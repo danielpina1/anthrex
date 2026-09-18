@@ -57,6 +57,6 @@ The smoke script builds `target/debug/anthrex` if it is missing, and runs agains
 
 `ANTHREX_SOCKET` and `ANTHREX_DATA_DIR` override these. `ANTHREX_LOG=debug` raises the daemon log level.
 
-## Status
+## Roadmap
 
-Milestone 1 of 5 (see `docs/superpowers/specs/`). Coming next: hook-driven agent status, the new-agent dialog with git worktrees, persistence across daemon restarts, CI.
+Milestone 1 of 9 is done. `docs/ROADMAP.md` lists every milestone: agent status from hooks, a project tree of agents and their sub-agents, worktrees, persistence, split panes, and orchestration where a Claude or Codex orchestrator dispatches reviewed, merged tasks to both. Coding agents working on this repository start with `AGENTS.md`.

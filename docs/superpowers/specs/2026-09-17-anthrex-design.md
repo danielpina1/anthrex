@@ -17,6 +17,8 @@ anthrex is a terminal multiplexer built for running many coding agents at once. 
 
 ### Non-goals (v1)
 
+> Update 2026-09-18: split panes and automatic task decomposition are now goals, in milestones 7 to 9. See `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` and `docs/ROADMAP.md`.
+
 - Split panes showing several agents at once.
 - Automatic task decomposition or planner agents.
 - Scrollback carried across detach/attach (the client keeps scrollback only from the moment it attached).
@@ -280,7 +282,7 @@ A client has at most one subscription; `Subscribe` replaces the previous one, re
 
 ### 6.2 Input model
 
-Passthrough by default: every key and paste goes to the focused PTY, encoded as the terminal would send it. The prefix key (default Ctrl-b, configurable) enters prefix mode for one keystroke:
+Passthrough by default: every key and paste goes to the focused PTY, encoded as the terminal would send it. The prefix key (default Ctrl-b, configurable) enters prefix mode for one keystroke. The table below is milestone 1's set with the milestone-6 change to rename and reconnect; section 10.3 of the product design spec lists every binding of milestones 1 to 9.
 
 | Prefix + key | Action |
 |--------------|--------|
@@ -290,7 +292,8 @@ Passthrough by default: every key and paste goes to the focused PTY, encoded as 
 | `x` | Kill focused window (confirm) |
 | `X` | Remove focused window (confirm; worktree checkbox) |
 | `R` | Restart focused window |
-| `r` | Rename focused window |
+| `,` | Rename focused window (as in tmux) |
+| `r` | Reconnect, only while disconnected |
 | `s` | Toggle sidebar |
 | `d` | Detach (quit client, daemon keeps running) |
 | `Q` | Stop daemon and all agents (confirm) |
