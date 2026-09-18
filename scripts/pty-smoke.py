@@ -28,14 +28,16 @@ import select
 import shutil
 import struct
 import subprocess
+import tempfile
 import termios
 import time
+import tty
 
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(REPO, "target/debug/anthrex")
-SOCKET = "/tmp/anthrex-smoke.sock"
-DATA_DIR = "/tmp/anthrex-smoke-data"
+DATA_DIR = tempfile.mkdtemp(prefix="anthrex-smoke-", dir="/tmp")
+SOCKET = os.path.join(DATA_DIR, "daemon.sock")
 ROWS, COLS = 40, 120
 
 ENV = dict(os.environ)
@@ -279,15 +281,44 @@ def stop_daemon(timeout=30.0):
         pass
 
 
-def reset_state():
-    """Starts from a clean slate: no leftover daemon, no leftover socket or data dir."""
-    stop_daemon()
-    shutil.rmtree(DATA_DIR, ignore_errors=True)
+def calibrate_raw_pty_capacity():
+    """Try 32 KiB on a separate non-reading raw PTY; return (blocked, written).
+
+    This calibrates the local kernel, not the agent's writer or the client's PTY.
+    """
+    master, slave = pty.openpty()
+    try:
+        tty.setraw(slave)
+        os.set_blocking(master, False)
+        remaining = memoryview(b"x" * (32 * 1024))
+        deadline = time.monotonic() + 1.0
+        blocked_since = None
+        while remaining:
+            if time.monotonic() >= deadline:
+                fail("raw PTY calibration exceeded its 1s deadline")
+            try:
+                written = os.write(master, remaining[:4096])
+            except BlockingIOError:
+                if blocked_since is None:
+                    blocked_since = time.monotonic()
+                if time.monotonic() - blocked_since >= 0.2:
+                    return True, 32 * 1024 - len(remaining)
+                # Let asynchronous line-discipline work finish before claiming
+                # backpressure; a transient EAGAIN alone is not confirmation.
+                select.select([], [master], [], 0.01)
+                continue
+            if written == 0:
+                fail("raw PTY calibration made no write progress")
+            blocked_since = None
+            remaining = remaining[written:]
+        return False, 32 * 1024
+    finally:
+        os.close(master)
+        os.close(slave)
 
 
 def main():
     ensure_binary()
-    reset_state()
 
     print("== stage 1: initial attach ==")
     proc = PtyProc([BIN])
@@ -376,17 +407,24 @@ def main():
 
     print("== stage 8: a 32 KiB paste freezes neither the daemon nor the client ==")
     # Regression for the blocked-PTY-write fix. `stty raw -echo` is what every full-screen
-    # agent does: no canonical line discipline draining the input queue and no echo, so
-    # the PTY master write stalls after about a kilobyte. The daemon used to perform that
+    # agent does: no canonical line discipline draining the input queue and no echo.
+    # The kernel's capacity varies by platform. The daemon used to perform the
     # write inline, on a tokio worker, while holding the window-table mutex - so for the
     # length of the stall NOTHING else worked: no other client, no tick, no kill, no
     # shutdown. `anthrex ls` from outside is the sharpest probe of that, because it needs
     # exactly the mutex the stalled write was holding.
+    blocked, written = calibrate_raw_pty_capacity()
+    if blocked:
+        print(f"ok: local raw PTY calibration retained backpressure for 200ms after {written}/32768 bytes")
+    else:
+        print("note: local raw PTY accepted all 32768 bytes; platform backpressure unconfirmed")
+    print("note: calibration does not observe the agent's writer; both timing limits remain enforced")
     proc3.send(b"\x02c")
     proc3.wait_for("shell-4", label="shell-4 card")
-    proc3.send(b"stty raw -echo; sleep 5\r")
-    time.sleep(0.8)
-    proc3.read_available(timeout=0.5)
+    child_started = time.monotonic()
+    proc3.send(b"stty raw -echo && printf '%s%s' RAW_ READY && exec sleep 30\r")
+    proc3.wait_for("RAW_READY", label="shell-4 raw-mode readiness")
+    print("ok: child reported raw-mode readiness")
     paste = b"\x1b[200~" + b"x" * (32 * 1024) + b"\x1b[201~"
     proc3.send_large(paste)
 
@@ -394,14 +432,14 @@ def main():
     try:
         listed = subprocess.run([BIN, "ls"], cwd=REPO, env=ENV, capture_output=True, text=True, timeout=5)
     except subprocess.TimeoutExpired:
-        fail("`anthrex ls` never returned while a paste was stalled in a PTY write")
+        fail("`anthrex ls` never returned after pasting to the non-reading child")
     ls_elapsed = time.monotonic() - started
     if listed.returncode != 0:
-        fail(f"`anthrex ls` failed during the stalled paste: {listed.stderr}")
+        fail(f"`anthrex ls` failed after the paste: {listed.stderr}")
     if "shell-4" not in listed.stdout:
         fail(f"`anthrex ls` did not list shell-4:\n{listed.stdout}")
     if ls_elapsed > 1.5:
-        fail(f"`anthrex ls` took {ls_elapsed:.2f}s; the daemon was blocked behind the PTY write")
+        fail(f"`anthrex ls` took {ls_elapsed:.2f}s after the paste (limit 1.5s)")
 
     started = time.monotonic()
     proc3.send(b"\x02d")
@@ -411,10 +449,12 @@ def main():
         fail(f"detach after the large paste did not exit cleanly (raw status {status3})")
     if detach_elapsed > 2.0:
         fail(f"detach after a 32 KiB paste took {detach_elapsed:.2f}s; the client froze behind the PTY write")
+    if time.monotonic() - child_started >= 30:
+        fail("non-reading child's 30s lifetime expired before responsiveness checks finished")
     proc3.close()
     print(
         f"ok: daemon answered ls in {ls_elapsed:.2f}s and the client detached in "
-        f"{detach_elapsed:.2f}s while 32 KiB sat unread in the PTY"
+        f"{detach_elapsed:.2f}s after a 32 KiB paste to a ready, non-reading child"
     )
 
     print("== stage 9: stop the daemon, verify status ==")

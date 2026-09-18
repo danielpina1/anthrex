@@ -136,46 +136,108 @@ async fn kill_terminates_and_remove_forgets() {
 
 /// C1: a program that does not read its stdin must never block the manager.
 ///
-/// `stty raw -echo; sleep 5` is the shape every full-screen agent (claude, codex, vim)
-/// has: no canonical line discipline to drain the input queue and no echo, so the PTY
-/// master write stalls after about 1 KB on macOS. Enqueueing input must stay
-/// non-blocking (Ok, or a queue-full Err), and a concurrent `list()` must not wait
-/// behind it.
+/// A raw-mode child that ignores stdin can fill the platform's PTY input buffer.
+/// Confirm sustained backpressure before checking concurrent list() latency.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_program_that_ignores_stdin_never_blocks_write_input_or_list() {
     let m = manager();
     let id = m.create(spec("blocked"), 80, 24).unwrap().id;
+    let stop = Arc::new(AtomicBool::new(false));
+    // Remove our own child and stop the lister even if an assertion panics.
+    struct Cleanup(Arc<WindowManager>, u32, Arc<AtomicBool>);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            self.2.store(true, Ordering::Relaxed);
+            let _ = self.0.remove(self.1);
+        }
+    }
+    let _cleanup = Cleanup(m.clone(), id, stop.clone());
+    let write = |bytes: &[u8]| {
+        let started = Instant::now();
+        let result = m.write_input(id, bytes);
+        assert!(
+            started.elapsed() < Duration::from_millis(100),
+            "write_input took {:?}",
+            started.elapsed()
+        );
+        match result {
+            Ok(()) => false,
+            Err(err) => {
+                assert!(err.to_string().contains("not reading input"), "{err}");
+                true
+            }
+        }
+    };
     wait_until("prompt output", || find(&m, id).status == Status::Working).await;
-    m.write_input(id, b"stty raw -echo; sleep 5\n").unwrap();
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    let child_started = Instant::now();
+    assert!(!write(
+        b"stty raw -echo && printf '%s%s' RAW_ READY && exec sleep 15\n"
+    ));
+    wait_until("raw-mode child readiness", || {
+        let (snap, _, _) = m.snapshot(id).unwrap();
+        String::from_utf8_lossy(&snap).contains("RAW_READY")
+    })
+    .await;
+
+    let chunk = vec![b'x'; 4096];
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut full_since = None;
+    for _ in 0..400 {
+        if Instant::now() >= deadline {
+            break;
+        }
+        if write(&chunk) {
+            full_since = Some(Instant::now());
+            break;
+        }
+    }
+    // A burst alone only outpaces the writer. Give it time to drain, then probe
+    // with empty chunks so the check cannot create more byte pressure itself.
+    let mut confirmed = false;
+    while let Some(since) = full_since {
+        if Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        if !write(b"") {
+            break;
+        }
+        if since.elapsed() >= Duration::from_millis(200) {
+            confirmed = true;
+            break;
+        }
+    }
+    use std::io::Write;
+    if !confirmed {
+        writeln!(std::io::stdout(), "skip: sustained PTY backpressure unconfirmed within the 400-chunk/2s probe; concurrent C1 assertions not exercised").unwrap();
+        return;
+    }
 
     // A second thread hammers list() for as long as the writes run.
-    let stop = Arc::new(AtomicBool::new(false));
+    let ready = Arc::new(std::sync::Barrier::new(2));
     let lister = {
         let m = m.clone();
         let stop = stop.clone();
+        let ready = ready.clone();
         std::thread::spawn(move || {
             let mut worst = Duration::ZERO;
-            while !stop.load(Ordering::Relaxed) {
+            ready.wait();
+            loop {
                 let started = Instant::now();
                 let _ = m.list();
                 worst = worst.max(started.elapsed());
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
                 std::thread::sleep(Duration::from_millis(5));
             }
             worst
         })
     };
+    ready.wait();
 
-    let chunk = vec![b'x'; 4096];
     for i in 0..16 {
-        let started = Instant::now();
-        // Ok or the queue-full Err; what matters is that it returns promptly.
-        let _ = m.write_input(id, &chunk);
-        let elapsed = started.elapsed();
-        assert!(
-            elapsed < Duration::from_millis(100),
-            "write_input #{i} took {elapsed:?}"
-        );
+        assert!(write(&chunk), "backpressure disappeared at write #{i}");
         let started = Instant::now();
         let _ = m.list();
         let elapsed = started.elapsed();
@@ -191,7 +253,9 @@ async fn a_program_that_ignores_stdin_never_blocks_write_input_or_list() {
         worst < Duration::from_millis(100),
         "concurrent list() worst case was {worst:?}"
     );
-    m.remove(id).unwrap();
+    assert!(child_started.elapsed() < Duration::from_secs(15));
+    assert_ne!(find(&m, id).status, Status::Exited);
+    writeln!(std::io::stdout(), "ok: sustained PTY backpressure confirmed for 200ms; write_input and concurrent list() stayed below 100ms").unwrap();
 }
 
 #[tokio::test]
