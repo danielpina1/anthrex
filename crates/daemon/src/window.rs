@@ -58,6 +58,17 @@ impl vt100::Callbacks for ScreenCallbacks {
 
 type Parser = vt100::Parser<ScreenCallbacks>;
 
+/// Best-effort text of a caught panic payload.
+fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        return (*s).to_string();
+    }
+    if let Some(s) = payload.downcast_ref::<String>() {
+        return s.clone();
+    }
+    "unknown panic".to_string()
+}
+
 /// A live subscription: the exact screen at subscribe time, then every later chunk.
 pub struct Attachment {
     pub output: broadcast::Receiver<Bytes>,
@@ -139,13 +150,30 @@ impl Window {
                         Ok(n) => n,
                     };
                     let chunk = Bytes::copy_from_slice(&buf[..n]);
-                    let batch = {
+                    // A panic inside `vt100::process` - on some byte sequence we have not
+                    // thought of - must cost one window, not the daemon. Catching it here
+                    // keeps the panic off every other code path that touches this parser
+                    // and lets the window be reported as exited rather than hanging.
+                    let batch = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         // Hold the lock across process + send so `attach` can never
                         // observe a chunk in the screen without also receiving it, or vice versa.
-                        let mut p = reader_parser.lock().unwrap();
+                        let mut p = crate::lock(&reader_parser);
                         p.process(&chunk);
                         let _ = reader_tx.send(chunk);
                         std::mem::take(&mut p.callbacks_mut().events)
+                    }));
+                    let batch = match batch {
+                        Ok(batch) => batch,
+                        Err(payload) => {
+                            let reason = panic_message(&payload);
+                            tracing::error!(id, %reason, "screen parser panicked; window abandoned");
+                            let event = WindowEvent::Exited {
+                                code: None,
+                                signal: Some(format!("screen parser panicked: {reason}")),
+                            };
+                            let _ = reader_events.send((id, event));
+                            break;
+                        }
                     };
                     let _ = reader_events.send((id, WindowEvent::Output));
                     for ev in batch {
@@ -208,26 +236,26 @@ impl Window {
 
     pub fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
         self.master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })?;
-        self.parser.lock().unwrap().screen_mut().set_size(rows, cols);
+        crate::lock(&self.parser).screen_mut().set_size(rows, cols);
         Ok(())
     }
 
     /// Current size as `(cols, rows)`.
     pub fn size(&self) -> (u16, u16) {
-        let (rows, cols) = self.parser.lock().unwrap().screen().size();
+        let (rows, cols) = crate::lock(&self.parser).screen().size();
         (cols, rows)
     }
 
     /// Subscribes to live output and takes the screen snapshot atomically.
     pub fn attach(&self) -> Attachment {
-        let p = self.parser.lock().unwrap();
+        let p = crate::lock(&self.parser);
         let output = self.output_tx.subscribe();
         let (rows, cols) = p.screen().size();
         Attachment { output, snapshot: Self::snapshot_of(p.screen()), cols, rows }
     }
 
     pub fn snapshot(&self) -> Vec<u8> {
-        Self::snapshot_of(self.parser.lock().unwrap().screen())
+        Self::snapshot_of(crate::lock(&self.parser).screen())
     }
 
     /// Escape codes that put a fresh parser into this screen's state.
@@ -248,7 +276,7 @@ impl Window {
 
     /// Plain text of the visible screen; used by tests and status heuristics.
     pub fn screen_text(&self) -> String {
-        self.parser.lock().unwrap().screen().contents()
+        crate::lock(&self.parser).screen().contents()
     }
 
     /// Sends a POSIX signal to the child.

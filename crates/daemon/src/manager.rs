@@ -90,7 +90,7 @@ impl WindowManager {
     }
 
     pub fn list(&self) -> Vec<WindowInfo> {
-        self.inner.lock().unwrap().entries.values().map(Entry::info).collect()
+        crate::lock(&self.inner).entries.values().map(Entry::info).collect()
     }
 
     fn publish(&self, inner: &Inner) {
@@ -98,7 +98,7 @@ impl WindowManager {
     }
 
     pub fn create(&self, spec: WindowSpec, cols: u16, rows: u16) -> anyhow::Result<WindowInfo> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = crate::lock(&self.inner);
         let id = inner.next_id;
         let name = match spec.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
             Some(n) => n.to_string(),
@@ -137,7 +137,7 @@ impl WindowManager {
     }
 
     pub fn handle_event(&self, id: u32, event: WindowEvent) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = crate::lock(&self.inner);
         let Some(entry) = inner.entries.get_mut(&id) else { return };
         let changed = match event {
             WindowEvent::Output => {
@@ -167,7 +167,7 @@ impl WindowManager {
 
     /// Called once a second by the daemon: Working windows that went quiet become Idle.
     pub fn tick(&self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = crate::lock(&self.inner);
         let mut changed = false;
         for entry in inner.entries.values_mut() {
             if entry.status == Status::Working && entry.last_output.elapsed() >= QUIET_AFTER {
@@ -180,7 +180,7 @@ impl WindowManager {
     }
 
     fn with_entry<R>(&self, id: u32, f: impl FnOnce(&mut Entry) -> R) -> anyhow::Result<R> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = crate::lock(&self.inner);
         let entry = inner.entries.get_mut(&id).ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
         Ok(f(entry))
     }
@@ -189,7 +189,7 @@ impl WindowManager {
     /// writer thread, so holding `Inner` across it cannot stall the rest of the daemon
     /// behind a PTY that is not being read.
     pub fn write_input(&self, id: u32, bytes: &[u8]) -> anyhow::Result<()> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = crate::lock(&self.inner);
         let entry = inner.entries.get_mut(&id).ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
         entry.window.write_input(bytes)?;
         if entry.apply(StatusEvent::InputSent) {
@@ -215,7 +215,7 @@ impl WindowManager {
 
     /// A client started viewing this window.
     pub fn focus(&self, id: u32) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = crate::lock(&self.inner);
         if let Some(entry) = inner.entries.get_mut(&id) {
             if entry.apply(StatusEvent::Focused) {
                 self.publish(&inner);
@@ -224,7 +224,7 @@ impl WindowManager {
     }
 
     fn signal(&self, id: u32, sig: i32) -> anyhow::Result<()> {
-        let inner = self.inner.lock().unwrap();
+        let inner = crate::lock(&self.inner);
         let entry = inner.entries.get(&id).ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
         if entry.status == Status::Exited {
             return Ok(());
@@ -245,7 +245,7 @@ impl WindowManager {
 
     /// Kills immediately and forgets the window.
     pub fn remove(&self, id: u32) -> anyhow::Result<()> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = crate::lock(&self.inner);
         let entry = inner.entries.remove(&id).ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
         if entry.status != Status::Exited {
             let _ = entry.window.signal(libc::SIGKILL);
@@ -261,7 +261,7 @@ impl WindowManager {
         if name.is_empty() {
             anyhow::bail!("name must not be empty");
         }
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = crate::lock(&self.inner);
         if inner.entries.values().any(|e| e.id != id && e.name == name) {
             anyhow::bail!("a window named '{name}' already exists");
         }
