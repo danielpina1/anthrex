@@ -200,22 +200,29 @@ class PtyProc:
     def send(self, data: bytes):
         os.write(self.fd, data)
 
-    def send_large(self, data: bytes, timeout=5.0):
-        """Writes a lot of bytes, draining output in between so neither side deadlocks.
+    def send_large(self, data: bytes, timeout=10.0):
+        """Writes a lot of bytes, draining output as it goes so neither side wedges.
 
-        A client that has stopped reading its own stdin would make this block; that is
-        itself a failure, so it is bounded by `timeout`.
+        Both directions have to keep moving: the client blocks writing its own frames
+        once we stop reading, and a client that is blocked writing is not reading, so a
+        plain blocking `os.write` here would deadlock the pair. The fd is put in
+        non-blocking mode and reads are drained on every pass, which also means a client
+        that has genuinely stopped reading shows up as this `timeout` rather than a hang.
         """
         deadline = time.monotonic() + timeout
         view = memoryview(data)
-        while view:
-            if time.monotonic() > deadline:
-                fail(f"writing to the client's pty blocked with {len(view)} bytes left")
-            _, w, _ = select.select([], [self.fd], [], 0.2)
-            if self.fd in w:
-                written = os.write(self.fd, view[:4096])
-                view = view[written:]
-            self.read_available(timeout=0.0)
+        os.set_blocking(self.fd, False)
+        try:
+            while view:
+                if time.monotonic() > deadline:
+                    fail(f"writing to the client's pty stalled with {len(view)} bytes left")
+                self.read_available(timeout=0.0)
+                try:
+                    view = view[os.write(self.fd, view[:4096]) :]
+                except BlockingIOError:
+                    time.sleep(0.01)
+        finally:
+            os.set_blocking(self.fd, True)
 
     def wait_exit(self, timeout=5.0):
         deadline = time.monotonic() + timeout
@@ -250,14 +257,32 @@ def ensure_binary():
         fail("`cargo build` did not produce target/debug/anthrex")
 
 
-def reset_state():
-    """Starts from a clean slate: no leftover daemon, no leftover socket or data dir."""
-    subprocess.run([BIN, "daemon", "stop"], cwd=REPO, env=ENV, capture_output=True, text=True, timeout=30)
-    shutil.rmtree(DATA_DIR, ignore_errors=True)
+def stop_daemon(timeout=30.0):
+    """Stops the daemon and waits until it is really gone.
+
+    `anthrex daemon stop` returns as soon as the daemon closes its listener, but the
+    daemon then spends up to its kill grace period ending agents - interactive shells
+    ignore SIGTERM, so that is the full three seconds - and removes the socket file only
+    as its very last act. Returning before that lets the next run bind a socket at the
+    same path that the dying daemon then unlinks out from under it.
+    """
+    subprocess.run([BIN, "daemon", "stop"], cwd=REPO, env=ENV, capture_output=True, text=True, timeout=timeout)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not os.path.exists(SOCKET):
+            return
+        time.sleep(0.1)
+    # Nothing removed it: it is a stale file, not a live daemon's socket.
     try:
         os.unlink(SOCKET)
     except OSError:
         pass
+
+
+def reset_state():
+    """Starts from a clean slate: no leftover daemon, no leftover socket or data dir."""
+    stop_daemon()
+    shutil.rmtree(DATA_DIR, ignore_errors=True)
 
 
 def main():
@@ -409,12 +434,10 @@ if __name__ == "__main__":
     finally:
         # Always try to stop the daemon, even on failure, so nothing is left running.
         try:
-            subprocess.run([BIN, "daemon", "stop"], cwd=REPO, env=ENV, capture_output=True, text=True, timeout=10)
+            stop_daemon()
         except Exception:
             pass
-        # Leave nothing behind under /tmp.
-        shutil.rmtree(DATA_DIR, ignore_errors=True)
-        try:
-            os.unlink(SOCKET)
-        except OSError:
-            pass
+        # Leave nothing behind under /tmp. ANTHREX_SMOKE_KEEP=1 keeps the data
+        # directory (and so daemon.log) for debugging a failure.
+        if not os.environ.get("ANTHREX_SMOKE_KEEP"):
+            shutil.rmtree(DATA_DIR, ignore_errors=True)
