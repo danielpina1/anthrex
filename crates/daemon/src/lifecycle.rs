@@ -2,7 +2,7 @@
 
 use crate::manager::WindowManager;
 use crate::server;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::net::UnixListener;
@@ -18,10 +18,20 @@ pub struct DaemonOptions {
 pub fn prepare_socket(path: &Path) -> anyhow::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
-        // Best-effort: tighten the directory when we own it. A shared directory we don't
-        // own (e.g. the socket lives directly under /tmp) can't be chmod'd by us, and that
-        // is not fatal — it just means we could not harden a directory we didn't create.
-        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        if let Err(e) = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)) {
+            // SAFETY: getuid has no preconditions and cannot fail.
+            let current_uid = unsafe { libc::getuid() };
+            let owner_uid = std::fs::metadata(dir)?.uid();
+            if owner_uid == current_uid {
+                // We own this directory: the 0700 guarantee must hold, so a chmod
+                // failure here is a real problem and must be fatal.
+                return Err(e.into());
+            }
+            // A directory we don't own (e.g. the socket path was overridden to sit
+            // directly under /tmp) can't be chmod'd by us. That's not fatal — we just
+            // can't harden a directory someone else created — but it is worth a warning.
+            tracing::warn!(dir = %dir.display(), error = %e, "could not set socket directory to 0700");
+        }
     }
     if path.exists() {
         match std::os::unix::net::UnixStream::connect(path) {
@@ -86,13 +96,16 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
         signal_token.cancel();
     });
 
-    server::serve(listener, manager.clone(), shutdown.clone()).await?;
+    let served = server::serve(listener, manager.clone(), shutdown.clone()).await;
+    if let Err(e) = &served {
+        tracing::error!(error = %e, "server exited with an error");
+    }
     tracing::info!("stopping agents");
     manager.shutdown().await;
     let _ = std::fs::remove_file(&opts.socket_path);
     let _ = std::fs::remove_file(&pid_path);
     tracing::info!("daemon stopped");
-    Ok(())
+    served
 }
 
 #[cfg(test)]
@@ -119,5 +132,22 @@ mod tests {
         let err = prepare_socket(&sock).unwrap_err();
         assert!(err.to_string().contains("already"));
         assert!(sock.exists());
+    }
+
+    #[test]
+    fn foreign_owned_parent_is_tolerated() {
+        let tmp = PathBuf::from("/tmp");
+        // SAFETY: getuid has no preconditions and cannot fail.
+        let current_uid = unsafe { libc::getuid() };
+        let tmp_owner = std::fs::metadata(&tmp).unwrap().uid();
+        if tmp_owner == current_uid {
+            // Running as root (or otherwise owns /tmp): the scenario this test exercises
+            // (a parent directory we don't own) doesn't apply here.
+            return;
+        }
+        let sock = tmp.join(format!("anthrex-prep-{}.sock", std::process::id()));
+        assert!(!sock.exists());
+        let result = prepare_socket(&sock);
+        assert!(result.is_ok(), "{result:?}");
     }
 }

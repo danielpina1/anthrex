@@ -26,7 +26,12 @@ fn spawn_detached() -> anyhow::Result<()> {
             Ok(())
         });
     }
-    cmd.spawn()?;
+    let mut child = cmd.spawn()?;
+    // Reap the detached child so it never lingers as a zombie once it exits —
+    // this process (e.g. a long-lived TUI) may outlive the daemon by a long margin.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
     Ok(())
 }
 
