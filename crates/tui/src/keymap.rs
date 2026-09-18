@@ -134,13 +134,22 @@ pub fn encode_key(key: KeyEvent, app_cursor: bool) -> Option<Vec<u8>> {
             }
             out
         }
-        Enter => vec![b'\r'],
-        Tab => vec![b'\t'],
+        // Alt prefixes these with ESC, the same way Alt+<char> does. Alt+Enter in
+        // particular is how claude and codex take a newline without submitting, on
+        // terminals that do not speak the kitty keyboard protocol.
+        Enter => {
+            if alt { vec![0x1b, b'\r'] } else { vec![b'\r'] }
+        }
+        Tab => {
+            if alt { vec![0x1b, b'\t'] } else { vec![b'\t'] }
+        }
         BackTab => b"\x1b[Z".to_vec(),
         Backspace => {
             if alt { vec![0x1b, 0x7f] } else { vec![0x7f] }
         }
-        Esc => vec![0x1b],
+        Esc => {
+            if alt { vec![0x1b, 0x1b] } else { vec![0x1b] }
+        }
         Up => cursor('A'),
         Down => cursor('B'),
         Right => cursor('C'),
@@ -194,6 +203,20 @@ mod tests {
         assert_eq!(encode_key(key(KeyCode::Esc, KeyModifiers::NONE), false), Some(vec![0x1b]));
         assert_eq!(encode_key(key(KeyCode::Tab, KeyModifiers::NONE), false), Some(vec![b'\t']));
         assert_eq!(encode_key(key(KeyCode::BackTab, KeyModifiers::SHIFT), false), Some(b"\x1b[Z".to_vec()));
+    }
+
+    /// I3: Alt+Enter is how claude and codex insert a newline without submitting; it must
+    /// reach them as ESC CR, not as a bare CR that submits the prompt.
+    #[test]
+    fn alt_prefixes_enter_tab_escape_and_backspace_with_escape() {
+        assert_eq!(encode_key(key(KeyCode::Enter, KeyModifiers::ALT), false), Some(vec![0x1b, b'\r']));
+        assert_eq!(encode_key(key(KeyCode::Tab, KeyModifiers::ALT), false), Some(vec![0x1b, b'\t']));
+        assert_eq!(encode_key(key(KeyCode::Esc, KeyModifiers::ALT), false), Some(vec![0x1b, 0x1b]));
+        assert_eq!(encode_key(key(KeyCode::Backspace, KeyModifiers::ALT), false), Some(vec![0x1b, 0x7f]));
+        // Without Alt they are unchanged.
+        assert_eq!(encode_key(key(KeyCode::Enter, KeyModifiers::NONE), false), Some(vec![b'\r']));
+        assert_eq!(encode_key(key(KeyCode::Tab, KeyModifiers::NONE), false), Some(vec![b'\t']));
+        assert_eq!(encode_key(key(KeyCode::Esc, KeyModifiers::NONE), false), Some(vec![0x1b]));
     }
 
     #[test]
