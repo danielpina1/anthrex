@@ -4322,7 +4322,7 @@ mod tests {
         assert!(out.contains("claude · working · 1m"));
         assert!(out.contains("◆ 2 tests"));
         assert!(out.contains("codex · attention · 1m"));
-        assert!(out.contains("2 agents · 1 working · 1 attention"));
+        assert!(out.contains("2 agents · 1 working"), "footer is truncated to the 28-column sidebar\n{out}");
         assert!(out.contains("api-worker · claude · /tmp/repo (feat/x)"), "main title\n{out}");
     }
 
