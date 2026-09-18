@@ -1,6 +1,8 @@
 //! Socket setup, logging, pid file, signals, and the top-level daemon loop. Spec section 3.7.
 
 use crate::manager::{ManagerConfig, WindowManager};
+
+mod codex_version;
 use crate::server;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -92,6 +94,8 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     let config = ManagerConfig::from_env(opts.socket_path.clone(), shell)?;
+    // Complete the only version probe before any window launch is accepted.
+    codex_version::check(config.codex_bin.clone()).await;
     let (manager, mut events) = WindowManager::new(config);
     let shutdown = CancellationToken::new();
 

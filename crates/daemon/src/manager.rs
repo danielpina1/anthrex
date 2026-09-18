@@ -257,6 +257,7 @@ impl WindowManager {
             .get_mut(&id)
             .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
         if !hooks::accepts(entry.spec.runtime, source) {
+            tracing::debug!(id, ?source, "ignored hook source for runtime");
             return Ok(());
         }
         let Some(hook) = hooks::parse(source, payload) else {
@@ -298,8 +299,11 @@ impl WindowManager {
             }
             WindowEvent::Bell => entry.apply(StatusEvent::Bell),
             WindowEvent::Title(title) => {
-                tracing::debug!(id, %title, "window title");
-                false
+                let ctx = entry.state.context(entry.viewers > 0);
+                entry
+                    .state
+                    .on_title(entry.spec.runtime, &title)
+                    .is_some_and(|event| entry.apply_with_context(event, ctx))
             }
             WindowEvent::ParserPanicked(reason) => {
                 entry.exit.get_or_insert_with(|| ExitInfo {

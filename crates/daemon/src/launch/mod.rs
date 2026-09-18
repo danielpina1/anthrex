@@ -77,19 +77,7 @@ pub fn plan(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> LaunchPlan {
             }
             (ctx.claude_bin.to_string(), args)
         }
-        Runtime::Codex => {
-            let mut args = vec!["-C".to_string(), spec.cwd.display().to_string()];
-            if let Some(model) = &spec.model {
-                args.push("-m".to_string());
-                args.push(model.clone());
-            }
-            if let Some(prompt) = &spec.initial_prompt {
-                // See the `claude` arm: `--` keeps a leading-dash prompt out of the parser.
-                args.push("--".to_string());
-                args.push(prompt.clone());
-            }
-            (ctx.codex_bin.to_string(), args)
-        }
+        Runtime::Codex => (ctx.codex_bin.to_string(), codex::args(spec, ctx)),
     };
     LaunchPlan {
         program,
@@ -213,15 +201,118 @@ mod tests {
     }
 
     #[test]
-    fn codex_gets_cwd_flag_model_and_prompt() {
+    fn codex_args_without_hooks_are_exact() {
         let mut s = spec(Runtime::Codex);
         s.model = Some("gpt-5-codex".into());
         s.initial_prompt = Some("hello".into());
-        let p = plan(&s, &ctx());
+        let mut context = ctx();
+        context.window_id = 7;
+        let p = plan(&s, &context);
         assert_eq!(p.program, "/opt/agents/codex");
         assert_eq!(
             p.args,
-            vec!["-C", "/tmp/repo", "-m", "gpt-5-codex", "--", "hello"]
+            vec![
+                "-C",
+                "/tmp/repo",
+                "-c",
+                r#"notify=["/opt/anthrex/bin/anthrex","hook","--window","7","--source","codex-notify"]"#,
+                "-c",
+                r#"tui.terminal_title=["status"]"#,
+                "-c",
+                r#"tui.notifications=["approval-requested"]"#,
+                "-c",
+                r#"tui.notification_method="bel""#,
+                "-c",
+                r#"tui.notification_condition="always""#,
+                "-m",
+                "gpt-5-codex",
+                "--",
+                "hello"
+            ]
         );
+    }
+
+    #[test]
+    fn codex_args_with_hooks_are_exact() {
+        let mut s = spec(Runtime::Codex);
+        s.model = Some("gpt-5-codex".into());
+        s.initial_prompt = Some("hello".into());
+        let mut context = ctx();
+        context.window_id = 7;
+        context.codex_hook_source = Some("/tmp/codex-home/config.toml");
+        let args = plan(&s, &context).args;
+        assert_eq!(args.len(), 48);
+        assert_eq!(args[12], "-c");
+        assert_eq!(
+            args[13],
+            r#"hooks.SessionStart=[{hooks=[{type="command",command="'/opt/anthrex/bin/anthrex' hook --window 7 --source codex-hook"}]}]"#
+        );
+        assert_eq!(args[14], "-c");
+        assert_eq!(
+            args[15],
+            r#"hooks.state={"/tmp/codex-home/config.toml:session_start:0:0"={trusted_hash="sha256:69de55a0df8e7abb3454e8d67f19af0d5797d208837a23f45af6e2617fb3668e"}}"#
+        );
+        for (index, (event, label, hash)) in [
+            (
+                "SessionStart",
+                "session_start",
+                "69de55a0df8e7abb3454e8d67f19af0d5797d208837a23f45af6e2617fb3668e",
+            ),
+            (
+                "UserPromptSubmit",
+                "user_prompt_submit",
+                "ce28fe1882eab2637afb9213a27be7ac6a67155af428b111b3af6f4b616bd062",
+            ),
+            (
+                "PreToolUse",
+                "pre_tool_use",
+                "cb3a96262c960578050675ee2bf22680d8aaf909f7941553bae039b36074ad7e",
+            ),
+            (
+                "PermissionRequest",
+                "permission_request",
+                "bd8e3f7788f89e22bee74e8013c66f372634c2ebe116dff5b4b5ebc575a3227b",
+            ),
+            (
+                "PostToolUse",
+                "post_tool_use",
+                "f636075c28818926b2811587ea0eb0f6bca8c33246d06da515f215f72e2273bc",
+            ),
+            (
+                "SubagentStart",
+                "subagent_start",
+                "e78a75f4a757c49a69d9f05868989d0e87b84d2f16b330d712a73b353882718b",
+            ),
+            (
+                "SubagentStop",
+                "subagent_stop",
+                "d19a438eb5d993e8fc89de50a36ff0a032cd82e4c8d8884306a45d0ca485f0d3",
+            ),
+            (
+                "Stop",
+                "stop",
+                "38977630548e48639d47d2af5b14143f24886115cfab74dcd4aae3da28f1d203",
+            ),
+        ]
+        .iter()
+        .enumerate()
+        {
+            assert_eq!(args[12 + index * 4], "-c");
+            assert_eq!(
+                args[13 + index * 4],
+                format!(
+                    "hooks.{event}=[{{hooks=[{{type=\"command\",command=\"'/opt/anthrex/bin/anthrex' hook --window 7 --source codex-hook\"}}]}}]"
+                )
+            );
+            assert_eq!(args[14 + index * 4], "-c");
+            assert_eq!(
+                args[15 + index * 4],
+                format!(
+                    "hooks.state={{\"/tmp/codex-home/config.toml:{label}:0:0\"={{trusted_hash=\"sha256:{hash}\"}}}}"
+                )
+            );
+        }
+        assert_eq!(&args[44..], ["-m", "gpt-5-codex", "--", "hello"]);
+        assert!(!args.iter().any(|arg| arg.contains("dangerously-bypass")));
     }
 }

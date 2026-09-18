@@ -68,7 +68,9 @@ pub struct StatusContext {
 /// | focus, input | all | clear `Done`, or clear `Attention` |
 /// | output, quiet | Shell or agent before its first signal | fallback activity transitions |
 /// | hook lifecycle | Claude/Codex | start, work, permission, idle, and stop transitions |
-/// | notify/title | Codex | unchanged until the M3.10 parser/status integration |
+/// | notify | Codex | complete any state before hooks; only `Working` after hooks |
+/// | title | Codex before hooks | starting, working/thinking, waiting; ready completes work and keeps done |
+/// | title | Codex after hooks | waiting demands attention; ready only completes `Working` |
 ///
 /// Session ids, active tools, and sub-agents are recorded by `AgentState`, not here.
 pub fn next(current: Status, event: StatusEvent, runtime: Runtime, ctx: StatusContext) -> Status {
@@ -108,6 +110,19 @@ pub fn next(current: Status, event: StatusEvent, runtime: Runtime, ctx: StatusCo
         (Runtime::Claude, Starting | Working, E::IdlePrompt) => Idle,
         (Runtime::Claude, status, E::IdlePrompt) => status,
         (Runtime::Claude | Runtime::Codex, _, E::Stop) => completion(ctx),
+        (Runtime::Codex, status, E::CodexNotify) if !ctx.hooks_seen || status == Working => {
+            completion(ctx)
+        }
+        (Runtime::Codex, _, E::Title(CodexTitle::Waiting)) => Attention,
+        (Runtime::Codex, Working, E::Title(CodexTitle::Ready)) => completion(ctx),
+        (Runtime::Codex, Done, E::Title(CodexTitle::Ready)) => Done,
+        (Runtime::Codex, _, E::Title(CodexTitle::Ready)) if !ctx.hooks_seen => Idle,
+        (Runtime::Codex, _, E::Title(CodexTitle::Starting)) if !ctx.hooks_seen => Starting,
+        (Runtime::Codex, _, E::Title(CodexTitle::Working | CodexTitle::Thinking))
+            if !ctx.hooks_seen =>
+        {
+            Working
+        }
         (_, status, _) => status,
     }
 }
@@ -324,17 +339,119 @@ mod tests {
     }
 
     #[test]
-    fn codex_specific_events_are_deferred() {
-        let cases = [
-            (Working, StatusEvent::CodexNotify),
-            (Idle, StatusEvent::Title(CodexTitle::Starting)),
-            (Idle, StatusEvent::Title(CodexTitle::Working)),
-            (Idle, StatusEvent::Title(CodexTitle::Thinking)),
-            (Idle, StatusEvent::Title(CodexTitle::Waiting)),
-            (Working, StatusEvent::Title(CodexTitle::Ready)),
-        ];
-        for (status, event) in cases {
-            assert_eq!(next(status, event, Codex, EMPTY), status, "{event:?}");
+    fn codex_titles_without_hooks() {
+        for (title, expected) in [
+            (CodexTitle::Starting, Starting),
+            (CodexTitle::Working, Working),
+            (CodexTitle::Thinking, Working),
+            (CodexTitle::Waiting, Attention),
+        ] {
+            assert_eq!(
+                next(Idle, StatusEvent::Title(title), Codex, EMPTY),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn ready_ends_a_working_turn_and_keeps_done() {
+        for focused in [false, true] {
+            let ctx = StatusContext { focused, ..EMPTY };
+            for (current, expected) in [
+                (Starting, Idle),
+                (Idle, Idle),
+                (Attention, Idle),
+                (Done, Done),
+                (Working, if focused { Idle } else { Done }),
+            ] {
+                assert_eq!(
+                    next(current, StatusEvent::Title(CodexTitle::Ready), Codex, ctx),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn codex_notify_without_hooks() {
+        for focused in [false, true] {
+            for current in [Starting, Working, Idle, Done, Attention] {
+                assert_eq!(
+                    next(
+                        current,
+                        StatusEvent::CodexNotify,
+                        Codex,
+                        StatusContext { focused, ..EMPTY }
+                    ),
+                    if focused { Idle } else { Done }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn codex_notify_with_hooks_only_ends_a_working_turn() {
+        for focused in [false, true] {
+            let ctx = StatusContext {
+                focused,
+                hooks_seen: true,
+                ..EMPTY
+            };
+            for current in [Starting, Working, Idle, Done, Attention] {
+                assert_eq!(
+                    next(current, StatusEvent::CodexNotify, Codex, ctx),
+                    if current == Working {
+                        if focused { Idle } else { Done }
+                    } else {
+                        current
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn titles_after_codex_hooks_only_report_waiting_and_ready() {
+        for focused in [false, true] {
+            let ctx = StatusContext {
+                focused,
+                hooks_seen: true,
+                ..EMPTY
+            };
+            for current in [Starting, Working, Idle, Done, Attention] {
+                for title in [
+                    CodexTitle::Starting,
+                    CodexTitle::Working,
+                    CodexTitle::Thinking,
+                ] {
+                    assert_eq!(
+                        next(current, StatusEvent::Title(title), Codex, ctx),
+                        current
+                    );
+                }
+                assert_eq!(
+                    next(current, StatusEvent::Title(CodexTitle::Waiting), Codex, ctx),
+                    Attention
+                );
+                assert_eq!(
+                    next(current, StatusEvent::Title(CodexTitle::Ready), Codex, ctx),
+                    if current == Working {
+                        if focused { Idle } else { Done }
+                    } else {
+                        current
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn prompt_submit_clears_attention() {
+        for runtime in [Claude, Codex] {
+            assert_eq!(
+                next(Attention, StatusEvent::UserPromptSubmit, runtime, EMPTY),
+                Working
+            );
         }
     }
 
@@ -345,7 +462,12 @@ mod tests {
         assert_eq!(CodexTitle::parse("Thinking"), Some(CodexTitle::Thinking));
         assert_eq!(CodexTitle::parse("Waiting"), Some(CodexTitle::Waiting));
         assert_eq!(CodexTitle::parse("Ready"), Some(CodexTitle::Ready));
+    }
+
+    #[test]
+    fn unknown_titles_do_not_parse() {
         assert_eq!(CodexTitle::parse("working"), None);
         assert_eq!(CodexTitle::parse("Working now"), None);
+        assert_eq!(CodexTitle::parse(""), None);
     }
 }

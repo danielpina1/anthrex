@@ -1,6 +1,59 @@
+use super::{LaunchContext, hook_command};
+use proto::{HookSource, WindowSpec};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fmt::Write;
+
+pub fn args(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> Vec<String> {
+    let id = ctx.window_id.to_string();
+    let exe = ctx.exe.to_string_lossy();
+    let notify = [
+        exe.as_ref(),
+        "hook",
+        "--window",
+        &id,
+        "--source",
+        "codex-notify",
+    ]
+    .map(toml_string)
+    .join(",");
+    let mut args = vec!["-C".into(), spec.cwd.display().to_string()];
+    for value in [
+        format!("notify=[{notify}]"),
+        format!("tui.terminal_title=[{}]", toml_string("status")),
+        format!("tui.notifications=[{}]", toml_string("approval-requested")),
+        format!("tui.notification_method={}", toml_string("bel")),
+        format!("tui.notification_condition={}", toml_string("always")),
+    ] {
+        args.extend(["-c".into(), value]);
+    }
+    if let Some(source) = ctx.codex_hook_source {
+        let command = hook_command(ctx.exe, ctx.window_id, HookSource::CodexHook);
+        for (event, label) in HOOK_EVENTS {
+            args.extend([
+                "-c".into(),
+                format!(
+                    "hooks.{event}=[{{hooks=[{{type={},command={}}}]}}]",
+                    toml_string("command"),
+                    toml_string(&command)
+                ),
+                "-c".into(),
+                format!(
+                    "hooks.state={{{}={{trusted_hash={}}}}}",
+                    toml_string(&trust_key(source, label, 0, 0)),
+                    toml_string(&trust_hash(label, &command))
+                ),
+            ]);
+        }
+    }
+    if let Some(model) = &spec.model {
+        args.extend(["-m".into(), model.clone()]);
+    }
+    if let Some(prompt) = &spec.initial_prompt {
+        args.extend(["--".into(), prompt.clone()]);
+    }
+    args
+}
 
 pub const HOOK_EVENTS: [(&str, &str); 8] = [
     ("SessionStart", "session_start"),

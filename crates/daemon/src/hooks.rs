@@ -43,30 +43,37 @@ pub fn accepts(runtime: Runtime, source: HookSource) -> bool {
 }
 
 pub fn parse(source: HookSource, payload: &Value) -> Option<ParsedHook> {
-    if source != HookSource::Claude {
-        return None;
-    }
-
     let object = payload.as_object()?;
-    let kind = match object.get("hook_event_name")?.as_str()? {
-        "SessionStart" => HookKind::SessionStart,
-        "UserPromptSubmit" => HookKind::UserPromptSubmit,
-        "PreToolUse" => HookKind::PreToolUse,
-        "PostToolUse" => HookKind::PostToolUse,
-        "PermissionRequest" => HookKind::PermissionRequest,
-        "Notification" => HookKind::Notification,
-        "Stop" => HookKind::Stop,
-        "SubagentStart" => HookKind::SubagentStart,
-        "SubagentStop" => HookKind::SubagentStop,
-        "SessionEnd" => HookKind::SessionEnd,
-        _ => return None,
+    let kind = if source == HookSource::CodexNotify {
+        if object.get("type")?.as_str()? != "agent-turn-complete" {
+            return None;
+        }
+        HookKind::TurnComplete
+    } else {
+        match object.get("hook_event_name")?.as_str()? {
+            "SessionStart" => HookKind::SessionStart,
+            "UserPromptSubmit" => HookKind::UserPromptSubmit,
+            "PreToolUse" => HookKind::PreToolUse,
+            "PostToolUse" => HookKind::PostToolUse,
+            "PermissionRequest" => HookKind::PermissionRequest,
+            "Notification" => HookKind::Notification,
+            "Stop" => HookKind::Stop,
+            "SubagentStart" => HookKind::SubagentStart,
+            "SubagentStop" => HookKind::SubagentStop,
+            "SessionEnd" => HookKind::SessionEnd,
+            _ => return None,
+        }
     };
     let string = |key| object.get(key).and_then(Value::as_str).map(str::to_owned);
 
     Some(ParsedHook {
         source,
         kind,
-        session_id: string("session_id"),
+        session_id: string(if source == HookSource::CodexNotify {
+            "thread-id"
+        } else {
+            "session_id"
+        }),
         agent_id: string("agent_id"),
         agent_type: string("agent_type"),
         tool_name: string("tool_name"),
@@ -101,6 +108,38 @@ mod tests {
     use crate::status::StatusEvent;
     use proto::{HookSource, Runtime};
     use serde_json::json;
+
+    #[test]
+    fn parses_codex_notify() {
+        let hook = parse(
+            HookSource::CodexNotify,
+            &json!({"type":"agent-turn-complete", "thread-id":"t1", "session_id":"wrong"}),
+        )
+        .expect("notify parsed");
+        assert_eq!(hook.kind, HookKind::TurnComplete);
+        assert_eq!(hook.session_id.as_deref(), Some("t1"));
+        assert_eq!(hook.status_event(), Some(StatusEvent::CodexNotify));
+        assert_eq!(
+            parse(
+                HookSource::CodexNotify,
+                &json!({"type":"other", "thread-id":"t1"})
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn parses_codex_hook_payloads_like_claude_ones() {
+        let payload = json!({"hook_event_name":"PreToolUse", "session_id":"root", "agent_id":"child", "agent_type":"worker", "tool_name":"shell", "tool_input":{"command":"pwd"}});
+        let hook = parse(HookSource::CodexHook, &payload).expect("lifecycle hook parsed");
+        assert_eq!(hook.source, HookSource::CodexHook);
+        assert_eq!(hook.kind, HookKind::PreToolUse);
+        assert_eq!(hook.session_id.as_deref(), Some("root"));
+        assert_eq!(hook.agent_id.as_deref(), Some("child"));
+        assert_eq!(hook.agent_type.as_deref(), Some("worker"));
+        assert_eq!(hook.tool_name.as_deref(), Some("shell"));
+        assert_eq!(hook.tool_input, Some(json!({"command":"pwd"})));
+    }
 
     #[test]
     fn parses_a_claude_pre_tool_use_payload() {
