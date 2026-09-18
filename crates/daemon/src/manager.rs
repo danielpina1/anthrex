@@ -60,6 +60,26 @@ impl Entry {
 struct Inner {
     next_id: u32,
     entries: BTreeMap<u32, Entry>,
+    // Cleanup owns a group beyond the leader's exit and even after window removal.
+    cleanups: BTreeMap<u32, watch::Receiver<bool>>,
+}
+
+impl Inner {
+    fn start_cleanup(&mut self, id: u32) -> anyhow::Result<()> {
+        if self.cleanups.contains_key(&id) {
+            return Ok(());
+        }
+        let entry = self
+            .entries
+            .get(&id)
+            .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
+        if entry.child_alive
+            && let Some(pid) = entry.window.pid()
+        {
+            self.cleanups.insert(id, crate::process::escalate(pid)?);
+        }
+        Ok(())
+    }
 }
 
 pub struct WindowManager {
@@ -82,6 +102,7 @@ impl WindowManager {
             inner: Mutex::new(Inner {
                 next_id: 1,
                 entries: BTreeMap::new(),
+                cleanups: BTreeMap::new(),
             }),
             changed,
             events,
@@ -164,6 +185,7 @@ impl WindowManager {
     }
 
     pub fn handle_event(&self, id: u32, event: WindowEvent) {
+        let parser_panicked = matches!(&event, WindowEvent::ParserPanicked(_));
         let mut inner = crate::lock(&self.inner);
         let Some(entry) = inner.entries.get_mut(&id) else {
             return;
@@ -183,12 +205,6 @@ impl WindowManager {
                     code: None,
                     reason: format!("screen parser panicked: {reason}"),
                 });
-                if entry.child_alive
-                    && let Some(pid) = entry.window.pid()
-                    && let Err(error) = crate::process::escalate(pid)
-                {
-                    tracing::error!(id, %error, "parser panic cleanup failed");
-                }
                 entry.apply(StatusEvent::Exited)
             }
             WindowEvent::Exited { code, signal } => {
@@ -203,6 +219,9 @@ impl WindowManager {
                 entry.apply(StatusEvent::Exited)
             }
         };
+        if parser_panicked && let Err(error) = inner.start_cleanup(id) {
+            tracing::error!(id, %error, "parser panic cleanup failed");
+        }
         if changed {
             self.publish(&inner);
         }
@@ -211,6 +230,10 @@ impl WindowManager {
     /// Called once a second by the daemon: Working windows that went quiet become Idle.
     pub fn tick(&self) {
         let mut inner = crate::lock(&self.inner);
+        let Inner {
+            entries, cleanups, ..
+        } = &mut *inner;
+        cleanups.retain(|id, done| entries.contains_key(id) || !*done.borrow());
         let mut changed = false;
         for entry in inner.entries.values_mut() {
             if entry.status == Status::Working && entry.last_output.elapsed() >= QUIET_AFTER {
@@ -278,17 +301,9 @@ impl WindowManager {
 
     /// SIGHUP now, SIGTERM after one second, SIGKILL after three seconds.
     pub fn kill(self: &Arc<Self>, id: u32) -> anyhow::Result<()> {
-        let inner = crate::lock(&self.inner);
-        let entry = inner
-            .entries
-            .get(&id)
-            .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
-        if entry.child_alive
-            && let Some(pid) = entry.window.pid()
-        {
-            crate::process::escalate(pid)?;
-        }
-        Ok(())
+        let mut inner = crate::lock(&self.inner);
+        anyhow::ensure!(inner.entries.contains_key(&id), "no window with id {id}");
+        inner.start_cleanup(id)
     }
 
     /// Kills immediately and forgets the window.
@@ -328,17 +343,17 @@ impl WindowManager {
     /// Run the same bounded group escalation for every live child concurrently.
     pub async fn shutdown(&self) {
         let pending: Vec<_> = {
-            let inner = crate::lock(&self.inner);
-            inner
-                .entries
-                .values()
-                .filter(|entry| entry.child_alive)
-                .filter_map(|entry| entry.window.pid())
-                .filter_map(|pid| crate::process::escalate(pid).ok())
-                .collect()
+            let mut inner = crate::lock(&self.inner);
+            let ids: Vec<_> = inner.entries.keys().copied().collect();
+            for id in ids {
+                if let Err(error) = inner.start_cleanup(id) {
+                    tracing::error!(id, %error, "shutdown cleanup failed");
+                }
+            }
+            inner.cleanups.values().cloned().collect()
         };
-        for done in pending {
-            let _ = done.await;
+        for mut done in pending {
+            let _ = done.wait_for(|finished| *finished).await;
         }
     }
 }

@@ -1,7 +1,7 @@
 //! Bounded cleanup of the session owned by a PTY child.
 
 use std::time::{Duration, Instant};
-use tokio::sync::oneshot;
+use tokio::sync::watch;
 
 pub const HUP_GRACE: Duration = Duration::from_secs(1);
 pub const KILL_GRACE: Duration = Duration::from_secs(3);
@@ -22,11 +22,11 @@ pub(crate) fn signal_group(pid: u32, signal: i32) -> anyhow::Result<bool> {
 
 /// Signal immediately, then monitor the group on a dedicated thread. Keep checking
 /// even after the leader exits: a descendant may still need TERM or KILL.
-pub(crate) fn escalate(pid: u32) -> anyhow::Result<oneshot::Receiver<()>> {
+pub(crate) fn escalate(pid: u32) -> anyhow::Result<watch::Receiver<bool>> {
     let started = Instant::now();
-    let (done, receiver) = oneshot::channel();
+    let (done, receiver) = watch::channel(false);
     if !signal_group(pid, libc::SIGHUP)? {
-        let _ = done.send(());
+        done.send_replace(true);
         return Ok(receiver);
     }
     std::thread::Builder::new()
@@ -47,7 +47,7 @@ pub(crate) fn escalate(pid: u32) -> anyhow::Result<oneshot::Receiver<()>> {
                 }
                 std::thread::sleep(Duration::from_millis(20));
             }
-            let _ = done.send(());
+            done.send_replace(true);
         })?;
     Ok(receiver)
 }
