@@ -30,7 +30,8 @@ fn card_rows(
 }
 
 fn cut_to_width(text: &str, width: usize) -> String {
-    if Span::raw(text).width() <= width {
+    let span = Span::raw(text);
+    if span.width() <= width {
         return text.to_owned();
     }
     if width == 0 {
@@ -41,13 +42,13 @@ fn cut_to_width(text: &str, width: usize) -> String {
     let content_width = width.saturating_sub(Span::raw(ellipsis.to_string()).width());
     let mut cut = String::new();
     let mut used = 0;
-    for character in text.chars() {
-        let character_width = Span::raw(character.to_string()).width();
-        if used + character_width > content_width {
+    for grapheme in span.styled_graphemes(Style::default()) {
+        let grapheme_width = Span::raw(grapheme.symbol).width();
+        if used + grapheme_width > content_width {
             break;
         }
-        cut.push(character);
-        used += character_width;
+        cut.push_str(grapheme.symbol);
+        used += grapheme_width;
     }
     cut.push(ellipsis);
     cut

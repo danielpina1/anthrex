@@ -181,6 +181,21 @@ mod tests {
     }
 
     #[test]
+    fn emoji_tool_names_are_cut_at_grapheme_boundaries() {
+        let emoji = "👩🏽‍💻";
+        let mut window = win(1, "api-worker", Runtime::Claude, Status::Working);
+        window.tool = Some(emoji.repeat(13));
+        let mut app = App::new(vec![window], "/tmp".into(), Keymap::default_prefix());
+        let _ = app.set_terminal_size(80, 24);
+        let (out, _) = render(&app, 100, 20);
+        let expected = format!("▎  {}…│", emoji.repeat(12));
+        assert!(
+            out.contains(&expected),
+            "emoji modifiers and ZWJ sequences stay intact\n{out}"
+        );
+    }
+
+    #[test]
     fn empty_state_and_hidden_sidebar() {
         let mut app = App::new(vec![], "/tmp".into(), Keymap::default_prefix());
         let _ = app.set_terminal_size(80, 24);
