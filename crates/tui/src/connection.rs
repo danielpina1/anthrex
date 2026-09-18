@@ -9,6 +9,7 @@ use tokio::sync::mpsc;
 pub struct Connection {
     tx: mpsc::Sender<ClientMsg>,
     rx: mpsc::Receiver<DaemonMsg>,
+    reader: tokio::task::JoinHandle<()>,
     pub windows: Vec<WindowInfo>,
     pub daemon_version: String,
 }
@@ -37,7 +38,7 @@ impl Connection {
         });
 
         let (in_tx, rx) = mpsc::channel::<DaemonMsg>(1024);
-        tokio::spawn(async move {
+        let reader = tokio::spawn(async move {
             loop {
                 match read_frame::<_, DaemonMsg>(&mut rd).await {
                     Ok(Some(msg)) => {
@@ -51,7 +52,7 @@ impl Connection {
             // Dropping in_tx closes the channel; recv() then yields None.
         });
 
-        Ok(Self { tx, rx, windows, daemon_version })
+        Ok(Self { tx, rx, reader, windows, daemon_version })
     }
 
     /// Returns false if the connection is gone.
@@ -62,5 +63,13 @@ impl Connection {
     /// Returns None once the daemon has closed the connection.
     pub async fn recv(&mut self) -> Option<DaemonMsg> {
         self.rx.recv().await
+    }
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        // The reader task otherwise blocks in `read_frame` on its `OwnedReadHalf` until the
+        // daemon sends something, keeping the task and the socket fd alive past this `Connection`.
+        self.reader.abort();
     }
 }
