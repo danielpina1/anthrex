@@ -137,13 +137,14 @@ impl App {
         if !self.windows.iter().any(|w| w.id == id) {
             return vec![];
         }
+        if self.term_size == (0, 0) {
+            self.pending_focus = Some(id);
+            return vec![];
+        }
         self.focused = Some(id);
         self.scroll_offset = 0;
         let (cols, rows) = self.term_size;
         self.parser = vt100::Parser::new(rows.max(1), cols.max(1), SCROLLBACK_LINES);
-        if self.term_size == (0, 0) {
-            return vec![];
-        }
         vec![Effect::Send(ClientMsg::Subscribe { window_id: id, cols, rows })]
     }
 
@@ -436,6 +437,18 @@ mod tests {
         assert_eq!(effects, vec![Effect::Send(ClientMsg::Subscribe { window_id: 4, cols: 100, rows: 30 })]);
         assert_eq!(app.focused, Some(4));
         assert_eq!(app.parser.screen().size(), (30, 100));
+    }
+
+    #[test]
+    fn focus_requested_before_the_first_size_report_subscribes_once_sized() {
+        let mut app = App::new(vec![win(4, "a", Status::Idle), win(5, "b", Status::Idle)], "/tmp".into(), Keymap::default_prefix());
+        assert!(app.focus(5).is_empty());
+        assert_eq!(app.focused, None);
+        assert!(app.on_daemon(DaemonMsg::Created { window_id: 5 }).is_empty());
+        assert_eq!(app.focused, None);
+        let effects = app.set_terminal_size(100, 30);
+        assert_eq!(effects, vec![Effect::Send(ClientMsg::Subscribe { window_id: 5, cols: 100, rows: 30 })]);
+        assert_eq!(app.focused, Some(5));
     }
 
     #[test]
