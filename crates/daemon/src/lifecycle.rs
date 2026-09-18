@@ -14,23 +14,37 @@ pub struct DaemonOptions {
 }
 
 /// Creates the socket directory (mode 0700) and removes a stale socket file.
-/// Fails if a live daemon answers on the socket.
+/// Fails if a live daemon answers on the socket, or if the directory belongs to
+/// somebody else.
 pub fn prepare_socket(path: &Path) -> anyhow::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
         if let Err(e) = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)) {
             // SAFETY: getuid has no preconditions and cannot fail.
             let current_uid = unsafe { libc::getuid() };
-            let owner_uid = std::fs::metadata(dir)?.uid();
+            let meta = std::fs::metadata(dir)?;
+            let owner_uid = meta.uid();
             if owner_uid == current_uid {
                 // We own this directory: the 0700 guarantee must hold, so a chmod
                 // failure here is a real problem and must be fatal.
                 return Err(e.into());
             }
-            // A directory we don't own (e.g. the socket path was overridden to sit
-            // directly under /tmp) can't be chmod'd by us. That's not fatal — we just
-            // can't harden a directory someone else created — but it is worth a warning.
-            tracing::warn!(dir = %dir.display(), error = %e, "could not set socket directory to 0700");
+            // A directory owned by someone else is the attack case, not a nuisance:
+            // without XDG_RUNTIME_DIR the default path is /tmp/anthrex-<uid>, which
+            // another local user can create first and then read every keystroke we
+            // send through the socket inside it. The one safe exception is a
+            // root-owned sticky directory (/tmp, /var/tmp): sticky means no one but
+            // the owner can remove or rename what we create there, so the socket we
+            // bind and chmod 0600 below is still ours alone.
+            let sticky = meta.mode() & 0o1000 != 0;
+            if !(owner_uid == 0 && sticky) {
+                anyhow::bail!(
+                    "refusing to use the socket directory {}: it is owned by uid {owner_uid}, not by you (uid {current_uid}), \
+                     and is not a root-owned sticky directory; set ANTHREX_SOCKET to a path you own ({e})",
+                    dir.display()
+                );
+            }
+            tracing::warn!(dir = %dir.display(), error = %e, "socket directory is a shared sticky directory, not 0700");
         }
     }
     if path.exists() {
@@ -40,6 +54,17 @@ pub fn prepare_socket(path: &Path) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Binds the listening socket and restricts it to its owner.
+///
+/// The socket directory can legitimately be a shared sticky directory (/tmp), so the
+/// socket's own mode is what stops another local user from connecting and driving every
+/// agent the daemon owns.
+pub fn bind_socket(path: &Path) -> anyhow::Result<UnixListener> {
+    let listener = UnixListener::bind(path)?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(listener)
 }
 
 fn init_logging(data_dir: &Path) -> tracing_appender::non_blocking::WorkerGuard {
@@ -56,7 +81,7 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     std::fs::create_dir_all(&opts.data_dir)?;
     let _log_guard = init_logging(&opts.data_dir);
     prepare_socket(&opts.socket_path)?;
-    let listener = UnixListener::bind(&opts.socket_path)?;
+    let listener = bind_socket(&opts.socket_path)?;
     let pid_path = opts.data_dir.join("daemon.pid");
     std::fs::write(&pid_path, std::process::id().to_string())?;
     tracing::info!(socket = %opts.socket_path.display(), pid = std::process::id(), "daemon started");
@@ -134,20 +159,54 @@ mod tests {
         assert!(sock.exists());
     }
 
+    /// I5: a root-owned sticky directory (/tmp) is the deliberate override and stays
+    /// allowed - nobody but us can replace what we create inside it.
     #[test]
-    fn foreign_owned_parent_is_tolerated() {
+    fn root_owned_sticky_parent_is_tolerated() {
         let tmp = PathBuf::from("/tmp");
         // SAFETY: getuid has no preconditions and cannot fail.
         let current_uid = unsafe { libc::getuid() };
-        let tmp_owner = std::fs::metadata(&tmp).unwrap().uid();
-        if tmp_owner == current_uid {
+        let meta = std::fs::metadata(&tmp).unwrap();
+        if meta.uid() == current_uid {
             // Running as root (or otherwise owns /tmp): the scenario this test exercises
             // (a parent directory we don't own) doesn't apply here.
             return;
         }
+        assert_eq!(meta.uid(), 0, "/tmp is expected to be root-owned");
+        assert_ne!(meta.mode() & 0o1000, 0, "/tmp is expected to be sticky");
         let sock = tmp.join(format!("anthrex-prep-{}.sock", std::process::id()));
         assert!(!sock.exists());
         let result = prepare_socket(&sock);
         assert!(result.is_ok(), "{result:?}");
+    }
+
+    /// I5: any other directory we do not own is refused by name, because an attacker who
+    /// pre-created it would otherwise see every keystroke going through the socket.
+    #[test]
+    fn foreign_owned_parent_without_the_sticky_bit_is_fatal() {
+        // SAFETY: getuid has no preconditions and cannot fail.
+        let current_uid = unsafe { libc::getuid() };
+        if current_uid == 0 {
+            return; // root can chmod anything, so there is no failure to observe.
+        }
+        // /usr is root-owned and NOT sticky: exactly the shape of a directory another
+        // user pre-created for us.
+        let dir = PathBuf::from("/usr");
+        let meta = std::fs::metadata(&dir).unwrap();
+        assert_ne!(meta.uid(), current_uid);
+        assert_eq!(meta.mode() & 0o1000, 0);
+        let err = prepare_socket(&dir.join("anthrex-should-never-bind.sock")).unwrap_err().to_string();
+        assert!(err.contains("/usr"), "{err}");
+        assert!(err.contains(&format!("uid {}", meta.uid())), "{err}");
+    }
+
+    /// I5: the socket file itself must end up 0600, since the directory may be shared.
+    #[tokio::test]
+    async fn the_bound_socket_is_chmod_0600() {
+        let dir = tempfile::tempdir().unwrap();
+        let sock = dir.path().join("d.sock");
+        prepare_socket(&sock).unwrap();
+        let _listener = bind_socket(&sock).unwrap();
+        assert_eq!(std::fs::metadata(&sock).unwrap().permissions().mode() & 0o777, 0o600);
     }
 }
