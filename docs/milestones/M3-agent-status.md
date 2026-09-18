@@ -162,7 +162,7 @@ Out:
 
 ### Client
 
-51. The client strips `ESC [ 2 0 1 ~` and `ESC [ 2 0 0 ~` from pasted text before it wraps the text in bracketed-paste markers, in both bracketed and unbracketed mode. An embedded end marker would otherwise let pasted text escape the paste and be typed as keys.
+51. The client strips `ESC [ 2 0 1 ~` and `ESC [ 2 0 0 ~` from text that crossterm has already delivered as one paste event, before encoding it and, when bracketed-paste mode is enabled, wrapping it in bracketed-paste markers. This is a pure sanitization boundary for a delivered paste event, in both bracketed and unbracketed mode; it is not an end-to-end clipboard-boundary guarantee. Crossterm can split terminal input at an embedded end marker before the helper runs, after which the intended clipboard boundary is unavailable to the client. A reliable terminal-input policy is deferred to M7 rather than approximated here with timing filters or changed key semantics.
 52. A sidebar card gets a third line when `status == Working` and `tool` is `Some`: two spaces and the tool name, muted, cut with `…` to the sidebar's inner width. Cards now have a height of 2 or 3 rows. `sidebar::card_height(&WindowInfo) -> u16` replaces the `CARD_HEIGHT` constant, and rendering and `hit_test` share one row-layout helper.
 
     ```
@@ -684,7 +684,7 @@ cargo build
 6. Press Esc during a Claude turn to interrupt it. Record the status that follows. If it stays `working`, add a follow-up for milestone 4 to `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`.
 7. `anthrex new --runtime codex --name x1`. Watch the card go `starting`, `working`, `done` over a turn. Trigger an approval, for example by running with `-a untrusted` through a prompt that needs a command. The card shows `attention`. Confirm that no hook review prompt appears at startup (branch A). Ask for a sub-agent and check `anthrex ls --json` (branch A).
 8. `anthrex kill x1`. The window is `exited` within about a second. `pgrep -fl codex` shows no process left from that window.
-9. Paste text that contains a literal `ESC[201~` (for example from `printf 'a\033[201~b' | pbcopy` on macOS) into a shell window with bracketed paste on. It arrives as `ab`.
+9. In an input harness that can deliver one crossterm paste event containing `aESC[201~b`, pass that event through the client with bracketed-paste mode on and confirm the forwarded paste body is `ab`. This checks sanitization of text already delivered as a paste event only; it does not claim that a real terminal and crossterm preserve the clipboard boundary when the clipboard itself contains an end marker.
 10. `target/debug/anthrex daemon stop`, then `pgrep -fl "anthrex daemon"` shows nothing of yours.
 
 ## Risks and gotchas
@@ -1020,6 +1020,23 @@ regression. Re-review is clean. The initial full workspace run passed 222
 tests; the added emoji regression and all 10 UI tests pass, with strict clippy
 and formatting. The existing large `app.rs` is a documented M4 organization
 follow-up, not an unrelated refactor in this milestone.
+
+Final review narrowed decision 51 to the boundary the implementation can
+actually enforce. An isolated crossterm 0.29 event-reader probe received the
+bytes `ESC[200~aESC[201~b\rESC[201~` and emitted exactly:
+
+```text
+EVENT Paste("a")
+EVENT Key(KeyEvent { code: Char('b'), modifiers: KeyModifiers(0x0), kind: Press, state: KeyEventState(0x0) })
+EVENT Key(KeyEvent { code: Enter, modifiers: KeyModifiers(0x0), kind: Press, state: KeyEventState(0x0) })
+```
+
+Crossterm therefore consumes the first end marker before `App::on_paste` and
+delivers the remaining bytes as ordinary key events. Once `EventStream` has
+split those events, anthrex cannot recover the intended clipboard boundary.
+The correct pure helper remains unchanged, but M3 makes no end-to-end
+clipboard escape guarantee. No timing filter or input-semantics change was
+added; terminal-input policy is an explicit M7 follow-up.
 
 ### M3.13 smoke and contributor documentation
 

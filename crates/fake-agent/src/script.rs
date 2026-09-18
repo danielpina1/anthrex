@@ -32,14 +32,19 @@ pub fn parse_script(reader: impl BufRead) -> Result<Vec<Step>> {
     reader
         .lines()
         .enumerate()
-        .map(|(index, line)| {
+        .try_fold(Vec::new(), |mut steps, (index, line)| {
             let line_number = index + 1;
             let line = line.with_context(|| format!("bad step on line {line_number}"))?;
+            if line.trim().is_empty() {
+                return Ok(steps);
+            }
             let value = serde_json::from_str(&line)
                 .with_context(|| format!("bad step on line {line_number}"))?;
-            parse_step(value).with_context(|| format!("bad step on line {line_number}"))
+            let step =
+                parse_step(value).with_context(|| format!("bad step on line {line_number}"))?;
+            steps.push(step);
+            Ok(steps)
         })
-        .collect()
 }
 
 fn parse_step(value: Value) -> Result<Step> {
@@ -161,5 +166,25 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("line 3"), "{error:#}");
+    }
+
+    #[test]
+    fn skips_leading_and_interior_blank_lines() {
+        let steps = parse_script(Cursor::new(
+            "\n  \t\n{\"print\":\"one\"}\n\t \n{\"exit\":0}\n",
+        ))
+        .unwrap();
+
+        assert_eq!(steps, vec![Step::Print("one".into()), Step::Exit(0)]);
+    }
+
+    #[test]
+    fn bad_step_line_counts_skipped_blank_lines() {
+        let error = parse_script(Cursor::new(
+            "\n{\"print\":\"one\"}\n  \n{\"bell\":true}\n{\"wat\":false}\n",
+        ))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("line 5"), "{error:#}");
     }
 }

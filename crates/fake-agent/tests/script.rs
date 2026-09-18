@@ -38,6 +38,7 @@ fn command(script: &Path) -> Command {
 fn run_with_deadline(mut command: Command, timeout: Duration) -> Result<Output, String> {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let (mut child, process_group) = spawn_owned(&mut command)?;
+    drop(child.stdin.take());
     let Some(stdout) = child.stdout.take() else {
         terminate_owned(&mut child, process_group)?;
         return Err("child stdout was not piped".into());
@@ -218,6 +219,18 @@ fn prints_and_exits_with_the_scripted_code() {
 
     assert_eq!(output.status.code(), Some(4));
     assert_eq!(output.stdout, b"hello");
+}
+
+#[test]
+fn noninteractive_runner_closes_stdin_for_script_eof() {
+    let temp = tempfile::tempdir_in("/tmp").unwrap();
+    let script = script_file(&temp, &[json!({"print": "done"})]);
+
+    let output = run_with_deadline(command(&script), Duration::from_millis(500)).unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"done");
+    assert!(output.stderr.is_empty());
 }
 
 #[test]

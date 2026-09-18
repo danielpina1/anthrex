@@ -308,7 +308,7 @@ impl Client {
         });
     }
 
-    pub fn receive(&mut self, pred: impl Fn(&DaemonMsg) -> bool) -> DaemonMsg {
+    pub fn receive(&mut self, mut pred: impl FnMut(&DaemonMsg) -> bool) -> DaemonMsg {
         self.rt.block_on(async {
             tokio::time::timeout(Duration::from_secs(2), async {
                 loop {

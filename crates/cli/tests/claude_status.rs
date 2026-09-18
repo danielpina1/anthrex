@@ -18,6 +18,28 @@ fn turn_script() -> Vec<Value> {
     ]
 }
 
+fn output_marker_seen(
+    observed: &mut Vec<u8>,
+    window_id: u32,
+    marker: &[u8],
+    message: &proto::DaemonMsg,
+) -> bool {
+    let proto::DaemonMsg::Output {
+        window_id: output_window,
+        bytes,
+    } = message
+    else {
+        return false;
+    };
+    if *output_window != window_id {
+        return false;
+    }
+    observed.extend_from_slice(bytes);
+    observed
+        .windows(marker.len())
+        .any(|window| window == marker)
+}
+
 #[test]
 fn a_turn_reports_working_the_tool_and_done() {
     let daemon = TestDaemon::start(&turn_script());
@@ -86,16 +108,28 @@ fn idle_prompt_and_bell_after_hooks() {
     client.subscribe(id);
     client.wait_window(id, "session before bell", |w| w.session_id.is_some());
     client.input(id, b"go\r");
-    client.receive(|msg| match msg {
-        proto::DaemonMsg::Output { bytes, .. } => {
-            String::from_utf8_lossy(bytes).contains("AFTER-BELL")
-        }
-        _ => false,
-    });
+    let mut observed = Vec::new();
+    client.receive(|msg| output_marker_seen(&mut observed, id, b"AFTER-BELL", msg));
     client.wait_window(id, "idle after bell", |w| {
         w.status == Status::Idle && w.session_id.is_some()
     });
     client.remains(id, Duration::from_millis(500), |w| w.status == Status::Idle);
+}
+
+#[test]
+fn output_marker_matches_across_frames() {
+    let mut observed = Vec::new();
+    let first = proto::DaemonMsg::Output {
+        window_id: 7,
+        bytes: b"AFTER-".to_vec(),
+    };
+    let second = proto::DaemonMsg::Output {
+        window_id: 7,
+        bytes: b"BELL".to_vec(),
+    };
+
+    assert!(!output_marker_seen(&mut observed, 7, b"AFTER-BELL", &first));
+    assert!(output_marker_seen(&mut observed, 7, b"AFTER-BELL", &second));
 }
 
 #[test]
