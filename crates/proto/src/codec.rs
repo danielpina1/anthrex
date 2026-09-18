@@ -53,11 +53,13 @@ where
     T: DeserializeOwned,
 {
     let mut header = [0u8; 4];
-    match reader.read_exact(&mut header).await {
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(e) => return Err(e.into()),
+    // Read first byte; if 0 bytes read, peer closed before sending anything (clean EOF).
+    match reader.read(&mut header[..1]).await? {
+        0 => return Ok(None),
+        _ => {}
     }
+    // Read remaining 3 bytes; EOF here is an error.
+    reader.read_exact(&mut header[1..]).await?;
     let len = u32::from_be_bytes(header) as usize;
     if len > MAX_FRAME {
         return Err(CodecError::TooLarge(len));
@@ -71,7 +73,6 @@ where
 mod tests {
     use super::*;
     use crate::{ClientKind, ClientMsg, DaemonMsg};
-    use tokio::io::AsyncWriteExt;
 
     #[test]
     fn encode_prefixes_big_endian_length() {
@@ -114,5 +115,14 @@ mod tests {
         a.write_all(&((MAX_FRAME as u32) + 1).to_be_bytes()).await.unwrap();
         let got: Result<Option<ClientMsg>, CodecError> = read_frame(&mut b).await;
         assert!(matches!(got, Err(CodecError::TooLarge(_))));
+    }
+
+    #[tokio::test]
+    async fn read_frame_rejects_truncated_header() {
+        let (mut a, mut b) = tokio::io::duplex(64);
+        a.write_all(&[0u8, 0u8]).await.unwrap();
+        drop(a);
+        let got: Result<Option<ClientMsg>, CodecError> = read_frame(&mut b).await;
+        assert!(matches!(got, Err(CodecError::Io(_))));
     }
 }
