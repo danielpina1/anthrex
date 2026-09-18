@@ -39,14 +39,10 @@ impl Connection {
 
         let (in_tx, rx) = mpsc::channel::<DaemonMsg>(1024);
         let reader = tokio::spawn(async move {
-            loop {
-                match read_frame::<_, DaemonMsg>(&mut rd).await {
-                    Ok(Some(msg)) => {
-                        if in_tx.send(msg).await.is_err() {
-                            break;
-                        }
-                    }
-                    Ok(None) | Err(_) => break,
+            // Ends on EOF, a decode error, or a dropped `Connection`.
+            while let Ok(Some(msg)) = read_frame::<_, DaemonMsg>(&mut rd).await {
+                if in_tx.send(msg).await.is_err() {
+                    break;
                 }
             }
             // Dropping in_tx closes the channel; recv() then yields None.

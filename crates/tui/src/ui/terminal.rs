@@ -8,10 +8,10 @@ use std::path::Path;
 use tui_term::widget::{Cursor, PseudoTerminal};
 
 pub fn shorten_home(path: &Path) -> String {
-    if let Some(home) = dirs::home_dir() {
-        if let Ok(rest) = path.strip_prefix(&home) {
-            return format!("~/{}", rest.display());
-        }
+    if let Some(home) = dirs::home_dir()
+        && let Ok(rest) = path.strip_prefix(&home)
+    {
+        return format!("~/{}", rest.display());
     }
     path.display().to_string()
 }

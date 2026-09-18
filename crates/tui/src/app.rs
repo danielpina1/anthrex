@@ -115,11 +115,11 @@ impl App {
         if self.term_size == (0, 0) {
             return vec![];
         }
-        if let Some(id) = self.pending_focus {
-            if self.windows.iter().any(|w| w.id == id) {
-                self.pending_focus = None;
-                return self.focus(id);
-            }
+        if let Some(id) = self.pending_focus
+            && self.windows.iter().any(|w| w.id == id)
+        {
+            self.pending_focus = None;
+            return self.focus(id);
         }
         if self.focused_window().is_some() {
             return vec![];
@@ -222,18 +222,18 @@ impl App {
         self.windows = windows;
         self.windows_received_at = Instant::now();
 
-        if let Some(id) = self.pending_focus {
-            if self.windows.iter().any(|w| w.id == id) {
-                self.pending_focus = None;
-                return self.focus(id);
-            }
+        if let Some(id) = self.pending_focus
+            && self.windows.iter().any(|w| w.id == id)
+        {
+            self.pending_focus = None;
+            return self.focus(id);
         }
         if self.focused_window().is_none() {
-            if let Some(i) = previous_index {
-                if !self.windows.is_empty() {
-                    let id = self.windows[i.min(self.windows.len() - 1)].id;
-                    return self.focus(id);
-                }
+            if let Some(i) = previous_index
+                && !self.windows.is_empty()
+            {
+                let id = self.windows[i.min(self.windows.len() - 1)].id;
+                return self.focus(id);
             }
             return self.ensure_focus();
         }

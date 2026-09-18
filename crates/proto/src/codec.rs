@@ -54,9 +54,8 @@ where
 {
     let mut header = [0u8; 4];
     // Read first byte; if 0 bytes read, peer closed before sending anything (clean EOF).
-    match reader.read(&mut header[..1]).await? {
-        0 => return Ok(None),
-        _ => {}
+    if reader.read(&mut header[..1]).await? == 0 {
+        return Ok(None);
     }
     // Read remaining 3 bytes; EOF here is an error.
     reader.read_exact(&mut header[1..]).await?;

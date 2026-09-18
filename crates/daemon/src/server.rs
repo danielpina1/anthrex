@@ -156,10 +156,10 @@ async fn handle_client(stream: UnixStream, manager: Arc<WindowManager>, shutdown
                 None
             }
         };
-        if let Some(reply) = reply {
-            if out_tx.send(reply).await.is_err() {
-                break;
-            }
+        if let Some(reply) = reply
+            && out_tx.send(reply).await.is_err()
+        {
+            break;
         }
     }
 

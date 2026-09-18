@@ -221,10 +221,10 @@ impl WindowManager {
     /// A client started viewing this window.
     pub fn focus(&self, id: u32) {
         let mut inner = crate::lock(&self.inner);
-        if let Some(entry) = inner.entries.get_mut(&id) {
-            if entry.apply(StatusEvent::Focused) {
-                self.publish(&inner);
-            }
+        if let Some(entry) = inner.entries.get_mut(&id)
+            && entry.apply(StatusEvent::Focused)
+        {
+            self.publish(&inner);
         }
     }
 

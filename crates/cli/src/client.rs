@@ -61,10 +61,10 @@ impl CliClient {
 
 /// `target` is a window id or a window name. Ids win when both match.
 pub fn resolve_target(windows: &[WindowInfo], target: &str) -> anyhow::Result<u32> {
-    if let Ok(id) = target.parse::<u32>() {
-        if windows.iter().any(|w| w.id == id) {
-            return Ok(id);
-        }
+    if let Ok(id) = target.parse::<u32>()
+        && windows.iter().any(|w| w.id == id)
+    {
+        return Ok(id);
     }
     if let Some(w) = windows.iter().find(|w| w.name == target) {
         return Ok(w.id);
