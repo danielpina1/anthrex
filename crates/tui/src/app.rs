@@ -141,6 +141,13 @@ impl App {
             self.pending_focus = Some(id);
             return vec![];
         }
+        // Re-focusing the window we are already on would throw away a screen we have and
+        // ask for a second subscription to the same window. The daemon then has to tear
+        // the first forwarder down and race it against the new snapshot; nothing is
+        // gained, so do nothing at all.
+        if self.focused == Some(id) {
+            return vec![];
+        }
         self.focused = Some(id);
         self.scroll_offset = 0;
         let (cols, rows) = self.term_size;
@@ -507,6 +514,21 @@ mod tests {
         let effects = app.on_daemon(DaemonMsg::WindowsChanged { windows: vec![win(9, "shell-9", Status::Starting)] });
         assert_eq!(effects, vec![Effect::Send(ClientMsg::Subscribe { window_id: 9, cols: 80, rows: 24 })]);
         assert_eq!(app.focused, Some(9));
+    }
+
+    /// I8: re-focusing the focused window must not resubscribe or reset the parser.
+    #[test]
+    fn focusing_the_already_focused_window_does_nothing() {
+        let mut app = app_with(vec![win(1, "a", Status::Idle), win(2, "b", Status::Idle)]);
+        assert_eq!(app.focused, Some(1));
+        app.on_daemon(DaemonMsg::Snapshot { window_id: 1, cols: 80, rows: 24, bytes: b"kept".to_vec() });
+        assert!(app.focus(1).is_empty(), "no Subscribe for the window we are already on");
+        assert!(app.parser.screen().contents().starts_with("kept"), "the screen must survive");
+        // Only a real change still subscribes.
+        assert_eq!(app.focus(2), vec![Effect::Send(ClientMsg::Subscribe { window_id: 2, cols: 80, rows: 24 })]);
+        // C-b 2 on the window already focused is likewise a no-op.
+        prefix(&mut app);
+        assert!(press(&mut app, KeyCode::Char('2'), KeyModifiers::NONE).is_empty());
     }
 
     #[test]

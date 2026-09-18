@@ -1,6 +1,7 @@
 //! Accepts client connections and speaks the protocol from spec section 4.
 
 use crate::manager::WindowManager;
+use crate::window::Attachment;
 use bytes::Bytes;
 use proto::{ClientMsg, DaemonMsg, PROTO_VERSION, read_frame, write_frame};
 use std::sync::Arc;
@@ -103,8 +104,12 @@ async fn handle_client(stream: UnixStream, manager: Arc<WindowManager>, shutdown
                 Err(e) => error("create", e.to_string()),
             }),
             ClientMsg::Subscribe { window_id, cols, rows } => {
+                // `abort` only takes effect at the task's next yield point, so a forwarder
+                // that is mid-`send` could still queue an Output behind the new Snapshot
+                // and have the client apply that chunk twice. Wait for it to be gone.
                 if let Some(task) = subscription.take() {
                     task.abort();
+                    let _ = task.await;
                 }
                 match manager.resize(window_id, cols, rows).and_then(|_| manager.attach(window_id)) {
                     Ok(att) => {
@@ -123,6 +128,7 @@ async fn handle_client(stream: UnixStream, manager: Arc<WindowManager>, shutdown
             ClientMsg::Unsubscribe => {
                 if let Some(task) = subscription.take() {
                     task.abort();
+                    let _ = task.await;
                 }
                 Some(DaemonMsg::Ack { request: "unsubscribe".into() })
             }
@@ -159,9 +165,19 @@ async fn handle_client(stream: UnixStream, manager: Arc<WindowManager>, shutdown
 /// Copies live PTY output to the client; a lagging client gets a fresh snapshot instead of the gap.
 async fn forward_output(
     window_id: u32,
-    mut output: broadcast::Receiver<Bytes>,
+    output: broadcast::Receiver<Bytes>,
     out: mpsc::Sender<DaemonMsg>,
     manager: Arc<WindowManager>,
+) {
+    forward_output_from(window_id, output, out, move || manager.attach(window_id)).await
+}
+
+/// The forwarding loop, with re-attaching factored out so tests can drive it directly.
+async fn forward_output_from(
+    window_id: u32,
+    mut output: broadcast::Receiver<Bytes>,
+    out: mpsc::Sender<DaemonMsg>,
+    reattach: impl Fn() -> anyhow::Result<Attachment> + Send,
 ) {
     loop {
         match output.recv().await {
@@ -172,9 +188,17 @@ async fn forward_output(
             }
             Err(broadcast::error::RecvError::Lagged(n)) => {
                 tracing::debug!(window_id, missed = n, "client lagged; resending snapshot");
-                match manager.snapshot(window_id) {
-                    Ok((bytes, cols, rows)) => {
-                        if out.send(DaemonMsg::Snapshot { window_id, cols, rows, bytes }).await.is_err() {
+                // A lagged receiver resumes at the OLDEST RETAINED chunk, every one of
+                // which the fresh snapshot already contains. Continuing with it would
+                // replay up to a full channel's worth of output on top of the snapshot,
+                // so the receiver is replaced by the one `attach` takes under the same
+                // lock as the snapshot.
+                match reattach() {
+                    Ok(att) => {
+                        output = att.output;
+                        let snapshot =
+                            DaemonMsg::Snapshot { window_id, cols: att.cols, rows: att.rows, bytes: att.snapshot };
+                        if out.send(snapshot).await.is_err() {
                             break;
                         }
                     }
@@ -183,5 +207,79 @@ async fn forward_output(
             }
             Err(broadcast::error::RecvError::Closed) => break,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::launch::LaunchPlan;
+    use crate::window::Window;
+    use std::time::{Duration, Instant};
+
+    /// I1: after `Lagged`, the forwarder must not replay the chunks the fresh snapshot
+    /// already contains. The mirror a client would build from the forwarded messages has
+    /// to match the daemon's own screen exactly.
+    ///
+    /// The child is long finished before anything is drained, so the snapshot taken on
+    /// the lag provably contains every chunk still retained by the broadcast channel -
+    /// continuing with the old receiver replays exactly those, and the twelve printed
+    /// lines all fit on one screen, so a duplicate cannot scroll out of sight.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_lagged_subscriber_is_resynced_without_replaying_retained_chunks() {
+        let plan = LaunchPlan {
+            program: "sh".into(),
+            args: vec!["-c".into(), "i=1; while [ $i -le 12 ]; do echo line-$i; sleep 0.03; i=$((i+1)); done".into()],
+            cwd: std::env::temp_dir(),
+            env: vec![("TERM".into(), "xterm-256color".into())],
+        };
+        let (events, _events_rx) = mpsc::unbounded_channel();
+        // `Window` is Send but not Sync, so the mutex is what lets the forwarder task
+        // and the test share it. Capacity 2: the forwarder lags as soon as it waits.
+        let window = Arc::new(std::sync::Mutex::new(
+            Window::spawn_with_output_capacity(1, &plan, 80, 24, events, 2).unwrap(),
+        ));
+
+        let first = window.lock().unwrap().attach();
+        let mut mirror = vt100::Parser::new(first.rows, first.cols, 0);
+        mirror.process(&first.snapshot);
+
+        // A one-slot outgoing channel that nobody drains: exactly the shape of a client
+        // that cannot keep up.
+        let (out, mut out_rx) = mpsc::channel::<DaemonMsg>(1);
+        let forwarder = {
+            let window = Arc::clone(&window);
+            tokio::spawn(forward_output_from(1, first.output, out, move || Ok(window.lock().unwrap().attach())))
+        };
+
+        // Long enough for every line to be printed and the child to exit.
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        let expected = window.lock().unwrap().screen_text();
+        assert!(expected.contains("line-12"), "the child did not finish: {expected:?}");
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut lagged = false;
+        loop {
+            match tokio::time::timeout(Duration::from_millis(500), out_rx.recv()).await {
+                Ok(Some(DaemonMsg::Snapshot { cols, rows, bytes, .. })) => {
+                    lagged = true;
+                    mirror = vt100::Parser::new(rows, cols, 0);
+                    mirror.process(&bytes);
+                }
+                Ok(Some(DaemonMsg::Output { bytes, .. })) => mirror.process(&bytes),
+                Ok(Some(_)) => {}
+                Ok(None) => break,
+                Err(_) => break, // quiet for 500 ms: nothing more is coming
+            }
+            assert!(Instant::now() < deadline, "the forwarder never went quiet");
+        }
+        forwarder.abort();
+
+        assert!(lagged, "the subscriber never lagged; the test did not exercise the recovery path");
+        assert_eq!(
+            mirror.screen().contents(),
+            expected,
+            "the mirror diverged from the daemon's screen (chunks replayed on top of a snapshot that held them)"
+        );
     }
 }

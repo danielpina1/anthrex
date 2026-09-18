@@ -87,6 +87,19 @@ impl Window {
         rows: u16,
         events: mpsc::UnboundedSender<(u32, WindowEvent)>,
     ) -> anyhow::Result<Self> {
+        Self::spawn_with_output_capacity(id, plan, cols, rows, events, OUTPUT_CHANNEL_CAPACITY)
+    }
+
+    /// `spawn` with the broadcast capacity chosen by the caller. Tests use a tiny capacity
+    /// to make a subscriber lag deterministically.
+    pub fn spawn_with_output_capacity(
+        id: u32,
+        plan: &LaunchPlan,
+        cols: u16,
+        rows: u16,
+        events: mpsc::UnboundedSender<(u32, WindowEvent)>,
+        output_capacity: usize,
+    ) -> anyhow::Result<Self> {
         let pty = native_pty_system();
         let pair = pty.openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })?;
 
@@ -111,7 +124,7 @@ impl Window {
             0,
             ScreenCallbacks::default(),
         )));
-        let (output_tx, _) = broadcast::channel(OUTPUT_CHANNEL_CAPACITY);
+        let (output_tx, _) = broadcast::channel(output_capacity);
 
         let reader_parser = Arc::clone(&parser);
         let reader_tx = output_tx.clone();
