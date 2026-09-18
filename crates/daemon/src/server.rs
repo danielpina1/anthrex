@@ -60,6 +60,31 @@ fn ack_or_error(request: &str, result: anyhow::Result<()>) -> DaemonMsg {
     }
 }
 
+/// Owns one client's view, including while its initial snapshot is being sent.
+struct Subscription {
+    window_id: u32,
+    manager: Arc<WindowManager>,
+    task: Option<JoinHandle<()>>,
+}
+
+impl Subscription {
+    async fn stop(mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+            let _ = task.await;
+        }
+    }
+}
+
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        if let Some(task) = &self.task {
+            task.abort();
+        }
+        self.manager.unfocus(self.window_id);
+    }
+}
+
 async fn handle_client(
     stream: UnixStream,
     manager: Arc<WindowManager>,
@@ -116,7 +141,8 @@ async fn handle_client(
         }
     });
 
-    let mut subscription: Option<JoinHandle<()>> = None;
+    let mut subscription: Option<Subscription> = None;
+    let mut connection_error = None;
     loop {
         let msg = tokio::select! {
             _ = shutdown.cancelled() => {
@@ -125,9 +151,13 @@ async fn handle_client(
                 let _ = out_tx.try_send(DaemonMsg::Bye { reason: "daemon shutting down".into() });
                 break;
             }
-            frame = read_frame::<_, ClientMsg>(&mut rd) => match frame? {
-                Some(m) => m,
-                None => break,
+            frame = read_frame::<_, ClientMsg>(&mut rd) => match frame {
+                Ok(Some(m)) => m,
+                Ok(None) => break,
+                Err(error) => {
+                    connection_error = Some(error);
+                    break;
+                }
             },
         };
 
@@ -150,9 +180,8 @@ async fn handle_client(
                 // `abort` only takes effect at the task's next yield point, so a forwarder
                 // that is mid-`send` could still queue an Output behind the new Snapshot
                 // and have the client apply that chunk twice. Wait for it to be gone.
-                if let Some(task) = subscription.take() {
-                    task.abort();
-                    let _ = task.await;
+                if let Some(previous) = subscription.take() {
+                    previous.stop().await;
                 }
                 match manager
                     .resize(window_id, cols, rows)
@@ -160,6 +189,11 @@ async fn handle_client(
                 {
                     Ok(att) => {
                         manager.focus(window_id);
+                        subscription = Some(Subscription {
+                            window_id,
+                            manager: manager.clone(),
+                            task: None,
+                        });
                         // Snapshot must be queued before the forwarder can queue live output.
                         let snapshot = DaemonMsg::Snapshot {
                             window_id,
@@ -170,21 +204,21 @@ async fn handle_client(
                         if out_tx.send(snapshot).await.is_err() {
                             break;
                         }
-                        subscription = Some(tokio::spawn(forward_output(
-                            window_id,
-                            att.output,
-                            out_tx.clone(),
-                            manager.clone(),
-                        )));
+                        subscription.as_mut().expect("view acquired above").task =
+                            Some(tokio::spawn(forward_output(
+                                window_id,
+                                att.output,
+                                out_tx.clone(),
+                                manager.clone(),
+                            )));
                         None
                     }
                     Err(e) => Some(error("subscribe", e.to_string())),
                 }
             }
             ClientMsg::Unsubscribe => {
-                if let Some(task) = subscription.take() {
-                    task.abort();
-                    let _ = task.await;
+                if let Some(previous) = subscription.take() {
+                    previous.stop().await;
                 }
                 Some(DaemonMsg::Ack {
                     request: "unsubscribe".into(),
@@ -213,9 +247,13 @@ async fn handle_client(
                 "restart",
                 "restart is not supported by this daemon version",
             )),
-            ClientMsg::HookEvent { .. } => Some(error(
+            ClientMsg::HookEvent {
+                window_id,
+                source,
+                payload,
+            } => Some(ack_or_error(
                 "hook",
-                "hook events are not supported by this daemon version",
+                manager.handle_hook(window_id, source, &payload),
             )),
             ClientMsg::Shutdown => {
                 tracing::info!("shutdown requested by client");
@@ -230,14 +268,17 @@ async fn handle_client(
         }
     }
 
-    if let Some(task) = subscription.take() {
-        task.abort();
+    if let Some(previous) = subscription.take() {
+        previous.stop().await;
     }
     changes_task.abort();
     drop(out_tx);
     let _ = writer.await;
     tracing::debug!("client disconnected");
-    Ok(())
+    match connection_error {
+        Some(error) => Err(error.into()),
+        None => Ok(()),
+    }
 }
 
 /// Copies live PTY output to the client; a lagging client gets a fresh snapshot instead of the gap.

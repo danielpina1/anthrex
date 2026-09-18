@@ -1,9 +1,11 @@
 //! Owns every window, applies status events, and broadcasts the window list.
 
+use crate::agent_state::AgentState;
+use crate::hooks;
 use crate::launch::{self, LaunchContext};
 use crate::status::{self, StatusContext, StatusEvent};
 use crate::window::{Attachment, Window, WindowEvent};
-use proto::{ExitInfo, Status, WindowInfo, WindowSpec};
+use proto::{ExitInfo, HookSource, Status, WindowInfo, WindowSpec};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -66,10 +68,10 @@ struct Entry {
     name: String,
     spec: WindowSpec,
     status: Status,
-    tool: Option<String>,
+    state: AgentState,
+    viewers: u32,
     since: Instant,
     last_output: Instant,
-    session_id: Option<String>,
     exit: Option<ExitInfo>,
     child_alive: bool,
     window: Window,
@@ -84,10 +86,10 @@ impl Entry {
             cwd: self.spec.cwd.clone(),
             branch: self.spec.worktree_branch.clone(),
             status: self.status,
-            tool: self.tool.clone(),
+            tool: self.state.tool.clone(),
             since_secs: self.since.elapsed().as_secs(),
             last_output_secs: self.last_output.elapsed().as_secs(),
-            session_id: self.session_id.clone(),
+            session_id: self.state.session_id.clone(),
             model: self.spec.model.clone(),
             subagents: vec![],
             exit: self.exit.clone(),
@@ -96,16 +98,11 @@ impl Entry {
 
     /// Applies a status event; returns whether the status changed.
     fn apply(&mut self, event: StatusEvent) -> bool {
-        let next = status::next(
-            self.status,
-            event,
-            self.spec.runtime,
-            StatusContext {
-                focused: false,
-                signals_seen: false,
-                hooks_seen: false,
-            },
-        );
+        self.apply_with_context(event, self.state.context(self.viewers > 0))
+    }
+
+    fn apply_with_context(&mut self, event: StatusEvent, ctx: StatusContext) -> bool {
+        let next = status::next(self.status, event, self.spec.runtime, ctx);
         if next == self.status {
             return false;
         }
@@ -226,10 +223,10 @@ impl WindowManager {
             name,
             spec,
             status: Status::Starting,
-            tool: None,
+            state: AgentState::default(),
+            viewers: 0,
             since: now,
             last_output: now,
-            session_id: None,
             exit: None,
             child_alive: true,
             window,
@@ -239,6 +236,46 @@ impl WindowManager {
         tracing::info!(id, name = %info.name, runtime = %info.runtime, "window created");
         self.publish(&inner);
         Ok(info)
+    }
+
+    pub fn handle_hook(
+        &self,
+        id: u32,
+        source: HookSource,
+        payload: &serde_json::Value,
+    ) -> anyhow::Result<()> {
+        let mut inner = crate::lock(&self.inner);
+        let entry = inner
+            .entries
+            .get_mut(&id)
+            .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
+        if !hooks::accepts(entry.spec.runtime, source) {
+            return Ok(());
+        }
+        let Some(hook) = hooks::parse(source, payload) else {
+            if tracing::enabled!(tracing::Level::DEBUG) {
+                let mut payload = payload.to_string();
+                let mut end = payload.len().min(2048);
+                while !payload.is_char_boundary(end) {
+                    end -= 1;
+                }
+                payload.truncate(end);
+                tracing::debug!(id, ?source, %payload, "ignored unparseable hook");
+            }
+            return Ok(());
+        };
+        // SessionStart must see the flags from before this event is accepted.
+        let ctx = entry.state.context(entry.viewers > 0);
+        let outcome = entry
+            .state
+            .on_hook(entry.spec.runtime, &hook, Instant::now());
+        let status_changed = outcome
+            .status_event
+            .is_some_and(|event| entry.apply_with_context(event, ctx));
+        if status_changed || outcome.changed {
+            self.publish(&inner);
+        }
+        Ok(())
     }
 
     pub fn handle_event(&self, id: u32, event: WindowEvent) {
@@ -349,10 +386,19 @@ impl WindowManager {
     /// A client started viewing this window.
     pub fn focus(&self, id: u32) {
         let mut inner = crate::lock(&self.inner);
-        if let Some(entry) = inner.entries.get_mut(&id)
-            && entry.apply(StatusEvent::Focused)
-        {
-            self.publish(&inner);
+        if let Some(entry) = inner.entries.get_mut(&id) {
+            entry.viewers = entry.viewers.saturating_add(1);
+            if entry.apply(StatusEvent::Focused) {
+                self.publish(&inner);
+            }
+        }
+    }
+
+    /// A client stopped viewing this window.
+    pub fn unfocus(&self, id: u32) {
+        let mut inner = crate::lock(&self.inner);
+        if let Some(entry) = inner.entries.get_mut(&id) {
+            entry.viewers = entry.viewers.saturating_sub(1);
         }
     }
 
