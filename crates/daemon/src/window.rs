@@ -230,10 +230,19 @@ impl Window {
         Self::snapshot_of(self.parser.lock().unwrap().screen())
     }
 
+    /// Escape codes that put a fresh parser into this screen's state.
+    ///
+    /// `state_formatted()` in vt100 0.16 is already `contents_formatted()` followed by
+    /// `input_mode_formatted()`, so it is the whole snapshot on its own - emitting any of
+    /// those a second time would write the screen twice. What it does not encode is
+    /// `?1049`, so the alternate screen has to be entered first, or a client attaching to
+    /// vim, less or codex would believe it is on the primary screen.
     fn snapshot_of(screen: &vt100::Screen) -> Vec<u8> {
-        let mut out = screen.contents_formatted();
+        let mut out = Vec::new();
+        if screen.alternate_screen() {
+            out.extend_from_slice(b"\x1b[?1049h");
+        }
         out.extend_from_slice(&screen.state_formatted());
-        out.extend_from_slice(&screen.input_mode_formatted());
         out
     }
 

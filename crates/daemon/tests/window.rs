@@ -107,6 +107,25 @@ async fn signal_terminates_the_child() {
     }
 }
 
+/// I2: a client attaching to a window whose program is on the alternate screen (vim,
+/// less, htop, codex) must land on the alternate screen too.
+#[tokio::test]
+async fn snapshot_carries_the_alternate_screen_state() {
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let w = Window::spawn(8, &plan("sh", &["-c", "printf '\\033[?1049h'; printf 'ALT'; sleep 2"]), 80, 24, tx).unwrap();
+    wait_until("alternate screen text", || w.screen_text().contains("ALT")).await;
+
+    let att = w.attach();
+    let mut mirror = vt100::Parser::new(att.rows, att.cols, 0);
+    mirror.process(&att.snapshot);
+    assert!(mirror.screen().alternate_screen(), "the snapshot did not restore the alternate screen");
+    assert!(mirror.screen().contents().contains("ALT"), "screen: {:?}", mirror.screen().contents());
+    // The screen must appear exactly once: `state_formatted()` already includes the
+    // contents, so emitting `contents_formatted()` as well would write it twice.
+    assert_eq!(mirror.screen().contents().matches("ALT").count(), 1);
+    let _ = w.signal(libc::SIGKILL);
+}
+
 #[tokio::test]
 async fn attach_gives_a_snapshot_and_live_output_without_duplicates() {
     let (tx, _rx) = mpsc::unbounded_channel();
