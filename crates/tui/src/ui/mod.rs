@@ -173,4 +173,29 @@ mod tests {
         assert_eq!(sidebar::format_elapsed(59), "59s");
         assert_eq!(sidebar::format_elapsed(3600), "1h");
     }
+
+    #[test]
+    fn sidebar_hit_test_ignores_footer_and_undrawn_cards() {
+        let mut app = App::new(
+            vec![
+                win(1, "a", Runtime::Shell, Status::Idle),
+                win(2, "b", Runtime::Shell, Status::Idle),
+                win(3, "c", Runtime::Shell, Status::Idle),
+                win(4, "d", Runtime::Shell, Status::Idle),
+                win(5, "e", Runtime::Shell, Status::Idle),
+            ],
+            "/tmp".into(),
+            Keymap::default_prefix(),
+        );
+        let _ = app.set_terminal_size(80, 24);
+        // Hand-built inner rect: height 8 draws 3 full cards (6 rows) plus a spacer row and a footer row.
+        let inner = ratatui::layout::Rect::new(1, 1, 28, 8);
+        let expected = [Some(0), Some(0), Some(1), Some(1), Some(2), Some(2)];
+        for (offset, want) in expected.into_iter().enumerate() {
+            assert_eq!(sidebar::hit_test(inner, &app, 3, inner.y + offset as u16), want, "row offset {offset}");
+        }
+        assert_eq!(sidebar::hit_test(inner, &app, 3, inner.y + 6), None, "spacer row");
+        assert_eq!(sidebar::hit_test(inner, &app, 3, inner.y + 7), None, "footer row");
+        assert_eq!(sidebar::hit_test(inner, &app, 3, inner.y + 8), None, "below the rect");
+    }
 }

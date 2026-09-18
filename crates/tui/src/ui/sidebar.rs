@@ -61,17 +61,26 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(Span::styled(" C-b c opens a shell", theme::muted())));
     }
 
-    let list_area = Rect { height: inner.height.saturating_sub(2), ..inner };
-    frame.render_widget(Paragraph::new(lines), list_area);
+    let list = list_area(inner);
+    frame.render_widget(Paragraph::new(lines), list);
     let footer = Rect { y: inner.y + inner.height - 1, height: 1, ..inner };
     frame.render_widget(Paragraph::new(Line::from(Span::styled(summary(app), theme::muted()))), footer);
 }
 
+/// The area cards are actually drawn into: `inner` minus the trailing spacer and footer rows.
+fn list_area(inner: Rect) -> Rect {
+    Rect { height: inner.height.saturating_sub(2), ..inner }
+}
+
 /// Which card (index into `app.windows`) is under a screen position inside the sidebar.
+/// Only positions inside the drawn card list count: the spacer and footer rows below it,
+/// and rows past the last fully-drawn card, both return `None`.
 pub fn hit_test(inner: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
-    if column < inner.x || column >= inner.x + inner.width || row < inner.y || row >= inner.y + inner.height {
+    let list = list_area(inner);
+    if column < list.x || column >= list.x + list.width || row < list.y || row >= list.y + list.height {
         return None;
     }
-    let index = ((row - inner.y) / CARD_HEIGHT) as usize;
-    (index < app.windows.len()).then_some(index)
+    let index = ((row - list.y) / CARD_HEIGHT) as usize;
+    let drawn_cards = (list.height / CARD_HEIGHT) as usize;
+    (index < app.windows.len() && index < drawn_cards).then_some(index)
 }
