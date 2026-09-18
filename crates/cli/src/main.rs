@@ -19,6 +19,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Attach to the daemon (the default when no command is given)
+    Attach {
+        /// Window id or name to focus
+        target: Option<String>,
+    },
     /// Manage the background daemon that owns the agents
     Daemon {
         #[command(subcommand)]
@@ -106,10 +111,8 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let socket: PathBuf = proto::paths::socket_path();
     match cli.command {
-        None => {
-            println!("anthrex {} — attach comes in a later task", env!("CARGO_PKG_VERSION"));
-            Ok(())
-        }
+        None => attach(socket, resolve_dir(cli.dir)?, None).await,
+        Some(Command::Attach { target }) => attach(socket, resolve_dir(cli.dir)?, target).await,
         Some(Command::Daemon { action }) => daemon_command(action, socket).await,
         Some(Command::New { runtime, name, worktree, model, prompt }) => {
             let dir = resolve_dir(cli.dir)?;
@@ -149,6 +152,11 @@ async fn main() -> anyhow::Result<()> {
             expect_ack(c.request(ClientMsg::Remove { window_id: id, remove_worktree: worktree, force }).await?)
         }
     }
+}
+
+async fn attach(socket: PathBuf, dir: PathBuf, target: Option<String>) -> anyhow::Result<()> {
+    spawn::ensure_daemon(&socket).await?;
+    tui::run(tui::TuiOptions { socket_path: socket, default_dir: dir, focus: target }).await
 }
 
 async fn daemon_command(action: DaemonAction, socket: PathBuf) -> anyhow::Result<()> {
