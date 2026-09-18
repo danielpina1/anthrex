@@ -108,4 +108,25 @@ fn launch_arguments_reach_the_codex_agent() {
         ]
     );
     assert_eq!(&args[args.len() - 4..], ["-m", "gpt-5-codex", "--", "-x"]);
+    let effective_trust = args
+        .iter()
+        .rev()
+        .find_map(|arg| arg.strip_prefix("hooks.state="))
+        .expect("trust override reached agent");
+    for label in [
+        "session_start",
+        "user_prompt_submit",
+        "pre_tool_use",
+        "permission_request",
+        "post_tool_use",
+        "subagent_start",
+        "subagent_stop",
+        "stop",
+    ] {
+        assert!(
+            effective_trust.contains(&format!("\"/<session-flags>/config.toml:{label}:0:0\"=")),
+            "missing effective trust for {label}"
+        );
+    }
+    assert_eq!(effective_trust.matches("trusted_hash=").count(), 8);
 }

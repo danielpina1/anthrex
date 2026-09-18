@@ -252,6 +252,7 @@ mod tests {
             args[15],
             r#"hooks.state={"/tmp/codex-home/config.toml:session_start:0:0"={trusted_hash="sha256:69de55a0df8e7abb3454e8d67f19af0d5797d208837a23f45af6e2617fb3668e"}}"#
         );
+        let mut expected_trust_entries = Vec::new();
         for (index, (event, label, hash)) in [
             (
                 "SessionStart",
@@ -305,14 +306,45 @@ mod tests {
                 )
             );
             assert_eq!(args[14 + index * 4], "-c");
+            expected_trust_entries.push(format!(
+                "\"/tmp/codex-home/config.toml:{label}:0:0\"={{trusted_hash=\"sha256:{hash}\"}}"
+            ));
             assert_eq!(
                 args[15 + index * 4],
-                format!(
-                    "hooks.state={{\"/tmp/codex-home/config.toml:{label}:0:0\"={{trusted_hash=\"sha256:{hash}\"}}}}"
-                )
+                format!("hooks.state={{{}}}", expected_trust_entries.join(","))
             );
         }
         assert_eq!(&args[44..], ["-m", "gpt-5-codex", "--", "hello"]);
         assert!(!args.iter().any(|arg| arg.contains("dangerously-bypass")));
+    }
+
+    #[test]
+    fn codex_final_cli_trust_override_retains_every_hook() {
+        let mut context = ctx();
+        context.codex_hook_source = Some("/tmp/codex-home/config.toml");
+        let args = plan(&spec(Runtime::Codex), &context).args;
+        // Codex inserts each -c value by key: later values replace earlier ones.
+        let effective: std::collections::HashMap<_, _> = args
+            .windows(2)
+            .filter(|pair| pair[0] == "-c")
+            .map(|pair| pair[1].split_once('=').unwrap())
+            .collect();
+        let trust = effective["hooks.state"];
+        for label in [
+            "session_start",
+            "user_prompt_submit",
+            "pre_tool_use",
+            "permission_request",
+            "post_tool_use",
+            "subagent_start",
+            "subagent_stop",
+            "stop",
+        ] {
+            assert!(
+                trust.contains(&format!("\"/tmp/codex-home/config.toml:{label}:0:0\"=")),
+                "missing {label} from effective trust: {trust}"
+            );
+        }
+        assert_eq!(trust.matches("trusted_hash=").count(), 8);
     }
 }

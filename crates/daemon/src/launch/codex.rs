@@ -29,7 +29,15 @@ pub fn args(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> Vec<String> {
     }
     if let Some(source) = ctx.codex_hook_source {
         let command = hook_command(ctx.exe, ctx.window_id, HookSource::CodexHook);
+        let mut trust_entries = Vec::new();
         for (event, label) in HOOK_EVENTS {
+            // Codex replaces repeated CLI keys within this config layer. Each
+            // adjacent trust flag must retain the earlier generated entries.
+            trust_entries.push(format!(
+                "{}={{trusted_hash={}}}",
+                toml_string(&trust_key(source, label, 0, 0)),
+                toml_string(&trust_hash(label, &command))
+            ));
             args.extend([
                 "-c".into(),
                 format!(
@@ -38,11 +46,7 @@ pub fn args(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> Vec<String> {
                     toml_string(&command)
                 ),
                 "-c".into(),
-                format!(
-                    "hooks.state={{{}={{trusted_hash={}}}}}",
-                    toml_string(&trust_key(source, label, 0, 0)),
-                    toml_string(&trust_hash(label, &command))
-                ),
+                format!("hooks.state={{{}}}", trust_entries.join(",")),
             ]);
         }
     }
