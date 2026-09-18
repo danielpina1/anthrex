@@ -90,6 +90,7 @@ dependencies = [
  "bytes",
  "libc",
  "portable-pty",
+ "serde_json",
  "tempfile",
  "tokio",
  "tokio-util",

@@ -1,4 +1,4 @@
-use daemon::manager::WindowManager;
+use daemon::manager::{ManagerConfig, WindowManager};
 use proto::{Runtime, Status, WindowInfo, WindowSpec};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,7 +17,10 @@ fn spec(name: &str) -> WindowSpec {
 
 /// A manager whose events are pumped by a background task, like the daemon does.
 fn manager() -> Arc<WindowManager> {
-    let (m, mut events) = WindowManager::new("/tmp/unused.sock".into(), "/bin/sh".into());
+    let (m, mut events) = WindowManager::new(ManagerConfig::new(
+        "/tmp/unused.sock".into(),
+        "/bin/sh".into(),
+    ));
     let pump = m.clone();
     tokio::spawn(async move {
         while let Some((id, ev)) = events.recv().await {
@@ -433,7 +436,10 @@ async fn shutdown_waits_for_cleanup_after_the_group_leader_exits() {
             ),
         )
         .unwrap();
-        let (m, mut events) = WindowManager::new("/tmp/unused.sock".into(), "/bin/sh".into());
+        let (m, mut events) = WindowManager::new(ManagerConfig::new(
+            "/tmp/unused.sock".into(),
+            "/bin/sh".into(),
+        ));
         let id = m.create(spec("cleanup-descendant"), 80, 24).unwrap().id;
         m.write_input(
             id,

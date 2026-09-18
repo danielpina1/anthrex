@@ -1,4 +1,4 @@
-use daemon::manager::WindowManager;
+use daemon::manager::{ManagerConfig, WindowManager};
 use daemon::server::serve;
 use proto::{ClientMsg, DaemonMsg, Runtime, WindowSpec};
 use std::path::PathBuf;
@@ -10,7 +10,8 @@ async fn start_daemon() -> (tempfile::TempDir, PathBuf, CancellationToken) {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("d.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-    let (manager, mut events) = WindowManager::new(socket.clone(), "/bin/sh".into());
+    let (manager, mut events) =
+        WindowManager::new(ManagerConfig::new(socket.clone(), "/bin/sh".into()));
     let pump = manager.clone();
     tokio::spawn(async move {
         while let Some((id, ev)) = events.recv().await {

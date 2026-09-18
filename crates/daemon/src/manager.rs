@@ -10,6 +10,53 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch};
 
+#[derive(Debug, Clone)]
+pub struct ManagerConfig {
+    pub socket_path: PathBuf,
+    pub shell: String,
+    pub exe: PathBuf,
+    pub claude_bin: String,
+    pub codex_bin: String,
+    pub codex_hook_source: Option<String>,
+}
+
+impl ManagerConfig {
+    pub fn new(socket_path: PathBuf, shell: String) -> Self {
+        Self {
+            socket_path,
+            shell,
+            exe: PathBuf::from("anthrex"),
+            claude_bin: "claude".to_string(),
+            codex_bin: "codex".to_string(),
+            codex_hook_source: None,
+        }
+    }
+
+    pub fn from_vars(
+        socket_path: PathBuf,
+        shell: String,
+        exe: PathBuf,
+        var: impl Fn(&str) -> Option<String>,
+    ) -> Self {
+        let nonempty = |key| var(key).filter(|value| !value.is_empty());
+        Self {
+            socket_path,
+            shell,
+            exe,
+            claude_bin: nonempty("ANTHREX_CLAUDE_BIN").unwrap_or_else(|| "claude".to_string()),
+            codex_bin: nonempty("ANTHREX_CODEX_BIN").unwrap_or_else(|| "codex".to_string()),
+            codex_hook_source: None,
+        }
+    }
+
+    pub fn from_env(socket_path: PathBuf, shell: String) -> anyhow::Result<Self> {
+        let exe = std::env::current_exe()?;
+        let mut config = Self::from_vars(socket_path, shell, exe, |key| std::env::var(key).ok());
+        config.codex_hook_source = launch::codex::default_hook_source();
+        Ok(config)
+    }
+}
+
 /// A Working window with no output for this long becomes Idle.
 pub const QUIET_AFTER: Duration = Duration::from_secs(3);
 pub use crate::process::{HUP_GRACE, KILL_GRACE};
@@ -88,16 +135,12 @@ pub struct WindowManager {
     inner: Mutex<Inner>,
     changed: watch::Sender<Vec<WindowInfo>>,
     events: mpsc::UnboundedSender<(u32, WindowEvent)>,
-    socket_path: PathBuf,
-    shell: String,
+    config: ManagerConfig,
 }
 
 impl WindowManager {
     /// Returns the manager and the event receiver the caller must pump into `handle_event`.
-    pub fn new(
-        socket_path: PathBuf,
-        shell: String,
-    ) -> (Arc<Self>, mpsc::UnboundedReceiver<(u32, WindowEvent)>) {
+    pub fn new(config: ManagerConfig) -> (Arc<Self>, mpsc::UnboundedReceiver<(u32, WindowEvent)>) {
         let (events, events_rx) = mpsc::unbounded_channel();
         let (changed, _) = watch::channel(Vec::new());
         let manager = Arc::new(Self {
@@ -108,8 +151,7 @@ impl WindowManager {
             }),
             changed,
             events,
-            socket_path,
-            shell,
+            config,
         });
         (manager, events_rx)
     }
@@ -159,8 +201,12 @@ impl WindowManager {
             &LaunchContext {
                 window_id: id,
                 name: &name,
-                socket_path: &self.socket_path,
-                shell: &self.shell,
+                socket_path: &self.config.socket_path,
+                shell: &self.config.shell,
+                exe: &self.config.exe,
+                claude_bin: &self.config.claude_bin,
+                codex_bin: &self.config.codex_bin,
+                codex_hook_source: self.config.codex_hook_source.as_deref(),
             },
         );
         let window = Window::spawn(id, &plan, cols.max(1), rows.max(1), self.events.clone())?;
@@ -357,5 +403,36 @@ impl WindowManager {
         for mut done in pending {
             let _ = done.wait_for(|finished| *finished).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn bin_overrides_come_from_the_environment_variables() {
+        let vars = HashMap::from([
+            ("ANTHREX_CLAUDE_BIN", "/opt/agents/claude"),
+            ("ANTHREX_CODEX_BIN", "/opt/agents/codex"),
+        ]);
+        let config = ManagerConfig::from_vars(
+            "/tmp/a.sock".into(),
+            "/bin/zsh".into(),
+            "/opt/anthrex/bin/anthrex".into(),
+            |key| vars.get(key).map(|value| (*value).to_string()),
+        );
+        assert_eq!(config.claude_bin, "/opt/agents/claude");
+        assert_eq!(config.codex_bin, "/opt/agents/codex");
+
+        let defaults = ManagerConfig::from_vars(
+            "/tmp/a.sock".into(),
+            "/bin/zsh".into(),
+            "/opt/anthrex/bin/anthrex".into(),
+            |key| (key == "ANTHREX_CLAUDE_BIN").then(String::new),
+        );
+        assert_eq!(defaults.claude_bin, "claude");
+        assert_eq!(defaults.codex_bin, "codex");
     }
 }

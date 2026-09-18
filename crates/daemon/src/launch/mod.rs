@@ -1,6 +1,9 @@
 //! Builds the command line and environment for each runtime. See spec section 3.2.
 
-use proto::{Runtime, WindowSpec};
+pub mod claude;
+pub mod codex;
+
+use proto::{HookSource, Runtime, WindowSpec};
 use std::path::{Path, PathBuf};
 
 /// Everything needed to spawn a window's child.
@@ -19,6 +22,26 @@ pub struct LaunchContext<'a> {
     pub socket_path: &'a Path,
     /// The user's login shell, e.g. `/bin/zsh`.
     pub shell: &'a str,
+    pub exe: &'a Path,
+    pub claude_bin: &'a str,
+    pub codex_bin: &'a str,
+    pub codex_hook_source: Option<&'a str>,
+}
+
+pub fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+pub fn hook_command(exe: &Path, window_id: u32, source: HookSource) -> String {
+    let label = match source {
+        HookSource::Claude => "claude",
+        HookSource::CodexNotify => "codex-notify",
+        HookSource::CodexHook => "codex-hook",
+    };
+    format!(
+        "{} hook --window {window_id} --source {label}",
+        shell_quote(&exe.display().to_string())
+    )
 }
 
 pub fn plan(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> LaunchPlan {
@@ -34,7 +57,14 @@ pub fn plan(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> LaunchPlan {
     let (program, args) = match spec.runtime {
         Runtime::Shell => (ctx.shell.to_string(), vec!["-l".to_string()]),
         Runtime::Claude => {
-            let mut args = vec!["--name".to_string(), ctx.name.to_string()];
+            let settings = serde_json::to_string(&claude::settings(ctx.exe, ctx.window_id))
+                .expect("Claude hook settings are serializable");
+            let mut args = vec![
+                "--name".to_string(),
+                ctx.name.to_string(),
+                "--settings".to_string(),
+                settings,
+            ];
             if let Some(model) = &spec.model {
                 args.push("--model".to_string());
                 args.push(model.clone());
@@ -45,7 +75,7 @@ pub fn plan(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> LaunchPlan {
                 args.push("--".to_string());
                 args.push(prompt.clone());
             }
-            ("claude".to_string(), args)
+            (ctx.claude_bin.to_string(), args)
         }
         Runtime::Codex => {
             let mut args = vec!["-C".to_string(), spec.cwd.display().to_string()];
@@ -58,7 +88,7 @@ pub fn plan(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> LaunchPlan {
                 args.push("--".to_string());
                 args.push(prompt.clone());
             }
-            ("codex".to_string(), args)
+            (ctx.codex_bin.to_string(), args)
         }
     };
     LaunchPlan {
@@ -72,7 +102,7 @@ pub fn plan(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> LaunchPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proto::{Runtime, WindowSpec};
+    use proto::{HookSource, Runtime, WindowSpec};
     use std::path::Path;
 
     fn spec(runtime: Runtime) -> WindowSpec {
@@ -92,7 +122,25 @@ mod tests {
             name: "api",
             socket_path: Path::new("/tmp/a.sock"),
             shell: "/bin/zsh",
+            exe: Path::new("/opt/anthrex/bin/anthrex"),
+            claude_bin: "/opt/agents/claude",
+            codex_bin: "/opt/agents/codex",
+            codex_hook_source: None,
         }
+    }
+
+    #[test]
+    fn shell_quote_wraps_and_escapes_single_quotes() {
+        assert_eq!(shell_quote("/a b/x"), "'/a b/x'");
+        assert_eq!(shell_quote("/it's/x"), "'/it'\\''s/x'");
+    }
+
+    #[test]
+    fn hook_command_quotes_the_exe() {
+        assert_eq!(
+            hook_command(Path::new("/opt/anthrex/bin/anthrex"), 4, HookSource::Claude),
+            "'/opt/anthrex/bin/anthrex' hook --window 4 --source claude"
+        );
     }
 
     #[test]
@@ -109,15 +157,39 @@ mod tests {
     }
 
     #[test]
-    fn claude_gets_name_model_and_prompt() {
+    fn claude_gets_name_settings_model_and_prompt_in_order() {
         let mut s = spec(Runtime::Claude);
         s.model = Some("opus".into());
         s.initial_prompt = Some("fix the tests".into());
         let p = plan(&s, &ctx());
-        assert_eq!(p.program, "claude");
+        let settings =
+            serde_json::to_string(&claude::settings(Path::new("/opt/anthrex/bin/anthrex"), 4))
+                .unwrap();
+        assert_eq!(p.program, "/opt/agents/claude");
         assert_eq!(
             p.args,
-            vec!["--name", "api", "--model", "opus", "--", "fix the tests"]
+            vec![
+                "--name",
+                "api",
+                "--settings",
+                &settings,
+                "--model",
+                "opus",
+                "--",
+                "fix the tests"
+            ]
+        );
+    }
+
+    #[test]
+    fn programs_come_from_the_context() {
+        assert_eq!(
+            plan(&spec(Runtime::Claude), &ctx()).program,
+            "/opt/agents/claude"
+        );
+        assert_eq!(
+            plan(&spec(Runtime::Codex), &ctx()).program,
+            "/opt/agents/codex"
         );
     }
 
@@ -146,7 +218,7 @@ mod tests {
         s.model = Some("gpt-5-codex".into());
         s.initial_prompt = Some("hello".into());
         let p = plan(&s, &ctx());
-        assert_eq!(p.program, "codex");
+        assert_eq!(p.program, "/opt/agents/codex");
         assert_eq!(
             p.args,
             vec!["-C", "/tmp/repo", "-m", "gpt-5-codex", "--", "hello"]
