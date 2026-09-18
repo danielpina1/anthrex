@@ -39,6 +39,15 @@ Inside the UI, the prefix key is `Ctrl-b`:
 
 Mouse: click a sidebar card to focus it; the wheel scrolls (forwarded to programs that use the mouse). Because mouse capture is on, use your terminal's shift-drag to select text.
 
+## Test
+
+```bash
+cargo test --workspace        # unit and integration tests
+python3 scripts/pty-smoke.py  # drives the real binary through a PTY end to end
+```
+
+The smoke script builds `target/debug/anthrex` if it is missing, and runs against an isolated socket and data directory under `/tmp` that it cleans up afterwards.
+
 ## Files
 
 | What | macOS | Linux |
