@@ -11,6 +11,10 @@ pub const MAX_PENDING_SPAWNS: usize = 50;
 pub const LABEL_MAX_CHARS: usize = 60;
 pub const CLAUDE_SPAWN_TOOL: &str = "Agent";
 pub const CODEX_SPAWN_TOOL: &str = "spawn_agent";
+pub const CODEX_SPAWN_TOOL_ALIAS: &str = "collaborationspawn_agent";
+pub const CODEX_SPAWN_TYPE_KEY: Option<&str> = None;
+pub const CODEX_SPAWN_LABEL_KEYS: (Option<&str>, Option<&str>) = (Some("task_name"), None);
+pub const CODEX_SPAWN_MODEL_KEY: Option<&str> = Some("model");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingSpawn {
@@ -47,26 +51,45 @@ pub struct SubagentTracker {
 }
 
 pub fn spawn_request(runtime: Runtime, hook: &ParsedHook) -> Option<PendingSpawn> {
-    if runtime != Runtime::Claude
-        || hook.kind != HookKind::PreToolUse
-        || hook.tool_name.as_deref() != Some(CLAUDE_SPAWN_TOOL)
-    {
+    if hook.kind != HookKind::PreToolUse {
         return None;
     }
+    let (type_key, label_keys, model_key) = match runtime {
+        Runtime::Claude if hook.tool_name.as_deref() == Some(CLAUDE_SPAWN_TOOL) => (
+            Some("subagent_type"),
+            (Some("name"), Some("prompt")),
+            Some("model"),
+        ),
+        Runtime::Codex
+            if matches!(
+                hook.tool_name.as_deref(),
+                Some(CODEX_SPAWN_TOOL | CODEX_SPAWN_TOOL_ALIAS)
+            ) =>
+        {
+            (
+                CODEX_SPAWN_TYPE_KEY,
+                CODEX_SPAWN_LABEL_KEYS,
+                CODEX_SPAWN_MODEL_KEY,
+            )
+        }
+        _ => return None,
+    };
     let input = hook
         .tool_input
         .as_ref()
         .and_then(serde_json::Value::as_object);
-    let string = |field| {
-        input
-            .and_then(|object| object.get(field))
-            .and_then(serde_json::Value::as_str)
+    let string = |field: Option<&str>| {
+        field.and_then(|field| {
+            input
+                .and_then(|object| object.get(field))
+                .and_then(serde_json::Value::as_str)
+        })
     };
     Some(PendingSpawn {
         parent_id: hook.agent_id.clone(),
-        subagent_type: string("subagent_type").map(str::to_owned),
-        label: make_label(string("name"), string("prompt")),
-        model: string("model").map(str::to_owned),
+        subagent_type: string(type_key).map(str::to_owned),
+        label: make_label(string(label_keys.0), string(label_keys.1)),
+        model: string(model_key).map(str::to_owned),
     })
 }
 
@@ -601,8 +624,49 @@ mod tests {
     }
 
     #[test]
-    fn codex_spawn_requests_remain_deferred() {
-        let request = spawn(None, Some("Explore"), "scout");
-        assert_eq!(spawn_request(Runtime::Codex, &request), None);
+    fn codex_spawn_request_reads_the_verified_fields() {
+        for tool_name in ["spawn_agent", "collaborationspawn_agent"] {
+            let mut request = hook(HookKind::PreToolUse);
+            request.source = HookSource::CodexHook;
+            request.tool_name = Some(tool_name.into());
+            request.tool_input = Some(json!({
+                "task_name": "list_filenames",
+                "fork_turns": "none",
+                "model": "gpt-6-astra",
+                "message": "opaque runtime value"
+            }));
+
+            assert_eq!(
+                spawn_request(Runtime::Codex, &request),
+                Some(PendingSpawn {
+                    parent_id: None,
+                    subagent_type: None,
+                    label: Some("list_filenames".into()),
+                    model: Some("gpt-6-astra".into()),
+                })
+            );
+        }
+
+        let mut missing_task_name = hook(HookKind::PreToolUse);
+        missing_task_name.source = HookSource::CodexHook;
+        missing_task_name.tool_name = Some("spawn_agent".into());
+        missing_task_name.tool_input = Some(json!({
+            "type": "unverified type",
+            "agent_type": "unverified agent type",
+            "message": "never expose this opaque message"
+        }));
+        assert_eq!(
+            spawn_request(Runtime::Codex, &missing_task_name),
+            Some(PendingSpawn {
+                parent_id: None,
+                subagent_type: None,
+                label: None,
+                model: None,
+            })
+        );
+
+        let mut unrelated = missing_task_name;
+        unrelated.tool_name = Some("namespace_spawn_agent".into());
+        assert_eq!(spawn_request(Runtime::Codex, &unrelated), None);
     }
 }
