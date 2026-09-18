@@ -84,7 +84,9 @@ async fn handle_client(stream: UnixStream, manager: Arc<WindowManager>, shutdown
     loop {
         let msg = tokio::select! {
             _ = shutdown.cancelled() => {
-                let _ = out_tx.send(DaemonMsg::Bye { reason: "daemon shutting down".into() }).await;
+                // Bye is best-effort: an awaited send would block forever on a stalled
+                // client whose full channel nobody is draining, delaying shutdown cleanup.
+                let _ = out_tx.try_send(DaemonMsg::Bye { reason: "daemon shutting down".into() });
                 break;
             }
             frame = read_frame::<_, ClientMsg>(&mut rd) => match frame? {
