@@ -117,6 +117,7 @@ async fn version_mismatch_is_rejected() {
 
 #[tokio::test]
 async fn create_subscribe_input_and_kill_flow() {
+    let started = std::time::Instant::now();
     let d = start_daemon().await;
     let (mut c, _) = Client::connect(&d, PROTO_VERSION).await;
 
@@ -185,6 +186,7 @@ async fn create_subscribe_input_and_kill_flow() {
     .await;
     c.recv_until(|m| matches!(m, DaemonMsg::Ack { request } if request == "remove"))
         .await;
+    assert!(started.elapsed() < Duration::from_millis(1500));
 }
 
 #[tokio::test]

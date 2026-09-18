@@ -12,8 +12,7 @@ use tokio::sync::{mpsc, watch};
 
 /// A Working window with no output for this long becomes Idle.
 pub const QUIET_AFTER: Duration = Duration::from_secs(3);
-/// Time between SIGTERM and SIGKILL.
-pub const KILL_GRACE: Duration = Duration::from_secs(3);
+pub use crate::process::{HUP_GRACE, KILL_GRACE};
 
 struct Entry {
     id: u32,
@@ -25,6 +24,7 @@ struct Entry {
     last_output: Instant,
     session_id: Option<String>,
     exit: Option<ExitInfo>,
+    child_alive: bool,
     window: Window,
 }
 
@@ -153,6 +153,7 @@ impl WindowManager {
             last_output: now,
             session_id: None,
             exit: None,
+            child_alive: true,
             window,
         };
         let info = entry.info();
@@ -177,6 +178,19 @@ impl WindowManager {
                 tracing::debug!(id, %title, "window title");
                 false
             }
+            WindowEvent::ParserPanicked(reason) => {
+                entry.exit.get_or_insert_with(|| ExitInfo {
+                    code: None,
+                    reason: format!("screen parser panicked: {reason}"),
+                });
+                if entry.child_alive
+                    && let Some(pid) = entry.window.pid()
+                    && let Err(error) = crate::process::escalate(pid)
+                {
+                    tracing::error!(id, %error, "parser panic cleanup failed");
+                }
+                entry.apply(StatusEvent::Exited)
+            }
             WindowEvent::Exited { code, signal } => {
                 let reason = match (&signal, code) {
                     (Some(sig), _) => format!("killed by {sig}"),
@@ -184,7 +198,8 @@ impl WindowManager {
                     (None, None) => "exited".to_string(),
                 };
                 tracing::info!(id, %reason, "window exited");
-                entry.exit = Some(ExitInfo { code, reason });
+                entry.child_alive = false;
+                entry.exit.get_or_insert(ExitInfo { code, reason });
                 entry.apply(StatusEvent::Exited)
             }
         };
@@ -240,6 +255,10 @@ impl WindowManager {
         self.with_entry(id, |e| e.window.attach())
     }
 
+    pub fn child_pid(&self, id: u32) -> anyhow::Result<Option<u32>> {
+        self.with_entry(id, |e| e.window.pid())
+    }
+
     pub fn snapshot(&self, id: u32) -> anyhow::Result<(Vec<u8>, u16, u16)> {
         self.with_entry(id, |e| {
             let (cols, rows) = e.window.size();
@@ -257,26 +276,18 @@ impl WindowManager {
         }
     }
 
-    fn signal(&self, id: u32, sig: i32) -> anyhow::Result<()> {
+    /// SIGHUP now, SIGTERM after one second, SIGKILL after three seconds.
+    pub fn kill(self: &Arc<Self>, id: u32) -> anyhow::Result<()> {
         let inner = crate::lock(&self.inner);
         let entry = inner
             .entries
             .get(&id)
             .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
-        if entry.status == Status::Exited {
-            return Ok(());
+        if entry.child_alive
+            && let Some(pid) = entry.window.pid()
+        {
+            crate::process::escalate(pid)?;
         }
-        entry.window.signal(sig)
-    }
-
-    /// SIGTERM now, SIGKILL after `KILL_GRACE` if the child is still alive.
-    pub fn kill(self: &Arc<Self>, id: u32) -> anyhow::Result<()> {
-        self.signal(id, libc::SIGTERM)?;
-        let me = Arc::clone(self);
-        std::thread::spawn(move || {
-            std::thread::sleep(KILL_GRACE);
-            let _ = me.signal(id, libc::SIGKILL);
-        });
         Ok(())
     }
 
@@ -287,8 +298,8 @@ impl WindowManager {
             .entries
             .remove(&id)
             .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
-        if entry.status != Status::Exited {
-            let _ = entry.window.signal(libc::SIGKILL);
+        if entry.child_alive {
+            let _ = entry.window.signal_group(libc::SIGKILL);
         }
         drop(entry);
         tracing::info!(id, "window removed");
@@ -314,26 +325,20 @@ impl WindowManager {
         Ok(())
     }
 
-    /// SIGTERM every live window, wait up to `KILL_GRACE`, then SIGKILL the rest.
+    /// Run the same bounded group escalation for every live child concurrently.
     pub async fn shutdown(&self) {
-        let live: Vec<u32> = self
-            .list()
-            .into_iter()
-            .filter(|w| w.status != Status::Exited)
-            .map(|w| w.id)
-            .collect();
-        for id in &live {
-            let _ = self.signal(*id, libc::SIGTERM);
-        }
-        let deadline = Instant::now() + KILL_GRACE;
-        while Instant::now() < deadline {
-            if self.list().iter().all(|w| w.status == Status::Exited) {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        for id in &live {
-            let _ = self.signal(*id, libc::SIGKILL);
+        let pending: Vec<_> = {
+            let inner = crate::lock(&self.inner);
+            inner
+                .entries
+                .values()
+                .filter(|entry| entry.child_alive)
+                .filter_map(|entry| entry.window.pid())
+                .filter_map(|pid| crate::process::escalate(pid).ok())
+                .collect()
+        };
+        for done in pending {
+            let _ = done.await;
         }
     }
 }

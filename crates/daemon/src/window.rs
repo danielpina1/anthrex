@@ -4,6 +4,7 @@ use crate::launch::LaunchPlan;
 use bytes::Bytes;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::{Read, Write};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
 
@@ -13,6 +14,7 @@ pub enum WindowEvent {
     Output,
     Bell,
     Title(String),
+    ParserPanicked(String),
     Exited {
         code: Option<i32>,
         signal: Option<String>,
@@ -31,6 +33,20 @@ pub const OUTPUT_CHANNEL_CAPACITY: usize = 1024;
 /// The writer thread absorbs that stall; this queue bounds how much unwritten input the
 /// daemon holds on its behalf before it tells the client the program is not listening.
 pub const INPUT_QUEUE_CAPACITY: usize = 256;
+/// Includes the chunk currently being written, even while the PTY blocks.
+pub const INPUT_QUEUE_BYTES: usize = 1 << 20;
+
+struct InputChunk {
+    bytes: Vec<u8>,
+    queued: Arc<AtomicUsize>,
+}
+
+impl Drop for InputChunk {
+    fn drop(&mut self) {
+        // Also rolls back failed sends and releases queued chunks on writer failure.
+        self.queued.fetch_sub(self.bytes.len(), Ordering::Relaxed);
+    }
+}
 
 /// One bell or title change, in the order vt100's callbacks fired for them.
 ///
@@ -87,7 +103,8 @@ pub struct Attachment {
 pub struct Window {
     master: Box<dyn MasterPty + Send>,
     /// Bounded hand-off to the writer thread. Sending never blocks the caller.
-    input_tx: std::sync::mpsc::SyncSender<Vec<u8>>,
+    input_tx: std::sync::mpsc::SyncSender<InputChunk>,
+    input_bytes: Arc<AtomicUsize>,
     pid: Option<u32>,
     parser: Arc<Mutex<Parser>>,
     output_tx: broadcast::Sender<Bytes>,
@@ -179,10 +196,7 @@ impl Window {
                         Err(payload) => {
                             let reason = panic_message(&payload);
                             tracing::error!(id, %reason, "screen parser panicked; window abandoned");
-                            let event = WindowEvent::Exited {
-                                code: None,
-                                signal: Some(format!("screen parser panicked: {reason}")),
-                            };
+                            let event = WindowEvent::ParserPanicked(reason);
                             let _ = reader_events.send((id, event));
                             break;
                         }
@@ -201,14 +215,16 @@ impl Window {
         // A dedicated writer thread owns the PTY master's write side. Writes to it can
         // block for seconds when the child is not reading stdin, so no caller - and in
         // particular no tokio worker holding the manager's mutex - may perform them.
-        let (input_tx, input_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(INPUT_QUEUE_CAPACITY);
+        let input_bytes = Arc::new(AtomicUsize::new(0));
+        let (input_tx, input_rx) =
+            std::sync::mpsc::sync_channel::<InputChunk>(INPUT_QUEUE_CAPACITY);
         std::thread::Builder::new()
             .name(format!("pty-write-{id}"))
             .spawn(move || {
                 // Ends when the channel closes (the Window was dropped) or a write fails
                 // (the child is gone and the master reports EIO).
                 for chunk in input_rx {
-                    if writer.write_all(&chunk).is_err() || writer.flush().is_err() {
+                    if writer.write_all(&chunk.bytes).is_err() || writer.flush().is_err() {
                         break;
                     }
                 }
@@ -236,6 +252,7 @@ impl Window {
         Ok(Self {
             master: pair.master,
             input_tx,
+            input_bytes,
             pid,
             parser,
             output_tx,
@@ -249,7 +266,23 @@ impl Window {
     /// Queues `bytes` for the PTY. Never blocks: the writer thread does the blocking write.
     pub fn write_input(&self, bytes: &[u8]) -> anyhow::Result<()> {
         use std::sync::mpsc::TrySendError;
-        match self.input_tx.try_send(bytes.to_vec()) {
+        anyhow::ensure!(
+            bytes.len() <= INPUT_QUEUE_BYTES,
+            "input too large ({} bytes, max 1 MiB)",
+            bytes.len()
+        );
+        self.input_bytes
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |queued| {
+                queued
+                    .checked_add(bytes.len())
+                    .filter(|total| *total <= INPUT_QUEUE_BYTES)
+            })
+            .map_err(|_| anyhow::anyhow!("input queue full; the program is not reading input"))?;
+        let chunk = InputChunk {
+            bytes: bytes.to_vec(),
+            queued: Arc::clone(&self.input_bytes),
+        };
+        match self.input_tx.try_send(chunk) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => {
                 anyhow::bail!("input queue full; the program is not reading input")
@@ -326,5 +359,13 @@ impl Window {
             anyhow::bail!("kill({pid}, {sig}): {}", std::io::Error::last_os_error());
         }
         Ok(())
+    }
+
+    /// Signals the child's entire process group. An absent group is already cleaned up.
+    pub fn signal_group(&self, sig: i32) -> anyhow::Result<()> {
+        let pid = self
+            .pid
+            .ok_or_else(|| anyhow::anyhow!("child has no pid"))?;
+        crate::process::signal_group(pid, sig).map(|_| ())
     }
 }

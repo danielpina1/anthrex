@@ -125,8 +125,10 @@ async fn kill_terminates_and_remove_forgets() {
     let m = manager();
     let id = m.create(spec("victim"), 80, 24).unwrap().id;
     wait_until("shell started", || find(&m, id).status != Status::Starting).await;
+    let started = Instant::now();
     m.kill(id).unwrap();
     wait_until("exited", || find(&m, id).status == Status::Exited).await;
+    assert!(started.elapsed() < Duration::from_millis(1500));
     let info = find(&m, id);
     assert!(info.exit.is_some());
     m.remove(id).unwrap();
@@ -191,15 +193,16 @@ async fn a_program_that_ignores_stdin_never_blocks_write_input_or_list() {
             break;
         }
     }
-    // A burst alone only outpaces the writer. Give it time to drain, then probe
-    // with empty chunks so the check cannot create more byte pressure itself.
+    // A burst alone only outpaces the writer. Give it time to drain, then retry
+    // the same chunk: a byte-full queue still accepts empty chunks. A successful
+    // retry stops the probe, so sustained failures cannot add more pressure.
     let mut confirmed = false;
     while let Some(since) = full_since {
         if Instant::now() >= deadline {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
-        if !write(b"") {
+        if !write(&chunk) {
             break;
         }
         if since.elapsed() >= Duration::from_millis(200) {
@@ -278,9 +281,100 @@ async fn shutdown_ends_every_window() {
         m.list().iter().all(|w| w.status != Status::Starting)
     })
     .await;
+    let started = Instant::now();
     m.shutdown().await;
+    assert!(started.elapsed() < Duration::from_millis(1500));
     wait_until("both exited", || {
         m.list().iter().all(|w| w.status == Status::Exited)
     })
     .await;
+}
+
+#[tokio::test]
+async fn kill_ends_an_interactive_shell_within_a_second() {
+    let m = manager();
+    let id = m.create(spec("quick-kill"), 80, 24).unwrap().id;
+    wait_until("shell started", || find(&m, id).status != Status::Starting).await;
+    let started = Instant::now();
+    m.kill(id).unwrap();
+    wait_until("exited", || find(&m, id).status == Status::Exited).await;
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[tokio::test]
+async fn the_first_exit_reason_is_preserved() {
+    use daemon::window::WindowEvent;
+    let m = manager();
+    let id = m.create(spec("first-exit"), 80, 24).unwrap().id;
+    m.handle_event(
+        id,
+        WindowEvent::Exited {
+            code: Some(7),
+            signal: None,
+        },
+    );
+    m.handle_event(
+        id,
+        WindowEvent::Exited {
+            code: Some(9),
+            signal: None,
+        },
+    );
+    let exit = find(&m, id).exit.unwrap();
+    m.write_input(id, b"exit\n").unwrap();
+    assert_eq!(exit.code, Some(7));
+    assert_eq!(exit.reason, "exited with code 7");
+}
+
+#[tokio::test]
+async fn a_parser_panic_ends_the_child_and_keeps_its_reason() {
+    use daemon::window::WindowEvent;
+    let m = manager();
+    let id = m.create(spec("parser-panic"), 80, 24).unwrap().id;
+    wait_until("shell started", || find(&m, id).status != Status::Starting).await;
+    let pid = m.child_pid(id).unwrap().unwrap() as libc::pid_t;
+    let mut changed = m.watch();
+    m.handle_event(id, WindowEvent::ParserPanicked("boom".into()));
+    tokio::time::timeout(Duration::from_secs(1), changed.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(find(&m, id).status, Status::Exited);
+    assert_eq!(
+        find(&m, id).exit.unwrap().reason,
+        "screen parser panicked: boom"
+    );
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let gone = loop {
+        // SAFETY: this PID belongs to the window created by this test.
+        if unsafe { libc::kill(pid, 0) } == -1
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        {
+            break true;
+        }
+        if Instant::now() >= deadline {
+            break false;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    if !gone {
+        // SAFETY: ensure a failed regression leaves no test-owned child behind.
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+        }
+    }
+    assert!(gone, "parser panic left its child alive");
+    // Deliver a later wait result explicitly: the assertion does not depend on a
+    // fixed sleep to infer whether the waiter has already reported its exit.
+    m.handle_event(
+        id,
+        WindowEvent::Exited {
+            code: Some(0),
+            signal: None,
+        },
+    );
+    assert_eq!(
+        find(&m, id).exit.unwrap().reason,
+        "screen parser panicked: boom"
+    );
 }

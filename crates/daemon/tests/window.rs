@@ -212,3 +212,92 @@ async fn attach_gives_a_snapshot_and_live_output_without_duplicates() {
     }
     assert_eq!(mirror.screen().contents().matches("first").count(), 1);
 }
+
+#[tokio::test]
+async fn input_queue_is_capped_by_bytes() {
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let w = Window::spawn(
+        9,
+        &plan("sh", &["-c", "stty raw -echo; printf READY; exec sleep 5"]),
+        80,
+        24,
+        tx,
+    )
+    .unwrap();
+    wait_until("raw mode ready", || w.screen_text().contains("READY")).await;
+    let chunk = vec![b'x'; 512 * 1024];
+    w.write_input(&chunk).unwrap();
+    w.write_input(&chunk).unwrap();
+    let full = w.write_input(&chunk);
+    // Give the writer repeated opportunities to dequeue the first chunk. Its
+    // blocked write must remain in the byte budget throughout this deadline.
+    let deadline = Instant::now() + Duration::from_millis(200);
+    let mut stayed_full = true;
+    while Instant::now() < deadline {
+        stayed_full &= w.write_input(b"x").is_err();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let large = w.write_input(&vec![b'x'; 1024 * 1024 + 1]);
+    w.signal_group(libc::SIGKILL).unwrap();
+    wait_event(&mut rx, |e| matches!(e, WindowEvent::Exited { .. })).await;
+    assert!(full.unwrap_err().to_string().contains("input queue full"));
+    assert!(
+        stayed_full,
+        "the blocked writer's bytes left the budget early"
+    );
+    assert!(large.unwrap_err().to_string().contains("too large"));
+}
+
+#[tokio::test]
+async fn signal_group_reaches_background_children() {
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    // The TERM trap reaps the background child before exiting, including on Linux
+    // hosts whose PID 1 does not reap orphaned children promptly.
+    let w = Window::spawn(
+        10,
+        &plan(
+            "sh",
+            &[
+                "-c",
+                "trap 'wait; exit 0' TERM; sleep 300 & echo bg=$!; wait",
+            ],
+        ),
+        80,
+        24,
+        tx,
+    )
+    .unwrap();
+    wait_until("background child pid", || w.screen_text().contains("bg=")).await;
+    let text = w.screen_text();
+    let pid: libc::pid_t = text
+        .split("bg=")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    w.signal_group(libc::SIGTERM).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let gone = loop {
+        // SAFETY: this is the background child PID printed by our own shell.
+        if unsafe { libc::kill(pid, 0) } == -1
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        {
+            break true;
+        }
+        if Instant::now() >= deadline {
+            break false;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    if !gone {
+        // SAFETY: clean up the child our shell started if group signaling is broken.
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+    }
+    wait_event(&mut rx, |e| matches!(e, WindowEvent::Exited { .. })).await;
+    assert!(gone, "background child survived the group signal");
+}
