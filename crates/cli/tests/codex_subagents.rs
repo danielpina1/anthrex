@@ -2,6 +2,7 @@ mod support;
 
 use proto::{Runtime, SubagentInfo, SubagentState, WindowInfo};
 use serde_json::json;
+use std::time::{Duration, Instant};
 use support::TestDaemon;
 
 #[test]
@@ -37,6 +38,7 @@ fn codex_sub_agents_pair_and_never_touch_the_session_id() {
         }}),
     ]);
     let mut client = daemon.client();
+    let created = Instant::now();
     let id = client.create(Runtime::Codex, "subagent");
     let running = client.wait_window(id, "running Codex sub-agent", |window| {
         window.session_id.as_deref() == Some("root")
@@ -54,11 +56,12 @@ fn codex_sub_agents_pair_and_never_touch_the_session_id() {
             model: Some("gpt-6-astra".into()),
             state: SubagentState::Running,
             tool: Some("Bash".into()),
-            started_secs: 0,
+            started_secs: running.subagents[0].started_secs,
             ended_secs: None,
             needs_permission: false,
         }
     );
+    assert!(running.subagents[0].started_secs <= created.elapsed().as_secs());
 
     client.input(id, b"go\r");
     let done = client.wait_window(id, "finished Codex sub-agent", |window| {
@@ -70,16 +73,51 @@ fn codex_sub_agents_pair_and_never_touch_the_session_id() {
     assert_eq!(done.session_id.as_deref(), Some("root"));
     assert_eq!(done.subagents[0].label.as_deref(), Some("list_filenames"));
     assert_eq!(done.subagents[0].model.as_deref(), Some("gpt-6-astra"));
+    assert!(done.subagents[0].started_secs >= running.subagents[0].started_secs);
+    assert!(done.subagents[0].started_secs <= created.elapsed().as_secs());
+    assert!(done.subagents[0].ended_secs.unwrap() <= done.subagents[0].started_secs);
 
-    let output = daemon.anthrex(&["ls", "--json"]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(output.stderr.is_empty());
-    let windows: Vec<WindowInfo> = serde_json::from_slice(&output.stdout).unwrap();
+    // Exercise snapshot comparison across an actual elapsed-second boundary.
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let windows = loop {
+        let output = daemon.anthrex(&["ls", "--json"]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty());
+        let windows: Vec<WindowInfo> = serde_json::from_slice(&output.stdout).unwrap();
+        let listed = windows.iter().find(|window| window.id == id).unwrap();
+        assert_eq!(listed.session_id.as_deref(), Some("root"));
+        assert_eq!(listed.subagents.len(), 1);
+        let current = &listed.subagents[0];
+        assert!(current.started_secs >= done.subagents[0].started_secs);
+        assert!(current.started_secs <= created.elapsed().as_secs());
+        assert!(current.ended_secs.unwrap() >= done.subagents[0].ended_secs.unwrap());
+        assert!(current.ended_secs.unwrap() <= current.started_secs);
+        // Ages change between snapshots; all identity, state and metadata must match.
+        assert_eq!(
+            current,
+            &SubagentInfo {
+                started_secs: current.started_secs,
+                ended_secs: current.ended_secs,
+                ..done.subagents[0].clone()
+            }
+        );
+        if listed.subagents[0].started_secs > done.subagents[0].started_secs
+            && listed.subagents[0].ended_secs > done.subagents[0].ended_secs
+        {
+            break windows;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "sub-agent ages did not advance: {listed:?}"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    };
     let listed = windows.iter().find(|window| window.id == id).unwrap();
     assert_eq!(listed.session_id.as_deref(), Some("root"));
-    assert_eq!(listed.subagents, done.subagents);
+    assert!(listed.subagents[0].started_secs > done.subagents[0].started_secs);
+    assert!(listed.subagents[0].ended_secs > done.subagents[0].ended_secs);
 }

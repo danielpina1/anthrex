@@ -46,6 +46,7 @@ pub fn isolated_command(dir: &Path, args: &[&str]) -> Command {
 
 /// Drain pipes concurrently, without a join that can outlive the test deadline.
 pub struct RunningCommand {
+    description: String,
     child: Child,
     stdout: Receiver<Vec<u8>>,
     stderr: Receiver<Vec<u8>>,
@@ -53,6 +54,11 @@ pub struct RunningCommand {
 
 impl RunningCommand {
     pub fn start(command: &mut Command) -> Self {
+        let description = format!(
+            "{:?} {:?}",
+            command.get_program(),
+            command.get_args().take(2).collect::<Vec<_>>()
+        );
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -71,6 +77,7 @@ impl RunningCommand {
         let stdout = drain(child.stdout.take().unwrap());
         let stderr = drain(child.stderr.take().unwrap());
         Self {
+            description,
             child,
             stdout,
             stderr,
@@ -101,18 +108,20 @@ impl RunningCommand {
             }
             assert!(
                 Instant::now() < deadline,
-                "anthrex child exceeded test deadline {limit:?}"
+                "child {} ({}) exceeded test deadline {limit:?}",
+                self.child.id(),
+                self.description
             );
             std::thread::sleep(Duration::from_millis(5));
         };
         let stdout = self
             .stdout
             .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .expect("stdout drain exceeded test deadline");
+            .unwrap_or_else(|error| panic!("stdout drain exceeded test deadline: {error}; child {} ({}) exited with {status}", self.child.id(), self.description));
         let stderr = self
             .stderr
             .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .expect("stderr drain exceeded test deadline");
+            .unwrap_or_else(|error| panic!("stderr drain exceeded test deadline: {error}; child {} ({}) exited with {status}", self.child.id(), self.description));
         Output {
             status,
             stdout,

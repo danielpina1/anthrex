@@ -1059,3 +1059,23 @@ Hosted macOS/Ubuntu CI remains the final completion gate.
 The full human interactive checklist above remains outstanding and will be
 listed in the pull request. Automated PTY checks and the documented real-Codex
 probe do not substitute for that human visual/interaction sign-off.
+
+### Fresh verification follow-ups
+
+macOS CI exposed a test assertion comparing complete sub-agent snapshots even
+though `started_secs` and `ended_secs` are ages recomputed at each read. A
+deadline-based real-CLI regression deliberately crosses a second boundary and
+failed with ages 0 versus 1 before the assertion fix. The test now checks all
+stable fields, the root session id, age ordering and elapsed-time bounds, and
+requires both ages to advance. The running snapshot also no longer assumes
+that setup must finish within its first second.
+
+A separate local `unsupported_codex_version_warns_once_at_startup` stderr-drain
+timeout remains unexplained. The original failure did not identify which of
+the daemon, `ls`, or stop commands timed out. One baseline and twelve repeated
+four-test version suites passed, as did a temporary eight-thread diagnostic
+running 160 startup probes. That diagnostic was removed. The shared command
+helper now reports the command, PID, pipe and observed exit status on timeout;
+deadlines and subprocess behavior are unchanged. These passing runs are not
+evidence that the original timeout is fixed. Further occurrences need the new
+diagnostic context before attributing a cause or changing process ownership.
