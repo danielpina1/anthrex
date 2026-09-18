@@ -40,7 +40,9 @@ impl Entry {
             tool: self.tool.clone(),
             since_secs: self.since.elapsed().as_secs(),
             last_output_secs: self.last_output.elapsed().as_secs(),
-            has_session: self.session_id.is_some(),
+            session_id: self.session_id.clone(),
+            model: self.spec.model.clone(),
+            subagents: vec![],
             exit: self.exit.clone(),
         }
     }

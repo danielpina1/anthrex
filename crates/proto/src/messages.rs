@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub enum HookSource {
     Claude,
     CodexNotify,
+    CodexHook,
 }
 
 /// Client → daemon.
@@ -101,7 +102,9 @@ pub enum DaemonMsg {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ClientKind, Runtime, WindowSpec};
+    use crate::types::{
+        ClientKind, Runtime, Status, SubagentInfo, SubagentState, WindowInfo, WindowSpec,
+    };
 
     #[test]
     fn input_bytes_survive_messagepack() {
@@ -127,20 +130,63 @@ mod tests {
     }
 
     #[test]
-    fn every_daemon_message_round_trips() {
+    fn hook_source_serializes_kebab_case() {
+        assert_eq!(
+            serde_json::to_string(&HookSource::Claude).unwrap(),
+            "\"claude\""
+        );
+        assert_eq!(
+            serde_json::to_string(&HookSource::CodexNotify).unwrap(),
+            "\"codex-notify\""
+        );
+        assert_eq!(
+            serde_json::to_string(&HookSource::CodexHook).unwrap(),
+            "\"codex-hook\""
+        );
+    }
+
+    #[test]
+    fn every_message_round_trips() {
         let spec = WindowSpec {
-            name: None,
+            name: Some("shell".into()),
             runtime: Runtime::Shell,
             cwd: "/tmp".into(),
-            worktree_branch: None,
-            model: None,
-            initial_prompt: None,
+            worktree_branch: Some("feat/protocol".into()),
+            model: Some("opus".into()),
+            initial_prompt: Some("hello".into()),
         };
-        let msgs = vec![
+        let window = WindowInfo {
+            id: 1,
+            name: "shell".into(),
+            runtime: Runtime::Shell,
+            cwd: "/tmp".into(),
+            branch: Some("feat/protocol".into()),
+            status: Status::Working,
+            tool: Some("Read".into()),
+            since_secs: 3,
+            last_output_secs: 1,
+            session_id: Some("s1".into()),
+            model: Some("opus".into()),
+            subagents: vec![SubagentInfo {
+                id: "agent-1".into(),
+                parent_id: Some("parent-1".into()),
+                kind: "explore".into(),
+                label: Some("Inspect protocol".into()),
+                model: Some("haiku".into()),
+                state: SubagentState::Running,
+                tool: Some("Read".into()),
+                started_secs: 2,
+                ended_secs: Some(3),
+                needs_permission: true,
+            }],
+            exit: None,
+        };
+        let client_messages = vec![
             ClientMsg::Hello {
                 proto_version: 1,
                 client: ClientKind::Tui,
             },
+            ClientMsg::ListWindows,
             ClientMsg::CreateWindow {
                 spec,
                 cols: 80,
@@ -151,19 +197,74 @@ mod tests {
                 cols: 80,
                 rows: 24,
             },
+            ClientMsg::Unsubscribe,
+            ClientMsg::Input {
+                window_id: 1,
+                bytes: vec![0, 0xff],
+            },
+            ClientMsg::Resize {
+                window_id: 1,
+                cols: 100,
+                rows: 30,
+            },
+            ClientMsg::Kill { window_id: 1 },
+            ClientMsg::Remove {
+                window_id: 1,
+                remove_worktree: true,
+                force: true,
+            },
+            ClientMsg::Restart { window_id: 1 },
+            ClientMsg::Rename {
+                window_id: 1,
+                name: "renamed".into(),
+            },
+            ClientMsg::HookEvent {
+                window_id: 1,
+                source: HookSource::CodexHook,
+                payload: serde_json::json!({"event": "agent-turn-complete"}),
+            },
+            ClientMsg::Shutdown,
         ];
-        for m in msgs {
+        for message in client_messages {
             let back: ClientMsg =
-                rmp_serde::from_slice(&rmp_serde::to_vec_named(&m).unwrap()).unwrap();
-            assert_eq!(back, m);
+                rmp_serde::from_slice(&rmp_serde::to_vec_named(&message).unwrap()).unwrap();
+            assert_eq!(back, message);
         }
-        let d = DaemonMsg::Snapshot {
-            window_id: 1,
-            cols: 80,
-            rows: 24,
-            bytes: b"\x1b[H\x1b[Jhi".to_vec(),
-        };
-        let back: DaemonMsg = rmp_serde::from_slice(&rmp_serde::to_vec_named(&d).unwrap()).unwrap();
-        assert_eq!(back, d);
+
+        let daemon_messages = vec![
+            DaemonMsg::Welcome {
+                daemon_version: "0.1.0".into(),
+                windows: vec![window.clone()],
+            },
+            DaemonMsg::WindowsChanged {
+                windows: vec![window],
+            },
+            DaemonMsg::Created { window_id: 1 },
+            DaemonMsg::Snapshot {
+                window_id: 1,
+                cols: 80,
+                rows: 24,
+                bytes: b"\x1b[H\x1b[Jhi".to_vec(),
+            },
+            DaemonMsg::Output {
+                window_id: 1,
+                bytes: vec![0, 0xff],
+            },
+            DaemonMsg::Ack {
+                request: "kill".into(),
+            },
+            DaemonMsg::Error {
+                request: "hello".into(),
+                message: "mismatch".into(),
+            },
+            DaemonMsg::Bye {
+                reason: "shutdown".into(),
+            },
+        ];
+        for message in daemon_messages {
+            let back: DaemonMsg =
+                rmp_serde::from_slice(&rmp_serde::to_vec_named(&message).unwrap()).unwrap();
+            assert_eq!(back, message);
+        }
     }
 }

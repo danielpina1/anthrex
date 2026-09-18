@@ -471,7 +471,9 @@ mod tests {
             tool: None,
             since_secs: 0,
             last_output_secs: 0,
-            has_session: false,
+            session_id: None,
+            model: None,
+            subagents: vec![],
             exit: None,
         }
     }

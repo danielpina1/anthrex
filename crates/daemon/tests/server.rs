@@ -103,9 +103,9 @@ async fn handshake_returns_welcome_with_empty_window_list() {
 }
 
 #[tokio::test]
-async fn version_mismatch_is_rejected() {
+async fn a_version_1_client_is_rejected() {
     let d = start_daemon().await;
-    let (_c, reply) = Client::connect(&d, PROTO_VERSION + 1).await;
+    let (_c, reply) = Client::connect(&d, 1).await;
     match reply {
         DaemonMsg::Error { request, message } => {
             assert_eq!(request, "hello");
