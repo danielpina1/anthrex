@@ -4,7 +4,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | `ready` |
+| Status | `in progress` |
 | Depends on | Milestone 2 (CI) |
 | Spec sections | Product spec (`docs/superpowers/specs/2026-09-18-anthrex-product-design.md`) sections 4 (all), 10.1 (the version-2 row), 10.4 (the environment variables), 11.1 to 11.4, 11.6 (the session-id part), 12 (the fake agent and the `ANTHREX_CLAUDE_BIN` / `ANTHREX_CODEX_BIN` overrides). Core spec (`docs/superpowers/specs/2026-09-17-anthrex-design.md`) sections 3.2 (launchers with hooks) and 3.4 (the full status table). |
 | Branch | `m3-agent-status` |
@@ -718,4 +718,323 @@ From `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`, "Assig
 
 ## Implementation notes
 
-The implementer fills this section in during implementation.
+Implementation starts from main commit `43dc604` after the user's explicit request
+to merge PR #3, delete `m2-ci`, and continue. Both local and remote M2 branches
+were deleted; the existing isolated worktree is reused on `m3-agent-status`.
+
+- The M2 raw-mode readiness and isolated smoke-directory improvements supersede
+  stale instructions to rely only on a fixed 300 ms delay or to write a shared
+  `/tmp/anthrex-smoke-fake.jsonl`. The smoke script also no longer has
+  `reset_state`, and stage 8 detaches its client; M3.13 will explicitly reattach
+  for the new stage and put its script under the unique test data directory.
+- M3.6 refers to `SubagentTracker` before M3.8 defines it (and calls M3.7 the
+  tracker task). The field and its calls are integrated in M3.8 together, with
+  M3.6 retaining the existing empty `subagents` list in the interim. Similarly,
+  the M3.4 default Codex hook source remains `None` until M3.9 verifies it.
+- Production behavior, test evidence, installed Codex observations, and final
+  verification are recorded here as their tasks complete.
+
+### M3.1 process safety
+
+Commit `4723860` extracts the shared group signal/escalation code into private
+`process.rs`. Byte reservations are RAII-owned by queued chunks, so a failed
+enqueue or discarded queue also releases its reservation. The blocked writer
+chunk continues to count until both its write and flush return.
+
+Test corrections: the background-child shell traps TERM and reaps its child
+(avoiding dependence on Linux PID 1); the input fixture waits for a raw-mode
+READY marker and checks sustained rejection for 200 ms; the parser-panic test
+waits for actual PID disappearance and explicitly delivers a subsequent exit
+event instead of using a fixed delay to assume waiter delivery. The existing
+backpressure regression now retries its 4 KiB chunk rather than an empty one:
+an empty chunk does not detect the new byte limit. The server flow directly
+asserts the 1.5-second acceptance bound.
+
+All new behaviors were observed failing before implementation. Afterward,
+`cargo test -p anthrex-daemon --tests` passed 43 tests (16 unit, 12 manager,
+5 server, 10 window); daemon clippy and workspace formatting passed. The
+non-reading-child test confirmed sustained backpressure while input/list
+operations stayed below 100 ms. Full milestone verification follows integration.
+
+Review caught a shutdown race: a leader could exit after HUP while descendants
+still awaited TERM, and shutdown would no longer wait for the discarded cleanup
+handle. Follow-up `0fd1a61` retains cloneable completion handles independently of
+entry/leader liveness and awaits them outside the manager lock. A new real-process
+test reproduces the old failure for both explicit kill and parser panic, then
+passes with the fix. On Linux it isolates subreaper mode in a test subprocess
+and reaps only the exact owned descendant. The macOS daemon suite now passes
+44 tests; the conditional Linux fixture will be validated by CI. Escalation
+remains bounded: an absent group stops it early; terminal SIGKILL at three
+seconds completes signal dispatch without an unbounded zombie-reaping wait.
+
+### M3.2 protocol acceptance clarification
+
+The brief requires both a negative JSON assertion for `has_session` and a grep
+finding no occurrences. The assertion keeps that literal; the meaningful
+acceptance condition is no production field or constructor use.
+
+Commit `4c1cf93` updates all clients and fixtures to protocol 2, covers all
+13 client and 8 daemon message variants in named MessagePack round-trips,
+and verifies the real socket rejects version 1 with the restart instruction.
+At this point all five milestone commands pass: 93 workspace tests, build,
+clippy with warnings denied, formatting, and every existing PTY smoke stage.
+Session id and requested model are exposed; sub-agent lists remain empty until
+M3.8. The hook acknowledgment behavior deliberately remains in M3.6.
+
+### Codex version target
+
+The user explicitly requested the latest Codex version during implementation.
+On 2026-09-18, `codex --version` and `brew list --cask --versions codex` both
+report 0.155.0. `gh api repos/openai/codex/releases/latest` reports stable
+`rust-v0.155.0`, published 2026-09-17T23:14:43Z
+([official release](https://github.com/openai/codex/releases/tag/rust-v0.155.0)).
+No upgrade is necessary. Runtime verification targets this latest stable
+version; the default launcher remains `codex` on PATH, not a versioned path.
+
+### M3.3 scripted agent harness
+
+Commit `21975cf` adds the non-publishable `anthrex-fake-agent` crate and all ten
+milestone-3 script steps. Its real subprocess tests cover Claude stdin hooks,
+Codex last-argument notify, lifecycle flags, payload defaults, terminal signals,
+input barriers, git commits, version/argument capture, and the unsupported MCP
+step. A 2 MiB payload to a non-reading hook additionally verifies that the
+five-second timeout includes blocked stdin delivery and cleans its owned group.
+
+One brief ambiguity is resolved using product spec section 12: requested argv
+capture happens before `--version` exits, while script loading/execution is
+skipped. The combined case has a regression test. M3.10 will finish its startup
+version probe before accepting window launches, preventing argument-file races.
+
+Red tests failed before implementation, including a corrected timeout assertion
+that rejects an immediate process failure. Green verification passes 5 unit and
+14 integration harness tests, strict crate clippy, all 112 workspace tests,
+formatting, and the check that `target/debug/fake-agent` is built.
+
+Independent review found that test-side subprocess waits could hang before the
+timeout assertions ran. Commit `4ece8a0` adds deadline-based child and pipe waits,
+owned-process-group cleanup, and a real timeout/reaping regression. Scoped review
+confirms the fix; all 5 unit and 15 integration harness tests, strict clippy,
+formatting and diff checks pass.
+
+### M3.4 launcher configuration
+
+Commit `a2e6ea3` splits launchers, registers the ten Claude hooks with quoted
+executable paths, and migrates manager creation to explicit `ManagerConfig`.
+Empty binary overrides use PATH defaults. The real daemon supplies its current
+executable; Codex hook-source detection remains disabled until M3.9 verification.
+Independent spec/quality review approves the change. All 118 workspace tests,
+strict clippy, formatting and an all-target workspace build pass.
+
+### M3.5 pure hook/status engine
+
+Commit `ff09e06` adds the pure Claude payload parser, source acceptance matrix,
+context-aware status rules and exact title vocabulary. Codex-specific title and
+notify transitions remain deferred to M3.10; manager context is wired in M3.6.
+Independent spec/quality review approves the task. All 138 workspace tests,
+strict clippy and formatting pass.
+
+### M3.6 daemon hooks and viewers
+
+Commit `9801308` adds per-window agent facts, applies hooks using the pre-event
+status context, acknowledges ignored hooks, and tracks subscribed viewers.
+Subscription ownership releases counts on replacement, unsubscribe, disconnect,
+malformed frames and cancellation. Real PTY/socket tests cover those paths.
+Independent review found no issues; all 151 workspace tests, strict clippy and
+formatting pass. Sub-agent tracking remains deferred to M3.8.
+
+### M3.7 silent hook CLI and end-to-end status
+
+Commit `9349b24` adds the hidden pre-clap hook path and `ls --json`. A main-thread
+deadline bounds the complete hook operation, including capped stdin, JSON work,
+socket exchange and runtime teardown. Real isolated tests cover acknowledgment
+ordering, shallow response stripping, held-open stdin and Claude status flow.
+All 167 workspace tests, strict clippy and formatting pass; task review approves.
+
+The fallback test retains the planned 3500 ms wait but adds a read-line barrier:
+it observes `Quiet` before releasing `SessionStart`, because the one-second
+ticker can detect a three-second quiet period near four seconds. The idle/bell
+test likewise synchronizes on emitted output before its sustained assertion.
+One supplemental Codex source/Error coverage test was added after the initial
+green run without separate historical red evidence; it passes with the suite.
+
+### M3.8 sub-agent tracker
+
+Commit `2cf6fda` adds the pure tracker and real Claude PTY/socket tests for
+spawn metadata, nesting, tool and permission state, and child-exit failure.
+Metadata-only changes publish updated window information. Independent review
+found no issues; 185 workspace tests, strict clippy, and formatting pass.
+The tracker is 608 lines including its 15 unit tests; its production logic
+remains cohesive. Codex metadata extraction is intentionally left to M3.11.
+
+### M3.9 runtime findings (verified ahead of helper implementation)
+
+Commit `24ba860` implements the verified helpers and seven literal regression
+tests. Independent review found no issues; 192 workspace tests, strict clippy,
+and formatting pass. The evidence below determines the corrected trust identity.
+
+The M3.4 binary was built with `cargo build --workspace --all-targets`. All
+manual runs used fresh `/tmp/anthrex-smoke-*` sockets/data and a separate
+`CODEX_HOME=/tmp/anthrex-m3-codex.LvA6TL`; the model's working directory was
+`/tmp/anthrex-m3-workspace.tHwabh`, not its home. `CODEX_HOME` isolation is
+documented in [OpenAI's environment-variable documentation](https://developers.openai.com/fr-FR/docs/config-file/environment-variables)
+and worked in practice. The empty home requested login;
+only `auth.json` was copied with mode 0600, then deleted after verification.
+The user's real config was never modified. Each probe stopped its own daemon;
+the final process check showed only the pre-existing user daemon. The temporary
+Codex home was then deleted; these notes preserve the relevant evidence.
+
+`codex --version` reports `codex-cli 0.155.0`. `codex --help` lists `-C`, `-c`,
+`-m`, `-s`, and `-a`; `codex features list` reports `hooks` and `multi_agent`
+enabled. Approval-policy choices are now `on-request` and `never`.
+
+The initial flags were:
+
+```text
+-c tui.terminal_title=["status"]
+-c hooks.PreToolUse=[{hooks=[{type="command",command="/tmp/anthrex-m3-codex-hook-log.py"}]}]
+```
+
+The temporary logging hook parsed JSON from stdin and appended it to a local
+JSONL file. Codex displayed a startup review, listing the command, synchronous
+execution, 600-second timeout, and source `/<session-flags>/config.toml`.
+Trusting this known test hook in the UI persisted key
+`/<session-flags>/config.toml:pre_tool_use:0:0` with hash
+`sha256:d58938d41a83039d93b170819dc549e06a9b2f646de44905e017131bfdb30177`.
+
+The installed-tag source explains the differences from decisions 21–22:
+`hooks/src/engine/discovery.rs::config_toml_source_path` uses a synthetic
+session-flags path; `normalize_handler` adds `async: false` and timeout 600;
+`hook_hash` converts the identity through TOML, which omits absent matcher.
+`config/src/fingerprint.rs::version_for_toml` recursively sorts JSON and hashes
+compact bytes. `config/src/overrides.rs::apply_toml_override` splits dotted keys
+on literal periods, requiring the inline-table form below. These files were
+read from `openai/codex`, tag `rust-v0.155.0`, using
+`gh api 'repos/openai/codex/contents/codex-rs/<path>?ref=rust-v0.155.0' --jq .content | base64 -D`.
+
+The verified canonical identity for the logging command is:
+
+```json
+{"event_name":"pre_tool_use","hooks":[{"async":false,"command":"/tmp/anthrex-m3-codex-hook-log.py","timeout":600,"type":"command"}]}
+```
+
+Independent SHA-256 calculation matches the persisted hash exactly. After
+removing the temporary persisted trust entry, restarting with this additional
+flag displayed no review and a real `pwd` call produced a new hook record:
+
+```text
+-c hooks.state={"/<session-flags>/config.toml:pre_tool_use:0:0"={trusted_hash="sha256:d58938d41a83039d93b170819dc549e06a9b2f646de44905e017131bfdb30177"}}
+```
+
+The payload arrived on stdin with `hook_event_name`, `session_id`,
+`tool_name: "Bash"`, and `tool_input: {"command":"pwd"}`. This establishes
+**branch A**. For decision 22's anthrex command, the corrected hashes are
+`sha256:cb3a96262c960578050675ee2bf22680d8aaf909f7941553bae039b36074ad7e`
+(`pre_tool_use`) and
+`sha256:69de55a0df8e7abb3454e8d67f19af0d5797d208837a23f45af6e2617fb3668e`
+(`session_start`). The synthetic source does not depend on `CODEX_HOME`.
+
+Two additional hooks for the same event, one in the temporary user TOML and
+one in its `hooks.json`, were explicitly trusted. One tool call then produced
+all three tagged/untagged records with the same tool-use id. Restarting with
+the computed session trust produced no review and all three hooks ran again:
+the session array preserves both user sources and their trust entries. Codex
+warns when both user representations are present, recommending one per layer;
+this warning was expected in this coexistence test.
+
+Debug logs show whole titles `Starting`, `Working`, and `Ready`, without a
+prefix. A high-effort turn and a background-wait request did not produce
+`Thinking` or `Waiting`; those two remain runtime-unobserved. The installed
+`tui/src/chatwidget/status_surfaces.rs::run_state_status_text` confirms all five
+exact strings, and the action-required prefix applies only when `Spinner` is
+selected, not for `["status"]`. No parser-prefix change is justified; the two
+unobserved states remain an explicit manual verification limitation.
+
+### M3.10 full-launch trust correction
+
+The first complete launch (`a1c5b3a`) exposed a distinction the single-hook
+probe could not: repeated `hooks.state={...}` overrides replace the table
+within the CLI layer. With eight generated hooks and eight temporary logging
+hooks, real Codex reported 15 pending reviews; only generated `Stop` was active.
+The official `config/src/overrides.rs::build_cli_overrides_layer` applies each
+override in sequence, and `apply_toml_override` uses `table.insert` for this key.
+Each adjacent trust override therefore must carry all generated entries so far;
+the final table contains all eight. This preserves the specified pair ordering
+and cross-layer user-hook/trust merging, without editing user configuration or
+bypassing trust. Regression and real-runtime re-verification follow this finding.
+
+Fix `694a77a` adds cumulative trust tables and unit/process-captured argv
+regressions. Re-review is clean. Real Codex now shows one active generated hook
+for each of all eight events; only the eight temporary logging hooks require
+review. The temporary persisted config contains only logging-hook trust, never
+session-flags trust. The status integration's prior full verification passed
+217 tests, build, strict clippy, formatting, and the existing PTY smoke stages.
+The version probe is a focused `lifecycle/codex_version.rs` helper rather than
+embedding process ownership/deadlines in the startup function; exact argv tests
+exercise the public launch boundary in `launch/mod.rs`.
+
+### M3.11 observed sub-agent mapping
+
+Commit `ea23840` implements the exact observed alias and verified field mapping,
+with unit and real PTY/socket regressions. Independent review found no issues;
+workspace tests, strict clippy, and formatting pass. The tests also reject fuzzy
+tool names, ignore unobserved type fields, and never expose the opaque message.
+
+Verification used `python3 -u /tmp/anthrex-m3-codex-probe.py
+/tmp/anthrex-m3-runtime.5UY3dG /tmp/anthrex-m3-workspace.tHwabh`, with a fresh
+daemon/socket per run and `ANTHREX_LOG=debug`. A final restart showed no review
+prompt and reached idle. The real runtime creates its session lazily: its
+`SessionStart` and session ID arrived with the first submitted turn, not at the
+empty composer. All probe daemons/clients were stopped; the temporary home,
+including the mode-0600 auth copy, was deleted and absence verified. Only the
+pre-existing user daemon remained. The known detached-client shutdown issue
+is recorded for M6; the probe helper reaped only its own client PID.
+
+Real Codex 0.155.0 with its selected `gpt-6-astra` model emitted the exact tool
+name `collaborationspawn_agent`, not the public-source prediction `spawn_agent`.
+Decision 38 is refined to accept both exact names. Its input had `task_name`,
+`fork_turns`, `model`, and an opaque `message`, but no type field. Extraction
+uses `task_name` and `model`; type and prompt-label fallback remain unset.
+Opaque messages are neither decoded nor displayed as labels. Other presets
+may therefore retain the safe lifecycle `agent_type` fallback until verified.
+`SubagentStart` and `SubagentStop` provide child `agent_id`, `agent_type`, and
+the root `session_id`; child tool events also carry `agent_id`. No explicit
+parent identifier appears, so FIFO pairing remains best effort as designed.
+The observed child ran Bash to list `README.md`, finished, appeared as `done`
+in `ls --json`, and never replaced the root session ID.
+
+Full observed payloads (only the opaque message value is redacted):
+
+```json
+{"session_id":"01a0b598-36df-77f0-a183-d9552de86572","turn_id":"01a0b598-e93f-7b80-b69c-ed658db897ae","transcript_path":"/private/tmp/anthrex-m3-runtime.5UY3dG/sessions/2026/09/18/rollout-2026-09-18T18-37-26-01a0b598-36df-77f0-a183-d9552de86572.jsonl","cwd":"/private/tmp/anthrex-m3-workspace.tHwabh","hook_event_name":"PreToolUse","model":"gpt-6-astra","permission_mode":"default","tool_name":"collaborationspawn_agent","tool_input":{"task_name":"list_filenames","fork_turns":"none","model":"gpt-6-astra","message":"[opaque runtime value redacted]"},"tool_use_id":"call_6KQGopUXx7OoxsrRwWdoep8w"}
+{"session_id":"01a0b598-36df-77f0-a183-d9552de86572","turn_id":"01a0b599-14ed-79c1-971d-aa5117fbac98","transcript_path":"/private/tmp/anthrex-m3-runtime.5UY3dG/sessions/2026/09/18/rollout-2026-09-18T18-38-23-01a0b599-14ca-75a0-90ee-777f88489171.jsonl","cwd":"/private/tmp/anthrex-m3-workspace.tHwabh","hook_event_name":"SubagentStart","model":"gpt-6-astra","permission_mode":"default","agent_id":"01a0b599-14ca-75a0-90ee-777f88489171","agent_type":"default"}
+{"session_id":"01a0b598-36df-77f0-a183-d9552de86572","turn_id":"01a0b599-14ed-79c1-971d-aa5117fbac98","transcript_path":"/private/tmp/anthrex-m3-runtime.5UY3dG/sessions/2026/09/18/rollout-2026-09-18T18-37-26-01a0b598-36df-77f0-a183-d9552de86572.jsonl","agent_transcript_path":"/private/tmp/anthrex-m3-runtime.5UY3dG/sessions/2026/09/18/rollout-2026-09-18T18-38-23-01a0b599-14ca-75a0-90ee-777f88489171.jsonl","cwd":"/private/tmp/anthrex-m3-workspace.tHwabh","hook_event_name":"SubagentStop","model":"gpt-6-astra","permission_mode":"default","stop_hook_active":false,"agent_id":"01a0b599-14ca-75a0-90ee-777f88489171","agent_type":"default","last_assistant_message":"README.md"}
+```
+
+### M3.12 sidebar and paste safety
+
+Commits `23f2b63` and `63ceea9` add shared variable-height card geometry,
+the working-tool line, and linear paste-marker removal (including nested
+markers). Review caught scalar-width truncation splitting emoji sequences;
+the fix uses ratatui's intact graphemes and adds a rendered modifier/ZWJ
+regression. Re-review is clean. The initial full workspace run passed 222
+tests; the added emoji regression and all 10 UI tests pass, with strict clippy
+and formatting. The existing large `app.rs` is a documented M4 organization
+follow-up, not an unrelated refactor in this milestone.
+
+### M3.13 smoke and contributor documentation
+
+Commit `e781762` adds stage 8b and the fake-agent documentation. Every smoke
+attempt overrides both runtime binaries with the fake agent, including the
+harness RED run. That run detected the missing scripted lifecycle; it is not
+claimed as a production RED, because earlier tasks already implement status.
+The unique-data-directory script then made the stage pass: working/Bash,
+completion toast/done, JSON session metadata, removal, detach, and daemon stop.
+All five required commands pass locally: build, 223 workspace tests, strict
+clippy, formatting, and all PTY smoke stages. No task-owned daemon remained.
+
+### Final verification and handoff
+
+Whole-branch review and macOS/Ubuntu CI are the remaining completion gates.
+The full human interactive checklist above remains outstanding and will be
+listed in the pull request. Automated PTY checks and the documented real-Codex
+probe do not substitute for that human visual/interaction sign-off.

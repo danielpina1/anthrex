@@ -79,3 +79,18 @@ Each open item above is closed by exactly one milestone. Its brief lists the ite
 | M6 Persistence | The lifetime lock file, the unconditional socket unlink at shutdown, and the stale-socket TOCTOU. Umask around bind. Reconnect, including re-subscribe after a dropped Subscribe. `C-b Q` confirms that the shutdown was delivered before quitting. End-to-end `lifecycle::run` start and stop test. Log rotation. Handshake read timeout. |
 | M7 Split panes | SIGWINCH jiggle on attach so full-screen apps repaint. Wheel scrolling for alternate-screen apps without mouse mode. Check `mouse_protocol_encoding()` instead of assuming SGR. |
 | Not scheduled | Kitty keyboard protocol flags. Coalescing redraws. The remaining test-coverage minors from tasks 4, 5, 8 and 13. |
+
+### M3 file organization observation for M4
+
+- `crates/tui/src/app.rs` was already 814 lines before M3.12 and is now 880.
+  When M4 changes client state for the project tree, consider a focused split
+  of input normalization/tests from application transitions. M3 keeps its
+  small pure paste helpers local and does not perform an unrelated refactor.
+
+### M3 verification observations for M6
+
+- In isolated real-Codex probes, `anthrex daemon stop` stopped the owned daemon,
+  but the attached TUI process did not exit within the helper's three-second
+  deadline. The helper killed and reaped only its own client PID. Reproduce and
+  define the expected disconnected-client behavior alongside M6 reconnect and
+  lifecycle tests; this observation does not establish the root cause.
