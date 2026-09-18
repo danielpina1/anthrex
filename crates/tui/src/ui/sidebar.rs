@@ -6,9 +6,52 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use std::ops::Range;
 
-/// Rows per agent card: name line plus detail line.
-pub const CARD_HEIGHT: u16 = 2;
+pub fn card_height(window: &proto::WindowInfo) -> u16 {
+    if window.status == Status::Working && window.tool.is_some() {
+        3
+    } else {
+        2
+    }
+}
+
+fn card_rows(
+    windows: &[proto::WindowInfo],
+) -> impl Iterator<Item = (usize, Range<u16>, &proto::WindowInfo)> {
+    windows
+        .iter()
+        .enumerate()
+        .scan(0u16, |next_row, (index, window)| {
+            let start = *next_row;
+            *next_row = (*next_row).saturating_add(card_height(window));
+            Some((index, start..*next_row, window))
+        })
+}
+
+fn cut_to_width(text: &str, width: usize) -> String {
+    if Span::raw(text).width() <= width {
+        return text.to_owned();
+    }
+    if width == 0 {
+        return String::new();
+    }
+
+    let ellipsis = '…';
+    let content_width = width.saturating_sub(Span::raw(ellipsis.to_string()).width());
+    let mut cut = String::new();
+    let mut used = 0;
+    for character in text.chars() {
+        let character_width = Span::raw(character.to_string()).width();
+        if used + character_width > content_width {
+            break;
+        }
+        cut.push(character);
+        used += character_width;
+    }
+    cut.push(ellipsis);
+    cut
+}
 
 pub fn format_elapsed(secs: u64) -> String {
     if secs < 60 {
@@ -54,8 +97,9 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
+    let list = list_area(inner);
     let mut lines: Vec<Line> = Vec::new();
-    for (i, w) in app.windows.iter().enumerate() {
+    for (i, _, w) in card_rows(&app.windows).take_while(|(_, rows, _)| rows.end <= list.height) {
         let focused = app.focused == Some(w.id);
         let bar = if focused {
             Span::styled("▎", Style::default().fg(theme::ACCENT))
@@ -83,7 +127,19 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             w.status.label(),
             format_elapsed(app.elapsed_secs(w))
         );
-        lines.push(Line::from(vec![bar, Span::styled(detail, theme::muted())]));
+        lines.push(Line::from(vec![
+            bar.clone(),
+            Span::styled(detail, theme::muted()),
+        ]));
+        if w.status == Status::Working
+            && let Some(tool) = &w.tool
+        {
+            let tool = cut_to_width(tool, list.width.saturating_sub(3) as usize);
+            lines.push(Line::from(vec![
+                bar,
+                Span::styled(format!("  {tool}"), theme::muted()),
+            ]));
+        }
     }
     if app.windows.is_empty() {
         lines.push(Line::from(Span::styled(" no agents yet", theme::muted())));
@@ -93,7 +149,6 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         )));
     }
 
-    let list = list_area(inner);
     frame.render_widget(Paragraph::new(lines), list);
     let footer = Rect {
         y: inner.y + inner.height - 1,
@@ -126,7 +181,8 @@ pub fn hit_test(inner: Rect, app: &App, column: u16, row: u16) -> Option<usize> 
     {
         return None;
     }
-    let index = ((row - list.y) / CARD_HEIGHT) as usize;
-    let drawn_cards = (list.height / CARD_HEIGHT) as usize;
-    (index < app.windows.len() && index < drawn_cards).then_some(index)
+    let row = row - list.y;
+    card_rows(&app.windows)
+        .take_while(|(_, rows, _)| rows.end <= list.height)
+        .find_map(|(index, rows, _)| rows.contains(&row).then_some(index))
 }

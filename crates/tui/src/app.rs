@@ -10,6 +10,36 @@ use std::time::{Duration, Instant};
 pub const SCROLLBACK_LINES: usize = 5000;
 pub const TOAST_TTL: Duration = Duration::from_secs(4);
 pub const RESIZE_DEBOUNCE: Duration = Duration::from_millis(30);
+const BRACKETED_PASTE_START: &[u8] = b"\x1b[200~";
+const BRACKETED_PASTE_END: &[u8] = b"\x1b[201~";
+
+fn push_sanitized_paste_byte(bytes: &mut Vec<u8>, byte: u8) {
+    bytes.push(byte);
+    while bytes.ends_with(BRACKETED_PASTE_START) || bytes.ends_with(BRACKETED_PASTE_END) {
+        bytes.truncate(bytes.len() - BRACKETED_PASTE_START.len());
+    }
+}
+
+fn sanitize_paste(text: &str) -> Vec<u8> {
+    let source = text.as_bytes();
+    let mut bytes = Vec::with_capacity(source.len());
+    let mut index = 0;
+    while index < source.len() {
+        if source[index] == b'\r' && source.get(index + 1) == Some(&b'\n') {
+            push_sanitized_paste_byte(&mut bytes, b'\r');
+            index += 2;
+        } else {
+            let byte = if source[index] == b'\n' {
+                b'\r'
+            } else {
+                source[index]
+            };
+            push_sanitized_paste_byte(&mut bytes, byte);
+            index += 1;
+        }
+    }
+    bytes
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
@@ -379,11 +409,11 @@ impl App {
         let bracketed = self.parser.screen().bracketed_paste();
         let mut bytes = Vec::with_capacity(text.len() + 12);
         if bracketed {
-            bytes.extend_from_slice(b"\x1b[200~");
+            bytes.extend_from_slice(BRACKETED_PASTE_START);
         }
-        bytes.extend_from_slice(text.replace("\r\n", "\r").replace('\n', "\r").as_bytes());
+        bytes.extend_from_slice(&sanitize_paste(&text));
         if bracketed {
-            bytes.extend_from_slice(b"\x1b[201~");
+            bytes.extend_from_slice(BRACKETED_PASTE_END);
         }
         vec![Effect::Send(ClientMsg::Input {
             window_id: id,
@@ -786,6 +816,42 @@ mod tests {
             vec![Effect::Send(ClientMsg::Input {
                 window_id: 1,
                 bytes: b"\x1b[200~x\x1b[201~".to_vec()
+            })]
+        );
+    }
+
+    #[test]
+    fn paste_strips_bracketed_paste_markers() {
+        let mut app = app_with(vec![win(1, "a", Status::Idle)]);
+        assert_eq!(
+            app.on_paste("a\x1b[201~b\x1b[200~c".into()),
+            vec![Effect::Send(ClientMsg::Input {
+                window_id: 1,
+                bytes: b"abc".to_vec()
+            })]
+        );
+        assert_eq!(
+            app.on_paste("a\x1b[20\x1b[201~1~b".into()),
+            vec![Effect::Send(ClientMsg::Input {
+                window_id: 1,
+                bytes: b"ab".to_vec()
+            })],
+            "removing an embedded marker must not manufacture a new end marker"
+        );
+
+        app.parser.process(b"\x1b[?2004h");
+        assert_eq!(
+            app.on_paste("a\x1b[201~b\x1b[200~c".into()),
+            vec![Effect::Send(ClientMsg::Input {
+                window_id: 1,
+                bytes: b"\x1b[200~abc\x1b[201~".to_vec()
+            })]
+        );
+        assert_eq!(
+            app.on_paste("a\x1b[20\x1b[201~1~b".into()),
+            vec![Effect::Send(ClientMsg::Input {
+                window_id: 1,
+                bytes: b"\x1b[200~ab\x1b[201~".to_vec()
             })]
         );
     }
