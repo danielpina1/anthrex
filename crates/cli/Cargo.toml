@@ -1,0 +1,21 @@
+[package]
+name = "anthrex"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "A terminal multiplexer for coding agents"
+
+[[bin]]
+name = "anthrex"
+path = "src/main.rs"
+
+[dependencies]
+proto.workspace = true
+daemon.workspace = true
+tui.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+libc.workspace = true
+crossterm.workspace = true

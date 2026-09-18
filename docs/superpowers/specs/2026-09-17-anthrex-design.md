@@ -146,7 +146,8 @@ $SHELL -l     (cwd = the window's cwd)
 
 - Spawn with `portable-pty` at the size the creating client reports.
 - One blocking reader thread per window reads the master and sends `Bytes` chunks to an async task. That task feeds the daemon's `vt100::Parser` (no scrollback, sized to the PTY), then publishes the chunk on a `tokio::sync::broadcast` channel. After each chunk it checks the parser for a bell-count change and a title change and forwards those to the status engine, along with an output-activity event.
-- Input from clients is written to the master through a mutex-guarded writer.
+- Input from clients is handed to a per-window writer thread through a bounded channel; enqueueing never blocks, and a full queue is reported to the client as an error. A PTY master write can stall for seconds when the child is not reading its stdin, so no request path may perform one.
+- A snapshot of a window is `\x1b[?1049h` when the screen is the alternate one, followed by the parser's `state_formatted()` (contents plus input modes).
 - Resize calls `MasterPty::resize` and resizes the daemon's parser. Multiple subscribers: last resize wins.
 - A blocking thread waits on the child; on exit it emits `ChildExited(code)`.
 - Kill sends SIGTERM to the child pid, waits up to 3 s, then SIGKILL.
@@ -234,7 +235,7 @@ Daemon → client:
 | `Welcome` | daemon_version, windows: Vec<WindowInfo> |
 | `WindowsChanged` | windows: Vec<WindowInfo> (throttled to one per 50 ms) |
 | `Created` | window_id (reply to CreateWindow) |
-| `Snapshot` | window_id, cols, rows, bytes (parser `contents_formatted()` followed by `state_formatted()`) |
+| `Snapshot` | window_id, cols, rows, bytes (`\x1b[?1049h` when the screen is the alternate one, then the parser's `state_formatted()`, which already carries the contents and the input modes) |
 | `Output` | window_id, bytes |
 | `Error` | request, message |
 | `Bye` | reason |
