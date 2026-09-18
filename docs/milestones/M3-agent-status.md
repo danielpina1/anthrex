@@ -1051,7 +1051,11 @@ clippy, formatting, and all PTY smoke stages. No task-owned daemon remained.
 
 ### Final verification and handoff
 
-Whole-branch review and macOS/Ubuntu CI are the remaining completion gates.
+Whole-branch review and its scoped re-review are complete. Commit `af7437c`
+addresses all four findings: the paste-boundary documentation, blank script
+lines, unused test stdin, and fragmented output-marker matching. All five
+required local commands pass after that wave, including 227 workspace tests.
+Hosted macOS/Ubuntu CI remains the final completion gate.
 The full human interactive checklist above remains outstanding and will be
 listed in the pull request. Automated PTY checks and the documented real-Codex
 probe do not substitute for that human visual/interaction sign-off.
