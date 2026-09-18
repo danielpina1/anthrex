@@ -2,5 +2,6 @@
 
 pub mod launch;
 pub mod manager;
+pub mod server;
 pub mod status;
 pub mod window;
