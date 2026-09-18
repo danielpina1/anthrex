@@ -1,4 +1,4 @@
-use daemon::manager::WindowManager;
+use daemon::manager::{ManagerConfig, WindowManager};
 use proto::{Runtime, Status, WindowInfo, WindowSpec};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,7 +17,10 @@ fn spec(name: &str) -> WindowSpec {
 
 /// A manager whose events are pumped by a background task, like the daemon does.
 fn manager() -> Arc<WindowManager> {
-    let (m, mut events) = WindowManager::new("/tmp/unused.sock".into(), "/bin/sh".into());
+    let (m, mut events) = WindowManager::new(ManagerConfig::new(
+        "/tmp/unused.sock".into(),
+        "/bin/sh".into(),
+    ));
     let pump = m.clone();
     tokio::spawn(async move {
         while let Some((id, ev)) = events.recv().await {
@@ -125,8 +128,10 @@ async fn kill_terminates_and_remove_forgets() {
     let m = manager();
     let id = m.create(spec("victim"), 80, 24).unwrap().id;
     wait_until("shell started", || find(&m, id).status != Status::Starting).await;
+    let started = Instant::now();
     m.kill(id).unwrap();
     wait_until("exited", || find(&m, id).status == Status::Exited).await;
+    assert!(started.elapsed() < Duration::from_millis(1500));
     let info = find(&m, id);
     assert!(info.exit.is_some());
     m.remove(id).unwrap();
@@ -191,15 +196,16 @@ async fn a_program_that_ignores_stdin_never_blocks_write_input_or_list() {
             break;
         }
     }
-    // A burst alone only outpaces the writer. Give it time to drain, then probe
-    // with empty chunks so the check cannot create more byte pressure itself.
+    // A burst alone only outpaces the writer. Give it time to drain, then retry
+    // the same chunk: a byte-full queue still accepts empty chunks. A successful
+    // retry stops the probe, so sustained failures cannot add more pressure.
     let mut confirmed = false;
     while let Some(since) = full_since {
         if Instant::now() >= deadline {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
-        if !write(b"") {
+        if !write(&chunk) {
             break;
         }
         if since.elapsed() >= Duration::from_millis(200) {
@@ -278,9 +284,223 @@ async fn shutdown_ends_every_window() {
         m.list().iter().all(|w| w.status != Status::Starting)
     })
     .await;
+    let started = Instant::now();
     m.shutdown().await;
+    assert!(started.elapsed() < Duration::from_millis(1500));
     wait_until("both exited", || {
         m.list().iter().all(|w| w.status == Status::Exited)
     })
     .await;
+}
+
+#[tokio::test]
+async fn kill_ends_an_interactive_shell_within_a_second() {
+    let m = manager();
+    let id = m.create(spec("quick-kill"), 80, 24).unwrap().id;
+    wait_until("shell started", || find(&m, id).status != Status::Starting).await;
+    let started = Instant::now();
+    m.kill(id).unwrap();
+    wait_until("exited", || find(&m, id).status == Status::Exited).await;
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[tokio::test]
+async fn the_first_exit_reason_is_preserved() {
+    use daemon::window::WindowEvent;
+    let m = manager();
+    let id = m.create(spec("first-exit"), 80, 24).unwrap().id;
+    m.handle_event(
+        id,
+        WindowEvent::Exited {
+            code: Some(7),
+            signal: None,
+        },
+    );
+    m.handle_event(
+        id,
+        WindowEvent::Exited {
+            code: Some(9),
+            signal: None,
+        },
+    );
+    let exit = find(&m, id).exit.unwrap();
+    m.write_input(id, b"exit\n").unwrap();
+    assert_eq!(exit.code, Some(7));
+    assert_eq!(exit.reason, "exited with code 7");
+}
+
+#[tokio::test]
+async fn a_parser_panic_ends_the_child_and_keeps_its_reason() {
+    use daemon::window::WindowEvent;
+    let m = manager();
+    let id = m.create(spec("parser-panic"), 80, 24).unwrap().id;
+    wait_until("shell started", || find(&m, id).status != Status::Starting).await;
+    let pid = m.child_pid(id).unwrap().unwrap() as libc::pid_t;
+    let mut changed = m.watch();
+    m.handle_event(id, WindowEvent::ParserPanicked("boom".into()));
+    tokio::time::timeout(Duration::from_secs(1), changed.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(find(&m, id).status, Status::Exited);
+    assert_eq!(
+        find(&m, id).exit.unwrap().reason,
+        "screen parser panicked: boom"
+    );
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let gone = loop {
+        // SAFETY: this PID belongs to the window created by this test.
+        if unsafe { libc::kill(pid, 0) } == -1
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        {
+            break true;
+        }
+        if Instant::now() >= deadline {
+            break false;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    if !gone {
+        // SAFETY: ensure a failed regression leaves no test-owned child behind.
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+        }
+    }
+    assert!(gone, "parser panic left its child alive");
+    // Deliver a later wait result explicitly: the assertion does not depend on a
+    // fixed sleep to infer whether the waiter has already reported its exit.
+    m.handle_event(
+        id,
+        WindowEvent::Exited {
+            code: Some(0),
+            signal: None,
+        },
+    );
+    assert_eq!(
+        find(&m, id).exit.unwrap().reason,
+        "screen parser panicked: boom"
+    );
+}
+
+#[tokio::test]
+async fn shutdown_waits_for_cleanup_after_the_group_leader_exits() {
+    // Isolate Linux's subreaper setting from the other concurrently running tests.
+    // Our test process adopts and reaps only the descendant it explicitly created.
+    #[cfg(target_os = "linux")]
+    {
+        const CHILD_ENV: &str = "ANTHREX_TEST_GROUP_REAPER";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let output = tokio::task::spawn_blocking(|| {
+                std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "shutdown_waits_for_cleanup_after_the_group_leader_exits",
+                        "--nocapture",
+                    ])
+                    .env(CHILD_ENV, "1")
+                    .output()
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        // SAFETY: this isolated test process becomes a reaper for its own descendants.
+        assert_eq!(
+            unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) },
+            0
+        );
+    }
+
+    let mut premature_returns = Vec::new();
+    for parser_panic in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("descendant.pid");
+        let term_file = dir.path().join("term");
+        let descendant = dir.path().join("descendant.sh");
+        let leader = dir.path().join("leader.sh");
+        std::fs::write(&descendant, format!(
+            "trap '' HUP\ntrap 'printf term > \"{}\"; exit 0' TERM\nprintf '%s' \"$$\" > '{}'\nwhile :; do :; done\n",
+            term_file.display(), pid_file.display())).unwrap();
+        std::fs::write(
+            &leader,
+            format!(
+                "trap 'exit 0' HUP\n/bin/sh '{}' &\nwait\n",
+                descendant.display()
+            ),
+        )
+        .unwrap();
+        let (m, mut events) = WindowManager::new(ManagerConfig::new(
+            "/tmp/unused.sock".into(),
+            "/bin/sh".into(),
+        ));
+        let id = m.create(spec("cleanup-descendant"), 80, 24).unwrap().id;
+        m.write_input(
+            id,
+            format!("exec /bin/sh '{}'\n", leader.display()).as_bytes(),
+        )
+        .unwrap();
+        let mut descendant_pid = None;
+        wait_until("descendant traps ready", || {
+            descendant_pid = std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|value| value.parse::<libc::pid_t>().ok());
+            descendant_pid.is_some()
+        })
+        .await;
+        let descendant_pid = descendant_pid.unwrap();
+        let reaper = tokio::spawn(async move {
+            wait_until("owned descendant reaped", || {
+                #[cfg(target_os = "linux")]
+                // SAFETY: wait only for the descendant PID written by our fixture.
+                if unsafe { libc::waitpid(descendant_pid, std::ptr::null_mut(), libc::WNOHANG) }
+                    == descendant_pid
+                {
+                    return true;
+                }
+                // SAFETY: this only probes the descendant started by this test.
+                (unsafe { libc::kill(descendant_pid, 0) }) == -1
+                    && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+            })
+            .await;
+        });
+        if parser_panic {
+            m.handle_event(
+                id,
+                daemon::window::WindowEvent::ParserPanicked("boom".into()),
+            );
+        } else {
+            m.kill(id).unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let (event_id, event) = events.recv().await.unwrap();
+                let exited = matches!(event, daemon::window::WindowEvent::Exited { .. });
+                m.handle_event(event_id, event);
+                if exited {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("leader did not exit on HUP");
+        m.shutdown().await;
+        let term_delivered_before_return = term_file.exists();
+        // Clean up before asserting even on the pre-fix path: its detached worker
+        // still sends TERM while this test runtime remains alive.
+        reaper.await.unwrap();
+        if !term_delivered_before_return {
+            premature_returns.push(parser_panic);
+        }
+    }
+    assert!(
+        premature_returns.is_empty(),
+        "shutdown returned before descendant cleanup for parser_panic={premature_returns:?}"
+    );
 }

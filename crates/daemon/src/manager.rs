@@ -1,35 +1,84 @@
 //! Owns every window, applies status events, and broadcasts the window list.
 
+use crate::agent_state::AgentState;
+use crate::hooks;
 use crate::launch::{self, LaunchContext};
-use crate::status::{self, StatusEvent};
+use crate::status::{self, StatusContext, StatusEvent};
 use crate::window::{Attachment, Window, WindowEvent};
-use proto::{ExitInfo, Status, WindowInfo, WindowSpec};
+use proto::{ExitInfo, HookSource, Status, WindowInfo, WindowSpec};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch};
 
+#[derive(Debug, Clone)]
+pub struct ManagerConfig {
+    pub socket_path: PathBuf,
+    pub shell: String,
+    pub exe: PathBuf,
+    pub claude_bin: String,
+    pub codex_bin: String,
+    pub codex_hook_source: Option<String>,
+}
+
+impl ManagerConfig {
+    pub fn new(socket_path: PathBuf, shell: String) -> Self {
+        Self {
+            socket_path,
+            shell,
+            exe: PathBuf::from("anthrex"),
+            claude_bin: "claude".to_string(),
+            codex_bin: "codex".to_string(),
+            codex_hook_source: None,
+        }
+    }
+
+    pub fn from_vars(
+        socket_path: PathBuf,
+        shell: String,
+        exe: PathBuf,
+        var: impl Fn(&str) -> Option<String>,
+    ) -> Self {
+        let nonempty = |key| var(key).filter(|value| !value.is_empty());
+        Self {
+            socket_path,
+            shell,
+            exe,
+            claude_bin: nonempty("ANTHREX_CLAUDE_BIN").unwrap_or_else(|| "claude".to_string()),
+            codex_bin: nonempty("ANTHREX_CODEX_BIN").unwrap_or_else(|| "codex".to_string()),
+            codex_hook_source: None,
+        }
+    }
+
+    pub fn from_env(socket_path: PathBuf, shell: String) -> anyhow::Result<Self> {
+        let exe = std::env::current_exe()?;
+        let mut config = Self::from_vars(socket_path, shell, exe, |key| std::env::var(key).ok());
+        config.codex_hook_source = launch::codex::default_hook_source();
+        Ok(config)
+    }
+}
+
 /// A Working window with no output for this long becomes Idle.
 pub const QUIET_AFTER: Duration = Duration::from_secs(3);
-/// Time between SIGTERM and SIGKILL.
-pub const KILL_GRACE: Duration = Duration::from_secs(3);
+pub use crate::process::{HUP_GRACE, KILL_GRACE};
 
 struct Entry {
     id: u32,
     name: String,
     spec: WindowSpec,
     status: Status,
-    tool: Option<String>,
+    state: AgentState,
+    viewers: u32,
     since: Instant,
     last_output: Instant,
-    session_id: Option<String>,
     exit: Option<ExitInfo>,
+    child_alive: bool,
     window: Window,
 }
 
 impl Entry {
-    fn info(&self) -> WindowInfo {
+    fn info(&self, now: Instant) -> WindowInfo {
         WindowInfo {
             id: self.id,
             name: self.name.clone(),
@@ -37,17 +86,23 @@ impl Entry {
             cwd: self.spec.cwd.clone(),
             branch: self.spec.worktree_branch.clone(),
             status: self.status,
-            tool: self.tool.clone(),
+            tool: self.state.tool.clone(),
             since_secs: self.since.elapsed().as_secs(),
             last_output_secs: self.last_output.elapsed().as_secs(),
-            has_session: self.session_id.is_some(),
+            session_id: self.state.session_id.clone(),
+            model: self.spec.model.clone(),
+            subagents: self.state.subagents.infos(now),
             exit: self.exit.clone(),
         }
     }
 
     /// Applies a status event; returns whether the status changed.
     fn apply(&mut self, event: StatusEvent) -> bool {
-        let next = status::next(self.status, event, self.spec.runtime);
+        self.apply_with_context(event, self.state.context(self.viewers > 0))
+    }
+
+    fn apply_with_context(&mut self, event: StatusEvent, ctx: StatusContext) -> bool {
+        let next = status::next(self.status, event, self.spec.runtime, ctx);
         if next == self.status {
             return false;
         }
@@ -60,33 +115,49 @@ impl Entry {
 struct Inner {
     next_id: u32,
     entries: BTreeMap<u32, Entry>,
+    // Cleanup owns a group beyond the leader's exit and even after window removal.
+    cleanups: BTreeMap<u32, watch::Receiver<bool>>,
+}
+
+impl Inner {
+    fn start_cleanup(&mut self, id: u32) -> anyhow::Result<()> {
+        if self.cleanups.contains_key(&id) {
+            return Ok(());
+        }
+        let entry = self
+            .entries
+            .get(&id)
+            .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
+        if entry.child_alive
+            && let Some(pid) = entry.window.pid()
+        {
+            self.cleanups.insert(id, crate::process::escalate(pid)?);
+        }
+        Ok(())
+    }
 }
 
 pub struct WindowManager {
     inner: Mutex<Inner>,
     changed: watch::Sender<Vec<WindowInfo>>,
     events: mpsc::UnboundedSender<(u32, WindowEvent)>,
-    socket_path: PathBuf,
-    shell: String,
+    config: ManagerConfig,
 }
 
 impl WindowManager {
     /// Returns the manager and the event receiver the caller must pump into `handle_event`.
-    pub fn new(
-        socket_path: PathBuf,
-        shell: String,
-    ) -> (Arc<Self>, mpsc::UnboundedReceiver<(u32, WindowEvent)>) {
+    pub fn new(config: ManagerConfig) -> (Arc<Self>, mpsc::UnboundedReceiver<(u32, WindowEvent)>) {
         let (events, events_rx) = mpsc::unbounded_channel();
         let (changed, _) = watch::channel(Vec::new());
         let manager = Arc::new(Self {
             inner: Mutex::new(Inner {
                 next_id: 1,
                 entries: BTreeMap::new(),
+                cleanups: BTreeMap::new(),
             }),
             changed,
             events,
-            socket_path,
-            shell,
+            config,
         });
         (manager, events_rx)
     }
@@ -96,16 +167,23 @@ impl WindowManager {
     }
 
     pub fn list(&self) -> Vec<WindowInfo> {
+        let now = Instant::now();
         crate::lock(&self.inner)
             .entries
             .values()
-            .map(Entry::info)
+            .map(|entry| entry.info(now))
             .collect()
     }
 
     fn publish(&self, inner: &Inner) {
-        self.changed
-            .send_replace(inner.entries.values().map(Entry::info).collect());
+        let now = Instant::now();
+        self.changed.send_replace(
+            inner
+                .entries
+                .values()
+                .map(|entry| entry.info(now))
+                .collect(),
+        );
     }
 
     pub fn create(&self, spec: WindowSpec, cols: u16, rows: u16) -> anyhow::Result<WindowInfo> {
@@ -136,8 +214,12 @@ impl WindowManager {
             &LaunchContext {
                 window_id: id,
                 name: &name,
-                socket_path: &self.socket_path,
-                shell: &self.shell,
+                socket_path: &self.config.socket_path,
+                shell: &self.config.shell,
+                exe: &self.config.exe,
+                claude_bin: &self.config.claude_bin,
+                codex_bin: &self.config.codex_bin,
+                codex_hook_source: self.config.codex_hook_source.as_deref(),
             },
         );
         let window = Window::spawn(id, &plan, cols.max(1), rows.max(1), self.events.clone())?;
@@ -148,34 +230,87 @@ impl WindowManager {
             name,
             spec,
             status: Status::Starting,
-            tool: None,
+            state: AgentState::default(),
+            viewers: 0,
             since: now,
             last_output: now,
-            session_id: None,
             exit: None,
+            child_alive: true,
             window,
         };
-        let info = entry.info();
+        let info = entry.info(now);
         inner.entries.insert(id, entry);
         tracing::info!(id, name = %info.name, runtime = %info.runtime, "window created");
         self.publish(&inner);
         Ok(info)
     }
 
+    pub fn handle_hook(
+        &self,
+        id: u32,
+        source: HookSource,
+        payload: &serde_json::Value,
+    ) -> anyhow::Result<()> {
+        let mut inner = crate::lock(&self.inner);
+        let entry = inner
+            .entries
+            .get_mut(&id)
+            .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
+        if !hooks::accepts(entry.spec.runtime, source) {
+            tracing::debug!(id, ?source, "ignored hook source for runtime");
+            return Ok(());
+        }
+        let Some(hook) = hooks::parse(source, payload) else {
+            if tracing::enabled!(tracing::Level::DEBUG) {
+                let mut payload = payload.to_string();
+                let mut end = payload.len().min(2048);
+                while !payload.is_char_boundary(end) {
+                    end -= 1;
+                }
+                payload.truncate(end);
+                tracing::debug!(id, ?source, %payload, "ignored unparseable hook");
+            }
+            return Ok(());
+        };
+        // SessionStart must see the flags from before this event is accepted.
+        let ctx = entry.state.context(entry.viewers > 0);
+        let now = Instant::now();
+        let outcome = entry.state.on_hook(entry.spec.runtime, &hook, now);
+        let status_changed = outcome
+            .status_event
+            .is_some_and(|event| entry.apply_with_context(event, ctx));
+        if status_changed || outcome.changed {
+            self.publish(&inner);
+        }
+        Ok(())
+    }
+
     pub fn handle_event(&self, id: u32, event: WindowEvent) {
+        let parser_panicked = matches!(&event, WindowEvent::ParserPanicked(_));
         let mut inner = crate::lock(&self.inner);
         let Some(entry) = inner.entries.get_mut(&id) else {
             return;
         };
+        let now = Instant::now();
         let changed = match event {
             WindowEvent::Output => {
-                entry.last_output = Instant::now();
+                entry.last_output = now;
                 entry.apply(StatusEvent::Output)
             }
             WindowEvent::Bell => entry.apply(StatusEvent::Bell),
             WindowEvent::Title(title) => {
-                tracing::debug!(id, %title, "window title");
-                false
+                let ctx = entry.state.context(entry.viewers > 0);
+                entry
+                    .state
+                    .on_title(entry.spec.runtime, &title)
+                    .is_some_and(|event| entry.apply_with_context(event, ctx))
+            }
+            WindowEvent::ParserPanicked(reason) => {
+                entry.exit.get_or_insert_with(|| ExitInfo {
+                    code: None,
+                    reason: format!("screen parser panicked: {reason}"),
+                });
+                entry.apply(StatusEvent::Exited)
             }
             WindowEvent::Exited { code, signal } => {
                 let reason = match (&signal, code) {
@@ -184,10 +319,16 @@ impl WindowManager {
                     (None, None) => "exited".to_string(),
                 };
                 tracing::info!(id, %reason, "window exited");
-                entry.exit = Some(ExitInfo { code, reason });
-                entry.apply(StatusEvent::Exited)
+                entry.child_alive = false;
+                entry.exit.get_or_insert(ExitInfo { code, reason });
+                let status_changed = entry.apply(StatusEvent::Exited);
+                let subagents_changed = entry.state.subagents.child_exited(now);
+                status_changed || subagents_changed
             }
         };
+        if parser_panicked && let Err(error) = inner.start_cleanup(id) {
+            tracing::error!(id, %error, "parser panic cleanup failed");
+        }
         if changed {
             self.publish(&inner);
         }
@@ -195,10 +336,18 @@ impl WindowManager {
 
     /// Called once a second by the daemon: Working windows that went quiet become Idle.
     pub fn tick(&self) {
+        let now = Instant::now();
         let mut inner = crate::lock(&self.inner);
+        let Inner {
+            entries, cleanups, ..
+        } = &mut *inner;
+        cleanups.retain(|id, done| entries.contains_key(id) || !*done.borrow());
         let mut changed = false;
         for entry in inner.entries.values_mut() {
-            if entry.status == Status::Working && entry.last_output.elapsed() >= QUIET_AFTER {
+            changed |= entry.state.subagents.prune(now);
+            if entry.status == Status::Working
+                && now.saturating_duration_since(entry.last_output) >= QUIET_AFTER
+            {
                 changed |= entry.apply(StatusEvent::Quiet);
             }
         }
@@ -226,7 +375,9 @@ impl WindowManager {
             .get_mut(&id)
             .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
         entry.window.write_input(bytes)?;
-        if entry.apply(StatusEvent::InputSent) {
+        let status_changed = entry.apply(StatusEvent::InputSent);
+        let subagents_changed = entry.state.subagents.input_sent();
+        if status_changed || subagents_changed {
             self.publish(&inner);
         }
         Ok(())
@@ -240,6 +391,10 @@ impl WindowManager {
         self.with_entry(id, |e| e.window.attach())
     }
 
+    pub fn child_pid(&self, id: u32) -> anyhow::Result<Option<u32>> {
+        self.with_entry(id, |e| e.window.pid())
+    }
+
     pub fn snapshot(&self, id: u32) -> anyhow::Result<(Vec<u8>, u16, u16)> {
         self.with_entry(id, |e| {
             let (cols, rows) = e.window.size();
@@ -250,34 +405,27 @@ impl WindowManager {
     /// A client started viewing this window.
     pub fn focus(&self, id: u32) {
         let mut inner = crate::lock(&self.inner);
-        if let Some(entry) = inner.entries.get_mut(&id)
-            && entry.apply(StatusEvent::Focused)
-        {
-            self.publish(&inner);
+        if let Some(entry) = inner.entries.get_mut(&id) {
+            entry.viewers = entry.viewers.saturating_add(1);
+            if entry.apply(StatusEvent::Focused) {
+                self.publish(&inner);
+            }
         }
     }
 
-    fn signal(&self, id: u32, sig: i32) -> anyhow::Result<()> {
-        let inner = crate::lock(&self.inner);
-        let entry = inner
-            .entries
-            .get(&id)
-            .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
-        if entry.status == Status::Exited {
-            return Ok(());
+    /// A client stopped viewing this window.
+    pub fn unfocus(&self, id: u32) {
+        let mut inner = crate::lock(&self.inner);
+        if let Some(entry) = inner.entries.get_mut(&id) {
+            entry.viewers = entry.viewers.saturating_sub(1);
         }
-        entry.window.signal(sig)
     }
 
-    /// SIGTERM now, SIGKILL after `KILL_GRACE` if the child is still alive.
+    /// SIGHUP now, SIGTERM after one second, SIGKILL after three seconds.
     pub fn kill(self: &Arc<Self>, id: u32) -> anyhow::Result<()> {
-        self.signal(id, libc::SIGTERM)?;
-        let me = Arc::clone(self);
-        std::thread::spawn(move || {
-            std::thread::sleep(KILL_GRACE);
-            let _ = me.signal(id, libc::SIGKILL);
-        });
-        Ok(())
+        let mut inner = crate::lock(&self.inner);
+        anyhow::ensure!(inner.entries.contains_key(&id), "no window with id {id}");
+        inner.start_cleanup(id)
     }
 
     /// Kills immediately and forgets the window.
@@ -287,8 +435,8 @@ impl WindowManager {
             .entries
             .remove(&id)
             .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
-        if entry.status != Status::Exited {
-            let _ = entry.window.signal(libc::SIGKILL);
+        if entry.child_alive {
+            let _ = entry.window.signal_group(libc::SIGKILL);
         }
         drop(entry);
         tracing::info!(id, "window removed");
@@ -314,26 +462,51 @@ impl WindowManager {
         Ok(())
     }
 
-    /// SIGTERM every live window, wait up to `KILL_GRACE`, then SIGKILL the rest.
+    /// Run the same bounded group escalation for every live child concurrently.
     pub async fn shutdown(&self) {
-        let live: Vec<u32> = self
-            .list()
-            .into_iter()
-            .filter(|w| w.status != Status::Exited)
-            .map(|w| w.id)
-            .collect();
-        for id in &live {
-            let _ = self.signal(*id, libc::SIGTERM);
-        }
-        let deadline = Instant::now() + KILL_GRACE;
-        while Instant::now() < deadline {
-            if self.list().iter().all(|w| w.status == Status::Exited) {
-                return;
+        let pending: Vec<_> = {
+            let mut inner = crate::lock(&self.inner);
+            let ids: Vec<_> = inner.entries.keys().copied().collect();
+            for id in ids {
+                if let Err(error) = inner.start_cleanup(id) {
+                    tracing::error!(id, %error, "shutdown cleanup failed");
+                }
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            inner.cleanups.values().cloned().collect()
+        };
+        for mut done in pending {
+            let _ = done.wait_for(|finished| *finished).await;
         }
-        for id in &live {
-            let _ = self.signal(*id, libc::SIGKILL);
-        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn bin_overrides_come_from_the_environment_variables() {
+        let vars = HashMap::from([
+            ("ANTHREX_CLAUDE_BIN", "/opt/agents/claude"),
+            ("ANTHREX_CODEX_BIN", "/opt/agents/codex"),
+        ]);
+        let config = ManagerConfig::from_vars(
+            "/tmp/a.sock".into(),
+            "/bin/zsh".into(),
+            "/opt/anthrex/bin/anthrex".into(),
+            |key| vars.get(key).map(|value| (*value).to_string()),
+        );
+        assert_eq!(config.claude_bin, "/opt/agents/claude");
+        assert_eq!(config.codex_bin, "/opt/agents/codex");
+
+        let defaults = ManagerConfig::from_vars(
+            "/tmp/a.sock".into(),
+            "/bin/zsh".into(),
+            "/opt/anthrex/bin/anthrex".into(),
+            |key| (key == "ANTHREX_CLAUDE_BIN").then(String::new),
+        );
+        assert_eq!(defaults.claude_bin, "claude");
+        assert_eq!(defaults.codex_bin, "codex");
     }
 }

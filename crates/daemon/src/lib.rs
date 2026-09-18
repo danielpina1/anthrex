@@ -19,11 +19,15 @@ pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, 
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+pub mod agent_state;
+pub mod hooks;
 pub mod launch;
 pub mod lifecycle;
 pub mod manager;
+mod process;
 pub mod server;
 pub mod status;
+pub mod subagents;
 pub mod window;
 
 pub use lifecycle::{DaemonOptions, run};

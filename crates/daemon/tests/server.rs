@@ -1,8 +1,8 @@
-use daemon::manager::WindowManager;
+use daemon::manager::{ManagerConfig, WindowManager};
 use daemon::server::serve;
 use proto::{
-    ClientKind, ClientMsg, DaemonMsg, PROTO_VERSION, Runtime, Status, WindowSpec, read_frame,
-    write_frame,
+    ClientKind, ClientMsg, DaemonMsg, HookSource, PROTO_VERSION, Runtime, Status, WindowSpec,
+    read_frame, write_frame,
 };
 use std::path::PathBuf;
 use std::time::Duration;
@@ -14,13 +14,29 @@ struct TestDaemon {
     _dir: tempfile::TempDir,
     socket: PathBuf,
     shutdown: CancellationToken,
+    manager: std::sync::Arc<WindowManager>,
+}
+
+impl Drop for TestDaemon {
+    fn drop(&mut self) {
+        self.shutdown.cancel();
+        for window in self.manager.list() {
+            let _ = self.manager.remove(window.id);
+        }
+    }
 }
 
 async fn start_daemon() -> TestDaemon {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("d.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-    let (manager, mut events) = WindowManager::new(socket.clone(), "/bin/sh".into());
+    use std::os::unix::fs::PermissionsExt;
+    let stub = dir.path().join("stub.sh");
+    std::fs::write(&stub, "#!/bin/sh\nexec sleep 300\n").unwrap();
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut config = ManagerConfig::new(socket.clone(), "/bin/sh".into());
+    config.claude_bin = stub.to_str().unwrap().into();
+    let (manager, mut events) = WindowManager::new(config);
     let pump = manager.clone();
     tokio::spawn(async move {
         while let Some((id, ev)) = events.recv().await {
@@ -28,11 +44,12 @@ async fn start_daemon() -> TestDaemon {
         }
     });
     let shutdown = CancellationToken::new();
-    tokio::spawn(serve(listener, manager, shutdown.clone()));
+    tokio::spawn(serve(listener, manager.clone(), shutdown.clone()));
     TestDaemon {
         _dir: dir,
         socket,
         shutdown,
+        manager,
     }
 }
 
@@ -103,9 +120,9 @@ async fn handshake_returns_welcome_with_empty_window_list() {
 }
 
 #[tokio::test]
-async fn version_mismatch_is_rejected() {
+async fn a_version_1_client_is_rejected() {
     let d = start_daemon().await;
-    let (_c, reply) = Client::connect(&d, PROTO_VERSION + 1).await;
+    let (_c, reply) = Client::connect(&d, 1).await;
     match reply {
         DaemonMsg::Error { request, message } => {
             assert_eq!(request, "hello");
@@ -117,6 +134,7 @@ async fn version_mismatch_is_rejected() {
 
 #[tokio::test]
 async fn create_subscribe_input_and_kill_flow() {
+    let started = std::time::Instant::now();
     let d = start_daemon().await;
     let (mut c, _) = Client::connect(&d, PROTO_VERSION).await;
 
@@ -185,6 +203,7 @@ async fn create_subscribe_input_and_kill_flow() {
     .await;
     c.recv_until(|m| matches!(m, DaemonMsg::Ack { request } if request == "remove"))
         .await;
+    assert!(started.elapsed() < Duration::from_millis(1500));
 }
 
 #[tokio::test]
@@ -222,4 +241,153 @@ async fn shutdown_request_says_bye_and_stops_serving() {
     tokio::time::timeout(Duration::from_secs(2), d.shutdown.cancelled())
         .await
         .expect("token cancelled");
+}
+
+impl Client {
+    async fn hook(&mut self, id: u32, name: &str) -> DaemonMsg {
+        self.send(ClientMsg::HookEvent {
+            window_id: id,
+            source: HookSource::Claude,
+            payload: serde_json::json!({"hook_event_name":name}),
+        })
+        .await;
+        self.recv_until(|m| matches!(m, DaemonMsg::Ack { request } | DaemonMsg::Error { request, .. } if request == "hook")).await
+    }
+
+    async fn subscribe(&mut self, id: u32) {
+        self.send(ClientMsg::Subscribe {
+            window_id: id,
+            cols: 80,
+            rows: 24,
+        })
+        .await;
+        self.recv_until(|m| matches!(m, DaemonMsg::Snapshot { window_id, .. } if *window_id == id))
+            .await;
+    }
+
+    async fn unsubscribe(&mut self) {
+        self.send(ClientMsg::Unsubscribe).await;
+        self.recv_until(|m| matches!(m, DaemonMsg::Ack { request } if request == "unsubscribe"))
+            .await;
+    }
+}
+
+async fn claude_window(d: &TestDaemon, name: &str) -> u32 {
+    let manager = d.manager.clone();
+    let mut spec = shell_spec(name);
+    spec.runtime = Runtime::Claude;
+    tokio::task::spawn_blocking(move || manager.create(spec, 80, 24).unwrap().id)
+        .await
+        .unwrap()
+}
+
+async fn assert_completion(d: &TestDaemon, client: &mut Client, id: u32, expected: Status) {
+    assert!(matches!(
+        client.hook(id, "UserPromptSubmit").await,
+        DaemonMsg::Ack { .. }
+    ));
+    assert!(matches!(
+        client.hook(id, "Stop").await,
+        DaemonMsg::Ack { .. }
+    ));
+    assert_eq!(
+        d.manager.list().iter().find(|w| w.id == id).unwrap().status,
+        expected
+    );
+}
+
+#[tokio::test]
+async fn hook_events_are_acknowledged() {
+    let d = start_daemon().await;
+    let manager = d.manager.clone();
+    let id = tokio::task::spawn_blocking(move || {
+        manager.create(shell_spec("hook-shell"), 80, 24).unwrap().id
+    })
+    .await
+    .unwrap();
+    let (mut c, _) = Client::connect(&d, PROTO_VERSION).await;
+    assert_eq!(
+        c.hook(id, "Stop").await,
+        DaemonMsg::Ack {
+            request: "hook".into()
+        }
+    );
+    assert_eq!(
+        c.hook(99, "Stop").await,
+        DaemonMsg::Error {
+            request: "hook".into(),
+            message: "no window with id 99".into()
+        }
+    );
+}
+
+#[tokio::test]
+async fn a_subscription_marks_the_window_viewed_until_the_client_leaves() {
+    let d = start_daemon().await;
+    let id = claude_window(&d, "viewed").await;
+    let (mut a, _) = Client::connect(&d, PROTO_VERSION).await;
+    let (mut b, _) = Client::connect(&d, PROTO_VERSION).await;
+    a.subscribe(id).await;
+    assert_completion(&d, &mut b, id, Status::Idle).await;
+    drop(a);
+    wait_unviewed(&d, &mut b, id).await;
+}
+
+async fn wait_unviewed(d: &TestDaemon, client: &mut Client, id: u32) {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            client.hook(id, "UserPromptSubmit").await;
+            client.hook(id, "Stop").await;
+            if d.manager.list().iter().find(|w| w.id == id).unwrap().status == Status::Done {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("disconnected client retained its viewer");
+}
+
+#[tokio::test]
+async fn subscriptions_count_clients_and_release_on_switch_and_unsubscribe() {
+    let d = start_daemon().await;
+    let one = claude_window(&d, "one").await;
+    let two = claude_window(&d, "two").await;
+    let (mut a, _) = Client::connect(&d, PROTO_VERSION).await;
+    let (mut b, _) = Client::connect(&d, PROTO_VERSION).await;
+    let (mut observer, _) = Client::connect(&d, PROTO_VERSION).await;
+    a.subscribe(one).await;
+    a.subscribe(one).await;
+    b.subscribe(one).await;
+    a.unsubscribe().await;
+    a.unsubscribe().await;
+    assert_completion(&d, &mut observer, one, Status::Idle).await;
+    b.subscribe(two).await;
+    assert_completion(&d, &mut observer, one, Status::Done).await;
+    assert_completion(&d, &mut observer, two, Status::Idle).await;
+    b.unsubscribe().await;
+    assert_completion(&d, &mut observer, two, Status::Done).await;
+    a.subscribe(one).await;
+    a.send(ClientMsg::Subscribe {
+        window_id: 99,
+        cols: 80,
+        rows: 24,
+    })
+    .await;
+    a.recv_until(|m| matches!(m, DaemonMsg::Error { request, .. } if request == "subscribe"))
+        .await;
+    assert_completion(&d, &mut observer, one, Status::Done).await;
+}
+
+#[tokio::test]
+async fn malformed_frames_release_the_subscription_viewer() {
+    use tokio::io::AsyncWriteExt;
+    let d = start_daemon().await;
+    let id = claude_window(&d, "malformed").await;
+    let (mut a, _) = Client::connect(&d, PROTO_VERSION).await;
+    let (mut observer, _) = Client::connect(&d, PROTO_VERSION).await;
+    a.subscribe(id).await;
+    assert_completion(&d, &mut observer, id, Status::Idle).await;
+    a.wr.write_all(&[0, 0, 0, 1, 0xc1]).await.unwrap();
+    wait_unviewed(&d, &mut observer, id).await;
 }

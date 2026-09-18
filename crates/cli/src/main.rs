@@ -1,4 +1,5 @@
 mod client;
+mod hook;
 mod spawn;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -49,8 +50,12 @@ enum Command {
         prompt: Option<String>,
     },
     /// List windows
-    Ls,
-    /// Kill a window's process (SIGTERM, then SIGKILL after 3 s)
+    Ls {
+        /// Print the window list as pretty JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Kill a window's process group (SIGHUP, then SIGTERM, then SIGKILL)
     Kill { target: String },
     /// Kill and forget a window
     Rm {
@@ -111,8 +116,17 @@ enum DaemonAction {
     Status,
 }
 
+fn main() -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("hook")) {
+        hook::run(std::env::args_os().skip(2).collect(), started);
+        std::process::exit(0);
+    }
+    run_cli()
+}
+
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn run_cli() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let socket: PathBuf = proto::paths::socket_path();
     match cli.command {
@@ -155,9 +169,13 @@ async fn main() -> anyhow::Result<()> {
                 other => anyhow::bail!("unexpected reply: {other:?}"),
             }
         }
-        Some(Command::Ls) => {
+        Some(Command::Ls { json }) => {
             let c = client::CliClient::connect(&socket).await?;
-            print!("{}", client::format_table(&c.windows));
+            if json {
+                println!("{}", serde_json::to_string_pretty(&c.windows)?);
+            } else {
+                print!("{}", client::format_table(&c.windows));
+            }
             Ok(())
         }
         Some(Command::Kill { target }) => {

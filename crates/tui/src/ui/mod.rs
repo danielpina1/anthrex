@@ -82,7 +82,9 @@ mod tests {
             tool: None,
             since_secs: 75,
             last_output_secs: 1,
-            has_session: false,
+            session_id: None,
+            model: None,
+            subagents: vec![],
             exit: None,
         }
     }
@@ -134,6 +136,62 @@ mod tests {
         assert!(
             out.contains("api-worker · claude · /tmp/repo (feat/x)"),
             "main title\n{out}"
+        );
+    }
+
+    #[test]
+    fn a_working_card_shows_its_tool_on_a_third_line() {
+        let mut window = win(1, "api-worker", Runtime::Claude, Status::Working);
+        window.tool = Some("Bash".into());
+        let mut app = App::new(
+            vec![window.clone()],
+            "/tmp".into(),
+            Keymap::default_prefix(),
+        );
+        let _ = app.set_terminal_size(80, 24);
+        let (out, _) = render(&app, 100, 20);
+        let rows: Vec<_> = out.lines().collect();
+        let detail_row = rows
+            .iter()
+            .position(|row| row.contains("claude · working"))
+            .expect("working detail row");
+        assert!(rows[detail_row + 1].contains("Bash"), "{out}");
+
+        window.status = Status::Idle;
+        let mut app = App::new(vec![window], "/tmp".into(), Keymap::default_prefix());
+        let _ = app.set_terminal_size(80, 24);
+        let (out, _) = render(&app, 100, 20);
+        assert!(
+            !out.contains("Bash"),
+            "idle cards do not show a tool\n{out}"
+        );
+    }
+
+    #[test]
+    fn long_tool_names_are_cut_to_the_sidebar() {
+        let mut window = win(1, "api-worker", Runtime::Claude, Status::Working);
+        window.tool = Some("界".repeat(20));
+        let mut app = App::new(vec![window], "/tmp".into(), Keymap::default_prefix());
+        let _ = app.set_terminal_size(80, 24);
+        let (out, _) = render(&app, 100, 20);
+        assert!(
+            out.contains("▎  界界界界界界界界界界界界…│"),
+            "the 28-column inner width is measured in terminal columns\n{out}"
+        );
+    }
+
+    #[test]
+    fn emoji_tool_names_are_cut_at_grapheme_boundaries() {
+        let emoji = "👩🏽‍💻";
+        let mut window = win(1, "api-worker", Runtime::Claude, Status::Working);
+        window.tool = Some(emoji.repeat(13));
+        let mut app = App::new(vec![window], "/tmp".into(), Keymap::default_prefix());
+        let _ = app.set_terminal_size(80, 24);
+        let (out, _) = render(&app, 100, 20);
+        let expected = format!("▎  {}…│", emoji.repeat(12));
+        assert!(
+            out.contains(&expected),
+            "emoji modifiers and ZWJ sequences stay intact\n{out}"
         );
     }
 
@@ -193,36 +251,31 @@ mod tests {
 
     #[test]
     fn sidebar_hit_test_maps_rows_to_cards() {
+        let mut first = win(1, "a", Runtime::Claude, Status::Working);
+        first.tool = Some("Bash".into());
         let mut app = App::new(
-            vec![
-                win(1, "a", Runtime::Shell, Status::Idle),
-                win(2, "b", Runtime::Shell, Status::Idle),
-            ],
+            vec![first, win(2, "b", Runtime::Shell, Status::Idle)],
             "/tmp".into(),
             Keymap::default_prefix(),
         );
         let _ = app.set_terminal_size(80, 24);
         let (_, l) = render(&app, 100, 20);
+        for offset in 0..sidebar::card_height(&app.windows[0]) {
+            assert_eq!(
+                sidebar::hit_test(l.sidebar_inner, &app, 3, l.sidebar_inner.y + offset),
+                Some(0),
+                "first card row {offset}"
+            );
+        }
+        for offset in 3..5 {
+            assert_eq!(
+                sidebar::hit_test(l.sidebar_inner, &app, 3, l.sidebar_inner.y + offset),
+                Some(1),
+                "second card row {offset}"
+            );
+        }
         assert_eq!(
-            sidebar::hit_test(l.sidebar_inner, &app, 3, l.sidebar_inner.y),
-            Some(0)
-        );
-        assert_eq!(
-            sidebar::hit_test(
-                l.sidebar_inner,
-                &app,
-                3,
-                l.sidebar_inner.y + sidebar::CARD_HEIGHT
-            ),
-            Some(1)
-        );
-        assert_eq!(
-            sidebar::hit_test(
-                l.sidebar_inner,
-                &app,
-                3,
-                l.sidebar_inner.y + 3 * sidebar::CARD_HEIGHT
-            ),
+            sidebar::hit_test(l.sidebar_inner, &app, 3, l.sidebar_inner.y + 5),
             None
         );
         assert_eq!(
@@ -235,11 +288,15 @@ mod tests {
 
     #[test]
     fn sidebar_hit_test_ignores_footer_and_undrawn_cards() {
+        let mut first = win(1, "a", Runtime::Claude, Status::Working);
+        first.tool = Some("Bash".into());
+        let mut third = win(3, "c", Runtime::Claude, Status::Working);
+        third.tool = Some("Read".into());
         let mut app = App::new(
             vec![
-                win(1, "a", Runtime::Shell, Status::Idle),
+                first,
                 win(2, "b", Runtime::Shell, Status::Idle),
-                win(3, "c", Runtime::Shell, Status::Idle),
+                third,
                 win(4, "d", Runtime::Shell, Status::Idle),
                 win(5, "e", Runtime::Shell, Status::Idle),
             ],
@@ -247,9 +304,9 @@ mod tests {
             Keymap::default_prefix(),
         );
         let _ = app.set_terminal_size(80, 24);
-        // Hand-built inner rect: height 8 draws 3 full cards (6 rows) plus a spacer row and a footer row.
+        // Six list rows fit the first two cards (3 + 2), but not the next three-row card.
         let inner = ratatui::layout::Rect::new(1, 1, 28, 8);
-        let expected = [Some(0), Some(0), Some(1), Some(1), Some(2), Some(2)];
+        let expected = [Some(0), Some(0), Some(0), Some(1), Some(1), None];
         for (offset, want) in expected.into_iter().enumerate() {
             assert_eq!(
                 sidebar::hit_test(inner, &app, 3, inner.y + offset as u16),

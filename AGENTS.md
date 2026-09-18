@@ -14,6 +14,7 @@ anthrex is a terminal multiplexer for coding agents, written in Rust. A backgrou
 | `crates/daemon` | PTY windows, status state machine, window manager, Unix-socket server, daemon lifecycle. |
 | `crates/tui` | The client: key encoding, prefix keymap, daemon connection, pure application state, rendering, event loop. |
 | `crates/cli` | The `anthrex` binary and its subcommands. |
+| `crates/fake-agent` | Scripted Claude/Codex stand-in for deterministic status integration and smoke tests. |
 | `scripts/pty-smoke.py` | End-to-end smoke test that drives the real binary through a real PTY with an isolated daemon. |
 | `docs/ROADMAP.md` | Every milestone, its status, and its dependencies. Start here. |
 | `docs/milestones/` | One implementation brief per milestone. The brief is your requirements. |
@@ -40,7 +41,9 @@ cargo fmt --all --check
 python3 scripts/pty-smoke.py
 ```
 
-All five must pass before a milestone is done. `cargo test` spawns real shells in real PTYs. Some tests take about 3 seconds each because interactive shells ignore SIGTERM and wait for the SIGKILL escalation. That is expected until milestone 3 changes kill to use the process group.
+Status tests run `crates/fake-agent` through `ANTHREX_CLAUDE_BIN` and `ANTHREX_CODEX_BIN`; never point them at real agent binaries.
+
+All five must pass before a milestone is done. `cargo test` spawns real shells in real PTYs. Kill signals the process group with SIGHUP first, so an interactive shell exits at once.
 
 ## Hard rules
 
@@ -60,7 +63,7 @@ All five must pass before a milestone is done. `cargo test` spawns real shells i
 - tokio `broadcast`: after `RecvError::Lagged` the receiver resumes from the oldest retained message. To resynchronise, take a fresh `attach()` and replace the receiver.
 - macOS: writing to a PTY master blocks after about 1 KB when the foreground program is not reading. Never write from a thread that anything else waits on.
 - `JoinHandle::abort()` takes effect at the next yield point. Await the handle after aborting when ordering matters.
-- An interactive `sh` ignores SIGTERM. Tests that kill a shell pay the 3-second grace period.
+- Kill signals the process group with SIGHUP first, so an interactive shell exits at once.
 - Edition 2024 makes `std::env::set_var` and `remove_var` unsafe. Tests that change environment variables must hold a shared lock.
 - Claude Code accepts hooks through `claude --settings '<json>'`, merged under the user's own settings. Codex runs `notify` with the JSON payload as the last argument, not on stdin.
 

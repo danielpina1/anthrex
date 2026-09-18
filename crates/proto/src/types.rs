@@ -85,6 +85,29 @@ pub struct WindowSpec {
     pub initial_prompt: Option<String>,
 }
 
+/// One sub-agent inside a window's session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubagentInfo {
+    pub id: String,
+    pub parent_id: Option<String>,
+    pub kind: String,
+    pub label: Option<String>,
+    pub model: Option<String>,
+    pub state: SubagentState,
+    pub tool: Option<String>,
+    pub started_secs: u64,
+    pub ended_secs: Option<u64>,
+    pub needs_permission: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SubagentState {
+    Running,
+    Done,
+    Failed,
+}
+
 /// The display projection of a window, sent to clients.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WindowInfo {
@@ -97,7 +120,9 @@ pub struct WindowInfo {
     pub tool: Option<String>,
     pub since_secs: u64,
     pub last_output_secs: u64,
-    pub has_session: bool,
+    pub session_id: Option<String>,
+    pub model: Option<String>,
+    pub subagents: Vec<SubagentInfo>,
     pub exit: Option<ExitInfo>,
 }
 
@@ -139,11 +164,42 @@ mod tests {
             tool: Some("Bash".into()),
             since_secs: 12,
             last_output_secs: 1,
-            has_session: true,
+            session_id: Some("s1".into()),
+            model: Some("opus".into()),
+            subagents: vec![SubagentInfo {
+                id: "agent-1".into(),
+                parent_id: Some("parent-1".into()),
+                kind: "explore".into(),
+                label: Some("Find call sites".into()),
+                model: Some("haiku".into()),
+                state: SubagentState::Running,
+                tool: Some("Read".into()),
+                started_secs: 9,
+                ended_secs: Some(11),
+                needs_permission: true,
+            }],
             exit: None,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"runtime\":\"claude\""));
+        assert!(json.contains("\"state\":\"running\""));
+        assert!(!json.contains("has_session"));
         assert_eq!(serde_json::from_str::<WindowInfo>(&json).unwrap(), info);
+    }
+
+    #[test]
+    fn subagent_state_serializes_lowercase() {
+        assert_eq!(
+            serde_json::to_string(&SubagentState::Running).unwrap(),
+            "\"running\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SubagentState::Done).unwrap(),
+            "\"done\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SubagentState::Failed).unwrap(),
+            "\"failed\""
+        );
     }
 }
