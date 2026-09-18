@@ -14,6 +14,7 @@ anthrex is a terminal multiplexer for coding agents, written in Rust. A backgrou
 | `crates/daemon` | PTY windows, status state machine, window manager, Unix-socket server, daemon lifecycle. |
 | `crates/tui` | The client: key encoding, prefix keymap, daemon connection, pure application state, rendering, event loop. |
 | `crates/cli` | The `anthrex` binary and its subcommands. |
+| `crates/fake-agent` | Scripted Claude/Codex stand-in for deterministic status integration and smoke tests. |
 | `scripts/pty-smoke.py` | End-to-end smoke test that drives the real binary through a real PTY with an isolated daemon. |
 | `docs/ROADMAP.md` | Every milestone, its status, and its dependencies. Start here. |
 | `docs/milestones/` | One implementation brief per milestone. The brief is your requirements. |
@@ -39,6 +40,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 python3 scripts/pty-smoke.py
 ```
+
+Status tests run `crates/fake-agent` through `ANTHREX_CLAUDE_BIN` and `ANTHREX_CODEX_BIN`; never point them at real agent binaries.
 
 All five must pass before a milestone is done. `cargo test` spawns real shells in real PTYs. Kill signals the process group with SIGHUP first, so an interactive shell exits at once.
 

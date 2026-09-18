@@ -21,6 +21,7 @@ every byte seen so far into it, and asserts against the reconstructed grid
 instead of the raw stream.
 """
 import fcntl
+import json
 import os
 import pty
 import re
@@ -36,13 +37,18 @@ import tty
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(REPO, "target/debug/anthrex")
+FAKE_AGENT_BIN = os.path.join(REPO, "target/debug/fake-agent")
 DATA_DIR = tempfile.mkdtemp(prefix="anthrex-smoke-", dir="/tmp")
 SOCKET = os.path.join(DATA_DIR, "daemon.sock")
+FAKE_AGENT_SCRIPT = os.path.join(DATA_DIR, "fake-agent.jsonl")
 ROWS, COLS = 40, 120
 
 ENV = dict(os.environ)
 ENV["ANTHREX_SOCKET"] = SOCKET
 ENV["ANTHREX_DATA_DIR"] = DATA_DIR
+ENV["ANTHREX_CLAUDE_BIN"] = FAKE_AGENT_BIN
+ENV["ANTHREX_CODEX_BIN"] = FAKE_AGENT_BIN
+ENV["FAKE_AGENT_SCRIPT"] = FAKE_AGENT_SCRIPT
 ENV["TERM"] = "xterm-256color"
 
 
@@ -251,22 +257,37 @@ def run_cmd(args, expect_ok=True):
 
 
 def ensure_binary():
-    if os.path.exists(BIN):
+    binaries = [BIN, FAKE_AGENT_BIN]
+    missing = [path for path in binaries if not os.path.exists(path)]
+    if not missing:
         return
-    print(f"== building {BIN} ==")
-    result = subprocess.run(["cargo", "build"], cwd=REPO, timeout=900)
-    if result.returncode != 0 or not os.path.exists(BIN):
-        fail("`cargo build` did not produce target/debug/anthrex")
+    print(f"== building missing smoke binaries: {', '.join(missing)} ==")
+    result = subprocess.run(["cargo", "build", "--workspace"], cwd=REPO, timeout=900)
+    if result.returncode != 0 or any(not os.path.exists(path) for path in binaries):
+        fail("`cargo build --workspace` did not produce anthrex and fake-agent")
+
+
+def write_fake_agent_script():
+    steps = [
+        {"hook": "SessionStart", "payload": {}},
+        {"hook": "UserPromptSubmit", "payload": {}},
+        {"hook": "PreToolUse", "payload": {"tool_name": "Bash"}},
+        {"wait_ms": 3000},
+        {"hook": "PostToolUse", "payload": {}},
+        {"hook": "Stop", "payload": {}},
+    ]
+    with open(FAKE_AGENT_SCRIPT, "w", encoding="utf-8") as script:
+        for step in steps:
+            script.write(json.dumps(step) + "\n")
 
 
 def stop_daemon(timeout=30.0):
     """Stops the daemon and waits until it is really gone.
 
     `anthrex daemon stop` returns as soon as the daemon closes its listener, but the
-    daemon then spends up to its kill grace period ending agents - interactive shells
-    ignore SIGTERM, so that is the full three seconds - and removes the socket file only
-    as its very last act. Returning before that lets the next run bind a socket at the
-    same path that the dying daemon then unlinks out from under it.
+    daemon still has to end every agent process group with SIGHUP (escalating if needed)
+    and removes the socket file only as its very last act. Returning before that lets the
+    next run bind a socket at the same path that the dying daemon then unlinks out from it.
     """
     subprocess.run([BIN, "daemon", "stop"], cwd=REPO, env=ENV, capture_output=True, text=True, timeout=timeout)
     deadline = time.monotonic() + timeout
@@ -319,6 +340,7 @@ def calibrate_raw_pty_capacity():
 
 def main():
     ensure_binary()
+    write_fake_agent_script()
 
     print("== stage 1: initial attach ==")
     proc = PtyProc([BIN])
@@ -456,6 +478,48 @@ def main():
         f"ok: daemon answered ls in {ls_elapsed:.2f}s and the client detached in "
         f"{detach_elapsed:.2f}s after a 32 KiB paste to a ready, non-reading child"
     )
+
+    print("== stage 8b: a fake Claude turn reports working, tool, and done ==")
+    proc4 = PtyProc([BIN, "attach", "shell-1"])
+    proc4.wait_for("anthrex", label="fourth attach banner")
+    proc4.wait_for("smoke-42", label="shell-1 focused before fake Claude creation")
+    created = run_cmd(["new", "--runtime", "claude", "--name", "fake-claude"])
+    try:
+        fake_claude_id = int(created.stdout.strip())
+    except ValueError:
+        fail(f"`anthrex new` did not print a window id: {created.stdout!r}")
+    proc4.wait_for("claude · working", label="fake-claude working status")
+    proc4.wait_for("Bash", label="fake-claude Bash tool")
+    print("ok: fake-claude card showed working with the Bash tool")
+    proc4.wait_for("fake-claude finished", label="fake-claude completion toast")
+    proc4.wait_for("claude · done", label="fake-claude done status")
+
+    listed_json = run_cmd(["ls", "--json"])
+    try:
+        windows = json.loads(listed_json.stdout)
+    except json.JSONDecodeError as error:
+        fail(f"`anthrex ls --json` returned invalid JSON ({error}):\n{listed_json.stdout}")
+    fake_claude = next((window for window in windows if window["id"] == fake_claude_id), None)
+    if fake_claude is None:
+        fail(f"`anthrex ls --json` omitted fake-claude id {fake_claude_id}:\n{listed_json.stdout}")
+    if fake_claude["status"] != "done":
+        fail(f"fake-claude status was not done:\n{listed_json.stdout}")
+    expected_session = f"fake-session-{fake_claude_id}"
+    if fake_claude["session_id"] != expected_session:
+        fail(f"fake-claude session id was not {expected_session!r}:\n{listed_json.stdout}")
+    print("ok: completion toast, done card, and JSON session metadata appeared")
+
+    run_cmd(["rm", "fake-claude"])
+    remaining = json.loads(run_cmd(["ls", "--json"]).stdout)
+    remaining_names = {window["name"] for window in remaining}
+    if remaining_names != {"shell-1", "shell-2", "shell-3", "shell-4"}:
+        fail(f"unexpected windows after removing fake-claude: {sorted(remaining_names)}")
+    proc4.send(b"\x02d")
+    status4 = proc4.wait_exit(timeout=5.0)
+    if not os.WIFEXITED(status4) or os.WEXITSTATUS(status4) != 0:
+        fail(f"fourth detach did not exit cleanly with status 0 (raw status {status4})")
+    proc4.close()
+    print("ok: fake-claude removed and fourth client detached cleanly")
 
     print("== stage 9: stop the daemon, verify status ==")
     stop_result = run_cmd(["daemon", "stop"])
