@@ -1,8 +1,10 @@
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -33,13 +35,178 @@ fn command(script: &Path) -> Command {
     command
 }
 
-fn run(mut command: Command) -> Output {
-    let child = command.spawn().unwrap();
-    child.wait_with_output().unwrap()
+fn run_with_deadline(mut command: Command, timeout: Duration) -> Result<Output, String> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let (mut child, process_group) = spawn_owned(&mut command)?;
+    let Some(stdout) = child.stdout.take() else {
+        terminate_owned(&mut child, process_group)?;
+        return Err("child stdout was not piped".into());
+    };
+    let Some(stderr) = child.stderr.take() else {
+        terminate_owned(&mut child, process_group)?;
+        return Err("child stderr was not piped".into());
+    };
+    let stdout_rx = drain(stdout);
+    let stderr_rx = drain(stderr);
+    let deadline = Instant::now() + timeout;
+    let mut status = None;
+    let mut stdout = None;
+    let mut stderr = None;
+
+    loop {
+        if status.is_none() {
+            match child.try_wait() {
+                Ok(next_status) => status = next_status,
+                Err(error) => {
+                    terminate_owned(&mut child, process_group)?;
+                    return Err(error.to_string());
+                }
+            }
+        }
+        if stdout.is_none()
+            && let Ok(result) = stdout_rx.try_recv()
+        {
+            match result {
+                Ok(bytes) => stdout = Some(bytes),
+                Err(error) => {
+                    terminate_owned(&mut child, process_group)?;
+                    return Err(error);
+                }
+            }
+        }
+        if stderr.is_none()
+            && let Ok(result) = stderr_rx.try_recv()
+        {
+            match result {
+                Ok(bytes) => stderr = Some(bytes),
+                Err(error) => {
+                    terminate_owned(&mut child, process_group)?;
+                    return Err(error);
+                }
+            }
+        }
+        match (status.take(), stdout.take(), stderr.take()) {
+            (Some(status), Some(stdout), Some(stderr)) => {
+                return Ok(Output {
+                    status,
+                    stdout,
+                    stderr,
+                });
+            }
+            (next_status, next_stdout, next_stderr) => {
+                status = next_status;
+                stdout = next_stdout;
+                stderr = next_stderr;
+            }
+        }
+        if Instant::now() >= deadline {
+            terminate_owned(&mut child, process_group)?;
+            return Err(format!("owned child timed out after {timeout:?}"));
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn run(command: Command) -> Output {
+    run_with_deadline(command, Duration::from_secs(10)).unwrap()
+}
+
+fn spawn_owned(command: &mut Command) -> Result<(Child, libc::pid_t), String> {
+    // SAFETY: setpgid is async-signal-safe and the closure captures no Rust state.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let child = command.spawn().map_err(|error| error.to_string())?;
+    let process_group = child.id() as libc::pid_t;
+    Ok((child, process_group))
+}
+
+fn drain(mut pipe: impl Read + Send + 'static) -> mpsc::Receiver<Result<Vec<u8>, String>> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = pipe
+            .read_to_end(&mut bytes)
+            .map(|_| bytes)
+            .map_err(|error| error.to_string());
+        let _ = tx.send(result);
+    });
+    rx
+}
+
+fn wait_owned(
+    child: &mut Child,
+    process_group: libc::pid_t,
+    timeout: Duration,
+) -> Result<ExitStatus, String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {}
+            Err(error) => {
+                terminate_owned(child, process_group)?;
+                return Err(error.to_string());
+            }
+        }
+        if Instant::now() >= deadline {
+            terminate_owned(child, process_group)?;
+            return Err(format!("owned child timed out after {timeout:?}"));
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn terminate_owned(child: &mut Child, process_group: libc::pid_t) -> Result<(), String> {
+    // SAFETY: the negative PID targets only the fresh process group created by spawn_owned.
+    unsafe {
+        libc::kill(-process_group, libc::SIGKILL);
+    }
+    let _ = child.kill();
+    let deadline = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) => thread::sleep(Duration::from_millis(5)),
+            Err(error) => return Err(format!("failed to reap owned child: {error}")),
+        }
+    }
+    Err("failed to reap owned child within 500ms".into())
 }
 
 fn json_file(path: &Path) -> Value {
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
+}
+
+#[test]
+fn subprocess_deadline_stops_a_hung_owned_child() {
+    let temp = tempfile::tempdir_in("/tmp").unwrap();
+    let pid_file = temp.path().join("child.pid");
+    let mut command = Command::new("/bin/sh");
+    command.args(["-c", &format!("echo $$ > {}; sleep 1", pid_file.display())]);
+    let started = Instant::now();
+
+    let error = run_with_deadline(command, Duration::from_millis(200)).unwrap_err();
+
+    assert!(error.contains("timed out"), "{error}");
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "elapsed: {:?}",
+        started.elapsed()
+    );
+    let pid: libc::pid_t = fs::read_to_string(pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    // SAFETY: signal 0 performs a read-only existence check on the exact owned PID.
+    assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+    assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
 }
 
 #[test]
@@ -230,24 +397,40 @@ fn read_line_waits_for_input() {
             json!({"exit": 0}),
         ],
     );
-    let mut child = command(&script).spawn().unwrap();
+    let mut child_command = command(&script);
+    let (mut child, process_group) = spawn_owned(&mut child_command).unwrap();
     let mut stdout = child.stdout.take().unwrap();
+    let stderr_rx = drain(child.stderr.take().unwrap());
     let (tx, rx) = mpsc::channel();
-    let reader = std::thread::spawn(move || {
+    let (done_tx, done_rx) = mpsc::channel();
+    let reader = thread::spawn(move || {
         let mut byte = [0];
         while stdout.read_exact(&mut byte).is_ok() {
             tx.send(byte[0]).unwrap();
         }
+        let _ = done_tx.send(());
     });
 
+    let before_input = rx.recv_timeout(Duration::from_millis(200));
+    let input_result = child.stdin.take().unwrap().write_all(b"go\n");
+    let after_input = rx.recv_timeout(Duration::from_secs(2));
+    let status = wait_owned(&mut child, process_group, Duration::from_secs(2));
+    let stderr = stderr_rx.recv_timeout(Duration::from_secs(2));
+    let reader_done = done_rx.recv_timeout(Duration::from_secs(2));
+    if reader_done.is_ok() {
+        reader.join().unwrap();
+    }
+
     assert_eq!(
-        rx.recv_timeout(Duration::from_millis(200)),
-        Err(mpsc::RecvTimeoutError::Timeout)
+        before_input,
+        Err(mpsc::RecvTimeoutError::Timeout),
+        "fake agent produced output before input"
     );
-    child.stdin.take().unwrap().write_all(b"go\n").unwrap();
-    assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), b'a');
-    assert!(child.wait().unwrap().success());
-    reader.join().unwrap();
+    input_result.unwrap();
+    assert_eq!(after_input.unwrap(), b'a');
+    assert!(status.unwrap().success());
+    assert!(stderr.unwrap().unwrap().is_empty());
+    reader_done.unwrap();
 }
 
 #[test]
@@ -271,10 +454,9 @@ fn writes_its_arguments_when_asked() {
 
 #[test]
 fn version_prints_a_codex_style_version() {
-    let output = Command::new(fake_agent())
-        .arg("--version")
-        .output()
-        .unwrap();
+    let mut command = Command::new(fake_agent());
+    command.arg("--version");
+    let output = run(command);
 
     assert!(output.status.success());
     assert_eq!(output.stdout, b"codex-cli 0.155.0\n");
@@ -284,11 +466,15 @@ fn version_prints_a_codex_style_version() {
 fn writes_arguments_before_the_version_short_circuit() {
     let temp = tempfile::tempdir_in("/tmp").unwrap();
     let args_path = temp.path().join("args.json");
-    let output = Command::new(fake_agent())
-        .env("FAKE_AGENT_ARGS_FILE", &args_path)
-        .args(["--name", "agent", "--version", "--", "literal prompt"])
-        .output()
-        .unwrap();
+    let mut command = Command::new(fake_agent());
+    command.env("FAKE_AGENT_ARGS_FILE", &args_path).args([
+        "--name",
+        "agent",
+        "--version",
+        "--",
+        "literal prompt",
+    ]);
+    let output = run(command);
 
     assert!(output.status.success());
     assert_eq!(output.stdout, b"codex-cli 0.155.0\n");
@@ -301,14 +487,9 @@ fn writes_arguments_before_the_version_short_circuit() {
 #[test]
 fn git_commit_creates_a_commit() {
     let temp = tempfile::tempdir_in("/tmp").unwrap();
-    assert!(
-        Command::new("git")
-            .arg("init")
-            .arg(temp.path())
-            .status()
-            .unwrap()
-            .success()
-    );
+    let mut init = Command::new("git");
+    init.arg("init").arg(temp.path());
+    assert!(run(init).status.success());
     let script = script_file(
         &temp,
         &[
@@ -326,11 +507,11 @@ fn git_commit_creates_a_commit() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let log = Command::new("git")
+    let mut log_command = Command::new("git");
+    log_command
         .args(["log", "--oneline", "-1"])
-        .current_dir(temp.path())
-        .output()
-        .unwrap();
+        .current_dir(temp.path());
+    let log = run(log_command);
     assert!(String::from_utf8_lossy(&log.stdout).contains("made by fake"));
     assert_eq!(fs::read_to_string(temp.path().join("a.txt")).unwrap(), "x");
 }
@@ -367,7 +548,7 @@ fn hook_timeout_includes_blocked_stdin_delivery() {
     command.arg("--settings").arg(settings.to_string());
 
     let started = Instant::now();
-    let output = run(command);
+    let output = run_with_deadline(command, Duration::from_secs(8)).unwrap();
 
     assert!(!output.status.success());
     assert!(
