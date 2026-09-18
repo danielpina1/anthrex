@@ -25,8 +25,8 @@ pub const OUTPUT_CHANNEL_CAPACITY: usize = 1024;
 /// Input chunks that may be waiting for the PTY before `write_input` starts refusing them.
 ///
 /// A program in raw mode that never reads its stdin (an agent busy thinking, a `sleep`
-/// under `stty raw`) can stall writes to the PTY master. Capacity is platform-dependent
-/// (about a kilobyte on macOS); the manager regression probes for sustained input
+/// under `stty raw`) can stall writes to the PTY master, verified on macOS and Linux.
+/// Capacity is platform-dependent; the manager regression probes for sustained input
 /// backpressure instead of assuming a fixed byte count on every platform.
 /// The writer thread absorbs that stall; this queue bounds how much unwritten input the
 /// daemon holds on its behalf before it tells the client the program is not listening.

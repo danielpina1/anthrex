@@ -2,7 +2,7 @@
 
 ## Header
 
-- **Status**: in progress
+- **Status**: done
 - **Depends on**: milestone 1 (done)
 - **Spec sections**: core spec (`docs/superpowers/specs/2026-09-17-anthrex-design.md`) §8, last bullet: "CI (GitHub Actions): `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` on macOS and Ubuntu." The product design spec (`docs/superpowers/specs/2026-09-18-anthrex-product-design.md`) says nothing about CI beyond `docs/ROADMAP.md`'s "Why this order" reasoning ("CI first. Every later milestone is implemented by an agent. Automated checks on every pull request catch regressions before a human reviews them."). Everything else in this brief is the controller's own decision, recorded below.
 - **Branch**: `m2-ci`
@@ -279,6 +279,43 @@ slave accepted all 32768 bytes and reported no sustained backpressure. Independe
 review reproduced rustfmt from the baseline and matched every changed Rust file
 byte-for-byte. No daemon from the milestone worktree was left running.
 
-Hosted macOS/Ubuntu outcomes are recorded below once available. Human review of
-the format-only commit and README rendering, and the one-time branch-protection
-setting, remain manual checks.
+### Hosted verification
+
+[CI run 35355666200](https://github.com/danielpina1/anthrex/actions/runs/35355666200)
+passed on 2026-09-18 for commit `2425fa2`. Both `ci (ubuntu-latest)` and
+`ci (macos-latest)` ran all five required commands successfully, with no skipped
+verification steps. Both used stable Rust 1.98.1; the earlier design-decision
+claim that 1.92.0 was current stable described the local toolchain, not the
+hosted stable release.
+
+Ubuntu job 105634286496, exact excerpts:
+
+```text
+ok: sustained PTY backpressure confirmed for 200ms; write_input and concurrent list() stayed below 100ms
+ok: local raw PTY calibration retained backpressure for 200ms after 15360/32768 bytes
+ok: child reported raw-mode readiness
+ok: daemon answered ls in 0.01s and the client detached in 0.00s after a 32 KiB paste to a ready, non-reading child
+ALL SMOKE STAGES PASSED
+```
+
+macOS job 105634286104 printed the same manager confirmation and responsiveness
+times; its calibration line was:
+
+```text
+ok: local raw PTY calibration retained backpressure for 200ms after 1022/32768 bytes
+```
+
+The Linux result confirms sustained backpressure; the production comment now
+records both platforms without assuming they share a capacity. Neither job
+skipped the timing assertions. Per-task and whole-milestone independent reviews
+found no actionable issues.
+
+GitHub emitted a non-failing Node 20 deprecation annotation for the brief's exact
+`actions/checkout@v4` pin, which the runner executed using Node 24 compatibility.
+It also announced an upcoming `ubuntu-latest` image migration. The requested
+action pins and moving runner labels are unchanged.
+
+Human review of the format-only commit and README rendering, and the one-time
+branch-protection setting, remain manual checks listed in PR #3. The roadmap
+marks M2 done and M3 ready on this branch as AGENTS.md requires before handoff;
+PR #3 still requires human merge.

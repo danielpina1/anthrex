@@ -17,8 +17,8 @@ The design for milestones 2 to 9 is `docs/superpowers/specs/2026-09-18-anthrex-p
 | # | Milestone | Brief | Depends on | Status |
 |---|-----------|-------|------------|--------|
 | 1 | Foundation: daemon, PTY windows, sidebar, CLI | `docs/superpowers/plans/2026-09-17-anthrex-foundation.md` | none | `done` |
-| 2 | Continuous integration | `docs/milestones/M2-ci.md` | 1 | `in progress` |
-| 3 | Agent status and sub-agent tracking from hooks | `docs/milestones/M3-agent-status.md` | 2 | `blocked` |
+| 2 | Continuous integration | `docs/milestones/M2-ci.md` | 1 | `done` |
+| 3 | Agent status and sub-agent tracking from hooks | `docs/milestones/M3-agent-status.md` | 2 | `ready` |
 | 4 | Project tree view | `docs/milestones/M4-project-tree.md` | 3 | `blocked` |
 | 5 | New-agent dialog and git worktrees | `docs/milestones/M5-worktrees.md` | 4 | `blocked` |
 | 6 | Persistence, resume, rename, config, reconnect | `docs/milestones/M6-persistence.md` | 3 | `blocked` |

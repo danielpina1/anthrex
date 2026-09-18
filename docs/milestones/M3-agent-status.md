@@ -4,7 +4,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | `blocked` |
+| Status | `ready` |
 | Depends on | Milestone 2 (CI) |
 | Spec sections | Product spec (`docs/superpowers/specs/2026-09-18-anthrex-product-design.md`) sections 4 (all), 10.1 (the version-2 row), 10.4 (the environment variables), 11.1 to 11.4, 11.6 (the session-id part), 12 (the fake agent and the `ANTHREX_CLAUDE_BIN` / `ANTHREX_CODEX_BIN` overrides). Core spec (`docs/superpowers/specs/2026-09-17-anthrex-design.md`) sections 3.2 (launchers with hooks) and 3.4 (the full status table). |
 | Branch | `m3-agent-status` |
