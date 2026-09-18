@@ -22,21 +22,52 @@ pub struct TuiOptions {
     pub focus: Option<String>,
 }
 
+/// Disables mouse capture and bracketed paste on stdout, ignoring any error. Called both from
+/// the drop guard on normal/error exit and from the panic hook, so it must be safe to call
+/// more than once and must not touch anything that requires an intact runtime.
+fn disable_mouse_and_paste() {
+    let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste, DisableMouseCapture);
+}
+
+/// Restores the terminal exactly once, on every way out of `run`'s scope: normal return, an
+/// `Err` from the event loop, or unwinding from a panic. Without this, a panic inside the
+/// event loop would skip plain cleanup statements and leave the user's shell reading raw mouse
+/// and bracketed-paste escape sequences until they run `reset`.
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        disable_mouse_and_paste();
+        ratatui::restore();
+    }
+}
+
 pub async fn run(opts: TuiOptions) -> anyhow::Result<()> {
     let mut conn = Connection::connect(&opts.socket_path).await?;
     let mut app = App::new(conn.windows.clone(), opts.default_dir.clone(), Keymap::default_prefix());
     if let Some(target) = &opts.focus {
-        if let Some(w) = app.windows.iter().find(|w| w.name == *target || w.id.to_string() == *target) {
-            app.request_focus(w.id);
+        match app.windows.iter().find(|w| w.name == *target || w.id.to_string() == *target) {
+            Some(w) => app.request_focus(w.id),
+            None => app.toast(format!("no window named '{target}'")),
         }
     }
 
     let mut terminal = ratatui::init();
     let _ = crossterm::execute!(std::io::stdout(), EnableMouseCapture, EnableBracketedPaste);
-    let result = event_loop(&mut terminal, &mut conn, &mut app).await;
-    let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste, DisableMouseCapture);
-    ratatui::restore();
-    result
+
+    // ratatui's own panic hook restores raw mode and the alternate screen, then prints the
+    // panic message, but it knows nothing about mouse capture or bracketed paste. Disable both
+    // before that message is printed, then defer to the hook ratatui (or anyone before us)
+    // already installed.
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        disable_mouse_and_paste();
+        prev_hook(info);
+    }));
+
+    // Held across the event loop so cleanup runs exactly once on every exit path.
+    let _guard = TerminalGuard;
+    event_loop(&mut terminal, &mut conn, &mut app).await
 }
 
 async fn apply(effects: Vec<Effect>, conn: &Connection) -> bool {
