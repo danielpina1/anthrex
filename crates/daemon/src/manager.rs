@@ -1,7 +1,7 @@
 //! Owns every window, applies status events, and broadcasts the window list.
 
 use crate::launch::{self, LaunchContext};
-use crate::status::{self, StatusEvent};
+use crate::status::{self, StatusContext, StatusEvent};
 use crate::window::{Attachment, Window, WindowEvent};
 use proto::{ExitInfo, Status, WindowInfo, WindowSpec};
 use std::collections::BTreeMap;
@@ -96,7 +96,16 @@ impl Entry {
 
     /// Applies a status event; returns whether the status changed.
     fn apply(&mut self, event: StatusEvent) -> bool {
-        let next = status::next(self.status, event, self.spec.runtime);
+        let next = status::next(
+            self.status,
+            event,
+            self.spec.runtime,
+            StatusContext {
+                focused: false,
+                signals_seen: false,
+                hooks_seen: false,
+            },
+        );
         if next == self.status {
             return false;
         }
