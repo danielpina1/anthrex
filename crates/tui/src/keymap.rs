@@ -56,6 +56,9 @@ impl Keymap {
             return KeyAction::Nothing;
         }
         if self.pending {
+            if key.kind == KeyEventKind::Repeat && self.is_prefix(&key) {
+                return KeyAction::AwaitPrefix;
+            }
             self.pending = false;
             if self.is_prefix(&key) {
                 return encode_key(KeyEvent::new(self.prefix.0, self.prefix.1), app_cursor)
@@ -244,5 +247,19 @@ mod tests {
         let mut release = key(KeyCode::Char('q'), KeyModifiers::NONE);
         release.kind = crossterm::event::KeyEventKind::Release;
         assert_eq!(km.handle(release, false), KeyAction::Nothing);
+    }
+
+    #[test]
+    fn held_prefix_auto_repeat_keeps_waiting() {
+        let mut km = Keymap::new(Keymap::default_prefix());
+        let prefix = key(KeyCode::Char('b'), KeyModifiers::CONTROL);
+        assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
+        assert!(km.pending());
+        let mut repeat = key(KeyCode::Char('b'), KeyModifiers::CONTROL);
+        repeat.kind = crossterm::event::KeyEventKind::Repeat;
+        assert_eq!(km.handle(repeat, false), KeyAction::AwaitPrefix);
+        assert!(km.pending());
+        assert_eq!(km.handle(key(KeyCode::Char('j'), KeyModifiers::NONE), false), KeyAction::Run(Command::NextWindow));
+        assert!(!km.pending());
     }
 }
