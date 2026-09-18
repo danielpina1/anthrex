@@ -16,7 +16,18 @@ pub async fn serve(listener: UnixListener, manager: Arc<WindowManager>, shutdown
         tokio::select! {
             _ = shutdown.cancelled() => return Ok(()),
             accepted = listener.accept() => {
-                let (stream, _) = accepted?;
+                // An accept error must never end `serve`: `run` would then kill every
+                // agent the daemon owns. EMFILE is entirely reachable (macOS defaults to
+                // 256 descriptors), and it clears as soon as a client disconnects, so
+                // back off briefly and keep listening.
+                let stream = match accepted {
+                    Ok((stream, _)) => stream,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "accept failed; still listening");
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        continue;
+                    }
+                };
                 let manager = manager.clone();
                 let shutdown = shutdown.clone();
                 tokio::spawn(async move {
