@@ -1,0 +1,26 @@
+[package]
+name = "anthrex-daemon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "daemon"
+path = "src/lib.rs"
+
+[dependencies]
+proto.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+bytes.workspace = true
+portable-pty.workspace = true
+vt100.workspace = true
+libc.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
