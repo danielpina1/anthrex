@@ -1,3 +1,5 @@
+[![CI](https://github.com/danielpina1/anthrex/actions/workflows/ci.yml/badge.svg)](https://github.com/danielpina1/anthrex/actions/workflows/ci.yml)
+
 # anthrex
 
 A terminal multiplexer for coding agents. Each window is a real `claude`, `codex` or shell session in its own PTY, owned by a background daemon so it survives closing the UI. A sidebar shows every agent with live status; the main pane shows the focused one at full size.
