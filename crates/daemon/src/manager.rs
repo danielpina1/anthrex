@@ -185,6 +185,9 @@ impl WindowManager {
         Ok(f(entry))
     }
 
+    /// Queues input for a window. `Window::write_input` only enqueues onto the window's
+    /// writer thread, so holding `Inner` across it cannot stall the rest of the daemon
+    /// behind a PTY that is not being read.
     pub fn write_input(&self, id: u32, bytes: &[u8]) -> anyhow::Result<()> {
         let mut inner = self.inner.lock().unwrap();
         let entry = inner.entries.get_mut(&id).ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;

@@ -1,6 +1,7 @@
 use daemon::manager::WindowManager;
 use proto::{Runtime, Status, WindowInfo, WindowSpec};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 fn spec(name: &str) -> WindowSpec {
@@ -106,6 +107,57 @@ async fn kill_terminates_and_remove_forgets() {
     m.remove(id).unwrap();
     assert!(m.list().is_empty());
     assert!(m.remove(id).is_err());
+}
+
+/// C1: a program that does not read its stdin must never block the manager.
+///
+/// `stty raw -echo; sleep 5` is the shape every full-screen agent (claude, codex, vim)
+/// has: no canonical line discipline to drain the input queue and no echo, so the PTY
+/// master write stalls after about 1 KB on macOS. Enqueueing input must stay
+/// non-blocking (Ok, or a queue-full Err), and a concurrent `list()` must not wait
+/// behind it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_program_that_ignores_stdin_never_blocks_write_input_or_list() {
+    let m = manager();
+    let id = m.create(spec("blocked"), 80, 24).unwrap().id;
+    wait_until("prompt output", || find(&m, id).status == Status::Working).await;
+    m.write_input(id, b"stty raw -echo; sleep 5\n").unwrap();
+    tokio::time::sleep(Duration::from_millis(600)).await;
+
+    // A second thread hammers list() for as long as the writes run.
+    let stop = Arc::new(AtomicBool::new(false));
+    let lister = {
+        let m = m.clone();
+        let stop = stop.clone();
+        std::thread::spawn(move || {
+            let mut worst = Duration::ZERO;
+            while !stop.load(Ordering::Relaxed) {
+                let started = Instant::now();
+                let _ = m.list();
+                worst = worst.max(started.elapsed());
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            worst
+        })
+    };
+
+    let chunk = vec![b'x'; 4096];
+    for i in 0..16 {
+        let started = Instant::now();
+        // Ok or the queue-full Err; what matters is that it returns promptly.
+        let _ = m.write_input(id, &chunk);
+        let elapsed = started.elapsed();
+        assert!(elapsed < Duration::from_millis(100), "write_input #{i} took {elapsed:?}");
+        let started = Instant::now();
+        let _ = m.list();
+        let elapsed = started.elapsed();
+        assert!(elapsed < Duration::from_millis(100), "list() after write #{i} took {elapsed:?}");
+    }
+
+    stop.store(true, Ordering::Relaxed);
+    let worst = lister.join().unwrap();
+    assert!(worst < Duration::from_millis(100), "concurrent list() worst case was {worst:?}");
+    m.remove(id).unwrap();
 }
 
 #[tokio::test]

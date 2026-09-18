@@ -19,6 +19,14 @@ pub enum WindowEvent {
 /// Chunks a slow subscriber may fall behind by before it is sent a fresh snapshot.
 pub const OUTPUT_CHANNEL_CAPACITY: usize = 1024;
 
+/// Input chunks that may be waiting for the PTY before `write_input` starts refusing them.
+///
+/// A program in raw mode that never reads its stdin (an agent busy thinking, a `sleep`
+/// under `stty raw`) stalls writes to the PTY master after about a kilobyte on macOS.
+/// The writer thread absorbs that stall; this queue bounds how much unwritten input the
+/// daemon holds on its behalf before it tells the client the program is not listening.
+pub const INPUT_QUEUE_CAPACITY: usize = 256;
+
 /// One bell or title change, in the order vt100's callbacks fired for them.
 ///
 /// A single PTY read can bundle several escape sequences (e.g. an OSC title set
@@ -60,7 +68,8 @@ pub struct Attachment {
 
 pub struct Window {
     master: Box<dyn MasterPty + Send>,
-    writer: Mutex<Box<dyn Write + Send>>,
+    /// Bounded hand-off to the writer thread. Sending never blocks the caller.
+    input_tx: std::sync::mpsc::SyncSender<Vec<u8>>,
     pid: Option<u32>,
     parser: Arc<Mutex<Parser>>,
     output_tx: broadcast::Sender<Bytes>,
@@ -95,7 +104,7 @@ impl Window {
         drop(pair.slave);
         let pid = child.process_id();
         let mut reader = pair.master.try_clone_reader()?;
-        let writer = pair.master.take_writer()?;
+        let mut writer = pair.master.take_writer()?;
         let parser = Arc::new(Mutex::new(vt100::Parser::new_with_callbacks(
             rows,
             cols,
@@ -136,6 +145,22 @@ impl Window {
                 }
             })?;
 
+        // A dedicated writer thread owns the PTY master's write side. Writes to it can
+        // block for seconds when the child is not reading stdin, so no caller - and in
+        // particular no tokio worker holding the manager's mutex - may perform them.
+        let (input_tx, input_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(INPUT_QUEUE_CAPACITY);
+        std::thread::Builder::new()
+            .name(format!("pty-write-{id}"))
+            .spawn(move || {
+                // Ends when the channel closes (the Window was dropped) or a write fails
+                // (the child is gone and the master reports EIO).
+                for chunk in input_rx {
+                    if writer.write_all(&chunk).is_err() || writer.flush().is_err() {
+                        break;
+                    }
+                }
+            })?;
+
         std::thread::Builder::new()
             .name(format!("pty-wait-{id}"))
             .spawn(move || {
@@ -149,18 +174,23 @@ impl Window {
                 let _ = events.send((id, event));
             })?;
 
-        Ok(Self { master: pair.master, writer: Mutex::new(writer), pid, parser, output_tx })
+        Ok(Self { master: pair.master, input_tx, pid, parser, output_tx })
     }
 
     pub fn pid(&self) -> Option<u32> {
         self.pid
     }
 
+    /// Queues `bytes` for the PTY. Never blocks: the writer thread does the blocking write.
     pub fn write_input(&self, bytes: &[u8]) -> anyhow::Result<()> {
-        let mut w = self.writer.lock().unwrap();
-        w.write_all(bytes)?;
-        w.flush()?;
-        Ok(())
+        use std::sync::mpsc::TrySendError;
+        match self.input_tx.try_send(bytes.to_vec()) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                anyhow::bail!("input queue full; the program is not reading input")
+            }
+            Err(TrySendError::Disconnected(_)) => anyhow::bail!("the window is no longer accepting input"),
+        }
     }
 
     pub fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
