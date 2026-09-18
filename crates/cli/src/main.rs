@@ -7,7 +7,11 @@ use std::path::PathBuf;
 use tokio::net::UnixStream;
 
 #[derive(Parser)]
-#[command(name = "anthrex", version, about = "A terminal multiplexer for coding agents")]
+#[command(
+    name = "anthrex",
+    version,
+    about = "A terminal multiplexer for coding agents"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -90,7 +94,8 @@ fn resolve_dir(dir: Option<PathBuf>) -> anyhow::Result<PathBuf> {
         Some(d) => d,
         None => std::env::current_dir()?,
     };
-    dir.canonicalize().map_err(|e| anyhow::anyhow!("cannot resolve directory {}: {e}", dir.display()))
+    dir.canonicalize()
+        .map_err(|e| anyhow::anyhow!("cannot resolve directory {}: {e}", dir.display()))
 }
 
 #[derive(Subcommand)]
@@ -114,7 +119,13 @@ async fn main() -> anyhow::Result<()> {
         None => attach(socket, resolve_dir(cli.dir)?, None).await,
         Some(Command::Attach { target }) => attach(socket, resolve_dir(cli.dir)?, target).await,
         Some(Command::Daemon { action }) => daemon_command(action, socket).await,
-        Some(Command::New { runtime, name, worktree, model, prompt }) => {
+        Some(Command::New {
+            runtime,
+            name,
+            worktree,
+            model,
+            prompt,
+        }) => {
             if worktree.is_some() {
                 // Silently ignoring it would show the branch in the title bar with no
                 // worktree behind it, so the user would think the agent was isolated.
@@ -132,7 +143,10 @@ async fn main() -> anyhow::Result<()> {
                 initial_prompt: prompt,
             };
             let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-            match c.request(ClientMsg::CreateWindow { spec, cols, rows }).await? {
+            match c
+                .request(ClientMsg::CreateWindow { spec, cols, rows })
+                .await?
+            {
                 DaemonMsg::Created { window_id } => {
                     println!("{window_id}");
                     Ok(())
@@ -151,23 +165,43 @@ async fn main() -> anyhow::Result<()> {
             let id = client::resolve_target(&c.windows, &target)?;
             expect_ack(c.request(ClientMsg::Kill { window_id: id }).await?)
         }
-        Some(Command::Rm { target, worktree, force }) => {
+        Some(Command::Rm {
+            target,
+            worktree,
+            force,
+        }) => {
             let mut c = client::CliClient::connect(&socket).await?;
             let id = client::resolve_target(&c.windows, &target)?;
-            expect_ack(c.request(ClientMsg::Remove { window_id: id, remove_worktree: worktree, force }).await?)
+            expect_ack(
+                c.request(ClientMsg::Remove {
+                    window_id: id,
+                    remove_worktree: worktree,
+                    force,
+                })
+                .await?,
+            )
         }
     }
 }
 
 async fn attach(socket: PathBuf, dir: PathBuf, target: Option<String>) -> anyhow::Result<()> {
     spawn::ensure_daemon(&socket).await?;
-    tui::run(tui::TuiOptions { socket_path: socket, default_dir: dir, focus: target }).await
+    tui::run(tui::TuiOptions {
+        socket_path: socket,
+        default_dir: dir,
+        focus: target,
+    })
+    .await
 }
 
 async fn daemon_command(action: DaemonAction, socket: PathBuf) -> anyhow::Result<()> {
     match action {
         DaemonAction::Start { foreground: true } => {
-            daemon::run(daemon::DaemonOptions { socket_path: socket, data_dir: proto::paths::data_dir() }).await
+            daemon::run(daemon::DaemonOptions {
+                socket_path: socket,
+                data_dir: proto::paths::data_dir(),
+            })
+            .await
         }
         DaemonAction::Start { foreground: false } => {
             spawn::ensure_daemon(&socket).await?;
@@ -175,7 +209,9 @@ async fn daemon_command(action: DaemonAction, socket: PathBuf) -> anyhow::Result
             Ok(())
         }
         DaemonAction::Stop => {
-            let mut c = client::CliClient::connect(&socket).await.map_err(|_| anyhow::anyhow!("no daemon is running"))?;
+            let mut c = client::CliClient::connect(&socket)
+                .await
+                .map_err(|_| anyhow::anyhow!("no daemon is running"))?;
             c.send(ClientMsg::Shutdown).await?;
             c.wait_close().await;
             println!("daemon stopped");

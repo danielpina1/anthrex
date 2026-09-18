@@ -8,7 +8,10 @@ pub mod ui;
 
 use app::{App, Effect};
 use connection::Connection;
-use crossterm::event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event, EventStream, MouseButton, MouseEventKind};
+use crossterm::event::{
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
+    EventStream, MouseButton, MouseEventKind,
+};
 use futures::StreamExt;
 use keymap::Keymap;
 use ratatui::DefaultTerminal;
@@ -26,7 +29,11 @@ pub struct TuiOptions {
 /// the drop guard on normal/error exit and from the panic hook, so it must be safe to call
 /// more than once and must not touch anything that requires an intact runtime.
 fn disable_mouse_and_paste() {
-    let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste, DisableMouseCapture);
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        DisableBracketedPaste,
+        DisableMouseCapture
+    );
 }
 
 /// Restores the terminal exactly once, on every way out of `run`'s scope: normal return, an
@@ -44,9 +51,17 @@ impl Drop for TerminalGuard {
 
 pub async fn run(opts: TuiOptions) -> anyhow::Result<()> {
     let mut conn = Connection::connect(&opts.socket_path).await?;
-    let mut app = App::new(conn.windows.clone(), opts.default_dir.clone(), Keymap::default_prefix());
+    let mut app = App::new(
+        conn.windows.clone(),
+        opts.default_dir.clone(),
+        Keymap::default_prefix(),
+    );
     if let Some(target) = &opts.focus {
-        match app.windows.iter().find(|w| w.name == *target || w.id.to_string() == *target) {
+        match app
+            .windows
+            .iter()
+            .find(|w| w.name == *target || w.id.to_string() == *target)
+        {
             Some(w) => app.request_focus(w.id),
             None => app.toast(format!("no window named '{target}'")),
         }
@@ -91,7 +106,11 @@ fn apply(effects: Vec<Effect>, conn: &Connection, app: &mut App) -> bool {
     false
 }
 
-fn draw(terminal: &mut DefaultTerminal, app: &mut App, conn: &Connection) -> anyhow::Result<ui::Layout> {
+fn draw(
+    terminal: &mut DefaultTerminal,
+    app: &mut App,
+    conn: &Connection,
+) -> anyhow::Result<ui::Layout> {
     let mut layout = None;
     terminal.draw(|frame| layout = Some(ui::draw(frame, app)))?;
     let layout = layout.expect("draw closure always runs");
@@ -100,7 +119,11 @@ fn draw(terminal: &mut DefaultTerminal, app: &mut App, conn: &Connection) -> any
     Ok(layout)
 }
 
-async fn event_loop(terminal: &mut DefaultTerminal, conn: &mut Connection, app: &mut App) -> anyhow::Result<()> {
+async fn event_loop(
+    terminal: &mut DefaultTerminal,
+    conn: &mut Connection,
+    app: &mut App,
+) -> anyhow::Result<()> {
     let mut events = EventStream::new();
     let mut tick = tokio::time::interval(Duration::from_millis(100));
     loop {

@@ -39,13 +39,26 @@ async fn wait_event(
 #[tokio::test]
 async fn shows_output_accepts_input_and_reports_exit_code() {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let w = Window::spawn(1, &plan("sh", &["-c", "echo hello-anthrex; cat"]), 80, 24, tx).unwrap();
+    let w = Window::spawn(
+        1,
+        &plan("sh", &["-c", "echo hello-anthrex; cat"]),
+        80,
+        24,
+        tx,
+    )
+    .unwrap();
     wait_until("greeting", || w.screen_text().contains("hello-anthrex")).await;
     w.write_input(b"ping-pong\n").unwrap();
     wait_until("echoed input", || w.screen_text().contains("ping-pong")).await;
     w.write_input(&[0x04]).unwrap(); // Ctrl-D ends `cat`
     let ev = wait_event(&mut rx, |e| matches!(e, WindowEvent::Exited { .. })).await;
-    assert_eq!(ev, WindowEvent::Exited { code: Some(0), signal: None });
+    assert_eq!(
+        ev,
+        WindowEvent::Exited {
+            code: Some(0),
+            signal: None
+        }
+    );
 }
 
 #[tokio::test]
@@ -53,7 +66,13 @@ async fn nonzero_exit_code_is_reported() {
     let (tx, mut rx) = mpsc::unbounded_channel();
     let _w = Window::spawn(2, &plan("sh", &["-c", "exit 3"]), 80, 24, tx).unwrap();
     let ev = wait_event(&mut rx, |e| matches!(e, WindowEvent::Exited { .. })).await;
-    assert_eq!(ev, WindowEvent::Exited { code: Some(3), signal: None });
+    assert_eq!(
+        ev,
+        WindowEvent::Exited {
+            code: Some(3),
+            signal: None
+        }
+    );
 }
 
 #[tokio::test]
@@ -61,8 +80,18 @@ async fn missing_binary_shows_error_in_window_and_exits_127() {
     let (tx, mut rx) = mpsc::unbounded_channel();
     let w = Window::spawn(3, &plan("definitely-not-a-binary-anthrex", &[]), 80, 24, tx).unwrap();
     let ev = wait_event(&mut rx, |e| matches!(e, WindowEvent::Exited { .. })).await;
-    assert_eq!(ev, WindowEvent::Exited { code: Some(127), signal: None });
-    assert!(w.screen_text().contains("not found"), "screen: {:?}", w.screen_text());
+    assert_eq!(
+        ev,
+        WindowEvent::Exited {
+            code: Some(127),
+            signal: None
+        }
+    );
+    assert!(
+        w.screen_text().contains("not found"),
+        "screen: {:?}",
+        w.screen_text()
+    );
 }
 
 #[tokio::test]
@@ -79,7 +108,13 @@ async fn bell_and_title_are_reported_as_events() {
     let (tx, mut rx) = mpsc::unbounded_channel();
     let _w = Window::spawn(
         5,
-        &plan("sh", &["-c", "printf '\\033]0;hello-title\\007'; printf '\\007'; sleep 0.2"]),
+        &plan(
+            "sh",
+            &[
+                "-c",
+                "printf '\\033]0;hello-title\\007'; printf '\\007'; sleep 0.2",
+            ],
+        ),
         80,
         24,
         tx,
@@ -100,7 +135,10 @@ async fn signal_terminates_the_child() {
         // On macOS, portable-pty derives the signal string from libc::strsignal(15),
         // which is "Terminated: 15" rather than a string literally containing "TERM".
         // Match case-insensitively so this still verifies it was a TERM signal.
-        WindowEvent::Exited { code: None, signal: Some(s) } => {
+        WindowEvent::Exited {
+            code: None,
+            signal: Some(s),
+        } => {
             assert!(s.to_uppercase().contains("TERM"), "{s}")
         }
         other => panic!("expected signal exit, got {other:?}"),
@@ -112,14 +150,31 @@ async fn signal_terminates_the_child() {
 #[tokio::test]
 async fn snapshot_carries_the_alternate_screen_state() {
     let (tx, _rx) = mpsc::unbounded_channel();
-    let w = Window::spawn(8, &plan("sh", &["-c", "printf '\\033[?1049h'; printf 'ALT'; sleep 2"]), 80, 24, tx).unwrap();
+    let w = Window::spawn(
+        8,
+        &plan(
+            "sh",
+            &["-c", "printf '\\033[?1049h'; printf 'ALT'; sleep 2"],
+        ),
+        80,
+        24,
+        tx,
+    )
+    .unwrap();
     wait_until("alternate screen text", || w.screen_text().contains("ALT")).await;
 
     let att = w.attach();
     let mut mirror = vt100::Parser::new(att.rows, att.cols, 0);
     mirror.process(&att.snapshot);
-    assert!(mirror.screen().alternate_screen(), "the snapshot did not restore the alternate screen");
-    assert!(mirror.screen().contents().contains("ALT"), "screen: {:?}", mirror.screen().contents());
+    assert!(
+        mirror.screen().alternate_screen(),
+        "the snapshot did not restore the alternate screen"
+    );
+    assert!(
+        mirror.screen().contents().contains("ALT"),
+        "screen: {:?}",
+        mirror.screen().contents()
+    );
     // The screen must appear exactly once: `state_formatted()` already includes the
     // contents, so emitting `contents_formatted()` as well would write it twice.
     assert_eq!(mirror.screen().contents().matches("ALT").count(), 1);
@@ -129,7 +184,17 @@ async fn snapshot_carries_the_alternate_screen_state() {
 #[tokio::test]
 async fn attach_gives_a_snapshot_and_live_output_without_duplicates() {
     let (tx, _rx) = mpsc::unbounded_channel();
-    let w = Window::spawn(7, &plan("sh", &["-c", "echo first; sleep 0.3; echo second; sleep 0.3"]), 80, 24, tx).unwrap();
+    let w = Window::spawn(
+        7,
+        &plan(
+            "sh",
+            &["-c", "echo first; sleep 0.3; echo second; sleep 0.3"],
+        ),
+        80,
+        24,
+        tx,
+    )
+    .unwrap();
     wait_until("first line", || w.screen_text().contains("first")).await;
     let mut att = w.attach();
     assert_eq!((att.cols, att.rows), (80, 24));
@@ -139,7 +204,9 @@ async fn attach_gives_a_snapshot_and_live_output_without_duplicates() {
     let deadline = Instant::now() + Duration::from_secs(5);
     while !mirror.screen().contents().contains("second") {
         assert!(Instant::now() < deadline, "never saw second line");
-        if let Ok(Ok(chunk)) = tokio::time::timeout(Duration::from_millis(200), att.output.recv()).await {
+        if let Ok(Ok(chunk)) =
+            tokio::time::timeout(Duration::from_millis(200), att.output.recv()).await
+        {
             mirror.process(&chunk);
         }
     }

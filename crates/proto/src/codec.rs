@@ -84,14 +84,20 @@ mod tests {
 
     #[test]
     fn encode_rejects_oversized_body() {
-        let msg = DaemonMsg::Output { window_id: 1, bytes: vec![0u8; MAX_FRAME + 1] };
+        let msg = DaemonMsg::Output {
+            window_id: 1,
+            bytes: vec![0u8; MAX_FRAME + 1],
+        };
         assert!(matches!(encode(&msg), Err(CodecError::TooLarge(_))));
     }
 
     #[tokio::test]
     async fn frames_round_trip_over_a_duplex_stream() {
         let (mut a, mut b) = tokio::io::duplex(4096);
-        let hello = ClientMsg::Hello { proto_version: 1, client: ClientKind::Cli };
+        let hello = ClientMsg::Hello {
+            proto_version: 1,
+            client: ClientKind::Cli,
+        };
         write_frame(&mut a, &hello).await.unwrap();
         write_frame(&mut a, &ClientMsg::Unsubscribe).await.unwrap();
         let first: Option<ClientMsg> = read_frame(&mut b).await.unwrap();
@@ -111,7 +117,9 @@ mod tests {
     #[tokio::test]
     async fn read_frame_rejects_oversized_header() {
         let (mut a, mut b) = tokio::io::duplex(64);
-        a.write_all(&((MAX_FRAME as u32) + 1).to_be_bytes()).await.unwrap();
+        a.write_all(&((MAX_FRAME as u32) + 1).to_be_bytes())
+            .await
+            .unwrap();
         let got: Result<Option<ClientMsg>, CodecError> = read_frame(&mut b).await;
         assert!(matches!(got, Err(CodecError::TooLarge(_))));
     }

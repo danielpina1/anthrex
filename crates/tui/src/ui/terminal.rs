@@ -19,12 +19,25 @@ pub fn shorten_home(path: &Path) -> String {
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let title = match app.focused_window() {
         Some(w) => {
-            let branch = w.branch.as_ref().map(|b| format!(" ({b})")).unwrap_or_default();
-            format!(" {} · {} · {}{branch} ", w.name, w.runtime.label(), shorten_home(&w.cwd))
+            let branch = w
+                .branch
+                .as_ref()
+                .map(|b| format!(" ({b})"))
+                .unwrap_or_default();
+            format!(
+                " {} · {} · {}{branch} ",
+                w.name,
+                w.runtime.label(),
+                shorten_home(&w.cwd)
+            )
         }
         None => " no window ".to_string(),
     };
-    let border = if app.modal.is_none() { theme::border_focused() } else { theme::border() };
+    let border = if app.modal.is_none() {
+        theme::border_focused()
+    } else {
+        theme::border()
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -36,7 +49,10 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     if app.focused.is_none() {
         let hint = vec![
             Line::raw(""),
-            Line::styled("  No agents. Press C-b c to open a shell here, or run `anthrex new`.", theme::muted()),
+            Line::styled(
+                "  No agents. Press C-b c to open a shell here, or run `anthrex new`.",
+                theme::muted(),
+            ),
         ];
         frame.render_widget(Paragraph::new(hint), inner);
         return;

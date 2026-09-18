@@ -30,14 +30,22 @@ fn inset(r: Rect) -> Rect {
 }
 
 pub fn layout(area: Rect, sidebar_visible: bool) -> Layout {
-    let [body, statusbar] = RLayout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(area);
+    let [body, statusbar] =
+        RLayout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(area);
     let (sidebar, main) = if sidebar_visible {
-        let [s, m] = RLayout::horizontal([Constraint::Length(SIDEBAR_WIDTH), Constraint::Min(10)]).areas(body);
+        let [s, m] = RLayout::horizontal([Constraint::Length(SIDEBAR_WIDTH), Constraint::Min(10)])
+            .areas(body);
         (s, m)
     } else {
         (Rect::new(body.x, body.y, 0, body.height), body)
     };
-    Layout { sidebar, sidebar_inner: inset(sidebar), main, main_inner: inset(main), statusbar }
+    Layout {
+        sidebar,
+        sidebar_inner: inset(sidebar),
+        main,
+        main_inner: inset(main),
+        statusbar,
+    }
 }
 
 /// Draws everything and returns the layout so the caller can size the PTY and hit-test the mouse.
@@ -93,7 +101,10 @@ mod tests {
         assert_eq!(l.main.x, SIDEBAR_WIDTH);
         assert_eq!(l.main.width, 120 - SIDEBAR_WIDTH);
         assert_eq!(l.statusbar, ratatui::layout::Rect::new(0, 39, 120, 1));
-        assert_eq!(l.main_inner, ratatui::layout::Rect::new(SIDEBAR_WIDTH + 1, 1, 120 - SIDEBAR_WIDTH - 2, 37));
+        assert_eq!(
+            l.main_inner,
+            ratatui::layout::Rect::new(SIDEBAR_WIDTH + 1, 1, 120 - SIDEBAR_WIDTH - 2, 37)
+        );
         let hidden = layout(ratatui::layout::Rect::new(0, 0, 120, 40), false);
         assert_eq!(hidden.sidebar.width, 0);
         assert_eq!(hidden.main.width, 120);
@@ -102,7 +113,10 @@ mod tests {
     #[test]
     fn sidebar_lists_cards_with_glyph_runtime_status_and_elapsed() {
         let mut app = App::new(
-            vec![win(1, "api-worker", Runtime::Claude, Status::Working), win(2, "tests", Runtime::Codex, Status::Attention)],
+            vec![
+                win(1, "api-worker", Runtime::Claude, Status::Working),
+                win(2, "tests", Runtime::Codex, Status::Attention),
+            ],
             "/tmp".into(),
             Keymap::default_prefix(),
         );
@@ -113,8 +127,14 @@ mod tests {
         assert!(out.contains("claude · working · 1m"));
         assert!(out.contains("◆ 2 tests"));
         assert!(out.contains("codex · attention · 1m"));
-        assert!(out.contains("2 agents · 1 working"), "footer is truncated to the 28-column sidebar\n{out}");
-        assert!(out.contains("api-worker · claude · /tmp/repo (feat/x)"), "main title\n{out}");
+        assert!(
+            out.contains("2 agents · 1 working"),
+            "footer is truncated to the 28-column sidebar\n{out}"
+        );
+        assert!(
+            out.contains("api-worker · claude · /tmp/repo (feat/x)"),
+            "main title\n{out}"
+        );
     }
 
     #[test]
@@ -132,12 +152,19 @@ mod tests {
 
     #[test]
     fn statusbar_shows_prefix_state_and_toast() {
-        let mut app = App::new(vec![win(1, "a", Runtime::Shell, Status::Idle)], "/tmp".into(), Keymap::default_prefix());
+        let mut app = App::new(
+            vec![win(1, "a", Runtime::Shell, Status::Idle)],
+            "/tmp".into(),
+            Keymap::default_prefix(),
+        );
         let _ = app.set_terminal_size(80, 24);
         let (out, _) = render(&app, 100, 20);
         assert!(out.contains("C-b ?"));
         assert!(!out.contains("PREFIX"));
-        app.on_key(crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('b'), crossterm::event::KeyModifiers::CONTROL));
+        app.on_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('b'),
+            crossterm::event::KeyModifiers::CONTROL,
+        ));
         app.toast("tests needs attention");
         let (out, _) = render(&app, 100, 20);
         assert!(out.contains("PREFIX"));
@@ -146,9 +173,16 @@ mod tests {
 
     #[test]
     fn modals_render_on_top() {
-        let mut app = App::new(vec![win(1, "a", Runtime::Shell, Status::Idle)], "/tmp".into(), Keymap::default_prefix());
+        let mut app = App::new(
+            vec![win(1, "a", Runtime::Shell, Status::Idle)],
+            "/tmp".into(),
+            Keymap::default_prefix(),
+        );
         let _ = app.set_terminal_size(80, 24);
-        app.modal = Some(Modal::Confirm { message: "Kill 'a'?".into(), action: PendingAction::Kill(1) });
+        app.modal = Some(Modal::Confirm {
+            message: "Kill 'a'?".into(),
+            action: PendingAction::Kill(1),
+        });
         let (out, _) = render(&app, 100, 20);
         assert!(out.contains("Kill 'a'?"));
         assert!(out.contains("y / Enter = yes"));
@@ -160,16 +194,41 @@ mod tests {
     #[test]
     fn sidebar_hit_test_maps_rows_to_cards() {
         let mut app = App::new(
-            vec![win(1, "a", Runtime::Shell, Status::Idle), win(2, "b", Runtime::Shell, Status::Idle)],
+            vec![
+                win(1, "a", Runtime::Shell, Status::Idle),
+                win(2, "b", Runtime::Shell, Status::Idle),
+            ],
             "/tmp".into(),
             Keymap::default_prefix(),
         );
         let _ = app.set_terminal_size(80, 24);
         let (_, l) = render(&app, 100, 20);
-        assert_eq!(sidebar::hit_test(l.sidebar_inner, &app, 3, l.sidebar_inner.y), Some(0));
-        assert_eq!(sidebar::hit_test(l.sidebar_inner, &app, 3, l.sidebar_inner.y + sidebar::CARD_HEIGHT), Some(1));
-        assert_eq!(sidebar::hit_test(l.sidebar_inner, &app, 3, l.sidebar_inner.y + 3 * sidebar::CARD_HEIGHT), None);
-        assert_eq!(sidebar::hit_test(l.sidebar_inner, &app, 60, l.sidebar_inner.y), None);
+        assert_eq!(
+            sidebar::hit_test(l.sidebar_inner, &app, 3, l.sidebar_inner.y),
+            Some(0)
+        );
+        assert_eq!(
+            sidebar::hit_test(
+                l.sidebar_inner,
+                &app,
+                3,
+                l.sidebar_inner.y + sidebar::CARD_HEIGHT
+            ),
+            Some(1)
+        );
+        assert_eq!(
+            sidebar::hit_test(
+                l.sidebar_inner,
+                &app,
+                3,
+                l.sidebar_inner.y + 3 * sidebar::CARD_HEIGHT
+            ),
+            None
+        );
+        assert_eq!(
+            sidebar::hit_test(l.sidebar_inner, &app, 60, l.sidebar_inner.y),
+            None
+        );
         assert_eq!(sidebar::format_elapsed(59), "59s");
         assert_eq!(sidebar::format_elapsed(3600), "1h");
     }
@@ -192,10 +251,26 @@ mod tests {
         let inner = ratatui::layout::Rect::new(1, 1, 28, 8);
         let expected = [Some(0), Some(0), Some(1), Some(1), Some(2), Some(2)];
         for (offset, want) in expected.into_iter().enumerate() {
-            assert_eq!(sidebar::hit_test(inner, &app, 3, inner.y + offset as u16), want, "row offset {offset}");
+            assert_eq!(
+                sidebar::hit_test(inner, &app, 3, inner.y + offset as u16),
+                want,
+                "row offset {offset}"
+            );
         }
-        assert_eq!(sidebar::hit_test(inner, &app, 3, inner.y + 6), None, "spacer row");
-        assert_eq!(sidebar::hit_test(inner, &app, 3, inner.y + 7), None, "footer row");
-        assert_eq!(sidebar::hit_test(inner, &app, 3, inner.y + 8), None, "below the rect");
+        assert_eq!(
+            sidebar::hit_test(inner, &app, 3, inner.y + 6),
+            None,
+            "spacer row"
+        );
+        assert_eq!(
+            sidebar::hit_test(inner, &app, 3, inner.y + 7),
+            None,
+            "footer row"
+        );
+        assert_eq!(
+            sidebar::hit_test(inner, &app, 3, inner.y + 8),
+            None,
+            "below the rect"
+        );
     }
 }

@@ -29,7 +29,9 @@ impl FromStr for Runtime {
             "claude" => Ok(Runtime::Claude),
             "codex" => Ok(Runtime::Codex),
             "shell" => Ok(Runtime::Shell),
-            other => Err(format!("unknown runtime '{other}' (expected claude, codex or shell)")),
+            other => Err(format!(
+                "unknown runtime '{other}' (expected claude, codex or shell)"
+            )),
         }
     }
 }

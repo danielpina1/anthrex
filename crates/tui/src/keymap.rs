@@ -40,7 +40,10 @@ impl Keymap {
     }
 
     pub fn new(prefix: (KeyCode, KeyModifiers)) -> Self {
-        Self { prefix, pending: false }
+        Self {
+            prefix,
+            pending: false,
+        }
     }
 
     pub fn pending(&self) -> bool {
@@ -68,7 +71,9 @@ impl Keymap {
             return match key.code {
                 KeyCode::Char('j') | KeyCode::Char('n') => KeyAction::Run(Command::NextWindow),
                 KeyCode::Char('k') | KeyCode::Char('p') => KeyAction::Run(Command::PrevWindow),
-                KeyCode::Char(d @ '1'..='9') => KeyAction::Run(Command::FocusIndex(d as usize - '1' as usize)),
+                KeyCode::Char(d @ '1'..='9') => {
+                    KeyAction::Run(Command::FocusIndex(d as usize - '1' as usize))
+                }
                 KeyCode::Char('c') => KeyAction::Run(Command::NewWindow),
                 KeyCode::Char('x') => KeyAction::Run(Command::KillWindow),
                 KeyCode::Char('X') => KeyAction::Run(Command::RemoveWindow),
@@ -84,7 +89,9 @@ impl Keymap {
             self.pending = true;
             return KeyAction::AwaitPrefix;
         }
-        encode_key(key, app_cursor).map(KeyAction::Send).unwrap_or(KeyAction::Nothing)
+        encode_key(key, app_cursor)
+            .map(KeyAction::Send)
+            .unwrap_or(KeyAction::Nothing)
     }
 }
 
@@ -99,14 +106,23 @@ pub fn encode_key(key: KeyEvent, app_cursor: bool) -> Option<Vec<u8>> {
 
     let cursor = |final_byte: char| -> Vec<u8> {
         if modifier == 1 {
-            if app_cursor { format!("\x1bO{final_byte}") } else { format!("\x1b[{final_byte}") }
+            if app_cursor {
+                format!("\x1bO{final_byte}")
+            } else {
+                format!("\x1b[{final_byte}")
+            }
         } else {
             format!("\x1b[1;{modifier}{final_byte}")
         }
         .into_bytes()
     };
     let tilde = |code: u8| -> Vec<u8> {
-        if modifier == 1 { format!("\x1b[{code}~") } else { format!("\x1b[{code};{modifier}~") }.into_bytes()
+        if modifier == 1 {
+            format!("\x1b[{code}~")
+        } else {
+            format!("\x1b[{code};{modifier}~")
+        }
+        .into_bytes()
     };
 
     let bytes = match key.code {
@@ -138,17 +154,33 @@ pub fn encode_key(key: KeyEvent, app_cursor: bool) -> Option<Vec<u8>> {
         // particular is how claude and codex take a newline without submitting, on
         // terminals that do not speak the kitty keyboard protocol.
         Enter => {
-            if alt { vec![0x1b, b'\r'] } else { vec![b'\r'] }
+            if alt {
+                vec![0x1b, b'\r']
+            } else {
+                vec![b'\r']
+            }
         }
         Tab => {
-            if alt { vec![0x1b, b'\t'] } else { vec![b'\t'] }
+            if alt {
+                vec![0x1b, b'\t']
+            } else {
+                vec![b'\t']
+            }
         }
         BackTab => b"\x1b[Z".to_vec(),
         Backspace => {
-            if alt { vec![0x1b, 0x7f] } else { vec![0x7f] }
+            if alt {
+                vec![0x1b, 0x7f]
+            } else {
+                vec![0x7f]
+            }
         }
         Esc => {
-            if alt { vec![0x1b, 0x1b] } else { vec![0x1b] }
+            if alt {
+                vec![0x1b, 0x1b]
+            } else {
+                vec![0x1b]
+            }
         }
         Up => cursor('A'),
         Down => cursor('B'),
@@ -191,47 +223,143 @@ mod tests {
 
     #[test]
     fn plain_and_control_characters() {
-        assert_eq!(encode_key(key(KeyCode::Char('a'), KeyModifiers::NONE), false), Some(b"a".to_vec()));
-        assert_eq!(encode_key(key(KeyCode::Char('é'), KeyModifiers::NONE), false), Some("é".as_bytes().to_vec()));
-        assert_eq!(encode_key(key(KeyCode::Char('c'), KeyModifiers::CONTROL), false), Some(vec![0x03]));
-        assert_eq!(encode_key(key(KeyCode::Char('C'), KeyModifiers::CONTROL | KeyModifiers::SHIFT), false), Some(vec![0x03]));
-        assert_eq!(encode_key(key(KeyCode::Char('['), KeyModifiers::CONTROL), false), Some(vec![0x1b]));
-        assert_eq!(encode_key(key(KeyCode::Char(' '), KeyModifiers::CONTROL), false), Some(vec![0x00]));
-        assert_eq!(encode_key(key(KeyCode::Char('x'), KeyModifiers::ALT), false), Some(vec![0x1b, b'x']));
-        assert_eq!(encode_key(key(KeyCode::Enter, KeyModifiers::NONE), false), Some(vec![b'\r']));
-        assert_eq!(encode_key(key(KeyCode::Backspace, KeyModifiers::NONE), false), Some(vec![0x7f]));
-        assert_eq!(encode_key(key(KeyCode::Esc, KeyModifiers::NONE), false), Some(vec![0x1b]));
-        assert_eq!(encode_key(key(KeyCode::Tab, KeyModifiers::NONE), false), Some(vec![b'\t']));
-        assert_eq!(encode_key(key(KeyCode::BackTab, KeyModifiers::SHIFT), false), Some(b"\x1b[Z".to_vec()));
+        assert_eq!(
+            encode_key(key(KeyCode::Char('a'), KeyModifiers::NONE), false),
+            Some(b"a".to_vec())
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Char('é'), KeyModifiers::NONE), false),
+            Some("é".as_bytes().to_vec())
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Char('c'), KeyModifiers::CONTROL), false),
+            Some(vec![0x03])
+        );
+        assert_eq!(
+            encode_key(
+                key(
+                    KeyCode::Char('C'),
+                    KeyModifiers::CONTROL | KeyModifiers::SHIFT
+                ),
+                false
+            ),
+            Some(vec![0x03])
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Char('['), KeyModifiers::CONTROL), false),
+            Some(vec![0x1b])
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Char(' '), KeyModifiers::CONTROL), false),
+            Some(vec![0x00])
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Char('x'), KeyModifiers::ALT), false),
+            Some(vec![0x1b, b'x'])
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Enter, KeyModifiers::NONE), false),
+            Some(vec![b'\r'])
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Backspace, KeyModifiers::NONE), false),
+            Some(vec![0x7f])
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Esc, KeyModifiers::NONE), false),
+            Some(vec![0x1b])
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Tab, KeyModifiers::NONE), false),
+            Some(vec![b'\t'])
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::BackTab, KeyModifiers::SHIFT), false),
+            Some(b"\x1b[Z".to_vec())
+        );
     }
 
     /// I3: Alt+Enter is how claude and codex insert a newline without submitting; it must
     /// reach them as ESC CR, not as a bare CR that submits the prompt.
     #[test]
     fn alt_prefixes_enter_tab_escape_and_backspace_with_escape() {
-        assert_eq!(encode_key(key(KeyCode::Enter, KeyModifiers::ALT), false), Some(vec![0x1b, b'\r']));
-        assert_eq!(encode_key(key(KeyCode::Tab, KeyModifiers::ALT), false), Some(vec![0x1b, b'\t']));
-        assert_eq!(encode_key(key(KeyCode::Esc, KeyModifiers::ALT), false), Some(vec![0x1b, 0x1b]));
-        assert_eq!(encode_key(key(KeyCode::Backspace, KeyModifiers::ALT), false), Some(vec![0x1b, 0x7f]));
+        assert_eq!(
+            encode_key(key(KeyCode::Enter, KeyModifiers::ALT), false),
+            Some(vec![0x1b, b'\r'])
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Tab, KeyModifiers::ALT), false),
+            Some(vec![0x1b, b'\t'])
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Esc, KeyModifiers::ALT), false),
+            Some(vec![0x1b, 0x1b])
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Backspace, KeyModifiers::ALT), false),
+            Some(vec![0x1b, 0x7f])
+        );
         // Without Alt they are unchanged.
-        assert_eq!(encode_key(key(KeyCode::Enter, KeyModifiers::NONE), false), Some(vec![b'\r']));
-        assert_eq!(encode_key(key(KeyCode::Tab, KeyModifiers::NONE), false), Some(vec![b'\t']));
-        assert_eq!(encode_key(key(KeyCode::Esc, KeyModifiers::NONE), false), Some(vec![0x1b]));
+        assert_eq!(
+            encode_key(key(KeyCode::Enter, KeyModifiers::NONE), false),
+            Some(vec![b'\r'])
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Tab, KeyModifiers::NONE), false),
+            Some(vec![b'\t'])
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Esc, KeyModifiers::NONE), false),
+            Some(vec![0x1b])
+        );
     }
 
     #[test]
     fn cursor_keys_honour_application_mode_and_modifiers() {
-        assert_eq!(encode_key(key(KeyCode::Up, KeyModifiers::NONE), false), Some(b"\x1b[A".to_vec()));
-        assert_eq!(encode_key(key(KeyCode::Up, KeyModifiers::NONE), true), Some(b"\x1bOA".to_vec()));
-        assert_eq!(encode_key(key(KeyCode::Left, KeyModifiers::SHIFT), false), Some(b"\x1b[1;2D".to_vec()));
-        assert_eq!(encode_key(key(KeyCode::Right, KeyModifiers::CONTROL), true), Some(b"\x1b[1;5C".to_vec()));
-        assert_eq!(encode_key(key(KeyCode::Home, KeyModifiers::NONE), true), Some(b"\x1bOH".to_vec()));
-        assert_eq!(encode_key(key(KeyCode::Delete, KeyModifiers::NONE), false), Some(b"\x1b[3~".to_vec()));
-        assert_eq!(encode_key(key(KeyCode::PageUp, KeyModifiers::SHIFT), false), Some(b"\x1b[5;2~".to_vec()));
-        assert_eq!(encode_key(key(KeyCode::F(1), KeyModifiers::NONE), false), Some(b"\x1bOP".to_vec()));
-        assert_eq!(encode_key(key(KeyCode::F(5), KeyModifiers::NONE), false), Some(b"\x1b[15~".to_vec()));
-        assert_eq!(encode_key(key(KeyCode::F(12), KeyModifiers::NONE), false), Some(b"\x1b[24~".to_vec()));
-        assert_eq!(encode_key(key(KeyCode::CapsLock, KeyModifiers::NONE), false), None);
+        assert_eq!(
+            encode_key(key(KeyCode::Up, KeyModifiers::NONE), false),
+            Some(b"\x1b[A".to_vec())
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Up, KeyModifiers::NONE), true),
+            Some(b"\x1bOA".to_vec())
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Left, KeyModifiers::SHIFT), false),
+            Some(b"\x1b[1;2D".to_vec())
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Right, KeyModifiers::CONTROL), true),
+            Some(b"\x1b[1;5C".to_vec())
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Home, KeyModifiers::NONE), true),
+            Some(b"\x1bOH".to_vec())
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::Delete, KeyModifiers::NONE), false),
+            Some(b"\x1b[3~".to_vec())
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::PageUp, KeyModifiers::SHIFT), false),
+            Some(b"\x1b[5;2~".to_vec())
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::F(1), KeyModifiers::NONE), false),
+            Some(b"\x1bOP".to_vec())
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::F(5), KeyModifiers::NONE), false),
+            Some(b"\x1b[15~".to_vec())
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::F(12), KeyModifiers::NONE), false),
+            Some(b"\x1b[24~".to_vec())
+        );
+        assert_eq!(
+            encode_key(key(KeyCode::CapsLock, KeyModifiers::NONE), false),
+            None
+        );
     }
 
     #[test]
@@ -240,14 +368,26 @@ mod tests {
         let prefix = key(KeyCode::Char('b'), KeyModifiers::CONTROL);
         assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
         assert!(km.pending());
-        assert_eq!(km.handle(key(KeyCode::Char('j'), KeyModifiers::NONE), false), KeyAction::Run(Command::NextWindow));
+        assert_eq!(
+            km.handle(key(KeyCode::Char('j'), KeyModifiers::NONE), false),
+            KeyAction::Run(Command::NextWindow)
+        );
         assert!(!km.pending());
         assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
-        assert_eq!(km.handle(key(KeyCode::Char('3'), KeyModifiers::NONE), false), KeyAction::Run(Command::FocusIndex(2)));
+        assert_eq!(
+            km.handle(key(KeyCode::Char('3'), KeyModifiers::NONE), false),
+            KeyAction::Run(Command::FocusIndex(2))
+        );
         assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
-        assert_eq!(km.handle(key(KeyCode::Char('X'), KeyModifiers::SHIFT), false), KeyAction::Run(Command::RemoveWindow));
+        assert_eq!(
+            km.handle(key(KeyCode::Char('X'), KeyModifiers::SHIFT), false),
+            KeyAction::Run(Command::RemoveWindow)
+        );
         assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
-        assert_eq!(km.handle(key(KeyCode::Char('?'), KeyModifiers::NONE), false), KeyAction::Run(Command::Help));
+        assert_eq!(
+            km.handle(key(KeyCode::Char('?'), KeyModifiers::NONE), false),
+            KeyAction::Run(Command::Help)
+        );
     }
 
     #[test]
@@ -257,16 +397,25 @@ mod tests {
         km.handle(prefix, false);
         assert_eq!(km.handle(prefix, false), KeyAction::Send(vec![0x02]));
         km.handle(prefix, false);
-        assert_eq!(km.handle(key(KeyCode::Esc, KeyModifiers::NONE), false), KeyAction::Cancel);
+        assert_eq!(
+            km.handle(key(KeyCode::Esc, KeyModifiers::NONE), false),
+            KeyAction::Cancel
+        );
         assert!(!km.pending());
         km.handle(prefix, false);
-        assert_eq!(km.handle(key(KeyCode::Char('z'), KeyModifiers::NONE), false), KeyAction::Nothing);
+        assert_eq!(
+            km.handle(key(KeyCode::Char('z'), KeyModifiers::NONE), false),
+            KeyAction::Nothing
+        );
     }
 
     #[test]
     fn ordinary_keys_pass_through_and_releases_are_ignored() {
         let mut km = Keymap::new(Keymap::default_prefix());
-        assert_eq!(km.handle(key(KeyCode::Char('q'), KeyModifiers::NONE), false), KeyAction::Send(b"q".to_vec()));
+        assert_eq!(
+            km.handle(key(KeyCode::Char('q'), KeyModifiers::NONE), false),
+            KeyAction::Send(b"q".to_vec())
+        );
         let mut release = key(KeyCode::Char('q'), KeyModifiers::NONE);
         release.kind = crossterm::event::KeyEventKind::Release;
         assert_eq!(km.handle(release, false), KeyAction::Nothing);
@@ -282,7 +431,10 @@ mod tests {
         repeat.kind = crossterm::event::KeyEventKind::Repeat;
         assert_eq!(km.handle(repeat, false), KeyAction::AwaitPrefix);
         assert!(km.pending());
-        assert_eq!(km.handle(key(KeyCode::Char('j'), KeyModifiers::NONE), false), KeyAction::Run(Command::NextWindow));
+        assert_eq!(
+            km.handle(key(KeyCode::Char('j'), KeyModifiers::NONE), false),
+            KeyAction::Run(Command::NextWindow)
+        );
         assert!(!km.pending());
     }
 }

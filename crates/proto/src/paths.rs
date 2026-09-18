@@ -75,7 +75,11 @@ mod tests {
         assert_eq!(p.file_name().unwrap(), "daemon.sock");
         let dir = p.parent().unwrap().to_string_lossy().into_owned();
         assert!(dir.contains("anthrex"), "{dir}");
-        assert!(p.to_string_lossy().len() < 100, "socket path too long for sun_path: {}", p.display());
+        assert!(
+            p.to_string_lossy().len() < 100,
+            "socket path too long for sun_path: {}",
+            p.display()
+        );
     }
 
     #[test]

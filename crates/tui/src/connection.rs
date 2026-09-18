@@ -16,13 +16,23 @@ pub struct Connection {
 
 impl Connection {
     pub async fn connect(socket: &Path) -> anyhow::Result<Self> {
-        let stream = UnixStream::connect(socket)
-            .await
-            .map_err(|e| anyhow::anyhow!("cannot connect to the daemon at {}: {e}", socket.display()))?;
+        let stream = UnixStream::connect(socket).await.map_err(|e| {
+            anyhow::anyhow!("cannot connect to the daemon at {}: {e}", socket.display())
+        })?;
         let (mut rd, mut wr) = stream.into_split();
-        write_frame(&mut wr, &ClientMsg::Hello { proto_version: PROTO_VERSION, client: ClientKind::Tui }).await?;
+        write_frame(
+            &mut wr,
+            &ClientMsg::Hello {
+                proto_version: PROTO_VERSION,
+                client: ClientKind::Tui,
+            },
+        )
+        .await?;
         let (daemon_version, windows) = match read_frame::<_, DaemonMsg>(&mut rd).await? {
-            Some(DaemonMsg::Welcome { daemon_version, windows }) => (daemon_version, windows),
+            Some(DaemonMsg::Welcome {
+                daemon_version,
+                windows,
+            }) => (daemon_version, windows),
             Some(DaemonMsg::Error { message, .. }) => anyhow::bail!(message),
             Some(other) => anyhow::bail!("unexpected handshake reply: {other:?}"),
             None => anyhow::bail!("the daemon closed the connection during the handshake"),
@@ -48,7 +58,13 @@ impl Connection {
             // Dropping in_tx closes the channel; recv() then yields None.
         });
 
-        Ok(Self { tx, rx, reader, windows, daemon_version })
+        Ok(Self {
+            tx,
+            rx,
+            reader,
+            windows,
+            daemon_version,
+        })
     }
 
     /// Queues a message for the daemon. Never suspends: the UI loop must stay responsive

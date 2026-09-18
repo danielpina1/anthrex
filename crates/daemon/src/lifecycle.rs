@@ -72,7 +72,11 @@ fn init_logging(data_dir: &Path) -> tracing_appender::non_blocking::WorkerGuard 
     let (writer, guard) = tracing_appender::non_blocking(file);
     let filter = tracing_subscriber::EnvFilter::try_from_env("ANTHREX_LOG")
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    tracing_subscriber::fmt().with_env_filter(filter).with_ansi(false).with_writer(writer).init();
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_ansi(false)
+        .with_writer(writer)
+        .init();
     guard
 }
 
@@ -145,7 +149,11 @@ mod tests {
         std::fs::write(&sock, b"not a socket").unwrap();
         prepare_socket(&sock).unwrap();
         assert!(!sock.exists());
-        let mode = std::fs::metadata(sock.parent().unwrap()).unwrap().permissions().mode() & 0o777;
+        let mode = std::fs::metadata(sock.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
         assert_eq!(mode, 0o700);
     }
 
@@ -195,7 +203,9 @@ mod tests {
         let meta = std::fs::metadata(&dir).unwrap();
         assert_ne!(meta.uid(), current_uid);
         assert_eq!(meta.mode() & 0o1000, 0);
-        let err = prepare_socket(&dir.join("anthrex-should-never-bind.sock")).unwrap_err().to_string();
+        let err = prepare_socket(&dir.join("anthrex-should-never-bind.sock"))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("/usr"), "{err}");
         assert!(err.contains(&format!("uid {}", meta.uid())), "{err}");
     }
@@ -207,6 +217,9 @@ mod tests {
         let sock = dir.path().join("d.sock");
         prepare_socket(&sock).unwrap();
         let _listener = bind_socket(&sock).unwrap();
-        assert_eq!(std::fs::metadata(&sock).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::metadata(&sock).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }

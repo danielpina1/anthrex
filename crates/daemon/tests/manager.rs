@@ -36,7 +36,10 @@ async fn wait_until(what: &str, mut cond: impl FnMut() -> bool) {
 }
 
 fn find(m: &WindowManager, id: u32) -> WindowInfo {
-    m.list().into_iter().find(|w| w.id == id).expect("window listed")
+    m.list()
+        .into_iter()
+        .find(|w| w.id == id)
+        .expect("window listed")
 }
 
 #[tokio::test]
@@ -51,7 +54,10 @@ async fn create_lists_the_window_and_notifies_watchers() {
     assert_eq!(rx.borrow().len(), 1);
     let second = m.create(spec("two"), 80, 24).unwrap();
     assert_eq!(second.id, 2);
-    assert_eq!(m.list().iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), vec!["one", "two"]);
+    assert_eq!(
+        m.list().iter().map(|w| w.name.as_str()).collect::<Vec<_>>(),
+        vec!["one", "two"]
+    );
 }
 
 #[tokio::test]
@@ -65,7 +71,12 @@ async fn names_default_to_runtime_and_id_and_must_be_unique() {
     assert!(err.to_string().contains("already exists"));
     let mut bad_dir = spec("y");
     bad_dir.cwd = "/definitely/missing/dir".into();
-    assert!(m.create(bad_dir, 80, 24).unwrap_err().to_string().contains("does not exist"));
+    assert!(
+        m.create(bad_dir, 80, 24)
+            .unwrap_err()
+            .to_string()
+            .contains("does not exist")
+    );
 }
 
 #[tokio::test]
@@ -161,16 +172,25 @@ async fn a_program_that_ignores_stdin_never_blocks_write_input_or_list() {
         // Ok or the queue-full Err; what matters is that it returns promptly.
         let _ = m.write_input(id, &chunk);
         let elapsed = started.elapsed();
-        assert!(elapsed < Duration::from_millis(100), "write_input #{i} took {elapsed:?}");
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "write_input #{i} took {elapsed:?}"
+        );
         let started = Instant::now();
         let _ = m.list();
         let elapsed = started.elapsed();
-        assert!(elapsed < Duration::from_millis(100), "list() after write #{i} took {elapsed:?}");
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "list() after write #{i} took {elapsed:?}"
+        );
     }
 
     stop.store(true, Ordering::Relaxed);
     let worst = lister.join().unwrap();
-    assert!(worst < Duration::from_millis(100), "concurrent list() worst case was {worst:?}");
+    assert!(
+        worst < Duration::from_millis(100),
+        "concurrent list() worst case was {worst:?}"
+    );
     m.remove(id).unwrap();
 }
 
@@ -190,7 +210,13 @@ async fn shutdown_ends_every_window() {
     for n in ["s1", "s2"] {
         m.create(spec(n), 80, 24).unwrap();
     }
-    wait_until("both started", || m.list().iter().all(|w| w.status != Status::Starting)).await;
+    wait_until("both started", || {
+        m.list().iter().all(|w| w.status != Status::Starting)
+    })
+    .await;
     m.shutdown().await;
-    wait_until("both exited", || m.list().iter().all(|w| w.status == Status::Exited)).await;
+    wait_until("both exited", || {
+        m.list().iter().all(|w| w.status == Status::Exited)
+    })
+    .await;
 }

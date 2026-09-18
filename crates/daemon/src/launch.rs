@@ -26,7 +26,10 @@ pub fn plan(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> LaunchPlan {
         ("TERM".to_string(), "xterm-256color".to_string()),
         ("COLORTERM".to_string(), "truecolor".to_string()),
         ("ANTHREX_WINDOW_ID".to_string(), ctx.window_id.to_string()),
-        ("ANTHREX_SOCKET".to_string(), ctx.socket_path.display().to_string()),
+        (
+            "ANTHREX_SOCKET".to_string(),
+            ctx.socket_path.display().to_string(),
+        ),
     ];
     let (program, args) = match spec.runtime {
         Runtime::Shell => (ctx.shell.to_string(), vec!["-l".to_string()]),
@@ -58,7 +61,12 @@ pub fn plan(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> LaunchPlan {
             ("codex".to_string(), args)
         }
     };
-    LaunchPlan { program, args, cwd: spec.cwd.clone(), env }
+    LaunchPlan {
+        program,
+        args,
+        cwd: spec.cwd.clone(),
+        env,
+    }
 }
 
 #[cfg(test)]
@@ -79,7 +87,12 @@ mod tests {
     }
 
     fn ctx() -> LaunchContext<'static> {
-        LaunchContext { window_id: 4, name: "api", socket_path: Path::new("/tmp/a.sock"), shell: "/bin/zsh" }
+        LaunchContext {
+            window_id: 4,
+            name: "api",
+            socket_path: Path::new("/tmp/a.sock"),
+            shell: "/bin/zsh",
+        }
     }
 
     #[test]
@@ -102,7 +115,10 @@ mod tests {
         s.initial_prompt = Some("fix the tests".into());
         let p = plan(&s, &ctx());
         assert_eq!(p.program, "claude");
-        assert_eq!(p.args, vec!["--name", "api", "--model", "opus", "--", "fix the tests"]);
+        assert_eq!(
+            p.args,
+            vec!["--name", "api", "--model", "opus", "--", "fix the tests"]
+        );
     }
 
     /// M1: a prompt beginning with a dash must reach the agent as a prompt. Verified that
@@ -115,7 +131,12 @@ mod tests {
             let p = plan(&s, &ctx());
             let dashdash = p.args.iter().position(|a| a == "--").expect("-- present");
             assert_eq!(p.args[dashdash + 1], "--version");
-            assert_eq!(dashdash + 2, p.args.len(), "the prompt is last: {:?}", p.args);
+            assert_eq!(
+                dashdash + 2,
+                p.args.len(),
+                "the prompt is last: {:?}",
+                p.args
+            );
         }
     }
 
@@ -126,6 +147,9 @@ mod tests {
         s.initial_prompt = Some("hello".into());
         let p = plan(&s, &ctx());
         assert_eq!(p.program, "codex");
-        assert_eq!(p.args, vec!["-C", "/tmp/repo", "-m", "gpt-5-codex", "--", "hello"]);
+        assert_eq!(
+            p.args,
+            vec!["-C", "/tmp/repo", "-m", "gpt-5-codex", "--", "hello"]
+        );
     }
 }

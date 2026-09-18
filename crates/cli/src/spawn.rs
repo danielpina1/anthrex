@@ -48,5 +48,8 @@ pub async fn ensure_daemon(socket: &Path) -> anyhow::Result<()> {
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    anyhow::bail!("the daemon did not start within 3 s; check {}", proto::paths::log_path().display())
+    anyhow::bail!(
+        "the daemon did not start within 3 s; check {}",
+        proto::paths::log_path().display()
+    )
 }

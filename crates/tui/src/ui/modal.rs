@@ -22,19 +22,33 @@ pub const HELP: &[(&str, &str)] = &[
 fn centered(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(area.width);
     let height = height.min(area.height);
-    Rect { x: area.x + (area.width - width) / 2, y: area.y + (area.height - height) / 2, width, height }
+    Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    }
 }
 
 pub fn render(frame: &mut Frame, modal: &Modal, area: Rect) {
     let (title, body): (&str, Vec<Line>) = match modal {
         Modal::Confirm { message, .. } => (
             " confirm ",
-            vec![Line::raw(message.clone()), Line::raw(""), Line::styled("y / Enter = yes    n / Esc = no", theme::muted())],
+            vec![
+                Line::raw(message.clone()),
+                Line::raw(""),
+                Line::styled("y / Enter = yes    n / Esc = no", theme::muted()),
+            ],
         ),
         Modal::Help => (
             " keys ",
             HELP.iter()
-                .map(|(key, what)| Line::from(vec![Span::styled(format!("{key:<11}"), Style::default().fg(theme::ACCENT)), Span::raw(*what)]))
+                .map(|(key, what)| {
+                    Line::from(vec![
+                        Span::styled(format!("{key:<11}"), Style::default().fg(theme::ACCENT)),
+                        Span::raw(*what),
+                    ])
+                })
                 .collect(),
         ),
     };
