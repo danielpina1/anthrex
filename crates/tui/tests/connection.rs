@@ -50,13 +50,26 @@ async fn connects_creates_and_receives_output() {
         model: None,
         initial_prompt: None,
     };
-    assert!(conn.send(ClientMsg::CreateWindow { spec, cols: 80, rows: 24 }));
-    let DaemonMsg::Created { window_id } = recv_until(&mut conn, |m| matches!(m, DaemonMsg::Created { .. })).await else {
+    assert!(conn.send(ClientMsg::CreateWindow {
+        spec,
+        cols: 80,
+        rows: 24
+    }));
+    let DaemonMsg::Created { window_id } =
+        recv_until(&mut conn, |m| matches!(m, DaemonMsg::Created { .. })).await
+    else {
         unreachable!()
     };
-    assert!(conn.send(ClientMsg::Subscribe { window_id, cols: 80, rows: 24 }));
+    assert!(conn.send(ClientMsg::Subscribe {
+        window_id,
+        cols: 80,
+        rows: 24
+    }));
     recv_until(&mut conn, |m| matches!(m, DaemonMsg::Snapshot { .. })).await;
-    assert!(conn.send(ClientMsg::Input { window_id, bytes: b"echo conn-$((3+3))\n".to_vec() }));
+    assert!(conn.send(ClientMsg::Input {
+        window_id,
+        bytes: b"echo conn-$((3+3))\n".to_vec()
+    }));
     let mut seen = Vec::new();
     recv_until(&mut conn, |m| {
         if let DaemonMsg::Output { bytes, .. } = m {
@@ -65,7 +78,11 @@ async fn connects_creates_and_receives_output() {
         String::from_utf8_lossy(&seen).contains("conn-6")
     })
     .await;
-    assert!(conn.send(ClientMsg::Remove { window_id, remove_worktree: false, force: false }));
+    assert!(conn.send(ClientMsg::Remove {
+        window_id,
+        remove_worktree: false,
+        force: false
+    }));
 }
 
 #[tokio::test]
@@ -74,7 +91,9 @@ async fn recv_returns_none_after_daemon_shutdown() {
     let mut conn = Connection::connect(&socket).await.unwrap();
     token.cancel();
     recv_until(&mut conn, |m| matches!(m, DaemonMsg::Bye { .. })).await;
-    let after = tokio::time::timeout(Duration::from_secs(5), conn.recv()).await.expect("timed out");
+    let after = tokio::time::timeout(Duration::from_secs(5), conn.recv())
+        .await
+        .expect("timed out");
     assert!(after.is_none());
 }
 
@@ -91,17 +110,28 @@ async fn send_never_suspends_and_reports_a_dead_connection() {
         let _ = conn.send(ClientMsg::ListWindows);
     }
     let elapsed = started.elapsed();
-    assert!(elapsed < Duration::from_millis(500), "5000 sends took {elapsed:?}");
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "5000 sends took {elapsed:?}"
+    );
 
     token.cancel();
     recv_until(&mut conn, |m| matches!(m, DaemonMsg::Bye { .. })).await;
-    assert!(tokio::time::timeout(Duration::from_secs(5), conn.recv()).await.unwrap().is_none());
+    assert!(
+        tokio::time::timeout(Duration::from_secs(5), conn.recv())
+            .await
+            .unwrap()
+            .is_none()
+    );
 
     // Once the writer task has noticed the closed socket it drops its receiver, and
     // every later send reports false instead of blocking.
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while conn.send(ClientMsg::ListWindows) {
-        assert!(std::time::Instant::now() < deadline, "send kept succeeding after the daemon went away");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "send kept succeeding after the daemon went away"
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
@@ -109,6 +139,8 @@ async fn send_never_suspends_and_reports_a_dead_connection() {
 #[tokio::test]
 async fn connect_fails_cleanly_without_a_daemon() {
     let dir = tempfile::tempdir().unwrap();
-    let err = Connection::connect(&dir.path().join("missing.sock")).await.unwrap_err();
+    let err = Connection::connect(&dir.path().join("missing.sock"))
+        .await
+        .unwrap_err();
     assert!(err.to_string().contains("missing.sock"));
 }

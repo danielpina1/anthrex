@@ -1,4 +1,6 @@
-# anthrex Foundation: follow-ups carried into plans 2 to 5
+# anthrex Foundation: follow-ups carried into later milestones
+
+The old "plan 2 to 5" numbering in the ledger lines below predates `docs/ROADMAP.md`. Old plan 2 (agent status) is now milestone 3, old plan 3 (worktrees) is milestone 5, old plan 4 (persistence) is milestone 6, and old plan 5 (CI) is milestone 2. The section "Assignment to milestones" at the end is the authoritative mapping.
 
 Generated from the execution ledger of `2026-09-17-anthrex-foundation.md` before the scratch workspace was deleted. Every line is a finding that a reviewer raised and that was deliberately deferred, or a decision ("Ruling") the controller made during execution.
 
@@ -63,3 +65,17 @@ Generated from the execution ledger of `2026-09-17-anthrex-foundation.md` before
 - Plan 4: a lifetime lock file (flock) to close the stale-socket TOCTOU and the unconditional socket unlink at shutdown; end-to-end `lifecycle::run` start/stop test; reconnect built on `try_send`; umask around bind; log rotation; handshake read timeout.
 - Process: review the plan's own code listings adversarially before execution; add concurrency tests for a non-reading child, a lagged receiver and an alternate-screen snapshot (now present) to every future plan that touches the data path.
 - A human should run the visual checklist in plan 1's Task 16 Step 4 with real `claude` and `codex` windows before plan 2 starts.
+
+## Assignment to milestones
+
+Each open item above is closed by exactly one milestone. Its brief lists the item under "Follow-ups handled".
+
+| Milestone | Items it closes |
+|-----------|-----------------|
+| M2 CI | Nothing from the ledger. CI enforces `-D warnings`, which keeps the clippy sweep from regressing. |
+| M3 Agent status | Kill by process group: SIGHUP, then SIGTERM, then SIGKILL via `killpg`. Cap the per-window input queue by bytes (1 MiB) as well as chunks. After a caught parser panic: signal the child, keep the first exit reason, and publish. Strip `ESC [ 201 ~` from pasted text. `status::next` doc comment. The Task 2 test-coverage minors: every message variant round-trips, and the serialized case of `HookSource` is asserted. |
+| M4 Project tree | Sidebar overflow: the tree scrolls to keep the selection visible. Hit-testing shares geometry with rendering. |
+| M5 Worktrees | The Task 8 minor "create() holds the Inner mutex across Window::spawn": `create` runs `Window::spawn` off the lock. |
+| M6 Persistence | The lifetime lock file, the unconditional socket unlink at shutdown, and the stale-socket TOCTOU. Umask around bind. Reconnect, including re-subscribe after a dropped Subscribe. `C-b Q` confirms that the shutdown was delivered before quitting. End-to-end `lifecycle::run` start and stop test. Log rotation. Handshake read timeout. |
+| M7 Split panes | SIGWINCH jiggle on attach so full-screen apps repaint. Wheel scrolling for alternate-screen apps without mouse mode. Check `mouse_protocol_encoding()` instead of assuming SGR. |
+| Not scheduled | Kitty keyboard protocol flags. Coalescing redraws. The remaining test-coverage minors from tasks 4, 5, 8 and 13. |

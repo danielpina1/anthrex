@@ -19,9 +19,24 @@ impl CliClient {
             .await
             .map_err(|e| anyhow::anyhow!("cannot reach the daemon at {}: {e}", socket.display()))?;
         let (mut rd, mut wr) = stream.into_split();
-        write_frame(&mut wr, &ClientMsg::Hello { proto_version: PROTO_VERSION, client: ClientKind::Cli }).await?;
+        write_frame(
+            &mut wr,
+            &ClientMsg::Hello {
+                proto_version: PROTO_VERSION,
+                client: ClientKind::Cli,
+            },
+        )
+        .await?;
         match read_frame::<_, DaemonMsg>(&mut rd).await? {
-            Some(DaemonMsg::Welcome { daemon_version, windows }) => Ok(Self { rd, wr, windows, daemon_version }),
+            Some(DaemonMsg::Welcome {
+                daemon_version,
+                windows,
+            }) => Ok(Self {
+                rd,
+                wr,
+                windows,
+                daemon_version,
+            }),
             Some(DaemonMsg::Error { message, .. }) => anyhow::bail!(message),
             Some(other) => anyhow::bail!("unexpected handshake reply: {other:?}"),
             None => anyhow::bail!("the daemon closed the connection during the handshake"),
@@ -73,8 +88,16 @@ pub fn resolve_target(windows: &[WindowInfo], target: &str) -> anyhow::Result<u3
 }
 
 pub fn format_table(windows: &[WindowInfo]) -> String {
-    let name_w = windows.iter().map(|w| w.name.len()).max().unwrap_or(4).max(4);
-    let mut out = format!("{:<4} {:<name_w$} {:<7} {:<10} DIR\n", "ID", "NAME", "RUNTIME", "STATUS");
+    let name_w = windows
+        .iter()
+        .map(|w| w.name.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    let mut out = format!(
+        "{:<4} {:<name_w$} {:<7} {:<10} DIR\n",
+        "ID", "NAME", "RUNTIME", "STATUS"
+    );
     for w in windows {
         out.push_str(&format!(
             "{:<4} {:<name_w$} {:<7} {:<10} {}\n",
@@ -114,8 +137,17 @@ mod tests {
         let ws = vec![win(1, "api"), win(2, "7"), win(7, "other")];
         assert_eq!(resolve_target(&ws, "1").unwrap(), 1);
         assert_eq!(resolve_target(&ws, "api").unwrap(), 1);
-        assert_eq!(resolve_target(&ws, "7").unwrap(), 7, "an id match wins even when another window's name is the same string");
-        assert!(resolve_target(&ws, "nope").unwrap_err().to_string().contains("nope"));
+        assert_eq!(
+            resolve_target(&ws, "7").unwrap(),
+            7,
+            "an id match wins even when another window's name is the same string"
+        );
+        assert!(
+            resolve_target(&ws, "nope")
+                .unwrap_err()
+                .to_string()
+                .contains("nope")
+        );
 
         let ws_without_id_7 = vec![win(1, "api"), win(2, "7")];
         assert_eq!(
@@ -131,7 +163,11 @@ mod tests {
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines.len(), 3);
         assert!(lines[0].starts_with("ID"));
-        assert!(lines[1].contains("api") && lines[1].contains("idle") && lines[1].contains("/home/me/repo"));
+        assert!(
+            lines[1].contains("api")
+                && lines[1].contains("idle")
+                && lines[1].contains("/home/me/repo")
+        );
         assert!(lines[2].contains("tests"));
     }
 }

@@ -13,7 +13,10 @@ pub enum WindowEvent {
     Output,
     Bell,
     Title(String),
-    Exited { code: Option<i32>, signal: Option<String> },
+    Exited {
+        code: Option<i32>,
+        signal: Option<String>,
+    },
 }
 
 /// Chunks a slow subscriber may fall behind by before it is sent a fresh snapshot.
@@ -22,7 +25,9 @@ pub const OUTPUT_CHANNEL_CAPACITY: usize = 1024;
 /// Input chunks that may be waiting for the PTY before `write_input` starts refusing them.
 ///
 /// A program in raw mode that never reads its stdin (an agent busy thinking, a `sleep`
-/// under `stty raw`) stalls writes to the PTY master after about a kilobyte on macOS.
+/// under `stty raw`) can stall writes to the PTY master, verified on macOS and Linux.
+/// Capacity is platform-dependent; the manager regression probes for sustained input
+/// backpressure instead of assuming a fixed byte count on every platform.
 /// The writer thread absorbs that stall; this queue bounds how much unwritten input the
 /// daemon holds on its behalf before it tells the client the program is not listening.
 pub const INPUT_QUEUE_CAPACITY: usize = 256;
@@ -52,7 +57,9 @@ impl vt100::Callbacks for ScreenCallbacks {
     }
 
     fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
-        self.events.push(CallbackEvent::Title(String::from_utf8_lossy(title).into_owned()));
+        self.events.push(CallbackEvent::Title(
+            String::from_utf8_lossy(title).into_owned(),
+        ));
     }
 }
 
@@ -112,7 +119,12 @@ impl Window {
         output_capacity: usize,
     ) -> anyhow::Result<Self> {
         let pty = native_pty_system();
-        let pair = pty.openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })?;
+        let pair = pty.openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
 
         let mut cmd = CommandBuilder::new("/bin/sh");
         cmd.arg("-c");
@@ -207,15 +219,27 @@ impl Window {
             .spawn(move || {
                 let event = match child.wait() {
                     Ok(status) => WindowEvent::Exited {
-                        code: status.signal().is_none().then_some(status.exit_code() as i32),
+                        code: status
+                            .signal()
+                            .is_none()
+                            .then_some(status.exit_code() as i32),
                         signal: status.signal().map(str::to_owned),
                     },
-                    Err(e) => WindowEvent::Exited { code: None, signal: Some(format!("wait failed: {e}")) },
+                    Err(e) => WindowEvent::Exited {
+                        code: None,
+                        signal: Some(format!("wait failed: {e}")),
+                    },
                 };
                 let _ = events.send((id, event));
             })?;
 
-        Ok(Self { master: pair.master, input_tx, pid, parser, output_tx })
+        Ok(Self {
+            master: pair.master,
+            input_tx,
+            pid,
+            parser,
+            output_tx,
+        })
     }
 
     pub fn pid(&self) -> Option<u32> {
@@ -230,12 +254,19 @@ impl Window {
             Err(TrySendError::Full(_)) => {
                 anyhow::bail!("input queue full; the program is not reading input")
             }
-            Err(TrySendError::Disconnected(_)) => anyhow::bail!("the window is no longer accepting input"),
+            Err(TrySendError::Disconnected(_)) => {
+                anyhow::bail!("the window is no longer accepting input")
+            }
         }
     }
 
     pub fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
-        self.master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })?;
+        self.master.resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
         crate::lock(&self.parser).screen_mut().set_size(rows, cols);
         Ok(())
     }
@@ -251,7 +282,12 @@ impl Window {
         let p = crate::lock(&self.parser);
         let output = self.output_tx.subscribe();
         let (rows, cols) = p.screen().size();
-        Attachment { output, snapshot: Self::snapshot_of(p.screen()), cols, rows }
+        Attachment {
+            output,
+            snapshot: Self::snapshot_of(p.screen()),
+            cols,
+            rows,
+        }
     }
 
     pub fn snapshot(&self) -> Vec<u8> {
@@ -281,7 +317,9 @@ impl Window {
 
     /// Sends a POSIX signal to the child.
     pub fn signal(&self, sig: i32) -> anyhow::Result<()> {
-        let pid = self.pid.ok_or_else(|| anyhow::anyhow!("child has no pid"))?;
+        let pid = self
+            .pid
+            .ok_or_else(|| anyhow::anyhow!("child has no pid"))?;
         // SAFETY: kill(2) has no memory-safety preconditions; an invalid pid returns an error.
         let rc = unsafe { libc::kill(pid as libc::pid_t, sig) };
         if rc != 0 {

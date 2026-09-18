@@ -72,11 +72,17 @@ pub struct WindowManager {
 
 impl WindowManager {
     /// Returns the manager and the event receiver the caller must pump into `handle_event`.
-    pub fn new(socket_path: PathBuf, shell: String) -> (Arc<Self>, mpsc::UnboundedReceiver<(u32, WindowEvent)>) {
+    pub fn new(
+        socket_path: PathBuf,
+        shell: String,
+    ) -> (Arc<Self>, mpsc::UnboundedReceiver<(u32, WindowEvent)>) {
         let (events, events_rx) = mpsc::unbounded_channel();
         let (changed, _) = watch::channel(Vec::new());
         let manager = Arc::new(Self {
-            inner: Mutex::new(Inner { next_id: 1, entries: BTreeMap::new() }),
+            inner: Mutex::new(Inner {
+                next_id: 1,
+                entries: BTreeMap::new(),
+            }),
             changed,
             events,
             socket_path,
@@ -90,17 +96,27 @@ impl WindowManager {
     }
 
     pub fn list(&self) -> Vec<WindowInfo> {
-        crate::lock(&self.inner).entries.values().map(Entry::info).collect()
+        crate::lock(&self.inner)
+            .entries
+            .values()
+            .map(Entry::info)
+            .collect()
     }
 
     fn publish(&self, inner: &Inner) {
-        self.changed.send_replace(inner.entries.values().map(Entry::info).collect());
+        self.changed
+            .send_replace(inner.entries.values().map(Entry::info).collect());
     }
 
     pub fn create(&self, spec: WindowSpec, cols: u16, rows: u16) -> anyhow::Result<WindowInfo> {
         let mut inner = crate::lock(&self.inner);
         let id = inner.next_id;
-        let name = match spec.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+        let name = match spec
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+        {
             Some(n) => n.to_string(),
             None => format!("{}-{id}", spec.runtime.label()),
         };
@@ -117,7 +133,12 @@ impl WindowManager {
         }
         let plan = launch::plan(
             &spec,
-            &LaunchContext { window_id: id, name: &name, socket_path: &self.socket_path, shell: &self.shell },
+            &LaunchContext {
+                window_id: id,
+                name: &name,
+                socket_path: &self.socket_path,
+                shell: &self.shell,
+            },
         );
         let window = Window::spawn(id, &plan, cols.max(1), rows.max(1), self.events.clone())?;
         inner.next_id += 1;
@@ -143,7 +164,9 @@ impl WindowManager {
 
     pub fn handle_event(&self, id: u32, event: WindowEvent) {
         let mut inner = crate::lock(&self.inner);
-        let Some(entry) = inner.entries.get_mut(&id) else { return };
+        let Some(entry) = inner.entries.get_mut(&id) else {
+            return;
+        };
         let changed = match event {
             WindowEvent::Output => {
                 entry.last_output = Instant::now();
@@ -186,7 +209,10 @@ impl WindowManager {
 
     fn with_entry<R>(&self, id: u32, f: impl FnOnce(&mut Entry) -> R) -> anyhow::Result<R> {
         let mut inner = crate::lock(&self.inner);
-        let entry = inner.entries.get_mut(&id).ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
+        let entry = inner
+            .entries
+            .get_mut(&id)
+            .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
         Ok(f(entry))
     }
 
@@ -195,7 +221,10 @@ impl WindowManager {
     /// behind a PTY that is not being read.
     pub fn write_input(&self, id: u32, bytes: &[u8]) -> anyhow::Result<()> {
         let mut inner = crate::lock(&self.inner);
-        let entry = inner.entries.get_mut(&id).ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
+        let entry = inner
+            .entries
+            .get_mut(&id)
+            .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
         entry.window.write_input(bytes)?;
         if entry.apply(StatusEvent::InputSent) {
             self.publish(&inner);
@@ -230,7 +259,10 @@ impl WindowManager {
 
     fn signal(&self, id: u32, sig: i32) -> anyhow::Result<()> {
         let inner = crate::lock(&self.inner);
-        let entry = inner.entries.get(&id).ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
+        let entry = inner
+            .entries
+            .get(&id)
+            .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
         if entry.status == Status::Exited {
             return Ok(());
         }
@@ -251,7 +283,10 @@ impl WindowManager {
     /// Kills immediately and forgets the window.
     pub fn remove(&self, id: u32) -> anyhow::Result<()> {
         let mut inner = crate::lock(&self.inner);
-        let entry = inner.entries.remove(&id).ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
+        let entry = inner
+            .entries
+            .remove(&id)
+            .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
         if entry.status != Status::Exited {
             let _ = entry.window.signal(libc::SIGKILL);
         }
@@ -270,7 +305,10 @@ impl WindowManager {
         if inner.entries.values().any(|e| e.id != id && e.name == name) {
             anyhow::bail!("a window named '{name}' already exists");
         }
-        let entry = inner.entries.get_mut(&id).ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
+        let entry = inner
+            .entries
+            .get_mut(&id)
+            .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
         entry.name = name;
         self.publish(&inner);
         Ok(())
@@ -278,7 +316,12 @@ impl WindowManager {
 
     /// SIGTERM every live window, wait up to `KILL_GRACE`, then SIGKILL the rest.
     pub async fn shutdown(&self) {
-        let live: Vec<u32> = self.list().into_iter().filter(|w| w.status != Status::Exited).map(|w| w.id).collect();
+        let live: Vec<u32> = self
+            .list()
+            .into_iter()
+            .filter(|w| w.status != Status::Exited)
+            .map(|w| w.id)
+            .collect();
         for id in &live {
             let _ = self.signal(*id, libc::SIGTERM);
         }

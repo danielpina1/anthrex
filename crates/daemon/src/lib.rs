@@ -2,7 +2,8 @@
 
 /// Refusal message for `--worktree` / `WindowSpec::worktree_branch`, shared by the daemon
 /// and the CLI so both say the same thing.
-pub const WORKTREE_UNSUPPORTED: &str = "--worktree is not implemented yet; it arrives with the worktree milestone";
+pub const WORKTREE_UNSUPPORTED: &str =
+    "--worktree is not implemented yet; it arrives with the worktree milestone";
 
 /// Locks a mutex, taking the data back even when a previous holder panicked.
 ///
@@ -13,7 +14,9 @@ pub const WORKTREE_UNSUPPORTED: &str = "--worktree is not implemented yet; it ar
 /// these mutexes guard (a screen mirror, the window table) stays structurally sound after
 /// such a panic, so recovering is strictly better than cascading.
 pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 pub mod launch;
