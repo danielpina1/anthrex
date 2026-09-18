@@ -70,11 +70,20 @@ pub async fn run(opts: TuiOptions) -> anyhow::Result<()> {
     event_loop(&mut terminal, &mut conn, &mut app).await
 }
 
-async fn apply(effects: Vec<Effect>, conn: &Connection) -> bool {
+/// Hands each effect to the connection. Returns true when the client should exit.
+///
+/// `Connection::send` never suspends, so a daemon that has stopped reading can never
+/// freeze the event loop - `Effect::Quit` still runs. A dropped `Input` is not worth a
+/// toast (the next keystroke will try again), but a dropped command would silently do
+/// nothing, so that one is reported.
+fn apply(effects: Vec<Effect>, conn: &Connection, app: &mut App) -> bool {
     for effect in effects {
         match effect {
             Effect::Send(msg) => {
-                conn.send(msg).await;
+                let is_input = matches!(msg, proto::ClientMsg::Input { .. });
+                if !conn.send(msg) && !is_input {
+                    app.toast("daemon is not responding");
+                }
             }
             Effect::Quit => return true,
         }
@@ -82,12 +91,12 @@ async fn apply(effects: Vec<Effect>, conn: &Connection) -> bool {
     false
 }
 
-async fn draw(terminal: &mut DefaultTerminal, app: &mut App, conn: &Connection) -> anyhow::Result<ui::Layout> {
+fn draw(terminal: &mut DefaultTerminal, app: &mut App, conn: &Connection) -> anyhow::Result<ui::Layout> {
     let mut layout = None;
     terminal.draw(|frame| layout = Some(ui::draw(frame, app)))?;
     let layout = layout.expect("draw closure always runs");
     let effects = app.set_terminal_size(layout.main_inner.width, layout.main_inner.height);
-    apply(effects, conn).await;
+    apply(effects, conn, app);
     Ok(layout)
 }
 
@@ -95,7 +104,7 @@ async fn event_loop(terminal: &mut DefaultTerminal, conn: &mut Connection, app: 
     let mut events = EventStream::new();
     let mut tick = tokio::time::interval(Duration::from_millis(100));
     loop {
-        let layout = draw(terminal, app, conn).await?;
+        let layout = draw(terminal, app, conn)?;
         let effects = tokio::select! {
             Some(event) = events.next() => match event? {
                 Event::Key(key) => app.on_key(key),
@@ -123,7 +132,7 @@ async fn event_loop(terminal: &mut DefaultTerminal, conn: &mut Connection, app: 
             },
             _ = tick.tick() => app.on_tick(),
         };
-        if apply(effects, conn).await {
+        if apply(effects, conn, app) {
             return Ok(());
         }
     }

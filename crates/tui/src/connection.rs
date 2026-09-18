@@ -55,9 +55,11 @@ impl Connection {
         Ok(Self { tx, rx, reader, windows, daemon_version })
     }
 
-    /// Returns false if the connection is gone.
-    pub async fn send(&self, msg: ClientMsg) -> bool {
-        self.tx.send(msg).await.is_ok()
+    /// Queues a message for the daemon. Never suspends: the UI loop must stay responsive
+    /// even when the daemon has stopped draining (so `C-b d` always works). Returns false
+    /// when the outgoing queue is full or the connection is gone.
+    pub fn send(&self, msg: ClientMsg) -> bool {
+        self.tx.try_send(msg).is_ok()
     }
 
     /// Returns None once the daemon has closed the connection.
