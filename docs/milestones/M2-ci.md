@@ -2,7 +2,7 @@
 
 ## Header
 
-- **Status**: ready
+- **Status**: in progress
 - **Depends on**: milestone 1 (done)
 - **Spec sections**: core spec (`docs/superpowers/specs/2026-09-17-anthrex-design.md`) §8, last bullet: "CI (GitHub Actions): `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` on macOS and Ubuntu." The product design spec (`docs/superpowers/specs/2026-09-18-anthrex-product-design.md`) says nothing about CI beyond `docs/ROADMAP.md`'s "Why this order" reasoning ("CI first. Every later milestone is implemented by an agent. Automated checks on every pull request catch regressions before a human reviews them."). Everything else in this brief is the controller's own decision, recorded below.
 - **Branch**: `m2-ci`
@@ -213,4 +213,72 @@ Per `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`'s "Assig
 
 ## Implementation notes
 
-*(Filled in by the implementer: every deviation from this brief, and the outcome of the Design decision 10 / M2.4 / M2.5 Linux-stall check, goes here.)*
+The user authorized corrections to the plan during implementation. The following
+changes preserve the milestone's CI/test-hardening scope and leave runtime
+behavior and protocol version 1 unchanged.
+
+- **M2.1:** The baseline had 85 passing tests: CLI 2; daemon unit 16, manager 9,
+  server 5, window 8; proto 15; TUI unit 26, connection 4. The dedicated formatting
+  commit changes exactly the 26 listed files; the same counts pass afterward.
+- **M2.2/M2.3 ambiguities:** The explicit workflow block controls step order.
+  The exact first-line badge instruction controls placement: the badge is above
+  the heading. Statements elsewhere saying "under the title" are inconsistent
+  with that instruction. The default-branch badge can show no status until merge.
+- **M2.4 correction:** A full software queue after a tight burst proves only that
+  the producer momentarily outpaced the writer. The test must establish child
+  readiness, measure latency during the probe itself (so a synchronous blocked
+  implementation cannot turn into a skip), and check sustained backpressure with
+  paced empty-input probes. This observes the real window's backpressure without
+  adding more payload. It does not instrument the writer's kernel syscall.
+  Outcome text goes directly to stdout because libtest captures successful
+  `println!`/`eprintln!` output under the required `cargo test --workspace` command.
+  The raw-mode fixture replaces its shell with `sleep 15`, and a deadline check
+  ensures the assertions finish while that child is still not reading. This
+  replaces the brief's fixed setup delay and five-second assumption.
+- **M2.5 correction:** `PtyProc.send_large` writes the client's PTY. The agent PTY
+  is a separate device reached through the socket and writer queue. Consequently
+  `paste_elapsed > 0.5` cannot detect an agent-write stall and could disable the
+  regression assertions on a healthy implementation. Stage 8 instead calibrates
+  the platform with a separate raw PTY and the same 32 KiB payload, waits for the
+  actual child's raw-mode readiness, and keeps both responsiveness limits
+  unconditional. Calibration is explicitly platform evidence, not direct
+  observation of the agent's writer. Stronger instrumentation would require
+  additional test infrastructure and is outside this milestone.
+  The smoke child uses `exec sleep 30` with a final lifetime guard, allowing the
+  existing client-send timeout without the fixture beginning to read midway.
+  Calibration requires 200 ms with no progress rather than treating one
+  transient `EAGAIN` as confirmation.
+- **Smoke isolation:** Each run uses its own temporary socket/data directory
+  under `/tmp`, avoiding collisions with a concurrent smoke run. The existing
+  unrelated daemon from the original checkout is left untouched.
+- **Branch ancestry:** The milestone starts from `docs/roadmap-v2`, which contains
+  the brief and roadmap and is the subject of PR #2. Its PR targets `main` and
+  includes those prerequisite documentation commits until PR #2 is merged.
+
+### Local verification (macOS, Rust 1.92.0, Python 3.14.5)
+
+All five required commands passed in order on the completed code:
+`cargo build --workspace --all-targets`, `cargo test --workspace` (85 passed),
+`cargo clippy --workspace --all-targets -- -D warnings`,
+`cargo fmt --all --check`, and `python3 scripts/pty-smoke.py` (all stages passed).
+
+Observed output:
+
+```text
+ok: sustained PTY backpressure confirmed for 200ms; write_input and concurrent list() stayed below 100ms
+ok: local raw PTY calibration retained backpressure for 200ms after 1022/32768 bytes
+ok: child reported raw-mode readiness
+ok: daemon answered ls in 0.01s and the client detached in 0.00s after a 32 KiB paste to a ready, non-reading child
+ALL SMOKE STAGES PASSED
+```
+
+Negative controls, restored before committing: blocking queue send failed the
+manager's latency assertion at 14.9855 seconds instead of skipping; a reading
+child produced the explicit unconfirmed/skip outcome; a reading calibration
+slave accepted all 32768 bytes and reported no sustained backpressure. Independent
+review reproduced rustfmt from the baseline and matched every changed Rust file
+byte-for-byte. No daemon from the milestone worktree was left running.
+
+Hosted macOS/Ubuntu outcomes are recorded below once available. Human review of
+the format-only commit and README rendering, and the one-time branch-protection
+setting, remain manual checks.
