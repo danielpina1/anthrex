@@ -2,7 +2,7 @@ mod client;
 mod spawn;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use proto::{ClientKind, ClientMsg, DaemonMsg, PROTO_VERSION, Runtime, WindowSpec, read_frame, write_frame};
+use proto::{ClientMsg, DaemonMsg, Runtime, WindowSpec};
 use std::path::PathBuf;
 use tokio::net::UnixStream;
 
@@ -78,6 +78,16 @@ fn expect_ack(reply: DaemonMsg) -> anyhow::Result<()> {
     }
 }
 
+/// Resolves the working directory for a new window: the given `--dir`, or the current
+/// directory when none was given, canonicalized either way.
+fn resolve_dir(dir: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+    let dir = match dir {
+        Some(d) => d,
+        None => std::env::current_dir()?,
+    };
+    dir.canonicalize().map_err(|e| anyhow::anyhow!("cannot resolve directory {}: {e}", dir.display()))
+}
+
 #[derive(Subcommand)]
 enum DaemonAction {
     /// Start the daemon (detached unless --foreground)
@@ -95,11 +105,6 @@ enum DaemonAction {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let socket: PathBuf = proto::paths::socket_path();
-    let dir = match cli.dir {
-        Some(d) => d,
-        None => std::env::current_dir()?,
-    }
-    .canonicalize()?;
     match cli.command {
         None => {
             println!("anthrex {} — attach comes in a later task", env!("CARGO_PKG_VERSION"));
@@ -107,6 +112,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Command::Daemon { action }) => daemon_command(action, socket).await,
         Some(Command::New { runtime, name, worktree, model, prompt }) => {
+            let dir = resolve_dir(cli.dir)?;
             spawn::ensure_daemon(&socket).await?;
             let mut c = client::CliClient::connect(&socket).await?;
             let spec = WindowSpec {
@@ -156,29 +162,28 @@ async fn daemon_command(action: DaemonAction, socket: PathBuf) -> anyhow::Result
             Ok(())
         }
         DaemonAction::Stop => {
-            let stream = UnixStream::connect(&socket).await.map_err(|_| anyhow::anyhow!("no daemon is running"))?;
-            let (mut rd, mut wr) = stream.into_split();
-            write_frame(&mut wr, &ClientMsg::Hello { proto_version: PROTO_VERSION, client: ClientKind::Cli }).await?;
-            let _welcome: Option<DaemonMsg> = read_frame(&mut rd).await?;
-            write_frame(&mut wr, &ClientMsg::Shutdown).await?;
-            // Drain until the daemon closes the connection.
-            while let Ok(Some(_)) = read_frame::<_, DaemonMsg>(&mut rd).await {}
+            let mut c = client::CliClient::connect(&socket).await.map_err(|_| anyhow::anyhow!("no daemon is running"))?;
+            c.send(ClientMsg::Shutdown).await?;
+            c.wait_close().await;
             println!("daemon stopped");
             Ok(())
         }
         DaemonAction::Status => match UnixStream::connect(&socket).await {
-            Ok(stream) => {
-                let (mut rd, mut wr) = stream.into_split();
-                write_frame(&mut wr, &ClientMsg::Hello { proto_version: PROTO_VERSION, client: ClientKind::Cli }).await?;
-                match read_frame::<_, DaemonMsg>(&mut rd).await? {
-                    Some(DaemonMsg::Welcome { daemon_version, windows }) => {
-                        println!("running: version {daemon_version}, {} window(s), socket {}", windows.len(), socket.display());
-                    }
-                    Some(DaemonMsg::Error { message, .. }) => println!("running but incompatible: {message}"),
-                    _ => println!("running but did not answer the handshake"),
+            Ok(_) => match client::CliClient::connect(&socket).await {
+                Ok(c) => {
+                    println!(
+                        "running: version {}, {} window(s), socket {}",
+                        c.daemon_version,
+                        c.windows.len(),
+                        socket.display()
+                    );
+                    Ok(())
                 }
-                Ok(())
-            }
+                Err(e) => {
+                    println!("running but incompatible: {e}");
+                    Ok(())
+                }
+            },
             Err(_) => {
                 println!("not running (socket {})", socket.display());
                 Ok(())

@@ -10,8 +10,6 @@ pub struct CliClient {
     rd: OwnedReadHalf,
     wr: OwnedWriteHalf,
     pub windows: Vec<WindowInfo>,
-    // Reserved for later tasks (e.g. printing it from `ls`/`attach`); not read yet.
-    #[allow(dead_code)]
     pub daemon_version: String,
 }
 
@@ -30,9 +28,15 @@ impl CliClient {
         }
     }
 
+    /// Writes one frame without waiting for a reply.
+    pub async fn send(&mut self, msg: ClientMsg) -> anyhow::Result<()> {
+        write_frame(&mut self.wr, &msg).await?;
+        Ok(())
+    }
+
     /// Sends one request and returns the first reply that is not a `WindowsChanged` broadcast.
     pub async fn request(&mut self, msg: ClientMsg) -> anyhow::Result<DaemonMsg> {
-        write_frame(&mut self.wr, &msg).await?;
+        self.send(msg).await?;
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 match read_frame::<_, DaemonMsg>(&mut self.rd).await? {
@@ -44,6 +48,14 @@ impl CliClient {
         })
         .await
         .map_err(|_| anyhow::anyhow!("timed out waiting for the daemon"))?
+    }
+
+    /// Reads and discards frames until the daemon closes the connection, bounded by a 5 s timeout.
+    pub async fn wait_close(&mut self) {
+        let _ = tokio::time::timeout(Duration::from_secs(5), async {
+            while let Ok(Some(_)) = read_frame::<_, DaemonMsg>(&mut self.rd).await {}
+        })
+        .await;
     }
 }
 
@@ -99,11 +111,18 @@ mod tests {
 
     #[test]
     fn resolve_by_id_then_by_name() {
-        let ws = vec![win(1, "api"), win(2, "7")];
+        let ws = vec![win(1, "api"), win(2, "7"), win(7, "other")];
         assert_eq!(resolve_target(&ws, "1").unwrap(), 1);
         assert_eq!(resolve_target(&ws, "api").unwrap(), 1);
-        assert_eq!(resolve_target(&ws, "7").unwrap(), 2, "a numeric name still resolves when no such id exists");
+        assert_eq!(resolve_target(&ws, "7").unwrap(), 7, "an id match wins even when another window's name is the same string");
         assert!(resolve_target(&ws, "nope").unwrap_err().to_string().contains("nope"));
+
+        let ws_without_id_7 = vec![win(1, "api"), win(2, "7")];
+        assert_eq!(
+            resolve_target(&ws_without_id_7, "7").unwrap(),
+            2,
+            "a numeric name still resolves when no such id exists"
+        );
     }
 
     #[test]
