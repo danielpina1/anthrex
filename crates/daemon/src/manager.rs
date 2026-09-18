@@ -78,7 +78,7 @@ struct Entry {
 }
 
 impl Entry {
-    fn info(&self) -> WindowInfo {
+    fn info(&self, now: Instant) -> WindowInfo {
         WindowInfo {
             id: self.id,
             name: self.name.clone(),
@@ -91,7 +91,7 @@ impl Entry {
             last_output_secs: self.last_output.elapsed().as_secs(),
             session_id: self.state.session_id.clone(),
             model: self.spec.model.clone(),
-            subagents: vec![],
+            subagents: self.state.subagents.infos(now),
             exit: self.exit.clone(),
         }
     }
@@ -167,16 +167,23 @@ impl WindowManager {
     }
 
     pub fn list(&self) -> Vec<WindowInfo> {
+        let now = Instant::now();
         crate::lock(&self.inner)
             .entries
             .values()
-            .map(Entry::info)
+            .map(|entry| entry.info(now))
             .collect()
     }
 
     fn publish(&self, inner: &Inner) {
-        self.changed
-            .send_replace(inner.entries.values().map(Entry::info).collect());
+        let now = Instant::now();
+        self.changed.send_replace(
+            inner
+                .entries
+                .values()
+                .map(|entry| entry.info(now))
+                .collect(),
+        );
     }
 
     pub fn create(&self, spec: WindowSpec, cols: u16, rows: u16) -> anyhow::Result<WindowInfo> {
@@ -231,7 +238,7 @@ impl WindowManager {
             child_alive: true,
             window,
         };
-        let info = entry.info();
+        let info = entry.info(now);
         inner.entries.insert(id, entry);
         tracing::info!(id, name = %info.name, runtime = %info.runtime, "window created");
         self.publish(&inner);
@@ -266,9 +273,8 @@ impl WindowManager {
         };
         // SessionStart must see the flags from before this event is accepted.
         let ctx = entry.state.context(entry.viewers > 0);
-        let outcome = entry
-            .state
-            .on_hook(entry.spec.runtime, &hook, Instant::now());
+        let now = Instant::now();
+        let outcome = entry.state.on_hook(entry.spec.runtime, &hook, now);
         let status_changed = outcome
             .status_event
             .is_some_and(|event| entry.apply_with_context(event, ctx));
@@ -284,9 +290,10 @@ impl WindowManager {
         let Some(entry) = inner.entries.get_mut(&id) else {
             return;
         };
+        let now = Instant::now();
         let changed = match event {
             WindowEvent::Output => {
-                entry.last_output = Instant::now();
+                entry.last_output = now;
                 entry.apply(StatusEvent::Output)
             }
             WindowEvent::Bell => entry.apply(StatusEvent::Bell),
@@ -310,7 +317,9 @@ impl WindowManager {
                 tracing::info!(id, %reason, "window exited");
                 entry.child_alive = false;
                 entry.exit.get_or_insert(ExitInfo { code, reason });
-                entry.apply(StatusEvent::Exited)
+                let status_changed = entry.apply(StatusEvent::Exited);
+                let subagents_changed = entry.state.subagents.child_exited(now);
+                status_changed || subagents_changed
             }
         };
         if parser_panicked && let Err(error) = inner.start_cleanup(id) {
@@ -323,6 +332,7 @@ impl WindowManager {
 
     /// Called once a second by the daemon: Working windows that went quiet become Idle.
     pub fn tick(&self) {
+        let now = Instant::now();
         let mut inner = crate::lock(&self.inner);
         let Inner {
             entries, cleanups, ..
@@ -330,7 +340,10 @@ impl WindowManager {
         cleanups.retain(|id, done| entries.contains_key(id) || !*done.borrow());
         let mut changed = false;
         for entry in inner.entries.values_mut() {
-            if entry.status == Status::Working && entry.last_output.elapsed() >= QUIET_AFTER {
+            changed |= entry.state.subagents.prune(now);
+            if entry.status == Status::Working
+                && now.saturating_duration_since(entry.last_output) >= QUIET_AFTER
+            {
                 changed |= entry.apply(StatusEvent::Quiet);
             }
         }
@@ -358,7 +371,9 @@ impl WindowManager {
             .get_mut(&id)
             .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
         entry.window.write_input(bytes)?;
-        if entry.apply(StatusEvent::InputSent) {
+        let status_changed = entry.apply(StatusEvent::InputSent);
+        let subagents_changed = entry.state.subagents.input_sent();
+        if status_changed || subagents_changed {
             self.publish(&inner);
         }
         Ok(())

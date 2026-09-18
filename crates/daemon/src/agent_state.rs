@@ -2,6 +2,7 @@
 
 use crate::hooks::{HookKind, ParsedHook};
 use crate::status::{StatusContext, StatusEvent};
+use crate::subagents::SubagentTracker;
 use proto::{HookSource, Runtime};
 use std::time::Instant;
 
@@ -11,6 +12,7 @@ pub struct AgentState {
     pub tool: Option<String>,
     pub signals_seen: bool,
     pub hooks_seen: bool,
+    pub subagents: SubagentTracker,
 }
 
 pub struct HookOutcome {
@@ -27,8 +29,8 @@ impl AgentState {
         }
     }
 
-    pub fn on_hook(&mut self, runtime: Runtime, hook: &ParsedHook, _now: Instant) -> HookOutcome {
-        let mut changed = false;
+    pub fn on_hook(&mut self, runtime: Runtime, hook: &ParsedHook, now: Instant) -> HookOutcome {
+        let mut changed = self.subagents.apply(runtime, hook, now);
         if runtime == Runtime::Claude
             && (hook.kind == HookKind::SessionStart || self.session_id.is_none())
             && self.session_id != hook.session_id
@@ -39,7 +41,7 @@ impl AgentState {
         let tool = match hook.kind {
             HookKind::PreToolUse if hook.agent_id.is_none() => Some(hook.tool_name.clone()),
             HookKind::PostToolUse if hook.agent_id.is_none() => Some(None),
-            HookKind::Stop => Some(None),
+            HookKind::Stop if hook.agent_id.is_none() => Some(None),
             _ => None,
         };
         if let Some(tool) = tool

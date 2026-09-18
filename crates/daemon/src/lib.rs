@@ -27,6 +27,7 @@ pub mod manager;
 mod process;
 pub mod server;
 pub mod status;
+pub mod subagents;
 pub mod window;
 
 pub use lifecycle::{DaemonOptions, run};
