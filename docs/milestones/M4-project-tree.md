@@ -4,7 +4,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | `blocked` |
+| Status | `ready` |
 | Depends on | Milestone 3 (agent status and sub-agent tracking from hooks) |
 | Spec sections | `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` sections 3, 4.4 (the `needs_permission` marker) and 5; section 10.1 for the protocol version and 10.3 for the keys |
 | Branch | `m4-project-tree` |

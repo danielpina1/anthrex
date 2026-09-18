@@ -4,7 +4,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | `in progress` |
+| Status | `done` |
 | Depends on | Milestone 2 (CI) |
 | Spec sections | Product spec (`docs/superpowers/specs/2026-09-18-anthrex-product-design.md`) sections 4 (all), 10.1 (the version-2 row), 10.4 (the environment variables), 11.1 to 11.4, 11.6 (the session-id part), 12 (the fake agent and the `ANTHREX_CLAUDE_BIN` / `ANTHREX_CODEX_BIN` overrides). Core spec (`docs/superpowers/specs/2026-09-17-anthrex-design.md`) sections 3.2 (launchers with hooks) and 3.4 (the full status table). |
 | Branch | `m3-agent-status` |
@@ -1055,7 +1055,11 @@ Whole-branch review and its scoped re-review are complete. Commit `af7437c`
 addresses all four findings: the paste-boundary documentation, blank script
 lines, unused test stdin, and fragmented output-marker matching. All five
 required local commands pass after that wave, including 227 workspace tests.
-Hosted macOS/Ubuntu CI remains the final completion gate.
+After the verification correction below, all five commands passed independently
+again at `6f35470` (227 workspace tests). Both macOS and Ubuntu CI passed in
+[run 35382553847](https://github.com/danielpina1/anthrex/actions/runs/35382553847).
+M3 is complete in [PR #4](https://github.com/danielpina1/anthrex/pull/4), pending
+human review and merge; M4 is the next ready milestone. No automatic merge.
 The full human interactive checklist above remains outstanding and will be
 listed in the pull request. Automated PTY checks and the documented real-Codex
 probe do not substitute for that human visual/interaction sign-off.
