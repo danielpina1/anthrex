@@ -85,6 +85,20 @@ async fn input_reaches_the_shell_and_output_drives_status() {
     assert_eq!(find(&m, id).status, Status::Idle);
 }
 
+/// I6: worktrees are a later milestone. Accepting the branch would show it in the title
+/// bar with no worktree behind it, so the user would believe the agent was isolated.
+#[tokio::test]
+async fn a_spec_asking_for_a_worktree_is_rejected() {
+    let m = manager();
+    let mut with_branch = spec("wt");
+    with_branch.worktree_branch = Some("feat/x".into());
+    let err = m.create(with_branch, 80, 24).unwrap_err().to_string();
+    assert!(err.contains("--worktree is not implemented yet"), "{err}");
+    assert!(m.list().is_empty(), "no window may be created");
+    // Without the branch the same spec is fine.
+    m.create(spec("wt"), 80, 24).unwrap();
+}
+
 #[tokio::test]
 async fn attach_then_resize_reports_new_size() {
     let m = manager();

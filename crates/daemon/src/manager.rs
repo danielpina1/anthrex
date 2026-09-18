@@ -110,6 +110,11 @@ impl WindowManager {
         if !spec.cwd.is_dir() {
             anyhow::bail!("directory does not exist: {}", spec.cwd.display());
         }
+        if spec.worktree_branch.is_some() {
+            // Accepting it would create no worktree while `WindowInfo.branch` showed the
+            // branch in the title bar, so the user would believe the agent was isolated.
+            anyhow::bail!("{}", crate::WORKTREE_UNSUPPORTED);
+        }
         let plan = launch::plan(
             &spec,
             &LaunchContext { window_id: id, name: &name, socket_path: &self.socket_path, shell: &self.shell },

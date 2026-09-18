@@ -37,6 +37,9 @@ pub fn plan(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> LaunchPlan {
                 args.push(model.clone());
             }
             if let Some(prompt) = &spec.initial_prompt {
+                // `--` first: a prompt that starts with a dash is a prompt, not an option.
+                // Verified that `claude --prompt --version` printed the version and exited.
+                args.push("--".to_string());
                 args.push(prompt.clone());
             }
             ("claude".to_string(), args)
@@ -48,6 +51,8 @@ pub fn plan(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> LaunchPlan {
                 args.push(model.clone());
             }
             if let Some(prompt) = &spec.initial_prompt {
+                // See the `claude` arm: `--` keeps a leading-dash prompt out of the parser.
+                args.push("--".to_string());
                 args.push(prompt.clone());
             }
             ("codex".to_string(), args)
@@ -97,7 +102,21 @@ mod tests {
         s.initial_prompt = Some("fix the tests".into());
         let p = plan(&s, &ctx());
         assert_eq!(p.program, "claude");
-        assert_eq!(p.args, vec!["--name", "api", "--model", "opus", "fix the tests"]);
+        assert_eq!(p.args, vec!["--name", "api", "--model", "opus", "--", "fix the tests"]);
+    }
+
+    /// M1: a prompt beginning with a dash must reach the agent as a prompt. Verified that
+    /// `claude --prompt "--version"` otherwise printed claude's version and exited.
+    #[test]
+    fn a_prompt_starting_with_a_dash_is_separated_by_a_double_dash() {
+        for runtime in [Runtime::Claude, Runtime::Codex] {
+            let mut s = spec(runtime);
+            s.initial_prompt = Some("--version".into());
+            let p = plan(&s, &ctx());
+            let dashdash = p.args.iter().position(|a| a == "--").expect("-- present");
+            assert_eq!(p.args[dashdash + 1], "--version");
+            assert_eq!(dashdash + 2, p.args.len(), "the prompt is last: {:?}", p.args);
+        }
     }
 
     #[test]
@@ -107,6 +126,6 @@ mod tests {
         s.initial_prompt = Some("hello".into());
         let p = plan(&s, &ctx());
         assert_eq!(p.program, "codex");
-        assert_eq!(p.args, vec!["-C", "/tmp/repo", "-m", "gpt-5-codex", "hello"]);
+        assert_eq!(p.args, vec!["-C", "/tmp/repo", "-m", "gpt-5-codex", "--", "hello"]);
     }
 }
