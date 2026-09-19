@@ -283,8 +283,8 @@ mod tests {
             sidebar::hit_test(l.sidebar_inner, &app, 60, l.sidebar_inner.y),
             None
         );
-        assert_eq!(sidebar::format_elapsed(59), "59s");
-        assert_eq!(sidebar::format_elapsed(3600), "1h");
+        assert_eq!(crate::tree::format_elapsed(59), "59s");
+        assert_eq!(crate::tree::format_elapsed(3600), "1h");
     }
 
     #[test]

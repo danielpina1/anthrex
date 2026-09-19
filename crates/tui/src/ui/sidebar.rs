@@ -1,5 +1,6 @@
 use crate::app::App;
 use crate::theme;
+use crate::tree::format_elapsed;
 use proto::Status;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -52,16 +53,6 @@ fn cut_to_width(text: &str, width: usize) -> String {
     }
     cut.push(ellipsis);
     cut
-}
-
-pub fn format_elapsed(secs: u64) -> String {
-    if secs < 60 {
-        format!("{secs}s")
-    } else if secs < 3600 {
-        format!("{}m", secs / 60)
-    } else {
-        format!("{}h", secs / 3600)
-    }
 }
 
 fn summary(app: &App) -> String {
