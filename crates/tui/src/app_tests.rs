@@ -21,6 +21,21 @@ fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     }
 }
 
+fn project_win(id: u32, project: &str) -> WindowInfo {
+    let mut window = win(id, &format!("window-{id}"), Status::Idle);
+    window.cwd = project.into();
+    window.project = project.into();
+    window
+}
+
+fn project_windows() -> Vec<WindowInfo> {
+    vec![
+        project_win(1, "/p/b"),
+        project_win(2, "/p/a"),
+        project_win(3, "/p/b"),
+    ]
+}
+
 fn app_with(windows: Vec<WindowInfo>) -> App {
     let mut app = App::new(windows, "/tmp".into(), Keymap::default_prefix());
     // The renderer reports the size on the first draw; simulate that.
@@ -163,6 +178,79 @@ fn keys_go_to_the_focused_window_and_prefix_switches() {
 }
 
 #[test]
+fn next_and_previous_follow_the_tree_order() {
+    let mut app = app_with(project_windows());
+    app.focus(2);
+
+    for expected in [1, 3, 2] {
+        prefix(&mut app);
+        press(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
+        assert_eq!(app.focused, Some(expected));
+    }
+
+    prefix(&mut app);
+    press(&mut app, KeyCode::Char('k'), KeyModifiers::NONE);
+    assert_eq!(app.focused, Some(3));
+}
+
+#[test]
+fn number_keys_use_visible_positions() {
+    let mut app = app_with(project_windows());
+
+    prefix(&mut app);
+    press(&mut app, KeyCode::Char('1'), KeyModifiers::NONE);
+    assert_eq!(app.focused, Some(2));
+    prefix(&mut app);
+    press(&mut app, KeyCode::Char('3'), KeyModifiers::NONE);
+    assert_eq!(app.focused, Some(3));
+
+    assert!(app.tree.toggle(&tree::NodeKey::Project("/p/a".into())));
+    prefix(&mut app);
+    press(&mut app, KeyCode::Char('1'), KeyModifiers::NONE);
+    assert_eq!(app.focused, Some(1));
+}
+
+#[test]
+fn first_focus_is_the_first_visible_window() {
+    let mut app = App::new(project_windows(), "/tmp".into(), Keymap::default_prefix());
+
+    assert_eq!(
+        app.set_terminal_size(100, 30),
+        vec![Effect::Send(ClientMsg::Subscribe {
+            window_id: 2,
+            cols: 100,
+            rows: 30,
+        })]
+    );
+    assert_eq!(app.focused, Some(2));
+}
+
+#[test]
+fn next_from_a_hidden_focused_window_goes_forward() {
+    let mut app = app_with(project_windows());
+    app.focus(1);
+    assert!(app.tree.toggle(&tree::NodeKey::Project("/p/b".into())));
+
+    prefix(&mut app);
+    press(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
+    assert_eq!(app.focused, Some(2));
+
+    assert!(app.tree.toggle(&tree::NodeKey::Project("/p/b".into())));
+    app.focus(3);
+    assert!(app.tree.toggle(&tree::NodeKey::Project("/p/b".into())));
+    prefix(&mut app);
+    press(&mut app, KeyCode::Char('k'), KeyModifiers::NONE);
+    assert_eq!(app.focused, Some(2));
+
+    assert!(app.tree.toggle(&tree::NodeKey::Project("/p/a".into())));
+    prefix(&mut app);
+    assert!(press(&mut app, KeyCode::Char('j'), KeyModifiers::NONE).is_empty());
+    prefix(&mut app);
+    assert!(press(&mut app, KeyCode::Char('k'), KeyModifiers::NONE).is_empty());
+    assert_eq!(app.focused, Some(2));
+}
+
+#[test]
 fn new_window_creates_a_shell_in_the_default_dir_and_focuses_it_when_created() {
     let mut app = app_with(vec![]);
     prefix(&mut app);
@@ -283,6 +371,45 @@ fn removed_focused_window_moves_focus_to_a_neighbour() {
     let effects = app.on_daemon(DaemonMsg::WindowsChanged { windows: vec![] });
     assert!(effects.is_empty());
     assert_eq!(app.focused, None);
+}
+
+#[test]
+fn removing_the_focused_window_focuses_the_same_position() {
+    let mut app = app_with(project_windows());
+    app.focus(1);
+    assert!(app.tree.toggle(&tree::NodeKey::Window(1)));
+    let rows = tree::build(&app.windows, &app.tree);
+    app.tree.select(&rows, tree::NodeKey::Window(1));
+
+    let effects = app.on_daemon(DaemonMsg::WindowsChanged {
+        windows: vec![project_win(2, "/p/a"), project_win(3, "/p/b")],
+    });
+    assert_eq!(
+        effects,
+        vec![Effect::Send(ClientMsg::Subscribe {
+            window_id: 3,
+            cols: 80,
+            rows: 24,
+        })]
+    );
+    assert_eq!(app.focused, Some(3));
+    assert!(!app.tree.collapsed.contains(&tree::NodeKey::Window(1)));
+    assert_eq!(app.tree.selected, Some(tree::NodeKey::Window(3)));
+
+    let mut app = app_with(project_windows());
+    app.focus(3);
+    let effects = app.on_daemon(DaemonMsg::WindowsChanged {
+        windows: vec![project_win(1, "/p/b"), project_win(2, "/p/a")],
+    });
+    assert_eq!(
+        effects,
+        vec![Effect::Send(ClientMsg::Subscribe {
+            window_id: 1,
+            cols: 80,
+            rows: 24,
+        })]
+    );
+    assert_eq!(app.focused, Some(1));
 }
 
 #[test]

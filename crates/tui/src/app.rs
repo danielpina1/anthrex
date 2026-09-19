@@ -222,7 +222,7 @@ impl App {
         if self.focused_window().is_some() {
             return vec![];
         }
-        match self.windows.first().map(|w| w.id) {
+        match tree::agent_order(&self.rows()).first().copied() {
             Some(id) => self.focus(id),
             None => {
                 self.focused = None;
@@ -259,13 +259,34 @@ impl App {
     }
 
     fn focus_relative(&mut self, delta: isize) -> Vec<Effect> {
-        if self.windows.is_empty() {
+        let visible = tree::agent_order(&self.rows());
+        if visible.is_empty() {
             return vec![];
         }
-        let len = self.windows.len() as isize;
-        let current = self.focused_index().map(|i| i as isize).unwrap_or(0);
-        let next = (current + delta).rem_euclid(len) as usize;
-        let id = self.windows[next].id;
+        let len = visible.len() as isize;
+        let id = if let Some(current) = self
+            .focused
+            .and_then(|id| visible.iter().position(|candidate| *candidate == id))
+        {
+            visible[(current as isize + delta).rem_euclid(len) as usize]
+        } else {
+            let expanded = tree::agent_order(&tree::build(&self.windows, &TreeState::default()));
+            let current = self
+                .focused
+                .and_then(|id| expanded.iter().position(|candidate| *candidate == id));
+            current
+                .and_then(|current| {
+                    (1..=expanded.len()).find_map(|offset| {
+                        let index = (current as isize + delta.signum() * offset as isize)
+                            .rem_euclid(expanded.len() as isize)
+                            as usize;
+                        visible
+                            .contains(&expanded[index])
+                            .then_some(expanded[index])
+                    })
+                })
+                .unwrap_or(visible[0])
+        };
         self.focus(id)
     }
 
@@ -332,9 +353,15 @@ impl App {
                 }
             }
         }
-        let previous_index = self.focused_index();
+        let previous_order = tree::agent_order(&self.rows());
+        let previous_index = self
+            .focused
+            .and_then(|id| previous_order.iter().position(|candidate| *candidate == id));
         self.windows = windows;
         self.windows_received_at = Instant::now();
+        self.tree.prune(&self.windows);
+        let rows = tree::build(&self.windows, &self.tree);
+        self.tree.repair_selection(&rows);
         self.reveal_tree_anchor();
 
         if let Some(id) = self.pending_focus
@@ -347,8 +374,10 @@ impl App {
             if let Some(i) = previous_index
                 && !self.windows.is_empty()
             {
-                let id = self.windows[i.min(self.windows.len() - 1)].id;
-                return self.focus(id);
+                let order = tree::agent_order(&self.rows());
+                if let Some(id) = order.get(i.min(order.len().saturating_sub(1))).copied() {
+                    return self.focus(id);
+                }
             }
             return self.ensure_focus();
         }
@@ -412,7 +441,7 @@ impl App {
         match cmd {
             Command::NextWindow => self.focus_relative(1),
             Command::PrevWindow => self.focus_relative(-1),
-            Command::FocusIndex(i) => match self.windows.get(i).map(|w| w.id) {
+            Command::FocusIndex(i) => match tree::agent_order(&self.rows()).get(i).copied() {
                 Some(id) => self.focus(id),
                 None => vec![],
             },
