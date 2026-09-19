@@ -4,6 +4,7 @@ use crate::app::{App, Effect, TreeInput};
 use crate::keymap::Command;
 use crate::tree::{self, NodeKey};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use unicode_segmentation::UnicodeSegmentation;
 
 impl App {
     pub fn rows(&self) -> Vec<tree::Row<'_>> {
@@ -188,7 +189,9 @@ impl App {
                 self.tree.filter.push(c);
             }
             KeyCode::Backspace => {
-                self.tree.filter.pop();
+                if let Some((index, _)) = self.tree.filter.grapheme_indices(true).next_back() {
+                    self.tree.filter.truncate(index);
+                }
             }
             KeyCode::Enter => {
                 self.tree_input = Some(TreeInput::Navigate);

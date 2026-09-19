@@ -736,6 +736,7 @@ The implementer fills in this section with every deviation, surprise and decisio
 - Added `ui/sidebar.rs` to the task's file list: its existing renderer still hardcoded the normal title, border, and unselected rows. The required tree title and full-width reversed selection could not be connected without updating that renderer.
 - Put the new App interaction tests in `app_tests/tree_interaction.rs`, registered from `app_tests.rs`, to keep both files below 600 lines. Updated the M4.7 no-PTY-input regression to re-enter tree mode before testing paste because Enter now correctly leaves the mode.
 - Filter paste removes both carriage returns and line feeds, including CRLF, while preserving other pasted characters. The filter selection rule in decision 30 takes precedence over generic index repair in decision 23; collapse and list changes retain index repair.
+- Review hardening: main-area wheel events are ignored in both tree input modes, including when the focused program enables mouse reporting; sidebar wheel scrolling remains active. Filter Backspace removes one extended grapheme cluster, so emoji sequences and decomposed accented characters are deleted intact.
 
 ### M4.5 sidebar rendering
 

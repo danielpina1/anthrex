@@ -474,8 +474,8 @@ impl App {
         })]
     }
 
-    /// The sidebar wheel scrolls tree rows; the main wheel forwards SGR mouse reports
-    /// when tracking is enabled, otherwise it scrolls the local terminal history.
+    /// The sidebar wheel scrolls tree rows. Outside tree mode, the main wheel forwards
+    /// SGR mouse reports when enabled, otherwise it scrolls the local terminal history.
     pub fn on_scroll(
         &mut self,
         up: bool,
@@ -493,7 +493,7 @@ impl App {
                 .scroll(if up { -3 } else { 3 }, self.rows().len());
             return vec![];
         }
-        if !main_inner.contains((column, row).into()) {
+        if self.tree_input.is_some() || !main_inner.contains((column, row).into()) {
             return vec![];
         }
         if self.parser.screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None {

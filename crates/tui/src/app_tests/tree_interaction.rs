@@ -146,6 +146,28 @@ fn filter_accepts_printable_unicode_and_shift_but_not_control_or_alt() {
 }
 
 #[test]
+fn filter_backspace_deletes_whole_extended_grapheme_clusters() {
+    let mut app = example();
+    assert!(tap(&mut app, KeyCode::Char('/')).is_empty());
+    assert!(app.on_paste("a👩🏽‍💻e\u{301}".into()).is_empty());
+
+    assert!(tap(&mut app, KeyCode::Backspace).is_empty());
+    assert_eq!(app.tree.filter, "a👩🏽‍💻", "deletes the decomposed character");
+    assert!(tap(&mut app, KeyCode::Backspace).is_empty());
+    assert_eq!(
+        app.tree.filter, "a",
+        "deletes the emoji grapheme as one unit"
+    );
+    assert!(tap(&mut app, KeyCode::Backspace).is_empty());
+    assert!(app.tree.filter.is_empty(), "preserves no stale ASCII text");
+    assert!(tap(&mut app, KeyCode::Backspace).is_empty());
+    assert!(
+        app.tree.filter.is_empty(),
+        "backspace on an empty filter is harmless"
+    );
+}
+
+#[test]
 fn filter_repairs_empty_results_and_retains_visible_selection() {
     let mut app = example();
     select(&mut app, subagent(4, "b2"));
@@ -221,6 +243,55 @@ fn selection_stays_visible_while_moving() {
     );
     tap(&mut app, KeyCode::Esc);
     assert_eq!(app.tree.sidebar.top, 1, "exit reveals focused window");
+}
+
+#[test]
+fn tree_mode_wheel_stays_local_in_main_and_scrolls_sidebar() {
+    let area = ratatui::layout::Rect::new(0, 0, 120, 14);
+    let layout = crate::ui::layout(area, 34);
+
+    for filter in [false, true] {
+        let mut app = app_with((1..=20).map(|id| project_win(id, "/r/shop")).collect());
+        app.enter_tree();
+        app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
+        app.parser.process(b"\x1b[?1000h\x1b[?1006h");
+        assert_ne!(
+            app.parser.screen().mouse_protocol_mode(),
+            vt100::MouseProtocolMode::None,
+            "DECSET 1000/1006 enables mouse reporting"
+        );
+        if filter {
+            assert!(tap(&mut app, KeyCode::Char('/')).is_empty());
+        }
+
+        assert!(
+            app.on_scroll(false, layout.main_inner.x, layout.main_inner.y, &layout)
+                .is_empty(),
+            "main-area wheel stays local while tree input is active"
+        );
+        assert_eq!(
+            app.tree_input,
+            Some(if filter {
+                TreeInput::Filter
+            } else {
+                TreeInput::Navigate
+            })
+        );
+
+        assert!(
+            app.on_scroll(false, layout.sidebar_list.x, layout.sidebar_list.y, &layout)
+                .is_empty()
+        );
+        assert_eq!(app.tree.sidebar.top, 3, "sidebar wheel scrolls tree rows");
+        assert_eq!(
+            app.tree_input,
+            Some(if filter {
+                TreeInput::Filter
+            } else {
+                TreeInput::Navigate
+            })
+        );
+    }
 }
 
 #[test]
