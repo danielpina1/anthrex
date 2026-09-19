@@ -731,6 +731,14 @@ From `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`, "Assig
 
 The implementer fills in this section with every deviation, surprise and decision made during implementation.
 
+### M4.10 CLI tree
+
+- Controller ruling gives the CLI-specific interfaces and decisions 43–44 precedence over decision 38: text uses plain status/state words and the required Unicode tree guides, without overview markers, alignment grids, or home shortening. Finished sub-agents without an end timestamp show `0s`, matching the approved M4.9 rule.
+- Connect before canonicalizing an optional `--project`, preserving `ls`'s unreachable-daemon behavior even when the supplied directory does not exist. No project argument leaves the tree unfiltered; component-aware longest-root selection is shared by text and JSON, and positions restart at 1 in the selected tree.
+- JSON retains explicit nullable fields, actual sub-agent state independently of `needs_permission`, raw timestamps, and recursively nested children from the existing forest builder. Paths use `Path::display()`; empty JSON is pretty-printed at the command boundary like other results.
+- Added the generated `Cargo.lock` change for the direct `serde` dependency; no dependency versions changed. Retained the requested `serde_json` dev dependency even though it is also a production dependency.
+- Text preserves field content exactly. Control-character, newline, and terminal-escape sanitization is unspecified and, by controller ruling, remains outside this task; JSON retains serde escaping. Full process-level tree integration and the additional smoke stage remain M4.11 work.
+
 ### M4.9 overview
 
 - Controller ruling resolves decisions 32/34 in favor of the overview's absolute no-layout/no-resize promise: `C-b T` enters tree navigation without revealing a hidden sidebar; ordinary `C-b t` still reveals it. Both entry paths share the tree-key-routing helper, and overview clicks share Enter activation while sidebar clicks retain their existing behavior. An overview click activates even during filter input; filter-key Enter/Esc behavior is unchanged.
