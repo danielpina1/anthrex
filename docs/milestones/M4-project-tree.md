@@ -731,6 +731,12 @@ From `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`, "Assig
 
 The implementer fills in this section with every deviation, surprise and decision made during implementation.
 
+### M4.8 tree-mode interaction
+
+- Added `ui/sidebar.rs` to the task's file list: its existing renderer still hardcoded the normal title, border, and unselected rows. The required tree title and full-width reversed selection could not be connected without updating that renderer.
+- Put the new App interaction tests in `app_tests/tree_interaction.rs`, registered from `app_tests.rs`, to keep both files below 600 lines. Updated the M4.7 no-PTY-input regression to re-enter tree mode before testing paste because Enter now correctly leaves the mode.
+- Filter paste removes both carriage returns and line feeds, including CRLF, while preserving other pasted characters. The filter selection rule in decision 30 takes precedence over generic index repair in decision 23; collapse and list changes retain index repair.
+
 ### M4.5 sidebar rendering
 
 - Corrected the layout test's arithmetic, preserving the existing one-row statusbar: a 120×40 area has a 39-row body, a 37-row sidebar inner area, a 35-row list, and footer at y=37. The brief's list height 34/footer y=36 would leave an extra unused body row and contradict decision 36 (inner minus spacer and footer). The controller explicitly approved these corrected expectations. All four narrow golden strings remain exactly as written and occupy 32 columns.

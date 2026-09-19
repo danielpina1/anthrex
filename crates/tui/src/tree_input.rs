@@ -3,7 +3,7 @@
 use crate::app::{App, Effect, TreeInput};
 use crate::keymap::Command;
 use crate::tree::{self, NodeKey};
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl App {
     pub fn rows(&self) -> Vec<tree::Row<'_>> {
@@ -24,28 +24,37 @@ impl App {
         if self.modal.is_some() || !self.sidebar_visible {
             return vec![];
         }
-        let rows = self.rows();
+        let rows = tree::build(&self.windows, &self.tree);
         let geometry =
             crate::ui::tree_view::geometry(layout.sidebar_list, rows.len(), self.tree.sidebar.top);
         let Some(index) = geometry.index_at(column, row) else {
             return vec![];
         };
-        match rows[index].key.clone() {
-            NodeKey::Project(root) => {
-                self.tree.toggle(&NodeKey::Project(root));
-                self.reveal_tree_anchor();
+        let key = rows[index].key.clone();
+        if self.tree_input.is_some() {
+            self.tree.select(&rows, key.clone());
+        }
+        let effects = match key {
+            key @ NodeKey::Project(_) => {
+                self.toggle_tree_node(&key);
                 vec![]
             }
             NodeKey::Window(id) | NodeKey::Subagent { window_id: id, .. } => self.focus(id),
-        }
+        };
+        self.reveal_tree_anchor();
+        effects
     }
 
     pub(crate) fn reveal_tree_anchor(&mut self) {
         let rows = self.rows();
-        let index = self.focused_window().and_then(|window| {
-            tree::row_index(&rows, &NodeKey::Window(window.id))
-                .or_else(|| tree::row_index(&rows, &NodeKey::Project(window.project.clone())))
-        });
+        let index = if self.tree_input.is_some() {
+            self.tree.selected_index(&rows)
+        } else {
+            self.focused_window().and_then(|window| {
+                tree::row_index(&rows, &NodeKey::Window(window.id))
+                    .or_else(|| tree::row_index(&rows, &NodeKey::Project(window.project.clone())))
+            })
+        };
         let len = rows.len();
         if let Some(index) = index {
             if self.tree.sidebar.height > 0 {
@@ -74,6 +83,7 @@ impl App {
         if let Some(selected) = selected {
             self.tree.select(&rows, selected);
         }
+        self.reveal_tree_anchor();
     }
 
     pub fn exit_tree(&mut self) {
@@ -82,6 +92,7 @@ impl App {
         self.tree.selected = None;
         self.tree.filter.clear();
         self.overview = false;
+        self.reveal_tree_anchor();
     }
 
     pub(crate) fn run_tree_command(&mut self, command: Command) -> Vec<Effect> {
@@ -121,13 +132,99 @@ impl App {
     }
 
     pub(crate) fn on_tree_key(&mut self, key: KeyEvent) -> Vec<Effect> {
-        if key.code == KeyCode::Esc {
-            self.exit_tree();
+        if self.tree_input == Some(TreeInput::Filter) {
+            self.on_filter_key(key);
+            return vec![];
+        }
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => self.move_tree_selection(1),
+            KeyCode::Char('k') | KeyCode::Up => self.move_tree_selection(-1),
+            KeyCode::Enter => {
+                if let Some(selected) = self.tree.selected.clone() {
+                    match selected {
+                        key @ NodeKey::Project(_) => self.toggle_tree_node(&key),
+                        NodeKey::Window(id) | NodeKey::Subagent { window_id: id, .. } => {
+                            let effects = self.focus(id);
+                            self.exit_tree();
+                            return effects;
+                        }
+                    }
+                }
+            }
+            KeyCode::Char(' ') => {
+                if let Some(selected) = self.tree.selected.clone() {
+                    self.toggle_tree_node(&selected);
+                }
+            }
+            KeyCode::Char('/') => self.tree_input = Some(TreeInput::Filter),
+            KeyCode::Esc => self.exit_tree(),
+            _ => {}
         }
         vec![]
     }
 
-    pub(crate) fn on_tree_paste(&mut self, _text: String) -> Vec<Effect> {
+    fn move_tree_selection(&mut self, delta: isize) {
+        let rows = tree::build(&self.windows, &self.tree);
+        self.tree.move_selection(&rows, delta);
+        self.reveal_tree_anchor();
+    }
+
+    fn toggle_tree_node(&mut self, key: &NodeKey) {
+        if self.tree.toggle(key) {
+            let rows = tree::build(&self.windows, &self.tree);
+            self.tree.repair_selection(&rows);
+            self.reveal_tree_anchor();
+        }
+    }
+
+    fn on_filter_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char(c)
+                if !c.is_control()
+                    && !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.tree.filter.push(c);
+            }
+            KeyCode::Backspace => {
+                self.tree.filter.pop();
+            }
+            KeyCode::Enter => {
+                self.tree_input = Some(TreeInput::Navigate);
+                return;
+            }
+            KeyCode::Esc => {
+                self.tree.filter.clear();
+                self.tree_input = Some(TreeInput::Navigate);
+            }
+            _ => return,
+        }
+        self.repair_filtered_selection();
+    }
+
+    fn repair_filtered_selection(&mut self) {
+        let rows = tree::build(&self.windows, &self.tree);
+        if self.tree.selected_index(&rows).is_none() {
+            let first = rows
+                .iter()
+                .find(|row| matches!(row.key, NodeKey::Window(_)))
+                .or_else(|| rows.first());
+            if let Some(row) = first {
+                self.tree.select(&rows, row.key.clone());
+            }
+        }
+        self.tree.repair_selection(&rows);
+        self.reveal_tree_anchor();
+    }
+
+    pub(crate) fn on_tree_paste(&mut self, text: String) -> Vec<Effect> {
+        if self.tree_input == Some(TreeInput::Filter) {
+            self.tree
+                .filter
+                .extend(text.chars().filter(|c| *c != '\r' && *c != '\n'));
+            self.repair_filtered_selection();
+        }
         vec![]
     }
 }

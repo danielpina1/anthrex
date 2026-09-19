@@ -69,6 +69,7 @@ fn keys_in_tree_mode_never_reach_the_pty() {
     assert!(tree_command(&mut app, KeyCode::Char('t'), KeyModifiers::NONE).is_empty());
 
     for code in [KeyCode::Char('j'), KeyCode::Char('q'), KeyCode::Enter] {
+        app.enter_tree();
         let effects = press(&mut app, code, KeyModifiers::NONE);
         assert!(
             effects
@@ -77,6 +78,8 @@ fn keys_in_tree_mode_never_reach_the_pty() {
             "{code:?} leaked input: {effects:?}"
         );
     }
+    // Enter now leaves tree mode; exercise paste while navigating again.
+    app.enter_tree();
     let effects = app.on_paste("pasted text".into());
     assert!(
         effects

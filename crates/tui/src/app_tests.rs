@@ -5,6 +5,9 @@ use proto::{Runtime, Status};
 #[path = "app_tests/tree_mode.rs"]
 mod tree_mode;
 
+#[path = "app_tests/tree_interaction.rs"]
+mod tree_interaction;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

@@ -39,15 +39,34 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(theme::border())
-        .title(Line::from(Span::styled(" agents ", theme::title())));
+        .border_style(if app.tree_input.is_some() {
+            theme::border_focused()
+        } else {
+            theme::border()
+        })
+        .title(Line::from(Span::styled(
+            if app.tree_input.is_some() {
+                " agents · tree "
+            } else {
+                " agents "
+            },
+            theme::title(),
+        )));
     frame.render_widget(block, layout.sidebar);
     let rows = app.rows();
     let geometry = tree_view::geometry(layout.sidebar_list, rows.len(), app.tree.sidebar.top);
     let pos_width = tree::agent_order(&rows).len().max(1).to_string().len();
     let mut lines: Vec<_> = rows[geometry.first..geometry.first + geometry.count]
         .iter()
-        .map(|row| tree_view::narrow_line(app, row, geometry.list.width, pos_width, false))
+        .map(|row| {
+            tree_view::narrow_line(
+                app,
+                row,
+                geometry.list.width,
+                pos_width,
+                app.tree_input.is_some() && app.tree.selected.as_ref() == Some(&row.key),
+            )
+        })
         .collect();
     if app.windows.is_empty() {
         lines.push(Line::from(Span::styled(" no agents yet", theme::muted())));

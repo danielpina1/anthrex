@@ -93,6 +93,7 @@ mod tests {
     use proto::{Runtime, Status, WindowInfo};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use ratatui::style::Modifier;
 
     fn win(id: u32, name: &str, runtime: Runtime, status: Status) -> WindowInfo {
         WindowInfo {
@@ -220,6 +221,44 @@ mod tests {
     }
 
     #[test]
+    fn tree_mode_shows_the_badge_the_title_and_the_selection() {
+        let mut app = example_app();
+        app.enter_tree();
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, &app);
+            })
+            .unwrap();
+        let out = terminal.backend().to_string();
+        assert!(out.contains(" TREE "), "{out}");
+        assert!(out.contains("agents · tree"), "{out}");
+
+        let selected = app.tree.selected.as_ref().unwrap();
+        let index = app
+            .rows()
+            .iter()
+            .position(|row| &row.key == selected)
+            .unwrap();
+        let l = layout(Rect::new(0, 0, 120, 30), app.sidebar_width);
+        let y = l.sidebar_list.y + index as u16;
+        for x in l.sidebar_list.x..l.sidebar_list.right() {
+            assert!(
+                terminal.backend().buffer()[(x, y)]
+                    .modifier
+                    .contains(Modifier::REVERSED),
+                "cell ({x}, {y}) was not selected"
+            );
+        }
+
+        app.tree_input = Some(crate::app::TreeInput::Filter);
+        app.tree.filter = "sty".into();
+        let (out, _) = render(&app, 120, 30);
+        assert!(out.contains(" FILTER "), "{out}");
+        assert!(out.contains("/sty"), "{out}");
+    }
+
+    #[test]
     fn modals_render_on_top() {
         let mut app = App::new(
             vec![win(1, "a", Runtime::Shell, Status::Idle)],
@@ -237,6 +276,8 @@ mod tests {
         app.modal = Some(Modal::Help);
         let (out, _) = render(&app, 100, 24);
         assert!(out.contains("send a literal C-b"));
+        assert!(out.contains("tree mode"));
+        assert!(out.contains("sidebar width"));
     }
 
     #[test]
