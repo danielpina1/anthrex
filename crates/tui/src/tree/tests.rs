@@ -50,7 +50,7 @@ fn subagent(
     }
 }
 
-fn example() -> Vec<WindowInfo> {
+pub(super) fn example() -> Vec<WindowInfo> {
     let mut api = window(
         1,
         "/r/shop",

@@ -730,3 +730,12 @@ From `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`, "Assig
 ## Implementation notes
 
 The implementer fills in this section with every deviation, surprise and decision made during implementation.
+
+### M4.5 sidebar rendering
+
+- Corrected the layout test's arithmetic, preserving the existing one-row statusbar: a 120×40 area has a 39-row body, a 37-row sidebar inner area, a 35-row list, and footer at y=37. The brief's list height 34/footer y=36 would leave an extra unused body row and contradict decision 36 (inner minus spacer and footer). The controller explicitly approved these corrected expectations. All four narrow golden strings remain exactly as written and occupy 32 columns.
+- Moved the existing app tests to `crates/tui/src/app_tests.rs` in M4.5, bringing forward the file-only split already planned for M4.6. The starting app file was 881 lines, not the brief's stale 595-line count; the resulting production file is 566 lines. Existing test behavior is unchanged; the wheel test now supplies a layout whose main inner rectangle equals its previous rectangle to match the expanded scrolling API.
+- Exposed the existing M4.3 fixture through the requested test-only `tree::example_windows()` wrapper; its original implementation lives in `tree/tests.rs`.
+- Updated all four old-sidebar-title smoke waits, including the additional stage-8b attach omitted from the brief's inventory. The old stage-8b card assertions also proved incompatible with decision 37: window tree rows omit the textual status and current tool. With controller approval, stage 8b now checks the visible `fake-claude` row/runtime tag, polls isolated-daemon JSON within the existing three-second working period for `working`/`Bash`, and retains the completion toast and JSON done/session checks, additionally checking that the tool cleared. No smoke stage was added.
+- The task packet's “later-compatible wide_line” wording was clarified by the controller: decision 38 and the actual wide-line API/behavior remain M4.9 work. M4.5 adds shared geometry and narrow rendering, without an untested wide-format stub.
+- `set_tree_viewports` reveals the anchor only when viewport heights change, so a repeated draw does not undo wheel scrolling. Focus/list changes still reveal it. Zero-height viewports do not reveal an anchor before their first usable size report.

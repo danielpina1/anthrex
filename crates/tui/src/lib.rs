@@ -116,6 +116,7 @@ fn draw(
     terminal.draw(|frame| layout = Some(ui::draw(frame, app)))?;
     let layout = layout.expect("draw closure always runs");
     let effects = app.set_terminal_size(layout.main_inner.width, layout.main_inner.height);
+    app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
     apply(effects, conn, app);
     Ok(layout)
 }
@@ -134,14 +135,9 @@ async fn event_loop(
                 Event::Key(key) => app.on_key(key),
                 Event::Paste(text) => app.on_paste(text),
                 Event::Mouse(mouse) => match mouse.kind {
-                    MouseEventKind::Down(MouseButton::Left) if app.sidebar_visible && app.modal.is_none() => {
-                        match ui::sidebar::hit_test(layout.sidebar_inner, app, mouse.column, mouse.row) {
-                            Some(index) => { let id = app.windows[index].id; app.focus(id) }
-                            None => vec![],
-                        }
-                    }
-                    MouseEventKind::ScrollUp => app.on_scroll(true, mouse.column, mouse.row, layout.main_inner),
-                    MouseEventKind::ScrollDown => app.on_scroll(false, mouse.column, mouse.row, layout.main_inner),
+                    MouseEventKind::Down(MouseButton::Left) => app.on_click(mouse.column, mouse.row, &layout),
+                    MouseEventKind::ScrollUp => app.on_scroll(true, mouse.column, mouse.row, &layout),
+                    MouseEventKind::ScrollDown => app.on_scroll(false, mouse.column, mouse.row, &layout),
                     _ => vec![],
                 },
                 _ => vec![],

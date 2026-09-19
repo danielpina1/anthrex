@@ -249,8 +249,8 @@ class PtyProc:
             pass
 
 
-def run_cmd(args, expect_ok=True):
-    result = subprocess.run([BIN] + args, cwd=REPO, env=ENV, capture_output=True, text=True, timeout=15)
+def run_cmd(args, expect_ok=True, timeout=15):
+    result = subprocess.run([BIN] + args, cwd=REPO, env=ENV, capture_output=True, text=True, timeout=timeout)
     if expect_ok and result.returncode != 0:
         fail(f"`anthrex {' '.join(args)}` exited {result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}")
     return result
@@ -344,7 +344,7 @@ def main():
 
     print("== stage 1: initial attach ==")
     proc = PtyProc([BIN])
-    proc.wait_for("anthrex", label="initial banner")
+    proc.wait_for("agents", label="initial banner")
     proc.wait_for("no agents yet", label="empty sidebar hint")
     print("ok: initial frame shows anthrex UI with no agents yet")
 
@@ -399,7 +399,7 @@ def main():
 
     print("== stage 6: re-attach, verify persisted output, detach again ==")
     proc2 = PtyProc([BIN])
-    proc2.wait_for("anthrex", label="re-attach banner")
+    proc2.wait_for("agents", label="re-attach banner")
     proc2.send(b"\x021")
     proc2.wait_for("smoke-42", label="smoke-42 visible again after focusing window 1")
     proc2.send(b"\x02d")
@@ -414,7 +414,7 @@ def main():
     # submits a claude/codex prompt instead of inserting a newline. `cat -v` renders the
     # ESC byte it actually receives as the two characters ^ and [.
     proc3 = PtyProc([BIN])
-    proc3.wait_for("anthrex", label="third attach banner")
+    proc3.wait_for("agents", label="third attach banner")
     proc3.send(b"\x02c")
     proc3.wait_for("shell-3", label="shell-3 card")
     proc3.send(b"cat -v\r")
@@ -481,18 +481,30 @@ def main():
 
     print("== stage 8b: a fake Claude turn reports working, tool, and done ==")
     proc4 = PtyProc([BIN, "attach", "shell-1"])
-    proc4.wait_for("anthrex", label="fourth attach banner")
+    proc4.wait_for("agents", label="fourth attach banner")
     proc4.wait_for("smoke-42", label="shell-1 focused before fake Claude creation")
     created = run_cmd(["new", "--runtime", "claude", "--name", "fake-claude"])
     try:
         fake_claude_id = int(created.stdout.strip())
     except ValueError:
         fail(f"`anthrex new` did not print a window id: {created.stdout!r}")
-    proc4.wait_for("claude · working", label="fake-claude working status")
-    proc4.wait_for("Bash", label="fake-claude Bash tool")
-    print("ok: fake-claude card showed working with the Bash tool")
+    deadline = time.monotonic() + 3.0
+    working = None
+    while time.monotonic() < deadline:
+        listed = run_cmd(["ls", "--json"], timeout=max(0.01, deadline - time.monotonic()))
+        working = next((w for w in json.loads(listed.stdout) if w["id"] == fake_claude_id), None)
+        if working and working["status"] == "working" and working["tool"] == "Bash":
+            break
+        proc4.read_available(timeout=0.05)
+    else:
+        fail(f"fake-claude never reported working with Bash: {working!r}")
+    deadline = time.monotonic() + 3.0
+    while not re.search(r"fake-claude\s+cl\b", proc4.screen_text()):
+        if time.monotonic() >= deadline:
+            fail(f"fake-claude tree row/runtime tag did not appear:\n{proc4.screen_text()}")
+        proc4.read_available(timeout=0.05)
+    print("ok: fake-claude tree row appeared and JSON reported working with Bash")
     proc4.wait_for("fake-claude finished", label="fake-claude completion toast")
-    proc4.wait_for("claude · done", label="fake-claude done status")
 
     listed_json = run_cmd(["ls", "--json"])
     try:
@@ -504,10 +516,12 @@ def main():
         fail(f"`anthrex ls --json` omitted fake-claude id {fake_claude_id}:\n{listed_json.stdout}")
     if fake_claude["status"] != "done":
         fail(f"fake-claude status was not done:\n{listed_json.stdout}")
+    if fake_claude["tool"] is not None:
+        fail(f"fake-claude tool was not cleared after completion:\n{listed_json.stdout}")
     expected_session = f"fake-session-{fake_claude_id}"
     if fake_claude["session_id"] != expected_session:
         fail(f"fake-claude session id was not {expected_session!r}:\n{listed_json.stdout}")
-    print("ok: completion toast, done card, and JSON session metadata appeared")
+    print("ok: completion toast and JSON done/session metadata appeared with the tool cleared")
 
     run_cmd(["rm", "fake-claude"])
     remaining = json.loads(run_cmd(["ls", "--json"]).stdout)

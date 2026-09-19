@@ -1,9 +1,9 @@
 //! Client state and its pure update functions. Rendering lives in `ui`; I/O in `lib.rs`.
 
 use crate::keymap::{Command, KeyAction, Keymap};
+use crate::tree::{self, TreeState};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use proto::{ClientMsg, DaemonMsg, Runtime, Status, WindowInfo, WindowSpec};
-use ratatui::layout::Rect;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -68,6 +68,8 @@ pub struct App {
     pub focused: Option<u32>,
     pub parser: vt100::Parser,
     pub sidebar_visible: bool,
+    pub sidebar_width: u16,
+    pub tree: TreeState,
     pub keymap: Keymap,
     pub modal: Option<Modal>,
     pub connected: bool,
@@ -93,6 +95,8 @@ impl App {
             focused: None,
             parser: vt100::Parser::new(24, 80, SCROLLBACK_LINES),
             sidebar_visible: true,
+            sidebar_width: crate::ui::DEFAULT_SIDEBAR_WIDTH,
+            tree: TreeState::default(),
             keymap: Keymap::new(prefix),
             modal: None,
             connected: true,
@@ -110,6 +114,61 @@ impl App {
     pub fn focused_window(&self) -> Option<&WindowInfo> {
         self.focused
             .and_then(|id| self.windows.iter().find(|w| w.id == id))
+    }
+
+    pub fn rows(&self) -> Vec<tree::Row<'_>> {
+        tree::build(&self.windows, &self.tree)
+    }
+
+    pub fn set_tree_viewports(&mut self, sidebar_rows: u16, overview_rows: u16) {
+        let changed =
+            self.tree.sidebar.height != sidebar_rows || self.tree.overview.height != overview_rows;
+        self.tree.sidebar.height = sidebar_rows;
+        self.tree.overview.height = overview_rows;
+        if changed {
+            self.reveal_tree_anchor();
+        }
+    }
+
+    pub fn on_click(&mut self, column: u16, row: u16, layout: &crate::ui::Layout) -> Vec<Effect> {
+        if self.modal.is_some() || !self.sidebar_visible {
+            return vec![];
+        }
+        let rows = self.rows();
+        let geometry =
+            crate::ui::tree_view::geometry(layout.sidebar_list, rows.len(), self.tree.sidebar.top);
+        let Some(index) = geometry.index_at(column, row) else {
+            return vec![];
+        };
+        match rows[index].key.clone() {
+            tree::NodeKey::Project(root) => {
+                self.tree.toggle(&tree::NodeKey::Project(root));
+                self.reveal_tree_anchor();
+                vec![]
+            }
+            tree::NodeKey::Window(id) | tree::NodeKey::Subagent { window_id: id, .. } => {
+                self.focus(id)
+            }
+        }
+    }
+
+    fn reveal_tree_anchor(&mut self) {
+        let rows = self.rows();
+        let index = self.focused_window().and_then(|window| {
+            tree::row_index(&rows, &tree::NodeKey::Window(window.id))
+                .or_else(|| tree::row_index(&rows, &tree::NodeKey::Project(window.project.clone())))
+        });
+        let len = rows.len();
+        if let Some(index) = index {
+            if self.tree.sidebar.height > 0 {
+                self.tree.sidebar.reveal(index);
+            }
+            if self.tree.overview.height > 0 {
+                self.tree.overview.reveal(index);
+            }
+        }
+        self.tree.sidebar.scroll(0, len);
+        self.tree.overview.scroll(0, len);
     }
 
     pub fn focused_index(&self) -> Option<usize> {
@@ -188,6 +247,7 @@ impl App {
             return vec![];
         }
         self.focused = Some(id);
+        self.reveal_tree_anchor();
         self.scroll_offset = 0;
         let (cols, rows) = self.term_size;
         self.parser = vt100::Parser::new(rows.max(1), cols.max(1), SCROLLBACK_LINES);
@@ -275,6 +335,7 @@ impl App {
         let previous_index = self.focused_index();
         self.windows = windows;
         self.windows_received_at = Instant::now();
+        self.reveal_tree_anchor();
 
         if let Some(id) = self.pending_focus
             && self.windows.iter().any(|w| w.id == id)
@@ -421,10 +482,26 @@ impl App {
         })]
     }
 
-    /// Mouse wheel over the main area. Forwarded as an SGR mouse report when the program
-    /// enabled mouse tracking; otherwise scrolls the local scrollback view.
-    pub fn on_scroll(&mut self, up: bool, column: u16, row: u16, main_inner: Rect) -> Vec<Effect> {
-        if self.modal.is_some() || !main_inner.contains((column, row).into()) {
+    /// The sidebar wheel scrolls tree rows; the main wheel forwards SGR mouse reports
+    /// when tracking is enabled, otherwise it scrolls the local terminal history.
+    pub fn on_scroll(
+        &mut self,
+        up: bool,
+        column: u16,
+        row: u16,
+        layout: &crate::ui::Layout,
+    ) -> Vec<Effect> {
+        let main_inner = layout.main_inner;
+        if self.modal.is_some() {
+            return vec![];
+        }
+        if self.sidebar_visible && layout.sidebar_list.contains((column, row).into()) {
+            self.tree
+                .sidebar
+                .scroll(if up { -3 } else { 3 }, self.rows().len());
+            return vec![];
+        }
+        if !main_inner.contains((column, row).into()) {
             return vec![];
         }
         if self.parser.screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None {
@@ -485,397 +562,5 @@ impl App {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use proto::{Runtime, Status};
-
-    fn win(id: u32, name: &str, status: Status) -> WindowInfo {
-        WindowInfo {
-            id,
-            name: name.into(),
-            runtime: Runtime::Shell,
-            cwd: "/tmp".into(),
-            project: "/tmp".into(),
-            branch: None,
-            status,
-            tool: None,
-            since_secs: 0,
-            last_output_secs: 0,
-            session_id: None,
-            model: None,
-            subagents: vec![],
-            exit: None,
-        }
-    }
-
-    fn app_with(windows: Vec<WindowInfo>) -> App {
-        let mut app = App::new(windows, "/tmp".into(), Keymap::default_prefix());
-        // The renderer reports the size on the first draw; simulate that.
-        let _ = app.set_terminal_size(80, 24);
-        app
-    }
-
-    fn key(code: KeyCode, mods: KeyModifiers) -> KeyEvent {
-        KeyEvent::new(code, mods)
-    }
-
-    fn press(app: &mut App, code: KeyCode, mods: KeyModifiers) -> Vec<Effect> {
-        app.on_key(key(code, mods))
-    }
-
-    fn prefix(app: &mut App) {
-        assert!(press(app, KeyCode::Char('b'), KeyModifiers::CONTROL).is_empty());
-    }
-
-    #[test]
-    fn first_size_report_subscribes_to_the_first_window() {
-        let mut app = App::new(
-            vec![win(4, "a", Status::Idle), win(5, "b", Status::Idle)],
-            "/tmp".into(),
-            Keymap::default_prefix(),
-        );
-        assert_eq!(app.focused, None);
-        let effects = app.set_terminal_size(100, 30);
-        assert_eq!(
-            effects,
-            vec![Effect::Send(ClientMsg::Subscribe {
-                window_id: 4,
-                cols: 100,
-                rows: 30
-            })]
-        );
-        assert_eq!(app.focused, Some(4));
-        assert_eq!(app.parser.screen().size(), (30, 100));
-    }
-
-    #[test]
-    fn focus_requested_before_the_first_size_report_subscribes_once_sized() {
-        let mut app = App::new(
-            vec![win(4, "a", Status::Idle), win(5, "b", Status::Idle)],
-            "/tmp".into(),
-            Keymap::default_prefix(),
-        );
-        assert!(app.focus(5).is_empty());
-        assert_eq!(app.focused, None);
-        assert!(
-            app.on_daemon(DaemonMsg::Created { window_id: 5 })
-                .is_empty()
-        );
-        assert_eq!(app.focused, None);
-        let effects = app.set_terminal_size(100, 30);
-        assert_eq!(
-            effects,
-            vec![Effect::Send(ClientMsg::Subscribe {
-                window_id: 5,
-                cols: 100,
-                rows: 30
-            })]
-        );
-        assert_eq!(app.focused, Some(5));
-    }
-
-    #[test]
-    fn later_size_changes_are_debounced_into_a_resize() {
-        let mut app = app_with(vec![win(1, "a", Status::Idle)]);
-        assert!(app.set_terminal_size(120, 40).is_empty());
-        assert!(
-            app.on_tick().is_empty(),
-            "resize is not sent before the debounce window"
-        );
-        std::thread::sleep(RESIZE_DEBOUNCE + Duration::from_millis(5));
-        assert_eq!(
-            app.on_tick(),
-            vec![Effect::Send(ClientMsg::Resize {
-                window_id: 1,
-                cols: 120,
-                rows: 40
-            })]
-        );
-        assert!(app.on_tick().is_empty());
-    }
-
-    #[test]
-    fn snapshot_and_output_feed_the_focused_parser_only() {
-        let mut app = app_with(vec![win(1, "a", Status::Idle), win(2, "b", Status::Idle)]);
-        app.on_daemon(DaemonMsg::Snapshot {
-            window_id: 1,
-            cols: 80,
-            rows: 24,
-            bytes: b"hello".to_vec(),
-        });
-        assert!(app.parser.screen().contents().starts_with("hello"));
-        app.on_daemon(DaemonMsg::Output {
-            window_id: 2,
-            bytes: b"IGNORED".to_vec(),
-        });
-        assert!(!app.parser.screen().contents().contains("IGNORED"));
-        app.on_daemon(DaemonMsg::Output {
-            window_id: 1,
-            bytes: b" world".to_vec(),
-        });
-        assert!(app.parser.screen().contents().starts_with("hello world"));
-    }
-
-    #[test]
-    fn keys_go_to_the_focused_window_and_prefix_switches() {
-        let mut app = app_with(vec![win(1, "a", Status::Idle), win(2, "b", Status::Idle)]);
-        assert_eq!(
-            press(&mut app, KeyCode::Char('l'), KeyModifiers::NONE),
-            vec![Effect::Send(ClientMsg::Input {
-                window_id: 1,
-                bytes: b"l".to_vec()
-            })]
-        );
-        prefix(&mut app);
-        assert_eq!(
-            press(&mut app, KeyCode::Char('j'), KeyModifiers::NONE),
-            vec![Effect::Send(ClientMsg::Subscribe {
-                window_id: 2,
-                cols: 80,
-                rows: 24
-            })]
-        );
-        assert_eq!(app.focused, Some(2));
-        prefix(&mut app);
-        press(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
-        assert_eq!(app.focused, Some(1), "next wraps around");
-        prefix(&mut app);
-        press(&mut app, KeyCode::Char('2'), KeyModifiers::NONE);
-        assert_eq!(app.focused, Some(2));
-        prefix(&mut app);
-        assert_eq!(
-            press(&mut app, KeyCode::Char('d'), KeyModifiers::NONE),
-            vec![Effect::Quit]
-        );
-    }
-
-    #[test]
-    fn new_window_creates_a_shell_in_the_default_dir_and_focuses_it_when_created() {
-        let mut app = app_with(vec![]);
-        prefix(&mut app);
-        let effects = press(&mut app, KeyCode::Char('c'), KeyModifiers::NONE);
-        match &effects[..] {
-            [
-                Effect::Send(ClientMsg::CreateWindow {
-                    spec,
-                    cols: 80,
-                    rows: 24,
-                }),
-            ] => {
-                assert_eq!(spec.runtime, Runtime::Shell);
-                assert_eq!(spec.cwd, PathBuf::from("/tmp"));
-                assert_eq!(spec.name, None);
-            }
-            other => panic!("unexpected effects {other:?}"),
-        }
-        // The daemon may announce the window list before or after Created; both orders focus it.
-        assert!(
-            app.on_daemon(DaemonMsg::Created { window_id: 9 })
-                .is_empty()
-        );
-        let effects = app.on_daemon(DaemonMsg::WindowsChanged {
-            windows: vec![win(9, "shell-9", Status::Starting)],
-        });
-        assert_eq!(
-            effects,
-            vec![Effect::Send(ClientMsg::Subscribe {
-                window_id: 9,
-                cols: 80,
-                rows: 24
-            })]
-        );
-        assert_eq!(app.focused, Some(9));
-    }
-
-    /// I8: re-focusing the focused window must not resubscribe or reset the parser.
-    #[test]
-    fn focusing_the_already_focused_window_does_nothing() {
-        let mut app = app_with(vec![win(1, "a", Status::Idle), win(2, "b", Status::Idle)]);
-        assert_eq!(app.focused, Some(1));
-        app.on_daemon(DaemonMsg::Snapshot {
-            window_id: 1,
-            cols: 80,
-            rows: 24,
-            bytes: b"kept".to_vec(),
-        });
-        assert!(
-            app.focus(1).is_empty(),
-            "no Subscribe for the window we are already on"
-        );
-        assert!(
-            app.parser.screen().contents().starts_with("kept"),
-            "the screen must survive"
-        );
-        // Only a real change still subscribes.
-        assert_eq!(
-            app.focus(2),
-            vec![Effect::Send(ClientMsg::Subscribe {
-                window_id: 2,
-                cols: 80,
-                rows: 24
-            })]
-        );
-        // C-b 2 on the window already focused is likewise a no-op.
-        prefix(&mut app);
-        assert!(press(&mut app, KeyCode::Char('2'), KeyModifiers::NONE).is_empty());
-    }
-
-    #[test]
-    fn kill_asks_for_confirmation_first() {
-        let mut app = app_with(vec![win(1, "a", Status::Working)]);
-        prefix(&mut app);
-        assert!(press(&mut app, KeyCode::Char('x'), KeyModifiers::NONE).is_empty());
-        assert!(matches!(
-            app.modal,
-            Some(Modal::Confirm {
-                action: PendingAction::Kill(1),
-                ..
-            })
-        ));
-        assert!(press(&mut app, KeyCode::Char('n'), KeyModifiers::NONE).is_empty());
-        assert!(app.modal.is_none());
-        prefix(&mut app);
-        press(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
-        assert_eq!(
-            press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE),
-            vec![Effect::Send(ClientMsg::Kill { window_id: 1 })]
-        );
-        prefix(&mut app);
-        press(&mut app, KeyCode::Char('Q'), KeyModifiers::SHIFT);
-        assert_eq!(
-            press(&mut app, KeyCode::Enter, KeyModifiers::NONE),
-            vec![Effect::Send(ClientMsg::Shutdown), Effect::Quit]
-        );
-    }
-
-    #[test]
-    fn removed_focused_window_moves_focus_to_a_neighbour() {
-        let mut app = app_with(vec![
-            win(1, "a", Status::Idle),
-            win(2, "b", Status::Idle),
-            win(3, "c", Status::Idle),
-        ]);
-        app.focus(2);
-        let effects = app.on_daemon(DaemonMsg::WindowsChanged {
-            windows: vec![win(1, "a", Status::Idle), win(3, "c", Status::Idle)],
-        });
-        assert_eq!(
-            effects,
-            vec![Effect::Send(ClientMsg::Subscribe {
-                window_id: 3,
-                cols: 80,
-                rows: 24
-            })]
-        );
-        let effects = app.on_daemon(DaemonMsg::WindowsChanged { windows: vec![] });
-        assert!(effects.is_empty());
-        assert_eq!(app.focused, None);
-    }
-
-    #[test]
-    fn background_status_changes_raise_toasts() {
-        let mut app = app_with(vec![
-            win(1, "a", Status::Working),
-            win(2, "b", Status::Working),
-        ]);
-        app.on_daemon(DaemonMsg::WindowsChanged {
-            windows: vec![
-                win(1, "a", Status::Attention),
-                win(2, "b", Status::Attention),
-            ],
-        });
-        assert_eq!(
-            app.toast_text(),
-            Some("b needs attention"),
-            "the focused window (1) never toasts"
-        );
-        app.on_daemon(DaemonMsg::WindowsChanged {
-            windows: vec![win(1, "a", Status::Attention), win(2, "b", Status::Done)],
-        });
-        assert_eq!(app.toast_text(), Some("b finished"));
-        app.on_daemon(DaemonMsg::Error {
-            request: "kill".into(),
-            message: "no window with id 7".into(),
-        });
-        assert_eq!(app.toast_text(), Some("no window with id 7"));
-    }
-
-    #[test]
-    fn paste_uses_bracketed_mode_when_the_program_asked_for_it() {
-        let mut app = app_with(vec![win(1, "a", Status::Idle)]);
-        assert_eq!(
-            app.on_paste("ab\ncd".into()),
-            vec![Effect::Send(ClientMsg::Input {
-                window_id: 1,
-                bytes: b"ab\rcd".to_vec()
-            })]
-        );
-        app.parser.process(b"\x1b[?2004h");
-        assert_eq!(
-            app.on_paste("x".into()),
-            vec![Effect::Send(ClientMsg::Input {
-                window_id: 1,
-                bytes: b"\x1b[200~x\x1b[201~".to_vec()
-            })]
-        );
-    }
-
-    #[test]
-    fn paste_strips_bracketed_paste_markers() {
-        let mut app = app_with(vec![win(1, "a", Status::Idle)]);
-        assert_eq!(
-            app.on_paste("a\x1b[201~b\x1b[200~c".into()),
-            vec![Effect::Send(ClientMsg::Input {
-                window_id: 1,
-                bytes: b"abc".to_vec()
-            })]
-        );
-        assert_eq!(
-            app.on_paste("a\x1b[20\x1b[201~1~b".into()),
-            vec![Effect::Send(ClientMsg::Input {
-                window_id: 1,
-                bytes: b"ab".to_vec()
-            })],
-            "removing an embedded marker must not manufacture a new end marker"
-        );
-
-        app.parser.process(b"\x1b[?2004h");
-        assert_eq!(
-            app.on_paste("a\x1b[201~b\x1b[200~c".into()),
-            vec![Effect::Send(ClientMsg::Input {
-                window_id: 1,
-                bytes: b"\x1b[200~abc\x1b[201~".to_vec()
-            })]
-        );
-        assert_eq!(
-            app.on_paste("a\x1b[20\x1b[201~1~b".into()),
-            vec![Effect::Send(ClientMsg::Input {
-                window_id: 1,
-                bytes: b"\x1b[200~ab\x1b[201~".to_vec()
-            })]
-        );
-    }
-
-    #[test]
-    fn wheel_scrolls_the_local_scrollback_and_any_key_snaps_back() {
-        let mut app = app_with(vec![win(1, "a", Status::Idle)]);
-        for i in 0..40 {
-            app.parser.process(format!("line {i}\r\n").as_bytes());
-        }
-        let area = ratatui::layout::Rect::new(0, 0, 80, 24);
-        assert!(app.on_scroll(true, 5, 5, area).is_empty());
-        assert_eq!(app.scroll_offset, 3);
-        press(&mut app, KeyCode::Char('q'), KeyModifiers::NONE);
-        assert_eq!(app.scroll_offset, 0);
-        app.parser.process(b"\x1b[?1000h\x1b[?1006h");
-        let effects = app.on_scroll(false, 5, 5, area);
-        assert_eq!(
-            effects,
-            vec![Effect::Send(ClientMsg::Input {
-                window_id: 1,
-                bytes: b"\x1b[<65;6;6M".to_vec()
-            })]
-        );
-    }
-}
+#[path = "app_tests.rs"]
+mod tests;

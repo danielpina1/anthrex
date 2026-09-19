@@ -583,3 +583,8 @@ fn make_subagent_node<'a>(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) fn example_windows() -> Vec<WindowInfo> {
+    tests::example()
+}

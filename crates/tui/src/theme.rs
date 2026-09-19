@@ -1,6 +1,6 @@
 //! Colours and glyphs. Spec section 6.5: inherit the terminal background, one accent, unicode-only glyphs.
 
-use proto::Status;
+use proto::{Status, SubagentInfo, SubagentState};
 use ratatui::style::{Color, Modifier, Style};
 
 pub const ACCENT: Color = Color::Rgb(0x89, 0xb4, 0xfa);
@@ -31,6 +31,28 @@ pub fn status_glyph(status: Status, spinner_frame: usize) -> &'static str {
 
 pub fn border() -> Style {
     Style::default().fg(DIM)
+}
+
+pub fn subagent_glyph(info: &SubagentInfo, spinner_frame: usize) -> &'static str {
+    if info.needs_permission {
+        return status_glyph(Status::Attention, spinner_frame);
+    }
+    match info.state {
+        SubagentState::Running => status_glyph(Status::Working, spinner_frame),
+        SubagentState::Done => "✓",
+        SubagentState::Failed => "✕",
+    }
+}
+
+pub fn subagent_color(info: &SubagentInfo) -> Color {
+    if info.needs_permission {
+        return status_color(Status::Attention);
+    }
+    match info.state {
+        SubagentState::Running => status_color(Status::Working),
+        SubagentState::Done => status_color(Status::Done),
+        SubagentState::Failed => Color::Red,
+    }
 }
 
 pub fn border_focused() -> Style {
