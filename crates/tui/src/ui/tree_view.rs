@@ -9,6 +9,10 @@ use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+#[cfg(test)]
+#[path = "tree_view_tests.rs"]
+mod tests;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TreeGeometry {
     pub list: Rect,
@@ -164,6 +168,183 @@ pub fn counts_text(counts: RuntimeCounts) -> String {
     .map(|(tag, count)| format!("{tag} {count}"))
     .collect::<Vec<_>>()
     .join(" · ")
+}
+
+/// Column widths from the visible tree, after filtering and collapse.
+pub struct WideColumns {
+    name: usize,
+    model: usize,
+    position: usize,
+}
+
+impl WideColumns {
+    pub fn from_rows(rows: &[Row<'_>]) -> Self {
+        let mut columns = Self {
+            name: 0,
+            model: 1,
+            position: 1,
+        };
+        for row in rows {
+            match &row.kind {
+                RowKind::Window { info, position, .. } => {
+                    columns.name = columns
+                        .name
+                        .max(UnicodeWidthStr::width(info.name.as_str()).min(24));
+                    columns.model = columns
+                        .model
+                        .max(UnicodeWidthStr::width(info.model.as_deref().unwrap_or("-")).min(28));
+                    columns.position = columns.position.max(position.to_string().len());
+                }
+                RowKind::Project { .. } | RowKind::Subagent { .. } => {}
+            }
+        }
+        columns
+    }
+}
+
+pub fn wide_line(
+    app: &App,
+    row: &Row<'_>,
+    width: u16,
+    columns: &WideColumns,
+    selected: bool,
+) -> Line<'static> {
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let spans = match &row.kind {
+        RowKind::Project {
+            root,
+            name,
+            status,
+            counts,
+            collapsed,
+        } => {
+            let root = super::terminal::shorten_home(root);
+            let root = if root == "~/" { "~" } else { &root };
+            return fit_line(
+                vec![Span::styled(
+                    format!(
+                        "{}{} ",
+                        " ".repeat(row.indent.into()),
+                        if *collapsed { "▸" } else { "▾" }
+                    ),
+                    bold,
+                )],
+                Span::styled(format!("{name}  {root}"), bold),
+                vec![vec![
+                    Span::styled(
+                        format!(
+                            "{} {}",
+                            theme::status_glyph(*status, app.spinner_frame),
+                            status.label()
+                        ),
+                        Style::default().fg(theme::status_color(*status)),
+                    ),
+                    Span::styled(format!("  {}", counts_text(*counts)), theme::muted()),
+                ]],
+                usize::from(width),
+                selected,
+            );
+        }
+        RowKind::Window {
+            info,
+            position,
+            has_subagents,
+            collapsed,
+        } => {
+            let focused = app.focused == Some(info.id);
+            let position_width = columns.position;
+            let name = padded(&info.name, columns.name);
+            let model = padded(info.model.as_deref().unwrap_or("-"), columns.model);
+            let elapsed = tree::format_elapsed(app.elapsed_secs(info));
+            vec![
+                Span::raw(" ".repeat(row.indent.saturating_sub(2).into())),
+                Span::styled(
+                    if focused { "▎" } else { " " },
+                    Style::default().fg(theme::ACCENT),
+                ),
+                Span::raw(if *collapsed && *has_subagents {
+                    "▸"
+                } else {
+                    " "
+                }),
+                Span::styled(
+                    theme::status_glyph(info.status, app.spinner_frame),
+                    Style::default().fg(theme::status_color(info.status)),
+                ),
+                Span::raw(format!(" {position:>position_width$} ")),
+                Span::styled(name, if focused { bold } else { Style::default() }),
+                Span::styled(
+                    format!(
+                        "  {:<6}  {model}  {:<9}  {elapsed:>4}  {}",
+                        info.runtime.label(),
+                        info.status.label(),
+                        info.tool.as_deref().unwrap_or("")
+                    ),
+                    theme::muted(),
+                ),
+            ]
+        }
+        RowKind::Subagent { info, guides, .. } => {
+            let label = match info.label.as_deref() {
+                Some(label) => format!("{}: {label}", info.kind),
+                None => info.kind.clone(),
+            };
+            let (state, duration) = match info.state {
+                proto::SubagentState::Running => ("running", app.age_secs(info.started_secs)),
+                proto::SubagentState::Done => (
+                    "done",
+                    info.ended_secs
+                        .map_or(0, |ended| info.started_secs.saturating_sub(ended)),
+                ),
+                proto::SubagentState::Failed => (
+                    "failed",
+                    info.ended_secs
+                        .map_or(0, |ended| info.started_secs.saturating_sub(ended)),
+                ),
+            };
+            vec![
+                Span::raw(format!("{}{guides}", " ".repeat(row.indent.into()))),
+                Span::styled(
+                    theme::subagent_glyph(info, app.spinner_frame),
+                    Style::default().fg(theme::subagent_color(info)),
+                ),
+                Span::raw(format!(" {label}")),
+                Span::styled(
+                    format!(
+                        "  {}  {state}  {}  {}",
+                        info.model.as_deref().unwrap_or("-"),
+                        tree::format_elapsed(duration),
+                        info.tool.as_deref().unwrap_or("")
+                    ),
+                    theme::muted(),
+                ),
+            ]
+        }
+    };
+    fit_spans(spans, usize::from(width), selected)
+}
+
+fn padded(text: &str, width: usize) -> String {
+    let text = truncate(text, width);
+    let padding = width.saturating_sub(UnicodeWidthStr::width(text.as_str()));
+    format!("{text}{}", " ".repeat(padding))
+}
+
+fn fit_spans(spans: Vec<Span<'static>>, width: usize, selected: bool) -> Line<'static> {
+    let mut remaining = width;
+    let mut fitted = Vec::new();
+    for mut span in spans {
+        span.content = truncate(&span.content, remaining).into();
+        remaining = remaining.saturating_sub(UnicodeWidthStr::width(span.content.as_ref()));
+        fitted.push(span);
+    }
+    fitted.push(Span::raw(" ".repeat(remaining)));
+    let line = Line::from(fitted);
+    if selected {
+        line.style(Style::default().add_modifier(Modifier::REVERSED))
+    } else {
+        line
+    }
 }
 
 fn spans_width(spans: &[Span<'_>]) -> usize {

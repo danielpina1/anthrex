@@ -8,6 +8,9 @@ mod tree_mode;
 #[path = "app_tests/tree_interaction.rs"]
 mod tree_interaction;
 
+#[path = "app_tests/overview.rs"]
+mod overview;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

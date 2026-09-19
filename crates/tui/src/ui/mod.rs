@@ -1,6 +1,7 @@
 //! Screen layout and the top-level draw. Spec section 6.1.
 
 pub mod modal;
+pub mod overview;
 pub mod sidebar;
 pub mod statusbar;
 pub mod terminal;
@@ -77,7 +78,11 @@ pub fn draw(frame: &mut Frame, app: &App) -> Layout {
     if app.sidebar_visible {
         sidebar::render(frame, app, &l);
     }
-    terminal::render(frame, app, l.main);
+    if app.overview {
+        overview::render(frame, app, l.main);
+    } else {
+        terminal::render(frame, app, l.main);
+    }
     statusbar::render(frame, app, l.statusbar);
     if let Some(m) = &app.modal {
         modal::render(frame, m, frame.area());
@@ -129,6 +134,102 @@ mod tests {
         );
         app.set_terminal_size(80, 24);
         app
+    }
+
+    fn open_overview(app: &mut App) {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        app.on_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        app.on_key(KeyEvent::new(KeyCode::Char('T'), KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn overview_replaces_the_terminal_with_the_wide_tree() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = example_app();
+        app.on_daemon(proto::DaemonMsg::Snapshot {
+            window_id: 1,
+            cols: 80,
+            rows: 24,
+            bytes: b"TERMINAL-TEXT".to_vec(),
+        });
+        assert!(render(&app, 160, 30).0.contains("TERMINAL-TEXT"));
+        open_overview(&mut app);
+        let (out, _) = render(&app, 160, 30);
+        for expected in [
+            " tree overview ",
+            "claude-opus-5",
+            "claude-sonnet-4-5",
+            "/r/shop",
+            "general-purpose: grep handlers",
+            "running",
+            "done",
+        ] {
+            assert!(out.contains(expected), "missing {expected:?}:\n{out}");
+        }
+        assert!(!out.contains("TERMINAL-TEXT"), "{out}");
+        app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        let (out, _) = render(&app, 160, 30);
+        assert!(out.contains("TERMINAL-TEXT"), "{out}");
+        assert!(!out.contains(" tree overview "), "{out}");
+    }
+
+    #[test]
+    fn overview_geometry_matches_its_hit_test() {
+        let mut app = example_app();
+        open_overview(&mut app);
+        app.set_tree_viewports(8, 10);
+        app.tree.overview.top = 4;
+        let mut terminal = Terminal::new(TestBackend::new(160, 13)).unwrap();
+        let mut l = None;
+        terminal.draw(|f| l = Some(draw(f, &app))).unwrap();
+        let l = l.unwrap();
+        assert_eq!(l.main_inner.height, 10);
+        let g = tree_view::geometry(l.main_inner, app.rows().len(), app.tree.overview.top);
+        for (offset, expected) in [
+            "tests: run unit suite",
+            "2 billing",
+            "3 search",
+            "4 frontend",
+            "general-purpose: style pass",
+            "Explore: find tokens",
+            "Explore: list files",
+            "5 docs",
+            "6 infra",
+            "7 perf",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let y = l.main_inner.y + offset as u16;
+            assert_eq!(g.index_at(l.main_inner.x, y), Some(4 + offset));
+            let text = sidebar_text(terminal.backend().buffer(), l.main_inner, y);
+            assert!(text.contains(expected), "{text:?} missing {expected:?}");
+        }
+        for (x, y) in [
+            (l.main.x, l.main_inner.y),
+            (l.main.right() - 1, l.main_inner.y),
+            (l.main_inner.x, l.main.y),
+            (l.main_inner.x, l.main.bottom() - 1),
+        ] {
+            assert_eq!(g.index_at(x, y), None);
+        }
+    }
+
+    #[test]
+    fn overview_handles_zero_and_one_cell_areas() {
+        let mut app = example_app();
+        open_overview(&mut app);
+        for sidebar_visible in [false, true] {
+            app.sidebar_visible = sidebar_visible;
+            for (width, height) in [(0, 0), (0, 1), (1, 0), (1, 1), (0, 30), (160, 0)] {
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal
+                    .draw(|frame| {
+                        draw(frame, &app);
+                    })
+                    .unwrap();
+            }
+        }
     }
 
     #[test]

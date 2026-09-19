@@ -133,7 +133,12 @@ impl App {
 
     /// Seconds since the window's status changed, extrapolated from the last list we received.
     pub fn elapsed_secs(&self, w: &WindowInfo) -> u64 {
-        w.since_secs + self.windows_received_at.elapsed().as_secs()
+        self.age_secs(w.since_secs)
+    }
+
+    /// Seconds value from the last window list, plus the time since it arrived.
+    pub fn age_secs(&self, secs: u64) -> u64 {
+        secs.saturating_add(self.windows_received_at.elapsed().as_secs())
     }
 
     pub fn toast_text(&self) -> Option<&str> {

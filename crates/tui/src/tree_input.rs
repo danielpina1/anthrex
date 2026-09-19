@@ -22,10 +22,25 @@ impl App {
     }
 
     pub fn on_click(&mut self, column: u16, row: u16, layout: &crate::ui::Layout) -> Vec<Effect> {
-        if self.modal.is_some() || !self.sidebar_visible {
+        if self.modal.is_some() {
             return vec![];
         }
         let rows = tree::build(&self.windows, &self.tree);
+        if self.overview {
+            let geometry = crate::ui::tree_view::geometry(
+                layout.main_inner,
+                rows.len(),
+                self.tree.overview.top,
+            );
+            if let Some(index) = geometry.index_at(column, row) {
+                let key = rows[index].key.clone();
+                self.tree.select(&rows, key.clone());
+                return self.activate_tree_node(key);
+            }
+        }
+        if !self.sidebar_visible {
+            return vec![];
+        }
         let geometry =
             crate::ui::tree_view::geometry(layout.sidebar_list, rows.len(), self.tree.sidebar.top);
         let Some(index) = geometry.index_at(column, row) else {
@@ -71,6 +86,15 @@ impl App {
 
     pub fn enter_tree(&mut self) {
         self.sidebar_visible = true;
+        self.enter_tree_navigation();
+    }
+
+    fn enter_overview(&mut self) {
+        self.overview = true;
+        self.enter_tree_navigation();
+    }
+
+    fn enter_tree_navigation(&mut self) {
         self.tree_input = Some(TreeInput::Navigate);
         self.keymap.set_tree_mode(true);
 
@@ -109,8 +133,7 @@ impl App {
                 if self.overview {
                     self.exit_tree();
                 } else {
-                    self.enter_tree();
-                    self.overview = true;
+                    self.enter_overview();
                 }
             }
             Command::NarrowSidebar => {
@@ -142,14 +165,7 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.move_tree_selection(-1),
             KeyCode::Enter => {
                 if let Some(selected) = self.tree.selected.clone() {
-                    match selected {
-                        key @ NodeKey::Project(_) => self.toggle_tree_node(&key),
-                        NodeKey::Window(id) | NodeKey::Subagent { window_id: id, .. } => {
-                            let effects = self.focus(id);
-                            self.exit_tree();
-                            return effects;
-                        }
-                    }
+                    return self.activate_tree_node(selected);
                 }
             }
             KeyCode::Char(' ') => {
@@ -162,6 +178,20 @@ impl App {
             _ => {}
         }
         vec![]
+    }
+
+    fn activate_tree_node(&mut self, key: NodeKey) -> Vec<Effect> {
+        match key {
+            key @ NodeKey::Project(_) => {
+                self.toggle_tree_node(&key);
+                vec![]
+            }
+            NodeKey::Window(id) | NodeKey::Subagent { window_id: id, .. } => {
+                let effects = self.focus(id);
+                self.exit_tree();
+                effects
+            }
+        }
     }
 
     fn move_tree_selection(&mut self, delta: isize) {

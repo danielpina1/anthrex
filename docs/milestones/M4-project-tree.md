@@ -731,6 +731,14 @@ From `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`, "Assig
 
 The implementer fills in this section with every deviation, surprise and decision made during implementation.
 
+### M4.9 overview
+
+- Controller ruling resolves decisions 32/34 in favor of the overview's absolute no-layout/no-resize promise: `C-b T` enters tree navigation without revealing a hidden sidebar; ordinary `C-b t` still reveals it. Both entry paths share the tree-key-routing helper, and overview clicks share Enter activation while sidebar clicks retain their existing behavior. An overview click activates even during filter input; filter-key Enter/Esc behavior is unchanged.
+- Defined `WideColumns` from the visible overview rows, using terminal display widths with window names capped at 24 and models at 28. Capped fields and undersized lines truncate at grapheme boundaries with an ellipsis, and selected rows fill the supplied width. No additional field-drop priority is imposed for narrow overview areas.
+- Reuse `terminal::shorten_home` and normalize its exact-home `~/` result to `~` locally; `ui/terminal.rs` remains untouched. Absent sub-agent labels omit the colon. Finished sub-agents without an end timestamp show `0s`; permission changes only the glyph/color, retaining the actual state word.
+- Added focused tests in `app_tests/overview.rs` and `ui/tree_view_tests.rs`, registered from their existing parent modules, to keep production and test files below roughly 600 lines. The two required overview render/geometry tests remain in `ui/mod.rs`.
+- Review hardening: the overview reuses the layout's inset helper directly, so render and click geometry agree even for zero-width or zero-height areas where ratatui's block inset clamps the origin differently.
+
 ### M4.8 tree-mode interaction
 
 - Added `ui/sidebar.rs` to the task's file list: its existing renderer still hardcoded the normal title, border, and unselected rows. The required tree title and full-width reversed selection could not be connected without updating that renderer.
