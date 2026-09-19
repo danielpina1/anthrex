@@ -115,6 +115,7 @@ pub struct WindowInfo {
     pub name: String,
     pub runtime: Runtime,
     pub cwd: PathBuf,
+    pub project: PathBuf,
     pub branch: Option<String>,
     pub status: Status,
     pub tool: Option<String>,
@@ -159,6 +160,7 @@ mod tests {
             name: "api".into(),
             runtime: Runtime::Claude,
             cwd: "/tmp/repo".into(),
+            project: "/tmp/repo".into(),
             branch: Some("feat/api".into()),
             status: Status::Working,
             tool: Some("Bash".into()),
@@ -181,6 +183,7 @@ mod tests {
             exit: None,
         };
         let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"project\":\"/tmp/repo\""));
         assert!(json.contains("\"runtime\":\"claude\""));
         assert!(json.contains("\"state\":\"running\""));
         assert!(!json.contains("has_session"));

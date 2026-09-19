@@ -67,6 +67,7 @@ struct Entry {
     id: u32,
     name: String,
     spec: WindowSpec,
+    project: PathBuf,
     status: Status,
     state: AgentState,
     viewers: u32,
@@ -84,6 +85,7 @@ impl Entry {
             name: self.name.clone(),
             runtime: self.spec.runtime,
             cwd: self.spec.cwd.clone(),
+            project: self.project.clone(),
             branch: self.spec.worktree_branch.clone(),
             status: self.status,
             tool: self.state.tool.clone(),
@@ -186,7 +188,13 @@ impl WindowManager {
         );
     }
 
-    pub fn create(&self, spec: WindowSpec, cols: u16, rows: u16) -> anyhow::Result<WindowInfo> {
+    pub fn create(
+        &self,
+        spec: WindowSpec,
+        project: PathBuf,
+        cols: u16,
+        rows: u16,
+    ) -> anyhow::Result<WindowInfo> {
         let mut inner = crate::lock(&self.inner);
         let id = inner.next_id;
         let name = match spec
@@ -229,6 +237,7 @@ impl WindowManager {
             id,
             name,
             spec,
+            project,
             status: Status::Starting,
             state: AgentState::default(),
             viewers: 0,

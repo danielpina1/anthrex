@@ -122,6 +122,7 @@ mod tests {
             name: name.into(),
             runtime: Runtime::Shell,
             cwd: "/home/me/repo".into(),
+            project: "/home/me/repo".into(),
             branch: None,
             status: Status::Idle,
             tool: None,

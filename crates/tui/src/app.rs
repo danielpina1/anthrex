@@ -496,6 +496,7 @@ mod tests {
             name: name.into(),
             runtime: Runtime::Shell,
             cwd: "/tmp".into(),
+            project: "/tmp".into(),
             branch: None,
             status,
             tool: None,

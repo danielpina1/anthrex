@@ -77,6 +77,7 @@ mod tests {
             name: name.into(),
             runtime,
             cwd: "/tmp/repo".into(),
+            project: "/tmp/repo".into(),
             branch: Some("feat/x".into()),
             status,
             tool: None,
