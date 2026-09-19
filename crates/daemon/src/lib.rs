@@ -25,6 +25,7 @@ pub mod launch;
 pub mod lifecycle;
 pub mod manager;
 mod process;
+pub mod project;
 pub mod server;
 pub mod status;
 pub mod subagents;
