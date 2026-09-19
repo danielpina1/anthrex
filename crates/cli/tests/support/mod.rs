@@ -3,11 +3,11 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Output, Stdio};
-use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 use proto::{ClientKind, ClientMsg, DaemonMsg, Runtime, WindowInfo, WindowSpec};
 use serde_json::Value;
+use tempfile::NamedTempFile;
 use tokio::net::UnixStream;
 
 pub const ANTHREX: &str = env!("CARGO_BIN_EXE_anthrex");
@@ -44,12 +44,12 @@ pub fn isolated_command(dir: &Path, args: &[&str]) -> Command {
     command
 }
 
-/// Drain pipes concurrently, without a join that can outlive the test deadline.
+/// Capture output without making direct-child completion depend on inherited pipe handles.
 pub struct RunningCommand {
     description: String,
     child: Child,
-    stdout: Receiver<Vec<u8>>,
-    stderr: Receiver<Vec<u8>>,
+    stdout: NamedTempFile,
+    stderr: NamedTempFile,
 }
 
 impl RunningCommand {
@@ -59,23 +59,14 @@ impl RunningCommand {
             command.get_program(),
             command.get_args().take(2).collect::<Vec<_>>()
         );
-        let mut child = command
+        let stdout = NamedTempFile::new().unwrap();
+        let stderr = NamedTempFile::new().unwrap();
+        let child = command
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(stdout.reopen().unwrap())
+            .stderr(stderr.reopen().unwrap())
             .spawn()
             .unwrap();
-        fn drain(mut pipe: impl Read + Send + 'static) -> Receiver<Vec<u8>> {
-            let (tx, rx) = mpsc::channel();
-            std::thread::spawn(move || {
-                let mut bytes = Vec::new();
-                let _ = pipe.read_to_end(&mut bytes);
-                let _ = tx.send(bytes);
-            });
-            rx
-        }
-        let stdout = drain(child.stdout.take().unwrap());
-        let stderr = drain(child.stderr.take().unwrap());
         Self {
             description,
             child,
@@ -114,14 +105,28 @@ impl RunningCommand {
             );
             std::thread::sleep(Duration::from_millis(5));
         };
-        let stdout = self
-            .stdout
-            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .unwrap_or_else(|error| panic!("stdout drain exceeded test deadline: {error}; child {} ({}) exited with {status}", self.child.id(), self.description));
-        let stderr = self
-            .stderr
-            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .unwrap_or_else(|error| panic!("stderr drain exceeded test deadline: {error}; child {} ({}) exited with {status}", self.child.id(), self.description));
+        let mut stdout = Vec::new();
+        self.stdout
+            .as_file_mut()
+            .read_to_end(&mut stdout)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "failed to read stdout: {error}; child {} ({}) exited with {status}",
+                    self.child.id(),
+                    self.description
+                )
+            });
+        let mut stderr = Vec::new();
+        self.stderr
+            .as_file_mut()
+            .read_to_end(&mut stderr)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "failed to read stderr: {error}; child {} ({}) exited with {status}",
+                    self.child.id(),
+                    self.description
+                )
+            });
         Output {
             status,
             stdout,

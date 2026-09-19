@@ -1,8 +1,26 @@
 mod support;
 
 use std::os::unix::fs::PermissionsExt;
+use std::process::Command;
 use std::time::{Duration, Instant};
 use support::{RunningCommand, isolated_command, tempdir};
+
+#[test]
+fn running_command_finishes_when_a_descendant_keeps_output_handles_open() {
+    let mut command = Command::new("sh");
+    command.args([
+        "-c",
+        "printf 'known stdout'; printf 'known stderr' >&2; sleep 1 &",
+    ]);
+
+    let started = Instant::now();
+    let output = RunningCommand::start(&mut command).finish(Duration::from_millis(250));
+
+    assert!(output.status.success(), "{:?}", output.status);
+    assert_eq!(output.stdout, b"known stdout");
+    assert_eq!(output.stderr, b"known stderr");
+    assert!(started.elapsed() < Duration::from_millis(750));
+}
 
 fn probe(script: &str) -> (String, Duration, tempfile::TempDir) {
     let dir = tempdir();
