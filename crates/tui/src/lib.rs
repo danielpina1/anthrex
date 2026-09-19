@@ -107,19 +107,33 @@ fn apply(effects: Vec<Effect>, conn: &Connection, app: &mut App) -> bool {
     false
 }
 
-fn draw(
-    terminal: &mut DefaultTerminal,
+fn draw<B: ratatui::backend::Backend>(
+    terminal: &mut ratatui::Terminal<B>,
     app: &mut App,
     conn: &Connection,
-) -> anyhow::Result<ui::Layout> {
+) -> Result<ui::Layout, B::Error> {
     let mut layout = None;
-    terminal.draw(|frame| layout = Some(ui::draw(frame, app)))?;
-    let layout = layout.expect("draw closure always runs");
-    let effects = app.set_terminal_size(layout.main_inner.width, layout.main_inner.height);
-    app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
-    apply(effects, conn, app);
-    Ok(layout)
+    terminal.draw(|frame| {
+        // Terminal::draw has already handled a resize. Settle the viewport before
+        // rendering so the next mouse event sees the same rows as this frame.
+        let next = ui::layout(
+            frame.area(),
+            if app.sidebar_visible {
+                app.sidebar_width
+            } else {
+                0
+            },
+        );
+        let effects = app.set_terminal_size(next.main_inner.width, next.main_inner.height);
+        app.set_tree_viewports(next.sidebar_list.height, next.main_inner.height);
+        apply(effects, conn, app);
+        layout = Some(ui::draw(frame, app));
+    })?;
+    Ok(layout.expect("draw closure always runs"))
 }
+
+#[cfg(test)]
+mod draw_tests;
 
 async fn event_loop(
     terminal: &mut DefaultTerminal,
