@@ -5,6 +5,7 @@ pub mod connection;
 pub mod keymap;
 pub mod theme;
 pub mod tree;
+mod tree_input;
 pub mod ui;
 
 use app::{App, Effect};

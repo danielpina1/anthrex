@@ -2,6 +2,9 @@ use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use proto::{Runtime, Status};
 
+#[path = "app_tests/tree_mode.rs"]
+mod tree_mode;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

@@ -63,6 +63,12 @@ pub enum Modal {
     Help,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreeInput {
+    Navigate,
+    Filter,
+}
+
 pub struct App {
     pub windows: Vec<WindowInfo>,
     pub focused: Option<u32>,
@@ -70,6 +76,8 @@ pub struct App {
     pub sidebar_visible: bool,
     pub sidebar_width: u16,
     pub tree: TreeState,
+    pub tree_input: Option<TreeInput>,
+    pub overview: bool,
     pub keymap: Keymap,
     pub modal: Option<Modal>,
     pub connected: bool,
@@ -97,6 +105,8 @@ impl App {
             sidebar_visible: true,
             sidebar_width: crate::ui::DEFAULT_SIDEBAR_WIDTH,
             tree: TreeState::default(),
+            tree_input: None,
+            overview: false,
             keymap: Keymap::new(prefix),
             modal: None,
             connected: true,
@@ -114,61 +124,6 @@ impl App {
     pub fn focused_window(&self) -> Option<&WindowInfo> {
         self.focused
             .and_then(|id| self.windows.iter().find(|w| w.id == id))
-    }
-
-    pub fn rows(&self) -> Vec<tree::Row<'_>> {
-        tree::build(&self.windows, &self.tree)
-    }
-
-    pub fn set_tree_viewports(&mut self, sidebar_rows: u16, overview_rows: u16) {
-        let changed =
-            self.tree.sidebar.height != sidebar_rows || self.tree.overview.height != overview_rows;
-        self.tree.sidebar.height = sidebar_rows;
-        self.tree.overview.height = overview_rows;
-        if changed {
-            self.reveal_tree_anchor();
-        }
-    }
-
-    pub fn on_click(&mut self, column: u16, row: u16, layout: &crate::ui::Layout) -> Vec<Effect> {
-        if self.modal.is_some() || !self.sidebar_visible {
-            return vec![];
-        }
-        let rows = self.rows();
-        let geometry =
-            crate::ui::tree_view::geometry(layout.sidebar_list, rows.len(), self.tree.sidebar.top);
-        let Some(index) = geometry.index_at(column, row) else {
-            return vec![];
-        };
-        match rows[index].key.clone() {
-            tree::NodeKey::Project(root) => {
-                self.tree.toggle(&tree::NodeKey::Project(root));
-                self.reveal_tree_anchor();
-                vec![]
-            }
-            tree::NodeKey::Window(id) | tree::NodeKey::Subagent { window_id: id, .. } => {
-                self.focus(id)
-            }
-        }
-    }
-
-    fn reveal_tree_anchor(&mut self) {
-        let rows = self.rows();
-        let index = self.focused_window().and_then(|window| {
-            tree::row_index(&rows, &tree::NodeKey::Window(window.id))
-                .or_else(|| tree::row_index(&rows, &tree::NodeKey::Project(window.project.clone())))
-        });
-        let len = rows.len();
-        if let Some(index) = index {
-            if self.tree.sidebar.height > 0 {
-                self.tree.sidebar.reveal(index);
-            }
-            if self.tree.overview.height > 0 {
-                self.tree.overview.reveal(index);
-            }
-        }
-        self.tree.sidebar.scroll(0, len);
-        self.tree.overview.scroll(0, len);
     }
 
     pub fn focused_index(&self) -> Option<usize> {
@@ -401,6 +356,7 @@ impl App {
                 }
             }
             KeyAction::Run(cmd) => self.run(cmd),
+            KeyAction::Tree(key) => self.on_tree_key(key),
             KeyAction::AwaitPrefix | KeyAction::Cancel | KeyAction::Nothing => vec![],
         }
     }
@@ -478,6 +434,10 @@ impl App {
                 self.modal = Some(Modal::Help);
                 vec![]
             }
+            cmd @ (Command::ToggleTree
+            | Command::ToggleOverview
+            | Command::NarrowSidebar
+            | Command::WidenSidebar) => self.run_tree_command(cmd),
         }
     }
 
@@ -492,6 +452,9 @@ impl App {
     }
 
     pub fn on_paste(&mut self, text: String) -> Vec<Effect> {
+        if self.tree_input.is_some() {
+            return self.on_tree_paste(text);
+        }
         let Some(id) = self.focused else {
             return vec![];
         };
