@@ -312,6 +312,42 @@ async fn rename_rejects_duplicates() {
 }
 
 #[tokio::test]
+async fn shutdown_rejects_a_pending_creation_before_it_can_spawn() {
+    let m = manager();
+    let worker = m.clone();
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    let (resume_tx, resume_rx) = tokio::sync::oneshot::channel();
+    let pending = tokio::spawn(async move {
+        let spec = spec("late");
+        let project = daemon::project::resolve_root(spec.cwd.clone()).await;
+        ready_tx.send(()).unwrap();
+        // Reproduce a create task paused before manager admission, without sleeps.
+        resume_rx.await.unwrap();
+        tokio::task::spawn_blocking(move || worker.create(spec, project, 80, 24))
+            .await
+            .unwrap()
+    });
+    tokio::time::timeout(Duration::from_secs(2), ready_rx)
+        .await
+        .expect("creation did not resolve its project")
+        .unwrap();
+    m.shutdown().await;
+    resume_tx.send(()).unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(2), pending)
+        .await
+        .expect("pending creation did not finish")
+        .unwrap();
+    let windows = m.list();
+    // The pre-fix path creates a real shell; clean it up before asserting RED.
+    for window in &windows {
+        m.remove(window.id).unwrap();
+    }
+    let error = result.expect_err("a pending creation spawned after shutdown");
+    assert!(error.to_string().contains("shutting down"));
+    assert!(windows.is_empty(), "shutdown admitted a new window");
+}
+
+#[tokio::test]
 async fn shutdown_ends_every_window() {
     let m = manager();
     for n in ["s1", "s2"] {
