@@ -191,6 +191,10 @@ async fn run_cli() -> anyhow::Result<()> {
         Some(Command::Tree { project, json }) => {
             let c = client::CliClient::connect(&socket).await?;
             let project = project.map(|path| resolve_dir(Some(path))).transpose()?;
+            let project = match project {
+                Some(path) => Some(daemon::project::resolve_root(path).await),
+                None => None,
+            };
             if json {
                 println!(
                     "{}",

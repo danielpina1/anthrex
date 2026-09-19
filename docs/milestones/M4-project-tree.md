@@ -4,7 +4,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | `ready` |
+| Status | `done` (automated checks complete; real-agent manual check outstanding) |
 | Depends on | Milestone 3 (agent status and sub-agent tracking from hooks) |
 | Spec sections | `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` sections 3, 4.4 (the `needs_permission` marker) and 5; section 10.1 for the protocol version and 10.3 for the keys |
 | Branch | `m4-project-tree` |
@@ -679,7 +679,7 @@ python3 scripts/pty-smoke.py
 
 Milestone-specific checks:
 
-1. `rg -n 'SIDEBAR_WIDTH\b|CARD_HEIGHT|sidebar::hit_test' crates` finds nothing.
+1. `rg -n '\bSIDEBAR_WIDTH\b|CARD_HEIGHT|sidebar::hit_test' crates` finds nothing. Match the exact old identifier so the approved `DEFAULT_`, `MIN_`, and `MAX_SIDEBAR_WIDTH` constants are not false positives.
 2. `rg -n '_ =>' crates/tui/src/tree.rs crates/tui/src/ui/tree_view.rs crates/tui/src/ui/overview.rs crates/cli/src/tree_cmd.rs` finds no arm that matches on `NodeKey`, `RowKind` or `ProjectChild` (decision 26).
 3. `rg -n 'std::fs|std::process|tokio' crates/tui/src/tree.rs crates/tui/src/tree_input.rs crates/tui/src/app.rs crates/tui/src/ui` finds nothing.
 4. `wc -l crates/tui/src/app.rs` is under 600.
@@ -730,6 +730,18 @@ From `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`, "Assig
 ## Implementation notes
 
 The implementer fills in this section with every deviation, surprise and decision made during implementation.
+
+### M4.11 end-to-end verification
+
+- Added two CLI end-to-end tests with independent real daemons, the exact scripted fake-agent hook sequence, and temporary main-repository, sibling linked-worktree, and plain-directory fixtures. They verify canonical grouping, both agents' nested sub-agent identity/parent/kind/label/state/tool, and linked-worktree text filtering. Readiness polls actual JSON every 100 ms within a 10-second deadline and also waits for the final `Read` hook to avoid racing it. Fixture Git commands disable prompts/signing/hooks, use explicit identity/default-branch settings, and have deadlines. Daemons stop before their working directories are removed.
+- Test-first evidence: the new JSON grouping/nesting test passed on the reviewed M4.10 implementation, while `tree_text_and_project_filter` failed with `tree did not print the canonical main repository: "no windows\n"`. After the correction, the same focused command passed both tests.
+- Controller ruling extends decision 42 and M4.11's original file list: after connecting and canonicalizing `--project`, `main.rs` now resolves it through `daemon::project::resolve_root` before the existing pure longest-containing-root filter. A sibling worktree is not a descendant of the main checkout, so canonical-prefix matching alone cannot implement M4.11, manual step 9, and the project's shared identity. The existing bounded blocking-thread detector is reused; connect-first/no-auto-start behavior and the pure text/JSON selector are preserved. No new dependency or protocol change was needed.
+- Added stage 8c through the focused `scripts/pty_tree_smoke.py` helper, an approved file-list extension that keeps the mature harness at 565 lines (helper 150). It checks shell windows from the main checkout and linked worktree in one project, tree/filter/focus/overview behavior, a normal detach, and restoration of exactly `shell-1` through `shell-4`. Its `finally` cleanup removes only its own windows and temporary fixture and closes its PTY; the outer harness stops its isolated daemon.
+- The first smoke run exposed an input synchronization issue: adjacent Escape and Control-b could decode as Alt+Control-b, and stage 8c timed out waiting for detach. Source inspection confirmed crossterm's Escape-prefix behavior and the keymap's exact modifier match. The stage now waits for the restored `tree-b · shell` title after Escape before sending detach, with no fixed sleep. The complete rerun printed stage 8c's success line, passed daemon shutdown/status, and ended `ALL SMOKE STAGES PASSED`. Independent review approved the combined implementation and the synchronization correction.
+- Final local gates passed: `cargo build --workspace --all-targets`; `cargo test --workspace` (333 tests, zero failures); `cargo clippy --workspace --all-targets -- -D warnings`; `cargo fmt --all --check`; and `python3 scripts/pty-smoke.py`. The corrected identifier, exhaustive-match, and pure-state absence scans had no matches. `app.rs` remains 563 lines.
+- Corrected the milestone's absence regex from `SIDEBAR_WIDTH\b` to `\bSIDEBAR_WIDTH\b`: the original matched six approved `DEFAULT_`, `MIN_`, and `MAX_SIDEBAR_WIDTH` uses/declarations. This changes only the verification expression, not those constants.
+- Before/after process audits found only the same pre-existing user daemon (PID 20823, from the user's main checkout), which was untouched. There were no fake agents or task-worktree clients after verification, and no new smoke/tree/test fixture directories or sockets. The failed first smoke also cleaned up fully. Process enumeration required read-only sandbox escalation.
+- The real Claude/Codex manual check remains **outstanding** and must be stated in the PR. This task never invoked either real agent. Automated gates permit M4 to become `done` and M5 `ready`; later milestones remain blocked until their numerical turn. CI verification belongs to the controller's PR handoff.
 
 ### M4.10 CLI tree
 

@@ -34,6 +34,8 @@ import termios
 import time
 import tty
 
+from pty_tree_smoke import run_project_tree_stage
+
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(REPO, "target/debug/anthrex")
@@ -534,6 +536,8 @@ def main():
         fail(f"fourth detach did not exit cleanly with status 0 (raw status {status4})")
     proc4.close()
     print("ok: fake-claude removed and fourth client detached cleanly")
+
+    run_project_tree_stage(REPO, PtyProc, run_cmd, fail)
 
     print("== stage 9: stop the daemon, verify status ==")
     stop_result = run_cmd(["daemon", "stop"])
