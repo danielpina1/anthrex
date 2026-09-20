@@ -164,6 +164,8 @@ impl App {
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => self.move_tree_selection(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_tree_selection(-1),
+            KeyCode::Char('h') => self.select_tree_parent(),
+            KeyCode::Char('l') => self.select_first_visible_child(),
             KeyCode::Enter => {
                 if let Some(selected) = self.tree.selected.clone() {
                     return self.activate_tree_node(selected);
@@ -199,6 +201,42 @@ impl App {
         let rows = tree::build(&self.windows, &self.tree);
         self.tree.move_selection(&rows, delta);
         self.reveal_tree_anchor();
+    }
+
+    /// `h`: selects the nearest preceding row one level up, the row's parent
+    /// in the visible pre-order list. A no-op at a root, which has no
+    /// shallower row before it (decision 17).
+    fn select_tree_parent(&mut self) {
+        let rows = tree::build(&self.windows, &self.tree);
+        let Some(index) = self.tree.selected_index(&rows) else {
+            return;
+        };
+        let depth = rows[index].depth;
+        if depth == 0 {
+            return;
+        }
+        if let Some(parent) = rows[..index].iter().rev().find(|row| row.depth < depth) {
+            self.tree.select(&rows, parent.key.clone());
+            self.reveal_tree_anchor();
+        }
+    }
+
+    /// `l`: selects the row right after the selected one if it is one level
+    /// deeper, the first visible child in the pre-order list. A no-op at a
+    /// leaf, whether it has no children or is collapsed — either way the next
+    /// row is not a child (decision 17, decision 7).
+    fn select_first_visible_child(&mut self) {
+        let rows = tree::build(&self.windows, &self.tree);
+        let Some(index) = self.tree.selected_index(&rows) else {
+            return;
+        };
+        let depth = rows[index].depth;
+        if let Some(child) = rows.get(index + 1)
+            && child.depth == depth + 1
+        {
+            self.tree.select(&rows, child.key.clone());
+            self.reveal_tree_anchor();
+        }
     }
 
     pub(crate) fn toggle_tree_node(&mut self, key: &NodeKey) {

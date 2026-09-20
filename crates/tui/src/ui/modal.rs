@@ -10,7 +10,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("C-b j / k", "next / previous agent"),
     ("C-b 1-9", "focus agent by number"),
     ("C-b c", "new shell window"),
-    ("C-b t", "tree mode (j/k, Enter, Space, /)"),
+    ("C-b t", "tree mode (j/k, h/l, Enter, Space, /)"),
     ("C-b T", "tree overview"),
     ("C-b < / >", "sidebar width"),
     ("C-b x", "kill agent"),
