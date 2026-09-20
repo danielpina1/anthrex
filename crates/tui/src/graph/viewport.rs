@@ -1,11 +1,13 @@
-//! The two-dimensional viewport onto the canvas `graph::layout` produces
-//! (spec §4.2).
+//! The two-dimensional viewport onto the canvas `graph::layout` produces, and
+//! the hit-test that turns a click into the node under it (spec §4.2).
 //!
 //! `Pan` is the canvas coordinate shown at the viewport's top-left corner
 //! (decision 14). Every method here keeps it inside the canvas, so the
 //! viewport never scrolls past the canvas's own right or bottom edge.
 
-use ratatui::layout::Rect;
+use super::Layout;
+use crate::tree::NodeKey;
+use ratatui::layout::{Position, Rect};
 
 /// The canvas coordinate shown at the viewport's top-left corner (decision
 /// 14).
@@ -64,6 +66,39 @@ fn reveal_axis(pan: u16, near: u16, far: u16, span: u16) -> u16 {
         far.saturating_sub(span)
     } else {
         pan
+    }
+}
+
+/// Where the viewport sits on screen and how far it has panned — everything a
+/// click needs to find the canvas cell under it.
+pub struct GraphGeometry {
+    pub area: Rect,
+    pub pan: Pan,
+}
+
+impl GraphGeometry {
+    /// The node under the screen cell at `(column, row)`, scanned linearly
+    /// over `layout.nodes` since a click is not a hot path (decision 20).
+    ///
+    /// A screen cell is converted to a canvas cell — offset out of `area`,
+    /// then by `pan` — before any rectangle is consulted. Doing that
+    /// backwards is a bug a zero-pan test cannot catch, since it only
+    /// misfires once the viewport has actually panned.
+    pub fn node_at(&self, layout: &Layout, column: u16, row: u16) -> Option<NodeKey> {
+        let local_x = column.checked_sub(self.area.x)?;
+        let local_y = row.checked_sub(self.area.y)?;
+        if local_x >= self.area.width || local_y >= self.area.height {
+            return None;
+        }
+        let canvas = Position::new(
+            self.pan.x.saturating_add(local_x),
+            self.pan.y.saturating_add(local_y),
+        );
+        layout
+            .nodes
+            .iter()
+            .find(|node| node.rect.contains(canvas))
+            .map(|node| node.key.clone())
     }
 }
 

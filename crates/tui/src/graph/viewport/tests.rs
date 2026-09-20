@@ -4,7 +4,36 @@
 //! wrong answers could satisfy.
 
 use super::*;
+use crate::graph::{Edge, PlacedNode};
 use ratatui::layout::Rect;
+
+/// Two nodes side by side on the canvas: `a` at the origin, `b` three columns
+/// past its right edge, with an edge between them — enough shape to test a
+/// box, a gap and an edge cell all in one layout.
+fn sample_layout() -> (Layout, NodeKey, NodeKey) {
+    let a = NodeKey::Window(1);
+    let b = NodeKey::Window(2);
+    let layout = Layout {
+        nodes: vec![
+            PlacedNode {
+                key: a.clone(),
+                rect: Rect::new(0, 0, 12, 3),
+                depth: 0,
+            },
+            PlacedNode {
+                key: b.clone(),
+                rect: Rect::new(15, 0, 12, 3),
+                depth: 1,
+            },
+        ],
+        edges: vec![Edge {
+            parent: a.clone(),
+            children: vec![b.clone()],
+        }],
+        size: (27, 3),
+    };
+    (layout, a, b)
+}
 
 #[test]
 fn clamped_never_shows_past_the_canvas() {
@@ -77,4 +106,96 @@ fn revealing_a_rect_larger_than_the_area_shows_its_top_left() {
         Pan::default().revealing(rect, canvas, area),
         Pan { x: 20, y: 20 }
     );
+}
+
+#[test]
+fn every_cell_of_a_box_hits_it() {
+    let (layout, a, _b) = sample_layout();
+    let geometry = GraphGeometry {
+        area: Rect::new(0, 0, 30, 5),
+        pan: Pan::default(),
+    };
+    let rect = layout.node(&a).unwrap().rect;
+
+    for x in rect.x..rect.right() {
+        for y in rect.y..rect.bottom() {
+            assert_eq!(
+                geometry.node_at(&layout, x, y),
+                Some(a.clone()),
+                "cell ({x}, {y}) should hit the box"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_gap_cell_hits_nothing() {
+    let (layout, _a, _b) = sample_layout();
+    let geometry = GraphGeometry {
+        area: Rect::new(0, 0, 30, 5),
+        pan: Pan::default(),
+    };
+
+    // Column 13 is in the tier gap between the two boxes; row 0 is not the
+    // row the edge is painted on. Neither box, nor the edge, is here.
+    assert_eq!(geometry.node_at(&layout, 13, 0), None);
+}
+
+#[test]
+fn an_edge_cell_hits_nothing() {
+    let (layout, _a, _b) = sample_layout();
+    let geometry = GraphGeometry {
+        area: Rect::new(0, 0, 30, 5),
+        pan: Pan::default(),
+    };
+
+    // Row 1 is the shared middle row of both boxes, where the painter draws
+    // the straight run connecting them (decision 13). It is a drawn line,
+    // not a node.
+    assert_eq!(geometry.node_at(&layout, 13, 1), None);
+}
+
+#[test]
+fn a_cell_past_the_canvas_hits_nothing() {
+    let (layout, _a, _b) = sample_layout();
+    // The viewport area is wider and taller than anything the layout placed
+    // (the canvas is only 27 x 3). A click in that dead space still lands
+    // inside the viewport but past every node.
+    let geometry = GraphGeometry {
+        area: Rect::new(0, 0, 30, 5),
+        pan: Pan::default(),
+    };
+    assert_eq!(geometry.node_at(&layout, 29, 4), None);
+
+    // A click outside the viewport area altogether must not panic (column
+    // and row are unsigned, so going the wrong way could underflow).
+    let geometry = GraphGeometry {
+        area: Rect::new(5, 5, 10, 5),
+        pan: Pan::default(),
+    };
+    assert_eq!(geometry.node_at(&layout, 0, 0), None);
+}
+
+#[test]
+fn hit_testing_accounts_for_the_pan() {
+    let (layout, a, b) = sample_layout();
+    let area = Rect::new(0, 0, 30, 5);
+
+    // With no pan, the top-left screen cell lands on canvas cell (0, 1),
+    // inside `a`.
+    let unpanned = GraphGeometry {
+        area,
+        pan: Pan::default(),
+    };
+    assert_eq!(unpanned.node_at(&layout, 0, 1), Some(a));
+
+    // Panned fifteen columns right, the same screen cell lands on canvas
+    // cell (15, 1) instead — `b`'s left border — proving the mapping goes
+    // through the pan rather than treating screen coordinates as canvas
+    // coordinates directly.
+    let panned = GraphGeometry {
+        area,
+        pan: Pan { x: 15, y: 0 },
+    };
+    assert_eq!(panned.node_at(&layout, 0, 1), Some(b));
 }
