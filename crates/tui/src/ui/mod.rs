@@ -94,6 +94,7 @@ pub fn draw(frame: &mut Frame, app: &App) -> Layout {
 mod tests {
     use super::*;
     use crate::app::{App, Modal, PendingAction};
+    use crate::graph::Pan;
     use crate::keymap::Keymap;
     use proto::{Runtime, Status, WindowInfo};
     use ratatui::Terminal;
@@ -178,19 +179,40 @@ mod tests {
 
     #[test]
     fn overview_geometry_matches_its_hit_test() {
+        // Once with the whole canvas on screen, and once in a viewport too
+        // small for it, panned on both axes. A hit test that forgot the pan
+        // passes the first and fails the second.
         let mut app = example_app();
         open_overview(&mut app);
-        let mut terminal = Terminal::new(TestBackend::new(200, 50)).unwrap();
+        assert_eq!(hits_every_visible_box(&app, 200, 50), Pan::default());
+        app.graph_pan = Pan { x: 20, y: 6 };
+        assert_eq!(hits_every_visible_box(&app, 120, 20), Pan { x: 20, y: 6 });
+    }
+
+    /// Draws the overview at `width` x `height` and asserts that the middle of
+    /// every box on screen hit-tests to that box and that its left border was
+    /// really drawn there; returns the pan it drew at.
+    fn hits_every_visible_box(app: &App, width: u16, height: u16) -> Pan {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         let mut l = None;
-        terminal.draw(|f| l = Some(draw(f, &app))).unwrap();
+        terminal.draw(|f| l = Some(draw(f, app))).unwrap();
         let l = l.unwrap();
-        let view = overview::view(&app, l.main);
+        let view = overview::view(app, l.main);
         let geometry = view.geometry();
-        assert!(!view.layout.nodes.is_empty());
+        let mut checked = 0;
         for node in &view.layout.nodes {
-            // The middle of every box, where its content is drawn.
-            let x = l.main.x + 1 + node.rect.x + node.rect.width / 2 - view.pan.x;
-            let y = l.main.y + 1 + node.rect.y + 1 - view.pan.y;
+            let Some(x) = (node.rect.x + node.rect.width / 2).checked_sub(view.pan.x) else {
+                continue;
+            };
+            let Some(y) = (node.rect.y + 1).checked_sub(view.pan.y) else {
+                continue;
+            };
+            let (x, y) = (view.canvas.x + x, view.canvas.y + y);
+            // Only boxes whose left border is on screen too: a box clipped by
+            // the left edge has no border cell to check.
+            if !view.canvas.contains((x, y).into()) || node.rect.x < view.pan.x {
+                continue;
+            }
             assert_eq!(
                 geometry.node_at(&view.layout, x, y).as_ref(),
                 Some(&node.key),
@@ -206,7 +228,9 @@ mod tests {
                 "{:?}'s left border at ({border}, {y}) was {symbol:?}",
                 node.key
             );
+            checked += 1;
         }
+        assert!(checked > 1, "only {checked} boxes were on screen");
         // The block's own border, and the footer, are not the canvas.
         for (x, y) in [
             (l.main.x, view.canvas.y),
@@ -216,6 +240,7 @@ mod tests {
         ] {
             assert_eq!(geometry.node_at(&view.layout, x, y), None, "({x}, {y})");
         }
+        view.pan
     }
 
     #[test]
