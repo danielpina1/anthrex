@@ -68,6 +68,36 @@ fn renders_an_unborn_branch() {
 }
 
 #[test]
+fn an_unborn_branch_still_counts_and_still_goes_stale() {
+    // The unborn head used to return early, so the bar could only ever say
+    // `main (unborn)`: a freshly scaffolded project showed no untracked count, and a
+    // failing probe against one showed a confident head with nothing marking it stale.
+    let mut fresh = clean_state();
+    fresh.head = Head::Unborn("main".into());
+    fresh.untracked = 4;
+    assert_eq!(text(&git_spans(&fresh, 80)), "main (unborn) ?4");
+
+    let mut stale = fresh.clone();
+    stale.stale = true;
+    assert_eq!(text(&git_spans(&stale, 80)), "main (unborn) ?4 (stale)");
+
+    // `(unborn)` qualifies the head itself, so it is the last part to go: at a budget
+    // that fits only one of them, it is `(stale)` (priority 5) that is dropped.
+    let budget = UnicodeWidthStr::width("main (unborn)");
+    assert_eq!(text(&git_spans(&stale, budget)), "main (unborn)");
+}
+
+#[test]
+fn a_clean_tree_mid_rebase_is_not_a_tick() {
+    // `GitState::is_clean` counts the operation, and the bar asks it rather than
+    // deciding cleanliness a second way from the parts it built.
+    let mut state = clean_state();
+    state.operation = Some(GitOperation::Rebase);
+    assert!(!state.is_clean());
+    assert_eq!(text(&git_spans(&state, 80)), "main rebase");
+}
+
+#[test]
 fn renders_stale() {
     let mut state = clean_state();
     state.dirty = 3;
@@ -205,6 +235,45 @@ fn no_segment_without_a_focused_worktree() {
     }
     assert!(!text.contains("(stale)"));
     assert!(!text.contains("(unborn)"));
+}
+
+#[test]
+fn hints_drop_from_the_right_one_at_a_time() {
+    // Decision 20 drops key hints from the right *one at a time*. The other render
+    // tests only ever hit the ends of that range — no git segment at all, or a budget
+    // so tight that all five hints are gone at once — so this pins an intermediate
+    // width, where the first three hints survive and the last two do not.
+    let mut app = App::new(
+        vec![window(1, Some("/repo".into()))],
+        "/tmp".into(),
+        Keymap::default_prefix(),
+    );
+    app.set_terminal_size(50, 24);
+    let mut state = clean_state();
+    state.dirty = 3;
+    app.on_daemon(proto::DaemonMsg::Git {
+        root: "/repo".into(),
+        state: Some(state),
+    });
+
+    let text = row_text(&render_row(&app, 50));
+
+    assert!(
+        text.contains("main ●3"),
+        "the git segment must survive whole while hints are still being dropped: {text:?}"
+    );
+    for kept in ["C-b ?", "C-b c", "C-b t"] {
+        assert!(
+            text.contains(kept),
+            "hint {kept:?} still fits and must be rendered: {text:?}"
+        );
+    }
+    for dropped in ["C-b j/k", "C-b d"] {
+        assert!(
+            !text.contains(dropped),
+            "hint {dropped:?} does not fit and must be dropped: {text:?}"
+        );
+    }
 }
 
 #[test]

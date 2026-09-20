@@ -159,17 +159,33 @@ fn operation_name(op: GitOperation) -> &'static str {
 
 /// Builds the full (untruncated) list of parts after the head, in decision 19's colours.
 /// Priorities implement decision 20's drop order (operation, untracked, divergence, dirty)
-/// exactly; conflicts, the clean tick and `(stale)` are not named by that decision, so they
-/// are ranked around it — kept longer than dirty, since an active conflict or a good status
-/// is worth more than the counts feeding it.
+/// exactly; conflicts, the clean tick, `(stale)` and `(unborn)` are not named by that
+/// decision, so they are ranked around it — kept longer than dirty, since an active
+/// conflict or a good status is worth more than the counts feeding it.
 ///
 /// Controller ruling (not in decision 20): `(stale)` shares conflicts' priority rather than
 /// being the first thing dropped. It is not another datum competing with dirty/untracked/
 /// divergence for space — it is a trust flag on all of them. Dropping it first would let a
 /// narrow terminal show a confident `main ●3 ?1 ⇡2⇣1` with nothing marking the read as
 /// possibly stale, which is worse than showing `main (stale)` with the counts gone.
+///
+/// Controller ruling (not in decision 20): `(unborn)` is an ordinary part of the highest
+/// priority, not a separate rendering path. The spec's `main (unborn)` table row is an
+/// example, not an exhaustive rule: a fresh repository an agent has just scaffolded has
+/// untracked files worth counting, and a failing probe against one is just as stale as
+/// against any other — the earlier early-return could only ever render `main (unborn)`,
+/// silently dropping both. Being the highest priority makes it the last thing dropped,
+/// since it qualifies the head itself.
 fn build_parts(state: &GitState) -> Vec<Part> {
     let mut parts = Vec::new();
+    let unborn = matches!(state.head, Head::Unborn(_));
+    if unborn {
+        parts.push(Part {
+            text: "(unborn)".to_string(),
+            style: theme::muted(),
+            priority: 7,
+        });
+    }
     if state.conflicts > 0 {
         parts.push(Part {
             text: format!("⚠{}", state.conflicts),
@@ -212,7 +228,11 @@ fn build_parts(state: &GitState) -> Vec<Part> {
             priority: 1,
         });
     }
-    if parts.is_empty() {
+    // `GitState::is_clean` is the single definition of cleanliness (it counts an
+    // in-progress operation, which deriving it from "no parts so far" would only
+    // accidentally agree with). An unborn head has no commit to be clean against, so
+    // `(unborn)` stands in place of the tick and says more than it would.
+    if state.is_clean() && !unborn {
         parts.push(Part {
             text: "✓".to_string(),
             style: Style::default().fg(Color::Green),
@@ -239,15 +259,6 @@ pub fn git_spans(state: &GitState, budget: usize) -> Vec<Span<'static>> {
         return vec![];
     }
     let head_span = Span::styled(head, Style::default().add_modifier(Modifier::BOLD));
-
-    if let Head::Unborn(_) = state.head {
-        let suffix = " (unborn)";
-        return if head_width + UnicodeWidthStr::width(suffix) <= budget {
-            vec![head_span, Span::styled(suffix, theme::muted())]
-        } else {
-            vec![head_span]
-        };
-    }
 
     let mut parts = build_parts(state);
     loop {
