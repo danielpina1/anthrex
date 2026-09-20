@@ -66,13 +66,24 @@ A node with no visible children is a leaf for layout, whether it truly has none 
 Nodes are rounded boxes in the style the app already uses:
 
 ```
-╭──────────╮   ╭──────────────────╮   ╭────────────────────────╮
-│ anthrex  ├───┤ ◆ 2 api          ├─┬─┤ ✓ Explore: call sites  │
-╰──────────╯   ╰──────────────────╯ │ ╰────────────────────────╯
-               ╭──────────────────╮ │ ╭────────────────────────╮
-               │ ○ 1 shell-1      │ └─┤ ⣾ Plan: migration      │
-               ╰──────────────────╯   ╰────────────────────────╯
+                              ╭──────────╮
+                            ┌─┤ ✓ x      │
+               ╭──────────╮ │ ╰──────────╯
+             ┌─┤ ○ 1 a    ├─┤
+             │ ╰──────────╯ │ ╭──────────╮
+             │              └─┤ ✓ y      │
+             │                ╰──────────╯
+╭──────────╮ │
+│ ○ p      ├─┤ ╭──────────╮
+╰──────────╯ ├─┤ ○ 2 b    │
+             │ ╰──────────╯
+             │
+             │ ╭──────────╮
+             └─┤ ○ 3 c    │
+               ╰──────────╯
 ```
+
+That drawing is verbatim output from the painter's tests, not an artist's impression: a project `p` with three windows, the first of which has two sub-agents.
 
 Content is one row: the status glyph in its status colour, then the window's tree position for window nodes, then the name or label, truncated to the remaining display width with `…`. The focused window's box uses the focused border style; the selected node's box is highlighted the way the selected row is today.
 
