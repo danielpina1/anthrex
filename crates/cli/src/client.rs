@@ -54,7 +54,8 @@ impl CliClient {
         Ok(())
     }
 
-    /// Sends one request and returns the first reply that is not a `WindowsChanged` broadcast.
+    /// Sends one request and returns the first reply that is not a `WindowsChanged` or
+    /// `Git` broadcast.
     pub async fn request(&mut self, msg: ClientMsg) -> anyhow::Result<DaemonMsg> {
         self.request_with_timeout(msg, REQUEST_TIMEOUT).await
     }
@@ -69,7 +70,13 @@ impl CliClient {
         tokio::time::timeout(reply_timeout, async {
             loop {
                 match read_frame::<_, DaemonMsg>(&mut self.rd).await? {
-                    Some(DaemonMsg::WindowsChanged { .. }) => continue,
+                    // Both are broadcasts a one-shot request/reply client has no use
+                    // for, and either can land between the request and its reply: a
+                    // fresh client's git snapshot arrives right after `Welcome`, and a
+                    // window's own creation can trigger both at once.
+                    Some(DaemonMsg::WindowsChanged { .. }) | Some(DaemonMsg::Git { .. }) => {
+                        continue;
+                    }
                     Some(reply) => return Ok(reply),
                     None => anyhow::bail!("the daemon closed the connection"),
                 }
