@@ -135,6 +135,76 @@ pub fn format_table(windows: &[WindowInfo]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M4.5.6 review finding: `request_with_timeout` skips `WindowsChanged` and `Git`
+    /// broadcasts, but nothing pinned that deterministically — the daemon integration
+    /// tests only caught it when a real broadcast happened to race a real reply. This
+    /// drives `CliClient` against a hand-scripted fake daemon (a real `UnixListener`,
+    /// no real daemon behind it) that writes both broadcast kinds *ahead of* the
+    /// genuine reply on purpose, and asserts the reply still comes back.
+    #[tokio::test]
+    async fn request_skips_broadcasts_ahead_of_the_genuine_reply() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("d.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+
+        let fake_daemon = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (mut rd, mut wr) = stream.into_split();
+
+            let hello = read_frame::<_, ClientMsg>(&mut rd).await.unwrap().unwrap();
+            assert!(matches!(hello, ClientMsg::Hello { .. }));
+            write_frame(
+                &mut wr,
+                &DaemonMsg::Welcome {
+                    daemon_version: "test".into(),
+                    windows: vec![],
+                },
+            )
+            .await
+            .unwrap();
+
+            let request = read_frame::<_, ClientMsg>(&mut rd).await.unwrap().unwrap();
+            assert_eq!(request, ClientMsg::Kill { window_id: 7 });
+
+            // Two broadcasts ahead of the genuine reply - exactly the interleaving a
+            // freshly registered git root or a live window list can produce.
+            write_frame(&mut wr, &DaemonMsg::WindowsChanged { windows: vec![] })
+                .await
+                .unwrap();
+            write_frame(
+                &mut wr,
+                &DaemonMsg::Git {
+                    root: "/tmp/repo".into(),
+                    state: None,
+                },
+            )
+            .await
+            .unwrap();
+            write_frame(
+                &mut wr,
+                &DaemonMsg::Ack {
+                    request: "kill".into(),
+                },
+            )
+            .await
+            .unwrap();
+        });
+
+        let mut client = CliClient::connect(&socket).await.unwrap();
+        let reply = client
+            .request(ClientMsg::Kill { window_id: 7 })
+            .await
+            .unwrap();
+        assert_eq!(
+            reply,
+            DaemonMsg::Ack {
+                request: "kill".into()
+            }
+        );
+
+        fake_daemon.await.unwrap();
+    }
     use proto::{Runtime, Status};
 
     fn win(id: u32, name: &str) -> WindowInfo {
