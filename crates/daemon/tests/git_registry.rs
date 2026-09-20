@@ -346,6 +346,61 @@ async fn unregistering_during_a_probe_publishes_nothing_afterwards() {
     assert_eq!(harness.max_live.load(Ordering::SeqCst), 1);
 }
 
+/// M4.5.6 review finding: `server.rs` used to derive "is this the last window on this
+/// root" from a `manager.list()` snapshot, which races a concurrent `register` on the
+/// same root across two independent locks. The fix moves reference counting into the
+/// registry itself, so `register` and `unregister` commute regardless of arrival order.
+/// This test pins that contract directly against the registry, independent of the
+/// server: two `register` calls must be undone by two `unregister` calls, and the root
+/// must keep probing after only one of them.
+#[tokio::test(start_paused = true)]
+async fn a_root_survives_until_every_registration_is_released() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let Fake {
+        probe,
+        harness,
+        starts: _starts,
+    } = scripted(vec![Some(state(0))]);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let registry = GitRegistry::with_probe(true, tx, probe);
+
+    registry.register(root.clone());
+    registry.register(root.clone());
+    assert_eq!(
+        next_publication(&mut rx).await,
+        (root.clone(), Some(state(0)))
+    );
+    assert_eq!(
+        harness.total.load(Ordering::SeqCst),
+        1,
+        "a second registration of an already-live root must not start a second task"
+    );
+
+    registry.unregister(&root);
+    // Still referenced once: the poll keeps firing, and the snapshot still knows the
+    // root, across a window that would have caught a task that tore down early.
+    expect_no_publication(&mut rx, LONG).await;
+    assert!(
+        harness.total.load(Ordering::SeqCst) >= 4,
+        "the root must still be polled after releasing only one of two registrations"
+    );
+    assert_eq!(registry.snapshot(), vec![(root.clone(), Some(state(0)))]);
+
+    registry.unregister(&root);
+    assert!(
+        registry.snapshot().is_empty(),
+        "the second unregister must be the one that actually tears the root down"
+    );
+    let after_last_unregister = harness.total.load(Ordering::SeqCst);
+    expect_no_publication(&mut rx, LONG).await;
+    assert_eq!(
+        harness.total.load(Ordering::SeqCst),
+        after_last_unregister,
+        "no probe may run once every registration has been released"
+    );
+}
+
 #[test]
 fn enabled_from_env_reads_anthrex_git() {
     static ENV_LOCK: Mutex<()> = Mutex::new(());

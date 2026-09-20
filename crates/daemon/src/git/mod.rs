@@ -84,6 +84,13 @@ impl Channel {
 struct Slot {
     handle: JoinHandle<()>,
     cancelled: Arc<AtomicBool>,
+    /// How many windows currently reference this root. The task starts on the 0 → 1
+    /// transition and tears down on the 1 → 0 transition; every call in between just
+    /// moves this count, which is what makes `register` and `unregister` commute
+    /// regardless of the order a racing create and remove happen to land in — the
+    /// reason this lives here rather than being derived from `WindowManager::list()`
+    /// (see the module docs' race note).
+    refs: usize,
 }
 
 /// Watches and probes a set of worktree roots, publishing each root's git state when
@@ -92,6 +99,11 @@ struct Slot {
 /// The manager holds no git state and takes no git-related lock: it calls
 /// [`GitRegistry::register`] and [`GitRegistry::unregister`] as windows come and go
 /// (design decision 16, never with the manager lock held) and reads nothing back.
+/// Reference counting lives here, under `roots`' own mutex, precisely so that two
+/// calls racing from different connections — one window's `create` registering a root
+/// just as another window on the same root is removed — always commute to the same
+/// end state no matter which lands first, instead of depending on a snapshot of the
+/// window table taken by the caller.
 pub struct GitRegistry {
     enabled: bool,
     probe: ProbeFn,
@@ -123,17 +135,21 @@ impl GitRegistry {
         }
     }
 
-    /// Starts watching and probing `root`, immediately (design decision 13). Registering
-    /// a root that is already registered does nothing; `ANTHREX_GIT=off` makes this a
-    /// no-op, so no watcher is built and no probe ever runs (design decision 21).
+    /// Adds one reference to `root`, starting its watcher and probing it immediately
+    /// (design decision 13) only if this is the first reference. A second and later
+    /// `register` for the same root just counts up — the root keeps running the task
+    /// it already had. `ANTHREX_GIT=off` makes every call a no-op, so no watcher is
+    /// ever built and no probe ever runs (design decision 21).
     ///
-    /// Must be called from inside a tokio runtime: it spawns the root's task.
+    /// Must be called from inside a tokio runtime: the first reference spawns the
+    /// root's task.
     pub fn register(&self, root: PathBuf) {
         if !self.enabled {
             return;
         }
         let mut roots = crate::lock(&self.roots);
-        if roots.contains_key(&root) {
+        if let Some(slot) = roots.get_mut(&root) {
+            slot.refs += 1;
             return;
         }
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -143,15 +159,34 @@ impl GitRegistry {
             Arc::clone(&self.channel),
             Arc::clone(&cancelled),
         ));
-        roots.insert(root, Slot { handle, cancelled });
+        roots.insert(
+            root,
+            Slot {
+                handle,
+                cancelled,
+                refs: 1,
+            },
+        );
     }
 
-    /// Stops watching and probing `root` and forgets its last published state. Safe
-    /// while a probe is in flight: that probe's result is discarded rather than
-    /// published (see the module docs).
+    /// Removes one reference from `root`. Stops watching and probing it, and forgets
+    /// its last published state, only once this was the last reference. Safe while a
+    /// probe is in flight: that probe's result is discarded rather than published (see
+    /// the module docs). Unregistering a root with no reference to remove — including
+    /// one that was never registered, e.g. because `ANTHREX_GIT=off` — is a no-op.
     pub fn unregister(&self, root: &Path) {
-        let slot = crate::lock(&self.roots).remove(root);
-        if let Some(slot) = slot {
+        let released = {
+            let mut roots = crate::lock(&self.roots);
+            match roots.get_mut(root) {
+                Some(slot) if slot.refs > 1 => {
+                    slot.refs -= 1;
+                    None
+                }
+                Some(_) => roots.remove(root),
+                None => None,
+            }
+        };
+        if let Some(slot) = released {
             self.channel.forget(&slot.cancelled, root);
             slot.handle.abort();
         }

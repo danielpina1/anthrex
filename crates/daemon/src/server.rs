@@ -340,6 +340,16 @@ async fn handle_client(
                 // Captured before `remove`, never held across it: `list` and `remove`
                 // each take and release the manager lock on their own, so nothing here
                 // runs with it held (AGENTS.md hard rule 2, design decision 16).
+                //
+                // Whether this was the *last* reference to the root is `GitRegistry`'s
+                // own call, not this handler's: deriving it here from a second
+                // `manager.list()` would race a concurrent `CreateWindow` on the same
+                // root across two independent locks (the manager's and the registry's)
+                // with nothing to order them, so a `register` and this `unregister`
+                // could land in either order and leave the root permanently
+                // unregistered while a window still used it. `unregister` is called
+                // unconditionally instead; the registry's own reference count decides
+                // whether anything actually stops.
                 let removed_root = manager
                     .list()
                     .into_iter()
@@ -348,10 +358,6 @@ async fn handle_client(
                 let result = manager.remove(window_id);
                 if result.is_ok()
                     && let Some(root) = removed_root
-                    && !manager
-                        .list()
-                        .iter()
-                        .any(|w| w.worktree.as_deref() == Some(root.as_path()))
                 {
                     git_registry.unregister(&root);
                 }
