@@ -18,6 +18,7 @@ fn win(id: u32, name: &str, status: Status) -> WindowInfo {
         runtime: Runtime::Shell,
         cwd: "/tmp".into(),
         project: "/tmp".into(),
+        worktree: None,
         branch: None,
         status,
         tool: None,

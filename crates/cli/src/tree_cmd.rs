@@ -275,6 +275,7 @@ mod tests {
             runtime: Runtime::Claude,
             cwd: project.into(),
             project: project.into(),
+            worktree: None,
             branch: None,
             status: Status::Working,
             tool: None,

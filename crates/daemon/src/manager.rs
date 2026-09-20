@@ -86,6 +86,8 @@ impl Entry {
             runtime: self.spec.runtime,
             cwd: self.spec.cwd.clone(),
             project: self.project.clone(),
+            // Populated once daemon::project reports both roots (M4.5.2).
+            worktree: None,
             branch: self.spec.worktree_branch.clone(),
             status: self.status,
             tool: self.state.tool.clone(),

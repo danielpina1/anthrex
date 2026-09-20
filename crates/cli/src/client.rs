@@ -137,6 +137,7 @@ mod tests {
             runtime: Runtime::Shell,
             cwd: "/home/me/repo".into(),
             project: "/home/me/repo".into(),
+            worktree: None,
             branch: None,
             status: Status::Idle,
             tool: None,

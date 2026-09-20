@@ -107,6 +107,7 @@ mod tests {
             runtime,
             cwd: "/tmp/repo".into(),
             project: "/tmp/repo".into(),
+            worktree: None,
             branch: Some("feat/x".into()),
             status,
             tool: None,

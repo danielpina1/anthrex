@@ -16,6 +16,7 @@ fn window(
         runtime,
         cwd: project.into(),
         project: project.into(),
+        worktree: None,
         branch: None,
         status,
         tool: None,

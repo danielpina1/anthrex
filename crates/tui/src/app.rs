@@ -292,6 +292,8 @@ impl App {
                 vec![]
             }
             DaemonMsg::Ack { .. } => vec![],
+            // App.git and the bottom-bar segment land in a later M4.5 task.
+            DaemonMsg::Git { .. } => vec![],
         }
     }
 
