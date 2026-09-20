@@ -53,6 +53,17 @@ fn hanging_git(dir: &Path) -> PathBuf {
     script
 }
 
+/// A real, executable git stand-in that exits non-zero without printing anything —
+/// distinct from a missing binary, which fails to spawn at all.
+fn failing_git(dir: &Path) -> PathBuf {
+    let script = dir.join("failing-git");
+    fs::write(&script, "#!/bin/sh\nexit 1\n").unwrap();
+    let mut permissions = fs::metadata(&script).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script, permissions).unwrap();
+    script
+}
+
 struct OwnedHelper {
     pid_file: PathBuf,
     stopped: bool,
@@ -221,10 +232,10 @@ fn hanging_git_times_out() {
     let script = hanging_git(scripts.path());
     let started = Instant::now();
 
-    assert_eq!(
-        detect_roots_with(script.as_os_str(), repo.path(), Duration::from_millis(300)).project,
-        repo.path().canonicalize().unwrap()
-    );
+    let roots = detect_roots_with(script.as_os_str(), repo.path(), Duration::from_millis(300));
+
+    assert_eq!(roots.project, repo.path().canonicalize().unwrap());
+    assert_eq!(roots.worktree, None);
     assert!(started.elapsed() < Duration::from_secs(2));
 }
 
@@ -376,12 +387,10 @@ fn detect_roots_with_a_failing_git_has_no_worktree() {
     let repo = init_repo();
     let subdirectory = repo.path().join("a");
     fs::create_dir(&subdirectory).unwrap();
+    let scripts = tempdir().unwrap();
+    let script = failing_git(scripts.path());
 
-    let roots = detect_roots_with(
-        OsStr::new("/nonexistent/git"),
-        &subdirectory,
-        DETECT_TIMEOUT,
-    );
+    let roots = detect_roots_with(script.as_os_str(), &subdirectory, DETECT_TIMEOUT);
 
     assert_eq!(roots.project, subdirectory.canonicalize().unwrap());
     assert_eq!(roots.worktree, None);
