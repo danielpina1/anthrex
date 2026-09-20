@@ -168,7 +168,10 @@ async fn run_cli() -> anyhow::Result<()> {
             };
             let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
             match c
-                .request(ClientMsg::CreateWindow { spec, cols, rows })
+                .request_with_timeout(
+                    ClientMsg::CreateWindow { spec, cols, rows },
+                    client::CREATE_WINDOW_REPLY_TIMEOUT,
+                )
                 .await?
             {
                 DaemonMsg::Created { window_id } => {

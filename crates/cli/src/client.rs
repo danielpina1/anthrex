@@ -6,6 +6,11 @@ use std::time::Duration;
 use tokio::net::UnixStream;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const CREATE_REPLY_ALLOWANCE: Duration = Duration::from_secs(2);
+pub const CREATE_WINDOW_REPLY_TIMEOUT: Duration =
+    daemon::project::DETECT_TIMEOUT.saturating_add(CREATE_REPLY_ALLOWANCE);
+
 pub struct CliClient {
     rd: OwnedReadHalf,
     wr: OwnedWriteHalf,
@@ -51,8 +56,17 @@ impl CliClient {
 
     /// Sends one request and returns the first reply that is not a `WindowsChanged` broadcast.
     pub async fn request(&mut self, msg: ClientMsg) -> anyhow::Result<DaemonMsg> {
+        self.request_with_timeout(msg, REQUEST_TIMEOUT).await
+    }
+
+    /// Sends one request with an explicit reply deadline.
+    pub async fn request_with_timeout(
+        &mut self,
+        msg: ClientMsg,
+        reply_timeout: Duration,
+    ) -> anyhow::Result<DaemonMsg> {
         self.send(msg).await?;
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(reply_timeout, async {
             loop {
                 match read_frame::<_, DaemonMsg>(&mut self.rd).await? {
                     Some(DaemonMsg::WindowsChanged { .. }) => continue,
@@ -172,5 +186,14 @@ mod tests {
                 && lines[1].contains("/home/me/repo")
         );
         assert!(lines[2].contains("tests"));
+    }
+
+    #[test]
+    fn create_timeout_adds_allowance_without_changing_the_default() {
+        assert_eq!(REQUEST_TIMEOUT, Duration::from_secs(5));
+        assert_eq!(
+            CREATE_WINDOW_REPLY_TIMEOUT,
+            daemon::project::DETECT_TIMEOUT + CREATE_REPLY_ALLOWANCE,
+        );
     }
 }

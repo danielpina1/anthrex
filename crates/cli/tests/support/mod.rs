@@ -182,6 +182,10 @@ pub struct TestDaemon {
 
 impl TestDaemon {
     pub fn start(script: &[Value]) -> Self {
+        Self::start_configured(script, |_| {})
+    }
+
+    pub fn start_configured(script: &[Value], configure: impl FnOnce(&mut Command)) -> Self {
         let dir = tempdir();
         let script_path = dir.path().join("script.jsonl");
         let lines = script
@@ -191,16 +195,17 @@ impl TestDaemon {
             .join("\n");
         std::fs::write(&script_path, lines).unwrap();
         let log = std::fs::File::create(dir.path().join("daemon.log")).unwrap();
-        let child = isolated_command(dir.path(), &["daemon", "start", "--foreground"])
+        let mut command = isolated_command(dir.path(), &["daemon", "start", "--foreground"]);
+        command
             .env("ANTHREX_CLAUDE_BIN", fake_agent_bin())
             .env("ANTHREX_CODEX_BIN", fake_agent_bin())
             .env("FAKE_AGENT_SCRIPT", script_path)
             .env("FAKE_AGENT_ARGS_FILE", dir.path().join("data/args.json"))
             .stdin(Stdio::null())
             .stdout(log.try_clone().unwrap())
-            .stderr(log)
-            .spawn()
-            .unwrap();
+            .stderr(log);
+        configure(&mut command);
+        let child = command.spawn().unwrap();
         let data = dir.path().join("data");
         let mut daemon = Self { dir, data, child };
         let deadline = Instant::now() + Duration::from_secs(3);
@@ -238,6 +243,9 @@ impl TestDaemon {
     }
     pub fn anthrex(&self, args: &[&str]) -> Output {
         RunningCommand::start(&mut self.command(args)).finish(Duration::from_secs(3))
+    }
+    pub fn anthrex_with_timeout(&self, args: &[&str], timeout: Duration) -> Output {
+        RunningCommand::start(&mut self.command(args)).finish(timeout)
     }
 }
 
