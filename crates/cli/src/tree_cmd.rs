@@ -102,10 +102,12 @@ pub fn tree_text(windows: &[WindowInfo], project: Option<ProjectQuery<'_>>) -> S
                 tree::format_elapsed(info.since_secs),
                 tool_suffix(info.tool.as_deref())
             ),
-            RowKind::Subagent { info, guides, .. } => writeln!(
+            RowKind::Subagent { info, .. } => writeln!(
                 text,
-                "      {}{}{}  {}  {}{}",
-                guides.strip_prefix("│ ").unwrap_or(&guides),
+                // Sub-agents sit under a fixed window indent here, so the
+                // window's own guide level is dropped: two columns per level.
+                "      {} {}{}  {}  {}{}",
+                row.guides.chars().skip(2).collect::<String>(),
                 info.kind,
                 info.label
                     .as_ref()
@@ -349,9 +351,9 @@ mod tests {
         assert!(lines.contains(&"   1  api-worker  claude  claude-opus-5  working  2m  Bash"));
         assert!(lines.contains(&"   2  billing  codex  -  attention  41s"));
         assert!(lines.contains(&"   3  frontend  claude  claude-sonnet-4-5  working  1m"));
-        assert!(lines.contains(&"      ├ Explore: map routes  running  1m  Read"));
-        assert!(lines.contains(&"      │ └ general-purpose: grep handlers  running  20s"));
-        assert!(lines.contains(&"      └ tests: run unit suite  done  45s"));
+        assert!(lines.contains(&"      ├─ Explore: map routes  running  1m  Read"));
+        assert!(lines.contains(&"      │ └─ general-purpose: grep handlers  running  20s"));
+        assert!(lines.contains(&"      └─ tests: run unit suite  done  45s"));
         assert!(lines.contains(&"blog  /r/blog  idle  cl 1"));
         assert_eq!(
             lines.last().copied(),
@@ -473,7 +475,7 @@ mod tests {
         assert!(
             tree_text(&windows, None)
                 .lines()
-                .any(|line| { line == "      ├ Explore: map routes  permission  1m  Read" })
+                .any(|line| { line == "      ├─ Explore: map routes  permission  1m  Read" })
         );
         let value = as_json(&windows, None);
         let agent = &value["projects"][0]["windows"][0]["subagents"][0];
@@ -500,7 +502,7 @@ mod tests {
             let text = tree_text(&windows, None);
             assert_eq!(
                 text.lines().last(),
-                Some(format!("      └ tests  {label}  {elapsed}").as_str())
+                Some(format!("      └─ tests  {label}  {elapsed}").as_str())
             );
             let value = as_json(&windows, None);
             let agent = &value["projects"][0]["windows"][0]["subagents"][0];

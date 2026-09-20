@@ -62,11 +62,7 @@ pub fn narrow_line(
             );
             (
                 vec![Span::styled(
-                    format!(
-                        "{}{} ",
-                        " ".repeat(row.indent.into()),
-                        if *collapsed { "▸" } else { "▾" }
-                    ),
+                    format!("{}{} ", row.guides, if *collapsed { "▸" } else { "▾" }),
                     bold,
                 )],
                 Span::styled(name.clone(), bold),
@@ -106,7 +102,7 @@ pub fn narrow_line(
             rights.push(vec![Span::styled(tag, theme::muted())]);
             (
                 vec![
-                    Span::raw(" ".repeat(row.indent.saturating_sub(2).into())),
+                    Span::raw(row.guides.clone()),
                     Span::styled(
                         if focused { "▎" } else { " " },
                         Style::default().fg(theme::ACCENT),
@@ -129,14 +125,14 @@ pub fn narrow_line(
                 rights,
             )
         }
-        RowKind::Subagent { info, guides, .. } => {
+        RowKind::Subagent { info, .. } => {
             let label = match info.label.as_deref() {
                 Some(label) => format!("{}: {label}", info.kind),
                 None => info.kind.clone(),
             };
             (
                 vec![
-                    Span::raw(format!("{}{guides}", " ".repeat(row.indent.into()))),
+                    Span::raw(row.guides.clone()),
                     Span::styled(
                         theme::subagent_glyph(info, app.spinner_frame),
                         Style::default().fg(theme::subagent_color(info)),
@@ -222,11 +218,7 @@ pub fn wide_line(
             let root = if root == "~/" { "~" } else { &root };
             return fit_line(
                 vec![Span::styled(
-                    format!(
-                        "{}{} ",
-                        " ".repeat(row.indent.into()),
-                        if *collapsed { "▸" } else { "▾" }
-                    ),
+                    format!("{}{} ", row.guides, if *collapsed { "▸" } else { "▾" }),
                     bold,
                 )],
                 Span::styled(format!("{name}  {root}"), bold),
@@ -257,7 +249,7 @@ pub fn wide_line(
             let model = padded(info.model.as_deref().unwrap_or("-"), columns.model);
             let elapsed = tree::format_elapsed(app.elapsed_secs(info));
             vec![
-                Span::raw(" ".repeat(row.indent.saturating_sub(2).into())),
+                Span::raw(row.guides.clone()),
                 Span::styled(
                     if focused { "▎" } else { " " },
                     Style::default().fg(theme::ACCENT),
@@ -284,7 +276,7 @@ pub fn wide_line(
                 ),
             ]
         }
-        RowKind::Subagent { info, guides, .. } => {
+        RowKind::Subagent { info, .. } => {
             let label = match info.label.as_deref() {
                 Some(label) => format!("{}: {label}", info.kind),
                 None => info.kind.clone(),
@@ -303,7 +295,7 @@ pub fn wide_line(
                 ),
             };
             vec![
-                Span::raw(format!("{}{guides}", " ".repeat(row.indent.into()))),
+                Span::raw(row.guides.clone()),
                 Span::styled(
                     theme::subagent_glyph(info, app.spinner_frame),
                     Style::default().fg(theme::subagent_color(info)),

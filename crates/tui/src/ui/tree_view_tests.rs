@@ -44,15 +44,15 @@ fn wide_rows_show_full_fields_and_finished_duration() {
     assert!(row(&buffer, &layout, 0).ends_with("◆ attention  cl 4 · cx 3"));
     assert_eq!(
         row(&buffer, &layout, 1),
-        "▎ ⠋ 1 api-worker  claude  claude-opus-5      working      2m  Bash"
+        "├─▎ ⠋ 1 api-worker  claude  claude-opus-5      working      2m  Bash"
     );
     assert_eq!(
         row(&buffer, &layout, 2),
-        "  │ ├ ⠋ Explore: map routes  -  running  1m  Read"
+        "│ ├─⠋ Explore: map routes  -  running  1m  Read"
     );
     assert_eq!(
         row(&buffer, &layout, 4),
-        "  │ └ ✓ tests: run unit suite  -  done  45s"
+        "│ └─✓ tests: run unit suite  -  done  45s"
     );
     for x in layout.main_inner.x..layout.main_inner.right() {
         assert!(
@@ -81,15 +81,15 @@ fn wide_subagent_permission_keeps_state_and_missing_end_is_zero() {
     let (buffer, layout) = render(&app, 160);
     assert_eq!(
         row(&buffer, &layout, 2),
-        "  │ ├ ◆ Explore  claude-haiku-4-5  running  1m  Read"
+        "│ ├─◆ Explore  claude-haiku-4-5  running  1m  Read"
     );
     assert_eq!(
-        buffer[(layout.main_inner.x + 6, layout.main_inner.y + 2)].fg,
+        buffer[(layout.main_inner.x + 4, layout.main_inner.y + 2)].fg,
         theme::status_color(Status::Attention)
     );
     assert_eq!(
         row(&buffer, &layout, 4),
-        "  │ └ ✕ tests: run unit suite  -  failed  0s"
+        "│ └─✕ tests: run unit suite  -  failed  0s"
     );
 }
 
