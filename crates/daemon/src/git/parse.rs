@@ -51,34 +51,39 @@ enum HeadField {
 }
 
 impl Header {
-    /// Combines `branch.oid` and `branch.head` into the [`Head`] they describe.
+    /// Combines `branch.oid` and `branch.head` into the [`Head`] they describe, or
+    /// `None` when there is no head to describe.
     ///
     /// A `branch.head` line always accompanies `branch.oid` in real git output; a
-    /// missing one only happens here when the input was truncated before it arrived.
-    /// That case has no branch name to report, so it falls back to an empty unborn
-    /// branch rather than inventing one.
-    fn resolve_head(&self) -> Head {
+    /// missing one only happens here when the input was cut between the two. There is
+    /// then no branch name, and every way of inventing one is worse than saying
+    /// nothing: an empty `Head::Unborn` is what the bottom bar used to render as a bare
+    /// ` (unborn)`, a leading space with no name in front of it. `None` puts this in
+    /// the same case as a probe that timed out before any header arrived — no head
+    /// means no [`proto::GitState`], and the registry republishes the root's last known
+    /// state as stale rather than showing a wrong one.
+    fn resolve_head(&self) -> Option<Head> {
         match &self.head {
             Some(HeadField::Detached) => {
                 let oid = self.oid.as_deref().unwrap_or("");
-                Head::Detached(oid.chars().take(7).collect())
+                Some(Head::Detached(oid.chars().take(7).collect()))
             }
-            Some(HeadField::Branch(name)) => {
-                if self.unborn {
-                    Head::Unborn(name.clone())
-                } else {
-                    Head::Branch(name.clone())
-                }
-            }
-            None => Head::Unborn(String::new()),
+            Some(HeadField::Branch(name)) => Some(if self.unborn {
+                Head::Unborn(name.clone())
+            } else {
+                Head::Branch(name.clone())
+            }),
+            None => None,
         }
     }
 }
 
 /// Parses one probe's stdout. Truncated input is not an error: whatever complete
 /// records precede the cut are kept, and the field says so is [`crate::git::probe`]'s
-/// job (it sets `GitState::stale`), not this function's. Only input with no
-/// `# branch.*` records at all is rejected, since even a clean repository emits them.
+/// job (it sets `GitState::stale`), not this function's. Input is rejected in exactly
+/// two cases: no `# branch.*` records at all, since even a clean repository emits them;
+/// and a cut that landed between `# branch.oid` and `# branch.head`, which leaves no
+/// head to report (see [`Header::resolve_head`]).
 pub fn parse_porcelain_v2_z(output: &[u8]) -> Option<Parsed> {
     if output.is_empty() {
         return None;
@@ -130,7 +135,7 @@ pub fn parse_porcelain_v2_z(output: &[u8]) -> Option<Parsed> {
         return None;
     }
 
-    let head = header.resolve_head();
+    let head = header.resolve_head()?;
     Some(Parsed {
         head,
         upstream: header.upstream,
@@ -345,6 +350,18 @@ mod tests {
         let parsed = parse_porcelain_v2_z(&input).expect("complete records precede the cut");
         assert_eq!(parsed.head, Head::Branch("main".into()));
         assert_eq!(parsed.counts.untracked, 2);
+    }
+
+    #[test]
+    fn a_cut_between_the_oid_and_the_head_is_none() {
+        // The one input that reaches `resolve_head`'s `None` arm: a probe cut after
+        // `# branch.oid` but before `# branch.head`. There is no branch name in it, and
+        // the fallback used to be an empty `Head::Unborn`, which the bottom bar
+        // rendered as a bare " (unborn)" — a leading space with no name.
+        let mut input = stream(&[b"# branch.oid abcdef1234567890"]);
+        input.extend_from_slice(b"# branch.he");
+
+        assert_eq!(parse_porcelain_v2_z(&input), None);
     }
 
     #[test]
