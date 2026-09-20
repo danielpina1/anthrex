@@ -94,7 +94,7 @@ pub fn probe(git: &OsStr, root: &Path, timeout: Duration) -> Option<GitState> {
 /// linked worktree's git dir `<common-dir>/worktrees/<name>` instead of the shared
 /// common dir). `None` when `<root>/.git` is neither, or can't be read: operation
 /// detection is best-effort and never fails the probe itself.
-fn resolve_git_dir(root: &Path) -> Option<PathBuf> {
+pub(crate) fn resolve_git_dir(root: &Path) -> Option<PathBuf> {
     let dot_git = root.join(".git");
     let metadata = std::fs::metadata(&dot_git).ok()?;
     if metadata.is_dir() {
