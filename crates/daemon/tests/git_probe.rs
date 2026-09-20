@@ -405,6 +405,38 @@ fn output_over_the_cap_is_truncated_and_stale() {
 }
 
 #[test]
+fn a_stale_probe_still_reports_the_operation() {
+    // The operation comes from `stat` on the worktree's own git dir (design decision
+    // 7), not from `status` output, so it does not depend on how much of that output
+    // the probe managed to read. Skipping it on the stale path dropped the red
+    // `rebase` marker on exactly the repositories large enough to hit the cap or the
+    // timeout — the moment it matters most. The repository here really is mid-rebase;
+    // only the `status` half of the probe is faked, and it is faked into going stale.
+    let repo = rebase_conflict_repo();
+    let scripts = tempdir().unwrap();
+    let script = write_script(
+        scripts.path(),
+        "huge-output-git",
+        "#!/bin/sh\n\
+         printf '# branch.oid abcdef1234567890'\n\
+         printf '\\0'\n\
+         printf '# branch.head main'\n\
+         printf '\\0'\n\
+         yes '? file.txt' | head -n 100000 | tr '\\n' '\\0'\n",
+    );
+
+    let state = probe(script.as_os_str(), repo.path(), PROBE_TIMEOUT)
+        .expect("complete records before the cap still parse");
+
+    assert!(state.stale, "the over-cap read must still mark the state stale");
+    assert_eq!(
+        state.operation,
+        Some(GitOperation::Rebase),
+        "a degraded probe must not lose the in-progress operation"
+    );
+}
+
+#[test]
 fn the_probe_passes_no_optional_locks() {
     let repo = init_repo();
     let scripts = tempdir().unwrap();

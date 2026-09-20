@@ -58,16 +58,13 @@ pub fn probe(git: &OsStr, root: &Path, timeout: Duration) -> Option<GitState> {
 
     let parsed = parse_porcelain_v2_z(&output)?;
 
-    // Operation detection is skipped when `stale` is set: the probe is already
-    // degraded, and the bar has no rendering for "stale" and an operation at once
-    // anyway. Unlike the status probe itself, resolving the git dir costs no extra
-    // process (see `resolve_git_dir`), so this is purely about not bothering, not
-    // about bounding a second spawn's latency.
-    let operation = if stale {
-        None
-    } else {
-        resolve_git_dir(root).and_then(|git_dir| detect_operation(&git_dir))
-    };
+    // Detected unconditionally, including on the stale path. Design decision 7 takes
+    // the operation from `stat`, not from `status` output, and resolving the git dir
+    // costs no extra process (see `resolve_git_dir`) — so the operation does not depend
+    // on how much of `status` was read before the deadline or the cap. Skipping it when
+    // `stale` is set lost the red `rebase` marker on exactly the repositories big enough
+    // to time out, which is when it matters most.
+    let operation = resolve_git_dir(root).and_then(|git_dir| detect_operation(&git_dir));
 
     Some(GitState {
         head: parsed.head,
