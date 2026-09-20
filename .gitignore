@@ -2,3 +2,4 @@ target/
 .superpowers/
 .DS_Store
 .worktrees/
+__pycache__/
