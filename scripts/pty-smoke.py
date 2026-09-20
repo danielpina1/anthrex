@@ -207,6 +207,14 @@ class PtyProc:
             self.read_available(timeout=0.2)
         fail(f"timed out waiting for {label or text!r}\n--- rendered screen ---\n{self.screen_text()}")
 
+    def wait_for_focused_window(self, name, timeout=10.0):
+        """Wait until `name` is the main pane, not merely a sidebar row."""
+        self.wait_for(
+            f"{name} · shell",
+            timeout=timeout,
+            label=f"{name} focused main-pane title",
+        )
+
     def send(self, data: bytes):
         os.write(self.fd, data)
 
@@ -352,14 +360,14 @@ def main():
 
     print("== stage 2: create shell-1, run a command ==")
     proc.send(b"\x02c")
-    proc.wait_for("shell-1", label="shell-1 card")
+    proc.wait_for_focused_window("shell-1")
     proc.send(b"echo smoke-$((40+2))\r")
     proc.wait_for("smoke-42", label="echo output in shell-1")
     print("ok: shell-1 created and command output visible")
 
     print("== stage 3: create shell-2, exercise keys, help overlay ==")
     proc.send(b"\x02c")
-    proc.wait_for("shell-2", label="shell-2 card")
+    proc.wait_for_focused_window("shell-2")
     proc.send(b"\x02k")
     time.sleep(0.3)
     proc.read_available(timeout=0.3)
@@ -418,15 +426,12 @@ def main():
     proc3 = PtyProc([BIN])
     proc3.wait_for("agents", label="third attach banner")
     proc3.send(b"\x02c")
-    proc3.wait_for("shell-3", label="shell-3 card")
-    proc3.send(b"cat -v\r")
-    time.sleep(0.5)
-    proc3.read_available(timeout=0.5)
+    proc3.wait_for_focused_window("shell-3")
+    proc3.send(b"stty -echo; printf '%s%s\\n' CAT_ READY; cat -v\r")
+    proc3.wait_for("CAT_READY", label="cat -v readiness in focused shell-3")
     proc3.send(b"\x1b\r")  # ESC CR: how a terminal reports Alt+Enter
     proc3.wait_for("^[", label="ESC rendered by cat -v in the focused window")
     proc3.send(b"\x04")  # Ctrl-D ends cat
-    time.sleep(0.3)
-    proc3.read_available(timeout=0.3)
     print("ok: Alt+Enter arrived at the child as ESC CR")
 
     print("== stage 8: a 32 KiB paste freezes neither the daemon nor the client ==")
@@ -444,7 +449,7 @@ def main():
         print("note: local raw PTY accepted all 32768 bytes; platform backpressure unconfirmed")
     print("note: calibration does not observe the agent's writer; both timing limits remain enforced")
     proc3.send(b"\x02c")
-    proc3.wait_for("shell-4", label="shell-4 card")
+    proc3.wait_for_focused_window("shell-4")
     child_started = time.monotonic()
     proc3.send(b"stty raw -echo && printf '%s%s' RAW_ READY && exec sleep 30\r")
     proc3.wait_for("RAW_READY", label="shell-4 raw-mode readiness")
