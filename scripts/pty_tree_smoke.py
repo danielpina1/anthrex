@@ -1,4 +1,10 @@
-"""Project-tree stage for the PTY smoke test."""
+"""Project-tree stages for the PTY smoke test.
+
+This module holds stage functions that `scripts/pty-smoke.py` imports and drives
+against the one daemon it starts. It has no `if __name__ == "__main__":` of its own
+and is not meant to be run directly — doing so just defines these functions and exits
+0 having exercised nothing.
+"""
 
 import json
 import os
@@ -8,16 +14,11 @@ import subprocess
 import tempfile
 import time
 
-# This module's own stage functions compare rendered screens, so a git segment in the
-# bottom bar (driven by the state of whatever working tree the daemon happens to run
-# in) would make those comparisons depend on the runner's git state rather than the
-# fixture git repositories the stages build for themselves. `pty-smoke.py` sets this
-# for the daemon it starts and passes it through its own `ENV`; this covers the case
-# where a stage function in this module is ever driven by a caller that instead
-# inherits `os.environ` for the daemon it starts.
-os.environ["ANTHREX_GIT"] = "off"
-
-
+# This module's stage functions compare rendered screens, so a git segment in the
+# bottom bar would make those comparisons depend on the runner's own git state rather
+# than the fixture repositories the stages build for themselves. `pty-smoke.py` sets
+# `ANTHREX_GIT=off` for the one daemon it starts, which is the daemon every stage in
+# this module runs against — nothing here starts a daemon of its own.
 GIT_CONFIG = [
     "-c",
     "user.name=t",
