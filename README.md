@@ -29,17 +29,25 @@ Inside the UI, the prefix key is `Ctrl-b`:
 
 | Keys | Action |
 |------|--------|
-| `C-b j` / `C-b k` | next / previous window |
-| `C-b 1`..`9` | focus window by number |
+| `C-b j` / `C-b k` | next / previous agent |
+| `C-b 1`..`9` | focus agent by number |
 | `C-b c` | new shell window |
-| `C-b x` / `C-b X` | kill / remove the focused window |
-| `C-b s` | toggle the sidebar |
+| `C-b t` | tree mode (j/k, Enter, Space, /) |
+| `C-b T` | tree overview |
+| `C-b <` / `C-b >` | sidebar width |
+| `C-b x` | kill agent |
+| `C-b X` | remove agent |
+| `C-b s` | toggle sidebar |
 | `C-b d` | detach (agents keep running) |
-| `C-b Q` | stop the daemon and all agents |
-| `C-b C-b` | send a literal Ctrl-b |
+| `C-b Q` | stop daemon and all agents |
+| `C-b C-b` | send a literal C-b |
 | `C-b ?` | help |
 
 Mouse: click a sidebar card to focus it; the wheel scrolls (forwarded to programs that use the mouse). Because mouse capture is on, use your terminal's shift-drag to select text.
+
+## Git status
+
+The bottom bar shows the branch, uncommitted-work count, divergence from upstream, and any in-progress merge or rebase for the focused agent's checkout — kept current by watching the filesystem, not by polling, so it moves within a fraction of a second of a commit and costs nothing while the repository is idle. Set `ANTHREX_GIT=off` to disable the watcher and probes entirely. The project tree (`C-b t` / `C-b T`) is drawn with box-drawing connectors (`├─`, `└─`, `│`) at every level, to any depth, so a worker's own sub-agents stay legible.
 
 ## Test
 

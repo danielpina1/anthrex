@@ -34,7 +34,7 @@ import termios
 import time
 import tty
 
-from pty_tree_smoke import run_project_tree_stage
+from pty_tree_smoke import run_project_tree_stage, run_tree_connectors_stage
 
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -52,6 +52,11 @@ ENV["ANTHREX_CLAUDE_BIN"] = FAKE_AGENT_BIN
 ENV["ANTHREX_CODEX_BIN"] = FAKE_AGENT_BIN
 ENV["FAKE_AGENT_SCRIPT"] = FAKE_AGENT_SCRIPT
 ENV["TERM"] = "xterm-256color"
+# This script compares rendered screens against literal text. The bottom-bar git
+# segment (design decision 21) would make those comparisons depend on the state of
+# whatever working tree the daemon happens to run in, so the daemon this script starts
+# never probes or watches git at all.
+ENV["ANTHREX_GIT"] = "off"
 
 
 def fail(msg):
@@ -543,8 +548,9 @@ def main():
     print("ok: fake-claude removed and fourth client detached cleanly")
 
     run_project_tree_stage(REPO, PtyProc, run_cmd, fail)
+    run_tree_connectors_stage(REPO, PtyProc, run_cmd, fail, FAKE_AGENT_SCRIPT)
 
-    print("== stage 9: stop the daemon, verify status ==")
+    print("== stage 10: stop the daemon, verify status ==")
     stop_result = run_cmd(["daemon", "stop"])
     print(f"daemon stop output: {stop_result.stdout.strip()!r}")
     status_result = run_cmd(["daemon", "status"])

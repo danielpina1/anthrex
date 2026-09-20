@@ -40,3 +40,13 @@ jobs:
 
       - name: python3 scripts/pty-smoke.py
         run: python3 scripts/pty-smoke.py
+        env:
+          # The smoke script compares rendered screens against literal text; a git
+          # segment in the bottom bar would make those comparisons depend on the
+          # state of whatever working tree the runner happens to have.
+          ANTHREX_GIT: "off"
+
+      - name: python3 scripts/pty_tree_smoke.py
+        run: python3 scripts/pty_tree_smoke.py
+        env:
+          ANTHREX_GIT: "off"

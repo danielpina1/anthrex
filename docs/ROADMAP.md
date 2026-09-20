@@ -8,7 +8,7 @@ The design is layered, newest first:
 2. `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` — milestones 2 to 9.
 3. `docs/superpowers/specs/2026-09-17-anthrex-design.md` — milestone 1 and the parts of the core it still governs.
 
-The protocol version currently on `main` is **3**. Milestone 4.5 raises it to 4. Protocol numbers written in the milestone 5 to 9 briefs predate this and are wrong; each is re-derived from this line when that milestone is implemented.
+The protocol version currently on `main` is **4**, raised from 3 by milestone 4.5. Protocol numbers written in the milestone 5 to 9 briefs predate this and are wrong; each is re-derived from this line when that milestone is implemented.
 
 ## What anthrex does when all milestones are done
 
@@ -27,8 +27,8 @@ The protocol version currently on `main` is **3**. Milestone 4.5 raises it to 4.
 | 2 | Continuous integration | `docs/milestones/M2-ci.md` | 1 | `done` |
 | 3 | Agent status and sub-agent tracking from hooks | `docs/milestones/M3-agent-status.md` | 2 | `done` |
 | 4 | Project tree view | `docs/milestones/M4-project-tree.md` | 3 | `done` |
-| 4.5 | Git status in the bottom bar, and tree connectors | `docs/milestones/M4.5-git-and-tree.md` | 4 | `ready` |
-| 5 | New-agent dialog and git worktrees | `docs/milestones/M5-worktrees.md` | 4.5 | `blocked` |
+| 4.5 | Git status in the bottom bar, and tree connectors | `docs/milestones/M4.5-git-and-tree.md` | 4 | `done` |
+| 5 | New-agent dialog and git worktrees | `docs/milestones/M5-worktrees.md` | 4.5 | `ready` |
 | 6 | Persistence, resume, rename, config, reconnect | `docs/milestones/M6-persistence.md` | 3 | `blocked` |
 | 7 | Split panes | `docs/milestones/M7-split-panes.md` | 4 | `blocked` |
 | 8 | Orchestration engine: runs, tasks, worktrees, review and merge | `docs/milestones/M8-orchestration-engine.md` | 5, 6 | `blocked` |
