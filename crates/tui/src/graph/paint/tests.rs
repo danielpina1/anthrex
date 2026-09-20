@@ -214,6 +214,12 @@ fn a_box_partly_outside_the_viewport_is_clipped_not_dropped() {
 // tier 0 owns columns 0..=11, the gap owns 12..=14 and tier 1 starts at 15.
 // The bus therefore sits in column 13, the middle of the gap, and every
 // expected string below can be read off column by column.
+//
+// A bus cell's glyph is the arms that meet in it, and the parent's run adds
+// the one pointing left when it arrives on that row. Each of the three arms
+// it can add has a test of its own below: `┌` becomes `┬` at the top end,
+// `├` becomes `┼` at a child between the ends, and `└` becomes `┴` at the
+// bottom end.
 
 #[test]
 fn one_child_is_a_straight_run() {
@@ -241,7 +247,9 @@ fn three_children_use_a_bus() {
     // 2 while `b` and `c` take the rows below. That lifts the whole span and
     // leaves the project's own middle row — 8 — on none of its children's
     // rows, which is what keeps the middle junction a plain `├` rather than
-    // the `┼` three leaf children would produce.
+    // the `┼` three leaf children would produce. The bus's own ends are
+    // therefore `┌` and `└`: the parent's run arrives at neither, and reaches
+    // the bus on row 8 as a `┤`.
     let app = app_with(vec![
         with_subagents(window(1, "/r/p", "a", Status::Idle), &["x", "y"]),
         window(2, "/r/p", "b", Status::Idle),
@@ -256,9 +264,9 @@ fn three_children_use_a_bus() {
         lines_text(&lines),
         vec![
             "                              ╭──────────╮",
-            "                            ┬─┤ ✓ x      │",
+            "                            ┌─┤ ✓ x      │",
             "               ╭──────────╮ │ ╰──────────╯",
-            "             ┬─┤ ○ 1 a    ├─┤             ",
+            "             ┌─┤ ○ 1 a    ├─┤             ",
             "             │ ╰──────────╯ │ ╭──────────╮",
             "             │              └─┤ ✓ y      │",
             "             │                ╰──────────╯",
@@ -293,7 +301,7 @@ fn the_parent_row_coinciding_with_the_bus_uses_a_cross() {
         lines_text(&lines),
         vec![
             "               ╭──────────╮",
-            "             ┬─┤ ○ 1 a    │",
+            "             ┌─┤ ○ 1 a    │",
             "             │ ╰──────────╯",
             "             │             ",
             "╭──────────╮ │ ╭──────────╮",
@@ -311,10 +319,11 @@ fn the_parent_row_coinciding_with_the_bus_uses_a_cross() {
 fn the_parent_row_coinciding_with_the_first_child_uses_a_tee() {
     // `layout` centres a parent on its children, so with two or more of them
     // the parent's row is always at least two rows below the bus's top: this
-    // geometry cannot arise from `layout` and the rectangle is moved by hand.
-    // The painter still has to answer for it, and the answer is that the top
-    // end is a tee either way — the arm the parent arrives on is the one `┬`
-    // already has, which is why decision 13's glyph list has no `┌` in it.
+    // geometry cannot arise from `layout` today and the rectangle is moved by
+    // hand. It is not dead weight — decision 6's centring rule is not a law of
+    // nature, and this is what stops the glyph going wrong silently if it ever
+    // changes. The top end's `┌` gains the arm the parent arrives on and
+    // becomes a `┬`; everything below it is untouched.
     let app = app_with(vec![
         window(1, "/r/p", "a", Status::Idle),
         window(2, "/r/p", "b", Status::Idle),
@@ -350,10 +359,10 @@ fn the_parent_row_coinciding_with_the_first_child_uses_a_tee() {
 }
 
 #[test]
-fn the_parent_row_coinciding_with_the_last_child_opens_the_corner() {
-    // The mirror of the test above, and equally unreachable from `layout`:
-    // the bottom end's `└` gains the arm the parent arrives on and becomes a
-    // `├`. Without this the corner would swallow the parent's run.
+fn the_parent_row_coinciding_with_the_last_child_uses_an_upward_tee() {
+    // The mirror of the test above, and unreachable from `layout` for the same
+    // reason: the bottom end's `└` gains the arm the parent arrives on and
+    // becomes a `┴`. Without this the corner would swallow the parent's run.
     let app = app_with(vec![
         window(1, "/r/p", "a", Status::Idle),
         window(2, "/r/p", "b", Status::Idle),
@@ -374,7 +383,7 @@ fn the_parent_row_coinciding_with_the_last_child_opens_the_corner() {
         lines_text(&lines),
         vec![
             "               ╭──────────╮",
-            "             ┬─┤ ○ 1 a    │",
+            "             ┌─┤ ○ 1 a    │",
             "             │ ╰──────────╯",
             "             │             ",
             "             │ ╭──────────╮",
@@ -382,7 +391,7 @@ fn the_parent_row_coinciding_with_the_last_child_opens_the_corner() {
             "             │ ╰──────────╯",
             "             │             ",
             "╭──────────╮ │ ╭──────────╮",
-            "│ ○ p      ├─├─┤ ○ 3 c    │",
+            "│ ○ p      ├─┴─┤ ○ 3 c    │",
             "╰──────────╯   ╰──────────╯",
         ]
     );
@@ -411,7 +420,7 @@ fn a_border_an_edge_meets_becomes_a_junction() {
         text,
         vec![
             "               ╭──────────╮",
-            "             ┬─┤ ○ 1 a    │",
+            "             ┌─┤ ○ 1 a    │",
             "╭──────────╮ │ ╰──────────╯",
             "│ ○ p      ├─┤             ",
             "╰──────────╯ │ ╭──────────╮",
@@ -450,7 +459,7 @@ fn edges_are_clipped_with_the_viewport() {
     let cut_top_left = paint(&layout, Rect::new(0, 0, 8, 3), Pan { x: 10, y: 0 }, &app);
     assert_eq!(
         lines_text(&cut_top_left),
-        vec!["     ╭──", "   ┬─┤ ○", "─╮ │ ╰──"]
+        vec!["     ╭──", "   ┌─┤ ○", "─╮ │ ╰──"]
     );
 
     // Right and bottom: column 17 cuts both children's boxes in half, and row
@@ -460,7 +469,7 @@ fn edges_are_clipped_with_the_viewport() {
     assert_eq!(
         lines_text(&cut_bottom_right),
         vec![
-            "           ┬─┤ ○",
+            "           ┌─┤ ○",
             "─────────╮ │ ╰──",
             "○ p      ├─┤    ",
             "─────────╯ │ ╭──",

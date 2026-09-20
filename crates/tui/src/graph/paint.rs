@@ -398,21 +398,27 @@ fn bus_cell(row: u16, top: u16, bottom: u16, child_rows: &[u16]) -> BusCell {
     }
 }
 
-/// The glyph for one bus cell: what the bus itself needs there, plus the arm
-/// the parent's run adds when it arrives on that row (decision 13).
+/// The glyph for one bus cell, chosen by the arms that actually meet in it:
+/// what the bus needs at that row, the arm going right to a child on it, and
+/// the arm going left when the parent's run arrives on it (decision 13).
 ///
-/// The top end is a tee either way, because the arm the parent arrives on —
-/// the one pointing left — is the arm `┬` already has. That is why decision
-/// 13's glyph list has a `┬` in it and no `┌`: with two or more children the
-/// parent never arrives at the top end, and the cell has to read as the head
-/// of the bus regardless.
+/// | cell | arms without the parent | with it |
+/// |---|---|---|
+/// | top end | down, right — `┌` | left, down, right — `┬` |
+/// | a child between the ends | up, down, right — `├` | all four — `┼` |
+/// | bottom end | up, right — `└` | left, up, right — `┴` |
+/// | a row the bus passes through | up, down — `│` | left, up, down — `┤` |
+///
+/// The corners are sharp, not rounded like the boxes': `└` is already what the
+/// sidebar's guides mean by "last child", and that idiom wins.
 fn bus_glyph(cell: BusCell, parent_arrives: bool) -> &'static str {
     match (cell, parent_arrives) {
-        (BusCell::Top, _) => "┬",
+        (BusCell::Top, false) => "┌",
+        (BusCell::Top, true) => "┬",
         (BusCell::Child, false) => "├",
         (BusCell::Child, true) => "┼",
         (BusCell::Bottom, false) => "└",
-        (BusCell::Bottom, true) => "├",
+        (BusCell::Bottom, true) => "┴",
         (BusCell::Plain, false) => "│",
         (BusCell::Plain, true) => "┤",
     }
