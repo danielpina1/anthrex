@@ -43,13 +43,13 @@ impl App {
             })
         };
         let len = rows.len();
-        if let Some(index) = index {
-            if self.tree.sidebar.height > 0 {
-                self.tree.sidebar.reveal(index);
-            }
-            if self.tree.overview.height > 0 {
-                self.tree.overview.reveal(index);
-            }
+        if let Some(index) = index
+            && self.tree.sidebar.height > 0
+        {
+            // `self.tree.overview` is not revealed: the overview is a graph
+            // now and pans through `graph_pan`, so nothing reads that
+            // one-dimensional viewport (see the brief's implementation notes).
+            self.tree.sidebar.reveal(index);
         }
         self.tree.sidebar.scroll(0, len);
         self.tree.overview.scroll(0, len);

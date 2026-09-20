@@ -284,14 +284,16 @@ fn selection_stays_visible_while_moving() {
     }
     assert_eq!(app.tree.selected, Some(NodeKey::Window(13)));
     assert_eq!(app.tree.sidebar.top, 9);
-    assert_eq!(app.tree.overview.top, 0);
     assert_eq!(app.focused, Some(1));
     app.set_tree_viewports(3, 4);
     assert_eq!(app.tree.sidebar.top, 11);
-    assert_eq!(app.tree.overview.top, 10);
-    app.on_daemon(DaemonMsg::WindowsChanged {
-        windows: app.windows.clone(),
-    });
+    // A list that really changed — the last window is gone — reveals, and
+    // what it reveals is the selection (row 13, already inside the three rows
+    // at 11) and not the focused window (row 1, which would pull the top to
+    // 1, as leaving tree mode does two lines below).
+    let mut shorter = app.windows.clone();
+    shorter.pop();
+    app.on_daemon(DaemonMsg::WindowsChanged { windows: shorter });
     assert_eq!(
         app.tree.sidebar.top, 11,
         "list updates reveal selection, not focus"

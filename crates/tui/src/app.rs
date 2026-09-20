@@ -354,17 +354,34 @@ impl App {
                 }
             }
         }
-        let previous_order = tree::agent_order(&self.rows());
+        // One derivation of the outgoing rows serves both readers below: the
+        // agent order the focus falls back through, and the keys the reveal
+        // compares against.
+        let previous_rows = self.rows();
+        let previous_order = tree::agent_order(&previous_rows);
+        let previous_keys: Vec<_> = previous_rows.iter().map(|row| row.key.clone()).collect();
         let previous_index = self
             .focused
             .and_then(|id| previous_order.iter().position(|candidate| *candidate == id));
+        let previous_selection = self.tree.selected.clone();
         self.windows = windows;
         self.prune_git();
         self.windows_received_at = Instant::now();
         self.tree.prune(&self.windows);
         let rows = tree::build(&self.windows, &self.tree);
         self.tree.repair_selection(&rows);
-        self.reveal_tree_anchor();
+        // Only on the edges decision 15 names, never on every list. The daemon
+        // republishes on every status flip and every output event — several
+        // times a second while agents work — and revealing unconditionally
+        // would snap the canvas back to the selection about as fast as a
+        // person can scroll away from it, undoing what decision 16 grants.
+        // A change of focus is the third edge and reveals from `focus` itself,
+        // which is the only thing that moves it from here.
+        if self.tree.selected != previous_selection
+            || rows.iter().map(|row| &row.key).ne(previous_keys.iter())
+        {
+            self.reveal_tree_anchor();
+        }
 
         if let Some(id) = self.pending_focus
             && self.windows.iter().any(|w| w.id == id)

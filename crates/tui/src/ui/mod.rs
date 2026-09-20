@@ -513,9 +513,17 @@ mod tests {
         app.on_scroll(true, 2, 2, &l);
         app.set_tree_viewports(l.sidebar_list.height, l.main_inner.height);
         assert_eq!(app.tree.sidebar.top, 9);
+        // Nor may a window list that changes nothing the view depends on: the
+        // daemon republishes one on every status flip and every output event.
         let windows = app.windows.clone();
         app.on_daemon(proto::DaemonMsg::WindowsChanged { windows });
-        assert_eq!(app.tree.sidebar.top, 12);
+        assert_eq!(app.tree.sidebar.top, 9);
+        // A list that really changed reveals the anchor again: with window 1
+        // gone the focused window 20 is row 19 of 20, and nine rows of list
+        // put its top at 11.
+        let windows = app.windows[1..].to_vec();
+        app.on_daemon(proto::DaemonMsg::WindowsChanged { windows });
+        assert_eq!(app.tree.sidebar.top, 11);
     }
 
     #[test]

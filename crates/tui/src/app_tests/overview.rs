@@ -329,6 +329,55 @@ fn the_wheel_scrolls_vertically_by_three() {
     assert_eq!(app.graph_pan, Pan { x: 0, y: 3 });
 }
 
+/// The daemon publishes a window list on every status flip and every output
+/// event, several times a second while agents work. A list that changes
+/// nothing the view depends on must leave the pan alone, or the canvas snaps
+/// back to the selection as fast as a person can scroll away from it
+/// (decision 16, spec §4.4).
+#[test]
+fn only_a_real_change_in_the_window_list_reveals() {
+    let (mut app, layout) = opened();
+    let canvas = overview::view(&app, layout.main).canvas;
+    let (x, y) = (canvas.x + 1, canvas.y + 1);
+    assert!(app.on_scroll(false, x, y, &layout).is_empty());
+    assert!(app.on_scroll(false, x, y, &layout).is_empty());
+    let scrolled = Pan { x: 0, y: 6 };
+    assert_eq!(app.graph_pan, scrolled);
+
+    assert!(
+        app.on_daemon(DaemonMsg::WindowsChanged {
+            windows: app.windows.clone(),
+        })
+        .is_empty()
+    );
+    assert_eq!(
+        app.graph_pan, scrolled,
+        "an identical window list must not move the view"
+    );
+
+    // A list with one more window changes the visible rows, so the reveal
+    // fires and pulls the selection back inside the viewport.
+    let mut extra = app.windows[0].clone();
+    extra.id = 9;
+    extra.name = "extra".into();
+    extra.subagents.clear();
+    let mut grown = app.windows.clone();
+    grown.push(extra);
+    assert!(
+        app.on_daemon(DaemonMsg::WindowsChanged { windows: grown })
+            .is_empty()
+    );
+    assert_ne!(app.graph_pan, scrolled, "a changed row list reveals");
+    let view = overview::view(&app, layout.main);
+    let selected = app.tree.selected.clone().expect("the overview selects");
+    let rect = view.layout.node(&selected).expect("and places it").rect;
+    assert!(
+        rect.y >= view.pan.y && rect.bottom() <= view.pan.y + view.canvas.height,
+        "{rect:?} is not wholly inside the viewport at {:?}",
+        view.pan
+    );
+}
+
 #[test]
 fn dragging_pans_both_axes() {
     let (mut app, layout) = opened();
