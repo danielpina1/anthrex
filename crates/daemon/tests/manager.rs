@@ -51,7 +51,7 @@ async fn create_records_the_given_project() {
     let worker = m.clone();
     let info = tokio::task::spawn_blocking(move || {
         worker
-            .create(spec("p"), "/some/root".into(), 80, 24)
+            .create(spec("p"), "/some/root".into(), None, 80, 24)
             .unwrap()
     })
     .await
@@ -63,16 +63,46 @@ async fn create_records_the_given_project() {
 }
 
 #[tokio::test]
+async fn create_records_the_given_worktree() {
+    let m = manager();
+    let worker = m.clone();
+    let info = tokio::task::spawn_blocking(move || {
+        worker
+            .create(
+                spec("wt-root"),
+                "/some/project".into(),
+                Some("/some/project/linked".into()),
+                80,
+                24,
+            )
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    let listed = find(&m, info.id);
+    m.remove(info.id).unwrap();
+    assert_eq!(
+        info.worktree,
+        Some(std::path::PathBuf::from("/some/project/linked"))
+    );
+    assert_eq!(listed.worktree, info.worktree);
+}
+
+#[tokio::test]
 async fn create_lists_the_window_and_notifies_watchers() {
     let m = manager();
     let mut rx = m.watch();
-    let info = m.create(spec("one"), std::env::temp_dir(), 80, 24).unwrap();
+    let info = m
+        .create(spec("one"), std::env::temp_dir(), None, 80, 24)
+        .unwrap();
     assert_eq!(info.id, 1);
     assert_eq!(info.name, "one");
     assert_eq!(info.status, Status::Starting);
     rx.changed().await.unwrap();
     assert_eq!(rx.borrow().len(), 1);
-    let second = m.create(spec("two"), std::env::temp_dir(), 80, 24).unwrap();
+    let second = m
+        .create(spec("two"), std::env::temp_dir(), None, 80, 24)
+        .unwrap();
     assert_eq!(second.id, 2);
     assert_eq!(
         m.list().iter().map(|w| w.name.as_str()).collect::<Vec<_>>(),
@@ -85,16 +115,18 @@ async fn names_default_to_runtime_and_id_and_must_be_unique() {
     let m = manager();
     let mut unnamed = spec("x");
     unnamed.name = None;
-    let info = m.create(unnamed, std::env::temp_dir(), 80, 24).unwrap();
+    let info = m
+        .create(unnamed, std::env::temp_dir(), None, 80, 24)
+        .unwrap();
     assert_eq!(info.name, "shell-1");
     let err = m
-        .create(spec("shell-1"), std::env::temp_dir(), 80, 24)
+        .create(spec("shell-1"), std::env::temp_dir(), None, 80, 24)
         .unwrap_err();
     assert!(err.to_string().contains("already exists"));
     let mut bad_dir = spec("y");
     bad_dir.cwd = "/definitely/missing/dir".into();
     assert!(
-        m.create(bad_dir, std::env::temp_dir(), 80, 24)
+        m.create(bad_dir, std::env::temp_dir(), None, 80, 24)
             .unwrap_err()
             .to_string()
             .contains("does not exist")
@@ -105,7 +137,7 @@ async fn names_default_to_runtime_and_id_and_must_be_unique() {
 async fn input_reaches_the_shell_and_output_drives_status() {
     let m = manager();
     let id = m
-        .create(spec("io"), std::env::temp_dir(), 80, 24)
+        .create(spec("io"), std::env::temp_dir(), None, 80, 24)
         .unwrap()
         .id;
     wait_until("prompt output", || find(&m, id).status == Status::Working).await;
@@ -129,20 +161,21 @@ async fn a_spec_asking_for_a_worktree_is_rejected() {
     let mut with_branch = spec("wt");
     with_branch.worktree_branch = Some("feat/x".into());
     let err = m
-        .create(with_branch, std::env::temp_dir(), 80, 24)
+        .create(with_branch, std::env::temp_dir(), None, 80, 24)
         .unwrap_err()
         .to_string();
     assert!(err.contains("--worktree is not implemented yet"), "{err}");
     assert!(m.list().is_empty(), "no window may be created");
     // Without the branch the same spec is fine.
-    m.create(spec("wt"), std::env::temp_dir(), 80, 24).unwrap();
+    m.create(spec("wt"), std::env::temp_dir(), None, 80, 24)
+        .unwrap();
 }
 
 #[tokio::test]
 async fn attach_then_resize_reports_new_size() {
     let m = manager();
     let id = m
-        .create(spec("size"), std::env::temp_dir(), 80, 24)
+        .create(spec("size"), std::env::temp_dir(), None, 80, 24)
         .unwrap()
         .id;
     m.resize(id, 120, 40).unwrap();
@@ -155,7 +188,7 @@ async fn attach_then_resize_reports_new_size() {
 async fn kill_terminates_and_remove_forgets() {
     let m = manager();
     let id = m
-        .create(spec("victim"), std::env::temp_dir(), 80, 24)
+        .create(spec("victim"), std::env::temp_dir(), None, 80, 24)
         .unwrap()
         .id;
     wait_until("shell started", || find(&m, id).status != Status::Starting).await;
@@ -178,7 +211,7 @@ async fn kill_terminates_and_remove_forgets() {
 async fn a_program_that_ignores_stdin_never_blocks_write_input_or_list() {
     let m = manager();
     let id = m
-        .create(spec("blocked"), std::env::temp_dir(), 80, 24)
+        .create(spec("blocked"), std::env::temp_dir(), None, 80, 24)
         .unwrap()
         .id;
     let stop = Arc::new(AtomicBool::new(false));
@@ -302,10 +335,12 @@ async fn a_program_that_ignores_stdin_never_blocks_write_input_or_list() {
 async fn rename_rejects_duplicates() {
     let m = manager();
     let a = m
-        .create(spec("a"), std::env::temp_dir(), 80, 24)
+        .create(spec("a"), std::env::temp_dir(), None, 80, 24)
         .unwrap()
         .id;
-    let _b = m.create(spec("b"), std::env::temp_dir(), 80, 24).unwrap();
+    let _b = m
+        .create(spec("b"), std::env::temp_dir(), None, 80, 24)
+        .unwrap();
     assert!(m.rename(a, "b".into()).is_err());
     m.rename(a, "c".into()).unwrap();
     assert_eq!(find(&m, a).name, "c");
@@ -319,13 +354,15 @@ async fn shutdown_rejects_a_pending_creation_before_it_can_spawn() {
     let (resume_tx, resume_rx) = tokio::sync::oneshot::channel();
     let pending = tokio::spawn(async move {
         let spec = spec("late");
-        let project = daemon::project::resolve_root(spec.cwd.clone()).await;
+        let roots = daemon::project::resolve_roots(spec.cwd.clone()).await;
         ready_tx.send(()).unwrap();
         // Reproduce a create task paused before manager admission, without sleeps.
         resume_rx.await.unwrap();
-        tokio::task::spawn_blocking(move || worker.create(spec, project, 80, 24))
-            .await
-            .unwrap()
+        tokio::task::spawn_blocking(move || {
+            worker.create(spec, roots.project, roots.worktree, 80, 24)
+        })
+        .await
+        .unwrap()
     });
     tokio::time::timeout(Duration::from_secs(2), ready_rx)
         .await
@@ -351,7 +388,8 @@ async fn shutdown_rejects_a_pending_creation_before_it_can_spawn() {
 async fn shutdown_ends_every_window() {
     let m = manager();
     for n in ["s1", "s2"] {
-        m.create(spec(n), std::env::temp_dir(), 80, 24).unwrap();
+        m.create(spec(n), std::env::temp_dir(), None, 80, 24)
+            .unwrap();
     }
     wait_until("both started", || {
         m.list().iter().all(|w| w.status != Status::Starting)
@@ -370,7 +408,7 @@ async fn shutdown_ends_every_window() {
 async fn kill_ends_an_interactive_shell_within_a_second() {
     let m = manager();
     let id = m
-        .create(spec("quick-kill"), std::env::temp_dir(), 80, 24)
+        .create(spec("quick-kill"), std::env::temp_dir(), None, 80, 24)
         .unwrap()
         .id;
     wait_until("shell started", || find(&m, id).status != Status::Starting).await;
@@ -385,7 +423,7 @@ async fn the_first_exit_reason_is_preserved() {
     use daemon::window::WindowEvent;
     let m = manager();
     let id = m
-        .create(spec("first-exit"), std::env::temp_dir(), 80, 24)
+        .create(spec("first-exit"), std::env::temp_dir(), None, 80, 24)
         .unwrap()
         .id;
     m.handle_event(
@@ -413,7 +451,7 @@ async fn a_parser_panic_ends_the_child_and_keeps_its_reason() {
     use daemon::window::WindowEvent;
     let m = manager();
     let id = m
-        .create(spec("parser-panic"), std::env::temp_dir(), 80, 24)
+        .create(spec("parser-panic"), std::env::temp_dir(), None, 80, 24)
         .unwrap()
         .id;
     wait_until("shell started", || find(&m, id).status != Status::Starting).await;
@@ -523,7 +561,13 @@ async fn shutdown_waits_for_cleanup_after_the_group_leader_exits() {
             "/bin/sh".into(),
         ));
         let id = m
-            .create(spec("cleanup-descendant"), std::env::temp_dir(), 80, 24)
+            .create(
+                spec("cleanup-descendant"),
+                std::env::temp_dir(),
+                None,
+                80,
+                24,
+            )
             .unwrap()
             .id;
         m.write_input(

@@ -68,6 +68,7 @@ struct Entry {
     name: String,
     spec: WindowSpec,
     project: PathBuf,
+    worktree: Option<PathBuf>,
     status: Status,
     state: AgentState,
     viewers: u32,
@@ -86,8 +87,7 @@ impl Entry {
             runtime: self.spec.runtime,
             cwd: self.spec.cwd.clone(),
             project: self.project.clone(),
-            // Populated once daemon::project reports both roots (M4.5.2).
-            worktree: None,
+            worktree: self.worktree.clone(),
             branch: self.spec.worktree_branch.clone(),
             status: self.status,
             tool: self.state.tool.clone(),
@@ -196,6 +196,7 @@ impl WindowManager {
         &self,
         spec: WindowSpec,
         project: PathBuf,
+        worktree: Option<PathBuf>,
         cols: u16,
         rows: u16,
     ) -> anyhow::Result<WindowInfo> {
@@ -243,6 +244,7 @@ impl WindowManager {
             name,
             spec,
             project,
+            worktree,
             status: Status::Starting,
             state: AgentState::default(),
             viewers: 0,

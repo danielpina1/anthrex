@@ -195,7 +195,7 @@ async fn run_cli() -> anyhow::Result<()> {
             let c = client::CliClient::connect(&socket).await?;
             let requested = project.map(|path| resolve_dir(Some(path))).transpose()?;
             let normalized = match requested.as_ref() {
-                Some(path) => Some(daemon::project::resolve_root(path.clone()).await),
+                Some(path) => Some(daemon::project::resolve_roots(path.clone()).await.project),
                 None => None,
             };
             let project = requested

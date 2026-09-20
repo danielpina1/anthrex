@@ -170,10 +170,10 @@ async fn handle_client(
                 let manager = manager.clone();
                 let out_tx = out_tx.clone();
                 tokio::spawn(async move {
-                    let project = crate::project::resolve_root(spec.cwd.clone()).await;
+                    let roots = crate::project::resolve_roots(spec.cwd.clone()).await;
                     // PTY creation can block too; keep it off the runtime worker.
                     let result = tokio::task::spawn_blocking(move || {
-                        manager.create(spec, project, cols, rows)
+                        manager.create(spec, roots.project, roots.worktree, cols, rows)
                     })
                     .await;
                     let reply = match result {

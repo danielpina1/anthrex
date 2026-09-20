@@ -39,6 +39,7 @@ impl Agent {
                     initial_prompt: None,
                 },
                 std::env::temp_dir(),
+                None,
                 80,
                 24,
             )

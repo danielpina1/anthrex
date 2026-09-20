@@ -1,4 +1,4 @@
-use daemon::project::{DETECT_TIMEOUT, detect_root, detect_root_with, resolve_root};
+use daemon::project::{DETECT_TIMEOUT, detect_roots, detect_roots_with, resolve_roots};
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
@@ -96,7 +96,10 @@ impl Drop for OwnedHelper {
 fn plain_directory_is_its_own_root() {
     let dir = tempdir().unwrap();
 
-    assert_eq!(detect_root(dir.path()), dir.path().canonicalize().unwrap());
+    assert_eq!(
+        detect_roots(dir.path()).project,
+        dir.path().canonicalize().unwrap()
+    );
 }
 
 #[test]
@@ -104,7 +107,7 @@ fn repository_root_is_the_checkout() {
     let repo = init_repo();
 
     assert_eq!(
-        detect_root(repo.path()),
+        detect_roots(repo.path()).project,
         repo.path().canonicalize().unwrap()
     );
 }
@@ -116,7 +119,7 @@ fn subdirectory_maps_to_the_repository_root() {
     fs::create_dir_all(&subdirectory).unwrap();
 
     assert_eq!(
-        detect_root(&subdirectory),
+        detect_roots(&subdirectory).project,
         repo.path().canonicalize().unwrap()
     );
 }
@@ -140,9 +143,12 @@ fn linked_worktree_maps_to_the_main_checkout() {
     fs::create_dir(&subdirectory).unwrap();
     let expected = repo.path().canonicalize().unwrap();
 
-    assert_eq!(detect_root(&worktree), expected);
-    assert_eq!(detect_root(&subdirectory), expected);
-    assert_ne!(detect_root(&worktree), worktree.canonicalize().unwrap());
+    assert_eq!(detect_roots(&worktree).project, expected);
+    assert_eq!(detect_roots(&subdirectory).project, expected);
+    assert_ne!(
+        detect_roots(&worktree).project,
+        worktree.canonicalize().unwrap()
+    );
 }
 
 #[test]
@@ -162,7 +168,10 @@ fn submodule_maps_to_its_own_checkout() {
     );
     let submodule = repo.path().join("mods");
 
-    assert_eq!(detect_root(&submodule), submodule.canonicalize().unwrap());
+    assert_eq!(
+        detect_roots(&submodule).project,
+        submodule.canonicalize().unwrap()
+    );
 }
 
 #[test]
@@ -178,14 +187,14 @@ fn bare_repository_falls_back_to_the_directory() {
     );
     let bare = parent.path().join("x.git");
 
-    assert_eq!(detect_root(&bare), bare.canonicalize().unwrap());
+    assert_eq!(detect_roots(&bare).project, bare.canonicalize().unwrap());
 }
 
 #[test]
 fn missing_directory_is_returned_unchanged() {
     let missing = Path::new("/definitely/missing/dir");
 
-    assert_eq!(detect_root(missing), missing);
+    assert_eq!(detect_roots(missing).project, missing);
 }
 
 #[test]
@@ -195,11 +204,12 @@ fn missing_git_falls_back() {
     fs::create_dir(&subdirectory).unwrap();
 
     assert_eq!(
-        detect_root_with(
+        detect_roots_with(
             OsStr::new("/nonexistent/git"),
             &subdirectory,
             DETECT_TIMEOUT
-        ),
+        )
+        .project,
         subdirectory.canonicalize().unwrap()
     );
 }
@@ -212,7 +222,7 @@ fn hanging_git_times_out() {
     let started = Instant::now();
 
     assert_eq!(
-        detect_root_with(script.as_os_str(), repo.path(), Duration::from_millis(300)),
+        detect_roots_with(script.as_os_str(), repo.path(), Duration::from_millis(300)).project,
         repo.path().canonicalize().unwrap()
     );
     assert!(started.elapsed() < Duration::from_secs(2));
@@ -247,7 +257,7 @@ fn inherited_stdout_does_not_outlive_the_detection_deadline() {
     let (tx, rx) = mpsc::channel();
     let detector = std::thread::spawn(move || {
         let started = Instant::now();
-        let detected = detect_root_with(script.as_os_str(), &cwd, Duration::from_secs(1));
+        let detected = detect_roots_with(script.as_os_str(), &cwd, Duration::from_secs(1));
         tx.send((detected, started.elapsed())).unwrap();
     });
     let helper_deadline = Instant::now() + Duration::from_secs(2);
@@ -276,7 +286,7 @@ fn inherited_stdout_does_not_outlive_the_detection_deadline() {
         "project detection stayed blocked on stdout inherited by an exited git child's helper",
     );
 
-    assert_eq!(detected, root);
+    assert_eq!(detected.project, root);
     assert!(elapsed < Duration::from_secs(2), "elapsed: {elapsed:?}");
 }
 
@@ -287,7 +297,7 @@ async fn resolve_root_finds_the_repository() {
     fs::create_dir(&subdirectory).unwrap();
 
     assert_eq!(
-        resolve_root(subdirectory).await,
+        resolve_roots(subdirectory).await.project,
         repo.path().canonicalize().unwrap()
     );
 }
@@ -302,7 +312,7 @@ async fn resolve_root_does_not_block_the_runtime() {
         Instant::now()
     });
 
-    let resolved = daemon::project::resolve_root_with(
+    let resolved = daemon::project::resolve_roots_with(
         script.into_os_string(),
         repo.path().to_path_buf(),
         Duration::from_millis(500),
@@ -311,6 +321,68 @@ async fn resolve_root_does_not_block_the_runtime() {
     let resolved_at = Instant::now();
     let sleeper_at = sleeper.await.unwrap();
 
-    assert_eq!(resolved, repo.path().canonicalize().unwrap());
+    assert_eq!(resolved.project, repo.path().canonicalize().unwrap());
     assert!(sleeper_at < resolved_at);
+}
+
+#[test]
+fn detect_roots_reports_the_worktree_and_the_project() {
+    let repo = init_repo();
+    let expected = repo.path().canonicalize().unwrap();
+
+    let roots = detect_roots(repo.path());
+
+    assert_eq!(roots.project, expected);
+    assert_eq!(roots.worktree, Some(expected));
+}
+
+#[test]
+fn detect_roots_in_a_linked_worktree_splits_them() {
+    let repo = init_repo();
+    let worktree_parent = tempdir().unwrap();
+    let worktree = worktree_parent.path().join("wt");
+    git(
+        repo.path(),
+        &[
+            OsStr::new("worktree"),
+            OsStr::new("add"),
+            OsStr::new("-b"),
+            OsStr::new("feat"),
+            worktree.as_os_str(),
+        ],
+    );
+    let expected_project = repo.path().canonicalize().unwrap();
+    let expected_worktree = worktree.canonicalize().unwrap();
+
+    let roots = detect_roots(&worktree);
+
+    assert_eq!(roots.project, expected_project);
+    assert_eq!(roots.worktree, Some(expected_worktree));
+    assert_ne!(roots.project, roots.worktree.unwrap());
+}
+
+#[test]
+fn detect_roots_outside_a_repository_has_no_worktree() {
+    let dir = tempdir().unwrap();
+
+    let roots = detect_roots(dir.path());
+
+    assert_eq!(roots.project, dir.path().canonicalize().unwrap());
+    assert_eq!(roots.worktree, None);
+}
+
+#[test]
+fn detect_roots_with_a_failing_git_has_no_worktree() {
+    let repo = init_repo();
+    let subdirectory = repo.path().join("a");
+    fs::create_dir(&subdirectory).unwrap();
+
+    let roots = detect_roots_with(
+        OsStr::new("/nonexistent/git"),
+        &subdirectory,
+        DETECT_TIMEOUT,
+    );
+
+    assert_eq!(roots.project, subdirectory.canonicalize().unwrap());
+    assert_eq!(roots.worktree, None);
 }

@@ -397,7 +397,7 @@ async fn claude_window(d: &TestDaemon, name: &str) -> u32 {
     spec.runtime = Runtime::Claude;
     tokio::task::spawn_blocking(move || {
         manager
-            .create(spec, std::env::temp_dir(), 80, 24)
+            .create(spec, std::env::temp_dir(), None, 80, 24)
             .unwrap()
             .id
     })
@@ -426,7 +426,7 @@ async fn hook_events_are_acknowledged() {
     let manager = d.manager.clone();
     let id = tokio::task::spawn_blocking(move || {
         manager
-            .create(shell_spec("hook-shell"), std::env::temp_dir(), 80, 24)
+            .create(shell_spec("hook-shell"), std::env::temp_dir(), None, 80, 24)
             .unwrap()
             .id
     })
