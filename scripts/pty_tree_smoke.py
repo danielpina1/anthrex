@@ -322,3 +322,86 @@ def run_tree_connectors_stage(repo_root, pty_proc, run_cmd, fail, fake_agent_scr
             "ok: tree overview draws ├─/└─ connectors and stems the last window's "
             "sub-agents with two spaces, not │"
         )
+
+
+def run_graph_glyphs_stage(repo_root, pty_proc, run_cmd, fail):
+    """Opens the tree overview and confirms the graph itself draws: a rounded
+    box border and an edge glyph joining two windows of the same project, not
+    just the sidebar's own row guides.
+
+    Two windows under one project give the project node two visible children,
+    which the graph connects with a vertical bus in the tier-gap column
+    (decision 13 of the graph-overview brief). `┬`, `┼`, `├`, `┴` and `┤` are
+    all bus or border glyphs the sidebar's own guides (`├─`, `└─`, `│ `)
+    never draw, so any of them on screen can only have come from the graph.
+    """
+    print("== stage 9b: graph overview draws boxes and edges ==")
+    fixture = tempfile.mkdtemp(prefix="anthrex-graph-", dir="/tmp")
+    project = os.path.join(fixture, "proj")
+    pending_removal = []
+    proc = None
+    passed = False
+    try:
+        _git(["init", project], repo_root, fail)
+        _git(["-C", project, "commit", "--allow-empty", "-m", "init"], repo_root, fail)
+
+        for name in ("graph-a", "graph-b"):
+            created = run_cmd(["new", "--runtime", "shell", "--name", name, "--dir", project])
+            pending_removal.append(name)
+            _window_id(created, name, fail)
+
+        proc = pty_proc([os.path.join(repo_root, "target/debug/anthrex")])
+        proc.wait_for("agents", timeout=10.0, label="graph-glyphs attach banner")
+        proc.wait_for("graph-b", timeout=10.0, label="graph-b sidebar row")
+        proc.send(b"\x02T")
+        proc.wait_for(" tree overview ", timeout=10.0, label="tree overview for graph glyphs")
+
+        deadline = time.monotonic() + 5.0
+        screen = proc.screen_text()
+        while True:
+            has_border = "╭" in screen
+            has_edge = any(glyph in screen for glyph in ("┬", "┼", "├", "┴", "┤"))
+            if has_border and has_edge:
+                break
+            if time.monotonic() >= deadline:
+                fail(
+                    "tree overview never drew a box border and an edge glyph "
+                    f"(border={has_border}, edge={has_edge}):\n{screen}"
+                )
+            proc.read_available(timeout=0.2)
+            screen = proc.screen_text()
+
+        # The prefix key is handled ahead of tree/overview input routing (see
+        # `Keymap::handle` in `crates/tui/src/keymap.rs`), so detach works
+        # directly from the overview without first pressing Escape to leave
+        # it (`run_tree_connectors_stage` above relies on the same fact).
+        proc.send(b"\x02d")
+        status = proc.wait_exit(timeout=5.0)
+        if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+            fail(f"graph-glyphs detach did not exit cleanly with status 0 (raw status {status})")
+        proc.close()
+        proc = None
+
+        for name in list(pending_removal):
+            run_cmd(["rm", name])
+            pending_removal.remove(name)
+        remaining = json.loads(run_cmd(["ls", "--json"]).stdout)
+        remaining_names = {window["name"] for window in remaining}
+        expected = {"shell-1", "shell-2", "shell-3", "shell-4"}
+        if remaining_names != expected:
+            fail(f"unexpected windows after graph-glyphs cleanup: {sorted(remaining_names)}")
+        passed = True
+    finally:
+        try:
+            for name in pending_removal:
+                try:
+                    run_cmd(["rm", name], expect_ok=False)
+                except Exception:
+                    pass
+        finally:
+            if proc is not None:
+                proc.close()
+            shutil.rmtree(fixture, ignore_errors=True)
+
+    if passed:
+        print("ok: tree overview draws a rounded box border and an edge glyph")
