@@ -57,17 +57,17 @@ impl Header {
     /// missing one only happens here when the input was truncated before it arrived.
     /// That case has no branch name to report, so it falls back to an empty unborn
     /// branch rather than inventing one.
-    fn resolve_head(self) -> Head {
-        match self.head {
+    fn resolve_head(&self) -> Head {
+        match &self.head {
             Some(HeadField::Detached) => {
-                let oid = self.oid.unwrap_or_default();
+                let oid = self.oid.as_deref().unwrap_or("");
                 Head::Detached(oid.chars().take(7).collect())
             }
             Some(HeadField::Branch(name)) => {
                 if self.unborn {
-                    Head::Unborn(name)
+                    Head::Unborn(name.clone())
                 } else {
-                    Head::Branch(name)
+                    Head::Branch(name.clone())
                 }
             }
             None => Head::Unborn(String::new()),
@@ -85,15 +85,11 @@ pub fn parse_porcelain_v2_z(output: &[u8]) -> Option<Parsed> {
     }
 
     let mut tokens: Vec<&[u8]> = output.split(|byte| *byte == 0).collect();
-    if output.last() == Some(&0) {
-        // A well-formed -z stream ends with a record's own NUL, so split() reports one
-        // trailing empty token; that is a splitting artifact, not a record.
-        tokens.pop();
-    } else {
-        // The buffer stopped mid-record: its last token is a fragment git never
-        // terminated. Drop it rather than guess at what it would have said.
-        tokens.pop();
-    }
+    // A well-formed -z stream ends with a record's own NUL, so split() reports one
+    // trailing empty token that is a splitting artifact, not a record; an incomplete
+    // stream instead ends with a fragment git never terminated. Either way, the last
+    // token is not a record to parse, so drop it.
+    tokens.pop();
 
     let mut header = Header::default();
     let mut counts = Counts::default();
@@ -107,11 +103,16 @@ pub fn parse_porcelain_v2_z(output: &[u8]) -> Option<Parsed> {
         if let Some(line) = token.strip_prefix(b"# ") {
             saw_branch_record |= apply_header(line, &mut header);
         } else if token.starts_with(b"1 ") {
-            counts.dirty += 1;
+            if xy_is_dirty(token) {
+                counts.dirty += 1;
+            }
         } else if token.starts_with(b"2 ") {
-            counts.dirty += 1;
+            if xy_is_dirty(token) {
+                counts.dirty += 1;
+            }
             // The original path: a second NUL-separated field of this same record, not
-            // a record of its own. Consume it so the next token is realigned.
+            // a record of its own. Consume it whether or not this record counted as
+            // dirty, so the next token is realigned either way.
             tokens.next();
         } else if token.starts_with(b"u ") {
             counts.conflicts += 1;
@@ -129,14 +130,12 @@ pub fn parse_porcelain_v2_z(output: &[u8]) -> Option<Parsed> {
         return None;
     }
 
-    let upstream = header.upstream.clone();
-    let ahead = header.ahead;
-    let behind = header.behind;
+    let head = header.resolve_head();
     Some(Parsed {
-        head: header.resolve_head(),
-        upstream,
-        ahead,
-        behind,
+        head,
+        upstream: header.upstream,
+        ahead: header.ahead,
+        behind: header.behind,
         counts,
     })
 }
@@ -166,6 +165,18 @@ fn apply_header(line: &[u8], header: &mut Header) -> bool {
         header.behind = behind;
     }
     true
+}
+
+/// Reads the `XY` status pair from a `1 ` or `2 ` record (the two bytes right after the
+/// two-byte record marker) and reports whether it counts toward `dirty`: spec §3.2,
+/// design decision 6 — staged and unstaged are merged into one count, so a record
+/// counts when either half differs from `HEAD`, i.e. `X != '.' || Y != '.'`. A record
+/// too short to hold `XY` (truncated input) is not counted.
+fn xy_is_dirty(token: &[u8]) -> bool {
+    match (token.get(2), token.get(3)) {
+        (Some(&x), Some(&y)) => x != b'.' || y != b'.',
+        _ => false,
+    }
 }
 
 /// Parses a `branch.ab` value of the form `+<ahead> -<behind>`.
@@ -263,12 +274,26 @@ mod tests {
     }
 
     #[test]
+    fn unchanged_xy_does_not_count_as_dirty() {
+        // XY == ".." (real git never emits this for a "1 " record, since a file with no
+        // difference from HEAD is not reported at all, but the parser must not rely on
+        // that and must key off the XY field rather than merely on the record existing).
+        let input = stream(&[
+            b"# branch.oid abcdef1234567890",
+            b"# branch.head main",
+            b"1 .. N... 100644 100644 100644 aaaa bbbb unchanged.txt",
+            b"1 M. N... 100644 100644 100644 aaaa bbbb staged.txt",
+        ]);
+        let parsed = parse_porcelain_v2_z(&input).unwrap();
+        assert_eq!(parsed.counts.dirty, 1);
+    }
+
+    #[test]
     fn rename_entries_consume_both_paths() {
         // The "2 " record's payload is "<path>\0<origPath>", two tokens; the "? "
         // record right after it must still parse as its own, separate record.
         let mut input = stream(&[b"# branch.oid abcdef1234567890", b"# branch.head main"]);
-        input
-            .extend_from_slice(b"2 R100 N... 100644 100644 100644 aaaa bbbb R100 new.txt\0old.txt");
+        input.extend_from_slice(b"2 R. N... 100644 100644 100644 aaaa bbbb R100 new.txt\0old.txt");
         input.push(0);
         input.extend_from_slice(&stream(&[b"? next.txt"]));
 
