@@ -47,7 +47,7 @@ Mouse: click a sidebar card to focus it; the wheel scrolls (forwarded to program
 
 ## Git status
 
-The bottom bar shows the branch, uncommitted-work count, divergence from upstream, and any in-progress merge or rebase for the focused agent's checkout. A filesystem watcher gives the fast path, so it moves within a fraction of a second of a commit; a 30-second safety poll of every registered checkout is the backstop, so the cost while a repository sits idle is one cheap `git status` probe every 30 seconds, not nothing. Set `ANTHREX_GIT=off` to disable the watcher and probes entirely. The project tree (`C-b t` / `C-b T`) is drawn with box-drawing connectors (`├─`, `└─`, `│`) at every level, to any depth, so a worker's own sub-agents stay legible.
+The bottom bar shows the branch, uncommitted-work count, divergence from upstream, and any in-progress merge or rebase for the focused agent's checkout. A filesystem watcher gives the fast path, so it moves within a fraction of a second of a commit; a 30-second safety poll of every registered checkout is the backstop, so the cost while a repository sits idle is one cheap `git status` probe every 30 seconds, not nothing. The watch is recursive, and on Linux's inotify backend that takes one descriptor per directory in the checkout, so on a host with a low `fs.inotify.max_user_watches` the watcher can fail to arm and that checkout falls back to the poll alone — correct, just up to 30 seconds behind. Set `ANTHREX_GIT=off` to disable the watcher and probes entirely. The project tree (`C-b t` / `C-b T`) is drawn with box-drawing connectors (`├─`, `└─`, `│`) at every level, to any depth, so a worker's own sub-agents stay legible.
 
 ## Test
 
