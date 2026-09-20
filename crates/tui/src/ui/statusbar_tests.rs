@@ -105,6 +105,47 @@ fn drops_parts_right_to_left_when_the_budget_shrinks() {
 }
 
 #[test]
+fn stale_outlives_the_named_parts_when_the_budget_shrinks() {
+    // Controller ruling: `(stale)` is a trust flag on the numbers beside it, not another
+    // datum competing with them, so it shares conflicts' priority rather than being the
+    // first thing dropped. It must survive operation/untracked/divergence/dirty being
+    // dropped in turn, and only disappear once nothing is left to qualify.
+    let mut state = clean_state();
+    state.dirty = 3;
+    state.untracked = 1;
+    state.ahead = 2;
+    state.behind = 1;
+    state.operation = Some(GitOperation::Rebase);
+    state.stale = true;
+
+    let full = "main ●3 ?1 ⇡2⇣1 rebase (stale)";
+    assert_eq!(text(&git_spans(&state, 80)), full);
+
+    let without_operation = "main ●3 ?1 ⇡2⇣1 (stale)";
+    let budget = UnicodeWidthStr::width(without_operation);
+    assert_eq!(text(&git_spans(&state, budget)), without_operation);
+
+    let without_untracked = "main ●3 ⇡2⇣1 (stale)";
+    let budget = UnicodeWidthStr::width(without_untracked);
+    assert_eq!(text(&git_spans(&state, budget)), without_untracked);
+
+    // A count and `(stale)` still surviving together at a tight budget.
+    let without_divergence = "main ●3 (stale)";
+    let budget = UnicodeWidthStr::width(without_divergence);
+    assert_eq!(text(&git_spans(&state, budget)), without_divergence);
+
+    // Dirty (priority 4) is still lower than `(stale)` (priority 5, matching conflicts),
+    // so it is the next to go, leaving `(stale)` alone beside the head.
+    let stale_alone = "main (stale)";
+    let budget = UnicodeWidthStr::width(stale_alone);
+    assert_eq!(text(&git_spans(&state, budget)), stale_alone);
+
+    let head_only = "main";
+    let budget = UnicodeWidthStr::width(head_only);
+    assert_eq!(text(&git_spans(&state, budget)), head_only);
+}
+
+#[test]
 fn is_hidden_when_it_cannot_fit_the_head() {
     let state = clean_state(); // head "main" has width 4
     assert!(git_spans(&state, 3).is_empty());

@@ -67,12 +67,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             theme::muted(),
         )),
         None => match app.focused_git() {
-            None => {
-                for (key, what) in HINTS {
-                    spans.push(Span::styled(key, Style::default().fg(theme::ACCENT)));
-                    spans.push(Span::styled(format!(" {what}  "), theme::muted()));
-                }
-            }
+            None => push_hints(&mut spans, HINTS.len()),
             Some(state) => {
                 let badge_width = spans_width(&spans);
                 let available = area
@@ -86,10 +81,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 while hint_count > 0 && hints_width(hint_count) + full_git_width > available {
                     hint_count -= 1;
                 }
-                for (key, what) in HINTS.into_iter().take(hint_count) {
-                    spans.push(Span::styled(key, Style::default().fg(theme::ACCENT)));
-                    spans.push(Span::styled(format!(" {what}  "), theme::muted()));
-                }
+                push_hints(&mut spans, hint_count);
                 let git_budget = available.saturating_sub(hints_width(hint_count));
                 spans.extend(git_spans(state, usize::from(git_budget)));
             }
@@ -111,6 +103,15 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         );
         frame.render_widget(Paragraph::new(Line::from(toast)), right);
+    }
+}
+
+/// Pushes the first `count` key hints (of `HINTS`'s 5) onto `spans`, in the styling shared by
+/// the git-present and git-absent render paths.
+fn push_hints(spans: &mut Vec<Span<'static>>, count: usize) {
+    for (key, what) in HINTS.into_iter().take(count) {
+        spans.push(Span::styled(key, Style::default().fg(theme::ACCENT)));
+        spans.push(Span::styled(format!(" {what}  "), theme::muted()));
     }
 }
 
@@ -161,6 +162,12 @@ fn operation_name(op: GitOperation) -> &'static str {
 /// exactly; conflicts, the clean tick and `(stale)` are not named by that decision, so they
 /// are ranked around it — kept longer than dirty, since an active conflict or a good status
 /// is worth more than the counts feeding it.
+///
+/// Controller ruling (not in decision 20): `(stale)` shares conflicts' priority rather than
+/// being the first thing dropped. It is not another datum competing with dirty/untracked/
+/// divergence for space — it is a trust flag on all of them. Dropping it first would let a
+/// narrow terminal show a confident `main ●3 ?1 ⇡2⇣1` with nothing marking the read as
+/// possibly stale, which is worse than showing `main (stale)` with the counts gone.
 fn build_parts(state: &GitState) -> Vec<Part> {
     let mut parts = Vec::new();
     if state.conflicts > 0 {
@@ -216,7 +223,7 @@ fn build_parts(state: &GitState) -> Vec<Part> {
         parts.push(Part {
             text: "(stale)".to_string(),
             style: theme::muted(),
-            priority: 0,
+            priority: 5, // matches conflicts — see the controller ruling above.
         });
     }
     parts
