@@ -1,4 +1,7 @@
+mod rows;
+
 use proto::{Runtime, Status, SubagentInfo, WindowInfo};
+use rows::{emit_subagents, guide_prefix, visible_windows};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use unicode_segmentation::UnicodeSegmentation;
@@ -40,9 +43,7 @@ pub enum RowKind<'a> {
         collapsed: bool,
     },
     Subagent {
-        window: &'a WindowInfo,
         info: &'a SubagentInfo,
-        guides: String,
     },
     // Milestone 8 adds Run { .. }.
 }
@@ -50,9 +51,9 @@ pub enum RowKind<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Row<'a> {
     pub key: NodeKey,
-    /// Columns of indentation before the row's own content. Project 0, window 2,
-    /// sub-agent 2 (its guide string starts with the window stem).
-    pub indent: u16,
+    /// The box-drawing prefix to draw before the row's own marker, two columns
+    /// per level. Empty on project rows, which are roots.
+    pub guides: String,
     pub kind: RowKind<'a>,
 }
 
@@ -242,7 +243,7 @@ pub fn build<'a>(windows: &'a [WindowInfo], state: &TreeState) -> Vec<Row<'a>> {
         let project_collapsed = !filtering && state.is_collapsed(&project_key);
         rows.push(Row {
             key: project_key,
-            indent: 0,
+            guides: String::new(),
             kind: RowKind::Project {
                 root: project.root,
                 name: project.name,
@@ -254,94 +255,42 @@ pub fn build<'a>(windows: &'a [WindowInfo], state: &TreeState) -> Vec<Row<'a>> {
         if project_collapsed {
             continue;
         }
-        for member in project.members {
-            match member {
-                ProjectChild::Window(window) => {
-                    let window_matches = filtering && matches_filter(&window.name, &filter);
-                    let forest = subagent_forest(&window.subagents);
-                    let subagent_matches = filtering
-                        && forest
-                            .iter()
-                            .any(|node| subagent_branch_matches(node, &filter));
-                    if filtering && !project_matches && !window_matches && !subagent_matches {
-                        continue;
-                    }
-                    let window_key = NodeKey::Window(window.id);
-                    let window_collapsed = !filtering && state.is_collapsed(&window_key);
-                    position += 1;
-                    rows.push(Row {
-                        key: window_key,
-                        indent: 2,
-                        kind: RowKind::Window {
-                            info: window,
-                            position,
-                            has_subagents: !window.subagents.is_empty(),
-                            collapsed: window_collapsed,
-                        },
-                    });
-                    if !window_collapsed {
-                        emit_subagent_rows(
-                            &mut rows,
-                            window,
-                            &forest,
-                            &mut Vec::new(),
-                            !filtering || project_matches || window_matches,
-                            &filter,
-                            false,
-                        );
-                    }
-                }
+        let visible = visible_windows(project.members, filtering, project_matches, &filter);
+        let count = visible.len();
+        for (index, member) in visible.into_iter().enumerate() {
+            let has_later_sibling = index + 1 < count;
+            let window = member.window;
+            let window_key = NodeKey::Window(window.id);
+            let window_collapsed = !filtering && state.is_collapsed(&window_key);
+            position += 1;
+            rows.push(Row {
+                key: window_key,
+                guides: guide_prefix(&[], has_later_sibling),
+                kind: RowKind::Window {
+                    info: window,
+                    position,
+                    has_subagents: !window.subagents.is_empty(),
+                    collapsed: window_collapsed,
+                },
+            });
+            if !window_collapsed {
+                // The window's own bit opens the ancestor stack: its sub-agents
+                // hang below it, and the stem continues only while it has a
+                // later visible sibling.
+                let mut ancestors = vec![has_later_sibling];
+                emit_subagents(
+                    &mut rows,
+                    window,
+                    &member.forest,
+                    &mut ancestors,
+                    member.show_all,
+                    &filter,
+                    false,
+                );
             }
         }
     }
     rows
-}
-
-fn emit_subagent_rows<'a>(
-    rows: &mut Vec<Row<'a>>,
-    window: &'a WindowInfo,
-    nodes: &[SubagentNode<'a>],
-    ancestor_has_later_sibling: &mut Vec<bool>,
-    show_all: bool,
-    filter: &str,
-    ancestor_matches: bool,
-) {
-    let visible: Vec<_> = nodes
-        .iter()
-        .filter(|node| show_all || ancestor_matches || subagent_branch_matches(node, filter))
-        .collect();
-    for (index, node) in visible.iter().enumerate() {
-        let has_later_sibling = index + 1 < visible.len();
-        let mut guides = String::from("│ ");
-        for ancestor_has_later in ancestor_has_later_sibling.iter().copied() {
-            guides.push_str(if ancestor_has_later { "│ " } else { "  " });
-        }
-        guides.push_str(if has_later_sibling { "├ " } else { "└ " });
-        rows.push(Row {
-            key: NodeKey::Subagent {
-                window_id: window.id,
-                id: node.info.id.clone(),
-            },
-            indent: 2,
-            kind: RowKind::Subagent {
-                window,
-                info: node.info,
-                guides,
-            },
-        });
-        ancestor_has_later_sibling.push(has_later_sibling);
-        let node_matches = matches_subagent(node.info, filter);
-        emit_subagent_rows(
-            rows,
-            window,
-            &node.children,
-            ancestor_has_later_sibling,
-            show_all,
-            filter,
-            ancestor_matches || node_matches,
-        );
-        ancestor_has_later_sibling.pop();
-    }
 }
 
 fn window_matches_filter(window: &WindowInfo, filter: &str) -> bool {

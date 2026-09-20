@@ -107,6 +107,7 @@ mod tests {
             runtime,
             cwd: "/tmp/repo".into(),
             project: "/tmp/repo".into(),
+            worktree: None,
             branch: Some("feat/x".into()),
             status,
             tool: None,
@@ -239,13 +240,13 @@ mod tests {
         assert!(out.contains(" agents "), "{out}");
         for golden in [
             "▾ shop            ◆  cl 4 · cx 3",
-            "▎ ⠋ 1 api-worker     cl opus  2m",
-            "  │ ├ ⠋ Explore: map routes Read",
+            "├─▎ ⠋ 1 api-worker   cl opus  2m",
+            "│ ├─⠋ Explore: map routes   Read",
             "▾ blog                   ○  cl 1",
         ] {
             assert!(out.contains(golden), "{golden:?}\n{out}");
         }
-        assert!(out.contains("│ └ ✓ tests: run unit suite"), "{out}");
+        assert!(out.contains("│ └─✓ tests: run unit suite"), "{out}");
         assert!(out.contains(" ◆ 2 billing"), "{out}");
         assert!(out.contains("8 agents · 2 working"), "{out}");
     }
@@ -261,15 +262,15 @@ mod tests {
             })
             .unwrap();
         let out = terminal.backend().to_string();
-        assert!(out.contains("│ ├ ◆ Explore: map routes"), "{out}");
-        assert!(out.contains("│ └ ✓ tests: run unit suite"), "{out}");
+        assert!(out.contains("│ ├─◆ Explore: map routes"), "{out}");
+        assert!(out.contains("│ └─✓ tests: run unit suite"), "{out}");
         assert_eq!(
-            terminal.backend().buffer()[(7, 3)].fg,
+            terminal.backend().buffer()[(5, 3)].fg,
             crate::theme::status_color(Status::Attention)
         );
         app.windows[0].subagents[0].needs_permission = false;
         let (out, _) = render(&app, 120, 30);
-        assert!(out.contains("│ ├ ⠋ Explore: map routes"), "{out}");
+        assert!(out.contains("│ ├─⠋ Explore: map routes"), "{out}");
     }
 
     #[test]

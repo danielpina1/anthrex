@@ -116,6 +116,7 @@ pub struct WindowInfo {
     pub runtime: Runtime,
     pub cwd: PathBuf,
     pub project: PathBuf,
+    pub worktree: Option<PathBuf>,
     pub branch: Option<String>,
     pub status: Status,
     pub tool: Option<String>,
@@ -125,6 +126,59 @@ pub struct WindowInfo {
     pub model: Option<String>,
     pub subagents: Vec<SubagentInfo>,
     pub exit: Option<ExitInfo>,
+}
+
+/// Where a window's `HEAD` points.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Head {
+    Branch(String),
+    Detached(String), // short oid
+    Unborn(String),   // the branch name that does not exist yet
+}
+
+/// A git operation in progress in a worktree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GitOperation {
+    Merge,
+    Rebase,
+    CherryPick,
+    Revert,
+    Bisect,
+}
+
+/// The git status of one worktree, as last probed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitState {
+    pub head: Head,
+    pub upstream: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
+    pub dirty: u32,
+    pub untracked: u32,
+    pub conflicts: u32,
+    pub operation: Option<GitOperation>,
+    pub stale: bool,
+}
+
+impl GitState {
+    /// True when there is nothing uncommitted, no divergence and no operation in
+    /// progress.
+    ///
+    /// This is the *single* definition of "clean": the TUI's bottom bar asks this
+    /// rather than deciding a second time from the parts it happens to be about to
+    /// render. An in-progress operation counts, which is the part that is easy to
+    /// leave out — a worktree halfway through a rebase with no dirty files is not a
+    /// worktree anyone should be told is clean.
+    pub fn is_clean(&self) -> bool {
+        self.dirty == 0
+            && self.untracked == 0
+            && self.conflicts == 0
+            && self.ahead == 0
+            && self.behind == 0
+            && self.operation.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,6 +215,7 @@ mod tests {
             runtime: Runtime::Claude,
             cwd: "/tmp/repo".into(),
             project: "/tmp/repo".into(),
+            worktree: Some("/tmp/repo".into()),
             branch: Some("feat/api".into()),
             status: Status::Working,
             tool: Some("Bash".into()),
@@ -188,6 +243,127 @@ mod tests {
         assert!(json.contains("\"state\":\"running\""));
         assert!(!json.contains("has_session"));
         assert_eq!(serde_json::from_str::<WindowInfo>(&json).unwrap(), info);
+    }
+
+    #[test]
+    fn window_info_carries_the_worktree() {
+        let mut info = WindowInfo {
+            id: 7,
+            name: "api".into(),
+            runtime: Runtime::Claude,
+            cwd: "/tmp/repo".into(),
+            project: "/tmp/repo".into(),
+            worktree: Some("/tmp/repo".into()),
+            branch: None,
+            status: Status::Working,
+            tool: None,
+            since_secs: 12,
+            last_output_secs: 1,
+            session_id: None,
+            model: None,
+            subagents: vec![],
+            exit: None,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"worktree\":\"/tmp/repo\""));
+        assert_eq!(serde_json::from_str::<WindowInfo>(&json).unwrap(), info);
+
+        info.worktree = None;
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"worktree\":null"));
+        assert_eq!(serde_json::from_str::<WindowInfo>(&json).unwrap(), info);
+    }
+
+    #[test]
+    fn git_state_round_trips_through_messagepack() {
+        let full = GitState {
+            head: Head::Branch("main".into()),
+            upstream: Some("origin/main".into()),
+            ahead: 2,
+            behind: 1,
+            dirty: 3,
+            untracked: 1,
+            conflicts: 0,
+            operation: Some(GitOperation::Rebase),
+            stale: false,
+        };
+        let packed = rmp_serde::to_vec_named(&full).unwrap();
+        let back: GitState = rmp_serde::from_slice(&packed).unwrap();
+        assert_eq!(back, full);
+
+        let minimal = GitState {
+            head: Head::Detached("a1b2c3d".into()),
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+            dirty: 0,
+            untracked: 0,
+            conflicts: 0,
+            operation: None,
+            stale: true,
+        };
+        let packed = rmp_serde::to_vec_named(&minimal).unwrap();
+        let back: GitState = rmp_serde::from_slice(&packed).unwrap();
+        assert_eq!(back, minimal);
+    }
+
+    #[test]
+    fn head_variants_serialize_snake_case() {
+        assert_eq!(
+            serde_json::to_value(Head::Branch("main".into())).unwrap(),
+            serde_json::json!({"branch": "main"})
+        );
+        assert_eq!(
+            serde_json::to_value(Head::Detached("a1b2c3d".into())).unwrap(),
+            serde_json::json!({"detached": "a1b2c3d"})
+        );
+        assert_eq!(
+            serde_json::to_value(Head::Unborn("main".into())).unwrap(),
+            serde_json::json!({"unborn": "main"})
+        );
+    }
+
+    #[test]
+    fn is_clean_is_true_only_when_nothing_is_pending() {
+        let clean = GitState {
+            head: Head::Branch("main".into()),
+            upstream: Some("origin/main".into()),
+            ahead: 0,
+            behind: 0,
+            dirty: 0,
+            untracked: 0,
+            conflicts: 0,
+            operation: None,
+            stale: false,
+        };
+        assert!(clean.is_clean());
+
+        let mut dirty = clean.clone();
+        dirty.dirty = 1;
+        assert!(!dirty.is_clean());
+
+        let mut untracked = clean.clone();
+        untracked.untracked = 1;
+        assert!(!untracked.is_clean());
+
+        let mut conflicts = clean.clone();
+        conflicts.conflicts = 1;
+        assert!(!conflicts.is_clean());
+
+        let mut ahead = clean.clone();
+        ahead.ahead = 1;
+        assert!(!ahead.is_clean());
+
+        let mut behind = clean.clone();
+        behind.behind = 1;
+        assert!(!behind.is_clean());
+
+        // A worktree mid-rebase with a spotless tree is the case this used to get
+        // wrong: every count is zero, but there is an operation in progress, and the
+        // bottom bar must not be able to derive a tick from it.
+        let mut rebasing = clean.clone();
+        rebasing.operation = Some(GitOperation::Rebase);
+        assert!(!rebasing.is_clean());
     }
 
     #[test]

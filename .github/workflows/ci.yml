@@ -40,3 +40,10 @@ jobs:
 
       - name: python3 scripts/pty-smoke.py
         run: python3 scripts/pty-smoke.py
+        env:
+          # The smoke script compares rendered screens against literal text; a git
+          # segment in the bottom bar would make those comparisons depend on the
+          # state of whatever working tree the runner happens to have. This covers
+          # scripts/pty_tree_smoke.py too: it has no __main__ of its own and is only
+          # ever run as the stage module pty-smoke.py imports and drives.
+          ANTHREX_GIT: "off"

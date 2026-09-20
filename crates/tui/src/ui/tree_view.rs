@@ -62,11 +62,7 @@ pub fn narrow_line(
             );
             (
                 vec![Span::styled(
-                    format!(
-                        "{}{} ",
-                        " ".repeat(row.indent.into()),
-                        if *collapsed { "▸" } else { "▾" }
-                    ),
+                    format!("{}{} ", row.guides, if *collapsed { "▸" } else { "▾" }),
                     bold,
                 )],
                 Span::styled(name.clone(), bold),
@@ -106,7 +102,7 @@ pub fn narrow_line(
             rights.push(vec![Span::styled(tag, theme::muted())]);
             (
                 vec![
-                    Span::raw(" ".repeat(row.indent.saturating_sub(2).into())),
+                    Span::raw(row.guides.clone()),
                     Span::styled(
                         if focused { "▎" } else { " " },
                         Style::default().fg(theme::ACCENT),
@@ -129,32 +125,35 @@ pub fn narrow_line(
                 rights,
             )
         }
-        RowKind::Subagent { info, guides, .. } => {
-            let label = match info.label.as_deref() {
-                Some(label) => format!("{}: {label}", info.kind),
-                None => info.kind.clone(),
-            };
-            (
-                vec![
-                    Span::raw(format!("{}{guides}", " ".repeat(row.indent.into()))),
-                    Span::styled(
-                        theme::subagent_glyph(info, app.spinner_frame),
-                        Style::default().fg(theme::subagent_color(info)),
-                    ),
-                    Span::raw(" "),
-                ],
-                Span::raw(label),
-                vec![
-                    vec![Span::styled(
-                        info.tool.clone().unwrap_or_default(),
-                        theme::muted(),
-                    )],
-                    vec![],
-                ],
-            )
-        }
+        RowKind::Subagent { info, .. } => (
+            vec![
+                Span::raw(row.guides.clone()),
+                Span::styled(
+                    theme::subagent_glyph(info, app.spinner_frame),
+                    Style::default().fg(theme::subagent_color(info)),
+                ),
+                Span::raw(" "),
+            ],
+            Span::raw(subagent_label(info)),
+            vec![
+                vec![Span::styled(
+                    info.tool.clone().unwrap_or_default(),
+                    theme::muted(),
+                )],
+                vec![],
+            ],
+        ),
     };
     fit_line(prefix, name, rights, usize::from(width), selected)
+}
+
+/// The text a sub-agent row shows in its name column: `kind: label` when a
+/// label was set, `kind` alone otherwise.
+fn subagent_label(info: &proto::SubagentInfo) -> String {
+    match info.label.as_deref() {
+        Some(label) => format!("{}: {label}", info.kind),
+        None => info.kind.clone(),
+    }
 }
 
 pub fn counts_text(counts: RuntimeCounts) -> String {
@@ -171,8 +170,14 @@ pub fn counts_text(counts: RuntimeCounts) -> String {
 }
 
 /// Column widths from the visible tree, after filtering and collapse.
+///
+/// `name` and `subagent_name` are the total width of guides *plus* the row's
+/// own text (decision 27): a row's guides eat into its own budget, so the
+/// text after the name column — the model, the status, the rest — starts at
+/// the same offset whatever the row's depth.
 pub struct WideColumns {
     name: usize,
+    subagent_name: usize,
     model: usize,
     position: usize,
 }
@@ -181,21 +186,29 @@ impl WideColumns {
     pub fn from_rows(rows: &[Row<'_>]) -> Self {
         let mut columns = Self {
             name: 0,
+            subagent_name: 0,
             model: 1,
             position: 1,
         };
         for row in rows {
+            let guide_width = UnicodeWidthStr::width(row.guides.as_str());
             match &row.kind {
                 RowKind::Window { info, position, .. } => {
-                    columns.name = columns
-                        .name
-                        .max(UnicodeWidthStr::width(info.name.as_str()).min(24));
+                    let name_width = UnicodeWidthStr::width(info.name.as_str()).min(24);
+                    columns.name = columns.name.max(guide_width + name_width);
                     columns.model = columns
                         .model
                         .max(UnicodeWidthStr::width(info.model.as_deref().unwrap_or("-")).min(28));
                     columns.position = columns.position.max(position.to_string().len());
                 }
-                RowKind::Project { .. } | RowKind::Subagent { .. } => {}
+                RowKind::Subagent { info, .. } => {
+                    // Unlike the window name, this is never capped: sub-agent
+                    // labels were shown in full before guides took a column,
+                    // and nothing here bounds their depth (decision 25).
+                    let name_width = UnicodeWidthStr::width(subagent_label(info).as_str());
+                    columns.subagent_name = columns.subagent_name.max(guide_width + name_width);
+                }
+                RowKind::Project { .. } => {}
             }
         }
         columns
@@ -222,11 +235,7 @@ pub fn wide_line(
             let root = if root == "~/" { "~" } else { &root };
             return fit_line(
                 vec![Span::styled(
-                    format!(
-                        "{}{} ",
-                        " ".repeat(row.indent.into()),
-                        if *collapsed { "▸" } else { "▾" }
-                    ),
+                    format!("{}{} ", row.guides, if *collapsed { "▸" } else { "▾" }),
                     bold,
                 )],
                 Span::styled(format!("{name}  {root}"), bold),
@@ -253,11 +262,12 @@ pub fn wide_line(
         } => {
             let focused = app.focused == Some(info.id);
             let position_width = columns.position;
-            let name = padded(&info.name, columns.name);
+            let guide_width = UnicodeWidthStr::width(row.guides.as_str());
+            let name = padded(&info.name, columns.name.saturating_sub(guide_width));
             let model = padded(info.model.as_deref().unwrap_or("-"), columns.model);
             let elapsed = tree::format_elapsed(app.elapsed_secs(info));
             vec![
-                Span::raw(" ".repeat(row.indent.saturating_sub(2).into())),
+                Span::raw(row.guides.clone()),
                 Span::styled(
                     if focused { "▎" } else { " " },
                     Style::default().fg(theme::ACCENT),
@@ -284,11 +294,12 @@ pub fn wide_line(
                 ),
             ]
         }
-        RowKind::Subagent { info, guides, .. } => {
-            let label = match info.label.as_deref() {
-                Some(label) => format!("{}: {label}", info.kind),
-                None => info.kind.clone(),
-            };
+        RowKind::Subagent { info, .. } => {
+            let guide_width = UnicodeWidthStr::width(row.guides.as_str());
+            let label = padded(
+                &subagent_label(info),
+                columns.subagent_name.saturating_sub(guide_width),
+            );
             let (state, duration) = match info.state {
                 proto::SubagentState::Running => ("running", app.age_secs(info.started_secs)),
                 proto::SubagentState::Done => (
@@ -303,7 +314,7 @@ pub fn wide_line(
                 ),
             };
             vec![
-                Span::raw(format!("{}{guides}", " ".repeat(row.indent.into()))),
+                Span::raw(row.guides.clone()),
                 Span::styled(
                     theme::subagent_glyph(info, app.spinner_frame),
                     Style::default().fg(theme::subagent_color(info)),

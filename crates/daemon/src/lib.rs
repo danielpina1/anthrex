@@ -20,6 +20,7 @@ pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, 
 }
 
 pub mod agent_state;
+pub mod git;
 pub mod hooks;
 pub mod launch;
 pub mod lifecycle;
@@ -29,6 +30,7 @@ pub mod project;
 pub mod server;
 pub mod status;
 pub mod subagents;
+mod subprocess;
 pub mod window;
 
 pub use lifecycle::{DaemonOptions, run};

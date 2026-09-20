@@ -16,6 +16,7 @@ fn window(
         runtime,
         cwd: project.into(),
         project: project.into(),
+        worktree: None,
         branch: None,
         status,
         tool: None,
@@ -147,6 +148,10 @@ fn row_keys(rows: &[Row<'_>]) -> Vec<NodeKey> {
     rows.iter().map(|row| row.key.clone()).collect()
 }
 
+fn guide_strings<'a>(rows: &'a [Row<'_>]) -> Vec<&'a str> {
+    rows.iter().map(|row| row.guides.as_str()).collect()
+}
+
 #[test]
 fn example_rows_in_order() {
     let windows = example();
@@ -263,32 +268,28 @@ fn positions_follow_visible_order() {
 fn guides_draw_the_nesting() {
     let windows = example();
     let rows = build(&windows, &TreeState::default());
-    let guides: Vec<_> = rows
-        .iter()
-        .filter_map(|row| match &row.kind {
-            RowKind::Subagent { info, guides, .. } => Some((info.id.as_str(), guides.as_str())),
-            RowKind::Project { .. } | RowKind::Window { .. } => None,
-        })
-        .collect();
 
     assert_eq!(
-        guides,
+        guide_strings(&rows),
         vec![
-            ("a1", "│ ├ "),
-            ("a2", "│ │ └ "),
-            ("a3", "│ └ "),
-            ("b1", "│ └ "),
-            ("b2", "│   └ "),
-            ("b3", "│     └ "),
+            "",         // shop
+            "├─",       // 1 api-worker
+            "│ ├─",     // a1
+            "│ │ └─",   // a2, the last child of a1
+            "│ └─",     // a3, the last root sub-agent
+            "├─",       // 2 billing
+            "├─",       // 3 search
+            "├─",       // 4 frontend
+            "│ └─",     // b1
+            "│   └─",   // b2, below a last sibling
+            "│     └─", // b3
+            "├─",       // 5 docs
+            "├─",       // 6 infra
+            "└─",       // 7 perf, the last window of shop
+            "",         // blog
+            "└─",       // 8 notes
         ]
     );
-    for row in rows {
-        let expected = match row.kind {
-            RowKind::Project { .. } => 0,
-            RowKind::Window { .. } | RowKind::Subagent { .. } => 2,
-        };
-        assert_eq!(row.indent, expected, "wrong indent for {:?}", row.key);
-    }
 }
 
 #[test]

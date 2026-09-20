@@ -56,6 +56,8 @@ All five must pass before a milestone is done. `cargo test` spawns real shells i
 7. **Stay inside the brief.** If you notice something worth fixing outside it, add it to `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md` under the milestone it belongs to, and move on.
 8. **Keep files focused.** A file that grows past roughly 600 lines is doing too much; split it by responsibility, following the brief's file list.
 9. **Never push to `main`, never force-push a shared branch, never merge a pull request.** Opening a pull request is the end of your job.
+10. **Never probe git under the manager lock.** Git registration, probing and unregistration each run on their own task per worktree root, entirely outside `daemon::lock(&m)`. A blocking git command that could stall while the lock is held would freeze every window, not just the one it's checking — the same class of bug as hard rule 2, for git specifically.
+11. **Every git invocation passes `--no-optional-locks` and a scrubbed environment.** Remove `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE` and `GIT_PREFIX` before spawning `git`. Skipping `--no-optional-locks` lets a probe take the index lock at the same moment an agent runs git in that worktree — an intermittent failure that is miserable to diagnose, because it reproduces only under real concurrent use, never in a quiet checkout.
 
 ## Facts learned the hard way in milestone 1
 
