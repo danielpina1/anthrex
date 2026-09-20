@@ -102,10 +102,7 @@ pub(super) fn emit_subagents<'a>(
                 id: node.info.id.clone(),
             },
             guides: guide_prefix(ancestors, has_later_sibling),
-            kind: RowKind::Subagent {
-                window,
-                info: node.info,
-            },
+            kind: RowKind::Subagent { info: node.info },
         });
         ancestors.push(has_later_sibling);
         let node_matches = matches_subagent(node.info, filter);

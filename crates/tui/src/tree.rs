@@ -43,7 +43,6 @@ pub enum RowKind<'a> {
         collapsed: bool,
     },
     Subagent {
-        window: &'a WindowInfo,
         info: &'a SubagentInfo,
     },
     // Milestone 8 adds Run { .. }.
