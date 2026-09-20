@@ -130,7 +130,13 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
         signal_token.cancel();
     });
 
-    let served = server::serve(listener, manager.clone(), shutdown.clone()).await;
+    let served = server::serve(
+        listener,
+        manager.clone(),
+        crate::git::enabled_from_env(),
+        shutdown.clone(),
+    )
+    .await;
     if let Err(e) = &served {
         tracing::error!(error = %e, "server exited with an error");
     }

@@ -1,9 +1,11 @@
 //! Accepts client connections and speaks the protocol from spec section 4.
 
+use crate::git::GitRegistry;
 use crate::manager::WindowManager;
 use crate::window::Attachment;
 use bytes::Bytes;
-use proto::{ClientMsg, DaemonMsg, PROTO_VERSION, read_frame, write_frame};
+use proto::{ClientMsg, DaemonMsg, GitState, PROTO_VERSION, read_frame, write_frame};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, mpsc};
@@ -11,11 +13,24 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 /// Runs until `shutdown` is cancelled. Each connection gets its own task.
+///
+/// Owns the [`GitRegistry`] for the whole daemon: one registry, watching and probing
+/// whatever roots the connected clients' windows reference, and one broadcast channel
+/// that turns its publications into [`DaemonMsg::Git`] for every attached client. The
+/// manager itself holds no git state and takes no git-related lock (AGENTS.md hard rule
+/// 2); registration and unregistration happen from inside `handle_client`, always after
+/// the call that changed the window table has already returned.
 pub async fn serve(
     listener: UnixListener,
     manager: Arc<WindowManager>,
+    git_enabled: bool,
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
+    let (git_publish_tx, git_publish_rx) = mpsc::unbounded_channel();
+    let git_registry = Arc::new(GitRegistry::new(git_enabled, git_publish_tx));
+    let (git_tx, _) = broadcast::channel::<DaemonMsg>(256);
+    tokio::spawn(pump_git(git_publish_rx, git_tx.clone(), shutdown.clone()));
+
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => return Ok(()),
@@ -33,12 +48,41 @@ pub async fn serve(
                     }
                 };
                 let manager = manager.clone();
+                let git_registry = git_registry.clone();
+                let git_tx = git_tx.clone();
                 let shutdown = shutdown.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_client(stream, manager, shutdown).await {
+                    if let Err(e) = handle_client(stream, manager, git_registry, git_tx, shutdown).await {
                         tracing::warn!(error = %e, "client connection ended with error");
                     }
                 });
+            }
+        }
+    }
+}
+
+/// Turns every publication the registry makes into a `DaemonMsg::Git` broadcast.
+///
+/// A `broadcast::Sender::send` never blocks and never waits for a receiver, so nothing
+/// here can be wedged by a slow or gone client — a lagging or dropped receiver only
+/// affects that one client's own forwarding task in `handle_client`.
+async fn pump_git(
+    mut publish_rx: mpsc::UnboundedReceiver<(PathBuf, Option<GitState>)>,
+    git_tx: broadcast::Sender<DaemonMsg>,
+    shutdown: CancellationToken,
+) {
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            received = publish_rx.recv() => match received {
+                Some((root, state)) => {
+                    // The registry already dedups (an unchanged poll never republishes),
+                    // so every line here is a real change — this is what the milestone's
+                    // manual check ("a `cargo build` must not storm the log") reads.
+                    tracing::debug!(?root, ?state, "git state published");
+                    let _ = git_tx.send(DaemonMsg::Git { root, state });
+                }
+                None => return,
             }
         }
     }
@@ -88,6 +132,8 @@ impl Drop for Subscription {
 async fn handle_client(
     stream: UnixStream,
     manager: Arc<WindowManager>,
+    git_registry: Arc<GitRegistry>,
+    git_tx: broadcast::Sender<DaemonMsg>,
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
     let (mut rd, mut wr) = stream.into_split();
@@ -107,6 +153,10 @@ async fn handle_client(
         return Ok(());
     }
     tracing::debug!(?client, "client connected");
+    // Subscribed before `Welcome` is even written, so nothing published between the
+    // subscription and the snapshot replay below can be missed — at worst a root's
+    // state is sent twice, never zero times.
+    let mut git_rx = git_tx.subscribe();
     write_frame(
         &mut wr,
         &DaemonMsg::Welcome {
@@ -115,6 +165,12 @@ async fn handle_client(
         },
     )
     .await?;
+    // Design decision 17: every known root goes to a fresh client right after its
+    // `Welcome`, written directly (nothing else touches `wr` yet), so a client's first
+    // git traffic is never interleaved with anything else.
+    for (root, state) in git_registry.snapshot() {
+        write_frame(&mut wr, &DaemonMsg::Git { root, state }).await?;
+    }
 
     // All outgoing traffic goes through one channel so the writer is never shared.
     let (out_tx, mut out_rx) = mpsc::channel::<DaemonMsg>(256);
@@ -137,6 +193,27 @@ async fn handle_client(
                 .is_err()
             {
                 break;
+            }
+        }
+    });
+
+    // Forwards every later git publication to this client. A slow or gone client can
+    // only stall this task's own `out_tx.send` (bounded by that client's channel), the
+    // same way `changes_task` already can — it never touches `git_tx` itself, so it
+    // cannot delay `pump_git` or any other client's forwarding task.
+    let git_out = out_tx.clone();
+    let git_task = tokio::spawn(async move {
+        loop {
+            match git_rx.recv().await {
+                Ok(msg) => {
+                    if git_out.send(msg).await.is_err() {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::debug!(missed = n, "client lagged on git broadcast");
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     });
@@ -169,6 +246,7 @@ async fn handle_client(
             ClientMsg::CreateWindow { spec, cols, rows } => {
                 let manager = manager.clone();
                 let out_tx = out_tx.clone();
+                let git_registry = git_registry.clone();
                 tokio::spawn(async move {
                     let roots = crate::project::resolve_roots(spec.cwd.clone()).await;
                     // PTY creation can block too; keep it off the runtime worker.
@@ -176,8 +254,16 @@ async fn handle_client(
                         manager.create(spec, roots.project, roots.worktree, cols, rows)
                     })
                     .await;
+                    // `create` has already returned and its lock has already been
+                    // released by the time this runs; `register` is never called from
+                    // inside the closure above or while `spawn_blocking` is in flight.
                     let reply = match result {
-                        Ok(Ok(info)) => DaemonMsg::Created { window_id: info.id },
+                        Ok(Ok(info)) => {
+                            if let Some(root) = info.worktree.clone() {
+                                git_registry.register(root);
+                            }
+                            DaemonMsg::Created { window_id: info.id }
+                        }
                         Ok(Err(e)) => error("create", e.to_string()),
                         Err(e) => error("create", e.to_string()),
                     };
@@ -251,7 +337,25 @@ async fn handle_client(
                 .map(|e| error("resize", e.to_string())),
             ClientMsg::Kill { window_id } => Some(ack_or_error("kill", manager.kill(window_id))),
             ClientMsg::Remove { window_id, .. } => {
-                Some(ack_or_error("remove", manager.remove(window_id)))
+                // Captured before `remove`, never held across it: `list` and `remove`
+                // each take and release the manager lock on their own, so nothing here
+                // runs with it held (AGENTS.md hard rule 2, design decision 16).
+                let removed_root = manager
+                    .list()
+                    .into_iter()
+                    .find(|w| w.id == window_id)
+                    .and_then(|w| w.worktree);
+                let result = manager.remove(window_id);
+                if result.is_ok()
+                    && let Some(root) = removed_root
+                    && !manager
+                        .list()
+                        .iter()
+                        .any(|w| w.worktree.as_deref() == Some(root.as_path()))
+                {
+                    git_registry.unregister(&root);
+                }
+                Some(ack_or_error("remove", result))
             }
             ClientMsg::Rename { window_id, name } => {
                 Some(ack_or_error("rename", manager.rename(window_id, name)))
@@ -285,6 +389,7 @@ async fn handle_client(
         previous.stop().await;
     }
     changes_task.abort();
+    git_task.abort();
     drop(out_tx);
     let _ = writer.await;
     tracing::debug!("client disconnected");

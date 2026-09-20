@@ -19,7 +19,7 @@ async fn start_daemon() -> (tempfile::TempDir, PathBuf, CancellationToken) {
         }
     });
     let token = CancellationToken::new();
-    tokio::spawn(serve(listener, manager, token.clone()));
+    tokio::spawn(serve(listener, manager, true, token.clone()));
     (dir, socket, token)
 }
 
