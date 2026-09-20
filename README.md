@@ -32,8 +32,8 @@ Inside the UI, the prefix key is `Ctrl-b`:
 | `C-b j` / `C-b k` | next / previous agent |
 | `C-b 1`..`9` | focus agent by number |
 | `C-b c` | new shell window |
-| `C-b t` | tree mode (j/k, Enter, Space, /) |
-| `C-b T` | tree overview |
+| `C-b t` | tree mode (j/k, h/l, Enter, Space, /) |
+| `C-b T` | tree overview: a drawn graph, roots on the left |
 | `C-b <` / `C-b >` | sidebar width |
 | `C-b x` | kill agent |
 | `C-b X` | remove agent |
@@ -47,7 +47,7 @@ Mouse: click a sidebar card to focus it; the wheel scrolls (forwarded to program
 
 ## Git status
 
-The bottom bar shows the branch, uncommitted-work count, divergence from upstream, and any in-progress merge or rebase for the focused agent's checkout. A filesystem watcher gives the fast path, so it moves within a fraction of a second of a commit; a 30-second safety poll of every registered checkout is the backstop, so the cost while a repository sits idle is one cheap `git status` probe every 30 seconds, not nothing. The watch is recursive, and on Linux's inotify backend that takes one descriptor per directory in the checkout, so on a host with a low `fs.inotify.max_user_watches` the watcher can fail to arm and that checkout falls back to the poll alone — correct, just up to 30 seconds behind. Set `ANTHREX_GIT=off` to disable the watcher and probes entirely. The project tree (`C-b t` / `C-b T`) is drawn with box-drawing connectors (`├─`, `└─`, `│`) at every level, to any depth, so a worker's own sub-agents stay legible.
+The bottom bar shows the branch, uncommitted-work count, divergence from upstream, and any in-progress merge or rebase for the focused agent's checkout. A filesystem watcher gives the fast path, so it moves within a fraction of a second of a commit; a 30-second safety poll of every registered checkout is the backstop, so the cost while a repository sits idle is one cheap `git status` probe every 30 seconds, not nothing. The watch is recursive, and on Linux's inotify backend that takes one descriptor per directory in the checkout, so on a host with a low `fs.inotify.max_user_watches` the watcher can fail to arm and that checkout falls back to the poll alone — correct, just up to 30 seconds behind. Set `ANTHREX_GIT=off` to disable the watcher and probes entirely. The project tree (`C-b t`) is a sidebar list drawn with box-drawing connectors (`├─`, `└─`, `│`) at every level, to any depth, so a worker's own sub-agents stay legible. The overview (`C-b T`) draws the same tree as a graph instead: rounded boxes joined by edges, projects on the left and sub-agents to the right, on a canvas you pan with the wheel, a drag, or `h`/`l` to jump to a node's parent or first child. The footer spells the selected node out in full.
 
 ## Test
 

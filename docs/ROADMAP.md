@@ -29,8 +29,8 @@ The protocol version currently on `main` is **4**, raised from 3 by milestone 4.
 | 3 | Agent status and sub-agent tracking from hooks | `docs/milestones/M3-agent-status.md` | 2 | `done` |
 | 4 | Project tree view | `docs/milestones/M4-project-tree.md` | 3 | `done` |
 | 4.5 | Git status in the bottom bar, and tree connectors | `docs/milestones/M4.5-git-and-tree.md` | 4 | `done` |
-| 4.6 | Graph overview, and sub-agent labels worth reading | `docs/milestones/M4.6-graph-overview.md` | 4.5 | `ready` |
-| 5 | New-agent dialog and git worktrees | `docs/milestones/M5-worktrees.md` | 4.5 | `blocked` |
+| 4.6 | Graph overview, and sub-agent labels worth reading | `docs/milestones/M4.6-graph-overview.md` | 4.5 | `done` |
+| 5 | New-agent dialog and git worktrees | `docs/milestones/M5-worktrees.md` | 4.5 | `ready` |
 | 6 | Persistence, resume, rename, config, reconnect | `docs/milestones/M6-persistence.md` | 3 | `blocked` |
 | 7 | Split panes | `docs/milestones/M7-split-panes.md` | 4 | `blocked` |
 | 8 | Orchestration engine: runs, tasks, worktrees, review and merge | `docs/milestones/M8-orchestration-engine.md` | 5, 6 | `blocked` |
