@@ -20,14 +20,11 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 /// How far one wheel notch scrolls the graph canvas (decision 16).
 const WHEEL_ROWS: u16 = 3;
 
-/// How far one wheel notch scrolls a list of rows.
-const WHEEL_LIST_ROWS: isize = 3;
-
 /// What the last left press left behind: enough to recognise a double click,
 /// and the cell a drag should measure its next step from.
 #[derive(Debug, Default)]
 pub struct MouseState {
-    press: Option<(u16, u16, Instant)>,
+    last_press: Option<(u16, u16, Instant)>,
     drag_from: Option<(u16, u16)>,
 }
 
@@ -38,9 +35,9 @@ impl MouseState {
     /// instead of firing again on every press after the second.
     fn press(&mut self, column: u16, row: u16) -> bool {
         let double = self
-            .press
+            .last_press
             .is_some_and(|(x, y, at)| (x, y) == (column, row) && at.elapsed() < DOUBLE_CLICK);
-        self.press = (!double).then(|| (column, row, Instant::now()));
+        self.last_press = (!double).then(|| (column, row, Instant::now()));
         self.drag_from = Some((column, row));
         double
     }
@@ -62,14 +59,9 @@ impl App {
             return vec![];
         }
         if self.sidebar_visible && layout.sidebar_list.contains((column, row).into()) {
-            self.tree.sidebar.scroll(
-                if up {
-                    -WHEEL_LIST_ROWS
-                } else {
-                    WHEEL_LIST_ROWS
-                },
-                self.rows().len(),
-            );
+            self.tree
+                .sidebar
+                .scroll(if up { -3 } else { 3 }, self.rows().len());
             return vec![];
         }
         if self.overview {
