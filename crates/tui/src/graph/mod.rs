@@ -76,8 +76,9 @@ pub fn layout(rows: &[Row<'_>]) -> Layout {
         return Layout::default();
     }
 
-    let (children, roots) = parentage(rows);
-    let widths = tier_widths(rows);
+    let tiers = tier_count(rows);
+    let (children, roots) = parentage(rows, tiers);
+    let widths = tier_widths(rows, tiers);
     let xs = tier_columns(&widths);
 
     let mut tops = vec![0; rows.len()];
@@ -122,8 +123,7 @@ pub fn layout(rows: &[Row<'_>]) -> Layout {
 /// Depth alone carries the shape: in pre-order the parent of a row is whatever
 /// row was last seen one level up, and anything deeper than that row is no
 /// longer in scope once we come back out.
-fn parentage(rows: &[Row<'_>]) -> (Vec<Vec<usize>>, Vec<usize>) {
-    let tiers = tier_count(rows);
+fn parentage(rows: &[Row<'_>], tiers: usize) -> (Vec<Vec<usize>>, Vec<usize>) {
     let mut children = vec![Vec::new(); rows.len()];
     let mut roots = Vec::new();
     let mut last_in_tier: Vec<Option<usize>> = vec![None; tiers];
@@ -143,8 +143,8 @@ fn parentage(rows: &[Row<'_>]) -> (Vec<Vec<usize>>, Vec<usize>) {
 
 /// One width per tier: the widest content in it plus borders and padding,
 /// held between the floor and the cap (decision 3).
-fn tier_widths(rows: &[Row<'_>]) -> Vec<u16> {
-    let mut widths = vec![MIN_NODE_WIDTH; tier_count(rows)];
+fn tier_widths(rows: &[Row<'_>], tiers: usize) -> Vec<u16> {
+    let mut widths = vec![MIN_NODE_WIDTH; tiers];
     for row in rows {
         let content = u16::try_from(content_width(row)).unwrap_or(MAX_NODE_WIDTH);
         let wanted = content
@@ -168,6 +168,7 @@ fn tier_columns(widths: &[u16]) -> Vec<u16> {
     xs
 }
 
+/// One more than the deepest row's depth: how many tiers the canvas has.
 fn tier_count(rows: &[Row<'_>]) -> usize {
     rows.iter()
         .map(|row| usize::from(row.depth).saturating_add(1))

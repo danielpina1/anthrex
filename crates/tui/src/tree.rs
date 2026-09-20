@@ -296,6 +296,7 @@ pub fn build<'a>(windows: &'a [WindowInfo], state: &TreeState) -> Vec<Row<'a>> {
                     },
                     &member.forest,
                     &mut ancestors,
+                    // A window's own sub-agents are two levels below a project.
                     2,
                     false,
                 );

@@ -356,3 +356,27 @@ fn wide_characters_count_as_two_columns() {
     assert_eq!(rect(&layout, &tree, 0), Rect::new(0, 0, 24, 3));
     assert_eq!(layout.size, (24, 3));
 }
+
+#[test]
+fn every_status_glyph_is_one_column() {
+    // `GLYPH_COLUMNS` budgets one column for the glyph and one for the space
+    // after it. A two-column glyph would leave every box in the tree one
+    // column short of its content.
+    for status in [
+        Status::Starting,
+        Status::Working,
+        Status::Idle,
+        Status::Attention,
+        Status::Done,
+        Status::Exited,
+    ] {
+        for frame in 0..crate::theme::SPINNER.len() {
+            let glyph = crate::theme::status_glyph(status, frame);
+            assert_eq!(
+                unicode_width::UnicodeWidthStr::width(glyph),
+                1,
+                "glyph {glyph} for {status:?}"
+            );
+        }
+    }
+}
