@@ -161,6 +161,48 @@ fn a_wide_character_label_keeps_the_border_aligned() {
     );
 }
 
+/// A wide grapheme is two slots — the grapheme, then an empty continuation —
+/// and either edge of the viewport can fall between them: the pan can clip the
+/// grapheme and keep the continuation, and the right edge can keep the
+/// grapheme and clip the continuation. Left unhandled the first leaves the
+/// line one column short, which ratatui left-aligns, shifting every border to
+/// its right out of line with the rows above and below; the second leaves it
+/// one column long.
+#[test]
+fn a_wide_grapheme_cut_by_either_edge_keeps_the_line_the_areas_width() {
+    let name = "日本語プロジェクト";
+    let app = app_with(vec![window(1, &format!("/r/{name}"), "w", Status::Idle)]);
+    let rows = app.rows();
+    let layout = layout(&rows);
+    // Every horizontal drag position at every width, not one chosen pair:
+    // roughly half of them put one edge or the other inside a grapheme.
+    for width in 1..=layout.size.0 {
+        for pan_x in 0..=layout.size.0 {
+            let area = Rect::new(0, 0, width, 3);
+            let lines = paint(&layout, area, Pan { x: pan_x, y: 0 }, &app);
+            for (index, text) in lines_text(&lines).iter().enumerate() {
+                assert_eq!(
+                    UnicodeWidthStr::width(text.as_str()),
+                    usize::from(width),
+                    "line {index} at pan.x {pan_x} in a {width}-column area: {text:?}"
+                );
+            }
+        }
+    }
+
+    // The two cases spelled out. The project's content row is
+    // `│ ○ 日本語プロジェクト │`, so its first `日` covers canvas columns 4
+    // and 5. A pan of 5 clips that grapheme and leaves its continuation
+    // leading the line, and `ロ` at the far end loses its continuation to the
+    // right edge: one space each, and eight columns of line.
+    let clipped_head = paint(&layout, Rect::new(0, 0, 8, 3), Pan { x: 5, y: 0 }, &app);
+    assert_eq!(lines_text(&clipped_head)[1], " 本語プ ");
+    // Three columns from column 2: the glyph, a space, and a `日` whose own
+    // continuation is past the right edge.
+    let clipped_tail = paint(&layout, Rect::new(0, 0, 3, 3), Pan { x: 2, y: 0 }, &app);
+    assert_eq!(lines_text(&clipped_tail)[1], "○  ");
+}
+
 #[test]
 fn the_viewport_shows_only_its_window_of_the_canvas() {
     // One project, two windows: the project (tier 0, x 0) centres at y 2

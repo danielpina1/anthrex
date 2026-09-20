@@ -144,17 +144,41 @@ impl Grid {
 /// status glyph is its own because its colour differs from its neighbours.
 fn merge_runs(cells: &[Cell]) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
-    for cell in cells {
+    let last_index = cells.len().saturating_sub(1);
+    for (index, cell) in cells.iter().enumerate() {
+        let text = edge_text(cell, index == 0, index == last_index);
         match spans.last_mut() {
             Some(last) if last.style == cell.style => {
                 let mut content = last.content.to_string();
-                content.push_str(&cell.text);
+                content.push_str(text);
                 last.content = content.into();
             }
-            _ => spans.push(Span::styled(cell.text.clone(), cell.style)),
+            _ => spans.push(Span::styled(text.to_owned(), cell.style)),
         }
     }
     spans
+}
+
+/// The text one cell contributes to its line, with the two halves of a wide
+/// grapheme that the viewport's own edges can separate put right.
+///
+/// A wide grapheme occupies two slots — the grapheme, then an empty
+/// continuation — and `Grid::index` clips one slot at a time. When the pan
+/// lands on the second slot the grapheme is clipped away and the empty string
+/// survives; when the viewport's right edge falls between the two, the
+/// grapheme survives without its continuation. Either way the pair has lost a
+/// cell, so the survivor becomes a space and the line keeps the area's display
+/// width. Left alone, the first case leaves the line one column short and
+/// ratatui left-aligns it, shifting every border to its right out of line with
+/// the rows above and below; the second leaves it one column too long.
+fn edge_text(cell: &Cell, first: bool, last: bool) -> &str {
+    let orphaned_continuation = first && cell.text.is_empty();
+    let orphaned_grapheme = last && UnicodeWidthStr::width(cell.text.as_str()) == 2;
+    if orphaned_continuation || orphaned_grapheme {
+        " "
+    } else {
+        &cell.text
+    }
 }
 
 /// Paints one node's three rows into `grid`, at its placed rectangle.
