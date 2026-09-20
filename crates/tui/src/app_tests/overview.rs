@@ -1,5 +1,9 @@
 use super::*;
+use crate::graph::Pan;
 use crate::tree::NodeKey;
+use crate::ui::overview;
+use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
 fn toggle(app: &mut App) -> Vec<Effect> {
@@ -7,12 +11,19 @@ fn toggle(app: &mut App) -> Vec<Effect> {
     press(app, KeyCode::Char('T'), KeyModifiers::NONE)
 }
 
-fn opened() -> (App, crate::ui::Layout) {
+/// Opens the overview and reports the layout the next frame will draw into,
+/// with both viewports already set the way `lib::draw` sets them.
+fn opened_at(width: u16, height: u16) -> (App, crate::ui::Layout) {
     let mut app = app_with(tree::example_windows());
     assert!(toggle(&mut app).is_empty());
-    let layout = crate::ui::layout(Rect::new(0, 0, 120, 30), app.sidebar_width);
+    let layout = crate::ui::layout(Rect::new(0, 0, width, height), app.sidebar_width);
     app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
+    app.set_graph_viewport(layout.main);
     (app, layout)
+}
+
+fn opened() -> (App, crate::ui::Layout) {
+    opened_at(120, 30)
 }
 
 fn assert_closed(app: &App) {
@@ -21,6 +32,50 @@ fn assert_closed(app: &App) {
     assert!(!app.keymap.tree_mode());
     assert_eq!(app.tree.selected, None);
     assert!(app.tree.filter.is_empty());
+}
+
+fn select(app: &mut App, key: NodeKey) {
+    let rows = tree::build(&app.windows, &app.tree);
+    app.tree.select(&rows, key);
+    app.reveal_tree_anchor();
+}
+
+/// The screen cell at the middle of `key`'s box, which must be on screen.
+fn box_middle(app: &App, main: Rect, key: &NodeKey) -> (u16, u16) {
+    let view = overview::view(app, main);
+    let rect = view.layout.node(key).expect("a visible row is placed").rect;
+    let cell = (
+        view.canvas.x + (rect.x + rect.width / 2) - view.pan.x,
+        view.canvas.y + (rect.y + 1) - view.pan.y,
+    );
+    assert!(
+        view.canvas.contains(cell.into()),
+        "{key:?} at {rect:?} is off screen under pan {:?}",
+        view.pan
+    );
+    cell
+}
+
+fn drawn(app: &App, width: u16, height: u16) -> Buffer {
+    let mut terminal = ratatui::Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal
+        .draw(|frame| {
+            crate::ui::draw(frame, app);
+        })
+        .unwrap();
+    terminal.backend().buffer().clone()
+}
+
+/// Every cell inside `rect`, rows joined by newlines.
+fn text_in(buffer: &Buffer, rect: Rect) -> String {
+    (rect.y..rect.bottom())
+        .map(|y| {
+            (rect.x..rect.right())
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[test]
@@ -94,42 +149,126 @@ fn overview_keeps_a_hidden_sidebar_hidden_and_preserves_pty_size() {
 }
 
 #[test]
-fn a_click_in_the_overview_acts_like_enter() {
-    let (mut app, layout) = opened();
-    assert_eq!(
-        app.on_click(layout.main_inner.x, layout.main_inner.y + 5, &layout),
-        vec![Effect::Send(ClientMsg::Subscribe {
-            window_id: 2,
-            cols: 80,
-            rows: 24,
-        })]
-    );
-    assert_eq!(app.focused, Some(2));
-    assert_closed(&app);
+fn the_overview_draws_boxes() {
+    // Wide enough that the whole canvas fits, so nothing is clipped away.
+    let (app, layout) = opened_at(200, 50);
+    let view = overview::view(&app, layout.main);
+    assert_eq!(view.pan, Pan::default(), "the canvas fits: no pan");
+    let buffer = drawn(&app, 200, 50);
+    let canvas = text_in(&buffer, view.canvas);
+    for glyph in ['╭', '╮', '╰', '╯'] {
+        assert!(canvas.contains(glyph), "no {glyph} in:\n{canvas}");
+    }
+    // `┤` is where an edge meets a child's left border. The sidebar's guides
+    // draw `├`, `│` and `└`, so only the graph can have produced this one.
+    assert!(canvas.contains('┤'), "no edge junction in:\n{canvas}");
+    assert!(canvas.contains("1 api-worker"), "{canvas}");
+    // The aligned columns are gone from the rows; the footer carries them now.
+    assert!(!canvas.contains("claude-opus-5"), "{canvas}");
 }
 
 #[test]
-fn overview_clicks_activate_projects_subagents_and_the_focused_window() {
+fn the_pan_follows_the_selection() {
     let (mut app, layout) = opened();
-    assert!(
-        app.on_click(layout.main_inner.x, layout.main_inner.y, &layout)
-            .is_empty()
-    );
-    assert!(app.tree.is_collapsed(&NodeKey::Project("/r/shop".into())));
-    assert_eq!(app.tree.selected, Some(NodeKey::Project("/r/shop".into())));
-    assert!(app.overview);
-    assert_eq!(app.tree_input, Some(TreeInput::Navigate));
+    let canvas = overview::view(&app, layout.main).canvas;
+    assert_eq!(app.graph_pan, Pan::default());
 
-    let (mut app, layout) = opened();
+    // The deepest tier lies past the viewport's right edge, and nothing else.
+    let deep = NodeKey::Subagent {
+        window_id: 4,
+        id: "b3".into(),
+    };
+    select(&mut app, deep.clone());
+    let view = overview::view(&app, layout.main);
     assert!(
-        app.on_click(layout.main_inner.x, layout.main_inner.y + 1, &layout)
-            .is_empty()
+        app.graph_pan.x > 0,
+        "the deepest tier is off the right edge of a {}-column viewport: {:?}",
+        canvas.width,
+        app.graph_pan
     );
-    assert_closed(&app);
+    assert_eq!(app.graph_pan.y, 0, "it was already vertically visible");
+    let rect = view.layout.node(&deep).unwrap().rect;
+    assert!(
+        rect.x >= view.pan.x && rect.right() <= view.pan.x + canvas.width,
+        "{rect:?} is not wholly inside the viewport at {:?}",
+        view.pan
+    );
 
-    let (mut app, layout) = opened();
+    // The last project's window lies past the bottom edge, and back to the left.
+    select(&mut app, NodeKey::Window(8));
+    let view = overview::view(&app, layout.main);
+    assert!(app.graph_pan.y > 0, "{:?}", app.graph_pan);
+    let rect = view.layout.node(&NodeKey::Window(8)).unwrap().rect;
+    assert!(
+        rect.y >= view.pan.y && rect.bottom() <= view.pan.y + canvas.height,
+        "{rect:?} is not wholly inside the viewport at {:?}",
+        view.pan
+    );
+    assert!(rect.x >= view.pan.x && rect.right() <= view.pan.x + canvas.width);
+}
+
+#[test]
+fn the_footer_shows_the_selected_node_in_full() {
+    let (mut app, layout) = opened_at(200, 50);
+    let label = "grep every handler in the repository";
+    app.windows[0].subagents[1].label = Some(label.into());
+    app.windows[0].subagents[1].model = Some("claude-haiku-4-5".into());
+    let key = NodeKey::Subagent {
+        window_id: 1,
+        id: "a2".into(),
+    };
+    select(&mut app, key.clone());
+    let full = format!("general-purpose: {label}");
+
+    let view = overview::view(&app, layout.main);
+    let buffer = drawn(&app, 200, 50);
+    let footer = text_in(&buffer, view.footer);
+    assert!(footer.contains(&full), "footer {footer:?} misses {full:?}");
+    for field in ["claude-haiku-4-5", "running", "20s"] {
+        assert!(footer.contains(field), "footer {footer:?} misses {field:?}");
+    }
+    // The box itself cannot hold the label: that is what the footer is for.
+    let canvas = text_in(&buffer, view.canvas);
+    assert!(!canvas.contains(&full), "{canvas}");
+    assert!(canvas.contains('…'), "{canvas}");
+}
+
+#[test]
+fn hit_testing_selects_on_click() {
+    let (mut app, layout) = opened_at(200, 50);
+    let key = NodeKey::Window(4);
+    let (x, y) = box_middle(&app, layout.main, &key);
+    assert!(
+        app.on_click(x, y, &layout).is_empty(),
+        "a click only selects"
+    );
+    assert_eq!(app.tree.selected, Some(key));
+    assert_eq!(app.focused, Some(1), "the focus did not move");
+    assert!(app.overview, "the overview stays open");
+
+    // A click on a gap between boxes selects nothing and changes nothing.
+    let view = overview::view(&app, layout.main);
+    let gap = (
+        view.canvas.x + crate::graph::MIN_NODE_WIDTH + 1,
+        view.canvas.y + view.canvas.height - 1,
+    );
     assert_eq!(
-        app.on_click(layout.main_inner.x, layout.main_inner.y + 9, &layout),
+        view.geometry().node_at(&view.layout, gap.0, gap.1),
+        None,
+        "the fixture's bottom-left corner should be empty canvas"
+    );
+    assert!(app.on_click(gap.0, gap.1, &layout).is_empty());
+    assert_eq!(app.tree.selected, Some(NodeKey::Window(4)));
+    assert!(app.overview);
+}
+
+#[test]
+fn a_double_click_focuses() {
+    let (mut app, layout) = opened_at(200, 50);
+    let (x, y) = box_middle(&app, layout.main, &NodeKey::Window(4));
+    assert!(app.on_click(x, y, &layout).is_empty());
+    assert_eq!(
+        app.on_click(x, y, &layout),
         vec![Effect::Send(ClientMsg::Subscribe {
             window_id: 4,
             cols: 80,
@@ -138,59 +277,113 @@ fn overview_clicks_activate_projects_subagents_and_the_focused_window() {
     );
     assert_eq!(app.focused, Some(4));
     assert_closed(&app);
+
+    // A project toggles instead, and a third press starts a fresh gesture
+    // rather than firing again.
+    let (mut app, layout) = opened_at(200, 50);
+    let project = NodeKey::Project("/r/shop".into());
+    let (x, y) = box_middle(&app, layout.main, &project);
+    assert!(app.on_click(x, y, &layout).is_empty());
+    assert!(app.on_click(x, y, &layout).is_empty());
+    assert!(app.tree.is_collapsed(&project));
+    assert!(app.on_click(x, y, &layout).is_empty());
+    assert!(
+        app.tree.is_collapsed(&project),
+        "the third press is a first"
+    );
 }
 
 #[test]
-fn overview_click_activates_while_filtering_and_with_sidebar_hidden() {
-    let (mut app, _) = opened();
-    app.sidebar_visible = false;
-    let layout = crate::ui::layout(Rect::new(0, 0, 120, 30), 0);
-    press(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
-    assert!(app.on_paste("billing".into()).is_empty());
-    assert_eq!(app.tree_input, Some(TreeInput::Filter));
+fn the_wheel_scrolls_vertically_by_three() {
+    let (mut app, layout) = opened();
+    let canvas = overview::view(&app, layout.main).canvas;
+    let (x, y) = (canvas.x + 1, canvas.y + 1);
+    assert!(app.on_scroll(false, x, y, &layout).is_empty());
+    assert_eq!(app.graph_pan, Pan { x: 0, y: 3 });
+    assert!(app.on_scroll(false, x, y, &layout).is_empty());
+    assert_eq!(app.graph_pan, Pan { x: 0, y: 6 });
+    assert!(app.on_scroll(true, x, y, &layout).is_empty());
+    assert_eq!(app.graph_pan, Pan { x: 0, y: 3 });
+    // A same-size draw must not snap the pan back to the selection.
+    app.set_graph_viewport(layout.main);
+    assert_eq!(app.graph_pan, Pan { x: 0, y: 3 });
+    // The wheel over the sidebar is still the sidebar's, not the canvas's.
+    assert!(
+        app.on_scroll(false, 2, layout.sidebar_list.y, &layout)
+            .is_empty()
+    );
+    assert_eq!(app.graph_pan, Pan { x: 0, y: 3 });
+}
+
+#[test]
+fn dragging_pans_both_axes() {
+    let (mut app, layout) = opened();
+    let canvas = overview::view(&app, layout.main).canvas;
+    let (x, y) = (canvas.x + 20, canvas.y + 20);
+    assert!(app.on_click(x, y, &layout).is_empty());
+    // Dragging up and to the left pulls the canvas with the cursor, so the
+    // viewport moves down and to the right.
+    assert!(app.on_drag(x - 8, y - 5, &layout).is_empty());
+    assert_eq!(app.graph_pan, Pan { x: 8, y: 5 });
+    assert!(app.on_drag(x - 10, y - 6, &layout).is_empty());
+    assert_eq!(app.graph_pan, Pan { x: 10, y: 6 });
+    // Dragging back the other way returns it, and the canvas edge holds.
+    assert!(app.on_drag(x + 40, y + 40, &layout).is_empty());
+    assert_eq!(app.graph_pan, Pan::default());
+
+    // A press outside the canvas ends the gesture, so the next drag has no
+    // anchor to pan from and leaves the canvas where it is.
+    assert!(app.on_click(2, layout.sidebar_footer.y, &layout).is_empty());
+    assert!(app.on_drag(x - 6, y - 6, &layout).is_empty());
+    assert_eq!(app.graph_pan, Pan::default());
+}
+
+#[test]
+fn overview_clicks_ignore_modals_borders_and_the_sidebar_stays_live() {
+    let (mut app, layout) = opened_at(200, 50);
+    let inside = box_middle(&app, layout.main, &NodeKey::Window(4));
+    for (x, y) in [
+        (layout.main.x, inside.1),
+        (layout.main.right() - 1, inside.1),
+        (inside.0, layout.main.y),
+        (inside.0, layout.main.bottom() - 1),
+    ] {
+        assert!(app.on_click(x, y, &layout).is_empty());
+        assert_eq!(app.tree.selected, Some(NodeKey::Window(1)));
+    }
+    // The sidebar is still clickable while the overview is open.
     assert_eq!(
-        app.on_click(layout.main_inner.x, layout.main_inner.y + 1, &layout),
+        app.on_click(2, layout.sidebar_list.y + 5, &layout),
         vec![Effect::Send(ClientMsg::Subscribe {
             window_id: 2,
             cols: 80,
             rows: 24,
         })]
     );
-    assert_closed(&app);
-}
+    assert_eq!(app.focused, Some(2));
 
-#[test]
-fn overview_clicks_respect_modal_borders_and_undrawn_rows() {
-    let (mut app, layout) = opened();
-    for (x, y) in [
-        (layout.main.x, layout.main_inner.y + 5),
-        (layout.main_inner.x, layout.main.y),
-        (layout.main.right() - 1, layout.main_inner.y + 5),
-        (layout.main_inner.x, layout.main.bottom() - 1),
-        (layout.main_inner.x, layout.main_inner.y + 16),
-    ] {
-        assert!(app.on_click(x, y, &layout).is_empty());
-        assert!(app.overview);
-        assert_eq!(app.focused, Some(1));
-    }
+    let (mut app, layout) = opened_at(200, 50);
     app.modal = Some(Modal::Help);
-    assert!(
-        app.on_click(layout.main_inner.x, layout.main_inner.y + 5, &layout)
-            .is_empty()
-    );
-    assert!(app.overview);
-    assert_eq!(app.focused, Some(1));
+    assert!(app.on_click(inside.0, inside.1, &layout).is_empty());
+    assert!(app.on_drag(inside.0 + 4, inside.1, &layout).is_empty());
+    assert!(app.on_scroll(false, inside.0, inside.1, &layout).is_empty());
+    assert_eq!(app.graph_pan, Pan::default());
+    assert_eq!(app.tree.selected, Some(NodeKey::Window(1)));
 }
 
 #[test]
-fn overview_click_uses_its_own_scrolled_viewport() {
-    let (mut app, _) = opened();
-    let layout = crate::ui::layout(Rect::new(0, 0, 120, 13), app.sidebar_width);
-    app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
-    app.tree.overview.top = 4;
-    app.tree.sidebar.top = 0;
+fn the_overview_click_works_with_a_filter_and_a_hidden_sidebar() {
+    let (mut app, _) = opened_at(200, 50);
+    app.sidebar_visible = false;
+    let layout = crate::ui::layout(Rect::new(0, 0, 200, 50), 0);
+    app.set_graph_viewport(layout.main);
+    press(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
+    assert!(app.on_paste("billing".into()).is_empty());
+    assert_eq!(app.tree_input, Some(TreeInput::Filter));
+    let (x, y) = box_middle(&app, layout.main, &NodeKey::Window(2));
+    assert!(app.on_click(x, y, &layout).is_empty());
     assert_eq!(
-        app.on_click(layout.main_inner.x, layout.main_inner.y + 1, &layout),
+        app.on_click(x, y, &layout),
         vec![Effect::Send(ClientMsg::Subscribe {
             window_id: 2,
             cols: 80,

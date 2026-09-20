@@ -139,6 +139,14 @@ def run_project_tree_stage(repo_root, pty_proc, run_cmd, fail):
         proc.wait_for("tree-b · shell", timeout=10.0, label="tree-b focused title")
         proc.send(b"\x02T")
         proc.wait_for(" tree overview ", timeout=10.0, label="tree overview")
+        # The overview draws a graph: a box carries a name, and the footer
+        # spells the selected node out in full. Narrow it to this repository's
+        # own windows, walk up to the project box, and read its root there.
+        proc.send(b"/tree-")
+        proc.wait_for(" FILTER ", timeout=10.0, label="overview filter mode")
+        proc.send(b"\r")
+        proc.wait_for(" TREE ", timeout=10.0, label="overview navigation after filtering")
+        proc.send(b"kkkkk")
         proc.wait_for(canonical_repo, timeout=10.0, label="canonical repository in overview")
         proc.send(b"\x1b")
         proc.wait_for("tree-b · shell", timeout=10.0, label="overview dismissed")

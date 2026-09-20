@@ -144,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    fn overview_replaces_the_terminal_with_the_wide_tree() {
+    fn overview_replaces_the_terminal_with_the_graph() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = example_app();
         app.on_daemon(proto::DaemonMsg::Snapshot {
@@ -153,23 +153,25 @@ mod tests {
             rows: 24,
             bytes: b"TERMINAL-TEXT".to_vec(),
         });
-        assert!(render(&app, 160, 30).0.contains("TERMINAL-TEXT"));
+        assert!(render(&app, 200, 50).0.contains("TERMINAL-TEXT"));
         open_overview(&mut app);
-        let (out, _) = render(&app, 160, 30);
+        app.set_graph_viewport(layout(Rect::new(0, 0, 200, 50), app.sidebar_width).main);
+        let (out, _) = render(&app, 200, 50);
         for expected in [
             " tree overview ",
-            "claude-opus-5",
-            "claude-sonnet-4-5",
-            "/r/shop",
-            "general-purpose: grep handlers",
-            "running",
-            "done",
+            // Boxes: a project, a window and a sub-agent, each with its
+            // glyph, between the borders only the graph draws.
+            "│ ◆ shop   ├",
+            "┤ ⠋ 1 api-worker ├",
+            "┤ ⠋ Explore: map routes      ├",
+            // The footer spells the selected window out in full.
+            "⠋ 1 api-worker  claude  claude-opus-5  working",
         ] {
             assert!(out.contains(expected), "missing {expected:?}:\n{out}");
         }
         assert!(!out.contains("TERMINAL-TEXT"), "{out}");
         app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        let (out, _) = render(&app, 160, 30);
+        let (out, _) = render(&app, 200, 50);
         assert!(out.contains("TERMINAL-TEXT"), "{out}");
         assert!(!out.contains(" tree overview "), "{out}");
     }
@@ -178,41 +180,41 @@ mod tests {
     fn overview_geometry_matches_its_hit_test() {
         let mut app = example_app();
         open_overview(&mut app);
-        app.set_tree_viewports(8, 10);
-        app.tree.overview.top = 4;
-        let mut terminal = Terminal::new(TestBackend::new(160, 13)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(200, 50)).unwrap();
         let mut l = None;
         terminal.draw(|f| l = Some(draw(f, &app))).unwrap();
         let l = l.unwrap();
-        assert_eq!(l.main_inner.height, 10);
-        let g = tree_view::geometry(l.main_inner, app.rows().len(), app.tree.overview.top);
-        for (offset, expected) in [
-            "tests: run unit suite",
-            "2 billing",
-            "3 search",
-            "4 frontend",
-            "general-purpose: style pass",
-            "Explore: find tokens",
-            "Explore: list files",
-            "5 docs",
-            "6 infra",
-            "7 perf",
-        ]
-        .iter()
-        .enumerate()
-        {
-            let y = l.main_inner.y + offset as u16;
-            assert_eq!(g.index_at(l.main_inner.x, y), Some(4 + offset));
-            let text = sidebar_text(terminal.backend().buffer(), l.main_inner, y);
-            assert!(text.contains(expected), "{text:?} missing {expected:?}");
+        let view = overview::view(&app, l.main);
+        let geometry = view.geometry();
+        assert!(!view.layout.nodes.is_empty());
+        for node in &view.layout.nodes {
+            // The middle of every box, where its content is drawn.
+            let x = l.main.x + 1 + node.rect.x + node.rect.width / 2 - view.pan.x;
+            let y = l.main.y + 1 + node.rect.y + 1 - view.pan.y;
+            assert_eq!(
+                geometry.node_at(&view.layout, x, y).as_ref(),
+                Some(&node.key),
+                "the cell at ({x}, {y}) should hit {:?}",
+                node.key
+            );
+            // The box's left border stands exactly where the layout put it,
+            // as a plain border or as the junction an edge turned it into.
+            let border = view.canvas.x + node.rect.x - view.pan.x;
+            let symbol = terminal.backend().buffer()[(border, y)].symbol().to_owned();
+            assert!(
+                symbol == "│" || symbol == "┤",
+                "{:?}'s left border at ({border}, {y}) was {symbol:?}",
+                node.key
+            );
         }
+        // The block's own border, and the footer, are not the canvas.
         for (x, y) in [
-            (l.main.x, l.main_inner.y),
-            (l.main.right() - 1, l.main_inner.y),
-            (l.main_inner.x, l.main.y),
-            (l.main_inner.x, l.main.bottom() - 1),
+            (l.main.x, view.canvas.y),
+            (l.main.right() - 1, view.canvas.y),
+            (view.canvas.x, l.main.y),
+            (view.canvas.x, view.footer.y),
         ] {
-            assert_eq!(g.index_at(x, y), None);
+            assert_eq!(geometry.node_at(&view.layout, x, y), None, "({x}, {y})");
         }
     }
 

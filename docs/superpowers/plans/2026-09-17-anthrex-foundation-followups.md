@@ -96,3 +96,15 @@ Each open item above is closed by exactly one milestone. Its brief lists the ite
   deadline. The helper killed and reaped only its own client PID. Reproduce and
   define the expected disconnected-client behavior alongside M6 reconnect and
   lifecycle tests; this observation does not establish the root cause.
+
+### M4.6 observation for a later tree milestone
+
+- `TreeState::overview` — the one-dimensional viewport the aligned-row overview
+  scrolled with — is still maintained by `set_tree_viewports` and
+  `reveal_tree_anchor`, but nothing reads it any more: M4.6.7 replaced that
+  renderer with the graph, which pans through `App::graph_pan` instead.
+  Removing it means changing `set_tree_viewports`'s signature, which every
+  existing viewport test calls, so M4.6.7 left it in place rather than edit
+  tests outside its brief. Delete the field, the `overview_rows` parameter and
+  the anchor's second `reveal` together in the milestone that next touches
+  tree state.
