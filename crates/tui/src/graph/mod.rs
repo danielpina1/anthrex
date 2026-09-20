@@ -14,6 +14,9 @@ use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
 pub mod paint;
+pub mod viewport;
+
+pub use viewport::Pan;
 
 /// A tier is never narrower than this, borders included, so a project called
 /// `ab` still reads as a box.
@@ -35,19 +38,6 @@ const BORDERS_AND_PADDING: u16 = 4;
 /// The status glyph and the space after it, which precede the content text in
 /// every box (decision 11). Every status glyph is one column wide.
 const GLYPH_COLUMNS: usize = 2;
-
-/// The canvas coordinate shown at the viewport's top-left corner (decision
-/// 14).
-///
-/// Only the data lives here: `Pan::clamped` and `Pan::revealing` arrive with
-/// the viewport task, in `graph::viewport`, which adds its `impl` block to
-/// this same type. The painter needs somewhere to apply the offset it is
-/// given before that task exists, so the struct is defined here instead.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Pan {
-    pub x: u16,
-    pub y: u16,
-}
 
 /// One box on the canvas.
 #[derive(Debug, Clone, PartialEq, Eq)]
