@@ -164,8 +164,8 @@ impl App {
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => self.move_tree_selection(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_tree_selection(-1),
-            KeyCode::Char('h') => self.select_tree_parent(),
-            KeyCode::Char('l') => self.select_first_visible_child(),
+            KeyCode::Char('h') | KeyCode::Left => self.select_tree_parent(),
+            KeyCode::Char('l') | KeyCode::Right => self.select_first_visible_child(),
             KeyCode::Enter => {
                 if let Some(selected) = self.tree.selected.clone() {
                     return self.activate_tree_node(selected);
@@ -203,7 +203,7 @@ impl App {
         self.reveal_tree_anchor();
     }
 
-    /// `h`: selects the nearest preceding row one level up, the row's parent
+    /// `h` and `Left`: select the nearest preceding row one level up, the row's parent
     /// in the visible pre-order list. A no-op at a root, which has no
     /// shallower row before it (decision 17).
     fn select_tree_parent(&mut self) {
@@ -221,7 +221,7 @@ impl App {
         }
     }
 
-    /// `l`: selects the row right after the selected one if it is one level
+    /// `l` and `Right`: select the row right after the selected one if it is one level
     /// deeper, the first visible child in the pre-order list. A no-op at a
     /// leaf, whether it has no children or is collapsed — either way the next
     /// row is not a child (decision 17, decision 7).

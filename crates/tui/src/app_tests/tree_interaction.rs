@@ -55,59 +55,76 @@ fn j_and_k_move_the_selection_without_wrapping() {
     }
 }
 
+/// The two spellings of "parent" and "first visible child" the spec's key
+/// table gives (§4.5): the vi pair and the arrows, which behave identically.
+const PARENT_AND_CHILD_KEYS: [(KeyCode, KeyCode); 2] = [
+    (KeyCode::Char('h'), KeyCode::Char('l')),
+    (KeyCode::Left, KeyCode::Right),
+];
+
 #[test]
 fn h_selects_the_parent() {
-    let mut app = example();
-    // a2 (window_id 1) is nested under a1: h once reaches a1, again reaches
-    // the window, again the project — the parent at each level up.
-    select(&mut app, subagent(1, "a2"));
-    assert!(tap(&mut app, KeyCode::Char('h')).is_empty());
-    assert_eq!(app.tree.selected, Some(subagent(1, "a1")));
-    assert!(tap(&mut app, KeyCode::Char('h')).is_empty());
-    assert_eq!(app.tree.selected, Some(NodeKey::Window(1)));
-    assert!(tap(&mut app, KeyCode::Char('h')).is_empty());
-    assert_eq!(app.tree.selected, Some(NodeKey::Project("/r/shop".into())));
+    for (parent, _) in PARENT_AND_CHILD_KEYS {
+        let mut app = example();
+        // a2 (window_id 1) is nested under a1: h once reaches a1, again
+        // reaches the window, again the project — the parent at each level up.
+        select(&mut app, subagent(1, "a2"));
+        assert!(tap(&mut app, parent).is_empty());
+        assert_eq!(app.tree.selected, Some(subagent(1, "a1")));
+        assert!(tap(&mut app, parent).is_empty());
+        assert_eq!(app.tree.selected, Some(NodeKey::Window(1)));
+        assert!(tap(&mut app, parent).is_empty());
+        assert_eq!(app.tree.selected, Some(NodeKey::Project("/r/shop".into())));
+    }
 }
 
 #[test]
 fn l_selects_the_first_visible_child() {
-    let mut app = example();
-    select(&mut app, NodeKey::Project("/r/shop".into()));
-    assert!(tap(&mut app, KeyCode::Char('l')).is_empty());
-    assert_eq!(app.tree.selected, Some(NodeKey::Window(1)));
-    assert!(tap(&mut app, KeyCode::Char('l')).is_empty());
-    assert_eq!(app.tree.selected, Some(subagent(1, "a1")));
-    // a2 is nested under a1, not a sibling of it.
-    assert!(tap(&mut app, KeyCode::Char('l')).is_empty());
-    assert_eq!(app.tree.selected, Some(subagent(1, "a2")));
+    for (_, child) in PARENT_AND_CHILD_KEYS {
+        let mut app = example();
+        select(&mut app, NodeKey::Project("/r/shop".into()));
+        assert!(tap(&mut app, child).is_empty());
+        assert_eq!(app.tree.selected, Some(NodeKey::Window(1)));
+        assert!(tap(&mut app, child).is_empty());
+        assert_eq!(app.tree.selected, Some(subagent(1, "a1")));
+        // a2 is nested under a1, not a sibling of it.
+        assert!(tap(&mut app, child).is_empty());
+        assert_eq!(app.tree.selected, Some(subagent(1, "a2")));
+    }
 }
 
 #[test]
 fn h_at_a_root_is_a_no_op() {
-    let mut app = example();
-    let root = NodeKey::Project("/r/shop".into());
-    select(&mut app, root.clone());
-    assert!(tap(&mut app, KeyCode::Char('h')).is_empty());
-    assert_eq!(app.tree.selected, Some(root));
+    for (parent, _) in PARENT_AND_CHILD_KEYS {
+        let mut app = example();
+        let root = NodeKey::Project("/r/shop".into());
+        select(&mut app, root.clone());
+        assert!(tap(&mut app, parent).is_empty());
+        assert_eq!(app.tree.selected, Some(root));
+    }
 }
 
 #[test]
 fn l_at_a_leaf_is_a_no_op() {
-    let mut app = example();
-    // a3 has no children of its own.
-    let leaf = subagent(1, "a3");
-    select(&mut app, leaf.clone());
-    assert!(tap(&mut app, KeyCode::Char('l')).is_empty());
-    assert_eq!(app.tree.selected, Some(leaf));
+    for (_, child) in PARENT_AND_CHILD_KEYS {
+        let mut app = example();
+        // a3 has no children of its own.
+        let leaf = subagent(1, "a3");
+        select(&mut app, leaf.clone());
+        assert!(tap(&mut app, child).is_empty());
+        assert_eq!(app.tree.selected, Some(leaf));
+    }
 }
 
 #[test]
 fn l_into_a_collapsed_node_is_a_no_op() {
-    let mut app = example();
-    app.tree.toggle(&NodeKey::Window(1));
-    select(&mut app, NodeKey::Window(1));
-    assert!(tap(&mut app, KeyCode::Char('l')).is_empty());
-    assert_eq!(app.tree.selected, Some(NodeKey::Window(1)));
+    for (_, child) in PARENT_AND_CHILD_KEYS {
+        let mut app = example();
+        app.tree.toggle(&NodeKey::Window(1));
+        select(&mut app, NodeKey::Window(1));
+        assert!(tap(&mut app, child).is_empty());
+        assert_eq!(app.tree.selected, Some(NodeKey::Window(1)));
+    }
 }
 
 #[test]
