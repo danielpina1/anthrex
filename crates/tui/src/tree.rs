@@ -458,6 +458,19 @@ fn cut_to_width(text: &str, max_width: usize) -> String {
     text[..end].to_owned()
 }
 
+/// The text a sub-agent row shows in its name column: `kind: label` when a
+/// label was set, `kind` alone otherwise.
+///
+/// Shared by the sidebar and the graph overview's layout and painter, so the
+/// string a tier is sized to and the string drawn inside it can never drift
+/// apart into two definitions.
+pub fn subagent_label(info: &SubagentInfo) -> String {
+    match info.label.as_deref() {
+        Some(label) => format!("{}: {label}", info.kind),
+        None => info.kind.clone(),
+    }
+}
+
 pub fn format_elapsed(secs: u64) -> String {
     if secs < 60 {
         format!("{secs}s")

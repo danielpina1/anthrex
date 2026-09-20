@@ -134,7 +134,7 @@ pub fn narrow_line(
                 ),
                 Span::raw(" "),
             ],
-            Span::raw(subagent_label(info)),
+            Span::raw(tree::subagent_label(info)),
             vec![
                 vec![Span::styled(
                     info.tool.clone().unwrap_or_default(),
@@ -145,15 +145,6 @@ pub fn narrow_line(
         ),
     };
     fit_line(prefix, name, rights, usize::from(width), selected)
-}
-
-/// The text a sub-agent row shows in its name column: `kind: label` when a
-/// label was set, `kind` alone otherwise.
-fn subagent_label(info: &proto::SubagentInfo) -> String {
-    match info.label.as_deref() {
-        Some(label) => format!("{}: {label}", info.kind),
-        None => info.kind.clone(),
-    }
 }
 
 pub fn counts_text(counts: RuntimeCounts) -> String {
@@ -205,7 +196,7 @@ impl WideColumns {
                     // Unlike the window name, this is never capped: sub-agent
                     // labels were shown in full before guides took a column,
                     // and nothing here bounds their depth (decision 25).
-                    let name_width = UnicodeWidthStr::width(subagent_label(info).as_str());
+                    let name_width = UnicodeWidthStr::width(tree::subagent_label(info).as_str());
                     columns.subagent_name = columns.subagent_name.max(guide_width + name_width);
                 }
                 RowKind::Project { .. } => {}
@@ -297,7 +288,7 @@ pub fn wide_line(
         RowKind::Subagent { info, .. } => {
             let guide_width = UnicodeWidthStr::width(row.guides.as_str());
             let label = padded(
-                &subagent_label(info),
+                &tree::subagent_label(info),
                 columns.subagent_name.saturating_sub(guide_width),
             );
             let (state, duration) = match info.state {
@@ -406,7 +397,10 @@ fn fit_line(
     }
 }
 
-fn truncate(text: &str, width: usize) -> String {
+/// Cuts `text` to `width` display columns, grapheme-safe, appending `…` when
+/// it does not fit. Shared with the graph painter, which truncates box
+/// content the same way (decision 11).
+pub(crate) fn truncate(text: &str, width: usize) -> String {
     if UnicodeWidthStr::width(text) <= width {
         return text.to_owned();
     }
