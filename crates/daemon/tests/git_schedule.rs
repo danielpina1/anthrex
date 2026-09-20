@@ -12,7 +12,7 @@
 //! run past this repository's file-length limit, not because they test different
 //! things.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use daemon::git::schedule::{BREAKER_EVENTS, DEBOUNCE, POLL_INTERVAL, Publisher, Scheduler};
@@ -153,12 +153,15 @@ fn the_breaker_drops_a_noisy_root_to_poll_only() {
 // The path filter, and what it does to the scheduler
 // ---------------------------------------------------------------------------
 
+/// The worktree root every filter case below is relative to.
+const ROOT: &str = "/w";
+
 /// Feeds one watcher path through the filter exactly as the registry's task does, and
 /// reports whether a probe became due one debounce later.
 fn schedules(path: &str, git_dir: Option<&Path>) -> bool {
     let t0 = Instant::now();
     let mut scheduler = settled(t0);
-    if accepts(Path::new(path), git_dir) {
+    if accepts(Path::new(path), Path::new(ROOT), git_dir) {
         scheduler.record_event(t0);
     }
     scheduler.plan(t0 + DEBOUNCE).probe
@@ -180,7 +183,7 @@ fn filtered_paths_do_not_schedule_a_probe() {
         "/w/src/main.rs.lock",
     ] {
         assert!(
-            !accepts(Path::new(path), Some(git_dir)),
+            !accepts(Path::new(path), Path::new(ROOT), Some(git_dir)),
             "{path} must be rejected"
         );
         assert!(
@@ -200,12 +203,40 @@ fn an_event_on_a_real_source_file_schedules_a_probe() {
         "/w/docs/target-audience.md",
     ] {
         assert!(
-            accepts(Path::new(path), Some(git_dir)),
+            accepts(Path::new(path), Path::new(ROOT), Some(git_dir)),
             "{path} must be accepted"
         );
         assert!(
             schedules(path, Some(git_dir)),
             "{path} must schedule a probe"
+        );
+    }
+}
+
+/// The deny list is about the worktree's *own* build directories. A checkout that
+/// lives under a directory called `build` or `dist` must not go silently deaf — and it
+/// would go silently deaf, because nothing fails: the root just stops seeing events and
+/// falls back to the 30-second poll.
+#[test]
+fn a_root_under_a_denied_directory_name_still_sees_its_own_events() {
+    for root in [
+        "/home/me/build/repo",
+        "/srv/dist/repo",
+        "/x/node_modules/repo",
+    ] {
+        let git_dir = PathBuf::from(root).join(".git");
+        let source = PathBuf::from(root).join("src/main.rs");
+        assert!(
+            accepts(&source, Path::new(root), Some(&git_dir)),
+            "{} must be accepted under {root}",
+            source.display()
+        );
+        // The rule still applies below the root.
+        let ignored = PathBuf::from(root).join("target/debug/x.o");
+        assert!(
+            !accepts(&ignored, Path::new(root), Some(&git_dir)),
+            "{} must still be rejected",
+            ignored.display()
         );
     }
 }

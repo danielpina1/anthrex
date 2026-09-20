@@ -19,12 +19,12 @@ pub const DENY_COMPONENTS: [&str; 6] =
 
 /// Whether an event on `path` should wake the scheduler.
 ///
-/// Pure, and the only thing that decides it. `git_dir` is the worktree's own git dir
-/// when it could be resolved; pass it canonicalised, because the paths a watcher
-/// reports are canonical on macOS (a `/var/folders/...` root is reported under
-/// `/private/var/folders/...`) and a prefix test against an uncanonicalised git dir
-/// would silently never match.
-pub fn accepts(path: &Path, git_dir: Option<&Path>) -> bool {
+/// Pure, and the only thing that decides it. `root` is the watched worktree root and
+/// `git_dir` is that worktree's own git dir when it could be resolved; pass both
+/// canonicalised, because the paths a watcher reports are canonical on macOS (a
+/// `/var/folders/...` root is reported under `/private/var/folders/...`) and a prefix
+/// test against an uncanonicalised one would silently never match.
+pub fn accepts(path: &Path, root: &Path, git_dir: Option<&Path>) -> bool {
     // `*.lock` catches `index.lock`, `config.lock`, `packed-refs.lock` and the rest of
     // git's own transient files. It is a name test, not a component test: a directory
     // called `x.lock` is not a thing, and a file is what the churn is.
@@ -34,7 +34,15 @@ pub fn accepts(path: &Path, git_dir: Option<&Path>) -> bool {
     {
         return false;
     }
-    if path.components().any(|component| {
+    // Only the components *below* the root are the worktree's own. Scanning the whole
+    // absolute path instead would reject every event in a checkout that happens to
+    // live under a directory called `build` or `dist` — which does not announce
+    // itself: the root would simply go quiet and fall back to the 30-second poll.
+    let inside = path
+        .strip_prefix(root)
+        .or_else(|_| path.strip_prefix(git_dir.unwrap_or(root)))
+        .unwrap_or(path);
+    if inside.components().any(|component| {
         matches!(component, Component::Normal(name)
             if DENY_COMPONENTS.iter().any(|deny| name == OsStr::new(deny)))
     }) {
@@ -62,6 +70,7 @@ pub fn build(
     git_dir: Option<&Path>,
     events: UnboundedSender<()>,
 ) -> notify::Result<RecommendedWatcher> {
+    let filter_root = root.to_path_buf();
     let filter_git_dir: Option<PathBuf> = git_dir.map(Path::to_path_buf);
     let mut watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
         let Ok(event) = result else {
@@ -72,7 +81,7 @@ pub fn build(
         if event
             .paths
             .iter()
-            .any(|path| accepts(path, filter_git_dir.as_deref()))
+            .any(|path| accepts(path, &filter_root, filter_git_dir.as_deref()))
         {
             let _ = events.send(());
         }
