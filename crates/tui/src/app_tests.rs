@@ -11,6 +11,9 @@ mod tree_interaction;
 #[path = "app_tests/overview.rs"]
 mod overview;
 
+#[path = "app_tests/git.rs"]
+mod git;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

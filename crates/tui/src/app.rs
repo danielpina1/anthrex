@@ -3,7 +3,8 @@
 use crate::keymap::{Command, KeyAction, Keymap};
 use crate::tree::{self, TreeState};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use proto::{ClientMsg, DaemonMsg, Runtime, Status, WindowInfo, WindowSpec};
+use proto::{ClientMsg, DaemonMsg, GitState, Runtime, Status, WindowInfo, WindowSpec};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -84,6 +85,8 @@ pub struct App {
     pub spinner_frame: usize,
     pub scroll_offset: usize,
     pub default_dir: PathBuf,
+    /// Git state by worktree root; pruned to current windows' roots (see `prune_git`).
+    pub git: HashMap<PathBuf, GitState>,
     toast: Option<(String, Instant)>,
     windows_received_at: Instant,
     /// (cols, rows) of the main inner area; (0, 0) until the first draw.
@@ -113,6 +116,7 @@ impl App {
             spinner_frame: 0,
             scroll_offset: 0,
             default_dir,
+            git: HashMap::new(),
             toast: None,
             windows_received_at: Instant::now(),
             term_size: (0, 0),
@@ -129,6 +133,12 @@ impl App {
     pub fn focused_index(&self) -> Option<usize> {
         self.focused
             .and_then(|id| self.windows.iter().position(|w| w.id == id))
+    }
+
+    /// The focused window's git state, by its worktree root.
+    pub fn focused_git(&self) -> Option<&GitState> {
+        let worktree = self.focused_window()?.worktree.as_ref()?;
+        self.git.get(worktree)
     }
 
     /// Seconds since the window's status changed, extrapolated from the last list we received.
@@ -292,9 +302,29 @@ impl App {
                 vec![]
             }
             DaemonMsg::Ack { .. } => vec![],
-            // App.git and the bottom-bar segment land in a later M4.5 task.
-            DaemonMsg::Git { .. } => vec![],
+            DaemonMsg::Git { root, state } => {
+                match state {
+                    Some(state) => {
+                        self.git.insert(root, state);
+                    }
+                    None => {
+                        self.git.remove(&root);
+                    }
+                }
+                vec![]
+            }
         }
+    }
+
+    /// The daemon never publishes `None` for an unregistered root, so the client prunes its
+    /// own `git` map to the current windows' roots on every window-list change.
+    fn prune_git(&mut self) {
+        let live: HashSet<PathBuf> = self
+            .windows
+            .iter()
+            .filter_map(|w| w.worktree.clone())
+            .collect();
+        self.git.retain(|root, _| live.contains(root));
     }
 
     fn replace_windows(&mut self, windows: Vec<WindowInfo>) -> Vec<Effect> {
@@ -320,6 +350,7 @@ impl App {
             .focused
             .and_then(|id| previous_order.iter().position(|candidate| *candidate == id));
         self.windows = windows;
+        self.prune_git();
         self.windows_received_at = Instant::now();
         self.tree.prune(&self.windows);
         let rows = tree::build(&self.windows, &self.tree);

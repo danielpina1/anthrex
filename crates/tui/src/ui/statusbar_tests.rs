@@ -1,0 +1,204 @@
+use super::*;
+use crate::app::App;
+use crate::keymap::Keymap;
+use proto::{GitOperation, Runtime, Status, WindowInfo};
+use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
+use std::path::PathBuf;
+use unicode_width::UnicodeWidthStr;
+
+fn clean_state() -> GitState {
+    GitState {
+        head: Head::Branch("main".into()),
+        upstream: None,
+        ahead: 0,
+        behind: 0,
+        dirty: 0,
+        untracked: 0,
+        conflicts: 0,
+        operation: None,
+        stale: false,
+    }
+}
+
+fn text(spans: &[Span<'_>]) -> String {
+    spans.iter().map(|s| s.content.as_ref()).collect()
+}
+
+#[test]
+fn renders_a_clean_repository_as_a_tick() {
+    assert_eq!(text(&git_spans(&clean_state(), 80)), "main ✓");
+}
+
+#[test]
+fn renders_dirty_untracked_and_divergence() {
+    let mut state = clean_state();
+    state.dirty = 3;
+    state.untracked = 1;
+    state.ahead = 2;
+    state.behind = 1;
+    assert_eq!(text(&git_spans(&state, 80)), "main ●3 ?1 ⇡2⇣1");
+
+    // Zero untracked and zero divergence omit those parts entirely.
+    let mut only_dirty = clean_state();
+    only_dirty.dirty = 3;
+    assert_eq!(text(&git_spans(&only_dirty, 80)), "main ●3");
+}
+
+#[test]
+fn renders_conflicts_and_the_operation() {
+    let mut state = clean_state();
+    state.conflicts = 2;
+    state.operation = Some(GitOperation::Rebase);
+    assert_eq!(text(&git_spans(&state, 80)), "main ⚠2 rebase");
+}
+
+#[test]
+fn renders_a_detached_head() {
+    let mut state = clean_state();
+    state.head = Head::Detached("a1b2c3d".into());
+    state.dirty = 1;
+    assert_eq!(text(&git_spans(&state, 80)), "@a1b2c3d ●1");
+}
+
+#[test]
+fn renders_an_unborn_branch() {
+    let mut state = clean_state();
+    state.head = Head::Unborn("main".into());
+    assert_eq!(text(&git_spans(&state, 80)), "main (unborn)");
+}
+
+#[test]
+fn renders_stale() {
+    let mut state = clean_state();
+    state.dirty = 3;
+    state.stale = true;
+    assert_eq!(text(&git_spans(&state, 80)), "main ●3 (stale)");
+}
+
+#[test]
+fn drops_parts_right_to_left_when_the_budget_shrinks() {
+    let mut state = clean_state();
+    state.dirty = 3;
+    state.untracked = 1;
+    state.ahead = 2;
+    state.behind = 1;
+    state.operation = Some(GitOperation::Rebase);
+
+    let full = "main ●3 ?1 ⇡2⇣1 rebase";
+    assert_eq!(text(&git_spans(&state, 80)), full);
+
+    let without_operation = "main ●3 ?1 ⇡2⇣1";
+    let budget = UnicodeWidthStr::width(without_operation);
+    assert_eq!(text(&git_spans(&state, budget)), without_operation);
+
+    let without_untracked = "main ●3 ⇡2⇣1";
+    let budget = UnicodeWidthStr::width(without_untracked);
+    assert_eq!(text(&git_spans(&state, budget)), without_untracked);
+
+    let without_divergence = "main ●3";
+    let budget = UnicodeWidthStr::width(without_divergence);
+    assert_eq!(text(&git_spans(&state, budget)), without_divergence);
+
+    let head_only = "main";
+    let budget = UnicodeWidthStr::width(head_only);
+    assert_eq!(text(&git_spans(&state, budget)), head_only);
+}
+
+#[test]
+fn is_hidden_when_it_cannot_fit_the_head() {
+    let state = clean_state(); // head "main" has width 4
+    assert!(git_spans(&state, 3).is_empty());
+}
+
+fn window(id: u32, worktree: Option<PathBuf>) -> WindowInfo {
+    WindowInfo {
+        id,
+        name: format!("w{id}"),
+        runtime: Runtime::Shell,
+        cwd: "/tmp".into(),
+        project: "/tmp".into(),
+        worktree,
+        branch: None,
+        status: Status::Idle,
+        tool: None,
+        since_secs: 0,
+        last_output_secs: 0,
+        session_id: None,
+        model: None,
+        subagents: vec![],
+        exit: None,
+    }
+}
+
+fn render_row(app: &App, width: u16) -> Buffer {
+    let area = Rect::new(0, 0, width, 1);
+    let mut terminal = Terminal::new(TestBackend::new(width, 1)).unwrap();
+    terminal.draw(|f| render(f, app, area)).unwrap();
+    terminal.backend().buffer().clone()
+}
+
+fn row_text(buffer: &Buffer) -> String {
+    let area = buffer.area;
+    (area.x..area.right())
+        .map(|x| buffer[(x, area.y)].symbol())
+        .collect()
+}
+
+#[test]
+fn no_segment_without_a_focused_worktree() {
+    let mut app = App::new(
+        vec![window(1, None)],
+        "/tmp".into(),
+        Keymap::default_prefix(),
+    );
+    app.set_terminal_size(80, 24);
+    let buffer = render_row(&app, 80);
+    let text = row_text(&buffer);
+    // '?' is deliberately excluded: it's also part of the literal "C-b ?" help hint, so
+    // checking for it here would flag the hints themselves rather than a git segment.
+    for glyph in ['✓', '●', '⇡', '⇣', '⚠'] {
+        assert!(
+            !text.contains(glyph),
+            "expected no git glyphs without a focused worktree, got {text:?}"
+        );
+    }
+    assert!(!text.contains("(stale)"));
+    assert!(!text.contains("(unborn)"));
+}
+
+#[test]
+fn the_toast_is_never_overwritten_by_git() {
+    let mut app = App::new(
+        vec![window(1, Some("/repo".into()))],
+        "/tmp".into(),
+        Keymap::default_prefix(),
+    );
+    app.set_terminal_size(80, 24);
+    let mut state = clean_state();
+    state.dirty = 3;
+    app.on_daemon(proto::DaemonMsg::Git {
+        root: "/repo".into(),
+        state: Some(state),
+    });
+    app.toast("a rather long toast message taking up real room");
+
+    let width = 60;
+    let buffer = render_row(&app, width);
+    let toast_text = app.toast_text().unwrap();
+    let toast_width = (UnicodeWidthStr::width(toast_text) as u16 + 1).min(width);
+    let start = width - toast_width;
+
+    // The git segment must actually be present (and not itself truncated away) in the room
+    // left of the toast — otherwise this test would pass with no git segment at all.
+    let before_toast: String = (0..start).map(|x| buffer[(x, 0)].symbol()).collect();
+    assert!(
+        before_toast.contains("main ●3"),
+        "expected the dirty git segment before the toast, got {before_toast:?}"
+    );
+
+    let rendered: String = (start..width).map(|x| buffer[(x, 0)].symbol()).collect();
+    assert!(
+        rendered.trim_end().ends_with(toast_text),
+        "toast cells were not intact: {rendered:?}"
+    );
+}
