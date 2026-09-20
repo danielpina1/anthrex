@@ -38,6 +38,7 @@ impl Agent {
                     model: Some("test-model".into()),
                     initial_prompt: None,
                 },
+                std::env::temp_dir(),
                 80,
                 24,
             )

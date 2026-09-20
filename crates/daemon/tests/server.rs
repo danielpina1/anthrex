@@ -133,6 +133,125 @@ async fn a_version_1_client_is_rejected() {
 }
 
 #[tokio::test]
+async fn a_version_2_client_is_rejected() {
+    let d = start_daemon().await;
+    let (_c, reply) = Client::connect(&d, 2).await;
+    match reply {
+        DaemonMsg::Error { request, message } => {
+            assert_eq!(request, "hello");
+            assert!(message.contains("protocol version mismatch"));
+            assert!(message.contains("anthrex daemon stop"));
+        }
+        other => panic!("expected Error, got {other:?}"),
+    }
+}
+
+fn git(dir: &std::path::Path, args: &[&std::ffi::OsStr]) {
+    let output = std::process::Command::new("git")
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "init.defaultBranch=main",
+        ])
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+async fn created_windows_carry_their_project_root() {
+    use std::ffi::OsStr;
+    let (_dir, sub, worktree, root) = tokio::task::spawn_blocking(|| {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        let sub = repo.join("sub");
+        let worktree = dir.path().join("wt");
+        std::fs::create_dir_all(&sub).unwrap();
+        git(&repo, &[OsStr::new("init")]);
+        git(
+            &repo,
+            &[
+                OsStr::new("commit"),
+                OsStr::new("--allow-empty"),
+                OsStr::new("-m"),
+                OsStr::new("init"),
+            ],
+        );
+        git(
+            &repo,
+            &[
+                OsStr::new("worktree"),
+                OsStr::new("add"),
+                OsStr::new("-b"),
+                OsStr::new("feature"),
+                worktree.as_os_str(),
+            ],
+        );
+        let root = repo.canonicalize().unwrap();
+        (dir, sub, worktree, root)
+    })
+    .await
+    .unwrap();
+    let d = start_daemon().await;
+    let (mut client, _) = Client::connect(&d, PROTO_VERSION).await;
+    for (name, cwd) in [("main", &sub), ("worktree", &worktree)] {
+        client
+            .send(ClientMsg::CreateWindow {
+                spec: WindowSpec {
+                    cwd: cwd.clone(),
+                    ..shell_spec(name)
+                },
+                cols: 80,
+                rows: 24,
+            })
+            .await;
+    }
+    let DaemonMsg::WindowsChanged { windows } = client.recv_until(|message| {
+        matches!(message, DaemonMsg::WindowsChanged { windows } if windows.len() == 2)
+    }).await else { unreachable!() };
+    for (name, cwd) in [("main", &sub), ("worktree", &worktree)] {
+        let window = windows.iter().find(|window| window.name == name).unwrap();
+        assert_eq!(&window.cwd, cwd);
+        assert_eq!(window.project, root);
+    }
+}
+
+#[tokio::test]
+async fn a_window_outside_any_repository_is_its_own_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let d = start_daemon().await;
+    let (mut client, _) = Client::connect(&d, PROTO_VERSION).await;
+    client
+        .send(ClientMsg::CreateWindow {
+            spec: WindowSpec {
+                cwd: dir.path().into(),
+                ..shell_spec("plain")
+            },
+            cols: 80,
+            rows: 24,
+        })
+        .await;
+    let DaemonMsg::WindowsChanged { windows } = client.recv_until(|message| {
+        matches!(message, DaemonMsg::WindowsChanged { windows } if windows.len() == 1)
+    }).await else { unreachable!() };
+    assert_eq!(windows[0].cwd, dir.path());
+    assert_eq!(windows[0].project, root);
+}
+
+#[tokio::test]
 async fn create_subscribe_input_and_kill_flow() {
     let started = std::time::Instant::now();
     let d = start_daemon().await;
@@ -276,9 +395,14 @@ async fn claude_window(d: &TestDaemon, name: &str) -> u32 {
     let manager = d.manager.clone();
     let mut spec = shell_spec(name);
     spec.runtime = Runtime::Claude;
-    tokio::task::spawn_blocking(move || manager.create(spec, 80, 24).unwrap().id)
-        .await
-        .unwrap()
+    tokio::task::spawn_blocking(move || {
+        manager
+            .create(spec, std::env::temp_dir(), 80, 24)
+            .unwrap()
+            .id
+    })
+    .await
+    .unwrap()
 }
 
 async fn assert_completion(d: &TestDaemon, client: &mut Client, id: u32, expected: Status) {
@@ -301,7 +425,10 @@ async fn hook_events_are_acknowledged() {
     let d = start_daemon().await;
     let manager = d.manager.clone();
     let id = tokio::task::spawn_blocking(move || {
-        manager.create(shell_spec("hook-shell"), 80, 24).unwrap().id
+        manager
+            .create(shell_spec("hook-shell"), std::env::temp_dir(), 80, 24)
+            .unwrap()
+            .id
     })
     .await
     .unwrap();

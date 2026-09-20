@@ -1,20 +1,27 @@
 //! Screen layout and the top-level draw. Spec section 6.1.
 
 pub mod modal;
+pub mod overview;
 pub mod sidebar;
 pub mod statusbar;
 pub mod terminal;
+pub mod tree_view;
 
 use crate::app::App;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout as RLayout, Rect};
 
-pub const SIDEBAR_WIDTH: u16 = 30;
+pub const DEFAULT_SIDEBAR_WIDTH: u16 = 34;
+pub const MIN_SIDEBAR_WIDTH: u16 = 24;
+pub const MAX_SIDEBAR_WIDTH: u16 = 60;
+pub const SIDEBAR_WIDTH_STEP: u16 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Layout {
     pub sidebar: Rect,
     pub sidebar_inner: Rect,
+    pub sidebar_list: Rect,
+    pub sidebar_footer: Rect,
     pub main: Rect,
     pub main_inner: Rect,
     pub statusbar: Rect,
@@ -29,19 +36,29 @@ fn inset(r: Rect) -> Rect {
     }
 }
 
-pub fn layout(area: Rect, sidebar_visible: bool) -> Layout {
+pub fn layout(area: Rect, sidebar_width: u16) -> Layout {
     let [body, statusbar] =
         RLayout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(area);
-    let (sidebar, main) = if sidebar_visible {
-        let [s, m] = RLayout::horizontal([Constraint::Length(SIDEBAR_WIDTH), Constraint::Min(10)])
+    let (sidebar, main) = if sidebar_width > 0 {
+        let [s, m] = RLayout::horizontal([Constraint::Length(sidebar_width), Constraint::Min(10)])
             .areas(body);
         (s, m)
     } else {
         (Rect::new(body.x, body.y, 0, body.height), body)
     };
+    let sidebar_inner = inset(sidebar);
     Layout {
         sidebar,
-        sidebar_inner: inset(sidebar),
+        sidebar_inner,
+        sidebar_list: Rect {
+            height: sidebar_inner.height.saturating_sub(2),
+            ..sidebar_inner
+        },
+        sidebar_footer: Rect {
+            y: sidebar_inner.y + sidebar_inner.height.saturating_sub(1),
+            height: sidebar_inner.height.min(1),
+            ..sidebar_inner
+        },
         main,
         main_inner: inset(main),
         statusbar,
@@ -50,11 +67,22 @@ pub fn layout(area: Rect, sidebar_visible: bool) -> Layout {
 
 /// Draws everything and returns the layout so the caller can size the PTY and hit-test the mouse.
 pub fn draw(frame: &mut Frame, app: &App) -> Layout {
-    let l = layout(frame.area(), app.sidebar_visible);
+    let l = layout(
+        frame.area(),
+        if app.sidebar_visible {
+            app.sidebar_width
+        } else {
+            0
+        },
+    );
     if app.sidebar_visible {
-        sidebar::render(frame, app, l.sidebar);
+        sidebar::render(frame, app, &l);
     }
-    terminal::render(frame, app, l.main);
+    if app.overview {
+        overview::render(frame, app, l.main);
+    } else {
+        terminal::render(frame, app, l.main);
+    }
     statusbar::render(frame, app, l.statusbar);
     if let Some(m) = &app.modal {
         modal::render(frame, m, frame.area());
@@ -70,6 +98,7 @@ mod tests {
     use proto::{Runtime, Status, WindowInfo};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use ratatui::style::Modifier;
 
     fn win(id: u32, name: &str, runtime: Runtime, status: Status) -> WindowInfo {
         WindowInfo {
@@ -77,6 +106,7 @@ mod tests {
             name: name.into(),
             runtime,
             cwd: "/tmp/repo".into(),
+            project: "/tmp/repo".into(),
             branch: Some("feat/x".into()),
             status,
             tool: None,
@@ -96,103 +126,165 @@ mod tests {
         (terminal.backend().to_string(), layout.unwrap())
     }
 
+    fn example_app() -> App {
+        let mut app = App::new(
+            crate::tree::example_windows(),
+            "/tmp".into(),
+            Keymap::default_prefix(),
+        );
+        app.set_terminal_size(80, 24);
+        app
+    }
+
+    fn open_overview(app: &mut App) {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        app.on_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        app.on_key(KeyEvent::new(KeyCode::Char('T'), KeyModifiers::NONE));
+    }
+
     #[test]
-    fn layout_splits_sidebar_main_and_statusbar() {
-        let l = layout(ratatui::layout::Rect::new(0, 0, 120, 40), true);
-        assert_eq!(l.sidebar.width, SIDEBAR_WIDTH);
-        assert_eq!(l.main.x, SIDEBAR_WIDTH);
-        assert_eq!(l.main.width, 120 - SIDEBAR_WIDTH);
-        assert_eq!(l.statusbar, ratatui::layout::Rect::new(0, 39, 120, 1));
+    fn overview_replaces_the_terminal_with_the_wide_tree() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = example_app();
+        app.on_daemon(proto::DaemonMsg::Snapshot {
+            window_id: 1,
+            cols: 80,
+            rows: 24,
+            bytes: b"TERMINAL-TEXT".to_vec(),
+        });
+        assert!(render(&app, 160, 30).0.contains("TERMINAL-TEXT"));
+        open_overview(&mut app);
+        let (out, _) = render(&app, 160, 30);
+        for expected in [
+            " tree overview ",
+            "claude-opus-5",
+            "claude-sonnet-4-5",
+            "/r/shop",
+            "general-purpose: grep handlers",
+            "running",
+            "done",
+        ] {
+            assert!(out.contains(expected), "missing {expected:?}:\n{out}");
+        }
+        assert!(!out.contains("TERMINAL-TEXT"), "{out}");
+        app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        let (out, _) = render(&app, 160, 30);
+        assert!(out.contains("TERMINAL-TEXT"), "{out}");
+        assert!(!out.contains(" tree overview "), "{out}");
+    }
+
+    #[test]
+    fn overview_geometry_matches_its_hit_test() {
+        let mut app = example_app();
+        open_overview(&mut app);
+        app.set_tree_viewports(8, 10);
+        app.tree.overview.top = 4;
+        let mut terminal = Terminal::new(TestBackend::new(160, 13)).unwrap();
+        let mut l = None;
+        terminal.draw(|f| l = Some(draw(f, &app))).unwrap();
+        let l = l.unwrap();
+        assert_eq!(l.main_inner.height, 10);
+        let g = tree_view::geometry(l.main_inner, app.rows().len(), app.tree.overview.top);
+        for (offset, expected) in [
+            "tests: run unit suite",
+            "2 billing",
+            "3 search",
+            "4 frontend",
+            "general-purpose: style pass",
+            "Explore: find tokens",
+            "Explore: list files",
+            "5 docs",
+            "6 infra",
+            "7 perf",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let y = l.main_inner.y + offset as u16;
+            assert_eq!(g.index_at(l.main_inner.x, y), Some(4 + offset));
+            let text = sidebar_text(terminal.backend().buffer(), l.main_inner, y);
+            assert!(text.contains(expected), "{text:?} missing {expected:?}");
+        }
+        for (x, y) in [
+            (l.main.x, l.main_inner.y),
+            (l.main.right() - 1, l.main_inner.y),
+            (l.main_inner.x, l.main.y),
+            (l.main_inner.x, l.main.bottom() - 1),
+        ] {
+            assert_eq!(g.index_at(x, y), None);
+        }
+    }
+
+    #[test]
+    fn overview_handles_zero_and_one_cell_areas() {
+        let mut app = example_app();
+        open_overview(&mut app);
+        for sidebar_visible in [false, true] {
+            app.sidebar_visible = sidebar_visible;
+            for (width, height) in [(0, 0), (0, 1), (1, 0), (1, 1), (0, 30), (160, 0)] {
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal
+                    .draw(|frame| {
+                        draw(frame, &app);
+                    })
+                    .unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn sidebar_renders_the_example_tree_at_the_default_width() {
+        let app = example_app();
+        let (out, _) = render(&app, 120, 30);
+        assert!(out.contains(" agents "), "{out}");
+        for golden in [
+            "▾ shop            ◆  cl 4 · cx 3",
+            "▎ ⠋ 1 api-worker     cl opus  2m",
+            "  │ ├ ⠋ Explore: map routes Read",
+            "▾ blog                   ○  cl 1",
+        ] {
+            assert!(out.contains(golden), "{golden:?}\n{out}");
+        }
+        assert!(out.contains("│ └ ✓ tests: run unit suite"), "{out}");
+        assert!(out.contains(" ◆ 2 billing"), "{out}");
+        assert!(out.contains("8 agents · 2 working"), "{out}");
+    }
+
+    #[test]
+    fn a_sub_agent_asking_for_permission_shows_a_diamond() {
+        let mut app = example_app();
+        app.windows[0].subagents[0].needs_permission = true;
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, &app);
+            })
+            .unwrap();
+        let out = terminal.backend().to_string();
+        assert!(out.contains("│ ├ ◆ Explore: map routes"), "{out}");
+        assert!(out.contains("│ └ ✓ tests: run unit suite"), "{out}");
         assert_eq!(
-            l.main_inner,
-            ratatui::layout::Rect::new(SIDEBAR_WIDTH + 1, 1, 120 - SIDEBAR_WIDTH - 2, 37)
+            terminal.backend().buffer()[(7, 3)].fg,
+            crate::theme::status_color(Status::Attention)
         );
-        let hidden = layout(ratatui::layout::Rect::new(0, 0, 120, 40), false);
-        assert_eq!(hidden.sidebar.width, 0);
-        assert_eq!(hidden.main.width, 120);
+        app.windows[0].subagents[0].needs_permission = false;
+        let (out, _) = render(&app, 120, 30);
+        assert!(out.contains("│ ├ ⠋ Explore: map routes"), "{out}");
     }
 
     #[test]
-    fn sidebar_lists_cards_with_glyph_runtime_status_and_elapsed() {
-        let mut app = App::new(
-            vec![
-                win(1, "api-worker", Runtime::Claude, Status::Working),
-                win(2, "tests", Runtime::Codex, Status::Attention),
-            ],
-            "/tmp".into(),
-            Keymap::default_prefix(),
+    fn long_names_are_truncated_with_an_ellipsis() {
+        let mut window = win(
+            1,
+            "a-very-long-window-name-that-overflows",
+            Runtime::Shell,
+            Status::Idle,
         );
-        let _ = app.set_terminal_size(80, 24);
-        let (out, _) = render(&app, 100, 20);
-        assert!(out.contains("anthrex"));
-        assert!(out.contains("1 api-worker"));
-        assert!(out.contains("claude · working · 1m"));
-        assert!(out.contains("◆ 2 tests"));
-        assert!(out.contains("codex · attention · 1m"));
-        assert!(
-            out.contains("2 agents · 1 working"),
-            "footer is truncated to the 28-column sidebar\n{out}"
-        );
-        assert!(
-            out.contains("api-worker · claude · /tmp/repo (feat/x)"),
-            "main title\n{out}"
-        );
-    }
-
-    #[test]
-    fn a_working_card_shows_its_tool_on_a_third_line() {
-        let mut window = win(1, "api-worker", Runtime::Claude, Status::Working);
-        window.tool = Some("Bash".into());
-        let mut app = App::new(
-            vec![window.clone()],
-            "/tmp".into(),
-            Keymap::default_prefix(),
-        );
-        let _ = app.set_terminal_size(80, 24);
-        let (out, _) = render(&app, 100, 20);
-        let rows: Vec<_> = out.lines().collect();
-        let detail_row = rows
-            .iter()
-            .position(|row| row.contains("claude · working"))
-            .expect("working detail row");
-        assert!(rows[detail_row + 1].contains("Bash"), "{out}");
-
-        window.status = Status::Idle;
+        window.since_secs = 0;
         let mut app = App::new(vec![window], "/tmp".into(), Keymap::default_prefix());
-        let _ = app.set_terminal_size(80, 24);
-        let (out, _) = render(&app, 100, 20);
-        assert!(
-            !out.contains("Bash"),
-            "idle cards do not show a tool\n{out}"
-        );
-    }
-
-    #[test]
-    fn long_tool_names_are_cut_to_the_sidebar() {
-        let mut window = win(1, "api-worker", Runtime::Claude, Status::Working);
-        window.tool = Some("界".repeat(20));
-        let mut app = App::new(vec![window], "/tmp".into(), Keymap::default_prefix());
-        let _ = app.set_terminal_size(80, 24);
-        let (out, _) = render(&app, 100, 20);
-        assert!(
-            out.contains("▎  界界界界界界界界界界界界…│"),
-            "the 28-column inner width is measured in terminal columns\n{out}"
-        );
-    }
-
-    #[test]
-    fn emoji_tool_names_are_cut_at_grapheme_boundaries() {
-        let emoji = "👩🏽‍💻";
-        let mut window = win(1, "api-worker", Runtime::Claude, Status::Working);
-        window.tool = Some(emoji.repeat(13));
-        let mut app = App::new(vec![window], "/tmp".into(), Keymap::default_prefix());
-        let _ = app.set_terminal_size(80, 24);
-        let (out, _) = render(&app, 100, 20);
-        let expected = format!("▎  {}…│", emoji.repeat(12));
-        assert!(
-            out.contains(&expected),
-            "emoji modifiers and ZWJ sequences stay intact\n{out}"
-        );
+        app.set_terminal_size(80, 24);
+        let (out, _) = render(&app, 120, 30);
+        assert!(out.contains("… sh  0s│"), "{out}");
     }
 
     #[test]
@@ -230,6 +322,44 @@ mod tests {
     }
 
     #[test]
+    fn tree_mode_shows_the_badge_the_title_and_the_selection() {
+        let mut app = example_app();
+        app.enter_tree();
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal
+            .draw(|f| {
+                draw(f, &app);
+            })
+            .unwrap();
+        let out = terminal.backend().to_string();
+        assert!(out.contains(" TREE "), "{out}");
+        assert!(out.contains("agents · tree"), "{out}");
+
+        let selected = app.tree.selected.as_ref().unwrap();
+        let index = app
+            .rows()
+            .iter()
+            .position(|row| &row.key == selected)
+            .unwrap();
+        let l = layout(Rect::new(0, 0, 120, 30), app.sidebar_width);
+        let y = l.sidebar_list.y + index as u16;
+        for x in l.sidebar_list.x..l.sidebar_list.right() {
+            assert!(
+                terminal.backend().buffer()[(x, y)]
+                    .modifier
+                    .contains(Modifier::REVERSED),
+                "cell ({x}, {y}) was not selected"
+            );
+        }
+
+        app.tree_input = Some(crate::app::TreeInput::Filter);
+        app.tree.filter = "sty".into();
+        let (out, _) = render(&app, 120, 30);
+        assert!(out.contains(" FILTER "), "{out}");
+        assert!(out.contains("/sty"), "{out}");
+    }
+
+    #[test]
     fn modals_render_on_top() {
         let mut app = App::new(
             vec![win(1, "a", Runtime::Shell, Status::Idle)],
@@ -247,87 +377,187 @@ mod tests {
         app.modal = Some(Modal::Help);
         let (out, _) = render(&app, 100, 24);
         assert!(out.contains("send a literal C-b"));
+        assert!(out.contains("tree mode"));
+        assert!(out.contains("sidebar width"));
     }
 
     #[test]
-    fn sidebar_hit_test_maps_rows_to_cards() {
-        let mut first = win(1, "a", Runtime::Claude, Status::Working);
-        first.tool = Some("Bash".into());
-        let mut app = App::new(
-            vec![first, win(2, "b", Runtime::Shell, Status::Idle)],
-            "/tmp".into(),
-            Keymap::default_prefix(),
-        );
-        let _ = app.set_terminal_size(80, 24);
-        let (_, l) = render(&app, 100, 20);
-        for offset in 0..sidebar::card_height(&app.windows[0]) {
-            assert_eq!(
-                sidebar::hit_test(l.sidebar_inner, &app, 3, l.sidebar_inner.y + offset),
-                Some(0),
-                "first card row {offset}"
-            );
-        }
-        for offset in 3..5 {
-            assert_eq!(
-                sidebar::hit_test(l.sidebar_inner, &app, 3, l.sidebar_inner.y + offset),
-                Some(1),
-                "second card row {offset}"
-            );
-        }
-        assert_eq!(
-            sidebar::hit_test(l.sidebar_inner, &app, 3, l.sidebar_inner.y + 5),
-            None
-        );
-        assert_eq!(
-            sidebar::hit_test(l.sidebar_inner, &app, 60, l.sidebar_inner.y),
-            None
-        );
-        assert_eq!(sidebar::format_elapsed(59), "59s");
-        assert_eq!(sidebar::format_elapsed(3600), "1h");
+    fn layout_uses_the_sidebar_width() {
+        let l = layout(Rect::new(0, 0, 120, 40), 34);
+        assert_eq!(l.sidebar.width, 34);
+        assert_eq!(l.main.x, 34);
+        assert_eq!(l.sidebar_list, Rect::new(1, 1, 32, 35));
+        assert_eq!(l.sidebar_footer, Rect::new(1, 37, 32, 1));
+        assert_eq!(l.statusbar, Rect::new(0, 39, 120, 1));
+        let hidden = layout(Rect::new(0, 0, 120, 40), 0);
+        assert_eq!(hidden.sidebar.width, 0);
+        assert_eq!(hidden.sidebar_list.width, 0);
+        assert_eq!(hidden.main.width, 120);
+        let narrow = layout(Rect::new(0, 0, 80, 24), 24);
+        assert_eq!(narrow.sidebar.width, 24);
+        assert_eq!(narrow.main_inner.width, 54);
+    }
+
+    fn sidebar_text(buffer: &ratatui::buffer::Buffer, rect: Rect, y: u16) -> String {
+        (rect.x..rect.right())
+            .map(|x| buffer[(x, y)].symbol())
+            .collect()
     }
 
     #[test]
-    fn sidebar_hit_test_ignores_footer_and_undrawn_cards() {
-        let mut first = win(1, "a", Runtime::Claude, Status::Working);
-        first.tool = Some("Bash".into());
-        let mut third = win(3, "c", Runtime::Claude, Status::Working);
-        third.tool = Some("Read".into());
+    fn hit_test_uses_the_render_geometry() {
+        let mut app = example_app();
+        app.set_tree_viewports(10, 12);
+        app.tree.sidebar.top = 4;
+        let mut terminal = Terminal::new(TestBackend::new(120, 15)).unwrap();
+        let mut l = None;
+        terminal.draw(|f| l = Some(draw(f, &app))).unwrap();
+        let l = l.unwrap();
+        assert_eq!(l.sidebar_list.height, 10);
+        let g = tree_view::geometry(l.sidebar_list, app.rows().len(), app.tree.sidebar.top);
+        for (offset, expected) in [
+            "tests: run unit suite",
+            "2 billing",
+            "3 search",
+            "4 frontend",
+            "general-purpose:",
+            "Explore: find tokens",
+            "Explore: list files",
+            "5 docs",
+            "6 infra",
+            "7 perf",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let y = l.sidebar_list.y + offset as u16;
+            assert_eq!(g.index_at(2, y), Some(4 + offset));
+            let text = sidebar_text(terminal.backend().buffer(), l.sidebar_list, y);
+            assert!(
+                text.contains(expected),
+                "{text:?} should contain {expected:?}"
+            );
+        }
+        for (x, y) in [(0, 1), (33, 1), (1, 0), (1, 11), (1, 12), (1, 13)] {
+            assert_eq!(g.index_at(x, y), None, "outside list ({x},{y})");
+        }
+        let short = tree_view::geometry(Rect::new(2, 3, 10, 8), 2, 99);
+        assert_eq!((short.first, short.count), (0, 2));
+        assert_eq!(short.index_at(2, 5), None);
+        let empty = tree_view::geometry(Rect::new(2, 3, 10, 0), 10, 100);
+        assert_eq!((empty.first, empty.count), (10, 0));
+        assert_eq!(empty.index_at(2, 3), None);
+        let out = terminal.backend().to_string();
+        assert!(
+            !sidebar_text(
+                terminal.backend().buffer(),
+                l.sidebar_footer,
+                l.sidebar_footer.y
+            )
+            .contains("attention"),
+            "{out}"
+        );
+    }
+
+    fn shells_app() -> App {
         let mut app = App::new(
-            vec![
-                first,
-                win(2, "b", Runtime::Shell, Status::Idle),
-                third,
-                win(4, "d", Runtime::Shell, Status::Idle),
-                win(5, "e", Runtime::Shell, Status::Idle),
-            ],
+            (1..=20)
+                .map(|id| win(id, &format!("shell-{id}"), Runtime::Shell, Status::Idle))
+                .collect(),
             "/tmp".into(),
             Keymap::default_prefix(),
         );
-        let _ = app.set_terminal_size(80, 24);
-        // Six list rows fit the first two cards (3 + 2), but not the next three-row card.
-        let inner = ratatui::layout::Rect::new(1, 1, 28, 8);
-        let expected = [Some(0), Some(0), Some(0), Some(1), Some(1), None];
-        for (offset, want) in expected.into_iter().enumerate() {
-            assert_eq!(
-                sidebar::hit_test(inner, &app, 3, inner.y + offset as u16),
-                want,
-                "row offset {offset}"
-            );
+        app.set_terminal_size(80, 24);
+        app
+    }
+
+    #[test]
+    fn sidebar_scrolls_to_keep_the_focused_window_visible() {
+        let mut app = shells_app();
+        app.focus(20);
+        let l = layout(Rect::new(0, 0, 120, 14), 34);
+        app.set_tree_viewports(l.sidebar_list.height, l.main_inner.height);
+        let (out, _) = render(&app, 120, 14);
+        assert!(out.contains("20 shell-20"), "{out}");
+        assert!(!out.contains(" 1 shell-1 "), "{out}");
+        assert_eq!(app.tree.sidebar.top, 12);
+        // Same-size draws must preserve wheel scrolling, not snap back to the anchor.
+        app.on_scroll(true, 2, 2, &l);
+        app.set_tree_viewports(l.sidebar_list.height, l.main_inner.height);
+        assert_eq!(app.tree.sidebar.top, 9);
+        let windows = app.windows.clone();
+        app.on_daemon(proto::DaemonMsg::WindowsChanged { windows });
+        assert_eq!(app.tree.sidebar.top, 12);
+    }
+
+    #[test]
+    fn wheel_over_the_sidebar_scrolls_the_tree() {
+        let mut app = shells_app();
+        let l = layout(Rect::new(0, 0, 120, 14), 34);
+        app.set_tree_viewports(l.sidebar_list.height, l.main_inner.height);
+        assert!(app.on_scroll(false, 2, 2, &l).is_empty());
+        assert_eq!(app.tree.sidebar.top, 3);
+        assert_eq!(app.focused, Some(1));
+        app.parser.process(b"\x1b[?1000h\x1b[?1006h");
+        assert_eq!(
+            app.on_scroll(false, l.main_inner.x, l.main_inner.y, &l),
+            vec![crate::app::Effect::Send(proto::ClientMsg::Input {
+                window_id: 1,
+                bytes: b"\x1b[<65;1;1M".to_vec()
+            })]
+        );
+        assert!(app.on_scroll(false, 2, l.sidebar_footer.y, &l).is_empty());
+        assert_eq!(app.tree.sidebar.top, 3);
+    }
+
+    #[test]
+    fn a_click_on_a_row_focuses_toggles_or_focuses_the_parent() {
+        use crate::app::Effect;
+        use proto::ClientMsg;
+        let mut app = example_app();
+        let l = layout(Rect::new(0, 0, 120, 30), 34);
+        app.set_tree_viewports(l.sidebar_list.height, l.main_inner.height);
+        assert!(app.on_click(2, 2, &l).is_empty());
+        assert_eq!(
+            app.on_click(2, 6, &l),
+            vec![Effect::Send(ClientMsg::Subscribe {
+                window_id: 2,
+                cols: 80,
+                rows: 24
+            })]
+        );
+        assert_eq!(
+            app.on_click(2, 3, &l),
+            vec![Effect::Send(ClientMsg::Subscribe {
+                window_id: 1,
+                cols: 80,
+                rows: 24
+            })]
+        );
+        assert!(app.on_click(2, 15, &l).is_empty());
+        assert!(
+            app.tree
+                .is_collapsed(&crate::tree::NodeKey::Project("/r/blog".into()))
+        );
+        app.focus(8);
+        assert_eq!(app.tree.sidebar.top, 0);
+        assert!(app.on_click(0, 6, &l).is_empty());
+        assert!(app.on_click(2, l.sidebar_footer.y, &l).is_empty());
+        app.modal = Some(Modal::Help);
+        assert!(app.on_click(2, 6, &l).is_empty());
+        assert_eq!(app.focused, Some(8));
+    }
+
+    #[test]
+    fn unicode_names_preserve_graphemes_and_right_fields() {
+        for name in ["界".repeat(20), "👩🏽‍💻".repeat(20)] {
+            let mut window = win(1, &name, Runtime::Shell, Status::Idle);
+            window.since_secs = 0;
+            let mut app = App::new(vec![window], "/tmp".into(), Keymap::default_prefix());
+            app.set_terminal_size(80, 24);
+            let (out, _) = render(&app, 120, 30);
+            assert!(out.contains("… sh  0s│"), "{out}");
+            assert!(!out.contains('\u{fffd}'));
         }
-        assert_eq!(
-            sidebar::hit_test(inner, &app, 3, inner.y + 6),
-            None,
-            "spacer row"
-        );
-        assert_eq!(
-            sidebar::hit_test(inner, &app, 3, inner.y + 7),
-            None,
-            "footer row"
-        );
-        assert_eq!(
-            sidebar::hit_test(inner, &app, 3, inner.y + 8),
-            None,
-            "below the rect"
-        );
     }
 }

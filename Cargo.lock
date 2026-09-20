@@ -78,6 +78,7 @@ dependencies = [
  "clap",
  "crossterm",
  "libc",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -143,6 +144,8 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tui-term",
+ "unicode-segmentation",
+ "unicode-width",
  "vt100",
 ]
 

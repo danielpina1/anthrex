@@ -3,11 +3,11 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Output, Stdio};
-use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 use proto::{ClientKind, ClientMsg, DaemonMsg, Runtime, WindowInfo, WindowSpec};
 use serde_json::Value;
+use tempfile::NamedTempFile;
 use tokio::net::UnixStream;
 
 pub const ANTHREX: &str = env!("CARGO_BIN_EXE_anthrex");
@@ -44,12 +44,12 @@ pub fn isolated_command(dir: &Path, args: &[&str]) -> Command {
     command
 }
 
-/// Drain pipes concurrently, without a join that can outlive the test deadline.
+/// Capture output without making direct-child completion depend on inherited pipe handles.
 pub struct RunningCommand {
     description: String,
     child: Child,
-    stdout: Receiver<Vec<u8>>,
-    stderr: Receiver<Vec<u8>>,
+    stdout: NamedTempFile,
+    stderr: NamedTempFile,
 }
 
 impl RunningCommand {
@@ -59,23 +59,14 @@ impl RunningCommand {
             command.get_program(),
             command.get_args().take(2).collect::<Vec<_>>()
         );
-        let mut child = command
+        let stdout = NamedTempFile::new().unwrap();
+        let stderr = NamedTempFile::new().unwrap();
+        let child = command
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdout(stdout.reopen().unwrap())
+            .stderr(stderr.reopen().unwrap())
             .spawn()
             .unwrap();
-        fn drain(mut pipe: impl Read + Send + 'static) -> Receiver<Vec<u8>> {
-            let (tx, rx) = mpsc::channel();
-            std::thread::spawn(move || {
-                let mut bytes = Vec::new();
-                let _ = pipe.read_to_end(&mut bytes);
-                let _ = tx.send(bytes);
-            });
-            rx
-        }
-        let stdout = drain(child.stdout.take().unwrap());
-        let stderr = drain(child.stderr.take().unwrap());
         Self {
             description,
             child,
@@ -114,14 +105,28 @@ impl RunningCommand {
             );
             std::thread::sleep(Duration::from_millis(5));
         };
-        let stdout = self
-            .stdout
-            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .unwrap_or_else(|error| panic!("stdout drain exceeded test deadline: {error}; child {} ({}) exited with {status}", self.child.id(), self.description));
-        let stderr = self
-            .stderr
-            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .unwrap_or_else(|error| panic!("stderr drain exceeded test deadline: {error}; child {} ({}) exited with {status}", self.child.id(), self.description));
+        let mut stdout = Vec::new();
+        self.stdout
+            .as_file_mut()
+            .read_to_end(&mut stdout)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "failed to read stdout: {error}; child {} ({}) exited with {status}",
+                    self.child.id(),
+                    self.description
+                )
+            });
+        let mut stderr = Vec::new();
+        self.stderr
+            .as_file_mut()
+            .read_to_end(&mut stderr)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "failed to read stderr: {error}; child {} ({}) exited with {status}",
+                    self.child.id(),
+                    self.description
+                )
+            });
         Output {
             status,
             stdout,
@@ -177,6 +182,10 @@ pub struct TestDaemon {
 
 impl TestDaemon {
     pub fn start(script: &[Value]) -> Self {
+        Self::start_configured(script, |_| {})
+    }
+
+    pub fn start_configured(script: &[Value], configure: impl FnOnce(&mut Command)) -> Self {
         let dir = tempdir();
         let script_path = dir.path().join("script.jsonl");
         let lines = script
@@ -186,16 +195,17 @@ impl TestDaemon {
             .join("\n");
         std::fs::write(&script_path, lines).unwrap();
         let log = std::fs::File::create(dir.path().join("daemon.log")).unwrap();
-        let child = isolated_command(dir.path(), &["daemon", "start", "--foreground"])
+        let mut command = isolated_command(dir.path(), &["daemon", "start", "--foreground"]);
+        command
             .env("ANTHREX_CLAUDE_BIN", fake_agent_bin())
             .env("ANTHREX_CODEX_BIN", fake_agent_bin())
             .env("FAKE_AGENT_SCRIPT", script_path)
             .env("FAKE_AGENT_ARGS_FILE", dir.path().join("data/args.json"))
             .stdin(Stdio::null())
             .stdout(log.try_clone().unwrap())
-            .stderr(log)
-            .spawn()
-            .unwrap();
+            .stderr(log);
+        configure(&mut command);
+        let child = command.spawn().unwrap();
         let data = dir.path().join("data");
         let mut daemon = Self { dir, data, child };
         let deadline = Instant::now() + Duration::from_secs(3);
@@ -233,6 +243,9 @@ impl TestDaemon {
     }
     pub fn anthrex(&self, args: &[&str]) -> Output {
         RunningCommand::start(&mut self.command(args)).finish(Duration::from_secs(3))
+    }
+    pub fn anthrex_with_timeout(&self, args: &[&str], timeout: Duration) -> Output {
+        RunningCommand::start(&mut self.command(args)).finish(timeout)
     }
 }
 

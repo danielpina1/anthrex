@@ -34,6 +34,8 @@ import termios
 import time
 import tty
 
+from pty_tree_smoke import run_project_tree_stage
+
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(REPO, "target/debug/anthrex")
@@ -205,6 +207,14 @@ class PtyProc:
             self.read_available(timeout=0.2)
         fail(f"timed out waiting for {label or text!r}\n--- rendered screen ---\n{self.screen_text()}")
 
+    def wait_for_focused_window(self, name, timeout=10.0):
+        """Wait until `name` is the main pane, not merely a sidebar row."""
+        self.wait_for(
+            f"{name} · shell",
+            timeout=timeout,
+            label=f"{name} focused main-pane title",
+        )
+
     def send(self, data: bytes):
         os.write(self.fd, data)
 
@@ -249,8 +259,8 @@ class PtyProc:
             pass
 
 
-def run_cmd(args, expect_ok=True):
-    result = subprocess.run([BIN] + args, cwd=REPO, env=ENV, capture_output=True, text=True, timeout=15)
+def run_cmd(args, expect_ok=True, timeout=15):
+    result = subprocess.run([BIN] + args, cwd=REPO, env=ENV, capture_output=True, text=True, timeout=timeout)
     if expect_ok and result.returncode != 0:
         fail(f"`anthrex {' '.join(args)}` exited {result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}")
     return result
@@ -344,20 +354,20 @@ def main():
 
     print("== stage 1: initial attach ==")
     proc = PtyProc([BIN])
-    proc.wait_for("anthrex", label="initial banner")
+    proc.wait_for("agents", label="initial banner")
     proc.wait_for("no agents yet", label="empty sidebar hint")
     print("ok: initial frame shows anthrex UI with no agents yet")
 
     print("== stage 2: create shell-1, run a command ==")
     proc.send(b"\x02c")
-    proc.wait_for("shell-1", label="shell-1 card")
+    proc.wait_for_focused_window("shell-1")
     proc.send(b"echo smoke-$((40+2))\r")
     proc.wait_for("smoke-42", label="echo output in shell-1")
     print("ok: shell-1 created and command output visible")
 
     print("== stage 3: create shell-2, exercise keys, help overlay ==")
     proc.send(b"\x02c")
-    proc.wait_for("shell-2", label="shell-2 card")
+    proc.wait_for_focused_window("shell-2")
     proc.send(b"\x02k")
     time.sleep(0.3)
     proc.read_available(timeout=0.3)
@@ -399,7 +409,7 @@ def main():
 
     print("== stage 6: re-attach, verify persisted output, detach again ==")
     proc2 = PtyProc([BIN])
-    proc2.wait_for("anthrex", label="re-attach banner")
+    proc2.wait_for("agents", label="re-attach banner")
     proc2.send(b"\x021")
     proc2.wait_for("smoke-42", label="smoke-42 visible again after focusing window 1")
     proc2.send(b"\x02d")
@@ -414,17 +424,14 @@ def main():
     # submits a claude/codex prompt instead of inserting a newline. `cat -v` renders the
     # ESC byte it actually receives as the two characters ^ and [.
     proc3 = PtyProc([BIN])
-    proc3.wait_for("anthrex", label="third attach banner")
+    proc3.wait_for("agents", label="third attach banner")
     proc3.send(b"\x02c")
-    proc3.wait_for("shell-3", label="shell-3 card")
-    proc3.send(b"cat -v\r")
-    time.sleep(0.5)
-    proc3.read_available(timeout=0.5)
+    proc3.wait_for_focused_window("shell-3")
+    proc3.send(b"stty -echo; printf '%s%s\\n' CAT_ READY; cat -v\r")
+    proc3.wait_for("CAT_READY", label="cat -v readiness in focused shell-3")
     proc3.send(b"\x1b\r")  # ESC CR: how a terminal reports Alt+Enter
     proc3.wait_for("^[", label="ESC rendered by cat -v in the focused window")
     proc3.send(b"\x04")  # Ctrl-D ends cat
-    time.sleep(0.3)
-    proc3.read_available(timeout=0.3)
     print("ok: Alt+Enter arrived at the child as ESC CR")
 
     print("== stage 8: a 32 KiB paste freezes neither the daemon nor the client ==")
@@ -442,7 +449,7 @@ def main():
         print("note: local raw PTY accepted all 32768 bytes; platform backpressure unconfirmed")
     print("note: calibration does not observe the agent's writer; both timing limits remain enforced")
     proc3.send(b"\x02c")
-    proc3.wait_for("shell-4", label="shell-4 card")
+    proc3.wait_for_focused_window("shell-4")
     child_started = time.monotonic()
     proc3.send(b"stty raw -echo && printf '%s%s' RAW_ READY && exec sleep 30\r")
     proc3.wait_for("RAW_READY", label="shell-4 raw-mode readiness")
@@ -481,18 +488,30 @@ def main():
 
     print("== stage 8b: a fake Claude turn reports working, tool, and done ==")
     proc4 = PtyProc([BIN, "attach", "shell-1"])
-    proc4.wait_for("anthrex", label="fourth attach banner")
+    proc4.wait_for("agents", label="fourth attach banner")
     proc4.wait_for("smoke-42", label="shell-1 focused before fake Claude creation")
     created = run_cmd(["new", "--runtime", "claude", "--name", "fake-claude"])
     try:
         fake_claude_id = int(created.stdout.strip())
     except ValueError:
         fail(f"`anthrex new` did not print a window id: {created.stdout!r}")
-    proc4.wait_for("claude · working", label="fake-claude working status")
-    proc4.wait_for("Bash", label="fake-claude Bash tool")
-    print("ok: fake-claude card showed working with the Bash tool")
+    deadline = time.monotonic() + 3.0
+    working = None
+    while time.monotonic() < deadline:
+        listed = run_cmd(["ls", "--json"], timeout=max(0.01, deadline - time.monotonic()))
+        working = next((w for w in json.loads(listed.stdout) if w["id"] == fake_claude_id), None)
+        if working and working["status"] == "working" and working["tool"] == "Bash":
+            break
+        proc4.read_available(timeout=0.05)
+    else:
+        fail(f"fake-claude never reported working with Bash: {working!r}")
+    deadline = time.monotonic() + 3.0
+    while not re.search(r"fake-claude\s+cl\b", proc4.screen_text()):
+        if time.monotonic() >= deadline:
+            fail(f"fake-claude tree row/runtime tag did not appear:\n{proc4.screen_text()}")
+        proc4.read_available(timeout=0.05)
+    print("ok: fake-claude tree row appeared and JSON reported working with Bash")
     proc4.wait_for("fake-claude finished", label="fake-claude completion toast")
-    proc4.wait_for("claude · done", label="fake-claude done status")
 
     listed_json = run_cmd(["ls", "--json"])
     try:
@@ -504,10 +523,12 @@ def main():
         fail(f"`anthrex ls --json` omitted fake-claude id {fake_claude_id}:\n{listed_json.stdout}")
     if fake_claude["status"] != "done":
         fail(f"fake-claude status was not done:\n{listed_json.stdout}")
+    if fake_claude["tool"] is not None:
+        fail(f"fake-claude tool was not cleared after completion:\n{listed_json.stdout}")
     expected_session = f"fake-session-{fake_claude_id}"
     if fake_claude["session_id"] != expected_session:
         fail(f"fake-claude session id was not {expected_session!r}:\n{listed_json.stdout}")
-    print("ok: completion toast, done card, and JSON session metadata appeared")
+    print("ok: completion toast and JSON done/session metadata appeared with the tool cleared")
 
     run_cmd(["rm", "fake-claude"])
     remaining = json.loads(run_cmd(["ls", "--json"]).stdout)
@@ -520,6 +541,8 @@ def main():
         fail(f"fourth detach did not exit cleanly with status 0 (raw status {status4})")
     proc4.close()
     print("ok: fake-claude removed and fourth client detached cleanly")
+
+    run_project_tree_stage(REPO, PtyProc, run_cmd, fail)
 
     print("== stage 9: stop the daemon, verify status ==")
     stop_result = run_cmd(["daemon", "stop"])

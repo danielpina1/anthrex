@@ -14,6 +14,10 @@ pub enum Command {
     Detach,
     StopDaemon,
     Help,
+    ToggleTree,
+    ToggleOverview,
+    NarrowSidebar,
+    WidenSidebar,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +29,8 @@ pub enum KeyAction {
     AwaitPrefix,
     /// Prefix mode was cancelled with Esc.
     Cancel,
+    /// A key pressed in tree mode; `App` interprets it.
+    Tree(KeyEvent),
     Nothing,
 }
 
@@ -32,6 +38,7 @@ pub enum KeyAction {
 pub struct Keymap {
     prefix: (KeyCode, KeyModifiers),
     pending: bool,
+    tree_mode: bool,
 }
 
 impl Keymap {
@@ -43,11 +50,20 @@ impl Keymap {
         Self {
             prefix,
             pending: false,
+            tree_mode: false,
         }
     }
 
     pub fn pending(&self) -> bool {
         self.pending
+    }
+
+    pub fn set_tree_mode(&mut self, on: bool) {
+        self.tree_mode = on;
+    }
+
+    pub fn tree_mode(&self) -> bool {
+        self.tree_mode
     }
 
     fn is_prefix(&self, key: &KeyEvent) -> bool {
@@ -78,6 +94,10 @@ impl Keymap {
                 KeyCode::Char('x') => KeyAction::Run(Command::KillWindow),
                 KeyCode::Char('X') => KeyAction::Run(Command::RemoveWindow),
                 KeyCode::Char('s') => KeyAction::Run(Command::ToggleSidebar),
+                KeyCode::Char('t') => KeyAction::Run(Command::ToggleTree),
+                KeyCode::Char('T') => KeyAction::Run(Command::ToggleOverview),
+                KeyCode::Char('<') => KeyAction::Run(Command::NarrowSidebar),
+                KeyCode::Char('>') => KeyAction::Run(Command::WidenSidebar),
                 KeyCode::Char('d') => KeyAction::Run(Command::Detach),
                 KeyCode::Char('Q') => KeyAction::Run(Command::StopDaemon),
                 KeyCode::Char('?') => KeyAction::Run(Command::Help),
@@ -88,6 +108,9 @@ impl Keymap {
         if self.is_prefix(&key) {
             self.pending = true;
             return KeyAction::AwaitPrefix;
+        }
+        if self.tree_mode {
+            return KeyAction::Tree(key);
         }
         encode_key(key, app_cursor)
             .map(KeyAction::Send)
@@ -436,5 +459,71 @@ mod tests {
             KeyAction::Run(Command::NextWindow)
         );
         assert!(!km.pending());
+    }
+
+    #[test]
+    fn prefix_opens_tree_overview_and_width_commands() {
+        let mut km = Keymap::new(Keymap::default_prefix());
+        let prefix = key(KeyCode::Char('b'), KeyModifiers::CONTROL);
+
+        for (key, command) in [
+            (
+                key(KeyCode::Char('t'), KeyModifiers::NONE),
+                Command::ToggleTree,
+            ),
+            (
+                key(KeyCode::Char('T'), KeyModifiers::NONE),
+                Command::ToggleOverview,
+            ),
+            (
+                key(KeyCode::Char('T'), KeyModifiers::SHIFT),
+                Command::ToggleOverview,
+            ),
+            (
+                key(KeyCode::Char('<'), KeyModifiers::NONE),
+                Command::NarrowSidebar,
+            ),
+            (
+                key(KeyCode::Char('>'), KeyModifiers::NONE),
+                Command::WidenSidebar,
+            ),
+        ] {
+            assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
+            assert_eq!(km.handle(key, false), KeyAction::Run(command));
+        }
+    }
+
+    #[test]
+    fn tree_mode_returns_keys_instead_of_bytes() {
+        let mut km = Keymap::new(Keymap::default_prefix());
+        let prefix = key(KeyCode::Char('b'), KeyModifiers::CONTROL);
+        km.set_tree_mode(true);
+
+        for tree_key in [
+            key(KeyCode::Char('j'), KeyModifiers::NONE),
+            key(KeyCode::Enter, KeyModifiers::NONE),
+            key(KeyCode::Esc, KeyModifiers::NONE),
+            key(KeyCode::Char('/'), KeyModifiers::NONE),
+        ] {
+            assert_eq!(km.handle(tree_key, false), KeyAction::Tree(tree_key));
+        }
+
+        let mut release = key(KeyCode::Char('j'), KeyModifiers::NONE);
+        release.kind = KeyEventKind::Release;
+        assert_eq!(km.handle(release, false), KeyAction::Nothing);
+
+        assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
+        assert_eq!(
+            km.handle(key(KeyCode::Char('j'), KeyModifiers::NONE), false),
+            KeyAction::Run(Command::NextWindow)
+        );
+        assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
+        assert_eq!(km.handle(prefix, false), KeyAction::Send(vec![0x02]));
+
+        km.set_tree_mode(false);
+        assert_eq!(
+            km.handle(key(KeyCode::Char('j'), KeyModifiers::NONE), false),
+            KeyAction::Send(b"j".to_vec())
+        );
     }
 }

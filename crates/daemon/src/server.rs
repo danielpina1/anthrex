@@ -167,10 +167,23 @@ async fn handle_client(
                 windows: manager.list(),
             }),
             ClientMsg::CreateWindow { spec, cols, rows } => {
-                Some(match manager.create(spec, cols, rows) {
-                    Ok(info) => DaemonMsg::Created { window_id: info.id },
-                    Err(e) => error("create", e.to_string()),
-                })
+                let manager = manager.clone();
+                let out_tx = out_tx.clone();
+                tokio::spawn(async move {
+                    let project = crate::project::resolve_root(spec.cwd.clone()).await;
+                    // PTY creation can block too; keep it off the runtime worker.
+                    let result = tokio::task::spawn_blocking(move || {
+                        manager.create(spec, project, cols, rows)
+                    })
+                    .await;
+                    let reply = match result {
+                        Ok(Ok(info)) => DaemonMsg::Created { window_id: info.id },
+                        Ok(Err(e)) => error("create", e.to_string()),
+                        Err(e) => error("create", e.to_string()),
+                    };
+                    let _ = out_tx.send(reply).await;
+                });
+                None
             }
             ClientMsg::Subscribe {
                 window_id,

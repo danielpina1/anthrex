@@ -1,6 +1,7 @@
 mod client;
 mod hook;
 mod spawn;
+mod tree_cmd;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use proto::{ClientMsg, DaemonMsg, Runtime, WindowSpec};
@@ -52,6 +53,15 @@ enum Command {
     /// List windows
     Ls {
         /// Print the window list as pretty JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the project tree
+    Tree {
+        /// Show the project containing this directory
+        #[arg(long)]
+        project: Option<PathBuf>,
+        /// Print the project tree as pretty JSON
         #[arg(long)]
         json: bool,
     },
@@ -158,7 +168,10 @@ async fn run_cli() -> anyhow::Result<()> {
             };
             let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
             match c
-                .request(ClientMsg::CreateWindow { spec, cols, rows })
+                .request_with_timeout(
+                    ClientMsg::CreateWindow { spec, cols, rows },
+                    client::CREATE_WINDOW_REPLY_TIMEOUT,
+                )
                 .await?
             {
                 DaemonMsg::Created { window_id } => {
@@ -175,6 +188,27 @@ async fn run_cli() -> anyhow::Result<()> {
                 println!("{}", serde_json::to_string_pretty(&c.windows)?);
             } else {
                 print!("{}", client::format_table(&c.windows));
+            }
+            Ok(())
+        }
+        Some(Command::Tree { project, json }) => {
+            let c = client::CliClient::connect(&socket).await?;
+            let requested = project.map(|path| resolve_dir(Some(path))).transpose()?;
+            let normalized = match requested.as_ref() {
+                Some(path) => Some(daemon::project::resolve_root(path.clone()).await),
+                None => None,
+            };
+            let project = requested
+                .as_deref()
+                .zip(normalized.as_deref())
+                .map(|(requested, normalized)| tree_cmd::ProjectQuery::new(requested, normalized));
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&tree_cmd::tree_json(&c.windows, project))?
+                );
+            } else {
+                print!("{}", tree_cmd::tree_text(&c.windows, project));
             }
             Ok(())
         }
@@ -256,5 +290,35 @@ async fn daemon_command(action: DaemonAction, socket: PathBuf) -> anyhow::Result
                 Ok(())
             }
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Cli;
+    use clap::Parser;
+
+    #[test]
+    fn tree_accepts_optional_project_and_json_flags() {
+        for args in [
+            vec!["anthrex", "tree"],
+            vec!["anthrex", "tree", "--project", "/r/shop/src"],
+            vec!["anthrex", "tree", "--json"],
+            vec!["anthrex", "tree", "--project", "/r/shop/src", "--json"],
+        ] {
+            assert!(Cli::try_parse_from(&args).is_ok(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn tree_help_describes_command_and_both_flags() {
+        let error = Cli::try_parse_from(["anthrex", "tree", "--help"])
+            .err()
+            .expect("help exits instead of parsing a command");
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
+        let help = error.to_string();
+        assert!(help.contains("Print the project tree"));
+        assert!(help.contains("--project <PROJECT>"));
+        assert!(help.contains("--json"));
     }
 }

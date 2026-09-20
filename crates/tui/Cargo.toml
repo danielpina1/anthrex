@@ -19,6 +19,8 @@ tui-term.workspace = true
 vt100.workspace = true
 futures.workspace = true
 dirs.workspace = true
+unicode-width.workspace = true
+unicode-segmentation.workspace = true
 
 [dev-dependencies]
 daemon.workspace = true

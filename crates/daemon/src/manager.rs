@@ -67,6 +67,7 @@ struct Entry {
     id: u32,
     name: String,
     spec: WindowSpec,
+    project: PathBuf,
     status: Status,
     state: AgentState,
     viewers: u32,
@@ -84,6 +85,7 @@ impl Entry {
             name: self.name.clone(),
             runtime: self.spec.runtime,
             cwd: self.spec.cwd.clone(),
+            project: self.project.clone(),
             branch: self.spec.worktree_branch.clone(),
             status: self.status,
             tool: self.state.tool.clone(),
@@ -114,6 +116,7 @@ impl Entry {
 
 struct Inner {
     next_id: u32,
+    shutting_down: bool,
     entries: BTreeMap<u32, Entry>,
     // Cleanup owns a group beyond the leader's exit and even after window removal.
     cleanups: BTreeMap<u32, watch::Receiver<bool>>,
@@ -152,6 +155,7 @@ impl WindowManager {
         let manager = Arc::new(Self {
             inner: Mutex::new(Inner {
                 next_id: 1,
+                shutting_down: false,
                 entries: BTreeMap::new(),
                 cleanups: BTreeMap::new(),
             }),
@@ -186,8 +190,15 @@ impl WindowManager {
         );
     }
 
-    pub fn create(&self, spec: WindowSpec, cols: u16, rows: u16) -> anyhow::Result<WindowInfo> {
+    pub fn create(
+        &self,
+        spec: WindowSpec,
+        project: PathBuf,
+        cols: u16,
+        rows: u16,
+    ) -> anyhow::Result<WindowInfo> {
         let mut inner = crate::lock(&self.inner);
+        anyhow::ensure!(!inner.shutting_down, "daemon is shutting down");
         let id = inner.next_id;
         let name = match spec
             .name
@@ -229,6 +240,7 @@ impl WindowManager {
             id,
             name,
             spec,
+            project,
             status: Status::Starting,
             state: AgentState::default(),
             viewers: 0,
@@ -466,6 +478,9 @@ impl WindowManager {
     pub async fn shutdown(&self) {
         let pending: Vec<_> = {
             let mut inner = crate::lock(&self.inner);
+            // Share create's admission lock: an accepted window is in this snapshot,
+            // and a creation still resolving its project cannot spawn afterward.
+            inner.shutting_down = true;
             let ids: Vec<_> = inner.entries.keys().copied().collect();
             for id in ids {
                 if let Err(error) = inner.start_cleanup(id) {

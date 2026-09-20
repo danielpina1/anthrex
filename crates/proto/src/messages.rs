@@ -107,6 +107,22 @@ mod tests {
     };
 
     #[test]
+    fn windows_changed_carries_the_project_through_messagepack() {
+        let value = serde_json::json!({"WindowsChanged": {"windows": [{
+            "id": 1, "name": "shell", "runtime": "shell",
+            "cwd": "/tmp/repo/sub", "project": "/tmp/repo", "branch": null,
+            "status": "starting", "tool": null, "since_secs": 0,
+            "last_output_secs": 0, "session_id": null, "model": null,
+            "subagents": [], "exit": null
+        }]}});
+        let message: DaemonMsg = serde_json::from_value(value.clone()).unwrap();
+        let packed = rmp_serde::to_vec_named(&message).unwrap();
+        let back: DaemonMsg = rmp_serde::from_slice(&packed).unwrap();
+        assert_eq!(back, message);
+        assert_eq!(serde_json::to_value(back).unwrap(), value);
+    }
+
+    #[test]
     fn input_bytes_survive_messagepack() {
         let msg = ClientMsg::Input {
             window_id: 3,
@@ -160,6 +176,7 @@ mod tests {
             name: "shell".into(),
             runtime: Runtime::Shell,
             cwd: "/tmp".into(),
+            project: "/tmp".into(),
             branch: Some("feat/protocol".into()),
             status: Status::Working,
             tool: Some("Read".into()),
