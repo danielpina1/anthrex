@@ -428,7 +428,10 @@ fn a_stale_probe_still_reports_the_operation() {
     let state = probe(script.as_os_str(), repo.path(), PROBE_TIMEOUT)
         .expect("complete records before the cap still parse");
 
-    assert!(state.stale, "the over-cap read must still mark the state stale");
+    assert!(
+        state.stale,
+        "the over-cap read must still mark the state stale"
+    );
     assert_eq!(
         state.operation,
         Some(GitOperation::Rebase),
