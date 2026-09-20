@@ -33,7 +33,7 @@ pub enum Head {
     Unborn(String),    // branch name that does not exist yet
 }
 
-pub enum Operation { Merge, Rebase, CherryPick, Revert, Bisect }
+pub enum GitOperation { Merge, Rebase, CherryPick, Revert, Bisect }
 
 pub struct GitState {
     pub head: Head,
@@ -43,7 +43,7 @@ pub struct GitState {
     pub dirty: u32,       // tracked files with staged or unstaged changes
     pub untracked: u32,
     pub conflicts: u32,
-    pub operation: Option<Operation>,
+    pub operation: Option<GitOperation>,
     pub stale: bool,      // the last probe failed or was truncated
 }
 ```
@@ -110,7 +110,7 @@ Like `project`, `worktree` is computed once, before the window is created, and n
 `PROTO_VERSION` goes from 3 to 4.
 
 - `WindowInfo.worktree: Option<PathBuf>`.
-- `ServerMsg::Git { root: PathBuf, state: Option<GitState> }`. `None` means the root is not a git working tree or git could not be run. Broadcast to every attached client whenever a probe changes the state, and sent once for every known root immediately after the client's initial window list, so a fresh client is never blank.
+- `DaemonMsg::Git { root: PathBuf, state: Option<GitState> }`. `None` means the root is not a git working tree or git could not be run. Broadcast to every attached client whenever a probe changes the state, and sent once for every known root immediately after the client's initial window list, so a fresh client is never blank.
 
 There is no client-initiated refresh. The daemon decides when to probe.
 
