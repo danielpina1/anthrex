@@ -360,6 +360,29 @@ fn a_timeout_marks_the_state_stale() {
 }
 
 #[test]
+fn a_timeout_before_any_output_is_none() {
+    // Distinct from `a_timeout_marks_the_state_stale`: that fake git prints a valid
+    // branch header before hanging, so the probe has a partial parse to mark stale.
+    // This one never prints anything before the deadline hits — no `# branch.*`
+    // header, no state, nothing for `GitState` to represent (`Head` has no "unknown"
+    // variant) — so `probe` returns `None`, exactly as it does for a directory outside
+    // a repository or a missing git binary. This boundary is the one the doc comment
+    // on `probe` calls out explicitly: "any timeout" is not the rule, "a timeout (or a
+    // cap) before even one header arrived" is.
+    let repo = init_repo();
+    let scripts = tempdir().unwrap();
+    let script = write_script(
+        scripts.path(),
+        "silent-hanging-git",
+        "#!/bin/sh\nsleep 100\n",
+    );
+
+    let state = probe(script.as_os_str(), repo.path(), Duration::from_millis(100));
+
+    assert_eq!(state, None);
+}
+
+#[test]
 fn output_over_the_cap_is_truncated_and_stale() {
     let repo = init_repo();
     let scripts = tempdir().unwrap();
