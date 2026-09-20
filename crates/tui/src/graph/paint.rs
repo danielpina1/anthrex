@@ -100,14 +100,14 @@ impl Grid {
 
     /// Writes one cell of an edge, in the plain border style the gap columns
     /// belong to.
-    fn place_line(&mut self, canvas_x: u16, canvas_y: u16, text: &str) {
+    fn place_edge_cell(&mut self, canvas_x: u16, canvas_y: u16, text: &str) {
         self.place(canvas_x, canvas_y, text.to_owned(), theme::border());
     }
 
     /// Replaces a cell's text but keeps the style already under it, so a
     /// junction painted onto a box's border inherits that box's focused or
     /// selected styling instead of reverting it to the plain border style.
-    fn retext(&mut self, canvas_x: u16, canvas_y: u16, text: &str) {
+    fn overwrite_text(&mut self, canvas_x: u16, canvas_y: u16, text: &str) {
         if let Some(index) = self.index(canvas_x, canvas_y) {
             self.cells[index].text = text.to_owned();
         }
@@ -299,7 +299,7 @@ impl EdgeGeometry {
 
 /// Which part of the bus one of its cells is, before the parent's own run is
 /// taken into account.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum BusCell {
     /// The first child's row, where the bus starts.
     Top,
@@ -332,63 +332,60 @@ fn paint_edge(grid: &mut Grid, layout: &Layout, edge: &Edge) {
         // middle rows are the same one and the edge is a single straight run
         // with no bus column at all.
         [row] => paint_straight_run(grid, &geometry, *row),
-        _ => paint_bus(grid, &geometry),
+        // The bus's ends are the first and last child's rows, in the order the
+        // layout placed them — which is top to bottom (decision 6).
+        [first, .., last] => paint_bus(grid, &geometry, *first, *last),
+        [] => {}
     }
 }
 
 /// One horizontal line from the parent's border to the child's, junctions
 /// included.
 fn paint_straight_run(grid: &mut Grid, geometry: &EdgeGeometry, row: u16) {
-    for x in (geometry.parent_x + 1)..geometry.child_x {
-        grid.place_line(x, row, "─");
+    for x in geometry.parent_x.saturating_add(1)..geometry.child_x {
+        grid.place_edge_cell(x, row, "─");
     }
-    paint_junctions(grid, geometry, row, &[row]);
+    paint_junctions(grid, geometry, row);
 }
 
-/// A vertical bus in the middle gap column, the parent's run into it, and one
-/// run out of it into each child.
-fn paint_bus(grid: &mut Grid, geometry: &EdgeGeometry) {
-    for x in (geometry.parent_x + 1)..geometry.bus_x {
-        grid.place_line(x, geometry.parent_row, "─");
+/// A vertical bus in the middle gap column from `top` to `bottom`, the
+/// parent's run into it, and one run out of it into each child.
+///
+/// The bus is not stretched to reach the parent's row: the layout centres a
+/// parent inside its children's span, so that row lies between the two ends by
+/// construction.
+fn paint_bus(grid: &mut Grid, geometry: &EdgeGeometry, top: u16, bottom: u16) {
+    for x in geometry.parent_x.saturating_add(1)..geometry.bus_x {
+        grid.place_edge_cell(x, geometry.parent_row, "─");
     }
     for row in &geometry.child_rows {
-        for x in (geometry.bus_x + 1)..geometry.child_x {
-            grid.place_line(x, *row, "─");
+        for x in geometry.bus_x.saturating_add(1)..geometry.child_x {
+            grid.place_edge_cell(x, *row, "─");
         }
     }
-
-    // The ends are the first and last child's rows, so the bus reaches every
-    // child. It is not stretched to the parent's row: the layout centres a
-    // parent inside its children's span, which puts that row between the two
-    // ends by construction.
-    let (Some(top), Some(bottom)) = (
-        geometry.child_rows.iter().min().copied(),
-        geometry.child_rows.iter().max().copied(),
-    ) else {
-        return;
-    };
     for row in top..=bottom {
         let cell = bus_cell(row, top, bottom, &geometry.child_rows);
-        grid.place_line(
+        grid.place_edge_cell(
             geometry.bus_x,
             row,
             bus_glyph(cell, row == geometry.parent_row),
         );
     }
 
-    paint_junctions(grid, geometry, geometry.parent_row, &geometry.child_rows);
+    paint_junctions(grid, geometry, geometry.parent_row);
 }
 
 /// Turns the borders an edge meets into junctions: `├` where it leaves the
-/// parent, `┤` where it arrives at each child (decision 13).
-fn paint_junctions(grid: &mut Grid, geometry: &EdgeGeometry, parent_row: u16, child_rows: &[u16]) {
-    grid.retext(geometry.parent_x, parent_row, "├");
-    for row in child_rows {
-        grid.retext(geometry.child_x, *row, "┤");
+/// parent on `parent_row`, `┤` where it arrives at each child (decision 13).
+fn paint_junctions(grid: &mut Grid, geometry: &EdgeGeometry, parent_row: u16) {
+    grid.overwrite_text(geometry.parent_x, parent_row, "├");
+    for row in &geometry.child_rows {
+        grid.overwrite_text(geometry.child_x, *row, "┤");
     }
 }
 
-/// Which part of the bus the cell at `row` is.
+/// Which part of the bus the cell at `row` is. `Top` wins a tie so a bus with
+/// one row reads as its own head rather than its own foot.
 fn bus_cell(row: u16, top: u16, bottom: u16, child_rows: &[u16]) -> BusCell {
     if row == top {
         BusCell::Top
