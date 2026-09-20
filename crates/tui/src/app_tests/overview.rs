@@ -230,7 +230,21 @@ fn the_footer_shows_the_selected_node_in_full() {
     // The box itself cannot hold the label: that is what the footer is for.
     let canvas = text_in(&buffer, view.canvas);
     assert!(!canvas.contains(&full), "{canvas}");
-    assert!(canvas.contains('…'), "{canvas}");
+    // Scoped to the selected node's own box, not any elided box in the
+    // fixture: the truncation under test is this one's, not a neighbour's.
+    let rect = view
+        .layout
+        .node(&key)
+        .expect("the selected node is placed")
+        .rect;
+    let node_screen = Rect {
+        x: view.canvas.x + rect.x.saturating_sub(view.pan.x),
+        y: view.canvas.y + rect.y.saturating_sub(view.pan.y),
+        width: rect.width,
+        height: rect.height,
+    };
+    let node_text = text_in(&buffer, node_screen);
+    assert!(node_text.contains('…'), "{node_text}");
 }
 
 #[test]
@@ -362,13 +376,30 @@ fn overview_clicks_ignore_modals_borders_and_the_sidebar_stays_live() {
     );
     assert_eq!(app.focused, Some(2));
 
-    let (mut app, layout) = opened_at(200, 50);
+    // A viewport too small for the canvas, so a real drag actually moves the
+    // pan (at 200x50 the whole canvas fits and `Pan::clamped` pins every pan
+    // back to zero regardless, which would make the guard below untestable —
+    // the same coordinates `dragging_pans_both_axes` below uses to move the
+    // pan to `Pan { x: 8, y: 5 }` when nothing blocks the drag).
+    let (mut app, layout) = opened();
+    let canvas = overview::view(&app, layout.main).canvas;
+    let (x, y) = (canvas.x + 20, canvas.y + 20);
+    // Press inside the canvas first, while there is no modal, so `drag_from`
+    // holds a real anchor. With a fresh app `drag_from` is `None` regardless,
+    // and `on_drag`'s anchor check alone would return empty whether or not
+    // the modal guard below exists — this earlier press is what makes the
+    // guard load-bearing.
+    assert!(app.on_click(x, y, &layout).is_empty());
+    let selected = app.tree.selected.clone();
     app.modal = Some(Modal::Help);
-    assert!(app.on_click(inside.0, inside.1, &layout).is_empty());
-    assert!(app.on_drag(inside.0 + 4, inside.1, &layout).is_empty());
-    assert!(app.on_scroll(false, inside.0, inside.1, &layout).is_empty());
+    assert!(app.on_click(x, y, &layout).is_empty());
+    assert!(app.on_drag(x - 8, y - 5, &layout).is_empty());
+    assert!(app.on_scroll(false, x, y, &layout).is_empty());
+    // The drag never ran: with a real anchor in place, only the modal guard
+    // kept the pan from moving. The selection is unchanged by the modal
+    // clicks, whatever the real click above landed on.
     assert_eq!(app.graph_pan, Pan::default());
-    assert_eq!(app.tree.selected, Some(NodeKey::Window(1)));
+    assert_eq!(app.tree.selected, selected);
 }
 
 #[test]

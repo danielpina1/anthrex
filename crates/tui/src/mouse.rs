@@ -150,7 +150,10 @@ impl App {
     /// an edge or a gap does nothing (decision 19).
     ///
     /// `None` means the press missed the canvas altogether, which leaves the
-    /// sidebar — still drawn beside the overview — free to claim it.
+    /// sidebar — still drawn beside the overview — free to claim it. A press
+    /// that lands on the canvas but misses every node is a different case:
+    /// the canvas has claimed it, so it always returns `Some`, with an empty
+    /// effect list when `node_at` finds nothing there.
     fn click_graph(
         &mut self,
         column: u16,
@@ -162,7 +165,9 @@ impl App {
             return None;
         }
         let double = self.graph_mouse.press(column, row);
-        let key = view.geometry().node_at(&view.layout, column, row)?;
+        let Some(key) = view.geometry().node_at(&view.layout, column, row) else {
+            return Some(vec![]);
+        };
         let rows = tree::build(&self.windows, &self.tree);
         self.tree.select(&rows, key.clone());
         self.reveal_tree_anchor();
