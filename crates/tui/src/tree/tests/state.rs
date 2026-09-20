@@ -238,6 +238,53 @@ fn filtering_the_last_sibling_promotes_the_one_above() {
     );
 }
 
+/// The same promotion one level down, where the window itself survives only
+/// because a sub-agent matched — so its other sub-agents really are dropped.
+#[test]
+fn filtering_the_last_subagent_promotes_the_one_above() {
+    let windows = vec![window_with_subagents(
+        1,
+        "worker",
+        vec![
+            subagent("s1", None, "Explore", "map", SubagentState::Running, 90),
+            subagent("s2", None, "Explore", "tokens", SubagentState::Running, 60),
+            subagent("s3", None, "tests", "suite", SubagentState::Running, 30),
+        ],
+    )];
+    assert_eq!(
+        guide_strings(&build(&windows, &TreeState::default())),
+        vec!["", "└─", "  ├─", "  ├─", "  └─"]
+    );
+
+    let state = TreeState {
+        filter: "explore".into(),
+        ..TreeState::default()
+    };
+    let rows = build(&windows, &state);
+
+    assert_eq!(
+        row_keys(&rows),
+        vec![
+            NodeKey::Project("/p".into()),
+            NodeKey::Window(1),
+            NodeKey::Subagent {
+                window_id: 1,
+                id: "s1".into(),
+            },
+            NodeKey::Subagent {
+                window_id: 1,
+                id: "s2".into(),
+            },
+        ],
+        "neither the project nor the window matched, so only the matching sub-agents show"
+    );
+    assert_eq!(
+        guide_strings(&rows),
+        vec!["", "└─", "  ├─", "  └─"],
+        "the filter hid the last sub-agent, so the one above it is now last"
+    );
+}
+
 #[test]
 fn guides_are_two_columns_per_level() {
     let windows = vec![window_with_subagents(
