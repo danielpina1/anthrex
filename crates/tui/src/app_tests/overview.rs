@@ -566,6 +566,65 @@ fn the_overview_click_works_with_a_filter_and_a_hidden_sidebar() {
     assert_closed(&app);
 }
 
+/// The aligned-row overview had `wide_overview_stays_inside_tiny_main_areas`;
+/// the graph replaced that renderer and nothing replaced the guard. Drawing,
+/// clicking, dragging and scrolling at every degenerate size — with pans far
+/// past any canvas, and with the sidebar both ways — must not panic, and
+/// whatever the graph draws must stay inside its own block.
+#[test]
+fn the_graph_stays_inside_tiny_main_areas() {
+    for sidebar_visible in [false, true] {
+        let (mut app, _) = opened_at(200, 50);
+        app.sidebar_visible = sidebar_visible;
+        // Every width from a single column to sixty, and the heights either
+        // side of the ones that change the shape: no block, a block with no
+        // interior, a canvas one row tall with no footer, and room for both.
+        for width in 1..=60 {
+            for height in [1, 2, 3, 4, 5, 9, 24] {
+                let sidebar_width = if sidebar_visible {
+                    app.sidebar_width
+                } else {
+                    0
+                };
+                let layout = crate::ui::layout(Rect::new(0, 0, width, height), sidebar_width);
+                app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
+                app.set_graph_viewport(layout.main);
+                for pan in [Pan::default(), Pan { x: 60000, y: 60000 }] {
+                    app.graph_pan = pan;
+                    let buffer = drawn(&app, width, height);
+                    let main = layout.main;
+                    if main.width >= 2 && main.height >= 3 {
+                        for y in main.y + 1..main.bottom() - 1 {
+                            assert_eq!(
+                                buffer[(main.right() - 1, y)].symbol(),
+                                "│",
+                                "{width}x{height} at {pan:?}: the graph crossed its own \
+                                 right border on row {y}"
+                            );
+                        }
+                    }
+                    for (x, y) in [
+                        (0, 0),
+                        (width / 2, height / 2),
+                        (width - 1, height - 1),
+                        (main.x, main.y),
+                    ] {
+                        app.on_click(x, y, &layout);
+                        app.on_drag(x.saturating_sub(3), y.saturating_add(2), &layout);
+                        app.on_scroll(true, x, y, &layout);
+                        app.on_scroll(false, x, y, &layout);
+                    }
+                    // A double click on a node leaves the overview; reopen it
+                    // so the next size is drawn as a graph and not a terminal.
+                    if !app.overview {
+                        assert!(toggle(&mut app).is_empty());
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn elapsed_duration_saturates_when_extrapolating_old_lists() {
     let mut app = app_with(tree::example_windows());
