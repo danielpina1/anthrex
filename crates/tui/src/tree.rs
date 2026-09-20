@@ -1,7 +1,7 @@
 mod rows;
 
 use proto::{Runtime, Status, SubagentInfo, WindowInfo};
-use rows::{emit_subagents, guide_prefix, visible_windows};
+use rows::{SubagentWalk, emit_subagents, guide_prefix, visible_windows};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use unicode_segmentation::UnicodeSegmentation;
@@ -54,6 +54,13 @@ pub struct Row<'a> {
     /// The box-drawing prefix to draw before the row's own marker, two columns
     /// per level. Empty on project rows, which are roots.
     pub guides: String,
+    /// How far below a root this row sits: 0 for a project, 1 for a window, 2
+    /// for one of that window's sub-agents, and one more per nested level.
+    ///
+    /// Carried explicitly rather than recovered from `guides`, whose width per
+    /// level is the sidebar's business alone: the graph overview's tiers must
+    /// not move when the guide alphabet changes.
+    pub depth: u16,
     pub kind: RowKind<'a>,
 }
 
@@ -244,6 +251,7 @@ pub fn build<'a>(windows: &'a [WindowInfo], state: &TreeState) -> Vec<Row<'a>> {
         rows.push(Row {
             key: project_key,
             guides: String::new(),
+            depth: 0,
             kind: RowKind::Project {
                 root: project.root,
                 name: project.name,
@@ -266,6 +274,7 @@ pub fn build<'a>(windows: &'a [WindowInfo], state: &TreeState) -> Vec<Row<'a>> {
             rows.push(Row {
                 key: window_key,
                 guides: guide_prefix(&[], has_later_sibling),
+                depth: 1,
                 kind: RowKind::Window {
                     info: window,
                     position,
@@ -280,11 +289,14 @@ pub fn build<'a>(windows: &'a [WindowInfo], state: &TreeState) -> Vec<Row<'a>> {
                 let mut ancestors = vec![has_later_sibling];
                 emit_subagents(
                     &mut rows,
-                    window,
+                    &SubagentWalk {
+                        window,
+                        filter: &filter,
+                        show_all: member.show_all,
+                    },
                     &member.forest,
                     &mut ancestors,
-                    member.show_all,
-                    &filter,
+                    2,
                     false,
                 );
             }
