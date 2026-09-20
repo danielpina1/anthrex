@@ -163,13 +163,21 @@ pub struct GitState {
 }
 
 impl GitState {
-    /// True when there is nothing uncommitted and no divergence.
+    /// True when there is nothing uncommitted, no divergence and no operation in
+    /// progress.
+    ///
+    /// This is the *single* definition of "clean": the TUI's bottom bar asks this
+    /// rather than deciding a second time from the parts it happens to be about to
+    /// render. An in-progress operation counts, which is the part that is easy to
+    /// leave out — a worktree halfway through a rebase with no dirty files is not a
+    /// worktree anyone should be told is clean.
     pub fn is_clean(&self) -> bool {
         self.dirty == 0
             && self.untracked == 0
             && self.conflicts == 0
             && self.ahead == 0
             && self.behind == 0
+            && self.operation.is_none()
     }
 }
 
@@ -349,6 +357,13 @@ mod tests {
         let mut behind = clean.clone();
         behind.behind = 1;
         assert!(!behind.is_clean());
+
+        // A worktree mid-rebase with a spotless tree is the case this used to get
+        // wrong: every count is zero, but there is an operation in progress, and the
+        // bottom bar must not be able to derive a tick from it.
+        let mut rebasing = clean.clone();
+        rebasing.operation = Some(GitOperation::Rebase);
+        assert!(!rebasing.is_clean());
     }
 
     #[test]
