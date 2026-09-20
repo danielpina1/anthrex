@@ -57,7 +57,7 @@ pub fn spawn_request(runtime: Runtime, hook: &ParsedHook) -> Option<PendingSpawn
     let (type_key, label_keys, model_key) = match runtime {
         Runtime::Claude if hook.tool_name.as_deref() == Some(CLAUDE_SPAWN_TOOL) => (
             Some("subagent_type"),
-            (Some("name"), Some("prompt")),
+            (Some("description"), Some("name"), Some("prompt")),
             Some("model"),
         ),
         Runtime::Codex
@@ -68,7 +68,9 @@ pub fn spawn_request(runtime: Runtime, hook: &ParsedHook) -> Option<PendingSpawn
         {
             (
                 CODEX_SPAWN_TYPE_KEY,
-                CODEX_SPAWN_LABEL_KEYS,
+                // Codex has no description-like field; its `name` key slots
+                // into make_label's `name` position, unchanged from before.
+                (None, CODEX_SPAWN_LABEL_KEYS.0, CODEX_SPAWN_LABEL_KEYS.1),
                 CODEX_SPAWN_MODEL_KEY,
             )
         }
@@ -88,17 +90,33 @@ pub fn spawn_request(runtime: Runtime, hook: &ParsedHook) -> Option<PendingSpawn
     Some(PendingSpawn {
         parent_id: hook.agent_id.clone(),
         subagent_type: string(type_key).map(str::to_owned),
-        label: make_label(string(label_keys.0), string(label_keys.1)),
+        label: make_label(
+            string(label_keys.0),
+            string(label_keys.1),
+            string(label_keys.2),
+        ),
         model: string(model_key).map(str::to_owned),
     })
 }
 
-pub fn make_label(name: Option<&str>, prompt: Option<&str>) -> Option<String> {
-    let label = name.filter(|value| !value.is_empty()).or_else(|| {
-        prompt
-            .and_then(|value| value.lines().next())
-            .filter(|value| !value.is_empty())
-    })?;
+/// Builds a sub-agent label from candidates tried in order: `description`,
+/// then `name`, both used whole, then `prompt`, whose first line only is
+/// used since it is the sole candidate that can span multiple lines.
+pub fn make_label(
+    description: Option<&str>,
+    name: Option<&str>,
+    prompt: Option<&str>,
+) -> Option<String> {
+    fn non_empty(value: Option<&str>) -> Option<&str> {
+        value.filter(|value| !value.is_empty())
+    }
+    let label = non_empty(description)
+        .or_else(|| non_empty(name))
+        .or_else(|| {
+            prompt
+                .and_then(|value| value.lines().next())
+                .filter(|value| !value.is_empty())
+        })?;
     if label.chars().count() <= LABEL_MAX_CHARS {
         return Some(label.to_owned());
     }
@@ -449,21 +467,85 @@ mod tests {
     }
 
     #[test]
-    fn label_prefers_name_then_first_prompt_line_and_is_cut_at_60() {
-        let long = "é".repeat(70);
+    fn claude_label_prefers_the_description() {
         assert_eq!(
-            make_label(Some("named"), Some("ignored")),
+            make_label(Some("described"), Some("named"), Some("ignored prompt")),
+            Some("described".into())
+        );
+    }
+
+    #[test]
+    fn claude_label_falls_back_to_name() {
+        assert_eq!(
+            make_label(None, Some("named"), Some("ignored prompt")),
             Some("named".into())
         );
+    }
+
+    #[test]
+    fn claude_label_falls_back_to_the_prompts_first_line() {
+        let long = "é".repeat(70);
         assert_eq!(
-            make_label(None, Some("first line\nsecond line")),
+            make_label(None, None, Some("first line\nsecond line")),
             Some("first line".into())
         );
         assert_eq!(
-            make_label(None, Some(&format!("{long}\nignored"))),
+            make_label(None, None, Some(&format!("{long}\nignored"))),
             Some(format!("{}…", "é".repeat(59)))
         );
-        assert_eq!(make_label(Some(""), Some("")), None);
+        assert_eq!(make_label(None, None, None), None);
+    }
+
+    #[test]
+    fn an_empty_description_is_skipped() {
+        assert_eq!(
+            make_label(Some(""), Some("named"), Some("ignored prompt")),
+            Some("named".into())
+        );
+        assert_eq!(make_label(Some(""), Some(""), Some("")), None);
+    }
+
+    #[test]
+    fn codex_labels_are_unchanged() {
+        for tool_name in ["spawn_agent", "collaborationspawn_agent"] {
+            let mut request = hook(HookKind::PreToolUse);
+            request.source = HookSource::CodexHook;
+            request.tool_name = Some(tool_name.into());
+            request.tool_input = Some(json!({
+                "task_name": "list_filenames",
+                "fork_turns": "none",
+                "model": "gpt-6-astra",
+                "message": "opaque runtime value"
+            }));
+
+            assert_eq!(
+                spawn_request(Runtime::Codex, &request),
+                Some(PendingSpawn {
+                    parent_id: None,
+                    subagent_type: None,
+                    label: Some("list_filenames".into()),
+                    model: Some("gpt-6-astra".into()),
+                })
+            );
+        }
+
+        let mut missing_task_name = hook(HookKind::PreToolUse);
+        missing_task_name.source = HookSource::CodexHook;
+        missing_task_name.tool_name = Some("spawn_agent".into());
+        missing_task_name.tool_input = Some(json!({
+            "type": "unverified type",
+            "agent_type": "unverified agent type",
+            "message": "never expose this opaque message"
+        }));
+        assert_eq!(
+            spawn_request(Runtime::Codex, &missing_task_name),
+            Some(PendingSpawn {
+                parent_id: None,
+                subagent_type: None,
+                label: None,
+                model: None,
+            })
+        );
     }
 
     #[test]
