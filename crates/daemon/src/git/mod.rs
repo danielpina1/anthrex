@@ -19,6 +19,10 @@
 //!   [`GitRegistry::unregister`] sets the root's cancelled flag *under the same mutex*
 //!   that every publication takes, so a publication either lands entirely before the
 //!   unregister (and is then removed with the root) or sees the flag and is dropped.
+//! * **A watcher is never destroyed on a runtime thread.** `notify`'s watchers join a
+//!   thread in their `Drop`, and the watcher lives inside this task's future, so an
+//!   `abort()` would otherwise run that blocking destructor on a worker. It is held as
+//!   a [`watch::WatchGuard`], which disposes of it on a blocking thread instead.
 
 pub mod parse;
 pub mod probe;
@@ -250,8 +254,10 @@ async fn run_root(
         watch::build(&canonical, git_dir.as_deref(), sender)
     })
     .await;
-    // Held, not used: dropping it unwatches the root. Design decision 15 — a watcher
-    // that could not be built is logged once and the root stays on the safety poll.
+    // Held, not used: dropping the guard unwatches the root, on a blocking thread
+    // rather than on the worker that drops this future (see `watch::WatchGuard`).
+    // Design decision 15 — a watcher that could not be built is logged once and the
+    // root stays on the safety poll.
     let _watcher = match built {
         Ok(Ok(watcher)) => Some(watcher),
         Ok(Err(error)) => {
