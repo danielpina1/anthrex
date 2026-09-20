@@ -349,3 +349,73 @@ fn tree_text_and_project_filter() {
 
     drop(daemon);
 }
+
+#[test]
+fn tree_project_filter_preserves_an_exact_recorded_root_after_git_init() {
+    let fixture = tempdir();
+    let repository = fixture.path().join("repo");
+    let recorded_root = repository.join("sub");
+    std::fs::create_dir_all(&recorded_root).unwrap();
+    let recorded_root = recorded_root.canonicalize().unwrap();
+    let daemon = TestDaemon::start(&[]);
+    create_window(&daemon, "shell", "bootstrap", &recorded_root);
+    wait_for_tree(&daemon, "bootstrap window", |tree| {
+        all_window_names(tree) == BTreeSet::from(["bootstrap"])
+    });
+
+    run_git(&[OsStr::new("init"), repository.as_os_str()]);
+    create_window(&daemon, "shell", "repo-agent", &repository);
+    wait_for_tree(&daemon, "both immutable project roots", |tree| {
+        all_window_names(tree) == BTreeSet::from(["bootstrap", "repo-agent"])
+    });
+    let output = daemon.anthrex(&["tree", "--project", recorded_root.to_str().unwrap()]);
+    assert!(
+        output.status.success(),
+        "tree --project failed with {}; stdout: {}; stderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "tree --project wrote stderr: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = std::str::from_utf8(&output.stdout).unwrap();
+    assert!(
+        stdout.contains(&format!("sub  {}  ", recorded_root.display())),
+        "tree discarded the daemon's recorded project root after repository topology changed: {stdout:?}",
+    );
+    assert!(
+        stdout.contains("bootstrap"),
+        "missing bootstrap: {stdout:?}"
+    );
+    assert!(
+        !stdout.contains("repo-agent"),
+        "included the newer normalized-root project instead of the exact recorded root: {stdout:?}"
+    );
+
+    let output = daemon.anthrex(&[
+        "tree",
+        "--project",
+        recorded_root.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(
+        output.status.success(),
+        "tree --project --json failed with {}; stdout: {}; stderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let tree: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        projects(&tree).len(),
+        1,
+        "unexpected filtered tree: {tree:#}"
+    );
+    let project = project_with_root(&tree, &recorded_root);
+    assert_eq!(window_names(project), BTreeSet::from(["bootstrap"]));
+
+    drop(daemon);
+}

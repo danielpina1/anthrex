@@ -4,6 +4,21 @@ use std::fmt::Write;
 use std::path::Path;
 use tui::tree::{self, RowKind, RuntimeCounts, SubagentNode, TreeState};
 
+#[derive(Clone, Copy)]
+pub struct ProjectQuery<'a> {
+    requested: &'a Path,
+    normalized: &'a Path,
+}
+
+impl<'a> ProjectQuery<'a> {
+    pub fn new(requested: &'a Path, normalized: &'a Path) -> Self {
+        Self {
+            requested,
+            normalized,
+        }
+    }
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct TreeJson {
     pub projects: Vec<ProjectJson>,
@@ -56,7 +71,7 @@ pub struct SubagentJson {
     pub children: Vec<SubagentJson>,
 }
 
-pub fn tree_text(windows: &[WindowInfo], project: Option<&Path>) -> String {
+pub fn tree_text(windows: &[WindowInfo], project: Option<ProjectQuery<'_>>) -> String {
     let windows = selected_windows(windows, project);
     if windows.is_empty() {
         return "no windows\n".into();
@@ -110,7 +125,7 @@ pub fn tree_text(windows: &[WindowInfo], project: Option<&Path>) -> String {
     text
 }
 
-pub fn tree_json(windows: &[WindowInfo], project: Option<&Path>) -> TreeJson {
+pub fn tree_json(windows: &[WindowInfo], project: Option<ProjectQuery<'_>>) -> TreeJson {
     let windows = selected_windows(windows, project);
     let mut result = TreeJson {
         projects: Vec::new(),
@@ -164,16 +179,28 @@ pub fn tree_json(windows: &[WindowInfo], project: Option<&Path>) -> TreeJson {
 
 fn selected_windows<'a>(
     windows: &'a [WindowInfo],
-    project: Option<&Path>,
+    project: Option<ProjectQuery<'_>>,
 ) -> Cow<'a, [WindowInfo]> {
     let Some(project) = project else {
         return Cow::Borrowed(windows);
     };
-    let root = windows
-        .iter()
-        .map(|window| window.project.as_path())
-        .filter(|root| project.starts_with(root))
-        .max_by_key(|root| root.components().count());
+    let exact = |query: &Path| {
+        windows
+            .iter()
+            .map(|window| window.project.as_path())
+            .find(|root| *root == query)
+    };
+    let containing = |query: &Path| {
+        windows
+            .iter()
+            .map(|window| window.project.as_path())
+            .filter(|root| query.starts_with(root))
+            .max_by_key(|root| root.components().count())
+    };
+    let root = exact(project.requested)
+        .or_else(|| containing(project.requested))
+        .or_else(|| exact(project.normalized))
+        .or_else(|| containing(project.normalized));
     Cow::Owned(
         windows
             .iter()
@@ -302,7 +329,11 @@ mod tests {
         vec![api, billing, frontend, blog]
     }
 
-    fn as_json(windows: &[WindowInfo], project: Option<&Path>) -> Value {
+    fn query(path: &Path) -> ProjectQuery<'_> {
+        ProjectQuery::new(path, path)
+    }
+
+    fn as_json(windows: &[WindowInfo], project: Option<ProjectQuery<'_>>) -> Value {
         serde_json::to_value(tree_json(windows, project)).unwrap()
     }
 
@@ -387,11 +418,11 @@ mod tests {
             ("/r/other", "/r", "r"),
             ("/r/shopper", "/r", "r"),
         ] {
-            let value = as_json(&windows, Some(Path::new(path)));
+            let value = as_json(&windows, Some(query(Path::new(path))));
             assert_eq!(value["projects"][0]["root"], root, "{path}");
             assert_eq!(value["projects"].as_array().unwrap().len(), 1);
             assert_eq!(value["projects"][0]["windows"][0]["position"], 1);
-            let text = tree_text(&windows, Some(Path::new(path)));
+            let text = tree_text(&windows, Some(query(Path::new(path))));
             assert_eq!(text.lines().count(), 2);
             assert_eq!(
                 text.lines().next(),
@@ -399,13 +430,33 @@ mod tests {
             );
         }
         assert_eq!(
-            tree_text(&windows, Some(Path::new("/elsewhere"))),
+            tree_text(&windows, Some(query(Path::new("/elsewhere")))),
             "no windows\n"
         );
         assert_eq!(
-            as_json(&windows, Some(Path::new("/elsewhere"))),
+            as_json(&windows, Some(query(Path::new("/elsewhere")))),
             json!({"projects": []})
         );
+    }
+
+    #[test]
+    fn project_filter_prefers_recorded_request_before_normalized_fallback() {
+        let windows = vec![
+            window(1, "immutable", "/late/sub"),
+            window(2, "normalized", "/late"),
+        ];
+
+        let recorded = ProjectQuery::new(Path::new("/late/sub"), Path::new("/late"));
+        let value = as_json(&windows, Some(recorded));
+        assert_eq!(value["projects"].as_array().unwrap().len(), 1);
+        assert_eq!(value["projects"][0]["root"], "/late/sub");
+        assert_eq!(value["projects"][0]["windows"][0]["name"], "immutable");
+
+        let normalized = ProjectQuery::new(Path::new("/external/wt"), Path::new("/late"));
+        let value = as_json(&windows, Some(normalized));
+        assert_eq!(value["projects"].as_array().unwrap().len(), 1);
+        assert_eq!(value["projects"][0]["root"], "/late");
+        assert_eq!(value["projects"][0]["windows"][0]["name"], "normalized");
     }
 
     #[test]

@@ -190,21 +190,22 @@ async fn run_cli() -> anyhow::Result<()> {
         }
         Some(Command::Tree { project, json }) => {
             let c = client::CliClient::connect(&socket).await?;
-            let project = project.map(|path| resolve_dir(Some(path))).transpose()?;
-            let project = match project {
-                Some(path) => Some(daemon::project::resolve_root(path).await),
+            let requested = project.map(|path| resolve_dir(Some(path))).transpose()?;
+            let normalized = match requested.as_ref() {
+                Some(path) => Some(daemon::project::resolve_root(path.clone()).await),
                 None => None,
             };
+            let project = requested
+                .as_deref()
+                .zip(normalized.as_deref())
+                .map(|(requested, normalized)| tree_cmd::ProjectQuery::new(requested, normalized));
             if json {
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&tree_cmd::tree_json(
-                        &c.windows,
-                        project.as_deref(),
-                    ))?
+                    serde_json::to_string_pretty(&tree_cmd::tree_json(&c.windows, project))?
                 );
             } else {
-                print!("{}", tree_cmd::tree_text(&c.windows, project.as_deref()));
+                print!("{}", tree_cmd::tree_text(&c.windows, project));
             }
             Ok(())
         }

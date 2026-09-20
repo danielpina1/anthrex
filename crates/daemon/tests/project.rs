@@ -1,9 +1,11 @@
 use daemon::project::{DETECT_TIMEOUT, detect_root, detect_root_with, resolve_root};
 use std::ffi::OsStr;
 use std::fs;
+use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use tempfile::{TempDir, tempdir};
 
@@ -49,6 +51,45 @@ fn hanging_git(dir: &Path) -> PathBuf {
     permissions.set_mode(0o755);
     fs::set_permissions(&script, permissions).unwrap();
     script
+}
+
+struct OwnedHelper {
+    pid_file: PathBuf,
+    stopped: bool,
+}
+
+impl OwnedHelper {
+    fn stop(&mut self) -> bool {
+        if self.stopped {
+            return true;
+        }
+        self.stopped = true;
+        let Ok(pid) = fs::read_to_string(&self.pid_file) else {
+            return false;
+        };
+        let Ok(pid) = pid.trim().parse::<libc::pid_t>() else {
+            return false;
+        };
+        // SAFETY: the wrapper writes only the pid of the background helper it started
+        // for this test. The test owns that process and never targets any other pid.
+        if unsafe { libc::kill(pid, libc::SIGKILL) } == -1
+            && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+        {
+            return false;
+        }
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while unsafe { libc::kill(pid, 0) } == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        (unsafe { libc::kill(pid, 0) }) == -1
+            && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    }
+}
+
+impl Drop for OwnedHelper {
+    fn drop(&mut self) {
+        let _ = self.stop();
+    }
 }
 
 #[test]
@@ -175,6 +216,68 @@ fn hanging_git_times_out() {
         repo.path().canonicalize().unwrap()
     );
     assert!(started.elapsed() < Duration::from_secs(2));
+}
+
+#[test]
+fn inherited_stdout_does_not_outlive_the_detection_deadline() {
+    let repo = init_repo();
+    let scripts = tempdir().unwrap();
+    let script = scripts.path().join("inherited-stdout-git");
+    let pid_file = scripts.path().join("helper.pid");
+    let root = repo.path().canonicalize().unwrap();
+    let cwd = root.clone();
+    fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nsleep 30 &\nprintf '%s\\n' \"$!\" > '{}'\nprintf '%s\\n%s\\n' '{}'/'.git' '{}'\nexit 0\n",
+            pid_file.display(),
+            root.display(),
+            root.display(),
+        ),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&script).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script, permissions).unwrap();
+    let mut helper = OwnedHelper {
+        pid_file: pid_file.clone(),
+        stopped: false,
+    };
+
+    let (tx, rx) = mpsc::channel();
+    let detector = std::thread::spawn(move || {
+        let started = Instant::now();
+        let detected = detect_root_with(script.as_os_str(), &cwd, Duration::from_secs(1));
+        tx.send((detected, started.elapsed())).unwrap();
+    });
+    let helper_deadline = Instant::now() + Duration::from_secs(2);
+    while !pid_file.exists() {
+        if let Ok((detected, elapsed)) = rx.try_recv() {
+            detector.join().unwrap();
+            panic!(
+                "project detection returned before the wrapper started its helper: detected {detected:?} after {elapsed:?}"
+            );
+        }
+        assert!(
+            Instant::now() < helper_deadline,
+            "git wrapper did not start its inherited-stdout helper"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    let timely = rx.recv_timeout(Duration::from_secs(2));
+    let helper_stopped = helper.stop();
+    detector.join().unwrap();
+    assert!(
+        helper_stopped,
+        "owned inherited-stdout helper survived cleanup"
+    );
+    let (detected, elapsed) = timely.expect(
+        "project detection stayed blocked on stdout inherited by an exited git child's helper",
+    );
+
+    assert_eq!(detected, root);
+    assert!(elapsed < Duration::from_secs(2), "elapsed: {elapsed:?}");
 }
 
 #[tokio::test]
