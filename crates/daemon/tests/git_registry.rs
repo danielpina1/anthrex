@@ -9,7 +9,8 @@
 //!
 //! `a_real_write_triggers_a_probe` is the single exception the brief allows: it uses
 //! the real watcher against a real repository and waits on wall-clock time, with a
-//! five second deadline.
+//! five second deadline. `a_commit_in_a_linked_worktree_triggers_a_probe` is its
+//! sibling for the linked-worktree watch, and waits the same way.
 //!
 //! The pure scheduler, publisher and path filter are tested in
 //! `crates/daemon/tests/git_schedule.rs`.
@@ -20,7 +21,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use daemon::git::{GitRegistry, ProbeFn, enabled_from_env};
+use daemon::git::{GitRegistry, ProbeFn};
 use proto::{GitState, Head};
 use tempfile::{TempDir, tempdir};
 use tokio::sync::mpsc;
@@ -401,29 +402,10 @@ async fn a_root_survives_until_every_registration_is_released() {
     );
 }
 
-#[test]
-fn enabled_from_env_reads_anthrex_git() {
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-
-    // SAFETY: this is the only test in this binary that touches ANTHREX_GIT, and
-    // ENV_LOCK serialises it against itself.
-    unsafe {
-        std::env::remove_var("ANTHREX_GIT");
-    }
-    assert!(enabled_from_env(), "unset leaves git on");
-
-    for (value, expected) in [("off", false), ("0", false), ("", true), ("on", true)] {
-        unsafe {
-            std::env::set_var("ANTHREX_GIT", value);
-        }
-        assert_eq!(enabled_from_env(), expected, "ANTHREX_GIT={value:?}");
-    }
-
-    unsafe {
-        std::env::remove_var("ANTHREX_GIT");
-    }
-}
+// `enabled_from_env` is deliberately *not* here: it mutates the environment, and this
+// binary spawns `git` on other libtest threads, which reads `environ` while that write
+// reallocates it. It lives alone in `crates/daemon/tests/git_env.rs`, which explains
+// the hazard in full.
 
 // ---------------------------------------------------------------------------
 // The one test allowed to wait on wall-clock time
@@ -458,16 +440,42 @@ fn repo_with_one_committed_file() -> TempDir {
     dir
 }
 
-/// The real `notify` watcher, a real repository and the real probe. This is the only
-/// test in the suite that waits on wall-clock time, and it waits with a deadline.
-#[tokio::test]
-async fn a_real_write_triggers_a_probe() {
-    if std::process::Command::new("git")
+fn git_is_available() -> bool {
+    std::process::Command::new("git")
         .arg("--version")
         .stdout(std::process::Stdio::null())
         .status()
-        .is_err()
-    {
+        .is_ok()
+}
+
+/// Waits on wall-clock time, with a deadline, for a published state that satisfies
+/// `wanted`. Publications that do not (the registration probe, an intermediate state)
+/// are skipped rather than failing the wait.
+async fn wait_for_state(
+    rx: &mut mpsc::UnboundedReceiver<Publication>,
+    within: Duration,
+    what: &str,
+    wanted: impl Fn(&GitState) -> bool,
+) {
+    let deadline = std::time::Instant::now() + within;
+    loop {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        let publication = tokio::time::timeout(left, rx.recv())
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for {what}"))
+            .expect("the registry dropped the publish channel");
+        if publication.1.as_ref().is_some_and(&wanted) {
+            return;
+        }
+    }
+}
+
+/// The real `notify` watcher, a real repository and the real probe. This and its
+/// linked-worktree sibling below are the only tests in the suite that wait on
+/// wall-clock time, and they wait with a deadline.
+#[tokio::test]
+async fn a_real_write_triggers_a_probe() {
+    if !git_is_available() {
         return;
     }
     let repo = repo_with_one_committed_file();
@@ -486,15 +494,73 @@ async fn a_real_write_triggers_a_probe() {
 
     std::fs::write(root.join("a.txt"), "two\n").unwrap();
 
-    let deadline = std::time::Instant::now() + secs(5);
-    loop {
-        let left = deadline.saturating_duration_since(std::time::Instant::now());
-        let publication = tokio::time::timeout(left, rx.recv())
-            .await
-            .expect("a real write must trigger a probe within five seconds")
-            .unwrap();
-        if publication.1.as_ref().is_some_and(|s| s.dirty == 1) {
-            break;
-        }
+    wait_for_state(
+        &mut rx,
+        secs(5),
+        "a real write to trigger a probe",
+        |state| state.dirty == 1,
+    )
+    .await;
+}
+
+/// The same, in a **linked** worktree — which milestone 5 makes the normal case, since
+/// every agent gets its own `git worktree add` checkout. A linked worktree's own git
+/// dir is `<common>/.git/worktrees/<name>/`, outside the root, which is the only case
+/// where `watch::build`'s second, non-recursive `watch()` is added at all; before this
+/// test, nothing in the suite built a watcher for one.
+///
+/// The two phases are not redundant. The write is seen by the recursive watch on the
+/// root and would be seen with the git-dir watch missing. The commit is the phase that
+/// needs it: `git add` and `git commit` in a linked worktree touch nothing under the
+/// worktree root — the index and `COMMIT_EDITMSG` are in its own git dir, the objects
+/// and refs are in the common dir — so without that second watch there is no event to
+/// debounce, and the tree going clean is not noticed until the 30-second poll.
+#[tokio::test]
+async fn a_commit_in_a_linked_worktree_triggers_a_probe() {
+    if !git_is_available() {
+        return;
     }
+    let repo = repo_with_one_committed_file();
+    let parent = tempdir().unwrap();
+    let linked = parent.path().join("wt");
+    git(
+        repo.path(),
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "feature",
+            linked.to_str().expect("a UTF-8 temporary path"),
+        ],
+    );
+
+    let (tx, mut rx) = mpsc::unbounded_channel::<Publication>();
+    let registry = GitRegistry::new(true, tx);
+    registry.register(linked.clone());
+
+    let first = tokio::time::timeout(SOON, rx.recv())
+        .await
+        .expect("the registration probe must publish")
+        .unwrap();
+    assert_eq!(first.0, linked);
+    assert_eq!(first.1.as_ref().map(|s| s.dirty), Some(0));
+
+    std::fs::write(linked.join("a.txt"), "two\n").unwrap();
+    wait_for_state(
+        &mut rx,
+        secs(5),
+        "a write in a linked worktree to trigger a probe",
+        |state| state.dirty == 1,
+    )
+    .await;
+
+    git(&linked, &["add", "a.txt"]);
+    git(&linked, &["commit", "-m", "two"]);
+    wait_for_state(
+        &mut rx,
+        secs(5),
+        "a commit in a linked worktree to trigger a probe",
+        |state| state.dirty == 0,
+    )
+    .await;
 }
