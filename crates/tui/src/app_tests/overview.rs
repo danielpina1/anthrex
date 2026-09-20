@@ -247,6 +247,99 @@ fn the_footer_shows_the_selected_node_in_full() {
     assert!(node_text.contains('…'), "{node_text}");
 }
 
+/// The whole footer line for the current selection, drawn at 200 x 50 so
+/// nothing in it is cut off, with the padding to the right trimmed away.
+fn footer_text(app: &App, layout: &crate::ui::Layout) -> String {
+    let view = overview::view(app, layout.main);
+    text_in(&drawn(app, 200, 50), view.footer)
+        .trim_end()
+        .to_owned()
+}
+
+/// A stopped sub-agent's footer: `started_secs` and `ended_secs` are both
+/// *ages*, so the run is the older age minus the newer one. Subtracting them
+/// the other way round reads zero for every sub-agent that ever ran.
+#[test]
+fn the_footer_times_a_stopped_subagent_from_the_two_ages() {
+    let (mut app, layout) = opened_at(200, 50);
+    let key = NodeKey::Subagent {
+        window_id: 1,
+        id: "a3".into(),
+    };
+    // a3 started 60 seconds ago and ended 15 seconds ago: it ran for 45.
+    assert_eq!(app.windows[0].subagents[2].started_secs, 60);
+    assert_eq!(app.windows[0].subagents[2].ended_secs, Some(15));
+    select(&mut app, key.clone());
+    assert_eq!(
+        footer_text(&app, &layout),
+        "✓ tests: run unit suite  -  done  45s"
+    );
+
+    // An end that never arrived reads as no elapsed time rather than as the
+    // sub-agent's own age.
+    app.windows[0].subagents[2].ended_secs = None;
+    assert_eq!(
+        footer_text(&app, &layout),
+        "✓ tests: run unit suite  -  done  0s"
+    );
+}
+
+/// The three sub-agent states name themselves in the footer, and a stopped
+/// sub-agent's name is not its neighbour's.
+#[test]
+fn the_footer_names_the_subagent_state() {
+    let (mut app, layout) = opened_at(200, 50);
+    let done = NodeKey::Subagent {
+        window_id: 1,
+        id: "a3".into(),
+    };
+    let running = NodeKey::Subagent {
+        window_id: 1,
+        id: "a1".into(),
+    };
+    select(&mut app, done.clone());
+    assert!(footer_text(&app, &layout).contains("  done  "));
+
+    app.windows[0].subagents[2].state = proto::SubagentState::Failed;
+    let failed = footer_text(&app, &layout);
+    assert!(failed.contains("  failed  "), "{failed}");
+    assert!(!failed.contains("done"), "{failed}");
+    // A failed sub-agent is still timed from the two ages, not from its age.
+    assert!(failed.ends_with("45s"), "{failed}");
+
+    select(&mut app, running);
+    let running = footer_text(&app, &layout);
+    assert!(running.contains("  running  "), "{running}");
+    assert!(!running.contains("done"), "{running}");
+}
+
+/// The project arm: the root, shortened, and the per-runtime counts.
+#[test]
+fn the_footer_spells_a_project_out_with_its_root_and_counts() {
+    let (mut app, layout) = opened_at(200, 50);
+    select(&mut app, NodeKey::Project("/r/shop".into()));
+    // Seven windows: four Claude, three Codex. The project's own status is
+    // its most urgent window's.
+    assert_eq!(
+        footer_text(&app, &layout),
+        "◆ shop  /r/shop  attention  cl 4 · cx 3"
+    );
+
+    // A project at the home directory reads `~`, not the bare `~/` that
+    // shortening a path that *is* the home directory leaves behind.
+    let home = dirs::home_dir().expect("the test host has a home directory");
+    let mut window = win(1, "home-agent", Status::Idle);
+    window.cwd = home.clone();
+    window.project = home.clone();
+    let mut app = app_with(vec![window]);
+    assert!(toggle(&mut app).is_empty());
+    app.set_graph_viewport(layout.main);
+    select(&mut app, NodeKey::Project(home));
+    let footer = footer_text(&app, &layout);
+    assert!(footer.contains("  ~  idle  sh 1"), "{footer}");
+    assert!(!footer.contains("~/"), "{footer}");
+}
+
 #[test]
 fn hit_testing_selects_on_click() {
     let (mut app, layout) = opened_at(200, 50);
