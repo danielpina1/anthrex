@@ -1,23 +1,16 @@
 //! Project-root detection for daemon windows.
 
 use std::ffi::{OsStr, OsString};
-use std::io::{self, Read};
-use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdout, Command, ExitStatus, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
+
+use crate::subprocess::{self, Outcome};
 
 pub const DETECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_OUTPUT_BYTES: usize = 64 * 1024;
-
-enum DrainState {
-    Open,
-    Eof,
-    Deadline,
-}
 
 /// The two roots a window's directory can resolve to.
 ///
@@ -37,104 +30,24 @@ pub fn detect_roots(cwd: &Path) -> DetectedRoots {
 
 /// Blocking, with the git program and timeout injectable for tests.
 pub fn detect_roots_with(git: &OsStr, cwd: &Path, timeout: Duration) -> DetectedRoots {
-    let mut child = match Command::new(git)
-        .arg("-C")
-        .arg(cwd)
-        .args([
-            "rev-parse",
-            "--path-format=absolute",
-            "--git-common-dir",
-            "--show-toplevel",
-        ])
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_COMMON_DIR")
-        .env_remove("GIT_INDEX_FILE")
-        .env_remove("GIT_PREFIX")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(error) => {
-            tracing::debug!(?error, ?git, ?cwd, "project detection could not start git");
+    let mut command = Command::new(git);
+    command.arg("-C").arg(cwd).args([
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
+        "--show-toplevel",
+    ]);
+
+    let output = match subprocess::run(&mut command, MAX_OUTPUT_BYTES, timeout) {
+        Outcome::Complete(output) => output,
+        // A timeout or an over-cap read gets no special treatment here, unlike in
+        // `git::probe`: project-root detection has no "stale" concept, so there is
+        // nothing useful to do with a partial read but fall back, same as any other
+        // failure to detect.
+        Outcome::Failed | Outcome::TimedOut(_) | Outcome::Truncated(_) => {
             return fallback_roots(cwd);
         }
     };
-
-    let mut status = None;
-    let Some(mut stdout) = child.stdout.take() else {
-        tracing::debug!(?git, ?cwd, "git project detection had no stdout");
-        terminate_unreaped(&mut child, &mut status, git, cwd);
-        return fallback_roots(cwd);
-    };
-    if let Err(error) = set_nonblocking(&stdout) {
-        tracing::debug!(
-            ?error,
-            ?git,
-            ?cwd,
-            "could not make git project detection output nonblocking"
-        );
-        terminate_unreaped(&mut child, &mut status, git, cwd);
-        return fallback_roots(cwd);
-    }
-
-    let started = Instant::now();
-    let mut output = Vec::new();
-    let mut eof = false;
-    loop {
-        if !eof {
-            match drain_stdout(&mut stdout, &mut output, started, timeout) {
-                Ok(DrainState::Open) => {}
-                Ok(DrainState::Eof) => eof = true,
-                Ok(DrainState::Deadline) => {
-                    tracing::debug!(?git, ?cwd, ?timeout, "project detection timed out");
-                    terminate_unreaped(&mut child, &mut status, git, cwd);
-                    return fallback_roots(cwd);
-                }
-                Err(error) => {
-                    tracing::debug!(
-                        ?error,
-                        ?git,
-                        ?cwd,
-                        "could not read git project detection output"
-                    );
-                    terminate_unreaped(&mut child, &mut status, git, cwd);
-                    return fallback_roots(cwd);
-                }
-            }
-        }
-
-        if status.is_none() {
-            match child.try_wait() {
-                Ok(found) => status = found,
-                Err(error) => {
-                    tracing::debug!(?error, ?git, ?cwd, "could not poll git for project root");
-                    terminate_unreaped(&mut child, &mut status, git, cwd);
-                    return fallback_roots(cwd);
-                }
-            }
-        }
-
-        if let Some(status) = status {
-            if !status.success() {
-                tracing::debug!(?status, ?git, ?cwd, "git could not detect a project root");
-                return fallback_roots(cwd);
-            }
-            if eof {
-                break;
-            }
-        }
-
-        if started.elapsed() >= timeout {
-            tracing::debug!(?git, ?cwd, ?timeout, "project detection timed out");
-            terminate_unreaped(&mut child, &mut status, git, cwd);
-            return fallback_roots(cwd);
-        }
-        let remaining = timeout.saturating_sub(started.elapsed());
-        std::thread::sleep(POLL_INTERVAL.min(remaining));
-    }
 
     let Some(roots) = parse_roots(&output) else {
         tracing::debug!(
@@ -147,67 +60,6 @@ pub fn detect_roots_with(git: &OsStr, cwd: &Path, timeout: Duration) -> Detected
     DetectedRoots {
         project: canonicalize_or(roots.project),
         worktree: roots.worktree.map(canonicalize_or),
-    }
-}
-
-fn set_nonblocking(stdout: &ChildStdout) -> io::Result<()> {
-    let fd = stdout.as_raw_fd();
-    // SAFETY: stdout owns this live pipe descriptor. fcntl changes only its status flags
-    // and neither transfers nor closes the descriptor.
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-    if flags == -1 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
-
-fn drain_stdout(
-    stdout: &mut ChildStdout,
-    output: &mut Vec<u8>,
-    started: Instant,
-    timeout: Duration,
-) -> io::Result<DrainState> {
-    let mut buffer = [0; 4096];
-    loop {
-        if started.elapsed() >= timeout {
-            return Ok(DrainState::Deadline);
-        }
-        match stdout.read(&mut buffer) {
-            Ok(0) => return Ok(DrainState::Eof),
-            Ok(count) => {
-                if output.len() + count > MAX_OUTPUT_BYTES {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "git project detection output exceeded 64 KiB",
-                    ));
-                }
-                output.extend_from_slice(&buffer[..count]);
-            }
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                return Ok(DrainState::Open);
-            }
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-fn terminate_unreaped(child: &mut Child, status: &mut Option<ExitStatus>, git: &OsStr, cwd: &Path) {
-    if status.is_some() {
-        return;
-    }
-    if let Ok(Some(found)) = child.try_wait() {
-        *status = Some(found);
-        return;
-    }
-    if let Err(error) = child.kill() {
-        tracing::debug!(?error, ?git, ?cwd, "could not kill project detection git");
-    }
-    match child.wait() {
-        Ok(found) => *status = Some(found),
-        Err(error) => {
-            tracing::debug!(?error, ?git, ?cwd, "could not reap project detection git");
-        }
     }
 }
 
