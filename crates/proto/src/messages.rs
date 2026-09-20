@@ -1,5 +1,6 @@
-use crate::types::{ClientKind, WindowInfo, WindowSpec};
+use crate::types::{ClientKind, GitState, WindowInfo, WindowSpec};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// Who produced a hook event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,20 +98,25 @@ pub enum DaemonMsg {
     Bye {
         reason: String,
     },
+    Git {
+        root: PathBuf,
+        state: Option<GitState>,
+    },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::types::{
-        ClientKind, Runtime, Status, SubagentInfo, SubagentState, WindowInfo, WindowSpec,
+        ClientKind, GitOperation, Head, Runtime, Status, SubagentInfo, SubagentState, WindowInfo,
+        WindowSpec,
     };
 
     #[test]
     fn windows_changed_carries_the_project_through_messagepack() {
         let value = serde_json::json!({"WindowsChanged": {"windows": [{
             "id": 1, "name": "shell", "runtime": "shell",
-            "cwd": "/tmp/repo/sub", "project": "/tmp/repo", "branch": null,
+            "cwd": "/tmp/repo/sub", "project": "/tmp/repo", "worktree": null, "branch": null,
             "status": "starting", "tool": null, "since_secs": 0,
             "last_output_secs": 0, "session_id": null, "model": null,
             "subagents": [], "exit": null
@@ -177,6 +183,7 @@ mod tests {
             runtime: Runtime::Shell,
             cwd: "/tmp".into(),
             project: "/tmp".into(),
+            worktree: Some("/tmp".into()),
             branch: Some("feat/protocol".into()),
             status: Status::Working,
             tool: Some("Read".into()),
@@ -277,11 +284,44 @@ mod tests {
             DaemonMsg::Bye {
                 reason: "shutdown".into(),
             },
+            DaemonMsg::Git {
+                root: "/tmp/repo".into(),
+                state: None,
+            },
         ];
         for message in daemon_messages {
             let back: DaemonMsg =
                 rmp_serde::from_slice(&rmp_serde::to_vec_named(&message).unwrap()).unwrap();
             assert_eq!(back, message);
         }
+    }
+
+    #[test]
+    fn git_message_round_trips() {
+        let with_state = DaemonMsg::Git {
+            root: "/tmp/repo".into(),
+            state: Some(GitState {
+                head: Head::Branch("main".into()),
+                upstream: Some("origin/main".into()),
+                ahead: 1,
+                behind: 0,
+                dirty: 2,
+                untracked: 0,
+                conflicts: 0,
+                operation: Some(GitOperation::Merge),
+                stale: false,
+            }),
+        };
+        let packed = rmp_serde::to_vec_named(&with_state).unwrap();
+        let back: DaemonMsg = rmp_serde::from_slice(&packed).unwrap();
+        assert_eq!(back, with_state);
+
+        let without_state = DaemonMsg::Git {
+            root: "/tmp/repo".into(),
+            state: None,
+        };
+        let packed = rmp_serde::to_vec_named(&without_state).unwrap();
+        let back: DaemonMsg = rmp_serde::from_slice(&packed).unwrap();
+        assert_eq!(back, without_state);
     }
 }
