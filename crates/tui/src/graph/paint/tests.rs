@@ -544,9 +544,11 @@ fn edges_are_clipped_with_the_viewport() {
     let rows = app.rows();
     let layout = layout(&rows);
 
-    // Above and left of the parent: the parent's box and its own run are
-    // outside the viewport entirely, yet the part of the first child's edge
-    // that falls inside still shows.
+    // Above and left of the parent's middle row: all that survives of the
+    // parent's box is the last two columns of its top border, `─╮` on the
+    // third line, and its own run into the bus is a row below the viewport,
+    // so none of it shows. The part of the first child's edge that falls
+    // inside does.
     let cut_top_left = paint(
         &layout,
         Rect::new(0, 0, 8, 3),

@@ -11,7 +11,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("C-b 1-9", "focus agent by number"),
     ("C-b c", "new shell window"),
     ("C-b t", "tree mode (j/k, h/l, Enter, Space, /)"),
-    ("C-b T", "tree overview"),
+    ("C-b T", "tree overview (j/k, h/l, wheel, drag)"),
     ("C-b < / >", "sidebar width"),
     ("C-b x", "kill agent"),
     ("C-b X", "remove agent"),
