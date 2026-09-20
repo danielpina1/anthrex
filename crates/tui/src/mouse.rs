@@ -160,7 +160,10 @@ impl App {
         row: u16,
         main: ratatui::layout::Rect,
     ) -> Option<Vec<Effect>> {
-        let view = overview::view(self, main);
+        // One row build for the gesture: `overview::view` would otherwise
+        // build its own, and the selection below needs the same list.
+        let rows = tree::build(&self.windows, &self.tree);
+        let view = overview::view_of(self, main, &rows);
         if !view.canvas.contains((column, row).into()) {
             return None;
         }
@@ -168,7 +171,6 @@ impl App {
         let Some(key) = view.geometry().node_at(&view.layout, column, row) else {
             return Some(vec![]);
         };
-        let rows = tree::build(&self.windows, &self.tree);
         self.tree.select(&rows, key.clone());
         self.reveal_tree_anchor();
         Some(if double {

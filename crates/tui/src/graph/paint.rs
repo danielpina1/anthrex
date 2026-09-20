@@ -10,11 +10,12 @@
 use super::{Edge, Layout, Pan};
 use crate::app::App;
 use crate::theme;
-use crate::tree::{Row, RowKind};
+use crate::tree::{NodeKey, Row, RowKind};
 use crate::ui::tree_view::truncate;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use std::collections::HashMap;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -25,15 +26,36 @@ use unicode_width::UnicodeWidthStr;
 /// at a time rather than dropped whole: each cell is placed independently, so
 /// whatever falls inside `area` survives even when the shape's own origin does
 /// not.
-pub fn paint(layout: &Layout, area: Rect, pan: Pan, app: &App) -> Vec<Line<'static>> {
+///
+/// `rows` is the very list `layout` was built from, and the caller passes it in
+/// rather than rebuilding it: painting runs at least ten times a second in a
+/// process meant to run for days. `layout` pushes one `PlacedNode` per row in
+/// row order, so the two zip and no node has to be looked up by key.
+pub fn paint(
+    layout: &Layout,
+    area: Rect,
+    pan: Pan,
+    rows: &[Row<'_>],
+    app: &App,
+) -> Vec<Line<'static>> {
     let mut grid = Grid::new(area, pan);
-    for row in app.rows() {
-        if let Some(node) = layout.node(&row.key) {
-            paint_node(&mut grid, node.rect, &row, app);
-        }
+    for (node, row) in layout.nodes.iter().zip(rows) {
+        debug_assert_eq!(
+            node.key, row.key,
+            "layout places one node per row, in order"
+        );
+        paint_node(&mut grid, node.rect, row, app);
     }
+    // One pass over the nodes instead of one scan per edge endpoint: an edge
+    // names its parent and children by key, and there are as many edges as
+    // there are nodes with children.
+    let placed: HashMap<&NodeKey, Rect> = layout
+        .nodes
+        .iter()
+        .map(|node| (&node.key, node.rect))
+        .collect();
     for edge in &layout.edges {
-        paint_edge(&mut grid, layout, edge);
+        paint_edge(&mut grid, &placed, edge);
     }
     grid.into_lines()
 }
@@ -337,17 +359,16 @@ enum BusCell {
 
 /// Draws one parent-to-children connection in the `TIER_GAP` columns
 /// (decision 13).
-fn paint_edge(grid: &mut Grid, layout: &Layout, edge: &Edge) {
-    let Some(parent) = layout.node(&edge.parent) else {
+fn paint_edge(grid: &mut Grid, placed: &HashMap<&NodeKey, Rect>, edge: &Edge) {
+    let Some(parent) = placed.get(&edge.parent).copied() else {
         return;
     };
     let children: Vec<Rect> = edge
         .children
         .iter()
-        .filter_map(|child| layout.node(child))
-        .map(|child| child.rect)
+        .filter_map(|child| placed.get(child).copied())
         .collect();
-    let Some(geometry) = EdgeGeometry::new(parent.rect, &children) else {
+    let Some(geometry) = EdgeGeometry::new(parent, &children) else {
         return;
     };
 

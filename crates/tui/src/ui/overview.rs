@@ -58,8 +58,14 @@ impl View {
 }
 
 pub fn view(app: &App, main: Rect) -> View {
+    view_of(app, main, &app.rows())
+}
+
+/// `view` for a caller that has the visible rows in hand already, so one frame
+/// or one gesture builds that list once instead of once per reader.
+pub fn view_of(app: &App, main: Rect, rows: &[Row<'_>]) -> View {
     let (canvas, footer) = areas(main);
-    let layout = graph::layout(&app.rows());
+    let layout = graph::layout(rows);
     // The stored pan can outlive the canvas it was clamped against — a
     // narrowed terminal, or rows that vanished — so it is clamped on the way
     // out as well as when it is set.
@@ -84,10 +90,14 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .title(Line::from(Span::styled(" tree overview ", theme::title())));
     frame.render_widget(block, area);
 
-    let view = view(app, area);
-    let lines = paint(&view.layout, view.canvas, view.pan, app);
+    // One row build for the whole frame: the layout, the painter and the
+    // footer all read this list, and a frame is drawn at least ten times a
+    // second.
+    let rows = app.rows();
+    let view = view_of(app, area, &rows);
+    let lines = paint(&view.layout, view.canvas, view.pan, &rows, app);
     frame.render_widget(Paragraph::new(lines), view.canvas);
-    frame.render_widget(Paragraph::new(footer_line(app)), view.footer);
+    frame.render_widget(Paragraph::new(footer_line(app, &rows)), view.footer);
 }
 
 /// The selected node in full: its label untruncated, then its model, its state
@@ -95,8 +105,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
 ///
 /// Only the footer's own width cuts anything here, which is why the box above
 /// can afford to elide: whatever a box hides, this line shows.
-fn footer_line(app: &App) -> Line<'static> {
-    let rows = app.rows();
+fn footer_line(app: &App, rows: &[Row<'_>]) -> Line<'static> {
     let Some(row) = app
         .tree
         .selected

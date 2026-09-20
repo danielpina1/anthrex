@@ -83,7 +83,7 @@ fn one_box_paints_its_borders_and_content() {
     // viewport's right edge, so only the project's box can appear. Its right
     // border is a `├` all the same: the window hangs off it, and the edge is
     // painted whether or not the child it runs to is in view (decision 13).
-    let lines = paint(&layout, Rect::new(0, 0, 12, 3), Pan::default(), &app);
+    let lines = paint(&layout, Rect::new(0, 0, 12, 3), Pan::default(), &rows, &app);
 
     assert_eq!(
         lines_text(&lines),
@@ -108,6 +108,7 @@ fn content_is_glyph_position_then_name() {
             x: window_rect.x,
             y: 0,
         },
+        &rows,
         &app,
     );
 
@@ -128,7 +129,7 @@ fn a_long_label_is_truncated_with_an_ellipsis() {
     let rows = app.rows();
     let layout = layout(&rows);
 
-    let lines = paint(&layout, Rect::new(0, 0, 30, 3), Pan::default(), &app);
+    let lines = paint(&layout, Rect::new(0, 0, 30, 3), Pan::default(), &rows, &app);
 
     assert_eq!(
         lines_text(&lines),
@@ -149,7 +150,7 @@ fn a_wide_character_label_keeps_the_border_aligned() {
     let rows = app.rows();
     let layout = layout(&rows);
 
-    let lines = paint(&layout, Rect::new(0, 0, 24, 3), Pan::default(), &app);
+    let lines = paint(&layout, Rect::new(0, 0, 24, 3), Pan::default(), &rows, &app);
 
     assert_eq!(
         lines_text(&lines),
@@ -179,7 +180,7 @@ fn a_wide_grapheme_cut_by_either_edge_keeps_the_line_the_areas_width() {
     for width in 1..=layout.size.0 {
         for pan_x in 0..=layout.size.0 {
             let area = Rect::new(0, 0, width, 3);
-            let lines = paint(&layout, area, Pan { x: pan_x, y: 0 }, &app);
+            let lines = paint(&layout, area, Pan { x: pan_x, y: 0 }, &rows, &app);
             for (index, text) in lines_text(&lines).iter().enumerate() {
                 assert_eq!(
                     UnicodeWidthStr::width(text.as_str()),
@@ -195,11 +196,23 @@ fn a_wide_grapheme_cut_by_either_edge_keeps_the_line_the_areas_width() {
     // and 5. A pan of 5 clips that grapheme and leaves its continuation
     // leading the line, and `ロ` at the far end loses its continuation to the
     // right edge: one space each, and eight columns of line.
-    let clipped_head = paint(&layout, Rect::new(0, 0, 8, 3), Pan { x: 5, y: 0 }, &app);
+    let clipped_head = paint(
+        &layout,
+        Rect::new(0, 0, 8, 3),
+        Pan { x: 5, y: 0 },
+        &rows,
+        &app,
+    );
     assert_eq!(lines_text(&clipped_head)[1], " 本語プ ");
     // Three columns from column 2: the glyph, a space, and a `日` whose own
     // continuation is past the right edge.
-    let clipped_tail = paint(&layout, Rect::new(0, 0, 3, 3), Pan { x: 2, y: 0 }, &app);
+    let clipped_tail = paint(
+        &layout,
+        Rect::new(0, 0, 3, 3),
+        Pan { x: 2, y: 0 },
+        &rows,
+        &app,
+    );
     assert_eq!(lines_text(&clipped_tail)[1], "○  ");
 }
 
@@ -218,7 +231,13 @@ fn the_viewport_shows_only_its_window_of_the_canvas() {
     let rows = app.rows();
     let layout = layout(&rows);
 
-    let lines = paint(&layout, Rect::new(0, 0, 8, 5), Pan { x: 10, y: 2 }, &app);
+    let lines = paint(
+        &layout,
+        Rect::new(0, 0, 8, 5),
+        Pan { x: 10, y: 2 },
+        &rows,
+        &app,
+    );
 
     assert_eq!(
         lines_text(&lines),
@@ -236,7 +255,13 @@ fn a_box_partly_outside_the_viewport_is_clipped_not_dropped() {
     let rows = app.rows();
     let layout = layout(&rows);
 
-    let lines = paint(&layout, Rect::new(0, 0, 10, 5), Pan { x: 5, y: 1 }, &app);
+    let lines = paint(
+        &layout,
+        Rect::new(0, 0, 10, 5),
+        Pan { x: 5, y: 1 },
+        &rows,
+        &app,
+    );
 
     assert_eq!(
         lines_text(&lines),
@@ -271,7 +296,7 @@ fn one_child_is_a_straight_run() {
     let rows = app.rows();
     let layout = layout(&rows);
 
-    let lines = paint(&layout, Rect::new(0, 0, 27, 3), Pan::default(), &app);
+    let lines = paint(&layout, Rect::new(0, 0, 27, 3), Pan::default(), &rows, &app);
 
     assert_eq!(
         lines_text(&lines),
@@ -300,7 +325,13 @@ fn three_children_use_a_bus() {
     let rows = app.rows();
     let layout = layout(&rows);
 
-    let lines = paint(&layout, Rect::new(0, 0, 42, 15), Pan::default(), &app);
+    let lines = paint(
+        &layout,
+        Rect::new(0, 0, 42, 15),
+        Pan::default(),
+        &rows,
+        &app,
+    );
 
     assert_eq!(
         lines_text(&lines),
@@ -337,7 +368,13 @@ fn the_parent_row_coinciding_with_the_bus_uses_a_cross() {
     let rows = app.rows();
     let layout = layout(&rows);
 
-    let lines = paint(&layout, Rect::new(0, 0, 27, 11), Pan::default(), &app);
+    let lines = paint(
+        &layout,
+        Rect::new(0, 0, 27, 11),
+        Pan::default(),
+        &rows,
+        &app,
+    );
 
     assert_eq!(
         lines_text(&lines),
@@ -380,7 +417,13 @@ fn the_parent_row_coinciding_with_the_first_child_uses_a_tee() {
         .expect("the project is placed");
     project.rect.y = 0;
 
-    let lines = paint(&layout, Rect::new(0, 0, 27, 11), Pan::default(), &app);
+    let lines = paint(
+        &layout,
+        Rect::new(0, 0, 27, 11),
+        Pan::default(),
+        &rows,
+        &app,
+    );
 
     assert_eq!(
         lines_text(&lines),
@@ -419,7 +462,13 @@ fn the_parent_row_coinciding_with_the_last_child_uses_an_upward_tee() {
         .expect("the project is placed");
     project.rect.y = 8;
 
-    let lines = paint(&layout, Rect::new(0, 0, 27, 11), Pan::default(), &app);
+    let lines = paint(
+        &layout,
+        Rect::new(0, 0, 27, 11),
+        Pan::default(),
+        &rows,
+        &app,
+    );
 
     assert_eq!(
         lines_text(&lines),
@@ -455,7 +504,7 @@ fn a_border_an_edge_meets_becomes_a_junction() {
     let rows = app.rows();
     let layout = layout(&rows);
 
-    let lines = paint(&layout, Rect::new(0, 0, 27, 7), Pan::default(), &app);
+    let lines = paint(&layout, Rect::new(0, 0, 27, 7), Pan::default(), &rows, &app);
     let text = lines_text(&lines);
 
     assert_eq!(
@@ -498,7 +547,13 @@ fn edges_are_clipped_with_the_viewport() {
     // Above and left of the parent: the parent's box and its own run are
     // outside the viewport entirely, yet the part of the first child's edge
     // that falls inside still shows.
-    let cut_top_left = paint(&layout, Rect::new(0, 0, 8, 3), Pan { x: 10, y: 0 }, &app);
+    let cut_top_left = paint(
+        &layout,
+        Rect::new(0, 0, 8, 3),
+        Pan { x: 10, y: 0 },
+        &rows,
+        &app,
+    );
     assert_eq!(
         lines_text(&cut_top_left),
         vec!["     ╭──", "   ┌─┤ ○", "─╮ │ ╰──"]
@@ -507,7 +562,13 @@ fn edges_are_clipped_with_the_viewport() {
     // Right and bottom: column 17 cuts both children's boxes in half, and row
     // 4 is the last drawn, so the last child's `└─┤` on row 5 and its bottom
     // border on row 6 are dropped rather than wrapped or panicked on.
-    let cut_bottom_right = paint(&layout, Rect::new(0, 0, 16, 4), Pan { x: 2, y: 1 }, &app);
+    let cut_bottom_right = paint(
+        &layout,
+        Rect::new(0, 0, 16, 4),
+        Pan { x: 2, y: 1 },
+        &rows,
+        &app,
+    );
     assert_eq!(
         lines_text(&cut_bottom_right),
         vec![
@@ -528,12 +589,12 @@ fn the_focused_windows_box_uses_the_focused_border_style() {
     let area = Rect::new(0, 0, rect.width, rect.height);
     let pan = Pan { x: rect.x, y: 0 };
 
-    let unfocused = paint(&layout, area, pan, &app);
+    let unfocused = paint(&layout, area, pan, &app.rows(), &app);
     assert_eq!(unfocused[0].spans.len(), 1, "one uniform border run");
     assert_eq!(unfocused[0].spans[0].style, crate::theme::border());
 
     app.focused = Some(1);
-    let focused = paint(&layout, area, pan, &app);
+    let focused = paint(&layout, area, pan, &app.rows(), &app);
     assert_eq!(focused[0].spans.len(), 1);
     assert_eq!(focused[0].spans[0].style, crate::theme::border_focused());
 }
@@ -547,7 +608,7 @@ fn the_selected_node_is_highlighted() {
     let area = Rect::new(0, 0, rect.width, rect.height);
     let pan = Pan { x: rect.x, y: 0 };
 
-    let plain = paint(&layout, area, pan, &app);
+    let plain = paint(&layout, area, pan, &app.rows(), &app);
     assert!(
         !plain[0].spans[0]
             .style
@@ -557,7 +618,7 @@ fn the_selected_node_is_highlighted() {
 
     app.enter_tree();
     app.tree.selected = Some(NodeKey::Window(1));
-    let highlighted = paint(&layout, area, pan, &app);
+    let highlighted = paint(&layout, area, pan, &app.rows(), &app);
     assert_eq!(highlighted[0].spans.len(), 1);
     assert!(
         highlighted[0].spans[0]
