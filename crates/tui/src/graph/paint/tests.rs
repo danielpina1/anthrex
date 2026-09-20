@@ -8,7 +8,7 @@ use crate::app::App;
 use crate::graph::layout;
 use crate::keymap::Keymap;
 use crate::tree::NodeKey;
-use proto::{Runtime, Status, WindowInfo};
+use proto::{Runtime, Status, SubagentInfo, SubagentState, WindowInfo};
 use ratatui::style::Modifier;
 use ratatui::text::Line;
 
@@ -36,6 +36,27 @@ fn app_with(windows: Vec<WindowInfo>) -> App {
     App::new(windows, "/tmp".into(), Keymap::default_prefix())
 }
 
+/// Hangs one finished sub-agent per `kind` under `window`. `Done` keeps the
+/// glyph off the spinner, so the painted string does not depend on the frame.
+fn with_subagents(mut window: WindowInfo, kinds: &[&str]) -> WindowInfo {
+    window.subagents = kinds
+        .iter()
+        .map(|kind| SubagentInfo {
+            id: format!("{}-{kind}", window.id),
+            parent_id: None,
+            kind: (*kind).to_owned(),
+            label: None,
+            model: None,
+            state: SubagentState::Done,
+            tool: None,
+            started_secs: 0,
+            ended_secs: Some(0),
+            needs_permission: false,
+        })
+        .collect();
+    window
+}
+
 /// The plain-text content of every span on every line, joined per line —
 /// what a reader watching the terminal would see, with no style attached.
 fn lines_text(lines: &[Line<'_>]) -> Vec<String> {
@@ -59,12 +80,14 @@ fn one_box_paints_its_borders_and_content() {
     let layout = layout(&rows);
 
     // The window tier starts at x = 12 + TIER_GAP(3) = 15, past this
-    // viewport's right edge, so only the project's box can appear.
+    // viewport's right edge, so only the project's box can appear. Its right
+    // border is a `├` all the same: the window hangs off it, and the edge is
+    // painted whether or not the child it runs to is in view (decision 13).
     let lines = paint(&layout, Rect::new(0, 0, 12, 3), Pan::default(), &app);
 
     assert_eq!(
         lines_text(&lines),
-        vec!["╭──────────╮", "│ ○ shop   │", "╰──────────╯",]
+        vec!["╭──────────╮", "│ ○ shop   ├", "╰──────────╯",]
     );
 }
 
@@ -76,7 +99,8 @@ fn content_is_glyph_position_then_name() {
     let window_rect = layout.node(&NodeKey::Window(1)).unwrap().rect;
 
     // Pan to the window tier's own left edge so the project's box, well to
-    // its left, falls entirely outside this viewport.
+    // its left, falls entirely outside this viewport. The window's left
+    // border is the far end of that project's edge, so it reads `┤`.
     let lines = paint(
         &layout,
         Rect::new(0, 0, window_rect.width, window_rect.height),
@@ -89,7 +113,7 @@ fn content_is_glyph_position_then_name() {
 
     assert_eq!(
         lines_text(&lines),
-        vec!["╭────────────╮", "│ ○ 1 worker │", "╰────────────╯",]
+        vec!["╭────────────╮", "┤ ○ 1 worker │", "╰────────────╯",]
     );
 }
 
@@ -110,7 +134,7 @@ fn a_long_label_is_truncated_with_an_ellipsis() {
         lines_text(&lines),
         vec![
             "╭────────────────────────────╮",
-            "│ ○ a-project-name-far-past… │",
+            "│ ○ a-project-name-far-past… ├",
             "╰────────────────────────────╯",
         ]
     );
@@ -131,7 +155,7 @@ fn a_wide_character_label_keeps_the_border_aligned() {
         lines_text(&lines),
         vec![
             "╭──────────────────────╮",
-            "│ ○ 日本語プロジェクト │",
+            "│ ○ 日本語プロジェクト ├",
             "╰──────────────────────╯",
         ]
     );
@@ -143,7 +167,8 @@ fn the_viewport_shows_only_its_window_of_the_canvas() {
     // between its two children (tier 1, x 15, at y 0 and y 4) — the same
     // arithmetic `a_parent_centres_on_its_children` already pins for a
     // two-child span. Panning to (10, 2) cuts across all three boxes: the
-    // tail of the project's box, the gap, and the head of both windows'.
+    // tail of the project's box, the bus in the gap, and the head of both
+    // windows'.
     let app = app_with(vec![
         window(1, "/r/p", "a", Status::Idle),
         window(2, "/r/p", "b", Status::Idle),
@@ -155,7 +180,7 @@ fn the_viewport_shows_only_its_window_of_the_canvas() {
 
     assert_eq!(
         lines_text(&lines),
-        vec!["─╮   ╰──", " │      ", "─╯   ╭──", "     │ ○", "     ╰──",]
+        vec!["─╮ │ ╰──", " ├─┤    ", "─╯ │ ╭──", "   └─┤ ○", "     ╰──",]
     );
 }
 
@@ -174,11 +199,271 @@ fn a_box_partly_outside_the_viewport_is_clipped_not_dropped() {
     assert_eq!(
         lines_text(&lines),
         vec![
-            "hop   │   ",
+            "hop   ├───",
             "──────╯   ",
             "          ",
             "          ",
             "          ",
+        ]
+    );
+}
+
+// --- Edges (decision 13) -------------------------------------------------
+//
+// Every tier below is twelve columns wide — the `MIN_NODE_WIDTH` floor — so
+// tier 0 owns columns 0..=11, the gap owns 12..=14 and tier 1 starts at 15.
+// The bus therefore sits in column 13, the middle of the gap, and every
+// expected string below can be read off column by column.
+
+#[test]
+fn one_child_is_a_straight_run() {
+    // One child centres the parent on it (decision 6), so the two middle rows
+    // coincide and the edge is a horizontal line with no bus column at all.
+    let app = app_with(vec![window(1, "/r/p", "w", Status::Idle)]);
+    let rows = app.rows();
+    let layout = layout(&rows);
+
+    let lines = paint(&layout, Rect::new(0, 0, 27, 3), Pan::default(), &app);
+
+    assert_eq!(
+        lines_text(&lines),
+        vec![
+            "╭──────────╮   ╭──────────╮",
+            "│ ○ p      ├───┤ ○ 1 w    │",
+            "╰──────────╯   ╰──────────╯",
+        ]
+    );
+}
+
+#[test]
+fn three_children_use_a_bus() {
+    // `a` carries two sub-agents of its own, so it is centred on them at row
+    // 2 while `b` and `c` take the rows below. That lifts the whole span and
+    // leaves the project's own middle row — 8 — on none of its children's
+    // rows, which is what keeps the middle junction a plain `├` rather than
+    // the `┼` three leaf children would produce.
+    let app = app_with(vec![
+        with_subagents(window(1, "/r/p", "a", Status::Idle), &["x", "y"]),
+        window(2, "/r/p", "b", Status::Idle),
+        window(3, "/r/p", "c", Status::Idle),
+    ]);
+    let rows = app.rows();
+    let layout = layout(&rows);
+
+    let lines = paint(&layout, Rect::new(0, 0, 42, 15), Pan::default(), &app);
+
+    assert_eq!(
+        lines_text(&lines),
+        vec![
+            "                              ╭──────────╮",
+            "                            ┬─┤ ✓ x      │",
+            "               ╭──────────╮ │ ╰──────────╯",
+            "             ┬─┤ ○ 1 a    ├─┤             ",
+            "             │ ╰──────────╯ │ ╭──────────╮",
+            "             │              └─┤ ✓ y      │",
+            "             │                ╰──────────╯",
+            "╭──────────╮ │                            ",
+            "│ ○ p      ├─┤ ╭──────────╮               ",
+            "╰──────────╯ ├─┤ ○ 2 b    │               ",
+            "             │ ╰──────────╯               ",
+            "             │                            ",
+            "             │ ╭──────────╮               ",
+            "             └─┤ ○ 3 c    │               ",
+            "               ╰──────────╯               ",
+        ]
+    );
+}
+
+#[test]
+fn the_parent_row_coinciding_with_the_bus_uses_a_cross() {
+    // Three leaf children put the parent's middle row exactly on the middle
+    // child's, so the bus, the child's run and the parent's run all meet in
+    // one cell.
+    let app = app_with(vec![
+        window(1, "/r/p", "a", Status::Idle),
+        window(2, "/r/p", "b", Status::Idle),
+        window(3, "/r/p", "c", Status::Idle),
+    ]);
+    let rows = app.rows();
+    let layout = layout(&rows);
+
+    let lines = paint(&layout, Rect::new(0, 0, 27, 11), Pan::default(), &app);
+
+    assert_eq!(
+        lines_text(&lines),
+        vec![
+            "               ╭──────────╮",
+            "             ┬─┤ ○ 1 a    │",
+            "             │ ╰──────────╯",
+            "             │             ",
+            "╭──────────╮ │ ╭──────────╮",
+            "│ ○ p      ├─┼─┤ ○ 2 b    │",
+            "╰──────────╯ │ ╰──────────╯",
+            "             │             ",
+            "             │ ╭──────────╮",
+            "             └─┤ ○ 3 c    │",
+            "               ╰──────────╯",
+        ]
+    );
+}
+
+#[test]
+fn the_parent_row_coinciding_with_the_first_child_uses_a_tee() {
+    // `layout` centres a parent on its children, so with two or more of them
+    // the parent's row is always at least two rows below the bus's top: this
+    // geometry cannot arise from `layout` and the rectangle is moved by hand.
+    // The painter still has to answer for it, and the answer is that the top
+    // end is a tee either way — the arm the parent arrives on is the one `┬`
+    // already has, which is why decision 13's glyph list has no `┌` in it.
+    let app = app_with(vec![
+        window(1, "/r/p", "a", Status::Idle),
+        window(2, "/r/p", "b", Status::Idle),
+        window(3, "/r/p", "c", Status::Idle),
+    ]);
+    let rows = app.rows();
+    let mut layout = layout(&rows);
+    let project = layout
+        .nodes
+        .iter_mut()
+        .find(|node| node.depth == 0)
+        .expect("the project is placed");
+    project.rect.y = 0;
+
+    let lines = paint(&layout, Rect::new(0, 0, 27, 11), Pan::default(), &app);
+
+    assert_eq!(
+        lines_text(&lines),
+        vec![
+            "╭──────────╮   ╭──────────╮",
+            "│ ○ p      ├─┬─┤ ○ 1 a    │",
+            "╰──────────╯ │ ╰──────────╯",
+            "             │             ",
+            "             │ ╭──────────╮",
+            "             ├─┤ ○ 2 b    │",
+            "             │ ╰──────────╯",
+            "             │             ",
+            "             │ ╭──────────╮",
+            "             └─┤ ○ 3 c    │",
+            "               ╰──────────╯",
+        ]
+    );
+}
+
+#[test]
+fn the_parent_row_coinciding_with_the_last_child_opens_the_corner() {
+    // The mirror of the test above, and equally unreachable from `layout`:
+    // the bottom end's `└` gains the arm the parent arrives on and becomes a
+    // `├`. Without this the corner would swallow the parent's run.
+    let app = app_with(vec![
+        window(1, "/r/p", "a", Status::Idle),
+        window(2, "/r/p", "b", Status::Idle),
+        window(3, "/r/p", "c", Status::Idle),
+    ]);
+    let rows = app.rows();
+    let mut layout = layout(&rows);
+    let project = layout
+        .nodes
+        .iter_mut()
+        .find(|node| node.depth == 0)
+        .expect("the project is placed");
+    project.rect.y = 8;
+
+    let lines = paint(&layout, Rect::new(0, 0, 27, 11), Pan::default(), &app);
+
+    assert_eq!(
+        lines_text(&lines),
+        vec![
+            "               ╭──────────╮",
+            "             ┬─┤ ○ 1 a    │",
+            "             │ ╰──────────╯",
+            "             │             ",
+            "             │ ╭──────────╮",
+            "             ├─┤ ○ 2 b    │",
+            "             │ ╰──────────╯",
+            "             │             ",
+            "╭──────────╮ │ ╭──────────╮",
+            "│ ○ p      ├─├─┤ ○ 3 c    │",
+            "╰──────────╯   ╰──────────╯",
+        ]
+    );
+}
+
+#[test]
+fn a_border_an_edge_meets_becomes_a_junction() {
+    // Two children: the parent's run leaves its right border at row 3 and
+    // each child's run arrives at its left border at rows 1 and 5. Those
+    // three cells are borders in the box painter's output and junctions in
+    // this one, and each keeps the style of the box it belongs to — the
+    // focused child's `┤` is drawn in the focused border style, not the plain
+    // one the gap's own lines use.
+    let mut app = app_with(vec![
+        window(1, "/r/p", "a", Status::Idle),
+        window(2, "/r/p", "b", Status::Idle),
+    ]);
+    app.focused = Some(1);
+    let rows = app.rows();
+    let layout = layout(&rows);
+
+    let lines = paint(&layout, Rect::new(0, 0, 27, 7), Pan::default(), &app);
+    let text = lines_text(&lines);
+
+    assert_eq!(
+        text,
+        vec![
+            "               ╭──────────╮",
+            "             ┬─┤ ○ 1 a    │",
+            "╭──────────╮ │ ╰──────────╯",
+            "│ ○ p      ├─┤             ",
+            "╰──────────╯ │ ╭──────────╮",
+            "             └─┤ ○ 2 b    │",
+            "               ╰──────────╯",
+        ]
+    );
+
+    let cell = |row: usize, column: usize| text[row].chars().nth(column).expect("column is drawn");
+    assert_eq!(cell(3, 11), '├', "the parent's right border");
+    assert_eq!(cell(1, 15), '┤', "the first child's left border");
+    assert_eq!(cell(5, 15), '┤', "the last child's left border");
+
+    let junction = lines[1]
+        .spans
+        .iter()
+        .find(|span| span.content.starts_with('┤'))
+        .expect("the focused child's junction is its own span");
+    assert_eq!(junction.style, crate::theme::border_focused());
+}
+
+#[test]
+fn edges_are_clipped_with_the_viewport() {
+    // The same two-child canvas, 27 x 7, seen through two viewports that cut
+    // it on all four sides.
+    let app = app_with(vec![
+        window(1, "/r/p", "a", Status::Idle),
+        window(2, "/r/p", "b", Status::Idle),
+    ]);
+    let rows = app.rows();
+    let layout = layout(&rows);
+
+    // Above and left of the parent: the parent's box and its own run are
+    // outside the viewport entirely, yet the part of the first child's edge
+    // that falls inside still shows.
+    let cut_top_left = paint(&layout, Rect::new(0, 0, 8, 3), Pan { x: 10, y: 0 }, &app);
+    assert_eq!(
+        lines_text(&cut_top_left),
+        vec!["     ╭──", "   ┬─┤ ○", "─╮ │ ╰──"]
+    );
+
+    // Right and bottom: column 17 cuts both children's boxes in half, and row
+    // 4 is the last drawn, so the last child's `└─┤` on row 5 and its bottom
+    // border on row 6 are dropped rather than wrapped or panicked on.
+    let cut_bottom_right = paint(&layout, Rect::new(0, 0, 16, 4), Pan { x: 2, y: 1 }, &app);
+    assert_eq!(
+        lines_text(&cut_bottom_right),
+        vec![
+            "           ┬─┤ ○",
+            "─────────╮ │ ╰──",
+            "○ p      ├─┤    ",
+            "─────────╯ │ ╭──",
         ]
     );
 }
