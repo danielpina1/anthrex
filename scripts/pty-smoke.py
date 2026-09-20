@@ -208,6 +208,18 @@ class PtyProc:
         scr.feed(self.raw.decode("utf-8", errors="replace"))
         return scr.text()
 
+    def screen_region_text(self, col_start, col_end=None):
+        """Like `screen_text`, but only the columns `[col_start, col_end)` of
+        every row (default `col_end`: the right edge). For asserting on one
+        pane of a split layout without a match in another pane satisfying it
+        by coincidence — the sidebar and the graph overview both draw box
+        corners and row/edge glyphs, on the same screen, from different code.
+        """
+        scr = Screen(ROWS, COLS)
+        scr.feed(self.raw.decode("utf-8", errors="replace"))
+        end = COLS if col_end is None else col_end
+        return "\n".join("".join(row[col_start:end]).rstrip() for row in scr.grid)
+
     def wait_for(self, text, timeout=10.0, label=None):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
