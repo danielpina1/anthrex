@@ -492,6 +492,220 @@ fn delete_removes_at_the_cursor_not_only_at_index_zero() {
     assert_eq!(at_end.cursor(), 5);
 }
 
+/// Re-review, round 2: a combining mark inserted at cursor 0 in front of an
+/// already-present *orphan* combining mark (one with no preceding base character,
+/// so it is its own grapheme cluster) left the cursor stuck at 0, because the
+/// round-1 fix measured the cursor advance as the change in the whole string's
+/// grapheme count — and merging "e" into "\u{0301}" doesn't change that count (3
+/// graphemes before, 3 after). Once the cursor is stuck, every following keystroke
+/// splices at the same byte offset, silently reordering what the user typed.
+#[test]
+fn insert_before_an_orphan_combining_mark_does_not_reorder_later_keystrokes() {
+    let mut t = TextInput::new("\u{0301}bc");
+    t.home();
+    t.insert("e");
+    assert_eq!(
+        t.text(),
+        "e\u{0301}bc",
+        "e merges forward with the orphan mark into one grapheme"
+    );
+    assert_eq!(
+        t.cursor(),
+        1,
+        "cursor must advance past what was just typed"
+    );
+
+    t.insert("X");
+    t.insert("Y");
+    assert_eq!(
+        t.text(),
+        "e\u{0301}XYbc",
+        "later keystrokes land after earlier ones, not reordered in front of them"
+    );
+}
+
+/// Re-review, round 2: a ZWJ inserted between two emoji that were each inserted
+/// separately (and so were, until now, two distinct grapheme clusters) fuses them
+/// into a single cluster. The grapheme count therefore *decreases* on this insert,
+/// which the round-1 fix's `after - before` (both `usize`) cannot represent: it
+/// panicked with "attempt to subtract with overflow" at the old `dialog.rs:73`.
+#[test]
+fn zwj_fusing_two_separately_inserted_emoji_does_not_panic() {
+    let mut t = TextInput::new("");
+    t.insert("\u{1F468}");
+    t.insert("\u{1F469}");
+    assert_eq!(t.cursor(), 2, "two separate emoji, two graphemes");
+    t.left();
+    t.insert("\u{200D}");
+    assert_eq!(t.text(), "\u{1F468}\u{200D}\u{1F469}");
+    assert_eq!(
+        t.cursor(),
+        1,
+        "the ZWJ fuses the pair into a single grapheme"
+    );
+    let (visible, column) = t.visible(3);
+    assert_eq!(visible, "\u{1F468}\u{200D}\u{1F469}");
+    assert_eq!(column, 1);
+}
+
+/// Both prior rounds fixed a specific reported input and were then broken by a
+/// different one neither of us had thought to try. Rather than add a fourth named
+/// case, this drives `insert` through every ordered sequence (repetition allowed)
+/// of a small alphabet of grapheme-boundary troublemakers, up to length 3, from a
+/// handful of starting contexts, and checks after *every single insert* the
+/// invariants a correct `insert` can never violate:
+///
+/// - the cursor never exceeds `len()`
+/// - `visible()` does not panic at any width, including 0 and 1
+/// - each insertion happens at or after the byte offset where the previous one
+///   ended — since `insert_str` only ever splices bytes in, never reorders or
+///   deletes existing ones, this is the necessary and sufficient condition for
+///   "nothing typed lands in front of something typed earlier" (the reordering
+///   bug); checked unconditionally, in every context
+/// - in contexts where the text after the cursor cannot itself reach backward and
+///   absorb what gets typed (i.e. it doesn't start with a combining mark or ZWJ),
+///   the *stronger* and more direct check also holds: the resulting string is
+///   exactly the untouched prefix, then the typed pieces concatenated in order,
+///   then the untouched suffix. ("Before an orphan mark" is deliberately excluded
+///   from this stronger check: there, the first typed piece legitimately absorbs
+///   the pre-existing mark into its own cluster — exactly the documented, correct
+///   behaviour `insert_before_an_orphan_combining_mark_does_not_reorder_later_keystrokes`
+///   pins down by hand — so the untouched-suffix assumption doesn't apply, even
+///   though the weaker offset-monotonicity check above still does.)
+#[test]
+fn insert_exhaustive_combinations_never_reorder_or_go_out_of_range() {
+    const ALPHABET: [&str; 6] = [
+        "a",         // a plain ASCII letter
+        "e",         // a base letter
+        "\u{0301}",  // a lone combining acute
+        "\u{200D}",  // a ZWJ
+        "\u{1F1FA}", // a regional indicator
+        "\u{1F600}", // an emoji
+    ];
+
+    struct Context {
+        name: &'static str,
+        base: &'static str,
+        cursor: usize,
+        /// Whether the untouched-prefix/typed/untouched-suffix equality is
+        /// expected to hold here. False only where the suffix can legitimately
+        /// reach backward and absorb the first typed piece.
+        strict: bool,
+    }
+
+    let end_of = |base: &str| base.graphemes(true).count();
+    let contexts = [
+        Context {
+            name: "empty",
+            base: "",
+            cursor: 0,
+            strict: true,
+        },
+        Context {
+            name: "start of plain text",
+            base: "bc",
+            cursor: 0,
+            strict: true,
+        },
+        Context {
+            name: "end of plain text",
+            base: "bc",
+            cursor: end_of("bc"),
+            strict: true,
+        },
+        Context {
+            name: "before an orphan mark",
+            base: "\u{0301}xy",
+            cursor: 0,
+            strict: false,
+        },
+        Context {
+            name: "after a trailing mark",
+            base: "xy\u{0301}",
+            cursor: end_of("xy\u{0301}"),
+            strict: true,
+        },
+    ];
+
+    // Every ordered sequence (with repetition) of `ALPHABET`, lengths 1..=3.
+    fn sequences(alphabet: &[&'static str], max_len: usize) -> Vec<Vec<&'static str>> {
+        let mut out = Vec::new();
+        let mut stack: Vec<Vec<&'static str>> = vec![Vec::new()];
+        while let Some(seq) = stack.pop() {
+            if !seq.is_empty() {
+                out.push(seq.clone());
+            }
+            if seq.len() < max_len {
+                for piece in alphabet {
+                    let mut next = seq.clone();
+                    next.push(*piece);
+                    stack.push(next);
+                }
+            }
+        }
+        out
+    }
+
+    let mut cases = 0;
+    for ctx in &contexts {
+        for seq in sequences(&ALPHABET, 3) {
+            cases += 1;
+            let mut t = TextInput::new(ctx.base);
+            t.cursor = ctx.cursor;
+            let split = t.byte_offset(ctx.cursor);
+            let prefix = ctx.base[..split].to_string();
+            let suffix = ctx.base[split..].to_string();
+            let mut min_next_offset = split;
+
+            let mut typed_so_far = String::new();
+            for piece in &seq {
+                let offset = t.byte_offset(t.cursor());
+                assert!(
+                    offset >= min_next_offset,
+                    "{}: {:?} spliced {:?} at byte {offset}, before byte {min_next_offset} \
+                     where the previous piece ended — later input landed in front of \
+                     earlier input",
+                    ctx.name,
+                    seq,
+                    piece
+                );
+
+                t.insert(piece);
+                typed_so_far.push_str(piece);
+                min_next_offset = offset + piece.len();
+
+                let len = t.text().graphemes(true).count();
+                assert!(
+                    t.cursor() <= len,
+                    "{}: {:?} left the cursor ({}) past len() ({}) on {:?}",
+                    ctx.name,
+                    seq,
+                    t.cursor(),
+                    len,
+                    t.text()
+                );
+                for width in [0u16, 1, 2, 5, 20] {
+                    t.visible(width); // must not panic
+                }
+                if ctx.strict {
+                    let expected = format!("{prefix}{typed_so_far}{suffix}");
+                    assert_eq!(
+                        t.text(),
+                        expected,
+                        "{}: {:?} reordered the typed pieces",
+                        ctx.name,
+                        seq
+                    );
+                }
+            }
+        }
+    }
+    assert!(
+        cases > 100,
+        "sanity: expected a few hundred cases, got {cases}"
+    );
+}
+
 #[test]
 fn paste_replaces_newlines_with_spaces() {
     let mut f = form(Runtime::Claude);

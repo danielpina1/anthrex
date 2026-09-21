@@ -62,15 +62,35 @@ impl TextInput {
     /// several graphemes (a paste), so this is also what `on_paste` calls.
     pub fn insert(&mut self, s: &str) {
         let offset = self.byte_offset(self.cursor);
-        let before = self.len();
         self.text.insert_str(offset, s);
-        let after = self.len();
-        // The cursor advances by the actual change in the whole string's grapheme
-        // count, not by `s`'s own grapheme count in isolation: splicing `s` in can
-        // merge with a grapheme on either side of the cursor (a combining mark
-        // landing on the preceding base letter, a regional-indicator pair closing
-        // into one flag), so the isolated count can overshoot the real advance.
-        self.cursor += after - before;
+        let inserted_end = offset + s.len();
+        // The new cursor is the grapheme index of the first real cluster boundary
+        // at or after the byte offset where the inserted text ends. This is
+        // computed directly from the resulting string's own cluster boundaries, not
+        // from any kind of before/after count: a count (in isolation or as a delta)
+        // cannot represent what a splice does, because merging with a neighbouring
+        // grapheme can leave the count unchanged (this insertion's tail absorbed by
+        // an orphan combining mark that follows it) or even decrease it (a ZWJ
+        // fusing two previously separate emoji into one) — see the round-1 and
+        // round-2 regression tests below for both.
+        //
+        // The common case is that `inserted_end` lands exactly on a boundary (the
+        // splice didn't merge forward into what follows), and this is simply the
+        // count of clusters up to and including the inserted text. When `s` merges
+        // with a *following* grapheme it did not previously share a cluster with —
+        // typing a base letter right in front of an already-present combining mark,
+        // or a ZWJ fusing two previously-adjacent-but-separate emoji into one —
+        // `inserted_end` lands inside that merged cluster instead, since there is no
+        // boundary there to land on. We deliberately put the cursor just past the
+        // whole merged cluster rather than before it: "the cursor moves forward
+        // across what was just typed" stays true even when the typed text reaches
+        // into text that was already there, and it's what keeps later keystrokes
+        // from landing in front of earlier ones.
+        self.cursor = self
+            .text
+            .grapheme_indices(true)
+            .position(|(byte_idx, _)| byte_idx >= inserted_end)
+            .unwrap_or_else(|| self.len());
     }
 
     /// Removes the grapheme before the cursor.
