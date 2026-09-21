@@ -348,9 +348,20 @@ impl Client {
         });
     }
 
-    pub fn receive(&mut self, mut pred: impl FnMut(&DaemonMsg) -> bool) -> DaemonMsg {
+    pub fn receive(&mut self, pred: impl FnMut(&DaemonMsg) -> bool) -> DaemonMsg {
+        self.receive_within(Duration::from_secs(2), pred)
+    }
+
+    /// [`Client::receive`] with a caller-chosen timeout, for a reply this task's own
+    /// production code can legitimately take longer than 2s to send — e.g. a restart's
+    /// `Ack`, which can wait out a live window's whole kill grace first.
+    pub fn receive_within(
+        &mut self,
+        timeout: Duration,
+        mut pred: impl FnMut(&DaemonMsg) -> bool,
+    ) -> DaemonMsg {
         self.rt.block_on(async {
-            tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::time::timeout(timeout, async {
                 loop {
                     let message = proto::read_frame::<_, DaemonMsg>(&mut self.stream)
                         .await
@@ -364,6 +375,22 @@ impl Client {
             })
             .await
             .expect("client reply timeout")
+        })
+    }
+
+    /// Reads one frame if it arrives within `timeout`, otherwise `None` — unlike
+    /// [`Client::receive`], a timeout here is not a test failure. Used to drain whatever
+    /// is already queued on the connection (an unrelated `WindowsChanged` broadcast, in
+    /// particular) before a test starts timing a specific reply, so that reply is not
+    /// mistaken for one already in flight.
+    pub fn try_receive(&mut self, timeout: Duration) -> Option<DaemonMsg> {
+        self.rt.block_on(async {
+            match tokio::time::timeout(timeout, proto::read_frame::<_, DaemonMsg>(&mut self.stream))
+                .await
+            {
+                Ok(frame) => frame.unwrap(),
+                Err(_) => None,
+            }
         })
     }
 

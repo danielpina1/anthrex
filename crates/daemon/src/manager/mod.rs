@@ -3,6 +3,7 @@
 mod create;
 mod entry;
 mod remove;
+mod restart;
 mod restore;
 
 pub use remove::{GitRoots, RemoveError};

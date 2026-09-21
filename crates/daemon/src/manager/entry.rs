@@ -80,14 +80,10 @@ pub(super) struct Entry {
     /// same checkout, which would have two `git worktree remove` calls and two
     /// `unregister`s for one directory.
     pub(super) removing: bool,
-    /// A restart (task M6.7, not this one) is in flight for this window. Set to `false`
-    /// everywhere an `Entry` is built in this task and read by no code yet; added now,
-    /// ahead of the task that reads and writes it, because the M6.5 brief calls for it
-    /// explicitly so M6.7 does not have to touch every `Entry` literal again.
-    #[allow(
-        dead_code,
-        reason = "read and written starting in task M6.7 (restart in the daemon)"
-    )]
+    /// A restart (`manager::restart`, task M6.7) is in flight for this window. Guarded by
+    /// `manager::restart::Restarting`, which gives it back on every exit path — an early
+    /// return, a panic on the blocking pool, or a caller that drops the future — so a
+    /// failed restart never leaves the window permanently unrestartable.
     pub(super) restarting: bool,
     pub(super) status: Status,
     pub(super) state: AgentState,
