@@ -236,6 +236,43 @@ async fn a_stopping_daemon_leaves_a_replacement_socket_alone() {
     drop(probe);
 }
 
+/// Decision 11's advertised guarantee: "a socket file that has disappeared therefore
+/// means the state is on disk." Fix wave 4, item 5 (M6.5 review, Minor 4): the shutdown
+/// path used to unlink the socket unconditionally even when the final flush failed, which
+/// falsifies that guarantee at exactly the moment it would matter.
+///
+/// `data_dir/state.json` is pre-created as a directory, so `state::save`'s
+/// rename-`.tmp`-over-`path` step fails with `EISDIR` on every attempt, including the
+/// final one — the socket must still be on disk once `run` returns.
+#[tokio::test]
+async fn a_failed_final_flush_leaves_the_socket_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("d.sock");
+    let data_dir = dir.path().join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    std::fs::create_dir(data_dir.join("state.json")).unwrap();
+
+    let handle = tokio::spawn(run(opts(socket.clone(), data_dir.clone())));
+    wait_for_path(&socket, Duration::from_secs(5)).await;
+
+    let (mut c, _welcome) = Client::connect(&socket).await;
+    c.send(ClientMsg::Shutdown).await;
+    c.recv_until(|m| matches!(m, DaemonMsg::Bye { .. })).await;
+
+    let result = tokio::time::timeout(Duration::from_secs(10), handle)
+        .await
+        .expect("daemon::run did not return within 10s")
+        .expect("the daemon task panicked");
+    assert!(result.is_ok(), "run returned an error: {result:?}");
+
+    assert!(
+        socket.exists(),
+        "a failed final flush must leave the socket in place, or decision 11's guarantee \
+         (\"a socket file that has disappeared means the state is on disk\") is false \
+         exactly when it matters"
+    );
+}
+
 /// M6.5's headline lifecycle test (decisions 9, 11, 12 and 14 together): a window created
 /// and renamed in one daemon lifetime is listed, exited, in the next one, over a *real*
 /// stop and start — not a direct call to `restore` — so decision 11's shutdown order (the

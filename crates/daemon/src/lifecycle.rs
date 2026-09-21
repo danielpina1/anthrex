@@ -273,17 +273,35 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     let _ = persister.await;
     let final_state = manager.state_snapshot();
     let final_path = state_path.clone();
-    match tokio::task::spawn_blocking(move || crate::state::save(&final_path, &final_state)).await {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => tracing::error!(%error, "final state save failed"),
-        Err(error) => tracing::error!(%error, "final state save task panicked"),
-    }
+    let final_save_succeeded =
+        match tokio::task::spawn_blocking(move || crate::state::save(&final_path, &final_state))
+            .await
+        {
+            Ok(Ok(())) => true,
+            Ok(Err(error)) => {
+                tracing::error!(%error, "final state save failed");
+                false
+            }
+            Err(error) => {
+                tracing::error!(%error, "final state save task panicked");
+                false
+            }
+        };
 
-    let socket_is_still_ours = std::fs::metadata(&opts.socket_path)
-        .map(|m| (m.dev(), m.ino()) == socket_id)
-        .unwrap_or(false);
-    if socket_is_still_ours {
-        let _ = std::fs::remove_file(&opts.socket_path);
+    // Decision 11's advertised guarantee is that a socket file that has disappeared means
+    // the state is on disk. Unlinking unconditionally would make that false exactly when
+    // it matters, so the socket is only ever removed once the final flush actually
+    // succeeded (fix wave 4, item 5). Nothing in the tree waits on the socket rather than
+    // the lifetime lock file today, so this changes nothing on the success path; on a
+    // failed flush it leaves the socket in place rather than falsifying the guarantee —
+    // cheap, since `prepare_socket` already clears a stale socket file on the next boot.
+    if final_save_succeeded {
+        let socket_is_still_ours = std::fs::metadata(&opts.socket_path)
+            .map(|m| (m.dev(), m.ino()) == socket_id)
+            .unwrap_or(false);
+        if socket_is_still_ours {
+            let _ = std::fs::remove_file(&opts.socket_path);
+        }
     }
     let _ = std::fs::remove_file(&pid_path);
     tracing::info!("daemon stopped");
