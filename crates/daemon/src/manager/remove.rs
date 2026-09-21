@@ -41,7 +41,7 @@
 
 use super::{Entry, KILL_GRACE, WindowManager, git};
 use crate::worktree::{self, ManagedWorktree, WorktreeError};
-use proto::Status;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -144,7 +144,14 @@ impl WindowManager {
 
         // Step 2, before the kill: does the tree hold work? A refusal here has cost the
         // user nothing — their agent is still running in the checkout.
-        if !force {
+        //
+        // Skipped for a path that is not there, which is not the same as skipping it for
+        // convenience. `git -C <missing>` exits 128, so asking a directory that has been
+        // deleted turns design decision 13's "path missing → prune → succeed" branch into
+        // a raw git error about a directory that does not exist — unreachable except with
+        // `--force`, the one flag that sounds destructive. A user who tidied up with their
+        // own `git worktree remove` and then closed the window would be told to force it.
+        if !force && !worktree_is_gone(&wt.path) {
             let path = wt.path.clone();
             let dirty = blocking(move || worktree::is_dirty(git(), &path, deadline)).await?;
             if dirty {
@@ -203,11 +210,23 @@ impl WindowManager {
     }
 
     /// Design decision 19 step 3: SIGKILL to the process group, the way
-    /// [`WindowManager::remove`] does it, then wait — without the lock — for the exit to
-    /// be reported.
+    /// [`WindowManager::remove`] does it, then wait — without the lock — until the child
+    /// has actually been reaped.
     ///
-    /// A window that has already exited returns at once. That is not an optimisation: a
-    /// removal of a long-dead agent would otherwise sit through the whole of
+    /// Both halves ask `child_alive`, and **neither asks whether the status is Exited**,
+    /// because those are not the same question. `child_alive` goes false only when
+    /// [`crate::window::WindowEvent::Exited`] arrives, which is the daemon's evidence that
+    /// the process is gone. A status of Exited can precede that by seconds:
+    /// `WindowEvent::ParserPanicked` sets the status and leaves the child running while
+    /// `Inner::start_cleanup` walks it through HUP, TERM and KILL. A removal that
+    /// short-circuited on the status would signal nothing and go straight on to delete the
+    /// checkout out from under a live agent that is still writing into it — and with
+    /// `force`, with both dirty checks skipped, everything it wrote in those seconds would
+    /// go with the tree. `WindowManager::remove` signals on `child_alive` alone; this must
+    /// not be weaker than the path it mirrors.
+    ///
+    /// A window whose child is already reaped returns at once. That is not an
+    /// optimisation: removing a long-dead agent would otherwise sit through the whole of
     /// [`KILL_GRACE`] with a dialog on screen that looks hung.
     ///
     /// The grace is a bound, not a requirement. If the exit has not been reported when it
@@ -220,17 +239,15 @@ impl WindowManager {
             let Some(entry) = inner.entries.get(&id) else {
                 return;
             };
-            if entry.status == Status::Exited {
+            if !entry.child_alive {
                 return;
             }
-            if entry.child_alive {
-                let _ = entry.window.signal_group(libc::SIGKILL);
-            }
+            let _ = entry.window.signal_group(libc::SIGKILL);
         }
 
         let deadline = Instant::now() + KILL_GRACE;
         loop {
-            if self.has_exited(id) {
+            if self.child_is_gone(id) {
                 return;
             }
             if Instant::now() >= deadline {
@@ -244,23 +261,27 @@ impl WindowManager {
         }
     }
 
-    /// The status column of `list()` for one window, without building a `WindowInfo` for
-    /// every other one 40 times a second. A window that is no longer listed counts as
-    /// exited: a concurrent plain `remove` took it, and there is nothing left to wait for.
-    fn has_exited(&self, id: u32) -> bool {
+    /// Whether this window's child has been reaped, asked once under the lock rather than
+    /// by building a `WindowInfo` for every other window 40 times a second — and asked of
+    /// `child_alive`, which `list()` does not publish, for the reason above.
+    ///
+    /// A window that is no longer listed counts as gone: a concurrent plain `remove` took
+    /// it, and there is nothing left to wait for.
+    fn child_is_gone(&self, id: u32) -> bool {
         crate::lock(&self.inner)
             .entries
             .get(&id)
-            .is_none_or(|entry| entry.status == Status::Exited)
+            .is_none_or(|entry| !entry.child_alive)
     }
 
     /// Design decision 19 step 5.
     ///
-    /// The SIGKILL mirrors [`WindowManager::remove`] and is belt and braces: step 3 has
-    /// already signalled this group, and only a child that never reported its exit inside
-    /// [`KILL_GRACE`] can still look alive here. Forgetting an entry is the last moment
-    /// anything can reach its process group, so the invariant that no window is dropped
-    /// with a live child is kept on this path too rather than argued about.
+    /// The SIGKILL mirrors [`WindowManager::remove`] and is the last thing that can reach
+    /// this process group: once the entry is forgotten, nothing holds its pid. It is not
+    /// redundant with step 3 — a child that outlived [`KILL_GRACE`] without reporting an
+    /// exit reaches here alive — but it is also not a substitute for it, because by this
+    /// point `worktree::remove` has already deleted the checkout. Keeping a live agent out
+    /// of a tree that is about to be deleted is step 3's job and only step 3's.
     fn finish_removal(&self, id: u32, wt: &ManagedWorktree) {
         let mut inner = crate::lock(&self.inner);
         let Some(entry) = inner.entries.remove(&id) else {
@@ -273,6 +294,21 @@ impl WindowManager {
         tracing::info!(id, path = ?wt.path, branch = %wt.branch, "window and worktree removed");
         self.publish(&inner);
     }
+}
+
+/// Whether there is nothing at `path` to ask questions about, so that step 2's dirty
+/// check can be skipped and [`worktree::remove`] can go straight to its prune.
+///
+/// **Only [`io::ErrorKind::NotFound`] answers yes**, exactly as `worktree::remove` decides
+/// the same question: a `PermissionDenied`, or an `EIO` from a dead network mount, is not
+/// a worktree that is gone. Those fall through to the dirty check, where git fails and the
+/// removal fails with it, rather than being quietly treated as work that is no longer
+/// there. The safety-critical direction is the one this function must never guess in.
+fn worktree_is_gone(path: &Path) -> bool {
+    matches!(
+        std::fs::symlink_metadata(path),
+        Err(error) if error.kind() == io::ErrorKind::NotFound
+    )
 }
 
 /// Runs one blocking worktree call on the blocking pool and gives its failure the shape

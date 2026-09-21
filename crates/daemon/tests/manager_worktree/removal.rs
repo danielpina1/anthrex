@@ -24,6 +24,7 @@
 use super::*;
 use daemon::manager::{GitRoots, RemoveError};
 use proto::Status;
+use std::ffi::OsStr;
 use std::sync::Mutex;
 
 // ---------------------------------------------------------------------------
@@ -153,6 +154,17 @@ fn status_of(m: &WindowManager, id: u32) -> Option<Status> {
 
 fn listed(m: &WindowManager, id: u32) -> bool {
     m.list().iter().any(|w| w.id == id)
+}
+
+/// Whether any process in `pid`'s group is still there.
+///
+/// Signal 0 performs the existence and permission check without delivering anything, so
+/// this is a question and never an action. `ESRCH` — the process group is gone — is the
+/// only answer that means the agent is dead; a reaped child leaves no zombie behind
+/// because the window's own waiter collects it before the `Exited` event is sent.
+fn group_alive(pid: u32) -> bool {
+    // SAFETY: `pid` came from `child_pid`, and signal 0 delivers nothing.
+    unsafe { libc::killpg(pid as libc::pid_t, 0) == 0 }
 }
 
 /// Makes the agent's own checkout dirty from inside the agent, the way a real one does:
@@ -468,6 +480,119 @@ async fn a_plain_remove_is_refused_while_a_worktree_removal_is_in_flight() {
     assert!(!agent.path.exists());
     // Exactly one `unregister`, from the path that owns it.
     roots.assert_one_unregister_before_the_removal(&agent.path);
+}
+
+/// A window whose screen parser panicked reports Exited while its child is **still
+/// alive**: `WindowEvent::ParserPanicked` sets the status, and `Inner::start_cleanup` then
+/// walks the process group through HUP, TERM and KILL over three seconds. Those three
+/// seconds are a real window — long enough for a user to answer a remove confirm in.
+///
+/// A removal that took the status for the answer would signal nothing and hand the
+/// checkout to `git worktree remove` with an agent still writing into it. With `--force`,
+/// where both dirty checks are skipped, everything written in those seconds would go with
+/// the tree; without it, the dirty check has already passed by then. `WindowManager::remove`
+/// signals on `child_alive` alone, and this path must not be weaker than the one it
+/// mirrors.
+///
+/// The agent ignores HUP and TERM so that the escalation cannot reach it first — which is
+/// what makes the Exited-but-alive state last long enough to test rather than a race — and
+/// the question is asked from the `unregister` hook, in the instant before the deletion.
+/// It is not "does the agent die", which it does either way, but "was it already dead when
+/// its checkout was deleted".
+#[tokio::test]
+async fn a_parser_panicked_window_is_killed_before_its_checkout_goes() {
+    let repo = TempRepo::new();
+    let (m, _keep, _wt_root) = manager();
+    let agent = worktree_agent(&m, &repo, "panicked", "feat/panicked").await;
+    let pid = m
+        .child_pid(agent.id)
+        .unwrap()
+        .expect("the agent has a child");
+
+    m.write_input(agent.id, b"trap '' HUP TERM; echo trapped\n")
+        .unwrap();
+    wait_until("the agent to ignore HUP and TERM", || {
+        let (snapshot, _, _) = m.snapshot(agent.id).unwrap();
+        String::from_utf8_lossy(&snapshot).contains("trapped")
+    })
+    .await;
+
+    m.handle_event(agent.id, WindowEvent::ParserPanicked("boom".to_string()));
+    assert_eq!(
+        status_of(&m, agent.id),
+        Some(Status::Exited),
+        "a parser panic reports the window as exited"
+    );
+    assert!(
+        group_alive(pid),
+        "but its agent is still running, which is the whole hazard"
+    );
+
+    let alive_at_deletion = Arc::new(Mutex::new(None));
+    let roots = {
+        let seen = alive_at_deletion.clone();
+        FakeRoots::with_hook(move |_| *seen.lock().unwrap() = Some(group_alive(pid)))
+    };
+
+    m.remove_with_worktree(agent.id, false, &roots)
+        .await
+        .expect("a panicked window's worktree is still removable");
+
+    assert_eq!(
+        *alive_at_deletion.lock().unwrap(),
+        Some(false),
+        "the agent was still running when its checkout was deleted"
+    );
+    assert!(!listed(&m, agent.id));
+    assert!(!agent.path.exists());
+    assert!(repo.branch_exists("feat/panicked"));
+    roots.assert_one_unregister_before_the_removal(&agent.path);
+}
+
+/// The user tidied up themselves — `git worktree remove --force` from the main checkout —
+/// and only later closed the window with the box ticked.
+///
+/// Design decision 13 has a branch for exactly this: a path that is gone is pruned and the
+/// removal succeeds. Asking `is_dirty` first makes that branch unreachable, because
+/// `git -C <missing>` exits 128 and the user gets a raw git error about a directory that
+/// does not exist — one they cannot act on, with `--force` as their only route to the
+/// behaviour that was designed for them. Worse, the window stays listed and the registry
+/// goes on probing a path that is not there, which is the §3.8 staleness design decision
+/// 22 exists to prevent: the `unregister` below is the point of the test as much as the
+/// success is.
+#[tokio::test]
+async fn a_worktree_removed_by_hand_is_pruned_without_force() {
+    let repo = TempRepo::new();
+    let (m, _keep, _wt_root) = manager();
+    let roots = FakeRoots::new();
+    let agent = worktree_agent(&m, &repo, "tidied", "feat/tidied").await;
+
+    repo.git(&[
+        OsStr::new("worktree"),
+        OsStr::new("remove"),
+        OsStr::new("--force"),
+        agent.path.as_os_str(),
+    ]);
+    assert!(!agent.path.exists(), "the user's own removal took it");
+
+    m.remove_with_worktree(agent.id, false, &roots)
+        .await
+        .expect("a worktree that is already gone is not a reason to refuse");
+
+    assert!(!listed(&m, agent.id));
+    assert_eq!(repo.worktree_paths(), vec![repo.root.clone()]);
+    assert!(
+        repo.branch_exists("feat/tidied"),
+        "removal never deletes the branch"
+    );
+    assert_eq!(
+        roots.calls(),
+        vec![Call::Unregister {
+            root: agent.path.clone(),
+            existed: false,
+        }],
+        "a root whose directory is already gone must still stop being watched"
+    );
 }
 
 /// Design decision 19 step 3 waits for the child only when there is one. A window that has
