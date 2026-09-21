@@ -294,6 +294,41 @@ fn a_row_held_for_an_unwritable_wrapping_field_is_handed_back() {
 }
 
 #[test]
+fn a_flow_labels_span_is_muted_and_its_value_is_not() {
+    // Every other test in this file reads `symbol()` alone, so `flow_line`
+    // dropping `theme::muted()` from the label — or applying it to the value
+    // instead — changes nothing any of them can see. The panel's readability
+    // rests entirely on the label reading dimmer than the value beside it.
+    let inspection = inspection(
+        "shop",
+        vec![plain("path", "/r/shop"), plain("status", "idle")],
+    );
+    let buffer = draw(&inspection, 24, INSPECTOR_HEIGHT);
+    let row_y = 2; // the first field row, right under the title.
+    let muted = theme::muted().fg.expect("muted always carries a colour");
+
+    // "path" starts at column 2: one in from the border, one more from the
+    // panel's own padding — the same offset the title test uses for the name.
+    for x in 2..6 {
+        assert_eq!(buffer[(x, row_y)].fg, muted, "label cell at column {x}");
+    }
+    // The value's column is wherever "/r/shop" actually landed — the label
+    // column is as wide as the widest label in it ("status", six columns),
+    // not just "path" (four), so locating it by the rendered row is safer
+    // than recomputing that packing by hand.
+    let row = &panel(&inspection, 24, INSPECTOR_HEIGHT)[usize::from(row_y)];
+    let value_x = row
+        .chars()
+        .position(|c| c == '/')
+        .expect("the path value is on this row");
+    assert_ne!(
+        buffer[(value_x as u16, row_y)].fg,
+        muted,
+        "the value must not carry the label's muted colour"
+    );
+}
+
+#[test]
 fn the_title_is_the_glyph_then_the_name_in_bold() {
     let inspection = inspection("shop", vec![plain("path", "/r/shop")]);
     let buffer = draw(&inspection, 24, INSPECTOR_HEIGHT);

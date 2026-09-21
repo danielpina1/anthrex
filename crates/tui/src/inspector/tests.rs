@@ -9,6 +9,7 @@ use crate::tree::NodeKey;
 use proto::{
     GitOperation, GitState, Head, Runtime, Status, SubagentInfo, SubagentState, WindowInfo,
 };
+use ratatui::style::Color;
 use std::path::PathBuf;
 
 fn window(id: u32, project: &str, name: &str, runtime: Runtime) -> WindowInfo {
@@ -507,4 +508,52 @@ fn a_subagent_without_a_label_is_named_for_its_kind() {
     );
 
     assert_eq!(inspection.name, "Explore");
+}
+
+#[test]
+fn a_subagents_glyph_carries_its_own_status_colour() {
+    // Nothing else in this file reads `.glyph` — every other test here reads
+    // `.name` or `.fields` — so a sub-agent's glyph built with
+    // `theme::status_color` instead of `theme::subagent_color` (the pair
+    // `ui/overview.rs` uses for the same sub-agent's box, three files away)
+    // would pass every test above unnoticed. `subagent_color` disagrees with
+    // `status_color` exactly on `Failed`: a plain status has no "failed", so
+    // `status_color` cannot tell a failure from anything else, and a sub-agent
+    // that failed would show its glyph in some other status's colour.
+    let mut info = window(1, "/r/shop", "api-worker", Runtime::Claude);
+    let mut running = subagent("a1", "Explore", Some("map the routes"));
+    running.state = SubagentState::Running;
+    let mut failed = subagent("a2", "general-purpose", Some("grep handlers"));
+    failed.state = SubagentState::Failed;
+    info.subagents = vec![running, failed];
+    let app = app(vec![info]);
+
+    let running_glyph = inspect_key(
+        &app,
+        &NodeKey::Subagent {
+            window_id: 1,
+            id: "a1".into(),
+        },
+    )
+    .glyph;
+    let failed_glyph = inspect_key(
+        &app,
+        &NodeKey::Subagent {
+            window_id: 1,
+            id: "a2".into(),
+        },
+    )
+    .glyph;
+
+    assert_eq!(
+        running_glyph.style.fg,
+        Some(Color::Yellow),
+        "a running sub-agent reads as working, the same colour a window does"
+    );
+    assert_eq!(
+        failed_glyph.style.fg,
+        Some(Color::Red),
+        "a failed sub-agent has no counterpart in `Status` at all, so only \
+         `subagent_color` — not `status_color` — can colour it right"
+    );
 }
