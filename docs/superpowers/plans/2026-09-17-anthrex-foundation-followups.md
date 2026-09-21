@@ -125,3 +125,38 @@ Each open item above is closed by exactly one milestone. Its brief lists the ite
 - **The painter's zip invariant is only `debug_assert`ed.** `paint` pairs `layout.nodes`
   with the row list positionally. The invariant holds by construction today; in release a
   future divergence would paint labels onto the wrong boxes rather than dropping a node.
+
+## From milestone 5's whole-branch review (2026-09-21)
+
+- **Decision 25's "beside the loop" half is unpinned for `Remove`.**
+  `list_is_answered_while_a_create_is_running`
+  (`crates/daemon/tests/server/worktree.rs`) proves a `ListWindows` is answered while a
+  `CreateWindow` is still running, held open by a real `post-checkout` git hook that
+  writes a marker and sleeps for a fixed few seconds — so the test can wait for the
+  marker and know git is *provably* still inside `worktree add` before it asks whether
+  the connection loop is free. There is no equivalent test for `Remove`, and a refactor
+  that awaited `remove_with_worktree` inline in `handle_client` — reintroducing exactly
+  the stall decision 25 exists to prevent — would pass the whole suite today.
+  Investigated during the fix wave that added this entry: the reason isn't that nobody
+  wrote the test, it's that the technique the create-side test uses does not carry over.
+  `git worktree remove` fires no hook at all (checked against git 2.50.1: a repository
+  with every plausibly-relevant hook name wired up to log its own invocation stayed
+  silent across a `worktree remove`), so there is nothing to plant a sleep in the way
+  `post-checkout` holds `worktree add` open. The daemon's own `git` invocation is not
+  test-injectable either — `manager::git()` is a hardcoded `OsStr::new("git")`, unlike
+  `daemon::project::detect_roots_with`'s injectable program, so an integration test
+  cannot substitute a slow wrapper for the real removal's git calls without a new
+  production seam. `kill_and_await_exit`, the one phase of a removal that touches no
+  git, cannot be held open either: it waits on a real `SIGKILL`, which a child process
+  cannot delay or catch. Closing this needs one of: a test-only override for the git
+  program `WindowManager::remove_with_worktree` runs (mirroring
+  `project::detect_roots_with`'s `_with` twin), or a fixture child that can be told to
+  ignore its own reaping for a bounded window so `kill_and_await_exit`'s wait becomes
+  the held seam instead. Either is a real production-code change, not a test-only one,
+  so it is left for whichever milestone next touches `manager::remove` rather than
+  folded into a fix wave scoped to minors. See
+  `crates/daemon/tests/server/worktree.rs`'s
+  `a_worktree_removal_runs_to_completion_after_its_client_disconnects` for the same
+  held-seam gap on the *no-abort* guarantee (decisions 17 and 25 together), documented
+  in place since that test at least has a weaker, poll-based substitute; this one has
+  no test at all.

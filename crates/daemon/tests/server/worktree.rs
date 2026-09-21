@@ -402,6 +402,29 @@ async fn a_create_runs_to_completion_after_its_client_disconnects() {
 /// follows it, so the socket is not a reliable place to see that state at all. The
 /// `caught_it` assertion is there so the test cannot pass by having finished the whole
 /// removal before the first poll, which would exercise nothing.
+///
+/// **This is a margin, not a held seam, and it proves less than it looks like it does.**
+/// `a_create_runs_to_completion_after_its_client_disconnects` above can hold git open for
+/// two real seconds inside `worktree add` via a `post-checkout` hook that writes its
+/// marker and then sleeps, so that test's disconnect is *provably* mid-operation for the
+/// whole of that window. There is no equivalent here: `git worktree remove` runs no hook
+/// at all (checked directly against git 2.50.1 — a repo with every hook name that might
+/// plausibly fire wired up to log its own invocation stays silent across a `worktree
+/// remove`), so nothing this test can drop into the checkout blocks the daemon's own
+/// removal task the way `post-checkout` blocks `worktree add`. What this test actually
+/// has is a poll: `caught_it` proves the harness *observed* `Status::Exited` — evidence
+/// that the removal had reached the window between its kill and its deletion at least
+/// once — not that the removal was *still* in that window at the exact instant `drop(c)`
+/// below runs. Between the poll that sets `caught_it` and that `drop`, the removal keeps
+/// running concurrently and could in principle finish entirely while the client is still
+/// connected, in which case everything below would exercise a `remove` that had already
+/// succeeded rather than one that survived losing its client. That failure mode is safe
+/// rather than flaky: it cannot turn a real regression into a false pass, only make an
+/// already-finished removal look, to this test, like one caught in flight, and the
+/// assertions after `drop(c)` still hold either way. So this test is real evidence that
+/// worktree removals are not routinely torn down by a lost connection, but it is not the
+/// same guarantee decision 25's create-side test gives, and nothing here should be read
+/// as pinning that stronger claim.
 #[tokio::test]
 async fn a_worktree_removal_runs_to_completion_after_its_client_disconnects() {
     let repo = TempRepo::new();
