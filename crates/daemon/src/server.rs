@@ -247,6 +247,9 @@ async fn handle_client(
                 windows: manager.list(),
             }),
             ClientMsg::CreateWindow { spec, cols, rows } => {
+                // Runs in its own task, beside this loop, and is never aborted: the
+                // request functions hand back no `JoinHandle` precisely so that nothing
+                // here can cancel one (design decisions 17 and 25, `requests::detach`).
                 requests::create(
                     manager.clone(),
                     git_registry.clone(),
@@ -337,6 +340,12 @@ async fn handle_client(
                         "--force only applies when removing the worktree",
                     ))
                 } else if remove_worktree {
+                    // Like the create above, and for a sharper reason: this task
+                    // unregisters the window's git root and then deletes its checkout,
+                    // so a future dropped between those two steps would leave a live
+                    // worktree that nothing watches — with the user's agent already
+                    // killed and no restart in this milestone. Nothing in this function
+                    // is given a handle with which to do that.
                     requests::remove_with_worktree(
                         manager.clone(),
                         git_registry.clone(),
