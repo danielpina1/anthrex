@@ -97,8 +97,10 @@ pub enum WorktreeError {
     Git { action: String, stderr: String }, // action e.g. "worktree add"
     /// A failure that happened once `git worktree add` had already started, carrying
     /// design decision 16's suffix: the original failure, then whether the worktree it
-    /// had made was removed again. Built only by [`ops::discard_and_describe`], which is
-    /// the one place either suffix is written.
+    /// had made was removed again. Built only by [`ops::create`], at its two `worktree
+    /// add` failure sites, from the `String` [`ops::discard_and_describe`] returns —
+    /// that function is the one place either suffix is written, but it builds the
+    /// message, not this variant.
     #[error("{0}")]
     FailedAfterAdd(String),
     #[error("git is not installed or not on PATH")]
@@ -169,7 +171,7 @@ pub fn worktree_dir(worktrees_root: &Path, project_root: &Path, branch: &str) ->
 }
 
 /// Design decision 8, rules 1 to 4. Pure. `crates/tui/src/dialog.rs` has its own copy
-/// with the same messages (task M5.9).
+/// with the same messages (task M5.8).
 pub fn check_branch_syntax(branch: &str) -> Result<(), WorktreeError> {
     if branch.trim().is_empty() {
         return Err(WorktreeError::InvalidBranch(

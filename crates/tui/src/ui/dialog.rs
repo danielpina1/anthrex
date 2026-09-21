@@ -31,7 +31,8 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 #[path = "dialog_tests.rs"]
 mod tests;
 
-/// The label column's width, decision's "labels 11 columns".
+/// The label column's width, the milestone brief's `### Rendering:` section's "labels 11
+/// columns" — prose, not a numbered design decision.
 const LABEL_WIDTH: usize = 11;
 /// `"› "` or `"  "` ahead of the label.
 const MARKER_WIDTH: usize = 2;
@@ -127,7 +128,8 @@ fn runtime_span(current: Runtime, candidate: Runtime, label: &'static str) -> Sp
     }
 }
 
-/// Decision's rendering block. Width `min(66, area.width - 2)`; the hardware cursor goes
+/// The milestone brief's `### Rendering:` section's new-agent block — prose, not a
+/// numbered design decision. Width `min(66, area.width - 2)`; the hardware cursor goes
 /// to the focused text field's cursor, and nothing else places it (`ui/terminal.rs`
 /// already suppresses the PTY cursor while a modal is open).
 pub fn render_new_agent(frame: &mut Frame, form: &NewAgentForm, area: Rect) {
@@ -271,7 +273,7 @@ fn render_box(frame: &mut Frame, title: &str, body: Vec<Line<'static>>, area: Re
     frame.render_widget(Paragraph::new(body).block(block), rect);
 }
 
-/// Decision's remove-confirm rendering. `confirm.branch` is `None` for a window this
+/// Decision 35's remove-confirm rendering. `confirm.branch` is `None` for a window this
 /// daemon made no worktree for, which drops the checkbox line and its hint entirely
 /// (the wireframe's "for a window without a worktree" case).
 pub fn render_remove_confirm(frame: &mut Frame, confirm: &RemoveConfirm, area: Rect) {

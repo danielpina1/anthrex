@@ -86,10 +86,12 @@ pub struct Created {
 /// detection is the caller's and carries its own `DETECT_TIMEOUT` outside this deadline,
 /// as decision 5 specifies.
 ///
-/// If `git worktree add` fails or times out, [`discard_new`] runs before returning, on
-/// its own fresh [`CLEANUP_TIMEOUT`] deadline, and the *original* error is returned
-/// unchanged. (Design decision 16's `; the new worktree was removed` suffix belongs to
-/// `WindowManager::create`'s phase B, which is the layer that reports to the client.)
+/// If `git worktree add` fails or times out, [`discard_and_describe`] runs before
+/// returning: it discards whatever `git worktree add` half-made, on its own fresh
+/// [`CLEANUP_TIMEOUT`] deadline, appends design decision 16's suffix saying whether that
+/// cleanup succeeded, and the result comes back wrapped in
+/// [`WorktreeError::FailedAfterAdd`] — never the original error unchanged. See
+/// [`discard_and_describe`]'s own doc comment for why both suffixes matter.
 pub fn create(
     git: &OsStr,
     dir: &Path,

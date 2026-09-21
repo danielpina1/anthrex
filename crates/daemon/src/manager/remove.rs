@@ -270,8 +270,16 @@ impl WindowManager {
     /// by building a `WindowInfo` for every other window 40 times a second — and asked of
     /// `child_alive`, which `list()` does not publish, for the reason above.
     ///
-    /// A window that is no longer listed counts as gone: a concurrent plain `remove` took
-    /// it, and there is nothing left to wait for.
+    /// A missing entry counts as gone too. Not because a concurrent plain `remove` can
+    /// still take it out from under this loop — [`WindowManager::remove`]'s own
+    /// `entry.removing` check (added by the same change that gave `child_is_gone` its
+    /// current name) refuses exactly that for as long as this removal holds the flag, so
+    /// the id this loop polls cannot be unlisted by another caller while it runs. It is
+    /// belt and braces instead: if this id were ever unlisted anyway — a future bug in
+    /// that guard, not anything reachable today — there would be no evidence about it
+    /// left to wait for, and treating "not there" as "gone" is what lets the loop return
+    /// rather than sit out the whole of [`KILL_GRACE`] waiting for an entry that no
+    /// longer exists to change.
     fn child_is_gone(&self, id: u32) -> bool {
         crate::lock(&self.inner)
             .entries

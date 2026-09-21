@@ -21,8 +21,21 @@ use tokio_util::sync::CancellationToken;
 /// whatever roots the connected clients' windows reference, and one broadcast channel
 /// that turns its publications into [`DaemonMsg::Git`] for every attached client. The
 /// manager itself holds no git state and takes no git-related lock (AGENTS.md hard rule
-/// 2); registration and unregistration happen from inside `handle_client`, always after
-/// the call that changed the window table has already returned.
+/// 2).
+///
+/// Where registration and unregistration happen is not one rule but two, and the
+/// difference matters. A plain create and a plain `Remove { remove_worktree: false }`
+/// register or unregister from `server::requests`, in `handle_client`'s own task, always
+/// after the call that changed the window table has already returned — see
+/// [`requests::create`] and [`requests::remove_window`]. `Remove { remove_worktree: true
+/// }` does not: [`crate::manager::WindowManager::remove_with_worktree`] unregisters the
+/// root itself, *before* deleting the checkout, and re-registers it if the deletion
+/// fails, because that ordering (unregister, then delete, then maybe undo) has to happen
+/// inside one operation or not be provable at all. **Do not add an `unregister` after
+/// `remove_with_worktree` returns to "match" the other two paths** — the manager has
+/// already unregistered by then, and a second unregister on top of its own is the exact
+/// double-decrement `server::requests`' module doc and design decision 23 exist to
+/// prevent.
 pub async fn serve(
     listener: UnixListener,
     manager: Arc<WindowManager>,
