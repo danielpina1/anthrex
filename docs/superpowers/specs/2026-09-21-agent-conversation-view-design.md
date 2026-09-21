@@ -131,6 +131,24 @@ The summary is derived daemon-side from the hook, which always carries the tool 
 input. So a degraded conversation still reads as *"Edit parse.rs — 3 hunks"* rather than as a
 blank. Full input and result detail arrive with enrichment when it is available.
 
+### Decision 5a — the daemon does not currently receive tool results at all
+
+Corrected on inspection, against an earlier draft of this document that assumed it did.
+`crates/cli/src/hook.rs:97` removes `tool_response` from every payload before it reaches the
+daemon, guarded by `HOOK_PAYLOAD_MAX` above it, and
+`cli/tests/hook_command.rs::waits_for_hook_ack_and_strips_only_top_level_tool_response` pins
+that behaviour. The strip exists for a good reason: a tool response can be megabytes, and
+without it a large payload trips the size limit and the whole hook is dropped.
+
+So the CLI replaces the strip with a **bounded summary** rather than removing the field: it
+keeps `tool_response` truncated to `TOOL_RESULT_SUMMARY_MAX` (4 KiB) and adds
+`tool_result_truncated: bool`. The size guard keeps working, the daemon gains enough for
+`ToolState` and a one-line result summary, and full detail still comes from enrichment.
+
+Without this, `ToolResult` would be enrichment-only and every tool call in a degraded
+conversation would show as `Pending` forever — which is exactly the blank-looking failure
+decision 2 exists to prevent.
+
 ### Decision 6 — a sub-agent spawn is a block in its parent's conversation
 
 It carries the `agent_id` of the existing milestone 3 sub-agent record rather than
