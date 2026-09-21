@@ -163,6 +163,15 @@ impl std::fmt::Display for Problem {
 /// load. Every case past "missing file" is [`Severity::Warn`]: the module already
 /// recovered on its own.
 pub fn load(path: &Path) -> (StateFile, Vec<Problem>) {
+    load_with(path, SystemTime::now())
+}
+
+/// Injectable twin of [`load`]: `now` is the clock a corrupt/unsupported file's
+/// `mark_aside` rename timestamps itself with, following the same pattern as
+/// `project::detect_roots_with` — a real caller always uses [`load`], and tests drive
+/// `now` directly so a same-second collision (or its absence) is a property of the
+/// input instead of a race against the wall clock.
+pub fn load_with(path: &Path, now: SystemTime) -> (StateFile, Vec<Problem>) {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return (empty_state(), Vec::new()),
@@ -184,30 +193,33 @@ pub fn load(path: &Path) -> (StateFile, Vec<Problem>) {
     let value: serde_json::Value = match serde_json::from_slice(&bytes) {
         Ok(value) => value,
         Err(e) => {
-            return mark_aside(
+            return mark_aside_with(
                 path,
                 "corrupt",
                 &format!("state file is not valid JSON: {e}"),
+                now,
             );
         }
     };
 
     let Some(object) = value.as_object() else {
-        return mark_aside(path, "corrupt", "state file is not a JSON object");
+        return mark_aside_with(path, "corrupt", "state file is not a JSON object", now);
     };
 
     let Some(version) = object.get("version").and_then(serde_json::Value::as_u64) else {
-        return mark_aside(
+        return mark_aside_with(
             path,
             "corrupt",
             "state file is missing an integer \"version\"",
+            now,
         );
     };
     let Some(saved_next_id) = object.get("next_id").and_then(serde_json::Value::as_u64) else {
-        return mark_aside(
+        return mark_aside_with(
             path,
             "corrupt",
             "state file is missing an integer \"next_id\"",
+            now,
         );
     };
     // A saved value past `u32::MAX` cannot be represented by `StateFile::next_id`
@@ -217,10 +229,11 @@ pub fn load(path: &Path) -> (StateFile, Vec<Problem>) {
     let saved_next_id = u32::try_from(saved_next_id).unwrap_or(u32::MAX);
 
     if version > u64::from(STATE_VERSION) {
-        return mark_aside(
+        return mark_aside_with(
             path,
             "unsupported",
             &format!("state file version {version} is newer than {STATE_VERSION}"),
+            now,
         );
     }
 
@@ -233,10 +246,11 @@ pub fn load(path: &Path) -> (StateFile, Vec<Problem>) {
         None => &[],
         Some(serde_json::Value::Array(items)) => items,
         Some(_) => {
-            return mark_aside(
+            return mark_aside_with(
                 path,
                 "corrupt",
                 "state file's \"windows\" field is not an array",
+                now,
             );
         }
     };
@@ -319,8 +333,13 @@ pub fn load(path: &Path) -> (StateFile, Vec<Problem>) {
 /// problem naming the new path. The rename itself failing (permissions, a concurrent
 /// deletion) is reported instead of panicking, and still leaves the caller with an empty
 /// state rather than a corrupt one it would have to guard against everywhere else.
-fn mark_aside(path: &Path, tag: &str, why: &str) -> (StateFile, Vec<Problem>) {
-    let aside = aside_path(path, tag);
+fn mark_aside_with(
+    path: &Path,
+    tag: &str,
+    why: &str,
+    now: SystemTime,
+) -> (StateFile, Vec<Problem>) {
+    let aside = aside_path_with(path, tag, now);
     let message = match std::fs::rename(path, &aside) {
         Ok(()) => format!("{why}; moved it aside to {}", aside.display()),
         Err(e) => format!(
@@ -341,11 +360,13 @@ fn mark_aside(path: &Path, tag: &str, why: &str) -> (StateFile, Vec<Problem>) {
 /// Picks `<path>.<tag>-<unix-seconds>`, or `-1`, `-2`, ... appended to that if it is
 /// already taken. The suffix search — not the timestamp alone — is what makes two corrupt
 /// loads inside the same wall-clock second land on different names.
-fn aside_path(path: &Path, tag: &str) -> PathBuf {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+///
+/// `now` is injectable (following `project::detect_roots_with`'s convention) so a test
+/// can drive two, three, or more loads through the identical timestamp deterministically,
+/// instead of depending on the wall clock not ticking over between two real `load` calls —
+/// see `corrupt_file_is_moved_aside`'s history for why that assumption doesn't hold.
+fn aside_path_with(path: &Path, tag: &str, now: SystemTime) -> PathBuf {
+    let ts = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
     let base = format!("{}.{tag}-{ts}", path.display());
     let candidate = PathBuf::from(&base);
     if !candidate.exists() {

@@ -134,13 +134,23 @@ fn unreadable_file_is_left_alone_and_starts_empty() {
     );
 }
 
+/// A fixed instant, used wherever a test needs `load_with`'s injected clock to hold
+/// still across more than one call — real wall-clock seconds keep advancing mid-test,
+/// which is exactly the source of `corrupt_file_is_moved_aside`'s old flake (see its
+/// history: a `cargo test` run was observed to fail when the clock ticked over between
+/// two `load()` calls that were supposed to land in the same second).
+fn fixed_now() -> SystemTime {
+    UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000)
+}
+
 #[test]
 fn corrupt_file_is_moved_aside() {
     let dir = tempfile::tempdir().unwrap();
     let path = state_path(&dir);
+    let now = fixed_now();
     std::fs::write(&path, b"{not json").unwrap();
 
-    let (state, warnings) = load(&path);
+    let (state, warnings) = load_with(&path, now);
 
     assert!(state.windows.is_empty());
     assert_eq!(state.next_id, 1);
@@ -180,10 +190,11 @@ fn corrupt_file_is_moved_aside() {
     let original = std::fs::read(dir.path().join(first_name)).unwrap();
     assert_eq!(original, b"{not json");
 
-    // A second corrupt load, in the same second, must not collide with the first: it
-    // gets a "-1" suffix instead of silently overwriting or erroring.
+    // A second corrupt load, driven through the *same* injected `now` as the first —
+    // deterministically the same second, not merely likely to be — must not collide
+    // with the first: it gets a "-1" suffix instead of silently overwriting or erroring.
     std::fs::write(&path, b"{not json").unwrap();
-    let (_state2, warnings2) = load(&path);
+    let (_state2, warnings2) = load_with(&path, now);
     assert_eq!(warnings2.len(), 1);
 
     let corrupt_files_after: Vec<_> = std::fs::read_dir(dir.path())
@@ -199,6 +210,70 @@ fn corrupt_file_is_moved_aside() {
     assert!(
         second_name.ends_with("-1"),
         "a second corrupt load in the same second must produce a name ending in -1, got {second_name:?}"
+    );
+}
+
+/// A third corrupt load through the same injected `now` must land on `-2`, not collide
+/// with either of the first two. The review could not test this deterministically
+/// before `load_with` existed, since it would have needed three real `load()` calls to
+/// land in the same wall-clock second.
+#[test]
+fn third_corrupt_load_in_the_same_second_gets_a_dash_2_suffix() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = state_path(&dir);
+    let now = fixed_now();
+
+    for _ in 0..3 {
+        std::fs::write(&path, b"{not json").unwrap();
+        let (_state, warnings) = load_with(&path, now);
+        assert_eq!(warnings.len(), 1);
+    }
+
+    let mut corrupt_files: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("state.json.corrupt-"))
+        .collect();
+    corrupt_files.sort();
+    assert_eq!(corrupt_files.len(), 3, "{corrupt_files:?}");
+    assert!(
+        corrupt_files.iter().any(|n| n
+            .strip_prefix("state.json.corrupt-")
+            .unwrap()
+            .chars()
+            .all(|c| c.is_ascii_digit())),
+        "expected a bare-timestamp name: {corrupt_files:?}"
+    );
+    assert!(
+        corrupt_files.iter().any(|n| n.ends_with("-1")),
+        "expected a -1 name: {corrupt_files:?}"
+    );
+    assert!(
+        corrupt_files.iter().any(|n| n.ends_with("-2")),
+        "a third same-second corrupt load must produce a name ending in -2: {corrupt_files:?}"
+    );
+}
+
+/// If `<path>.corrupt-<ts>-1` already exists (from some earlier, unrelated run) but the
+/// bare `<path>.corrupt-<ts>` does not, `aside_path_with` must pick the free bare name
+/// rather than skip straight past it hunting for `-2` — the suffix search fills gaps,
+/// it doesn't just count up from whatever exists.
+#[test]
+fn aside_path_reuses_a_free_bare_name_even_when_dash_1_is_taken() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = state_path(&dir);
+    let now = fixed_now();
+    let ts = now.duration_since(UNIX_EPOCH).unwrap().as_secs();
+
+    // Pre-create the "-1" variant only; the bare name is still free.
+    std::fs::write(dir.path().join(format!("state.json.corrupt-{ts}-1")), b"x").unwrap();
+
+    let picked = aside_path_with(&path, "corrupt", now);
+
+    assert_eq!(
+        picked,
+        PathBuf::from(format!("{}.corrupt-{ts}", path.display())),
+        "the bare timestamp is free and must be reused, not skipped for -2"
     );
 }
 
