@@ -62,9 +62,15 @@ impl TextInput {
     /// several graphemes (a paste), so this is also what `on_paste` calls.
     pub fn insert(&mut self, s: &str) {
         let offset = self.byte_offset(self.cursor);
-        let added = s.graphemes(true).count();
+        let before = self.len();
         self.text.insert_str(offset, s);
-        self.cursor += added;
+        let after = self.len();
+        // The cursor advances by the actual change in the whole string's grapheme
+        // count, not by `s`'s own grapheme count in isolation: splicing `s` in can
+        // merge with a grapheme on either side of the cursor (a combining mark
+        // landing on the preceding base letter, a regional-indicator pair closing
+        // into one flag), so the isolated count can overshoot the real advance.
+        self.cursor += after - before;
     }
 
     /// Removes the grapheme before the cursor.
@@ -125,10 +131,13 @@ impl TextInput {
         }
         let graphemes: Vec<&str> = self.text.graphemes(true).collect();
         let len = graphemes.len();
-        let start = self.cursor.saturating_sub(width.saturating_sub(1));
+        // Defence in depth: clamp the cursor into range here too, so a future bug
+        // that leaves `self.cursor` past `len` still can't slice out of bounds.
+        let cursor = self.cursor.min(len);
+        let start = cursor.saturating_sub(width.saturating_sub(1));
         let end = (start + width).min(len);
         let visible: String = graphemes[start..end].concat();
-        let column = (self.cursor - start) as u16;
+        let column = (cursor - start) as u16;
         (visible, column)
     }
 }
@@ -456,7 +465,12 @@ pub fn expand_dir(input: &str, default_dir: &Path, home: Option<&Path>) -> Resul
         return Ok(if trimmed == "~" {
             home.to_path_buf()
         } else {
-            home.join(&trimmed[2..])
+            // `PathBuf::join` replaces rather than appends when its argument looks
+            // absolute, so a doubled slash right after `~/` (e.g. `~//etc/passwd`)
+            // would otherwise silently drop `home` entirely. The remainder of a `~/`
+            // path is always relative to home, so strip any extra leading slashes
+            // first.
+            home.join(trimmed[2..].trim_start_matches('/'))
         });
     }
     if trimmed.starts_with('~') {
@@ -852,6 +866,41 @@ mod tests {
         );
     }
 
+    /// Finding 2 (Major): `home.join(remainder)` must never let the remainder replace
+    /// `home` outright, which `PathBuf::join` does whenever its argument looks
+    /// absolute — a doubled slash right after `~/` produces exactly that.
+    #[test]
+    fn expand_dir_keeps_the_home_prefix_even_with_a_doubled_slash() {
+        let default_dir = Path::new("/work");
+        let home = Some(Path::new("/home/me"));
+
+        assert_eq!(
+            expand_dir("~//etc/passwd", default_dir, home).unwrap(),
+            PathBuf::from("/home/me/etc/passwd"),
+            "a doubled slash after ~/ must not drop the home prefix"
+        );
+        assert_eq!(
+            expand_dir("~///a", default_dir, home).unwrap(),
+            PathBuf::from("/home/me/a"),
+            "any number of extra leading slashes must still resolve under home"
+        );
+        assert_eq!(
+            expand_dir("~/", default_dir, home).unwrap(),
+            PathBuf::from("/home/me"),
+            "a bare ~/ with nothing after it is just home"
+        );
+        assert_eq!(
+            expand_dir("~", default_dir, home).unwrap(),
+            PathBuf::from("/home/me"),
+            "a bare ~ is unaffected by this fix"
+        );
+        assert_eq!(
+            expand_dir("~/./a", default_dir, home).unwrap(),
+            PathBuf::from("/home/me/./a"),
+            "a remainder with a leading ./ is relative already and joins normally"
+        );
+    }
+
     #[test]
     fn submitting_ignores_everything_but_cancel() {
         let ctx = ctx();
@@ -869,6 +918,97 @@ mod tests {
         assert_eq!(f, before);
 
         assert_eq!(f.on_key(key(KeyCode::Esc), &ctx), FormOutcome::Cancel);
+    }
+
+    /// Finding 1 (Critical): `insert` must derive the cursor advance from the actual
+    /// change in the whole string's grapheme count, not from the inserted fragment's
+    /// own count in isolation — a combining mark spliced onto an existing base letter
+    /// merges into one grapheme, so the naive count overshoots and leaves the cursor
+    /// past `len()`, which then made `visible()` panic. Every case here builds the
+    /// string incrementally via `insert`, since that is the path a real keystroke or
+    /// paste takes and the path the original 13 tests never exercised.
+    #[test]
+    fn insert_across_a_grapheme_boundary_keeps_the_cursor_in_range() {
+        // A combining mark inserted right after the base letter it attaches to, at
+        // the end of the string — the review's exact repro. `visible(1)` used to
+        // panic here; now it must not, and its result must be internally consistent.
+        let mut t = TextInput::new("cafe");
+        t.insert("\u{0301}");
+        assert_eq!(t.text(), "cafe\u{0301}");
+        assert_eq!(
+            t.cursor(),
+            4,
+            "4 graphemes: c, a, f, e-with-combining-acute"
+        );
+        let (visible, column) = t.visible(1);
+        assert_eq!(visible, "");
+        assert_eq!(column, 0);
+        let (visible, column) = t.visible(2);
+        assert_eq!(visible, "e\u{0301}");
+        assert_eq!(column, 1);
+
+        // The same merge, but in the middle of the string rather than at the end.
+        let mut mid = TextInput::new("caferolls");
+        for _ in 0..5 {
+            mid.left(); // cursor after "cafe" (index 4), before "rolls"
+        }
+        assert_eq!(mid.cursor(), 4);
+        mid.insert("\u{0301}");
+        assert_eq!(mid.text(), "cafe\u{0301}rolls");
+        assert_eq!(
+            mid.cursor(),
+            4,
+            "cursor lands right after the merged é, not past it"
+        );
+        let (visible, column) = mid.visible(3);
+        assert_eq!(visible, "fe\u{0301}r");
+        assert_eq!(column, 2);
+
+        // A wide cluster (a regional-indicator flag) built by two separate inserts:
+        // each is its own grapheme alone, but together they form one.
+        let mut flag = TextInput::new("");
+        flag.insert("\u{1F1FA}");
+        assert_eq!(flag.cursor(), 1);
+        assert_eq!(flag.visible(5), ("\u{1F1FA}".to_string(), 1));
+        flag.insert("\u{1F1F8}");
+        assert_eq!(flag.text(), "\u{1F1FA}\u{1F1F8}");
+        assert_eq!(
+            flag.cursor(),
+            1,
+            "the pair merges into a single flag grapheme"
+        );
+        assert_eq!(flag.visible(5), ("\u{1F1FA}\u{1F1F8}".to_string(), 1));
+    }
+
+    #[test]
+    fn visible_clamps_a_cursor_past_the_end_instead_of_panicking() {
+        // Defence in depth per the review: even if some future bug leaves the cursor
+        // past `len()`, `visible()` must not slice out of bounds.
+        let mut t = TextInput::new("cafe");
+        t.cursor = 99;
+        let (visible, column) = t.visible(2);
+        assert_eq!(visible, "e");
+        assert_eq!(column, 1);
+    }
+
+    #[test]
+    fn delete_removes_at_the_cursor_not_only_at_index_zero() {
+        // Finding 3 (Minor): the only required-test call to `delete` is immediately
+        // after `home()`, so a mutation hardcoding index 0 would still pass. Cover a
+        // middle cursor and end-of-string (a no-op).
+        let mut mid = TextInput::new("hello");
+        mid.left();
+        mid.left();
+        mid.left(); // cursor 2, on the first "l"
+        mid.delete();
+        assert_eq!(mid.text(), "helo");
+        assert_eq!(mid.cursor(), 2);
+
+        let mut at_end = TextInput::new("hello");
+        at_end.end();
+        at_end.delete();
+        assert_eq!(at_end.text(), "hello", "delete at end-of-string is a no-op");
+        assert_eq!(at_end.cursor(), 5);
     }
 
     #[test]
