@@ -18,7 +18,7 @@ use super::*;
 fn is_dirty_sees_modified_and_untracked_but_not_ignored_files() {
     let repo = TempRepo::new();
     let (_keep, wt_root) = worktrees_root();
-    let created = worktree::create(git(), &repo.root, "dirt", &wt_root, deadline()).unwrap();
+    let created = create_at(git(), &repo.root, "dirt", &wt_root, deadline()).unwrap();
     let path = &created.worktree.path;
 
     assert_eq!(
@@ -57,7 +57,7 @@ fn is_dirty_sees_modified_and_untracked_but_not_ignored_files() {
 fn remove_clean_worktree_keeps_the_branch() {
     let repo = TempRepo::new();
     let (_keep, wt_root) = worktrees_root();
-    let created = worktree::create(git(), &repo.root, "clean", &wt_root, deadline()).unwrap();
+    let created = create_at(git(), &repo.root, "clean", &wt_root, deadline()).unwrap();
 
     worktree::remove(git(), &created.worktree, false, deadline()).unwrap();
 
@@ -73,7 +73,7 @@ fn remove_clean_worktree_keeps_the_branch() {
 fn remove_dirty_worktree_is_refused_then_forced() {
     let repo = TempRepo::new();
     let (_keep, wt_root) = worktrees_root();
-    let created = worktree::create(git(), &repo.root, "dirty", &wt_root, deadline()).unwrap();
+    let created = create_at(git(), &repo.root, "dirty", &wt_root, deadline()).unwrap();
     let path = created.worktree.path.clone();
     fs::write(path.join("untracked.txt"), "unsaved work\n").unwrap();
 
@@ -114,7 +114,7 @@ fn remove_dirty_worktree_is_refused_then_forced() {
 fn remove_of_a_missing_path_prunes() {
     let repo = TempRepo::new();
     let (_keep, wt_root) = worktrees_root();
-    let created = worktree::create(git(), &repo.root, "gone", &wt_root, deadline()).unwrap();
+    let created = create_at(git(), &repo.root, "gone", &wt_root, deadline()).unwrap();
     fs::remove_dir_all(&created.worktree.path).unwrap();
     assert_eq!(
         repo.worktree_paths().len(),
@@ -143,7 +143,7 @@ fn remove_does_not_call_an_unreadable_path_gone() {
     use std::os::unix::fs::PermissionsExt;
     let repo = TempRepo::new();
     let (_keep, wt_root) = worktrees_root();
-    let created = worktree::create(git(), &repo.root, "unreadable", &wt_root, deadline()).unwrap();
+    let created = create_at(git(), &repo.root, "unreadable", &wt_root, deadline()).unwrap();
     let parent = created.worktree.path.parent().unwrap().to_path_buf();
     let original = fs::metadata(&parent).unwrap().permissions();
     fs::set_permissions(&parent, fs::Permissions::from_mode(0o000)).unwrap();
@@ -180,7 +180,7 @@ fn remove_does_not_call_an_unreadable_path_gone() {
 fn a_detached_head_holding_unreachable_commits_is_dirty() {
     let repo = TempRepo::new();
     let (_keep, wt_root) = worktrees_root();
-    let created = worktree::create(git(), &repo.root, "detachable", &wt_root, deadline()).unwrap();
+    let created = create_at(git(), &repo.root, "detachable", &wt_root, deadline()).unwrap();
     let path = created.worktree.path.clone();
 
     assert_eq!(
@@ -258,7 +258,7 @@ fn a_paused_rebase_with_a_clean_tree_is_dirty() {
     let repo = TempRepo::new();
     support::commit_more(&repo.root, 3);
     let (_keep, wt_root) = worktrees_root();
-    let created = worktree::create(git(), &repo.root, "rebasing", &wt_root, deadline()).unwrap();
+    let created = create_at(git(), &repo.root, "rebasing", &wt_root, deadline()).unwrap();
     let path = created.worktree.path.clone();
 
     assert_eq!(
@@ -341,7 +341,7 @@ fn discard_new_deletes_only_a_branch_it_created() {
     let repo = TempRepo::new();
     let (_keep, wt_root) = worktrees_root();
 
-    let fresh = worktree::create(git(), &repo.root, "fresh", &wt_root, deadline()).unwrap();
+    let fresh = create_at(git(), &repo.root, "fresh", &wt_root, deadline()).unwrap();
     assert!(fresh.created_branch);
 
     worktree::discard_new(git(), &fresh).unwrap();
@@ -354,7 +354,7 @@ fn discard_new_deletes_only_a_branch_it_created() {
     assert_eq!(repo.worktree_paths(), vec![repo.root.clone()]);
 
     repo.git(&[OsStr::new("branch"), OsStr::new("preexisting")]);
-    let reused = worktree::create(git(), &repo.root, "preexisting", &wt_root, deadline()).unwrap();
+    let reused = create_at(git(), &repo.root, "preexisting", &wt_root, deadline()).unwrap();
     assert!(!reused.created_branch);
 
     worktree::discard_new(git(), &reused).unwrap();
@@ -379,7 +379,7 @@ fn a_paused_bisect_is_refused_and_named() {
     let repo = TempRepo::new();
     support::commit_more(&repo.root, 4);
     let (_keep, wt_root) = worktrees_root();
-    let created = worktree::create(git(), &repo.root, "bisecting", &wt_root, deadline()).unwrap();
+    let created = create_at(git(), &repo.root, "bisecting", &wt_root, deadline()).unwrap();
     let path = created.worktree.path.clone();
 
     assert_eq!(
@@ -461,7 +461,7 @@ fn a_paused_merge_and_cherry_pick_name_themselves() {
         let repo = TempRepo::new();
         let (_keep, wt_root) = worktrees_root();
         let branch = format!("{operation}-target");
-        let created = worktree::create(git(), &repo.root, &branch, &wt_root, deadline()).unwrap();
+        let created = create_at(git(), &repo.root, &branch, &wt_root, deadline()).unwrap();
         let path = created.worktree.path.clone();
 
         // A side branch whose commit conflicts with one made here, so the operation

@@ -285,3 +285,112 @@ async fn a_name_is_reserved_while_its_create_is_in_flight() {
 
     drain(&m);
 }
+
+/// Whole-branch review finding 4, as its reproduction staged it: two concurrent creates
+/// for one worktree directory where the two callers' project roots **disagree**, which is
+/// what a `DETECT_TIMEOUT` on one of them produces. The branches are `feat/x` and
+/// `feat-x` again — one directory, two genuinely different branches, invisible to
+/// decision 9's "already checked out" check.
+///
+/// Observed before the fix: neither create was refused, **both entered phase B and ran
+/// `git worktree add` against one directory**, and only git's own `index.lock` happened
+/// to keep that harmless. The claim was computed from the caller's root while
+/// `worktree::create` resolved its own, so the moment the two disagreed the claim guarded
+/// a directory nobody would ever make.
+///
+/// Now the roots are resolved once and passed down, so the fallback create cannot reach
+/// git at all: it is refused for the reason the fallback actually means — the caller could
+/// not say which repository this is — instead of quietly re-deriving an answer the claim
+/// knows nothing about.
+#[tokio::test]
+async fn a_fallback_root_cannot_race_a_resolved_one_into_git() {
+    let repo = TempRepo::new();
+    let sub = repo.root.join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    let (m, _keep, wt_root) = manager();
+    let contested = repo_worktrees_dir(&wt_root, &repo.root).join("feat-x");
+
+    let (resolved, fell_back) = tokio::join!(
+        // What the server passes when detection succeeded.
+        m.create(
+            worktree_spec("resolved", &repo.root, "feat/x"),
+            repo.root.clone(),
+            Some(repo.root.clone()),
+            80,
+            24,
+        ),
+        // What `project::detect_roots_with` returns when detection times out, is
+        // truncated, or cannot spawn: the canonical `cwd`, and no worktree at all.
+        m.create(
+            worktree_spec("fell-back", &sub, "feat-x"),
+            sub.clone(),
+            None,
+            80,
+            24,
+        ),
+    );
+
+    let winner = resolved.expect("the create whose roots resolved must be unaffected");
+    let refusal = fell_back
+        .expect_err("a create whose root detection fell back must not reach git")
+        .to_string();
+    assert!(
+        refusal.contains("not a git repository"),
+        "the refusal must name what actually went wrong: {refusal}"
+    );
+
+    assert_eq!(
+        winner.cwd, contested,
+        "the winner keeps the directory its own admission claimed"
+    );
+    assert!(contested.is_dir(), "the winner's checkout was deleted");
+    assert!(
+        repo.worktree_paths().contains(&contested),
+        "git no longer knows about the winner's checkout"
+    );
+    assert_eq!(m.list().len(), 1, "only the winner may be listed");
+
+    drain(&m);
+}
+
+/// The invariant underneath that race, without the race: the directory a create's
+/// worktree ends up in is the directory its **admission** claimed, derived from the root
+/// its caller resolved — not from a root phase B works out for itself.
+///
+/// The roots here are valid but not the ones `create` would have detected: `project` is a
+/// subdirectory of the repository, which is what a fallback produces and what the review
+/// passed to reproduce the divergence. Before the fix this create landed under
+/// `<wt>/<repo>-<hash>/`, a directory nothing had claimed, while its claim sat unused
+/// under `<wt>/sub-<hash>/`.
+#[tokio::test]
+async fn a_create_lands_in_the_directory_its_admission_claimed() {
+    let repo = TempRepo::new();
+    let sub = repo.root.join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    let (m, _keep, wt_root) = manager();
+
+    let info = m
+        .create(
+            worktree_spec("divergent", &sub, "feat/x"),
+            sub.clone(),
+            Some(sub.clone()),
+            80,
+            24,
+        )
+        .await
+        .expect("a subdirectory root is still a usable root");
+
+    assert_eq!(
+        info.cwd,
+        daemon::worktree::worktree_dir(&wt_root, &sub, "feat/x"),
+        "the checkout must be where the claim computed from this caller's root says, \
+         not where a second resolution would have put it"
+    );
+    assert_ne!(
+        info.cwd,
+        daemon::worktree::worktree_dir(&wt_root, &repo.root, "feat/x"),
+        "landing under the re-resolved root is the divergence itself"
+    );
+
+    drain(&m);
+}

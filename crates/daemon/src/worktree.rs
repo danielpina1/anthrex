@@ -150,6 +150,24 @@ pub fn repo_worktrees_dir(worktrees_root: &Path, project_root: &Path) -> PathBuf
     worktrees_root.join(format!("{sanitized}-{}", hash8(project_root)))
 }
 
+/// The directory a worktree for `branch` of `project_root` occupies: `<wt>` joined with
+/// the branch's directory name.
+///
+/// **One derivation, two readers**, and that is the whole reason it is a function rather
+/// than two `join`s. `WindowManager::create`'s phase A calls this to claim the directory
+/// against other creates, under the manager lock, before any git runs; [`ops::create`]
+/// calls it to decide where `git worktree add` writes. If those two ever computed
+/// different paths for one create, the claim would guard a directory nobody makes while
+/// the real one stayed unclaimed — and the loser of a race would then run
+/// `git worktree remove --force` over the winner's live checkout. They were two copies of
+/// the arithmetic over two separately resolved roots until the whole-branch review's
+/// finding 4; now there is one of each.
+///
+/// Pure, so phase A can call it under the lock.
+pub fn worktree_dir(worktrees_root: &Path, project_root: &Path, branch: &str) -> PathBuf {
+    repo_worktrees_dir(worktrees_root, project_root).join(branch_dir_name(branch))
+}
+
 /// Design decision 8, rules 1 to 4. Pure. `crates/tui/src/dialog.rs` has its own copy
 /// with the same messages (task M5.9).
 pub fn check_branch_syntax(branch: &str) -> Result<(), WorktreeError> {

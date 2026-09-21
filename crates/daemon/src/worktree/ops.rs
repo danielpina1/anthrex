@@ -29,9 +29,9 @@ use std::time::Instant;
 use super::dirty::dirty_reason;
 use super::{
     CLEANUP_TIMEOUT, RESERVED_DIR, WorktreeError, branch_dir_name, check_branch_syntax,
-    repo_worktrees_dir, run_git,
+    repo_worktrees_dir, run_git, worktree_dir,
 };
-use crate::project;
+use crate::project::DetectedRoots;
 
 /// One worktree this daemon created and owns.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,9 +65,26 @@ pub struct Created {
 /// immediately before `git worktree add`, so a refused create leaves no directory behind
 /// at all.
 ///
+/// `roots` are the project and worktree roots of `dir`, resolved **once by the caller** and
+/// passed in rather than detected again here (whole-branch review finding 4). They were
+/// detected twice: once by the server, whose answer `WindowManager::create`'s phase A
+/// turns into the claim on the directory this worktree will occupy, and once here, whose
+/// answer decides where `git worktree add` actually writes. The two agree whenever
+/// detection succeeds on both sides and diverge the moment either falls back — a
+/// `DETECT_TIMEOUT` on a large or networked repository is enough — at which point the
+/// claim guards a directory nobody will create and the real target is unclaimed, which is
+/// precisely the state `Inner::reserved_worktrees` exists to make impossible. One
+/// resolution, passed down, is what makes the claim and this path the same arithmetic
+/// over the same input.
+///
+/// The cost is deliberate: a `roots` whose `worktree` is `None` — what a failed detection
+/// produces — is refused as [`WorktreeError::NotARepo`] instead of being re-detected in
+/// the hope of a better answer. A refused create is an annoyance; a worktree created
+/// outside its own claim is how one create's cleanup deletes another's live checkout.
+///
 /// `deadline` is shared by every git command this runs (design decision 3). Root
-/// detection carries its own `DETECT_TIMEOUT` outside it, as decision 5 specifies, so
-/// the worst case is one detection timeout plus the operation deadline.
+/// detection is the caller's and carries its own `DETECT_TIMEOUT` outside this deadline,
+/// as decision 5 specifies.
 ///
 /// If `git worktree add` fails or times out, [`discard_new`] runs before returning, on
 /// its own fresh [`CLEANUP_TIMEOUT`] deadline, and the *original* error is returned
@@ -76,6 +93,7 @@ pub struct Created {
 pub fn create(
     git: &OsStr,
     dir: &Path,
+    roots: &DetectedRoots,
     branch: &str,
     worktrees_root: &Path,
     deadline: Instant,
@@ -83,15 +101,15 @@ pub fn create(
     check_branch_syntax(branch)?;
 
     // Design decision 5: one implementation of "which repository is this?", milestone
-    // 4.5's. `worktree.is_none()` is "not a git working tree", which covers a bare
-    // repository too; `project` is the main checkout, already canonical.
-    let roots = project::detect_roots(dir);
+    // 4.5's — and, since the review's finding 4, one *call* of it per create.
+    // `worktree.is_none()` is "not a git working tree", which covers a bare repository
+    // and a detection that failed; `project` is the main checkout, already canonical.
     if roots.worktree.is_none() {
         return Err(WorktreeError::NotARepo {
             dir: dir.to_path_buf(),
         });
     }
-    let project_root = roots.project;
+    let project_root = roots.project.clone();
 
     check_ref_format(git, dir, branch, deadline)?;
 
@@ -111,8 +129,10 @@ pub fn create(
         });
     }
 
+    // The same call `WindowManager::create`'s phase A made to build its claim, over the
+    // same `project_root` it was handed — see this function's doc comment.
+    let path = worktree_dir(worktrees_root, &project_root, branch);
     let repo_dir = repo_worktrees_dir(worktrees_root, &project_root);
-    let path = repo_dir.join(&dir_name);
     // `symlink_metadata`, not `Path::exists`: a symlink pointing nowhere is still
     // something that is already there, and the cautious answer to "is this path taken?"
     // is yes. Design decision 7 also has this catching `feat/x` against an existing

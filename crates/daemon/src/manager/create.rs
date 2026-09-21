@@ -27,12 +27,23 @@
 use super::{Entry, Inner, ManagerConfig, WindowManager, git};
 use crate::agent_state::AgentState;
 use crate::launch::{self, LaunchContext};
+use crate::project::DetectedRoots;
 use crate::window::{Window, WindowEvent};
 use crate::worktree::{self, Created};
 use proto::{Status, WindowInfo, WindowSpec};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tokio::sync::mpsc;
+
+/// What phase A settled and phase B needs: the id it spent, the name it reserved, and the
+/// size the client asked for. One argument rather than four, so the signature stays
+/// readable as phase B grows.
+struct Admitted<'a> {
+    id: u32,
+    name: &'a str,
+    cols: u16,
+    rows: u16,
+}
 
 /// What phase B hands phase C: a live window, the spec as the child actually saw it
 /// (design decision 11 replaces `cwd` for a worktree window), and the worktree that was
@@ -104,22 +115,47 @@ impl WindowManager {
         cols: u16,
         rows: u16,
     ) -> anyhow::Result<WindowInfo> {
+        // The caller's roots, resolved once, and the only ones this create will use:
+        // phase A claims a directory computed from `roots.project` and phase B creates
+        // the worktree from the same value, so the claim and the checkout cannot name
+        // different directories (whole-branch review finding 4; see `worktree::create`).
+        let roots = DetectedRoots { project, worktree };
+
         // Phase A: under the lock, and nothing here can block.
-        let (id, reservation) = self.admit(&spec, &project)?;
+        let (id, reservation) = self.admit(&spec, &roots.project)?;
         let name = reservation.name.clone();
 
         // Phase B: no lock, not on a tokio worker.
         let config = self.config.clone();
         let events = self.events.clone();
         let phase_b_name = name.clone();
+        let phase_b_roots = roots.clone();
         let spawned = tokio::task::spawn_blocking(move || {
-            spawn_window(&config, events, spec, id, &phase_b_name, cols, rows)
+            spawn_window(
+                &config,
+                events,
+                spec,
+                &phase_b_roots,
+                &Admitted {
+                    id,
+                    name: &phase_b_name,
+                    cols,
+                    rows,
+                },
+            )
         })
         .await
         .map_err(|error| anyhow::anyhow!("window creation failed: {error}"))??;
 
         // Phase C: under the lock again.
-        self.insert(id, name, project, worktree, spawned, reservation)
+        self.insert(
+            id,
+            name,
+            roots.project,
+            roots.worktree,
+            spawned,
+            reservation,
+        )
     }
 
     /// Phase A. The id is spent whether or not the create goes on to succeed: one lost to
@@ -270,13 +306,13 @@ fn refuse_after_shutdown(window: Window, created: Option<Created>) -> anyhow::Er
 ///
 /// `project` is the root the server resolved from `spec.cwd`, which is what makes this
 /// claim repository-wide: every checkout of one repository shares it, so two creates
-/// pointed at different subdirectories of the same repository still collide here.
+/// pointed at different subdirectories of the same repository still collide here. It is
+/// also the root phase B is handed, and [`worktree::worktree_dir`] is the one derivation
+/// both of them use — the claim is the path that will be created, not a second guess at
+/// it (whole-branch review finding 4).
 fn worktree_claim(worktrees_root: &Path, project: &Path, spec: &WindowSpec) -> Option<PathBuf> {
     let branch = spec.worktree_branch.as_deref()?;
-    Some(
-        worktree::repo_worktrees_dir(worktrees_root, project)
-            .join(worktree::branch_dir_name(branch)),
-    )
+    Some(worktree::worktree_dir(worktrees_root, project, branch))
 }
 
 /// Phase B, the only phase that can take seconds. Blocking throughout, called only from
@@ -285,14 +321,18 @@ fn spawn_window(
     config: &ManagerConfig,
     events: mpsc::UnboundedSender<(u32, WindowEvent)>,
     mut spec: WindowSpec,
-    id: u32,
-    name: &str,
-    cols: u16,
-    rows: u16,
+    roots: &DetectedRoots,
+    admitted: &Admitted<'_>,
 ) -> anyhow::Result<Spawned> {
+    let &Admitted {
+        id,
+        name,
+        cols,
+        rows,
+    } = admitted;
     // Before the worktree, so a typo in the directory costs nothing: `worktree::create`
-    // would reach the same conclusion by way of `detect_roots`, but only after spending
-    // the detection timeout on a path that is not there.
+    // would reach the same conclusion from `roots.worktree` being `None`, but with a
+    // message about a repository rather than about the directory the user typed.
     if !spec.cwd.is_dir() {
         anyhow::bail!("directory does not exist: {}", spec.cwd.display());
     }
@@ -301,6 +341,7 @@ fn spawn_window(
         Some(branch) => Some(worktree::create(
             git(),
             &spec.cwd,
+            roots,
             branch,
             &config.worktrees_root,
             Instant::now() + worktree::OPERATION_TIMEOUT,

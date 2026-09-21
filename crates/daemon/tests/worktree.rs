@@ -28,6 +28,29 @@ fn deadline() -> Instant {
     Instant::now() + OPERATION_TIMEOUT
 }
 
+/// `worktree::create` with the roots resolved the way its one production caller resolves
+/// them: once, before the call (whole-branch review finding 4 — `create` no longer
+/// detects its own, so that the directory it makes is the one the manager claimed).
+///
+/// Every test below goes through here rather than calling `worktree::create` directly, so
+/// that a test cannot accidentally hand it roots no real caller would produce.
+fn create_at(
+    git: &OsStr,
+    dir: &Path,
+    branch: &str,
+    worktrees_root: &Path,
+    deadline: Instant,
+) -> Result<worktree::Created, WorktreeError> {
+    worktree::create(
+        git,
+        dir,
+        &daemon::project::detect_roots(dir),
+        branch,
+        worktrees_root,
+        deadline,
+    )
+}
+
 /// A `worktrees_root` that is already canonical, so the paths these tests compute match
 /// the one `create` returns — which canonicalizes the worktree it made, because that path
 /// becomes the git registry's key for the window (design decision 21).
@@ -54,7 +77,7 @@ fn a_directory_outside_a_repository_is_not_a_repo() {
     let plain = tempfile::tempdir().unwrap();
     let (_keep, wt_root) = worktrees_root();
 
-    let error = worktree::create(git(), plain.path(), "feat/x", &wt_root, deadline()).unwrap_err();
+    let error = create_at(git(), plain.path(), "feat/x", &wt_root, deadline()).unwrap_err();
 
     assert!(matches!(error, WorktreeError::NotARepo { .. }), "{error:?}");
     assert!(
@@ -73,7 +96,7 @@ fn create_with_a_new_branch() {
     let repo = TempRepo::new();
     let (_keep, wt_root) = worktrees_root();
 
-    let created = worktree::create(git(), &repo.root, "feat/new", &wt_root, deadline()).unwrap();
+    let created = create_at(git(), &repo.root, "feat/new", &wt_root, deadline()).unwrap();
 
     let expected = repo_worktrees_dir(&wt_root, &repo.root).join("feat-new");
     assert!(created.created_branch);
@@ -91,7 +114,7 @@ fn create_with_an_existing_branch() {
     repo.git(&[OsStr::new("branch"), OsStr::new("existing")]);
     let (_keep, wt_root) = worktrees_root();
 
-    let created = worktree::create(git(), &repo.root, "existing", &wt_root, deadline()).unwrap();
+    let created = create_at(git(), &repo.root, "existing", &wt_root, deadline()).unwrap();
 
     assert!(!created.created_branch);
     assert_eq!(head_branch(&created.worktree.path), "existing");
@@ -106,15 +129,14 @@ fn create_from_a_subdirectory_still_uses_the_project_root() {
     let (_keep, wt_root) = worktrees_root();
     let repo_dir = repo_worktrees_dir(&wt_root, &repo.root);
 
-    let from_sub = worktree::create(git(), &sub, "b", &wt_root, deadline()).unwrap();
+    let from_sub = create_at(git(), &sub, "b", &wt_root, deadline()).unwrap();
 
     assert_eq!(from_sub.worktree.path, repo_dir.join("b"));
     assert_eq!(from_sub.worktree.repo_root, repo.root);
 
     // And from inside the linked worktree that create just made: a linked worktree
     // shares its project root with the main checkout, so `<wt>` must not move.
-    let nested =
-        worktree::create(git(), &from_sub.worktree.path, "c", &wt_root, deadline()).unwrap();
+    let nested = create_at(git(), &from_sub.worktree.path, "c", &wt_root, deadline()).unwrap();
 
     assert_eq!(nested.worktree.path, repo_dir.join("c"));
     assert_eq!(nested.worktree.repo_root, repo.root);
@@ -124,9 +146,9 @@ fn create_from_a_subdirectory_still_uses_the_project_root() {
 fn a_branch_checked_out_elsewhere_fails_cleanly() {
     let repo = TempRepo::new();
     let (_keep, wt_root) = worktrees_root();
-    let first = worktree::create(git(), &repo.root, "taken", &wt_root, deadline()).unwrap();
+    let first = create_at(git(), &repo.root, "taken", &wt_root, deadline()).unwrap();
 
-    let again = worktree::create(git(), &repo.root, "taken", &wt_root, deadline()).unwrap_err();
+    let again = create_at(git(), &repo.root, "taken", &wt_root, deadline()).unwrap_err();
 
     match &again {
         WorktreeError::BranchInUse { branch, path } => {
@@ -137,7 +159,7 @@ fn a_branch_checked_out_elsewhere_fails_cleanly() {
     }
 
     // The branch the main checkout is standing on is the same case.
-    let main = worktree::create(git(), &repo.root, "main", &wt_root, deadline()).unwrap_err();
+    let main = create_at(git(), &repo.root, "main", &wt_root, deadline()).unwrap_err();
 
     match &main {
         WorktreeError::BranchInUse { branch, path } => {
@@ -169,7 +191,7 @@ fn an_existing_path_is_refused() {
     fs::create_dir_all(&taken).unwrap();
     fs::write(taken.join("precious.txt"), "not ours\n").unwrap();
 
-    let error = worktree::create(git(), &repo.root, "feat/x", &wt_root, deadline()).unwrap_err();
+    let error = create_at(git(), &repo.root, "feat/x", &wt_root, deadline()).unwrap_err();
 
     match &error {
         WorktreeError::PathExists { path } => assert_eq!(path, &taken),
@@ -212,7 +234,7 @@ fn invalid_and_reserved_branches_are_refused_before_worktree_add() {
     ];
 
     for (branch, expected) in cases {
-        let error = worktree::create(git(), &repo.root, branch, &wt_root, deadline()).unwrap_err();
+        let error = create_at(git(), &repo.root, branch, &wt_root, deadline()).unwrap_err();
         assert_eq!(error.to_string(), expected, "branch {branch:?}");
         assert!(
             matches!(error, WorktreeError::InvalidBranch(_)),
@@ -237,7 +259,7 @@ fn cleanup_keeps_a_branch_that_appeared_after_the_show_ref() {
     let scripts = tempfile::tempdir().unwrap();
     let racing = racing_git(scripts.path(), &repo.root, "rival");
 
-    let error = worktree::create(
+    let error = create_at(
         racing.as_os_str(),
         &repo.root,
         "rival",
@@ -282,7 +304,7 @@ fn a_create_whose_cleanup_also_fails_says_the_worktree_is_still_there() {
     let scripts = tempfile::tempdir().unwrap();
     let obstinate = git_that_refuses_to_remove(scripts.path());
 
-    let error = worktree::create(
+    let error = create_at(
         obstinate.as_os_str(),
         &repo.root,
         "stranded",
@@ -368,7 +390,7 @@ fn every_invocation_of_a_real_create_passes_no_optional_locks() {
     let log = scripts.path().join("argv.log");
     let recording = recording_git(scripts.path(), &log);
 
-    let created = worktree::create(
+    let created = create_at(
         recording.as_os_str(),
         &repo.root,
         "logged",
@@ -399,7 +421,7 @@ fn a_timeout_during_create_cleans_up() {
     let (_keep, wt_root) = worktrees_root();
 
     let started = Instant::now();
-    let error = worktree::create(
+    let error = create_at(
         git(),
         &repo.root,
         "slow",
@@ -452,7 +474,7 @@ fn a_create_that_fails_after_worktree_add_cleans_up_but_keeps_an_older_branch() 
     let (_keep, wt_root) = worktrees_root();
     let repo_dir = repo_worktrees_dir(&wt_root, &repo.root);
 
-    let error = worktree::create(git(), &repo.root, "half", &wt_root, deadline()).unwrap_err();
+    let error = create_at(git(), &repo.root, "half", &wt_root, deadline()).unwrap_err();
 
     match &error {
         WorktreeError::FailedAfterAdd(message) => {
@@ -475,7 +497,7 @@ fn a_create_that_fails_after_worktree_add_cleans_up_but_keeps_an_older_branch() 
     // must clean up the worktree and leave the branch, which may hold work.
     repo.git(&[OsStr::new("branch"), OsStr::new("older")]);
 
-    let error = worktree::create(git(), &repo.root, "older", &wt_root, deadline()).unwrap_err();
+    let error = create_at(git(), &repo.root, "older", &wt_root, deadline()).unwrap_err();
 
     assert!(
         matches!(error, WorktreeError::FailedAfterAdd(_)),
