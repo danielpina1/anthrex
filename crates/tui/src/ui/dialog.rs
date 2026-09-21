@@ -323,6 +323,20 @@ pub fn render_remove_confirm(frame: &mut Frame, confirm: &RemoveConfirm, area: R
 
 const FORCE_WRAP_WIDTH: usize = 50;
 
+/// The message's line budget: `DirtyReason`'s longest sentence, wrapped at
+/// [`FORCE_WRAP_WIDTH`] and prefixed with `worktree <path> `, needs more than the 4 lines
+/// this prompt used to allow. Measured against a realistic path
+/// (`<worktrees_root>/<project>-<hash8>/<branch-dir>`, ~79 columns) and every
+/// `DirtyReason` sentence, the six messages run 177–193 columns; 4 × 50 = 200 looked
+/// sufficient by raw character count, but the path alone is one unbroken "word" that
+/// consumes two of those four lines once `wrap` stopped dropping its tail (wave B), which
+/// left only two lines — 100 columns — for the sentence that says what forcing away
+/// destroys. 6 lines keeps `FORCE_WRAP_WIDTH` and the box's width unchanged (a
+/// same-width, taller box, not a wider one) while raising the budget to 300 columns,
+/// comfortably above the longest measured message with room for a longer path or branch
+/// name than the ones measured. See `dialog_tests.rs` for the rendered proof.
+const FORCE_MAX_LINES: usize = 6;
+
 /// The dirty-tree force-or-keep follow-up (decision 36). `message` is the daemon's own
 /// text (decision 24), which already names the worktree's path and what removing it would
 /// destroy, shown exactly as given, wrapped to fit the box.
@@ -341,7 +355,7 @@ pub fn render_force_remove(frame: &mut Frame, name: &str, message: &str, area: R
         ),
     ])];
     lines.extend(
-        wrap(message, FORCE_WRAP_WIDTH, 4)
+        wrap(message, FORCE_WRAP_WIDTH, FORCE_MAX_LINES)
             .into_iter()
             .map(Line::raw),
     );

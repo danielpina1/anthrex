@@ -151,6 +151,83 @@ fn force_prompt_names_the_window_it_targets() {
     assert!(out.contains("feat-beta"), "{out}");
 }
 
+/// Fix wave C item 2: wave A tripled the refusal messages' length (~123 → 177–193
+/// columns) without touching the 4 × 50 = 200-column budget this prompt wrapped them
+/// into, so on a realistic path the sentence that says what forcing away destroys — the
+/// entire payload of finding 2 — was cut off screen. The test that should have caught it
+/// used the legacy short message and a 22-character path, both far under the budget, so
+/// the truncation was invisible to it.
+///
+/// This one uses a realistic path (`<worktrees_root>/<project>-<hash8>/<branch-dir>`,
+/// design decision 6, with a real `hash8` and a real branch name) and every
+/// `DirtyReason`'s real sentence, and asserts two things for each: the branch directory
+/// — the path's tail, and the part finding 1 cared about — reaches the screen, and the
+/// message's own last line (from the same `wrap` call `render_force_remove` makes) does
+/// too, with no word dropped between the message and what `wrap` produced for it.
+#[test]
+fn force_prompt_shows_every_dirty_reason_in_full_with_a_realistic_path() {
+    use daemon::worktree::{DirtyReason, worktree_dir};
+    use std::path::Path;
+
+    let worktrees_root = Path::new("/home/dev/.local/share/anthrex/worktrees");
+    let project_root = Path::new("/home/dev/projects/anthrex");
+    let path = worktree_dir(worktrees_root, project_root, "feat/worktree-removal");
+    let branch_dir = "feat-worktree-removal";
+    assert!(
+        path.to_string_lossy().ends_with(branch_dir),
+        "fixture sanity, not the thing under test: {}",
+        path.display()
+    );
+
+    for reason in [
+        DirtyReason::Rebase,
+        DirtyReason::Merge,
+        DirtyReason::CherryPick,
+        DirtyReason::Revert,
+        DirtyReason::Sequence,
+        DirtyReason::Bisect,
+        DirtyReason::UnreachableHead,
+    ] {
+        let message = format!("worktree {} {reason}", path.display());
+        assert!(
+            message.len() > FORCE_WRAP_WIDTH * 3,
+            "{reason:?}: fixture must actually exercise several wrapped lines: \
+             {} columns",
+            message.len()
+        );
+
+        // What `render_force_remove` itself hands to the screen for this message, so
+        // the assertions below are the real budget, not a guess at it. Compared with
+        // whitespace stripped from both sides, because a normal word-wrap break
+        // consumes the one space at that point while a hard-cut break (inside the
+        // path's one long "word") consumes none — either way, no character of the
+        // message may go missing.
+        let wrapped = wrap(&message, FORCE_WRAP_WIDTH, FORCE_MAX_LINES);
+        let without_whitespace =
+            |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+        assert_eq!(
+            without_whitespace(&wrapped.concat()),
+            without_whitespace(&message),
+            "{reason:?}: the wrap must not drop any character of the message, which is \
+             what `max_lines` truncating silently would do: {wrapped:?}"
+        );
+        let last_line = wrapped.last().expect("at least one wrapped line");
+
+        let out = draw(100, 30, |frame| {
+            render_force_remove(frame, "api", &message, frame.area());
+        });
+        assert!(
+            out.contains(branch_dir),
+            "{reason:?}: the path's tail must reach the screen: {out}"
+        );
+        assert!(
+            out.contains(last_line.as_str()),
+            "{reason:?}: the sentence's final line must reach the screen, not be cut \
+             before it: {out}"
+        );
+    }
+}
+
 /// Finding 9 of the whole-branch review: `wrap` hard-cut a single word longer than the
 /// wrap width at its first `width` characters and silently dropped the rest. The word
 /// that hits this in practice is the worktree path in the force-remove message, and
