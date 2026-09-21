@@ -4,10 +4,14 @@ fn state_path(dir: &tempfile::TempDir) -> PathBuf {
     dir.path().join("state.json")
 }
 
-/// Two records with deliberately mismatched field *types* of content (a path here, a
-/// prose string there, a uuid-shaped id elsewhere) so that a bug which transposes two
-/// same-typed fields between the records — the exact blind spot a symmetric fixture
-/// cannot catch — shows up as a failing assertion.
+/// Every same-typed field of the first record holds its own distinct, recognisable
+/// value — `cwd`, `project` and `worktree.repo_root` are all `PathBuf`s, `worktree.path`
+/// is a fourth; `model` and `initial_prompt` are both `Option<String>`; `name` and
+/// `session_id` are both string-shaped — so a bug that transposes any pair of them (a
+/// review-confirmed blind spot when a fixture gives two same-typed fields the same
+/// literal value: this project has shipped exactly that shape twice before, in the
+/// config crate's `bell` fields and a umask test) shows up as a failing assertion
+/// instead of silently round-tripping clean. See `sample_state_fields_are_pairwise_distinct`.
 fn sample_state() -> StateFile {
     StateFile {
         version: STATE_VERSION,
@@ -17,10 +21,10 @@ fn sample_state() -> StateFile {
                 id: 3,
                 name: "api-worker".into(),
                 runtime: Runtime::Claude,
-                cwd: PathBuf::from("/Users/me/repos/shop"),
+                cwd: PathBuf::from("/Users/me/repos/shop/packages/api"),
                 project: Some(PathBuf::from("/Users/me/repos/shop")),
                 worktree: Some(WorktreeRecord {
-                    repo_root: PathBuf::from("/Users/me/repos/shop"),
+                    repo_root: PathBuf::from("/Users/me/repos/.bare/shop"),
                     path: PathBuf::from("/Users/me/repos/shop-worktrees/api-worker"),
                     branch: "feature/api-worker".into(),
                 }),
@@ -47,6 +51,70 @@ fn sample_state() -> StateFile {
             },
         ],
         runs: Vec::new(),
+    }
+}
+
+/// Guards the fixture itself, not `load`/`save`: if a future edit ever gives two
+/// same-typed fields of `sample_state()`'s first record the same literal value again
+/// (the exact shape this project has shipped twice before — the config crate's `bell`
+/// fields and a umask test — see Minor #1 of the M6.4 review), this fails loudly instead
+/// of silently reintroducing the blind spot other tests in this file rely on
+/// `sample_state()` not having.
+#[test]
+fn sample_state_fields_are_pairwise_distinct() {
+    let state = sample_state();
+    let record = &state.windows[0];
+    let worktree = record.worktree.as_ref().expect("fixture sets worktree");
+
+    let paths: Vec<(&str, &PathBuf)> = vec![
+        ("cwd", &record.cwd),
+        (
+            "project",
+            record.project.as_ref().expect("fixture sets project"),
+        ),
+        ("worktree.repo_root", &worktree.repo_root),
+        ("worktree.path", &worktree.path),
+    ];
+    for i in 0..paths.len() {
+        for j in (i + 1)..paths.len() {
+            assert_ne!(
+                paths[i].1, paths[j].1,
+                "{} and {} must hold distinct values in the fixture",
+                paths[i].0, paths[j].0
+            );
+        }
+    }
+
+    let strings: Vec<(&str, &str)> = vec![
+        ("name", record.name.as_str()),
+        (
+            "model",
+            record.model.as_deref().expect("fixture sets model"),
+        ),
+        (
+            "initial_prompt",
+            record
+                .initial_prompt
+                .as_deref()
+                .expect("fixture sets initial_prompt"),
+        ),
+        (
+            "session_id",
+            record
+                .session_id
+                .as_deref()
+                .expect("fixture sets session_id"),
+        ),
+        ("worktree.branch", worktree.branch.as_str()),
+    ];
+    for i in 0..strings.len() {
+        for j in (i + 1)..strings.len() {
+            assert_ne!(
+                strings[i].1, strings[j].1,
+                "{} and {} must hold distinct values in the fixture",
+                strings[i].0, strings[j].0
+            );
+        }
     }
 }
 
