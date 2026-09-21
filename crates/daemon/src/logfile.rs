@@ -154,15 +154,22 @@ impl RotatingFile {
     /// rotation instead of losing them — see [`Write::write`] below for why that matters.
     ///
     /// `rotate()` can fail partway: e.g. it may have successfully renamed the current file
-    /// to `.1` before failing to recreate a fresh current file (`ENOSPC`, or the same
-    /// permission problem). Reopening `self.path()` recovers that case too, and does not
-    /// need write permission on the directory when the file already exists — only
-    /// *creating* a new directory entry does — so it succeeds even in the common failure
-    /// (an unwritable directory) where `rotate()` itself could not rename or remove
-    /// anything. If that reopen also fails, `self.file` is left as whatever it was, which
-    /// in the ordinary case (nothing renamed it away) is still the original, perfectly
-    /// writable file. Either way, `self.len` is re-derived from real on-disk length rather
-    /// than trusted, since it may now be describing a file that moved out from under it.
+    /// to `.1` before failing to recreate a fresh current file (`ENOSPC`). Reopening
+    /// `self.path()` recovers *that* case, because `create` there only needs to make a
+    /// fresh directory entry once the disk has space again. It does not recover the far
+    /// more common failure, an unwritable directory: the very first rename in `rotate()`
+    /// is what fails then, before anything is renamed away, so `self.path()` still names
+    /// the *original* file — reopening it for append succeeds (no permission is needed to
+    /// append to a file that already exists, only to create or rename one), and
+    /// subsequent writes simply keep landing in the same file they always did, growing
+    /// past the cap. In the rarer ENOSPC-after-rename case, that reopen of `self.path()`
+    /// fails too (the directory entry `rotate()` renamed away is gone, and `create` needs
+    /// permission this directory does not have to make a new one), so `self.file` is left
+    /// exactly as it was: still pointing at the file now reachable only as `.1` on disk,
+    /// which is where subsequent writes land until a later successful rotation reassigns
+    /// `self.file` — not lost, just filed under the wrong name for a while. Either way,
+    /// `self.len` is re-derived from real on-disk length rather than trusted, since it may
+    /// now be describing a file that moved out from under it.
     ///
     /// The diagnostic below is latched (`rotation_failure_reported`), not printed on every
     /// call: `tracing_appender`'s non-blocking worker thread silently drops `Write` errors
