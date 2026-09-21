@@ -119,7 +119,17 @@ impl WindowManager {
         // phase A claims a directory computed from `roots.project` and phase B creates
         // the worktree from the same value, so the claim and the checkout cannot name
         // different directories (whole-branch review finding 4; see `worktree::create`).
-        let roots = DetectedRoots { project, worktree };
+        //
+        // `detection_failed: false` because it already did its job: the one production
+        // caller, `server::requests::create`, reads the real flag off its own
+        // `DetectedRoots` and answers a failed detection itself, before ever reaching
+        // here (fix wave C item 5) — a `worktree: None` that does arrive here is either
+        // a plain window or a detection that genuinely found no repository.
+        let roots = DetectedRoots {
+            project,
+            worktree,
+            detection_failed: false,
+        };
 
         // Phase A: under the lock, and nothing here can block.
         let (id, reservation) = self.admit(&spec, &roots.project)?;

@@ -214,14 +214,17 @@ fn missing_git_falls_back() {
     let subdirectory = repo.path().join("a");
     fs::create_dir(&subdirectory).unwrap();
 
-    assert_eq!(
-        detect_roots_with(
-            OsStr::new("/nonexistent/git"),
-            &subdirectory,
-            DETECT_TIMEOUT
-        )
-        .project,
-        subdirectory.canonicalize().unwrap()
+    let roots = detect_roots_with(
+        OsStr::new("/nonexistent/git"),
+        &subdirectory,
+        DETECT_TIMEOUT,
+    );
+
+    assert_eq!(roots.project, subdirectory.canonicalize().unwrap());
+    assert!(
+        roots.detection_failed,
+        "git could not even be started, which is the 'could not tell' case, not a \
+         negative answer"
     );
 }
 
@@ -237,6 +240,10 @@ fn hanging_git_times_out() {
     assert_eq!(roots.project, repo.path().canonicalize().unwrap());
     assert_eq!(roots.worktree, None);
     assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(
+        roots.detection_failed,
+        "a timeout is 'could not tell', not git answering that this is no repository"
+    );
 }
 
 #[test]
@@ -402,8 +409,18 @@ fn detect_roots_outside_a_repository_has_no_worktree() {
 
     assert_eq!(roots.project, dir.path().canonicalize().unwrap());
     assert_eq!(roots.worktree, None);
+    assert!(
+        !roots.detection_failed,
+        "the real git really did run and really did answer 'no repository here'"
+    );
 }
 
+/// Fix wave C item 5: a real, executable git that runs to completion and exits non-zero
+/// is git's own negative answer — reliable for this exact invocation, which takes no ref
+/// or object argument that could fail for any other reason — not a failure to detect.
+/// `worktree::create`'s `NotARepo` message is honest calling this one "not a git
+/// repository": `detection_failed` must be `false`, unlike every other test in this file
+/// that falls back for a reason that is not git answering the question at all.
 #[test]
 fn detect_roots_with_a_failing_git_has_no_worktree() {
     let repo = init_repo();
@@ -416,6 +433,35 @@ fn detect_roots_with_a_failing_git_has_no_worktree() {
 
     assert_eq!(roots.project, subdirectory.canonicalize().unwrap());
     assert_eq!(roots.worktree, None);
+    assert!(
+        !roots.detection_failed,
+        "git ran to completion and exited non-zero, which is a real negative answer"
+    );
+}
+
+/// A third case `detection_failed` must catch, beside a spawn failure and a timeout:
+/// git exits zero but prints something `parse_roots` cannot make sense of. Nothing ever
+/// said "no repository here" — the reply just did not parse — so this is `true`, the
+/// same as every other fix wave C item 5 test but the "failing git" one above.
+#[test]
+fn malformed_output_is_a_detection_failure_not_a_negative_answer() {
+    let repo = init_repo();
+    let scripts = tempdir().unwrap();
+    let script = scripts.path().join("malformed-git");
+    fs::write(&script, "#!/bin/sh\nprintf 'one\\ntwo\\nthree\\n'\n").unwrap();
+    let mut permissions = fs::metadata(&script).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script, permissions).unwrap();
+
+    let roots = detect_roots_with(script.as_os_str(), repo.path(), DETECT_TIMEOUT);
+
+    assert_eq!(roots.project, repo.path().canonicalize().unwrap());
+    assert_eq!(roots.worktree, None);
+    assert!(
+        roots.detection_failed,
+        "three lines is not a shape rev-parse produces; that is a parse failure, not git \
+         saying no"
+    );
 }
 
 /// AGENTS.md hard rule 11: every git invocation carries `--no-optional-locks`.

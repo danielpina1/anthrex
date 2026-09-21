@@ -77,6 +77,10 @@ pub(super) fn create(
 ) {
     detach(async move {
         let roots = crate::project::resolve_roots(spec.cwd.clone()).await;
+        if let Some(message) = detection_failed_for_a_worktree_request(&spec, &roots) {
+            reply_to(&out, error(request::CREATE, message)).await;
+            return;
+        }
         let result = manager
             .create(spec, roots.project, roots.worktree, cols, rows)
             .await;
@@ -93,6 +97,34 @@ pub(super) fn create(
         };
         reply_to(&out, reply).await;
     });
+}
+
+/// Fix wave C item 5: `worktree::create` refuses a worktree branch request with
+/// `WorktreeError::NotARepo` whenever `roots.worktree` is `None`, worded as a flat claim
+/// that the directory is not a git repository. That claim is right when detection
+/// genuinely found nothing, but wrong — and actively misleading, sending a user hunting
+/// for a bug in a checkout that is perfectly fine — when detection simply could not
+/// finish (`DetectedRoots::detection_failed`'s doc comment lists why).
+///
+/// Checked here, before `manager.create` is ever called, because this is the one place
+/// that distinction still exists: `WindowManager::create` takes `worktree: Option<PathBuf>`
+/// rather than a whole `DetectedRoots`, on purpose (`create.rs`'s comment on its own
+/// reconstruction of one), so by the time `worktree::create` sees `worktree: None` there
+/// is no way left to tell "detection failed" from "detection answered no". Intercepting
+/// here means neither the manager nor `worktree::create` has to carry a field that exists
+/// for exactly one caller.
+fn detection_failed_for_a_worktree_request(
+    spec: &WindowSpec,
+    roots: &crate::project::DetectedRoots,
+) -> Option<String> {
+    if spec.worktree_branch.is_some() && roots.worktree.is_none() && roots.detection_failed {
+        Some(format!(
+            "could not tell whether {} is a git repository: root detection failed; try again",
+            spec.cwd.display()
+        ))
+    } else {
+        None
+    }
 }
 
 /// `Remove { remove_worktree: true }`: the window and the checkout this daemon made for
@@ -189,5 +221,91 @@ pub(super) fn remove_window(
 async fn reply_to(out: &mpsc::Sender<DaemonMsg>, reply: DaemonMsg) {
     if out.send(reply).await.is_err() {
         tracing::debug!("client gone before its reply; the request itself ran to completion");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::DetectedRoots;
+    use proto::Runtime;
+    use std::path::PathBuf;
+
+    fn spec(worktree_branch: Option<&str>) -> WindowSpec {
+        WindowSpec {
+            name: None,
+            runtime: Runtime::Shell,
+            cwd: PathBuf::from("/work"),
+            worktree_branch: worktree_branch.map(str::to_string),
+            model: None,
+            initial_prompt: None,
+        }
+    }
+
+    fn roots(worktree: Option<&str>, detection_failed: bool) -> DetectedRoots {
+        DetectedRoots {
+            project: PathBuf::from("/work"),
+            worktree: worktree.map(PathBuf::from),
+            detection_failed,
+        }
+    }
+
+    /// The one case this function exists to catch: a worktree branch was asked for,
+    /// detection found no repository, and it could not even tell whether there was one.
+    #[test]
+    fn a_worktree_request_whose_detection_failed_gets_a_message_that_says_so() {
+        let message =
+            detection_failed_for_a_worktree_request(&spec(Some("feat/x")), &roots(None, true))
+                .expect("a failed detection behind a worktree request must not be silent");
+        assert!(message.contains("/work"), "{message}");
+        assert!(
+            message.contains("detection failed"),
+            "the message must say detection itself is what failed: {message}"
+        );
+        assert!(
+            !message.contains("not a git repository"),
+            "that claim is exactly the one this case must not make: {message}"
+        );
+        assert!(
+            message.contains("try again"),
+            "a transient failure should say so is worth retrying: {message}"
+        );
+    }
+
+    /// A worktree branch was asked for and detection genuinely found no repository —
+    /// `worktree::create`'s `WorktreeError::NotARepo` is right here, so this function
+    /// must stay out of the way and let that path run.
+    #[test]
+    fn a_worktree_request_with_a_real_negative_answer_is_not_intercepted() {
+        assert_eq!(
+            detection_failed_for_a_worktree_request(&spec(Some("feat/x")), &roots(None, false)),
+            None,
+            "detection answered 'no repository here'; that is worktree::create's message \
+             to give, not this function's"
+        );
+    }
+
+    /// A plain window (no worktree requested) never reaches `worktree::create` at all, so
+    /// a failed detection is nothing to report here — `roots.project`'s fallback is all a
+    /// plain window ever needed.
+    #[test]
+    fn a_plain_window_is_never_intercepted_even_if_detection_failed() {
+        assert_eq!(
+            detection_failed_for_a_worktree_request(&spec(None), &roots(None, true)),
+            None
+        );
+    }
+
+    /// Detection found a real worktree; a stale or irrelevant `detection_failed` on a
+    /// `Some` answer must not matter.
+    #[test]
+    fn a_worktree_request_that_found_a_worktree_is_never_intercepted() {
+        assert_eq!(
+            detection_failed_for_a_worktree_request(
+                &spec(Some("feat/x")),
+                &roots(Some("/work"), true)
+            ),
+            None
+        );
     }
 }
