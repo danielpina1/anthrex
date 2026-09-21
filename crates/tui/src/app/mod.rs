@@ -611,5 +611,4 @@ impl App {
 mod modal_keys;
 
 #[cfg(test)]
-#[path = "app_tests.rs"]
 mod tests;

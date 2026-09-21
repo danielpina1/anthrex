@@ -2,22 +2,22 @@ use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use proto::{Runtime, Status};
 
-#[path = "app_tests/tree_mode.rs"]
+#[path = "../app_tests/tree_mode.rs"]
 mod tree_mode;
 
-#[path = "app_tests/tree_interaction.rs"]
+#[path = "../app_tests/tree_interaction.rs"]
 mod tree_interaction;
 
-#[path = "app_tests/overview.rs"]
+#[path = "../app_tests/overview.rs"]
 mod overview;
 
-#[path = "app_tests/git.rs"]
+#[path = "../app_tests/git.rs"]
 mod git;
 
-#[path = "app_tests/dialog.rs"]
+#[path = "../app_tests/dialog.rs"]
 mod dialog;
 
-#[path = "app_tests/remove.rs"]
+#[path = "../app_tests/remove.rs"]
 mod remove;
 
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
