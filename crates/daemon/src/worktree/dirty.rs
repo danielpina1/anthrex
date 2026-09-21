@@ -20,15 +20,24 @@ use super::{WorktreeError, run_git};
 /// under `.git/worktrees/<name>/`, not the repository's `.git/`.
 ///
 /// `BISECT_LOG` is the whole-branch review's finding 5: verified against git 2.50.1, a
-/// bisect in progress leaves `status --porcelain` empty, matches none of the other four
+/// bisect in progress leaves `status --porcelain` empty, matches none of the other
 /// markers, counts zero unreachable commits, and is deleted by a plain
 /// `git worktree remove` — taking `BISECT_LOG`, the record of every good/bad answer the
 /// user has given, which exists nowhere else.
-const OPERATION_MARKERS: [(&str, DirtyReason); 5] = [
+///
+/// `REVERT_HEAD` is the same hole, found by looking for another instance of it rather
+/// than reported. A paused `git revert` usually leaves conflict markers, so question 2
+/// refuses the removal — but with the wrong reason, which is finding 2 again. And when
+/// the conflict is resolved to content identical to `HEAD`, `git add` leaves *nothing*
+/// staged: verified against git 2.50.1, `status --porcelain` is then empty, the count of
+/// unreachable commits is 0, and `git worktree remove` exits 0 and takes `REVERT_HEAD`
+/// with it. `git am` needs no entry of its own — it uses `rebase-apply`.
+const OPERATION_MARKERS: [(&str, DirtyReason); 6] = [
     ("rebase-merge", DirtyReason::Rebase),
     ("rebase-apply", DirtyReason::Rebase),
     ("MERGE_HEAD", DirtyReason::Merge),
     ("CHERRY_PICK_HEAD", DirtyReason::CherryPick),
+    ("REVERT_HEAD", DirtyReason::Revert),
     ("BISECT_LOG", DirtyReason::Bisect),
 ];
 
@@ -54,6 +63,8 @@ pub enum DirtyReason {
     Merge,
     /// `CHERRY_PICK_HEAD`: a cherry-pick stopped, usually at a conflict.
     CherryPick,
+    /// `REVERT_HEAD`: a revert stopped, usually at a conflict.
+    Revert,
     /// `BISECT_LOG`: a bisect in progress.
     Bisect,
     /// `status --porcelain` reported something: modified or untracked files.
@@ -77,6 +88,10 @@ impl DirtyReason {
             Self::CherryPick => {
                 "has a cherry-pick in progress; removing it discards the cherry-pick and \
                  everything resolved in it so far"
+            }
+            Self::Revert => {
+                "has a revert in progress; removing it discards the revert and everything \
+                 resolved in it so far"
             }
             Self::Bisect => {
                 "has a bisect in progress; removing it discards every good and bad answer \
@@ -269,29 +284,45 @@ mod tests {
     use super::*;
     use std::fs;
 
-    /// One reply line per marker, in the order they were asked, so the reason must be
-    /// read from the *position* of the path that exists. A mutation that dropped the
-    /// pairing and answered with the first reason in the table would call a bisect a
-    /// rebase, and the user would go looking for a rebase that is not there.
+    /// One reply line per marker, in the order they were asked: `git rev-parse` answers
+    /// `--git-path` once per argument, so the pairing below is what the real reply looks
+    /// like. Derived from [`OPERATION_MARKERS`] rather than written out, so that adding a
+    /// marker extends these tests instead of breaking them.
+    fn reply_for(root: &Path) -> String {
+        OPERATION_MARKERS
+            .iter()
+            .map(|(marker, _)| format!("{}\n", root.join(marker).display()))
+            .collect()
+    }
+
+    /// The reason must be read from the *position* of the path that exists. A mutation
+    /// that dropped the pairing and answered with the first reason in the table would
+    /// call the last marker a rebase, and the user would go looking for a rebase that is
+    /// not there.
     #[test]
     fn a_marker_is_named_by_its_position_in_the_reply() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let existing = root.join("BISECT_LOG");
-        fs::write(&existing, "git bisect start\n").unwrap();
-
-        let stdout = format!(
-            "{}\n{}\n{}\n{}\n{}\n",
-            root.join("rebase-merge").display(),
-            root.join("rebase-apply").display(),
-            root.join("MERGE_HEAD").display(),
-            root.join("CHERRY_PICK_HEAD").display(),
-            existing.display(),
+        let (last_marker, last_reason) = *OPERATION_MARKERS.last().unwrap();
+        let (first_marker, first_reason) = OPERATION_MARKERS[0];
+        assert_ne!(
+            last_reason, first_reason,
+            "this test needs the ends of the table to differ"
         );
+        fs::write(root.join(last_marker), "x").unwrap();
 
         assert_eq!(
-            first_existing_marker(root, &stdout),
-            Ok(Some(DirtyReason::Bisect))
+            first_existing_marker(root, &reply_for(root)),
+            Ok(Some(last_reason)),
+            "the reason must follow the marker that is on disk, not the table's order"
+        );
+
+        // And the first marker wins when both are there, which is the order the table
+        // itself fixes.
+        fs::write(root.join(first_marker), "x").unwrap();
+        assert_eq!(
+            first_existing_marker(root, &reply_for(root)),
+            Ok(Some(first_reason))
         );
     }
 
@@ -308,7 +339,13 @@ mod tests {
 
         let error = first_existing_marker(root, &short)
             .expect_err("a ragged reply must not be read as an answer");
-        assert!(error.contains("expected 5 paths, got 1"), "{error}");
+        assert!(
+            error.contains(&format!(
+                "expected {} paths, got 1",
+                OPERATION_MARKERS.len()
+            )),
+            "{error}"
+        );
         assert!(
             first_existing_marker(root, "").is_err(),
             "and neither must an empty one, which is what a stubbed git would produce"

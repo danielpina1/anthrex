@@ -457,6 +457,7 @@ fn a_paused_merge_and_cherry_pick_name_themselves() {
             DirtyReason::CherryPick,
             "has a cherry-pick in progress",
         ),
+        ("revert", DirtyReason::Revert, "has a revert in progress"),
     ] {
         let repo = TempRepo::new();
         let (_keep, wt_root) = worktrees_root();
@@ -502,4 +503,79 @@ fn a_paused_merge_and_cherry_pick_name_themselves() {
             "the paused operation is the reason, not the files it left: {message}"
         );
     }
+}
+
+/// The same hole as the bisect, in a state nobody reported: a paused `git revert` whose
+/// conflict was resolved to content identical to `HEAD`.
+///
+/// `git add` then stages nothing, so — verified against git 2.50.1 — `status --porcelain`
+/// is empty, the unreachable-commit count is 0, and a plain `git worktree remove` exits 0
+/// and deletes `REVERT_HEAD` with the directory. The revert the user was half-way through
+/// is gone with no refusal and no warning, which is exactly what decision 12 exists to
+/// prevent.
+#[test]
+fn a_revert_resolved_to_no_change_is_still_refused() {
+    let repo = TempRepo::new();
+    support::commit_more(&repo.root, 3);
+    let (_keep, wt_root) = worktrees_root();
+    let created = create_at(git(), &repo.root, "reverting", &wt_root, deadline()).unwrap();
+    let path = created.worktree.path.clone();
+
+    fs::write(path.join("README"), "ours\n").unwrap();
+    support::git(
+        &path,
+        &[OsStr::new("commit"), OsStr::new("-am"), OsStr::new("ours")],
+    );
+    let conflicted = support::git_output(
+        &path,
+        &[
+            OsStr::new("revert"),
+            OsStr::new("--no-edit"),
+            OsStr::new("HEAD~1"),
+        ],
+    );
+    assert!(
+        !conflicted.status.success(),
+        "the fixture needs the revert to stop at a conflict"
+    );
+
+    // Resolve it to exactly what HEAD already holds, so nothing is left staged.
+    fs::write(path.join("README"), "ours\n").unwrap();
+    support::git(&path, &[OsStr::new("add"), OsStr::new("README")]);
+
+    assert_eq!(
+        porcelain_status(&path),
+        "",
+        "a resolution identical to HEAD leaves a clean tree, which is the whole hazard"
+    );
+    let revert_head = support::git_output(
+        &path,
+        &[
+            OsStr::new("rev-parse"),
+            OsStr::new("--git-path"),
+            OsStr::new("REVERT_HEAD"),
+        ],
+    );
+    let revert_head = PathBuf::from(String::from_utf8(revert_head.stdout).unwrap().trim());
+    assert!(
+        revert_head.exists(),
+        "the revert must really still be paused"
+    );
+
+    assert_eq!(
+        worktree::dirty_reason(git(), &path, deadline()).unwrap(),
+        Some(DirtyReason::Revert),
+    );
+    let message = worktree::remove(git(), &created.worktree, false, deadline())
+        .expect_err("a plain removal must not silently delete a paused revert")
+        .to_string();
+    assert!(message.contains("has a revert in progress"), "{message}");
+    assert!(
+        !message.contains("uncommitted or untracked"),
+        "this tree is clean; claiming otherwise is what makes a user force: {message}"
+    );
+    assert!(
+        revert_head.exists(),
+        "a refused removal leaves the revert alone"
+    );
 }
