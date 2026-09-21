@@ -101,8 +101,22 @@ fn restart_request_does_not_block_the_connection() {
     let sent_list_windows_at = Instant::now();
     client.send(ClientMsg::ListWindows);
 
+    // Minor 6 (fix wave 5 review): `WindowsChanged` carries no request id, so nothing in
+    // the wire protocol lets this tell "the `ListWindows` reply" apart from an unrelated
+    // broadcast by shape alone. The best this predicate can do is correlate the message to
+    // this test's own window rather than accept any `WindowsChanged` whatsoever — matching
+    // one that lists `id` still with the status it had before the kill escalation could
+    // plausibly have changed anything (the drain above already removed the one broadcast
+    // that status change was expected to cause). The ordering property this test actually
+    // depends on is enforced separately, by `receive_within` discarding non-matching
+    // frames: an `Ack { "restart" }` arriving first would be swallowed here and the later
+    // 10s Ack wait below would time out and panic instead.
     client.receive_within(Duration::from_millis(500), |m| {
-        matches!(m, DaemonMsg::WindowsChanged { .. })
+        matches!(
+            m,
+            DaemonMsg::WindowsChanged { windows }
+                if windows.iter().any(|w| w.id == id && w.status == Status::Working)
+        )
     });
     assert!(
         sent_list_windows_at.elapsed() < Duration::from_millis(500),
