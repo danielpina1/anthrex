@@ -44,6 +44,27 @@
 //!   anyway would swap in a new `Process` with the old child's `Exited` still able to
 //!   arrive later and land on it, which is exactly the corruption decision 18's refusal
 //!   exists to rule out.
+//!
+//!   What none of the above closes (fix wave 5 review, Minor 8) is the same hazard for
+//!   `WindowEvent::Output`, `Title` and `ParserPanicked`: those come from the `pty-read-{id}`
+//!   thread, a *different* thread than the `pty-wait-{id}` one that sends `Exited`, and
+//!   both send on the same shared, unbounded channel with no ordering guarantee between
+//!   two different senders. Confirming `child_alive` false only proves the *`Exited`*
+//!   message was dequeued and processed — it says nothing about whatever the old reader
+//!   thread had already enqueued but not yet delivered at that moment, which can still
+//!   arrive after phase D's swap and land on the new `Entry`. `Output`/`Title` are
+//!   transient and self-correcting; a stale `ParserPanicked` is not — `handle_event`'s arm
+//!   for it sets `exit` and drives the status to `Exited` unconditionally, exactly like the
+//!   `Exited` arm does, so it can mark a freshly restarted, live window as exited the same
+//!   way. This is not closed by decision 18's timeout refusal above either: that refusal is
+//!   keyed on `child_alive`, which this hazard does not touch at all — a read-thread event
+//!   can be in flight whether or not the wait timed out. Narrower than Critical 1 in
+//!   practice (the panic itself is rare, and the reader thread's last events are usually
+//!   drained by the time `child.wait()` even returns, since PTY EOF typically precedes or
+//!   coincides with the child's own exit), but it is a real, unclosed gap, not a
+//!   theoretical one — left unaddressed here because closing it needs a generation counter
+//!   on `Entry` or a per-spawn tag on `WindowEvent`, which is a wider change than this fix
+//!   wave's scope.
 //! - **Phase C**, one `spawn_blocking` call, no lock: re-read the window's current spec,
 //!   name and session id — never phase A's own snapshot, which the window could have
 //!   outgrown while phase B ran with no lock held at all (this task's second named
