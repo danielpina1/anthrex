@@ -1,6 +1,6 @@
 # anthrex roadmap
 
-anthrex is built in eleven milestones. Milestones 1 to 4.7 are merged; milestone 5 is in review. Each later milestone has an implementation brief in `docs/milestones/`, written so that a coding agent such as Codex can implement it without further questions. `AGENTS.md` at the repository root holds the rules that apply to every milestone.
+anthrex is built in eleven milestones. Milestones 1 to 5 are merged. Each later milestone has an implementation brief in `docs/milestones/`, written so that a coding agent such as Codex can implement it without further questions. `AGENTS.md` at the repository root holds the rules that apply to every milestone.
 
 The design is layered, newest first:
 
@@ -11,7 +11,7 @@ The design is layered, newest first:
 5. `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` — milestones 2 to 9.
 6. `docs/superpowers/specs/2026-09-17-anthrex-design.md` — milestone 1 and the parts of the core it still governs.
 
-The protocol version currently on `main` is **4**, raised from 3 by milestone 4.5. Protocol numbers written in the milestone 5 to 9 briefs predate this and are wrong; each is re-derived from this line when that milestone is implemented.
+The protocol version currently on `main` is **5**, raised from 4 by milestone 5. Protocol numbers written in the milestone 5 to 9 briefs predate this and are wrong; each is re-derived from this line when that milestone is implemented.
 
 ## What anthrex does when all milestones are done
 
@@ -33,8 +33,8 @@ The protocol version currently on `main` is **4**, raised from 3 by milestone 4.
 | 4.5 | Git status in the bottom bar, and tree connectors | `docs/milestones/M4.5-git-and-tree.md` | 4 | `done` |
 | 4.6 | Graph overview, and sub-agent labels worth reading | `docs/milestones/M4.6-graph-overview.md` | 4.5 | `done` |
 | 4.7 | The node inspector | `docs/milestones/M4.7-node-inspector.md` | 4.6 | `done` |
-| 5 | New-agent dialog and git worktrees | `docs/milestones/M5-worktrees.md` | 4.7 | `ready` |
-| 6 | Persistence, resume, rename, config, reconnect | `docs/milestones/M6-persistence.md` | 3 | `blocked` |
+| 5 | New-agent dialog and git worktrees | `docs/milestones/M5-worktrees.md` | 4.7 | `done` |
+| 6 | Persistence, resume, rename, config, reconnect | `docs/milestones/M6-persistence.md` | 3 | `ready` |
 | 6.5 | Agent conversation view: structured turns, folded tool calls, sub-agent links | `docs/milestones/M6.5-conversation-view.md` | 6 | `blocked` |
 | 7 | Split panes | `docs/milestones/M7-split-panes.md` | 4 | `blocked` |
 | 8 | Orchestration engine: runs, tasks, worktrees, review and merge | `docs/milestones/M8-orchestration-engine.md` | 5, 6 | `blocked` |
