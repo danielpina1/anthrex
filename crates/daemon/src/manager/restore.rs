@@ -215,3 +215,61 @@ impl WindowManager {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manager::ManagerConfig;
+    use proto::Runtime;
+    use std::path::PathBuf;
+
+    fn manager() -> std::sync::Arc<WindowManager> {
+        let (m, _events) = WindowManager::new(ManagerConfig::new(
+            "/tmp/unused-restore-test.sock".into(),
+            "/bin/sh".into(),
+        ));
+        m
+    }
+
+    /// Minor 3, M6.5 review: of the eight same-typed transpositions the review applied to
+    /// this file, `Entry.spec.name` (`name: Some(name.clone())` here vs
+    /// `session_id.clone()`) was the one that survived — nothing under `crates/*/src`
+    /// reads `Entry.spec.name` again after `restore` builds it (decision 17's restart,
+    /// task M6.7, is the first thing that will), so no test anywhere could catch a
+    /// transposition there through a public accessor, because there isn't one yet.
+    ///
+    /// `Entry` is private to `manager` and this module (`manager::restore`) is one of its
+    /// descendants, so — exactly like `restore`'s own `crate::lock(&self.inner)` above —
+    /// this reaches the field directly rather than waiting for a public path to exist.
+    #[test]
+    fn restore_sets_entrys_spec_name_to_the_records_own_name() {
+        let m = manager();
+        m.restore(StateFile {
+            version: state::STATE_VERSION,
+            next_id: 2,
+            windows: vec![WindowRecord {
+                id: 1,
+                name: "record-name".into(),
+                runtime: Runtime::Shell,
+                cwd: PathBuf::from("/tmp"),
+                project: None,
+                worktree: None,
+                model: None,
+                initial_prompt: None,
+                session_id: Some("session-id-value".into()),
+                created_at: 1,
+                status: Status::Exited,
+                run: None,
+            }],
+            runs: Vec::new(),
+        });
+
+        let inner = crate::lock(&m.inner);
+        let entry = inner.entries.get(&1).expect("restored entry present");
+        assert_eq!(
+            entry.spec.name.as_deref(),
+            Some("record-name"),
+            "Entry.spec.name must be the record's own name, not its session_id"
+        );
+    }
+}
