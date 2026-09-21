@@ -4,6 +4,7 @@ use crate::app::{App, Effect, TreeInput};
 use crate::keymap::Command;
 use crate::tree::{self, NodeKey};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::layout::Rect;
 use unicode_segmentation::UnicodeSegmentation;
 
 impl App {
@@ -21,44 +22,14 @@ impl App {
         }
     }
 
-    pub fn on_click(&mut self, column: u16, row: u16, layout: &crate::ui::Layout) -> Vec<Effect> {
-        if self.modal.is_some() {
-            return vec![];
+    /// The renderer calls this with the overview's own area after every draw,
+    /// the way `set_tree_viewports` reports the list heights.
+    pub fn set_graph_viewport(&mut self, main: Rect) {
+        let (canvas, _) = crate::ui::overview::areas(main);
+        if self.graph_area != canvas {
+            self.graph_area = canvas;
+            self.reveal_graph_selection();
         }
-        let rows = tree::build(&self.windows, &self.tree);
-        if self.overview {
-            let geometry = crate::ui::tree_view::geometry(
-                layout.main_inner,
-                rows.len(),
-                self.tree.overview.top,
-            );
-            if let Some(index) = geometry.index_at(column, row) {
-                let key = rows[index].key.clone();
-                self.tree.select(&rows, key.clone());
-                return self.activate_tree_node(key);
-            }
-        }
-        if !self.sidebar_visible {
-            return vec![];
-        }
-        let geometry =
-            crate::ui::tree_view::geometry(layout.sidebar_list, rows.len(), self.tree.sidebar.top);
-        let Some(index) = geometry.index_at(column, row) else {
-            return vec![];
-        };
-        let key = rows[index].key.clone();
-        if self.tree_input.is_some() {
-            self.tree.select(&rows, key.clone());
-        }
-        let effects = match key {
-            key @ NodeKey::Project(_) => {
-                self.toggle_tree_node(&key);
-                vec![]
-            }
-            NodeKey::Window(id) | NodeKey::Subagent { window_id: id, .. } => self.focus(id),
-        };
-        self.reveal_tree_anchor();
-        effects
     }
 
     pub(crate) fn reveal_tree_anchor(&mut self) {
@@ -72,16 +43,46 @@ impl App {
             })
         };
         let len = rows.len();
-        if let Some(index) = index {
-            if self.tree.sidebar.height > 0 {
-                self.tree.sidebar.reveal(index);
-            }
-            if self.tree.overview.height > 0 {
-                self.tree.overview.reveal(index);
-            }
+        if let Some(index) = index
+            && self.tree.sidebar.height > 0
+        {
+            // `self.tree.overview` is not revealed: the overview is a graph
+            // now and pans through `graph_pan`, so nothing reads that
+            // one-dimensional viewport (see the brief's implementation notes).
+            self.tree.sidebar.reveal(index);
         }
         self.tree.sidebar.scroll(0, len);
         self.tree.overview.scroll(0, len);
+        self.reveal_graph_selection();
+    }
+
+    /// The two-dimensional form of `reveal_tree_anchor`'s rule: if the
+    /// selected node's rectangle is not wholly inside the viewport, the pan
+    /// moves by the smallest amount on each axis that puts it inside
+    /// (decision 15).
+    ///
+    /// The rectangle and the canvas size exist only once the layout has run,
+    /// so the reveal has to happen where a layout is in hand. It cannot be the
+    /// renderer, which takes `&App` and would also have to re-reveal on every
+    /// frame — undoing the wheel and a drag, which decision 16 leaves as the
+    /// only ways to look away from the selection. So it happens here, beside
+    /// the one-dimensional rule it generalises, on the same three edges:
+    /// a change of selection, rows or focus.
+    pub(crate) fn reveal_graph_selection(&mut self) {
+        if !self.overview || self.graph_area.is_empty() {
+            return;
+        }
+        let layout = crate::graph::layout(&self.rows());
+        let selected = self
+            .tree
+            .selected
+            .as_ref()
+            .and_then(|key| layout.node(key))
+            .map(|node| node.rect);
+        self.graph_pan = match selected {
+            Some(rect) => self.graph_pan.revealing(rect, layout.size, self.graph_area),
+            None => self.graph_pan.clamped(layout.size, self.graph_area),
+        };
     }
 
     pub fn enter_tree(&mut self) {
@@ -163,6 +164,8 @@ impl App {
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => self.move_tree_selection(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_tree_selection(-1),
+            KeyCode::Char('h') | KeyCode::Left => self.select_tree_parent(),
+            KeyCode::Char('l') | KeyCode::Right => self.select_first_visible_child(),
             KeyCode::Enter => {
                 if let Some(selected) = self.tree.selected.clone() {
                     return self.activate_tree_node(selected);
@@ -180,7 +183,7 @@ impl App {
         vec![]
     }
 
-    fn activate_tree_node(&mut self, key: NodeKey) -> Vec<Effect> {
+    pub(crate) fn activate_tree_node(&mut self, key: NodeKey) -> Vec<Effect> {
         match key {
             key @ NodeKey::Project(_) => {
                 self.toggle_tree_node(&key);
@@ -200,7 +203,43 @@ impl App {
         self.reveal_tree_anchor();
     }
 
-    fn toggle_tree_node(&mut self, key: &NodeKey) {
+    /// `h` and `Left`: select the nearest preceding row one level up, the row's parent
+    /// in the visible pre-order list. A no-op at a root, which has no
+    /// shallower row before it (decision 17).
+    fn select_tree_parent(&mut self) {
+        let rows = tree::build(&self.windows, &self.tree);
+        let Some(index) = self.tree.selected_index(&rows) else {
+            return;
+        };
+        let depth = rows[index].depth;
+        if depth == 0 {
+            return;
+        }
+        if let Some(parent) = rows[..index].iter().rev().find(|row| row.depth < depth) {
+            self.tree.select(&rows, parent.key.clone());
+            self.reveal_tree_anchor();
+        }
+    }
+
+    /// `l` and `Right`: select the row right after the selected one if it is one level
+    /// deeper, the first visible child in the pre-order list. A no-op at a
+    /// leaf, whether it has no children or is collapsed — either way the next
+    /// row is not a child (decision 17, decision 7).
+    fn select_first_visible_child(&mut self) {
+        let rows = tree::build(&self.windows, &self.tree);
+        let Some(index) = self.tree.selected_index(&rows) else {
+            return;
+        };
+        let depth = rows[index].depth;
+        if let Some(child) = rows.get(index + 1)
+            && child.depth == depth + 1
+        {
+            self.tree.select(&rows, child.key.clone());
+            self.reveal_tree_anchor();
+        }
+    }
+
+    pub(crate) fn toggle_tree_node(&mut self, key: &NodeKey) {
         if self.tree.toggle(key) {
             let rows = tree::build(&self.windows, &self.tree);
             self.tree.repair_selection(&rows);

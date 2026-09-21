@@ -34,7 +34,11 @@ import termios
 import time
 import tty
 
-from pty_tree_smoke import run_project_tree_stage, run_tree_connectors_stage
+from pty_tree_smoke import (
+    run_graph_glyphs_stage,
+    run_project_tree_stage,
+    run_tree_connectors_stage,
+)
 
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -203,6 +207,18 @@ class PtyProc:
         scr = Screen(ROWS, COLS)
         scr.feed(self.raw.decode("utf-8", errors="replace"))
         return scr.text()
+
+    def screen_region_text(self, col_start, col_end=None):
+        """Like `screen_text`, but only the columns `[col_start, col_end)` of
+        every row (default `col_end`: the right edge). For asserting on one
+        pane of a split layout without a match in another pane satisfying it
+        by coincidence — the sidebar and the graph overview both draw box
+        corners and row/edge glyphs, on the same screen, from different code.
+        """
+        scr = Screen(ROWS, COLS)
+        scr.feed(self.raw.decode("utf-8", errors="replace"))
+        end = COLS if col_end is None else col_end
+        return "\n".join("".join(row[col_start:end]).rstrip() for row in scr.grid)
 
     def wait_for(self, text, timeout=10.0, label=None):
         deadline = time.monotonic() + timeout
@@ -549,6 +565,7 @@ def main():
 
     run_project_tree_stage(REPO, PtyProc, run_cmd, fail)
     run_tree_connectors_stage(REPO, PtyProc, run_cmd, fail, FAKE_AGENT_SCRIPT)
+    run_graph_glyphs_stage(REPO, PtyProc, run_cmd, fail)
 
     print("== stage 10: stop the daemon, verify status ==")
     stop_result = run_cmd(["daemon", "stop"])

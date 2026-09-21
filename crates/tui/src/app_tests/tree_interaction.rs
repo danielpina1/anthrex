@@ -55,6 +55,78 @@ fn j_and_k_move_the_selection_without_wrapping() {
     }
 }
 
+/// The two spellings of "parent" and "first visible child" the spec's key
+/// table gives (§4.5): the vi pair and the arrows, which behave identically.
+const PARENT_AND_CHILD_KEYS: [(KeyCode, KeyCode); 2] = [
+    (KeyCode::Char('h'), KeyCode::Char('l')),
+    (KeyCode::Left, KeyCode::Right),
+];
+
+#[test]
+fn h_selects_the_parent() {
+    for (parent, _) in PARENT_AND_CHILD_KEYS {
+        let mut app = example();
+        // a2 (window_id 1) is nested under a1: h once reaches a1, again
+        // reaches the window, again the project — the parent at each level up.
+        select(&mut app, subagent(1, "a2"));
+        assert!(tap(&mut app, parent).is_empty());
+        assert_eq!(app.tree.selected, Some(subagent(1, "a1")));
+        assert!(tap(&mut app, parent).is_empty());
+        assert_eq!(app.tree.selected, Some(NodeKey::Window(1)));
+        assert!(tap(&mut app, parent).is_empty());
+        assert_eq!(app.tree.selected, Some(NodeKey::Project("/r/shop".into())));
+    }
+}
+
+#[test]
+fn l_selects_the_first_visible_child() {
+    for (_, child) in PARENT_AND_CHILD_KEYS {
+        let mut app = example();
+        select(&mut app, NodeKey::Project("/r/shop".into()));
+        assert!(tap(&mut app, child).is_empty());
+        assert_eq!(app.tree.selected, Some(NodeKey::Window(1)));
+        assert!(tap(&mut app, child).is_empty());
+        assert_eq!(app.tree.selected, Some(subagent(1, "a1")));
+        // a2 is nested under a1, not a sibling of it.
+        assert!(tap(&mut app, child).is_empty());
+        assert_eq!(app.tree.selected, Some(subagent(1, "a2")));
+    }
+}
+
+#[test]
+fn h_at_a_root_is_a_no_op() {
+    for (parent, _) in PARENT_AND_CHILD_KEYS {
+        let mut app = example();
+        let root = NodeKey::Project("/r/shop".into());
+        select(&mut app, root.clone());
+        assert!(tap(&mut app, parent).is_empty());
+        assert_eq!(app.tree.selected, Some(root));
+    }
+}
+
+#[test]
+fn l_at_a_leaf_is_a_no_op() {
+    for (_, child) in PARENT_AND_CHILD_KEYS {
+        let mut app = example();
+        // a3 has no children of its own.
+        let leaf = subagent(1, "a3");
+        select(&mut app, leaf.clone());
+        assert!(tap(&mut app, child).is_empty());
+        assert_eq!(app.tree.selected, Some(leaf));
+    }
+}
+
+#[test]
+fn l_into_a_collapsed_node_is_a_no_op() {
+    for (_, child) in PARENT_AND_CHILD_KEYS {
+        let mut app = example();
+        app.tree.toggle(&NodeKey::Window(1));
+        select(&mut app, NodeKey::Window(1));
+        assert!(tap(&mut app, child).is_empty());
+        assert_eq!(app.tree.selected, Some(NodeKey::Window(1)));
+    }
+}
+
 #[test]
 fn enter_on_a_window_focuses_it_and_leaves_tree_mode() {
     let mut app = example();
@@ -229,14 +301,16 @@ fn selection_stays_visible_while_moving() {
     }
     assert_eq!(app.tree.selected, Some(NodeKey::Window(13)));
     assert_eq!(app.tree.sidebar.top, 9);
-    assert_eq!(app.tree.overview.top, 0);
     assert_eq!(app.focused, Some(1));
     app.set_tree_viewports(3, 4);
     assert_eq!(app.tree.sidebar.top, 11);
-    assert_eq!(app.tree.overview.top, 10);
-    app.on_daemon(DaemonMsg::WindowsChanged {
-        windows: app.windows.clone(),
-    });
+    // A list that really changed — the last window is gone — reveals, and
+    // what it reveals is the selection (row 13, already inside the three rows
+    // at 11) and not the focused window (row 1, which would pull the top to
+    // 1, as leaving tree mode does two lines below).
+    let mut shorter = app.windows.clone();
+    shorter.pop();
+    app.on_daemon(DaemonMsg::WindowsChanged { windows: shorter });
     assert_eq!(
         app.tree.sidebar.top, 11,
         "list updates reveal selection, not focus"

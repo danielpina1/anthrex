@@ -79,6 +79,12 @@ pub struct App {
     pub tree: TreeState,
     pub tree_input: Option<TreeInput>,
     pub overview: bool,
+    /// The canvas coordinate at the graph overview's top-left corner.
+    pub graph_pan: crate::graph::Pan,
+    /// The overview's canvas viewport on screen; `set_graph_viewport` keeps it
+    /// current, and it stays empty until the first frame that draws one.
+    pub(crate) graph_area: ratatui::layout::Rect,
+    pub(crate) graph_mouse: crate::mouse::MouseState,
     pub keymap: Keymap,
     pub modal: Option<Modal>,
     pub connected: bool,
@@ -110,6 +116,9 @@ impl App {
             tree: TreeState::default(),
             tree_input: None,
             overview: false,
+            graph_pan: crate::graph::Pan::default(),
+            graph_area: ratatui::layout::Rect::default(),
+            graph_mouse: crate::mouse::MouseState::default(),
             keymap: Keymap::new(prefix),
             modal: None,
             connected: true,
@@ -345,17 +354,34 @@ impl App {
                 }
             }
         }
-        let previous_order = tree::agent_order(&self.rows());
+        // One derivation of the outgoing rows serves both readers below: the
+        // agent order the focus falls back through, and the keys the reveal
+        // compares against.
+        let previous_rows = self.rows();
+        let previous_order = tree::agent_order(&previous_rows);
+        let previous_keys: Vec<_> = previous_rows.iter().map(|row| row.key.clone()).collect();
         let previous_index = self
             .focused
             .and_then(|id| previous_order.iter().position(|candidate| *candidate == id));
+        let previous_selection = self.tree.selected.clone();
         self.windows = windows;
         self.prune_git();
         self.windows_received_at = Instant::now();
         self.tree.prune(&self.windows);
         let rows = tree::build(&self.windows, &self.tree);
         self.tree.repair_selection(&rows);
-        self.reveal_tree_anchor();
+        // Only on the edges decision 15 names, never on every list. The daemon
+        // republishes on every status flip and every output event — several
+        // times a second while agents work — and revealing unconditionally
+        // would snap the canvas back to the selection about as fast as a
+        // person can scroll away from it, undoing what decision 16 grants.
+        // A change of focus is the third edge and reveals from `focus` itself,
+        // which is the only thing that moves it from here.
+        if self.tree.selected != previous_selection
+            || rows.iter().map(|row| &row.key).ne(previous_keys.iter())
+        {
+            self.reveal_tree_anchor();
+        }
 
         if let Some(id) = self.pending_focus
             && self.windows.iter().any(|w| w.id == id)
@@ -512,51 +538,7 @@ impl App {
         })]
     }
 
-    /// The sidebar wheel scrolls tree rows. Outside tree mode, the main wheel forwards
-    /// SGR mouse reports when enabled, otherwise it scrolls the local terminal history.
-    pub fn on_scroll(
-        &mut self,
-        up: bool,
-        column: u16,
-        row: u16,
-        layout: &crate::ui::Layout,
-    ) -> Vec<Effect> {
-        let main_inner = layout.main_inner;
-        if self.modal.is_some() {
-            return vec![];
-        }
-        if self.sidebar_visible && layout.sidebar_list.contains((column, row).into()) {
-            self.tree
-                .sidebar
-                .scroll(if up { -3 } else { 3 }, self.rows().len());
-            return vec![];
-        }
-        if self.tree_input.is_some() || !main_inner.contains((column, row).into()) {
-            return vec![];
-        }
-        if self.parser.screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None {
-            let Some(id) = self.focused else {
-                return vec![];
-            };
-            let x = column - main_inner.x + 1;
-            let y = row - main_inner.y + 1;
-            let button = if up { 64 } else { 65 };
-            return vec![Effect::Send(ClientMsg::Input {
-                window_id: id,
-                bytes: format!("\x1b[<{button};{x};{y}M").into_bytes(),
-            })];
-        }
-        let target = if up {
-            self.scroll_offset + 3
-        } else {
-            self.scroll_offset.saturating_sub(3)
-        };
-        self.parser.screen_mut().set_scrollback(target);
-        self.scroll_offset = self.parser.screen().scrollback();
-        vec![]
-    }
-
-    fn scroll_to_live(&mut self) {
+    pub(crate) fn scroll_to_live(&mut self) {
         if self.scroll_offset != 0 {
             self.parser.screen_mut().set_scrollback(0);
             self.scroll_offset = 0;

@@ -80,16 +80,29 @@ pub(super) fn visible_windows<'a>(
         .collect()
 }
 
+/// What does not change as the sub-agent walk descends below one window.
+pub(super) struct SubagentWalk<'a, 'f> {
+    pub window: &'a WindowInfo,
+    pub filter: &'f str,
+    /// True when every sub-agent below the window is shown, because the window
+    /// or its project matched the filter itself.
+    pub show_all: bool,
+}
+
 /// Appends the rows for one sub-agent level and, recursively, everything below it.
 pub(super) fn emit_subagents<'a>(
     rows: &mut Vec<Row<'a>>,
-    window: &'a WindowInfo,
+    walk: &SubagentWalk<'a, '_>,
     nodes: &[SubagentNode<'a>],
     ancestors: &mut Vec<bool>,
-    show_all: bool,
-    filter: &str,
+    depth: u16,
     ancestor_matches: bool,
 ) {
+    let SubagentWalk {
+        window,
+        filter,
+        show_all,
+    } = *walk;
     let visible: Vec<_> = nodes
         .iter()
         .filter(|node| show_all || ancestor_matches || subagent_branch_matches(node, filter))
@@ -102,17 +115,17 @@ pub(super) fn emit_subagents<'a>(
                 id: node.info.id.clone(),
             },
             guides: guide_prefix(ancestors, has_later_sibling),
+            depth,
             kind: RowKind::Subagent { info: node.info },
         });
         ancestors.push(has_later_sibling);
         let node_matches = matches_subagent(node.info, filter);
         emit_subagents(
             rows,
-            window,
+            walk,
             &node.children,
             ancestors,
-            show_all,
-            filter,
+            depth.saturating_add(1),
             ancestor_matches || node_matches,
         );
         ancestors.pop();

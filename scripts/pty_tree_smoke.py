@@ -139,6 +139,14 @@ def run_project_tree_stage(repo_root, pty_proc, run_cmd, fail):
         proc.wait_for("tree-b · shell", timeout=10.0, label="tree-b focused title")
         proc.send(b"\x02T")
         proc.wait_for(" tree overview ", timeout=10.0, label="tree overview")
+        # The overview draws a graph: a box carries a name, and the footer
+        # spells the selected node out in full. Narrow it to this repository's
+        # own windows, walk up to the project box, and read its root there.
+        proc.send(b"/tree-")
+        proc.wait_for(" FILTER ", timeout=10.0, label="overview filter mode")
+        proc.send(b"\r")
+        proc.wait_for(" TREE ", timeout=10.0, label="overview navigation after filtering")
+        proc.send(b"kkkkk")
         proc.wait_for(canonical_repo, timeout=10.0, label="canonical repository in overview")
         proc.send(b"\x1b")
         proc.wait_for("tree-b · shell", timeout=10.0, label="overview dismissed")
@@ -314,3 +322,120 @@ def run_tree_connectors_stage(repo_root, pty_proc, run_cmd, fail, fake_agent_scr
             "ok: tree overview draws ├─/└─ connectors and stems the last window's "
             "sub-agents with two spaces, not │"
         )
+
+
+# The sidebar occupies columns [0, DEFAULT_SIDEBAR_WIDTH) of the 120-column
+# terminal this script's PtyProc always sizes to (crate::ui::DEFAULT_SIDEBAR_WIDTH
+# in crates/tui/src/ui/mod.rs; `crate::ui::layout` gives it exactly this many
+# columns via `Constraint::Length(sidebar_width)`, with the main pane starting
+# immediately after). Nothing in this stage changes the sidebar's width or
+# hides it, so the overview's own block — border, canvas, footer — is always
+# at or past this column.
+OVERVIEW_PANE_START_COLUMN = 34
+
+
+def run_graph_glyphs_stage(repo_root, pty_proc, run_cmd, fail):
+    """Opens the tree overview and confirms the graph itself draws: a rounded
+    box border and an edge glyph joining two windows of the same project.
+
+    Two windows under one project give the project node two visible children,
+    which the graph connects with a vertical bus in the tier-gap column
+    (decision 13 of the graph-overview brief), so `┬`, `┼`, `├`, `┴` and `┤`
+    are all plausible junction glyphs and `╭` is a plausible box corner.
+
+    None of that set is graph-exclusive on the *whole* screen: the sidebar is
+    still drawn beside the overview, and it draws its own rounded `Block`
+    corners (`crates/tui/src/ui/sidebar.rs`) and, for two windows under one
+    project, its own `├─` row guide (`TEE` in `crates/tui/src/tree/rows.rs`) —
+    this stage's own fixture guarantees the sidebar shows one. A whole-screen
+    check would pass even if the graph canvas rendered nothing at all. The
+    check is scoped to the overview's own pane instead
+    (`OVERVIEW_PANE_START_COLUMN` onward), the same way the Rust tests
+    `overview_geometry_matches_its_hit_test` and `hit_testing_selects_on_click`
+    restrict themselves to the canvas rather than the whole rendered buffer.
+
+    Scoping to the pane is not quite enough by itself: the overview's own
+    surrounding `Block` (`ui::overview::render`) draws a rounded corner too,
+    so a bare `"╭" in pane` check is still ambiguous — it is true the instant
+    the overview opens, whether or not `paint` drew anything inside it, which
+    was caught by mutating `paint`'s call out of `render` and confirming the
+    scoped check still (wrongly) reported a border. `Block` draws exactly one
+    top-left corner for the one rect it is given, so a *second* `╭` can only
+    be a node's own rounded corner (decision 11): the check below counts
+    them instead of merely checking presence.
+    """
+    print("== stage 9b: graph overview draws boxes and edges ==")
+    fixture = tempfile.mkdtemp(prefix="anthrex-graph-", dir="/tmp")
+    project = os.path.join(fixture, "proj")
+    pending_removal = []
+    proc = None
+    passed = False
+    try:
+        _git(["init", project], repo_root, fail)
+        _git(["-C", project, "commit", "--allow-empty", "-m", "init"], repo_root, fail)
+
+        for name in ("graph-a", "graph-b"):
+            created = run_cmd(["new", "--runtime", "shell", "--name", name, "--dir", project])
+            pending_removal.append(name)
+            _window_id(created, name, fail)
+
+        proc = pty_proc([os.path.join(repo_root, "target/debug/anthrex")])
+        proc.wait_for("agents", timeout=10.0, label="graph-glyphs attach banner")
+        proc.wait_for("graph-b", timeout=10.0, label="graph-b sidebar row")
+        proc.send(b"\x02T")
+        proc.wait_for(" tree overview ", timeout=10.0, label="tree overview for graph glyphs")
+
+        deadline = time.monotonic() + 5.0
+        pane = proc.screen_region_text(OVERVIEW_PANE_START_COLUMN)
+        while True:
+            # >1, not merely "present": the pane's own surrounding block
+            # draws one top-left corner unconditionally, whether or not the
+            # graph inside it drew anything. A second `╭` can only be a
+            # node's own box.
+            has_border = pane.count("╭") > 1
+            has_edge = any(glyph in pane for glyph in ("┬", "┼", "├", "┴", "┤"))
+            if has_border and has_edge:
+                break
+            if time.monotonic() >= deadline:
+                fail(
+                    "tree overview never drew a node box border and an edge "
+                    f"glyph in its own pane (border count={pane.count('╭')}, "
+                    f"edge={has_edge}):\n{pane}\n--- whole screen ---\n{proc.screen_text()}"
+                )
+            proc.read_available(timeout=0.2)
+            pane = proc.screen_region_text(OVERVIEW_PANE_START_COLUMN)
+
+        # The prefix key is handled ahead of tree/overview input routing (see
+        # `Keymap::handle` in `crates/tui/src/keymap.rs`), so detach works
+        # directly from the overview without first pressing Escape to leave
+        # it (`run_tree_connectors_stage` above relies on the same fact).
+        proc.send(b"\x02d")
+        status = proc.wait_exit(timeout=5.0)
+        if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+            fail(f"graph-glyphs detach did not exit cleanly with status 0 (raw status {status})")
+        proc.close()
+        proc = None
+
+        for name in list(pending_removal):
+            run_cmd(["rm", name])
+            pending_removal.remove(name)
+        remaining = json.loads(run_cmd(["ls", "--json"]).stdout)
+        remaining_names = {window["name"] for window in remaining}
+        expected = {"shell-1", "shell-2", "shell-3", "shell-4"}
+        if remaining_names != expected:
+            fail(f"unexpected windows after graph-glyphs cleanup: {sorted(remaining_names)}")
+        passed = True
+    finally:
+        try:
+            for name in pending_removal:
+                try:
+                    run_cmd(["rm", name], expect_ok=False)
+                except Exception:
+                    pass
+        finally:
+            if proc is not None:
+                proc.close()
+            shutil.rmtree(fixture, ignore_errors=True)
+
+    if passed:
+        print("ok: tree overview draws a rounded box border and an edge glyph")

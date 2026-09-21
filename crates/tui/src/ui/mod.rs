@@ -94,6 +94,7 @@ pub fn draw(frame: &mut Frame, app: &App) -> Layout {
 mod tests {
     use super::*;
     use crate::app::{App, Modal, PendingAction};
+    use crate::graph::Pan;
     use crate::keymap::Keymap;
     use proto::{Runtime, Status, WindowInfo};
     use ratatui::Terminal;
@@ -144,7 +145,7 @@ mod tests {
     }
 
     #[test]
-    fn overview_replaces_the_terminal_with_the_wide_tree() {
+    fn overview_replaces_the_terminal_with_the_graph() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = example_app();
         app.on_daemon(proto::DaemonMsg::Snapshot {
@@ -153,67 +154,93 @@ mod tests {
             rows: 24,
             bytes: b"TERMINAL-TEXT".to_vec(),
         });
-        assert!(render(&app, 160, 30).0.contains("TERMINAL-TEXT"));
+        assert!(render(&app, 200, 50).0.contains("TERMINAL-TEXT"));
         open_overview(&mut app);
-        let (out, _) = render(&app, 160, 30);
+        app.set_graph_viewport(layout(Rect::new(0, 0, 200, 50), app.sidebar_width).main);
+        let (out, _) = render(&app, 200, 50);
         for expected in [
             " tree overview ",
-            "claude-opus-5",
-            "claude-sonnet-4-5",
-            "/r/shop",
-            "general-purpose: grep handlers",
-            "running",
-            "done",
+            // Boxes: a project, a window and a sub-agent, each with its
+            // glyph, between the borders only the graph draws.
+            "│ ◆ shop   ├",
+            "┤ ⠋ 1 api-worker ├",
+            "┤ ⠋ Explore: map routes      ├",
+            // The footer spells the selected window out in full.
+            "⠋ 1 api-worker  claude  claude-opus-5  working",
         ] {
             assert!(out.contains(expected), "missing {expected:?}:\n{out}");
         }
         assert!(!out.contains("TERMINAL-TEXT"), "{out}");
         app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        let (out, _) = render(&app, 160, 30);
+        let (out, _) = render(&app, 200, 50);
         assert!(out.contains("TERMINAL-TEXT"), "{out}");
         assert!(!out.contains(" tree overview "), "{out}");
     }
 
     #[test]
     fn overview_geometry_matches_its_hit_test() {
+        // Once with the whole canvas on screen, and once in a viewport too
+        // small for it, panned on both axes. A hit test that forgot the pan
+        // passes the first and fails the second.
         let mut app = example_app();
         open_overview(&mut app);
-        app.set_tree_viewports(8, 10);
-        app.tree.overview.top = 4;
-        let mut terminal = Terminal::new(TestBackend::new(160, 13)).unwrap();
+        assert_eq!(hits_every_visible_box(&app, 200, 50), Pan::default());
+        app.graph_pan = Pan { x: 20, y: 6 };
+        assert_eq!(hits_every_visible_box(&app, 120, 20), Pan { x: 20, y: 6 });
+    }
+
+    /// Draws the overview at `width` x `height` and asserts that the middle of
+    /// every box on screen hit-tests to that box and that its left border was
+    /// really drawn there; returns the pan it drew at.
+    fn hits_every_visible_box(app: &App, width: u16, height: u16) -> Pan {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         let mut l = None;
-        terminal.draw(|f| l = Some(draw(f, &app))).unwrap();
+        terminal.draw(|f| l = Some(draw(f, app))).unwrap();
         let l = l.unwrap();
-        assert_eq!(l.main_inner.height, 10);
-        let g = tree_view::geometry(l.main_inner, app.rows().len(), app.tree.overview.top);
-        for (offset, expected) in [
-            "tests: run unit suite",
-            "2 billing",
-            "3 search",
-            "4 frontend",
-            "general-purpose: style pass",
-            "Explore: find tokens",
-            "Explore: list files",
-            "5 docs",
-            "6 infra",
-            "7 perf",
-        ]
-        .iter()
-        .enumerate()
-        {
-            let y = l.main_inner.y + offset as u16;
-            assert_eq!(g.index_at(l.main_inner.x, y), Some(4 + offset));
-            let text = sidebar_text(terminal.backend().buffer(), l.main_inner, y);
-            assert!(text.contains(expected), "{text:?} missing {expected:?}");
+        let view = overview::view(app, l.main);
+        let geometry = view.geometry();
+        let mut checked = 0;
+        for node in &view.layout.nodes {
+            let Some(x) = (node.rect.x + node.rect.width / 2).checked_sub(view.pan.x) else {
+                continue;
+            };
+            let Some(y) = (node.rect.y + 1).checked_sub(view.pan.y) else {
+                continue;
+            };
+            let (x, y) = (view.canvas.x + x, view.canvas.y + y);
+            // Only boxes whose left border is on screen too: a box clipped by
+            // the left edge has no border cell to check.
+            if !view.canvas.contains((x, y).into()) || node.rect.x < view.pan.x {
+                continue;
+            }
+            assert_eq!(
+                geometry.node_at(&view.layout, x, y).as_ref(),
+                Some(&node.key),
+                "the cell at ({x}, {y}) should hit {:?}",
+                node.key
+            );
+            // The box's left border stands exactly where the layout put it,
+            // as a plain border or as the junction an edge turned it into.
+            let border = view.canvas.x + node.rect.x - view.pan.x;
+            let symbol = terminal.backend().buffer()[(border, y)].symbol().to_owned();
+            assert!(
+                symbol == "│" || symbol == "┤",
+                "{:?}'s left border at ({border}, {y}) was {symbol:?}",
+                node.key
+            );
+            checked += 1;
         }
+        assert!(checked > 1, "only {checked} boxes were on screen");
+        // The block's own border, and the footer, are not the canvas.
         for (x, y) in [
-            (l.main.x, l.main_inner.y),
-            (l.main.right() - 1, l.main_inner.y),
-            (l.main_inner.x, l.main.y),
-            (l.main_inner.x, l.main.bottom() - 1),
+            (l.main.x, view.canvas.y),
+            (l.main.right() - 1, view.canvas.y),
+            (view.canvas.x, l.main.y),
+            (view.canvas.x, view.footer.y),
         ] {
-            assert_eq!(g.index_at(x, y), None);
+            assert_eq!(geometry.node_at(&view.layout, x, y), None, "({x}, {y})");
         }
+        view.pan
     }
 
     #[test]
@@ -486,9 +513,17 @@ mod tests {
         app.on_scroll(true, 2, 2, &l);
         app.set_tree_viewports(l.sidebar_list.height, l.main_inner.height);
         assert_eq!(app.tree.sidebar.top, 9);
+        // Nor may a window list that changes nothing the view depends on: the
+        // daemon republishes one on every status flip and every output event.
         let windows = app.windows.clone();
         app.on_daemon(proto::DaemonMsg::WindowsChanged { windows });
-        assert_eq!(app.tree.sidebar.top, 12);
+        assert_eq!(app.tree.sidebar.top, 9);
+        // A list that really changed reveals the anchor again: with window 1
+        // gone the focused window 20 is row 19 of 20, and nine rows of list
+        // put its top at 11.
+        let windows = app.windows[1..].to_vec();
+        app.on_daemon(proto::DaemonMsg::WindowsChanged { windows });
+        assert_eq!(app.tree.sidebar.top, 11);
     }
 
     #[test]

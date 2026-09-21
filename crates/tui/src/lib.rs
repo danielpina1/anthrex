@@ -2,7 +2,9 @@
 
 pub mod app;
 pub mod connection;
+pub mod graph;
 pub mod keymap;
+mod mouse;
 pub mod theme;
 pub mod tree;
 mod tree_input;
@@ -127,6 +129,7 @@ fn draw<B: ratatui::backend::Backend>(
         );
         let effects = app.set_terminal_size(next.main_inner.width, next.main_inner.height);
         app.set_tree_viewports(next.sidebar_list.height, next.main_inner.height);
+        app.set_graph_viewport(next.main);
         apply(effects, conn, app);
         layout = Some(ui::draw(frame, app));
     })?;
@@ -151,6 +154,7 @@ async fn event_loop(
                 Event::Paste(text) => app.on_paste(text),
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => app.on_click(mouse.column, mouse.row, &layout),
+                    MouseEventKind::Drag(MouseButton::Left) => app.on_drag(mouse.column, mouse.row, &layout),
                     MouseEventKind::ScrollUp => app.on_scroll(true, mouse.column, mouse.row, &layout),
                     MouseEventKind::ScrollDown => app.on_scroll(false, mouse.column, mouse.row, &layout),
                     _ => vec![],
