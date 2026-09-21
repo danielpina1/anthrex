@@ -202,3 +202,20 @@ Each open item above is closed by exactly one milestone. Its brief lists the ite
   final review tested twelve scenarios against `sequencer` and `BISECT_LOG`, found no reachable
   false positive, and verified per-worktree scoping (a cherry-pick paused in the main checkout
   correctly leaves a linked worktree clean).
+
+## From milestone 6.5's review (2026-09-21), left open by fix wave 4
+
+- **`u32::MAX` is never handed out as a window id.** `crates/daemon/src/manager/restore.rs`
+  (`next_id = next_id.max(id.saturating_add(1))`) together with
+  `crates/daemon/src/manager/create.rs:191` (`id.checked_add(1)`): a restored record already
+  holding id `u32::MAX - 1` makes `next_id` saturate to `u32::MAX`, and `create`'s
+  `checked_add(1)` then refuses — "no window ids remain" — one id before the space is actually
+  exhausted, because saturation cannot tell "the max id is taken" from "the max id is one below
+  the ceiling". This is deliberate, not an oversight: `crates/daemon/src/state.rs` reasons the
+  saturation through explicitly (saturating at `u32::MAX` so the next window-creation attempt
+  notices the collision and fails loudly) and names the consuming-side check — which
+  `manager/create.rs`'s `checked_add` guard supplies — as later work. Not worth fixing on its
+  own: it costs exactly one id, once, only after `u32::MAX - 1` ids have already been handed out
+  in one daemon lifetime (a restart reclaims the whole space), and closing the one-id gap would
+  mean `next_id` growing past `u32::MAX` itself, which is not representable. Recorded here per
+  the M6.5 review's Minor 2, rather than changed.
