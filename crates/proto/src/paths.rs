@@ -39,7 +39,11 @@ pub fn data_dir() -> PathBuf {
         .join("anthrex")
 }
 
+/// The config file. `ANTHREX_CONFIG` overrides it.
 pub fn config_path() -> PathBuf {
+    if let Some(p) = std::env::var_os("ANTHREX_CONFIG") {
+        return PathBuf::from(p);
+    }
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("anthrex")
@@ -56,6 +60,11 @@ pub fn pid_path() -> PathBuf {
 
 pub fn state_path() -> PathBuf {
     data_dir().join("state.json")
+}
+
+/// The daemon's `flock`-based lifetime lock.
+pub fn lock_path() -> PathBuf {
+    data_dir().join("daemon.lock")
 }
 
 #[cfg(test)]
@@ -94,6 +103,7 @@ mod tests {
         assert_eq!(log_path(), PathBuf::from("/tmp/x/data/daemon.log"));
         assert_eq!(pid_path(), PathBuf::from("/tmp/x/data/daemon.pid"));
         assert_eq!(state_path(), PathBuf::from("/tmp/x/data/state.json"));
+        assert_eq!(lock_path(), PathBuf::from("/tmp/x/data/daemon.lock"));
         unsafe {
             std::env::remove_var("ANTHREX_SOCKET");
             std::env::remove_var("ANTHREX_DATA_DIR");
@@ -103,8 +113,20 @@ mod tests {
     #[test]
     fn default_data_dir_ends_with_anthrex() {
         let _guard = ENV_LOCK.lock().unwrap();
-        unsafe { std::env::remove_var("ANTHREX_DATA_DIR") };
+        unsafe {
+            std::env::remove_var("ANTHREX_DATA_DIR");
+            std::env::remove_var("ANTHREX_CONFIG");
+        }
         assert_eq!(data_dir().file_name().unwrap(), "anthrex");
         assert_eq!(config_path().file_name().unwrap(), "config.toml");
+    }
+
+    #[test]
+    fn config_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        // SAFETY: see above.
+        unsafe { std::env::set_var("ANTHREX_CONFIG", "/tmp/x/c.toml") };
+        assert_eq!(config_path(), PathBuf::from("/tmp/x/c.toml"));
+        unsafe { std::env::remove_var("ANTHREX_CONFIG") };
     }
 }
