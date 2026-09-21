@@ -1,20 +1,20 @@
 # Milestone 5: New-agent dialog and git worktrees
 
-Refreshed on 2026-09-20 against milestones 2, 3, 4 and 4.5 as merged on `main`, from the audit in `.superpowers/m5-brief-audit.md`.
+Refreshed on 2026-09-21 against milestones 2, 3, 4, 4.5, 4.6 and 4.7 as merged on `main`, from the audits in `.superpowers/m5-brief-audit.md` and `.superpowers/m5-client-correction-report.md`.
 
 ## Header
 
 | | |
 |--|--|
 | Status | `ready` |
-| Depends on | Milestone 4.5 |
+| Depends on | Milestone 4.7 |
 | Spec sections | `docs/superpowers/specs/2026-09-20-git-surface-and-simple-orchestration-design.md` — the top layer, which wins where it disagrees with anything below: §2 (worktree root against project root), §3.3 (watching and the root's lifecycle), §3.4 (window metadata), §3.5 (protocol), §3.8 (failure modes) and §9 (risks). Product spec 6 items 1, 7 and 8 (layout under the data directory, kept compatible with milestone 8's run worktrees; create and remove rules). Core spec 3.5 (worktrees) and 6.3 (new-agent dialog; remove confirm with worktree checkbox and force follow-up). |
 | Branch | `m5-worktrees` |
 | Protocol version | Raised from 4 to 5. No message changes shape; see decision 24 for why the number moves anyway. |
 
 ## Starting point
 
-Milestones 2, 3, 4 and 4.5 are merged before this one starts. This brief uses the names on `main` at commit `2d3ccf8`:
+Milestones 2, 3, 4, 4.5, 4.6 and 4.7 are merged before this one starts. This brief uses the names on `main` at commit `703820e`:
 
 - Hooks: `anthrex hook`, `ClientMsg::HookEvent` handled, the Claude and Codex launch flags in `crates/daemon/src/launch/`, process-group kill. `WindowManager::remove` sends SIGKILL to the child's process group at once (M3 decision 47).
 - `WindowManager::new(config: ManagerConfig)`, where `ManagerConfig` holds exactly `socket_path`, `shell`, `exe`, `claude_bin`, `codex_bin` and `codex_hook_source`, built by `new`, `from_vars` and `from_env`.
@@ -25,7 +25,12 @@ Milestones 2, 3, 4 and 4.5 are merged before this one starts. This brief uses th
 - `crates/daemon/src/git/` is a directory module: `mod.rs` (`GitRegistry`, reference-counted per root, `enabled_from_env`), `parse.rs`, `probe.rs` (`PROBE_TIMEOUT = 5 s`, `resolve_git_dir`), `schedule.rs`, `watch.rs`. `ANTHREX_GIT=off` disables the subsystem.
 - `server::serve(listener, manager, git_enabled: bool, shutdown)`. Its `CreateWindow` arm runs in a spawned task: it awaits `project::resolve_roots(spec.cwd)`, calls `manager.create(spec, roots.project, roots.worktree, cols, rows)` inside `tokio::task::spawn_blocking`, and on success calls `git_registry.register(info.worktree)` — after `create` has returned, never inside the closure (AGENTS.md hard rule 10). Its `Remove` arm captures the removed window's `worktree` from `manager.list()`, calls `manager.remove`, then `git_registry.unregister(&root)` unconditionally.
 - `WindowManager::create(spec, project, worktree, cols, rows)` is synchronous, takes the manager lock for its whole body, and rejects `spec.worktree_branch.is_some()` with `daemon::WORKTREE_UNSUPPORTED`.
-- The project tree in `crates/tui/src/tree.rs` with its submodule `tree/rows.rs`. `Row { key, guides: String, kind }`: `guides` is the exact box-drawing prefix, two columns per level, and both renderers (`ui/tree_view.rs`, `narrow_line` and `wide_line`) emit it before anything else. Tree mode (`C-b t`) in `crates/tui/src/tree_input.rs`, the overview (`C-b T`). `App`'s tests live in `crates/tui/src/app_tests.rs` with the submodules `app_tests/{git,overview,tree_interaction,tree_mode}.rs`.
+- The project tree in `crates/tui/src/tree.rs` with its submodule `tree/rows.rs`. `Row { key, guides, depth, kind }`: `guides` is the exact box-drawing prefix, two columns per level, and the sidebar's one renderer — `narrow_line` in `crates/tui/src/ui/tree_view.rs` — emits it before anything else. `depth` is carried separately rather than recovered from `guides`, because the guide alphabet is the sidebar's business alone and the overview's tiers must not move with it. Tree mode (`C-b t`) in `crates/tui/src/tree_input.rs`.
+- The overview (`C-b T`) is a drawn left-to-right graph on a pannable canvas (milestone 4.6), not rows in aligned columns: `crates/tui/src/graph/` holds `layout`, `paint`, `content_text` and `viewport::{Pan, GraphGeometry}`, and `crates/tui/src/ui/overview.rs` owns the split between the canvas and the rect below it (`areas(main, inspector_visible)`, `view_of`). A node box is three rows of a status glyph, a window's tree position and its name, sized per tier against `MAX_NODE_WIDTH = 30`. `WideColumns` and `wide_line` were deleted with the aligned columns; `narrow_line` and the sidebar are untouched.
+- Below the canvas, `crates/tui/src/inspector.rs` projects the selected node into `Inspection { glyph, name, fields }` and `crates/tui/src/inspector/panel.rs` lays it out in a bordered panel of `INSPECTOR_HEIGHT = 8` rows (milestone 4.7). A window's fields already include `branch`, built by `ui::statusbar::git_spans` from the `GitState` that `App.git` holds for the window's `worktree` — the head with its dirty and ahead/behind counts. `i` toggles the panel; below `MIN_INTERIOR_FOR_PANEL` rows of interior it gives way to milestone 4.6's single footer line.
+- `App` carries `git: HashMap<PathBuf, GitState>`, keyed by worktree root and pruned to the live windows' roots on every list change, plus `inspector_visible`, `graph_pan` and the overview's canvas rect. `ui::statusbar::head_text` and `git_spans` are the only two renderings of a worktree's head in the client.
+- Every mouse gesture lives in `crates/tui/src/mouse.rs` — `on_scroll`, `on_click`, `on_drag` — and each returns early while `app.modal.is_some()`.
+- `crates/tui/src/ui/mod.rs` is 94 lines: the screen `Layout`, `layout()` and the top-level `draw`. Its tests are in `crates/tui/src/ui/tests.rs`. `ui/statusbar.rs` and `ui/tree_view.rs` each declare their own test file beside them with `#[path]`. `App`'s tests live in `crates/tui/src/app_tests.rs` with the submodules `app_tests/{git,overview,tree_interaction,tree_mode}.rs`, and `overview.rs` declares `overview/{mouse,inspector}.rs` below it.
 - The daemon's integration tests share `crates/daemon/tests/support/mod.rs`: `start_daemon()`, `start_daemon_with_git(git_enabled)`, a `Client` that speaks the wire protocol, `shell_spec`, and a `git(dir, args)` helper that already pins `user.name`, `user.email`, `commit.gpgsign=false`, `init.defaultBranch=main` and `GIT_CONFIG_NOSYSTEM=1`.
 - `crates/cli/src/client.rs` already has `request_with_timeout`, `REQUEST_TIMEOUT = 5 s`, `CREATE_REPLY_ALLOWANCE = 2 s` and `CREATE_WINDOW_REPLY_TIMEOUT = project::DETECT_TIMEOUT + CREATE_REPLY_ALLOWANCE`, pinned by `create_timeout_adds_allowance_without_changing_the_default`. `crates/cli/src/main.rs` already parses `new --worktree <branch>` and `rm <target> --worktree --force` and wires them into `WindowSpec.worktree_branch` and `ClientMsg::Remove`; only the rejection, the help text and clap's `requires` are missing.
 - `crates/fake-agent` and the `ANTHREX_CLAUDE_BIN` and `ANTHREX_CODEX_BIN` overrides.
@@ -34,7 +39,7 @@ If the merged code differs from the names above, use the real names and record t
 
 ## Goal
 
-`C-b c` opens a form to create an agent: runtime, name, directory, an optional git worktree on a branch, model and first prompt. With the worktree ticked, the daemon creates a linked worktree under the data directory and starts the agent inside it, so parallel agents never edit the same checkout. The tree shows the branch next to worktree windows, grouped under their repository's project, and the bottom bar shows that worktree's own git state, not the parent repository's. Removing a window offers to remove its worktree too. If git refuses because the tree has changes, the user chooses to force, to keep the worktree, or to cancel. The CLI does the same with `anthrex new --worktree <branch>` and `anthrex rm --worktree [--force]`.
+`C-b c` opens a form to create an agent: runtime, name, directory, an optional git worktree on a branch, model and first prompt. With the worktree ticked, the daemon creates a linked worktree under the data directory and starts the agent inside it, so parallel agents never edit the same checkout. The sidebar tree shows the branch next to worktree windows, grouped under their repository's project, and the bottom bar shows that worktree's own git state, not the parent repository's. Removing a window offers to remove its worktree too. If git refuses because the tree has changes, the user chooses to force, to keep the worktree, or to cancel. The CLI does the same with `anthrex new --worktree <branch>` and `anthrex rm --worktree [--force]`.
 
 ## Scope
 
@@ -48,7 +53,7 @@ In:
 - Keeping milestone 4.5's git registry correct as worktrees appear and disappear: the new checkout is what gets watched, and it stops being watched exactly when it is deleted.
 - The new-agent form as a pure model in the client, its rendering, and routing of keys and pastes to it.
 - The remove-confirm dialog with the "also remove worktree" checkbox, and the force follow-up.
-- The branch on worktree windows in the tree, the main title and `anthrex ls`.
+- The branch on worktree windows in the sidebar tree, the main pane title and `anthrex ls`, all three from one derivation (decision 37).
 - CLI: `new --worktree`, `rm --worktree [--force]`.
 - Smoke-script stages for both paths.
 
@@ -60,6 +65,7 @@ Out:
 - Rename (`C-b ,`) and the config file (`default_runtime`). Milestone 6.
 - Tracking remote branches. A branch that exists only on a remote gets a new local branch from `HEAD`. See risk 5.
 - Any change to how milestone 4.5 probes, watches or publishes git state. This milestone changes which root is registered and when, never the machinery behind it.
+- Any change to the graph overview or the node inspector. Milestone 4.7's inspector already spells out the selected node's branch with its dirty and divergence counts, so nothing under `crates/tui/src/graph/`, `crates/tui/src/inspector.rs` or `crates/tui/src/inspector/` is touched here. See decision 37.
 - The inotify descriptor cost of one recursive watch per agent worktree. See risk 11.
 
 ## Design decisions
@@ -140,7 +146,7 @@ Milestone 4.5 keys git state by worktree root and watches one root per registrat
 
     The prefix key has no meaning inside the form. Every other key is ignored. While `submitting` is true, only `Esc` and `Ctrl-C` do anything.
 30. **Pastes** go to the focused text field with `\r\n`, `\r` and `\n` replaced by a space. While any other modal is open, a paste is dropped, never sent to the PTY.
-31. **Defaults.** The form opens with the runtime, directory text and model of the last form that the daemon accepted in this client session. On the first open: Claude, the default directory shown with the home prefix as `~` (`ui::terminal::shorten_home`), and an empty model. Name, branch and prompt always start empty and the worktree unticked. The Name field shows the placeholder `automatic (<runtime>-N)` while empty.
+31. **Defaults.** The form opens with the runtime, directory text and model of the last form that the daemon accepted in this client session. On the first open: Claude, the default directory shown with the home prefix as `~` (`ui::terminal::shorten_home_with`, the pure variant task M5.9 adds, so the form stays free of `dirs`), and an empty model. Name, branch and prompt always start empty and the worktree unticked. The Name field shows the placeholder `automatic (<runtime>-N)` while empty.
 32. **Client-side validation** on Enter. The first failure sets `form.error` and moves focus to the failing field:
     - Directory: empty after trimming gives `directory is required`. `~` and `~/...` expand against `App.home_dir`. `~user` gives `only ~ and ~/ are expanded`. `~` with no known home gives `cannot expand ~: home directory unknown`. A relative path is joined onto `App.default_dir`.
     - Name: if not empty after trimming, at most 64 characters, no control characters (`name must be at most 64 characters`, `name must not contain control characters`), and not the name of a window in `app.windows` (`a window named '<name>' already exists`, the daemon's own wording).
@@ -148,9 +154,19 @@ Milestone 4.5 keys git state by worktree root and watches one root per registrat
     - Model and prompt: trimmed; empty means `None`.
 33. **Filesystem checks happen in the daemon, not the client.** The directory's existence, "is a git working tree", the branch being in use, `check-ref-format`, and every git failure come back as `DaemonMsg::Error { request: "create" }`. While the form is `submitting`, the app shows that message inline as `form.error` and clears `submitting`, and no toast is shown. Focus stays where it was.
 34. **Submission.** A valid Enter sets `submitting = true` and returns `Effect::Send(ClientMsg::CreateWindow { spec, cols, rows })` with the current terminal size, as `Command::NewWindow` does today. `Created` closes the form, stores the form's runtime, directory text and model in `app.form_defaults`, and focuses the window through the existing `Created` path. `Esc` while submitting closes the form; the create still completes and `Created` still focuses the new window.
-35. **Remove confirm.** `C-b X` opens `Modal::Remove(RemoveConfirm)`. The checkbox line appears only when the window's `branch` is `Some`. `Space` or `w` toggles it, `y` or `Enter` confirms, `n` or `Esc` cancels. Confirming sends `Remove { window_id, remove_worktree, force: false }`. When `remove_worktree` is true, the app records `pending_worktree_remove = Some(window_id)`.
+35. **Remove confirm.** `C-b X` opens `Modal::Remove(RemoveConfirm)`. The checkbox line appears only when the window's `branch` is `Some` — `WindowInfo.branch` itself, not decision 37's `branch_text`, because this asks whether the daemon made a worktree for this window, which is exactly what `spec.worktree_branch` records, and not which branch it is standing on now. The branch the line names is `WindowInfo.branch` for the same reason: it is the branch that will be kept. `Space` or `w` toggles it, `y` or `Enter` confirms, `n` or `Esc` cancels. Confirming sends `Remove { window_id, remove_worktree, force: false }`. When `remove_worktree` is true, the app records `pending_worktree_remove = Some(window_id)`.
 36. **Force follow-up.** `Error { request: "remove-dirty" }` while `pending_worktree_remove` is `Some(id)` opens `Modal::ForceRemove { window_id: id, name, message }`. `f` sends `Remove { remove_worktree: true, force: true }` and keeps `pending_worktree_remove`. `k` sends `Remove { remove_worktree: false, force: false }`, which removes the window and keeps the worktree. `n` or `Esc` cancels; the window stays as it is. `Enter` does nothing here, so a destructive choice is never one reflexive key away. `Ack { request: "remove" }` or `Error { request: "remove" }` clears `pending_worktree_remove`; the error is shown as a toast.
-37. **Branch display.** `WindowInfo.branch` is `Some` exactly for worktree windows: `Entry::info` already sets it from `spec.worktree_branch`, and it starts carrying a value the moment `create` stops rejecting that field. Milestone 4.5 left `branch` deliberately untouched for this. The tree's agent row shows it after the name as `[<branch>]` in the muted style. The budget for that is what is left after `row.guides`, which is not negotiable and costs two columns per level — twelve at depth six in a 32-column sidebar (amendment §4.1). Within what remains, the branch shrinks first, ending in `…`, and is dropped when fewer than 4 columns remain for it; the name keeps at least 8 columns. The overview (`C-b T`) shows the branch in full. The main pane title for a worktree window reads ` <name> · <runtime> · <shortened project root> (<branch>, worktree) `, using `WindowInfo.project`, instead of the long data-directory path; this replaces the rendering in `ui/terminal.rs`, which today formats `shorten_home(&w.cwd)` and a bare ` ({branch})`. `anthrex tree --json` already copies `info.branch` and needs no change.
+37. **Branch display, from one derivation.** A branch shown in two places with two derivations will drift, so the two client views this milestone adds read one function: `ui::tree_view::branch_text(window, app) -> Option<String>`, which returns the head from `app.git`, keyed by `window.worktree` and rendered by `ui::statusbar::head_text`, and falls back to `WindowInfo.branch` only when no `GitState` has arrived for that root.
+
+    The precedence is the decision, because the two values are different facts. `WindowInfo.branch` is the branch anthrex *asked for* at create: `Entry::info` sets it from `spec.worktree_branch` and it starts carrying a value the moment `create` stops rejecting that field, which is what milestone 4.5 left it untouched for. `GitState.head` is where that worktree's `HEAD` points *now*. An agent that checks out another branch inside its worktree moves the second and not the first, and both views that already exist — milestone 4.5's bottom bar and milestone 4.7's inspector `branch` field — show the second. A new view reading `spec.worktree_branch` directly would be the one disagreeing with the other three. The fallback is what keeps a marker on screen with `ANTHREX_GIT=off` and in the moment before the first probe, which is the state the smoke script runs in.
+
+    - **The sidebar's agent row** shows it after the name as `[<branch>]` in the muted style. The budget for that is what is left after `row.guides`, which is not negotiable and costs two columns per level — twelve at depth six in a 32-column sidebar (amendment §4.1, still binding; only its §4.4 was superseded, by the graph). Within what remains, the branch shrinks first, ending in `…`, and is dropped when fewer than 4 columns remain for it; the name keeps at least 8 columns.
+    - **The main pane title** for a worktree window reads ` <name> · <runtime> · <shortened project root> (<branch>, worktree) `, where the path is `WindowInfo.project` instead of the long data-directory path and `<branch>` is `branch_text`; this replaces the rendering in `ui/terminal.rs`, which today formats `shorten_home(&w.cwd)` and a bare ` ({branch})`.
+    - **The overview (`C-b T`) gains nothing.** A node box carries a status glyph, a window's tree position and its name (`graph::content_text`), and every box in a tier shares one width capped at `MAX_NODE_WIDTH = 30`; a branch inside it would widen every window tier by the longest branch in it, for a value the panel below already shows in full. That panel is milestone 4.7's inspector, whose `branch` field is this same worktree's head with its dirty and ahead/behind counts, from this same `GitState`. Nothing under `crates/tui/src/graph/` and nothing in `crates/tui/src/inspector.rs` or `crates/tui/src/inspector/` changes in this milestone.
+
+    `anthrex tree --json` already copies `info.branch` and needs no change: a `--json` consumer wants the record of what was asked for, and the daemon publishes no git state on that path.
+
+    **Needs confirmation.** The precedence above — live head first, `WindowInfo.branch` as the fallback — is this brief's reading of "the tree shows the branch", chosen so that no two views of one window can disagree. Two alternatives were considered and rejected, and either can be reinstated by ruling: show `WindowInfo.branch` in the sidebar unconditionally and accept that it drifts from the bottom bar and the inspector; or drop the sidebar marker and the title's branch entirely and let the inspector be the only place a branch is named, which would cut the sidebar half of task M5.11 and weaken the Goal's second sentence.
 
 ### CLI
 
@@ -443,6 +459,17 @@ pub struct RemoveConfirm {
 
 Name limit constant: `pub const NAME_MAX_CHARS: usize`, holding decision 32's limit.
 
+### `crates/tui/src/ui/tree_view.rs` (changed)
+
+```rust
+/// Decision 37's one derivation: the head `App.git` holds for the window's
+/// worktree root, and `WindowInfo.branch` when it holds none. `None` for a
+/// window that is not in a worktree this daemon made.
+pub fn branch_text(window: &WindowInfo, app: &App) -> Option<String>;
+```
+
+It sits beside `counts_text`, the other shared text helper in this module, and has the same two readers pattern: `narrow_line` here and `ui::terminal::render` for the main title. `ui::statusbar::head_text` is already `pub(crate)`.
+
 ### `crates/tui/src/app.rs` (changed)
 
 ```rust
@@ -464,7 +491,7 @@ pub struct App {
 }
 ```
 
-Modal key handling lives in `crates/tui/src/app/modal_keys.rs`, a submodule of `app.rs` (the same shape as `tree.rs` and `tree/rows.rs`); `app.rs` is at 596 lines before this milestone starts, so this split is not optional. See task M5.9.
+Modal key handling lives in `crates/tui/src/app/modal_keys.rs`, a submodule of `app.rs` (the same shape as `tree.rs` and `tree/rows.rs`); `app.rs` is at 583 lines before this milestone starts, so this split is not optional. See task M5.9.
 
 ### Rendering: `crates/tui/src/ui/dialog.rs` (new)
 
@@ -665,7 +692,9 @@ Every test that waits for `.hook-started` waits in a deadline loop, which AGENTS
 
 ### M5.8 The new-agent form model
 
-**Files.** Create `crates/tui/src/dialog.rs`. Modify `crates/tui/src/lib.rs` (`pub mod dialog;`).
+**Files.** Create `crates/tui/src/dialog.rs`. Modify `crates/tui/src/lib.rs` (`pub mod dialog;`, which is 179 lines and gains one).
+
+Not to be confused with `crates/tui/src/ui/dialog.rs`, which task M5.11 creates for the rendering. This one is the model and knows nothing about a terminal.
 
 **Tests first.** Unit tests in `crates/tui/src/dialog.rs`. `ctx()` builds a `FormContext` with `default_dir = /work`, `home = /home/me`, `existing_names = ["api"]`.
 
@@ -689,9 +718,9 @@ Every test that waits for `.hook-started` waits in a deadline loop, which AGENTS
 
 ### M5.9 App: open, submit and close the form
 
-**Files.** Modify `crates/tui/src/app.rs`, create `crates/tui/src/app/modal_keys.rs`, modify `crates/tui/src/lib.rs`, `crates/tui/src/ui/terminal.rs`, `crates/tui/src/ui/modal.rs`. Create `crates/tui/src/app_tests/dialog.rs`.
+**Files.** Modify `crates/tui/src/app.rs`, create `crates/tui/src/app/modal_keys.rs`, modify `crates/tui/src/lib.rs`, `crates/tui/src/ui/terminal.rs`, `crates/tui/src/ui/modal.rs`, `crates/tui/src/app_tests.rs`. Create `crates/tui/src/app_tests/dialog.rs`.
 
-`app.rs` is 596 lines before this task, so the split is part of it, not a contingency: modal key handling for every `Modal` variant moves to `crates/tui/src/app/modal_keys.rs`, a submodule of `app.rs`, and `app.rs` keeps the state, the effects and `on_daemon`. `app_tests.rs` is 534 lines and is already a hub of `#[path]` submodules, so the tests below go in `crates/tui/src/app_tests/dialog.rs`, declared from `app_tests.rs` like the four existing ones.
+Sizes before this task, against the 600-line rule: `app.rs` 583, `app_tests.rs` 534, `ui/terminal.rs` 72, `ui/modal.rs` 69, `lib.rs` 179. `app.rs` is close enough that the split is part of this task, not a contingency: modal key handling for every `Modal` variant moves to `crates/tui/src/app/modal_keys.rs`, a submodule of `app.rs`, and `app.rs` keeps the state, the effects and `on_daemon`. `app_tests.rs` is already a hub of `#[path]` submodules, so the tests below go in `crates/tui/src/app_tests/dialog.rs`, declared from `app_tests.rs` like the four existing ones.
 
 **Tests first.** In `crates/tui/src/app_tests/dialog.rs`.
 
@@ -701,16 +730,18 @@ Every test that waits for `.hook-started` waits in a deadline loop, which AGENTS
 - `keys_and_pastes_go_to_the_form_not_the_pty`: with the form open, typing `j` or pasting text returns no `Input` effect. With `Modal::Help` open, a paste returns no effects.
 - `the_form_remembers_the_last_accepted_values`: submit with Codex, dir `~/p` and model `m1`, receive `Created`, open again: runtime Codex, dir `~/p`, model `m1`, name, branch and prompt empty, worktree unticked. A submit answered by `Error` does not change the defaults.
 - `escape_while_submitting_still_focuses_the_new_window`: submit, Esc closes the form, then `Created` and `WindowsChanged` focus the window.
-- `first_open_shows_the_default_dir_with_tilde`: `App.default_dir = /home/me/code`, `home_dir = Some(/home/me)`: the Directory field text is `~/code`. Build this with the pure helper the form uses; `shorten_home` currently calls `dirs::home_dir()`, so add a pure variant `shorten_home_with(path, home: Option<&Path>)` in `ui::terminal` and make `shorten_home` call it.
-- A `DaemonMsg::Git` arriving while the form is open still reaches the bottom bar unchanged, so milestone 4.5's `app_tests/git.rs` keeps passing without modification.
+- `first_open_shows_the_default_dir_with_tilde`: `App.default_dir = /home/me/code`, `home_dir = Some(/home/me)`: the Directory field text is `~/code`. Build this with the pure helper the form uses; `shorten_home` currently calls `dirs::home_dir()`, so add a pure variant `shorten_home_with(path, home: Option<&Path>)` in `ui::terminal` and make `shorten_home` call it. `shorten_home` keeps its signature and both its callers — `ui::terminal::render` and `inspector::display_path` — so nothing else moves.
+- A `DaemonMsg::Git` arriving while the form is open still reaches `App.git` unchanged, so milestone 4.5's `app_tests/git.rs` and milestone 4.7's `app_tests/overview/inspector.rs` both keep passing without modification.
 
-**Change.** Implement decisions 26, 30, 31, 33 and 34. In `on_key`, take the modal out with `self.modal.take()`, handle the key, and put it back unless the handler closed it; the current `clone()` would drop in-place edits to the form. Route `on_paste` to the form or drop it while any modal is open. `tui::run` sets `app.home_dir = dirs::home_dir()`. In tree mode (milestone 4), an open modal takes keys before the tree does. `ui::modal::render` matches exhaustively over `Modal`, so this task adds arms for the three new variants or the client stops compiling; a one-line placeholder for each is enough, and M5.11 replaces them with the real rendering.
+**Change.** Implement decisions 26, 30, 31, 33 and 34. In `on_key`, take the modal out with `self.modal.take()`, handle the key, and put it back unless the handler closed it; the current `clone()` would drop in-place edits to the form. Route `on_paste` to the form or drop it while any modal is open. `tui::run` sets `app.home_dir = dirs::home_dir()`. In tree mode (milestone 4) and in the graph overview (milestones 4.6 and 4.7, including its `i` toggle), an open modal takes keys before either does: `App::on_key` already checks `self.modal` first and that check must stay first. The mouse needs no change at all — `on_scroll`, `on_click` and `on_drag` in `crates/tui/src/mouse.rs` each return early while `app.modal.is_some()` — so only the keyboard path is new. `ui::modal::render` matches exhaustively over `Modal`'s two variants, so this task adds arms for the three new ones or the client stops compiling; a one-line placeholder for each is enough, and M5.11 replaces them with the real rendering.
 
 **Acceptance.** All app tests pass. `app.rs` still performs no I/O, and both it and `app/modal_keys.rs` are well under 600 lines.
 
 ### M5.10 App: remove confirm and force follow-up
 
-**Files.** Modify `crates/tui/src/app.rs`, `crates/tui/src/app/modal_keys.rs`. Create `crates/tui/src/app_tests/remove.rs`.
+**Files.** Modify `crates/tui/src/app.rs`, `crates/tui/src/app/modal_keys.rs`, `crates/tui/src/app_tests.rs`. Create `crates/tui/src/app_tests/remove.rs`.
+
+Both files this task modifies were split in M5.9 and are well under the 600-line rule when it starts; nothing new is owed here.
 
 **Tests first.** In `crates/tui/src/app_tests/remove.rs`, declared from `app_tests.rs` like the others. `wt_win(id, name, branch)` builds a window with `branch: Some(branch)`.
 
@@ -727,11 +758,17 @@ Every test that waits for `.hook-started` waits in a deadline loop, which AGENTS
 
 **Acceptance.** All app tests pass.
 
-### M5.11 Rendering, tree branch, help, smoke stages
+### M5.11 Rendering, sidebar branch, help, smoke stages
 
-**Files.** Create `crates/tui/src/ui/dialog.rs` and `crates/tui/src/ui/dialog_tests.rs`. Modify `crates/tui/src/ui/mod.rs`, `crates/tui/src/ui/modal.rs`, `crates/tui/src/ui/terminal.rs`, `crates/tui/src/ui/tree_view.rs` (`narrow_line` and `wide_line`), `crates/tui/src/ui/tree_view_tests.rs`, `scripts/pty-smoke.py`.
+**Files.** Create `crates/tui/src/ui/dialog.rs` and `crates/tui/src/ui/dialog_tests.rs`. Modify `crates/tui/src/ui/mod.rs` (the `pub mod dialog;` line), `crates/tui/src/ui/modal.rs`, `crates/tui/src/ui/terminal.rs`, `crates/tui/src/ui/tree_view.rs` (`narrow_line`, and `branch_text` from the Interfaces section), `crates/tui/src/ui/tree_view_tests.rs`, `crates/tui/src/ui/tests.rs`, `scripts/pty-smoke.py`.
 
-`ui/mod.rs` is 564 lines with its test module inline, so the new `TestBackend` tests go in `crates/tui/src/ui/dialog_tests.rs`, declared with `#[path]` from `ui/mod.rs` exactly as `statusbar_tests.rs` and `tree_view_tests.rs` are. The two tree-row tests below go in `tree_view_tests.rs`, beside milestone 4.5's guide tests.
+Nothing under `crates/tui/src/graph/`, nothing in `crates/tui/src/inspector.rs` or `crates/tui/src/inspector/`, and nothing in `crates/tui/src/mouse.rs` is touched: the overview keeps the boxes and the panel milestones 4.6 and 4.7 gave it (decision 37), and the mouse already drops every gesture while a modal is open.
+
+Sizes before this task, against the 600-line rule: `ui/mod.rs` 94, `ui/modal.rs` 69, `ui/terminal.rs` 72, `ui/tree_view.rs` 256, `ui/tree_view_tests.rs` 155, `ui/tests.rs` 516. Only `ui/tests.rs` is near it, and that is what decides where the new tests go:
+
+- The three dialog renderings are tested through `TestBackend` in a new `crates/tui/src/ui/dialog_tests.rs`, declared with `#[path]` from `ui/dialog.rs` — the convention `ui/statusbar.rs` and `ui/tree_view.rs` already follow for `statusbar_tests.rs` and `tree_view_tests.rs`.
+- The three sidebar-row tests go in `tree_view_tests.rs`, beside milestone 4.5's guide tests.
+- The two whole-frame tests — the main title and the help overlay — go in `ui/tests.rs`, which renders whole frames already and has the room. If it crosses 600 anyway, the split is the same convention once more: a new `crates/tui/src/ui/terminal_tests.rs` declared with `#[path]` from `ui/terminal.rs`, taking the title test and `empty_state_and_hidden_sidebar` with it.
 
 **Tests first.**
 
@@ -739,19 +776,20 @@ Every test that waits for `.hook-started` waits in a deadline loop, which AGENTS
 - `new_agent_form_places_the_cursor_in_the_focused_field`: with focus on Name and text `ab`, `terminal.get_cursor_position()` after the draw is on the Name row, 2 columns after the field start.
 - `remove_dialog_shows_the_checkbox_only_for_worktree_windows`: a worktree window renders `[ ] also remove worktree feat/x` and `the branch is kept`; ticked renders `[x]`; a plain window renders neither.
 - `force_prompt_lists_the_three_choices`: contains `force`, `keep the worktree` and `cancel`.
-- `main_title_of_a_worktree_window_names_project_and_branch`: a window with `branch: Some("feat/x")` and `project: /tmp/shop` renders `(feat/x, worktree)` and `/tmp/shop` in the title, not its cwd. A window with `branch: None` still renders today's ` <name> · <runtime> · <shortened cwd> `.
-- `tree_row_shows_the_branch_and_truncates_it_first`: a 34-column sidebar with a worktree window named `api` on branch `feat/very-long-branch-name` shows `api [feat/` and `…]`; a window named `a-rather-long-name` keeps at least 8 name columns. The overview shows the full branch.
-- `a_deep_row_spends_its_guides_before_its_branch`: the same window at depth three loses branch columns, never guide columns; the guides are byte-for-byte what milestone 4.5 renders for that depth.
-- `tree_groups_worktree_windows_under_the_repository`: two windows with the same `project` and different cwds (one in the data directory) render under one project row with the count `sh 2`.
-- `help_lists_new_agent`: the help overlay contains `C-b c` and `new agent`. The empty-state hint in `ui/terminal.rs`, today `No agents. Press C-b c to open a shell here, or run \`anthrex new\`.`, becomes `No agents. Press C-b c to create one, or run \`anthrex new\`.`, and `empty_state_and_hidden_sidebar` (`crates/tui/src/ui/mod.rs`) is updated to the new string and still passes.
+- `main_title_of_a_worktree_window_names_project_and_branch`, in `ui/tests.rs`: a window with `branch: Some("feat/x")` and `project: /tmp/shop` renders `(feat/x, worktree)` and `/tmp/shop` in the title, not its cwd. A window with `branch: None` still renders today's ` <name> · <runtime> · <shortened cwd> `.
+- `branch_text_prefers_the_live_head`, in `tree_view_tests.rs`: for a window with `branch: Some("feat/x")` and a worktree root that `App.git` has a `GitState` for whose head is `other`, `branch_text` is `Some("other")`; with that entry removed it is `Some("feat/x")`; for a window with `branch: None` it is `None` whether or not a `GitState` exists. This is decision 37's precedence, and it is the one place it is asserted.
+- `tree_row_shows_the_branch_and_truncates_it_first`, in `tree_view_tests.rs`: a 34-column sidebar with a worktree window named `api` on branch `feat/very-long-branch-name` shows `api [feat/` and `…]`; a window named `a-rather-long-name` keeps at least 8 name columns.
+- `a_deep_row_spends_its_guides_before_its_branch`, in `tree_view_tests.rs`: the same window at depth three loses branch columns, never guide columns; the guides are byte-for-byte what milestone 4.5 renders for that depth.
+- `tree_groups_worktree_windows_under_the_repository`, in `tree_view_tests.rs`: two windows with the same `project` and different cwds (one in the data directory) render under one project row with the count `sh 2`.
+- `help_lists_new_agent`, in `ui/tests.rs`: the help overlay contains `C-b c` and `new agent`. The empty-state hint in `ui/terminal.rs`, today `No agents. Press C-b c to open a shell here, or run \`anthrex new\`.`, becomes `No agents. Press C-b c to create one, or run \`anthrex new\`.`, and `empty_state_and_hidden_sidebar` (`crates/tui/src/ui/tests.rs`) is updated to the new string and still passes.
 
-**Change.** Implement the rendering in the Interfaces section and decision 37. `ui::modal::render` dispatches the three new variants to `ui::dialog`. Update `HELP` in `ui/modal.rs`: `("C-b c", "new agent")` replaces `("C-b c", "new shell window")`, and `("C-b X", "remove agent (and worktree)")` replaces `("C-b X", "remove agent")`.
+**Change.** Implement the rendering in the Interfaces section and decision 37. `ui::modal::render` dispatches the three new variants to `ui::dialog`. Update `HELP` in `ui/modal.rs`: `("C-b c", "new agent")` replaces `("C-b c", "new shell window")`, and `("C-b X", "remove agent (and worktree)")` replaces `("C-b X", "remove agent")`. Its other rows, including milestone 4.7's `("i", "in the overview: show / hide the inspector")`, are unchanged.
 
-Smoke script (`scripts/pty-smoke.py`). The script exports `ANTHREX_GIT=off` for the daemon it starts, so both new stages run with milestone 4.5's git subsystem disabled. They must therefore assert only on `WindowInfo.branch`, the tree and the filesystem, never on a `Git` message or the bottom bar's git segment; nothing in this milestone depends on one.
+Smoke script (`scripts/pty-smoke.py`). The script exports `ANTHREX_GIT=off` for the daemon it starts, so both new stages run with milestone 4.5's git subsystem disabled and no `GitState` ever arrives. Decision 37's fallback is therefore what they see: the sidebar marker and the main title both read `WindowInfo.branch`. They must assert only on that, the tree and the filesystem — never on a `Git` message, the bottom bar's git segment or the inspector's `branch` field, none of which exist with git off, and none of which this milestone depends on. The two new stages go after milestone 4.7's `run_inspector_stage(...)` call and before stage 10, the stop stage.
 
 - Add `new_shell(proc, expected)`: send `\x02c`, wait for `new agent`, send `3`, send `\r`, wait for `expected`. Use it everywhere the script sends `\x02c` today (stages 2, 3, 7 and 8).
 - Add a module-level `make_repo()` that creates `/tmp/anthrex-smoke-repo-<pid>` with `git init -b main`, repo-local identity and `commit.gpgsign false`, and one commit. The final cleanup removes it.
-- New stage `W1: worktree from the CLI`, before the stop stage:
+- New stage `W1: worktree from the CLI`:
   1. `anthrex new --runtime shell --name wt-cli --dir <repo> --worktree smoke/cli` exits 0.
   2. `anthrex ls` lists `wt-cli` with `smoke/cli`.
   3. `git -C <repo> worktree list --porcelain` contains `branch refs/heads/smoke/cli` and a path under `<DATA_DIR>/worktrees/`.
@@ -786,7 +824,8 @@ Milestone-specific checks:
 - Every git invocation in the daemon carries `--no-optional-locks`, with no exception left to argue about (hard rules 10 and 11): `grep -rn "Command::new" crates/daemon/src` finds git spawned in `project.rs`, `git/probe.rs` and `worktree.rs`, and all three also match `grep -rn "no-optional-locks"`. Each is pinned by a test that reads the child's argv.
 - Search `manager.rs`, `manager/create.rs` and `manager/remove.rs` for every `crate::lock(&self.inner)`: no guard may be alive across a call into `worktree::`, `Window::spawn`, `GitRoots::register`, `GitRoots::unregister`, `spawn_blocking` or `.await`. Say in the pull request that you checked this.
 - `PROTO_VERSION` is 5 and `proto_version_is_five` pins it.
-- No file this milestone touched is over 600 lines (hard rule 8): check `app.rs`, `manager.rs`, `server.rs`, `ui/mod.rs`, `app_tests.rs`, `tests/manager.rs` and `tests/support/mod.rs`.
+- The branch is derived once (decision 37): `grep -rn "\.branch" crates/tui/src` finds `WindowInfo.branch` read only inside `ui::tree_view::branch_text` and in `RemoveConfirm`'s construction, which asks a different question and says so.
+- No file this milestone touched is over 600 lines (hard rule 8): check `app.rs`, `app/modal_keys.rs`, `manager.rs`, `server.rs`, `app_tests.rs`, `ui/tests.rs`, `tests/manager.rs` and `tests/support/mod.rs`. `ui/mod.rs` is not on the list: milestone 4.7 moved its tests to `ui/tests.rs` and left it at 94 lines.
 - After the smoke script, `pgrep -fl "anthrex daemon"` shows nothing of yours and `/tmp/anthrex-smoke-repo-*` is gone.
 
 ## Manual check
@@ -803,15 +842,17 @@ cargo build --release && ./target/release/anthrex --dir ~/some/real/repo
 3. Set Directory to a path that is not a repository and a branch `m5/check`. Enter shows `not a git repository: ...` inline after a moment, with no toast.
 4. Fix the directory to a real repository. Runtime Claude, a short prompt. Enter shows `creating the worktree…`, then the window opens focused. Claude's workspace-trust prompt for the new directory appears in the window; answer it. The tree shows `[m5/check]` after the name, under the repository's project row. The title shows the project root and `(m5/check, worktree)`.
 5. The bottom bar shows `m5/check` for that window, not the branch the parent repository is on. Commit something in the parent checkout in another terminal: the worktree window's bar does not change. Then commit inside the worktree: its bar updates within a second (decision 21).
-6. In another terminal, `git -C <repo> worktree list` shows the worktree under `/tmp/anthrex-m5/data/worktrees/<repo>-<hash>/m5-check`.
-7. Repeat 4 with Codex on branch `m5/codex`. Answer Codex's directory trust prompt. Check that Codex's `-C` points at the worktree: ask it `pwd`.
-8. Open the form again: runtime, directory and model are those of the last accepted form.
-9. Ask the Claude agent to create a file. `C-b X`, tick the box, Enter. The force prompt appears; Enter does nothing. Press `n`: the agent is still running, its screen intact, and its bottom bar still updating — the refusal did not unwatch the worktree (decision 22).
-10. `C-b X` again, tick, Enter, then `k`. The window is gone; the worktree directory and branch are still there. Remove it by hand with `git worktree remove --force`.
-11. For the Codex window, `C-b X`, tick, Enter on a clean tree: the window and worktree go, `git branch` still lists `m5/codex`.
-12. `anthrex new --runtime shell --worktree main --dir <repo>` fails with `branch 'main' is already checked out at <repo>`.
-13. Paste a multi-line text into the Prompt field: it arrives on one line. Paste while the help overlay is open: nothing reaches the focused agent.
-14. `./target/release/anthrex daemon stop`, then `pgrep -fl "anthrex daemon"` shows nothing. Remove `/tmp/anthrex-m5`.
+6. `C-b T`. The window's box sits under its project's, and the inspector below the canvas shows `branch  m5/check` with its change counts. Press `i`: the panel gives way to the single line, which names the window but no branch. Press `i` again, then `Esc`.
+7. In the worktree window, `git checkout -b m5/moved`. Within a second the sidebar marker, the main title, the bottom bar and the inspector all read `m5/moved` — one derivation, four views (decision 37). Check out `m5/check` again.
+8. In another terminal, `git -C <repo> worktree list` shows the worktree under `/tmp/anthrex-m5/data/worktrees/<repo>-<hash>/m5-check`.
+9. Repeat 4 with Codex on branch `m5/codex`. Answer Codex's directory trust prompt. Check that Codex's `-C` points at the worktree: ask it `pwd`.
+10. Open the form again: runtime, directory and model are those of the last accepted form.
+11. Ask the Claude agent to create a file. `C-b X`, tick the box, Enter. The force prompt appears; Enter does nothing. Press `n`: the agent is still running, its screen intact, and its bottom bar still updating — the refusal did not unwatch the worktree (decision 22).
+12. `C-b X` again, tick, Enter, then `k`. The window is gone; the worktree directory and branch are still there. Remove it by hand with `git worktree remove --force`.
+13. For the Codex window, `C-b X`, tick, Enter on a clean tree: the window and worktree go, `git branch` still lists `m5/codex`.
+14. `anthrex new --runtime shell --worktree main --dir <repo>` fails with `branch 'main' is already checked out at <repo>`.
+15. Paste a multi-line text into the Prompt field: it arrives on one line. Paste while the help overlay is open: nothing reaches the focused agent. Open the form, then click a node in the sidebar and turn the wheel over it: neither reaches the tree while the form is up.
+16. `./target/release/anthrex daemon stop`, then `pgrep -fl "anthrex daemon"` shows nothing. Remove `/tmp/anthrex-m5`.
 
 ## Risks and gotchas
 
@@ -824,7 +865,7 @@ cargo build --release && ./target/release/anthrex --dir ~/some/real/repo
 7. **Restart and persistence (milestone 6).** `Entry.spec.worktree_branch` stays `Some(branch)` after creation. A future restart that re-runs `create` with that spec would try to create the worktree again and fail with "already checked out". Milestone 6 must restart from `Entry.managed` instead. Leave a `// milestone 6:` comment at the `Entry.managed` field — not at `Entry.worktree`, which is milestone 4.5's git worktree root and means something else.
 8. **Agents writing during removal.** Between the dirty check and the kill, an agent can create a file. Then `git worktree remove` refuses after the agent is already dead, and the window stays listed as Exited with its root re-registered. That is the designed outcome of decision 19 step 4; the user answers the force prompt again.
 9. **Trust prompts in every new worktree.** Claude and Codex treat each worktree as a new directory and ask for trust once. This is expected and answered in the window (core spec 3.2).
-10. **The form and tree mode compete for keys.** If `j` typed into the Name field moves the tree selection, the modal is not taking precedence in `on_key`. The modal check must come before tree mode.
+10. **The form and tree mode compete for keys.** If `j` typed into the Name field moves the tree selection, the modal is not taking precedence in `on_key`. The modal check must come before tree mode. The graph overview's keys arrive on the same path and are covered by the same check, including milestone 4.7's `i`. The mouse is not: `on_scroll`, `on_click` and `on_drag` in `crates/tui/src/mouse.rs` each already return early while `app.modal.is_some()`, so a click that selects a node behind an open form means that guard was removed, not that one was never written.
 11. **One recursive watch per agent worktree.** Milestone 4.5's watch costs one inotify descriptor per directory in the checkout, ignored directories included, and this milestone multiplies that by the number of agents (amendment §9; `M4.5-git-and-tree.md`'s implementation notes). Past a host's `fs.inotify.max_user_watches` the watch silently fails to arm and the root drops to the 30-second poll, with only milestone 4.5's "watcher unavailable" warning to say so. This is a known, accepted cost here: the fix is a non-recursive watch plus a pruning walk, which shares its filter with milestone 6's `[git]` `ignore` list and is recorded against milestone 6 in `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`. Do not attempt it inside this milestone (AGENTS.md hard rule 7).
 
 ## Follow-ups handled
