@@ -103,3 +103,52 @@ fn codex_probe_does_not_wait_forever_for_inherited_stdout() {
     assert!(elapsed < Duration::from_secs(6), "{elapsed:?}");
     assert!(log.contains("could not read Codex version"), "{log}");
 }
+
+/// Fix wave 4, item 1 (M6.5 review, Critical 1): the socket bind must never wait on the
+/// codex version probe. `spawn::ensure_daemon` gives up waiting for the socket after 3 s;
+/// the probe's own budget is 5 s. A `codex` that answers `--version` anywhere in that gap
+/// — a real shim, a cold page cache, a slow filesystem — must not fail `anthrex daemon
+/// start`, because the daemon is in fact starting up fine.
+///
+/// Regresses the state in which `lifecycle::run` moved `codex_version::check` ahead of
+/// `bind_socket` to get decision 12's state-file load before the bind, taking the probe
+/// along with it by accident: `anthrex daemon start` against a `codex` that sleeps 4 s
+/// (inside the probe's 5 s allowance) failed with "the daemon did not start within 3 s"
+/// even though the daemon came up and bound its socket a moment later.
+#[test]
+fn daemon_start_does_not_wait_on_a_slow_codex_probe() {
+    let dir = tempdir();
+    let bin = dir.path().join("codex");
+    std::fs::write(&bin, "#!/bin/sh\nsleep 4\nprintf 'codex-cli 0.155.0\\n'\n").unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    let mut command = isolated_command(dir.path(), &["daemon", "start"]);
+    command.env("ANTHREX_CODEX_BIN", &bin);
+    let started = Instant::now();
+    let output = RunningCommand::start(&mut command).finish(Duration::from_secs(6));
+    let elapsed = started.elapsed();
+
+    // Whatever the assertions below find, do not leave a detached daemon behind: even
+    // when `daemon start` itself times out waiting for the socket, the daemon process it
+    // spawned keeps running and eventually binds once the slow probe finishes. Wait for
+    // that (bounded, generously past the stub's 4 s sleep) and stop it before asserting.
+    let sock = dir.path().join("daemon.sock");
+    let deadline = Instant::now() + Duration::from_secs(6);
+    while !sock.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if sock.exists() {
+        let _ = RunningCommand::start(&mut isolated_command(dir.path(), &["daemon", "stop"]))
+            .finish(Duration::from_secs(6));
+    }
+
+    assert!(
+        output.status.success(),
+        "daemon start failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "daemon start took {elapsed:?}, meaning the socket bind waited on the codex probe"
+    );
+}

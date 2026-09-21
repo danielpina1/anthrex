@@ -182,8 +182,14 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     let mut config = ManagerConfig::from_env(opts.socket_path.clone(), shell)?;
     config.worktrees_root = opts.data_dir.join("worktrees");
-    // Complete the only version probe before any window launch is accepted.
-    codex_version::check(config.codex_bin.clone()).await;
+    // Fix wave 4, item 1: `codex_bin` is cloned out here, before `WindowManager::new`
+    // consumes `config`, so the probe itself can run later — immediately before
+    // `server::serve`, not here. Only decision 12's state-file load needs to precede the
+    // bind; the probe was moved up alongside it by accident in an earlier change, and a
+    // `codex` that takes longer than `spawn::ensure_daemon`'s 3 s socket-wait (well inside
+    // the probe's own 5 s budget) made every auto-spawning entry point report a failed
+    // start even though the daemon was starting up fine.
+    let codex_bin = config.codex_bin.clone();
     let (manager, mut events) = WindowManager::new(config);
     // Decision 12/14: every restored window is listed, dormant and viewable before
     // anything can connect.
@@ -238,6 +244,12 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     // there is exactly one writer of this file at any instant.
     let persister =
         crate::state::spawn_persister(manager.clone(), state_path.clone(), shutdown.clone());
+
+    // Complete the only version probe before any window launch is accepted — `serve` is
+    // what actually accepts window launches, so immediately before it is where this
+    // invariant is preserved without also holding up the socket bind above (fix wave 4,
+    // item 1).
+    codex_version::check(codex_bin).await;
 
     let served = server::serve(
         listener,
