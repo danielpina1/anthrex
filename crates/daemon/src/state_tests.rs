@@ -413,6 +413,97 @@ fn windows_field_present_but_not_an_array_is_corrupt() {
     );
 }
 
+/// Minor #6, `runs`'s own version of the two `windows` tests just above: `runs` is
+/// `#[serde(default)]` too, so a file that omits the key entirely is legitimate and must
+/// load silently, exactly like a missing `windows`.
+#[test]
+fn runs_field_missing_entirely_loads_silently() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = state_path(&dir);
+    std::fs::write(&path, br#"{"version": 2, "next_id": 1, "windows": []}"#).unwrap();
+
+    let (state, warnings) = load(&path);
+
+    assert!(state.runs.is_empty());
+    assert!(
+        warnings.is_empty(),
+        "a missing runs field is legitimate (#[serde(default)]), not corrupt: {warnings:?}"
+    );
+    assert!(path.exists(), "nothing must be renamed aside");
+}
+
+/// The other half: `runs` present but the wrong JSON type used to be swallowed into an
+/// empty list with zero warnings — exactly the silent-malformed-field defect just fixed
+/// for `windows` above, reintroduced for a sibling field in the very same struct. `runs`
+/// gets the identical treatment: structurally invalid, corrupt, renamed aside, one
+/// warning, and (unlike the `windows` case, where good records could otherwise survive) a
+/// perfectly good `windows` entry alongside it must not survive either — the whole file is
+/// what gets moved aside, the same as a malformed `windows` field does.
+#[test]
+fn runs_field_present_but_not_an_array_is_corrupt() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = state_path(&dir);
+    std::fs::write(
+        &path,
+        br#"{"version": 2, "next_id": 2, "windows": [
+            {"id": 1, "name": "good", "runtime": "claude", "cwd": "/tmp/good"}
+        ], "runs": {"oops": true}}"#,
+    )
+    .unwrap();
+
+    let (state, warnings) = load(&path);
+
+    assert!(
+        state.windows.is_empty(),
+        "the whole file is corrupt, including the otherwise-good window: {state:?}"
+    );
+    assert!(state.runs.is_empty());
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert_eq!(warnings[0].severity, Severity::Warn);
+    assert!(
+        !path.exists(),
+        "a malformed runs field must not be left at state.json"
+    );
+
+    let corrupt_files: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("state.json.corrupt-"))
+        .collect();
+    assert_eq!(
+        corrupt_files.len(),
+        1,
+        "a malformed runs field must be moved aside like any other corrupt file: {corrupt_files:?}"
+    );
+}
+
+/// A `runs` array with valid JSON content, of any shape, round-trips: `Vec<serde_json::Value>`
+/// is opaque this milestone, so this is the forward-compatibility guarantee the
+/// `StateFile` doc promises — a newer daemon's structured runs survive a load by this
+/// build untouched.
+#[test]
+fn runs_field_with_array_content_loads_and_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = state_path(&dir);
+    std::fs::write(
+        &path,
+        br#"{"version": 2, "next_id": 1, "windows": [], "runs": [{"future": "shape"}, 42, "x"]}"#,
+    )
+    .unwrap();
+
+    let (state, warnings) = load(&path);
+
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(
+        state.runs,
+        vec![
+            serde_json::json!({"future": "shape"}),
+            serde_json::json!(42),
+            serde_json::json!("x"),
+        ]
+    );
+}
+
 #[test]
 fn newer_version_is_moved_aside() {
     let dir = tempfile::tempdir().unwrap();

@@ -155,15 +155,15 @@ impl std::fmt::Display for Problem {
 ///
 /// Decision 12's steps, in order: a missing file starts empty with no problems; any other
 /// read error starts empty too but leaves the file exactly where it was, reported as
-/// [`Severity::Error`]; invalid JSON, a non-object, or a missing/non-integer `version` or
-/// `next_id` counts as corrupt and gets renamed to `<path>.corrupt-<unix-seconds>` (with a
-/// `-1`, `-2`, ... suffix added until the name is free); a `version` newer than
-/// [`STATE_VERSION`] is renamed the same way to `<path>.unsupported-<unix-seconds>`,
-/// protecting a newer daemon's file from an older one; otherwise each entry of `windows`
-/// is deserialized on its own, so one bad record — an unknown runtime, or one that repeats
-/// an earlier entry's id or name — is skipped and reported instead of failing the whole
-/// load. Every case past "missing file" is [`Severity::Warn`]: the module already
-/// recovered on its own.
+/// [`Severity::Error`]; invalid JSON, a non-object, a missing/non-integer `version` or
+/// `next_id`, or a present-but-wrong-typed `windows` or `runs` counts as corrupt and gets
+/// renamed to `<path>.corrupt-<unix-seconds>` (with a `-1`, `-2`, ... suffix added until
+/// the name is free); a `version` newer than [`STATE_VERSION`] is renamed the same way to
+/// `<path>.unsupported-<unix-seconds>`, protecting a newer daemon's file from an older
+/// one; otherwise each entry of `windows` is deserialized on its own, so one bad record —
+/// an unknown runtime, or one that repeats an earlier entry's id or name — is skipped and
+/// reported instead of failing the whole load. Every case past "missing file" is
+/// [`Severity::Warn`]: the module already recovered on its own.
 pub fn load(path: &Path) -> (StateFile, Vec<Problem>) {
     load_with(path, SystemTime::now())
 }
@@ -274,6 +274,26 @@ pub fn load_with(path: &Path, now: SystemTime) -> (StateFile, Vec<Problem>) {
         }
     };
 
+    // Minor #6: `runs` gets exactly the treatment `windows` above just got, for the same
+    // reason — a present-but-wrong-typed field is structurally invalid, not defaultable,
+    // and must not be silently swallowed into an empty list with zero warnings. `runs` is
+    // always `[]` this milestone and its element type is opaque `serde_json::Value` (see
+    // the `StateFile` doc), so any JSON *array* is already valid content — there is
+    // nothing per-element left to validate the way the `windows` loop below validates
+    // each `WindowRecord`.
+    let runs: Vec<serde_json::Value> = match object.get("runs") {
+        None => Vec::new(),
+        Some(serde_json::Value::Array(items)) => items.clone(),
+        Some(_) => {
+            return mark_aside_with(
+                path,
+                "corrupt",
+                "state file's \"runs\" field is not an array",
+                now,
+            );
+        }
+    };
+
     let mut windows = Vec::new();
     let mut seen_ids = HashSet::new();
     let mut seen_names = HashSet::new();
@@ -346,11 +366,6 @@ pub fn load_with(path: &Path, now: SystemTime) -> (StateFile, Vec<Problem>) {
         }
         None => saved_next_id,
     };
-
-    let runs = object
-        .get("runs")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .unwrap_or_default();
 
     (
         StateFile {
