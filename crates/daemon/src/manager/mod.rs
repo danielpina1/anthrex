@@ -142,8 +142,38 @@ fn git() -> &'static std::ffi::OsStr {
     std::ffi::OsStr::new("git")
 }
 
+/// Fix wave 6, Minor finding: whether `c` is one of the bidi text-direction override
+/// characters — U+202A LRE through U+202E RLO, and U+2066 LRI through U+2069 PDI. Unicode
+/// category `Cf` ("format"), not `Cc` ("control"), so `char::is_control()` alone (decision
+/// 22 exactly as first written) does not catch it. U+202E RIGHT-TO-LEFT OVERRIDE is the
+/// character behind "Trojan Source" spoofing: it reorders a name's *rendered* glyphs
+/// without changing its bytes, confirmed live against the daemon (`anthrex rename 1
+/// "bad\u{202e}name"` succeeded, and `anthrex ls` rendered the reordered glyphs). That
+/// matters specifically because anthrex renders window names as labels distinguishing
+/// several agents running side by side with different worktrees and permissions — a window
+/// that renders as a different window is a security surface, not a cosmetic one.
+///
+/// This rejects exactly these nine bidi formatting characters, not the whole `Cf`
+/// category: `Cf` also contains U+200D ZERO WIDTH JOINER, required to fuse a legitimate
+/// multi-codepoint emoji sequence (a family emoji, `man+ZWJ+woman+ZWJ+girl+ZWJ+boy`) into
+/// the single grapheme cluster decision 22's own 64-*grapheme* limit exists to count
+/// correctly — rejecting the category would refuse exactly the input that limit was built
+/// to accept.
+fn is_bidi_override(c: char) -> bool {
+    matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+}
+
+/// The full set of characters decision 22 refuses in a name: the Unicode `Cc` control
+/// category (`char::is_control()`) plus the bidi overrides above. One predicate shared by
+/// [`validate_name`] and [`sanitize_name`] so the rule enforced on `create`/`rename` and
+/// the rule repaired on `restore` can never drift apart.
+fn is_disallowed_name_char(c: char) -> bool {
+    c.is_control() || is_bidi_override(c)
+}
+
 /// Design decision 22: a window name is trimmed, then must be 1 to 64 characters with no
-/// control characters. `create` (`manager::create::admit`) and `rename` both call this —
+/// control characters (amended, fix wave 6: and no bidi override characters — see
+/// [`is_bidi_override`]). `create` (`manager::create::admit`) and `rename` both call this —
 /// one validator, not two copies that could drift — so a name the CLI or TUI cannot get
 /// through creation can never be reached through a rename either.
 ///
@@ -163,7 +193,7 @@ fn validate_name(name: &str) -> anyhow::Result<String> {
     if trimmed.graphemes(true).count() > 64 {
         anyhow::bail!("name must be at most 64 characters");
     }
-    if trimmed.chars().any(|c| c.is_control()) {
+    if trimmed.chars().any(is_disallowed_name_char) {
         anyhow::bail!("name must not contain control characters");
     }
     Ok(trimmed)
@@ -179,14 +209,14 @@ fn validate_name(name: &str) -> anyhow::Result<String> {
 /// never deleted; one bad *record* among good ones is skipped, never the whole load) — a
 /// name is a label, not data the user cannot reconstruct, so it is repaired in place.
 ///
-/// Each disallowed character (`char::is_control()` — the exact rule [`validate_name`]
-/// enforces, so a sanitized name can never itself fail validation on the next save) is
-/// replaced with `_` rather than stripped, so two differently-placed bad characters cannot
-/// collapse two names into the same string by deleting the gap between them (`"a\x1bb"`
-/// becomes `"a_b"`, not `"ab"`). The result is then truncated to 64 grapheme clusters, the
-/// same unit and limit `validate_name` counts by. An input that is empty, trims to empty,
-/// or sanitizes to nothing usable falls back to `"window-<id>"`, which is always inside the
-/// limit and free of disallowed characters.
+/// Each disallowed character ([`is_disallowed_name_char`] — the exact rule
+/// [`validate_name`] enforces, so a sanitized name can never itself fail validation on the
+/// next save) is replaced with `_` rather than stripped, so two differently-placed bad
+/// characters cannot collapse two names into the same string by deleting the gap between
+/// them (`"a\x1bb"` becomes `"a_b"`, not `"ab"`). The result is then truncated to 64
+/// grapheme clusters, the same unit and limit `validate_name` counts by. An input that is
+/// empty, trims to empty, or sanitizes to nothing usable falls back to `"window-<id>"`,
+/// which is always inside the limit and free of disallowed characters.
 ///
 /// Idempotent by construction: every character this function can produce (`_`, and
 /// whatever safe characters survived from the input) is itself allowed, and the result is
@@ -203,7 +233,7 @@ fn sanitize_name(id: u32, name: &str) -> String {
     }
     let cleaned: String = trimmed
         .chars()
-        .map(|c| if c.is_control() { '_' } else { c })
+        .map(|c| if is_disallowed_name_char(c) { '_' } else { c })
         .collect();
     let truncated: String = cleaned.graphemes(true).take(64).collect();
     let truncated = truncated.trim();

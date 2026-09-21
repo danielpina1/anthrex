@@ -471,6 +471,34 @@ async fn restore_sanitizes_an_oversized_name_loaded_from_disk() {
     assert_eq!(info.name, "a".repeat(64));
 }
 
+/// Fix wave 6, Minor: the bidi rule from `validate_name` applies here too ("apply the same
+/// rule in the sanitizer... so a bad name cannot enter through the file either"). U+202E
+/// alone, once its (imaginary) surrounding control characters are gone, is still a `Cf`
+/// bidi override and must still be replaced.
+#[tokio::test]
+async fn restore_sanitizes_a_bidi_override_name_loaded_from_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("state.json");
+    let bidi = "bad\u{202E}name";
+    state::save(
+        &path,
+        &StateFile {
+            version: state::STATE_VERSION,
+            next_id: 2,
+            windows: vec![window_record(1, bidi, std::env::temp_dir(), None)],
+            runs: Vec::new(),
+        },
+    )
+    .unwrap();
+
+    let (loaded, _problems) = state::load(&path);
+    let m = manager();
+    m.restore(loaded);
+
+    let info = find(&m, 1);
+    assert_eq!(info.name, "bad_name");
+}
+
 /// Two records that each fail validation for a different reason can still sanitize to the
 /// *same* base string (two distinct control characters both become `_`); the ruling
 /// requires the sanitized result "cannot itself collide with another window's name" — so

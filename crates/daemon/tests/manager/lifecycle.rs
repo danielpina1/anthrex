@@ -8,6 +8,7 @@
 //! submodules share its fixtures.
 
 use super::*;
+use unicode_segmentation::UnicodeSegmentation;
 
 #[tokio::test]
 async fn rename_rejects_duplicates() {
@@ -355,4 +356,57 @@ async fn names_are_validated_on_create_and_rename() {
     let combining_65 = "e\u{0301}".repeat(65);
     let err = m.rename(base, combining_65).unwrap_err();
     assert_eq!(err.to_string(), "name must be at most 64 characters");
+}
+
+/// Fix wave 6, Minor: decision 22's "no control characters" was implemented with
+/// `char::is_control()`, which correctly covers the whole Unicode `Cc` category (`\x1b`,
+/// `\n`, `\r`, `\t`, `\x7f`) but not U+202E RIGHT-TO-LEFT OVERRIDE, which is category `Cf`
+/// ("format"), not `Cc`. A name carrying it renders with its glyphs reordered without its
+/// bytes changing — the "Trojan Source" spoofing class — which the live-daemon review
+/// reproduced: `anthrex rename 1 "bad\u{202e}name"` succeeded and `anthrex ls` rendered
+/// the reordered glyphs. The fix rejects the specific bidi formatting characters
+/// (U+202A-U+202E, U+2066-U+2069), not the whole `Cf` category, because `Cf` also contains
+/// U+200D ZERO WIDTH JOINER, required to fuse a legitimate multi-codepoint emoji sequence
+/// into the single grapheme cluster it is rendered and counted as (decision 22's own
+/// 64-*grapheme* limit, not 64-`char`, exists for exactly this reason) — so this test
+/// checks both directions: the bidi override is refused, and a name built entirely from
+/// family-emoji ZWJ sequences at exactly the 64-grapheme limit is still accepted, on both
+/// `create` and `rename`.
+#[tokio::test]
+async fn rename_rejects_bidi_override_but_accepts_family_emoji() {
+    let m = manager();
+    let base = create_id(&m, spec("base2"), std::env::temp_dir(), 80, 24).await;
+
+    let bidi = "bad\u{202E}name";
+    let err = create(&m, spec(bidi), std::env::temp_dir(), 80, 24)
+        .await
+        .unwrap_err();
+    assert_eq!(err.to_string(), "name must not contain control characters");
+    let err = m.rename(base, bidi.to_string()).unwrap_err();
+    assert_eq!(err.to_string(), "name must not contain control characters");
+
+    // man + ZWJ + woman + ZWJ + girl + ZWJ + boy: one grapheme cluster built from three
+    // ZWJs (Cf), repeated 64 times so the length check and the character check are both
+    // exercised at once, exactly as the review reproduced it live against the daemon.
+    // A second, distinct ZWJ sequence (man + ZWJ + woman, a couple emoji) covers `rename`,
+    // so accepting one via `create` and the other via `rename` cannot collide with each
+    // other under the existing duplicate-name check — the same reason
+    // `names_are_validated_on_create_and_rename` above uses two distinct 64-character
+    // fixtures rather than one shared between `create` and `rename`.
+    let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
+    let couple = "\u{1F468}\u{200D}\u{1F469}";
+    let family_64 = family.repeat(64);
+    let couple_64 = couple.repeat(64);
+    assert_eq!(
+        family_64.graphemes(true).count(),
+        64,
+        "the fixture itself must be exactly 64 grapheme clusters"
+    );
+    assert_eq!(couple_64.graphemes(true).count(), 64);
+    let created = create(&m, spec(&family_64), std::env::temp_dir(), 80, 24)
+        .await
+        .unwrap();
+    assert_eq!(created.name, family_64);
+    m.rename(base, couple_64.clone()).unwrap();
+    assert_eq!(find(&m, base).name, couple_64);
 }
