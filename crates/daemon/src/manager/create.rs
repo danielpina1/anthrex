@@ -396,6 +396,10 @@ fn spawn_window(
             claude_bin: &config.claude_bin,
             codex_bin: &config.codex_bin,
             codex_hook_source: config.codex_hook_source.as_deref(),
+            codex_bypass_hook_trust: config.codex_bypass_hook_trust,
+            // A fresh `create` is never a resume; only a later task's `restart` (design
+            // decision 17) resumes a known session id.
+            resume: None,
         },
     );
 

@@ -14,8 +14,8 @@ use tokio_util::sync::CancellationToken;
 pub struct DaemonOptions {
     pub socket_path: PathBuf,
     pub data_dir: PathBuf,
-    /// Not read by this milestone's task yet; carried so a later task can load
-    /// `config.toml` at the same point `run` already reads everything else it needs.
+    /// Where `config.toml` lives. Loaded by `run` with `config::load` before the manager
+    /// is built, so `runtimes.*` can resolve `ManagerConfig.claude_bin`/`codex_bin`.
     pub config_path: PathBuf,
     /// How long [`DaemonLock::acquire`] retries before giving up. The CLI passes
     /// [`LOCK_WAIT`]; tests pass [`Duration::ZERO`] so a locked-out daemon fails fast.
@@ -179,8 +179,23 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
         }
     }
 
+    // Config decision 7: loaded once, on `spawn_blocking` like the state file above and
+    // for the same reason (AGENTS.md hard rule 2 — file I/O that can stall must not run
+    // on a tokio worker thread), and before the socket bind so `runtimes.*` is already
+    // resolved into `ManagerConfig` before the first client can connect. Each problem is
+    // logged at `warn` (decision 7: "the daemon logs each problem at `warn` once, at
+    // start"); unlike the state file's `Problem`, `config::Problem` carries no severity of
+    // its own to preserve, so there is nothing to flatten here.
+    let config_path = opts.config_path.clone();
+    let (loaded_config, config_problems) =
+        tokio::task::spawn_blocking(move || config::load(&config_path)).await?;
+    for problem in &config_problems {
+        tracing::warn!(problem = %problem, "config problem");
+    }
+
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    let mut config = ManagerConfig::from_env(opts.socket_path.clone(), shell)?;
+    let mut config =
+        ManagerConfig::from_env(opts.socket_path.clone(), shell, &loaded_config.runtimes)?;
     config.worktrees_root = opts.data_dir.join("worktrees");
     // Fix wave 4, item 1: `codex_bin` is cloned out here, before `WindowManager::new`
     // consumes `config`, so the probe itself can run later — immediately before
