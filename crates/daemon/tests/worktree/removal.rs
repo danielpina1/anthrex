@@ -1,5 +1,11 @@
-//! Unmaking a worktree: `is_dirty`, `remove` and `discard_new`, including the two
-//! states that hold real commits while `git status` stays silent about them.
+//! Unmaking a worktree: `dirty_reason`, `remove` and `discard_new`, including the three
+//! states that hold real work while `git status` stays silent about them.
+//!
+//! Each of those states is checked twice over: that it is *detected*, and that the
+//! sentence the user is shown *names it*. The second half is the whole-branch review's
+//! finding 2 — every refusal used to read "uncommitted or untracked changes", which is
+//! false for a paused rebase, a bisect and an unreachable detached `HEAD`, and a user who
+//! runs `git status`, sees a clean tree and concludes the daemon is confused will force.
 //!
 //! A submodule of `tests/worktree.rs` rather than a test binary of its own, so it keeps
 //! that file's `TempRepo`, `worktrees_root`, `git()` and `deadline()` helpers instead of
@@ -15,23 +21,36 @@ fn is_dirty_sees_modified_and_untracked_but_not_ignored_files() {
     let created = worktree::create(git(), &repo.root, "dirt", &wt_root, deadline()).unwrap();
     let path = &created.worktree.path;
 
-    assert!(!worktree::is_dirty(git(), path, deadline()).unwrap());
+    assert_eq!(
+        worktree::dirty_reason(git(), path, deadline()).unwrap(),
+        None
+    );
 
     fs::write(path.join("ignored-build.log"), "noise\n").unwrap();
-    assert!(
-        !worktree::is_dirty(git(), path, deadline()).unwrap(),
+    assert_eq!(
+        worktree::dirty_reason(git(), path, deadline()).unwrap(),
+        None,
         "a file the committed .gitignore covers is not a change"
     );
 
     let untracked = path.join("untracked.txt");
     fs::write(&untracked, "new\n").unwrap();
-    assert!(worktree::is_dirty(git(), path, deadline()).unwrap());
+    assert_eq!(
+        worktree::dirty_reason(git(), path, deadline()).unwrap(),
+        Some(DirtyReason::Changes)
+    );
 
     fs::remove_file(&untracked).unwrap();
-    assert!(!worktree::is_dirty(git(), path, deadline()).unwrap());
+    assert_eq!(
+        worktree::dirty_reason(git(), path, deadline()).unwrap(),
+        None
+    );
 
     fs::write(path.join("README"), "two\n").unwrap();
-    assert!(worktree::is_dirty(git(), path, deadline()).unwrap());
+    assert_eq!(
+        worktree::dirty_reason(git(), path, deadline()).unwrap(),
+        Some(DirtyReason::Changes)
+    );
 }
 
 #[test]
@@ -61,9 +80,23 @@ fn remove_dirty_worktree_is_refused_then_forced() {
     let error = worktree::remove(git(), &created.worktree, false, deadline()).unwrap_err();
 
     match &error {
-        WorktreeError::Dirty { path: reported } => assert_eq!(reported, &path),
+        WorktreeError::Dirty {
+            path: reported,
+            reason,
+        } => {
+            assert_eq!(reported, &path);
+            assert_eq!(*reason, DirtyReason::Changes);
+        }
         other => panic!("{other:?}"),
     }
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "worktree {} has uncommitted or untracked changes",
+            path.display()
+        ),
+        "files really are what this state loses, so this wording stays"
+    );
     assert!(
         path.join("untracked.txt").exists(),
         "a refused removal must leave every byte of the work in place"
@@ -150,11 +183,15 @@ fn a_detached_head_holding_unreachable_commits_is_dirty() {
     let created = worktree::create(git(), &repo.root, "detachable", &wt_root, deadline()).unwrap();
     let path = created.worktree.path.clone();
 
-    assert!(!worktree::is_dirty(git(), &path, deadline()).unwrap());
+    assert_eq!(
+        worktree::dirty_reason(git(), &path, deadline()).unwrap(),
+        None
+    );
 
     support::git(&path, &[OsStr::new("checkout"), OsStr::new("--detach")]);
-    assert!(
-        !worktree::is_dirty(git(), &path, deadline()).unwrap(),
+    assert_eq!(
+        worktree::dirty_reason(git(), &path, deadline()).unwrap(),
+        None,
         "detached at a commit a branch still reaches is not work at risk"
     );
 
@@ -174,17 +211,40 @@ fn a_detached_head_holding_unreachable_commits_is_dirty() {
         "",
         "the committed state is invisible to `git status`, which is the whole hazard"
     );
-    assert!(
-        worktree::is_dirty(git(), &path, deadline()).unwrap(),
+    assert_eq!(
+        worktree::dirty_reason(git(), &path, deadline()).unwrap(),
+        Some(DirtyReason::UnreachableHead),
         "a commit no ref reaches is work a removal would destroy"
     );
 
     let error = worktree::remove(git(), &created.worktree, false, deadline()).unwrap_err();
 
     match &error {
-        WorktreeError::Dirty { path: reported } => assert_eq!(reported, &path),
+        WorktreeError::Dirty {
+            path: reported,
+            reason,
+        } => {
+            assert_eq!(reported, &path);
+            assert_eq!(*reason, DirtyReason::UnreachableHead);
+        }
         other => panic!("{other:?}"),
     }
+    // What the user is told, not merely that they were told something: these commits
+    // are not "changes", and a message calling them that is the one a user disproves
+    // with `git status` and then overrides.
+    let message = error.to_string();
+    assert!(
+        message.contains("is detached at commits no branch, tag or remote reaches"),
+        "{message}"
+    );
+    assert!(
+        message.contains("discards those commits"),
+        "the message must say what forcing would destroy: {message}"
+    );
+    assert!(
+        !message.contains("uncommitted or untracked"),
+        "this tree is clean; claiming otherwise is what makes a user force: {message}"
+    );
     assert!(path.join("scratch.txt").exists());
 
     worktree::remove(git(), &created.worktree, true, deadline()).unwrap();
@@ -201,7 +261,10 @@ fn a_paused_rebase_with_a_clean_tree_is_dirty() {
     let created = worktree::create(git(), &repo.root, "rebasing", &wt_root, deadline()).unwrap();
     let path = created.worktree.path.clone();
 
-    assert!(!worktree::is_dirty(git(), &path, deadline()).unwrap());
+    assert_eq!(
+        worktree::dirty_reason(git(), &path, deadline()).unwrap(),
+        None
+    );
 
     pause_rebase_at_edit(&path);
 
@@ -210,17 +273,34 @@ fn a_paused_rebase_with_a_clean_tree_is_dirty() {
         "",
         "the paused rebase leaves a clean tree, which is the whole hazard"
     );
-    assert!(
-        worktree::is_dirty(git(), &path, deadline()).unwrap(),
+    assert_eq!(
+        worktree::dirty_reason(git(), &path, deadline()).unwrap(),
+        Some(DirtyReason::Rebase),
         "a paused rebase is work a removal would destroy"
     );
 
     let error = worktree::remove(git(), &created.worktree, false, deadline()).unwrap_err();
 
     match &error {
-        WorktreeError::Dirty { path: reported } => assert_eq!(reported, &path),
+        WorktreeError::Dirty {
+            path: reported,
+            reason,
+        } => {
+            assert_eq!(reported, &path);
+            assert_eq!(*reason, DirtyReason::Rebase);
+        }
         other => panic!("{other:?}"),
     }
+    let message = error.to_string();
+    assert!(message.contains("has a rebase in progress"), "{message}");
+    assert!(
+        message.contains("every commit it has already replayed"),
+        "the message must say what forcing would destroy: {message}"
+    );
+    assert!(
+        !message.contains("uncommitted or untracked"),
+        "this tree is clean; claiming otherwise is what makes a user force: {message}"
+    );
     assert!(path.exists());
 
     worktree::remove(git(), &created.worktree, true, deadline()).unwrap();
@@ -285,4 +365,141 @@ fn discard_new_deletes_only_a_branch_it_created() {
         "a branch that was already there is not this create's to delete"
     );
     assert_eq!(repo.worktree_paths(), vec![repo.root.clone()]);
+}
+
+/// Whole-branch review finding 5, reproduced end to end: a `git bisect` in progress.
+///
+/// Verified against git 2.50.1 before the fix — `status --porcelain` empty, none of the
+/// four old markers on disk, `rev-list --count` zero, and a plain `git worktree remove`
+/// exiting 0 and taking `BISECT_LOG` with it. The record of every good/bad answer the
+/// user has given exists nowhere else, so this asserts the *removal* is refused, not that
+/// some helper returns true.
+#[test]
+fn a_paused_bisect_is_refused_and_named() {
+    let repo = TempRepo::new();
+    support::commit_more(&repo.root, 4);
+    let (_keep, wt_root) = worktrees_root();
+    let created = worktree::create(git(), &repo.root, "bisecting", &wt_root, deadline()).unwrap();
+    let path = created.worktree.path.clone();
+
+    assert_eq!(
+        worktree::dirty_reason(git(), &path, deadline()).unwrap(),
+        None
+    );
+
+    support::git(&path, &[OsStr::new("bisect"), OsStr::new("start")]);
+    support::git(&path, &[OsStr::new("bisect"), OsStr::new("bad")]);
+    support::git(
+        &path,
+        &[
+            OsStr::new("bisect"),
+            OsStr::new("good"),
+            OsStr::new("HEAD~3"),
+        ],
+    );
+
+    let bisect_log = support::git_output(
+        &path,
+        &[
+            OsStr::new("rev-parse"),
+            OsStr::new("--git-path"),
+            OsStr::new("BISECT_LOG"),
+        ],
+    );
+    let bisect_log = PathBuf::from(String::from_utf8(bisect_log.stdout).unwrap().trim());
+    assert!(
+        bisect_log.exists(),
+        "the fixture must really be mid-bisect: {}",
+        bisect_log.display()
+    );
+    assert_eq!(
+        porcelain_status(&path),
+        "",
+        "a bisect leaves a clean tree, which is the whole hazard"
+    );
+
+    assert_eq!(
+        worktree::dirty_reason(git(), &path, deadline()).unwrap(),
+        Some(DirtyReason::Bisect),
+    );
+
+    let error = worktree::remove(git(), &created.worktree, false, deadline())
+        .expect_err("a plain removal must not silently delete a bisect in progress");
+    let message = error.to_string();
+    assert!(message.contains("has a bisect in progress"), "{message}");
+    assert!(
+        message.contains("every good and bad answer recorded so far"),
+        "the message must say what forcing would destroy: {message}"
+    );
+    assert!(
+        !message.contains("uncommitted or untracked"),
+        "this tree is clean; claiming otherwise is what makes a user force: {message}"
+    );
+    assert!(
+        bisect_log.exists(),
+        "a refused removal must leave the bisect state intact"
+    );
+    assert!(path.exists());
+
+    worktree::remove(git(), &created.worktree, true, deadline()).unwrap();
+    assert!(!path.exists());
+}
+
+/// The other two markers, and the ordering that decides which sentence a conflicted
+/// merge gets: the paused-operation question runs before `status --porcelain`, so a
+/// merge stopped at a conflict is reported as a merge rather than as loose changes.
+#[test]
+fn a_paused_merge_and_cherry_pick_name_themselves() {
+    for (operation, expected, sentence) in [
+        ("merge", DirtyReason::Merge, "has a merge in progress"),
+        (
+            "cherry-pick",
+            DirtyReason::CherryPick,
+            "has a cherry-pick in progress",
+        ),
+    ] {
+        let repo = TempRepo::new();
+        let (_keep, wt_root) = worktrees_root();
+        let branch = format!("{operation}-target");
+        let created = worktree::create(git(), &repo.root, &branch, &wt_root, deadline()).unwrap();
+        let path = created.worktree.path.clone();
+
+        // A side branch whose commit conflicts with one made here, so the operation
+        // stops half-way instead of completing.
+        support::git(
+            &path,
+            &[OsStr::new("checkout"), OsStr::new("-b"), OsStr::new("side")],
+        );
+        fs::write(path.join("README"), "side\n").unwrap();
+        support::git(
+            &path,
+            &[OsStr::new("commit"), OsStr::new("-am"), OsStr::new("side")],
+        );
+        support::git(&path, &[OsStr::new("checkout"), OsStr::new(&branch)]);
+        fs::write(path.join("README"), "ours\n").unwrap();
+        support::git(
+            &path,
+            &[OsStr::new("commit"), OsStr::new("-am"), OsStr::new("ours")],
+        );
+
+        let output = support::git_output(&path, &[OsStr::new(operation), OsStr::new("side")]);
+        assert!(
+            !output.status.success(),
+            "the fixture needs a conflict to leave {operation} paused"
+        );
+
+        assert_eq!(
+            worktree::dirty_reason(git(), &path, deadline()).unwrap(),
+            Some(expected),
+            "a paused {operation} must be named as one, not as loose changes"
+        );
+        let error = worktree::remove(git(), &created.worktree, false, deadline())
+            .expect_err("a paused {operation} must refuse a plain removal");
+        let message = error.to_string();
+        assert!(message.contains(sentence), "{message}");
+        assert!(
+            !message.contains("uncommitted or untracked"),
+            "the paused operation is the reason, not the files it left: {message}"
+        );
+    }
 }

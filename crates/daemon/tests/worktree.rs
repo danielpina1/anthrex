@@ -12,7 +12,7 @@ mod support;
 #[path = "worktree/removal.rs"]
 mod removal;
 
-use daemon::worktree::{self, OPERATION_TIMEOUT, WorktreeError, repo_worktrees_dir};
+use daemon::worktree::{self, DirtyReason, OPERATION_TIMEOUT, WorktreeError, repo_worktrees_dir};
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};

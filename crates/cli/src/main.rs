@@ -104,11 +104,16 @@ fn expect_ack(reply: DaemonMsg) -> anyhow::Result<()> {
     }
 }
 
-/// The hint printed after a `remove-dirty` refusal, decision 39. `target` is echoed back
-/// exactly as the user typed it, so the two commands it names are ones they can paste.
+/// The hint printed after a dirty refusal, decision 39. `target` is echoed back exactly
+/// as the user typed it, so the two commands it names are ones they can paste.
+///
+/// "discard it anyway" rather than decision 39's original "discard the changes": the
+/// daemon's message above this line may have refused a paused rebase, a bisect or
+/// unreachable commits, none of which are changes, and a hint that renamed them would
+/// undo the work the message does.
 fn dirty_hint(target: &str) -> String {
     format!(
-        "run 'anthrex rm {target} --worktree --force' to discard the changes, or 'anthrex rm {target}' to keep the worktree"
+        "run 'anthrex rm {target} --worktree --force' to discard it anyway, or 'anthrex rm {target}' to keep the worktree"
     )
 }
 
@@ -387,7 +392,7 @@ mod tests {
     fn dirty_hint_names_both_commands() {
         assert_eq!(
             dirty_hint("api-worker"),
-            "run 'anthrex rm api-worker --worktree --force' to discard the changes, or \
+            "run 'anthrex rm api-worker --worktree --force' to discard it anyway, or \
              'anthrex rm api-worker' to keep the worktree"
         );
     }

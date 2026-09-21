@@ -10,10 +10,10 @@
 //! [`run_git`] is `#[doc(hidden)] pub` rather than private only so that
 //! `crates/daemon/tests/worktree_env.rs` can exercise it in a test binary of its own —
 //! see that file for why. It is not part of this module's real API; every other caller
-//! lives inside this module and its submodules — `create`, `is_dirty`, `remove` and
+//! lives inside this module and its submodules — `create`, `dirty_reason`, `remove` and
 //! `discard_new`, plus this file's own tests.
 //!
-//! `create`, `remove`, `discard_new` and `is_dirty` — the orchestration that actually
+//! `create`, `remove`, `discard_new` and `dirty_reason` — the orchestration that actually
 //! creates and removes a worktree — live in the [`ops`] and [`dirty`] submodules and are
 //! re-exported here, so the module's public surface is the one the brief's interface
 //! block names while no part of it grows past AGENTS.md rule 8's ~600 lines. The split is
@@ -24,7 +24,7 @@
 mod dirty;
 mod ops;
 
-pub use dirty::is_dirty;
+pub use dirty::{DirtyReason, dirty_reason};
 pub use ops::{Created, ManagedWorktree, create, discard_and_describe, discard_new, remove};
 
 use std::ffi::OsStr;
@@ -89,8 +89,10 @@ pub enum WorktreeError {
     BranchInUse { branch: String, path: PathBuf },
     #[error("worktree path already exists: {}", path.display())]
     PathExists { path: PathBuf },
-    #[error("worktree {} has uncommitted or untracked changes", path.display())]
-    Dirty { path: PathBuf },
+    /// `reason` is what makes this message true rather than merely alarming: see
+    /// [`DirtyReason`], whose variants each describe what a removal would destroy.
+    #[error("worktree {} {reason}", path.display())]
+    Dirty { path: PathBuf, reason: DirtyReason },
     #[error("git {action} failed: {stderr}")]
     Git { action: String, stderr: String }, // action e.g. "worktree add"
     /// A failure that happened once `git worktree add` had already started, carrying

@@ -242,7 +242,7 @@ fn rm_worktree_on_a_dirty_checkout_refuses_then_force_deletes_it() {
     );
     assert!(
         stderr.contains(&format!(
-            "run 'anthrex rm {id} --worktree --force' to discard the changes"
+            "run 'anthrex rm {id} --worktree --force' to discard it anyway"
         )) && stderr.contains(&format!("'anthrex rm {id}' to keep the worktree")),
         "expected the CLI's dirty hint naming both follow-up commands, got: {stderr}"
     );

@@ -11,8 +11,10 @@
 //! The dirty check runs *before* the agent is signalled, not after, so a refusal costs the
 //! user nothing: the agent is still running in the checkout it was working in, and they
 //! can go and look at what is in there. The check itself lives in
-//! [`crate::worktree::is_dirty`], which counts a paused rebase and an unreachable detached
-//! `HEAD` as changes precisely because `git status` does not. Every question it cannot
+//! [`crate::worktree::dirty_reason`], which counts a paused rebase, a paused bisect and an
+//! unreachable detached `HEAD` as work precisely because `git status` does not — and which
+//! says *which* of them it found, so the refusal the user reads names the state they can
+//! actually go and check. Every question it cannot
 //! answer is an error here rather than a "no": refusing to remove a clean worktree is an
 //! annoyance, removing a dirty one is lost work, and only one of those is recoverable.
 //!
@@ -153,9 +155,12 @@ impl WindowManager {
         // own `git worktree remove` and then closed the window would be told to force it.
         if !force && !worktree_is_gone(&wt.path) {
             let path = wt.path.clone();
-            let dirty = blocking(move || worktree::is_dirty(git(), &path, deadline)).await?;
-            if dirty {
-                return Err(RemoveError::Dirty(WorktreeError::Dirty { path: wt.path }));
+            let dirty = blocking(move || worktree::dirty_reason(git(), &path, deadline)).await?;
+            if let Some(reason) = dirty {
+                return Err(RemoveError::Dirty(WorktreeError::Dirty {
+                    path: wt.path,
+                    reason,
+                }));
             }
         }
 

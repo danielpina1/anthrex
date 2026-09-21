@@ -177,7 +177,7 @@ Milestone 4.5 keys git state by worktree root and watches one root per registrat
 ### CLI
 
 38. `anthrex new --worktree <branch>` sends the branch in `WindowSpec.worktree_branch`. `anthrex rm <target> --worktree [--force]` sends `Remove` with those flags; clap rejects `--force` without `--worktree`. A request that can run git waits `client::WORKTREE_REQUEST_TIMEOUT = 45 s` for its reply: the worktree operation deadline of decision 3, plus `KILL_GRACE`, plus margin. It is a third constant beside the existing `REQUEST_TIMEOUT` and `CREATE_WINDOW_REPLY_TIMEOUT`, which keep their values and their test: a `new` without `--worktree` still waits `CREATE_WINDOW_REPLY_TIMEOUT`, and every other command still waits `REQUEST_TIMEOUT`.
-39. `anthrex rm` of a worktree window without `--worktree` prints to stderr `kept worktree <cwd> on branch <branch>`. A `remove-dirty` refusal prints the daemon's message followed by `run 'anthrex rm <target> --worktree --force' to discard the changes, or 'anthrex rm <target>' to keep the worktree` and exits 1.
+39. `anthrex rm` of a worktree window without `--worktree` prints to stderr `kept worktree <cwd> on branch <branch>`. A dirty refusal (`DaemonMsg::RemoveDirty`) prints the daemon's message followed by `run 'anthrex rm <target> --worktree --force' to discard it anyway, or 'anthrex rm <target>' to keep the worktree` and exits 1. The hint says "it" rather than "the changes" because the refusal above it may name a paused rebase, a bisect or unreachable commits, none of which are changes.
 40. `anthrex ls` gains a `BRANCH` column between `STATUS` and `DIR`, with `-` for windows without a worktree.
 
 ## Interfaces
@@ -261,8 +261,8 @@ pub enum WorktreeError {
     BranchInUse { branch: String, path: PathBuf },
     #[error("worktree path already exists: {}", path.display())]
     PathExists { path: PathBuf },
-    #[error("worktree {} has uncommitted or untracked changes", path.display())]
-    Dirty { path: PathBuf },
+    #[error("worktree {} {reason}", path.display())]
+    Dirty { path: PathBuf, reason: DirtyReason }, // one of the six sentences in `DirtyReason`
     #[error("git {action} failed: {stderr}")]
     Git { action: String, stderr: String }, // action e.g. "worktree add"
     #[error("git is not installed or not on PATH")]
@@ -529,14 +529,20 @@ Modal key handling lives in `crates/tui/src/app/modal_keys.rs`, a submodule of `
 │ Space toggle · y / Enter remove · n / Esc   │
 ╰─────────────────────────────────────────────╯
 
-╭ worktree has changes ───────────────────────────────╮
+╭ worktree holds work ────────────────────────────────╮
+│ agent 'api-worker'                                  │
 │ worktree /…/shop-5cc2e648/feat-api has uncommitted  │
 │ or untracked changes                                │
 │                                                     │
-│ f  force: delete the worktree and those changes     │
+│ f  force: delete the worktree and everything in it  │
 │ k  keep the worktree, remove the window             │
 │ n  cancel                                           │
 ╰─────────────────────────────────────────────────────╯
+
+The first line names the window this prompt will act on, and the `f` line describes the
+whole checkout rather than "those changes": the daemon's message is the only part that
+knows which of `DirtyReason`'s six states was found, and for a paused rebase, a bisect or
+unreachable commits the word "changes" is false.
 
 **Neither prompt asserts the agent's process state, and none may be added.** The
 confirm wireframe above once read `Remove 'api-worker'? Its process is killed.`; that

@@ -3,6 +3,13 @@
 //! `ui::modal::render` dispatches `Modal::NewAgent`, `Modal::Remove` and
 //! `Modal::ForceRemove` here instead of its own generic (title, body) rendering.
 //!
+//! The force follow-up's own lines say nothing about *what kind* of work the checkout
+//! holds: the daemon's message is the only thing that knows (it may be a rebase, a
+//! bisect, unreachable commits or plain uncommitted files — see
+//! `daemon::worktree::DirtyReason`), so the title and the `f` line describe the worktree
+//! as a whole. A prompt that said "changes" would be false for exactly the states whose
+//! loss is worst.
+//!
 //! Neither the remove-confirm dialog nor the force follow-up says anything about the
 //! agent's process. `WindowManager::remove_with_worktree`'s dirty check
 //! (`crates/daemon/src/manager/remove.rs`) runs *before* the agent is signalled, so on
@@ -323,7 +330,7 @@ pub fn render_force_remove(frame: &mut Frame, name: &str, message: &str, area: R
     lines.push(Line::raw(""));
     lines.push(Line::from(vec![
         Span::styled("f  ", Style::default().fg(theme::ACCENT)),
-        Span::raw("force: delete the worktree and those changes"),
+        Span::raw("force: delete the worktree and everything in it"),
     ]));
     lines.push(Line::from(vec![
         Span::styled("k  ", Style::default().fg(theme::ACCENT)),
@@ -333,5 +340,5 @@ pub fn render_force_remove(frame: &mut Frame, name: &str, message: &str, area: R
         Span::styled("n  ", Style::default().fg(theme::ACCENT)),
         Span::raw("cancel"),
     ]));
-    render_box(frame, " worktree has changes ", lines, area);
+    render_box(frame, " worktree holds work ", lines, area);
 }

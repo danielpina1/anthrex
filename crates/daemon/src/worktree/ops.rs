@@ -26,7 +26,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use super::dirty::is_dirty;
+use super::dirty::dirty_reason;
 use super::{
     CLEANUP_TIMEOUT, RESERVED_DIR, WorktreeError, branch_dir_name, check_branch_syntax,
     repo_worktrees_dir, run_git,
@@ -201,7 +201,7 @@ pub fn create(
 /// Design decision 13: removes `wt`, refusing when its tree has changes unless `force`.
 /// The branch is never deleted, whatever happens here.
 ///
-/// Without `force`, [`is_dirty`] is asked **before** the git call, not only after it.
+/// Without `force`, [`dirty_reason`] is asked **before** the git call, not only after it.
 /// Git refuses a tree with modified or untracked files by itself, but it does *not*
 /// refuse a paused rebase or a detached `HEAD` holding unreachable commits — it deletes
 /// both silently — so a check that only classified git's own refusal would never fire
@@ -228,9 +228,10 @@ pub fn remove(
         return prune(git, &wt.repo_root, deadline);
     }
 
-    if !force && is_dirty(git, &wt.path, deadline)? {
+    if !force && let Some(reason) = dirty_reason(git, &wt.path, deadline)? {
         return Err(WorktreeError::Dirty {
             path: wt.path.clone(),
+            reason,
         });
     }
 
@@ -245,9 +246,10 @@ pub fn remove(
         return Ok(());
     }
 
-    if !force && matches!(is_dirty(git, &wt.path, deadline), Ok(true)) {
+    if !force && let Ok(Some(reason)) = dirty_reason(git, &wt.path, deadline) {
         return Err(WorktreeError::Dirty {
             path: wt.path.clone(),
+            reason,
         });
     }
     Err(WorktreeError::Git {
