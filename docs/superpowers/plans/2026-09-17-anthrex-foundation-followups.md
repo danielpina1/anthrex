@@ -219,3 +219,50 @@ Each open item above is closed by exactly one milestone. Its brief lists the ite
   in one daemon lifetime (a restart reclaims the whole space), and closing the one-id gap would
   mean `next_id` growing past `u32::MAX` itself, which is not representable. Recorded here per
   the M6.5 review's Minor 2, rather than changed.
+
+## From the M6 persistence flake investigation (2026-09-21), deliberately deferred
+
+A wall-clock timing audit (distilled into `docs/timing-budgets.md`) fixed the sites with a
+negative or thin margin and a cheap seam. Two more sites have a real margin problem but no
+cheap fix, and are recorded here rather than patched with a wider number, which would either
+do nothing (the first) or silently delete the property under test (the second).
+
+- **`later_size_changes_are_debounced_into_a_resize`** (`crates/tui/src/app_tests.rs:125`,
+  the test for `RESIZE_DEBOUNCE` = 30ms, `crates/tui/src/app.rs:14`). The tightest bound in
+  the workspace: `set_terminal_size` stamps `Instant::now()` and the very next statement
+  asserts `on_tick()` still sees the debounce as unexpired. There is no I/O and no
+  subprocess between the two lines — the entire budget is scheduler slack, so a 30ms
+  deschedule between two adjacent statements fails it. **Never observed failing** in this
+  investigation's runs, but margin analysis alone makes it the highest-risk site in the
+  repo. The real fix is to stop measuring the wall clock at all: give `App` an injectable
+  `now: fn() -> Instant` (or a small `Clock` trait, defaulting to `Instant::now`), the way
+  `ManagerConfig` already injects `operation_timeout`/`cleanup_timeout`/`kill_grace` in the
+  daemon crate, and have the test advance a fake clock explicitly instead of sleeping past a
+  real debounce. That also de-risks `TOAST_TTL` and `DOUBLE_CLICK` testing later, so it is
+  worth doing as one small piece of TUI work rather than folded into a test-only patch.
+  Estimated 1–2 hours. Not fixed here because it is production-code surgery in a different
+  crate from the rest of this work, not a test-file change.
+
+- **The four `< 100ms` lock-latency assertions** — `a_program_that_ignores_stdin_never_blocks_write_input_or_list`
+  in `crates/daemon/tests/manager.rs` (three call sites, currently around `:215`, `:302`,
+  `:310`) and `a_slow_worktree_create_does_not_block_the_manager` in
+  `crates/daemon/tests/manager_worktree/admission.rs` (currently around `:191`, plus a
+  second `< 1s` bound around `:212` covering a PTY spawn). These are **load-bearing**: the
+  property under test is that `list()`/`write_input()` never wait on the manager lock while
+  a sibling operation is deliberately stalled (a full PTY write buffer, or a real
+  `git worktree add` stuck inside a 2s `post-checkout` hook) — design requirement C1 and the
+  lock-discipline rule in AGENTS.md hard rule 2. Widening the bound would not fix a flake
+  here, it would quietly delete the requirement: a 500ms bound still "passes" if the code
+  regressed to blocking on the lock for 400ms, which is exactly the bug this test exists to
+  catch. **Not fixed here** because the honest fix is real instrumentation, not a wider
+  number: give `WindowManager::list`/`write_input` a way to report whether they blocked on
+  the contended mutex (e.g. a `try_lock`-first path, or a counter of contended acquisitions
+  incremented only when the fast path missed) and assert on that instead of on wall-clock
+  time. None of these four sites failed in this investigation's runs at load average ~200
+  across twelve full-suite passes, so there is no evidence of live flakiness forcing the
+  issue — but if CI ever shows one of them failing, the fix is "add the instrumentation,"
+  not "raise the number." Estimated 4–6 hours, the most expensive item in the investigation
+  and the lowest priority unless CI evidence changes that.
+
+Both items are recorded here rather than assigned to a specific milestone number; pick them
+up whenever TUI clock injection or manager lock instrumentation is next in scope.
