@@ -158,10 +158,30 @@ fn old_sidebar_width_is_an_alias() {
     assert_eq!(problems[0].key, "sidebar_width");
     assert_eq!(problems[0].message, "renamed to ui.sidebar_width");
 
-    // When both are present, `ui.sidebar_width` wins.
-    let text = "sidebar_width = 20\n\n[ui]\nsidebar_width = 50\n";
-    let (config, _problems) = parse(text);
+    // When both are present, `ui.sidebar_width` wins, and the alias's own
+    // "renamed" problem is still reported exactly once -- not duplicated,
+    // and not dropped because it was overridden. The alias value (30) is
+    // itself valid so it actually reaches the "renamed" problem, rather
+    // than being rejected for being out of range and masking the
+    // precedence behaviour this is meant to pin down.
+    let text = "sidebar_width = 30\n\n[ui]\nsidebar_width = 50\n";
+    let (config, problems) = parse(text);
     assert_eq!(config.ui.sidebar_width, Some(50));
+    assert_eq!(problems.len(), 1);
+    assert_eq!(problems[0].key, "sidebar_width");
+    assert_eq!(problems[0].message, "renamed to ui.sidebar_width");
+}
+
+/// `every_key_is_read` sets `attention = true, done = true`, the brief's own
+/// pinned fixture, which cannot tell the two `[bell]` fields apart: swapping
+/// which field each key writes into is invisible when both end up `true`.
+/// This uses different values per field so a swap fails here instead.
+#[test]
+fn bell_fields_are_independent() {
+    let (config, problems) = parse("[bell]\nattention = false\ndone = true\n");
+    assert!(problems.is_empty(), "unexpected problems: {problems:?}");
+    assert!(!config.bell.attention);
+    assert!(config.bell.done);
 }
 
 #[test]
@@ -184,6 +204,75 @@ fn missing_file_is_defaults() {
     let (config, problems) = load(&path);
     assert_eq!(config, Config::default());
     assert!(problems.is_empty());
+}
+
+/// Unlike a missing file, a path that exists but can't be read as config
+/// text must not fold into the same silent "defaults, no problems" result --
+/// the caller needs a way to tell "no config" from "config I could not read".
+#[test]
+fn directory_path_reports_a_problem() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::create_dir(&path).unwrap();
+
+    let (config, problems) = load(&path);
+    assert_eq!(config, Config::default());
+    assert_eq!(problems.len(), 1);
+    assert_eq!(problems[0].key, "<config>");
+    assert!(
+        problems[0].message.contains(&path.display().to_string()),
+        "message should name the path: {:?}",
+        problems[0].message
+    );
+}
+
+#[test]
+fn unreadable_file_reports_a_problem() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "prefix = \"C-a\"").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    // Root ignores the mode, so confirm the denial is real before asserting on it.
+    let denied = matches!(
+        std::fs::read_to_string(&path),
+        Err(ref e) if e.kind() == std::io::ErrorKind::PermissionDenied
+    );
+    let result = load(&path);
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    if !denied {
+        eprintln!("skipped: the file mode did not deny access (running as root?)");
+        return;
+    }
+    let (config, problems) = result;
+    assert_eq!(config, Config::default());
+    assert_eq!(problems.len(), 1);
+    assert_eq!(problems[0].key, "<config>");
+    assert!(
+        problems[0].message.contains(&path.display().to_string()),
+        "message should name the path: {:?}",
+        problems[0].message
+    );
+}
+
+#[test]
+fn non_utf8_file_reports_a_problem() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, [0xff, 0xfe, 0xfd]).unwrap();
+
+    let (config, problems) = load(&path);
+    assert_eq!(config, Config::default());
+    assert_eq!(problems.len(), 1);
+    assert_eq!(problems[0].key, "<config>");
+    assert!(
+        problems[0].message.contains(&path.display().to_string()),
+        "message should name the path: {:?}",
+        problems[0].message
+    );
 }
 
 /// Decision 4 excludes `h`, `i`, `j` and `m` specifically, because terminals

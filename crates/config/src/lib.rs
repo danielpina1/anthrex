@@ -163,13 +163,24 @@ pub fn parse(text: &str) -> (Config, Vec<Problem>) {
 }
 
 /// Load and parse the config file at `path`. A missing file is not a
-/// problem: it yields defaults, silently, same as any other unreadable
-/// file. A file the daemon, client or CLI cannot read must never stop them
-/// from starting.
+/// problem: it yields defaults, silently. Any other read failure (the path
+/// is a directory, permissions deny reading it, or its bytes are not UTF-8)
+/// is reported as a [`Problem`] naming the path and the reason, so it is
+/// never silently indistinguishable from "no config file" -- but it must
+/// still never stop the daemon, client or CLI from starting, so defaults are
+/// returned either way.
 pub fn load(path: &Path) -> (Config, Vec<Problem>) {
     match std::fs::read_to_string(path) {
         Ok(text) => parse(&text),
-        Err(_) => (Config::default(), Vec::new()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Config::default(), Vec::new()),
+        Err(e) => {
+            let problems = vec![Problem {
+                key: "<config>".to_string(),
+                message: format!("could not read {}: {e}", path.display()),
+                default: "all defaults".to_string(),
+            }];
+            (Config::default(), problems)
+        }
     }
 }
 
