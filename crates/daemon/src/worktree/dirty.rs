@@ -32,12 +32,27 @@ use super::{WorktreeError, run_git};
 /// staged: verified against git 2.50.1, `status --porcelain` is then empty, the count of
 /// unreachable commits is 0, and `git worktree remove` exits 0 and takes `REVERT_HEAD`
 /// with it. `git am` needs no entry of its own — it uses `rebase-apply`.
-const OPERATION_MARKERS: [(&str, DirtyReason); 6] = [
+///
+/// `sequencer` closes finding 5's shape a second time, in the same family: a multi-commit
+/// `git cherry-pick` or `git revert` that stops at a conflict and is resolved with plain
+/// `git commit` — permitted by git, and the older, still widely documented habit — rather
+/// than `--continue`. That commit consumes `CHERRY_PICK_HEAD`/`REVERT_HEAD` while
+/// `sequencer/todo` still lists every pick or revert left to replay. Verified against git
+/// 2.50.1 in a linked worktree: after such a commit, `status --porcelain` is empty, none
+/// of the other five markers exists, the unreachable-commit count is 0, `git status`
+/// (long form) still says "Cherry-pick currently in progress.", and a plain
+/// `git worktree remove` exits 0 and deletes `sequencer/todo` — the only record of which
+/// commits remain — with the checkout. It is placed *after* `CHERRY_PICK_HEAD` and
+/// `REVERT_HEAD` so that when either of those is also present (the ordinary paused-at-the-
+/// first-conflict case), the more specific reason still wins; `sequencer` only decides the
+/// case those two cannot see.
+const OPERATION_MARKERS: [(&str, DirtyReason); 7] = [
     ("rebase-merge", DirtyReason::Rebase),
     ("rebase-apply", DirtyReason::Rebase),
     ("MERGE_HEAD", DirtyReason::Merge),
     ("CHERRY_PICK_HEAD", DirtyReason::CherryPick),
     ("REVERT_HEAD", DirtyReason::Revert),
+    ("sequencer", DirtyReason::Sequence),
     ("BISECT_LOG", DirtyReason::Bisect),
 ];
 
@@ -65,6 +80,9 @@ pub enum DirtyReason {
     CherryPick,
     /// `REVERT_HEAD`: a revert stopped, usually at a conflict.
     Revert,
+    /// `sequencer`: a multi-commit cherry-pick or revert has picks left to replay, whose
+    /// current conflict was resolved with plain `git commit` rather than `--continue`.
+    Sequence,
     /// `BISECT_LOG`: a bisect in progress.
     Bisect,
     /// `status --porcelain` reported something: modified or untracked files.
@@ -92,6 +110,10 @@ impl DirtyReason {
             Self::Revert => {
                 "has a revert in progress; removing it discards the revert and everything \
                  resolved in it so far"
+            }
+            Self::Sequence => {
+                "has a cherry-pick or revert in progress; removing it discards the commits \
+                 it still has to replay"
             }
             Self::Bisect => {
                 "has a bisect in progress; removing it discards every good and bad answer \

@@ -579,3 +579,156 @@ fn a_revert_resolved_to_no_change_is_still_refused() {
         "a refused removal leaves the revert alone"
     );
 }
+
+/// Finding 5's shape a second time: a multi-commit `git cherry-pick` whose conflict is
+/// resolved with plain `git commit` rather than `--continue` — permitted by git, and the
+/// older, still widely documented habit.
+///
+/// Verified against git 2.50.1 in a linked worktree before this fix existed: that commit
+/// **consumes** `CHERRY_PICK_HEAD` while `sequencer/todo` still lists the picks left to
+/// replay, so `status --porcelain` is empty, none of the other markers exists, the
+/// unreachable-commit count is 0, and `git worktree remove` exits 0 and destroys
+/// `sequencer/todo` — the only record of which commits remain — with the checkout. This
+/// asserts the *removal* is refused and the queue survives the refusal, not that some
+/// helper returns the right enum.
+#[test]
+fn a_cherry_pick_resolved_with_plain_commit_leaves_picks_queued_and_is_refused() {
+    let repo = TempRepo::new();
+    let (_keep, wt_root) = worktrees_root();
+    let created = create_at(git(), &repo.root, "picking", &wt_root, deadline()).unwrap();
+    let path = created.worktree.path.clone();
+
+    assert_eq!(
+        worktree::dirty_reason(git(), &path, deadline()).unwrap(),
+        None
+    );
+
+    // A side branch with three commits to the same file, cut from the same base as
+    // `picking`, so cherry-picking it onto a `picking` that has diverged conflicts on
+    // the first commit and leaves the second and third still queued.
+    repo.git(&[OsStr::new("checkout"), OsStr::new("-b"), OsStr::new("side")]);
+    for content in ["s1", "s2", "s3"] {
+        fs::write(repo.root.join("README"), format!("{content}\n")).unwrap();
+        support::git(
+            &repo.root,
+            &[
+                OsStr::new("commit"),
+                OsStr::new("-am"),
+                &std::ffi::OsString::from(content),
+            ],
+        );
+    }
+    repo.git(&[OsStr::new("checkout"), OsStr::new("main")]);
+
+    fs::write(path.join("README"), "diverges\n").unwrap();
+    support::git(
+        &path,
+        &[
+            OsStr::new("commit"),
+            OsStr::new("-am"),
+            OsStr::new("picking diverges"),
+        ],
+    );
+
+    let rev = |rev: &str| -> String {
+        let output = support::git_output(&path, &[OsStr::new("rev-parse"), OsStr::new(rev)]);
+        assert!(output.status.success(), "rev-parse {rev} failed");
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    };
+    let s1 = rev("side~2");
+    let s2 = rev("side~1");
+    let s3 = rev("side");
+
+    let conflicted = support::git_output(
+        &path,
+        &[
+            OsStr::new("cherry-pick"),
+            OsStr::new(&s1),
+            OsStr::new(&s2),
+            OsStr::new(&s3),
+        ],
+    );
+    assert!(
+        !conflicted.status.success(),
+        "the fixture needs the first pick to conflict, leaving the other two queued"
+    );
+
+    // Resolve the conflict with plain `git commit` — not `--continue` — which is the
+    // whole defect: it finishes *this* commit without telling the sequencer the pick
+    // queue is still open.
+    fs::write(path.join("README"), "resolved\n").unwrap();
+    support::git(&path, &[OsStr::new("add"), OsStr::new("README")]);
+    support::git(
+        &path,
+        &[
+            OsStr::new("commit"),
+            OsStr::new("-m"),
+            OsStr::new("resolved s1"),
+        ],
+    );
+
+    assert_eq!(
+        porcelain_status(&path),
+        "",
+        "the picks-remaining state leaves a clean tree, which is the whole hazard"
+    );
+    let cherry_pick_head = support::git_output(
+        &path,
+        &[
+            OsStr::new("rev-parse"),
+            OsStr::new("--git-path"),
+            OsStr::new("CHERRY_PICK_HEAD"),
+        ],
+    );
+    let cherry_pick_head =
+        PathBuf::from(String::from_utf8(cherry_pick_head.stdout).unwrap().trim());
+    assert!(
+        !cherry_pick_head.exists(),
+        "a plain `git commit` consumes CHERRY_PICK_HEAD, which is the whole hazard"
+    );
+    let sequencer = support::git_output(
+        &path,
+        &[
+            OsStr::new("rev-parse"),
+            OsStr::new("--git-path"),
+            OsStr::new("sequencer"),
+        ],
+    );
+    let sequencer_todo =
+        PathBuf::from(String::from_utf8(sequencer.stdout).unwrap().trim()).join("todo");
+    assert!(
+        sequencer_todo.exists(),
+        "the fixture must really still have picks queued: {}",
+        sequencer_todo.display()
+    );
+
+    assert_eq!(
+        worktree::dirty_reason(git(), &path, deadline()).unwrap(),
+        Some(DirtyReason::Sequence),
+        "picks still queued behind a consumed CHERRY_PICK_HEAD must still be seen as dirty"
+    );
+
+    let error = worktree::remove(git(), &created.worktree, false, deadline())
+        .expect_err("a plain removal must not silently delete queued picks");
+    let message = error.to_string();
+    assert!(
+        message.contains("has a cherry-pick or revert in progress"),
+        "{message}"
+    );
+    assert!(
+        message.contains("the commits it still has to replay"),
+        "the message must say what forcing would destroy: {message}"
+    );
+    assert!(
+        !message.contains("uncommitted or untracked"),
+        "this tree is clean; claiming otherwise is what makes a user force: {message}"
+    );
+    assert!(
+        sequencer_todo.exists(),
+        "a refused removal must leave the queued picks intact"
+    );
+    assert!(path.exists());
+
+    worktree::remove(git(), &created.worktree, true, deadline()).unwrap();
+    assert!(!path.exists());
+}
