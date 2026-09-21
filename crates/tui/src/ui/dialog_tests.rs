@@ -150,3 +150,51 @@ fn force_prompt_names_the_window_it_targets() {
     );
     assert!(out.contains("feat-beta"), "{out}");
 }
+
+/// Finding 9 of the whole-branch review: `wrap` hard-cut a single word longer than the
+/// wrap width at its first `width` characters and silently dropped the rest. The word
+/// that hits this in practice is the worktree path in the force-remove message, and
+/// macOS's default data-directory path is long enough to hit it routinely — the dialog
+/// exists to tell the user *which* worktree holds uncommitted work immediately before
+/// offering to delete it, so losing the path's tail undercuts the one question it
+/// answers.
+///
+/// One "word" (no whitespace) longer than two wrap widths, so every line `wrap` produces
+/// is a hard-cut piece of it, and the pieces must reassemble the original exactly.
+#[test]
+fn wrap_continues_an_overlong_word_onto_the_lines_that_follow() {
+    let path = "/Users/someone/Library/Application-Support/anthrex/worktrees/\
+                shop-5cc2e648deadbeef1234/feat-a-rather-long-branch-name-for-good-measure";
+    assert!(
+        path.chars().count() > FORCE_WRAP_WIDTH * 2,
+        "fixture must exceed two wrap widths to exercise more than one continuation"
+    );
+
+    let lines = wrap(path, FORCE_WRAP_WIDTH, 10);
+
+    assert!(
+        lines.len() >= 3,
+        "a word this long, wrapped at {FORCE_WRAP_WIDTH}, must take at least three \
+         lines: {lines:?}"
+    );
+    for line in &lines {
+        assert!(
+            line.chars().count() <= FORCE_WRAP_WIDTH,
+            "no line may exceed the wrap width: {line:?}"
+        );
+    }
+    assert_eq!(
+        lines.concat(),
+        path,
+        "hard-cutting an overlong word must continue its remainder on the lines that \
+         follow, not drop it"
+    );
+    assert!(
+        lines
+            .last()
+            .expect("at least three lines")
+            .ends_with("good-measure"),
+        "the word's final segment must survive, on the last line, not just its first \
+         {FORCE_WRAP_WIDTH} columns: {lines:?}"
+    );
+}

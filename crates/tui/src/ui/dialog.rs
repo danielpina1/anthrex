@@ -74,12 +74,31 @@ fn wrap(text: &str, width: usize, max_lines: usize) -> Vec<String> {
             }
         }
         if word.chars().count() > width {
-            // A single word wider than the whole line: hard-cut it rather than loop
-            // forever trying to fit it.
-            current = word.chars().take(width).collect();
-            lines.push(std::mem::take(&mut current));
-            if lines.len() == max_lines {
-                return lines;
+            // A single word wider than the whole line: hard-cut it into `width`-wide
+            // pieces across as many lines as it takes, continuing the remainder on the
+            // lines that follow rather than dropping it. The word that hits this in
+            // practice is the worktree path in the force-remove message, and macOS's
+            // default data-directory path is long enough to hit it routinely — the
+            // dialog exists to tell the user *which* worktree holds uncommitted work
+            // immediately before offering to delete it, so losing the tail of that path
+            // undercuts the one question it answers.
+            let mut remainder: &str = word;
+            loop {
+                let take = remainder.chars().take(width).count();
+                let split_at = remainder
+                    .char_indices()
+                    .nth(take)
+                    .map(|(i, _)| i)
+                    .unwrap_or(remainder.len());
+                let (piece, rest) = remainder.split_at(split_at);
+                lines.push(piece.to_string());
+                if lines.len() == max_lines {
+                    return lines;
+                }
+                if rest.is_empty() {
+                    break;
+                }
+                remainder = rest;
             }
         } else {
             current.push_str(word);
