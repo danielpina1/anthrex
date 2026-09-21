@@ -668,6 +668,71 @@ async fn restored_windows_are_exited_and_viewable() {
     );
 }
 
+/// Minor 1, M6.5 review: a restored record whose id matches a live window must not
+/// silently replace it. Before this fix, `inner.entries.insert(id, entry)` just dropped
+/// the returned live `Window` with no kill and no `start_cleanup`, orphaning its PTY
+/// child. `restore` runs once on an empty manager today, so this could not happen from
+/// the one caller that exists — but that "it cannot happen from the only current caller"
+/// reasoning is exactly what let the same id-collision class through as two Criticals one
+/// task earlier, and `restore` is a public entry point in its own right, not trusted to
+/// get `next_id` right by its own doc comment.
+#[tokio::test]
+async fn restore_refuses_a_record_whose_id_collides_with_a_live_window() {
+    let m = manager();
+    let live = create(&m, spec("live"), std::env::temp_dir(), 80, 24)
+        .await
+        .unwrap();
+
+    m.restore(StateFile {
+        version: state::STATE_VERSION,
+        next_id: live.id + 1,
+        windows: vec![window_record(live.id, "ghost", std::env::temp_dir(), None)],
+        runs: Vec::new(),
+    });
+
+    let info = find(&m, live.id);
+    assert_eq!(
+        info.name, "live",
+        "the live window must survive a colliding restore, not be replaced by the ghost record: {info:?}"
+    );
+    assert_ne!(
+        info.status,
+        Status::Exited,
+        "the live window must not be turned dormant by a colliding restore: {info:?}"
+    );
+}
+
+/// The other half of Minor 1: a *name* collision must be refused too, even when the
+/// colliding record's id is new. Two restores in a row is the shape the review's own
+/// probe used — the second restore's record shares a name with an entry the first
+/// restore already inserted.
+#[tokio::test]
+async fn restore_refuses_a_record_whose_name_collides_with_an_existing_entry() {
+    let m = manager();
+    m.restore(StateFile {
+        version: state::STATE_VERSION,
+        next_id: 2,
+        windows: vec![window_record(1, "first", std::env::temp_dir(), None)],
+        runs: Vec::new(),
+    });
+
+    m.restore(StateFile {
+        version: state::STATE_VERSION,
+        next_id: 3,
+        windows: vec![window_record(2, "first", std::env::temp_dir(), None)],
+        runs: Vec::new(),
+    });
+
+    let list = m.list();
+    assert_eq!(
+        list.len(),
+        1,
+        "the second restore's colliding-name record must be refused, not silently taken: {list:?}"
+    );
+    assert_eq!(list[0].id, 1, "{list:?}");
+    assert_eq!(list[0].name, "first", "{list:?}");
+}
+
 /// Decision 9: `state_snapshot` mirrors the live window table exactly, with no I/O
 /// (verified indirectly — this only checks the shape it comes back with; the persister
 /// tests below check it never blocks a change from reaching disk).

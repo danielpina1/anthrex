@@ -44,6 +44,17 @@ impl WindowManager {
     /// Publishes exactly once, after every record is inserted, rather than once per
     /// record: a watcher (in particular the persister this same startup sequence spawns
     /// moments later) must never see a partially-restored table.
+    ///
+    /// A record whose id or name is already present in `inner.entries` — a live window,
+    /// or one this same call already restored — is skipped and logged instead of
+    /// overwriting it (fix wave 4, item 3). `state::load` already rejects a record that
+    /// repeats an earlier one's id or name within a single file, but `restore` is a
+    /// public entry point in its own right (this milestone's tests call it directly with
+    /// a hand-built `StateFile`, and nothing stops a second `restore` call against a
+    /// manager that already has entries) — the same "do not trust the caller" reasoning
+    /// this function's own `next_id` handling already applies to the counter has to apply
+    /// to the table it inserts into, or a colliding id silently drops a live window's
+    /// `Window` (and orphans its PTY) with no kill and no `start_cleanup`.
     pub fn restore(&self, state: StateFile) {
         let mut inner = crate::lock(&self.inner);
         let now = Instant::now();
@@ -64,6 +75,23 @@ impl WindowManager {
                 status: _saved_status,
                 run: _,
             } = record;
+
+            if inner.entries.contains_key(&id) {
+                tracing::warn!(
+                    id,
+                    name = %name,
+                    "restore: skipping a record whose id is already present"
+                );
+                continue;
+            }
+            if inner.entries.values().any(|entry| entry.name == name) {
+                tracing::warn!(
+                    id,
+                    name = %name,
+                    "restore: skipping a record whose name is already present"
+                );
+                continue;
+            }
 
             let managed = worktree.map(
                 |WorktreeRecord {
