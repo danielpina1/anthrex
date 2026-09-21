@@ -224,12 +224,28 @@ pub fn load(path: &Path) -> (StateFile, Vec<Problem>) {
         );
     }
 
+    // `windows` missing entirely is legitimate (the field is `#[serde(default)]`, e.g. a
+    // hand-written file that only sets `version`/`next_id`) and must load silently. A
+    // `windows` key that *is* present but is not a JSON array is structurally invalid,
+    // not defaultable — treated as corrupt like every other malformed part of this file,
+    // not silently swallowed into an empty list with zero warnings.
+    let raw_windows: &[serde_json::Value] = match object.get("windows") {
+        None => &[],
+        Some(serde_json::Value::Array(items)) => items,
+        Some(_) => {
+            return mark_aside(
+                path,
+                "corrupt",
+                "state file's \"windows\" field is not an array",
+            );
+        }
+    };
+
     let mut windows = Vec::new();
     let mut problems = Vec::new();
     let mut seen_ids = HashSet::new();
     let mut seen_names = HashSet::new();
-    let raw_windows = object.get("windows").and_then(serde_json::Value::as_array);
-    for (index, entry) in raw_windows.into_iter().flatten().enumerate() {
+    for (index, entry) in raw_windows.iter().enumerate() {
         match serde_json::from_value::<WindowRecord>(entry.clone()) {
             Ok(record) => {
                 // Both uniqueness checks run *before* either `HashSet` is touched: a

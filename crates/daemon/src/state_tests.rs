@@ -202,6 +202,74 @@ fn corrupt_file_is_moved_aside() {
     );
 }
 
+/// `windows` is `#[serde(default)]`, so a file that simply omits the key entirely (a
+/// hand-written file, or a hypothetical future version that dropped it) is legitimate,
+/// not corrupt: it must load silently, with no warning and no rename, exactly like any
+/// other defaulted field.
+#[test]
+fn windows_field_missing_entirely_loads_silently() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = state_path(&dir);
+    std::fs::write(&path, br#"{"version": 2, "next_id": 1}"#).unwrap();
+
+    let (state, warnings) = load(&path);
+
+    assert!(state.windows.is_empty());
+    assert_eq!(state.next_id, 1);
+    assert!(
+        warnings.is_empty(),
+        "a missing windows field is legitimate (#[serde(default)]), not corrupt: {warnings:?}"
+    );
+    assert!(path.exists(), "nothing must be renamed aside");
+    let siblings: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        siblings,
+        vec![std::ffi::OsString::from("state.json")],
+        "a missing windows field must not produce a corrupt-* sibling"
+    );
+}
+
+/// Unlike a missing `windows` key, a `windows` field that is *present* but the wrong
+/// JSON type (here, an object instead of an array) is structurally invalid - ruled to be
+/// treated exactly like every other corrupt case: renamed aside, one warning, empty
+/// state. Silently loading it as empty (the pre-fix behavior) left the caller with zero
+/// signal that anything was wrong and no forensic trail.
+#[test]
+fn windows_field_present_but_not_an_array_is_corrupt() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = state_path(&dir);
+    std::fs::write(
+        &path,
+        br#"{"version": 2, "next_id": 1, "windows": {"oops": true}}"#,
+    )
+    .unwrap();
+
+    let (state, warnings) = load(&path);
+
+    assert!(state.windows.is_empty());
+    assert_eq!(state.next_id, 1);
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert_eq!(warnings[0].severity, Severity::Warn);
+    assert!(
+        !path.exists(),
+        "a malformed windows field must not be left at state.json"
+    );
+
+    let corrupt_files: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("state.json.corrupt-"))
+        .collect();
+    assert_eq!(
+        corrupt_files.len(),
+        1,
+        "a malformed windows field must be moved aside like any other corrupt file: {corrupt_files:?}"
+    );
+}
+
 #[test]
 fn newer_version_is_moved_aside() {
     let dir = tempfile::tempdir().unwrap();
