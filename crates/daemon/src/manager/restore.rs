@@ -62,7 +62,30 @@ impl WindowManager {
         let now = Instant::now();
         let mut next_id = inner.next_id;
 
-        for record in state.windows {
+        // Fix wave 8, Major 1: `unique_name` below disambiguates a sanitized name only
+        // against `inner.entries` — records already inserted by this same loop, or a live
+        // window from before this call. It has no way to see a record still waiting later
+        // in `state.windows` whose name is already valid and needs no repair at all. Left
+        // alone, a record that *does* need repair can sanitize onto that later record's
+        // exact name, take it first, and the later record is then dropped by the ordinary
+        // name-collision check a few lines down — a regression this fix closes by making
+        // every name that will NOT be repaired (its `sanitize_name` output equals its own
+        // input) reserved up front, before any record is processed, so a repaired name can
+        // never steal one. This is computed once, from the file as loaded, not
+        // incrementally as records are inserted: a record already present in `inner`
+        // (skipped below by the id check, never reaching this loop's insert at all) must
+        // not reserve anything, since it will never claim its name here.
+        let windows = state.windows;
+        let protected_names: std::collections::HashSet<String> = windows
+            .iter()
+            .filter(|record| {
+                !inner.entries.contains_key(&record.id)
+                    && sanitize_name(record.id, &record.name) == record.name
+            })
+            .map(|record| record.name.clone())
+            .collect();
+
+        for record in windows {
             let WindowRecord {
                 id,
                 name,
@@ -96,14 +119,17 @@ impl WindowManager {
             // equality here means nothing needed repairing) falls straight through to the
             // untouched collision check below, unchanged from before this fix. A name that
             // needed repair is also made unique against every name already on the table —
-            // live windows, and any earlier record this same call already restored — since
-            // dropping a *sanitized* name for colliding would undo the "keep the window"
-            // ruling for the exact record it exists to protect.
+            // live windows, any earlier record this same call already restored, and (fix
+            // wave 8, Major 1) every not-yet-processed record whose own name needs no
+            // repair at all, via `protected_names` above — since dropping a *sanitized*
+            // name for colliding would undo the "keep the window" ruling for the exact
+            // record it exists to protect, and letting it steal a later, valid record's
+            // name would undo that same ruling for the window it displaces instead.
             let sanitized = sanitize_name(id, &name);
             let name = if sanitized == name {
                 name
             } else {
-                let unique = unique_name(&inner, &sanitized);
+                let unique = unique_name(&inner, &sanitized, &protected_names);
                 tracing::warn!(
                     id,
                     original = ?name,
@@ -261,6 +287,15 @@ impl WindowManager {
 /// windows and any earlier record this same `restore` call already inserted alike, by
 /// appending `-2`, `-3`, ... until one is free.
 ///
+/// Fix wave 8, Major 1: also avoids every name in `protected`, the set `restore` builds
+/// once up front from every record in the file that does **not** need repair — names a
+/// later iteration of `restore`'s loop is going to claim outright, with no call to this
+/// function at all. Without this, a base that only collides with a not-yet-processed
+/// valid record would sail through unchanged (`inner.entries` cannot see a record that
+/// has not been inserted yet), take that record's name, and the valid record would then
+/// be dropped by the plain collision check as if two saved windows had genuinely fought
+/// over one name — when in fact only one of them ever chose it.
+///
 /// This is deliberately narrower than the ordinary duplicate-name refusal a few lines
 /// above it: a genuine collision between two otherwise-*valid* saved names is still
 /// refused and the later record dropped, unchanged from before this fix (see
@@ -268,15 +303,17 @@ impl WindowManager {
 /// name is different — it is a repair the manager made up on the window's behalf, not
 /// something the user chose, so making it merely unique is what "sanitize, do not reject"
 /// (fix wave 6's ruling) requires: the window must survive, and it cannot survive under a
-/// name that collides with another live entry.
-fn unique_name(inner: &Inner, base: &str) -> String {
-    if !inner.entries.values().any(|e| e.name == base) {
+/// name that collides with another live entry or displaces a valid one.
+fn unique_name(inner: &Inner, base: &str, protected: &std::collections::HashSet<String>) -> String {
+    let taken =
+        |name: &str| inner.entries.values().any(|e| e.name == name) || protected.contains(name);
+    if !taken(base) {
         return base.to_string();
     }
     let mut n = 2u32;
     loop {
         let candidate = suffixed(base, n);
-        if !inner.entries.values().any(|e| e.name == candidate) {
+        if !taken(&candidate) {
             return candidate;
         }
         n += 1;
@@ -351,5 +388,90 @@ mod tests {
             Some("record-name"),
             "Entry.spec.name must be the record's own name, not its session_id"
         );
+    }
+
+    /// A minimal record with the given id and (unsanitized) name; the fields the
+    /// Major-1 tests below don't care about are filled with harmless defaults.
+    fn wr(id: u32, name: &str) -> WindowRecord {
+        WindowRecord {
+            id,
+            name: name.to_string(),
+            runtime: Runtime::Shell,
+            cwd: PathBuf::from("/tmp"),
+            project: None,
+            worktree: None,
+            model: None,
+            initial_prompt: None,
+            session_id: None,
+            created_at: 1,
+            status: Status::Exited,
+            run: None,
+        }
+    }
+
+    /// Restores `windows` into a fresh manager and returns the set of names that survived.
+    fn restored_names(windows: Vec<WindowRecord>) -> std::collections::BTreeSet<String> {
+        let m = manager();
+        let next_id = windows.iter().map(|w| w.id).max().unwrap_or(0) + 1;
+        m.restore(StateFile {
+            version: state::STATE_VERSION,
+            next_id,
+            windows,
+            runs: Vec::new(),
+        });
+        let inner = crate::lock(&m.inner);
+        inner.entries.values().map(|e| e.name.clone()).collect()
+    }
+
+    /// Fix wave 8, Major 1 (re-review of fix wave 6's "sanitize, do not reject" ruling):
+    /// `unique_name` used to disambiguate a sanitized name only against records already
+    /// inserted, never against records still to come. A record whose name *sanitizes*
+    /// onto a name a later, perfectly valid record already owns took that name first, and
+    /// the later, untouched record was then dropped by the plain name-collision check a
+    /// few lines below `unique_name`'s call site — silently and permanently, since the
+    /// next `state_snapshot` -> `state::save` never writes the dropped window back.
+    ///
+    /// Purely id-order dependent before this fix: reversing which id holds the bad name
+    /// changed which window survived. The three inputs here are the re-review's own
+    /// (`waves-6-7-re-review.md`, Major 1): an embedded escape character, a hand-edited
+    /// stray space, and a 70-character name against its own 64-character truncation. Each
+    /// is driven through **both** id orders — the order-dependence was the bug's own
+    /// signature, so a fix that only worked one way would not be a fix.
+    ///
+    /// Deliberately checks "both survive, one under a disambiguated name" rather than
+    /// which id ends up with which exact name: *that* part is still legitimately
+    /// order-dependent (whichever record is processed first claims the plain name), and
+    /// pinning it would test an implementation detail this fix does not claim to remove.
+    #[test]
+    fn restore_does_not_let_a_repaired_name_steal_a_later_valid_windows_name() {
+        let cases: [(String, String); 3] = [
+            ("a\u{1b}b".to_string(), "a_b".to_string()),
+            (" api ".to_string(), "api".to_string()),
+            ("x".repeat(70), "x".repeat(64)),
+        ];
+        for (bad, good) in cases {
+            for windows in [
+                vec![wr(1, &bad), wr(2, &good)],
+                vec![wr(1, &good), wr(2, &bad)],
+            ] {
+                let names = restored_names(windows.clone());
+                assert_eq!(
+                    names.len(),
+                    2,
+                    "both records must survive for bad={bad:?} good={good:?}, \
+                     windows={windows:?}, survivors={names:?}"
+                );
+                assert!(
+                    names.contains(&good),
+                    "the already-valid name must survive unchanged: bad={bad:?} \
+                     good={good:?}, survivors={names:?}"
+                );
+                assert!(
+                    names.iter().any(|n| n != &good),
+                    "the repaired record must still be present, under a disambiguated \
+                     name: bad={bad:?} good={good:?}, survivors={names:?}"
+                );
+            }
+        }
     }
 }
