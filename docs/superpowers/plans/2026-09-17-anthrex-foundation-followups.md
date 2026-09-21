@@ -160,3 +160,45 @@ Each open item above is closed by exactly one milestone. Its brief lists the ite
   held-seam gap on the *no-abort* guarantee (decisions 17 and 25 together), documented
   in place since that test at least has a weaker, poll-based substitute; this one has
   no test at all.
+
+## From milestone 5's final review (2026-09-21)
+
+- **The force-remove dialog clips on a short terminal, hiding every option but the
+  destructive one.** `crates/tui/src/ui/dialog.rs:338` with `:282-293`. The box grew from 11
+  rows to 13 — wave B's `wrap()` continuation gives a long path three lines, and wave C raised
+  `FORCE_MAX_LINES` from 4 to 6 — while `render_box`/`centered` clip the bottom silently. On an
+  11-row terminal the only visible choice is `f`, which deletes uncommitted work; `k` (keep the
+  worktree) and `n` (cancel) are both off-screen. Measured with `TestBackend` at both `cdd3681`
+  and `4c79d5d`.
+
+  Not merged as a blocker because the clipping class is pre-existing (it bit at ≤10 rows before
+  this milestone, ≤12 now), `Esc` still cancels, and a terminal that short is barely usable. But
+  a dialog whose only visible option is the destructive one is the wrong failure mode for this
+  particular screen. The real fix is in `render_box`/`centered` — clip predictably or scroll,
+  rather than silently dropping the bottom — which is a general rendering change deserving its
+  own review, not a patch at merge time.
+
+  This is a genuine cross-wave interaction: neither wave B's change nor wave C's is wrong alone,
+  and no per-wave review could have seen it.
+
+- **`wrap` measures characters while the box is sized in display columns.**
+  `crates/tui/src/ui/dialog.rs:55-112`. A CJK path renders an over-wide, misaligned box. No text
+  meaning is lost. Pre-existing, and the same unit mismatch the `TextInput` cursor work fixed
+  elsewhere in this milestone — worth closing with the same `unicode-width` treatment.
+
+- **Nothing runs `--ignored`, so the 45-second create-budget test proves nothing in CI.**
+  Milestone 5 replaced it with a ~2-second injectable-deadline version and kept the slow one
+  `#[ignore]`d as the only full-scale proof. The final review's judgement: little real coverage
+  was lost, because `CREATE_WORST_CASE`/`REMOVAL_WORST_CASE` are computed from the daemon's own
+  constants so an always-run assertion catches a timeout regression — and the ignored test's
+  unique coverage would not catch a new blocking term anyway, since `SLOW_CREATE_DELAYS` is a
+  fixed list. Either add a slow-test CI job that runs `--ignored`, or delete the test. An
+  ignored test that nobody schedules is documentation wearing a test's clothes.
+
+- **Two blind spots in the dirty check that are outside the paused-operation family**, both
+  pre-existing and both accepted knowingly. `--skip-worktree` hidden edits — git itself has the
+  identical hole — and per-worktree reflog loss on a detached HEAD, which is narrow because the
+  daemon always creates on a branch. The paused-operation family itself is now complete: the
+  final review tested twelve scenarios against `sequencer` and `BISECT_LOG`, found no reachable
+  false positive, and verified per-worktree scoping (a cherry-pick paused in the main checkout
+  correctly leaves a linked worktree clean).
