@@ -72,17 +72,25 @@ impl App {
         vec![]
     }
 
-    /// Decision 36: a `remove-dirty` reply opens the force-or-keep follow-up in place
-    /// of a toast, but only for the removal `pending_worktree_remove` is tracking —
-    /// `App::on_daemon` falls back to a toast when this returns `false`, which is also
-    /// what a stray `remove-dirty` with nothing pending gets. `message` is the daemon's
-    /// own text (decision 24), which already names the worktree's path and describes
-    /// its uncommitted or untracked changes rather than anything about the agent's
-    /// process, so it is shown exactly as given.
-    pub(super) fn open_force_remove(&mut self, message: String) -> bool {
-        let Some(window_id) = self.pending_worktree_remove else {
+    /// Decision 36: a `RemoveDirty` reply opens the force-or-keep follow-up in place of a
+    /// toast — but only when the id the daemon sent back is the one this client has a
+    /// worktree removal outstanding for. `App::on_daemon` falls back to a toast when this
+    /// returns `false`, which is what a stray refusal with nothing pending gets, and what
+    /// a refusal for some *other* window gets.
+    ///
+    /// The `==` is the whole safety property of this dialog. `f` sends a `--force`
+    /// deletion of a checkout, so the id it sends must be the id the refusal is about;
+    /// both come from `window_id` here, and a reply that disagrees with the pending
+    /// removal is refused rather than reconciled, because at that point the client cannot
+    /// tell which of the two is the truth and one of the two answers destroys work.
+    ///
+    /// `message` is the daemon's own text (decision 24), which names the worktree's path
+    /// and what removing it would destroy — never anything about the agent's process — so
+    /// it is shown exactly as given.
+    pub(super) fn open_force_remove(&mut self, window_id: u32, message: String) -> bool {
+        if self.pending_worktree_remove != Some(window_id) {
             return false;
-        };
+        }
         let name = self
             .windows
             .iter()
@@ -151,6 +159,25 @@ impl App {
             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
                 let remove_worktree = confirm.remove_worktree;
                 if remove_worktree {
+                    // One worktree removal at a time (see `App::pending_worktree_remove`).
+                    // A second one started now could not be told apart from the first by
+                    // the id-less `Ack`/`Error` that ends it, and the cost of getting that
+                    // wrong is a force prompt aimed at a window the user never looked at.
+                    // Refusing is a few seconds' wait; the alternative deletes work.
+                    if let Some(pending) = self.pending_worktree_remove
+                        && pending != confirm.window_id
+                    {
+                        let name = self
+                            .windows
+                            .iter()
+                            .find(|w| w.id == pending)
+                            .map(|w| w.name.as_str())
+                            .unwrap_or("another window");
+                        self.toast(format!(
+                            "still removing {name}'s worktree; try again once it finishes"
+                        ));
+                        return vec![];
+                    }
                     self.pending_worktree_remove = Some(confirm.window_id);
                 }
                 vec![Effect::Send(ClientMsg::Remove {
@@ -190,7 +217,13 @@ impl App {
                 remove_worktree: false,
                 force: false,
             })],
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => vec![],
+            // Cancelling ends the removal this client was tracking: the refusal was its
+            // final reply, so nothing is outstanding any more. Leaving the slot set would
+            // make the *next* worktree removal refuse itself for ever.
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                self.pending_worktree_remove = None;
+                vec![]
+            }
             _ => {
                 self.modal = Some(Modal::ForceRemove {
                     window_id,

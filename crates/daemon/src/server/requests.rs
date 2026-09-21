@@ -106,9 +106,13 @@ pub(super) fn create(
 /// decrement of one registration.
 ///
 /// [`RemoveError::Dirty`] is the one failure that is a question rather than an answer, so
-/// it goes back under its own `request` value and the client turns it into the
-/// force-or-keep prompt (design decision 24). Everything else is an ordinary
-/// [`request::REMOVE`] error.
+/// it goes back as its own message and the client turns it into the force-or-keep prompt
+/// (design decision 24). Everything else is an ordinary [`request::REMOVE`] error.
+///
+/// `window_id` rides back on that message rather than being left for the client to infer
+/// from whatever removal it thinks is outstanding: the prompt it opens offers a
+/// `--force` deletion, and the client must be able to prove the id it forces is the id
+/// this refusal is about. See [`DaemonMsg::RemoveDirty`].
 pub(super) fn remove_with_worktree(
     manager: Arc<WindowManager>,
     git_registry: Arc<GitRegistry>,
@@ -124,7 +128,10 @@ pub(super) fn remove_with_worktree(
             Ok(()) => DaemonMsg::Ack {
                 request: request::REMOVE.to_string(),
             },
-            Err(RemoveError::Dirty(dirty)) => error(request::REMOVE_DIRTY, dirty.to_string()),
+            Err(RemoveError::Dirty(dirty)) => DaemonMsg::RemoveDirty {
+                window_id,
+                message: dirty.to_string(),
+            },
             Err(RemoveError::Failed(e)) => error(request::REMOVE, e.to_string()),
         };
         reply_to(&out, reply).await;

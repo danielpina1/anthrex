@@ -109,10 +109,16 @@ pub struct App {
     pub home_dir: Option<PathBuf>,
     /// The last accepted new-agent form's values this session (decision 31); `dir` empty is `new_agent_defaults`'s sentinel for "nothing accepted yet".
     pub form_defaults: FormDefaults,
-    /// The window a `Remove` with `remove_worktree: true` is in flight for, so that a
-    /// `remove-dirty` refusal knows which window's dialog to open and an `Ack` or a
-    /// plain `Error` for the removal knows to stop watching for one (decisions 35 and
-    /// 36). `None` whenever no such removal is outstanding.
+    /// The window a `Remove` with `remove_worktree: true` is in flight for (decisions 35
+    /// and 36). `None` whenever no such removal is outstanding.
+    ///
+    /// Exactly one, never a set, and that is the point rather than a simplification.
+    /// `Ack { request: "remove" }` and `Error { request: "remove" }` carry no window id,
+    /// so with two worktree removals outstanding the client could not tell which one a
+    /// reply ended; `on_remove_confirm_key` therefore refuses to start a second while
+    /// one is in flight. A `DaemonMsg::RemoveDirty` then cross-checks its own
+    /// `window_id` against this slot, so the force prompt can only ever be opened for
+    /// the window whose refusal it is displaying.
     pending_worktree_remove: Option<u32>,
     /// Git state by worktree root; pruned to current windows' roots (see `prune_git`).
     pub git: HashMap<PathBuf, GitState>,
@@ -345,18 +351,28 @@ impl App {
                 {
                     form.error = Some(message);
                     form.submitting = false;
-                } else if request == proto::messages::request::REMOVE_DIRTY
-                    && self.open_force_remove(message.clone())
-                {
-                    // Decision 36: handled by opening the force-or-keep follow-up.
                 } else {
                     self.clear_pending_worktree_remove_on(&request);
                     self.toast(message);
                 }
                 vec![]
             }
+            // Decision 36: the force-or-keep follow-up, but only when this client asked
+            // for *this* window's worktree to be removed. A refusal that cannot be
+            // matched to an outstanding removal is shown as a toast and nothing is
+            // offered to force — see `open_force_remove`.
+            DaemonMsg::RemoveDirty { window_id, message } => {
+                if !self.open_force_remove(window_id, message.clone()) {
+                    self.toast(message);
+                }
+                vec![]
+            }
             DaemonMsg::Bye { reason } => {
                 self.connected = false;
+                // Nothing is outstanding on a connection that is gone. Leaving the slot
+                // set would block every later worktree removal behind a reply that can
+                // never arrive.
+                self.pending_worktree_remove = None;
                 self.toast(format!("daemon: {reason}"));
                 vec![]
             }

@@ -3,7 +3,8 @@
 /// Bumped whenever a message shape changes incompatibly — or whenever an existing
 /// field's *meaning* changes, which is why this is 5 and not 4.
 ///
-/// Milestone 5 adds no message and changes no shape. It changes what
+/// Milestone 5 adds one message — `DaemonMsg::RemoveDirty`, whose own doc comment says
+/// why the dirty refusal has to carry a window id — and changes what
 /// `ClientMsg::Remove { remove_worktree }` means: a milestone-4.5 daemon ignores that
 /// field entirely, because no window it can create has a worktree, and answers
 /// `Ack { request: "remove" }` either way. A milestone-5 client paired with one would ask

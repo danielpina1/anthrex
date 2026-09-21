@@ -95,6 +95,23 @@ pub enum DaemonMsg {
         request: String,
         message: String,
     },
+    /// A `Remove { remove_worktree: true }` refused because the checkout holds work
+    /// (design decision 24, amended by the M5 whole-branch review's finding 1).
+    ///
+    /// Its own variant rather than decision 24's `Error { request: "remove-dirty" }`
+    /// because of what the client does with it: it opens a prompt whose `f` key sends a
+    /// `--force` deletion of a checkout, and the *only* thing that can make the prompt
+    /// and that key agree about **which** checkout is the window id travelling with the
+    /// refusal. Decision 24 chose to add no message shape on the assumption that the
+    /// client could correlate the refusal with the one removal it had outstanding; with
+    /// two removals in flight that assumption is false, and the client force-deleted the
+    /// wrong window's worktree. A `window_id` the daemon cannot omit and the client
+    /// cannot guess is the fix, so it is a field of a variant rather than an optional
+    /// extra on the generic error.
+    RemoveDirty {
+        window_id: u32,
+        message: String,
+    },
     Bye {
         reason: String,
     },
@@ -117,12 +134,13 @@ pub mod request {
     /// A `CreateWindow` that failed. Its success is `DaemonMsg::Created`.
     pub const CREATE: &str = "create";
     /// A window removal, with or without its worktree.
+    ///
+    /// A worktree removal refused because the checkout holds work is *not* one of these:
+    /// it comes back as [`super::DaemonMsg::RemoveDirty`], which carries the window id
+    /// the force prompt needs. There is deliberately no `"remove-dirty"` constant any
+    /// more — a client that matched on the string would be correlating by convention,
+    /// which is the bug that variant exists to make unrepresentable.
     pub const REMOVE: &str = "remove";
-    /// A worktree removal refused because the tree has changes (design decision 24).
-    /// `message` names the path; the client turns this into the force-or-keep prompt
-    /// rather than a toast, which is the whole reason it is not a plain [`REMOVE`]
-    /// error.
-    pub const REMOVE_DIRTY: &str = "remove-dirty";
 }
 
 #[cfg(test)]
@@ -133,16 +151,34 @@ mod tests {
         WindowSpec,
     };
 
-    /// These three strings are wire values, not internal names: the daemon writes them
-    /// into `request` and the client matches on them to open the force-or-keep prompt or
-    /// to clear a pending removal. Renaming a constant is free; changing what it holds
+    /// These two strings are wire values, not internal names: the daemon writes them
+    /// into `request` and the client matches on them to clear a pending removal or to
+    /// fill a form's inline error. Renaming a constant is free; changing what it holds
     /// silently breaks every client that still compares the old spelling, so the spelling
     /// is pinned here rather than only at the sites that happen to use it.
     #[test]
     fn request_constants_are_stable() {
         assert_eq!(request::CREATE, "create");
         assert_eq!(request::REMOVE, "remove");
-        assert_eq!(request::REMOVE_DIRTY, "remove-dirty");
+    }
+
+    /// The window id is the whole point of [`DaemonMsg::RemoveDirty`] (see its doc
+    /// comment): a client that received this refusal without one would have to guess
+    /// which worktree a `--force` deletion should land on. Pinned here because the field
+    /// is load-bearing across the wire, not merely present.
+    #[test]
+    fn remove_dirty_carries_its_window_id_over_the_wire() {
+        let message = DaemonMsg::RemoveDirty {
+            window_id: 7,
+            message: "worktree /wt/feat-x has a rebase in progress".into(),
+        };
+        let back: DaemonMsg =
+            rmp_serde::from_slice(&rmp_serde::to_vec_named(&message).unwrap()).unwrap();
+        assert_eq!(back, message);
+        let DaemonMsg::RemoveDirty { window_id, .. } = back else {
+            panic!("a RemoveDirty must decode as one");
+        };
+        assert_eq!(window_id, 7);
     }
 
     #[test]
@@ -313,6 +349,10 @@ mod tests {
             DaemonMsg::Error {
                 request: "hello".into(),
                 message: "mismatch".into(),
+            },
+            DaemonMsg::RemoveDirty {
+                window_id: 2,
+                message: "worktree /wt/feat-x has uncommitted or untracked changes".into(),
             },
             DaemonMsg::Bye {
                 reason: "shutdown".into(),

@@ -120,6 +120,7 @@ fn force_prompt_lists_the_three_choices() {
     let out = draw(100, 30, |frame| {
         render_force_remove(
             frame,
+            "api",
             "worktree /tmp/shop-abc/feat-api has uncommitted or untracked changes",
             frame.area(),
         );
@@ -127,4 +128,25 @@ fn force_prompt_lists_the_three_choices() {
     assert!(out.contains("force"), "{out}");
     assert!(out.contains("keep the worktree"), "{out}");
     assert!(out.contains("cancel"), "{out}");
+}
+
+/// The prompt whose `f` key deletes a checkout with `--force` must say whose checkout.
+/// The whole-branch review's finding 1 was exactly a force prompt that named one window
+/// in its message and forced another, and it was invisible on screen because the window
+/// the dialog targeted was never drawn.
+#[test]
+fn force_prompt_names_the_window_it_targets() {
+    let out = draw(100, 30, |frame| {
+        render_force_remove(
+            frame,
+            "alpha",
+            "worktree /tmp/shop-abc/feat-beta has uncommitted or untracked changes",
+            frame.area(),
+        );
+    });
+    assert!(
+        out.contains("'alpha'"),
+        "the targeted window's name must be on screen: {out}"
+    );
+    assert!(out.contains("feat-beta"), "{out}");
 }

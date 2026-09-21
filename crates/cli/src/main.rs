@@ -4,7 +4,6 @@ mod spawn;
 mod tree_cmd;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use proto::messages::request;
 use proto::{ClientMsg, DaemonMsg, Runtime, WindowSpec};
 use std::path::PathBuf;
 use tokio::net::UnixStream;
@@ -264,10 +263,11 @@ async fn run_cli() -> anyhow::Result<()> {
                     }
                     Ok(())
                 }
-                DaemonMsg::Error {
-                    request: req,
-                    message,
-                } if req == request::REMOVE_DIRTY => {
+                // The id it carries is not needed here — a one-shot `rm` has exactly one
+                // removal outstanding and `target` is what the user typed — but the
+                // message is still matched by its own variant rather than by a `request`
+                // string, so the CLI and the TUI recognise the refusal the same way.
+                DaemonMsg::RemoveDirty { message, .. } => {
                     anyhow::bail!("{message}\n{}", dirty_hint(&target))
                 }
                 DaemonMsg::Error { message, .. } => anyhow::bail!(message),

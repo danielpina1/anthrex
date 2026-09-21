@@ -39,8 +39,8 @@ pub fn render(frame: &mut Frame, modal: &Modal, area: Rect) {
     match modal {
         Modal::NewAgent(form) => return dialog::render_new_agent(frame, form, area),
         Modal::Remove(confirm) => return dialog::render_remove_confirm(frame, confirm, area),
-        Modal::ForceRemove { message, .. } => {
-            return dialog::render_force_remove(frame, message, area);
+        Modal::ForceRemove { name, message, .. } => {
+            return dialog::render_force_remove(frame, name, message, area);
         }
         Modal::Confirm { .. } | Modal::Help => {}
     }

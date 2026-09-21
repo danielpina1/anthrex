@@ -9,9 +9,10 @@
 //! Three separate things are under test here and only the first is the feature.
 //!
 //! 1. **The answers.** A worktree create reports the new linked checkout, a create failure
-//!    comes back under `request::CREATE`, a refused worktree removal comes back under
-//!    `request::REMOVE_DIRTY` and not as an opaque error, and `--force` without
-//!    `--worktree` is refused before anything is killed (design decisions 20 and 24).
+//!    comes back under `request::CREATE`, a refused worktree removal comes back as a
+//!    `DaemonMsg::RemoveDirty` naming the window it refused rather than as an opaque
+//!    error, and `--force` without `--worktree` is refused before anything is killed
+//!    (design decisions 20 and 24).
 //! 2. **The connection loop is not blocked** while one of these runs (design decision 25).
 //!    `list_is_answered_while_a_create_is_running` is the whole reason these requests live
 //!    in their own tasks, and it waits for git to be provably *inside* `worktree add`
@@ -253,14 +254,19 @@ async fn a_dirty_worktree_removal_answers_remove_dirty_then_force_works() {
         force: false,
     })
     .await;
-    let DaemonMsg::Error { request, message } =
-        c.recv_until(|m| matches!(m, DaemonMsg::Error { .. })).await
+    let DaemonMsg::RemoveDirty {
+        window_id: refused,
+        message,
+    } = c
+        .recv_until(|m| matches!(m, DaemonMsg::RemoveDirty { .. } | DaemonMsg::Error { .. }))
+        .await
     else {
-        unreachable!()
+        panic!("a refusal for changes must come back as RemoveDirty, not a generic Error")
     };
     assert_eq!(
-        request, "remove-dirty",
-        "a refusal for changes must be distinguishable from every other removal failure"
+        refused, window.id,
+        "the refusal must name the window it is about: the client builds a --force prompt \
+         from this id, and a prompt aimed at another window deletes work nobody looked at"
     );
     assert!(
         message.contains(&path.display().to_string()),

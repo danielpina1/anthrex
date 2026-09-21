@@ -296,14 +296,28 @@ pub fn render_remove_confirm(frame: &mut Frame, confirm: &RemoveConfirm, area: R
 const FORCE_WRAP_WIDTH: usize = 50;
 
 /// The dirty-tree force-or-keep follow-up (decision 36). `message` is the daemon's own
-/// text (decision 24), which already names the worktree's path and its uncommitted or
-/// untracked changes, shown exactly as given, wrapped to fit the box.
-pub fn render_force_remove(frame: &mut Frame, message: &str, area: Rect) {
-    let mut lines: Vec<Line<'static>> = wrap(message, FORCE_WRAP_WIDTH, 4)
-        .into_iter()
-        .map(Line::raw)
-        .collect();
-    if lines.is_empty() {
+/// text (decision 24), which already names the worktree's path and what removing it would
+/// destroy, shown exactly as given, wrapped to fit the box.
+///
+/// `name` is on screen because `f` here deletes a checkout with `--force` and the user has
+/// to be able to see *which agent's*. The whole-branch review's finding 1 was a force
+/// prompt that named one window in its message while its `f` key targeted another; the
+/// wiring that made that possible is fixed in `app/modal_keys.rs`, and this line is what
+/// would have made it visible on screen rather than only in a test.
+pub fn render_force_remove(frame: &mut Frame, name: &str, message: &str, area: Rect) {
+    let mut lines: Vec<Line<'static>> = vec![Line::from(vec![
+        Span::raw("agent "),
+        Span::styled(
+            format!("'{name}'"),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+    ])];
+    lines.extend(
+        wrap(message, FORCE_WRAP_WIDTH, 4)
+            .into_iter()
+            .map(Line::raw),
+    );
+    if lines.len() == 1 {
         lines.push(Line::raw(message.to_string()));
     }
     lines.push(Line::raw(""));
