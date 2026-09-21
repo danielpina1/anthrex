@@ -7,6 +7,7 @@ pub mod graph;
 pub mod inspector;
 pub mod keymap;
 mod mouse;
+pub mod settings;
 pub mod theme;
 pub mod tree;
 mod tree_input;
@@ -19,8 +20,9 @@ use crossterm::event::{
     EventStream, MouseButton, MouseEventKind,
 };
 use futures::StreamExt;
-use keymap::Keymap;
 use ratatui::DefaultTerminal;
+use settings::UiSettings;
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -29,6 +31,9 @@ pub struct TuiOptions {
     pub default_dir: PathBuf,
     /// Window id or name to focus on start.
     pub focus: Option<String>,
+    pub settings: UiSettings,
+    /// Every config `Problem` the CLI's `attach` found, already formatted (decision 7).
+    pub config_problems: Vec<String>,
 }
 
 /// Disables mouse capture and bracketed paste on stdout, ignoring any error. Called both from
@@ -60,9 +65,11 @@ pub async fn run(opts: TuiOptions) -> anyhow::Result<()> {
     let mut app = App::new(
         conn.windows.clone(),
         opts.default_dir.clone(),
-        Keymap::default_prefix(),
+        opts.settings,
     );
     app.home_dir = dirs::home_dir();
+    // Decision 7: every config problem the CLI found, shown once at start.
+    app.report_config_problems(opts.config_problems);
     if let Some(target) = &opts.focus {
         match app
             .windows
@@ -106,6 +113,14 @@ fn apply(effects: Vec<Effect>, conn: &Connection, app: &mut App) -> bool {
                 if !conn.send(msg) && !is_input {
                     app.toast("daemon is not responding");
                 }
+            }
+            // `bell.attention` / `bell.done` (decision 4): a bare BEL byte on the outer
+            // terminal, which every terminal emulator's own bell setting then decides
+            // whether to actually ring. `App` has already checked which of the two
+            // settings applies and that the window was not the focused one.
+            Effect::Bell => {
+                let _ = std::io::stdout().write_all(b"\x07");
+                let _ = std::io::stdout().flush();
             }
             Effect::Quit => return true,
         }

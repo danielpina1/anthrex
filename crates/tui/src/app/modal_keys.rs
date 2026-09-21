@@ -120,8 +120,8 @@ impl App {
             return vec![];
         };
         match modal {
-            // Any key closes the help overlay; nothing to restore.
-            Modal::Help => vec![],
+            // Any key closes the help overlay or the config notice; nothing to restore.
+            Modal::Help | Modal::Notice { .. } => vec![],
             Modal::Confirm { message, action } => match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => self.perform(action),
                 KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => vec![],

@@ -1,4 +1,4 @@
-use crate::{app::App, keymap::Keymap, theme, tree, ui};
+use crate::{app::App, settings::UiSettings, theme, tree, ui};
 use proto::{GitState, Head, Runtime, Status, SubagentInfo, SubagentState, WindowInfo};
 use std::path::PathBuf;
 use unicode_width::UnicodeWidthStr;
@@ -9,7 +9,7 @@ fn app_narrow() -> App {
     App::new(
         tree::example_windows(),
         "/tmp".into(),
-        Keymap::default_prefix(),
+        UiSettings::default(),
     )
 }
 
@@ -125,7 +125,7 @@ fn a_deep_name_is_truncated_not_the_guides() {
         subagents,
         exit: None,
     };
-    let app = App::new(vec![window], "/tmp".into(), Keymap::default_prefix());
+    let app = App::new(vec![window], "/tmp".into(), UiSettings::default());
     let rows = app.rows();
     let deepest = rows
         .iter()
@@ -200,11 +200,7 @@ fn worktree_window(
 #[test]
 fn branch_text_prefers_the_live_head() {
     let mut window = worktree_window(1, "api", "/repo", "/repo/wt", Some("feat/x"));
-    let mut app = App::new(
-        vec![window.clone()],
-        "/tmp".into(),
-        Keymap::default_prefix(),
-    );
+    let mut app = App::new(vec![window.clone()], "/tmp".into(), UiSettings::default());
     let root = PathBuf::from("/repo/wt");
     app.git.insert(root.clone(), git_state("other"));
     assert_eq!(
@@ -232,7 +228,7 @@ fn tree_row_shows_the_branch_and_truncates_it_first() {
         "/repo/wt",
         Some("feat/very-long-branch-name"),
     );
-    let app = App::new(vec![window], "/tmp".into(), Keymap::default_prefix());
+    let app = App::new(vec![window], "/tmp".into(), UiSettings::default());
     let rows = app.rows();
     let row = rows
         .iter()
@@ -250,7 +246,7 @@ fn tree_row_shows_the_branch_and_truncates_it_first() {
         "/repo/wt",
         Some("feat/very-long-branch-name"),
     );
-    let app2 = App::new(vec![long_name], "/tmp".into(), Keymap::default_prefix());
+    let app2 = App::new(vec![long_name], "/tmp".into(), UiSettings::default());
     let rows2 = app2.rows();
     let row2 = rows2
         .iter()
@@ -290,11 +286,7 @@ fn a_deep_row_spends_its_guides_before_its_branch() {
         "/repo/wt",
         Some("feat/very-long-branch-name"),
     );
-    let app = App::new(
-        vec![window.clone()],
-        "/tmp".into(),
-        Keymap::default_prefix(),
-    );
+    let app = App::new(vec![window.clone()], "/tmp".into(), UiSettings::default());
     // The same two-columns-per-level alphabet milestone 4.5 renders, deep enough that
     // the row has no room left for a branch marker once the guides, the markers and the
     // right-hand fields are drawn.
@@ -337,11 +329,7 @@ fn tree_groups_worktree_windows_under_the_repository() {
         "/data/worktrees/repo-abcd/feat-x",
         Some("feat/x"),
     );
-    let app = App::new(
-        vec![plain, worktree],
-        "/tmp".into(),
-        Keymap::default_prefix(),
-    );
+    let app = App::new(vec![plain, worktree], "/tmp".into(), UiSettings::default());
     let rows = app.rows();
     let project_row = rows
         .iter()

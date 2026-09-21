@@ -2,14 +2,14 @@
 
 use crate::dialog::{FormDefaults, NewAgentForm, RemoveConfirm};
 use crate::keymap::{Command, KeyAction, Keymap};
+use crate::settings::UiSettings;
 use crate::tree::{self, TreeState};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use proto::{ClientMsg, DaemonMsg, GitState, Runtime, Status, WindowInfo};
+use crossterm::event::KeyEvent;
+use proto::{ClientMsg, DaemonMsg, GitState, Status, WindowInfo};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-pub const SCROLLBACK_LINES: usize = 5000;
 pub const TOAST_TTL: Duration = Duration::from_secs(4);
 pub const RESIZE_DEBOUNCE: Duration = Duration::from_millis(30);
 const BRACKETED_PASTE_START: &[u8] = b"\x1b[200~";
@@ -47,6 +47,8 @@ fn sanitize_paste(text: &str) -> Vec<u8> {
 pub enum Effect {
     Send(ClientMsg),
     Quit,
+    /// `bell.attention` / `bell.done` (decision 4): `lib.rs` writes the BEL byte.
+    Bell,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +73,12 @@ pub enum Modal {
         window_id: u32,
         name: String,
         message: String,
+    },
+    /// Every config `Problem` the CLI found, already formatted, shown once at start
+    /// (decision 7). Dismissed by any key, like `Help`.
+    Notice {
+        title: String,
+        lines: Vec<String>,
     },
 }
 
@@ -100,6 +108,10 @@ pub struct App {
     pub(crate) graph_area: ratatui::layout::Rect,
     pub(crate) graph_mouse: crate::mouse::MouseState,
     pub keymap: Keymap,
+    /// The client's resolved view of `config.toml` (task M6.9); loaded once by the
+    /// CLI's `attach` and never touched again — reloading it while running is out of
+    /// scope (milestone 6's "Out of scope" list).
+    pub settings: UiSettings,
     pub modal: Option<Modal>,
     pub connected: bool,
     pub spinner_frame: usize,
@@ -131,25 +143,23 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(
-        windows: Vec<WindowInfo>,
-        default_dir: PathBuf,
-        prefix: (KeyCode, KeyModifiers),
-    ) -> Self {
+    pub fn new(windows: Vec<WindowInfo>, default_dir: PathBuf, settings: UiSettings) -> Self {
+        let mut tree = TreeState::default();
+        tree.keep_finished_secs = settings.tree_keep_finished_secs;
         Self {
             windows,
             focused: None,
-            parser: vt100::Parser::new(24, 80, SCROLLBACK_LINES),
+            parser: vt100::Parser::new(24, 80, settings.scrollback_lines),
             sidebar_visible: true,
-            sidebar_width: crate::ui::DEFAULT_SIDEBAR_WIDTH,
-            tree: TreeState::default(),
+            sidebar_width: settings.sidebar_width,
+            tree,
             tree_input: None,
             overview: false,
             inspector_visible: true,
             graph_pan: crate::graph::Pan::default(),
             graph_area: ratatui::layout::Rect::default(),
             graph_mouse: crate::mouse::MouseState::default(),
-            keymap: Keymap::new(prefix),
+            keymap: Keymap::new(settings.prefix),
             modal: None,
             connected: true,
             spinner_frame: 0,
@@ -157,7 +167,7 @@ impl App {
             default_dir,
             home_dir: None,
             form_defaults: FormDefaults {
-                runtime: Runtime::Claude,
+                runtime: settings.default_runtime,
                 dir: String::new(),
                 model: String::new(),
             },
@@ -168,6 +178,7 @@ impl App {
             term_size: (0, 0),
             pending_resize: None,
             pending_focus: None,
+            settings,
         }
     }
 
@@ -203,6 +214,18 @@ impl App {
 
     pub fn toast(&mut self, text: impl Into<String>) {
         self.toast = Some((text.into(), Instant::now()));
+    }
+
+    /// Decision 7: every config `Problem` `attach` found, already formatted, shown
+    /// once at start in a dismissable notice. Called right after `App::new`; does
+    /// nothing when there is nothing to report.
+    pub fn report_config_problems(&mut self, problems: Vec<String>) {
+        if !problems.is_empty() {
+            self.modal = Some(Modal::Notice {
+                title: " config ".to_string(),
+                lines: problems,
+            });
+        }
     }
 
     /// Focus this window as soon as it appears in the list (used for `Created` and `attach <name>`).
@@ -266,7 +289,7 @@ impl App {
         self.reveal_tree_anchor();
         self.scroll_offset = 0;
         let (cols, rows) = self.term_size;
-        self.parser = vt100::Parser::new(rows.max(1), cols.max(1), SCROLLBACK_LINES);
+        self.parser = vt100::Parser::new(rows.max(1), cols.max(1), self.settings.scrollback_lines);
         vec![Effect::Send(ClientMsg::Subscribe {
             window_id: id,
             cols,
@@ -331,7 +354,11 @@ impl App {
                 bytes,
             } => {
                 if Some(window_id) == self.focused {
-                    self.parser = vt100::Parser::new(rows.max(1), cols.max(1), SCROLLBACK_LINES);
+                    self.parser = vt100::Parser::new(
+                        rows.max(1),
+                        cols.max(1),
+                        self.settings.scrollback_lines,
+                    );
                     self.parser.process(&bytes);
                     self.scroll_offset = 0;
                 }
@@ -406,6 +433,10 @@ impl App {
     }
 
     fn replace_windows(&mut self, windows: Vec<WindowInfo>) -> Vec<Effect> {
+        // `bell.attention` / `bell.done` (decision 4): only a *background* window's
+        // transition rings, matching the toast right above it — the focused window is
+        // already on screen and needs neither.
+        let mut effects = Vec::new();
         for w in &windows {
             if Some(w.id) == self.focused {
                 continue;
@@ -417,8 +448,18 @@ impl App {
                 .map(|old| old.status);
             if previous != Some(w.status) {
                 match w.status {
-                    Status::Attention => self.toast(format!("{} needs attention", w.name)),
-                    Status::Done => self.toast(format!("{} finished", w.name)),
+                    Status::Attention => {
+                        self.toast(format!("{} needs attention", w.name));
+                        if self.settings.bell_attention {
+                            effects.push(Effect::Bell);
+                        }
+                    }
+                    Status::Done => {
+                        self.toast(format!("{} finished", w.name));
+                        if self.settings.bell_done {
+                            effects.push(Effect::Bell);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -456,7 +497,8 @@ impl App {
             && self.windows.iter().any(|w| w.id == id)
         {
             self.pending_focus = None;
-            return self.focus(id);
+            effects.extend(self.focus(id));
+            return effects;
         }
         if self.focused_window().is_none() {
             if let Some(i) = previous_index
@@ -464,12 +506,14 @@ impl App {
             {
                 let order = tree::agent_order(&self.rows());
                 if let Some(id) = order.get(i.min(order.len().saturating_sub(1))).copied() {
-                    return self.focus(id);
+                    effects.extend(self.focus(id));
+                    return effects;
                 }
             }
-            return self.ensure_focus();
+            effects.extend(self.ensure_focus());
+            return effects;
         }
-        vec![]
+        effects
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Effect> {

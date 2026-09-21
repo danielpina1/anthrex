@@ -51,7 +51,7 @@ fn shells() -> Vec<WindowInfo> {
 async fn production_draw_keeps_resize_render_and_click_on_the_same_row() {
     let windows = shells();
     let (_dir, conn, mut peer) = connection(&windows).await;
-    let mut app = App::new(windows, "/tmp".into(), Keymap::default_prefix());
+    let mut app = App::new(windows, "/tmp".into(), UiSettings::default());
     let mut terminal = Terminal::new(TestBackend::new(120, 14)).unwrap();
     draw(&mut terminal, &mut app, &conn).unwrap();
     assert_eq!(

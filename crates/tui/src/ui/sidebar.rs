@@ -40,7 +40,7 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(if app.tree_input.is_some() {
-            theme::border_focused()
+            theme::border_focused(app.settings.accent)
         } else {
             theme::border()
         })
@@ -50,7 +50,7 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
             } else {
                 " agents "
             },
-            theme::title(),
+            theme::title(app.settings.accent),
         )));
     frame.render_widget(block, layout.sidebar);
     let rows = app.rows();

@@ -352,7 +352,7 @@ fn orphans_and_cycles_become_roots() {
             20,
         ),
     ];
-    let forest = subagent_forest(&subagents);
+    let forest = subagent_forest(&subagents, 300);
     let roots: Vec<_> = forest.iter().map(|node| node.info.id.as_str()).collect();
 
     assert_eq!(roots, vec!["orphan", "cycle-a", "cycle-b"]);
@@ -373,7 +373,7 @@ fn siblings_sort_oldest_first() {
             30,
         ),
     ];
-    let forest = subagent_forest(&subagents);
+    let forest = subagent_forest(&subagents, 300);
 
     assert_eq!(
         forest
@@ -382,6 +382,92 @@ fn siblings_sort_oldest_first() {
             .collect::<Vec<_>>(),
         vec!["old", "middle", "young"]
     );
+}
+
+/// Task M6.9: a finished sub-agent's row disappears once it has been finished longer
+/// than `keep_finished_secs`; a still-`Running` one never does, whatever its
+/// `started_secs`.
+#[test]
+fn finished_subagents_older_than_the_setting_are_hidden() {
+    let mut worker = window(1, "/p", "worker", Runtime::Shell, Status::Idle, 0);
+    worker.subagents = vec![
+        finished_subagent("old", None, SubagentState::Done, 150),
+        finished_subagent("recent", None, SubagentState::Done, 60),
+        subagent(
+            "running",
+            None,
+            "agent",
+            "running",
+            SubagentState::Running,
+            10,
+        ),
+    ];
+    let windows = vec![worker.clone()];
+
+    let strict = TreeState {
+        keep_finished_secs: 120,
+        ..TreeState::default()
+    };
+    let keys = row_keys(&build(&windows, &strict));
+    assert!(!keys.contains(&subagent_key(1, "old")), "{keys:?}");
+    assert!(keys.contains(&subagent_key(1, "recent")), "{keys:?}");
+    assert!(keys.contains(&subagent_key(1, "running")), "{keys:?}");
+
+    // The default (300) is above both finished ages, so both show.
+    let keys = row_keys(&build(&windows, &TreeState::default()));
+    assert!(keys.contains(&subagent_key(1, "old")), "{keys:?}");
+    assert!(keys.contains(&subagent_key(1, "recent")), "{keys:?}");
+}
+
+/// Hazard: hiding a finished sub-agent must not drop its own children with it. Three
+/// levels — a shown window, a hidden finished sub-agent, and a still-`Running`
+/// sub-agent beneath it — because a hidden node with no children of its own can't tell
+/// "descendants reattached" from "descendants dropped".
+#[test]
+fn hidden_finished_subagents_reattach_their_running_descendants() {
+    let mut worker = window(1, "/p", "worker", Runtime::Shell, Status::Idle, 0);
+    worker.subagents = vec![
+        finished_subagent("parent", None, SubagentState::Done, 200),
+        subagent(
+            "child",
+            Some("parent"),
+            "agent",
+            "child",
+            SubagentState::Running,
+            10,
+        ),
+    ];
+    let windows = vec![worker];
+
+    let state = TreeState {
+        keep_finished_secs: 120,
+        ..TreeState::default()
+    };
+    let keys = row_keys(&build(&windows, &state));
+    assert!(!keys.contains(&subagent_key(1, "parent")), "{keys:?}");
+    assert!(
+        keys.contains(&subagent_key(1, "child")),
+        "the running child must survive its hidden parent: {keys:?}"
+    );
+}
+
+fn finished_subagent(
+    id: &str,
+    parent_id: Option<&str>,
+    state: SubagentState,
+    ended_secs: u64,
+) -> SubagentInfo {
+    SubagentInfo {
+        ended_secs: Some(ended_secs),
+        ..subagent(id, parent_id, "agent", id, state, 0)
+    }
+}
+
+fn subagent_key(window_id: u32, id: &str) -> NodeKey {
+    NodeKey::Subagent {
+        window_id,
+        id: id.to_string(),
+    }
 }
 
 #[test]

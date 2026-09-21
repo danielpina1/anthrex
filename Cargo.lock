@@ -149,6 +149,7 @@ dependencies = [
 name = "anthrex-tui"
 version = "0.1.0"
 dependencies = [
+ "anthrex-config",
  "anthrex-daemon",
  "anthrex-proto",
  "anyhow",

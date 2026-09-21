@@ -8,22 +8,28 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-const HINTS: [(&str, &str); 5] = [
-    ("C-b ?", "help"),
-    ("C-b c", "new shell"),
-    ("C-b t", "tree"),
-    ("C-b j/k", "switch"),
-    ("C-b d", "detach"),
-];
+/// The status bar's key hints, keyed to `prefix_label` (decision 38: every hint takes
+/// the prefix from `app.settings.prefix_label`, never a hard-coded `C-b`).
+fn hints(prefix_label: &str) -> [(String, &'static str); 5] {
+    [
+        (format!("{prefix_label} ?"), "help"),
+        (format!("{prefix_label} c"), "new shell"),
+        (format!("{prefix_label} t"), "tree"),
+        (format!("{prefix_label} j/k"), "switch"),
+        (format!("{prefix_label} d"), "detach"),
+    ]
+}
 
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
+    let accent = app.settings.accent;
+    let hints = hints(&app.settings.prefix_label);
     let mut spans = Vec::new();
     if app.keymap.pending() {
         spans.push(Span::styled(
             " PREFIX ",
             Style::default()
                 .fg(Color::Black)
-                .bg(theme::ACCENT)
+                .bg(accent)
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::raw(" "));
@@ -35,7 +41,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             },
             Style::default()
                 .fg(Color::Black)
-                .bg(theme::ACCENT)
+                .bg(accent)
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::raw(" "));
@@ -67,7 +73,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             theme::muted(),
         )),
         None => match app.focused_git() {
-            None => push_hints(&mut spans, HINTS.len()),
+            None => push_hints(&mut spans, &hints, hints.len(), accent),
             Some(state) => {
                 let badge_width = spans_width(&spans);
                 let available = area
@@ -77,12 +83,13 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 // Hints drop from the right, one at a time, before the git segment gives up
                 // any of its own parts (decision 20).
                 let full_git_width = spans_width(&git_spans(state, usize::MAX));
-                let mut hint_count = HINTS.len();
-                while hint_count > 0 && hints_width(hint_count) + full_git_width > available {
+                let mut hint_count = hints.len();
+                while hint_count > 0 && hints_width(&hints, hint_count) + full_git_width > available
+                {
                     hint_count -= 1;
                 }
-                push_hints(&mut spans, hint_count);
-                let git_budget = available.saturating_sub(hints_width(hint_count));
+                push_hints(&mut spans, &hints, hint_count, accent);
+                let git_budget = available.saturating_sub(hints_width(&hints, hint_count));
                 spans.extend(git_spans(state, usize::from(git_budget)));
             }
         },
@@ -98,19 +105,22 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         };
         let toast = Span::styled(
             text.to_string(),
-            Style::default()
-                .fg(theme::ACCENT)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
         );
         frame.render_widget(Paragraph::new(Line::from(toast)), right);
     }
 }
 
-/// Pushes the first `count` key hints (of `HINTS`'s 5) onto `spans`, in the styling shared by
-/// the git-present and git-absent render paths.
-fn push_hints(spans: &mut Vec<Span<'static>>, count: usize) {
-    for (key, what) in HINTS.into_iter().take(count) {
-        spans.push(Span::styled(key, Style::default().fg(theme::ACCENT)));
+/// Pushes the first `count` key hints onto `spans`, in the styling shared by the
+/// git-present and git-absent render paths.
+fn push_hints(
+    spans: &mut Vec<Span<'static>>,
+    hints: &[(String, &'static str)],
+    count: usize,
+    accent: Color,
+) {
+    for (key, what) in hints.iter().take(count) {
+        spans.push(Span::styled(key.clone(), Style::default().fg(accent)));
         spans.push(Span::styled(format!(" {what}  "), theme::muted()));
     }
 }
@@ -122,12 +132,12 @@ fn spans_width(spans: &[Span<'_>]) -> u16 {
         .sum()
 }
 
-fn hints_width(count: usize) -> u16 {
-    HINTS
+fn hints_width(hints: &[(String, &'static str)], count: usize) -> u16 {
+    hints
         .iter()
         .take(count)
         .map(|(key, what)| {
-            UnicodeWidthStr::width(*key) as u16 + UnicodeWidthStr::width(*what) as u16 + 3
+            UnicodeWidthStr::width(key.as_str()) as u16 + UnicodeWidthStr::width(*what) as u16 + 3
         })
         .sum()
 }

@@ -6,7 +6,7 @@
 use super::*;
 use crate::app::{App, Modal, PendingAction};
 use crate::graph::Pan;
-use crate::keymap::Keymap;
+use crate::settings::UiSettings;
 use proto::{Runtime, Status, WindowInfo};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -43,7 +43,7 @@ fn example_app() -> App {
     let mut app = App::new(
         crate::tree::example_windows(),
         "/tmp".into(),
-        Keymap::default_prefix(),
+        UiSettings::default(),
     );
     app.set_terminal_size(80, 24);
     app
@@ -231,7 +231,7 @@ fn long_names_are_truncated_with_an_ellipsis() {
     // set (decision 37, `ui/tree_view_tests.rs` covers the budget between the two) — so
     // it is turned off here to keep the two concerns from being tested at once.
     window.branch = None;
-    let mut app = App::new(vec![window], "/tmp".into(), Keymap::default_prefix());
+    let mut app = App::new(vec![window], "/tmp".into(), UiSettings::default());
     app.set_terminal_size(80, 24);
     let (out, _) = render(&app, 120, 30);
     assert!(out.contains("… sh  0s│"), "{out}");
@@ -239,7 +239,7 @@ fn long_names_are_truncated_with_an_ellipsis() {
 
 #[test]
 fn empty_state_and_hidden_sidebar() {
-    let mut app = App::new(vec![], "/tmp".into(), Keymap::default_prefix());
+    let mut app = App::new(vec![], "/tmp".into(), UiSettings::default());
     let _ = app.set_terminal_size(80, 24);
     let (out, _) = render(&app, 100, 20);
     assert!(out.contains("no agents yet"));
@@ -256,7 +256,7 @@ fn main_title_of_a_worktree_window_names_project_and_branch() {
     window.project = "/tmp/shop".into();
     window.cwd = "/tmp/data/worktrees/shop-abcd/feat-x".into();
     window.branch = Some("feat/x".into());
-    let mut app = App::new(vec![window], "/tmp".into(), Keymap::default_prefix());
+    let mut app = App::new(vec![window], "/tmp".into(), UiSettings::default());
     let _ = app.set_terminal_size(80, 24);
     let (out, _) = render(&app, 100, 20);
     assert!(out.contains("(feat/x, worktree)"), "{out}");
@@ -265,7 +265,7 @@ fn main_title_of_a_worktree_window_names_project_and_branch() {
 
     let mut plain = win(2, "plain", Runtime::Shell, Status::Idle);
     plain.branch = None;
-    let mut app = App::new(vec![plain], "/tmp".into(), Keymap::default_prefix());
+    let mut app = App::new(vec![plain], "/tmp".into(), UiSettings::default());
     let _ = app.set_terminal_size(80, 24);
     let (out, _) = render(&app, 100, 20);
     assert!(out.contains(" plain · shell · "), "{out}");
@@ -277,7 +277,7 @@ fn help_lists_new_agent() {
     let mut app = App::new(
         vec![win(1, "a", Runtime::Shell, Status::Idle)],
         "/tmp".into(),
-        Keymap::default_prefix(),
+        UiSettings::default(),
     );
     let _ = app.set_terminal_size(80, 24);
     app.modal = Some(Modal::Help);
@@ -291,7 +291,7 @@ fn statusbar_shows_prefix_state_and_toast() {
     let mut app = App::new(
         vec![win(1, "a", Runtime::Shell, Status::Idle)],
         "/tmp".into(),
-        Keymap::default_prefix(),
+        UiSettings::default(),
     );
     let _ = app.set_terminal_size(80, 24);
     let (out, _) = render(&app, 100, 20);
@@ -350,7 +350,7 @@ fn modals_render_on_top() {
     let mut app = App::new(
         vec![win(1, "a", Runtime::Shell, Status::Idle)],
         "/tmp".into(),
-        Keymap::default_prefix(),
+        UiSettings::default(),
     );
     let _ = app.set_terminal_size(80, 24);
     app.modal = Some(Modal::Confirm {
@@ -365,6 +365,83 @@ fn modals_render_on_top() {
     assert!(out.contains("send a literal C-b"));
     assert!(out.contains("tree mode"));
     assert!(out.contains("sidebar width"));
+}
+
+/// Task M6.9 decision 38: every piece of help or hint text takes the prefix from
+/// `app.settings.prefix_label`, never a hard-coded `C-b`.
+#[test]
+fn help_and_hints_use_the_configured_prefix() {
+    let settings = UiSettings {
+        prefix_label: "C-a".into(),
+        ..UiSettings::default()
+    };
+    let mut app = App::new(
+        vec![win(1, "a", Runtime::Shell, Status::Idle)],
+        "/tmp".into(),
+        settings,
+    );
+    let _ = app.set_terminal_size(80, 24);
+
+    app.modal = Some(Modal::Help);
+    let (out, _) = render(&app, 100, 30);
+    assert!(out.contains("C-a c"), "{out}");
+    assert!(out.contains("send a literal C-a"), "{out}");
+    assert!(!out.contains("C-b"), "{out}");
+
+    app.modal = None;
+    let (out, _) = render(&app, 100, 20);
+    assert!(out.contains("C-a ?"), "{out}");
+    assert!(!out.contains("C-b"), "{out}");
+}
+
+/// Task M6.9: `app.settings.accent` colours the focused main pane's border, not the
+/// built-in `theme::DEFAULT_ACCENT`.
+#[test]
+fn accent_colours_the_focused_border() {
+    let accent = ratatui::style::Color::Rgb(0x11, 0x22, 0x33);
+    let settings = UiSettings {
+        accent,
+        ..UiSettings::default()
+    };
+    let mut app = App::new(
+        vec![win(1, "a", Runtime::Shell, Status::Idle)],
+        "/tmp".into(),
+        settings,
+    );
+    let _ = app.set_terminal_size(80, 24);
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    let mut l = None;
+    terminal.draw(|f| l = Some(draw(f, &app))).unwrap();
+    let l = l.unwrap();
+    assert_eq!(terminal.backend().buffer()[(l.main.x, l.main.y)].fg, accent);
+}
+
+#[test]
+fn layout_uses_the_configured_sidebar_width() {
+    let settings = UiSettings {
+        sidebar_width: 40,
+        ..UiSettings::default()
+    };
+    let mut app = App::new(
+        vec![win(1, "a", Runtime::Shell, Status::Idle)],
+        "/tmp".into(),
+        settings,
+    );
+    assert_eq!(app.sidebar_width, 40);
+    let _ = app.set_terminal_size(80, 24);
+    let (_, l) = render(&app, 120, 30);
+    assert_eq!(l.sidebar.width, 40);
+
+    // `C-b <` still steps it by the built-in constant, unaffected by the starting width.
+    app.on_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('b'),
+        crossterm::event::KeyModifiers::CONTROL,
+    ));
+    app.on_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('<'),
+        crossterm::event::KeyModifiers::NONE,
+    ));
+    assert_eq!(app.sidebar_width, 36);
 }
 
 #[test]
@@ -451,7 +528,7 @@ fn shells_app() -> App {
             .map(|id| win(id, &format!("shell-{id}"), Runtime::Shell, Status::Idle))
             .collect(),
         "/tmp".into(),
-        Keymap::default_prefix(),
+        UiSettings::default(),
     );
     app.set_terminal_size(80, 24);
     app
@@ -550,7 +627,7 @@ fn unicode_names_preserve_graphemes_and_right_fields() {
         // As in `long_names_are_truncated_with_an_ellipsis`: this is about grapheme-safe
         // truncation, not the branch marker `win()` happens to set.
         window.branch = None;
-        let mut app = App::new(vec![window], "/tmp".into(), Keymap::default_prefix());
+        let mut app = App::new(vec![window], "/tmp".into(), UiSettings::default());
         app.set_terminal_size(80, 24);
         let (out, _) = render(&app, 120, 30);
         assert!(out.contains("… sh  0s│"), "{out}");

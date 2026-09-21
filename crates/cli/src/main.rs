@@ -324,10 +324,20 @@ async fn run_cli() -> anyhow::Result<()> {
 
 async fn attach(socket: PathBuf, dir: PathBuf, target: Option<String>) -> anyhow::Result<()> {
     spawn::ensure_daemon(&socket).await?;
+    // The config is loaded exactly once, here, and turned into the client's resolved
+    // `UiSettings` before `tui::run` starts: nothing under `crates/tui/src/app/` or
+    // `crates/tui/src/ui/` does I/O (task M6.9's layering rule), so the CLI is the only
+    // place `config::load` can run for the TUI. Every problem it found is formatted
+    // (decision 7's `<key>: <message> (using <default>)`, `Problem`'s own `Display`)
+    // and shown once, in a dismissable notice, instead of being lost to a log no one
+    // watching the TUI would see.
+    let (loaded_config, config_problems) = config::load(&proto::paths::config_path());
     tui::run(tui::TuiOptions {
         socket_path: socket,
         default_dir: dir,
         focus: target,
+        settings: tui::settings::UiSettings::from_config(&loaded_config),
+        config_problems: config_problems.iter().map(ToString::to_string).collect(),
     })
     .await
 }

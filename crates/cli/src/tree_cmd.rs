@@ -168,7 +168,11 @@ pub fn tree_json(windows: &[WindowInfo], project: Option<ProjectQuery<'_>>) -> T
                     cwd: info.cwd.display().to_string(),
                     branch: info.branch.clone(),
                     session_id: info.session_id.clone(),
-                    subagents: tree::subagent_forest(&info.subagents)
+                    // `anthrex tree` reads no config (only `attach` does; see
+                    // `tui::settings::UiSettings`), so it keeps its pre-M6.9 behaviour
+                    // of listing every sub-agent the daemon reports, never hiding an
+                    // old finished one the way the client's tree view now can.
+                    subagents: tree::subagent_forest(&info.subagents, u64::MAX)
                         .into_iter()
                         .map(subagent_json)
                         .collect(),

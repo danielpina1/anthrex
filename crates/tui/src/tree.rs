@@ -1,6 +1,6 @@
 mod rows;
 
-use proto::{Runtime, Status, SubagentInfo, WindowInfo};
+use proto::{Runtime, Status, SubagentInfo, SubagentState, WindowInfo};
 use rows::{SubagentWalk, emit_subagents, guide_prefix, visible_windows};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -92,14 +92,39 @@ impl Viewport {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+/// `config.toml`'s `ui.tree_keep_finished_secs` default (decision 4), and `TreeState`'s
+/// own fallback when nothing else set it (task M4's `TreeState::default()` calls that
+/// still need a tree, e.g. `App::focus_relative`'s wrap-around lookup, and every
+/// existing test that predates `UiSettings`).
+const DEFAULT_KEEP_FINISHED_SECS: u64 = 300;
+
+#[derive(Debug, Clone)]
 pub struct TreeState {
     pub collapsed: HashSet<NodeKey>,
     pub filter: String,
     pub selected: Option<NodeKey>,
     pub sidebar: Viewport,
     pub overview: Viewport,
+    /// A finished (`Done` or `Failed`) sub-agent whose `ended_secs` exceeds this gets no
+    /// row, and its descendants reattach to the nearest still-shown ancestor (task
+    /// M6.9). Set from `UiSettings::tree_keep_finished_secs`, itself
+    /// `config.toml`'s `ui.tree_keep_finished_secs`.
+    pub keep_finished_secs: u64,
     selected_index: usize,
+}
+
+impl Default for TreeState {
+    fn default() -> Self {
+        Self {
+            collapsed: HashSet::new(),
+            filter: String::new(),
+            selected: None,
+            sidebar: Viewport::default(),
+            overview: Viewport::default(),
+            keep_finished_secs: DEFAULT_KEEP_FINISHED_SECS,
+            selected_index: 0,
+        }
+    }
 }
 
 impl TreeState {
@@ -263,7 +288,13 @@ pub fn build<'a>(windows: &'a [WindowInfo], state: &TreeState) -> Vec<Row<'a>> {
         if project_collapsed {
             continue;
         }
-        let visible = visible_windows(project.members, filtering, project_matches, &filter);
+        let visible = visible_windows(
+            project.members,
+            filtering,
+            project_matches,
+            &filter,
+            state.keep_finished_secs,
+        );
         let count = visible.len();
         for (index, member) in visible.into_iter().enumerate() {
             let has_later_sibling = index + 1 < count;
@@ -481,7 +512,10 @@ pub fn format_elapsed(secs: u64) -> String {
     }
 }
 
-pub fn subagent_forest(subagents: &[SubagentInfo]) -> Vec<SubagentNode<'_>> {
+pub fn subagent_forest(
+    subagents: &[SubagentInfo],
+    keep_finished_secs: u64,
+) -> Vec<SubagentNode<'_>> {
     let index_by_id: HashMap<&str, usize> = subagents
         .iter()
         .enumerate()
@@ -527,10 +561,47 @@ pub fn subagent_forest(subagents: &[SubagentInfo]) -> Vec<SubagentNode<'_>> {
     for siblings in &mut children {
         sort_subagents(siblings, subagents);
     }
-    roots
-        .into_iter()
-        .map(|index| make_subagent_node(index, subagents, &children))
-        .collect()
+    build_visible_forest(&roots, subagents, &children, keep_finished_secs)
+}
+
+/// Task M6.9: a `Done` or `Failed` sub-agent whose `ended_secs` is older than
+/// `keep_finished_secs` gets no row of its own.
+fn is_hidden_finished(info: &SubagentInfo, keep_finished_secs: u64) -> bool {
+    info.state != SubagentState::Running
+        && info
+            .ended_secs
+            .is_some_and(|secs| secs > keep_finished_secs)
+}
+
+/// Builds the forest for one level of `indices` (siblings, by index into `subagents`),
+/// recursing into `children` first so a hidden node's own descendants are already
+/// resolved before the decision to hide it is made.
+///
+/// A hidden node's resolved children are spliced into the list at the position the
+/// hidden node itself held — the same reattach-to-the-nearest-shown-ancestor rule
+/// `subagent_forest`'s cycle/orphan handling above already gives a sub-agent whose
+/// `parent_id` cannot be found (it becomes a root instead of vanishing); here the
+/// ancestor being skipped is known and hidden by age rather than missing, but a hidden
+/// node's children must survive it exactly the same way.
+fn build_visible_forest<'a>(
+    indices: &[usize],
+    subagents: &'a [SubagentInfo],
+    children: &[Vec<usize>],
+    keep_finished_secs: u64,
+) -> Vec<SubagentNode<'a>> {
+    let mut result = Vec::new();
+    for &index in indices {
+        let kids = build_visible_forest(&children[index], subagents, children, keep_finished_secs);
+        if is_hidden_finished(&subagents[index], keep_finished_secs) {
+            result.extend(kids);
+        } else {
+            result.push(SubagentNode {
+                info: &subagents[index],
+                children: kids,
+            });
+        }
+    }
+    result
 }
 
 fn sort_subagents(indices: &mut [usize], subagents: &[SubagentInfo]) {
@@ -540,20 +611,6 @@ fn sort_subagents(indices: &mut [usize], subagents: &[SubagentInfo]) {
             .cmp(&subagents[*left].started_secs)
             .then_with(|| subagents[*left].id.cmp(&subagents[*right].id))
     });
-}
-
-fn make_subagent_node<'a>(
-    index: usize,
-    subagents: &'a [SubagentInfo],
-    children: &[Vec<usize>],
-) -> SubagentNode<'a> {
-    SubagentNode {
-        info: &subagents[index],
-        children: children[index]
-            .iter()
-            .map(|child| make_subagent_node(*child, subagents, children))
-            .collect(),
-    }
 }
 
 #[cfg(test)]

@@ -257,7 +257,10 @@ fn a_border_an_edge_meets_becomes_a_junction() {
         .iter()
         .find(|span| span.content.starts_with('┤'))
         .expect("the focused child's junction is its own span");
-    assert_eq!(junction.style, crate::theme::border_focused());
+    assert_eq!(
+        junction.style,
+        crate::theme::border_focused(crate::theme::DEFAULT_ACCENT)
+    );
 }
 
 #[test]

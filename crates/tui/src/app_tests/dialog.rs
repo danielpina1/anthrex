@@ -244,7 +244,7 @@ fn escape_while_submitting_still_focuses_the_new_window() {
 
 #[test]
 fn first_open_shows_the_default_dir_with_tilde() {
-    let mut app = App::new(vec![], "/home/me/code".into(), Keymap::default_prefix());
+    let mut app = App::new(vec![], "/home/me/code".into(), UiSettings::default());
     let _ = app.set_terminal_size(80, 24);
     app.home_dir = Some(PathBuf::from("/home/me"));
 

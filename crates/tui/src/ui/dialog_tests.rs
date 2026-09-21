@@ -26,7 +26,7 @@ fn new_agent_form_renders_fields_and_error() {
     form.branch = TextInput::new("feat/x");
     form.error = Some("not a git repository: /x".into());
     let out = draw(100, 30, |frame| {
-        render_new_agent(frame, &form, frame.area());
+        render_new_agent(frame, &form, frame.area(), theme::DEFAULT_ACCENT);
     });
     for expected in [
         "new agent",
@@ -42,14 +42,14 @@ fn new_agent_form_renders_fields_and_error() {
 
     form.runtime = Runtime::Shell;
     let out = draw(100, 30, |frame| {
-        render_new_agent(frame, &form, frame.area());
+        render_new_agent(frame, &form, frame.area(), theme::DEFAULT_ACCENT);
     });
     assert!(!out.contains("Model"), "{out}");
     assert!(!out.contains("Prompt"), "{out}");
 
     form.submitting = true;
     let out = draw(100, 30, |frame| {
-        render_new_agent(frame, &form, frame.area());
+        render_new_agent(frame, &form, frame.area(), theme::DEFAULT_ACCENT);
     });
     assert!(out.contains("creating the worktree"), "{out}");
 }
@@ -62,7 +62,7 @@ fn new_agent_form_places_the_cursor_in_the_focused_field() {
     let area = Rect::new(0, 0, 100, 30);
     let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
     terminal
-        .draw(|frame| render_new_agent(frame, &form, frame.area()))
+        .draw(|frame| render_new_agent(frame, &form, frame.area(), theme::DEFAULT_ACCENT))
         .unwrap();
     let cursor = terminal.get_cursor_position().unwrap();
 
@@ -90,14 +90,14 @@ fn remove_dialog_shows_the_checkbox_only_for_worktree_windows() {
         remove_worktree: false,
     };
     let out = draw(100, 30, |frame| {
-        render_remove_confirm(frame, &confirm, frame.area());
+        render_remove_confirm(frame, &confirm, frame.area(), theme::DEFAULT_ACCENT);
     });
     assert!(out.contains("[ ] also remove worktree feat/api"), "{out}");
     assert!(out.contains("the branch is kept"), "{out}");
 
     confirm.remove_worktree = true;
     let out = draw(100, 30, |frame| {
-        render_remove_confirm(frame, &confirm, frame.area());
+        render_remove_confirm(frame, &confirm, frame.area(), theme::DEFAULT_ACCENT);
     });
     assert!(out.contains("[x] also remove worktree feat/api"), "{out}");
 
@@ -108,7 +108,7 @@ fn remove_dialog_shows_the_checkbox_only_for_worktree_windows() {
         remove_worktree: false,
     };
     let out = draw(100, 30, |frame| {
-        render_remove_confirm(frame, &plain, frame.area());
+        render_remove_confirm(frame, &plain, frame.area(), theme::DEFAULT_ACCENT);
     });
     assert!(out.contains("Remove 'shell-1'?"), "{out}");
     assert!(!out.contains("also remove worktree"), "{out}");
@@ -123,6 +123,7 @@ fn force_prompt_lists_the_three_choices() {
             "api",
             "worktree /tmp/shop-abc/feat-api has uncommitted or untracked changes",
             frame.area(),
+            theme::DEFAULT_ACCENT,
         );
     });
     assert!(out.contains("force"), "{out}");
@@ -142,6 +143,7 @@ fn force_prompt_names_the_window_it_targets() {
             "alpha",
             "worktree /tmp/shop-abc/feat-beta has uncommitted or untracked changes",
             frame.area(),
+            theme::DEFAULT_ACCENT,
         );
     });
     assert!(
@@ -214,7 +216,7 @@ fn force_prompt_shows_every_dirty_reason_in_full_with_a_realistic_path() {
         let last_line = wrapped.last().expect("at least one wrapped line");
 
         let out = draw(100, 30, |frame| {
-            render_force_remove(frame, "api", &message, frame.area());
+            render_force_remove(frame, "api", &message, frame.area(), theme::DEFAULT_ACCENT);
         });
         assert!(
             out.contains(branch_dir),
