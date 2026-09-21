@@ -589,3 +589,115 @@ async fn restart_admitted_before_shutdown_ordinary_shell_variant() {
     );
     assert!(err.to_string().contains("shutting down"), "{err}");
 }
+
+/// Minor 2 (fix wave 5 re-review): the kill-wait timeout refusal (Major 2, the previous
+/// wave) leaves `cleanups[id]` populated. `tick`'s retain keeps that record for as long as
+/// the entry exists (`entries.contains_key(id) || !*done.borrow()`, `mod.rs`), which is
+/// forever for a window that is merely refused, not removed — so a later `kill(id)` for the
+/// same window becomes the exact silent no-op Critical 1 fixed, on the one path this wave's
+/// own Major 2 fix created.
+///
+/// Driven with a real, *non*-ignoring script that logs each `HUP`/`TERM` it receives rather
+/// than exiting on them, so a *second*, independent signal delivery is directly observable
+/// (a repeat of the same eventual death is not: nothing distinguishes "a fresh escalation
+/// re-signalled" from "the original one was always going to get there"). `config.kill_grace`
+/// is shortened so `wait_for_exit`'s own deadline (`kill_grace + 2s`) falls before the real,
+/// hardcoded `KILL_GRACE` (`process.rs`, unaffected by this) the original escalation needs
+/// to finally force the issue with `SIGKILL` — guaranteeing a genuine timeout, not a race.
+#[tokio::test]
+async fn kill_after_a_timed_out_restart_still_signals_the_window() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("signals.log");
+    let ready = dir.path().join("ready");
+    let shell = dir.path().join("logging-shell.sh");
+    std::fs::write(
+        &shell,
+        format!(
+            "#!/bin/sh\ntrap 'echo hup >> \"{}\"' HUP\ntrap 'echo term >> \"{}\"' TERM\n\
+             : > \"{}\"\nwhile :; do :; done\n",
+            log.display(),
+            log.display(),
+            ready.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let mut config = ManagerConfig::new("/tmp/unused.sock".into(), shell.display().to_string());
+    // `wait_for_exit`'s deadline is `kill_grace + 2s`; 100ms here gives ~2.1s, comfortably
+    // short of the real, hardcoded `KILL_GRACE` (3s) the original escalation needs to reach
+    // its own `SIGKILL` — so the timeout is genuine, not a race against real death.
+    config.kill_grace = Duration::from_millis(100);
+    let (m, mut events) = WindowManager::new(config);
+    let pump = m.clone();
+    tokio::spawn(async move {
+        while let Some((id, ev)) = events.recv().await {
+            pump.handle_event(id, ev);
+        }
+    });
+
+    let id = create_id(&m, spec("timeout-then-kill"), std::env::temp_dir(), 80, 24).await;
+    wait_until("logging shell's traps are registered", || ready.exists()).await;
+
+    // Guarantees the process is dead before this test ends, on every exit path including
+    // a panicking assertion below — this script only ever dies to `SIGKILL`, so nothing
+    // but an explicit signal from this guard, or the original escalation's own hardcoded
+    // one, will ever end it.
+    struct KillOnDrop(Arc<WindowManager>, u32);
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            if let Ok(Some(pid)) = self.0.child_pid(self.1) {
+                // SAFETY: this is this test's own window's own process.
+                unsafe {
+                    libc::killpg(pid as libc::pid_t, libc::SIGKILL);
+                }
+            }
+        }
+    }
+    let _cleanup = KillOnDrop(m.clone(), id);
+
+    let err = m.restart(id).await.unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        format!("window {id} did not exit; not restarted")
+    );
+
+    // By now the original escalation has sent HUP (t=0) and TERM (t=1s per the real,
+    // hardcoded `HUP_GRACE`) — both logged, neither fatal to this script.
+    let after_timeout = std::fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(
+        after_timeout.matches("hup").count(),
+        1,
+        "sanity: exactly one HUP before the retry: {after_timeout:?}"
+    );
+
+    // The regression: a fresh, explicit `kill` for this same window must actually signal
+    // it again, not silently believe cleanup is already in hand.
+    m.kill(id).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        let hups = std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .matches("hup")
+            .count();
+        if hups >= 2 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "a second kill() after a timed-out restart sent no new signal — \
+             cleanups[id] was left stale, the exact no-op Critical 1 fixed"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    // The original escalation's own hardcoded `SIGKILL` lands on its own schedule
+    // regardless of any of the above; wait for the real death rather than declaring
+    // victory the moment a second signal was merely sent.
+    let pid = m.child_pid(id).unwrap();
+    if let Some(pid) = pid {
+        wait_until("the window's process to actually die", || !group_alive(pid)).await;
+    }
+}

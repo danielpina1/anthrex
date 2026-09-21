@@ -178,6 +178,18 @@ impl WindowManager {
         if was_live {
             self.kill(id)?;
             if !self.wait_for_exit(id).await {
+                // Minor 2 (fix wave 5 re-review): this refusal must not leave the
+                // `cleanups[id]` record `kill` just inserted behind. `tick`'s retain keeps
+                // it for as long as the entry exists — which this refusal does not
+                // change — so an un-evicted record here makes every later `kill(id)` for
+                // this same window, and this same window's next `restart`, believe
+                // cleanup is already in hand and signal nothing: the exact no-op Critical
+                // 1 fixed, reopened on the one path this wave's own Major 2 fix created.
+                // `orphan_cleanup` is safe to use even though the id has not changed hands
+                // (unlike `finish_restart`'s use of it): it only moves the record so a
+                // *fresh* `start_cleanup` can run, and `shutdown` can still wait on the
+                // moved receiver exactly as it already does for a restart's stale record.
+                crate::lock(&self.inner).orphan_cleanup(id);
                 anyhow::bail!("window {id} did not exit; not restarted");
             }
         }
