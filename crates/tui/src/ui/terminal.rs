@@ -7,13 +7,20 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use std::path::Path;
 use tui_term::widget::{Cursor, PseudoTerminal};
 
-pub fn shorten_home(path: &Path) -> String {
-    if let Some(home) = dirs::home_dir()
-        && let Ok(rest) = path.strip_prefix(&home)
+/// Pure variant of [`shorten_home`]: takes the home directory as a parameter instead of
+/// reading it from the environment, so callers with no filesystem access — the new-agent
+/// form's defaults (decision 31) among them — can use it too.
+pub fn shorten_home_with(path: &Path, home: Option<&Path>) -> String {
+    if let Some(home) = home
+        && let Ok(rest) = path.strip_prefix(home)
     {
         return format!("~/{}", rest.display());
     }
     path.display().to_string()
+}
+
+pub fn shorten_home(path: &Path) -> String {
+    shorten_home_with(path, dirs::home_dir().as_deref())
 }
 
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {

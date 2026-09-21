@@ -55,6 +55,14 @@ pub fn render(frame: &mut Frame, modal: &Modal, area: Rect) {
                 })
                 .collect(),
         ),
+        // Placeholders only: task M5.11 replaces these with the real renderings in
+        // `ui::dialog`, which `ui::modal::render` will dispatch to instead.
+        Modal::NewAgent(_) => (" new agent ", vec![Line::raw("(rendering: task M5.11)")]),
+        Modal::Remove(_) => (" remove ", vec![Line::raw("(rendering: task M5.11)")]),
+        Modal::ForceRemove { .. } => (
+            " worktree has changes ",
+            vec![Line::raw("(rendering: task M5.11)")],
+        ),
     };
     let width = body.iter().map(Line::width).max().unwrap_or(0).max(30) as u16 + 4;
     let height = body.len() as u16 + 2;

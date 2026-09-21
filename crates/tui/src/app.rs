@@ -1,9 +1,10 @@
 //! Client state and its pure update functions. Rendering lives in `ui`; I/O in `lib.rs`.
 
+use crate::dialog::{FormDefaults, NewAgentForm, RemoveConfirm};
 use crate::keymap::{Command, KeyAction, Keymap};
 use crate::tree::{self, TreeState};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use proto::{ClientMsg, DaemonMsg, GitState, Runtime, Status, WindowInfo, WindowSpec};
+use proto::{ClientMsg, DaemonMsg, GitState, Runtime, Status, WindowInfo};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -62,6 +63,16 @@ pub enum Modal {
         action: PendingAction,
     },
     Help,
+    /// The new-agent form; keys are handled in `app/modal_keys.rs`.
+    NewAgent(NewAgentForm),
+    /// The remove-confirm dialog (task M5.10).
+    Remove(RemoveConfirm),
+    /// The force-removal follow-up after a dirty-tree refusal (task M5.10).
+    ForceRemove {
+        window_id: u32,
+        name: String,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +106,10 @@ pub struct App {
     pub spinner_frame: usize,
     pub scroll_offset: usize,
     pub default_dir: PathBuf,
+    /// Set by `tui::run` from `dirs::home_dir()`.
+    pub home_dir: Option<PathBuf>,
+    /// The last accepted new-agent form's values this session (decision 31); `dir` empty is `new_agent_defaults`'s sentinel for "nothing accepted yet".
+    pub form_defaults: FormDefaults,
     /// Git state by worktree root; pruned to current windows' roots (see `prune_git`).
     pub git: HashMap<PathBuf, GitState>,
     toast: Option<(String, Instant)>,
@@ -130,6 +145,12 @@ impl App {
             spinner_frame: 0,
             scroll_offset: 0,
             default_dir,
+            home_dir: None,
+            form_defaults: FormDefaults {
+                runtime: Runtime::Claude,
+                dir: String::new(),
+                model: String::new(),
+            },
             git: HashMap::new(),
             toast: None,
             windows_received_at: Instant::now(),
@@ -280,6 +301,11 @@ impl App {
                 self.replace_windows(windows)
             }
             DaemonMsg::Created { window_id } => {
+                // Decision 34: a still-open form closes and hands its values on.
+                match self.modal.take() {
+                    Some(Modal::NewAgent(form)) => self.form_defaults = form.defaults(),
+                    other => self.modal = other,
+                }
                 if self.windows.iter().any(|w| w.id == window_id) {
                     self.focus(window_id)
                 } else {
@@ -306,8 +332,17 @@ impl App {
                 }
                 vec![]
             }
-            DaemonMsg::Error { message, .. } => {
-                self.toast(message);
+            DaemonMsg::Error { request, message } => {
+                // Decision 33: a submitting `create` failure goes inline, not a toast.
+                if request == proto::messages::request::CREATE
+                    && let Some(Modal::NewAgent(form)) = &mut self.modal
+                    && form.submitting
+                {
+                    form.error = Some(message);
+                    form.submitting = false;
+                } else {
+                    self.toast(message);
+                }
                 vec![]
             }
             DaemonMsg::Bye { reason } => {
@@ -409,8 +444,8 @@ impl App {
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Effect> {
-        if let Some(modal) = self.modal.clone() {
-            return self.on_modal_key(modal, key);
+        if self.modal.is_some() {
+            return self.on_modal_key(key);
         }
         let app_cursor = self.parser.screen().application_cursor();
         match self.keymap.handle(key, app_cursor) {
@@ -427,26 +462,6 @@ impl App {
             KeyAction::Run(cmd) => self.run(cmd),
             KeyAction::Tree(key) => self.on_tree_key(key),
             KeyAction::AwaitPrefix | KeyAction::Cancel | KeyAction::Nothing => vec![],
-        }
-    }
-
-    fn on_modal_key(&mut self, modal: Modal, key: KeyEvent) -> Vec<Effect> {
-        match modal {
-            Modal::Help => {
-                self.modal = None;
-                vec![]
-            }
-            Modal::Confirm { action, .. } => match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                    self.modal = None;
-                    self.perform(action)
-                }
-                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                    self.modal = None;
-                    vec![]
-                }
-                _ => vec![],
-            },
         }
     }
 
@@ -471,19 +486,10 @@ impl App {
                 None => vec![],
             },
             Command::NewWindow => {
-                let (cols, rows) = self.term_size;
-                vec![Effect::Send(ClientMsg::CreateWindow {
-                    spec: WindowSpec {
-                        name: None,
-                        runtime: Runtime::Shell,
-                        cwd: self.default_dir.clone(),
-                        worktree_branch: None,
-                        model: None,
-                        initial_prompt: None,
-                    },
-                    cols: cols.max(1),
-                    rows: rows.max(1),
-                })]
+                // Decision 26: opens the form; `app/modal_keys.rs` submits it.
+                let defaults = self.new_agent_defaults();
+                self.modal = Some(Modal::NewAgent(NewAgentForm::new(&defaults)));
+                vec![]
             }
             Command::KillWindow => self.confirm_focused("Kill", PendingAction::Kill),
             Command::RemoveWindow => self.confirm_focused("Remove", PendingAction::Remove),
@@ -521,6 +527,14 @@ impl App {
     }
 
     pub fn on_paste(&mut self, text: String) -> Vec<Effect> {
+        // Decision 30: a paste goes to the open form's focused field, or is dropped for
+        // any other modal — both checked before tree mode and the PTY (risk 10).
+        if let Some(modal) = &mut self.modal {
+            if let Modal::NewAgent(form) = modal {
+                form.on_paste(&text);
+            }
+            return vec![];
+        }
         if self.tree_input.is_some() {
             return self.on_tree_paste(text);
         }
@@ -577,6 +591,8 @@ impl App {
         vec![]
     }
 }
+
+mod modal_keys;
 
 #[cfg(test)]
 #[path = "app_tests.rs"]

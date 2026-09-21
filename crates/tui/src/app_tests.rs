@@ -14,6 +14,9 @@ mod overview;
 #[path = "app_tests/git.rs"]
 mod git;
 
+#[path = "app_tests/dialog.rs"]
+mod dialog;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,
@@ -261,44 +264,6 @@ fn next_from_a_hidden_focused_window_goes_forward() {
     prefix(&mut app);
     assert!(press(&mut app, KeyCode::Char('k'), KeyModifiers::NONE).is_empty());
     assert_eq!(app.focused, Some(2));
-}
-
-#[test]
-fn new_window_creates_a_shell_in_the_default_dir_and_focuses_it_when_created() {
-    let mut app = app_with(vec![]);
-    prefix(&mut app);
-    let effects = press(&mut app, KeyCode::Char('c'), KeyModifiers::NONE);
-    match &effects[..] {
-        [
-            Effect::Send(ClientMsg::CreateWindow {
-                spec,
-                cols: 80,
-                rows: 24,
-            }),
-        ] => {
-            assert_eq!(spec.runtime, Runtime::Shell);
-            assert_eq!(spec.cwd, PathBuf::from("/tmp"));
-            assert_eq!(spec.name, None);
-        }
-        other => panic!("unexpected effects {other:?}"),
-    }
-    // The daemon may announce the window list before or after Created; both orders focus it.
-    assert!(
-        app.on_daemon(DaemonMsg::Created { window_id: 9 })
-            .is_empty()
-    );
-    let effects = app.on_daemon(DaemonMsg::WindowsChanged {
-        windows: vec![win(9, "shell-9", Status::Starting)],
-    });
-    assert_eq!(
-        effects,
-        vec![Effect::Send(ClientMsg::Subscribe {
-            window_id: 9,
-            cols: 80,
-            rows: 24
-        })]
-    );
-    assert_eq!(app.focused, Some(9));
 }
 
 /// I8: re-focusing the focused window must not resubscribe or reset the parser.

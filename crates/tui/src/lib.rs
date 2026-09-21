@@ -62,6 +62,7 @@ pub async fn run(opts: TuiOptions) -> anyhow::Result<()> {
         opts.default_dir.clone(),
         Keymap::default_prefix(),
     );
+    app.home_dir = dirs::home_dir();
     if let Some(target) = &opts.focus {
         match app
             .windows
