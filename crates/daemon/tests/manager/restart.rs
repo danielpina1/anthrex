@@ -701,3 +701,108 @@ async fn kill_after_a_timed_out_restart_still_signals_the_window() {
         wait_until("the window's process to actually die", || !group_alive(pid)).await;
     }
 }
+
+/// Item 4 (fix wave 5 re-review): the restart analogue of
+/// `lifecycle::shutdown_waits_for_cleanup_after_the_group_leader_exits`, and the test
+/// `orphaned_cleanups` had none of before this — a grep for `orphaned_cleanups` across
+/// every test crate in the workspace found nothing, so a future simplification of
+/// `Inner::orphan_cleanup` back to a bare `self.cleanups.remove(&id)` would have been green
+/// on all 785 other tests.
+///
+/// The mechanism this pins: `finish_restart` only ever runs once the old group leader is
+/// confirmed gone (`child_alive == false`), which makes it tempting to conclude the
+/// escalation behind it has therefore finished. It has not — `crate::process::escalate`
+/// polls the whole process *group*, not the leader alone, so a leader that exits on `HUP`
+/// while leaving a descendant behind keeps its own escalation thread running, through
+/// `HUP_GRACE` to `SIGTERM`, well past the moment `finish_restart` evicts its record from
+/// `cleanups` to make room for this id's new, live process. Moving that record to
+/// `orphaned_cleanups` instead of dropping it is what keeps `shutdown` able to wait for it;
+/// a bare `remove` would leave nothing to wait for and the descendant would never be
+/// signalled.
+///
+/// Deliberately simpler than the `shutdown`-after-`kill` sibling this mirrors: that test
+/// isolates a Linux child-subreaper setting so it can positively confirm the descendant was
+/// *reaped*. This test only needs to confirm `TERM` was *delivered* before `shutdown`
+/// returns (`term_file`'s existence, written synchronously by the descendant's own trap
+/// before it exits), which needs no subreaper — the descendant is signalled by process
+/// *group*, not by parent/child relationship, and whoever ends up reaping it once it exits
+/// (`init` on Linux once reparented, `launchd` on macOS) is not this test's concern.
+#[tokio::test]
+async fn shutdown_after_a_restart_waits_for_the_old_leaders_orphaned_descendant() {
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("descendant.pid");
+    let term_file = dir.path().join("term");
+    let descendant = dir.path().join("descendant.sh");
+    let leader = dir.path().join("leader.sh");
+    std::fs::write(
+        &descendant,
+        format!(
+            "trap '' HUP\ntrap 'printf term > \"{}\"; exit 0' TERM\nprintf '%s' \"$$\" > '{}'\nwhile :; do :; done\n",
+            term_file.display(),
+            pid_file.display()
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        &leader,
+        format!(
+            "trap 'exit 0' HUP\n/bin/sh '{}' &\nwait\n",
+            descendant.display()
+        ),
+    )
+    .unwrap();
+
+    let m = manager();
+    let id = create_id(
+        &m,
+        spec("restart-cleanup-descendant"),
+        std::env::temp_dir(),
+        80,
+        24,
+    )
+    .await;
+    m.write_input(
+        id,
+        format!("exec /bin/sh '{}'\n", leader.display()).as_bytes(),
+    )
+    .unwrap();
+
+    let mut descendant_pid = None;
+    wait_until("descendant traps ready", || {
+        descendant_pid = std::fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|value| value.parse::<libc::pid_t>().ok());
+        descendant_pid.is_some()
+    })
+    .await;
+    let descendant_pid = descendant_pid.unwrap();
+
+    // The restart's own phase B kills the leader (`HUP`, trapped to `exit 0` at once,
+    // leaving the descendant behind in the group); phase C then spawns a fresh, ordinary
+    // shell to replace it.
+    m.restart(id).await.unwrap();
+    wait_until("restart leaves Exited", || {
+        find(&m, id).status != Status::Exited
+    })
+    .await;
+
+    let started = Instant::now();
+    m.shutdown().await;
+    let term_delivered_before_return = term_file.exists();
+    let elapsed = started.elapsed();
+
+    if !term_delivered_before_return {
+        // SAFETY: this pid is the descendant this test's own fixture spawned; kill what
+        // this probe would otherwise prove leaked, before asserting on it.
+        unsafe {
+            libc::kill(descendant_pid, libc::SIGKILL);
+        }
+    }
+    assert!(
+        term_delivered_before_return,
+        "shutdown returned after {elapsed:?} without the old leader's orphaned descendant \
+         ever being signalled — orphaned_cleanups must keep shutdown waiting for an \
+         escalation finish_restart evicted from cleanups, or a live descendant a restart \
+         leaves behind survives the daemon's own shutdown"
+    );
+}
