@@ -139,6 +139,19 @@ fn init_logging(data_dir: &Path) -> anyhow::Result<tracing_appender::non_blockin
 /// at the end of this function, after every other cleanup below has run, is what releases
 /// it (decision 24, decision 26).
 pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
+    // Test-only: `crates/cli/tests/daemon_spawn_stderr.rs`'s
+    // `detached_daemon_captures_its_stderr_to_a_file` needs to assert that a detached
+    // daemon's *actual* stderr writes reach `daemon.stderr.log`, not just that the file
+    // exists — `open_stderr_sink` (`crates/cli/src/spawn.rs`) creates the file as a
+    // side effect in the CLI parent regardless of whether the child's stdio is ever
+    // wired to it, which is exactly what let that test stay green after a mutation
+    // that discarded the child's stderr outright. Forcing a real rotation failure to
+    // get content onto this path needs a read-only directory or a full disk, so this
+    // writes one known, harmless line to the real stderr fd instead, gated behind an
+    // env var no real deployment sets.
+    if std::env::var_os("ANTHREX_TEST_STDERR_PROBE").is_some() {
+        let _ = std::io::Write::write_all(&mut std::io::stderr(), b"anthrex-test-stderr-probe\n");
+    }
     std::fs::create_dir_all(&opts.data_dir)?;
     let _lock = DaemonLock::acquire(&opts.data_dir, opts.lock_wait)?;
     let _log_guard = init_logging(&opts.data_dir)?;
