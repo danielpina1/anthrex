@@ -1,12 +1,17 @@
 //! Layout helpers and the hardened git invocation for milestone 5's linked worktrees.
 //!
 //! This module owns two things, and only these two: where a worktree lives on disk
-//! (`hash8`, `branch_dir_name`, `repo_worktrees_dir`), and the one private helper every
-//! git command this milestone runs goes through, hardened per design decisions 1 to 3 —
+//! (`hash8`, `branch_dir_name`, `repo_worktrees_dir`), and the one helper every git
+//! command this milestone runs goes through, hardened per design decisions 1 to 3 —
 //! `--no-optional-locks` and a scrubbed environment on every invocation (AGENTS.md hard
 //! rules 10 and 11), `LC_ALL=C` and `GIT_TERMINAL_PROMPT=0` so messages are stable and
 //! git never blocks on a credential prompt, and a caller-supplied deadline rather than a
 //! bare timeout, converted to whatever [`subprocess::run_captured`] needs at each call.
+//! [`run_git`] is `#[doc(hidden)] pub` rather than private only so that
+//! `crates/daemon/tests/worktree_env.rs` can exercise it in a test binary of its own —
+//! see that file for why. It is not part of this module's real API; every other caller
+//! lives inside this module (today, only its own tests; task M5.3's `create`, `is_dirty`
+//! and `remove` are the real callers).
 //!
 //! `create`, `is_dirty`, `remove` and `discard_new` — the orchestration that actually
 //! creates and removes a worktree — are milestone task M5.3's job, built on top of
@@ -171,12 +176,11 @@ pub fn check_branch_syntax(branch: &str) -> Result<(), WorktreeError> {
 /// non-zero one) apart; this function never fails just because git exited non-zero — the
 /// caller decides what that means for the operation it is composing (see design
 /// decisions 9, 10, 12 and 13, all implemented in task M5.3).
-#[allow(
-    dead_code,
-    reason = "called by worktree::create/is_dirty/remove/discard_new, added in task M5.3; \
-              exercised directly by this module's own tests in the meantime"
-)]
-fn run_git(
+///
+/// `pub` and `#[doc(hidden)]`: see the module doc comment. This is not part of the
+/// module's public API.
+#[doc(hidden)]
+pub fn run_git(
     git: &OsStr,
     dir: &Path,
     args: &[&str],
@@ -240,10 +244,8 @@ fn run_git(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::OsString;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use std::sync::Mutex;
     use tempfile::tempdir;
 
     fn write_script(dir: &Path, name: &str, body: &str) -> PathBuf {
@@ -299,84 +301,12 @@ mod tests {
         assert!(check_branch_syntax("feat/api").is_ok());
     }
 
-    #[test]
-    fn the_git_helper_passes_no_optional_locks_and_scrubs_the_environment() {
-        // Guards this test's environment mutation against another test in this module
-        // doing the same concurrently. No other unit test in this crate's lib target
-        // spawns a child process (real spawning is exercised only by the integration
-        // tests under `crates/daemon/tests/`, in their own binaries), so this narrow,
-        // synchronous window has no concurrent reader to race with.
-        static ENV_LOCK: Mutex<()> = Mutex::new(());
-        let _guard = ENV_LOCK.lock().unwrap();
-
-        let scripts = tempdir().unwrap();
-        let argv_log = scripts.path().join("argv.log");
-        let env_log = scripts.path().join("env.log");
-        let script = write_script(
-            scripts.path(),
-            "recording-git",
-            &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nenv >> '{}'\nexit 0\n",
-                argv_log.display(),
-                env_log.display()
-            ),
-        );
-
-        let scrubbed = [
-            "GIT_DIR",
-            "GIT_WORK_TREE",
-            "GIT_COMMON_DIR",
-            "GIT_INDEX_FILE",
-            "GIT_PREFIX",
-        ];
-        let previous: Vec<(&str, Option<OsString>)> = scrubbed
-            .iter()
-            .map(|key| (*key, std::env::var_os(key)))
-            .collect();
-        // SAFETY: serialized by ENV_LOCK against this module's own tests, and no other
-        // test in this crate's lib target reads or writes the process environment while
-        // spawning a child (see the comment above).
-        unsafe {
-            for key in scrubbed {
-                std::env::set_var(key, "leak-marker");
-            }
-        }
-
-        let dir = tempdir().unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let result = run_git(script.as_os_str(), dir.path(), &["status"], deadline);
-
-        // SAFETY: same as above.
-        unsafe {
-            for (key, value) in &previous {
-                match value {
-                    Some(value) => std::env::set_var(key, value),
-                    None => std::env::remove_var(key),
-                }
-            }
-        }
-
-        let output = result.expect("the recording script always exits zero");
-        assert!(output.success);
-
-        let recorded_argv = fs::read_to_string(&argv_log).unwrap();
-        let line = recorded_argv.lines().next().expect("one invocation");
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        assert_eq!(parts[0], "-C", "{parts:?}");
-        assert_eq!(parts[1], dir.path().to_str().unwrap(), "{parts:?}");
-        assert_eq!(parts[2], "--no-optional-locks", "{parts:?}");
-        assert_eq!(parts[3], "status", "{parts:?}");
-
-        let recorded_env = fs::read_to_string(&env_log).unwrap();
-        for key in scrubbed {
-            assert!(
-                !recorded_env
-                    .lines()
-                    .any(|line| line.starts_with(&format!("{key}="))),
-                "{key} leaked into the child environment:\n{recorded_env}"
-            );
-        }
-    }
+    // `the_git_helper_passes_no_optional_locks_and_scrubs_the_environment` lives in
+    // `crates/daemon/tests/worktree_env.rs`, its own test binary, not here: it mutates
+    // the real process environment, and `a_missing_git_is_reported_as_such` below
+    // spawns a process on another libtest thread of *this* binary — a concurrent
+    // `environ` reader racing that mutation, which is undefined behaviour regardless of
+    // which variable either side touches. See that file's module doc comment.
 
     #[test]
     fn a_passed_deadline_fails_without_spawning() {
