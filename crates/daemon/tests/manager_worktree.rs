@@ -54,6 +54,25 @@ fn manager_with_socket(socket: PathBuf) -> (Arc<WindowManager>, TempDir, PathBuf
     (m, keep, worktrees_root)
 }
 
+/// As [`manager`], but with `ManagerConfig::kill_grace` overridden — the seam
+/// `an_exited_window_is_removed_without_waiting` uses to separate "waited for the grace"
+/// from "took the early return" by 60x instead of sharing one ~1s bound with both.
+fn manager_with_kill_grace(kill_grace: Duration) -> (Arc<WindowManager>, TempDir, PathBuf) {
+    let keep = tempfile::tempdir().unwrap();
+    let worktrees_root = keep.path().canonicalize().unwrap();
+    let mut config = ManagerConfig::new("/tmp/unused-m54.sock".into(), "/bin/sh".to_string());
+    config.worktrees_root = worktrees_root.clone();
+    config.kill_grace = kill_grace;
+    let (m, mut events) = WindowManager::new(config);
+    let pump = m.clone();
+    tokio::spawn(async move {
+        while let Some((id, ev)) = events.recv().await {
+            pump.handle_event(id, ev);
+        }
+    });
+    (m, keep, worktrees_root)
+}
+
 /// As [`manager`], but the window events are handed back instead of being pumped into the
 /// manager. A window that never becomes an entry — a create phase C refuses — is
 /// invisible to `list()` and to `child_pid`, so its `Exited` event is the only evidence

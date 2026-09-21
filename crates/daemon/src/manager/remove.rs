@@ -53,7 +53,7 @@
 //! it would come back.
 
 use super::entry::Entry;
-use super::{KILL_GRACE, WindowManager, git};
+use super::{WindowManager, git};
 use crate::worktree::{self, ManagedWorktree, WorktreeError};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -137,8 +137,8 @@ impl WindowManager {
     ///
     /// Every git command this runs shares one deadline (design decision 3), opened here
     /// and spent across the dirty check, the kill wait and the removal, so the whole
-    /// operation is bounded by `OPERATION_TIMEOUT + KILL_GRACE` — which is what
-    /// `client::WORKTREE_REQUEST_TIMEOUT` is budgeted against.
+    /// operation is bounded by `OPERATION_TIMEOUT + KILL_GRACE` (production; `kill_grace`
+    /// in tests) — which is what `client::WORKTREE_REQUEST_TIMEOUT` is budgeted against.
     ///
     /// Nothing blocking happens on a tokio worker or under the manager lock (AGENTS.md
     /// hard rules 2 and 10): git runs inside `spawn_blocking`, and the kill wait sleeps
@@ -244,12 +244,16 @@ impl WindowManager {
     ///
     /// A window whose child is already reaped returns at once. That is not an
     /// optimisation: removing a long-dead agent would otherwise sit through the whole of
-    /// [`KILL_GRACE`] with a dialog on screen that looks hung.
+    /// the kill grace with a dialog on screen that looks hung.
     ///
     /// The grace is a bound, not a requirement. If the exit has not been reported when it
     /// runs out the removal goes ahead anyway: the child has had a SIGKILL, and a worktree
     /// the user asked to remove staying forever because one event never arrived is the
     /// worse failure.
+    ///
+    /// The grace itself is `self.config.kill_grace` — `crate::process::KILL_GRACE` in
+    /// production, injected so a test can set it far above its own removal bound instead
+    /// of sharing one number with the property it is supposed to distinguish.
     async fn kill_and_await_exit(&self, id: u32) {
         {
             let inner = crate::lock(&self.inner);
@@ -262,7 +266,7 @@ impl WindowManager {
             let _ = entry.signal_group(libc::SIGKILL);
         }
 
-        let deadline = Instant::now() + KILL_GRACE;
+        let deadline = Instant::now() + self.config.kill_grace;
         loop {
             if self.child_is_gone(id) {
                 return;
@@ -290,7 +294,7 @@ impl WindowManager {
     /// belt and braces instead: if this id were ever unlisted anyway — a future bug in
     /// that guard, not anything reachable today — there would be no evidence about it
     /// left to wait for, and treating "not there" as "gone" is what lets the loop return
-    /// rather than sit out the whole of [`KILL_GRACE`] waiting for an entry that no
+    /// rather than sit out the whole of the kill grace waiting for an entry that no
     /// longer exists to change.
     fn child_is_gone(&self, id: u32) -> bool {
         crate::lock(&self.inner)
@@ -303,7 +307,7 @@ impl WindowManager {
     ///
     /// The SIGKILL mirrors [`WindowManager::remove`] and is the last thing that can reach
     /// this process group: once the entry is forgotten, nothing holds its pid. It is not
-    /// redundant with step 3 — a child that outlived [`KILL_GRACE`] without reporting an
+    /// redundant with step 3 — a child that outlived the kill grace without reporting an
     /// exit reaches here alive — but it is also not a substitute for it, because by this
     /// point `worktree::remove` has already deleted the checkout. Keeping a live agent out
     /// of a tree that is about to be deleted is step 3's job and only step 3's.

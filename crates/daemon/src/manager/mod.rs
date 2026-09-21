@@ -47,6 +47,15 @@ pub struct ManagerConfig {
     /// create path's worst-case budget is built from, for the `git worktree add` failure
     /// or timeout that follows.
     pub cleanup_timeout: Duration,
+    /// `crate::process::KILL_GRACE`, injected here for the same reason as
+    /// `operation_timeout` above: production always gets the real value (`new`,
+    /// `from_vars`), and `remove_with_worktree`'s `kill_and_await_exit` reads this field
+    /// rather than the constant directly, so a test can widen it far past its own removal
+    /// bound instead of racing the two. See `an_exited_window_is_removed_without_waiting`
+    /// (`daemon/tests/manager_worktree/removal/ordering.rs`), which sets this to 60 s and
+    /// asserts the removal finishes in under 10 s — a 6x separation between "waited" and
+    /// "didn't wait" instead of the ~1x a shared 1 s bound gave it.
+    pub kill_grace: Duration,
 }
 
 impl ManagerConfig {
@@ -62,6 +71,7 @@ impl ManagerConfig {
             worktrees_root: std::env::temp_dir().join("anthrex-worktrees"),
             operation_timeout: worktree::OPERATION_TIMEOUT,
             cleanup_timeout: worktree::CLEANUP_TIMEOUT,
+            kill_grace: crate::process::KILL_GRACE,
         }
     }
 
@@ -90,6 +100,7 @@ impl ManagerConfig {
             worktrees_root: std::env::temp_dir().join("anthrex-worktrees"),
             operation_timeout: worktree::OPERATION_TIMEOUT,
             cleanup_timeout: worktree::CLEANUP_TIMEOUT,
+            kill_grace: crate::process::KILL_GRACE,
         }
     }
 

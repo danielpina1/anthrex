@@ -258,12 +258,21 @@ async fn a_parser_panicked_window_is_killed_before_its_checkout_goes() {
 }
 
 /// Design decision 19 step 3 waits for the child only when there is one. A window that has
-/// already exited must not spend `KILL_GRACE` waiting for an exit that happened minutes
-/// ago — in the TUI that is three seconds of a dialog that looks hung.
+/// already exited must not spend the kill grace waiting for an exit that happened minutes
+/// ago — in the TUI that is a dialog that looks hung for however long the grace is.
+///
+/// The property is "took the early return", not "was fast": the honest cost of this path
+/// is three real git subprocesses (the dirty check's two plus `worktree remove`), which on
+/// a loaded machine can themselves approach a 1s bound, making "waited" and "didn't wait"
+/// nearly the same size. So `kill_grace` is injected to 60s — an order of magnitude past
+/// what the git calls could plausibly cost — and the assertion is `< 10s`: a removal that
+/// takes the early return finishes in a fraction of a second regardless of git's cost, and
+/// one that regresses to actually waiting out the grace takes 60s. 10s is miles from
+/// either, so this discriminates the behaviour instead of the machine's speed.
 #[tokio::test]
 async fn an_exited_window_is_removed_without_waiting() {
     let repo = TempRepo::new();
-    let (m, _keep, _wt_root) = manager();
+    let (m, _keep, _wt_root) = manager_with_kill_grace(Duration::from_secs(60));
     let roots = FakeRoots::new();
     let agent = worktree_agent(&m, &repo, "done", "feat/done").await;
 
@@ -280,8 +289,10 @@ async fn an_exited_window_is_removed_without_waiting() {
     let took = started.elapsed();
 
     assert!(
-        took < Duration::from_secs(1),
-        "an exited window waited {took:?} for a child that was already gone"
+        took < Duration::from_secs(10),
+        "an exited window waited {took:?} for a child that was already gone \
+         (kill_grace is 60s in this test, so anything near it means the code actually \
+         waited instead of taking the early return)"
     );
     assert!(!listed(&m, agent.id));
     assert!(!agent.path.exists());
