@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod connection;
+pub mod dialog;
 pub mod graph;
 pub mod inspector;
 pub mod keymap;
