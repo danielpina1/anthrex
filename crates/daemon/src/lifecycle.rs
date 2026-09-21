@@ -109,8 +109,17 @@ fn bind_socket_locked(path: &Path) -> anyhow::Result<UnixListener> {
 /// `try_init` rather than `init`: production only ever calls this once, but a test
 /// process that runs `run` more than once (this milestone's `tests/lifecycle.rs`) must
 /// not panic on the second global-subscriber install.
-fn init_logging(data_dir: &Path) -> tracing_appender::non_blocking::WorkerGuard {
-    let file = tracing_appender::rolling::never(data_dir, "daemon.log");
+///
+/// Decision 28: `daemon.log` rotates by size through [`crate::logfile::RotatingFile`]
+/// rather than tracing_appender's non-rotating `never` appender, which lets the file grow
+/// without bound for as long as the daemon runs.
+fn init_logging(data_dir: &Path) -> anyhow::Result<tracing_appender::non_blocking::WorkerGuard> {
+    let file = crate::logfile::RotatingFile::open(
+        data_dir,
+        "daemon.log",
+        crate::logfile::LOG_MAX_BYTES,
+        crate::logfile::LOG_KEEP,
+    )?;
     let (writer, guard) = tracing_appender::non_blocking(file);
     let filter = tracing_subscriber::EnvFilter::try_from_env("ANTHREX_LOG")
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
@@ -119,7 +128,7 @@ fn init_logging(data_dir: &Path) -> tracing_appender::non_blocking::WorkerGuard 
         .with_ansi(false)
         .with_writer(writer)
         .try_init();
-    guard
+    Ok(guard)
 }
 
 /// Runs the daemon in the current process until a signal or a client asks it to stop.
@@ -132,7 +141,7 @@ fn init_logging(data_dir: &Path) -> tracing_appender::non_blocking::WorkerGuard 
 pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     std::fs::create_dir_all(&opts.data_dir)?;
     let _lock = DaemonLock::acquire(&opts.data_dir, opts.lock_wait)?;
-    let _log_guard = init_logging(&opts.data_dir);
+    let _log_guard = init_logging(&opts.data_dir)?;
     prepare_socket(&opts.socket_path)?;
     let listener = bind_socket(&opts.socket_path)?;
     // Decision 26: the socket is only ever unlinked at shutdown if this is still the same

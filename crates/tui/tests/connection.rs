@@ -137,6 +137,37 @@ async fn send_never_suspends_and_reports_a_dead_connection() {
     }
 }
 
+/// Decision 29: a daemon that accepted the connection but never answers the handshake
+/// must not hang the client forever either. A plain `UnixListener` that accepts and then
+/// writes nothing stands in for that daemon.
+#[tokio::test]
+async fn connect_times_out_on_a_silent_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("silent.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let _silent_server = tokio::spawn(async move {
+        // Accept and hold the connection open for longer than the test can possibly take,
+        // writing nothing back — never a `Welcome`.
+        let (_stream, _) = listener.accept().await.unwrap();
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    });
+
+    let started = std::time::Instant::now();
+    let err = tokio::time::timeout(Duration::from_secs(7), Connection::connect(&socket))
+        .await
+        .expect("connect did not return within 7 s")
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("timed out"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(7),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
 #[tokio::test]
 async fn connect_fails_cleanly_without_a_daemon() {
     let dir = tempfile::tempdir().unwrap();

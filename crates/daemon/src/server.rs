@@ -154,10 +154,24 @@ async fn handle_client(
 ) -> anyhow::Result<()> {
     let (mut rd, mut wr) = stream.into_split();
 
+    // Decision 29: a client that connects and then says nothing (or stalls mid-frame)
+    // must not hold this task, and the socket fd underneath it, forever.
+    let hello = match tokio::time::timeout(
+        proto::HANDSHAKE_TIMEOUT,
+        read_frame::<_, ClientMsg>(&mut rd),
+    )
+    .await
+    {
+        Ok(frame) => frame?,
+        Err(_) => {
+            tracing::debug!("client did not send Hello within the handshake timeout; dropping");
+            return Ok(());
+        }
+    };
     let Some(ClientMsg::Hello {
         proto_version,
         client,
-    }) = read_frame::<_, ClientMsg>(&mut rd).await?
+    }) = hello
     else {
         return Ok(()); // EOF or a client that skipped the handshake: drop silently.
     };

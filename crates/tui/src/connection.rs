@@ -28,7 +28,20 @@ impl Connection {
             },
         )
         .await?;
-        let (daemon_version, windows) = match read_frame::<_, DaemonMsg>(&mut rd).await? {
+        // Decision 29: a daemon that accepted the connection but never answers must not
+        // hang the client forever either.
+        let welcome = tokio::time::timeout(
+            proto::HANDSHAKE_TIMEOUT,
+            read_frame::<_, DaemonMsg>(&mut rd),
+        )
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "timed out waiting for the daemon's handshake at {}",
+                socket.display()
+            )
+        })?;
+        let (daemon_version, windows) = match welcome? {
             Some(DaemonMsg::Welcome {
                 daemon_version,
                 windows,

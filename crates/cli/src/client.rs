@@ -91,7 +91,20 @@ impl CliClient {
             },
         )
         .await?;
-        match read_frame::<_, DaemonMsg>(&mut rd).await? {
+        // Decision 29: a daemon that accepted the connection but never answers must not
+        // hang the client forever either.
+        let welcome = tokio::time::timeout(
+            proto::HANDSHAKE_TIMEOUT,
+            read_frame::<_, DaemonMsg>(&mut rd),
+        )
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "timed out waiting for the daemon's handshake at {}",
+                socket.display()
+            )
+        })?;
+        match welcome? {
             Some(DaemonMsg::Welcome {
                 daemon_version,
                 windows,
@@ -201,6 +214,37 @@ pub fn format_table(windows: &[WindowInfo]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Decision 29: a daemon that accepted the connection but never answers the handshake
+    /// must not hang the CLI client forever either, same as `tui::connection::Connection`.
+    #[tokio::test]
+    async fn connect_times_out_on_a_silent_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("silent.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        let _silent_server = tokio::spawn(async move {
+            let (_stream, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+
+        let started = std::time::Instant::now();
+        let result = tokio::time::timeout(Duration::from_secs(7), CliClient::connect(&socket))
+            .await
+            .expect("connect did not return within 7 s");
+        let err = match result {
+            Ok(_) => panic!("expected a timeout error, got a connection"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("timed out"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(7),
+            "{:?}",
+            started.elapsed()
+        );
+    }
 
     /// M4.5.6 review finding: `request_with_timeout` skips `WindowsChanged` and `Git`
     /// broadcasts, but nothing pinned that deterministically — the daemon integration
