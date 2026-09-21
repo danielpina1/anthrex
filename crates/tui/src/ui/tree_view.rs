@@ -186,11 +186,16 @@ fn spans_width(spans: &[Span<'_>]) -> usize {
         .sum()
 }
 
+/// Minimum columns decision 37 leaves the name once a worktree branch marker is
+/// competing for the same space; the branch is what shrinks past this point.
+const NAME_FLOOR: usize = 8;
+
 /// Preserve right-hand fields while leaving room for the row prefix and at least an
 /// ellipsis. `branch` is decision 37's sidebar marker, `Some` only for a window row in a
 /// worktree this daemon made: it sacrifices before the name does, shrinking with an
 /// ellipsis and finally dropped once fewer than 4 columns remain for it (`[` + at least
-/// one character + `…` + `]`), while the name is given everything it wants first.
+/// one character + `…` + `]`), while the name keeps only `NAME_FLOOR` columns for itself
+/// until the branch is gone, rather than taking everything it wants first.
 fn fit_line(
     mut prefix: Vec<Span<'static>>,
     mut name: Span<'static>,
@@ -215,9 +220,9 @@ fn fit_line(
     let available = width.saturating_sub(prefix_width + right_width + usize::from(right_width > 0));
 
     let name_full = UnicodeWidthStr::width(name.content.as_ref());
-    let name_reserved = available.min(name_full);
+    let name_floor = available.min(name_full).min(NAME_FLOOR);
     let branch_span = branch.as_deref().and_then(|branch| {
-        let budget = available.saturating_sub(name_reserved);
+        let budget = available.saturating_sub(name_floor);
         (budget >= 4).then(|| {
             let text = truncate(branch, budget - 3);
             Span::styled(format!(" [{text}]"), theme::muted())

@@ -258,9 +258,26 @@ fn tree_row_shows_the_branch_and_truncates_it_first() {
         .expect("a-rather-long-name");
     let line2 = ui::tree_view::narrow_line(&app2, row2, 34, 1, false);
     let text2 = spans_text(&line2);
+    // Decision 37: the branch shrinks first and the name keeps only its 8-column floor —
+    // not the other way around. A budget that gives the name everything it wants (the bug
+    // finding 7 of the whole-branch review found) renders no branch marker at all here, so
+    // a bare `text2.contains("a-rather")` passes under both the correct and the inverted
+    // budget: it is a prefix of the untruncated name too. Pin the exact 8-column result
+    // instead — the ellipsis spends one of those columns, so only 7 letters survive — and
+    // require the branch marker to still be present, truncated rather than dropped.
     assert!(
-        text2.contains("a-rather"),
-        "at least 8 name columns should survive: {text2:?}"
+        text2.contains("a-rathe…"),
+        "the name should be cut to its 8-column floor (7 letters plus the ellipsis \
+         column), not shown in full: {text2:?}"
+    );
+    assert!(
+        !text2.contains("long-name"),
+        "the name must be cut down to its 8-column floor, not shown in full: {text2:?}"
+    );
+    assert!(
+        text2.contains('['),
+        "the branch must still be shown, truncated, once the name has given up the space \
+         beyond its floor: {text2:?}"
     );
 }
 
