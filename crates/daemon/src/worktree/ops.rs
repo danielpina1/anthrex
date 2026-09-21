@@ -22,6 +22,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -193,14 +194,44 @@ pub fn create(
     Ok(created)
 }
 
-/// Design decision 12: whether the worktree at `path` holds anything a removal would
-/// destroy. Untracked files count; ignored files do not, and a plain `git worktree
-/// remove` deletes those itself (both verified against git 2.50.1).
+/// The per-worktree files and directories whose existence means git has an operation
+/// paused in this worktree. Each is resolved with `rev-parse --git-path`, because a
+/// linked worktree's are under `.git/worktrees/<name>/`, not the repository's `.git/`.
+const OPERATION_MARKERS: [&str; 4] = [
+    "rebase-merge",
+    "rebase-apply",
+    "MERGE_HEAD",
+    "CHERRY_PICK_HEAD",
+];
+
+/// Design decision 12 (extended by the M5.3 review's ruling): whether the worktree at
+/// `path` holds anything a removal would destroy.
 ///
-/// Any output at all means dirty — not "any non-whitespace output". Git prints nothing
-/// for a clean tree, so the two agree in practice, and where they could ever disagree
-/// the answer that refuses to delete is the right one.
+/// Three questions, any one of which means dirty:
+///
+/// 1. **A paused git operation** — `rebase-merge`, `rebase-apply`, `MERGE_HEAD` or
+///    `CHERRY_PICK_HEAD`. A rebase stopped at `edit` with a clean tree reports *nothing*
+///    in `status --porcelain`, and a plain `git worktree remove` deletes it and every
+///    commit it had already replayed (verified against git 2.50.1). An agent told to try
+///    an approach on scratch commits leaves exactly this state.
+/// 2. **Working-tree changes** — `status --porcelain --ignore-submodules=none`. Untracked
+///    files count; ignored files do not, and a plain `git worktree remove` deletes those
+///    itself. *Any* output means dirty, not "any non-whitespace output": git prints
+///    nothing for a clean tree, so the two agree in practice, and where they could ever
+///    disagree the answer that refuses to delete is the right one.
+/// 3. **A detached `HEAD` holding commits no ref reaches** — `rev-list --count HEAD --not
+///    --branches --remotes --tags`. Also silent in `status`, and also deleted without
+///    `--force`, at which point the commits are unreachable. On a branch the count is
+///    always zero, because `--branches` covers that branch, so this question answers
+///    itself for the ordinary case.
+///
+/// Questions 1 and 3 are why the caller must ask *before* `git worktree remove` rather
+/// than only classifying a refusal afterwards: git does not refuse either state.
 pub fn is_dirty(git: &OsStr, path: &Path, deadline: Instant) -> Result<bool, WorktreeError> {
+    if operation_in_progress(git, path, deadline)? {
+        return Ok(true);
+    }
+
     let output = run_git(
         git,
         path,
@@ -217,29 +248,125 @@ pub fn is_dirty(git: &OsStr, path: &Path, deadline: Instant) -> Result<bool, Wor
             stderr: output.stderr_tail(),
         });
     }
-    Ok(!output.stdout.is_empty())
+    if !output.stdout.is_empty() {
+        return Ok(true);
+    }
+
+    head_is_unreachable(git, path, deadline)
+}
+
+/// Whether any of [`OPERATION_MARKERS`] exists in this worktree's git directory.
+fn operation_in_progress(
+    git: &OsStr,
+    path: &Path,
+    deadline: Instant,
+) -> Result<bool, WorktreeError> {
+    let mut args = vec![OsStr::new("rev-parse")];
+    for marker in OPERATION_MARKERS {
+        args.push(OsStr::new("--git-path"));
+        args.push(OsStr::new(marker));
+    }
+    let output = run_git(git, path, &args, deadline)?;
+    if !output.success {
+        return Err(WorktreeError::Git {
+            action: "rev-parse --git-path".to_string(),
+            stderr: output.stderr_tail(),
+        });
+    }
+
+    Ok(output
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .any(|line| {
+            // git 2.50.1 answers with absolute paths, but older versions answer relative
+            // to the working directory, which is `path` here.
+            let candidate = Path::new(line);
+            let candidate = if candidate.is_absolute() {
+                candidate.to_path_buf()
+            } else {
+                path.join(candidate)
+            };
+            match fs::symlink_metadata(&candidate) {
+                Ok(_) => true,
+                // Only "it is not there" means it is not there. Anything else is a
+                // marker we cannot rule out, and the answer that refuses to delete wins.
+                Err(error) => error.kind() != io::ErrorKind::NotFound,
+            }
+        }))
+}
+
+/// Whether `HEAD` reaches commits that no branch, remote-tracking branch or tag does.
+fn head_is_unreachable(git: &OsStr, path: &Path, deadline: Instant) -> Result<bool, WorktreeError> {
+    let output = run_git(
+        git,
+        path,
+        &[
+            OsStr::new("rev-list"),
+            OsStr::new("--count"),
+            OsStr::new("HEAD"),
+            OsStr::new("--not"),
+            OsStr::new("--branches"),
+            OsStr::new("--remotes"),
+            OsStr::new("--tags"),
+        ],
+        deadline,
+    )?;
+    if !output.success {
+        return Err(WorktreeError::Git {
+            action: "rev-list".to_string(),
+            stderr: output.stderr_tail(),
+        });
+    }
+    let count: u64 = output
+        .stdout
+        .trim()
+        .parse()
+        .map_err(|_| WorktreeError::Git {
+            action: "rev-list".to_string(),
+            stderr: format!(
+                "could not read a commit count from {:?}",
+                output.stdout.trim()
+            ),
+        })?;
+    Ok(count > 0)
 }
 
 /// Design decision 13: removes `wt`, refusing when its tree has changes unless `force`.
 /// The branch is never deleted, whatever happens here.
 ///
-/// The refusal is git's own — a plain `git worktree remove` declines a tree with
-/// modified or untracked files — and [`is_dirty`] only classifies that refusal into the
-/// [`WorktreeError::Dirty`] the client turns into the force prompt. If the classifying
-/// `status` cannot be run, the removal still fails, with git's own message: the
-/// classification decides *which* refusal the user sees, never *whether* the worktree
-/// survives.
+/// Without `force`, [`is_dirty`] is asked **before** the git call, not only after it.
+/// Git refuses a tree with modified or untracked files by itself, but it does *not*
+/// refuse a paused rebase or a detached `HEAD` holding unreachable commits — it deletes
+/// both silently — so a check that only classified git's own refusal would never fire
+/// for exactly the two states that lose commits. It is asked again after a refusal git
+/// did make, to catch a file that appeared in between.
+///
+/// If that check cannot be run the removal fails rather than proceeding: a question
+/// about destroying work that cannot be answered is answered no.
 ///
 /// A `wt.path` that is already gone is not an error. The directory is what the user
-/// cares about; git just needs to stop listing it, which `worktree prune` does.
+/// cares about; git just needs to stop listing it, which `worktree prune` does. Only
+/// [`io::ErrorKind::NotFound`] counts as gone — a `PermissionDenied` or an `EIO` from a
+/// dead network mount must not be reported to the user as a successful removal while
+/// their work is still on disk.
 pub fn remove(
     git: &OsStr,
     wt: &ManagedWorktree,
     force: bool,
     deadline: Instant,
 ) -> Result<(), WorktreeError> {
-    if fs::symlink_metadata(&wt.path).is_err() {
+    if let Err(error) = fs::symlink_metadata(&wt.path)
+        && error.kind() == io::ErrorKind::NotFound
+    {
         return prune(git, &wt.repo_root, deadline);
+    }
+
+    if !force && is_dirty(git, &wt.path, deadline)? {
+        return Err(WorktreeError::Dirty {
+            path: wt.path.clone(),
+        });
     }
 
     let mut args = vec![OsStr::new("worktree"), OsStr::new("remove")];
@@ -280,7 +407,21 @@ pub fn discard_new(git: &OsStr, created: &Created) -> Result<(), WorktreeError> 
     let deadline = Instant::now() + CLEANUP_TIMEOUT;
     let wt = &created.worktree;
 
-    if fs::symlink_metadata(&wt.path).is_ok() {
+    // Read once, before the removal that will make it false, and reuse: it is both "is
+    // there anything to remove?" and, at the branch gate below, "did this create's `add`
+    // get far enough to have made the branch?".
+    let path_existed = match fs::symlink_metadata(&wt.path) {
+        Ok(_) => true,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+        Err(error) => {
+            return Err(WorktreeError::Git {
+                action: "worktree remove --force".to_string(),
+                stderr: format!("could not inspect {}: {error}", wt.path.display()),
+            });
+        }
+    };
+
+    if path_existed {
         let output = run_git(
             git,
             &wt.repo_root,
@@ -302,12 +443,21 @@ pub fn discard_new(git: &OsStr, created: &Created) -> Result<(), WorktreeError> 
 
     prune(git, &wt.repo_root, deadline)?;
 
-    if !created.created_branch {
+    // `created_branch` was decided by a `show-ref` that ran *before* `worktree add`, so
+    // on its own it does not say this create made the branch — only that no branch of
+    // that name existed a moment earlier. A branch that appeared in between makes the
+    // add fail with `a branch named 'x' already exists` (exit 255, git 2.50.1) *without
+    // creating the path*, and that branch is somebody else's work.
+    //
+    // `path_existed` is what closes the gap: `worktree add -b` brings the branch into
+    // existence only as part of checking the tree out, so a path that was never made is
+    // exactly an add that never created a branch.
+    if !created.created_branch || !path_existed {
         return Ok(());
     }
-    // A `worktree add` that died early may never have got as far as creating the branch.
-    // Asking first keeps that case a successful cleanup instead of a spurious "cleanup
-    // failed", and asking can delete nothing.
+    // A `worktree add` that died even earlier may never have got as far as creating the
+    // branch either. Asking first keeps that case a successful cleanup instead of a
+    // spurious "cleanup failed", and asking can delete nothing.
     if !branch_exists(git, &wt.repo_root, &wt.branch, deadline)? {
         return Ok(());
     }

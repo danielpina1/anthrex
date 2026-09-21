@@ -181,6 +181,14 @@ fn an_existing_path_is_refused() {
 #[test]
 fn invalid_and_reserved_branches_are_refused_before_worktree_add() {
     let repo = TempRepo::new();
+    // `@{-1}` below is git's "the branch I was on before" shorthand, which only resolves
+    // once there is a previous checkout — so give it one.
+    repo.git(&[
+        OsStr::new("checkout"),
+        OsStr::new("-b"),
+        OsStr::new("other"),
+    ]);
+    repo.git(&[OsStr::new("checkout"), OsStr::new("main")]);
     let (_keep, wt_root) = worktrees_root();
     let cases = [
         ("bad name", "branch name cannot contain spaces"),
@@ -191,6 +199,11 @@ fn invalid_and_reserved_branches_are_refused_before_worktree_add() {
         ),
         ("runs", "branch name 'runs' is reserved"),
         ("a..b", "invalid branch name 'a..b'"),
+        // Rejected only by the echo-unchanged half of the `check-ref-format` rule:
+        // verified against git 2.50.1, `check-ref-format --branch '@{-1}'` *exits zero*
+        // here and prints `other`. Exit status alone would let it through, and the
+        // worktree would silently land on whatever branch the shorthand resolved to.
+        ("@{-1}", "invalid branch name '@{-1}'"),
     ];
 
     for (branch, expected) in cases {
@@ -294,6 +307,227 @@ fn remove_of_a_missing_path_prunes() {
 
     assert_eq!(repo.worktree_paths(), vec![repo.root.clone()]);
     assert!(repo.branch_exists("gone"));
+}
+
+/// What `git status --porcelain` says, which for both states in review item 2 is
+/// nothing at all — the reason the two checks beside it exist.
+fn porcelain_status(path: &Path) -> String {
+    let output = support::git_output(path, &[OsStr::new("status"), OsStr::new("--porcelain")]);
+    assert!(output.status.success(), "git status failed");
+    String::from_utf8(output.stdout).unwrap()
+}
+
+/// Review item 3: only `NotFound` means the worktree is gone. Any other error reading
+/// the path must not be reported to the user as a removal that succeeded.
+#[test]
+fn remove_does_not_call_an_unreadable_path_gone() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = TempRepo::new();
+    let (_keep, wt_root) = worktrees_root();
+    let created = worktree::create(git(), &repo.root, "unreadable", &wt_root, deadline()).unwrap();
+    let parent = created.worktree.path.parent().unwrap().to_path_buf();
+    let original = fs::metadata(&parent).unwrap().permissions();
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o000)).unwrap();
+
+    // Root ignores the mode, so confirm the denial is real before asserting on it.
+    let denied = matches!(
+        fs::symlink_metadata(&created.worktree.path),
+        Err(ref error) if error.kind() == std::io::ErrorKind::PermissionDenied
+    );
+    let result = worktree::remove(git(), &created.worktree, false, deadline());
+    fs::set_permissions(&parent, original).unwrap();
+
+    if !denied {
+        eprintln!("skipped: the directory mode did not deny access (running as root?)");
+        return;
+    }
+    let error = result.expect_err("an unreadable worktree is not a removed worktree");
+    assert!(
+        !matches!(error, WorktreeError::Dirty { .. }),
+        "the failure must be git's, not a dirty verdict: {error:?}"
+    );
+    assert_eq!(
+        repo.worktree_paths().len(),
+        2,
+        "the worktree is still registered, so the user can retry"
+    );
+    assert!(created.worktree.path.join("README").exists());
+}
+
+/// Review item 2, first state: a detached `HEAD` whose commit is on no branch. `git
+/// status` is silent about it and a plain `git worktree remove` deletes it, at which
+/// point the commit is unreachable.
+#[test]
+fn a_detached_head_holding_unreachable_commits_is_dirty() {
+    let repo = TempRepo::new();
+    let (_keep, wt_root) = worktrees_root();
+    let created = worktree::create(git(), &repo.root, "detachable", &wt_root, deadline()).unwrap();
+    let path = created.worktree.path.clone();
+
+    assert!(!worktree::is_dirty(git(), &path, deadline()).unwrap());
+
+    support::git(&path, &[OsStr::new("checkout"), OsStr::new("--detach")]);
+    assert!(
+        !worktree::is_dirty(git(), &path, deadline()).unwrap(),
+        "detached at a commit a branch still reaches is not work at risk"
+    );
+
+    fs::write(path.join("scratch.txt"), "an approach worth keeping\n").unwrap();
+    support::git(&path, &[OsStr::new("add"), OsStr::new("scratch.txt")]);
+    support::git(
+        &path,
+        &[
+            OsStr::new("commit"),
+            OsStr::new("-m"),
+            OsStr::new("scratch"),
+        ],
+    );
+
+    assert_eq!(
+        porcelain_status(&path),
+        "",
+        "the committed state is invisible to `git status`, which is the whole hazard"
+    );
+    assert!(
+        worktree::is_dirty(git(), &path, deadline()).unwrap(),
+        "a commit no ref reaches is work a removal would destroy"
+    );
+
+    let error = worktree::remove(git(), &created.worktree, false, deadline()).unwrap_err();
+
+    match &error {
+        WorktreeError::Dirty { path: reported } => assert_eq!(reported, &path),
+        other => panic!("{other:?}"),
+    }
+    assert!(path.join("scratch.txt").exists());
+
+    worktree::remove(git(), &created.worktree, true, deadline()).unwrap();
+    assert!(!path.exists());
+}
+
+/// Review item 2, second state: a rebase paused at `edit` with a clean tree. The
+/// `rebase-merge` state and every commit already replayed go without a murmur.
+#[test]
+fn a_paused_rebase_with_a_clean_tree_is_dirty() {
+    let repo = TempRepo::new();
+    support::commit_more(&repo.root, 3);
+    let (_keep, wt_root) = worktrees_root();
+    let created = worktree::create(git(), &repo.root, "rebasing", &wt_root, deadline()).unwrap();
+    let path = created.worktree.path.clone();
+
+    assert!(!worktree::is_dirty(git(), &path, deadline()).unwrap());
+
+    pause_rebase_at_edit(&path);
+
+    assert_eq!(
+        porcelain_status(&path),
+        "",
+        "the paused rebase leaves a clean tree, which is the whole hazard"
+    );
+    assert!(
+        worktree::is_dirty(git(), &path, deadline()).unwrap(),
+        "a paused rebase is work a removal would destroy"
+    );
+
+    let error = worktree::remove(git(), &created.worktree, false, deadline()).unwrap_err();
+
+    match &error {
+        WorktreeError::Dirty { path: reported } => assert_eq!(reported, &path),
+        other => panic!("{other:?}"),
+    }
+    assert!(path.exists());
+
+    worktree::remove(git(), &created.worktree, true, deadline()).unwrap();
+    assert!(!path.exists());
+}
+
+/// Stops an interactive rebase of the last two commits at the first one, leaving a
+/// `rebase-merge` state and a clean working tree.
+fn pause_rebase_at_edit(worktree: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let editor = worktree.join(".pause-rebase.sh");
+    fs::write(
+        &editor,
+        "#!/bin/sh\nsed -e '1s/^pick/edit/' \"$1\" > \"$1.anthrex\" && mv \"$1.anthrex\" \"$1\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&editor, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let output = support::git_output_env(
+        worktree,
+        &[("GIT_SEQUENCE_EDITOR", editor.as_os_str())],
+        &[OsStr::new("rebase"), OsStr::new("-i"), OsStr::new("HEAD~2")],
+    );
+    assert!(
+        output.status.success(),
+        "rebase -i: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::remove_file(&editor).unwrap();
+    assert!(
+        worktree.join(".git").exists(),
+        "the worktree is still a worktree"
+    );
+}
+
+/// Review item 1: `created_branch` is decided by a `show-ref` that runs before `git
+/// worktree add`. A branch that appears in between makes the add fail *without creating
+/// the path*, and that branch is someone else's. Cleanup must not delete it.
+#[test]
+fn cleanup_keeps_a_branch_that_appeared_after_the_show_ref() {
+    let repo = TempRepo::new();
+    let (_keep, wt_root) = worktrees_root();
+    let scripts = tempfile::tempdir().unwrap();
+    let racing = racing_git(scripts.path(), &repo.root, "rival");
+
+    let error = worktree::create(
+        racing.as_os_str(),
+        &repo.root,
+        "rival",
+        &wt_root,
+        deadline(),
+    )
+    .unwrap_err();
+
+    match &error {
+        WorktreeError::Git { action, stderr } => {
+            assert_eq!(action, "worktree add");
+            assert!(stderr.contains("already exists"), "{stderr:?}");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(
+        repo.branch_exists("rival"),
+        "the branch that won the race is not this create's to delete"
+    );
+    assert!(
+        !repo_worktrees_dir(&wt_root, &repo.root)
+            .join("rival")
+            .exists()
+    );
+    assert_eq!(repo.worktree_paths(), vec![repo.root.clone()]);
+}
+
+/// A `git` that creates `branch` in `repo` immediately after answering the `show-ref`
+/// that asks whether it exists, and is the real git for everything else — the race in
+/// review item 1, made deterministic.
+fn racing_git(dir: &Path, repo: &Path, branch: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let real = which_git();
+    let script = dir.join("racing-git");
+    fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\ncase \"$*\" in\n  *show-ref*)\n    '{real}' \"$@\"\n    rc=$?\n    \
+             '{real}' -C '{repo}' branch '{branch}' HEAD >/dev/null 2>&1\n    exit $rc ;;\n  \
+             *) exec '{real}' \"$@\" ;;\nesac\n",
+            real = real.display(),
+            repo = repo.display(),
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    script
 }
 
 #[test]

@@ -85,8 +85,14 @@ These are final. If one proves wrong, stop on it and record the evidence under "
 9. **Branch in use.** Before `worktree add`, the daemon reads `git worktree list --porcelain`. If any entry has `branch refs/heads/<branch>`, creation fails with `branch '<branch>' is already checked out at <path>`. This covers the branch checked out in the main checkout. Verified against git 2.50.1: `git worktree add` refuses the same case with `'<branch>' is already used by worktree at '<path>'`, but the wording differs between git versions, so the daemon checks first.
 10. **Create.** `worktree::create` checks in this order and stops at the first failure: branch syntax (decision 8, rules 1 to 4), the roots (decision 5), `check-ref-format`, the reserved `runs` directory name, branch in use (decision 9), path exists (decision 7). Then, if `git show-ref --verify --quiet refs/heads/<branch>` exits 0, run `git worktree add <path> <branch>`. Otherwise run `git worktree add -b <branch> <path>`, which starts the branch at `HEAD` of the directory the user chose, and remember `created_branch = true`. All of these run with `-C <the user's directory>`. `create_dir_all(<wt>)` runs first.
 11. **Window directory.** The window's child runs in the worktree root, whatever subdirectory of the repository the user chose. The entry's `spec.cwd` is replaced by the worktree path before `launch::plan`, so `WindowInfo.cwd`, the PTY's cwd and Codex's `-C` all name the worktree.
-12. **Dirty check.** `worktree::is_dirty(git, path, deadline)` runs `git status --porcelain --ignore-submodules=none` in the worktree and returns true when stdout is not empty. Verified against git 2.50.1: untracked files make it dirty and make a plain `git worktree remove` fail with `contains modified or untracked files, use --force to delete it`. Ignored files do not count and are deleted by a plain remove.
-13. **Remove.** `worktree::remove(git, wt, force, deadline)`: if `wt.path` does not exist, run `git worktree prune` in `wt.repo_root` and succeed. Otherwise run `git worktree remove [--force] <path>` in `wt.repo_root`. When that fails without `--force` and `is_dirty` now returns true, return `WorktreeError::Dirty`; any other failure returns `WorktreeError::Git` with git's stderr. The branch is never deleted.
+12. **Dirty check.** `worktree::is_dirty(git, path, deadline)` answers three questions about the worktree and returns true if any of them says yes. *Amended by ruling during M5.3; the original decision was the first question alone.*
+
+    1. **A paused git operation.** `git rev-parse --git-path rebase-merge --git-path rebase-apply --git-path MERGE_HEAD --git-path CHERRY_PICK_HEAD`, then test each answer for existence on disk. A linked worktree keeps these under `.git/worktrees/<name>/`, which is why they are resolved through git rather than joined onto `.git/` by hand.
+    2. **Working-tree changes.** `git status --porcelain --ignore-submodules=none`, true when stdout is not empty. Verified against git 2.50.1: untracked files make it dirty and make a plain `git worktree remove` fail with `contains modified or untracked files, use --force to delete it`. Ignored files do not count and are deleted by a plain remove; the removal dialog must say so (M5.10).
+    3. **A detached `HEAD` holding commits no ref reaches.** `git rev-list --count HEAD --not --branches --remotes --tags`, true when the count is not zero. On a branch this is always zero, because `--branches` covers that branch.
+
+    Questions 1 and 3 exist because `git status` is *silent* about both states and a plain `git worktree remove` deletes them without complaint (verified against git 2.50.1): a rebase paused at `edit` with a clean tree loses its `rebase-merge` state and every commit already replayed, and a detached `HEAD` loses a commit that becomes unreachable the moment the worktree goes. An agent told to try an approach on scratch commits leaves exactly those states. Both new questions fail in the refusing direction, and `--force` still lets the user through.
+13. **Remove.** `worktree::remove(git, wt, force, deadline)`: if `wt.path` does not exist, run `git worktree prune` in `wt.repo_root` and succeed — where "does not exist" means `ErrorKind::NotFound` specifically, so a `PermissionDenied` or an `EIO` from a dead mount is never reported as a successful removal. Otherwise, without `force`, ask `is_dirty` **first** and return `WorktreeError::Dirty` if it says yes; decision 12's questions 1 and 3 name states git itself does not refuse, so a check that only classified git's own refusal would never fire for them. Then run `git worktree remove [--force] <path>` in `wt.repo_root`. When that fails without `--force` and `is_dirty` now returns true, return `WorktreeError::Dirty`; any other failure returns `WorktreeError::Git` with git's stderr. The branch is never deleted.
 14. **Error text.** Git failures carry the last 20 lines of stderr, trimmed, at most 1000 characters, with `fatal: ` prefixes kept. The client shows the message as given.
 
 ### Creating windows
@@ -875,3 +881,29 @@ From `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`, "Assig
 ## Implementation notes
 
 The implementer fills this section in during implementation: every deviation, surprise and decision, with evidence.
+
+### M5.3 — worktree create, remove, dirty check and cleanup
+
+**Git version.** Local: 2.50.1 (Apple Git-155), macOS (Darwin 25.2.0). Every behaviour below was re-verified against it in scratch repositories.
+
+**Decision 12 widened, by ruling.** Recorded as a *ruling from the M5.3 review*, not a discovery by the implementer: the decision as written named `status --porcelain` and that is exactly what was implemented and tested first. The review ruled it insufficient, and decision 12 above now carries the amended text. Two states hold real commits and are invisible to `git status`, and a plain `git worktree remove` deletes both:
+
+- A worktree on a **detached `HEAD`** whose commit is on no branch. Verified: `status --porcelain` empty, `rev-list --count HEAD --not --branches --remotes --tags` = 1, `git worktree remove` (no `--force`) exit 0, directory gone, commit unreachable.
+- A **rebase paused at `edit`** with a clean tree. Verified: `status --porcelain` empty, `rev-list --count` = 0 (so only the marker check catches it), `rev-parse --git-path rebase-merge` present on disk, `git worktree remove` (no `--force`) exit 0, state and replayed commits gone.
+
+Consequence for decision 13: the check now runs *before* `git worktree remove`, not only as a classifier afterwards, because git does not refuse either state and a post-hoc classifier would never fire for them. The post-refusal classification is kept, to catch a file that appears in between.
+
+**Ignored files still do not block removal.** Decision 12 stands on this: requiring a force for every worktree carrying `node_modules` would make the feature unusable. The removal dialog must tell the user that ignored files go too — carried into M5.10.
+
+**Decision 10, `create_dir_all(<wt>)` ordering.** Implemented as "immediately before `git worktree add`", not "before the checks", so a create refused by any of the six checks leaves no directory behind at all.
+
+**`run_git` takes `&[&OsStr]`, not `&[&str]`.** Two of its arguments are paths the daemon itself chose. A lossy conversion there could leave a worktree this daemon made but can never remove.
+
+**`created_branch` alone does not license deleting a branch.** It is decided by a `show-ref` that runs before `worktree add`. A branch that appears in between makes the add fail with `a branch named 'x' already exists` (exit 255) *without creating the path*, so `discard_new` also requires that the path existed: `worktree add -b` brings a branch into existence only as part of checking the tree out.
+
+**Other git behaviours verified against 2.50.1**, relied on by the implementation:
+
+- `git worktree remove --force <path>` on a directory that is not a working tree: `fatal: '<path>' is not a working tree`, exit 128, contents untouched. This is what makes the cleanup path safe without any `fs::remove_dir_all`.
+- `git check-ref-format --branch '@{-1}'` **exits zero** inside a repository with a previous checkout and prints a *different* branch name — so decision 8's "prints the branch unchanged" half is load-bearing, not belt-and-braces.
+- `git rev-parse --git-path` accepts several `--git-path` occurrences in one invocation and answers one absolute path per line.
+- A `post-checkout` hook exiting non-zero makes `git worktree add` exit non-zero *after* the branch and worktree exist — the deterministic handle on "a create that fails part-way" without a timeout.

@@ -135,7 +135,22 @@ pub fn git(dir: &std::path::Path, args: &[&std::ffi::OsStr]) {
 /// As [`git`], but hands back the result instead of asserting success, for the queries
 /// whose *failure* is the answer (`show-ref --verify` on a branch that does not exist).
 pub fn git_output(dir: &std::path::Path, args: &[&std::ffi::OsStr]) -> std::process::Output {
-    std::process::Command::new("git")
+    git_output_env(dir, &[], args)
+}
+
+/// As [`git_output`], with extra environment variables — `GIT_SEQUENCE_EDITOR` for a
+/// scripted `rebase -i`, which is the only way to reach a rebase paused at `edit`
+/// without a human.
+pub fn git_output_env(
+    dir: &std::path::Path,
+    envs: &[(&str, &std::ffi::OsStr)],
+    args: &[&std::ffi::OsStr],
+) -> std::process::Output {
+    let mut command = std::process::Command::new("git");
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    command
         .args([
             "-c",
             "user.name=t",
@@ -151,6 +166,24 @@ pub fn git_output(dir: &std::path::Path, args: &[&std::ffi::OsStr]) -> std::proc
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()
         .unwrap()
+}
+
+/// Adds a second and third commit on the current branch, so a worktree cut from it has
+/// history to rebase or detach onto.
+pub fn commit_more(dir: &std::path::Path, count: usize) {
+    use std::ffi::OsStr;
+    for n in 0..count {
+        std::fs::write(dir.join("README"), format!("line {n}\n")).unwrap();
+        git(dir, &[OsStr::new("add"), OsStr::new("README")]);
+        git(
+            dir,
+            &[
+                OsStr::new("commit"),
+                OsStr::new("-m"),
+                &std::ffi::OsString::from(format!("commit {n}")),
+            ],
+        );
+    }
 }
 
 /// A real repository in a temporary directory: one commit holding `README` and a
