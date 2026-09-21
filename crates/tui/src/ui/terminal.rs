@@ -7,30 +7,42 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use std::path::Path;
 use tui_term::widget::{Cursor, PseudoTerminal};
 
-pub fn shorten_home(path: &Path) -> String {
-    if let Some(home) = dirs::home_dir()
-        && let Ok(rest) = path.strip_prefix(&home)
+/// Pure variant of [`shorten_home`]: takes the home directory as a parameter instead of
+/// reading it from the environment, so callers with no filesystem access — the new-agent
+/// form's defaults (decision 31) among them — can use it too.
+pub fn shorten_home_with(path: &Path, home: Option<&Path>) -> String {
+    if let Some(home) = home
+        && let Ok(rest) = path.strip_prefix(home)
     {
         return format!("~/{}", rest.display());
     }
     path.display().to_string()
 }
 
+pub fn shorten_home(path: &Path) -> String {
+    shorten_home_with(path, dirs::home_dir().as_deref())
+}
+
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let title = match app.focused_window() {
-        Some(w) => {
-            let branch = w
-                .branch
-                .as_ref()
-                .map(|b| format!(" ({b})"))
-                .unwrap_or_default();
-            format!(
-                " {} · {} · {}{branch} ",
+        // Decision 37: the branch comes from `branch_text` alone, never a direct read
+        // of `WindowInfo.branch` here — `None` is also how this tells a worktree
+        // window from a plain one, since `branch_text` is `None` for exactly the
+        // windows this daemon made no worktree for.
+        Some(w) => match super::tree_view::branch_text(w, app) {
+            Some(branch) => format!(
+                " {} · {} · {} ({branch}, worktree) ",
+                w.name,
+                w.runtime.label(),
+                shorten_home(&w.project)
+            ),
+            None => format!(
+                " {} · {} · {} ",
                 w.name,
                 w.runtime.label(),
                 shorten_home(&w.cwd)
-            )
-        }
+            ),
+        },
         None => " no window ".to_string(),
     };
     let border = if app.modal.is_none() {
@@ -50,7 +62,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         let hint = vec![
             Line::raw(""),
             Line::styled(
-                "  No agents. Press C-b c to open a shell here, or run `anthrex new`.",
+                "  No agents. Press C-b c to create one, or run `anthrex new`.",
                 theme::muted(),
             ),
         ];

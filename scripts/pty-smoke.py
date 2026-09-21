@@ -49,6 +49,10 @@ DATA_DIR = tempfile.mkdtemp(prefix="anthrex-smoke-", dir="/tmp")
 SOCKET = os.path.join(DATA_DIR, "daemon.sock")
 FAKE_AGENT_SCRIPT = os.path.join(DATA_DIR, "fake-agent.jsonl")
 ROWS, COLS = 40, 120
+# W1 and W2 (the worktree stages) create linked checkouts against this repository.
+# Fixed rather than a `tempfile.mkdtemp`, per the acceptance check that
+# `/tmp/anthrex-smoke-repo-*` is gone once the script finishes.
+SMOKE_REPO = f"/tmp/anthrex-smoke-repo-{os.getpid()}"
 
 ENV = dict(os.environ)
 ENV["ANTHREX_SOCKET"] = SOCKET
@@ -288,6 +292,20 @@ def run_cmd(args, expect_ok=True, timeout=15):
     return result
 
 
+def new_shell(proc, expected):
+    """`C-b c` now opens the new-agent form (decision 26) instead of creating a shell
+    directly, so every stage that used to send a bare `\\x02c` and wait for its window to
+    focus now has to drive the form's default path first: Shell is the form's third
+    runtime, so `3` selects it, and `\\r` submits with the daemon's stock name and the
+    default directory.
+    """
+    proc.send(b"\x02c")
+    proc.wait_for("new agent", label="new-agent form opened")
+    proc.send(b"3")
+    proc.send(b"\r")
+    proc.wait_for_focused_window(expected)
+
+
 def ensure_binary():
     binaries = [BIN, FAKE_AGENT_BIN]
     missing = [path for path in binaries if not os.path.exists(path)]
@@ -370,6 +388,197 @@ def calibrate_raw_pty_capacity():
         os.close(slave)
 
 
+def _smoke_git(args, cwd=None):
+    """Runs git against `SMOKE_REPO` (or `cwd`) with a repo-local identity, the same
+    discipline the Rust tests' `TempRepo` follows: a developer's global git config must
+    not change what these stages see.
+    """
+    env = dict(os.environ)
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    result = subprocess.run(
+        ["git", "-C", cwd or SMOKE_REPO] + args,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if result.returncode != 0:
+        fail(f"git {' '.join(args)} in {cwd or SMOKE_REPO} failed: {result.stderr}")
+    return result.stdout
+
+
+def make_repo():
+    """Creates the small repository W1 and W2 create linked worktrees against: one
+    commit on `main`, repo-local identity, `commit.gpgsign` off. Removed by the script's
+    final cleanup.
+    """
+    shutil.rmtree(SMOKE_REPO, ignore_errors=True)
+    os.makedirs(SMOKE_REPO)
+    _smoke_git(["init", "-q", "-b", "main"])
+    _smoke_git(["config", "user.name", "anthrex smoke"])
+    _smoke_git(["config", "user.email", "smoke@anthrex.test"])
+    _smoke_git(["config", "commit.gpgsign", "false"])
+    with open(os.path.join(SMOKE_REPO, "README"), "w", encoding="utf-8") as handle:
+        handle.write("anthrex smoke fixture\n")
+    _smoke_git(["add", "README"])
+    _smoke_git(["commit", "-q", "-m", "init"])
+    return SMOKE_REPO
+
+
+def run_worktree_cli_stage(repo):
+    """W1: `anthrex new --worktree` and `anthrex rm --worktree` end to end, entirely
+    through the CLI, against the daemon the rest of the script already started.
+    """
+    print("== stage W1: worktree from the CLI ==")
+    branch = "smoke/cli"
+    run_cmd(
+        ["new", "--runtime", "shell", "--name", "wt-cli", "--dir", repo, "--worktree", branch],
+        timeout=60,
+    )
+    listed = run_cmd(["ls"]).stdout
+    if "wt-cli" not in listed or branch not in listed:
+        fail(f"`anthrex ls` did not list wt-cli with {branch}:\n{listed}")
+
+    windows = json.loads(run_cmd(["ls", "--json"]).stdout)
+    wt_cli = next((w for w in windows if w["name"] == "wt-cli"), None)
+    if wt_cli is None or not wt_cli.get("worktree"):
+        fail(f"wt-cli has no worktree recorded: {wt_cli!r}")
+    worktree_path = wt_cli["worktree"]
+    # The daemon canonicalizes the worktree path it hands back (so it matches the git
+    # registry's key), which resolves macOS's `/tmp` -> `/private/tmp` symlink; compare
+    # against the same resolution rather than the raw `DATA_DIR` string.
+    worktrees_root = os.path.realpath(os.path.join(DATA_DIR, "worktrees"))
+    if not worktree_path.startswith(worktrees_root):
+        fail(f"worktree path {worktree_path!r} is not under {worktrees_root!r}")
+
+    worktree_list = subprocess.run(
+        ["git", "-C", repo, "worktree", "list", "--porcelain"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    ).stdout
+    if f"branch refs/heads/{branch}" not in worktree_list or worktrees_root not in worktree_list:
+        fail(f"`git worktree list --porcelain` did not show the new checkout:\n{worktree_list}")
+
+    dup = run_cmd(
+        ["new", "--runtime", "shell", "--name", "wt-dup", "--dir", repo, "--worktree", branch],
+        expect_ok=False,
+        timeout=60,
+    )
+    if dup.returncode == 0 or "already checked out" not in dup.stderr:
+        fail(f"a duplicate worktree create should have failed with 'already checked out':\n{dup.stderr}")
+
+    run_cmd(["rm", "wt-cli", "--worktree"], timeout=60)
+    if os.path.exists(worktree_path):
+        fail(f"worktree directory {worktree_path!r} still exists after `anthrex rm --worktree`")
+    branch_list = subprocess.run(
+        ["git", "-C", repo, "branch", "--list", branch],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    ).stdout
+    if branch not in branch_list:
+        fail(f"branch {branch} should still exist after removal:\n{branch_list}")
+    print("ok: worktree created, listed, refused for a duplicate branch, and removed via the CLI")
+
+
+def run_worktree_form_stage(repo):
+    """W2: the new-agent form's worktree path, a dirty-tree refusal, and the force
+    follow-up, driven through the TUI.
+    """
+    print("== stage W2: form, dirty removal, force ==")
+    branch = "smoke/form"
+    proc = PtyProc([BIN])
+    proc.wait_for("agents", label="worktree-form attach banner")
+    proc.send(b"\x02c")
+    proc.wait_for("new agent", label="new-agent form opened for the worktree stage")
+    # Shell, Tab to Name, type it, Tab to Directory, clear the default and type the repo
+    # path, Tab to Worktree, tick it, Tab to Branch (now visible), type it, submit. Sent
+    # as separate writes, not one concatenated burst: crossterm's raw-mode reader can
+    # coalesce a single large write of mixed control bytes and plain text into fewer
+    # events than were sent, silently dropping keystrokes (verified by isolating this
+    # exact sequence — splitting it into one `send()` per key is what makes it reliable).
+    for chunk in (
+        b"3",
+        b"\t",
+        b"wt-form",
+        b"\t",
+        b"\x15",
+        repo.encode(),
+        b"\t",
+        b" ",
+        b"\t",
+        branch.encode(),
+        b"\r",
+    ):
+        proc.send(chunk)
+    proc.wait_for_focused_window("wt-form")
+    proc.wait_for(branch, label=f"{branch} on screen after submit")
+
+    proc.send(b"pwd\r")
+    proc.wait_for("smoke-form", label="worktree directory name in pwd output")
+
+    windows = json.loads(run_cmd(["ls", "--json"]).stdout)
+    wt_form = next((w for w in windows if w["name"] == "wt-form"), None)
+    if wt_form is None or not wt_form.get("worktree"):
+        fail(f"wt-form has no worktree recorded: {wt_form!r}")
+    worktree_path = wt_form["worktree"]
+
+    proc.send(b"touch dirty.txt\r")
+    dirty_marker = os.path.join(worktree_path, "dirty.txt")
+    deadline = time.monotonic() + 10.0
+    while not os.path.exists(dirty_marker):
+        if time.monotonic() >= deadline:
+            fail(f"{dirty_marker} never appeared")
+        proc.read_available(timeout=0.2)
+
+    proc.send(b"\x02X")
+    proc.wait_for("also remove worktree", label="remove-confirm worktree checkbox")
+    proc.send(b" ")
+    proc.send(b"\r")
+    proc.wait_for("uncommitted or untracked", label="dirty-tree force prompt")
+
+    proc.send(b"f")
+    deadline = time.monotonic() + 10.0
+    gone = False
+    while time.monotonic() < deadline:
+        remaining = json.loads(run_cmd(["ls", "--json"]).stdout)
+        if not any(w["name"] == "wt-form" for w in remaining):
+            gone = True
+            break
+        # Keep draining proc's own output while polling `ls`, the same discipline
+        # `wait_exit` documents above: the removal makes the daemon redraw the sidebar
+        # (a window disappearing, a spinner ticking) every 100ms, and a PTY's kernel
+        # output buffer is finite — left undrained across a multi-second wait, the
+        # client can block on its own write and stop reading input entirely, which
+        # looks exactly like the keypress that started this wait was never delivered.
+        proc.read_available(timeout=0.2)
+    if not gone:
+        fail(
+            "wt-form was still listed 10s after forcing the dirty removal\n"
+            f"--- screen ---\n{proc.screen_text()}\n"
+            f"--- windows ---\n{remaining!r}"
+        )
+    if os.path.exists(worktree_path):
+        fail(f"worktree directory {worktree_path!r} still exists after the forced removal")
+    branch_list = subprocess.run(
+        ["git", "-C", repo, "branch", "--list", branch],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    ).stdout
+    if branch not in branch_list:
+        fail(f"branch {branch} should still exist after the forced removal:\n{branch_list}")
+
+    proc.send(b"\x02d")
+    status = proc.wait_exit(timeout=5.0)
+    if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+        fail(f"worktree-form detach did not exit cleanly with status 0 (raw status {status})")
+    proc.close()
+    print("ok: the new-agent form created a worktree, a dirty removal was refused, then forced")
+
+
 def main():
     ensure_binary()
     write_fake_agent_script()
@@ -381,15 +590,13 @@ def main():
     print("ok: initial frame shows anthrex UI with no agents yet")
 
     print("== stage 2: create shell-1, run a command ==")
-    proc.send(b"\x02c")
-    proc.wait_for_focused_window("shell-1")
+    new_shell(proc, "shell-1")
     proc.send(b"echo smoke-$((40+2))\r")
     proc.wait_for("smoke-42", label="echo output in shell-1")
     print("ok: shell-1 created and command output visible")
 
     print("== stage 3: create shell-2, exercise keys, help overlay ==")
-    proc.send(b"\x02c")
-    proc.wait_for_focused_window("shell-2")
+    new_shell(proc, "shell-2")
     proc.send(b"\x02k")
     time.sleep(0.3)
     proc.read_available(timeout=0.3)
@@ -447,8 +654,7 @@ def main():
     # ESC byte it actually receives as the two characters ^ and [.
     proc3 = PtyProc([BIN])
     proc3.wait_for("agents", label="third attach banner")
-    proc3.send(b"\x02c")
-    proc3.wait_for_focused_window("shell-3")
+    new_shell(proc3, "shell-3")
     proc3.send(b"stty -echo; printf '%s%s\\n' CAT_ READY; cat -v\r")
     proc3.wait_for("CAT_READY", label="cat -v readiness in focused shell-3")
     proc3.send(b"\x1b\r")  # ESC CR: how a terminal reports Alt+Enter
@@ -470,8 +676,7 @@ def main():
     else:
         print("note: local raw PTY accepted all 32768 bytes; platform backpressure unconfirmed")
     print("note: calibration does not observe the agent's writer; both timing limits remain enforced")
-    proc3.send(b"\x02c")
-    proc3.wait_for_focused_window("shell-4")
+    new_shell(proc3, "shell-4")
     child_started = time.monotonic()
     proc3.send(b"stty raw -echo && printf '%s%s' RAW_ READY && exec sleep 30\r")
     proc3.wait_for("RAW_READY", label="shell-4 raw-mode readiness")
@@ -569,6 +774,10 @@ def main():
     run_graph_glyphs_stage(REPO, PtyProc, run_cmd, fail)
     run_inspector_stage(REPO, PtyProc, run_cmd, fail, FAKE_AGENT_SCRIPT)
 
+    smoke_repo = make_repo()
+    run_worktree_cli_stage(smoke_repo)
+    run_worktree_form_stage(smoke_repo)
+
     print("== stage 10: stop the daemon, verify status ==")
     stop_result = run_cmd(["daemon", "stop"])
     print(f"daemon stop output: {stop_result.stdout.strip()!r}")
@@ -593,3 +802,6 @@ if __name__ == "__main__":
         # directory (and so daemon.log) for debugging a failure.
         if not os.environ.get("ANTHREX_SMOKE_KEEP"):
             shutil.rmtree(DATA_DIR, ignore_errors=True)
+        # W1 and W2's fixture repository is not the daemon's data, so it is removed
+        # unconditionally, keep-flag or not.
+        shutil.rmtree(SMOKE_REPO, ignore_errors=True)

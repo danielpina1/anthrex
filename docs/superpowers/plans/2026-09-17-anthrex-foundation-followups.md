@@ -125,3 +125,80 @@ Each open item above is closed by exactly one milestone. Its brief lists the ite
 - **The painter's zip invariant is only `debug_assert`ed.** `paint` pairs `layout.nodes`
   with the row list positionally. The invariant holds by construction today; in release a
   future divergence would paint labels onto the wrong boxes rather than dropping a node.
+
+## From milestone 5's whole-branch review (2026-09-21)
+
+- **Decision 25's "beside the loop" half is unpinned for `Remove`.**
+  `list_is_answered_while_a_create_is_running`
+  (`crates/daemon/tests/server/worktree.rs`) proves a `ListWindows` is answered while a
+  `CreateWindow` is still running, held open by a real `post-checkout` git hook that
+  writes a marker and sleeps for a fixed few seconds — so the test can wait for the
+  marker and know git is *provably* still inside `worktree add` before it asks whether
+  the connection loop is free. There is no equivalent test for `Remove`, and a refactor
+  that awaited `remove_with_worktree` inline in `handle_client` — reintroducing exactly
+  the stall decision 25 exists to prevent — would pass the whole suite today.
+  Investigated during the fix wave that added this entry: the reason isn't that nobody
+  wrote the test, it's that the technique the create-side test uses does not carry over.
+  `git worktree remove` fires no hook at all (checked against git 2.50.1: a repository
+  with every plausibly-relevant hook name wired up to log its own invocation stayed
+  silent across a `worktree remove`), so there is nothing to plant a sleep in the way
+  `post-checkout` holds `worktree add` open. The daemon's own `git` invocation is not
+  test-injectable either — `manager::git()` is a hardcoded `OsStr::new("git")`, unlike
+  `daemon::project::detect_roots_with`'s injectable program, so an integration test
+  cannot substitute a slow wrapper for the real removal's git calls without a new
+  production seam. `kill_and_await_exit`, the one phase of a removal that touches no
+  git, cannot be held open either: it waits on a real `SIGKILL`, which a child process
+  cannot delay or catch. Closing this needs one of: a test-only override for the git
+  program `WindowManager::remove_with_worktree` runs (mirroring
+  `project::detect_roots_with`'s `_with` twin), or a fixture child that can be told to
+  ignore its own reaping for a bounded window so `kill_and_await_exit`'s wait becomes
+  the held seam instead. Either is a real production-code change, not a test-only one,
+  so it is left for whichever milestone next touches `manager::remove` rather than
+  folded into a fix wave scoped to minors. See
+  `crates/daemon/tests/server/worktree.rs`'s
+  `a_worktree_removal_runs_to_completion_after_its_client_disconnects` for the same
+  held-seam gap on the *no-abort* guarantee (decisions 17 and 25 together), documented
+  in place since that test at least has a weaker, poll-based substitute; this one has
+  no test at all.
+
+## From milestone 5's final review (2026-09-21)
+
+- **The force-remove dialog clips on a short terminal, hiding every option but the
+  destructive one.** `crates/tui/src/ui/dialog.rs:338` with `:282-293`. The box grew from 11
+  rows to 13 — wave B's `wrap()` continuation gives a long path three lines, and wave C raised
+  `FORCE_MAX_LINES` from 4 to 6 — while `render_box`/`centered` clip the bottom silently. On an
+  11-row terminal the only visible choice is `f`, which deletes uncommitted work; `k` (keep the
+  worktree) and `n` (cancel) are both off-screen. Measured with `TestBackend` at both `cdd3681`
+  and `4c79d5d`.
+
+  Not merged as a blocker because the clipping class is pre-existing (it bit at ≤10 rows before
+  this milestone, ≤12 now), `Esc` still cancels, and a terminal that short is barely usable. But
+  a dialog whose only visible option is the destructive one is the wrong failure mode for this
+  particular screen. The real fix is in `render_box`/`centered` — clip predictably or scroll,
+  rather than silently dropping the bottom — which is a general rendering change deserving its
+  own review, not a patch at merge time.
+
+  This is a genuine cross-wave interaction: neither wave B's change nor wave C's is wrong alone,
+  and no per-wave review could have seen it.
+
+- **`wrap` measures characters while the box is sized in display columns.**
+  `crates/tui/src/ui/dialog.rs:55-112`. A CJK path renders an over-wide, misaligned box. No text
+  meaning is lost. Pre-existing, and the same unit mismatch the `TextInput` cursor work fixed
+  elsewhere in this milestone — worth closing with the same `unicode-width` treatment.
+
+- **Nothing runs `--ignored`, so the 45-second create-budget test proves nothing in CI.**
+  Milestone 5 replaced it with a ~2-second injectable-deadline version and kept the slow one
+  `#[ignore]`d as the only full-scale proof. The final review's judgement: little real coverage
+  was lost, because `CREATE_WORST_CASE`/`REMOVAL_WORST_CASE` are computed from the daemon's own
+  constants so an always-run assertion catches a timeout regression — and the ignored test's
+  unique coverage would not catch a new blocking term anyway, since `SLOW_CREATE_DELAYS` is a
+  fixed list. Either add a slow-test CI job that runs `--ignored`, or delete the test. An
+  ignored test that nobody schedules is documentation wearing a test's clothes.
+
+- **Two blind spots in the dirty check that are outside the paused-operation family**, both
+  pre-existing and both accepted knowingly. `--skip-worktree` hidden edits — git itself has the
+  identical hole — and per-worktree reflog loss on a detached HEAD, which is narrow because the
+  daemon always creates on a branch. The paused-operation family itself is now complete: the
+  final review tested twelve scenarios against `sequencer` and `BISECT_LOG`, found no reachable
+  false positive, and verified per-worktree scoping (a cherry-pick paused in the main checkout
+  correctly leaves a linked worktree clean).

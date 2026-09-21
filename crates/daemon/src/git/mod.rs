@@ -210,6 +210,27 @@ impl GitRegistry {
     }
 }
 
+/// Design decision 22: what `WindowManager::remove_with_worktree` is allowed to know
+/// about this registry.
+///
+/// The manager has to unregister a root *between* killing the agent and deleting its
+/// directory, which only it is in a position to do, so it needs these two calls — and
+/// through this trait it gets exactly these two and nothing else: no [`GitState`], no
+/// `GitRegistry`, no knowledge that a watcher or a probe exists.
+///
+/// Both are the inherent methods below, unchanged. In particular the reference counting
+/// stays here (design decision 23): the manager calls `unregister` once per removed
+/// window and this decides whether anything stops.
+impl crate::manager::GitRoots for GitRegistry {
+    fn register(&self, root: PathBuf) {
+        GitRegistry::register(self, root);
+    }
+
+    fn unregister(&self, root: &Path) {
+        GitRegistry::unregister(self, root);
+    }
+}
+
 impl Drop for GitRegistry {
     /// Dropping the registry stops every root — otherwise the tasks, and the watcher
     /// threads they own, would outlive the daemon that made them.

@@ -1,10 +1,5 @@
 //! The anthrex daemon: owns PTY windows and serves them over a Unix socket.
 
-/// Refusal message for `--worktree` / `WindowSpec::worktree_branch`, shared by the daemon
-/// and the CLI so both say the same thing.
-pub const WORKTREE_UNSUPPORTED: &str =
-    "--worktree is not implemented yet; it arrives with the worktree milestone";
-
 /// Locks a mutex, taking the data back even when a previous holder panicked.
 ///
 /// Spec section 7: one window must never take the daemon down. A panic anywhere under
@@ -30,8 +25,15 @@ pub mod project;
 pub mod server;
 pub mod status;
 pub mod subagents;
-mod subprocess;
+/// `#[doc(hidden)] pub` rather than private only so that `crates/daemon/tests/subprocess.rs`
+/// can exercise `Captured`, `Outcome`, `run` and `run_captured` in a test binary of its own —
+/// the same reason and the same treatment `worktree::run_git` gives itself. Nothing outside
+/// the crate uses it otherwise: `project::detect_roots_with`, `git::probe` and
+/// `worktree::run_git`, the module's real callers, all live inside this crate.
+#[doc(hidden)]
+pub mod subprocess;
 pub mod window;
+pub mod worktree;
 
 pub use lifecycle::{DaemonOptions, run};
 

@@ -1,5 +1,11 @@
 mod support;
 
+/// M5.6's worktree requests. A submodule rather than a test binary of its own so it keeps
+/// this file's `Client` helpers and harness; this file was already at two thirds of
+/// AGENTS.md rule 8's guideline before the milestone started.
+#[path = "server/worktree.rs"]
+mod worktree;
+
 use proto::{ClientMsg, DaemonMsg, HookSource, PROTO_VERSION, Status, WindowSpec};
 use std::time::Duration;
 use support::{Client, TestDaemon, claude_window, git, shell_spec, start_daemon};
@@ -280,15 +286,12 @@ async fn assert_completion(d: &TestDaemon, client: &mut Client, id: u32, expecte
 #[tokio::test]
 async fn hook_events_are_acknowledged() {
     let d = start_daemon().await;
-    let manager = d.manager.clone();
-    let id = tokio::task::spawn_blocking(move || {
-        manager
-            .create(shell_spec("hook-shell"), std::env::temp_dir(), None, 80, 24)
-            .unwrap()
-            .id
-    })
-    .await
-    .unwrap();
+    let id = d
+        .manager
+        .create(shell_spec("hook-shell"), std::env::temp_dir(), None, 80, 24)
+        .await
+        .unwrap()
+        .id;
     let (mut c, _) = Client::connect(&d, PROTO_VERSION).await;
     assert_eq!(
         c.hook(id, "Stop").await,

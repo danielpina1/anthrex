@@ -1,9 +1,12 @@
 //! Accepts client connections and speaks the protocol from spec section 4.
 
+mod requests;
+
 use crate::git::GitRegistry;
 use crate::manager::WindowManager;
 use crate::window::Attachment;
 use bytes::Bytes;
+use proto::messages::request;
 use proto::{ClientMsg, DaemonMsg, GitState, PROTO_VERSION, read_frame, write_frame};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,8 +21,21 @@ use tokio_util::sync::CancellationToken;
 /// whatever roots the connected clients' windows reference, and one broadcast channel
 /// that turns its publications into [`DaemonMsg::Git`] for every attached client. The
 /// manager itself holds no git state and takes no git-related lock (AGENTS.md hard rule
-/// 2); registration and unregistration happen from inside `handle_client`, always after
-/// the call that changed the window table has already returned.
+/// 2).
+///
+/// Where registration and unregistration happen is not one rule but two, and the
+/// difference matters. A plain create and a plain `Remove { remove_worktree: false }`
+/// register or unregister from `server::requests`, in `handle_client`'s own task, always
+/// after the call that changed the window table has already returned — see
+/// [`requests::create`] and [`requests::remove_window`]. `Remove { remove_worktree: true
+/// }` does not: [`crate::manager::WindowManager::remove_with_worktree`] unregisters the
+/// root itself, *before* deleting the checkout, and re-registers it if the deletion
+/// fails, because that ordering (unregister, then delete, then maybe undo) has to happen
+/// inside one operation or not be provable at all. **Do not add an `unregister` after
+/// `remove_with_worktree` returns to "match" the other two paths** — the manager has
+/// already unregistered by then, and a second unregister on top of its own is the exact
+/// double-decrement `server::requests`' module doc and design decision 23 exist to
+/// prevent.
 pub async fn serve(
     listener: UnixListener,
     manager: Arc<WindowManager>,
@@ -244,31 +260,17 @@ async fn handle_client(
                 windows: manager.list(),
             }),
             ClientMsg::CreateWindow { spec, cols, rows } => {
-                let manager = manager.clone();
-                let out_tx = out_tx.clone();
-                let git_registry = git_registry.clone();
-                tokio::spawn(async move {
-                    let roots = crate::project::resolve_roots(spec.cwd.clone()).await;
-                    // PTY creation can block too; keep it off the runtime worker.
-                    let result = tokio::task::spawn_blocking(move || {
-                        manager.create(spec, roots.project, roots.worktree, cols, rows)
-                    })
-                    .await;
-                    // `create` has already returned and its lock has already been
-                    // released by the time this runs; `register` is never called from
-                    // inside the closure above or while `spawn_blocking` is in flight.
-                    let reply = match result {
-                        Ok(Ok(info)) => {
-                            if let Some(root) = info.worktree.clone() {
-                                git_registry.register(root);
-                            }
-                            DaemonMsg::Created { window_id: info.id }
-                        }
-                        Ok(Err(e)) => error("create", e.to_string()),
-                        Err(e) => error("create", e.to_string()),
-                    };
-                    let _ = out_tx.send(reply).await;
-                });
+                // Runs in its own task, beside this loop, and is never aborted: the
+                // request functions hand back no `JoinHandle` precisely so that nothing
+                // here can cancel one (design decisions 17 and 25, `requests::detach`).
+                requests::create(
+                    manager.clone(),
+                    git_registry.clone(),
+                    out_tx.clone(),
+                    spec,
+                    cols,
+                    rows,
+                );
                 None
             }
             ClientMsg::Subscribe {
@@ -336,32 +338,38 @@ async fn handle_client(
                 .err()
                 .map(|e| error("resize", e.to_string())),
             ClientMsg::Kill { window_id } => Some(ack_or_error("kill", manager.kill(window_id))),
-            ClientMsg::Remove { window_id, .. } => {
-                // Captured before `remove`, never held across it: `list` and `remove`
-                // each take and release the manager lock on their own, so nothing here
-                // runs with it held (AGENTS.md hard rule 2, design decision 16).
-                //
-                // Whether this was the *last* reference to the root is `GitRegistry`'s
-                // own call, not this handler's: deriving it here from a second
-                // `manager.list()` would race a concurrent `CreateWindow` on the same
-                // root across two independent locks (the manager's and the registry's)
-                // with nothing to order them, so a `register` and this `unregister`
-                // could land in either order and leave the root permanently
-                // unregistered while a window still used it. `unregister` is called
-                // unconditionally instead; the registry's own reference count decides
-                // whether anything actually stops.
-                let removed_root = manager
-                    .list()
-                    .into_iter()
-                    .find(|w| w.id == window_id)
-                    .and_then(|w| w.worktree);
-                let result = manager.remove(window_id);
-                if result.is_ok()
-                    && let Some(root) = removed_root
-                {
-                    git_registry.unregister(&root);
+            ClientMsg::Remove {
+                window_id,
+                remove_worktree,
+                force,
+            } => {
+                if force && !remove_worktree {
+                    // Design decision 20. `--force` is the user's answer to a dirty
+                    // refusal and means nothing on its own, so it is refused rather than
+                    // ignored: silently accepting it would let `anthrex rm --force` read
+                    // as "remove harder" when the user forgot `--worktree`.
+                    Some(error(
+                        request::REMOVE,
+                        "--force only applies when removing the worktree",
+                    ))
+                } else if remove_worktree {
+                    // Like the create above, and for a sharper reason: this task
+                    // unregisters the window's git root and then deletes its checkout,
+                    // so a future dropped between those two steps would leave a live
+                    // worktree that nothing watches — with the user's agent already
+                    // killed and no restart in this milestone. Nothing in this function
+                    // is given a handle with which to do that.
+                    requests::remove_with_worktree(
+                        manager.clone(),
+                        git_registry.clone(),
+                        out_tx.clone(),
+                        window_id,
+                        force,
+                    );
+                    None
+                } else {
+                    Some(requests::remove_window(&manager, &git_registry, window_id))
                 }
-                Some(ack_or_error("remove", result))
             }
             ClientMsg::Rename { window_id, name } => {
                 Some(ack_or_error("rename", manager.rename(window_id, name)))

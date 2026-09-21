@@ -1,5 +1,6 @@
 //! Screen layout and the top-level draw. Spec section 6.1.
 
+pub mod dialog;
 pub mod modal;
 pub mod overview;
 pub mod sidebar;

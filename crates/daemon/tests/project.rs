@@ -214,14 +214,17 @@ fn missing_git_falls_back() {
     let subdirectory = repo.path().join("a");
     fs::create_dir(&subdirectory).unwrap();
 
-    assert_eq!(
-        detect_roots_with(
-            OsStr::new("/nonexistent/git"),
-            &subdirectory,
-            DETECT_TIMEOUT
-        )
-        .project,
-        subdirectory.canonicalize().unwrap()
+    let roots = detect_roots_with(
+        OsStr::new("/nonexistent/git"),
+        &subdirectory,
+        DETECT_TIMEOUT,
+    );
+
+    assert_eq!(roots.project, subdirectory.canonicalize().unwrap());
+    assert!(
+        roots.detection_failed,
+        "git could not even be started, which is the 'could not tell' case, not a \
+         negative answer"
     );
 }
 
@@ -237,6 +240,10 @@ fn hanging_git_times_out() {
     assert_eq!(roots.project, repo.path().canonicalize().unwrap());
     assert_eq!(roots.worktree, None);
     assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(
+        roots.detection_failed,
+        "a timeout is 'could not tell', not git answering that this is no repository"
+    );
 }
 
 #[test]
@@ -265,13 +272,32 @@ fn inherited_stdout_does_not_outlive_the_detection_deadline() {
         stopped: false,
     };
 
+    // This is a margin, not a held seam, and the margin is the detection timeout below:
+    // the grandchild never closes the pipe on its own (it sleeps for 30s), so
+    // `detect_roots_with` always runs for the *entire* timeout before it can return —
+    // there is nothing in the wrapper script that can signal "started" any faster than
+    // the OS actually schedules a freshly forked process, and a fork's first timeslice
+    // is not something a test can hold open and wait on the way `post-checkout`'s sleep
+    // is (see `list_is_answered_while_a_create_is_running`). A timeout picked to keep
+    // this test fast (previously one second) bets that the host can schedule a new
+    // process, and that process can fork *its own* child and write a pid file, inside
+    // that one second — a bet a sufficiently loaded machine loses: under sustained CPU
+    // contention (reproduced locally by racing several copies of this suite against a
+    // dozen busy-loops) the wrapper has occasionally still not run at the one-second
+    // mark, so `detect_roots_with` returns *for hitting its own deadline* rather than
+    // for the reason this test exists to exercise, and the loop below misreads that as
+    // "detection finished before the helper started". Using the real production
+    // timeout here removes the bet: everything that runs against `detect_roots` in
+    // practice already gets this many seconds of scheduling slack, so a host too
+    // starved to schedule a forked shell within it would already be failing users, not
+    // just this test.
     let (tx, rx) = mpsc::channel();
     let detector = std::thread::spawn(move || {
         let started = Instant::now();
-        let detected = detect_roots_with(script.as_os_str(), &cwd, Duration::from_secs(1));
+        let detected = detect_roots_with(script.as_os_str(), &cwd, DETECT_TIMEOUT);
         tx.send((detected, started.elapsed())).unwrap();
     });
-    let helper_deadline = Instant::now() + Duration::from_secs(2);
+    let helper_deadline = Instant::now() + DETECT_TIMEOUT - Duration::from_secs(1);
     while !pid_file.exists() {
         if let Ok((detected, elapsed)) = rx.try_recv() {
             detector.join().unwrap();
@@ -286,7 +312,7 @@ fn inherited_stdout_does_not_outlive_the_detection_deadline() {
         std::thread::sleep(Duration::from_millis(5));
     }
 
-    let timely = rx.recv_timeout(Duration::from_secs(2));
+    let timely = rx.recv_timeout(DETECT_TIMEOUT + Duration::from_secs(2));
     let helper_stopped = helper.stop();
     detector.join().unwrap();
     assert!(
@@ -298,7 +324,10 @@ fn inherited_stdout_does_not_outlive_the_detection_deadline() {
     );
 
     assert_eq!(detected.project, root);
-    assert!(elapsed < Duration::from_secs(2), "elapsed: {elapsed:?}");
+    assert!(
+        elapsed < DETECT_TIMEOUT + Duration::from_secs(2),
+        "elapsed: {elapsed:?}"
+    );
 }
 
 #[tokio::test]
@@ -380,8 +409,18 @@ fn detect_roots_outside_a_repository_has_no_worktree() {
 
     assert_eq!(roots.project, dir.path().canonicalize().unwrap());
     assert_eq!(roots.worktree, None);
+    assert!(
+        !roots.detection_failed,
+        "the real git really did run and really did answer 'no repository here'"
+    );
 }
 
+/// Fix wave C item 5: a real, executable git that runs to completion and exits non-zero
+/// is git's own negative answer — reliable for this exact invocation, which takes no ref
+/// or object argument that could fail for any other reason — not a failure to detect.
+/// `worktree::create`'s `NotARepo` message is honest calling this one "not a git
+/// repository": `detection_failed` must be `false`, unlike every other test in this file
+/// that falls back for a reason that is not git answering the question at all.
 #[test]
 fn detect_roots_with_a_failing_git_has_no_worktree() {
     let repo = init_repo();
@@ -394,4 +433,84 @@ fn detect_roots_with_a_failing_git_has_no_worktree() {
 
     assert_eq!(roots.project, subdirectory.canonicalize().unwrap());
     assert_eq!(roots.worktree, None);
+    assert!(
+        !roots.detection_failed,
+        "git ran to completion and exited non-zero, which is a real negative answer"
+    );
+}
+
+/// A third case `detection_failed` must catch, beside a spawn failure and a timeout:
+/// git exits zero but prints something `parse_roots` cannot make sense of. Nothing ever
+/// said "no repository here" — the reply just did not parse — so this is `true`, the
+/// same as every other fix wave C item 5 test but the "failing git" one above.
+#[test]
+fn malformed_output_is_a_detection_failure_not_a_negative_answer() {
+    let repo = init_repo();
+    let scripts = tempdir().unwrap();
+    let script = scripts.path().join("malformed-git");
+    fs::write(&script, "#!/bin/sh\nprintf 'one\\ntwo\\nthree\\n'\n").unwrap();
+    let mut permissions = fs::metadata(&script).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script, permissions).unwrap();
+
+    let roots = detect_roots_with(script.as_os_str(), repo.path(), DETECT_TIMEOUT);
+
+    assert_eq!(roots.project, repo.path().canonicalize().unwrap());
+    assert_eq!(roots.worktree, None);
+    assert!(
+        roots.detection_failed,
+        "three lines is not a shape rev-parse produces; that is a parse failure, not git \
+         saying no"
+    );
+}
+
+/// AGENTS.md hard rule 11: every git invocation carries `--no-optional-locks`.
+/// `rev-parse` does not itself need it, but a rule with a silent exception is one
+/// nobody can check (milestone 5 design decision 2), so `detect_roots_with` carries it
+/// too, written right after `-C <cwd>` and before the subcommand.
+#[test]
+fn detection_passes_no_optional_locks() {
+    let repo = init_repo();
+    let root = repo.path().canonicalize().unwrap();
+    let scripts = tempdir().unwrap();
+    let argv_log = scripts.path().join("argv.log");
+    let script = scripts.path().join("argv-recording-git");
+    fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nprintf '%s\\n%s\\n' '{}'/'.git' '{}'\n",
+            argv_log.display(),
+            root.display(),
+            root.display(),
+        ),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&script).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script, permissions).unwrap();
+
+    let roots = detect_roots_with(script.as_os_str(), repo.path(), DETECT_TIMEOUT);
+
+    let recorded = fs::read_to_string(&argv_log).unwrap();
+    let invocation = recorded
+        .lines()
+        .next()
+        .expect("the rev-parse invocation was recorded");
+    let tokens: Vec<&str> = invocation.split_whitespace().collect();
+    assert_eq!(tokens[0], "-C", "recorded invocation: {invocation:?}");
+    assert_eq!(
+        &tokens[2..],
+        [
+            "--no-optional-locks",
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+            "--show-toplevel",
+        ],
+        "recorded invocation: {invocation:?}"
+    );
+
+    // The flag is a no-op change in behaviour: detection still resolves the same roots.
+    assert_eq!(roots.project, root);
+    assert_eq!(roots.worktree, Some(root));
 }

@@ -23,7 +23,7 @@ struct Cli {
     dir: Option<PathBuf>,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum Command {
     /// Attach to the daemon (the default when no command is given)
     Attach {
@@ -41,7 +41,7 @@ enum Command {
         runtime: RuntimeArg,
         #[arg(long)]
         name: Option<String>,
-        /// Create a git worktree on this branch (rejected for now; arrives with the worktree milestone)
+        /// Create a git worktree on this branch and start the window in it
         #[arg(long)]
         worktree: Option<String>,
         #[arg(long)]
@@ -70,14 +70,16 @@ enum Command {
     /// Kill and forget a window
     Rm {
         target: String,
+        /// Also remove the window's git worktree; the branch is kept
         #[arg(long)]
         worktree: bool,
-        #[arg(long)]
+        /// Remove the worktree even if it has uncommitted or untracked changes
+        #[arg(long, requires = "worktree")]
         force: bool,
     },
 }
 
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Clone, Copy, Debug, ValueEnum)]
 enum RuntimeArg {
     Claude,
     Codex,
@@ -102,6 +104,19 @@ fn expect_ack(reply: DaemonMsg) -> anyhow::Result<()> {
     }
 }
 
+/// The hint printed after a dirty refusal, decision 39. `target` is echoed back exactly
+/// as the user typed it, so the two commands it names are ones they can paste.
+///
+/// "discard it anyway" rather than decision 39's original "discard the changes": the
+/// daemon's message above this line may have refused a paused rebase, a bisect or
+/// unreachable commits, none of which are changes, and a hint that renamed them would
+/// undo the work the message does.
+fn dirty_hint(target: &str) -> String {
+    format!(
+        "run 'anthrex rm {target} --worktree --force' to discard it anyway, or 'anthrex rm {target}' to keep the worktree"
+    )
+}
+
 /// Resolves the working directory for a new window: the given `--dir`, or the current
 /// directory when none was given, canonicalized either way.
 fn resolve_dir(dir: Option<PathBuf>) -> anyhow::Result<PathBuf> {
@@ -113,7 +128,7 @@ fn resolve_dir(dir: Option<PathBuf>) -> anyhow::Result<PathBuf> {
         .map_err(|e| anyhow::anyhow!("cannot resolve directory {}: {e}", dir.display()))
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum DaemonAction {
     /// Start the daemon (detached unless --foreground)
     Start {
@@ -150,14 +165,17 @@ async fn run_cli() -> anyhow::Result<()> {
             model,
             prompt,
         }) => {
-            if worktree.is_some() {
-                // Silently ignoring it would show the branch in the title bar with no
-                // worktree behind it, so the user would think the agent was isolated.
-                anyhow::bail!(daemon::WORKTREE_UNSUPPORTED);
-            }
             let dir = resolve_dir(cli.dir)?;
             spawn::ensure_daemon(&socket).await?;
             let mut c = client::CliClient::connect(&socket).await?;
+            // A worktree create can make the daemon run git (decision 3's 30 s
+            // operation deadline), so it needs the longer budget; a plain create is
+            // bounded only by project detection (decision 38).
+            let reply_timeout = if worktree.is_some() {
+                client::WORKTREE_REQUEST_TIMEOUT
+            } else {
+                client::CREATE_WINDOW_REPLY_TIMEOUT
+            };
             let spec = WindowSpec {
                 name,
                 runtime: runtime.into(),
@@ -168,10 +186,7 @@ async fn run_cli() -> anyhow::Result<()> {
             };
             let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
             match c
-                .request_with_timeout(
-                    ClientMsg::CreateWindow { spec, cols, rows },
-                    client::CREATE_WINDOW_REPLY_TIMEOUT,
-                )
+                .request_with_timeout(ClientMsg::CreateWindow { spec, cols, rows }, reply_timeout)
                 .await?
             {
                 DaemonMsg::Created { window_id } => {
@@ -224,14 +239,45 @@ async fn run_cli() -> anyhow::Result<()> {
         }) => {
             let mut c = client::CliClient::connect(&socket).await?;
             let id = client::resolve_target(&c.windows, &target)?;
-            expect_ack(
-                c.request(ClientMsg::Remove {
-                    window_id: id,
-                    remove_worktree: worktree,
-                    force,
-                })
-                .await?,
-            )
+            // Kept only to word the "kept worktree" notice below; the removal itself
+            // is driven by `id`.
+            let removed = c.windows.iter().find(|w| w.id == id).cloned();
+            let remove_msg = ClientMsg::Remove {
+                window_id: id,
+                remove_worktree: worktree,
+                force,
+            };
+            // A worktree removal can make the daemon run git and wait out the agent's
+            // kill grace before it does (decision 38); a plain removal never touches
+            // git and keeps the short default.
+            let reply = if worktree {
+                c.request_with_timeout(remove_msg, client::WORKTREE_REQUEST_TIMEOUT)
+                    .await?
+            } else {
+                c.request(remove_msg).await?
+            };
+            match reply {
+                DaemonMsg::Ack { .. } => {
+                    // Decision 39: the agent is already gone by the time this prints,
+                    // so it reports what was kept, not what is still running.
+                    if !worktree
+                        && let Some(w) = &removed
+                        && let Some(branch) = &w.branch
+                    {
+                        eprintln!("kept worktree {} on branch {branch}", w.cwd.display());
+                    }
+                    Ok(())
+                }
+                // The id it carries is not needed here — a one-shot `rm` has exactly one
+                // removal outstanding and `target` is what the user typed — but the
+                // message is still matched by its own variant rather than by a `request`
+                // string, so the CLI and the TUI recognise the refusal the same way.
+                DaemonMsg::RemoveDirty { message, .. } => {
+                    anyhow::bail!("{message}\n{}", dirty_hint(&target))
+                }
+                DaemonMsg::Error { message, .. } => anyhow::bail!(message),
+                other => anyhow::bail!("unexpected reply: {other:?}"),
+            }
         }
     }
 }
@@ -295,8 +341,61 @@ async fn daemon_command(action: DaemonAction, socket: PathBuf) -> anyhow::Result
 
 #[cfg(test)]
 mod tests {
-    use super::Cli;
+    use super::{Cli, Command, dirty_hint};
     use clap::Parser;
+
+    #[test]
+    fn rm_force_requires_worktree() {
+        assert!(
+            Cli::try_parse_from(["anthrex", "rm", "x", "--force"]).is_err(),
+            "--force without --worktree must be a parse error, not a daemon round trip"
+        );
+
+        match Cli::try_parse_from(["anthrex", "rm", "x", "--worktree", "--force"])
+            .expect("--worktree --force parses")
+            .command
+        {
+            Some(Command::Rm {
+                target,
+                worktree,
+                force,
+            }) => {
+                assert_eq!(target, "x");
+                assert!(worktree);
+                assert!(force);
+            }
+            other => panic!("expected Rm, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn new_accepts_a_worktree_branch() {
+        match Cli::try_parse_from([
+            "anthrex",
+            "new",
+            "--runtime",
+            "shell",
+            "--worktree",
+            "feat/x",
+        ])
+        .expect("new --worktree <branch> parses")
+        .command
+        {
+            Some(Command::New { worktree, .. }) => {
+                assert_eq!(worktree, Some("feat/x".to_string()));
+            }
+            other => panic!("expected New, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dirty_hint_names_both_commands() {
+        assert_eq!(
+            dirty_hint("api-worker"),
+            "run 'anthrex rm api-worker --worktree --force' to discard it anyway, or \
+             'anthrex rm api-worker' to keep the worktree"
+        );
+    }
 
     #[test]
     fn tree_accepts_optional_project_and_json_flags() {

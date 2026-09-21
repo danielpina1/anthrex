@@ -1,9 +1,10 @@
 //! Client state and its pure update functions. Rendering lives in `ui`; I/O in `lib.rs`.
 
+use crate::dialog::{FormDefaults, NewAgentForm, RemoveConfirm};
 use crate::keymap::{Command, KeyAction, Keymap};
 use crate::tree::{self, TreeState};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use proto::{ClientMsg, DaemonMsg, GitState, Runtime, Status, WindowInfo, WindowSpec};
+use proto::{ClientMsg, DaemonMsg, GitState, Runtime, Status, WindowInfo};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -51,7 +52,6 @@ pub enum Effect {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingAction {
     Kill(u32),
-    Remove(u32),
     StopDaemon,
 }
 
@@ -62,6 +62,16 @@ pub enum Modal {
         action: PendingAction,
     },
     Help,
+    /// The new-agent form; keys are handled in `app/modal_keys.rs`.
+    NewAgent(NewAgentForm),
+    /// The remove-confirm dialog (task M5.10).
+    Remove(RemoveConfirm),
+    /// The force-removal follow-up after a dirty-tree refusal (task M5.10).
+    ForceRemove {
+        window_id: u32,
+        name: String,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +105,21 @@ pub struct App {
     pub spinner_frame: usize,
     pub scroll_offset: usize,
     pub default_dir: PathBuf,
+    /// Set by `tui::run` from `dirs::home_dir()`.
+    pub home_dir: Option<PathBuf>,
+    /// The last accepted new-agent form's values this session (decision 31); `dir` empty is `new_agent_defaults`'s sentinel for "nothing accepted yet".
+    pub form_defaults: FormDefaults,
+    /// The window a `Remove` with `remove_worktree: true` is in flight for (decisions 35
+    /// and 36). `None` whenever no such removal is outstanding.
+    ///
+    /// Exactly one, never a set, and that is the point rather than a simplification.
+    /// `Ack { request: "remove" }` and `Error { request: "remove" }` carry no window id,
+    /// so with two worktree removals outstanding the client could not tell which one a
+    /// reply ended; `on_remove_confirm_key` therefore refuses to start a second while
+    /// one is in flight. A `DaemonMsg::RemoveDirty` then cross-checks its own
+    /// `window_id` against this slot, so the force prompt can only ever be opened for
+    /// the window whose refusal it is displaying.
+    pending_worktree_remove: Option<u32>,
     /// Git state by worktree root; pruned to current windows' roots (see `prune_git`).
     pub git: HashMap<PathBuf, GitState>,
     toast: Option<(String, Instant)>,
@@ -130,6 +155,13 @@ impl App {
             spinner_frame: 0,
             scroll_offset: 0,
             default_dir,
+            home_dir: None,
+            form_defaults: FormDefaults {
+                runtime: Runtime::Claude,
+                dir: String::new(),
+                model: String::new(),
+            },
+            pending_worktree_remove: None,
             git: HashMap::new(),
             toast: None,
             windows_received_at: Instant::now(),
@@ -280,6 +312,11 @@ impl App {
                 self.replace_windows(windows)
             }
             DaemonMsg::Created { window_id } => {
+                // Decision 34: a still-open form closes and hands its values on.
+                match self.modal.take() {
+                    Some(Modal::NewAgent(form)) => self.form_defaults = form.defaults(),
+                    other => self.modal = other,
+                }
                 if self.windows.iter().any(|w| w.id == window_id) {
                     self.focus(window_id)
                 } else {
@@ -306,16 +343,43 @@ impl App {
                 }
                 vec![]
             }
-            DaemonMsg::Error { message, .. } => {
-                self.toast(message);
+            DaemonMsg::Error { request, message } => {
+                // Decision 33: a submitting `create` failure goes inline, not a toast.
+                if request == proto::messages::request::CREATE
+                    && let Some(Modal::NewAgent(form)) = &mut self.modal
+                    && form.submitting
+                {
+                    form.error = Some(message);
+                    form.submitting = false;
+                } else {
+                    self.clear_pending_worktree_remove_on(&request);
+                    self.toast(message);
+                }
+                vec![]
+            }
+            // Decision 36: the force-or-keep follow-up, but only when this client asked
+            // for *this* window's worktree to be removed. A refusal that cannot be
+            // matched to an outstanding removal is shown as a toast and nothing is
+            // offered to force — see `open_force_remove`.
+            DaemonMsg::RemoveDirty { window_id, message } => {
+                if !self.open_force_remove(window_id, message.clone()) {
+                    self.toast(message);
+                }
                 vec![]
             }
             DaemonMsg::Bye { reason } => {
                 self.connected = false;
+                // Nothing is outstanding on a connection that is gone. Leaving the slot
+                // set would block every later worktree removal behind a reply that can
+                // never arrive.
+                self.pending_worktree_remove = None;
                 self.toast(format!("daemon: {reason}"));
                 vec![]
             }
-            DaemonMsg::Ack { .. } => vec![],
+            DaemonMsg::Ack { request } => {
+                self.clear_pending_worktree_remove_on(&request);
+                vec![]
+            }
             DaemonMsg::Git { root, state } => {
                 match state {
                     Some(state) => {
@@ -409,8 +473,8 @@ impl App {
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Effect> {
-        if let Some(modal) = self.modal.clone() {
-            return self.on_modal_key(modal, key);
+        if self.modal.is_some() {
+            return self.on_modal_key(key);
         }
         let app_cursor = self.parser.screen().application_cursor();
         match self.keymap.handle(key, app_cursor) {
@@ -430,34 +494,9 @@ impl App {
         }
     }
 
-    fn on_modal_key(&mut self, modal: Modal, key: KeyEvent) -> Vec<Effect> {
-        match modal {
-            Modal::Help => {
-                self.modal = None;
-                vec![]
-            }
-            Modal::Confirm { action, .. } => match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                    self.modal = None;
-                    self.perform(action)
-                }
-                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                    self.modal = None;
-                    vec![]
-                }
-                _ => vec![],
-            },
-        }
-    }
-
     fn perform(&mut self, action: PendingAction) -> Vec<Effect> {
         match action {
             PendingAction::Kill(id) => vec![Effect::Send(ClientMsg::Kill { window_id: id })],
-            PendingAction::Remove(id) => vec![Effect::Send(ClientMsg::Remove {
-                window_id: id,
-                remove_worktree: false,
-                force: false,
-            })],
             PendingAction::StopDaemon => vec![Effect::Send(ClientMsg::Shutdown), Effect::Quit],
         }
     }
@@ -471,22 +510,15 @@ impl App {
                 None => vec![],
             },
             Command::NewWindow => {
-                let (cols, rows) = self.term_size;
-                vec![Effect::Send(ClientMsg::CreateWindow {
-                    spec: WindowSpec {
-                        name: None,
-                        runtime: Runtime::Shell,
-                        cwd: self.default_dir.clone(),
-                        worktree_branch: None,
-                        model: None,
-                        initial_prompt: None,
-                    },
-                    cols: cols.max(1),
-                    rows: rows.max(1),
-                })]
+                // Decision 26: opens the form; `app/modal_keys.rs` submits it.
+                let defaults = self.new_agent_defaults();
+                self.modal = Some(Modal::NewAgent(NewAgentForm::new(&defaults)));
+                vec![]
             }
             Command::KillWindow => self.confirm_focused("Kill", PendingAction::Kill),
-            Command::RemoveWindow => self.confirm_focused("Remove", PendingAction::Remove),
+            // Decision 35: straight to the remove-confirm dialog, not the generic
+            // yes/no `Confirm` modal, because this one carries its own checkbox.
+            Command::RemoveWindow => self.open_remove_confirm(),
             Command::ToggleSidebar => {
                 self.sidebar_visible = !self.sidebar_visible;
                 vec![]
@@ -510,17 +542,15 @@ impl App {
         }
     }
 
-    fn confirm_focused(&mut self, verb: &str, make: fn(u32) -> PendingAction) -> Vec<Effect> {
-        if let Some((id, name)) = self.focused_window().map(|w| (w.id, w.name.clone())) {
-            self.modal = Some(Modal::Confirm {
-                message: format!("{verb} '{name}'?"),
-                action: make(id),
-            });
-        }
-        vec![]
-    }
-
     pub fn on_paste(&mut self, text: String) -> Vec<Effect> {
+        // Decision 30: a paste goes to the open form's focused field, or is dropped for
+        // any other modal — both checked before tree mode and the PTY (risk 10).
+        if let Some(modal) = &mut self.modal {
+            if let Modal::NewAgent(form) = modal {
+                form.on_paste(&text);
+            }
+            return vec![];
+        }
         if self.tree_input.is_some() {
             return self.on_tree_paste(text);
         }
@@ -577,6 +607,8 @@ impl App {
         vec![]
     }
 }
+
+mod modal_keys;
 
 #[cfg(test)]
 #[path = "app_tests.rs"]

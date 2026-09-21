@@ -1,12 +1,18 @@
 //! Owns every window, applies status events, and broadcasts the window list.
 
+mod create;
+mod remove;
+
+pub use remove::{GitRoots, RemoveError};
+
 use crate::agent_state::AgentState;
 use crate::hooks;
-use crate::launch::{self, LaunchContext};
+use crate::launch;
 use crate::status::{self, StatusContext, StatusEvent};
 use crate::window::{Attachment, Window, WindowEvent};
+use crate::worktree::{self, ManagedWorktree};
 use proto::{ExitInfo, HookSource, Status, WindowInfo, WindowSpec};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -20,6 +26,22 @@ pub struct ManagerConfig {
     pub claude_bin: String,
     pub codex_bin: String,
     pub codex_hook_source: Option<String>,
+    /// `<data_dir>/worktrees`, the `worktrees_root` every window's linked worktree is
+    /// laid out under. `new` and `from_vars` pick a temporary directory so a manager
+    /// built without a data directory — every test that does not exercise worktrees —
+    /// still has somewhere harmless to point; `lifecycle::run` overrides it.
+    pub worktrees_root: PathBuf,
+    /// `worktree::OPERATION_TIMEOUT`, injected here rather than read from the constant
+    /// directly, exactly like `worktrees_root` above: production always gets the real
+    /// value (`new`, `from_vars`), and a test that wants to drive `spawn_window`'s create
+    /// path to its deadline without waiting out the real 30 s sets this field instead
+    /// (fix wave C item 7 — the cheap version of
+    /// `new_worktree_waits_out_the_daemons_whole_create_budget`).
+    pub operation_timeout: Duration,
+    /// `worktree::CLEANUP_TIMEOUT`, `operation_timeout`'s companion: the other term the
+    /// create path's worst-case budget is built from, for the `git worktree add` failure
+    /// or timeout that follows.
+    pub cleanup_timeout: Duration,
 }
 
 impl ManagerConfig {
@@ -31,6 +53,9 @@ impl ManagerConfig {
             claude_bin: "claude".to_string(),
             codex_bin: "codex".to_string(),
             codex_hook_source: None,
+            worktrees_root: std::env::temp_dir().join("anthrex-worktrees"),
+            operation_timeout: worktree::OPERATION_TIMEOUT,
+            cleanup_timeout: worktree::CLEANUP_TIMEOUT,
         }
     }
 
@@ -48,6 +73,9 @@ impl ManagerConfig {
             claude_bin: nonempty("ANTHREX_CLAUDE_BIN").unwrap_or_else(|| "claude".to_string()),
             codex_bin: nonempty("ANTHREX_CODEX_BIN").unwrap_or_else(|| "codex".to_string()),
             codex_hook_source: None,
+            worktrees_root: std::env::temp_dir().join("anthrex-worktrees"),
+            operation_timeout: worktree::OPERATION_TIMEOUT,
+            cleanup_timeout: worktree::CLEANUP_TIMEOUT,
         }
     }
 
@@ -63,12 +91,38 @@ impl ManagerConfig {
 pub const QUIET_AFTER: Duration = Duration::from_secs(3);
 pub use crate::process::{HUP_GRACE, KILL_GRACE};
 
+/// The git program every worktree operation this manager runs is spawned as (design
+/// decision 1). `worktree` takes it as a parameter so its own tests can hand it a
+/// recording or a slow script; the daemon has no reason to use anything but `git`.
+///
+/// One definition for both halves of the lifecycle: the `git` that made a worktree in
+/// [`create`] and the `git` that removes it in [`remove`] must be the same program, or a
+/// daemon could create a checkout it cannot unmake.
+fn git() -> &'static std::ffi::OsStr {
+    std::ffi::OsStr::new("git")
+}
+
 struct Entry {
     id: u32,
     name: String,
     spec: WindowSpec,
     project: PathBuf,
+    /// The git worktree *root* this window's git state is keyed on: milestone 4.5's
+    /// field, which the registry watches. For a window this daemon made a worktree for
+    /// it is that new checkout (design decision 21), which is why it is not the same
+    /// question as `managed` below.
     worktree: Option<PathBuf>,
+    /// The worktree this daemon created *for* this window, `None` for every other
+    /// window. Not to be confused with `worktree`: that one answers "which checkout do
+    /// we watch", this one answers "did we make it, and may we remove it".
+    // milestone 6: restart re-attaches to this, not to `spec.worktree_branch` (risk 7).
+    managed: Option<ManagedWorktree>,
+    /// A `remove_with_worktree` is in flight for this window (design decision 19 step 1).
+    /// The window stays listed and keeps running while it is set, because the removal can
+    /// still be refused; what the flag stops is a *second* removal reaching git for the
+    /// same checkout, which would have two `git worktree remove` calls and two
+    /// `unregister`s for one directory.
+    removing: bool,
     status: Status,
     state: AgentState,
     viewers: u32,
@@ -120,6 +174,23 @@ struct Inner {
     next_id: u32,
     shutting_down: bool,
     entries: BTreeMap<u32, Entry>,
+    /// Names of creates that have been admitted but whose window does not exist yet
+    /// (design decision 15, phase A). A name is taken from the moment a create is
+    /// admitted, because phase B can sit in `git worktree add` for seconds and two
+    /// creates racing on one name would otherwise both pass the duplicate check.
+    reserved_names: BTreeSet<String>,
+    /// Worktree directories that admitted creates are on their way to making, held for
+    /// exactly as long as `reserved_names` holds their window's name.
+    ///
+    /// Without this, two creates with different names and the same branch in one
+    /// repository both enter phase B and run git concurrently: the second one's
+    /// pre-flight checks pass before the first's `worktree add` has registered anything,
+    /// so it goes on to `worktree add` itself, fails with "already exists", and cleans up
+    /// after what it thinks is its own half-made worktree — which is the first agent's
+    /// live checkout, removed with `--force`, and its branch deleted with it. Running
+    /// parallel agents on one repository is what this milestone is *for*, so that is the
+    /// normal case, not an exotic one.
+    reserved_worktrees: BTreeSet<PathBuf>,
     // Cleanup owns a group beyond the leader's exit and even after window removal.
     cleanups: BTreeMap<u32, watch::Receiver<bool>>,
 }
@@ -159,6 +230,8 @@ impl WindowManager {
                 next_id: 1,
                 shutting_down: false,
                 entries: BTreeMap::new(),
+                reserved_names: BTreeSet::new(),
+                reserved_worktrees: BTreeSet::new(),
                 cleanups: BTreeMap::new(),
             }),
             changed,
@@ -190,75 +263,6 @@ impl WindowManager {
                 .map(|entry| entry.info(now))
                 .collect(),
         );
-    }
-
-    pub fn create(
-        &self,
-        spec: WindowSpec,
-        project: PathBuf,
-        worktree: Option<PathBuf>,
-        cols: u16,
-        rows: u16,
-    ) -> anyhow::Result<WindowInfo> {
-        let mut inner = crate::lock(&self.inner);
-        anyhow::ensure!(!inner.shutting_down, "daemon is shutting down");
-        let id = inner.next_id;
-        let name = match spec
-            .name
-            .as_deref()
-            .map(str::trim)
-            .filter(|n| !n.is_empty())
-        {
-            Some(n) => n.to_string(),
-            None => format!("{}-{id}", spec.runtime.label()),
-        };
-        if inner.entries.values().any(|e| e.name == name) {
-            anyhow::bail!("a window named '{name}' already exists");
-        }
-        if !spec.cwd.is_dir() {
-            anyhow::bail!("directory does not exist: {}", spec.cwd.display());
-        }
-        if spec.worktree_branch.is_some() {
-            // Accepting it would create no worktree while `WindowInfo.branch` showed the
-            // branch in the title bar, so the user would believe the agent was isolated.
-            anyhow::bail!("{}", crate::WORKTREE_UNSUPPORTED);
-        }
-        let plan = launch::plan(
-            &spec,
-            &LaunchContext {
-                window_id: id,
-                name: &name,
-                socket_path: &self.config.socket_path,
-                shell: &self.config.shell,
-                exe: &self.config.exe,
-                claude_bin: &self.config.claude_bin,
-                codex_bin: &self.config.codex_bin,
-                codex_hook_source: self.config.codex_hook_source.as_deref(),
-            },
-        );
-        let window = Window::spawn(id, &plan, cols.max(1), rows.max(1), self.events.clone())?;
-        inner.next_id += 1;
-        let now = Instant::now();
-        let entry = Entry {
-            id,
-            name,
-            spec,
-            project,
-            worktree,
-            status: Status::Starting,
-            state: AgentState::default(),
-            viewers: 0,
-            since: now,
-            last_output: now,
-            exit: None,
-            child_alive: true,
-            window,
-        };
-        let info = entry.info(now);
-        inner.entries.insert(id, entry);
-        tracing::info!(id, name = %info.name, runtime = %info.runtime, "window created");
-        self.publish(&inner);
-        Ok(info)
     }
 
     pub fn handle_hook(
@@ -444,13 +448,27 @@ impl WindowManager {
         inner.start_cleanup(id)
     }
 
-    /// Kills immediately and forgets the window.
+    /// Kills immediately and forgets the window, leaving any worktree on disk (design
+    /// decision 18). [`WindowManager::remove_with_worktree`] is the other path.
+    ///
+    /// A window that `remove_with_worktree` has already admitted belongs to that removal
+    /// until it finishes or gives up, so this refuses it rather than forgetting the entry
+    /// out from under it. That is not only tidiness: the two paths each drop one reference
+    /// to the window's git root — this one through the server, the other between its kill
+    /// and its deletion — and design decision 23 is that one removed window is exactly one
+    /// `unregister`. Letting both run would decrement a single registration twice, which is
+    /// invisible at a count of one and, with two windows on a root, stops the survivor's
+    /// watch with nothing on screen to explain why.
     pub fn remove(&self, id: u32) -> anyhow::Result<()> {
         let mut inner = crate::lock(&self.inner);
         let entry = inner
             .entries
-            .remove(&id)
+            .get(&id)
             .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
+        if entry.removing {
+            anyhow::bail!("window '{}' is already being removed", entry.name);
+        }
+        let entry = inner.entries.remove(&id).expect("looked up a line above");
         if entry.child_alive {
             let _ = entry.window.signal_group(libc::SIGKILL);
         }
@@ -466,7 +484,12 @@ impl WindowManager {
             anyhow::bail!("name must not be empty");
         }
         let mut inner = crate::lock(&self.inner);
-        if inner.entries.values().any(|e| e.id != id && e.name == name) {
+        // A name a create is still holding is taken just as firmly as one a window has:
+        // letting a rename win the race would leave two windows named the same the
+        // moment that create reached phase C.
+        if inner.entries.values().any(|e| e.id != id && e.name == name)
+            || inner.reserved_names.contains(&name)
+        {
             anyhow::bail!("a window named '{name}' already exists");
         }
         let entry = inner

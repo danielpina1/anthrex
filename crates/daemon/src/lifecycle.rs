@@ -93,7 +93,8 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     tracing::info!(socket = %opts.socket_path.display(), pid = std::process::id(), "daemon started");
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    let config = ManagerConfig::from_env(opts.socket_path.clone(), shell)?;
+    let mut config = ManagerConfig::from_env(opts.socket_path.clone(), shell)?;
+    config.worktrees_root = opts.data_dir.join("worktrees");
     // Complete the only version probe before any window launch is accepted.
     codex_version::check(config.codex_bin.clone()).await;
     let (manager, mut events) = WindowManager::new(config);

@@ -3,6 +3,7 @@ use crate::{
     theme,
     tree::{self, Row, RowKind, RuntimeCounts},
 };
+use proto::WindowInfo;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -40,6 +41,21 @@ impl TreeGeometry {
     }
 }
 
+/// Decision 37's one derivation: the head `App.git` holds for the window's worktree
+/// root, and `WindowInfo.branch` when it holds none. `None` for a window that is not in
+/// a worktree this daemon made — `WindowInfo.branch` is what records that, exactly as
+/// decision 35's remove-confirm checkbox already reads it, so this is the only other
+/// place `WindowInfo.branch` is read directly.
+pub fn branch_text(window: &WindowInfo, app: &App) -> Option<String> {
+    let fallback = window.branch.as_ref()?;
+    let live = window
+        .worktree
+        .as_ref()
+        .and_then(|root| app.git.get(root))
+        .map(|state| crate::ui::statusbar::head_text(&state.head));
+    Some(live.unwrap_or_else(|| fallback.clone()))
+}
+
 pub fn narrow_line(
     app: &App,
     row: &Row<'_>,
@@ -48,7 +64,7 @@ pub fn narrow_line(
     selected: bool,
 ) -> Line<'static> {
     let bold = Style::default().add_modifier(Modifier::BOLD);
-    let (prefix, name, rights) = match &row.kind {
+    let (prefix, name, branch, rights) = match &row.kind {
         RowKind::Project {
             name,
             status,
@@ -66,6 +82,7 @@ pub fn narrow_line(
                     bold,
                 )],
                 Span::styled(name.clone(), bold),
+                None,
                 vec![
                     vec![
                         glyph.clone(),
@@ -122,6 +139,7 @@ pub fn narrow_line(
                     info.name.clone(),
                     if focused { bold } else { Style::default() },
                 ),
+                branch_text(info, app),
                 rights,
             )
         }
@@ -135,6 +153,7 @@ pub fn narrow_line(
                 Span::raw(" "),
             ],
             Span::raw(tree::subagent_label(info)),
+            None,
             vec![
                 vec![Span::styled(
                     info.tool.clone().unwrap_or_default(),
@@ -144,7 +163,7 @@ pub fn narrow_line(
             ],
         ),
     };
-    fit_line(prefix, name, rights, usize::from(width), selected)
+    fit_line(prefix, name, branch, rights, usize::from(width), selected)
 }
 
 pub fn counts_text(counts: RuntimeCounts) -> String {
@@ -167,10 +186,20 @@ fn spans_width(spans: &[Span<'_>]) -> usize {
         .sum()
 }
 
-/// Preserve right-hand fields while leaving room for the row prefix and at least an ellipsis.
+/// Minimum columns decision 37 leaves the name once a worktree branch marker is
+/// competing for the same space; the branch is what shrinks past this point.
+const NAME_FLOOR: usize = 8;
+
+/// Preserve right-hand fields while leaving room for the row prefix and at least an
+/// ellipsis. `branch` is decision 37's sidebar marker, `Some` only for a window row in a
+/// worktree this daemon made: it sacrifices before the name does, shrinking with an
+/// ellipsis and finally dropped once fewer than 4 columns remain for it (`[` + at least
+/// one character + `…` + `]`), while the name keeps only `NAME_FLOOR` columns for itself
+/// until the branch is gone, rather than taking everything it wants first.
 fn fit_line(
     mut prefix: Vec<Span<'static>>,
     mut name: Span<'static>,
+    branch: Option<String>,
     rights: Vec<Vec<Span<'static>>>,
     width: usize,
     selected: bool,
@@ -188,10 +217,28 @@ fn fit_line(
         })
         .unwrap_or_default();
     let right_width = spans_width(&right);
-    let name_width =
-        width.saturating_sub(prefix_width + right_width + usize::from(right_width > 0));
+    let available = width.saturating_sub(prefix_width + right_width + usize::from(right_width > 0));
+
+    let name_full = UnicodeWidthStr::width(name.content.as_ref());
+    let name_floor = available.min(name_full).min(NAME_FLOOR);
+    let branch_span = branch.as_deref().and_then(|branch| {
+        let budget = available.saturating_sub(name_floor);
+        (budget >= 4).then(|| {
+            let text = truncate(branch, budget - 3);
+            Span::styled(format!(" [{text}]"), theme::muted())
+        })
+    });
+    let branch_width = branch_span
+        .as_ref()
+        .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+        .unwrap_or(0);
+
+    let name_width = available.saturating_sub(branch_width);
     name.content = truncate(&name.content, name_width).into();
     prefix.push(name);
+    if let Some(branch_span) = branch_span {
+        prefix.push(branch_span);
+    }
     // Extremely narrow terminals and deep nesting can truncate even the guides.
     let mut remaining = width.saturating_sub(right_width);
     for span in &mut prefix {

@@ -227,6 +227,10 @@ fn long_names_are_truncated_with_an_ellipsis() {
         Status::Idle,
     );
     window.since_secs = 0;
+    // This is about name truncation, not the sidebar branch marker `win()` happens to
+    // set (decision 37, `ui/tree_view_tests.rs` covers the budget between the two) — so
+    // it is turned off here to keep the two concerns from being tested at once.
+    window.branch = None;
     let mut app = App::new(vec![window], "/tmp".into(), Keymap::default_prefix());
     app.set_terminal_size(80, 24);
     let (out, _) = render(&app, 120, 30);
@@ -239,11 +243,47 @@ fn empty_state_and_hidden_sidebar() {
     let _ = app.set_terminal_size(80, 24);
     let (out, _) = render(&app, 100, 20);
     assert!(out.contains("no agents yet"));
-    assert!(out.contains("No agents"));
+    assert!(out.contains("No agents. Press C-b c to create one"));
     app.sidebar_visible = false;
     let (out, l) = render(&app, 100, 20);
     assert!(!out.contains("no agents yet"));
     assert_eq!(l.sidebar.width, 0);
+}
+
+#[test]
+fn main_title_of_a_worktree_window_names_project_and_branch() {
+    let mut window = win(1, "wt-api", Runtime::Shell, Status::Idle);
+    window.project = "/tmp/shop".into();
+    window.cwd = "/tmp/data/worktrees/shop-abcd/feat-x".into();
+    window.branch = Some("feat/x".into());
+    let mut app = App::new(vec![window], "/tmp".into(), Keymap::default_prefix());
+    let _ = app.set_terminal_size(80, 24);
+    let (out, _) = render(&app, 100, 20);
+    assert!(out.contains("(feat/x, worktree)"), "{out}");
+    assert!(out.contains("/tmp/shop"), "{out}");
+    assert!(!out.contains("worktrees/shop-abcd"), "{out}");
+
+    let mut plain = win(2, "plain", Runtime::Shell, Status::Idle);
+    plain.branch = None;
+    let mut app = App::new(vec![plain], "/tmp".into(), Keymap::default_prefix());
+    let _ = app.set_terminal_size(80, 24);
+    let (out, _) = render(&app, 100, 20);
+    assert!(out.contains(" plain · shell · "), "{out}");
+    assert!(!out.contains("worktree"), "{out}");
+}
+
+#[test]
+fn help_lists_new_agent() {
+    let mut app = App::new(
+        vec![win(1, "a", Runtime::Shell, Status::Idle)],
+        "/tmp".into(),
+        Keymap::default_prefix(),
+    );
+    let _ = app.set_terminal_size(80, 24);
+    app.modal = Some(Modal::Help);
+    let (out, _) = render(&app, 100, 30);
+    assert!(out.contains("C-b c"), "{out}");
+    assert!(out.contains("new agent"), "{out}");
 }
 
 #[test]
@@ -507,6 +547,9 @@ fn unicode_names_preserve_graphemes_and_right_fields() {
     for name in ["界".repeat(20), "👩🏽‍💻".repeat(20)] {
         let mut window = win(1, &name, Runtime::Shell, Status::Idle);
         window.since_secs = 0;
+        // As in `long_names_are_truncated_with_an_ellipsis`: this is about grapheme-safe
+        // truncation, not the branch marker `win()` happens to set.
+        window.branch = None;
         let mut app = App::new(vec![window], "/tmp".into(), Keymap::default_prefix());
         app.set_terminal_size(80, 24);
         let (out, _) = render(&app, 120, 30);

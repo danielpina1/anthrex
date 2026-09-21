@@ -1,5 +1,6 @@
 use crate::app::Modal;
 use crate::theme;
+use crate::ui::dialog;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -9,13 +10,13 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 pub const HELP: &[(&str, &str)] = &[
     ("C-b j / k", "next / previous agent"),
     ("C-b 1-9", "focus agent by number"),
-    ("C-b c", "new shell window"),
+    ("C-b c", "new agent"),
     ("C-b t", "tree mode (j/k, h/l, Enter, Space, /)"),
     ("C-b T", "tree overview (j/k, h/l, wheel, drag)"),
     ("i", "in the overview: show / hide the inspector"),
     ("C-b < / >", "sidebar width"),
     ("C-b x", "kill agent"),
-    ("C-b X", "remove agent"),
+    ("C-b X", "remove agent (and worktree)"),
     ("C-b s", "toggle sidebar"),
     ("C-b d", "detach (agents keep running)"),
     ("C-b Q", "stop daemon and all agents"),
@@ -35,6 +36,14 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
 }
 
 pub fn render(frame: &mut Frame, modal: &Modal, area: Rect) {
+    match modal {
+        Modal::NewAgent(form) => return dialog::render_new_agent(frame, form, area),
+        Modal::Remove(confirm) => return dialog::render_remove_confirm(frame, confirm, area),
+        Modal::ForceRemove { name, message, .. } => {
+            return dialog::render_force_remove(frame, name, message, area);
+        }
+        Modal::Confirm { .. } | Modal::Help => {}
+    }
     let (title, body): (&str, Vec<Line>) = match modal {
         Modal::Confirm { message, .. } => (
             " confirm ",
@@ -55,6 +64,9 @@ pub fn render(frame: &mut Frame, modal: &Modal, area: Rect) {
                 })
                 .collect(),
         ),
+        Modal::NewAgent(_) | Modal::Remove(_) | Modal::ForceRemove { .. } => {
+            unreachable!("handled and returned from above")
+        }
     };
     let width = body.iter().map(Line::width).max().unwrap_or(0).max(30) as u16 + 4;
     let height = body.len() as u16 + 2;
