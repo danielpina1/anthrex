@@ -52,7 +52,6 @@ pub enum Effect {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingAction {
     Kill(u32),
-    Remove(u32),
     StopDaemon,
 }
 
@@ -110,6 +109,11 @@ pub struct App {
     pub home_dir: Option<PathBuf>,
     /// The last accepted new-agent form's values this session (decision 31); `dir` empty is `new_agent_defaults`'s sentinel for "nothing accepted yet".
     pub form_defaults: FormDefaults,
+    /// The window a `Remove` with `remove_worktree: true` is in flight for, so that a
+    /// `remove-dirty` refusal knows which window's dialog to open and an `Ack` or a
+    /// plain `Error` for the removal knows to stop watching for one (decisions 35 and
+    /// 36). `None` whenever no such removal is outstanding.
+    pending_worktree_remove: Option<u32>,
     /// Git state by worktree root; pruned to current windows' roots (see `prune_git`).
     pub git: HashMap<PathBuf, GitState>,
     toast: Option<(String, Instant)>,
@@ -151,6 +155,7 @@ impl App {
                 dir: String::new(),
                 model: String::new(),
             },
+            pending_worktree_remove: None,
             git: HashMap::new(),
             toast: None,
             windows_received_at: Instant::now(),
@@ -340,7 +345,12 @@ impl App {
                 {
                     form.error = Some(message);
                     form.submitting = false;
+                } else if request == proto::messages::request::REMOVE_DIRTY
+                    && self.open_force_remove(message.clone())
+                {
+                    // Decision 36: handled by opening the force-or-keep follow-up.
                 } else {
+                    self.clear_pending_worktree_remove_on(&request);
                     self.toast(message);
                 }
                 vec![]
@@ -350,7 +360,10 @@ impl App {
                 self.toast(format!("daemon: {reason}"));
                 vec![]
             }
-            DaemonMsg::Ack { .. } => vec![],
+            DaemonMsg::Ack { request } => {
+                self.clear_pending_worktree_remove_on(&request);
+                vec![]
+            }
             DaemonMsg::Git { root, state } => {
                 match state {
                     Some(state) => {
@@ -468,11 +481,6 @@ impl App {
     fn perform(&mut self, action: PendingAction) -> Vec<Effect> {
         match action {
             PendingAction::Kill(id) => vec![Effect::Send(ClientMsg::Kill { window_id: id })],
-            PendingAction::Remove(id) => vec![Effect::Send(ClientMsg::Remove {
-                window_id: id,
-                remove_worktree: false,
-                force: false,
-            })],
             PendingAction::StopDaemon => vec![Effect::Send(ClientMsg::Shutdown), Effect::Quit],
         }
     }
@@ -492,7 +500,9 @@ impl App {
                 vec![]
             }
             Command::KillWindow => self.confirm_focused("Kill", PendingAction::Kill),
-            Command::RemoveWindow => self.confirm_focused("Remove", PendingAction::Remove),
+            // Decision 35: straight to the remove-confirm dialog, not the generic
+            // yes/no `Confirm` modal, because this one carries its own checkbox.
+            Command::RemoveWindow => self.open_remove_confirm(),
             Command::ToggleSidebar => {
                 self.sidebar_visible = !self.sidebar_visible;
                 vec![]
@@ -514,16 +524,6 @@ impl App {
             | Command::NarrowSidebar
             | Command::WidenSidebar) => self.run_tree_command(cmd),
         }
-    }
-
-    fn confirm_focused(&mut self, verb: &str, make: fn(u32) -> PendingAction) -> Vec<Effect> {
-        if let Some((id, name)) = self.focused_window().map(|w| (w.id, w.name.clone())) {
-            self.modal = Some(Modal::Confirm {
-                message: format!("{verb} '{name}'?"),
-                action: make(id),
-            });
-        }
-        vec![]
     }
 
     pub fn on_paste(&mut self, text: String) -> Vec<Effect> {

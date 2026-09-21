@@ -17,6 +17,9 @@ mod git;
 #[path = "app_tests/dialog.rs"]
 mod dialog;
 
+#[path = "app_tests/remove.rs"]
+mod remove;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

@@ -6,16 +6,37 @@
 //! field the user is typing into cannot afford), so every arm below is responsible for
 //! putting a modal back — or not, when the key closes it.
 //!
-//! `Modal::Remove` and `Modal::ForceRemove` are driven by task M5.10 (decisions 35 and
-//! 36); the arms here only keep the match exhaustive and leave those modals exactly as
-//! they were, since nothing in this task ever opens them.
+//! `Modal::Remove` and `Modal::ForceRemove` implement decisions 35 and 36 (task M5.10):
+//! the remove-confirm dialog's checkbox and its dirty-tree force-or-keep follow-up.
+//! Both describe what will happen to the worktree's *files* — deleted, or kept — and
+//! nothing about the agent's process, because `remove_with_worktree`'s dirty check
+//! (`crates/daemon/src/manager/remove.rs`) runs before the agent is signalled: on the
+//! common dirty-refusal path the agent is still running when this dialog is on screen,
+//! so a prompt that claimed otherwise would be wrong exactly when it matters most.
 
-use crate::app::{App, Effect, Modal};
-use crate::dialog::{FormContext, FormDefaults, FormOutcome, NewAgentForm};
+use crate::app::{App, Effect, Modal, PendingAction};
+use crate::dialog::{FormContext, FormDefaults, FormOutcome, NewAgentForm, RemoveConfirm};
 use crossterm::event::{KeyCode, KeyEvent};
 use proto::ClientMsg;
 
 impl App {
+    /// Opens the generic yes/no `Confirm` modal for the focused window, naming it in
+    /// `message` and running `action` on `y`/`Enter` (`app.rs`'s `perform`). `Modal::Remove`
+    /// (decision 35) no longer goes through this — only `Command::KillWindow` still does.
+    pub(super) fn confirm_focused(
+        &mut self,
+        verb: &str,
+        make: fn(u32) -> PendingAction,
+    ) -> Vec<Effect> {
+        if let Some((id, name)) = self.focused_window().map(|w| (w.id, w.name.clone())) {
+            self.modal = Some(Modal::Confirm {
+                message: format!("{verb} '{name}'?"),
+                action: make(id),
+            });
+        }
+        vec![]
+    }
+
     /// What the next new-agent form should open with (decision 31). Once a form has
     /// been accepted this session, `form_defaults` holds its raw values verbatim. Until
     /// then `form_defaults.dir` is still the empty sentinel `App::new` set it to, so the
@@ -36,6 +57,56 @@ impl App {
         }
     }
 
+    /// Decision 35: `C-b X` opens the remove-confirm dialog directly, rather than the
+    /// generic yes/no `Confirm` modal, because it carries its own checkbox. Does
+    /// nothing without a focused window, the same guard `confirm_focused` uses.
+    pub(super) fn open_remove_confirm(&mut self) -> Vec<Effect> {
+        if let Some(w) = self.focused_window() {
+            self.modal = Some(Modal::Remove(RemoveConfirm {
+                window_id: w.id,
+                name: w.name.clone(),
+                branch: w.branch.clone(),
+                remove_worktree: false,
+            }));
+        }
+        vec![]
+    }
+
+    /// Decision 36: a `remove-dirty` reply opens the force-or-keep follow-up in place
+    /// of a toast, but only for the removal `pending_worktree_remove` is tracking —
+    /// `App::on_daemon` falls back to a toast when this returns `false`, which is also
+    /// what a stray `remove-dirty` with nothing pending gets. `message` is the daemon's
+    /// own text (decision 24), which already names the worktree's path and describes
+    /// its uncommitted or untracked changes rather than anything about the agent's
+    /// process, so it is shown exactly as given.
+    pub(super) fn open_force_remove(&mut self, message: String) -> bool {
+        let Some(window_id) = self.pending_worktree_remove else {
+            return false;
+        };
+        let name = self
+            .windows
+            .iter()
+            .find(|w| w.id == window_id)
+            .map(|w| w.name.clone())
+            .unwrap_or_default();
+        self.modal = Some(Modal::ForceRemove {
+            window_id,
+            name,
+            message,
+        });
+        true
+    }
+
+    /// Decision 36's last sentence: an `Ack` or an `Error` for a plain `"remove"`
+    /// request is the end of whichever worktree removal `pending_worktree_remove` was
+    /// tracking, successful or not. A `"remove-dirty"` reply is deliberately not one of
+    /// these — it keeps the pending state alive so `f` can still find the window.
+    pub(super) fn clear_pending_worktree_remove_on(&mut self, request: &str) {
+        if request == proto::messages::request::REMOVE {
+            self.pending_worktree_remove = None;
+        }
+    }
+
     pub(crate) fn on_modal_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         let Some(modal) = self.modal.take() else {
             return vec![];
@@ -52,15 +123,75 @@ impl App {
                 }
             },
             Modal::NewAgent(form) => self.on_new_agent_key(form, key),
-            Modal::Remove(remove) => {
-                self.modal = Some(Modal::Remove(remove));
-                vec![]
-            }
+            Modal::Remove(confirm) => self.on_remove_confirm_key(confirm, key),
             Modal::ForceRemove {
                 window_id,
                 name,
                 message,
-            } => {
+            } => self.on_force_remove_key(window_id, name, message, key),
+        }
+    }
+
+    /// Decision 35. The checkbox (`Space` or `w`) only does anything when the window
+    /// has a worktree to offer removing (`confirm.branch.is_some()`); a plain window's
+    /// dialog has no checkbox line for it to toggle. Confirming always sends `Remove`;
+    /// ticking the box is what tells the daemon to also delete the worktree directory
+    /// (`remove_worktree: true`), which is the only reason this records
+    /// `pending_worktree_remove` — so a later `remove-dirty` refusal knows this is the
+    /// window whose files it is talking about.
+    fn on_remove_confirm_key(&mut self, mut confirm: RemoveConfirm, key: KeyEvent) -> Vec<Effect> {
+        match key.code {
+            KeyCode::Char(' ') | KeyCode::Char('w') | KeyCode::Char('W')
+                if confirm.branch.is_some() =>
+            {
+                confirm.remove_worktree = !confirm.remove_worktree;
+                self.modal = Some(Modal::Remove(confirm));
+                vec![]
+            }
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                let remove_worktree = confirm.remove_worktree;
+                if remove_worktree {
+                    self.pending_worktree_remove = Some(confirm.window_id);
+                }
+                vec![Effect::Send(ClientMsg::Remove {
+                    window_id: confirm.window_id,
+                    remove_worktree,
+                    force: false,
+                })]
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => vec![],
+            _ => {
+                self.modal = Some(Modal::Remove(confirm));
+                vec![]
+            }
+        }
+    }
+
+    /// Decision 36. `f` forces the removal through, deleting the worktree directory and
+    /// whatever uncommitted work is in it; `k` removes only the window and leaves the
+    /// directory on disk; `n`/`Esc` cancels and leaves both the window and the files
+    /// untouched. `Enter` is deliberately not a synonym for either choice, so a
+    /// reflexive keystroke can never discard files.
+    fn on_force_remove_key(
+        &mut self,
+        window_id: u32,
+        name: String,
+        message: String,
+        key: KeyEvent,
+    ) -> Vec<Effect> {
+        match key.code {
+            KeyCode::Char('f') | KeyCode::Char('F') => vec![Effect::Send(ClientMsg::Remove {
+                window_id,
+                remove_worktree: true,
+                force: true,
+            })],
+            KeyCode::Char('k') | KeyCode::Char('K') => vec![Effect::Send(ClientMsg::Remove {
+                window_id,
+                remove_worktree: false,
+                force: false,
+            })],
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => vec![],
+            _ => {
                 self.modal = Some(Modal::ForceRemove {
                     window_id,
                     name,
