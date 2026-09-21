@@ -757,6 +757,31 @@ fn record_json_shape() {
     assert_eq!(json, expected);
 }
 
+/// Re-review Major #2: `record_json_shape` above sets `worktree: None`, so nothing in
+/// this file ever asserted `WorktreeRecord`'s own literal wire keys. Wave 2 gave
+/// `worktree.repo_root` a distinct *value* in `sample_state()` and reasoned from that
+/// that a rename would be caught — but a value distinct from its siblings and a key
+/// name being the right one are different properties; `save_then_load_round_trips` (a
+/// self-consistent bijection) cannot see a consistent rename either, and nothing else
+/// looked. Pinning `repo_root`/`path`/`branch` here the same way `record_json_shape`
+/// pins `WindowRecord`'s keys closes exactly that gap: a `#[serde(rename = "root")]`
+/// added to `repo_root` must fail this test (verified below, then reverted — see the
+/// task report).
+#[test]
+fn worktree_record_json_shape() {
+    let worktree = WorktreeRecord {
+        repo_root: PathBuf::from("/Users/me/repos/.bare/shop"),
+        path: PathBuf::from("/Users/me/repos/shop-worktrees/api-worker"),
+        branch: "feature/api-worker".into(),
+    };
+
+    let json = serde_json::to_string(&worktree).unwrap();
+    let expected = "{\"repo_root\":\"/Users/me/repos/.bare/shop\",\
+\"path\":\"/Users/me/repos/shop-worktrees/api-worker\",\
+\"branch\":\"feature/api-worker\"}";
+    assert_eq!(json, expected);
+}
+
 /// `spawn_persister`'s own risk cases: decision 9's debounce loop is a classic place to
 /// lose the last write, and the failure mode that matters is a user's final change never
 /// reaching disk. `crates/daemon/tests/manager.rs`'s `persister_writes_changes_within_a_second`
