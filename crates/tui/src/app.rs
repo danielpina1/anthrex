@@ -79,6 +79,10 @@ pub struct App {
     pub tree: TreeState,
     pub tree_input: Option<TreeInput>,
     pub overview: bool,
+    /// Whether the graph overview draws the inspector panel below its canvas.
+    /// `i` toggles it, and the choice outlives the overview it was made in
+    /// (decision 7).
+    pub inspector_visible: bool,
     /// The canvas coordinate at the graph overview's top-left corner.
     pub graph_pan: crate::graph::Pan,
     /// The overview's canvas viewport on screen; `set_graph_viewport` keeps it
@@ -116,6 +120,7 @@ impl App {
             tree: TreeState::default(),
             tree_input: None,
             overview: false,
+            inspector_visible: true,
             graph_pan: crate::graph::Pan::default(),
             graph_area: ratatui::layout::Rect::default(),
             graph_mouse: crate::mouse::MouseState::default(),

@@ -4,10 +4,11 @@ anthrex is built in ten milestones. Milestones 1 to 4 are merged. Each later mil
 
 The design is layered, newest first:
 
-1. `docs/superpowers/specs/2026-09-20-graph-overview-design.md` — milestone 4.6: the drawn graph overview and sub-agent labels. Amends §5.1 and §10.3 of the product design below.
-2. `docs/superpowers/specs/2026-09-20-git-surface-and-simple-orchestration-design.md` — milestone 4.5, and the cut-down scope of milestones 8 and 9. Where it disagrees with the document below, it wins.
-3. `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` — milestones 2 to 9.
-4. `docs/superpowers/specs/2026-09-17-anthrex-design.md` — milestone 1 and the parts of the core it still governs.
+1. `docs/superpowers/specs/2026-09-21-node-inspector-design.md` — milestone 4.7: the panel below the graph. Amends the document below.
+2. `docs/superpowers/specs/2026-09-20-graph-overview-design.md` — milestone 4.6: the drawn graph overview and sub-agent labels. Amends §5.1 and §10.3 of the product design below.
+3. `docs/superpowers/specs/2026-09-20-git-surface-and-simple-orchestration-design.md` — milestone 4.5, and the cut-down scope of milestones 8 and 9. Where it disagrees with the document below, it wins.
+4. `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` — milestones 2 to 9.
+5. `docs/superpowers/specs/2026-09-17-anthrex-design.md` — milestone 1 and the parts of the core it still governs.
 
 The protocol version currently on `main` is **4**, raised from 3 by milestone 4.5. Protocol numbers written in the milestone 5 to 9 briefs predate this and are wrong; each is re-derived from this line when that milestone is implemented.
 
@@ -30,7 +31,8 @@ The protocol version currently on `main` is **4**, raised from 3 by milestone 4.
 | 4 | Project tree view | `docs/milestones/M4-project-tree.md` | 3 | `done` |
 | 4.5 | Git status in the bottom bar, and tree connectors | `docs/milestones/M4.5-git-and-tree.md` | 4 | `done` |
 | 4.6 | Graph overview, and sub-agent labels worth reading | `docs/milestones/M4.6-graph-overview.md` | 4.5 | `done` |
-| 5 | New-agent dialog and git worktrees | `docs/milestones/M5-worktrees.md` | 4.5 | `ready` |
+| 4.7 | The node inspector | `docs/milestones/M4.7-node-inspector.md` | 4.6 | `done` |
+| 5 | New-agent dialog and git worktrees | `docs/milestones/M5-worktrees.md` | 4.7 | `ready` |
 | 6 | Persistence, resume, rename, config, reconnect | `docs/milestones/M6-persistence.md` | 3 | `blocked` |
 | 7 | Split panes | `docs/milestones/M7-split-panes.md` | 4 | `blocked` |
 | 8 | Orchestration engine: runs, tasks, worktrees, review and merge | `docs/milestones/M8-orchestration-engine.md` | 5, 6 | `blocked` |
@@ -45,7 +47,8 @@ flowchart LR
   M3 --> M4[4 Project tree]
   M4 --> M45[4.5 Git and tree connectors]
   M45 --> M46[4.6 Graph overview]
-  M46 --> M5[5 Worktrees]
+  M46 --> M47[4.7 Node inspector]
+  M47 --> M5[5 Worktrees]
   M3 --> M6[6 Persistence]
   M4 --> M7[7 Split panes]
   M5 --> M8[8 Orchestration engine]

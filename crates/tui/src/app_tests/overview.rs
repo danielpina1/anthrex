@@ -13,6 +13,9 @@ use ratatui::layout::Rect;
 #[path = "overview/mouse.rs"]
 mod mouse;
 
+#[path = "overview/inspector.rs"]
+mod inspector;
+
 fn toggle(app: &mut App) -> Vec<Effect> {
     prefix(app);
     press(app, KeyCode::Char('T'), KeyModifiers::NONE)
@@ -31,6 +34,20 @@ fn opened_at(width: u16, height: u16) -> (App, crate::ui::Layout) {
 
 fn opened() -> (App, crate::ui::Layout) {
     opened_at(120, 30)
+}
+
+/// Opened with the inspector off, so the rect below the canvas is milestone
+/// 4.6's single line: what `i` returns to and what a short terminal shows
+/// (decisions 6 and 7). The panel that stands there by default is
+/// `overview/inspector.rs`'s business.
+fn opened_with_the_single_line(width: u16, height: u16) -> (App, crate::ui::Layout) {
+    let mut app = app_with(tree::example_windows());
+    assert!(toggle(&mut app).is_empty());
+    app.inspector_visible = false;
+    let layout = crate::ui::layout(Rect::new(0, 0, width, height), app.sidebar_width);
+    app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
+    app.set_graph_viewport(layout.main);
+    (app, layout)
 }
 
 fn assert_closed(app: &App) {
@@ -216,7 +233,7 @@ fn the_pan_follows_the_selection() {
 
 #[test]
 fn the_footer_shows_the_selected_node_in_full() {
-    let (mut app, layout) = opened_at(200, 50);
+    let (mut app, layout) = opened_with_the_single_line(200, 50);
     let label = "grep every handler in the repository";
     app.windows[0].subagents[1].label = Some(label.into());
     app.windows[0].subagents[1].model = Some("claude-haiku-4-5".into());
@@ -268,7 +285,7 @@ fn footer_text(app: &App, layout: &crate::ui::Layout) -> String {
 /// the other way round reads zero for every sub-agent that ever ran.
 #[test]
 fn the_footer_times_a_stopped_subagent_from_the_two_ages() {
-    let (mut app, layout) = opened_at(200, 50);
+    let (mut app, layout) = opened_with_the_single_line(200, 50);
     let key = NodeKey::Subagent {
         window_id: 1,
         id: "a3".into(),
@@ -295,7 +312,7 @@ fn the_footer_times_a_stopped_subagent_from_the_two_ages() {
 /// sub-agent's name is not its neighbour's.
 #[test]
 fn the_footer_names_the_subagent_state() {
-    let (mut app, layout) = opened_at(200, 50);
+    let (mut app, layout) = opened_with_the_single_line(200, 50);
     let done = NodeKey::Subagent {
         window_id: 1,
         id: "a3".into(),
@@ -323,7 +340,7 @@ fn the_footer_names_the_subagent_state() {
 /// The project arm: the root, shortened, and the per-runtime counts.
 #[test]
 fn the_footer_spells_a_project_out_with_its_root_and_counts() {
-    let (mut app, layout) = opened_at(200, 50);
+    let (mut app, layout) = opened_with_the_single_line(200, 50);
     select(&mut app, NodeKey::Project("/r/shop".into()));
     // Seven windows: four Claude, three Codex. The project's own status is
     // its most urgent window's.
@@ -340,6 +357,7 @@ fn the_footer_spells_a_project_out_with_its_root_and_counts() {
     window.project = home.clone();
     let mut app = app_with(vec![window]);
     assert!(toggle(&mut app).is_empty());
+    app.inspector_visible = false;
     app.set_graph_viewport(layout.main);
     select(&mut app, NodeKey::Project(home));
     let footer = footer_text(&app, &layout);

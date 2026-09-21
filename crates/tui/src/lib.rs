@@ -3,6 +3,7 @@
 pub mod app;
 pub mod connection;
 pub mod graph;
+pub mod inspector;
 pub mod keymap;
 mod mouse;
 pub mod theme;

@@ -36,6 +36,7 @@ import tty
 
 from pty_tree_smoke import (
     run_graph_glyphs_stage,
+    run_inspector_stage,
     run_project_tree_stage,
     run_tree_connectors_stage,
 )
@@ -566,6 +567,7 @@ def main():
     run_project_tree_stage(REPO, PtyProc, run_cmd, fail)
     run_tree_connectors_stage(REPO, PtyProc, run_cmd, fail, FAKE_AGENT_SCRIPT)
     run_graph_glyphs_stage(REPO, PtyProc, run_cmd, fail)
+    run_inspector_stage(REPO, PtyProc, run_cmd, fail, FAKE_AGENT_SCRIPT)
 
     print("== stage 10: stop the daemon, verify status ==")
     stop_result = run_cmd(["daemon", "stop"])

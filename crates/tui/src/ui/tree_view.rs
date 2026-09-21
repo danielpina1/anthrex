@@ -212,19 +212,45 @@ fn fit_line(
 /// it does not fit. Shared with the graph painter, which truncates box
 /// content the same way (decision 11).
 pub(crate) fn truncate(text: &str, width: usize) -> String {
+    fit(text, width, true)
+}
+
+/// `truncate` without the ellipsis: the longest prefix of `text` that fits
+/// `width` display columns. Used where the text continues somewhere else — the
+/// inspector wraps a field onto the next row rather than ending it — so a mark
+/// saying it was cut would be a lie.
+///
+/// Above a width of zero this always takes at least one grapheme, even one too
+/// wide to fit. A caller walking a string by repeated cuts has to make
+/// progress; returning nothing leaves it exactly where it was, which is an
+/// infinite loop rather than a narrow column.
+pub(crate) fn cut(text: &str, width: usize) -> String {
+    fit(text, width, false)
+}
+
+fn fit(text: &str, width: usize, ellipsis: bool) -> String {
     if UnicodeWidthStr::width(text) <= width {
         return text.to_owned();
     }
     if width == 0 {
         return String::new();
     }
+    // The ellipsis needs a column of its own; a cut with no mark keeps them all.
+    let budget = if ellipsis { width - 1 } else { width };
     let mut result = String::new();
     for grapheme in text.graphemes(true) {
-        if UnicodeWidthStr::width(result.as_str()) + UnicodeWidthStr::width(grapheme) >= width {
+        if UnicodeWidthStr::width(result.as_str()) + UnicodeWidthStr::width(grapheme) > budget {
             break;
         }
         result.push_str(grapheme);
     }
-    result.push('…');
+    if ellipsis {
+        result.push('…');
+    } else if result.is_empty() {
+        // A first grapheme wider than the whole width: take it anyway, so the
+        // caller advances. Overflowing a column by one cell is clipped; not
+        // advancing never ends.
+        result.extend(text.graphemes(true).next());
+    }
     result
 }

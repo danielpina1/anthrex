@@ -439,3 +439,101 @@ def run_graph_glyphs_stage(repo_root, pty_proc, run_cmd, fail):
 
     if passed:
         print("ok: tree overview draws a rounded box border and an edge glyph")
+
+
+def run_inspector_stage(repo_root, pty_proc, run_cmd, fail, fake_agent_script):
+    """Opens the tree overview, selects a sub-agent, and confirms the inspector
+    panel names who spawned it.
+
+    `spawned by` is what milestone 4.7 exists for: the tree draws a sub-agent
+    three levels down exactly like one directly under its window, and only the
+    panel says which it is. This stage covers decision 11's fallback arm — a
+    root sub-agent, whose parent is the owning window, by its number and name.
+
+    The check is scoped to the overview's own pane
+    (`OVERVIEW_PANE_START_COLUMN` onward) rather than the whole screen, the way
+    `run_graph_glyphs_stage` above had to learn to be: the sidebar is still
+    drawn beside the overview and carries the same sub-agent label and the same
+    window name, so a whole-screen check for either would pass with the panel
+    rendering nothing at all. `spawned by` is the panel's own vocabulary and the
+    label it prints is the window's, so the pattern below asks for both,
+    together, inside the pane.
+    """
+    print("== stage 9c: the node inspector names who spawned a sub-agent ==")
+    fixture = tempfile.mkdtemp(prefix="anthrex-inspector-", dir="/tmp")
+    project = os.path.join(fixture, "proj")
+    pending_removal = []
+    proc = None
+    passed = False
+    try:
+        _git(["init", project], repo_root, fail)
+        _git(["-C", project, "commit", "--allow-empty", "-m", "init"], repo_root, fail)
+
+        _write_subagent_script(fake_agent_script)
+        created = run_cmd(["new", "--runtime", "claude", "--name", "insp-1", "--dir", project])
+        pending_removal.append("insp-1")
+        _window_id(created, "insp-1", fail)
+
+        proc = pty_proc([os.path.join(repo_root, "target/debug/anthrex")])
+        proc.wait_for("agents", timeout=10.0, label="inspector attach banner")
+        proc.wait_for("conn-alpha", timeout=10.0, label="conn-alpha sub-agent row")
+        proc.send(b"\x02T")
+        proc.wait_for(" tree overview ", timeout=10.0, label="tree overview for the inspector")
+
+        # Narrow to the one sub-agent and its ancestors, which leaves the
+        # selection on its window, then `l` moves it to the first visible child
+        # — the sub-agent itself, whichever row it ended up on.
+        proc.send(b"/conn-alpha")
+        proc.wait_for(" FILTER ", timeout=10.0, label="overview filter mode")
+        proc.send(b"\r")
+        proc.wait_for(" TREE ", timeout=10.0, label="overview navigation after filtering")
+        proc.send(b"l")
+
+        # The window's number is its position among the visible agents, which
+        # the filter decides, so the pattern takes any number and insists on
+        # the name beside it.
+        spawned_by = re.compile(r"spawned by\s+\d+ insp-1\b")
+        deadline = time.monotonic() + 5.0
+        pane = proc.screen_region_text(OVERVIEW_PANE_START_COLUMN)
+        while True:
+            if "conn-alpha" in pane and spawned_by.search(pane):
+                break
+            if time.monotonic() >= deadline:
+                fail(
+                    "the inspector panel never named who spawned conn-alpha in "
+                    f"the overview's own pane:\n{pane}\n--- whole screen ---\n"
+                    f"{proc.screen_text()}"
+                )
+            proc.read_available(timeout=0.2)
+            pane = proc.screen_region_text(OVERVIEW_PANE_START_COLUMN)
+
+        proc.send(b"\x02d")
+        status = proc.wait_exit(timeout=5.0)
+        if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+            fail(f"inspector detach did not exit cleanly with status 0 (raw status {status})")
+        proc.close()
+        proc = None
+
+        for name in list(pending_removal):
+            run_cmd(["rm", name])
+            pending_removal.remove(name)
+        remaining = json.loads(run_cmd(["ls", "--json"]).stdout)
+        remaining_names = {window["name"] for window in remaining}
+        expected = {"shell-1", "shell-2", "shell-3", "shell-4"}
+        if remaining_names != expected:
+            fail(f"unexpected windows after inspector cleanup: {sorted(remaining_names)}")
+        passed = True
+    finally:
+        try:
+            for name in pending_removal:
+                try:
+                    run_cmd(["rm", name], expect_ok=False)
+                except Exception:
+                    pass
+        finally:
+            if proc is not None:
+                proc.close()
+            shutil.rmtree(fixture, ignore_errors=True)
+
+    if passed:
+        print("ok: the inspector panel names the window that spawned a sub-agent")

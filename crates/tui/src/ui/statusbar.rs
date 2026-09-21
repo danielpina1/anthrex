@@ -134,17 +134,52 @@ fn hints_width(count: usize) -> u16 {
 
 /// One droppable part of the git segment, right of the head. `priority` is the order parts
 /// are dropped in as the budget shrinks: the lowest priority goes first.
-struct Part {
-    text: String,
+pub(crate) struct Part {
+    pub(crate) text: String,
     style: Style,
     priority: u8,
 }
 
-fn head_text(head: &Head) -> String {
+/// Where a worktree's `HEAD` points. The inspector's `branch` field reads this
+/// too, so a detached head is written `@<oid>` in exactly one place.
+pub(crate) fn head_text(head: &Head) -> String {
     match head {
         Head::Branch(name) | Head::Unborn(name) => name.clone(),
         Head::Detached(oid) => format!("@{oid}"),
     }
+}
+
+/// What is uncommitted in a worktree — conflicts, dirty, untracked, in that
+/// order — in the one vocabulary the client has for them. Empty when there is
+/// nothing uncommitted.
+///
+/// The bar below ranks these by priority and drops them as its budget shrinks;
+/// the inspector's `changes` field joins their texts and has room for all
+/// three. Two renderings, one set of glyphs.
+pub(crate) fn change_parts(state: &GitState) -> Vec<Part> {
+    let mut parts = Vec::new();
+    if state.conflicts > 0 {
+        parts.push(Part {
+            text: format!("⚠{}", state.conflicts),
+            style: Style::default().fg(Color::Red),
+            priority: 5,
+        });
+    }
+    if state.dirty > 0 {
+        parts.push(Part {
+            text: format!("●{}", state.dirty),
+            style: theme::muted(),
+            priority: 4,
+        });
+    }
+    if state.untracked > 0 {
+        parts.push(Part {
+            text: format!("?{}", state.untracked),
+            style: theme::muted(),
+            priority: 2,
+        });
+    }
+    parts
 }
 
 fn operation_name(op: GitOperation) -> &'static str {
@@ -186,27 +221,7 @@ fn build_parts(state: &GitState) -> Vec<Part> {
             priority: 7,
         });
     }
-    if state.conflicts > 0 {
-        parts.push(Part {
-            text: format!("⚠{}", state.conflicts),
-            style: Style::default().fg(Color::Red),
-            priority: 5,
-        });
-    }
-    if state.dirty > 0 {
-        parts.push(Part {
-            text: format!("●{}", state.dirty),
-            style: theme::muted(),
-            priority: 4,
-        });
-    }
-    if state.untracked > 0 {
-        parts.push(Part {
-            text: format!("?{}", state.untracked),
-            style: theme::muted(),
-            priority: 2,
-        });
-    }
+    parts.extend(change_parts(state));
     if state.ahead > 0 || state.behind > 0 {
         let mut text = String::new();
         if state.ahead > 0 {
