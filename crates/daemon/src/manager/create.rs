@@ -288,27 +288,12 @@ fn spawn_window(
 /// Design decision 16: a phase B that failed after the worktree was already made undoes
 /// it, and says which of the two things happened.
 ///
-/// The two suffixes are the whole point. `; the new worktree was removed` means the
-/// failure is the only thing the user has to deal with — nothing is left on disk and the
-/// same create can simply be retried, including on the same branch. `; cleanup failed:
-/// <reason>` means the opposite: the checkout, and possibly a branch this create made,
-/// are still there, retrying the same branch will now fail with "path already exists",
-/// and a human has to remove it. Collapsing them into one message, or dropping the
-/// cleanup's `Result` into a `warn` where only the daemon log ever sees it, would leave
-/// the user unable to tell a retryable failure from one that needs cleaning up first.
+/// Both suffixes are written by `worktree::discard_and_describe`, which is also what
+/// `worktree::create` uses for a `git worktree add` that fails or times out, so the two
+/// paths into decision 16 cannot word the same outcome differently. See that function
+/// for why the distinction matters to the user.
 fn discard(created: &Created, error: anyhow::Error) -> anyhow::Error {
-    match worktree::discard_new(git(), created) {
-        Ok(()) => anyhow::anyhow!("{error}; the new worktree was removed"),
-        Err(cleanup) => {
-            tracing::warn!(
-                path = ?created.worktree.path,
-                branch = %created.worktree.branch,
-                error = %cleanup,
-                "could not remove the worktree of a window that failed to start"
-            );
-            anyhow::anyhow!("{error}; cleanup failed: {cleanup}")
-        }
-    }
+    anyhow::anyhow!("{}", worktree::discard_and_describe(git(), created, error))
 }
 
 #[cfg(test)]

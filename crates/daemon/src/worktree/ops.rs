@@ -26,6 +26,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use super::dirty::is_dirty;
 use super::{
     CLEANUP_TIMEOUT, RESERVED_DIR, WorktreeError, branch_dir_name, check_branch_syntax,
     repo_worktrees_dir, run_git,
@@ -170,16 +171,19 @@ pub fn create(
     match added {
         Ok(output) if output.success => {}
         Ok(output) => {
-            return Err(clean_up_after(
-                git,
-                &created,
-                WorktreeError::Git {
-                    action: "worktree add".to_string(),
-                    stderr: output.stderr_tail(),
-                },
-            ));
+            let original = WorktreeError::Git {
+                action: "worktree add".to_string(),
+                stderr: output.stderr_tail(),
+            };
+            return Err(WorktreeError::FailedAfterAdd(discard_and_describe(
+                git, &created, original,
+            )));
         }
-        Err(error) => return Err(clean_up_after(git, &created, error)),
+        Err(error) => {
+            return Err(WorktreeError::FailedAfterAdd(discard_and_describe(
+                git, &created, error,
+            )));
+        }
     }
 
     // The created path becomes the git registry's key for this window (design decision
@@ -192,145 +196,6 @@ pub fn create(
         .canonicalize()
         .unwrap_or(created.worktree.path);
     Ok(created)
-}
-
-/// The per-worktree files and directories whose existence means git has an operation
-/// paused in this worktree. Each is resolved with `rev-parse --git-path`, because a
-/// linked worktree's are under `.git/worktrees/<name>/`, not the repository's `.git/`.
-const OPERATION_MARKERS: [&str; 4] = [
-    "rebase-merge",
-    "rebase-apply",
-    "MERGE_HEAD",
-    "CHERRY_PICK_HEAD",
-];
-
-/// Design decision 12 (extended by the M5.3 review's ruling): whether the worktree at
-/// `path` holds anything a removal would destroy.
-///
-/// Three questions, any one of which means dirty:
-///
-/// 1. **A paused git operation** — `rebase-merge`, `rebase-apply`, `MERGE_HEAD` or
-///    `CHERRY_PICK_HEAD`. A rebase stopped at `edit` with a clean tree reports *nothing*
-///    in `status --porcelain`, and a plain `git worktree remove` deletes it and every
-///    commit it had already replayed (verified against git 2.50.1). An agent told to try
-///    an approach on scratch commits leaves exactly this state.
-/// 2. **Working-tree changes** — `status --porcelain --ignore-submodules=none`. Untracked
-///    files count; ignored files do not, and a plain `git worktree remove` deletes those
-///    itself. *Any* output means dirty, not "any non-whitespace output": git prints
-///    nothing for a clean tree, so the two agree in practice, and where they could ever
-///    disagree the answer that refuses to delete is the right one.
-/// 3. **A detached `HEAD` holding commits no ref reaches** — `rev-list --count HEAD --not
-///    --branches --remotes --tags`. Also silent in `status`, and also deleted without
-///    `--force`, at which point the commits are unreachable. On a branch the count is
-///    always zero, because `--branches` covers that branch, so this question answers
-///    itself for the ordinary case.
-///
-/// Questions 1 and 3 are why the caller must ask *before* `git worktree remove` rather
-/// than only classifying a refusal afterwards: git does not refuse either state.
-pub fn is_dirty(git: &OsStr, path: &Path, deadline: Instant) -> Result<bool, WorktreeError> {
-    if operation_in_progress(git, path, deadline)? {
-        return Ok(true);
-    }
-
-    let output = run_git(
-        git,
-        path,
-        &[
-            OsStr::new("status"),
-            OsStr::new("--porcelain"),
-            OsStr::new("--ignore-submodules=none"),
-        ],
-        deadline,
-    )?;
-    if !output.success {
-        return Err(WorktreeError::Git {
-            action: "status".to_string(),
-            stderr: output.stderr_tail(),
-        });
-    }
-    if !output.stdout.is_empty() {
-        return Ok(true);
-    }
-
-    head_is_unreachable(git, path, deadline)
-}
-
-/// Whether any of [`OPERATION_MARKERS`] exists in this worktree's git directory.
-fn operation_in_progress(
-    git: &OsStr,
-    path: &Path,
-    deadline: Instant,
-) -> Result<bool, WorktreeError> {
-    let mut args = vec![OsStr::new("rev-parse")];
-    for marker in OPERATION_MARKERS {
-        args.push(OsStr::new("--git-path"));
-        args.push(OsStr::new(marker));
-    }
-    let output = run_git(git, path, &args, deadline)?;
-    if !output.success {
-        return Err(WorktreeError::Git {
-            action: "rev-parse --git-path".to_string(),
-            stderr: output.stderr_tail(),
-        });
-    }
-
-    Ok(output
-        .stdout
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .any(|line| {
-            // git 2.50.1 answers with absolute paths, but older versions answer relative
-            // to the working directory, which is `path` here.
-            let candidate = Path::new(line);
-            let candidate = if candidate.is_absolute() {
-                candidate.to_path_buf()
-            } else {
-                path.join(candidate)
-            };
-            match fs::symlink_metadata(&candidate) {
-                Ok(_) => true,
-                // Only "it is not there" means it is not there. Anything else is a
-                // marker we cannot rule out, and the answer that refuses to delete wins.
-                Err(error) => error.kind() != io::ErrorKind::NotFound,
-            }
-        }))
-}
-
-/// Whether `HEAD` reaches commits that no branch, remote-tracking branch or tag does.
-fn head_is_unreachable(git: &OsStr, path: &Path, deadline: Instant) -> Result<bool, WorktreeError> {
-    let output = run_git(
-        git,
-        path,
-        &[
-            OsStr::new("rev-list"),
-            OsStr::new("--count"),
-            OsStr::new("HEAD"),
-            OsStr::new("--not"),
-            OsStr::new("--branches"),
-            OsStr::new("--remotes"),
-            OsStr::new("--tags"),
-        ],
-        deadline,
-    )?;
-    if !output.success {
-        return Err(WorktreeError::Git {
-            action: "rev-list".to_string(),
-            stderr: output.stderr_tail(),
-        });
-    }
-    let count: u64 = output
-        .stdout
-        .trim()
-        .parse()
-        .map_err(|_| WorktreeError::Git {
-            action: "rev-list".to_string(),
-            stderr: format!(
-                "could not read a commit count from {:?}",
-                output.stdout.trim()
-            ),
-        })?;
-    Ok(count > 0)
 }
 
 /// Design decision 13: removes `wt`, refusing when its tree has changes unless `force`.
@@ -480,19 +345,41 @@ pub fn discard_new(git: &OsStr, created: &Created) -> Result<(), WorktreeError> 
     Ok(())
 }
 
-/// Runs [`discard_new`] for a create that has just failed and returns `original`
-/// unchanged. A cleanup that fails is logged at `warn` and swallowed: the caller must
-/// hear about the failure that actually stopped the create, not about the tidying.
-fn clean_up_after(git: &OsStr, created: &Created, original: WorktreeError) -> WorktreeError {
-    if let Err(error) = discard_new(git, created) {
-        tracing::warn!(
-            path = ?created.worktree.path,
-            branch = %created.worktree.branch,
-            %error,
-            "could not clean up the worktree of a failed create"
-        );
+/// Runs [`discard_new`] for a create that has just failed and describes both: the
+/// failure, then design decision 16's suffix saying what became of the worktree.
+///
+/// **This is the only place either suffix is written**, so that the two callers — the
+/// `git worktree add` failures in [`create`] here, and `manager::create::discard` for a
+/// `Window::spawn` that fails once the worktree already exists — cannot drift apart.
+///
+/// The two suffixes are the whole point. `; the new worktree was removed` means the
+/// failure is the only thing the user has to deal with: nothing is left on disk and the
+/// same create can simply be retried, including on the same branch. `; cleanup failed:
+/// <reason>` means the opposite — the checkout, and possibly a branch this create made,
+/// are still there, retrying the same branch will now fail with `worktree path already
+/// exists`, and a human has to remove it. Collapsing them into one message, or dropping
+/// the cleanup's `Result` into a `warn` where only the daemon log ever sees it, leaves
+/// the user unable to tell a retryable failure from one that needs cleaning up first —
+/// and the failures that actually happen in production, a repository `post-checkout`
+/// hook that fails and a checkout that outruns `OPERATION_TIMEOUT` on a large
+/// repository, are exactly the ones that come through here rather than through spawn.
+pub fn discard_and_describe(
+    git: &OsStr,
+    created: &Created,
+    error: impl std::fmt::Display,
+) -> String {
+    match discard_new(git, created) {
+        Ok(()) => format!("{error}; the new worktree was removed"),
+        Err(cleanup) => {
+            tracing::warn!(
+                path = ?created.worktree.path,
+                branch = %created.worktree.branch,
+                error = %cleanup,
+                "could not remove the worktree of a create that failed"
+            );
+            format!("{error}; cleanup failed: {cleanup}")
+        }
     }
-    original
 }
 
 fn prune(git: &OsStr, repo_root: &Path, deadline: Instant) -> Result<(), WorktreeError> {

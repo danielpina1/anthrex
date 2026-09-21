@@ -895,6 +895,10 @@ Consequence for decision 13: the check now runs *before* `git worktree remove`, 
 
 **Ignored files still do not block removal.** Decision 12 stands on this: requiring a force for every worktree carrying `node_modules` would make the feature unusable. The removal dialog must tell the user that ignored files go too — carried into M5.10.
 
+**Decision 16's two suffixes are written in one place, `worktree::discard_and_describe`.** Both `worktree::create` (a `git worktree add` that fails or times out) and `manager::create::discard` (a `Window::spawn` that fails once the worktree exists) call it, so the same outcome cannot be worded two ways. `worktree::create` returns the result as `WorktreeError::FailedAfterAdd(String)`.
+
+An earlier M5.3 note said the suffix belonged to the manager alone and that `worktree::create` should return its error unsuffixed; **that was wrong and is superseded**. It left the distinction reachable only on the `Window::spawn` path, which is nearly unreachable in production, while the failures that actually happen — a repository `post-checkout` hook that fails, a checkout that outruns `OPERATION_TIMEOUT` on a large repository — went through `worktree::create` and had their cleanup result dropped into a `warn`. A user whose create timed out and whose cleanup then also failed was told only `git worktree add timed out after 30 s`, retried the same branch, hit `worktree path already exists`, and had nothing to tell them anthrex had made that path.
+
 **Decision 10, `create_dir_all(<wt>)` ordering.** Implemented as "immediately before `git worktree add`", not "before the checks", so a create refused by any of the six checks leaves no directory behind at all.
 
 **`run_git` takes `&[&OsStr]`, not `&[&str]`.** Two of its arguments are paths the daemon itself chose. A lossy conversion there could leave a worktree this daemon made but can never remove.

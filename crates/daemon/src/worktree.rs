@@ -10,20 +10,22 @@
 //! [`run_git`] is `#[doc(hidden)] pub` rather than private only so that
 //! `crates/daemon/tests/worktree_env.rs` can exercise it in a test binary of its own —
 //! see that file for why. It is not part of this module's real API; every other caller
-//! lives inside this module (today, only its own tests; task M5.3's `create`, `is_dirty`
-//! and `remove` are the real callers).
+//! lives inside this module and its submodules — `create`, `is_dirty`, `remove` and
+//! `discard_new`, plus this file's own tests.
 //!
-//! `create`, `is_dirty`, `remove` and `discard_new` — the orchestration that actually
-//! creates and removes a worktree — live in the [`ops`] submodule and are re-exported
-//! here, so the module's public surface is the one the brief's interface block names
-//! while neither half grows past AGENTS.md rule 8's ~600 lines. The split is by
-//! responsibility: this file is *where a worktree lives and how git is invoked*, `ops` is
-//! *what the daemon does to one*. Nothing in the daemon calls the orchestration yet;
-//! `WindowManager` wires it up in task M5.4.
+//! `create`, `remove`, `discard_new` and `is_dirty` — the orchestration that actually
+//! creates and removes a worktree — live in the [`ops`] and [`dirty`] submodules and are
+//! re-exported here, so the module's public surface is the one the brief's interface
+//! block names while no part of it grows past AGENTS.md rule 8's ~600 lines. The split is
+//! by responsibility: this file is *where a worktree lives and how git is invoked*,
+//! `ops` is *what the daemon does to one*, and `dirty` is *whether doing it would destroy
+//! work* — the safety-critical question, kept where it can be read on its own.
 
+mod dirty;
 mod ops;
 
-pub use ops::{Created, ManagedWorktree, create, discard_new, is_dirty, remove};
+pub use dirty::is_dirty;
+pub use ops::{Created, ManagedWorktree, create, discard_and_describe, discard_new, remove};
 
 use std::ffi::OsStr;
 use std::io;
@@ -91,6 +93,12 @@ pub enum WorktreeError {
     Dirty { path: PathBuf },
     #[error("git {action} failed: {stderr}")]
     Git { action: String, stderr: String }, // action e.g. "worktree add"
+    /// A failure that happened once `git worktree add` had already started, carrying
+    /// design decision 16's suffix: the original failure, then whether the worktree it
+    /// had made was removed again. Built only by [`ops::discard_and_describe`], which is
+    /// the one place either suffix is written.
+    #[error("{0}")]
+    FailedAfterAdd(String),
     #[error("git is not installed or not on PATH")]
     GitMissing,
     #[error("git {args} timed out after {secs} s")]
