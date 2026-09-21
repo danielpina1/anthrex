@@ -30,7 +30,7 @@ pub mod project;
 pub mod server;
 pub mod status;
 pub mod subagents;
-mod subprocess;
+pub mod subprocess;
 pub mod window;
 
 pub use lifecycle::{DaemonOptions, run};

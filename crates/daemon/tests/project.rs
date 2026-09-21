@@ -395,3 +395,54 @@ fn detect_roots_with_a_failing_git_has_no_worktree() {
     assert_eq!(roots.project, subdirectory.canonicalize().unwrap());
     assert_eq!(roots.worktree, None);
 }
+
+/// AGENTS.md hard rule 11: every git invocation carries `--no-optional-locks`.
+/// `rev-parse` does not itself need it, but a rule with a silent exception is one
+/// nobody can check (milestone 5 design decision 2), so `detect_roots_with` carries it
+/// too, written right after `-C <cwd>` and before the subcommand.
+#[test]
+fn detection_passes_no_optional_locks() {
+    let repo = init_repo();
+    let root = repo.path().canonicalize().unwrap();
+    let scripts = tempdir().unwrap();
+    let argv_log = scripts.path().join("argv.log");
+    let script = scripts.path().join("argv-recording-git");
+    fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nprintf '%s\\n%s\\n' '{}'/'.git' '{}'\n",
+            argv_log.display(),
+            root.display(),
+            root.display(),
+        ),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&script).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script, permissions).unwrap();
+
+    let roots = detect_roots_with(script.as_os_str(), repo.path(), DETECT_TIMEOUT);
+
+    let recorded = fs::read_to_string(&argv_log).unwrap();
+    let invocation = recorded
+        .lines()
+        .next()
+        .expect("the rev-parse invocation was recorded");
+    let tokens: Vec<&str> = invocation.split_whitespace().collect();
+    assert_eq!(tokens[0], "-C", "recorded invocation: {invocation:?}");
+    assert_eq!(
+        &tokens[2..],
+        [
+            "--no-optional-locks",
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+            "--show-toplevel",
+        ],
+        "recorded invocation: {invocation:?}"
+    );
+
+    // The flag is a no-op change in behaviour: detection still resolves the same roots.
+    assert_eq!(roots.project, root);
+    assert_eq!(roots.worktree, Some(root));
+}

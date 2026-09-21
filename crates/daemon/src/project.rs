@@ -32,6 +32,7 @@ pub fn detect_roots(cwd: &Path) -> DetectedRoots {
 pub fn detect_roots_with(git: &OsStr, cwd: &Path, timeout: Duration) -> DetectedRoots {
     let mut command = Command::new(git);
     command.arg("-C").arg(cwd).args([
+        "--no-optional-locks",
         "rev-parse",
         "--path-format=absolute",
         "--git-common-dir",
