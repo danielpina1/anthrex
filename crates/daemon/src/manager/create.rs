@@ -18,9 +18,11 @@
 //! - **Phase C**, under the lock again: insert the entry, release the reservation and
 //!   publish.
 //!
-//! Between A and C the name exists only in `Inner::reserved_names`, held by a
-//! [`Reservation`] guard that gives it back on every exit path — an early return, a
-//! panic in phase B, or a caller that drops the future.
+//! Between A and C the window's name and, when it is getting one, the directory its
+//! worktree will occupy exist only in `Inner::reserved_names` and
+//! `Inner::reserved_worktrees`, both held by one [`Reservation`] guard that gives them
+//! back on every exit path — an early return, a panic in phase B, or a caller that drops
+//! the future.
 
 use super::{Entry, Inner, ManagerConfig, WindowManager};
 use crate::agent_state::AgentState;
@@ -29,7 +31,7 @@ use crate::window::{Window, WindowEvent};
 use crate::worktree::{self, Created};
 use proto::{Status, WindowInfo, WindowSpec};
 use std::ffi::OsStr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tokio::sync::mpsc;
 
@@ -49,33 +51,42 @@ struct Spawned {
     created: Option<Created>,
 }
 
-/// Holds a name against other creates and against `rename` until the window exists.
+/// Holds a window's name against other creates and against `rename`, and the directory
+/// its worktree will occupy against other creates, until the window exists.
 ///
 /// The guard exists rather than a bare `insert`/`remove` pair because phase B has many
 /// ways to end — an error from git, a panic in the blocking closure, a dropped future —
-/// and a name left reserved after any of them would be unusable until the daemon
-/// restarted, with nothing in `list()` to explain why.
+/// and a name or a path left reserved after any of them would be unusable until the
+/// daemon restarted, with nothing in `list()` to explain why.
 struct Reservation<'a> {
     manager: &'a WindowManager,
     name: String,
+    /// The worktree directory this create will make, for a create that asked for one.
+    worktree_path: Option<PathBuf>,
     held: bool,
 }
 
 impl Reservation<'_> {
-    /// Gives the name back under a lock the caller already holds, so there is no instant
-    /// in which neither the reservation nor an entry claims it.
+    /// Gives both claims back under a lock the caller already holds, so there is no
+    /// instant in which neither the reservation nor an entry holds the name.
     fn release(mut self, inner: &mut Inner) {
-        inner.reserved_names.remove(&self.name);
+        Self::clear(inner, &self.name, self.worktree_path.as_deref());
         self.held = false;
+    }
+
+    fn clear(inner: &mut Inner, name: &str, worktree_path: Option<&Path>) {
+        inner.reserved_names.remove(name);
+        if let Some(path) = worktree_path {
+            inner.reserved_worktrees.remove(path);
+        }
     }
 }
 
 impl Drop for Reservation<'_> {
     fn drop(&mut self) {
         if self.held {
-            crate::lock(&self.manager.inner)
-                .reserved_names
-                .remove(&self.name);
+            let mut inner = crate::lock(&self.manager.inner);
+            Self::clear(&mut inner, &self.name, self.worktree_path.as_deref());
         }
     }
 }
@@ -102,7 +113,7 @@ impl WindowManager {
         rows: u16,
     ) -> anyhow::Result<WindowInfo> {
         // Phase A: under the lock, and nothing here can block.
-        let (id, reservation) = self.admit(&spec)?;
+        let (id, reservation) = self.admit(&spec, &project)?;
         let name = reservation.name.clone();
 
         // Phase B: no lock, not on a tokio worker.
@@ -122,7 +133,13 @@ impl WindowManager {
     /// Phase A. The id is spent whether or not the create goes on to succeed: one lost to
     /// a failed create is never reused, so two creates in flight can never be handed the
     /// same id no matter how long either spends in git.
-    fn admit(&self, spec: &WindowSpec) -> anyhow::Result<(u32, Reservation<'_>)> {
+    ///
+    /// Two things are claimed here, and both for the same reason: phase B runs git
+    /// without the lock, so anything two concurrent creates could collide on has to be
+    /// settled before either of them starts. The name is one. The worktree directory is
+    /// the other, and it is the dangerous one — see [`worktree_claim`].
+    fn admit(&self, spec: &WindowSpec, project: &Path) -> anyhow::Result<(u32, Reservation<'_>)> {
+        let claim = worktree_claim(&self.config.worktrees_root, project, spec);
         let mut inner = crate::lock(&self.inner);
         anyhow::ensure!(!inner.shutting_down, "daemon is shutting down");
         let id = inner.next_id;
@@ -138,13 +155,25 @@ impl WindowManager {
         if inner.entries.values().any(|e| e.name == name) || inner.reserved_names.contains(&name) {
             anyhow::bail!("a window named '{name}' already exists");
         }
+        if let Some(path) = &claim
+            && inner.reserved_worktrees.contains(path)
+        {
+            // Refused here rather than left to git, which would report it as a "path
+            // already exists" from inside phase B — at which point this create would
+            // believe the directory was its own to clean up.
+            anyhow::bail!("a worktree at {} is already being created", path.display());
+        }
         inner.next_id += 1;
         inner.reserved_names.insert(name.clone());
+        if let Some(path) = &claim {
+            inner.reserved_worktrees.insert(path.clone());
+        }
         Ok((
             id,
             Reservation {
                 manager: self,
                 name,
+                worktree_path: claim,
                 held: true,
             },
         ))
@@ -167,15 +196,8 @@ impl WindowManager {
         } = spawned;
         let mut inner = crate::lock(&self.inner);
         if inner.shutting_down {
-            // Phase A admitted this create, then `shutdown` ran while it was in git. The
-            // window is in no snapshot `shutdown` took, so nothing else will ever kill
-            // it; inserting it now would leave a live child behind the daemon's exit.
-            // The worktree stays on disk: an orphaned directory is recoverable and a
-            // stray agent process is not, and removing it here would mean running git
-            // from a tokio worker.
             drop(inner);
-            let _ = window.signal_group(libc::SIGKILL);
-            anyhow::bail!("daemon is shutting down");
+            return Err(refuse_after_shutdown(window, created));
         }
         let now = Instant::now();
         let entry = Entry {
@@ -215,6 +237,53 @@ impl WindowManager {
         self.publish(&inner);
         Ok(info)
     }
+}
+
+/// Phase A admitted this create, then `shutdown` ran while phase B was in git. The window
+/// is in no snapshot `shutdown` took, so nothing else will ever kill it; inserting it now
+/// would leave a live agent behind the daemon's exit.
+///
+/// The child is killed here. The worktree, if one was made, is deliberately *not*:
+/// removing it would mean running git from a tokio worker (AGENTS.md hard rule 2), and an
+/// orphaned directory is recoverable where a stray agent process is not. But nothing else
+/// will ever name it — no `Entry` is inserted, so milestone 5.5's removal cannot reach it
+/// and no `git worktree list` consumer will connect it to anthrex — so the path goes into
+/// both the daemon log and the error the client sees, which is the only record there is.
+fn refuse_after_shutdown(window: Window, created: Option<Created>) -> anyhow::Error {
+    let _ = window.signal_group(libc::SIGKILL);
+    let Some(created) = created else {
+        return anyhow::anyhow!("daemon is shutting down");
+    };
+    tracing::warn!(
+        path = ?created.worktree.path,
+        branch = %created.worktree.branch,
+        "shutdown refused a window whose worktree was already created; it is left on disk"
+    );
+    anyhow::anyhow!(
+        "daemon is shutting down; the new worktree was left at {}",
+        created.worktree.path.display()
+    )
+}
+
+/// The directory `worktree::create` would make for this spec, or `None` when it asked for
+/// no worktree. Pure — a hash and some string work, nothing that touches the disk — so it
+/// is safe to compute under the manager lock, and it is deliberately the same arithmetic
+/// `worktree::create` does later from the roots it resolves itself.
+///
+/// It is the *directory*, not the branch, because two different branches can want one
+/// directory: `branch_dir_name` maps `/` to `-`, so `feat/x` and `feat-x` collide.
+/// Decision 9's "branch already checked out" check never sees that pair — they are
+/// genuinely different branches — so the directory is the only thing that catches it.
+///
+/// `project` is the root the server resolved from `spec.cwd`, which is what makes this
+/// claim repository-wide: every checkout of one repository shares it, so two creates
+/// pointed at different subdirectories of the same repository still collide here.
+fn worktree_claim(worktrees_root: &Path, project: &Path, spec: &WindowSpec) -> Option<PathBuf> {
+    let branch = spec.worktree_branch.as_deref()?;
+    Some(
+        worktree::repo_worktrees_dir(worktrees_root, project)
+            .join(worktree::branch_dir_name(branch)),
+    )
 }
 
 /// Phase B, the only phase that can take seconds. Blocking throughout, called only from

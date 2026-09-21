@@ -144,6 +144,18 @@ struct Inner {
     /// admitted, because phase B can sit in `git worktree add` for seconds and two
     /// creates racing on one name would otherwise both pass the duplicate check.
     reserved_names: BTreeSet<String>,
+    /// Worktree directories that admitted creates are on their way to making, held for
+    /// exactly as long as `reserved_names` holds their window's name.
+    ///
+    /// Without this, two creates with different names and the same branch in one
+    /// repository both enter phase B and run git concurrently: the second one's
+    /// pre-flight checks pass before the first's `worktree add` has registered anything,
+    /// so it goes on to `worktree add` itself, fails with "already exists", and cleans up
+    /// after what it thinks is its own half-made worktree — which is the first agent's
+    /// live checkout, removed with `--force`, and its branch deleted with it. Running
+    /// parallel agents on one repository is what this milestone is *for*, so that is the
+    /// normal case, not an exotic one.
+    reserved_worktrees: BTreeSet<PathBuf>,
     // Cleanup owns a group beyond the leader's exit and even after window removal.
     cleanups: BTreeMap<u32, watch::Receiver<bool>>,
 }
@@ -184,6 +196,7 @@ impl WindowManager {
                 shutting_down: false,
                 entries: BTreeMap::new(),
                 reserved_names: BTreeSet::new(),
+                reserved_worktrees: BTreeSet::new(),
                 cleanups: BTreeMap::new(),
             }),
             changed,

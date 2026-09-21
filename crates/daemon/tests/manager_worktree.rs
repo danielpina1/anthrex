@@ -14,6 +14,7 @@
 mod support;
 
 use daemon::manager::{ManagerConfig, WindowManager};
+use daemon::window::WindowEvent;
 use daemon::worktree::repo_worktrees_dir;
 use proto::{Runtime, WindowSpec};
 use std::ffi::OsString;
@@ -23,6 +24,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use support::{TempRepo, head_branch};
 use tempfile::TempDir;
+use tokio::sync::mpsc;
 
 /// A manager whose events are pumped by a background task, like the daemon does, with a
 /// `worktrees_root` of its own so nothing here can touch a real data directory.
@@ -35,11 +37,7 @@ fn manager() -> (Arc<WindowManager>, TempDir, PathBuf) {
 }
 
 fn manager_with_socket(socket: PathBuf) -> (Arc<WindowManager>, TempDir, PathBuf) {
-    let keep = tempfile::tempdir().unwrap();
-    let worktrees_root = keep.path().canonicalize().unwrap();
-    let mut config = ManagerConfig::new(socket, "/bin/sh".to_string());
-    config.worktrees_root = worktrees_root.clone();
-    let (m, mut events) = WindowManager::new(config);
+    let (m, keep, worktrees_root, mut events) = manager_watching_events_with_socket(socket);
     let pump = m.clone();
     tokio::spawn(async move {
         while let Some((id, ev)) = events.recv().await {
@@ -47,6 +45,35 @@ fn manager_with_socket(socket: PathBuf) -> (Arc<WindowManager>, TempDir, PathBuf
         }
     });
     (m, keep, worktrees_root)
+}
+
+/// As [`manager`], but the window events are handed back instead of being pumped into the
+/// manager. A window that never becomes an entry — a create phase C refuses — is
+/// invisible to `list()` and to `child_pid`, so its `Exited` event is the only evidence
+/// the daemon has that its child is really gone.
+fn manager_watching_events() -> (
+    Arc<WindowManager>,
+    TempDir,
+    PathBuf,
+    mpsc::UnboundedReceiver<(u32, WindowEvent)>,
+) {
+    manager_watching_events_with_socket("/tmp/unused-m54.sock".into())
+}
+
+fn manager_watching_events_with_socket(
+    socket: PathBuf,
+) -> (
+    Arc<WindowManager>,
+    TempDir,
+    PathBuf,
+    mpsc::UnboundedReceiver<(u32, WindowEvent)>,
+) {
+    let keep = tempfile::tempdir().unwrap();
+    let worktrees_root = keep.path().canonicalize().unwrap();
+    let mut config = ManagerConfig::new(socket, "/bin/sh".to_string());
+    config.worktrees_root = worktrees_root.clone();
+    let (m, events) = WindowManager::new(config);
+    (m, keep, worktrees_root, events)
 }
 
 fn spec(name: &str, cwd: &Path) -> WindowSpec {
@@ -303,6 +330,176 @@ async fn a_failed_spawn_removes_the_new_worktree() {
             .join("doomed")
             .exists(),
         "the directory is gone too"
+    );
+
+    // What that suffix promises the user is that the create can simply be retried. A
+    // retry that reached git again and failed the same way is the proof: the admission
+    // claim on the directory was given back, and the directory really is free. A stale
+    // reservation would say "already being created" and a surviving checkout would say
+    // "worktree path already exists" — both before git ever ran.
+    let retry = m
+        .create(
+            worktree_spec("doomed-again", &repo.root, "doomed"),
+            repo.root.clone(),
+            Some(repo.root.clone()),
+            80,
+            24,
+        )
+        .await
+        .expect_err("the same broken socket fails the same way")
+        .to_string();
+    assert!(
+        retry.ends_with("the new worktree was removed"),
+        "a retry must reach git again, not a stale claim: {retry}"
+    );
+}
+
+/// Two creates must never both enter phase B for one worktree directory.
+///
+/// Phase B runs git without the lock, so without a claim taken at admission both creates
+/// run `git worktree add` concurrently. The loser's pre-flight can pass before the
+/// winner's add has registered anything, in which case the loser goes on to add, fails,
+/// and cleans up after what it believes is its own half-made worktree — `git worktree
+/// remove --force` against the winner's live checkout, and `git branch -D` on its branch.
+/// `--force` overrides the dirty refusal, so the other agent's uncommitted work goes with
+/// it. Running parallel agents on one repository is the point of this milestone, so this
+/// is the normal case.
+///
+/// The two branches here are deliberately different branches: `branch_dir_name` maps `/`
+/// to `-`, so `feat/x` and `feat-x` want one directory while decision 9's "already
+/// checked out" check can never flag them. Only the directory claim catches this pair.
+#[tokio::test]
+async fn two_creates_for_one_worktree_directory_cannot_both_reach_git() {
+    let repo = TempRepo::new();
+    let (m, _keep, wt_root) = manager();
+    let contested = repo_worktrees_dir(&wt_root, &repo.root).join("feat-x");
+
+    let (first, second) = tokio::join!(
+        m.create(
+            worktree_spec("one", &repo.root, "feat/x"),
+            repo.root.clone(),
+            Some(repo.root.clone()),
+            80,
+            24,
+        ),
+        m.create(
+            worktree_spec("two", &repo.root, "feat-x"),
+            repo.root.clone(),
+            Some(repo.root.clone()),
+            80,
+            24,
+        ),
+    );
+
+    let (winner, refusal) = match (first, second) {
+        (Ok(winner), Err(refusal)) => (winner, refusal),
+        (Err(refusal), Ok(winner)) => (winner, refusal),
+        (first, second) => panic!("exactly one create may win: {first:?} / {second:?}"),
+    };
+    let refusal = refusal.to_string();
+
+    // Refused at admission, not by git from inside phase B: a git-level "path already
+    // exists" would mean the loser had reached the step that cleans up after itself.
+    assert!(
+        refusal.contains("is already being created"),
+        "the loser must be refused at admission: {refusal}"
+    );
+    assert!(
+        refusal.contains(&contested.display().to_string()),
+        "the refusal must name the directory: {refusal}"
+    );
+
+    // The winner is untouched: still on disk, still a checkout git knows about, and its
+    // branch still exists.
+    let branch = winner
+        .branch
+        .clone()
+        .expect("the winner asked for a branch");
+    assert_eq!(winner.cwd, contested);
+    assert!(contested.is_dir(), "the winner's checkout was deleted");
+    assert!(
+        repo.worktree_paths().contains(&contested),
+        "git no longer knows about the winner's checkout"
+    );
+    assert!(
+        repo.branch_exists(&branch),
+        "the winner's branch '{branch}' was deleted"
+    );
+    assert_eq!(m.list().len(), 1, "only the winner may be listed");
+
+    drain(&m);
+}
+
+/// Phase C refuses a create that was admitted before `shutdown` and finished phase B
+/// after it. Without the guard the window is inserted into a manager that has already
+/// killed everything it knew about and is exiting, so its agent outlives the daemon:
+/// `anthrex daemon stop` seconds after `anthrex new --worktree` would leave a live
+/// process nothing can reach.
+#[tokio::test]
+async fn a_create_that_races_shutdown_is_refused_and_its_child_killed() {
+    let repo = TempRepo::new();
+    repo.slow_post_checkout(2);
+    let (m, _keep, wt_root, mut events) = manager_watching_events();
+
+    let worker = m.clone();
+    let root = repo.root.clone();
+    let racing = tokio::spawn(async move {
+        worker
+            .create(
+                worktree_spec("late", &root, "feat/late"),
+                root.clone(),
+                Some(root.clone()),
+                80,
+                24,
+            )
+            .await
+    });
+
+    // Shut down while the create is inside `git worktree add`, which is the only window
+    // in which phase A has admitted it and phase C has not yet run.
+    let marker = repo.hook_marker();
+    wait_until("the post-checkout hook to start", || marker.exists()).await;
+    m.shutdown().await;
+
+    let error = racing
+        .await
+        .unwrap()
+        .expect_err("a create that finishes after shutdown must be refused")
+        .to_string();
+
+    assert!(error.contains("shutting down"), "{error}");
+    assert!(
+        m.list().is_empty(),
+        "no window may be inserted after shutdown"
+    );
+
+    // The worktree really was made and is deliberately left on disk, so the error is the
+    // only place its path is ever named — no entry exists for a removal to find it by.
+    let orphan = repo_worktrees_dir(&wt_root, &repo.root).join("feat-late");
+    assert!(
+        orphan.is_dir(),
+        "the worktree was created before the refusal"
+    );
+    assert!(
+        error.contains(&orphan.display().to_string()),
+        "the error must name the worktree left behind: {error}"
+    );
+
+    // And the child is gone. It never became an entry, so `list()` and `child_pid` cannot
+    // see it; its `Exited` event is the daemon's only evidence that it was reaped.
+    let signal = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let (_, event) = events.recv().await.expect("the event channel is open");
+            if let WindowEvent::Exited { signal, .. } = event {
+                return signal;
+            }
+        }
+    })
+    .await
+    .expect("the refused window's child was never reaped");
+    assert!(
+        signal.is_some(),
+        "the child must be signalled, not left to exit on its own: {signal:?}"
     );
 }
 
