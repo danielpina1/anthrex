@@ -258,7 +258,7 @@ impl WindowManager {
             if !entry.child_alive {
                 return;
             }
-            let _ = entry.window.signal_group(libc::SIGKILL);
+            let _ = entry.signal_group(libc::SIGKILL);
         }
 
         let deadline = Instant::now() + KILL_GRACE;
@@ -312,7 +312,7 @@ impl WindowManager {
             return;
         };
         if entry.child_alive {
-            let _ = entry.window.signal_group(libc::SIGKILL);
+            let _ = entry.signal_group(libc::SIGKILL);
         }
         drop(entry);
         tracing::info!(id, path = ?wt.path, branch = %wt.branch, "window and worktree removed");

@@ -2,6 +2,7 @@
 
 mod create;
 mod remove;
+mod restore;
 
 pub use remove::{GitRoots, RemoveError};
 
@@ -11,12 +12,13 @@ use crate::launch;
 use crate::status::{self, StatusContext, StatusEvent};
 use crate::window::{Attachment, Window, WindowEvent};
 use crate::worktree::{self, ManagedWorktree};
+use bytes::Bytes;
 use proto::{ExitInfo, HookSource, Status, WindowInfo, WindowSpec};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, watch};
+use std::time::{Duration, Instant, SystemTime};
+use tokio::sync::{broadcast, mpsc, watch};
 
 #[derive(Debug, Clone)]
 pub struct ManagerConfig {
@@ -91,6 +93,9 @@ impl ManagerConfig {
 pub const QUIET_AFTER: Duration = Duration::from_secs(3);
 pub use crate::process::{HUP_GRACE, KILL_GRACE};
 
+/// The `ExitInfo.reason` a restored window carries until it is restarted (decision 14).
+pub const DAEMON_RESTARTED: &str = "daemon restarted";
+
 /// The git program every worktree operation this manager runs is spawned as (design
 /// decision 1). `worktree` takes it as a parameter so its own tests can hand it a
 /// recording or a slow script; the daemon has no reason to use anything but `git`.
@@ -100,6 +105,30 @@ pub use crate::process::{HUP_GRACE, KILL_GRACE};
 /// daemon could create a checkout it cannot unmake.
 fn git() -> &'static std::ffi::OsStr {
     std::ffi::OsStr::new("git")
+}
+
+/// What actually runs behind a window (decision 14).
+///
+/// A restored window has no child, no PTY and no vt100 mirror — everything [`Window`]
+/// owns — so it cannot simply hold a [`Window`] in some "not really running" state. This
+/// enum is the alternative: [`Process::Live`] is every window `create` or (a later
+/// milestone's) `restart` actually spawned, and [`Process::Dormant`] is every window
+/// [`WindowManager::restore`] rebuilt from the state file. Routing `write_input`,
+/// `resize`, `attach`, `snapshot`, `signal_group` and `pid` through this instead of
+/// through `Window` directly is what lets every other call site treat a restored window
+/// as an ordinary listed window rather than special-casing it.
+enum Process {
+    Live(Window),
+    /// `output` is a capacity-1 sender nothing is ever sent on. Its only job is to give
+    /// a subscriber a [`broadcast::Receiver`] that exists, so `attach` has something to
+    /// hand back — and, once a later milestone's `restart` swaps this entry's `Process`
+    /// for a `Live` one, dropping this sender is what closes that receiver, which is how
+    /// `forward_output_from` (decision 21) learns to re-attach.
+    Dormant {
+        output: broadcast::Sender<Bytes>,
+        cols: u16,
+        rows: u16,
+    },
 }
 
 struct Entry {
@@ -123,14 +152,27 @@ struct Entry {
     /// same checkout, which would have two `git worktree remove` calls and two
     /// `unregister`s for one directory.
     removing: bool,
+    /// A restart (task M6.7, not this one) is in flight for this window. Set to `false`
+    /// everywhere an `Entry` is built in this task and read by no code yet; added now,
+    /// ahead of the task that reads and writes it, because the M6.5 brief calls for it
+    /// explicitly so M6.7 does not have to touch every `Entry` literal again.
+    #[allow(
+        dead_code,
+        reason = "read and written starting in task M6.7 (restart in the daemon)"
+    )]
+    restarting: bool,
     status: Status,
     state: AgentState,
     viewers: u32,
     since: Instant,
     last_output: Instant,
+    /// When this window was first created, preserved verbatim across a restore (decision
+    /// 14) so the state file's `created_at` never resets just because the daemon did.
+    /// Distinct from `since`, which restarts at every status change including a restore.
+    created_at: SystemTime,
     exit: Option<ExitInfo>,
     child_alive: bool,
-    window: Window,
+    process: Process,
 }
 
 impl Entry {
@@ -167,6 +209,95 @@ impl Entry {
         self.status = next;
         self.since = Instant::now();
         true
+    }
+
+    fn pid(&self) -> Option<u32> {
+        match &self.process {
+            Process::Live(window) => window.pid(),
+            Process::Dormant { .. } => None,
+        }
+    }
+
+    /// Decision 14's dormant behaviour: refuses with a message naming the restart paths.
+    fn write_input(&self, bytes: &[u8]) -> anyhow::Result<()> {
+        match &self.process {
+            Process::Live(window) => window.write_input(bytes),
+            Process::Dormant { .. } => anyhow::bail!(
+                "window is not running; restart it with C-b R or anthrex restart {}",
+                self.id
+            ),
+        }
+    }
+
+    /// Decision 14: a dormant window has no PTY to resize, so this just records the size
+    /// for the placeholder snapshot `attach`/`snapshot` build from.
+    fn resize(&mut self, cols: u16, rows: u16) -> anyhow::Result<()> {
+        match &mut self.process {
+            Process::Live(window) => window.resize(cols, rows),
+            Process::Dormant {
+                cols: c, rows: r, ..
+            } => {
+                *c = cols;
+                *r = rows;
+                Ok(())
+            }
+        }
+    }
+
+    fn size(&self) -> (u16, u16) {
+        match &self.process {
+            Process::Live(window) => window.size(),
+            Process::Dormant { cols, rows, .. } => (*cols, *rows),
+        }
+    }
+
+    fn attach(&self) -> Attachment {
+        match &self.process {
+            Process::Live(window) => window.attach(),
+            Process::Dormant { output, cols, rows } => Attachment {
+                output: output.subscribe(),
+                snapshot: self.dormant_placeholder(),
+                cols: *cols,
+                rows: *rows,
+            },
+        }
+    }
+
+    fn snapshot(&self) -> Vec<u8> {
+        match &self.process {
+            Process::Live(window) => window.snapshot(),
+            Process::Dormant { .. } => self.dormant_placeholder(),
+        }
+    }
+
+    /// Decision 14's placeholder screen: cleared, then a fixed explanation, then the
+    /// session id to resume when one is known.
+    fn dormant_placeholder(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"\x1b[2J\x1b[H");
+        out.extend_from_slice(b"[anthrex] this window stopped when the daemon restarted.\r\n");
+        out.extend_from_slice(
+            format!(
+                "[anthrex] restart it with C-b R (default keys) or: anthrex restart {}\r\n",
+                self.id
+            )
+            .as_bytes(),
+        );
+        if let Some(session_id) = &self.state.session_id {
+            out.extend_from_slice(
+                format!("[anthrex] the restart resumes session {session_id}.\r\n").as_bytes(),
+            );
+        }
+        out
+    }
+
+    /// Decision 14: succeeds and does nothing for a dormant window — there is no process
+    /// group to signal.
+    fn signal_group(&self, sig: i32) -> anyhow::Result<()> {
+        match &self.process {
+            Process::Live(window) => window.signal_group(sig),
+            Process::Dormant { .. } => Ok(()),
+        }
     }
 }
 
@@ -205,7 +336,7 @@ impl Inner {
             .get(&id)
             .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
         if entry.child_alive
-            && let Some(pid) = entry.window.pid()
+            && let Some(pid) = entry.pid()
         {
             self.cleanups.insert(id, crate::process::escalate(pid)?);
         }
@@ -394,7 +525,7 @@ impl WindowManager {
             .entries
             .get_mut(&id)
             .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
-        entry.window.write_input(bytes)?;
+        entry.write_input(bytes)?;
         let status_changed = entry.apply(StatusEvent::InputSent);
         let subagents_changed = entry.state.subagents.input_sent();
         if status_changed || subagents_changed {
@@ -404,21 +535,21 @@ impl WindowManager {
     }
 
     pub fn resize(&self, id: u32, cols: u16, rows: u16) -> anyhow::Result<()> {
-        self.with_entry(id, |e| e.window.resize(cols.max(1), rows.max(1)))?
+        self.with_entry(id, |e| e.resize(cols.max(1), rows.max(1)))?
     }
 
     pub fn attach(&self, id: u32) -> anyhow::Result<Attachment> {
-        self.with_entry(id, |e| e.window.attach())
+        self.with_entry(id, |e| e.attach())
     }
 
     pub fn child_pid(&self, id: u32) -> anyhow::Result<Option<u32>> {
-        self.with_entry(id, |e| e.window.pid())
+        self.with_entry(id, |e| e.pid())
     }
 
     pub fn snapshot(&self, id: u32) -> anyhow::Result<(Vec<u8>, u16, u16)> {
         self.with_entry(id, |e| {
-            let (cols, rows) = e.window.size();
-            (e.window.snapshot(), cols, rows)
+            let (cols, rows) = e.size();
+            (e.snapshot(), cols, rows)
         })
     }
 
@@ -470,7 +601,7 @@ impl WindowManager {
         }
         let entry = inner.entries.remove(&id).expect("looked up a line above");
         if entry.child_alive {
-            let _ = entry.window.signal_group(libc::SIGKILL);
+            let _ = entry.signal_group(libc::SIGKILL);
         }
         drop(entry);
         tracing::info!(id, "window removed");

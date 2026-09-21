@@ -142,6 +142,40 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     std::fs::create_dir_all(&opts.data_dir)?;
     let _lock = DaemonLock::acquire(&opts.data_dir, opts.lock_wait)?;
     let _log_guard = init_logging(&opts.data_dir)?;
+
+    // Decision 12: loaded once, on `spawn_blocking`, before the socket is bound, so the
+    // first client's `Welcome` already lists every restored window. Every problem `load`
+    // found is logged at the severity it carries (decision 12's whole reason for
+    // returning `Problem` rather than a bare `String`): an unreadable file is a real,
+    // if recoverable, loss of this boot's window list (`error`); a corrupt/unsupported
+    // file or a skipped record is routine recovery the module already handled on its own
+    // (`warn`).
+    let state_path = opts.data_dir.join("state.json");
+    let (loaded_state, problems) = {
+        let path = state_path.clone();
+        tokio::task::spawn_blocking(move || crate::state::load(&path)).await?
+    };
+    for problem in &problems {
+        match problem.severity {
+            crate::state::Severity::Error => {
+                tracing::error!(problem = %problem, "state file problem");
+            }
+            crate::state::Severity::Warn => {
+                tracing::warn!(problem = %problem, "state file problem");
+            }
+        }
+    }
+
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    let mut config = ManagerConfig::from_env(opts.socket_path.clone(), shell)?;
+    config.worktrees_root = opts.data_dir.join("worktrees");
+    // Complete the only version probe before any window launch is accepted.
+    codex_version::check(config.codex_bin.clone()).await;
+    let (manager, mut events) = WindowManager::new(config);
+    // Decision 12/14: every restored window is listed, dormant and viewable before
+    // anything can connect.
+    manager.restore(loaded_state);
+
     prepare_socket(&opts.socket_path)?;
     let listener = bind_socket(&opts.socket_path)?;
     // Decision 26: the socket is only ever unlinked at shutdown if this is still the same
@@ -152,12 +186,6 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     std::fs::write(&pid_path, std::process::id().to_string())?;
     tracing::info!(socket = %opts.socket_path.display(), pid = std::process::id(), "daemon started");
 
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    let mut config = ManagerConfig::from_env(opts.socket_path.clone(), shell)?;
-    config.worktrees_root = opts.data_dir.join("worktrees");
-    // Complete the only version probe before any window launch is accepted.
-    codex_version::check(config.codex_bin.clone()).await;
-    let (manager, mut events) = WindowManager::new(config);
     let shutdown = CancellationToken::new();
 
     let pump = manager.clone();
@@ -191,6 +219,13 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
         signal_token.cancel();
     });
 
+    // Decision 9: keeps `state.json` current for as long as the daemon runs. Started
+    // only after the socket is bound (nothing for it to persist could have changed
+    // before this point) and stopped, below, before decision 11's own final write —
+    // there is exactly one writer of this file at any instant.
+    let persister =
+        crate::state::spawn_persister(manager.clone(), state_path.clone(), shutdown.clone());
+
     let served = server::serve(
         listener,
         manager.clone(),
@@ -203,6 +238,22 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     }
     tracing::info!("stopping agents");
     manager.shutdown().await;
+
+    // Decision 11's exact order: the persister is stopped and *awaited* — not merely
+    // signalled — before the final flush runs, so the two can never both be writing
+    // `state.json.tmp` at once. `shutdown` is already cancelled by construction (`serve`
+    // only ever returns after it is), but cancelling it again here is free and makes the
+    // invariant hold even if a future change to `serve` ever returns some other way.
+    shutdown.cancel();
+    let _ = persister.await;
+    let final_state = manager.state_snapshot();
+    let final_path = state_path.clone();
+    match tokio::task::spawn_blocking(move || crate::state::save(&final_path, &final_state)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::error!(%error, "final state save failed"),
+        Err(error) => tracing::error!(%error, "final state save task panicked"),
+    }
+
     let socket_is_still_ours = std::fs::metadata(&opts.socket_path)
         .map(|m| (m.dev(), m.ino()) == socket_id)
         .unwrap_or(false);

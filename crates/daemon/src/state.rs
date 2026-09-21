@@ -30,7 +30,9 @@ use std::io::{self, Write};
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio_util::sync::CancellationToken;
 
 /// The state file format this build writes, and the newest version it will load.
 pub const STATE_VERSION: u32 = 2;
@@ -415,6 +417,96 @@ pub fn save(path: &Path, state: &StateFile) -> io::Result<()> {
     dir_file.sync_all()?;
 
     Ok(())
+}
+
+/// How long [`spawn_persister`] waits, after a change, for further changes before it
+/// writes (decision 9).
+pub const SAVE_DEBOUNCE: Duration = Duration::from_millis(100);
+
+/// Subscribes to `manager`'s window list and keeps `path` current (decision 9).
+///
+/// Every publish on [`crate::manager::WindowManager::watch`] is one *debounced* write,
+/// not one write each: on a change this waits [`SAVE_DEBOUNCE`], restarting the wait on
+/// every further change, so a burst — a rename typed character by character, twenty
+/// renames in a tight loop — reaches disk as a single write of the *final* state rather
+/// than one write per edit. The wait is skipped entirely, and this task returns at once
+/// with no write of its own, the moment `shutdown` is cancelled: a debounce must never
+/// hold shutdown up, and [`crate::lifecycle::run`]'s own flush after this task has
+/// stopped is what guarantees the last change reaches disk (decision 11) — this loop's
+/// job is only to keep the file *reasonably* current while the daemon is up.
+///
+/// The snapshot itself, [`crate::manager::WindowManager::state_snapshot`], is a clone
+/// taken under the manager lock with no I/O under it (decision 9); only the write that
+/// follows runs on [`tokio::task::spawn_blocking`]. A write is skipped when its
+/// serialized bytes equal the last ones actually written, so a change that round-trips
+/// to identical bytes (a rename back to the same name, a status flap that settles where
+/// it started) costs no I/O. A failed write is logged at `warn` and left for the next
+/// change to retry — this task never retries on its own, since decision 11's final flush
+/// is the backstop for any write this loop never gets to.
+pub fn spawn_persister(
+    manager: Arc<crate::manager::WindowManager>,
+    path: PathBuf,
+    shutdown: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut changes = manager.watch();
+        let mut last_written: Option<Vec<u8>> = None;
+        loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => return,
+                changed = changes.changed() => {
+                    if changed.is_err() {
+                        // The manager itself is gone; nothing left to persist for.
+                        return;
+                    }
+                }
+            }
+
+            // Collect further changes for SAVE_DEBOUNCE, restarting the wait on each
+            // one. A fresh `sleep` future is constructed every time this inner loop
+            // runs, which is what makes the wait restart rather than merely continue a
+            // clock that started on the first change.
+            loop {
+                tokio::select! {
+                    _ = shutdown.cancelled() => return,
+                    () = tokio::time::sleep(SAVE_DEBOUNCE) => break,
+                    changed = changes.changed() => {
+                        if changed.is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+
+            let state = manager.state_snapshot();
+            let bytes = match serde_json::to_vec_pretty(&state) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    tracing::warn!(%error, "failed to serialize state for persistence");
+                    continue;
+                }
+            };
+            if last_written.as_deref() == Some(bytes.as_slice()) {
+                continue;
+            }
+
+            let save_path = path.clone();
+            let save_state = state.clone();
+            match tokio::task::spawn_blocking(move || save(&save_path, &save_state)).await {
+                Ok(Ok(())) => last_written = Some(bytes),
+                Ok(Err(error)) => {
+                    tracing::warn!(
+                        %error,
+                        path = %path.display(),
+                        "failed to save state file; will retry on the next change"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "state save task panicked; will retry on the next change");
+                }
+            }
+        }
+    })
 }
 
 #[cfg(test)]

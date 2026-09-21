@@ -24,7 +24,7 @@
 //! back on every exit path — an early return, a panic in phase B, or a caller that drops
 //! the future.
 
-use super::{Entry, Inner, ManagerConfig, WindowManager, git};
+use super::{Entry, Inner, ManagerConfig, Process, WindowManager, git};
 use crate::agent_state::AgentState;
 use crate::launch::{self, LaunchContext};
 use crate::project::DetectedRoots;
@@ -181,6 +181,16 @@ impl WindowManager {
         let mut inner = crate::lock(&self.inner);
         anyhow::ensure!(!inner.shutting_down, "daemon is shutting down");
         let id = inner.next_id;
+        // `next_id` saturates at `u32::MAX` rather than wrapping when a restored record
+        // already held it (`state::load`'s own doc comment on this exact boundary), so
+        // there is no larger id left to hand out. Refusing here, before `next_id` is
+        // touched, is what stops that saturation from turning into a silently reused id
+        // the moment a `+= 1` wrapped it back to 0 — the same class of bug the previous
+        // task's review found twice in `state.rs`, now in the code that actually spends
+        // an id.
+        let Some(next_id) = id.checked_add(1) else {
+            anyhow::bail!("no window ids remain; restart the daemon to reclaim them");
+        };
         let name = match spec
             .name
             .as_deref()
@@ -201,7 +211,7 @@ impl WindowManager {
             // believe the directory was its own to clean up.
             anyhow::bail!("a worktree at {} is already being created", path.display());
         }
-        inner.next_id += 1;
+        inner.next_id = next_id;
         inner.reserved_names.insert(name.clone());
         if let Some(path) = &claim {
             inner.reserved_worktrees.insert(path.clone());
@@ -254,14 +264,16 @@ impl WindowManager {
                 .or(worktree),
             managed: created.map(|created| created.worktree),
             removing: false,
+            restarting: false,
             status: Status::Starting,
             state: AgentState::default(),
             viewers: 0,
             since: now,
             last_output: now,
+            created_at: std::time::SystemTime::now(),
             exit: None,
             child_alive: true,
-            window,
+            process: Process::Live(window),
         };
         let info = entry.info(now);
         tracing::info!(
