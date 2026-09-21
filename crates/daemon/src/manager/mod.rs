@@ -521,6 +521,23 @@ mod tests {
         assert_eq!(mixed.claude_bin, "/opt/env/claude");
         assert_eq!(mixed.codex_bin, "/opt/config/codex");
 
+        // ANTHREX_CODEX_BIN wins over config, for Codex only — the mirror image of the
+        // Claude-only case above. Coverage gap flagged by the previous task's review:
+        // without this case, a `from_vars` that shared one fallback expression between
+        // `claude_bin` and `codex_bin` (reading only `ANTHREX_CLAUDE_BIN`, say) would
+        // still pass every test in this file, because nothing exercised "Codex overridden
+        // while config also differs from default" on its own.
+        let vars = HashMap::from([("ANTHREX_CODEX_BIN", "/opt/env/codex")]);
+        let mixed_codex = ManagerConfig::from_vars(
+            "/tmp/a.sock".into(),
+            "/bin/zsh".into(),
+            "/opt/anthrex/bin/anthrex".into(),
+            |key| vars.get(key).map(|value| (*value).to_string()),
+            &runtimes,
+        );
+        assert_eq!(mixed_codex.claude_bin, "/opt/config/claude");
+        assert_eq!(mixed_codex.codex_bin, "/opt/env/codex");
+
         // Nothing set, no config either: the built-in default.
         let defaults = ManagerConfig::from_vars(
             "/tmp/a.sock".into(),
