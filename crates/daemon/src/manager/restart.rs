@@ -174,6 +174,20 @@ impl WindowManager {
         if entry.restarting {
             anyhow::bail!("window {id} is already restarting");
         }
+        // Major 4 (fix wave 5 review): the symmetric half of `begin_removal`'s own new
+        // check below. `remove_with_worktree` deletes this window's checkout between its
+        // own kill and `worktree::remove`; a restart admitted while that is in flight
+        // could pass phase C's `cwd.is_dir()` check against a directory about to be
+        // removed and swap a live process into it mid-deletion, or lose the race and fail
+        // with a confusing "directory does not exist" instead of a clean refusal — both
+        // observed by constructing the interleaving before this fix existed (see
+        // `manager_worktree/removal/ordering.rs`'s `a_restart_admitted_after_a_removal_is_refused`
+        // and `a_removal_admitted_after_a_restart_is_refused`). Neither flag alone was
+        // enough: each guarded only its own operation against a second instance of
+        // itself, not against the other one.
+        if entry.removing {
+            anyhow::bail!("window {id} is being removed");
+        }
         let was_live = entry.child_alive;
         entry.restarting = true;
         Ok((

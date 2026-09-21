@@ -215,6 +215,17 @@ impl WindowManager {
         if entry.removing {
             anyhow::bail!("window '{}' is already being removed", entry.name);
         }
+        // Major 4 (fix wave 5 review): the symmetric half of `begin_restart`'s own new
+        // check. Without this, a `restart` admitted while this removal is in flight could
+        // pass its own phase C directory check and swap a live process into a checkout
+        // this removal is about to delete — defeating step 3's guarantee, above, that the
+        // checkout is never removed out from under a live process. See
+        // `manager/restart.rs`'s `begin_restart` for the mirror check and
+        // `manager_worktree/removal/ordering.rs` for the constructed interleaving that
+        // proved this reachable before either check existed.
+        if entry.restarting {
+            anyhow::bail!("window '{}' is restarting", entry.name);
+        }
         entry.removing = true;
         Ok((
             wt,
