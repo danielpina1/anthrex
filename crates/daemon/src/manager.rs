@@ -1,6 +1,9 @@
 //! Owns every window, applies status events, and broadcasts the window list.
 
 mod create;
+mod remove;
+
+pub use remove::{GitRoots, RemoveError};
 
 use crate::agent_state::AgentState;
 use crate::hooks;
@@ -73,6 +76,17 @@ impl ManagerConfig {
 pub const QUIET_AFTER: Duration = Duration::from_secs(3);
 pub use crate::process::{HUP_GRACE, KILL_GRACE};
 
+/// The git program every worktree operation this manager runs is spawned as (design
+/// decision 1). `worktree` takes it as a parameter so its own tests can hand it a
+/// recording or a slow script; the daemon has no reason to use anything but `git`.
+///
+/// One definition for both halves of the lifecycle: the `git` that made a worktree in
+/// [`create`] and the `git` that removes it in [`remove`] must be the same program, or a
+/// daemon could create a checkout it cannot unmake.
+fn git() -> &'static std::ffi::OsStr {
+    std::ffi::OsStr::new("git")
+}
+
 struct Entry {
     id: u32,
     name: String,
@@ -88,6 +102,12 @@ struct Entry {
     /// we watch", this one answers "did we make it, and may we remove it".
     // milestone 6: restart re-attaches to this, not to `spec.worktree_branch` (risk 7).
     managed: Option<ManagedWorktree>,
+    /// A `remove_with_worktree` is in flight for this window (design decision 19 step 1).
+    /// The window stays listed and keeps running while it is set, because the removal can
+    /// still be refused; what the flag stops is a *second* removal reaching git for the
+    /// same checkout, which would have two `git worktree remove` calls and two
+    /// `unregister`s for one directory.
+    removing: bool,
     status: Status,
     state: AgentState,
     viewers: u32,

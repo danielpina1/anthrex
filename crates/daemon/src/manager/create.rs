@@ -24,23 +24,15 @@
 //! back on every exit path — an early return, a panic in phase B, or a caller that drops
 //! the future.
 
-use super::{Entry, Inner, ManagerConfig, WindowManager};
+use super::{Entry, Inner, ManagerConfig, WindowManager, git};
 use crate::agent_state::AgentState;
 use crate::launch::{self, LaunchContext};
 use crate::window::{Window, WindowEvent};
 use crate::worktree::{self, Created};
 use proto::{Status, WindowInfo, WindowSpec};
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tokio::sync::mpsc;
-
-/// The git program every worktree operation this manager runs is spawned as (design
-/// decision 1). `worktree` takes it as a parameter so its own tests can hand it a
-/// recording or a slow script; the daemon has no reason to use anything but `git`.
-fn git() -> &'static OsStr {
-    OsStr::new("git")
-}
 
 /// What phase B hands phase C: a live window, the spec as the child actually saw it
 /// (design decision 11 replaces `cwd` for a worktree window), and the worktree that was
@@ -215,6 +207,7 @@ impl WindowManager {
                 .map(|created| created.worktree.path.clone())
                 .or(worktree),
             managed: created.map(|created| created.worktree),
+            removing: false,
             status: Status::Starting,
             state: AgentState::default(),
             viewers: 0,

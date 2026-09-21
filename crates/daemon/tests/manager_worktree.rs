@@ -17,6 +17,9 @@ mod support;
 #[path = "manager_worktree/admission.rs"]
 mod admission;
 
+#[path = "manager_worktree/removal.rs"]
+mod removal;
+
 use daemon::manager::{ManagerConfig, WindowManager};
 use daemon::window::WindowEvent;
 use daemon::worktree::repo_worktrees_dir;
