@@ -10,7 +10,8 @@
 //! in memory, so the lock is held for exactly as long as cloning a handful of small
 //! values takes, never for as long as serializing or writing them would.
 
-use super::{DAEMON_RESTARTED, Entry, Process, WindowManager};
+use super::entry::{Entry, Process};
+use super::{DAEMON_RESTARTED, WindowManager};
 use crate::agent_state::AgentState;
 use crate::state::{self, StateFile, WindowRecord, WorktreeRecord};
 use crate::worktree::ManagedWorktree;

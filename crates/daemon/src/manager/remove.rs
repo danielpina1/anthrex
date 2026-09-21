@@ -52,7 +52,8 @@
 //! raced a concurrent create across two independent locks, and this is the function where
 //! it would come back.
 
-use super::{Entry, KILL_GRACE, WindowManager, git};
+use super::entry::Entry;
+use super::{KILL_GRACE, WindowManager, git};
 use crate::worktree::{self, ManagedWorktree, WorktreeError};
 use std::io;
 use std::path::{Path, PathBuf};

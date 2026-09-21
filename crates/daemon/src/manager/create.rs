@@ -24,7 +24,8 @@
 //! back on every exit path — an early return, a panic in phase B, or a caller that drops
 //! the future.
 
-use super::{Entry, Inner, ManagerConfig, Process, WindowManager, git};
+use super::entry::{Entry, Inner, Process};
+use super::{ManagerConfig, WindowManager, git};
 use crate::agent_state::AgentState;
 use crate::launch::{self, LaunchContext};
 use crate::project::DetectedRoots;
