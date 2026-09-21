@@ -1168,3 +1168,70 @@ async fn a_failed_restart_leaves_the_window_restartable() {
         "{second}"
     );
 }
+
+/// Decision 22: a window name is trimmed and must be 1 to 64 characters with no control
+/// characters, enforced identically on `create` and `rename` so a name refused at
+/// creation can never be reached through a rename either. The 65-character, `\x1b` and
+/// `"  "` (blank-after-trim) cases each carry decision 22's exact message; a 64-character
+/// name is accepted; and a rename to the window's own current name succeeds, because a
+/// window is not a duplicate of itself.
+///
+/// The length limit is counted in *grapheme clusters* (`unicode_segmentation`), the same
+/// unit `crates/tui` already uses for user-facing text — not bytes and not `char`s. A
+/// combining-character sequence (`"e\u{0301}"`, two `char`s that render and are perceived
+/// as one glyph) makes that distinction observable: 64 copies is 64 `char`-pairs (128
+/// `char`s) but exactly 64 grapheme clusters, and must be accepted; a `char`-counting
+/// validator would wrongly refuse it.
+#[tokio::test]
+async fn names_are_validated_on_create_and_rename() {
+    let m = manager();
+    let base = create_id(&m, spec("base"), std::env::temp_dir(), 80, 24).await;
+
+    let too_long = "a".repeat(65);
+    // Two distinct 64-character names, so accepting one via `create` and the other via
+    // `rename` cannot collide with each other under the existing duplicate-name check.
+    let sixty_four_create = "a".repeat(64);
+    let sixty_four_rename = "b".repeat(64);
+    let control = "bad\x1bname";
+    let blank = "  ";
+    let cases: [(&str, &str); 3] = [
+        (too_long.as_str(), "name must be at most 64 characters"),
+        (control, "name must not contain control characters"),
+        (blank, "name must not be empty"),
+    ];
+
+    for (name, expected) in cases {
+        let err = create(&m, spec(name), std::env::temp_dir(), 80, 24)
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), expected, "create({name:?})");
+
+        let err = m.rename(base, name.to_string()).unwrap_err();
+        assert_eq!(err.to_string(), expected, "rename({name:?})");
+    }
+
+    // A 64-character name is accepted by both create and rename.
+    let created = create(&m, spec(&sixty_four_create), std::env::temp_dir(), 80, 24)
+        .await
+        .unwrap();
+    assert_eq!(created.name, sixty_four_create);
+    let sixty_four = sixty_four_rename;
+    m.rename(base, sixty_four.clone()).unwrap();
+    assert_eq!(find(&m, base).name, sixty_four);
+
+    // Rename to the window's own current name succeeds: it is not a duplicate of itself.
+    m.rename(base, sixty_four.clone()).unwrap();
+    assert_eq!(find(&m, base).name, sixty_four);
+
+    // Grapheme clusters, not `char`s: 64 combining-character sequences is 64 grapheme
+    // clusters (accepted) but 128 `char`s (which a naive `.chars().count()` validator
+    // would wrongly refuse).
+    let combining_64 = "e\u{0301}".repeat(64);
+    assert_eq!(combining_64.chars().count(), 128);
+    m.rename(base, combining_64.clone()).unwrap();
+    assert_eq!(find(&m, base).name, combining_64);
+
+    let combining_65 = "e\u{0301}".repeat(65);
+    let err = m.rename(base, combining_65).unwrap_err();
+    assert_eq!(err.to_string(), "name must be at most 64 characters");
+}

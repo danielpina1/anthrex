@@ -20,6 +20,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch};
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Debug, Clone)]
 pub struct ManagerConfig {
@@ -139,6 +140,33 @@ pub const DAEMON_RESTARTED: &str = "daemon restarted";
 /// daemon could create a checkout it cannot unmake.
 fn git() -> &'static std::ffi::OsStr {
     std::ffi::OsStr::new("git")
+}
+
+/// Design decision 22: a window name is trimmed, then must be 1 to 64 characters with no
+/// control characters. `create` (`manager::create::admit`) and `rename` both call this —
+/// one validator, not two copies that could drift — so a name the CLI or TUI cannot get
+/// through creation can never be reached through a rename either.
+///
+/// The 64-character limit is counted in *grapheme clusters*
+/// (`UnicodeSegmentation::graphemes`), not bytes and not `char`s: this is the same unit
+/// `crates/tui` already uses everywhere it counts or truncates user-facing text (see
+/// `tree.rs`, `dialog.rs`, `tree_input.rs`, `ui/tree_view.rs`, `graph/paint.rs`), because a
+/// name is rendered in the TUI sidebar and tree, where a multi-codepoint glyph (an accented
+/// letter typed as a base character plus a combining mark, a flag, a family emoji) must
+/// count as the one character it is perceived and rendered as, not as however many Unicode
+/// scalar values happen to encode it.
+fn validate_name(name: &str) -> anyhow::Result<String> {
+    let trimmed = name.trim().to_string();
+    if trimmed.is_empty() {
+        anyhow::bail!("name must not be empty");
+    }
+    if trimmed.graphemes(true).count() > 64 {
+        anyhow::bail!("name must be at most 64 characters");
+    }
+    if trimmed.chars().any(|c| c.is_control()) {
+        anyhow::bail!("name must not contain control characters");
+    }
+    Ok(trimmed)
 }
 
 pub struct WindowManager {
@@ -407,10 +435,7 @@ impl WindowManager {
     }
 
     pub fn rename(&self, id: u32, name: String) -> anyhow::Result<()> {
-        let name = name.trim().to_string();
-        if name.is_empty() {
-            anyhow::bail!("name must not be empty");
-        }
+        let name = validate_name(&name)?;
         let mut inner = crate::lock(&self.inner);
         // A name a create is still holding is taken just as firmly as one a window has:
         // letting a rename win the race would leave two windows named the same the

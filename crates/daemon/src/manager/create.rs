@@ -25,7 +25,7 @@
 //! the future.
 
 use super::entry::{Entry, Inner, Process};
-use super::{ManagerConfig, WindowManager, git};
+use super::{ManagerConfig, WindowManager, git, validate_name};
 use crate::agent_state::AgentState;
 use crate::launch::{self, LaunchContext};
 use crate::project::DetectedRoots;
@@ -192,13 +192,12 @@ impl WindowManager {
         let Some(next_id) = id.checked_add(1) else {
             anyhow::bail!("no window ids remain; restart the daemon to reclaim them");
         };
-        let name = match spec
-            .name
-            .as_deref()
-            .map(str::trim)
-            .filter(|n| !n.is_empty())
-        {
-            Some(n) => n.to_string(),
+        // Decision 22: an explicitly given name is validated by the same `validate_name`
+        // `rename` calls — a name a create rejects must never be reachable through a
+        // rename either. No name at all (`None`) is not "an invalid name"; it is the
+        // request for the auto-generated default, which is always valid on its own.
+        let name = match spec.name.as_deref() {
+            Some(n) => validate_name(n)?,
             None => format!("{}-{id}", spec.runtime.label()),
         };
         if inner.entries.values().any(|e| e.name == name) || inner.reserved_names.contains(&name) {
