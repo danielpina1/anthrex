@@ -252,7 +252,11 @@ impl WindowManager {
             id,
             name,
             spec,
-            project,
+            // A live `create` always resolves a concrete project root before this point
+            // (`DetectedRoots.project`, `detect_roots`'s own `cwd` fallback when git
+            // finds nothing better) — only a restored record can leave `Entry.project`
+            // unknown (fix wave 4, ruling 7).
+            project: Some(project),
             // Design decision 21: a worktree window's watched root is its *own* linked
             // checkout, not the directory the user pointed at. The server resolved
             // `worktree` from `spec.cwd` before this create ran, so for such a window it

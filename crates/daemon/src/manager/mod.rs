@@ -135,7 +135,17 @@ struct Entry {
     id: u32,
     name: String,
     spec: WindowSpec,
-    project: PathBuf,
+    /// The project root milestone 4's detection found, or `None` when this entry came
+    /// from a restored record whose saved `project` was itself `null` (fix wave 4, ruling
+    /// 7). `create` always resolves a concrete root before building an `Entry` — a plain
+    /// window's own `cwd` is `detect_roots`'s own fallback when git finds nothing better
+    /// — so only `restore` can leave this `None`. Never fabricated and never persisted as
+    /// a derived value: `info` below derives a *display* value from it on every read
+    /// instead, and `state_snapshot` writes it back exactly as it came in, so a record
+    /// that arrived with `project: null` still reads `null` after any number of
+    /// restore-then-save cycles, leaving a later boot free to re-detect it for real
+    /// instead of one save baking a guess in permanently.
+    project: Option<PathBuf>,
     /// The git worktree *root* this window's git state is keyed on: milestone 4.5's
     /// field, which the registry watches. For a window this daemon made a worktree for
     /// it is that new checkout (design decision 21), which is why it is not the same
@@ -182,7 +192,14 @@ impl Entry {
             name: self.name.clone(),
             runtime: self.spec.runtime,
             cwd: self.spec.cwd.clone(),
-            project: self.project.clone(),
+            // `WindowInfo.project` (the wire type) has no `null` case, so an unknown
+            // project is derived here, at display time, rather than fabricated once and
+            // persisted — the same "no worse than a plain window" fallback `restore`
+            // would otherwise have baked into the saved state permanently.
+            project: self
+                .project
+                .clone()
+                .unwrap_or_else(|| self.spec.cwd.clone()),
             worktree: self.worktree.clone(),
             branch: self.spec.worktree_branch.clone(),
             status: self.status,

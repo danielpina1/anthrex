@@ -122,16 +122,22 @@ impl WindowManager {
                 model,
                 initial_prompt,
             };
-            // "Starting point": a null saved `project` should re-detect the way milestone
-            // 4 does at window creation. That detection is `project::detect_roots`, a
-            // blocking git subprocess, which cannot run here — this function is
-            // synchronous and holds the manager lock the whole time (AGENTS.md hard
-            // rules 2 and 10). Falling back to `cwd`, `detect_roots`'s own fallback when
-            // git itself gives no better answer, is deliberately the same "no worse than
-            // a plain window" outcome, not a real detection; a real one would need to run
-            // before this call, outside the lock, in `lifecycle::run`. Recorded as a
-            // deviation in the task report.
-            let project = project.unwrap_or_else(|| cwd.clone());
+            // Ruling (fix wave 4, item 7): a null saved `project` is kept `None`, not
+            // rewritten to `cwd`. A real re-detection would need `project::detect_roots`,
+            // a blocking git subprocess, which cannot run here — this function is
+            // synchronous and holds the manager lock the whole time (AGENTS.md hard rules
+            // 2 and 10) — and the seam that *could* run it before this call, outside the
+            // lock, sits in `lifecycle::run` immediately before the socket bind, which is
+            // exactly the class of bug fix wave 4, item 1 exists to prevent: a per-window
+            // git probe there is that bug again, multiplied by the window count.
+            //
+            // The earlier fallback to `cwd` looked harmless — "no worse than a plain
+            // window" — but `state_snapshot` below writes `Entry.project` back verbatim,
+            // so the first save after a restore would have baked the fallback into the
+            // file permanently: `null` never survives to be re-detected by a later boot
+            // that might do better. Never persisting a value that was derived rather than
+            // detected is what keeps that door open; a display value, where one is
+            // wanted, is derived at the point of display instead (`Entry::info`).
             let (output, _unused) = broadcast::channel(1);
 
             let entry = Entry {
@@ -189,7 +195,12 @@ impl WindowManager {
                 name: entry.name.clone(),
                 runtime: entry.spec.runtime,
                 cwd: entry.spec.cwd.clone(),
-                project: Some(entry.project.clone()),
+                // `entry.project` is already `Option<PathBuf>` and is written back
+                // exactly as it came in — never `Some`-wrapped unconditionally — so a
+                // restored record's `null` survives any number of restore-then-save
+                // cycles instead of being baked into the file as a derived guess (fix
+                // wave 4, ruling 7).
+                project: entry.project.clone(),
                 worktree: entry.managed.as_ref().map(|m| WorktreeRecord {
                     repo_root: m.repo_root.clone(),
                     path: m.path.clone(),

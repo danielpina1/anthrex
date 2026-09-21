@@ -616,6 +616,43 @@ fn window_record(id: u32, name: &str, cwd: PathBuf, session_id: Option<&str>) ->
     }
 }
 
+/// Ruling, fix wave 4 item 7: a restored record's null `project` must survive a
+/// restore-then-`state_snapshot` cycle still null — never rewritten to `cwd` and baked
+/// permanently into the saved state by the next write. `window_record` above always sets
+/// `project: None`; `state_snapshot` is the "save" half of the cycle under test here
+/// (`spawn_persister`'s real writes go through the very same function). The *display*
+/// value (`WindowInfo.project`, which has no null case) is allowed to fall back to `cwd`
+/// — that derivation happens at `Entry::info`, not by mutating what gets persisted.
+#[tokio::test]
+async fn a_null_project_survives_a_restore_and_state_snapshot_cycle_still_null() {
+    let m = manager();
+    let cwd = std::env::temp_dir();
+    m.restore(StateFile {
+        version: state::STATE_VERSION,
+        next_id: 2,
+        windows: vec![window_record(1, "no-project", cwd.clone(), None)],
+        runs: Vec::new(),
+    });
+
+    let info = find(&m, 1);
+    assert_eq!(
+        info.project, cwd,
+        "the live display value may fall back to cwd: {info:?}"
+    );
+
+    let snapshot = m.state_snapshot();
+    let record = snapshot
+        .windows
+        .iter()
+        .find(|w| w.id == 1)
+        .expect("restored record is in the snapshot");
+    assert_eq!(
+        record.project, None,
+        "a restored null project must not be rewritten to cwd and baked into the saved \
+         state: {record:?}"
+    );
+}
+
 /// M6.5's headline acceptance test (decision 14): a restored window is listed as exited,
 /// carries its saved identity, is viewable with a placeholder screen, refuses input,
 /// tolerates `kill`, still guards its name against a duplicate `create`, and never lets a
