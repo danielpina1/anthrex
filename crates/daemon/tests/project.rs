@@ -265,13 +265,32 @@ fn inherited_stdout_does_not_outlive_the_detection_deadline() {
         stopped: false,
     };
 
+    // This is a margin, not a held seam, and the margin is the detection timeout below:
+    // the grandchild never closes the pipe on its own (it sleeps for 30s), so
+    // `detect_roots_with` always runs for the *entire* timeout before it can return —
+    // there is nothing in the wrapper script that can signal "started" any faster than
+    // the OS actually schedules a freshly forked process, and a fork's first timeslice
+    // is not something a test can hold open and wait on the way `post-checkout`'s sleep
+    // is (see `list_is_answered_while_a_create_is_running`). A timeout picked to keep
+    // this test fast (previously one second) bets that the host can schedule a new
+    // process, and that process can fork *its own* child and write a pid file, inside
+    // that one second — a bet a sufficiently loaded machine loses: under sustained CPU
+    // contention (reproduced locally by racing several copies of this suite against a
+    // dozen busy-loops) the wrapper has occasionally still not run at the one-second
+    // mark, so `detect_roots_with` returns *for hitting its own deadline* rather than
+    // for the reason this test exists to exercise, and the loop below misreads that as
+    // "detection finished before the helper started". Using the real production
+    // timeout here removes the bet: everything that runs against `detect_roots` in
+    // practice already gets this many seconds of scheduling slack, so a host too
+    // starved to schedule a forked shell within it would already be failing users, not
+    // just this test.
     let (tx, rx) = mpsc::channel();
     let detector = std::thread::spawn(move || {
         let started = Instant::now();
-        let detected = detect_roots_with(script.as_os_str(), &cwd, Duration::from_secs(1));
+        let detected = detect_roots_with(script.as_os_str(), &cwd, DETECT_TIMEOUT);
         tx.send((detected, started.elapsed())).unwrap();
     });
-    let helper_deadline = Instant::now() + Duration::from_secs(2);
+    let helper_deadline = Instant::now() + DETECT_TIMEOUT - Duration::from_secs(1);
     while !pid_file.exists() {
         if let Ok((detected, elapsed)) = rx.try_recv() {
             detector.join().unwrap();
@@ -286,7 +305,7 @@ fn inherited_stdout_does_not_outlive_the_detection_deadline() {
         std::thread::sleep(Duration::from_millis(5));
     }
 
-    let timely = rx.recv_timeout(Duration::from_secs(2));
+    let timely = rx.recv_timeout(DETECT_TIMEOUT + Duration::from_secs(2));
     let helper_stopped = helper.stop();
     detector.join().unwrap();
     assert!(
@@ -298,7 +317,10 @@ fn inherited_stdout_does_not_outlive_the_detection_deadline() {
     );
 
     assert_eq!(detected.project, root);
-    assert!(elapsed < Duration::from_secs(2), "elapsed: {elapsed:?}");
+    assert!(
+        elapsed < DETECT_TIMEOUT + Duration::from_secs(2),
+        "elapsed: {elapsed:?}"
+    );
 }
 
 #[tokio::test]
