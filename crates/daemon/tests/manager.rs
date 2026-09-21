@@ -1355,6 +1355,31 @@ async fn restart_refuses_when_the_kill_wait_times_out() {
     );
 }
 
+/// Major 3 (fix wave 5 review): `begin_restart` was missing the same `shutting_down`
+/// admission check `create`'s `admit` makes. Reachable in production because
+/// `requests::restart` detaches (`server/requests.rs`'s own doc comment says it is
+/// deliberately never aborted) while `lifecycle::run` calls `manager.shutdown().await`
+/// only after `serve` returns — a restart admitted just before shutdown began could still
+/// complete afterward and spawn a child nothing would ever kill.
+#[tokio::test]
+async fn restart_is_refused_after_shutdown() {
+    let m = manager();
+    let id = create_id(
+        &m,
+        spec("restart-after-shutdown"),
+        std::env::temp_dir(),
+        80,
+        24,
+    )
+    .await;
+    wait_until("shell started", || find(&m, id).status != Status::Starting).await;
+
+    m.shutdown().await;
+
+    let err = m.restart(id).await.unwrap_err();
+    assert!(err.to_string().contains("shutting down"), "{err}");
+}
+
 /// Decision 22: a window name is trimmed and must be 1 to 64 characters with no control
 /// characters, enforced identically on `create` and `rename` so a name refused at
 /// creation can never be reached through a rename either. The 65-character, `\x1b` and

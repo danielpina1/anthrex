@@ -157,6 +157,16 @@ impl WindowManager {
     /// Phase A. Nothing here can block.
     fn begin_restart(&self, id: u32) -> anyhow::Result<(bool, Restarting<'_>)> {
         let mut inner = crate::lock(&self.inner);
+        // Major 3 (fix wave 5 review): the same admission check `create`'s `admit`
+        // makes, and for the same reason — `shutdown` walks a snapshot of the ids it took
+        // at the instant it set this flag, and anything admitted afterward is invisible to
+        // it. `requests::restart` reaches the manager through `detach`, which
+        // `server/requests.rs`'s own doc comment says is deliberately never aborted, so a
+        // restart whose phase B kill wait is still running when `lifecycle::run` calls
+        // `manager.shutdown().await` (after `serve` returns) would otherwise complete
+        // afterward and spawn a PTY `shutdown` has already walked past — a child that
+        // outlives the daemon with nothing left holding its pid.
+        anyhow::ensure!(!inner.shutting_down, "daemon is shutting down");
         let entry = inner
             .entries
             .get_mut(&id)
