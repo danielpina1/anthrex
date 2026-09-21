@@ -998,9 +998,14 @@ mod persister_tests {
 
     /// A burst that never goes quiet on its own must still release the persister the
     /// instant it is cancelled — decision 9's collection window must never turn into an
-    /// unbounded wait for quiet. A naive debouncer whose collection loop has no
-    /// cancellation branch of its own (only the outer, pre-debounce `changed()` wait
-    /// does) would hang here until the burst task is aborted, which this test never does.
+    /// unbounded wait for quiet — and, separately, `state.json` must not go arbitrarily
+    /// stale while that burst keeps running: [`SAVE_MAX_DELAY`] (fix wave 4, item 2)
+    /// bounds how long a sustained stream of changes can hold the write back. Before that
+    /// bound existed, this test built exactly this never-quiet input and asserted only
+    /// the cancellation half — the right scenario, checking the wrong property. A naive
+    /// debouncer whose collection window restarts on every change (only the outer,
+    /// pre-debounce `changed()` wait had no restart problem) passes the cancellation
+    /// assertion below while starving `state.json` for as long as the burst continues.
     #[tokio::test(start_paused = true)]
     async fn cancellation_during_a_never_quiet_burst_is_not_delayed() {
         let m = test_manager();
@@ -1008,7 +1013,7 @@ mod persister_tests {
         let dir = tempfile::tempdir().unwrap();
         let path = state_path(&dir);
         let shutdown = CancellationToken::new();
-        let handle = spawn_persister(m.clone(), path, shutdown.clone());
+        let handle = spawn_persister(m.clone(), path.clone(), shutdown.clone());
 
         let burst_stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let burst_manager = m.clone();
@@ -1021,6 +1026,23 @@ mod persister_tests {
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }
         });
+
+        // The burst never goes quiet for longer than SAVE_DEBOUNCE, so only
+        // SAVE_MAX_DELAY can make a write land. Wait past that bound, with the burst
+        // still running, and confirm state.json moved on from the pre-burst "before" —
+        // to some "burst-*" name — despite the stream never settling.
+        tokio::time::sleep(SAVE_MAX_DELAY + SAVE_DEBOUNCE).await;
+        let read_path = path.clone();
+        let contents = tokio::task::spawn_blocking(move || std::fs::read_to_string(&read_path))
+            .await
+            .unwrap()
+            .unwrap_or_default();
+        assert!(
+            contents.contains("burst-"),
+            "state.json did not become current within SAVE_MAX_DELAY while the burst \
+             kept running (a debounce window that only ever restarts starves the write \
+             indefinitely): {contents:?}"
+        );
 
         // Run well past SAVE_DEBOUNCE while the burst keeps the debounce window
         // perpetually restarting, then cancel with the burst still going.

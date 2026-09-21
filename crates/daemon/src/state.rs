@@ -470,17 +470,41 @@ pub fn save(path: &Path, state: &StateFile) -> io::Result<()> {
 /// writes (decision 9).
 pub const SAVE_DEBOUNCE: Duration = Duration::from_millis(100);
 
+/// The upper bound on how stale `state.json` may get under a sustained change stream.
+///
+/// Decision 9's collection window restarts on every new change, and that alone has no
+/// upper bound: a change arriving faster than [`SAVE_DEBOUNCE`] apart, indefinitely — a
+/// busy daemon with several agents running publishes on `watch()` far more often than
+/// every 100 ms in the ordinary case, not an exotic one — would starve the write forever
+/// (fix wave 4, item 2). Once `SAVE_MAX_DELAY` has elapsed since the *first* unwritten
+/// change of a burst, [`spawn_persister`] writes unconditionally instead of waiting for
+/// quiet.
+///
+/// Ten times `SAVE_DEBOUNCE` (one second): long enough that an ordinary burst — a name
+/// typed character by character, twenty renames in a tight loop, decision 9's own
+/// examples — still coalesces into a single write the way decision 9 intends, short
+/// enough that the worst case this bounds (a SIGKILL, an OOM kill, or a crash landing
+/// mid-burst) loses at most one second of window state since the last write. A clean
+/// shutdown loses nothing regardless, because decision 11's final flush is the backstop;
+/// this bound is only about how far behind the *live* file can fall while the daemon
+/// keeps running.
+pub const SAVE_MAX_DELAY: Duration = Duration::from_millis(SAVE_DEBOUNCE.as_millis() as u64 * 10);
+
 /// Subscribes to `manager`'s window list and keeps `path` current (decision 9).
 ///
 /// Every publish on [`crate::manager::WindowManager::watch`] is one *debounced* write,
 /// not one write each: on a change this waits [`SAVE_DEBOUNCE`], restarting the wait on
 /// every further change, so a burst — a rename typed character by character, twenty
 /// renames in a tight loop — reaches disk as a single write of the *final* state rather
-/// than one write per edit. The wait is skipped entirely, and this task returns at once
-/// with no write of its own, the moment `shutdown` is cancelled: a debounce must never
-/// hold shutdown up, and [`crate::lifecycle::run`]'s own flush after this task has
-/// stopped is what guarantees the last change reaches disk (decision 11) — this loop's
-/// job is only to keep the file *reasonably* current while the daemon is up.
+/// than one write per edit. That restart has no ceiling of its own, so [`SAVE_MAX_DELAY`]
+/// (fix wave 4, item 2) bounds it: a change stream hotter than `SAVE_DEBOUNCE` apart,
+/// sustained, still forces a write once `SAVE_MAX_DELAY` has elapsed since the first
+/// unwritten change, so `state.json` cannot fall arbitrarily far behind a busy daemon.
+/// The wait is skipped entirely, and this task returns at once with no write of its own,
+/// the moment `shutdown` is cancelled: a debounce must never hold shutdown up, and
+/// [`crate::lifecycle::run`]'s own flush after this task has stopped is what guarantees
+/// the last change reaches disk (decision 11) — this loop's job is only to keep the file
+/// *reasonably* current while the daemon is up.
 ///
 /// The snapshot itself, [`crate::manager::WindowManager::state_snapshot`], is a clone
 /// taken under the manager lock with no I/O under it (decision 9); only the write that
@@ -509,14 +533,21 @@ pub fn spawn_persister(
                 }
             }
 
-            // Collect further changes for SAVE_DEBOUNCE, restarting the wait on each
-            // one. A fresh `sleep` future is constructed every time this inner loop
-            // runs, which is what makes the wait restart rather than merely continue a
-            // clock that started on the first change.
+            // Collect further changes for SAVE_DEBOUNCE, restarting that wait on each
+            // one — a fresh `sleep` future is constructed every time this inner loop
+            // runs, which is what makes it restart rather than merely continue a clock
+            // that started on the first change — but never later than SAVE_MAX_DELAY
+            // after the *first* change of this burst (fix wave 4, item 2): `max_delay`
+            // is a single `sleep` future, pinned once before the loop starts, so unlike
+            // the per-change window it does not restart and so puts a hard ceiling on
+            // how long a sustained stream of changes can hold the write back.
+            let max_delay = tokio::time::sleep(SAVE_MAX_DELAY);
+            tokio::pin!(max_delay);
             loop {
                 tokio::select! {
                     _ = shutdown.cancelled() => return,
                     () = tokio::time::sleep(SAVE_DEBOUNCE) => break,
+                    () = &mut max_delay => break,
                     changed = changes.changed() => {
                         if changed.is_err() {
                             return;
