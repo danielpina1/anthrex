@@ -11,9 +11,6 @@ use proto::{
 };
 use std::path::PathBuf;
 
-#[path = "tests/render.rs"]
-mod render_tests;
-
 fn window(id: u32, project: &str, name: &str, runtime: Runtime) -> WindowInfo {
     WindowInfo {
         id,
@@ -175,13 +172,15 @@ fn a_window_lists_its_runtime_model_and_timings() {
     let inspection = inspect_key(&app, &NodeKey::Window(1));
 
     assert_eq!(inspection.name, "1 api-worker");
+    // What it is doing first, where it is doing it after: a narrow panel drops
+    // from the end, and the session id is the longest value and the least read.
     assert_eq!(
         pairs(&inspection),
         vec![
-            ("runtime", "claude"),
-            ("model", "claude-opus-5"),
             ("status", "working · Edit"),
             ("for", "2m"),
+            ("model", "claude-opus-5"),
+            ("runtime", "claude"),
             ("dir", "/r/shop"),
             ("session", "0f3c"),
         ]
@@ -201,10 +200,10 @@ fn a_window_without_a_model_shows_a_dash() {
     assert_eq!(
         pairs(&inspection),
         vec![
-            ("runtime", "shell"),
-            ("model", "-"),
             ("status", "idle"),
             ("for", "1h"),
+            ("model", "-"),
+            ("runtime", "shell"),
             ("dir", "/r/shop"),
         ]
     );
@@ -301,16 +300,20 @@ fn a_subagent_lists_its_kind_task_and_state() {
         },
     );
 
-    assert_eq!(inspection.name, "Explore: map the routes");
+    // The title is the label alone, not `kind: label`: `kind` is a field of its
+    // own below, and saying it twice wastes the row the panel has least of.
+    assert_eq!(inspection.name, "map the routes");
+    // `spawned by` leads: it is the one thing the tree cannot tell you, and a
+    // narrow panel drops from the end.
     assert_eq!(
         pairs(&inspection),
         vec![
-            ("kind", "Explore"),
             ("task", "map the routes"),
-            ("model", "opus"),
+            ("spawned by", "1 api-worker"),
             ("state", "running · Read"),
             ("for", "1m"),
-            ("spawned by", "1 api-worker"),
+            ("model", "opus"),
+            ("kind", "Explore"),
             ("depth", "1"),
         ]
     );
@@ -383,8 +386,9 @@ fn spawned_by_names_the_parent_subagent() {
         pairs(&inspection)
             .into_iter()
             .find(|(label, _)| *label == "spawned by"),
-        Some(("spawned by", "Explore: map the routes")),
-        "a nested sub-agent names the sub-agent above it, which the tree cannot say"
+        Some(("spawned by", "map the routes")),
+        "a nested sub-agent names the sub-agent above it, which the tree cannot \
+         say — by its label alone, since `kind` is a field of its own"
     );
     assert_eq!(
         pairs(&inspection)
@@ -464,4 +468,43 @@ fn a_finished_subagent_shows_how_long_it_ran() {
         vec![("state", "done"), ("for", "45s")],
         "a finished sub-agent shows the run, not its age"
     );
+}
+
+#[test]
+fn a_project_with_only_some_windows_on_a_worktree_shows_neither() {
+    // One agent in a worktree beside a plain shell. Showing that worktree's
+    // branch would attribute it to the whole project — the same lie decision 8
+    // refuses to tell when there is more than one worktree.
+    let mut agent = window(1, "/r/shop", "api", Runtime::Claude);
+    agent.worktree = Some("/r/shop".into());
+    let shell = window(2, "/r/shop", "sh", Runtime::Shell);
+    let mut app = app(vec![agent, shell]);
+    app.git.insert("/r/shop".into(), clean_git());
+
+    assert_eq!(
+        pairs(&inspect_key(&app, &NodeKey::Project("/r/shop".into()))),
+        vec![
+            ("path", "/r/shop"),
+            ("status", "idle"),
+            ("agents", "cl 1 · sh 1"),
+        ],
+        "a mixed project is on no one worktree, so branch and changes are omitted"
+    );
+}
+
+#[test]
+fn a_subagent_without_a_label_is_named_for_its_kind() {
+    let mut info = window(1, "/r/shop", "api-worker", Runtime::Claude);
+    info.subagents = vec![subagent("a1", "Explore", None)];
+    let app = app(vec![info]);
+
+    let inspection = inspect_key(
+        &app,
+        &NodeKey::Subagent {
+            window_id: 1,
+            id: "a1".into(),
+        },
+    );
+
+    assert_eq!(inspection.name, "Explore");
 }

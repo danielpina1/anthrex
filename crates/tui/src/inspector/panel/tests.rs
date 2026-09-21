@@ -4,10 +4,10 @@
 //! shows up as a diff rather than as a property several wrong layouts satisfy.
 
 use super::*;
+use crate::inspector::INSPECTOR_HEIGHT;
 use crate::theme;
 use proto::Status;
 use ratatui::backend::TestBackend;
-use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::{Terminal, layout::Rect};
 
@@ -154,37 +154,76 @@ fn a_long_value_is_elided_with_an_ellipsis() {
     }
 }
 
-#[test]
-fn the_task_field_wraps_across_the_remaining_rows() {
-    let inspection = inspection(
-        "Explore",
+/// A sub-agent as the projection builds one: the title is the label, and the
+/// `task` field is that same label again.
+fn subagent(task: &str) -> Inspection {
+    inspection(
+        task,
         vec![
-            plain("kind", "Explore"),
             Field {
                 label: "task",
-                value: "map every route the api exposes and note the ones without tests".into(),
+                value: task.to_owned(),
                 wrap: true,
             },
-            plain("model", "opus"),
+            plain("spawned by", "1 api-worker"),
             plain("state", "running"),
             plain("for", "1m"),
-            plain("spawned by", "1 api-worker"),
+            plain("model", "opus"),
+            plain("kind", "Explore"),
             plain("depth", "1"),
         ],
-    );
+    )
+}
+
+#[test]
+fn the_task_field_wraps_across_the_remaining_rows() {
+    // The title had to cut this label short, so the field earns its rows: it
+    // leaves the column flow and takes the two the other fields did not, at the
+    // panel's full width. This is the whole point of the panel — the label a
+    // box could not show, read whole.
+    let inspection = subagent("map every route the api exposes and note the ones without tests");
 
     assert_eq!(
         panel(&inspection, 44, INSPECTOR_HEIGHT),
         vec![
             "╭──────────────────────────────────────────╮",
-            "│ ○ Explore                                │",
-            "│ kind        Explore       model  opus    │",
-            "│ state       running       for    1m      │",
-            "│ spawned by  1 api-worker  depth  1       │",
+            "│ ○ map every route the api exposes and n… │",
+            "│ spawned by  1 api-worker  state  running │",
+            "│ for         1m            model  opus    │",
+            "│ kind        Explore       depth  1       │",
             "│ task  map every route the api exposes    │",
             "│       and note the ones without tests    │",
             "╰──────────────────────────────────────────╯",
         ]
+    );
+}
+
+#[test]
+fn the_task_field_is_dropped_when_the_title_already_showed_it() {
+    // The same panel with a label the title can hold whole. Printing it again a
+    // row below would say the same words twice and cost the column flow the row
+    // held back for it, so the field goes and the row comes back: `depth` moves
+    // up into it.
+    let inspection = subagent("grep handlers");
+
+    assert_eq!(
+        panel(&inspection, 44, INSPECTOR_HEIGHT),
+        vec![
+            "╭──────────────────────────────────────────╮",
+            "│ ○ grep handlers                          │",
+            "│ spawned by  1 api-worker  state  running │",
+            "│ for         1m            model  opus    │",
+            "│ kind        Explore       depth  1       │",
+            "│                                          │",
+            "│                                          │",
+            "╰──────────────────────────────────────────╯",
+        ]
+    );
+    assert!(
+        !panel(&inspection, 44, INSPECTOR_HEIGHT)
+            .join("")
+            .contains("task"),
+        "the title said it; the field would only repeat it"
     );
 }
 
@@ -309,18 +348,22 @@ fn more_fields_than_fit_are_dropped_from_the_end() {
 #[test]
 fn no_panic_at_any_size() {
     // Milestone 4.6's guard, for the panel: every size from nothing upwards,
-    // with the field set most likely to break one — a wrapping field, a wide
-    // character and a value longer than any panel here.
+    // with the field set most likely to break one — a value longer than any
+    // panel here, and wide characters inside the *wrapping* field, which is
+    // the one the panel cuts a column at a time. With the wide characters in a
+    // plain field instead, this sweep walks straight past the width at which
+    // `cut` used to stop advancing.
+    let task = "日本語のタスク map every route the api exposes and note the ones without tests";
     let inspection = inspection(
-        "日本語プロジェクト",
+        task,
         vec![
-            plain("dir", "日本語プロジェクト"),
             Field {
                 label: "task",
-                value: "map every route the api exposes and note the ones without tests".into(),
+                value: task.into(),
                 wrap: true,
             },
             plain("spawned by", "1 api-worker"),
+            plain("dir", "日本語プロジェクト"),
         ],
     );
     let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
@@ -346,4 +389,95 @@ fn no_panic_at_any_size() {
             }
         }
     }
+}
+
+#[test]
+fn a_grapheme_wider_than_its_column_still_advances() {
+    // `cut` used to return nothing at all when the first grapheme was wider
+    // than the width it was given. `wrap_value`'s loop then re-tested an
+    // unchanged string and pushed empty lines until memory ran out.
+    //
+    // An eleven-column panel reaches it: `task` and its two-space gap leave the
+    // value a single column, and decision 6 collapses the inspector on height,
+    // never on width, so that panel renders.
+    assert_eq!(wrap_value("日本語のタスク", 1, 3), vec!["日", "本", "…"]);
+}
+
+#[test]
+fn a_long_value_is_elided_rather_than_closing_its_column() {
+    // A sub-agent whose parent's label is forty columns wide. Sizing a packing
+    // by its natural widths alone refuses two columns here — forty-two columns
+    // of interior cannot hold them — and falls back to one, which shows four of
+    // the six fields and drops `kind` and `depth` off the bottom.
+    //
+    // A column that cannot say everything elides instead (decision 5), so two
+    // columns are affordable and every field renders.
+    let inspection = inspection(
+        "grep the handlers",
+        vec![
+            plain("spawned by", "map every route the api exposes and no"),
+            plain("state", "running"),
+            plain("for", "40s"),
+            plain("model", "sonnet-4-5"),
+            plain("kind", "general-purpose"),
+            plain("depth", "2"),
+        ],
+    );
+
+    let rendered = panel(&inspection, 60, INSPECTOR_HEIGHT);
+    assert_eq!(
+        rendered,
+        vec![
+            "╭──────────────────────────────────────────────────────────╮",
+            "│ ○ grep the handlers                                      │",
+            "│ spawned by  map every route the api …  state  running    │",
+            "│ for         40s                        model  sonnet-4-5 │",
+            "│ kind        general-purpose            depth  2          │",
+            "│                                                          │",
+            "│                                                          │",
+            "╰──────────────────────────────────────────────────────────╯",
+        ]
+    );
+    let all = rendered.join("");
+    assert!(
+        all.contains("kind") && all.contains("depth"),
+        "the fields past the long value must survive it: {rendered:#?}"
+    );
+}
+
+#[test]
+fn columns_stop_at_the_number_that_shows_every_field() {
+    // Six short fields and five rows: two columns show them all, and a third
+    // would show nothing more while taking room from the two. On a panel wide
+    // enough for a column each, it must still open two — and elide nothing.
+    let inspection = inspection(
+        "worker",
+        vec![
+            plain("status", "working"),
+            plain("for", "15m"),
+            plain("model", "opus"),
+            plain("runtime", "claude"),
+            plain("dir", "/r/shop"),
+            plain("branch", "main"),
+        ],
+    );
+
+    let rendered = panel(&inspection, 76, INSPECTOR_HEIGHT);
+    assert_eq!(
+        rendered,
+        vec![
+            "╭──────────────────────────────────────────────────────────────────────────╮",
+            "│ ○ worker                                                                 │",
+            "│ status  working  for      15m                                            │",
+            "│ model   opus     runtime  claude                                         │",
+            "│ dir     /r/shop  branch   main                                           │",
+            "│                                                                          │",
+            "│                                                                          │",
+            "╰──────────────────────────────────────────────────────────────────────────╯",
+        ]
+    );
+    assert!(
+        !rendered.join("").contains('…'),
+        "nothing is elided when every field has its natural width: {rendered:#?}"
+    );
 }
