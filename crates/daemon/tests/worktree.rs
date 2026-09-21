@@ -465,6 +465,80 @@ fn a_timeout_during_create_cleans_up() {
     );
 }
 
+/// Fix wave C item 7. The whole-branch review's budget test drives a real `git worktree
+/// add` and the real cleanup that follows a failed one to their production deadlines
+/// (`OPERATION_TIMEOUT` 30 s, `CLEANUP_TIMEOUT` 10 s) to prove
+/// `client::WORKTREE_REQUEST_TIMEOUT`'s arithmetic describes something the daemon really
+/// does — at a real cost of ~45 s inside a suite this project's process runs constantly.
+/// The discriminator for a *regression* in that arithmetic is
+/// `client::tests::the_budget_clears_the_daemons_worst_case_on_both_git_paths`, which is
+/// free; this test only adds the evidence that the terms it sums are real.
+///
+/// [`worktree::create_with_cleanup_timeout`] makes `CLEANUP_TIMEOUT` an injected
+/// parameter exactly the way `project::detect_roots`/`detect_roots_with` already treat
+/// `DETECT_TIMEOUT` — `create`'s own `deadline` (`OPERATION_TIMEOUT`'s production use)
+/// was already one. That is enough to exercise the identical two stages the slow test
+/// does — `worktree add` killed at a deadline, then a cleanup that cannot finish inside
+/// its own — without waiting out either at production scale:
+///
+/// - The `add` step's deadline is 2 s, well inside `slow_post_checkout`'s 4 s hook, which
+///   only has to be *longer than the deadline*, not close to the 30 s it stands in for
+///   (`a_timeout_during_create_cleans_up` above already proved the child is killed the
+///   moment the deadline strikes, never waiting out the hook's own sleep).
+/// - The cleanup's deadline is a nanosecond — `run_git`'s own deadline check
+///   (`deadline <= now`) fails every command in [`worktree::discard_new`] before it can
+///   spawn git at all, so the cleanup genuinely cannot finish inside it, the same shape
+///   of failure a real `CLEANUP_TIMEOUT` miss produces, just not by waiting for one.
+///
+/// Both together cost about the 2 s the `add` step's deadline sets, not 44.
+#[test]
+fn create_and_its_cleanup_each_run_to_their_own_injected_deadline() {
+    let repo = TempRepo::new();
+    repo.slow_post_checkout(4);
+    let (_keep, wt_root) = worktrees_root();
+    let roots = daemon::project::detect_roots(&repo.root);
+
+    let started = Instant::now();
+    let error = worktree::create_with_cleanup_timeout(
+        git(),
+        &repo.root,
+        &roots,
+        "budget",
+        &wt_root,
+        Instant::now() + Duration::from_secs(2),
+        Duration::from_nanos(1),
+    )
+    .unwrap_err();
+    let elapsed = started.elapsed();
+
+    match &error {
+        WorktreeError::FailedAfterAdd(message) => {
+            assert!(message.contains("timed out after"), "{message}");
+            assert!(
+                message.contains("; cleanup failed: "),
+                "an effectively-zero cleanup_timeout must miss its own deadline, the \
+                 same shape of failure a real CLEANUP_TIMEOUT miss produces: {message}"
+            );
+            assert!(
+                !message.contains("the new worktree was removed"),
+                "{message}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(
+        elapsed < Duration::from_secs(4),
+        "both deadlines together must cost close to the 2 s the `add` step's deadline \
+         sets, nowhere near the 4 s hook, let alone the 30 s + 10 s these stand in for: \
+         {elapsed:?}"
+    );
+    assert!(
+        repo_worktrees_dir(&wt_root, &repo.root).exists(),
+        "the timeout must have happened inside `worktree add`, not before it, or the \
+         cleanup this test is measuring never had anything to do"
+    );
+}
+
 /// The same cleanup, reached without a timeout: a `post-checkout` hook that exits
 /// non-zero makes `git worktree add` fail once the worktree and branch already exist.
 #[test]

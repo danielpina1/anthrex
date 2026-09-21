@@ -25,7 +25,10 @@ mod dirty;
 mod ops;
 
 pub use dirty::{DirtyReason, dirty_reason};
-pub use ops::{Created, ManagedWorktree, create, discard_and_describe, discard_new, remove};
+pub use ops::{
+    Created, ManagedWorktree, create, create_with_cleanup_timeout, discard_and_describe,
+    discard_and_describe_with, discard_new, discard_new_with, remove,
+};
 
 use std::ffi::OsStr;
 use std::io;

@@ -24,7 +24,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::dirty::dirty_reason;
 use super::{
@@ -99,6 +99,40 @@ pub fn create(
     branch: &str,
     worktrees_root: &Path,
     deadline: Instant,
+) -> Result<Created, WorktreeError> {
+    create_with_cleanup_timeout(
+        git,
+        dir,
+        roots,
+        branch,
+        worktrees_root,
+        deadline,
+        CLEANUP_TIMEOUT,
+    )
+}
+
+/// As [`create`], with [`CLEANUP_TIMEOUT`] injectable for tests.
+///
+/// A failed or timed-out `git worktree add` runs [`discard_and_describe_with`] before
+/// returning, on its own fresh deadline computed from `cleanup_timeout` rather than from
+/// `deadline` above — the deadline that failed is by definition no longer usable (see
+/// [`discard_new`]'s doc comment). Fix wave C item 7: the two terms that dominate
+/// `WORKTREE_REQUEST_TIMEOUT`'s create-path derivation are this function's own
+/// `deadline` (`OPERATION_TIMEOUT`, 30 s in production) and this `cleanup_timeout`
+/// (`CLEANUP_TIMEOUT`, 10 s), and both were previously reachable only at their
+/// production durations — the reason the end-to-end test that drives a real `git
+/// worktree add` and a real cleanup to their deadlines took ~45 s. `deadline` was
+/// already an injected parameter; this gives `cleanup_timeout` the same treatment,
+/// mirroring `project::detect_roots`/`detect_roots_with`.
+#[doc(hidden)]
+pub fn create_with_cleanup_timeout(
+    git: &OsStr,
+    dir: &Path,
+    roots: &DetectedRoots,
+    branch: &str,
+    worktrees_root: &Path,
+    deadline: Instant,
+    cleanup_timeout: Duration,
 ) -> Result<Created, WorktreeError> {
     check_branch_syntax(branch)?;
 
@@ -197,13 +231,19 @@ pub fn create(
                 action: "worktree add".to_string(),
                 stderr: output.stderr_tail(),
             };
-            return Err(WorktreeError::FailedAfterAdd(discard_and_describe(
-                git, &created, original,
+            return Err(WorktreeError::FailedAfterAdd(discard_and_describe_with(
+                git,
+                &created,
+                original,
+                cleanup_timeout,
             )));
         }
         Err(error) => {
-            return Err(WorktreeError::FailedAfterAdd(discard_and_describe(
-                git, &created, error,
+            return Err(WorktreeError::FailedAfterAdd(discard_and_describe_with(
+                git,
+                &created,
+                error,
+                cleanup_timeout,
             )));
         }
     }
@@ -293,7 +333,17 @@ pub fn remove(
 /// and that is the module-level rule above: only a path `create` established did not
 /// exist, removed only through git, which refuses anything that is not a working tree.
 pub fn discard_new(git: &OsStr, created: &Created) -> Result<(), WorktreeError> {
-    let deadline = Instant::now() + CLEANUP_TIMEOUT;
+    discard_new_with(git, created, CLEANUP_TIMEOUT)
+}
+
+/// As [`discard_new`], with [`CLEANUP_TIMEOUT`] injectable for tests (fix wave C item 7).
+#[doc(hidden)]
+pub fn discard_new_with(
+    git: &OsStr,
+    created: &Created,
+    cleanup_timeout: Duration,
+) -> Result<(), WorktreeError> {
+    let deadline = Instant::now() + cleanup_timeout;
     let wt = &created.worktree;
 
     // Read once, before the removal that will make it false, and reuse: it is both "is
@@ -392,7 +442,19 @@ pub fn discard_and_describe(
     created: &Created,
     error: impl std::fmt::Display,
 ) -> String {
-    match discard_new(git, created) {
+    discard_and_describe_with(git, created, error, CLEANUP_TIMEOUT)
+}
+
+/// As [`discard_and_describe`], with [`CLEANUP_TIMEOUT`] injectable for tests (fix wave C
+/// item 7).
+#[doc(hidden)]
+pub fn discard_and_describe_with(
+    git: &OsStr,
+    created: &Created,
+    error: impl std::fmt::Display,
+    cleanup_timeout: Duration,
+) -> String {
+    match discard_new_with(git, created, cleanup_timeout) {
         Ok(()) => format!("{error}; the new worktree was removed"),
         Err(cleanup) => {
             tracing::warn!(

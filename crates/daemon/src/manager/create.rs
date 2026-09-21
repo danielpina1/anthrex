@@ -32,7 +32,7 @@ use crate::window::{Window, WindowEvent};
 use crate::worktree::{self, Created};
 use proto::{Status, WindowInfo, WindowSpec};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 /// What phase A settled and phase B needs: the id it spent, the name it reserved, and the
@@ -348,13 +348,14 @@ fn spawn_window(
     }
 
     let created = match spec.worktree_branch.as_deref() {
-        Some(branch) => Some(worktree::create(
+        Some(branch) => Some(worktree::create_with_cleanup_timeout(
             git(),
             &spec.cwd,
             roots,
             branch,
             &config.worktrees_root,
-            Instant::now() + worktree::OPERATION_TIMEOUT,
+            Instant::now() + config.operation_timeout,
+            config.cleanup_timeout,
         )?),
         None => None,
     };
@@ -385,7 +386,7 @@ fn spawn_window(
         Ok(window) => window,
         Err(error) => {
             return Err(match &created {
-                Some(created) => discard(created, error),
+                Some(created) => discard(created, error, config.cleanup_timeout),
                 None => error,
             });
         }
@@ -401,12 +402,16 @@ fn spawn_window(
 /// Design decision 16: a phase B that failed after the worktree was already made undoes
 /// it, and says which of the two things happened.
 ///
-/// Both suffixes are written by `worktree::discard_and_describe`, which is also what
-/// `worktree::create` uses for a `git worktree add` that fails or times out, so the two
-/// paths into decision 16 cannot word the same outcome differently. See that function
-/// for why the distinction matters to the user.
-fn discard(created: &Created, error: anyhow::Error) -> anyhow::Error {
-    anyhow::anyhow!("{}", worktree::discard_and_describe(git(), created, error))
+/// Both suffixes are written by `worktree::discard_and_describe_with`, which is also what
+/// `create_with_cleanup_timeout` uses for a `git worktree add` that fails or times out, so
+/// the two paths into decision 16 cannot word the same outcome differently, and both take
+/// the same injected `cleanup_timeout` (fix wave C item 7). See that function for why the
+/// distinction matters to the user.
+fn discard(created: &Created, error: anyhow::Error, cleanup_timeout: Duration) -> anyhow::Error {
+    anyhow::anyhow!(
+        "{}",
+        worktree::discard_and_describe_with(git(), created, error, cleanup_timeout)
+    )
 }
 
 #[cfg(test)]
@@ -434,7 +439,12 @@ mod tests {
             created_branch: true,
         };
 
-        let message = discard(&created, anyhow::anyhow!("spawn failed")).to_string();
+        let message = discard(
+            &created,
+            anyhow::anyhow!("spawn failed"),
+            worktree::CLEANUP_TIMEOUT,
+        )
+        .to_string();
 
         assert!(
             message.starts_with("spawn failed; cleanup failed: "),

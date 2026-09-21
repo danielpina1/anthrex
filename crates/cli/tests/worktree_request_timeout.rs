@@ -15,7 +15,10 @@
 //! The third test is the other half: not "is the longer timeout used here?" but "is the
 //! longer timeout long enough?". It drives the create path to the top of the budget
 //! `client::WORKTREE_REQUEST_TIMEOUT` is derived against and asserts the CLI comes back
-//! with the *daemon's* answer rather than its own "timed out waiting for the daemon".
+//! with the *daemon's* answer rather than its own "timed out waiting for the daemon". It
+//! is `#[ignore]`d (fix wave C item 7): at production timeouts this costs ~45 s, and its
+//! own doc comment says what still-always-run tests cover the same ground for a fraction
+//! of that.
 //!
 //! `crates/cli` has no `[lib]` target, so an integration test here cannot `use
 //! client::WORKTREE_REQUEST_TIMEOUT` to compute the delay; the values below are
@@ -321,7 +324,25 @@ const SLOW_CREATE_DELAYS: &[(&str, &str, u64)] = &[
 /// whether a checkout was left on disk (design decision 16's two suffixes: `; the new
 /// worktree was removed` means retry, `; cleanup failed: …` means go and delete it by
 /// hand). A client-side timeout replaces that with nothing at all.
+///
+/// `#[ignore]`d: fix wave C item 7. This drives a real `git worktree add` and the real
+/// cleanup after it to their *production* deadlines (`OPERATION_TIMEOUT` 30 s,
+/// `CLEANUP_TIMEOUT` 10 s) over a real CLI-to-daemon socket, costing ~45 s of a suite
+/// this project's process (`AGENTS.md`: subagent-driven TDD) runs on every edit. The
+/// discriminator for a *regression* in `WORKTREE_REQUEST_TIMEOUT`'s arithmetic is
+/// `client::tests::the_budget_clears_the_daemons_worst_case_on_both_git_paths`, free and
+/// always run; `anthrex-daemon`'s own
+/// `create_and_its_cleanup_each_run_to_their_own_injected_deadline`
+/// (`crates/daemon/tests/worktree.rs`) is the always-run, ~2 s sibling that exercises the
+/// identical two stages — `worktree add` killed at a deadline, then a cleanup that
+/// cannot finish inside its own — through the same production code
+/// (`worktree::create_with_cleanup_timeout`), with both deadlines injected instead of
+/// waited out. What only *this* test still proves, and the reason it is kept rather than
+/// deleted, is that a real CLI process talking to a real daemon process over a real
+/// socket does not give up first at the full 57 s scale; that is worth an occasional CI
+/// run (`cargo test -- --ignored`) but not every `cargo test`.
 #[test]
+#[ignore]
 fn new_worktree_waits_out_the_daemons_whole_create_budget() {
     let repo = init_repo();
     let bin = repo.path().join("slow-git-bin");

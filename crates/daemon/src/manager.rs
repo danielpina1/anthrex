@@ -10,7 +10,7 @@ use crate::hooks;
 use crate::launch;
 use crate::status::{self, StatusContext, StatusEvent};
 use crate::window::{Attachment, Window, WindowEvent};
-use crate::worktree::ManagedWorktree;
+use crate::worktree::{self, ManagedWorktree};
 use proto::{ExitInfo, HookSource, Status, WindowInfo, WindowSpec};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -31,6 +31,17 @@ pub struct ManagerConfig {
     /// built without a data directory — every test that does not exercise worktrees —
     /// still has somewhere harmless to point; `lifecycle::run` overrides it.
     pub worktrees_root: PathBuf,
+    /// `worktree::OPERATION_TIMEOUT`, injected here rather than read from the constant
+    /// directly, exactly like `worktrees_root` above: production always gets the real
+    /// value (`new`, `from_vars`), and a test that wants to drive `spawn_window`'s create
+    /// path to its deadline without waiting out the real 30 s sets this field instead
+    /// (fix wave C item 7 — the cheap version of
+    /// `new_worktree_waits_out_the_daemons_whole_create_budget`).
+    pub operation_timeout: Duration,
+    /// `worktree::CLEANUP_TIMEOUT`, `operation_timeout`'s companion: the other term the
+    /// create path's worst-case budget is built from, for the `git worktree add` failure
+    /// or timeout that follows.
+    pub cleanup_timeout: Duration,
 }
 
 impl ManagerConfig {
@@ -43,6 +54,8 @@ impl ManagerConfig {
             codex_bin: "codex".to_string(),
             codex_hook_source: None,
             worktrees_root: std::env::temp_dir().join("anthrex-worktrees"),
+            operation_timeout: worktree::OPERATION_TIMEOUT,
+            cleanup_timeout: worktree::CLEANUP_TIMEOUT,
         }
     }
 
@@ -61,6 +74,8 @@ impl ManagerConfig {
             codex_bin: nonempty("ANTHREX_CODEX_BIN").unwrap_or_else(|| "codex".to_string()),
             codex_hook_source: None,
             worktrees_root: std::env::temp_dir().join("anthrex-worktrees"),
+            operation_timeout: worktree::OPERATION_TIMEOUT,
+            cleanup_timeout: worktree::CLEANUP_TIMEOUT,
         }
     }
 
