@@ -1,10 +1,5 @@
 //! The anthrex daemon: owns PTY windows and serves them over a Unix socket.
 
-/// Refusal message for `--worktree` / `WindowSpec::worktree_branch`, shared by the daemon
-/// and the CLI so both say the same thing.
-pub const WORKTREE_UNSUPPORTED: &str =
-    "--worktree is not implemented yet; it arrives with the worktree milestone";
-
 /// Locks a mutex, taking the data back even when a previous holder panicked.
 ///
 /// Spec section 7: one window must never take the daemon down. A panic anywhere under

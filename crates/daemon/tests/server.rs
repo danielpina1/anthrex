@@ -280,15 +280,12 @@ async fn assert_completion(d: &TestDaemon, client: &mut Client, id: u32, expecte
 #[tokio::test]
 async fn hook_events_are_acknowledged() {
     let d = start_daemon().await;
-    let manager = d.manager.clone();
-    let id = tokio::task::spawn_blocking(move || {
-        manager
-            .create(shell_spec("hook-shell"), std::env::temp_dir(), None, 80, 24)
-            .unwrap()
-            .id
-    })
-    .await
-    .unwrap();
+    let id = d
+        .manager
+        .create(shell_spec("hook-shell"), std::env::temp_dir(), None, 80, 24)
+        .await
+        .unwrap()
+        .id;
     let (mut c, _) = Client::connect(&d, PROTO_VERSION).await;
     assert_eq!(
         c.hook(id, "Stop").await,

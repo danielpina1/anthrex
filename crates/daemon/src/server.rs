@@ -249,22 +249,22 @@ async fn handle_client(
                 let git_registry = git_registry.clone();
                 tokio::spawn(async move {
                     let roots = crate::project::resolve_roots(spec.cwd.clone()).await;
-                    // PTY creation can block too; keep it off the runtime worker.
-                    let result = tokio::task::spawn_blocking(move || {
-                        manager.create(spec, roots.project, roots.worktree, cols, rows)
-                    })
-                    .await;
+                    // `create` does its own `spawn_blocking` for every step that can
+                    // stall, so wrapping it in a second one would only put its lock-held
+                    // phases back on a blocking thread for nothing.
+                    let result = manager
+                        .create(spec, roots.project, roots.worktree, cols, rows)
+                        .await;
                     // `create` has already returned and its lock has already been
                     // released by the time this runs; `register` is never called from
-                    // inside the closure above or while `spawn_blocking` is in flight.
+                    // inside `create`'s blocking phase or while it is in flight.
                     let reply = match result {
-                        Ok(Ok(info)) => {
+                        Ok(info) => {
                             if let Some(root) = info.worktree.clone() {
                                 git_registry.register(root);
                             }
                             DaemonMsg::Created { window_id: info.id }
                         }
-                        Ok(Err(e)) => error("create", e.to_string()),
                         Err(e) => error("create", e.to_string()),
                     };
                     let _ = out_tx.send(reply).await;

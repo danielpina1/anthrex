@@ -41,7 +41,7 @@ enum Command {
         runtime: RuntimeArg,
         #[arg(long)]
         name: Option<String>,
-        /// Create a git worktree on this branch (rejected for now; arrives with the worktree milestone)
+        /// Create a git worktree on this branch and run the agent in it
         #[arg(long)]
         worktree: Option<String>,
         #[arg(long)]
@@ -150,11 +150,6 @@ async fn run_cli() -> anyhow::Result<()> {
             model,
             prompt,
         }) => {
-            if worktree.is_some() {
-                // Silently ignoring it would show the branch in the title bar with no
-                // worktree behind it, so the user would think the agent was isolated.
-                anyhow::bail!(daemon::WORKTREE_UNSUPPORTED);
-            }
             let dir = resolve_dir(cli.dir)?;
             spawn::ensure_daemon(&socket).await?;
             let mut c = client::CliClient::connect(&socket).await?;

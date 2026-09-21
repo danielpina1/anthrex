@@ -239,6 +239,15 @@ impl TempRepo {
         self.post_checkout_hook(&format!("sleep {secs}"));
     }
 
+    /// The file every hook installed here touches before it does anything else.
+    ///
+    /// It is what lets a test wait for git to be *inside* `worktree add` rather than
+    /// sleeping and hoping: a fixed sleep would pass whether or not the create had got
+    /// that far, which is exactly the synchronisation AGENTS.md rule 6 forbids.
+    pub fn hook_marker(&self) -> PathBuf {
+        self.root.join(".hook-started")
+    }
+
     /// Installs a `post-checkout` hook that exits non-zero, which makes `git worktree
     /// add` itself exit non-zero *after* it has created the branch and checked the tree
     /// out (verified against git 2.50.1: exit 3, worktree and branch both present). That
@@ -251,7 +260,16 @@ impl TempRepo {
         use std::os::unix::fs::PermissionsExt;
         let hook = self.root.join(".git/hooks/post-checkout");
         std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
-        std::fs::write(&hook, format!("#!/bin/sh\n{body}\n")).unwrap();
+        // The marker is written with an absolute path because the hook runs with the new
+        // worktree as its working directory, not the main checkout.
+        std::fs::write(
+            &hook,
+            format!(
+                "#!/bin/sh\n: > '{}'\n{body}\n",
+                self.hook_marker().display()
+            ),
+        )
+        .unwrap();
         std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 }
@@ -272,15 +290,11 @@ pub fn head_branch(path: &std::path::Path) -> String {
 }
 
 pub async fn claude_window(d: &TestDaemon, name: &str) -> u32 {
-    let manager = d.manager.clone();
     let mut spec = shell_spec(name);
     spec.runtime = Runtime::Claude;
-    tokio::task::spawn_blocking(move || {
-        manager
-            .create(spec, std::env::temp_dir(), None, 80, 24)
-            .unwrap()
-            .id
-    })
-    .await
-    .unwrap()
+    d.manager
+        .create(spec, std::env::temp_dir(), None, 80, 24)
+        .await
+        .unwrap()
+        .id
 }

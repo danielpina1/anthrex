@@ -15,7 +15,7 @@ struct Agent {
 }
 
 impl Agent {
-    fn new(output: bool) -> Self {
+    async fn new(output: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let stub = dir.path().join("stub.sh");
         let body = if output {
@@ -43,6 +43,7 @@ impl Agent {
                 80,
                 24,
             )
+            .await
             .unwrap()
             .id;
         Self {
@@ -89,9 +90,9 @@ impl Drop for Agent {
     }
 }
 
-#[test]
-fn claude_hooks_drive_status_tool_and_session() {
-    let a = Agent::new(false);
+#[tokio::test]
+async fn claude_hooks_drive_status_tool_and_session() {
+    let a = Agent::new(false).await;
     a.hook(json!({"hook_event_name":"SessionStart", "session_id":"s1"}));
     assert_eq!(a.info().status, Status::Idle);
     assert_eq!(a.info().session_id.as_deref(), Some("s1"));
@@ -115,9 +116,9 @@ fn claude_hooks_drive_status_tool_and_session() {
     assert_eq!(a.info().tool, None);
 }
 
-#[test]
-fn session_id_fills_once_then_latest_session_start_replaces_it() {
-    let a = Agent::new(false);
+#[tokio::test]
+async fn session_id_fills_once_then_latest_session_start_replaces_it() {
+    let a = Agent::new(false).await;
     a.hook(json!({"hook_event_name":"UserPromptSubmit", "session_id":"early"}));
     assert_eq!(a.info().session_id.as_deref(), Some("early"));
     a.hook(json!({"hook_event_name":"PreToolUse", "session_id":"ignored"}));
@@ -131,9 +132,9 @@ fn session_id_fills_once_then_latest_session_start_replaces_it() {
     );
 }
 
-#[test]
-fn stop_on_a_viewed_window_is_idle() {
-    let a = Agent::new(false);
+#[tokio::test]
+async fn stop_on_a_viewed_window_is_idle() {
+    let a = Agent::new(false).await;
     a.manager.focus(a.id);
     a.manager.focus(a.id);
     a.manager.unfocus(a.id);
@@ -146,9 +147,9 @@ fn stop_on_a_viewed_window_is_idle() {
     assert_eq!(a.info().status, Status::Done);
 }
 
-#[test]
-fn sub_agent_tool_events_do_not_touch_the_window_tool() {
-    let a = Agent::new(false);
+#[tokio::test]
+async fn sub_agent_tool_events_do_not_touch_the_window_tool() {
+    let a = Agent::new(false).await;
     a.hook(json!({"hook_event_name":"PreToolUse", "agent_id":"child", "tool_name":"Read"}));
     assert_eq!(a.info().tool, None);
     assert_eq!(a.info().status, Status::Working);
@@ -159,7 +160,7 @@ fn sub_agent_tool_events_do_not_touch_the_window_tool() {
 
 #[tokio::test]
 async fn the_first_hook_disables_the_output_fallback() {
-    let mut a = Agent::new(true);
+    let mut a = Agent::new(true).await;
     a.output().await;
     assert_eq!(a.info().status, Status::Working);
     a.hook(json!({"hook_event_name":"SessionStart"}));
@@ -171,9 +172,9 @@ async fn the_first_hook_disables_the_output_fallback() {
     }
 }
 
-#[test]
-fn unknown_window_is_an_error() {
-    let a = Agent::new(false);
+#[tokio::test]
+async fn unknown_window_is_an_error() {
+    let a = Agent::new(false).await;
     let error = a
         .manager
         .handle_hook(99, HookSource::Claude, &json!({}))
@@ -181,9 +182,9 @@ fn unknown_window_is_an_error() {
     assert_eq!(error.to_string(), "no window with id 99");
 }
 
-#[test]
-fn wrong_source_is_ignored() {
-    let a = Agent::new(false);
+#[tokio::test]
+async fn wrong_source_is_ignored() {
+    let a = Agent::new(false).await;
     let before = a.info();
     a.manager
         .handle_hook(
@@ -197,9 +198,9 @@ fn wrong_source_is_ignored() {
     assert_eq!(a.info().status, Status::Working);
 }
 
-#[test]
-fn unparseable_payload_is_ignored() {
-    let a = Agent::new(false);
+#[tokio::test]
+async fn unparseable_payload_is_ignored() {
+    let a = Agent::new(false).await;
     let before = a.info();
     a.hook(json!("invalid"));
     a.hook(json!({"hook_event_name":"future", "text":"é".repeat(2000)}));
@@ -208,9 +209,9 @@ fn unparseable_payload_is_ignored() {
     assert_eq!(a.info().status, Status::Working);
 }
 
-#[test]
-fn bell_after_hooks_does_not_raise_attention() {
-    let a = Agent::new(false);
+#[tokio::test]
+async fn bell_after_hooks_does_not_raise_attention() {
+    let a = Agent::new(false).await;
     a.hook(json!({"hook_event_name":"SessionStart"}));
     a.manager.handle_event(a.id, WindowEvent::Bell);
     assert_eq!(a.info().status, Status::Idle);
