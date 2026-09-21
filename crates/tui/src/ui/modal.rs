@@ -12,6 +12,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("C-b c", "new shell window"),
     ("C-b t", "tree mode (j/k, h/l, Enter, Space, /)"),
     ("C-b T", "tree overview (j/k, h/l, wheel, drag)"),
+    ("i", "in the overview: show / hide the inspector"),
     ("C-b < / >", "sidebar width"),
     ("C-b x", "kill agent"),
     ("C-b X", "remove agent"),

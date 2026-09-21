@@ -140,7 +140,10 @@ fn only_a_real_change_in_the_window_list_reveals() {
 fn dragging_pans_both_axes() {
     let (mut app, layout) = opened();
     let canvas = overview::view(&app, layout.main).canvas;
-    let (x, y) = (canvas.x + 20, canvas.y + 20);
+    // Well inside the canvas, which the inspector panel took rows from
+    // (milestone 4.7): a press outside it is not a drag anchor at all, and the
+    // drag below would then be measuring nothing.
+    let (x, y) = (canvas.x + 20, canvas.y + 10);
     assert!(app.on_click(x, y, &layout).is_empty());
     // Dragging up and to the left pulls the canvas with the cursor, so the
     // viewport moves down and to the right.
@@ -190,7 +193,7 @@ fn overview_clicks_ignore_modals_borders_and_the_sidebar_stays_live() {
     // pan to `Pan { x: 8, y: 5 }` when nothing blocks the drag).
     let (mut app, layout) = opened();
     let canvas = overview::view(&app, layout.main).canvas;
-    let (x, y) = (canvas.x + 20, canvas.y + 20);
+    let (x, y) = (canvas.x + 20, canvas.y + 10);
     // Press inside the canvas first, while there is no modal, so `drag_from`
     // holds a real anchor. With a fresh app `drag_from` is `None` regardless,
     // and `on_drag`'s anchor check alone would return empty whether or not

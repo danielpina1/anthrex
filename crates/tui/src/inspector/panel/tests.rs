@@ -228,6 +228,39 @@ fn the_task_field_is_dropped_when_the_title_already_showed_it() {
 }
 
 #[test]
+fn the_dropped_task_field_hands_its_reserved_row_back() {
+    // The row held back for the wrapping field is only worth reserving while
+    // the field will use it. At the width the pair above uses, seven fields in
+    // two columns fit in four of the five rows either way, so keeping the row
+    // reserved costs nothing visible there.
+    //
+    // At 24 columns they pack into one, and five rows show five fields where
+    // four rows would show four: `kind` is on the panel exactly because the
+    // dropped field gave its row back. Reserving a row for a field that is not
+    // drawn loses `kind` off the bottom.
+    let inspection = subagent("grep handlers");
+    let flow_fields = inspection.fields.iter().filter(|f| !f.wrap).count();
+    assert!(
+        flow_fields > usize::from(INSPECTOR_HEIGHT - 3),
+        "{flow_fields} flow fields must outnumber the five rows one column has"
+    );
+
+    assert_eq!(
+        panel(&inspection, 24, INSPECTOR_HEIGHT),
+        vec![
+            "╭──────────────────────╮",
+            "│ ○ grep handlers      │",
+            "│ spawned by  1 api-w… │",
+            "│ state       running  │",
+            "│ for         1m       │",
+            "│ model       opus     │",
+            "│ kind        Explore  │",
+            "╰──────────────────────╯",
+        ]
+    );
+}
+
+#[test]
 fn the_title_is_the_glyph_then_the_name_in_bold() {
     let inspection = inspection("shop", vec![plain("path", "/r/shop")]);
     let buffer = draw(&inspection, 24, INSPECTOR_HEIGHT);

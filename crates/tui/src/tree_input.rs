@@ -25,7 +25,7 @@ impl App {
     /// The renderer calls this with the overview's own area after every draw,
     /// the way `set_tree_viewports` reports the list heights.
     pub fn set_graph_viewport(&mut self, main: Rect) {
-        let (canvas, _) = crate::ui::overview::areas(main);
+        let (canvas, _) = crate::ui::overview::areas(main, self.inspector_visible);
         if self.graph_area != canvas {
             self.graph_area = canvas;
             self.reveal_graph_selection();
@@ -175,6 +175,14 @@ impl App {
                 if let Some(selected) = self.tree.selected.clone() {
                     self.toggle_tree_node(&selected);
                 }
+            }
+            // Only in the overview, which is the one place the panel is drawn,
+            // and the choice is kept for the session (decision 7). The canvas
+            // changes height under it, and `set_graph_viewport` settles that
+            // before the next frame, so the selection is revealed into the rows
+            // the toggle gave back.
+            KeyCode::Char('i') if self.overview => {
+                self.inspector_visible = !self.inspector_visible;
             }
             KeyCode::Char('/') => self.tree_input = Some(TreeInput::Filter),
             KeyCode::Esc => self.exit_tree(),

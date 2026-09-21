@@ -4,11 +4,13 @@
 //!
 //! The rows themselves carry only a status glyph and a name, so everything the
 //! old aligned columns showed — the model, the state, the elapsed time — lives
-//! in the footer now, for one node at a time and never truncated (decision
-//! 18).
+//! below the canvas: in the inspector panel (milestone 4.7), or in milestone
+//! 4.6's single line when the panel is toggled off or the terminal is too
+//! short for it.
 
 use super::tree_view;
 use crate::graph::{self, Pan, paint::paint, viewport::GraphGeometry};
+use crate::inspector::{self, INSPECTOR_HEIGHT, MIN_INTERIOR_FOR_PANEL};
 use crate::tree::{self, Row, RowKind};
 use crate::{app::App, theme};
 use ratatui::{
@@ -19,11 +21,19 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Paragraph},
 };
 
-/// Splits the overview's interior into the graph canvas and the one-row
-/// footer below it (decision 18).
-pub fn areas(main: Rect) -> (Rect, Rect) {
+/// Splits the overview's interior into the graph canvas and the rect below it:
+/// the inspector panel when `inspector_visible` and the interior has the rows
+/// for one, and milestone 4.6's single line otherwise (decisions 1 and 6).
+///
+/// A short terminal loses the panel, never the canvas: the panel is only ever
+/// carved out of an interior that keeps six rows of canvas under it.
+pub fn areas(main: Rect, inspector_visible: bool) -> (Rect, Rect) {
     let inner = super::inset(main);
-    let footer_height = inner.height.min(1);
+    let footer_height = if inspector_visible && inner.height >= MIN_INTERIOR_FOR_PANEL {
+        INSPECTOR_HEIGHT
+    } else {
+        inner.height.min(1)
+    };
     let canvas = Rect {
         height: inner.height - footer_height,
         ..inner
@@ -43,6 +53,7 @@ pub fn areas(main: Rect) -> (Rect, Rect) {
 /// hit-tested against exactly the geometry the frame under it was drawn with.
 pub struct View {
     pub canvas: Rect,
+    /// The rect below the canvas: the inspector panel, or the single line.
     pub footer: Rect,
     pub layout: graph::Layout,
     pub pan: Pan,
@@ -55,6 +66,13 @@ impl View {
             pan: self.pan,
         }
     }
+
+    /// Whether the rect below the canvas is the panel. It is the panel exactly
+    /// when `areas` gave it the panel's height, so what is drawn there can
+    /// never disagree with the height it was drawn into.
+    fn shows_panel(&self) -> bool {
+        self.footer.height >= INSPECTOR_HEIGHT
+    }
 }
 
 pub fn view(app: &App, main: Rect) -> View {
@@ -64,7 +82,7 @@ pub fn view(app: &App, main: Rect) -> View {
 /// `view` for a caller that has the visible rows in hand already, so one frame
 /// or one gesture builds that list once instead of once per reader.
 pub fn view_of(app: &App, main: Rect, rows: &[Row<'_>]) -> View {
-    let (canvas, footer) = areas(main);
+    let (canvas, footer) = areas(main, app.inspector_visible);
     let layout = graph::layout(rows);
     // The stored pan can outlive the canvas it was clamped against — a
     // narrowed terminal, or rows that vanished — so it is clamped on the way
@@ -97,23 +115,36 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let view = view_of(app, area, &rows);
     let lines = paint(&view.layout, view.canvas, view.pan, &rows, app);
     frame.render_widget(Paragraph::new(lines), view.canvas);
-    frame.render_widget(Paragraph::new(footer_line(app, &rows)), view.footer);
+
+    // What stands below the canvas is whatever `areas` made room for: the
+    // panel when it gave the rect the panel's height, and the single line
+    // otherwise (decisions 1, 6 and 7).
+    match (view.shows_panel(), selected_row(app, &rows)) {
+        (true, Some(row)) => inspector::render(frame, &inspector::inspect(row, app), view.footer),
+        // A panel with nothing to inspect is left blank rather than drawn as an
+        // empty box: the panel is one node spelled out, and there is no node.
+        (true, None) => {}
+        (false, row) => {
+            let line = row.map(|row| footer_line(row, app)).unwrap_or_default();
+            frame.render_widget(Paragraph::new(line), view.footer);
+        }
+    }
+}
+
+/// The row the overview's selection names, if it is still on screen.
+fn selected_row<'a, 'b>(app: &App, rows: &'a [Row<'b>]) -> Option<&'a Row<'b>> {
+    let key = app.tree.selected.as_ref()?;
+    rows.iter().find(|row| &row.key == key)
 }
 
 /// The selected node in full: its label untruncated, then its model, its state
 /// and how long it has been in it (decision 18).
 ///
-/// Only the footer's own width cuts anything here, which is why the box above
-/// can afford to elide: whatever a box hides, this line shows.
-fn footer_line(app: &App, rows: &[Row<'_>]) -> Line<'static> {
-    let Some(row) = app
-        .tree
-        .selected
-        .as_ref()
-        .and_then(|key| rows.iter().find(|row| &row.key == key))
-    else {
-        return Line::default();
-    };
+/// Only the line's own width cuts anything here, which is why the box above can
+/// afford to elide: whatever a box hides, this line shows. The panel replaces
+/// it (decision 1); it is what `i` turns back on and what a short terminal
+/// keeps (decisions 6 and 7).
+fn footer_line(row: &Row<'_>, app: &App) -> Line<'static> {
     let bold = Style::default().add_modifier(Modifier::BOLD);
     let (glyph, label, fields) = footer_parts(row, app);
     Line::from(vec![
