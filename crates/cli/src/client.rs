@@ -11,6 +11,19 @@ const CREATE_REPLY_ALLOWANCE: Duration = Duration::from_secs(2);
 pub const CREATE_WINDOW_REPLY_TIMEOUT: Duration =
     daemon::project::DETECT_TIMEOUT.saturating_add(CREATE_REPLY_ALLOWANCE);
 
+/// Room left over `worktree::OPERATION_TIMEOUT + KILL_GRACE` so the CLI's own deadline
+/// never fires before the daemon's (decision 38 of the M5 worktrees brief).
+const WORKTREE_TIMEOUT_MARGIN: Duration = Duration::from_secs(12);
+/// The reply budget for any request that can make the daemon run git: `new --worktree`
+/// and `rm --worktree`. It must exceed the daemon's own worst case for that operation —
+/// `worktree::OPERATION_TIMEOUT` (30 s) for the git command itself, plus
+/// `manager::KILL_GRACE` (3 s) that `remove_with_worktree` can spend waiting for the
+/// agent to exit before it ever touches git — or the CLI reports a timeout for a request
+/// the daemon is still about to finish successfully.
+pub const WORKTREE_REQUEST_TIMEOUT: Duration = daemon::worktree::OPERATION_TIMEOUT
+    .saturating_add(daemon::manager::KILL_GRACE)
+    .saturating_add(WORKTREE_TIMEOUT_MARGIN);
+
 pub struct CliClient {
     rd: OwnedReadHalf,
     wr: OwnedWriteHalf,
@@ -115,17 +128,24 @@ pub fn format_table(windows: &[WindowInfo]) -> String {
         .max()
         .unwrap_or(4)
         .max(4);
+    let branch_w = windows
+        .iter()
+        .map(|w| w.branch.as_deref().unwrap_or("-").len())
+        .max()
+        .unwrap_or(6)
+        .max(6);
     let mut out = format!(
-        "{:<4} {:<name_w$} {:<7} {:<10} DIR\n",
-        "ID", "NAME", "RUNTIME", "STATUS"
+        "{:<4} {:<name_w$} {:<7} {:<10} {:<branch_w$} DIR\n",
+        "ID", "NAME", "RUNTIME", "STATUS", "BRANCH"
     );
     for w in windows {
         out.push_str(&format!(
-            "{:<4} {:<name_w$} {:<7} {:<10} {}\n",
+            "{:<4} {:<name_w$} {:<7} {:<10} {:<branch_w$} {}\n",
             w.id,
             w.name,
             w.runtime.label(),
             w.status.label(),
+            w.branch.as_deref().unwrap_or("-"),
             w.cwd.display()
         ));
     }
@@ -253,17 +273,42 @@ mod tests {
     }
 
     #[test]
-    fn table_has_header_and_one_row_per_window() {
-        let out = format_table(&[win(1, "api"), win(2, "tests")]);
+    fn table_has_a_branch_column() {
+        let mut worktree_window = win(1, "api");
+        worktree_window.branch = Some("feat/x".into());
+        let out = format_table(&[worktree_window, win(2, "tests")]);
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines.len(), 3);
-        assert!(lines[0].starts_with("ID"));
+
+        let header = lines[0];
+        assert!(header.starts_with("ID"), "header: {header:?}");
+        let status_at = header.find("STATUS").expect("header: {header:?}");
+        let branch_at = header.find("BRANCH").unwrap_or_else(|| {
+            panic!("header is missing a BRANCH column, between STATUS and DIR: {header:?}")
+        });
+        let dir_at = header.rfind("DIR").expect("header: {header:?}");
+        assert!(
+            status_at < branch_at && branch_at < dir_at,
+            "BRANCH must sit between STATUS and DIR: {header:?}"
+        );
+
         assert!(
             lines[1].contains("api")
                 && lines[1].contains("idle")
-                && lines[1].contains("/home/me/repo")
+                && lines[1].contains("feat/x")
+                && lines[1].contains("/home/me/repo"),
+            "a worktree window shows its branch: {:?}",
+            lines[1]
         );
-        assert!(lines[2].contains("tests"));
+        let tests_branch_field = lines[2]
+            .split_whitespace()
+            .nth(4)
+            .unwrap_or_else(|| panic!("row is missing a branch field: {:?}", lines[2]));
+        assert_eq!(
+            tests_branch_field, "-",
+            "a window without a worktree shows '-' in the branch column: {:?}",
+            lines[2]
+        );
     }
 
     #[test]
@@ -272,6 +317,13 @@ mod tests {
         assert_eq!(
             CREATE_WINDOW_REPLY_TIMEOUT,
             daemon::project::DETECT_TIMEOUT + CREATE_REPLY_ALLOWANCE,
+        );
+        assert!(
+            WORKTREE_REQUEST_TIMEOUT > CREATE_WINDOW_REPLY_TIMEOUT
+                && WORKTREE_REQUEST_TIMEOUT > REQUEST_TIMEOUT,
+            "WORKTREE_REQUEST_TIMEOUT must be the longest of the three, since it is the \
+             only one that must outlast the daemon's own 30 s + KILL_GRACE worktree \
+             operation deadline",
         );
     }
 }
