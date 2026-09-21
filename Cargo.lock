@@ -71,6 +71,7 @@ dependencies = [
 name = "anthrex"
 version = "0.1.0"
 dependencies = [
+ "anthrex-config",
  "anthrex-daemon",
  "anthrex-proto",
  "anthrex-tui",
@@ -115,6 +116,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "unicode-segmentation",
  "vt100",
 ]
 

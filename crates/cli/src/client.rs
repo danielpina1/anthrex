@@ -70,6 +70,21 @@ const fn longer(a: Duration, b: Duration) -> Duration {
 pub const WORKTREE_REQUEST_TIMEOUT: Duration =
     longer(CREATE_WORST_CASE, REMOVAL_WORST_CASE).saturating_add(WORKTREE_TIMEOUT_MARGIN);
 
+/// What `restart` can cost the daemon (`manager::restart`, task M6.7/M6.8's brief for the
+/// exact derivation): phase A and D are lock-only and cost nothing measurable; phase B, for
+/// a live window, kills it and polls `child_alive` up to
+/// `daemon::manager::KILL_GRACE` (3 s) + 2 s of its own margin — 5 s, decision 18's own
+/// number; phase C spawns a fresh PTY with no git involved, the same cheap `Window::spawn`
+/// `create`'s phase B pays, never separately budgeted elsewhere in this file. 15 s is a
+/// literal from the milestone brief, not derived from `RESTART_WORST_CASE` (see this
+/// module's tests), but it must still clear it with real margin and never coincide with a
+/// constant the restart path itself is built from (`docs/timing-budgets.md`'s standing
+/// rule 1) — asserted below.
+pub const RESTART_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+#[cfg(test)]
+const RESTART_WORST_CASE: Duration =
+    daemon::manager::KILL_GRACE.saturating_add(Duration::from_secs(2));
+
 pub struct CliClient {
     rd: OwnedReadHalf,
     wr: OwnedWriteHalf,
@@ -447,5 +462,36 @@ mod tests {
             "{WORKTREE_REQUEST_TIMEOUT:?} vs {REMOVAL_WORST_CASE:?}",
         );
         assert_eq!(WORKTREE_REQUEST_TIMEOUT, Duration::from_secs(57));
+    }
+
+    /// M6.8: `restart`'s 15 s budget must exceed `RESTART_WORST_CASE` (the daemon's own
+    /// kill-wait deadline, decision 18) with real margin, and must not equal any
+    /// production constant the restart path is built from — `docs/timing-budgets.md`'s
+    /// standing rule 1, the defect shape that investigation found three times elsewhere
+    /// in this workspace.
+    #[test]
+    fn restart_timeout_clears_the_kill_wait_with_real_margin() {
+        assert_eq!(
+            RESTART_WORST_CASE,
+            Duration::from_secs(5),
+            "KILL_GRACE (3) + wait_for_exit's own 2s margin (decision 18)"
+        );
+        assert!(
+            RESTART_REQUEST_TIMEOUT > RESTART_WORST_CASE,
+            "{RESTART_REQUEST_TIMEOUT:?} vs {RESTART_WORST_CASE:?}",
+        );
+        assert_ne!(
+            RESTART_REQUEST_TIMEOUT,
+            daemon::manager::KILL_GRACE,
+            "must never coincide with the constant the restart path itself runs against"
+        );
+        assert_ne!(
+            RESTART_REQUEST_TIMEOUT, RESTART_WORST_CASE,
+            "must never coincide with the deadline it is supposed to exceed"
+        );
+        // 3x margin over the measured worst case, comfortably clearing both the process
+        // spawn `restart`'s own phase C pays (create's own phase B measures this as tens
+        // of milliseconds, never the seconds git can cost) and ordinary host contention.
+        assert_eq!(RESTART_REQUEST_TIMEOUT, Duration::from_secs(15));
     }
 }

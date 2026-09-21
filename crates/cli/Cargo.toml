@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 proto.workspace = true
+config.workspace = true
 daemon.workspace = true
 tui.workspace = true
 anyhow.workspace = true

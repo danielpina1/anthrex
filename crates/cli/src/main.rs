@@ -38,8 +38,9 @@ enum Command {
     },
     /// Create a window and print its id
     New {
-        #[arg(long, value_enum, default_value_t = RuntimeArg::Shell)]
-        runtime: RuntimeArg,
+        /// Defaults to the config's `default_runtime` (decision 7)
+        #[arg(long, value_enum)]
+        runtime: Option<RuntimeArg>,
         #[arg(long)]
         name: Option<String>,
         /// Create a git worktree on this branch and start the window in it
@@ -78,9 +79,13 @@ enum Command {
         #[arg(long, requires = "worktree")]
         force: bool,
     },
+    /// Rename a window
+    Rename { target: String, name: String },
+    /// Restart a window, resuming its session when known
+    Restart { target: String },
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum RuntimeArg {
     Claude,
     Codex,
@@ -167,6 +172,18 @@ async fn run_cli() -> anyhow::Result<()> {
             prompt,
         }) => {
             let dir = resolve_dir(cli.dir)?;
+            // Decision 7: `new` is the only one-shot command that reads the config, to
+            // fall back to `default_runtime` when `--runtime` was not given. Every
+            // problem it finds is printed to stderr, never stdout — stdout is reserved
+            // for the created window's id, which downstream scripts parse.
+            let (loaded_config, config_problems) = config::load(&proto::paths::config_path());
+            for problem in &config_problems {
+                eprintln!("anthrex: config: {}: {}", problem.key, problem.message);
+            }
+            let runtime: Runtime = match runtime {
+                Some(r) => r.into(),
+                None => loaded_config.default_runtime,
+            };
             spawn::ensure_daemon(&socket).await?;
             let mut c = client::CliClient::connect(&socket).await?;
             // A worktree create can make the daemon run git (decision 3's 30 s
@@ -179,7 +196,7 @@ async fn run_cli() -> anyhow::Result<()> {
             };
             let spec = WindowSpec {
                 name,
-                runtime: runtime.into(),
+                runtime,
                 cwd: dir,
                 worktree_branch: worktree,
                 model,
@@ -232,6 +249,28 @@ async fn run_cli() -> anyhow::Result<()> {
             let mut c = client::CliClient::connect(&socket).await?;
             let id = client::resolve_target(&c.windows, &target)?;
             expect_ack(c.request(ClientMsg::Kill { window_id: id }).await?)
+        }
+        Some(Command::Rename { target, name }) => {
+            let mut c = client::CliClient::connect(&socket).await?;
+            let id = client::resolve_target(&c.windows, &target)?;
+            expect_ack(
+                c.request(ClientMsg::Rename {
+                    window_id: id,
+                    name,
+                })
+                .await?,
+            )
+        }
+        Some(Command::Restart { target }) => {
+            let mut c = client::CliClient::connect(&socket).await?;
+            let id = client::resolve_target(&c.windows, &target)?;
+            expect_ack(
+                c.request_with_timeout(
+                    ClientMsg::Restart { window_id: id },
+                    client::RESTART_REQUEST_TIMEOUT,
+                )
+                .await?,
+            )
         }
         Some(Command::Rm {
             target,
@@ -423,6 +462,40 @@ mod tests {
             vec!["anthrex", "tree", "--project", "/r/shop/src", "--json"],
         ] {
             assert!(Cli::try_parse_from(&args).is_ok(), "{args:?}");
+        }
+    }
+
+    /// `rename` and `restart` parse into their new variants, and `new` with no
+    /// `--runtime` parses with `runtime == None` — the flag now falls back to the
+    /// config's `default_runtime` instead of defaulting to `RuntimeArg::Shell` at parse
+    /// time.
+    #[test]
+    fn rename_and_restart_parse() {
+        match Cli::try_parse_from(["anthrex", "rename", "3", "new name"])
+            .expect("rename <target> <name> parses")
+            .command
+        {
+            Some(Command::Rename { target, name }) => {
+                assert_eq!(target, "3");
+                assert_eq!(name, "new name");
+            }
+            other => panic!("expected Rename, got {other:?}"),
+        }
+
+        match Cli::try_parse_from(["anthrex", "restart", "api"])
+            .expect("restart <target> parses")
+            .command
+        {
+            Some(Command::Restart { target }) => assert_eq!(target, "api"),
+            other => panic!("expected Restart, got {other:?}"),
+        }
+
+        match Cli::try_parse_from(["anthrex", "new"])
+            .expect("new with no --runtime parses")
+            .command
+        {
+            Some(Command::New { runtime, .. }) => assert_eq!(runtime, None),
+            other => panic!("expected New, got {other:?}"),
         }
     }
 
