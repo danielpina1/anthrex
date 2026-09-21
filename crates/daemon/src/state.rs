@@ -224,11 +224,28 @@ pub fn load_with(path: &Path, now: SystemTime) -> (StateFile, Vec<Problem>) {
             now,
         );
     };
+    let mut problems = Vec::new();
+
     // A saved value past `u32::MAX` cannot be represented by `StateFile::next_id`
     // (`u32`, per decision 8) any more faithfully than by saturating: there is no
     // narrower valid id to fall back to, and silently truncating is exactly the bug
-    // this module must not repeat (see the `windows` loop below).
-    let saved_next_id = u32::try_from(saved_next_id).unwrap_or(u32::MAX);
+    // this module must not repeat (see the `windows` loop below). Decision 12: the
+    // module already recovered on its own, but the loaded state still differs from what
+    // the file said, silently, unless this is reported — see Minor #3.
+    let saved_next_id = match u32::try_from(saved_next_id) {
+        Ok(v) => v,
+        Err(_) => {
+            problems.push(Problem {
+                severity: Severity::Warn,
+                key: "next_id".to_string(),
+                message: format!(
+                    "saved next_id {saved_next_id} does not fit in a u32; using {}",
+                    u32::MAX
+                ),
+            });
+            u32::MAX
+        }
+    };
 
     if version > u64::from(STATE_VERSION) {
         return mark_aside_with(
@@ -258,7 +275,6 @@ pub fn load_with(path: &Path, now: SystemTime) -> (StateFile, Vec<Problem>) {
     };
 
     let mut windows = Vec::new();
-    let mut problems = Vec::new();
     let mut seen_ids = HashSet::new();
     let mut seen_names = HashSet::new();
     for (index, entry) in raw_windows.iter().enumerate() {
@@ -309,9 +325,24 @@ pub fn load_with(path: &Path, now: SystemTime) -> (StateFile, Vec<Problem>) {
     // deliberately, since there is no other representable choice - so the next
     // window-creation attempt must notice the collision and fail loudly rather than
     // silently reuse it. Nothing in this module creates windows; that check belongs to
-    // whichever later milestone wires `next_id` up to window creation.
+    // whichever later milestone wires `next_id` up to window creation. Loading the file
+    // is silent about the collision itself, though, unless this reports it — see Minor #3.
     let next_id = match windows.iter().map(|w| w.id).max() {
-        Some(max_id) => saved_next_id.max(max_id.saturating_add(1)),
+        Some(max_id) => {
+            let candidate = max_id.saturating_add(1);
+            if candidate == max_id {
+                problems.push(Problem {
+                    severity: Severity::Warn,
+                    key: "next_id".to_string(),
+                    message: format!(
+                        "the highest loaded window id {max_id} has no valid successor; \
+                         next_id is also {max_id}, so the next window created will \
+                         collide with it until the daemon restarts"
+                    ),
+                });
+            }
+            saved_next_id.max(candidate)
+        }
         None => saved_next_id,
     };
 

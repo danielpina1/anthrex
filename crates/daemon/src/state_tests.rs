@@ -684,17 +684,26 @@ fn next_id_saturates_instead_of_wrapping_when_a_loaded_id_is_u32_max() {
     });
     std::fs::write(&path, serde_json::to_vec(&contents).unwrap()).unwrap();
 
-    let (state, _warnings) = load(&path);
+    let (state, warnings) = load(&path);
 
     assert_eq!(
         state.next_id,
         u32::MAX,
         "next_id must saturate at u32::MAX, not wrap to 0"
     );
+    // Minor #3: `next_id` now equals a live window's own id — a collision the caller
+    // gets no signal about at all unless this is reported.
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert_eq!(warnings[0].severity, Severity::Warn);
+    assert!(
+        warnings[0].key == "next_id" && warnings[0].message.contains("4294967295"),
+        "warning must name the field and the colliding id: {warnings:?}"
+    );
 }
 
 /// One below the boundary: `u32::MAX - 1` still has a valid, non-colliding successor
-/// (`u32::MAX` itself), so ordinary max-plus-one logic applies with no saturation.
+/// (`u32::MAX` itself), so ordinary max-plus-one logic applies with no saturation, and
+/// nothing was silently adjusted — no `Problem` should be reported.
 #[test]
 fn next_id_advances_normally_at_u32_max_minus_one() {
     let dir = tempfile::tempdir().unwrap();
@@ -708,13 +717,15 @@ fn next_id_advances_normally_at_u32_max_minus_one() {
     });
     std::fs::write(&path, serde_json::to_vec(&contents).unwrap()).unwrap();
 
-    let (state, _warnings) = load(&path);
+    let (state, warnings) = load(&path);
 
     assert_eq!(state.next_id, u32::MAX);
+    assert!(warnings.is_empty(), "no adjustment happened: {warnings:?}");
 }
 
 /// An empty window list never triggers the max-plus-one path at all, so a saved
-/// `next_id` of `u32::MAX` (or anything else) passes through untouched.
+/// `next_id` of `u32::MAX` (or anything else) passes through untouched, with no
+/// `Problem` — the loaded value matches the file exactly, nothing was adjusted.
 #[test]
 fn next_id_with_empty_windows_preserves_the_saved_value_at_the_boundary() {
     let dir = tempfile::tempdir().unwrap();
@@ -726,9 +737,36 @@ fn next_id_with_empty_windows_preserves_the_saved_value_at_the_boundary() {
     });
     std::fs::write(&path, serde_json::to_vec(&contents).unwrap()).unwrap();
 
-    let (state, _warnings) = load(&path);
+    let (state, warnings) = load(&path);
 
     assert_eq!(state.next_id, u32::MAX);
+    assert!(warnings.is_empty(), "no adjustment happened: {warnings:?}");
+}
+
+/// Minor #3, the other silent adjustment: a saved `next_id` past `u32::MAX` (a
+/// hand-edited or corrupted file — nothing this build ever writes exceeds `u32::MAX`)
+/// used to saturate to `u32::MAX` with zero problems reported, even though the loaded
+/// value now differs from the file's own by billions.
+#[test]
+fn oversized_next_id_is_reported_as_a_problem() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = state_path(&dir);
+    let contents = serde_json::json!({
+        "version": 2,
+        "next_id": 99_999_999_999u64,
+        "windows": []
+    });
+    std::fs::write(&path, serde_json::to_vec(&contents).unwrap()).unwrap();
+
+    let (state, warnings) = load(&path);
+
+    assert_eq!(state.next_id, u32::MAX);
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert_eq!(warnings[0].severity, Severity::Warn);
+    assert!(
+        warnings[0].key == "next_id" && warnings[0].message.contains("99999999999"),
+        "warning must name the field and the out-of-range value: {warnings:?}"
+    );
 }
 
 #[test]
