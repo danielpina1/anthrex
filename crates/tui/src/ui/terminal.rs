@@ -25,19 +25,24 @@ pub fn shorten_home(path: &Path) -> String {
 
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let title = match app.focused_window() {
-        Some(w) => {
-            let branch = w
-                .branch
-                .as_ref()
-                .map(|b| format!(" ({b})"))
-                .unwrap_or_default();
-            format!(
-                " {} · {} · {}{branch} ",
+        // Decision 37: the branch comes from `branch_text` alone, never a direct read
+        // of `WindowInfo.branch` here — `None` is also how this tells a worktree
+        // window from a plain one, since `branch_text` is `None` for exactly the
+        // windows this daemon made no worktree for.
+        Some(w) => match super::tree_view::branch_text(w, app) {
+            Some(branch) => format!(
+                " {} · {} · {} ({branch}, worktree) ",
+                w.name,
+                w.runtime.label(),
+                shorten_home(&w.project)
+            ),
+            None => format!(
+                " {} · {} · {} ",
                 w.name,
                 w.runtime.label(),
                 shorten_home(&w.cwd)
-            )
-        }
+            ),
+        },
         None => " no window ".to_string(),
     };
     let border = if app.modal.is_none() {
@@ -57,7 +62,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         let hint = vec![
             Line::raw(""),
             Line::styled(
-                "  No agents. Press C-b c to open a shell here, or run `anthrex new`.",
+                "  No agents. Press C-b c to create one, or run `anthrex new`.",
                 theme::muted(),
             ),
         ];
