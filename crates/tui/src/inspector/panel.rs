@@ -84,7 +84,17 @@ fn lines(inspection: &Inspection, width: usize, height: usize) -> Vec<Line<'stat
     // One row is always held back for it, so the field the panel exists for
     // survives even when the column flow would fill every row. Dropped, it
     // hands that row back.
-    let flow_rows = if wrapping.is_some() { rows - 1 } else { rows };
+    //
+    // Held back only when the field could actually use it: `wrap_lines` gives
+    // the value `width - label_width - LABEL_GAP` columns, and at zero or
+    // fewer it wraps to nothing at all (its own `width == 0` guard). A row
+    // reserved for a field that renders blank is a row taken from the flow
+    // for nothing — the fields it would have shown are what is lost instead.
+    let wrapping_fits = wrapping.is_some_and(|field| {
+        let label_width = UnicodeWidthStr::width(field.label).min(width);
+        width > label_width + LABEL_GAP
+    });
+    let flow_rows = if wrapping_fits { rows - 1 } else { rows };
 
     let (columns, widths) = pack(&flow, flow_rows, width);
     let shown = &flow[..flow.len().min(flow_rows.saturating_mul(columns))];

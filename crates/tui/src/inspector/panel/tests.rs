@@ -261,6 +261,39 @@ fn the_dropped_task_field_hands_its_reserved_row_back() {
 }
 
 #[test]
+fn a_row_held_for_an_unwritable_wrapping_field_is_handed_back() {
+    // At six columns of interior the `task` field's label alone (`task`, four
+    // columns) plus its two-column gap already spends the whole width, so
+    // `wrap_lines` gives its value zero columns and writes nothing. Holding a
+    // row back for it anyway is a row taken from the flow for no reason: the
+    // fields that follow `for` — `model` and `kind` — are what would be lost.
+    //
+    // Interior width six is a ten-column panel, which is what a sidebar-hidden
+    // terminal around ten columns wide gives the inspector.
+    let inspection = subagent("map every route the api exposes and note the ones without tests");
+
+    let rendered = panel(&inspection, 10, INSPECTOR_HEIGHT);
+    assert_eq!(
+        rendered,
+        vec![
+            "╭────────╮",
+            "│ ○ map… │",
+            "│ spawn… │",
+            "│ state  │",
+            "│ for    │",
+            "│ model  │",
+            "│ kind   │",
+            "╰────────╯",
+        ]
+    );
+    assert!(
+        rendered.join("").contains("kind"),
+        "the row held back for a field that renders nothing must go to the \
+         flow instead, or `kind` is dropped off the bottom: {rendered:#?}"
+    );
+}
+
+#[test]
 fn the_title_is_the_glyph_then_the_name_in_bold() {
     let inspection = inspection("shop", vec![plain("path", "/r/shop")]);
     let buffer = draw(&inspection, 24, INSPECTOR_HEIGHT);
