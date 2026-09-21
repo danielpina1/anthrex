@@ -32,6 +32,7 @@ pub mod status;
 pub mod subagents;
 pub mod subprocess;
 pub mod window;
+pub mod worktree;
 
 pub use lifecycle::{DaemonOptions, run};
 
