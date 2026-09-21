@@ -320,13 +320,14 @@ pub fn load_with(path: &Path, now: SystemTime) -> (StateFile, Vec<Problem>) {
 
     // `saturating_add` rather than `+ 1`: a loaded record already holding `u32::MAX`
     // has no valid successor id, and wrapping to 0 (as an unchecked cast from wider
-    // arithmetic would) would immediately collide with the lowest live id. Saturating
-    // at `u32::MAX` instead means `next_id` ends up equal to that already-loaded id -
-    // deliberately, since there is no other representable choice - so the next
-    // window-creation attempt must notice the collision and fail loudly rather than
-    // silently reuse it. Nothing in this module creates windows; that check belongs to
-    // whichever later milestone wires `next_id` up to window creation. Loading the file
-    // is silent about the collision itself, though, unless this reports it — see Minor #3.
+    // arithmetic would) would immediately collide with the lowest live id. Saturating at
+    // `u32::MAX` instead means `next_id` ends up equal to that already-loaded id -
+    // deliberately, since there is no other representable choice. Nothing in this module
+    // creates windows, so it cannot refuse the collision itself — that refusal is
+    // `manager::create`'s `admit` (`crates/daemon/src/manager/create.rs`), which bails
+    // outright the moment `next_id` has nowhere left to advance, before it is ever
+    // handed out as a new window's id. Loading the file is silent about the collision
+    // itself, though, unless this reports it — see Minor #3.
     let next_id = match windows.iter().map(|w| w.id).max() {
         Some(max_id) => {
             let candidate = max_id.saturating_add(1);
