@@ -41,8 +41,12 @@ fn opened() -> (App, crate::ui::Layout) {
 /// (decisions 6 and 7). The panel that stands there by default is
 /// `overview/inspector.rs`'s business.
 fn opened_with_the_single_line(width: u16, height: u16) -> (App, crate::ui::Layout) {
-    let (mut app, layout) = opened_at(width, height);
+    let mut app = app_with(tree::example_windows());
+    assert!(toggle(&mut app).is_empty());
     app.inspector_visible = false;
+    let layout = crate::ui::layout(Rect::new(0, 0, width, height), app.sidebar_width);
+    app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
+    app.set_graph_viewport(layout.main);
     (app, layout)
 }
 
