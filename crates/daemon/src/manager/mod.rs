@@ -169,6 +169,51 @@ fn validate_name(name: &str) -> anyhow::Result<String> {
     Ok(trimmed)
 }
 
+/// Fix wave 6, Major finding: repairs a name that fails [`validate_name`] instead of
+/// refusing it, for `restore` (`manager::restore`) to apply to every record loaded from
+/// `state.json` — a file a user can hand-edit, that another tool could write, and that
+/// survives across daemon versions, none of which `validate_name` ever saw before this.
+///
+/// Ruling: sanitize, do not reject. Losing a user's window over a display string is the
+/// exact trade this milestone has refused everywhere else (a corrupt *file* is moved aside,
+/// never deleted; one bad *record* among good ones is skipped, never the whole load) — a
+/// name is a label, not data the user cannot reconstruct, so it is repaired in place.
+///
+/// Each disallowed character (`char::is_control()` — the exact rule [`validate_name`]
+/// enforces, so a sanitized name can never itself fail validation on the next save) is
+/// replaced with `_` rather than stripped, so two differently-placed bad characters cannot
+/// collapse two names into the same string by deleting the gap between them (`"a\x1bb"`
+/// becomes `"a_b"`, not `"ab"`). The result is then truncated to 64 grapheme clusters, the
+/// same unit and limit `validate_name` counts by. An input that is empty, trims to empty,
+/// or sanitizes to nothing usable falls back to `"window-<id>"`, which is always inside the
+/// limit and free of disallowed characters.
+///
+/// Idempotent by construction: every character this function can produce (`_`, and
+/// whatever safe characters survived from the input) is itself allowed, and the result is
+/// never longer than the limit, so calling this again on its own output is always a no-op —
+/// the round-trip stability decision 12's "one bad field must not cost the user their work"
+/// promise needs, so a restored name does not change on every subsequent restart.
+///
+/// This does not resolve a collision with another window's name; the caller
+/// (`manager::restore::restore`) does that, the same way it already disambiguates ids.
+fn sanitize_name(id: u32, name: &str) -> String {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return format!("window-{id}");
+    }
+    let cleaned: String = trimmed
+        .chars()
+        .map(|c| if c.is_control() { '_' } else { c })
+        .collect();
+    let truncated: String = cleaned.graphemes(true).take(64).collect();
+    let truncated = truncated.trim();
+    if truncated.is_empty() {
+        format!("window-{id}")
+    } else {
+        truncated.to_string()
+    }
+}
+
 pub struct WindowManager {
     inner: Mutex<Inner>,
     changed: watch::Sender<Vec<WindowInfo>>,

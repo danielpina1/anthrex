@@ -10,14 +10,15 @@
 //! in memory, so the lock is held for exactly as long as cloning a handful of small
 //! values takes, never for as long as serializing or writing them would.
 
-use super::entry::{Entry, Process};
-use super::{DAEMON_RESTARTED, WindowManager};
+use super::entry::{Entry, Inner, Process};
+use super::{DAEMON_RESTARTED, WindowManager, sanitize_name};
 use crate::agent_state::AgentState;
 use crate::state::{self, StateFile, WindowRecord, WorktreeRecord};
 use crate::worktree::ManagedWorktree;
 use proto::{ExitInfo, Status, WindowSpec};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 use tokio::sync::broadcast;
+use unicode_segmentation::UnicodeSegmentation;
 
 /// A restored window has no saved terminal size (the state file does not record one), so
 /// it starts at this and is resized to the client's real size on the first `Subscribe`,
@@ -85,6 +86,33 @@ impl WindowManager {
                 );
                 continue;
             }
+
+            // Fix wave 6, Major finding: `state.json` is a user-editable input, not a
+            // private serialization format, and `state::load` never applies
+            // `validate_name`'s rules to a loaded record — only this module's own
+            // id/name-collision checks. Ruling: sanitize, do not reject, so a bad name
+            // never costs the user their window. A name that was already valid
+            // (`sanitize_name` is idempotent on anything `validate_name` would accept, so
+            // equality here means nothing needed repairing) falls straight through to the
+            // untouched collision check below, unchanged from before this fix. A name that
+            // needed repair is also made unique against every name already on the table —
+            // live windows, and any earlier record this same call already restored — since
+            // dropping a *sanitized* name for colliding would undo the "keep the window"
+            // ruling for the exact record it exists to protect.
+            let sanitized = sanitize_name(id, &name);
+            let name = if sanitized == name {
+                name
+            } else {
+                let unique = unique_name(&inner, &sanitized);
+                tracing::warn!(
+                    id,
+                    original = ?name,
+                    sanitized = %unique,
+                    "restore: window name failed validation; sanitized to keep the window"
+                );
+                unique
+            };
+
             if inner.entries.values().any(|entry| entry.name == name) {
                 tracing::warn!(
                     id,
@@ -226,6 +254,46 @@ impl WindowManager {
             runs: Vec::new(),
         }
     }
+}
+
+/// Fix wave 6: makes `base` (already [`sanitize_name`]'s output — valid and within
+/// decision 22's length limit) unique against every name already in `inner.entries`, live
+/// windows and any earlier record this same `restore` call already inserted alike, by
+/// appending `-2`, `-3`, ... until one is free.
+///
+/// This is deliberately narrower than the ordinary duplicate-name refusal a few lines
+/// above it: a genuine collision between two otherwise-*valid* saved names is still
+/// refused and the later record dropped, unchanged from before this fix (see
+/// `restore_refuses_a_record_whose_name_collides_with_an_existing_entry`). A *sanitized*
+/// name is different — it is a repair the manager made up on the window's behalf, not
+/// something the user chose, so making it merely unique is what "sanitize, do not reject"
+/// (fix wave 6's ruling) requires: the window must survive, and it cannot survive under a
+/// name that collides with another live entry.
+fn unique_name(inner: &Inner, base: &str) -> String {
+    if !inner.entries.values().any(|e| e.name == base) {
+        return base.to_string();
+    }
+    let mut n = 2u32;
+    loop {
+        let candidate = suffixed(base, n);
+        if !inner.entries.values().any(|e| e.name == candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// `base` with `-<n>` appended, re-truncated (in grapheme clusters, the same unit
+/// `validate_name` and `sanitize_name` count by) so the result still fits decision 22's
+/// 64-character limit — `sanitize_name` already left `base` at or under that limit on its
+/// own, but appending a suffix could push it back over.
+fn suffixed(base: &str, n: u32) -> String {
+    let suffix = format!("-{n}");
+    let budget = 64usize
+        .saturating_sub(suffix.graphemes(true).count())
+        .max(1);
+    let shortened: String = base.graphemes(true).take(budget).collect();
+    format!("{shortened}{suffix}")
 }
 
 #[cfg(test)]
