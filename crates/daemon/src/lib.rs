@@ -25,6 +25,12 @@ pub mod project;
 pub mod server;
 pub mod status;
 pub mod subagents;
+/// `#[doc(hidden)] pub` rather than private only so that `crates/daemon/tests/subprocess.rs`
+/// can exercise `Captured`, `Outcome`, `run` and `run_captured` in a test binary of its own —
+/// the same reason and the same treatment `worktree::run_git` gives itself. Nothing outside
+/// the crate uses it otherwise: `project::detect_roots_with`, `git::probe` and
+/// `worktree::run_git`, the module's real callers, all live inside this crate.
+#[doc(hidden)]
 pub mod subprocess;
 pub mod window;
 pub mod worktree;

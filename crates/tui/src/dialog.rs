@@ -9,7 +9,11 @@ use proto::{Runtime, WindowSpec};
 use std::path::{Path, PathBuf};
 use unicode_segmentation::UnicodeSegmentation;
 
-/// The longest a submitted window name may be, after trimming.
+/// The longest a submitted window name may be, after trimming: design decision 32's
+/// limit. `pub` though nothing outside this file reads it today — the milestone brief's
+/// interface block names it `pub const NAME_MAX_CHARS: usize` explicitly, the same way
+/// `daemon::worktree::RESERVED_BRANCH_PREFIX` is public for a decision that owns it
+/// rather than for a caller that exists yet.
 pub const NAME_MAX_CHARS: usize = 64;
 
 /// A single-line text field. The cursor is a grapheme-cluster index into `text`, not a
