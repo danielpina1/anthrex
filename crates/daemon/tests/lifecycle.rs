@@ -550,6 +550,32 @@ async fn restart_resumes_claude_and_codex_sessions() {
                     !screen.contains(must_not_contain),
                     "window {window_id}: {screen:?}"
                 );
+                if window_id == CODEX_ID {
+                    // Decision 16, restored per Minor 5 (fix wave 5 review): the brief
+                    // requires the argv line to *end* with `[resume] [thr-1]` and to show
+                    // `[-m] [m1]` *before* it — both dropped from the original assertion,
+                    // which only checked substring containment anywhere on screen. The
+                    // property is separately pinned at the unit level
+                    // (`launch/mod.rs`'s `codex_resume_puts_resume_last_and_drops_the_prompt`),
+                    // but the brief asked for it here too, against a real spawned process.
+                    //
+                    // The fixture's whole argv is one `printf`-built logical line, but at
+                    // 80 columns it soft-wraps across several screen rows, and vt100's own
+                    // `contents()` joins rows with `\n` regardless of whether the break was
+                    // a real newline or a wrap — so this flattens the screen back into one
+                    // line before searching it, rather than looking for the fragment that
+                    // merely starts with `ARGV:`, which is only the line's first row.
+                    let flat: String = screen.chars().filter(|c| *c != '\n').collect();
+                    assert!(
+                        flat.trim_end().ends_with("[resume] [thr-1]"),
+                        "the argv line must end with resume last: {flat:?}"
+                    );
+                    let m_pos = flat
+                        .find("[-m] [m1]")
+                        .unwrap_or_else(|| panic!("-m m1 not on the argv line: {flat:?}"));
+                    let resume_pos = flat.find("[resume] [thr-1]").expect("checked above");
+                    assert!(m_pos < resume_pos, "-m must appear before resume: {flat:?}");
+                }
                 break;
             }
             assert!(
