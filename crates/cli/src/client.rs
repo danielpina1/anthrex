@@ -11,18 +11,64 @@ const CREATE_REPLY_ALLOWANCE: Duration = Duration::from_secs(2);
 pub const CREATE_WINDOW_REPLY_TIMEOUT: Duration =
     daemon::project::DETECT_TIMEOUT.saturating_add(CREATE_REPLY_ALLOWANCE);
 
-/// Room left over `worktree::OPERATION_TIMEOUT + KILL_GRACE` so the CLI's own deadline
+/// Room left over the longer of the two worst cases below, so the CLI's own deadline
 /// never fires before the daemon's (decision 38 of the M5 worktrees brief).
 const WORKTREE_TIMEOUT_MARGIN: Duration = Duration::from_secs(12);
+
+/// What `rm --worktree` can cost the daemon: `remove_with_worktree` opens one
+/// `OPERATION_TIMEOUT` deadline and shares it between the dirty check and
+/// `worktree::remove`, and spends `KILL_GRACE` on its own deadline waiting for the agent
+/// to exit in between.
+///
+///     OPERATION_TIMEOUT (30) + KILL_GRACE (3) = 33 s
+const REMOVAL_WORST_CASE: Duration =
+    daemon::worktree::OPERATION_TIMEOUT.saturating_add(daemon::manager::KILL_GRACE);
+
+/// What `new --worktree` can cost the daemon — the term-by-term derivation, because two
+/// earlier reviews disagreed about it (35 s and 50 s) and the constant sat between them:
+///
+///     DETECT_TIMEOUT (5) + OPERATION_TIMEOUT (30) + CLEANUP_TIMEOUT (10) = 45 s
+///
+/// - **`DETECT_TIMEOUT` (5 s)** — `server::requests::create` awaits
+///   `project::resolve_roots(spec.cwd)` before the manager is called at all.
+/// - **`OPERATION_TIMEOUT` (30 s)** — `spawn_window` opens the deadline as
+///   `Instant::now() + OPERATION_TIMEOUT` and hands it to `worktree::create`, which
+///   shares it across every git command it runs. This term is 30 s and **not** 35: the
+///   root detection design decision 5 keeps outside the operation deadline is *inside*
+///   this wall-clock window, because the deadline is an `Instant` fixed before it runs.
+///   Being outside the deadline means it is not cut short by it, not that it is served
+///   after it — and 5 s cannot push a 30 s window past 30 s. (Since the whole-branch
+///   review's finding 4 that call is gone entirely; the arithmetic held either way,
+///   which is why counting it twice was the error.)
+/// - **`CLEANUP_TIMEOUT` (10 s)** — a `git worktree add` that fails or times out runs
+///   `discard_new` on a *fresh* deadline before returning, and so does a `Window::spawn`
+///   that fails once the worktree exists. The two are disjoint, so this counts once, but
+///   it counts: it is the term both earlier derivations dropped.
+///
+/// The sum is a supremum rather than an attainable time — a detection that actually
+/// reaches `DETECT_TIMEOUT` falls back and the create is then refused without touching
+/// git — which is exactly why the budget must *exceed* it rather than match it.
+const CREATE_WORST_CASE: Duration = daemon::project::DETECT_TIMEOUT
+    .saturating_add(daemon::worktree::OPERATION_TIMEOUT)
+    .saturating_add(daemon::worktree::CLEANUP_TIMEOUT);
+
+/// `Duration::max` is not a `const fn`; this is.
+const fn longer(a: Duration, b: Duration) -> Duration {
+    if a.as_nanos() >= b.as_nanos() { a } else { b }
+}
+
 /// The reply budget for any request that can make the daemon run git: `new --worktree`
-/// and `rm --worktree`. It must exceed the daemon's own worst case for that operation —
-/// `worktree::OPERATION_TIMEOUT` (30 s) for the git command itself, plus
-/// `manager::KILL_GRACE` (3 s) that `remove_with_worktree` can spend waiting for the
-/// agent to exit before it ever touches git — or the CLI reports a timeout for a request
-/// the daemon is still about to finish successfully.
-pub const WORKTREE_REQUEST_TIMEOUT: Duration = daemon::worktree::OPERATION_TIMEOUT
-    .saturating_add(daemon::manager::KILL_GRACE)
-    .saturating_add(WORKTREE_TIMEOUT_MARGIN);
+/// and `rm --worktree`. It must exceed the daemon's own worst case for *either*
+/// operation, or the CLI reports a timeout for a request the daemon is still working on —
+/// and a `new --worktree` that times out client-side loses the one message that says
+/// whether a checkout was left on disk (design decision 16's two suffixes).
+///
+/// Both call sites take the same budget, so it is the larger of the two paths plus
+/// [`WORKTREE_TIMEOUT_MARGIN`]: max(45, 33) + 12 = 57 s. It was 45 s, derived from the
+/// removal path alone and applied to both, which left the create path with no margin at
+/// all — 45 s against a 45 s supremum.
+pub const WORKTREE_REQUEST_TIMEOUT: Duration =
+    longer(CREATE_WORST_CASE, REMOVAL_WORST_CASE).saturating_add(WORKTREE_TIMEOUT_MARGIN);
 
 pub struct CliClient {
     rd: OwnedReadHalf,
@@ -322,8 +368,40 @@ mod tests {
             WORKTREE_REQUEST_TIMEOUT > CREATE_WINDOW_REPLY_TIMEOUT
                 && WORKTREE_REQUEST_TIMEOUT > REQUEST_TIMEOUT,
             "WORKTREE_REQUEST_TIMEOUT must be the longest of the three, since it is the \
-             only one that must outlast the daemon's own 30 s + KILL_GRACE worktree \
-             operation deadline",
+             only one that must outlast the daemon's own worktree operation deadlines",
         );
+    }
+
+    /// The assertion the whole-branch review found missing: the budget is pinned against
+    /// the **daemon's** constants, not against the CLI's other two. Comparing the three
+    /// CLI timeouts with each other cannot notice that one of them has fallen below the
+    /// work it is waiting for, which is how 45 s survived while the create path's
+    /// supremum was also 45 s.
+    ///
+    /// The two sums are spelled out numerically as well as symbolically on purpose: a
+    /// change to any daemon constant should fail *here*, with the arithmetic in front of
+    /// whoever made it, rather than in a timeout on a user's slow repository.
+    #[test]
+    fn the_budget_clears_the_daemons_worst_case_on_both_git_paths() {
+        assert_eq!(
+            REMOVAL_WORST_CASE,
+            Duration::from_secs(33),
+            "OPERATION_TIMEOUT (30) + KILL_GRACE (3)"
+        );
+        assert_eq!(
+            CREATE_WORST_CASE,
+            Duration::from_secs(45),
+            "DETECT_TIMEOUT (5) + OPERATION_TIMEOUT (30) + CLEANUP_TIMEOUT (10)"
+        );
+        assert!(
+            WORKTREE_REQUEST_TIMEOUT > CREATE_WORST_CASE,
+            "the create path is the longer of the two and the one the old 45 s only \
+             matched: {WORKTREE_REQUEST_TIMEOUT:?} vs {CREATE_WORST_CASE:?}",
+        );
+        assert!(
+            WORKTREE_REQUEST_TIMEOUT > REMOVAL_WORST_CASE,
+            "{WORKTREE_REQUEST_TIMEOUT:?} vs {REMOVAL_WORST_CASE:?}",
+        );
+        assert_eq!(WORKTREE_REQUEST_TIMEOUT, Duration::from_secs(57));
     }
 }
