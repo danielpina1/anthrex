@@ -33,6 +33,12 @@ pub struct RotatingFile {
     keep: usize,
     file: File,
     len: u64,
+    /// Latches once [`Self::recover_from_failed_rotation`] has reported the current
+    /// failure episode, and clears the moment a `rotate()` call succeeds. Without this,
+    /// every write past the cap re-attempts rotation, fails identically, and re-emits the
+    /// diagnostic — one line per write for as long as the directory stays broken, not one
+    /// per failure episode. See `rotation_failure_diagnostic_is_reported_once_per_episode`.
+    rotation_failure_reported: bool,
 }
 
 impl RotatingFile {
@@ -54,7 +60,47 @@ impl RotatingFile {
             keep,
             file,
             len,
+            rotation_failure_reported: false,
         })
+    }
+
+    /// Rotates now if the file is already over the cap, with nothing new to write.
+    ///
+    /// [`Write::write`] below only ever checks the cap when it has bytes of its own to
+    /// add; a caller that opens a `RotatingFile` purely to enforce decision 28's bound at
+    /// *open* time — `anthrex`'s CLI parent, capping `daemon.stderr.log` before handing
+    /// the file to a detached child as its raw stderr fd (`crates/cli/src/spawn.rs`),
+    /// where nothing afterwards funnels through this `Write` impl at all — needs a way to
+    /// ask "is this already too big?" without writing anything. This is that: the same
+    /// rotate-or-recover logic `write` uses, with zero incoming bytes.
+    pub fn rotate_if_over_cap(&mut self) {
+        self.rotate_if_needed(0);
+    }
+
+    /// Rotates if `len` bytes already on top of `incoming` new ones would exceed the cap.
+    /// Shared by [`Write::write`] (`incoming` = the buffer it is about to write) and
+    /// [`Self::rotate_if_over_cap`] (`incoming` = 0, so this only fires when the file was
+    /// already over the cap before this call).
+    fn rotate_if_needed(&mut self, incoming: u64) {
+        // Decision 28: rotate *before* a write that would take the file past the limit,
+        // never after. A file already at or under the limit that receives a write which
+        // lands it exactly on the limit does not rotate — only a write that would go
+        // strictly past does.
+        if self.len > 0 && self.len.saturating_add(incoming) > self.max_bytes {
+            // A rotation failure must not turn into losing every write for the rest of
+            // the process's life (task-3 review, Major finding): `self.len` used to be
+            // reset only on a *successful* rotation, so a failure here left it stuck
+            // above `max_bytes` forever, and every later write re-tried rotation, failed
+            // the same way, and was lost too — even long after whatever broke the
+            // directory was fixed, since nothing ever cleared the stuck `len`. Losing all
+            // future logging is worse than exceeding the cap once, so a failure here does
+            // not propagate: it recovers the writer (below) and falls through to the
+            // write itself.
+            match self.rotate() {
+                Ok(()) => self.rotation_failure_reported = false,
+                Err(e) => self.recover_from_failed_rotation(&e),
+            }
+        }
     }
 
     fn path(&self) -> PathBuf {
@@ -117,15 +163,35 @@ impl RotatingFile {
     /// in the ordinary case (nothing renamed it away) is still the original, perfectly
     /// writable file. Either way, `self.len` is re-derived from real on-disk length rather
     /// than trusted, since it may now be describing a file that moved out from under it.
+    ///
+    /// The diagnostic below is latched (`rotation_failure_reported`), not printed on every
+    /// call: `tracing_appender`'s non-blocking worker thread silently drops `Write` errors
+    /// (its own source has only a `// TODO: print to stderr`), so this is the only place
+    /// on the path from a daemon log call to disk that can ever surface a rotation failure
+    /// at all — but `self.len` stays above the cap for as long as the directory does, so
+    /// every write in that span re-enters here. Reporting once per failure *episode*
+    /// (latched here, cleared in `rotate_if_needed` the moment a rotation next succeeds)
+    /// is what keeps the diagnostic's own destination, `daemon.stderr.log`
+    /// (`crates/cli/src/spawn.rs`), bounded on its own; the cap
+    /// `RotatingFile::rotate_if_over_cap` gives it at open time is only a backstop for
+    /// growth this latch cannot see (many separate failure/recovery episodes over a long
+    /// run, or an unrelated panic).
     fn recover_from_failed_rotation(&mut self, err: &io::Error) {
-        // `tracing_appender`'s non-blocking worker thread silently drops `Write` errors
-        // (its own source has only a `// TODO: print to stderr`), so this is the only
-        // place on the path from a daemon log call to disk that can ever surface a
-        // rotation failure at all.
-        eprintln!(
-            "anthrex daemon: failed to rotate {}: {err}; continuing to log to the existing file past its size limit",
-            self.path().display()
-        );
+        if !self.rotation_failure_reported {
+            // A direct write to the real `io::stderr()` handle, not `eprintln!`: the
+            // macro checks a thread-local capture override before it ever reaches the
+            // real stream (that override is exactly what the default `cargo test`
+            // harness installs per-test, and production has nothing like it, so the two
+            // behave identically outside of tests), and this message must land on the
+            // one thing production actually redirects — the real fd — for the detached-
+            // daemon path this exists for to work at all.
+            let message = format!(
+                "anthrex daemon: failed to rotate {}: {err}; continuing to log to the existing file past its size limit\n",
+                self.path().display()
+            );
+            let _ = io::stderr().write_all(message.as_bytes());
+            self.rotation_failure_reported = true;
+        }
         if let Ok(reopened) = OpenOptions::new()
             .create(true)
             .append(true)
@@ -140,24 +206,9 @@ impl RotatingFile {
 impl Write for RotatingFile {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let incoming = buf.len() as u64;
-        // Decision 28: rotate *before* a write that would take the file past the limit,
-        // never after. A file already at or under the limit that receives a write which
-        // lands it exactly on the limit does not rotate — only a write that would push it
-        // strictly past does. A buffer larger than `max_bytes` on its own is not split: it
-        // still rotates the (nonempty) file it would overflow, then goes in whole.
-        if self.len > 0 && self.len.saturating_add(incoming) > self.max_bytes {
-            // A rotation failure must not turn into losing every write for the rest of the
-            // process's life (task-3 review, Major finding): `self.len` used to be reset
-            // only on a *successful* rotation, so a failure here left it stuck above
-            // `max_bytes` forever, and every later write re-tried rotation, failed the same
-            // way, and was lost too — even long after whatever broke the directory was
-            // fixed, since nothing ever cleared the stuck `len`. Losing all future logging
-            // is worse than exceeding the cap once, so a failure here does not propagate:
-            // it recovers the writer (below) and falls through to the write itself.
-            if let Err(e) = self.rotate() {
-                self.recover_from_failed_rotation(&e);
-            }
-        }
+        // A buffer larger than `max_bytes` on its own is not split: it still rotates the
+        // (nonempty) file it would overflow, then goes in whole.
+        self.rotate_if_needed(incoming);
         self.file.write_all(buf)?;
         self.len += incoming;
         Ok(buf.len())
@@ -171,6 +222,50 @@ impl Write for RotatingFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `recover_from_failed_rotation`'s diagnostic writes directly to the real
+    /// process-wide stderr fd (2), deliberately not through `eprintln!` — the macro
+    /// checks `cargo test`'s per-test output-capture override before it ever reaches the
+    /// real stream, which would make `capture_stderr` below observe nothing no matter how
+    /// many times the diagnostic fires (confirmed by experiment: an `eprintln!` in this
+    /// position never appears in the fd this redirects, only a direct
+    /// `io::stderr().write_all()` does). `capture_stderr` redirects that real fd for the
+    /// duration of a closure so a test can assert on what was actually written, not just
+    /// on internal state. Because fd 2 is process-global and `cargo test` runs this
+    /// binary's unit tests on multiple threads, every test that triggers this diagnostic
+    /// must hold this lock for as long as it might write, or two such tests running
+    /// concurrently could interleave into each other's capture.
+    static STDERR_CAPTURE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Redirects the real stderr fd to a temp file for the duration of `f`, then restores
+    /// it and returns what was written, alongside `f`'s own result. Caller must hold
+    /// [`STDERR_CAPTURE_LOCK`].
+    fn capture_stderr<T>(f: impl FnOnce() -> T) -> (T, String) {
+        use std::io::{Read, Seek, SeekFrom};
+        use std::os::unix::io::AsRawFd;
+
+        let mut tmp = tempfile::tempfile().unwrap();
+        // SAFETY: `dup`/`dup2` on valid, open fds (2, and `tmp`'s own) cannot fail short
+        // of running out of file descriptors; the saved fd is closed again below before
+        // returning, so nothing leaks past this function.
+        let saved_stderr = unsafe { libc::dup(2) };
+        assert!(saved_stderr >= 0, "failed to save stderr fd");
+        let rc = unsafe { libc::dup2(tmp.as_raw_fd(), 2) };
+        assert!(rc >= 0, "failed to redirect stderr to the capture file");
+
+        let result = f();
+
+        // SAFETY: restores fd 2 to what it was before, then releases the saved copy.
+        unsafe {
+            libc::dup2(saved_stderr, 2);
+            libc::close(saved_stderr);
+        }
+
+        tmp.seek(SeekFrom::Start(0)).unwrap();
+        let mut captured = String::new();
+        tmp.read_to_string(&mut captured).unwrap();
+        (result, captured)
+    }
 
     /// Writes 40 lines of exactly 100 bytes each with a 1024-byte limit and a 3-file
     /// keep: each rotation completes exactly 10 lines (1000 bytes) before the 11th would
@@ -378,6 +473,11 @@ mod tests {
     fn rotation_failure_does_not_wedge_logging_shut() {
         use std::os::unix::fs::PermissionsExt;
 
+        // This test's writes go through `recover_from_failed_rotation`, which prints to
+        // the real stderr fd — see `STDERR_CAPTURE_LOCK`'s doc comment for why every such
+        // test must hold this lock for the duration.
+        let _stderr_guard = STDERR_CAPTURE_LOCK.lock().unwrap();
+
         let dir = tempfile::tempdir().unwrap();
         let mut file = RotatingFile::open(dir.path(), "daemon.log", 100, 3).unwrap();
         file.write_all(&[b'a'; 99]).unwrap();
@@ -428,6 +528,109 @@ mod tests {
         assert!(
             dir.path().join("daemon.log.1").exists(),
             "rotation must resume on its own once the directory is writable again"
+        );
+    }
+
+    /// Re-review Major #1: `recover_from_failed_rotation`'s diagnostic used to print on
+    /// every write past the cap, not once per failure episode — `self.len` stays above
+    /// `max_bytes` for as long as the directory does, so every write re-entered the same
+    /// "rotation failed" branch and re-printed. Measured directly here, not inferred: N
+    /// writes under a persistently unwritable directory must produce exactly one line on
+    /// stderr, and a fresh failure *after* a rotation has since succeeded must be reported
+    /// again — the latch tracks episodes, not "has this ever failed".
+    #[test]
+    fn rotation_failure_diagnostic_is_reported_once_per_episode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _stderr_guard = STDERR_CAPTURE_LOCK.lock().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut file = RotatingFile::open(dir.path(), "daemon.log", 100, 3).unwrap();
+        file.write_all(&[b'a'; 99]).unwrap();
+
+        let mode_before = std::fs::metadata(dir.path()).unwrap().permissions().mode();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        struct RestorePerms(PathBuf, u32);
+        impl Drop for RestorePerms {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(self.1));
+            }
+        }
+        let _restore = RestorePerms(dir.path().to_path_buf(), mode_before);
+
+        // Five writes, every one of them past the cap, under a directory that stays
+        // unwritable the whole time: one failure episode, so exactly one line.
+        let (_, captured) = capture_stderr(|| {
+            for _ in 0..5 {
+                file.write_all(&[b'b'; 5]).unwrap();
+            }
+        });
+        let lines = captured
+            .lines()
+            .filter(|l| l.contains("failed to rotate"))
+            .count();
+        assert_eq!(
+            lines, 1,
+            "5 writes under a persistently failing rotation must produce exactly one \
+             diagnostic line, not one per write: {captured:?}"
+        );
+
+        // Let a rotation succeed: the episode ends.
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(mode_before)).unwrap();
+        file.write_all(&[b'c'; 200]).unwrap();
+        assert!(
+            dir.path().join("daemon.log.1").exists(),
+            "the successful rotation that ends the episode must actually happen"
+        );
+
+        // Break the directory again: this is a *new* episode and must be reported again.
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        let (_, captured2) = capture_stderr(|| {
+            file.write_all(&[b'd'; 5]).unwrap();
+        });
+        let lines2 = captured2
+            .lines()
+            .filter(|l| l.contains("failed to rotate"))
+            .count();
+        assert_eq!(
+            lines2, 1,
+            "a new failure episode after a successful rotation must be reported again: {captured2:?}"
+        );
+    }
+
+    /// `rotate_if_over_cap` is `open_stderr_sink`'s hook (`crates/cli/src/spawn.rs`) for
+    /// bounding `daemon.stderr.log` at open time, since nothing after that point writes
+    /// to it through a `Write` call this crate controls. Pinned here at the `RotatingFile`
+    /// level: a file already over the cap, with nothing new to write, must still rotate.
+    #[test]
+    fn rotate_if_over_cap_rotates_an_already_oversized_file_with_nothing_to_write() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("daemon.log"), vec![b'x'; 500]).unwrap();
+
+        let mut file = RotatingFile::open(dir.path(), "daemon.log", 100, 3).unwrap();
+        file.rotate_if_over_cap();
+
+        assert!(
+            dir.path().join("daemon.log.1").exists(),
+            "an already-oversized file must be rotated away, not left in place"
+        );
+        let current_len = std::fs::metadata(dir.path().join("daemon.log"))
+            .unwrap()
+            .len();
+        assert_eq!(
+            current_len, 0,
+            "the fresh current file after an over-the-cap rotation must start empty"
+        );
+
+        // A file at or under the cap must not be touched — this is a cap check, not an
+        // unconditional rotation.
+        let dir2 = tempfile::tempdir().unwrap();
+        std::fs::write(dir2.path().join("daemon.log"), vec![b'x'; 50]).unwrap();
+        let mut file2 = RotatingFile::open(dir2.path(), "daemon.log", 100, 3).unwrap();
+        file2.rotate_if_over_cap();
+        assert!(
+            !dir2.path().join("daemon.log.1").exists(),
+            "a file under the cap must not be rotated"
         );
     }
 }
