@@ -4,10 +4,11 @@ anthrex is built in ten milestones. Milestones 1 to 4 are merged. Each later mil
 
 The design is layered, newest first:
 
-1. `docs/superpowers/specs/2026-09-20-graph-overview-design.md` — milestone 4.6: the drawn graph overview and sub-agent labels. Amends §5.1 and §10.3 of the product design below.
-2. `docs/superpowers/specs/2026-09-20-git-surface-and-simple-orchestration-design.md` — milestone 4.5, and the cut-down scope of milestones 8 and 9. Where it disagrees with the document below, it wins.
-3. `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` — milestones 2 to 9.
-4. `docs/superpowers/specs/2026-09-17-anthrex-design.md` — milestone 1 and the parts of the core it still governs.
+1. `docs/superpowers/specs/2026-09-21-node-inspector-design.md` — milestone 4.7: the panel below the graph. Amends the document below.
+2. `docs/superpowers/specs/2026-09-20-graph-overview-design.md` — milestone 4.6: the drawn graph overview and sub-agent labels. Amends §5.1 and §10.3 of the product design below.
+3. `docs/superpowers/specs/2026-09-20-git-surface-and-simple-orchestration-design.md` — milestone 4.5, and the cut-down scope of milestones 8 and 9. Where it disagrees with the document below, it wins.
+4. `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` — milestones 2 to 9.
+5. `docs/superpowers/specs/2026-09-17-anthrex-design.md` — milestone 1 and the parts of the core it still governs.
 
 The protocol version currently on `main` is **4**, raised from 3 by milestone 4.5. Protocol numbers written in the milestone 5 to 9 briefs predate this and are wrong; each is re-derived from this line when that milestone is implemented.
 
@@ -45,7 +46,8 @@ flowchart LR
   M3 --> M4[4 Project tree]
   M4 --> M45[4.5 Git and tree connectors]
   M45 --> M46[4.6 Graph overview]
-  M46 --> M5[5 Worktrees]
+  M46 --> M47[4.7 Node inspector]
+  M47 --> M5[5 Worktrees]
   M3 --> M6[6 Persistence]
   M4 --> M7[7 Split panes]
   M5 --> M8[8 Orchestration engine]
