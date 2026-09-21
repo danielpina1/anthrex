@@ -250,6 +250,20 @@ impl TestDaemon {
 }
 
 impl Drop for TestDaemon {
+    /// Waits for the daemon to actually be reaped rather than granting it a grace period
+    /// and moving on. The previous version polled `try_wait` for up to 5s and then handed
+    /// off to `terminate`, which itself could give up after another 500ms with the child
+    /// still alive — so a test binary could go on to its next `TestDaemon::start` while
+    /// this one's daemon was still dying. Since every `TestDaemon` gets its own tempdir
+    /// and socket path, that never produced a resource collision, but it did mean
+    /// consecutive daemons could overlap in the process table, which is exactly the
+    /// process contention the loop-vs-suite gap in `hook_command` was suspected to come
+    /// from (flake-diagnosis.md §3.4.1 — unconfirmed there; this fix stands on its own
+    /// merits regardless of whether it was the cause).
+    ///
+    /// `Child::wait` is a blocking `waitpid`: once SIGKILL is delivered it cannot return
+    /// early the way a polling loop with a deadline could, so this cannot leave the child
+    /// half-dead the way the old code structurally could.
     fn drop(&mut self) {
         let rt = runtime();
         let _ = rt.block_on(async {
@@ -275,7 +289,11 @@ impl Drop for TestDaemon {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        terminate(&mut self.child);
+        // The graceful shutdown did not finish inside the grace period. Escalate and
+        // block until the OS confirms the reap, instead of polling a second bounded
+        // window and returning regardless of the outcome.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
