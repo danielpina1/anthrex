@@ -11,6 +11,7 @@ path = "src/lib.rs"
 
 [dependencies]
 proto.workspace = true
+config.workspace = true
 anyhow.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

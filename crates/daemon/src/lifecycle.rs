@@ -1,5 +1,6 @@
 //! Socket setup, logging, pid file, signals, and the top-level daemon loop. Spec section 3.7.
 
+use crate::lockfile::DaemonLock;
 use crate::manager::{ManagerConfig, WindowManager};
 
 mod codex_version;
@@ -13,7 +14,17 @@ use tokio_util::sync::CancellationToken;
 pub struct DaemonOptions {
     pub socket_path: PathBuf,
     pub data_dir: PathBuf,
+    /// Not read by this milestone's task yet; carried so a later task can load
+    /// `config.toml` at the same point `run` already reads everything else it needs.
+    pub config_path: PathBuf,
+    /// How long [`DaemonLock::acquire`] retries before giving up. The CLI passes
+    /// [`LOCK_WAIT`]; tests pass [`Duration::ZERO`] so a locked-out daemon fails fast.
+    pub lock_wait: Duration,
 }
+
+/// How long the CLI's own daemon start waits for another daemon's lock to clear — long
+/// enough to cover a `daemon stop` immediately followed by a start (decision 24).
+pub const LOCK_WAIT: Duration = Duration::from_secs(5);
 
 /// Creates the socket directory (mode 0700) and removes a stale socket file.
 /// Fails if a live daemon answers on the socket, or if the directory belongs to
@@ -62,32 +73,72 @@ pub fn prepare_socket(path: &Path) -> anyhow::Result<()> {
 ///
 /// The socket directory can legitimately be a shared sticky directory (/tmp), so the
 /// socket's own mode is what stops another local user from connecting and driving every
-/// agent the daemon owns.
+/// agent the daemon owns. Decision 25: the umask is tightened to 0o077 for the bind call
+/// itself, then restored, so the socket is born 0600 without depending on whatever mask
+/// the process happened to start with; the explicit chmod below is a second, independent
+/// guard for the same property.
+///
+/// `libc::umask` is process-global, not per-thread, so every caller in this process must
+/// serialize around it or one caller's restore can clobber another's — the daemon itself
+/// only ever binds one socket at startup, but the test suite calls this from many
+/// concurrent test threads. [`UMASK_LOCK`] is that serialization; [`bind_socket_locked`]
+/// is the lock-free implementation it wraps, exposed separately so
+/// `bind_restores_the_umask` below can hold the lock across its own umask manipulation
+/// *and* this call without deadlocking on a lock it already holds.
+static UMASK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub fn bind_socket(path: &Path) -> anyhow::Result<UnixListener> {
-    let listener = UnixListener::bind(path)?;
+    let _guard = crate::lock(&UMASK_LOCK);
+    bind_socket_locked(path)
+}
+
+fn bind_socket_locked(path: &Path) -> anyhow::Result<UnixListener> {
+    // SAFETY: `umask` has no preconditions and cannot fail; it only ever changes this
+    // process's file-creation mask, which we restore immediately below on every path.
+    // Callers serialize through `UMASK_LOCK`.
+    let previous_umask = unsafe { libc::umask(0o077) };
+    let bound = UnixListener::bind(path);
+    // SAFETY: see above. Restored before `?` so a bind failure never leaves the tighter
+    // mask in place.
+    unsafe { libc::umask(previous_umask) };
+    let listener = bound?;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     Ok(listener)
 }
 
+/// `try_init` rather than `init`: production only ever calls this once, but a test
+/// process that runs `run` more than once (this milestone's `tests/lifecycle.rs`) must
+/// not panic on the second global-subscriber install.
 fn init_logging(data_dir: &Path) -> tracing_appender::non_blocking::WorkerGuard {
     let file = tracing_appender::rolling::never(data_dir, "daemon.log");
     let (writer, guard) = tracing_appender::non_blocking(file);
     let filter = tracing_subscriber::EnvFilter::try_from_env("ANTHREX_LOG")
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    tracing_subscriber::fmt()
+    let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_ansi(false)
         .with_writer(writer)
-        .init();
+        .try_init();
     guard
 }
 
 /// Runs the daemon in the current process until a signal or a client asks it to stop.
+///
+/// Decision 24: the lifetime lock is acquired first, right after the data directory
+/// exists and before anything else touches it — logging, the socket, `daemon.pid` — so
+/// two daemons can never share a data directory. `_lock` is otherwise unused: dropping it
+/// at the end of this function, after every other cleanup below has run, is what releases
+/// it (decision 24, decision 26).
 pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     std::fs::create_dir_all(&opts.data_dir)?;
+    let _lock = DaemonLock::acquire(&opts.data_dir, opts.lock_wait)?;
     let _log_guard = init_logging(&opts.data_dir);
     prepare_socket(&opts.socket_path)?;
     let listener = bind_socket(&opts.socket_path)?;
+    // Decision 26: the socket is only ever unlinked at shutdown if this is still the same
+    // file — an inode match, not a path match — so a replacement daemon (or, in the test
+    // that exercises this, a plain listener standing in for one) is never touched.
+    let socket_id = std::fs::metadata(&opts.socket_path).map(|m| (m.dev(), m.ino()))?;
     let pid_path = opts.data_dir.join("daemon.pid");
     std::fs::write(&pid_path, std::process::id().to_string())?;
     tracing::info!(socket = %opts.socket_path.display(), pid = std::process::id(), "daemon started");
@@ -143,9 +194,15 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     }
     tracing::info!("stopping agents");
     manager.shutdown().await;
-    let _ = std::fs::remove_file(&opts.socket_path);
+    let socket_is_still_ours = std::fs::metadata(&opts.socket_path)
+        .map(|m| (m.dev(), m.ino()) == socket_id)
+        .unwrap_or(false);
+    if socket_is_still_ours {
+        let _ = std::fs::remove_file(&opts.socket_path);
+    }
     let _ = std::fs::remove_file(&pid_path);
     tracing::info!("daemon stopped");
+    // `_lock` drops here, after every cleanup above, releasing the flock last.
     served
 }
 
@@ -229,6 +286,40 @@ mod tests {
         let sock = dir.path().join("d.sock");
         prepare_socket(&sock).unwrap();
         let _listener = bind_socket(&sock).unwrap();
+        assert_eq!(
+            std::fs::metadata(&sock).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    /// Decision 25: `bind_socket` must leave the process's umask exactly as it found it,
+    /// whatever that was — a mutation that forgot to restore it, or restored a hardcoded
+    /// value instead of the one it read, would leak a tightened (or loosened) mask into
+    /// every file this process creates afterwards.
+    ///
+    /// Holds `UMASK_LOCK` for the whole sequence and calls the lock-free
+    /// `bind_socket_locked` directly (not the public `bind_socket`, which would try to
+    /// take the same lock and deadlock): umask is process-wide, and other tests in this
+    /// binary call `bind_socket` concurrently, so without holding the lock across its own
+    /// two raw `umask` calls too this test is racy against them.
+    #[tokio::test]
+    async fn bind_restores_the_umask() {
+        let dir = tempfile::tempdir().unwrap();
+        let sock = dir.path().join("d.sock");
+        let _guard = crate::lock(&UMASK_LOCK);
+        // SAFETY: umask has no preconditions and cannot fail; both calls here bracket the
+        // temporary value this test sets so the process's real mask is restored after.
+        // `UMASK_LOCK` is held for the whole bracket, so no concurrently running test can
+        // observe or clobber the value in between.
+        let real_mask = unsafe { libc::umask(0o022) };
+        let result = bind_socket_locked(&sock);
+        // SAFETY: see above.
+        let mask_after_bind = unsafe { libc::umask(real_mask) };
+        let _listener = result.unwrap();
+        assert_eq!(
+            mask_after_bind, 0o022,
+            "bind_socket did not restore the umask it found"
+        );
         assert_eq!(
             std::fs::metadata(&sock).unwrap().permissions().mode() & 0o777,
             0o600

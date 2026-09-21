@@ -98,6 +98,7 @@ dependencies = [
 name = "anthrex-daemon"
 version = "0.1.0"
 dependencies = [
+ "anthrex-config",
  "anthrex-proto",
  "anyhow",
  "bytes",

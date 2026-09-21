@@ -19,6 +19,7 @@ pub mod git;
 pub mod hooks;
 pub mod launch;
 pub mod lifecycle;
+pub mod lockfile;
 pub mod manager;
 mod process;
 pub mod project;
@@ -35,7 +36,7 @@ pub mod subprocess;
 pub mod window;
 pub mod worktree;
 
-pub use lifecycle::{DaemonOptions, run};
+pub use lifecycle::{DaemonOptions, LOCK_WAIT, run};
 
 #[cfg(test)]
 mod tests {
