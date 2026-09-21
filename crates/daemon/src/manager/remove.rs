@@ -6,15 +6,26 @@
 //! disk (design decision 18). This is the other path, the one that deletes a directory the
 //! user cannot get back, and it is written around two rules.
 //!
-//! # The tree is asked before anything is killed
+//! # The tree is asked before anything is killed — on the common path
 //!
-//! The dirty check runs *before* the agent is signalled, not after, so a refusal costs the
-//! user nothing: the agent is still running in the checkout it was working in, and they
-//! can go and look at what is in there. The check itself lives in
-//! [`crate::worktree::dirty_reason`], which counts a paused rebase, a paused bisect and an
-//! unreachable detached `HEAD` as work precisely because `git status` does not — and which
-//! says *which* of them it found, so the refusal the user reads names the state they can
-//! actually go and check. Every question it cannot
+//! Step 2's dirty check runs *before* step 3 signals the agent, not after, so on the
+//! common path a refusal costs the user nothing: the agent is still running in the
+//! checkout it was working in, and they can go and look at what is in there.
+//! `app/modal_keys.rs`'s module doc hedges this the same way and for the same reason:
+//! **one path is the exception.** Risk 8 — a file appearing between step 2's check and
+//! step 3's kill — means `worktree::remove` in step 4 can *itself* answer
+//! [`WorktreeError::Dirty`], and [`blocking`]'s doc comment says so; that refusal reaches
+//! the user as the identical prompt, but by then the agent has already been SIGKILLed, so
+//! "the agent is still running in the checkout" is false on that one path. This is why
+//! neither the remove-confirm dialog nor the force-or-keep follow-up may say anything
+//! about the agent's process at all, rather than saying "the agent is still running": a
+//! rule that reads accurate here and gets qualified without a matching qualifier at the
+//! dialog would leave the dialog's wording resting on an unhedged claim.
+//!
+//! The check itself lives in [`crate::worktree::dirty_reason`], which counts a paused
+//! rebase, a paused bisect and an unreachable detached `HEAD` as work precisely because
+//! `git status` does not — and which says *which* of them it found, so the refusal the
+//! user reads names the state they can actually go and check. Every question it cannot
 //! answer is an error here rather than a "no": refusing to remove a clean worktree is an
 //! annoyance, removing a dirty one is lost work, and only one of those is recoverable.
 //!
