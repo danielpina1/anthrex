@@ -227,6 +227,10 @@ fn long_names_are_truncated_with_an_ellipsis() {
         Status::Idle,
     );
     window.since_secs = 0;
+    // This is about name truncation, not the sidebar branch marker `win()` happens to
+    // set (decision 37, `ui/tree_view_tests.rs` covers the budget between the two) — so
+    // it is turned off here to keep the two concerns from being tested at once.
+    window.branch = None;
     let mut app = App::new(vec![window], "/tmp".into(), Keymap::default_prefix());
     app.set_terminal_size(80, 24);
     let (out, _) = render(&app, 120, 30);
@@ -543,6 +547,9 @@ fn unicode_names_preserve_graphemes_and_right_fields() {
     for name in ["界".repeat(20), "👩🏽‍💻".repeat(20)] {
         let mut window = win(1, &name, Runtime::Shell, Status::Idle);
         window.since_secs = 0;
+        // As in `long_names_are_truncated_with_an_ellipsis`: this is about grapheme-safe
+        // truncation, not the branch marker `win()` happens to set.
+        window.branch = None;
         let mut app = App::new(vec![window], "/tmp".into(), Keymap::default_prefix());
         app.set_terminal_size(80, 24);
         let (out, _) = render(&app, 120, 30);
