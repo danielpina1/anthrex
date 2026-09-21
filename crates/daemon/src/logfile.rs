@@ -7,6 +7,12 @@
 //! caller, say), which is what `rotation_is_size_safe_under_concurrent_writers_behind_a_mutex`
 //! below pins down: every write is atomic under the caller's own lock, so nothing here can
 //! tear a line or let a file grow past its bound no matter how the caller serializes calls.
+//!
+//! A `rotate()` failure (a read-only directory, a full disk, ...) never fails the write
+//! that triggered it and never wedges logging shut for good: see
+//! `RotatingFile::recover_from_failed_rotation` and `rotation_failure_does_not_wedge_logging_shut`
+//! below. Exceeding the size cap once is the recoverable direction; losing every write from
+//! then on, silently, is not.
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
@@ -66,6 +72,13 @@ impl RotatingFile {
     /// `.3`, `.1` to `.2`, then the current file to `.1`. A rename source that does not
     /// exist yet (the log has not rotated `keep` times yet) is skipped rather than treated
     /// as an error.
+    ///
+    /// The two branches handle a removal failure differently on purpose, not by oversight:
+    /// deleting `oldest` (the `keep >= 2` branch) is cleanup of a file that may simply not
+    /// exist yet, if the log hasn't rotated `keep` times before — an error there is
+    /// expected and ignored. Deleting `self.path()` in the `keep < 2` branch instead *is*
+    /// the rotation (there is nowhere else for the content to go), so its error is the
+    /// caller's business and propagated with `?`, same as the renames above it.
     fn rotate(&mut self) -> io::Result<()> {
         if self.keep >= 2 {
             let oldest = self.rotated_path(self.keep - 1);
@@ -89,6 +102,39 @@ impl RotatingFile {
         self.len = 0;
         Ok(())
     }
+
+    /// Recovers `self.file`/`self.len` after `rotate()` fails (a read-only directory, a
+    /// full disk, ...) so the caller can still write the bytes that triggered the failed
+    /// rotation instead of losing them — see [`Write::write`] below for why that matters.
+    ///
+    /// `rotate()` can fail partway: e.g. it may have successfully renamed the current file
+    /// to `.1` before failing to recreate a fresh current file (`ENOSPC`, or the same
+    /// permission problem). Reopening `self.path()` recovers that case too, and does not
+    /// need write permission on the directory when the file already exists — only
+    /// *creating* a new directory entry does — so it succeeds even in the common failure
+    /// (an unwritable directory) where `rotate()` itself could not rename or remove
+    /// anything. If that reopen also fails, `self.file` is left as whatever it was, which
+    /// in the ordinary case (nothing renamed it away) is still the original, perfectly
+    /// writable file. Either way, `self.len` is re-derived from real on-disk length rather
+    /// than trusted, since it may now be describing a file that moved out from under it.
+    fn recover_from_failed_rotation(&mut self, err: &io::Error) {
+        // `tracing_appender`'s non-blocking worker thread silently drops `Write` errors
+        // (its own source has only a `// TODO: print to stderr`), so this is the only
+        // place on the path from a daemon log call to disk that can ever surface a
+        // rotation failure at all.
+        eprintln!(
+            "anthrex daemon: failed to rotate {}: {err}; continuing to log to the existing file past its size limit",
+            self.path().display()
+        );
+        if let Ok(reopened) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.path())
+        {
+            self.file = reopened;
+        }
+        self.len = self.file.metadata().map(|m| m.len()).unwrap_or(self.len);
+    }
 }
 
 impl Write for RotatingFile {
@@ -100,7 +146,17 @@ impl Write for RotatingFile {
         // strictly past does. A buffer larger than `max_bytes` on its own is not split: it
         // still rotates the (nonempty) file it would overflow, then goes in whole.
         if self.len > 0 && self.len.saturating_add(incoming) > self.max_bytes {
-            self.rotate()?;
+            // A rotation failure must not turn into losing every write for the rest of the
+            // process's life (task-3 review, Major finding): `self.len` used to be reset
+            // only on a *successful* rotation, so a failure here left it stuck above
+            // `max_bytes` forever, and every later write re-tried rotation, failed the same
+            // way, and was lost too — even long after whatever broke the directory was
+            // fixed, since nothing ever cleared the stuck `len`. Losing all future logging
+            // is worse than exceeding the cap once, so a failure here does not propagate:
+            // it recovers the writer (below) and falls through to the write itself.
+            if let Err(e) = self.rotate() {
+                self.recover_from_failed_rotation(&e);
+            }
         }
         self.file.write_all(buf)?;
         self.len += incoming;
@@ -302,6 +358,76 @@ mod tests {
         assert!(
             !dir.path().join("daemon.log.4").exists(),
             "keep = 4 must not retain a fifth file"
+        );
+    }
+
+    /// Task-3 review, Major finding: a rotation failure used to leave `self.len` stuck
+    /// above the cap forever, because it was only ever reset *after* a successful
+    /// rotation. So the write that triggered the failed rotation was lost, and — because
+    /// `len` was never reset — every write after it re-evaluated the same "would exceed
+    /// the cap" condition, retried rotation, failed the same way, and was lost too. Not
+    /// just for as long as the directory stayed unwritable: forever, since restoring
+    /// permissions did nothing to un-stick `len`.
+    ///
+    /// The ruling: losing all future logging is worse than exceeding the size cap once.
+    /// A failed rotation must leave the writer usable — the triggering write (and every
+    /// write after it, until the directory is writable again) must still land, growing
+    /// past the cap if it has to — and rotation must resume on its own once the directory
+    /// is writable again, with no restart needed.
+    #[test]
+    fn rotation_failure_does_not_wedge_logging_shut() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut file = RotatingFile::open(dir.path(), "daemon.log", 100, 3).unwrap();
+        file.write_all(&[b'a'; 99]).unwrap();
+
+        let mode_before = std::fs::metadata(dir.path()).unwrap().permissions().mode();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+
+        // Restore the directory's permissions even if an assertion below panics, so this
+        // test can never leave a read-only temp directory behind to wedge the rest of the
+        // suite (tempfile's own cleanup needs to remove it).
+        struct RestorePerms(PathBuf, u32);
+        impl Drop for RestorePerms {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(self.1));
+            }
+        }
+        let _restore = RestorePerms(dir.path().to_path_buf(), mode_before);
+
+        // 99 + 5 > 100: this write must try to rotate. The directory denies the
+        // rename/remove rotation needs, so rotation itself fails — but the write must
+        // still land instead of being lost.
+        file.write_all(&[b'b'; 5])
+            .expect("a rotation failure must not fail the triggering write");
+        let current = std::fs::read(dir.path().join("daemon.log")).unwrap();
+        assert!(
+            current.ends_with(&[b'b'; 5]),
+            "the triggering write must still land in the file"
+        );
+        assert!(
+            current.len() > 100,
+            "failing to rotate must grow past the cap rather than lose data; got {} bytes",
+            current.len()
+        );
+
+        // A second write, still under the read-only directory, must also still land —
+        // proving this isn't a one-shot recovery that then wedges shut again.
+        file.write_all(&[b'c'; 5]).unwrap();
+        let current = std::fs::read(dir.path().join("daemon.log")).unwrap();
+        assert!(
+            current.ends_with(&[b'c'; 5]),
+            "logging must keep working on every write while the directory stays unwritable"
+        );
+
+        // Once the directory is writable again, the very next threshold crossing must
+        // rotate successfully with no restart needed.
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(mode_before)).unwrap();
+        file.write_all(&[b'd'; 200]).unwrap();
+        assert!(
+            dir.path().join("daemon.log.1").exists(),
+            "rotation must resume on its own once the directory is writable again"
         );
     }
 }
