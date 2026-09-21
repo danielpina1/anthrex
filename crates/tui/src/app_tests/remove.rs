@@ -346,6 +346,62 @@ fn a_second_worktree_removal_is_refused_while_one_is_in_flight() {
     );
 }
 
+/// The re-review's extension to the finding above, reachable with a *single* window: the
+/// same-window case the cross-window guard's `!=` check let through. Confirming twice for
+/// the same window is the same shape of bug — the second `Remove` clears the pending
+/// slot's identity out from under the first, so the first removal's own `RemoveDirty`
+/// (should the tree turn out dirty) lands as a toast instead of opening the force prompt
+/// — reachable with only one worktree window open, which is the configuration every other
+/// test in this module uses.
+#[test]
+fn a_same_window_removal_is_refused_while_one_is_in_flight() {
+    let mut app = app_with(vec![wt_win(1, "alpha", "feat/alpha")]);
+
+    app.focus(1);
+    open_remove_confirm(&mut app);
+    assert!(press(&mut app, KeyCode::Char('w'), KeyModifiers::NONE).is_empty());
+    assert_eq!(
+        press(&mut app, KeyCode::Enter, KeyModifiers::NONE),
+        vec![Effect::Send(ClientMsg::Remove {
+            window_id: 1,
+            remove_worktree: true,
+            force: false,
+        })]
+    );
+
+    // Confirming the same window's removal again, before any reply to the first has
+    // arrived, must not send a second request.
+    open_remove_confirm(&mut app);
+    assert!(press(&mut app, KeyCode::Char('w'), KeyModifiers::NONE).is_empty());
+    assert_eq!(
+        press(&mut app, KeyCode::Enter, KeyModifiers::NONE),
+        vec![],
+        "a second removal of the same window must not be sent while the first is \
+         outstanding"
+    );
+    assert_eq!(
+        app.toast_text(),
+        Some("already removing alpha's worktree; wait for it to finish"),
+        "and the user must be told why nothing happened"
+    );
+
+    // The first removal's own refusal must still open the force prompt — the pending
+    // slot's identity must not have been disturbed by the refused second attempt.
+    assert!(
+        app.on_daemon(DaemonMsg::RemoveDirty {
+            window_id: 1,
+            message: "worktree /wt/feat-alpha has uncommitted or untracked changes".into(),
+        })
+        .is_empty()
+    );
+    match &app.modal {
+        Some(Modal::ForceRemove { window_id, .. }) => {
+            assert_eq!(*window_id, 1, "the prompt must target the refused window");
+        }
+        other => panic!("expected alpha's force prompt, got {other:?}"),
+    }
+}
+
 /// The same finding from the other side: a refusal whose `window_id` is not the removal
 /// this client has outstanding. Whatever produced it — a stale reply, another client's
 /// removal, a daemon bug — the answer is a toast, never a force prompt built on a guess.

@@ -159,23 +159,33 @@ impl App {
             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
                 let remove_worktree = confirm.remove_worktree;
                 if remove_worktree {
-                    // One worktree removal at a time (see `App::pending_worktree_remove`).
-                    // A second one started now could not be told apart from the first by
-                    // the id-less `Ack`/`Error` that ends it, and the cost of getting that
-                    // wrong is a force prompt aimed at a window the user never looked at.
-                    // Refusing is a few seconds' wait; the alternative deletes work.
-                    if let Some(pending) = self.pending_worktree_remove
-                        && pending != confirm.window_id
-                    {
-                        let name = self
-                            .windows
-                            .iter()
-                            .find(|w| w.id == pending)
-                            .map(|w| w.name.as_str())
-                            .unwrap_or("another window");
-                        self.toast(format!(
-                            "still removing {name}'s worktree; try again once it finishes"
-                        ));
+                    // One worktree removal at a time (see `App::pending_worktree_remove`),
+                    // for *any* window, including this same one. A second one started now
+                    // — same window or different — could not be told apart from the first
+                    // by the id-less `Ack`/`Error` that ends it: the daemon's answer to the
+                    // second request clears the slot, and the first request's own reply
+                    // (an outstanding `RemoveDirty`, if the tree turns out dirty) then lands
+                    // as a toast instead of the force-or-keep dialog it should open — a
+                    // second route to the same lost-prompt residual the cross-window guard
+                    // below exists for, reachable with a single window. The cost of
+                    // refusing is a few seconds' wait; the alternative can silently drop
+                    // the one dialog standing between the user and losing uncommitted work.
+                    if let Some(pending) = self.pending_worktree_remove {
+                        let message = if pending == confirm.window_id {
+                            format!(
+                                "already removing {}'s worktree; wait for it to finish",
+                                confirm.name
+                            )
+                        } else {
+                            let name = self
+                                .windows
+                                .iter()
+                                .find(|w| w.id == pending)
+                                .map(|w| w.name.as_str())
+                                .unwrap_or("another window");
+                            format!("still removing {name}'s worktree; try again once it finishes")
+                        };
+                        self.toast(message);
                         return vec![];
                     }
                     self.pending_worktree_remove = Some(confirm.window_id);
