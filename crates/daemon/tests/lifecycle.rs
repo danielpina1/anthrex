@@ -425,6 +425,11 @@ fn restart_test_record(
 /// given, one per line entry, then `exec sleep 60` so the window stays alive to be
 /// subscribed to. That is enough to check the resume argv (design decisions 15-16)
 /// without needing either real agent installed.
+///
+/// The `READY` line printed right after the argv is deliberate (fix wave 5 re-review,
+/// Minor 3): it pins that the argv assertion below checks the argv *line itself*, not
+/// "nothing else is on screen after it" — a fixture that never printed anything past the
+/// argv would pass either way and hide the distinction.
 #[tokio::test]
 async fn restart_resumes_claude_and_codex_sessions() {
     let dir = tempfile::tempdir().unwrap();
@@ -435,7 +440,7 @@ async fn restart_resumes_claude_and_codex_sessions() {
     let script = dir.path().join("argv.sh");
     std::fs::write(
         &script,
-        "#!/bin/sh\nprintf 'ARGV:'\nfor a in \"$@\"; do printf ' [%s]' \"$a\"; done\nprintf '\\n'\nexec sleep 60\n",
+        "#!/bin/sh\nprintf 'ARGV:'\nfor a in \"$@\"; do printf ' [%s]' \"$a\"; done\nprintf '\\n'\nprintf 'READY\\n'\nexec sleep 60\n",
     )
     .unwrap();
     #[cfg(unix)]
@@ -559,22 +564,53 @@ async fn restart_resumes_claude_and_codex_sessions() {
                     // (`launch/mod.rs`'s `codex_resume_puts_resume_last_and_drops_the_prompt`),
                     // but the brief asked for it here too, against a real spawned process.
                     //
-                    // The fixture's whole argv is one `printf`-built logical line, but at
-                    // 80 columns it soft-wraps across several screen rows, and vt100's own
-                    // `contents()` joins rows with `\n` regardless of whether the break was
-                    // a real newline or a wrap — so this flattens the screen back into one
-                    // line before searching it, rather than looking for the fragment that
-                    // merely starts with `ARGV:`, which is only the line's first row.
-                    let flat: String = screen.chars().filter(|c| *c != '\n').collect();
+                    // Minor 3 (fix wave 5 re-review): the fixture's whole argv is one
+                    // `printf`-built logical line, but at 80 columns it soft-wraps across
+                    // several screen rows, and vt100's own `contents()` joins rows with
+                    // `\n` regardless of whether the break was a real newline or a wrap —
+                    // flattening the *whole screen* into one line and asserting against its
+                    // end asserted more than the property means: it required the argv line
+                    // to be the last thing on the 24-row screen, not merely that the argv
+                    // line itself ends with resume last. `Screen::row_wrapped` tells the two
+                    // kinds of row boundary apart, so the argv line's own rows can be
+                    // reassembled and checked on their own, whatever the shell prints after
+                    // it.
+                    //
+                    // Anchored on `must_contain` (`[resume] [thr-1]`, already known present
+                    // — that is what let this loop iteration reach here), not on `ARGV:`:
+                    // the argv text is long enough to scroll `ARGV:` itself off the top of
+                    // the 24-row screen well before the whole line has arrived, while the
+                    // tail end — what this assertion actually cares about — is still on
+                    // screen by construction.
+                    let vt = mirror.screen();
+                    let (rows, cols) = vt.size();
+                    let row_texts: Vec<String> = vt.rows(0, cols).collect();
+                    let hit_row = row_texts
+                        .iter()
+                        .position(|r| r.contains("[resume] [thr-1]"))
+                        .unwrap_or_else(|| panic!("[resume] [thr-1] not found: {row_texts:?}"));
+                    let mut start_row = hit_row as u16;
+                    while start_row > 0 && vt.row_wrapped(start_row - 1) {
+                        start_row -= 1;
+                    }
+                    let mut end_row = hit_row as u16;
+                    while end_row + 1 < rows && vt.row_wrapped(end_row) {
+                        end_row += 1;
+                    }
+                    let argv_line: String =
+                        row_texts[usize::from(start_row)..=usize::from(end_row)].concat();
                     assert!(
-                        flat.trim_end().ends_with("[resume] [thr-1]"),
-                        "the argv line must end with resume last: {flat:?}"
+                        argv_line.trim_end().ends_with("[resume] [thr-1]"),
+                        "the argv line must end with resume last: {argv_line:?}"
                     );
-                    let m_pos = flat
+                    let m_pos = argv_line
                         .find("[-m] [m1]")
-                        .unwrap_or_else(|| panic!("-m m1 not on the argv line: {flat:?}"));
-                    let resume_pos = flat.find("[resume] [thr-1]").expect("checked above");
-                    assert!(m_pos < resume_pos, "-m must appear before resume: {flat:?}");
+                        .unwrap_or_else(|| panic!("-m m1 not on the argv line: {argv_line:?}"));
+                    let resume_pos = argv_line.find("[resume] [thr-1]").expect("checked above");
+                    assert!(
+                        m_pos < resume_pos,
+                        "-m must appear before resume: {argv_line:?}"
+                    );
                 }
                 break;
             }
