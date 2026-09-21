@@ -26,7 +26,7 @@ use ratatui::{
 /// for one, and milestone 4.6's single line otherwise (decisions 1 and 6).
 ///
 /// A short terminal loses the panel, never the canvas: the panel is only ever
-/// carved out of an interior that keeps six rows of canvas under it.
+/// carved out of an interior with six rows of canvas left above it.
 pub fn areas(main: Rect, inspector_visible: bool) -> (Rect, Rect) {
     let inner = super::inset(main);
     let footer_height = if inspector_visible && inner.height >= MIN_INTERIOR_FOR_PANEL {
