@@ -376,3 +376,41 @@ async fn a_removal_admitted_after_a_restart_is_refused() {
     // up rather than leaving it for the test binary's exit.
     drain(&m);
 }
+
+// ---------------------------------------------------------------------------
+// `remove_with_worktree` vs `shutdown` (fix wave 7 re-review, item 1's audit of every
+// admission-time check in this milestone, alongside `restart`'s own Major 1)
+// ---------------------------------------------------------------------------
+//
+// `begin_removal` had no `shutting_down` check at all — not even the admission-only guard
+// `create`'s `admit` and `begin_restart` already had before their own fixes for the same
+// flag. Unlike `restart`'s hazard, no race is needed to see this one: calling the removal
+// strictly *after* `shutdown()` has already returned is enough, because nothing ever
+// refused it.
+
+/// The straightforward case, no interleaving required: `shutdown` to completion, then the
+/// removal. Before this fix it ran anyway — deleting a checkout, dropping the git watch,
+/// and leaving the window unlisted — while the daemon believed every window was already
+/// accounted for and was on its way out.
+#[tokio::test]
+async fn a_removal_is_refused_after_shutdown() {
+    let repo = TempRepo::new();
+    let (m, _keep, _wt_root) = manager();
+    let roots = FakeRoots::new();
+    let agent = worktree_agent(&m, &repo, "post-shutdown", "feat/post-shutdown").await;
+
+    m.shutdown().await;
+
+    let error = m
+        .remove_with_worktree(agent.id, true, &roots)
+        .await
+        .expect_err("a removal admitted after shutdown must be refused");
+    assert!(matches!(error, RemoveError::Failed(_)), "{error:?}");
+    assert!(error.to_string().contains("shutting down"), "{error}");
+    assert!(agent.path.is_dir(), "the checkout must be left untouched");
+    assert!(listed(&m, agent.id), "the window must still be listed");
+    assert!(
+        roots.calls().is_empty(),
+        "the registry must never be touched by a removal that never started"
+    );
+}

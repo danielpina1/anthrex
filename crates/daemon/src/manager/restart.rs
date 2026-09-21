@@ -78,6 +78,18 @@
 //!   broadcast channel a subscriber was reading, which is what wakes `forward_output_from`
 //!   into reattaching (design decision 21) — the status fields are reset as for a fresh
 //!   create, and the change is published.
+//!
+//!   Fix wave 5 **re-review**, Major 1: phase A's `shutting_down` check only guards
+//!   *admission*. It cannot constrain a restart that was already admitted before
+//!   `shutdown` ran — none of the phases in between re-read the flag, so a restart whose
+//!   phase B kill wait was still outstanding when `shutdown` began could complete
+//!   afterward and swap a live process in regardless, using a flag it read seconds
+//!   earlier. `finish_restart` re-checks `shutting_down` here, under the same lock the
+//!   swap itself takes and `shutdown` uses to snapshot the ids it will wait for — the one
+//!   place the two operations cannot land ambiguously, because whichever acquires the
+//!   lock first is what the other observes. If `shutdown` won, this treats the situation
+//!   exactly like the "entry gone" case above: the fresh process is killed at once and the
+//!   restart fails, rather than resurrecting a process nothing will ever signal again.
 
 use super::entry::Process;
 use super::{ManagerConfig, WindowManager};
@@ -307,6 +319,22 @@ impl WindowManager {
         // phase B's kill, and `tick` already keeps that alive by id-absence alone, but
         // evicting it here is harmless and keeps this one call site unconditional.
         inner.orphan_cleanup(id);
+        // Major 1 (fix wave 5 **re-review**): `begin_restart`'s `shutting_down` check
+        // (phase A, above) guards admission only — nothing in phases B, C or D re-read it,
+        // so a restart already admitted before `shutdown` set the flag would sail through
+        // and swap a live process in here regardless, using a flag read up to several
+        // seconds earlier (phase B's kill wait). This is the one place that gap can be
+        // closed for real: `shutdown` walks a snapshot of `inner.entries` it takes under
+        // this very lock, so re-reading the flag here — still holding that lock, still
+        // before the swap — means whichever side acquires it first is the one the other
+        // observes. If `shutdown` got here first, this restart must not complete: the
+        // fresh process is killed at once, the same way the "entry gone" arm below already
+        // kills one nothing will ever reference.
+        if inner.shutting_down {
+            drop(inner);
+            let _ = window.signal_group(libc::SIGKILL);
+            anyhow::bail!("daemon is shutting down");
+        }
         let Some(entry) = inner.entries.get_mut(&id) else {
             drop(inner);
             let _ = window.signal_group(libc::SIGKILL);

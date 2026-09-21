@@ -266,3 +266,31 @@ do nothing (the first) or silently delete the property under test (the second).
 
 Both items are recorded here rather than assigned to a specific milestone number; pick them
 up whenever TUI clock injection or manager lock instrumentation is next in scope.
+
+## From fix wave 7's re-review response (2026-09-21), deliberately deferred
+
+- **`remove_with_worktree`'s own git operations can still be running when `shutdown()`
+  returns, and `lifecycle::run` moves on to the final state save and process exit right
+  after.** Fix wave 7 added the missing `shutting_down` admission check to
+  `WindowManager::begin_removal` (`crates/daemon/src/manager/remove.rs`), closing the
+  straightforward gap where a removal issued *after* `shutdown()` had already returned still
+  ran to completion. That fix is admission-only, deliberately — the same limit `create`'s
+  own check has — and does not extend to a removal that was already admitted *before*
+  `shutdown()` set the flag. Unlike `restart`'s Major 1, an in-flight `remove_with_worktree`
+  cannot leave a *live, untracked process* behind: the window's entry stays in
+  `inner.entries` for as long as the removal runs, and `shutdown`'s own unconditional scan
+  of every entry still present calls `start_cleanup` on it regardless of the `removing`
+  flag, the same path that already signals and waits for a live plain window. What is not
+  covered is *filesystem and git-registry consistency*: `shutdown()` only waits for process
+  cleanup (the `cleanups`/`orphaned_cleanups` receivers), not for a `remove_with_worktree`
+  task to reach `finish_removal`. If the daemon process itself exits (after the final
+  `state.json` save that follows `shutdown()`) while a `remove_with_worktree` detached task
+  is still between its `unregister` and `worktree::remove`, or mid `git worktree remove`,
+  the operation is cut off — the same corruption `server/requests.rs`'s own doc comment on
+  `detach` already reasons about for a *client-dropped* future, just not for the daemon
+  process's own exit. Closing this needs `shutdown()` (or `lifecycle::run`) to also wait for
+  every in-flight `create`/`remove_with_worktree` detached task to finish, not only for
+  process cleanup — a change to `detach`'s own contract, wider than an admission check, and
+  out of a fix wave's scope. Not reproduced with a running test in this fix wave (it needs a
+  slow or hook-stalled `git worktree remove` racing an actual process exit, not just
+  `shutdown()` returning); recorded here from the code reading that found it.

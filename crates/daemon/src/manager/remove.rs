@@ -202,6 +202,32 @@ impl WindowManager {
     /// the disk, so the lock is held for as long as a `BTreeMap` lookup takes.
     fn begin_removal(&self, id: u32) -> anyhow::Result<(ManagedWorktree, Removing<'_>)> {
         let mut inner = crate::lock(&self.inner);
+        // Fix wave 7 (item 1's audit of every admission-time check alongside restart's
+        // Major 1): unlike `create`'s `admit` and `begin_restart`, this had no
+        // `shutting_down` check at all — not even the admission-only guard restart had
+        // before that fix, so a `remove_with_worktree` issued strictly *after*
+        // `shutdown()` had already returned still ran to completion, deleting a checkout
+        // off disk with the daemon believing every window was already accounted for.
+        // Reproduced directly, no race needed: `shutdown().await` to completion, then
+        // `remove_with_worktree` on a still-listed worktree window returned `Ok(())` and
+        // the checkout was gone.
+        //
+        // This closes admission only, deliberately — the same limit `create`'s check has.
+        // It does not need `finish_removal` to re-check the flag the way `finish_restart`
+        // does: a removal already admitted before `shutdown` sets it cannot leave a live,
+        // untracked process behind, because the entry stays in `inner.entries` for as long
+        // as the removal runs (until `finish_removal`'s own `entries.remove`), and
+        // `shutdown`'s own unconditional scan of every entry still present calls
+        // `start_cleanup` on it regardless of `removing` — the same path that already
+        // signals and waits for a live plain window. `restart`'s hazard was a *new* process
+        // swapped in after `shutdown` had already taken its snapshot; this operation only
+        // ever removes an entry, never replaces one, so that specific failure mode does not
+        // apply here. What is not closed — an in-flight removal's own git operations
+        // (`worktree::remove`) being cut off if the daemon process itself exits before they
+        // finish — is a different question (filesystem/registry consistency under process
+        // teardown, not process leakage) and is out of this fix's scope; see the M6 entry
+        // in `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`.
+        anyhow::ensure!(!inner.shutting_down, "daemon is shutting down");
         let entry: &mut Entry = inner
             .entries
             .get_mut(&id)

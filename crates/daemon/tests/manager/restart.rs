@@ -408,3 +408,184 @@ async fn restart_is_refused_after_shutdown() {
     let err = m.restart(id).await.unwrap_err();
     assert!(err.to_string().contains("shutting down"), "{err}");
 }
+
+/// Major 1 (fix wave 5 **re-review**): `begin_restart`'s `shutting_down` check above only
+/// guards *admission*. It cannot constrain a restart that was already admitted before
+/// `shutdown` began — none of `restart`'s exit paths re-reads the flag after phase A, so an
+/// in-flight restart can still swap a live process in *after* `shutdown()` has returned,
+/// using a flag it read seconds earlier. The fix re-checks `shutting_down` in
+/// `finish_restart`, under the very lock the swap itself takes — the one place a race
+/// between "admitted" and "shutting down" cannot land ambiguously, because whichever side
+/// acquires that lock first is the one the other observes.
+///
+/// Variant A here forces the race deterministically with a real, signal-ignoring shell
+/// (`trap '' HUP TERM`), which only ever dies to the unblockable `SIGKILL`
+/// `crate::process::escalate` sends at its hardcoded `KILL_GRACE` (3s, `process.rs`) —
+/// giving a wide, real window in which `shutdown` can be called while phase B's kill wait
+/// is still outstanding. The same script is `ManagerConfig.shell`, so phase C's fresh spawn
+/// for the restart is *also* this stubborn shell, which is what lets the test tell the two
+/// processes apart and confirm the second one is truly dead, not merely "swapped out",
+/// after everything settles.
+#[tokio::test]
+async fn restart_admitted_before_shutdown_is_refused_and_leaves_no_process_behind() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let pid_log = dir.path().join("pids.log");
+    let shell = dir.path().join("stubborn-shell.sh");
+    std::fs::write(
+        &shell,
+        format!(
+            "#!/bin/sh\ntrap '' HUP TERM\nprintf '%s\\n' \"$$\" >> '{}'\nwhile :; do :; done\n",
+            pid_log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    // `ManagerConfig::new`'s default `kill_grace` is the real `KILL_GRACE` (process.rs),
+    // giving `wait_for_exit` its production deadline of `kill_grace + 2s` — comfortably
+    // past the ~3s the stubborn shell actually takes to die to `SIGKILL`, so phase B's own
+    // wait succeeds for the right reason rather than timing out (that is Minor 2's
+    // scenario, not this one).
+    let config = ManagerConfig::new("/tmp/unused.sock".into(), shell.display().to_string());
+    let (m, mut events) = WindowManager::new(config);
+    let pump = m.clone();
+    tokio::spawn(async move {
+        while let Some((id, ev)) = events.recv().await {
+            pump.handle_event(id, ev);
+        }
+    });
+
+    let id = create_id(
+        &m,
+        spec("restart-across-shutdown"),
+        std::env::temp_dir(),
+        80,
+        24,
+    )
+    .await;
+    wait_until("stubborn shell logged its pid", || {
+        std::fs::read_to_string(&pid_log)
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false)
+    })
+    .await;
+
+    let restart_task = {
+        let m = m.clone();
+        tokio::spawn(async move { m.restart(id).await })
+    };
+    // Give phase A/B a moment to run (set `restarting`, send the first HUP) before
+    // `shutdown` sets its own flag — not a bound on anything this test asserts, only
+    // ordering: `shutting_down` must land while the kill wait is genuinely outstanding,
+    // which is true for a wide, multi-second window here (the shell ignores both HUP and
+    // TERM), not a knife's edge this sleep has to hit precisely.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    m.shutdown().await;
+    let result = restart_task.await.unwrap();
+
+    // Whether phase C's fresh spawn survives is checked by process listing, not by
+    // waiting for it to log its own pid: `SIGKILL` can (and, observed while building this
+    // test, sometimes does) reach a just-forked child before it has run any of its own
+    // script at all, racing ahead of the very `printf` that would have logged it. Matching
+    // on this test's own unique script path is unambiguous either way.
+    let needle = shell.display().to_string();
+    let survivors = || {
+        std::process::Command::new("pgrep")
+            .arg("-f")
+            .arg(&needle)
+            .output()
+            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+            .unwrap_or_default()
+    };
+
+    if result.is_ok() {
+        // Pre-fix behaviour: `finish_restart` swapped a live process in after `shutdown`
+        // had already returned, and nothing ever signals it. Confirm and kill whatever is
+        // left before asserting RED, rather than leaving a leaked shell behind.
+        for pid in survivors().lines().filter_map(|l| l.trim().parse().ok()) {
+            // SAFETY: matched by this test's own unique, just-created script path.
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+        }
+    }
+
+    let err = result.expect_err(
+        "a restart admitted before shutdown() must be refused once shutdown() has set its \
+         flag, not allowed to swap a live process in afterward",
+    );
+    assert!(err.to_string().contains("shutting down"), "{err}");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let left = survivors();
+        if left.is_empty() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "a process spawned after shutdown() returned is still running: {left}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// Variant B of the same finding, with no injected timing at all: an ordinary shell that
+/// dies on `HUP` at once (AGENTS.md). The re-review reproduced this "first try" because the
+/// race is not actually close — once phase B's kill wait has confirmed the old child dead,
+/// `shutdown`'s own wait for that same, already-finished escalation resolves close to
+/// instantly (a `watch` channel notification), while phase C still has a real PTY spawn
+/// ahead of it (tens of ms, `docs/timing-budgets.md`'s idle table). Calling `shutdown` the
+/// moment the old child is confirmed gone at the OS level reliably lands inside that gap.
+#[tokio::test]
+async fn restart_admitted_before_shutdown_ordinary_shell_variant() {
+    let m = manager();
+    let id = create_id(
+        &m,
+        spec("post-shutdown-swap-ordinary"),
+        std::env::temp_dir(),
+        80,
+        24,
+    )
+    .await;
+    wait_until("shell started", || find(&m, id).status != Status::Starting).await;
+    let original_pid = m.child_pid(id).unwrap().expect("live window has a pid");
+
+    let restart_task = {
+        let m = m.clone();
+        tokio::spawn(async move { m.restart(id).await })
+    };
+
+    // "Wait for the old child to be reaped" — the re-review's own synchronization point
+    // for this variant, entirely from outside the manager: once the process group is gone
+    // at the OS level, phase B's kill has done its job and `restart` is on its way into
+    // phase C.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while group_alive(original_pid) {
+        assert!(Instant::now() < deadline, "old child was never reaped");
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+
+    m.shutdown().await;
+    let result = restart_task.await.unwrap();
+
+    if result.is_ok() {
+        // Pre-fix behaviour: confirm and clean up rather than leaving a leaked shell.
+        if let Ok(Some(pid)) = m.child_pid(id) {
+            // SAFETY: this pid is this window's own current process, just reported by the
+            // manager itself.
+            unsafe {
+                libc::killpg(pid as libc::pid_t, libc::SIGKILL);
+            }
+        }
+    }
+
+    let err = result.expect_err(
+        "a restart admitted before shutdown() must be refused once shutdown() has set its \
+         flag, not allowed to swap a live process in afterward",
+    );
+    assert!(err.to_string().contains("shutting down"), "{err}");
+}
