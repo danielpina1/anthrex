@@ -255,6 +255,25 @@ pub(super) struct Inner {
     pub(super) reserved_worktrees: BTreeSet<PathBuf>,
     // Cleanup owns a group beyond the leader's exit and even after window removal.
     pub(super) cleanups: BTreeMap<u32, watch::Receiver<bool>>,
+    /// Cleanup records `restart`'s `finish_restart` evicted from `cleanups` because their
+    /// id was about to be reused by a new `Process` (fix wave 5, Critical 1). `cleanups`
+    /// is keyed by window id and `start_cleanup` short-circuits whenever a record for that
+    /// id already exists, which was sound before restart existed — nothing respawned into
+    /// a live id, so an id was killed at most once meaningfully. Once an id can be reused,
+    /// leaving the old child's record under that key would make every `start_cleanup` for
+    /// the *new* process a silent no-op forever: `kill`, the next `restart`'s own phase B,
+    /// and `shutdown` would all believe cleanup was already in hand and signal nothing.
+    ///
+    /// So `finish_restart` moves the old record here instead of just dropping it: the
+    /// escalation thread behind it (`crate::process::escalate`) owns its `Sender` and
+    /// keeps running to HUP/TERM/KILL the old process group regardless of who, if anyone,
+    /// holds the `Receiver` — but `shutdown` still needs to *wait* for it before the daemon
+    /// exits and takes that thread down with it, or a descendant the old group's leader
+    /// left behind could survive as an orphan. Not keyed by id, because after eviction
+    /// nothing should ever look it up by the window's id again — it belongs to a process
+    /// that no longer has one. `tick` prunes finished entries the same way it prunes
+    /// `cleanups`.
+    pub(super) orphaned_cleanups: Vec<watch::Receiver<bool>>,
 }
 
 impl Inner {
@@ -272,5 +291,17 @@ impl Inner {
             self.cleanups.insert(id, crate::process::escalate(pid)?);
         }
         Ok(())
+    }
+
+    /// `restart`'s `finish_restart`: this id's `Process` is about to be swapped for a new
+    /// one, so any cleanup record still keyed on `id` belongs to the process being
+    /// replaced, not the one that will run under this id from now on. Moving it here
+    /// rather than dropping it keeps `shutdown` able to wait for it — see
+    /// `orphaned_cleanups`' own doc comment — while leaving `cleanups` free of the stale
+    /// entry that made `start_cleanup` a no-op for the new process (fix wave 5, Critical 1).
+    pub(super) fn orphan_cleanup(&mut self, id: u32) {
+        if let Some(done) = self.cleanups.remove(&id) {
+            self.orphaned_cleanups.push(done);
+        }
     }
 }

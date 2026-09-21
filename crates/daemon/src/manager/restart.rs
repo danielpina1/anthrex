@@ -212,6 +212,16 @@ impl WindowManager {
     /// re-attach always sees the new process (design decision 21).
     fn finish_restart(&self, id: u32, window: Window, guard: Restarting<'_>) -> anyhow::Result<()> {
         let mut inner = crate::lock(&self.inner);
+        // Critical 1 (fix wave 5): this id is about to be reused for `window`, so any
+        // cleanup record `start_cleanup` left under `id` belongs to the process being
+        // replaced. Left in place, it would make `kill`, this same id's next `restart`,
+        // and `shutdown` all believe the *new* process already has a cleanup in flight and
+        // signal nothing — see `Inner::orphan_cleanup` and `orphaned_cleanups`'s own doc
+        // comment for why this evicts rather than drops. Done before the "gone" check
+        // below too: a window removed mid-restart can still have a stale record from
+        // phase B's kill, and `tick` already keeps that alive by id-absence alone, but
+        // evicting it here is harmless and keeps this one call site unconditional.
+        inner.orphan_cleanup(id);
         let Some(entry) = inner.entries.get_mut(&id) else {
             drop(inner);
             let _ = window.signal_group(libc::SIGKILL);

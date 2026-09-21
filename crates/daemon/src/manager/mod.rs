@@ -189,6 +189,7 @@ impl WindowManager {
                 reserved_names: BTreeSet::new(),
                 reserved_worktrees: BTreeSet::new(),
                 cleanups: BTreeMap::new(),
+                orphaned_cleanups: Vec::new(),
             }),
             changed,
             events,
@@ -315,9 +316,13 @@ impl WindowManager {
         let now = Instant::now();
         let mut inner = crate::lock(&self.inner);
         let Inner {
-            entries, cleanups, ..
+            entries,
+            cleanups,
+            orphaned_cleanups,
+            ..
         } = &mut *inner;
         cleanups.retain(|id, done| entries.contains_key(id) || !*done.borrow());
+        orphaned_cleanups.retain(|done| !*done.borrow());
         let mut changed = false;
         for entry in inner.entries.values_mut() {
             changed |= entry.state.subagents.prune(now);
@@ -467,7 +472,17 @@ impl WindowManager {
                     tracing::error!(id, %error, "shutdown cleanup failed");
                 }
             }
-            inner.cleanups.values().cloned().collect()
+            // Every live id's own cleanup, plus any `orphaned_cleanups` a prior restart
+            // evicted from `cleanups`: those escalation threads still own a process group
+            // this daemon spawned, and exiting before they finish would take them down
+            // mid-HUP/TERM/KILL and leave a descendant behind (`entry.rs`'s
+            // `orphaned_cleanups` doc comment).
+            inner
+                .cleanups
+                .values()
+                .cloned()
+                .chain(inner.orphaned_cleanups.iter().cloned())
+                .collect()
         };
         for mut done in pending {
             let _ = done.wait_for(|finished| *finished).await;
