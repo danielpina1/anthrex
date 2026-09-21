@@ -105,6 +105,7 @@ dependencies = [
  "libc",
  "notify",
  "portable-pty",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",

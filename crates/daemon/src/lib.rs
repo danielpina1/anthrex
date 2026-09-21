@@ -25,6 +25,7 @@ pub mod manager;
 mod process;
 pub mod project;
 pub mod server;
+pub mod state;
 pub mod status;
 pub mod subagents;
 /// `#[doc(hidden)] pub` rather than private only so that `crates/daemon/tests/subprocess.rs`
