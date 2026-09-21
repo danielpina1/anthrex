@@ -14,7 +14,7 @@ use std::path::PathBuf;
 #[path = "tests/render.rs"]
 mod render_tests;
 
-pub(super) fn window(id: u32, project: &str, name: &str, runtime: Runtime) -> WindowInfo {
+fn window(id: u32, project: &str, name: &str, runtime: Runtime) -> WindowInfo {
     WindowInfo {
         id,
         name: name.to_owned(),
@@ -34,7 +34,7 @@ pub(super) fn window(id: u32, project: &str, name: &str, runtime: Runtime) -> Wi
     }
 }
 
-pub(super) fn subagent(id: &str, kind: &str, label: Option<&str>) -> SubagentInfo {
+fn subagent(id: &str, kind: &str, label: Option<&str>) -> SubagentInfo {
     SubagentInfo {
         id: id.to_owned(),
         parent_id: None,

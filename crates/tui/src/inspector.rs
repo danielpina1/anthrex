@@ -338,9 +338,8 @@ fn lines(inspection: &Inspection, width: usize, height: usize) -> Vec<Line<'stat
     // survives even when the column flow would fill every row.
     let flow_rows = if wrapping.is_some() { rows - 1 } else { rows };
 
-    let columns = choose_columns(&flow, flow_rows, width);
+    let (columns, widths) = pack(&flow, flow_rows, width);
     let shown = &flow[..flow.len().min(flow_rows.saturating_mul(columns))];
-    let widths = column_widths(shown, columns, width);
     let used_rows = shown.len().div_ceil(columns);
     for row in 0..used_rows {
         out.push(flow_line(shown, row, columns, &widths));
@@ -362,27 +361,99 @@ fn title_line(inspection: &Inspection, width: usize) -> Line<'static> {
     ])
 }
 
-/// How many columns to pack the fields into: as many as the width takes
-/// (decision 4). Columns are filled left to right and wrap to the next row, so
-/// column `j` holds fields `j`, `j + columns`, `j + 2 * columns` and so on, and
-/// each one is as wide as its own widest label and widest value.
-fn choose_columns(fields: &[&Field], rows: usize, width: usize) -> usize {
-    let mut best = 1;
+/// How much of its value a column must be able to say for opening another
+/// column to be worth it. Below this the row is stubs and ellipses, which says
+/// less than one fewer column would.
+const MIN_VALUE_WIDTH: usize = 8;
+
+/// How the fields pack into columns at this width: how many columns, and each
+/// one's label and value width (decision 4).
+///
+/// Fields fill left to right and wrap to the next row, so column `j` holds
+/// fields `j`, `j + columns`, `j + 2 * columns` and so on, and each column is
+/// as wide as its own widest label and widest value. Columns are opened while
+/// the width takes them, up to the number it takes to show every field: past
+/// that a new column buys nothing and costs every other column the room it
+/// took, which is how a window's `status` and `session` end up elided beside
+/// three columns of blank rows.
+///
+/// A column that cannot have its full value is not a reason to close it: it is
+/// elided instead (decision 5). Refusing any packing that needs an ellipsis
+/// would let one long value — a session id, or the label of a deeply nested
+/// parent — collapse the panel to a single column and push the fields below it
+/// off the bottom, which is the opposite of what the panel is for. So a
+/// packing is judged by whether every column can say `MIN_VALUE_WIDTH` of its
+/// value (or all of it, when it is shorter), and the room left over is handed
+/// out in fair shares, which gives the long values what the short ones do not
+/// need.
+fn pack(fields: &[&Field], rows: usize, width: usize) -> (usize, Vec<(usize, usize)>) {
+    // One column renders even in a panel too narrow to have asked for it: the
+    // label is cut to the panel and the value to whatever is left.
+    let mut forced = natural_widths(&fields[..fields.len().min(rows)], 1);
+    if let Some((label, value)) = forced.first_mut() {
+        *label = (*label).min(width);
+        *value = (*value).min(width.saturating_sub(*label + LABEL_GAP));
+    }
+    let mut best = (1, forced);
     if fields.is_empty() || rows == 0 {
         return best;
     }
-    for columns in 1..=fields.len() {
+
+    for columns in 1..=fields.len().div_ceil(rows) {
         let shown = &fields[..fields.len().min(rows.saturating_mul(columns))];
-        let total: usize = natural_widths(shown, columns)
+        let natural = natural_widths(shown, columns);
+        let fixed: usize = natural
             .iter()
-            .map(|(label, value)| label + LABEL_GAP + value)
+            .map(|(label, _)| label + LABEL_GAP)
             .sum::<usize>()
             + (columns - 1) * GUTTER;
-        if total <= width {
-            best = columns;
+        let floor: usize = natural
+            .iter()
+            .map(|(_, value)| (*value).min(MIN_VALUE_WIDTH))
+            .sum();
+        if fixed + floor > width {
+            continue;
         }
+        let wants: Vec<usize> = natural.iter().map(|(_, value)| *value).collect();
+        let given = distribute(width - fixed, &wants);
+        best = (
+            columns,
+            natural.iter().map(|(label, _)| *label).zip(given).collect(),
+        );
     }
     best
+}
+
+/// Hands `budget` columns of value width out among `wants`, a fair share at a
+/// time: no column takes more than it asked for, and what a short value leaves
+/// behind goes to the long ones.
+fn distribute(budget: usize, wants: &[usize]) -> Vec<usize> {
+    let mut given = vec![0usize; wants.len()];
+    let mut remaining = budget;
+    loop {
+        let needy: Vec<usize> = (0..wants.len())
+            .filter(|index| given[*index] < wants[*index])
+            .collect();
+        if needy.is_empty() || remaining == 0 {
+            return given;
+        }
+        let share = (remaining / needy.len()).max(1);
+        let mut spent = 0;
+        for index in needy {
+            let take = (wants[index] - given[index])
+                .min(share)
+                .min(remaining - spent);
+            given[index] += take;
+            spent += take;
+        }
+        // The share is at least one and at least one column is needy, so this
+        // only happens when the budget is exhausted — but it is what stops the
+        // loop, so it is checked rather than assumed.
+        if spent == 0 {
+            return given;
+        }
+        remaining -= spent;
+    }
 }
 
 /// Each column's widest label and widest value, in display columns
@@ -393,20 +464,6 @@ fn natural_widths(fields: &[&Field], columns: usize) -> Vec<(usize, usize)> {
         let (label, value) = &mut widths[index % columns];
         *label = (*label).max(UnicodeWidthStr::width(field.label));
         *value = (*value).max(UnicodeWidthStr::width(field.value.as_str()));
-    }
-    widths
-}
-
-/// The natural widths, with a lone column held to the panel so that a value
-/// too long for it is elided rather than pushing the border out (decision 5).
-/// With two or more columns `choose_columns` has already found them room.
-fn column_widths(fields: &[&Field], columns: usize, width: usize) -> Vec<(usize, usize)> {
-    let mut widths = natural_widths(fields, columns);
-    if columns == 1
-        && let Some((label, value)) = widths.first_mut()
-    {
-        *label = (*label).min(width);
-        *value = (*value).min(width.saturating_sub(*label + LABEL_GAP));
     }
     widths
 }

@@ -75,9 +75,10 @@ fn one_column_when_the_panel_is_narrow() {
 
 #[test]
 fn fields_pack_into_columns_and_wrap_to_the_next_row() {
-    // Two columns are 27 columns of interior wide here and three are 42, so 28
-    // is a width where exactly two fit: five fields become three rows, the
-    // last of them half empty.
+    // Seven fields and five rows: one column cannot show them all, so a second
+    // is worth opening and two are all that is. Two columns want 31 columns of
+    // interior, which 36 of panel gives them — fields fill left to right and
+    // wrap, four rows deep.
     let inspection = inspection(
         "worker",
         vec![
@@ -86,20 +87,38 @@ fn fields_pack_into_columns_and_wrap_to_the_next_row() {
             plain("state", "running"),
             plain("for", "1m"),
             plain("depth", "2"),
+            plain("dir", "/r/shop"),
+            plain("branch", "main"),
         ],
     );
 
     assert_eq!(
-        panel(&inspection, 32, INSPECTOR_HEIGHT),
+        panel(&inspection, 36, INSPECTOR_HEIGHT),
         vec![
-            "╭──────────────────────────────╮",
-            "│ ○ worker                     │",
-            "│ kind   Explore  model  opus  │",
-            "│ state  running  for    1m    │",
-            "│ depth  2                     │",
-            "│                              │",
-            "│                              │",
-            "╰──────────────────────────────╯",
+            "╭──────────────────────────────────╮",
+            "│ ○ worker                         │",
+            "│ kind    Explore  model  opus     │",
+            "│ state   running  for    1m       │",
+            "│ depth   2        dir    /r/shop  │",
+            "│ branch  main                     │",
+            "│                                  │",
+            "╰──────────────────────────────────╯",
+        ]
+    );
+
+    // Too narrow for the second column, the same fields fall back to one and
+    // the two that no longer fit are dropped from the end.
+    assert_eq!(
+        panel(&inspection, 24, INSPECTOR_HEIGHT),
+        vec![
+            "╭──────────────────────╮",
+            "│ ○ worker             │",
+            "│ kind   Explore       │",
+            "│ model  opus          │",
+            "│ state  running       │",
+            "│ for    1m            │",
+            "│ depth  2             │",
+            "╰──────────────────────╯",
         ]
     );
 }
@@ -206,6 +225,9 @@ fn a_wide_character_value_keeps_the_border_aligned() {
     // first and a blank in the second, so reading the row cell by cell puts a
     // space after every character. That is the terminal's own representation of
     // `日本語プロジェクト`, not an extra column: the row is still 32 cells.
+    //
+    // The width is chosen so the value gets its full eighteen columns rather
+    // than being elided: this test is about the accounting, not the ellipsis.
     let wide = inspection(
         "shop",
         vec![plain("dir", "日本語プロジェクト"), plain("status", "idle")],
@@ -226,22 +248,22 @@ fn a_wide_character_value_keeps_the_border_aligned() {
     );
 
     // Eighteen ASCII columns are the same eighteen display columns, so the two
-    // panels must agree cell for cell everywhere but the value itself. Counting
-    // the CJK value as nine characters would shift this row's trailing blanks
-    // and its right border nine cells left of the ASCII one's.
-    let narrow = inspection(
+    // panels must agree cell for cell from the end of the value onwards.
+    // Counting the CJK value as nine characters would pull the trailing blanks
+    // and the right border nine cells left of the ASCII one's.
+    let ascii = inspection(
         "shop",
         vec![plain("dir", "abcdefghijklmnopqr"), plain("status", "idle")],
     );
     let wide_buffer = draw(&wide, 32, INSPECTOR_HEIGHT);
-    let narrow_buffer = draw(&narrow, 32, INSPECTOR_HEIGHT);
-    // The value fills columns 10 to 27 either way; 28 onwards is the padding
-    // the panel has left and the border that closes it.
+    let ascii_buffer = draw(&ascii, 32, INSPECTOR_HEIGHT);
+    // The value fills cells 10 to 27 either way; 28 onwards is the room the
+    // panel has left and the border that closes it.
     for x in 28..32 {
         assert_eq!(
             wide_buffer[(x, 2)].symbol(),
-            narrow_buffer[(x, 2)].symbol(),
-            "the tail of the value row at column {x}"
+            ascii_buffer[(x, 2)].symbol(),
+            "the tail of the value row at cell {x}"
         );
     }
 }
@@ -276,6 +298,12 @@ fn more_fields_than_fit_are_dropped_from_the_end() {
     assert_eq!(rendered.len(), usize::from(INSPECTOR_HEIGHT));
     let all = rendered.join("");
     assert!(!all.contains('k') && !all.contains('l'));
+
+    // The terminal would clip a panel that laid out too many rows, and the
+    // buffer above would look the same either way. The layout itself has to
+    // stop: six rows of interior are one title row and five field rows, and
+    // nothing it produces may exceed that.
+    assert_eq!(lines(&inspection, 12, 6).len(), 6);
 }
 
 #[test]
@@ -301,6 +329,21 @@ fn no_panic_at_any_size() {
             terminal
                 .draw(|frame| render(frame, &inspection, Rect::new(0, 0, width, height)))
                 .unwrap();
+            // And at no size does the layout hand the terminal more rows than
+            // the interior has, whether or not the terminal would clip them.
+            let interior = (width.saturating_sub(4), height.saturating_sub(2));
+            if interior.0 > 0 && interior.1 > 0 {
+                assert!(
+                    lines(
+                        &inspection,
+                        usize::from(interior.0),
+                        usize::from(interior.1)
+                    )
+                    .len()
+                        <= usize::from(interior.1),
+                    "a {width}x{height} panel overflowed its interior"
+                );
+            }
         }
     }
 }
