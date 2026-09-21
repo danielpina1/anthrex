@@ -521,7 +521,7 @@ Modal key handling lives in `crates/tui/src/app/modal_keys.rs`, a submodule of `
 
 ```
 ╭ remove ─────────────────────────────────────╮
-│ Remove 'api-worker'? Its process is killed. │
+│ Remove 'api-worker'?                        │
 │                                             │
 │ [ ] also remove worktree feat/api           │
 │     the branch is kept                      │
@@ -537,6 +537,15 @@ Modal key handling lives in `crates/tui/src/app/modal_keys.rs`, a submodule of `
 │ k  keep the worktree, remove the window             │
 │ n  cancel                                           │
 ╰─────────────────────────────────────────────────────╯
+
+**Neither prompt asserts the agent's process state, and none may be added.** The
+confirm wireframe above once read `Remove 'api-worker'? Its process is killed.`; that
+sentence was removed in M5.10 and must not come back. `remove_with_worktree`'s dirty
+check runs *before* the agent is signalled, so a user who ticks the worktree box and
+hits a dirty refusal sees the second dialog with the agent still alive — having just
+been told its process was killed. The claim is false on the common path and true only
+on a rarer one, and the dialog cannot know which it is on. Describe what happens to the
+worktree's files; that is true on every path.
 ```
 
 For a window without a worktree, `Modal::Remove` shows only the first line and the key hint without `Space toggle`.
