@@ -227,7 +227,12 @@ pub fn load(path: &Path) -> (StateFile, Vec<Problem>) {
     for (index, entry) in raw_windows.into_iter().flatten().enumerate() {
         match serde_json::from_value::<WindowRecord>(entry.clone()) {
             Ok(record) => {
-                if !seen_ids.insert(record.id) {
+                // Both uniqueness checks run *before* either `HashSet` is touched: a
+                // record that is ultimately rejected must never claim the id or the
+                // name it arrived with, or a later, legitimate record that reuses that
+                // id/name would be wrongly rejected as a duplicate even though nothing
+                // surviving holds it.
+                if seen_ids.contains(&record.id) {
                     problems.push(Problem {
                         severity: Severity::Warn,
                         key: format!("windows[{index}]"),
@@ -235,7 +240,7 @@ pub fn load(path: &Path) -> (StateFile, Vec<Problem>) {
                     });
                     continue;
                 }
-                if !seen_names.insert(record.name.clone()) {
+                if seen_names.contains(&record.name) {
                     problems.push(Problem {
                         severity: Severity::Warn,
                         key: format!("windows[{index}]"),
@@ -246,6 +251,8 @@ pub fn load(path: &Path) -> (StateFile, Vec<Problem>) {
                     });
                     continue;
                 }
+                seen_ids.insert(record.id);
+                seen_names.insert(record.name.clone());
                 windows.push(record);
             }
             Err(e) => {

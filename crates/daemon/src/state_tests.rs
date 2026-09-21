@@ -359,6 +359,76 @@ fn bad_records_are_skipped() {
     assert_eq!(state.windows[1].name, "also-good");
 }
 
+/// A record rejected for a duplicate *name* must not claim its id: a later record that
+/// legitimately reuses that id must still load. Record 2 ("a" again) is rejected because
+/// its name collides with record 1's; nothing surviving ever holds id 3, so record 3's
+/// reuse of id 3 is legitimate, not a collision.
+#[test]
+fn duplicate_name_rejection_does_not_poison_the_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = state_path(&dir);
+    let contents = serde_json::json!({
+        "version": 2,
+        "next_id": 1,
+        "windows": [
+            {"id": 1, "name": "a", "runtime": "claude", "cwd": "/tmp/a"},
+            {"id": 3, "name": "a", "runtime": "shell", "cwd": "/tmp/dup"},
+            {"id": 3, "name": "unique-name", "runtime": "claude", "cwd": "/tmp/reuse"}
+        ]
+    });
+    std::fs::write(&path, serde_json::to_vec(&contents).unwrap()).unwrap();
+
+    let (state, warnings) = load(&path);
+
+    assert_eq!(
+        warnings.len(),
+        1,
+        "only the duplicate-name record should be rejected: {warnings:?}"
+    );
+    assert_eq!(state.windows.len(), 2, "{state:?}");
+    assert_eq!(state.windows[0].id, 1);
+    assert_eq!(
+        state.windows[1].id, 3,
+        "id 3 was never claimed by a surviving record, so the third record's reuse of it is legitimate"
+    );
+    assert_eq!(state.windows[1].name, "unique-name");
+}
+
+/// Symmetric case: a record rejected for a duplicate *id* must not claim its name
+/// either. Record 2 is rejected because its id (1) collides with record 1's; nothing
+/// surviving ever holds the name "b", so record 3's reuse of that name is legitimate.
+#[test]
+fn duplicate_id_rejection_does_not_poison_the_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = state_path(&dir);
+    let contents = serde_json::json!({
+        "version": 2,
+        "next_id": 1,
+        "windows": [
+            {"id": 1, "name": "a", "runtime": "claude", "cwd": "/tmp/a"},
+            {"id": 1, "name": "b", "runtime": "shell", "cwd": "/tmp/dup"},
+            {"id": 2, "name": "b", "runtime": "claude", "cwd": "/tmp/reuse"}
+        ]
+    });
+    std::fs::write(&path, serde_json::to_vec(&contents).unwrap()).unwrap();
+
+    let (state, warnings) = load(&path);
+
+    assert_eq!(
+        warnings.len(),
+        1,
+        "only the duplicate-id record should be rejected: {warnings:?}"
+    );
+    assert_eq!(state.windows.len(), 2, "{state:?}");
+    assert_eq!(state.windows[0].id, 1);
+    assert_eq!(state.windows[0].name, "a");
+    assert_eq!(state.windows[1].id, 2);
+    assert_eq!(
+        state.windows[1].name, "b",
+        "name \"b\" was never claimed by a surviving record, so record 3's reuse of it is legitimate"
+    );
+}
+
 #[test]
 fn next_id_is_never_below_a_loaded_id() {
     let dir = tempfile::tempdir().unwrap();
