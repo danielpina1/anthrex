@@ -210,6 +210,11 @@ pub fn load(path: &Path) -> (StateFile, Vec<Problem>) {
             "state file is missing an integer \"next_id\"",
         );
     };
+    // A saved value past `u32::MAX` cannot be represented by `StateFile::next_id`
+    // (`u32`, per decision 8) any more faithfully than by saturating: there is no
+    // narrower valid id to fall back to, and silently truncating is exactly the bug
+    // this module must not repeat (see the `windows` loop below).
+    let saved_next_id = u32::try_from(saved_next_id).unwrap_or(u32::MAX);
 
     if version > u64::from(STATE_VERSION) {
         return mark_aside(
@@ -265,8 +270,16 @@ pub fn load(path: &Path) -> (StateFile, Vec<Problem>) {
         }
     }
 
+    // `saturating_add` rather than `+ 1`: a loaded record already holding `u32::MAX`
+    // has no valid successor id, and wrapping to 0 (as an unchecked cast from wider
+    // arithmetic would) would immediately collide with the lowest live id. Saturating
+    // at `u32::MAX` instead means `next_id` ends up equal to that already-loaded id -
+    // deliberately, since there is no other representable choice - so the next
+    // window-creation attempt must notice the collision and fail loudly rather than
+    // silently reuse it. Nothing in this module creates windows; that check belongs to
+    // whichever later milestone wires `next_id` up to window creation.
     let next_id = match windows.iter().map(|w| w.id).max() {
-        Some(max_id) => saved_next_id.max(u64::from(max_id) + 1),
+        Some(max_id) => saved_next_id.max(max_id.saturating_add(1)),
         None => saved_next_id,
     };
 
@@ -278,8 +291,7 @@ pub fn load(path: &Path) -> (StateFile, Vec<Problem>) {
     (
         StateFile {
             version: STATE_VERSION,
-            #[allow(clippy::cast_possible_truncation)]
-            next_id: next_id as u32,
+            next_id,
             windows,
             runs,
         },

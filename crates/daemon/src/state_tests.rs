@@ -452,6 +452,74 @@ fn next_id_is_never_below_a_loaded_id() {
     assert_eq!(state.next_id, 8);
 }
 
+/// A loaded record already holding `u32::MAX` cannot be followed by any valid,
+/// non-colliding `u32` id (`u32::MAX + 1` does not exist as a `u32`). The invariant that
+/// matters here is that `next_id` is never an id a loaded record already holds *when a
+/// valid choice exists*; when it does not, `next_id` saturates at `u32::MAX` instead of
+/// silently wrapping to 0 (which would immediately collide with the lowest live id) -
+/// the deliberate consequence being that the next window-creation attempt must see
+/// `next_id` already collides with a live window and fail loudly, rather than the daemon
+/// silently handing out a reused id.
+#[test]
+fn next_id_saturates_instead_of_wrapping_when_a_loaded_id_is_u32_max() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = state_path(&dir);
+    let contents = serde_json::json!({
+        "version": 2,
+        "next_id": 1,
+        "windows": [
+            {"id": u32::MAX, "name": "maxed", "runtime": "claude", "cwd": "/tmp/maxed"}
+        ]
+    });
+    std::fs::write(&path, serde_json::to_vec(&contents).unwrap()).unwrap();
+
+    let (state, _warnings) = load(&path);
+
+    assert_eq!(
+        state.next_id,
+        u32::MAX,
+        "next_id must saturate at u32::MAX, not wrap to 0"
+    );
+}
+
+/// One below the boundary: `u32::MAX - 1` still has a valid, non-colliding successor
+/// (`u32::MAX` itself), so ordinary max-plus-one logic applies with no saturation.
+#[test]
+fn next_id_advances_normally_at_u32_max_minus_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = state_path(&dir);
+    let contents = serde_json::json!({
+        "version": 2,
+        "next_id": 1,
+        "windows": [
+            {"id": u32::MAX - 1, "name": "near-max", "runtime": "claude", "cwd": "/tmp/near-max"}
+        ]
+    });
+    std::fs::write(&path, serde_json::to_vec(&contents).unwrap()).unwrap();
+
+    let (state, _warnings) = load(&path);
+
+    assert_eq!(state.next_id, u32::MAX);
+}
+
+/// An empty window list never triggers the max-plus-one path at all, so a saved
+/// `next_id` of `u32::MAX` (or anything else) passes through untouched.
+#[test]
+fn next_id_with_empty_windows_preserves_the_saved_value_at_the_boundary() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = state_path(&dir);
+    let contents = serde_json::json!({
+        "version": 2,
+        "next_id": u32::MAX,
+        "windows": []
+    });
+    std::fs::write(&path, serde_json::to_vec(&contents).unwrap()).unwrap();
+
+    let (state, _warnings) = load(&path);
+
+    assert_eq!(state.next_id, u32::MAX);
+}
+
 #[test]
 fn record_json_shape() {
     let record = WindowRecord {
