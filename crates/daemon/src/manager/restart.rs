@@ -100,6 +100,19 @@ const RESTART_POLL: Duration = Duration::from_millis(50);
 /// Exactly the shape of `create`'s `Reservation` and `remove`'s `Removing`, guarding the
 /// same class of resource for the same reason: see this module's own doc comment for why
 /// a leaked flag here is worse than cosmetic.
+///
+/// **This guards the flag only, not the spawned process** (fix wave 5 review, Minor 9,
+/// narrowing a claim this comment used to make more broadly). A future dropped while
+/// phase C's `spawn_blocking` is in flight does give this window's `restarting` flag
+/// back — `Drop` below still runs — but the blocking closure itself keeps running to
+/// completion regardless (`spawn_blocking` cannot be cancelled), and the `Window` it
+/// returns is then dropped with nobody left to kill its child: `Window` has no `Drop` impl
+/// of its own, and dropping it only closes the master PTY. This is exactly `create`'s own
+/// decision 17 in the sibling module, restated here because phase C has the identical
+/// shape: "once phase B has started it always runs to completion... the server therefore
+/// must never abort a [restart] task, or it would leak [the process]." Unreachable today
+/// because `requests::restart` detaches rather than aborting, which is what makes that
+/// invariant hold — not anything this guard does.
 struct Restarting<'a> {
     manager: &'a WindowManager,
     id: u32,
