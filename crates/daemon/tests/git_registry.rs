@@ -9,8 +9,11 @@
 //!
 //! `a_real_write_triggers_a_probe` is the single exception the brief allows: it uses
 //! the real watcher against a real repository and waits on wall-clock time, with a
-//! five second deadline. `a_commit_in_a_linked_worktree_triggers_a_probe` is its
-//! sibling for the linked-worktree watch, and waits the same way.
+//! deadline derived from [`daemon::git::probe::PROBE_TIMEOUT`] and
+//! [`daemon::git::schedule::DEBOUNCE`] (see `watcher_probe_deadline` and
+//! `registration_probe_deadline` near the bottom of this file) rather than a literal
+//! that could coincide with either. `a_commit_in_a_linked_worktree_triggers_a_probe` is
+//! its sibling for the linked-worktree watch, and waits the same way.
 //!
 //! The pure scheduler, publisher and path filter are tested in
 //! `crates/daemon/tests/git_schedule.rs`.
@@ -21,6 +24,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use daemon::git::probe::PROBE_TIMEOUT;
+use daemon::git::schedule::DEBOUNCE;
 use daemon::git::{GitRegistry, ProbeFn};
 use proto::{GitState, Head};
 use tempfile::{TempDir, tempdir};
@@ -42,10 +47,6 @@ fn state(dirty: u32) -> GitState {
         operation: None,
         stale: false,
     }
-}
-
-fn secs(n: u64) -> Duration {
-    Duration::from_secs(n)
 }
 
 /// A virtual deadline for "this should arrive". Well under [`POLL_INTERVAL`], so
@@ -411,6 +412,32 @@ async fn a_root_survives_until_every_registration_is_released() {
 // The one test allowed to wait on wall-clock time
 // ---------------------------------------------------------------------------
 
+/// Scheduling and event-delivery slack on top of the real budgets below: `notify`
+/// event delivery, `spawn_blocking` pool contention, and everything else about a real
+/// OS that a virtual clock cannot model. Generous rather than tuned, because the two
+/// tests below are exactly the ones that found out the hard way what happens when a
+/// wall-clock deadline is tuned tight: their previous deadline (a bare `secs(5)`)
+/// happened to equal [`PROBE_TIMEOUT`] exactly, so the test could only pass when the
+/// probe finished well inside its own permitted budget. Deriving the deadline from the
+/// constants it actually depends on, plus this margin, means a future change to either
+/// constant cannot silently reintroduce that coincidence.
+const WALL_CLOCK_SLACK: Duration = Duration::from_secs(10);
+
+/// The deadline for the registration probe in a real-watcher test: it starts the
+/// instant `register` is called, with no debounce ahead of it, so it is bounded only by
+/// [`PROBE_TIMEOUT`] itself.
+fn registration_probe_deadline() -> Duration {
+    PROBE_TIMEOUT + WALL_CLOCK_SLACK
+}
+
+/// The deadline for a probe triggered by a real filesystem event: [`DEBOUNCE`] (the
+/// wait, from the last accepted event, before a probe is even scheduled) stacked on
+/// [`PROBE_TIMEOUT`] (that probe's own hard cap), plus [`WALL_CLOCK_SLACK`] for
+/// everything neither constant accounts for.
+fn watcher_probe_deadline() -> Duration {
+    PROBE_TIMEOUT + DEBOUNCE + WALL_CLOCK_SLACK
+}
+
 fn git(dir: &Path, args: &[&str]) {
     let status = std::process::Command::new("git")
         .args([
@@ -485,7 +512,7 @@ async fn a_real_write_triggers_a_probe() {
     registry.register(root.clone());
 
     // The registration probe sees a clean tree.
-    let first = tokio::time::timeout(SOON, rx.recv())
+    let first = tokio::time::timeout(registration_probe_deadline(), rx.recv())
         .await
         .expect("the registration probe must publish")
         .unwrap();
@@ -496,7 +523,7 @@ async fn a_real_write_triggers_a_probe() {
 
     wait_for_state(
         &mut rx,
-        secs(5),
+        watcher_probe_deadline(),
         "a real write to trigger a probe",
         |state| state.dirty == 1,
     )
@@ -538,7 +565,7 @@ async fn a_commit_in_a_linked_worktree_triggers_a_probe() {
     let registry = GitRegistry::new(true, tx);
     registry.register(linked.clone());
 
-    let first = tokio::time::timeout(SOON, rx.recv())
+    let first = tokio::time::timeout(registration_probe_deadline(), rx.recv())
         .await
         .expect("the registration probe must publish")
         .unwrap();
@@ -548,7 +575,7 @@ async fn a_commit_in_a_linked_worktree_triggers_a_probe() {
     std::fs::write(linked.join("a.txt"), "two\n").unwrap();
     wait_for_state(
         &mut rx,
-        secs(5),
+        watcher_probe_deadline(),
         "a write in a linked worktree to trigger a probe",
         |state| state.dirty == 1,
     )
@@ -558,7 +585,7 @@ async fn a_commit_in_a_linked_worktree_triggers_a_probe() {
     git(&linked, &["commit", "-m", "two"]);
     wait_for_state(
         &mut rx,
-        secs(5),
+        watcher_probe_deadline(),
         "a commit in a linked worktree to trigger a probe",
         |state| state.dirty == 0,
     )
