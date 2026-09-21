@@ -108,3 +108,20 @@ Each open item above is closed by exactly one milestone. Its brief lists the ite
   tests outside its brief. Delete the field, the `overview_rows` parameter and
   the anchor's second `reveal` together in the milestone that next touches
   tree state.
+
+## From milestone 4.6's final review (2026-09-21)
+
+- **A sub-agent label change escapes the reveal gate.** A tier's width comes from
+  `content_text`, which for a sub-agent is `kind: label`. A label that changes while the
+  agent runs resizes its tier without changing any row key, so the boxes move sideways
+  and no reveal fires; the selection can drift partly off-screen until the next real
+  change. It cannot mis-draw or panic — `view_of` re-clamps the pan. Tightening the gate
+  to compare `(key, content_text)` would close it, at the cost of re-introducing some of
+  the snap-back the gate was added to remove. Assigned to milestone 7, which already
+  takes the `TreeState::overview` follow-up.
+- **`crates/tui/src/ui/mod.rs` is 599 lines against the 600 rule**, about 470 of them its
+  test module. The next `ui` change has nowhere to land. Milestone 7 removes `main_inner`
+  and restructures the layout, so it splits the file there.
+- **The painter's zip invariant is only `debug_assert`ed.** `paint` pairs `layout.nodes`
+  with the row list positionally. The invariant holds by construction today; in release a
+  future divergence would paint labels onto the wrong boxes rather than dropping a node.
