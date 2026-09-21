@@ -417,6 +417,59 @@ async fn remove_with_worktree_rejects_windows_without_one_and_double_removal() {
     drain(&m);
 }
 
+/// The other half of the double-removal rule, and the one that costs something when it is
+/// missing: a *plain* [`WindowManager::remove`] landing while a worktree removal is in
+/// flight.
+///
+/// The plain path forgets the entry and its caller — the server — then drops one reference
+/// to the window's git root. The worktree path drops one of its own, between its kill and
+/// its deletion. Design decision 23 is that one removed window is exactly one
+/// `unregister`, so both running would decrement a single registration twice: invisible at
+/// a count of one, and with two windows on a root it stops the survivor's watch and leaves
+/// its git segment stale with nothing on screen to explain why. The refusal is what stops
+/// the second decrement, because the server only unregisters when `remove` succeeded.
+///
+/// Timed from [`FakeRoots`]' `unregister` hook, which the manager calls in the instant
+/// between the kill and `worktree::remove` — the exact window the two paths would collide
+/// in, reached deterministically rather than on a race the test has to win.
+#[tokio::test]
+async fn a_plain_remove_is_refused_while_a_worktree_removal_is_in_flight() {
+    let repo = TempRepo::new();
+    let (m, _keep, _wt_root) = manager();
+    let agent = worktree_agent(&m, &repo, "contended", "feat/contended").await;
+
+    let raced: Arc<Mutex<Option<Result<(), String>>>> = Arc::new(Mutex::new(None));
+    let roots = {
+        let racer = m.clone();
+        let raced = raced.clone();
+        let id = agent.id;
+        FakeRoots::with_hook(move |_| {
+            *raced.lock().unwrap() = Some(racer.remove(id).map_err(|e| e.to_string()));
+        })
+    };
+
+    m.remove_with_worktree(agent.id, false, &roots)
+        .await
+        .expect("the worktree removal owns the window and finishes");
+
+    let message = raced
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("the racing plain remove ran inside the hook")
+        .expect_err("a window already being removed is not removed a second time");
+    assert!(message.contains("already being removed"), "{message}");
+    assert!(
+        message.contains("contended"),
+        "the refusal names the window: {message}"
+    );
+
+    assert!(!listed(&m, agent.id), "the worktree removal still finished");
+    assert!(!agent.path.exists());
+    // Exactly one `unregister`, from the path that owns it.
+    roots.assert_one_unregister_before_the_removal(&agent.path);
+}
+
 /// Design decision 19 step 3 waits for the child only when there is one. A window that has
 /// already exited must not spend `KILL_GRACE` waiting for an exit that happened minutes
 /// ago — in the TUI that is three seconds of a dialog that looks hung.

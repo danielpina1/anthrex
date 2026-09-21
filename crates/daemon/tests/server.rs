@@ -1,5 +1,11 @@
 mod support;
 
+/// M5.6's worktree requests. A submodule rather than a test binary of its own so it keeps
+/// this file's `Client` helpers and harness; this file was already at two thirds of
+/// AGENTS.md rule 8's guideline before the milestone started.
+#[path = "server/worktree.rs"]
+mod worktree;
+
 use proto::{ClientMsg, DaemonMsg, HookSource, PROTO_VERSION, Status, WindowSpec};
 use std::time::Duration;
 use support::{Client, TestDaemon, claude_window, git, shell_spec, start_daemon};

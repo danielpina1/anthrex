@@ -104,6 +104,27 @@ pub enum DaemonMsg {
     },
 }
 
+/// The values of `DaemonMsg::Ack`'s and `DaemonMsg::Error`'s `request` field that a
+/// client *acts* on rather than merely displays.
+///
+/// They are constants because both ends compare them: the daemon writes one, the client
+/// matches on it and opens a dialog or clears a pending state. A literal typed in two
+/// crates is a silent no-op when one of them is misspelled — the client simply never
+/// recognises the reply and the user is left with a dialog that never answers — so the
+/// spelling lives once, here, beside the messages that carry it. Every other `request`
+/// value labels a reply the client only shows, and stays a literal at its one site.
+pub mod request {
+    /// A `CreateWindow` that failed. Its success is `DaemonMsg::Created`.
+    pub const CREATE: &str = "create";
+    /// A window removal, with or without its worktree.
+    pub const REMOVE: &str = "remove";
+    /// A worktree removal refused because the tree has changes (design decision 24).
+    /// `message` names the path; the client turns this into the force-or-keep prompt
+    /// rather than a toast, which is the whole reason it is not a plain [`REMOVE`]
+    /// error.
+    pub const REMOVE_DIRTY: &str = "remove-dirty";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,6 +132,18 @@ mod tests {
         ClientKind, GitOperation, Head, Runtime, Status, SubagentInfo, SubagentState, WindowInfo,
         WindowSpec,
     };
+
+    /// These three strings are wire values, not internal names: the daemon writes them
+    /// into `request` and the client matches on them to open the force-or-keep prompt or
+    /// to clear a pending removal. Renaming a constant is free; changing what it holds
+    /// silently breaks every client that still compares the old spelling, so the spelling
+    /// is pinned here rather than only at the sites that happen to use it.
+    #[test]
+    fn request_constants_are_stable() {
+        assert_eq!(request::CREATE, "create");
+        assert_eq!(request::REMOVE, "remove");
+        assert_eq!(request::REMOVE_DIRTY, "remove-dirty");
+    }
 
     #[test]
     fn windows_changed_carries_the_project_through_messagepack() {

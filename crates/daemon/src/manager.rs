@@ -433,13 +433,27 @@ impl WindowManager {
         inner.start_cleanup(id)
     }
 
-    /// Kills immediately and forgets the window.
+    /// Kills immediately and forgets the window, leaving any worktree on disk (design
+    /// decision 18). [`WindowManager::remove_with_worktree`] is the other path.
+    ///
+    /// A window that `remove_with_worktree` has already admitted belongs to that removal
+    /// until it finishes or gives up, so this refuses it rather than forgetting the entry
+    /// out from under it. That is not only tidiness: the two paths each drop one reference
+    /// to the window's git root — this one through the server, the other between its kill
+    /// and its deletion — and design decision 23 is that one removed window is exactly one
+    /// `unregister`. Letting both run would decrement a single registration twice, which is
+    /// invisible at a count of one and, with two windows on a root, stops the survivor's
+    /// watch with nothing on screen to explain why.
     pub fn remove(&self, id: u32) -> anyhow::Result<()> {
         let mut inner = crate::lock(&self.inner);
         let entry = inner
             .entries
-            .remove(&id)
+            .get(&id)
             .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
+        if entry.removing {
+            anyhow::bail!("window '{}' is already being removed", entry.name);
+        }
+        let entry = inner.entries.remove(&id).expect("looked up a line above");
         if entry.child_alive {
             let _ = entry.window.signal_group(libc::SIGKILL);
         }

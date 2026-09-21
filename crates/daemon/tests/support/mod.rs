@@ -18,6 +18,12 @@ use tokio_util::sync::CancellationToken;
 pub struct TestDaemon {
     pub _dir: tempfile::TempDir,
     pub socket: PathBuf,
+    /// The `<data_dir>/worktrees` this daemon lays its linked worktrees out under, inside
+    /// the harness's own `TempDir` so no test can reach a real data directory, and
+    /// canonical so the paths a test computes spell themselves the same way the daemon's
+    /// do (`worktree::create` canonicalizes, and a macOS `TempDir` under `/var` is a
+    /// symlink to `/private/var`).
+    pub worktrees_root: PathBuf,
     pub shutdown: CancellationToken,
     pub manager: Arc<WindowManager>,
 }
@@ -43,8 +49,10 @@ pub async fn start_daemon_with_git(git_enabled: bool) -> TestDaemon {
     let stub = dir.path().join("stub.sh");
     std::fs::write(&stub, "#!/bin/sh\nexec sleep 300\n").unwrap();
     std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let worktrees_root = dir.path().canonicalize().unwrap().join("worktrees");
     let mut config = ManagerConfig::new(socket.clone(), "/bin/sh".into());
     config.claude_bin = stub.to_str().unwrap().into();
+    config.worktrees_root = worktrees_root.clone();
     let (manager, mut events) = WindowManager::new(config);
     let pump = manager.clone();
     tokio::spawn(async move {
@@ -62,6 +70,7 @@ pub async fn start_daemon_with_git(git_enabled: bool) -> TestDaemon {
     TestDaemon {
         _dir: dir,
         socket,
+        worktrees_root,
         shutdown,
         manager,
     }
