@@ -5,10 +5,14 @@
 //! [`crate::logfile::RotatingFile`] — synchronous I/O, meant to be driven from
 //! `tokio::task::spawn_blocking` by the daemon's lifecycle and persister (a later task).
 //! Nothing in this module touches tokio or logs anything itself: `load` hands back the
-//! warnings it would like logged as plain strings, and the caller decides how (decision
-//! 12 distinguishes "log at error" for an unreadable file from "log at warn" for a
-//! corrupt/unsupported file or a skipped record, but that distinction is the caller's to
-//! make — see the module's tests for exactly which case produces which message).
+//! [`Problem`]s it found, each carrying decision 12's severity, and the caller decides how
+//! to log them — typically via `tracing`, at that severity. Decision 12 distinguishes
+//! `error` for an unreadable file (a real, if recoverable, data-loss event: the window
+//! list is gone for this boot even though the file survives on disk) from `warn` for a
+//! corrupt/unsupported file or a skipped record (the module already recovered on its own).
+//! A plain `String` cannot carry that distinction, so [`Problem`] mirrors `config::Problem`
+//! (`crates/config/src/lib.rs`), the shape this milestone already established for exactly
+//! this "here's what went wrong, and how it was handled" return value.
 //!
 //! `load` never panics and never returns an error: every recoverable problem — a missing
 //! file, an unreadable one, corrupt bytes, a too-new version, one bad window record among
@@ -111,30 +115,68 @@ fn empty_state() -> StateFile {
     }
 }
 
+/// How seriously the caller should treat a [`Problem`] (decision 12).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    /// The state file could not be read at all: the user's windows are gone for this boot
+    /// even though the file itself is untouched on disk wherever it was. A real, if
+    /// recoverable, data-loss event — the caller should log this at `error`.
+    Error,
+    /// The module already recovered on its own: a corrupt or too-new file was moved aside
+    /// (the bytes survive), or one bad record was skipped among otherwise-good ones. Worth
+    /// a human's attention, not urgent — the caller should log this at `warn`.
+    Warn,
+}
+
+/// One thing [`load`] noticed while reading the state file. Mirrors `config::Problem`
+/// (`crates/config/src/lib.rs`) — a struct the caller formats or matches on, not a bare
+/// `String` — with the [`Severity`] decision 12 needs added, since a plain string cannot
+/// carry it and this module does not call `tracing` itself to supply another way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Problem {
+    pub severity: Severity,
+    /// What the problem is about: `"<state file>"` for the file as a whole (unreadable,
+    /// corrupt, unsupported version), or `"windows[<index>]"` for one bad record.
+    pub key: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for Problem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.key, self.message)
+    }
+}
+
 /// Reads and validates the state file at `path`, returning the state to run with and any
-/// warnings the caller should log. See the module doc for the "never panics, never
+/// [`Problem`]s the caller should log. See the module doc for the "never panics, never
 /// errors, never silently destroys recoverable bytes" contract.
 ///
-/// Decision 12's steps, in order: a missing file starts empty with no warnings; any other
-/// read error starts empty too but leaves the file exactly where it was; invalid JSON, a
-/// non-object, or a missing/non-integer `version` or `next_id` counts as corrupt and gets
-/// renamed to `<path>.corrupt-<unix-seconds>` (with a `-1`, `-2`, ... suffix added until
-/// the name is free); a `version` newer than [`STATE_VERSION`] is renamed the same way to
-/// `<path>.unsupported-<unix-seconds>`, protecting a newer daemon's file from an older
-/// one; otherwise each entry of `windows` is deserialized on its own, so one bad record —
-/// an unknown runtime, or one that repeats an earlier entry's id or name — is skipped and
-/// warned about instead of failing the whole load.
-pub fn load(path: &Path) -> (StateFile, Vec<String>) {
+/// Decision 12's steps, in order: a missing file starts empty with no problems; any other
+/// read error starts empty too but leaves the file exactly where it was, reported as
+/// [`Severity::Error`]; invalid JSON, a non-object, or a missing/non-integer `version` or
+/// `next_id` counts as corrupt and gets renamed to `<path>.corrupt-<unix-seconds>` (with a
+/// `-1`, `-2`, ... suffix added until the name is free); a `version` newer than
+/// [`STATE_VERSION`] is renamed the same way to `<path>.unsupported-<unix-seconds>`,
+/// protecting a newer daemon's file from an older one; otherwise each entry of `windows`
+/// is deserialized on its own, so one bad record — an unknown runtime, or one that repeats
+/// an earlier entry's id or name — is skipped and reported instead of failing the whole
+/// load. Every case past "missing file" is [`Severity::Warn`]: the module already
+/// recovered on its own.
+pub fn load(path: &Path) -> (StateFile, Vec<Problem>) {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return (empty_state(), Vec::new()),
         Err(e) => {
             return (
                 empty_state(),
-                vec![format!(
-                    "could not read state file {}: {e}; starting empty and leaving the file alone",
-                    path.display()
-                )],
+                vec![Problem {
+                    severity: Severity::Error,
+                    key: "<state file>".to_string(),
+                    message: format!(
+                        "could not read {}: {e}; starting empty and leaving the file alone",
+                        path.display()
+                    ),
+                }],
             );
         }
     };
@@ -178,7 +220,7 @@ pub fn load(path: &Path) -> (StateFile, Vec<String>) {
     }
 
     let mut windows = Vec::new();
-    let mut warnings = Vec::new();
+    let mut problems = Vec::new();
     let mut seen_ids = HashSet::new();
     let mut seen_names = HashSet::new();
     let raw_windows = object.get("windows").and_then(serde_json::Value::as_array);
@@ -186,25 +228,32 @@ pub fn load(path: &Path) -> (StateFile, Vec<String>) {
         match serde_json::from_value::<WindowRecord>(entry.clone()) {
             Ok(record) => {
                 if !seen_ids.insert(record.id) {
-                    warnings.push(format!(
-                        "state file window[{index}] (id {}) repeats an earlier entry's id; skipped",
-                        record.id
-                    ));
+                    problems.push(Problem {
+                        severity: Severity::Warn,
+                        key: format!("windows[{index}]"),
+                        message: format!("id {} repeats an earlier entry's id; skipped", record.id),
+                    });
                     continue;
                 }
                 if !seen_names.insert(record.name.clone()) {
-                    warnings.push(format!(
-                        "state file window[{index}] ({:?}) repeats an earlier entry's name; skipped",
-                        record.name
-                    ));
+                    problems.push(Problem {
+                        severity: Severity::Warn,
+                        key: format!("windows[{index}]"),
+                        message: format!(
+                            "name {:?} repeats an earlier entry's name; skipped",
+                            record.name
+                        ),
+                    });
                     continue;
                 }
                 windows.push(record);
             }
             Err(e) => {
-                warnings.push(format!(
-                    "state file window[{index}] is invalid ({e}); skipped"
-                ));
+                problems.push(Problem {
+                    severity: Severity::Warn,
+                    key: format!("windows[{index}]"),
+                    message: format!("invalid ({e}); skipped"),
+                });
             }
         }
     }
@@ -227,24 +276,31 @@ pub fn load(path: &Path) -> (StateFile, Vec<String>) {
             windows,
             runs,
         },
-        warnings,
+        problems,
     )
 }
 
-/// Renames `path` aside (decision 12) and returns an empty state plus one warning naming
-/// the new path. The rename itself failing (permissions, a concurrent deletion) is
-/// reported instead of panicking, and still leaves the caller with an empty state rather
-/// than a corrupt one it would have to guard against everywhere else.
-fn mark_aside(path: &Path, tag: &str, why: &str) -> (StateFile, Vec<String>) {
+/// Renames `path` aside (decision 12) and returns an empty state plus one [`Severity::Warn`]
+/// problem naming the new path. The rename itself failing (permissions, a concurrent
+/// deletion) is reported instead of panicking, and still leaves the caller with an empty
+/// state rather than a corrupt one it would have to guard against everywhere else.
+fn mark_aside(path: &Path, tag: &str, why: &str) -> (StateFile, Vec<Problem>) {
     let aside = aside_path(path, tag);
-    let warning = match std::fs::rename(path, &aside) {
+    let message = match std::fs::rename(path, &aside) {
         Ok(()) => format!("{why}; moved it aside to {}", aside.display()),
         Err(e) => format!(
             "{why}; could not move it aside to {} ({e}); starting empty and leaving it in place",
             aside.display()
         ),
     };
-    (empty_state(), vec![warning])
+    (
+        empty_state(),
+        vec![Problem {
+            severity: Severity::Warn,
+            key: "<state file>".to_string(),
+            message,
+        }],
+    )
 }
 
 /// Picks `<path>.<tag>-<unix-seconds>`, or `-1`, `-2`, ... appended to that if it is

@@ -127,6 +127,11 @@ fn unreadable_file_is_left_alone_and_starts_empty() {
         "nothing must be renamed aside for an unreadable file"
     );
     assert!(!warnings.is_empty(), "the caller needs something to log");
+    assert_eq!(
+        warnings[0].severity,
+        Severity::Error,
+        "an unreadable file is a real data-loss event, not routine recovery: {warnings:?}"
+    );
 }
 
 #[test]
@@ -157,9 +162,14 @@ fn corrupt_file_is_moved_aside() {
     );
     let first_name = &corrupt_files[0];
     assert!(
-        warnings[0].contains(first_name.as_str()),
+        warnings[0].message.contains(first_name.as_str()),
         "warning {:?} must name the new path {first_name:?}",
         warnings[0]
+    );
+    assert_eq!(
+        warnings[0].severity,
+        Severity::Warn,
+        "the module already recovered by moving the file aside: {warnings:?}"
     );
     // No "-1", "-2", ... suffix yet: this is the first corrupt file at this timestamp.
     let suffix = first_name.strip_prefix("state.json.corrupt-").unwrap();
@@ -211,7 +221,12 @@ fn newer_version_is_moved_aside() {
         .filter(|name| name.starts_with("state.json.unsupported-"))
         .collect();
     assert_eq!(unsupported_files.len(), 1, "{unsupported_files:?}");
-    assert!(warnings[0].contains(unsupported_files[0].as_str()));
+    assert!(warnings[0].message.contains(unsupported_files[0].as_str()));
+    assert_eq!(
+        warnings[0].severity,
+        Severity::Warn,
+        "the module already recovered by moving the file aside: {warnings:?}"
+    );
 }
 
 #[test]
@@ -276,6 +291,16 @@ fn version_1_file_loads() {
     );
 }
 
+/// Four records, not three: a valid one, one with an unknown runtime, one that repeats
+/// the first record's name, and a *second* valid record positioned after both bad ones.
+/// Two survivors, two warnings.
+///
+/// The fourth record is the point: decision 12 rejects records one at a time rather than
+/// failing the whole file specifically so a rejected record cannot poison the ones that
+/// follow it. A three-record version where the only bad records are last cannot tell the
+/// difference between "skips bad records" and "stops processing at the first bad record" —
+/// both would leave exactly one record, id 1. Only a good record positioned *after* the
+/// bad ones can distinguish them, which is why this test needs four records, not three.
 #[test]
 fn bad_records_are_skipped() {
     let dir = tempfile::tempdir().unwrap();
@@ -301,6 +326,12 @@ fn bad_records_are_skipped() {
                 "name": "good",
                 "runtime": "shell",
                 "cwd": "/tmp/dup"
+            },
+            {
+                "id": 4,
+                "name": "also-good",
+                "runtime": "codex",
+                "cwd": "/tmp/also-good"
             }
         ]
     });
@@ -309,13 +340,23 @@ fn bad_records_are_skipped() {
     let (state, warnings) = load(&path);
 
     assert_eq!(warnings.len(), 2, "{warnings:?}");
+    assert!(
+        warnings.iter().all(|p| p.severity == Severity::Warn),
+        "a skipped record is routine recovery, not an error: {warnings:?}"
+    );
     assert_eq!(
         state.windows.len(),
-        1,
-        "only the first, valid record survives"
+        2,
+        "both bad records are skipped, both good ones survive"
     );
     assert_eq!(state.windows[0].id, 1);
     assert_eq!(state.windows[0].name, "good");
+    assert_eq!(
+        state.windows[1].id, 4,
+        "a good record after two bad ones must still load — a rejected record must not \
+         poison the records that follow it"
+    );
+    assert_eq!(state.windows[1].name, "also-good");
 }
 
 #[test]

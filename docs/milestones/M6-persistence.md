@@ -320,7 +320,17 @@ pub struct WindowRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorktreeRecord { pub repo_root: PathBuf, pub path: PathBuf, pub branch: String }
 
-pub fn load(path: &Path) -> (StateFile, Vec<String>);   // blocking; Vec = warnings to log
+// Fix wave 1 (task-2/3/4 review): decision 12 distinguishes "log at error" for an
+// unreadable file (real data loss for this boot) from "log at warn" for a corrupt/
+// unsupported file or a skipped record (already recovered) — a bare Vec<String> cannot
+// carry that. Problem mirrors config::Problem (crates/config/src/lib.rs) with a Severity
+// field added; load's warnings become Vec<Problem>.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity { Error, Warn }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Problem { pub severity: Severity, pub key: String, pub message: String } // Display: "{key}: {message}"
+
+pub fn load(path: &Path) -> (StateFile, Vec<Problem>);   // blocking; levelled problems to log
 pub fn save(path: &Path, state: &StateFile) -> std::io::Result<()>; // blocking, atomic
 pub fn spawn_persister(manager: Arc<WindowManager>, path: PathBuf, shutdown: CancellationToken)
     -> tokio::task::JoinHandle<()>;
@@ -504,7 +514,7 @@ The end of `run` unlinks by inode. Add `config_path` and `lock_wait` to `DaemonO
 - `corrupt_file_is_moved_aside`: write `{not json`. `load` gives an empty state and one warning naming the new path. `state.json` is gone, and exactly one `state.json.corrupt-*` file holds the original bytes. A second corrupt load in the same second produces a name ending in `-1`.
 - `newer_version_is_moved_aside`: `{"version": 3, "next_id": 1, "windows": []}` ends up as `state.json.unsupported-*`.
 - `version_1_file_loads`: a hand-written version-1 file with the core spec 3.6 fields, one record without `session_id` and one with `"status": "sleeping"`. It loads with `project == None`, `run == None`, the missing `session_id == None`, and the unknown status as `Exited`.
-- `bad_records_are_skipped`: three records. One has `"runtime": "perl"`. One repeats the first record's name. The loaded state holds the other one plus the first, with two warnings.
+- `bad_records_are_skipped`: four records: a valid one, one with `"runtime": "perl"`, one that repeats the first record's name, and a second valid record positioned after both bad ones (order-independence: a rejected record must not poison the records that follow it, decision 12's reason for rejecting per-record rather than per-file). The loaded state holds both valid records, with two warnings.
 - `next_id_is_never_below_a_loaded_id`: `next_id: 2` with a record of id 7 loads as `next_id == 8`.
 - `record_json_shape`: serializing the example record from decision 8 matches the example JSON, field names and order included.
 
