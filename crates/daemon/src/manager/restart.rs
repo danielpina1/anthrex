@@ -33,6 +33,17 @@
 //!   `StatusEvent::Exited` unconditionally, which would silently mark a freshly
 //!   restarted, live window as exited. Waiting on `child_alive` closes that window;
 //!   waiting on `status` alone, as decision 18 literally says, would not.
+//!
+//!   Decision 18 also specifies what happens when the wait itself runs out: the restart
+//!   is refused — `Error { request: "restart", message: "window <id> did not exit; not
+//!   restarted" }` — rather than proceeding anyway. This is not merely what the brief
+//!   says; it is the one path the paragraph above's safety argument does not cover. That
+//!   argument is that phase D never reuses this id for a new `Process` until
+//!   `child_alive` is confirmed false, so a stale `Exited` can never reach the
+//!   replacement. A timeout means `child_alive` was *not* confirmed false — restarting
+//!   anyway would swap in a new `Process` with the old child's `Exited` still able to
+//!   arrive later and land on it, which is exactly the corruption decision 18's refusal
+//!   exists to rule out.
 //! - **Phase C**, one `spawn_blocking` call, no lock: re-read the window's current spec,
 //!   name and session id — never phase A's own snapshot, which the window could have
 //!   outgrown while phase B ran with no lock held at all (this task's second named
@@ -115,10 +126,14 @@ impl WindowManager {
         // Phase A.
         let (was_live, guard) = self.begin_restart(id)?;
 
-        // Phase B: never under the lock.
+        // Phase B: never under the lock. Decision 18: if the wait times out, this does
+        // *not* fall through to phase C — see `wait_for_exit`'s own doc comment for why
+        // restarting anyway is exactly the case the `child_alive` deviation cannot cover.
         if was_live {
             self.kill(id)?;
-            self.wait_for_exit(id).await;
+            if !self.wait_for_exit(id).await {
+                anyhow::bail!("window {id} did not exit; not restarted");
+            }
         }
 
         // Phase C: no lock, not on a tokio worker. Re-read fresh rather than trusting
@@ -164,11 +179,23 @@ impl WindowManager {
     /// Phase B's wait. See this module's doc comment for why this polls `child_alive`
     /// rather than the status decision 18 names, and never with the lock held.
     ///
+    /// Returns `true` once the child is confirmed gone (or the window itself is gone —
+    /// phase C's own fresh read handles that case), `false` if the kill grace ran out
+    /// first. Decision 18 is explicit that a timeout here must not restart anyway: `window
+    /// <id> did not exit; not restarted`, not a warning and a fall-through. This matters
+    /// beyond the literal wording — the `child_alive` deviation this module's own doc
+    /// comment explains only closes the stale-`Exited` race *because* phase D never swaps
+    /// in a new `Process` until `child_alive` is confirmed false. Restarting on a timeout
+    /// would swap one in anyway, with the old child's `Exited` still unconfirmed and
+    /// therefore still able to arrive after the swap and land on the live replacement —
+    /// exactly the corruption the deviation exists to rule out, reopened on precisely the
+    /// path a timeout takes.
+    ///
     /// Bounded by the kill escalation's own total grace plus two seconds (decision 18):
     /// production's `self.config.kill_grace` is `crate::process::KILL_GRACE`, the exact
     /// deadline `crate::process::escalate` is built around, so this can never give up
     /// while that escalation could legitimately still be running.
-    async fn wait_for_exit(&self, id: u32) {
+    async fn wait_for_exit(&self, id: u32) -> bool {
         let deadline = Instant::now() + self.config.kill_grace + Duration::from_secs(2);
         loop {
             let child_alive = {
@@ -177,14 +204,14 @@ impl WindowManager {
             };
             match child_alive {
                 Some(true) => {}
-                Some(false) | None => return,
+                Some(false) | None => return true,
             }
             if Instant::now() >= deadline {
                 tracing::warn!(
                     id,
-                    "window's child did not exit within the restart kill grace; restarting anyway"
+                    "window's child did not exit within the restart kill grace; not restarting"
                 );
-                return;
+                return false;
             }
             tokio::time::sleep(RESTART_POLL).await;
         }

@@ -1313,6 +1313,48 @@ async fn shutdown_after_a_restart_ends_the_restarted_child() {
     );
 }
 
+/// Major 2 (fix wave 5 review): decision 18's timeout behaviour. `wait_for_exit` used to
+/// warn and fall through to phase C regardless, which is exactly the one path the
+/// `child_alive` deviation's own safety argument does not cover — see `restart.rs`'s
+/// module doc and `wait_for_exit`'s doc comment. On a timeout the restart must be refused
+/// with decision 18's exact message, not merely logged and retried.
+///
+/// Forcing a *real* process to survive `kill`'s HUP/TERM/KILL escalation deterministically
+/// is not practical (AGENTS.md: "an interactive shell exits at once" on HUP, and nothing
+/// can ignore `SIGKILL`). So this drives the manager-visible side of the race directly: a
+/// manager built with `WindowManager::new` whose event receiver is never pumped can never
+/// learn that `WindowEvent::Exited` arrived, so `Entry.child_alive` can never go false —
+/// deterministically reproducing "the wait ran out" without needing a process that
+/// actually refuses to die. `config.kill_grace` is shortened only so the test does not
+/// have to sit through the real, unrelated `KILL_GRACE` this window's `kill()` also starts
+/// escalating on (`crate::process::escalate` reads that constant directly, not
+/// `ManagerConfig.kill_grace`, so shortening this field changes nothing about what
+/// actually happens to the real child — only how long `wait_for_exit`'s own deadline is).
+#[tokio::test]
+async fn restart_refuses_when_the_kill_wait_times_out() {
+    let mut config = ManagerConfig::new("/tmp/unused.sock".into(), "/bin/sh".into());
+    config.kill_grace = Duration::from_millis(1);
+    let (m, _events) = WindowManager::new(config);
+    let id = create_id(
+        &m,
+        spec("never-confirmed-dead"),
+        std::env::temp_dir(),
+        80,
+        24,
+    )
+    .await;
+    assert!(
+        find(&m, id).status != Status::Exited,
+        "sanity: the window starts out live"
+    );
+
+    let err = m.restart(id).await.unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        format!("window {id} did not exit; not restarted")
+    );
+}
+
 /// Decision 22: a window name is trimmed and must be 1 to 64 characters with no control
 /// characters, enforced identically on `create` and `rename` so a name refused at
 /// creation can never be reached through a rename either. The 65-character, `\x1b` and
