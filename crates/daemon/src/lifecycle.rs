@@ -306,11 +306,21 @@ mod tests {
     /// value instead of the one it read, would leak a tightened (or loosened) mask into
     /// every file this process creates afterwards.
     ///
+    /// The starting mask is deliberately `0o037`, not `0o022`: `0o022` is both the value
+    /// this test used to set *and* the value it asserted was restored, so a mutation that
+    /// hard-coded the restore to `unsafe { libc::umask(0o022) }` instead of round-tripping
+    /// `previous_umask` passed unchanged (finding 2, M6 fix wave 1). `0o037` is also not a
+    /// common real-world default, unlike `0o022`, so a mutation that hard-codes some other
+    /// plausible-looking default is caught too.
+    ///
     /// Holds `UMASK_LOCK` for the whole sequence and calls the lock-free
     /// `bind_socket_locked` directly (not the public `bind_socket`, which would try to
     /// take the same lock and deadlock): umask is process-wide, and other tests in this
     /// binary call `bind_socket` concurrently, so without holding the lock across its own
-    /// two raw `umask` calls too this test is racy against them.
+    /// two raw `umask` calls too this test is racy against them. Whether `bind_socket`
+    /// itself takes `UMASK_LOCK` is a separate property, covered by
+    /// `bind_socket_serializes_concurrent_umask_use` below, which goes through the public
+    /// entry point precisely because this test cannot (see that test's doc comment).
     #[tokio::test]
     async fn bind_restores_the_umask() {
         let dir = tempfile::tempdir().unwrap();
@@ -320,18 +330,88 @@ mod tests {
         // temporary value this test sets so the process's real mask is restored after.
         // `UMASK_LOCK` is held for the whole bracket, so no concurrently running test can
         // observe or clobber the value in between.
-        let real_mask = unsafe { libc::umask(0o022) };
+        let real_mask = unsafe { libc::umask(0o037) };
         let result = bind_socket_locked(&sock);
         // SAFETY: see above.
         let mask_after_bind = unsafe { libc::umask(real_mask) };
         let _listener = result.unwrap();
         assert_eq!(
-            mask_after_bind, 0o022,
+            mask_after_bind, 0o037,
             "bind_socket did not restore the umask it found"
         );
         assert_eq!(
             std::fs::metadata(&sock).unwrap().permissions().mode() & 0o777,
             0o600
+        );
+    }
+
+    /// Finding 1, M6 fix wave 1 (task-2 review): `bind_restores_the_umask` above never
+    /// calls the *public* `bind_socket` — by construction it can't, since it holds
+    /// `UMASK_LOCK` itself and `bind_socket` would deadlock trying to take the same lock.
+    /// So deleting `bind_socket`'s `let _guard = crate::lock(&UMASK_LOCK);` line left
+    /// every test in this module green.
+    ///
+    /// `libc::umask` is process-global, so without that lock, concurrent `bind_socket`
+    /// calls' read-tighten-restore sequences can interleave: thread A reads the ambient
+    /// mask and tightens to `0o077`; thread B, running concurrently, reads *A's* `0o077`
+    /// as if it were ambient and later restores to that instead of to what was truly
+    /// ambient before either started. The mask observed once every call has returned is
+    /// then wrong, even though neither call did anything incorrect in isolation.
+    ///
+    /// This drives many concurrent calls through the public `bind_socket` and checks the
+    /// ambient mask survives the burst unchanged. Reading the mask itself, before and
+    /// after, is bracketed by `UMASK_LOCK` too — not part of what's under test, since
+    /// `bind_socket` takes the very same lock as long as its guard line still exists; this
+    /// only keeps those two reads race-free against the burst and against
+    /// `bind_restores_the_umask`'s own direct umask manipulation.
+    #[test]
+    fn bind_socket_serializes_concurrent_umask_use() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let starting = {
+            let _guard = crate::lock(&UMASK_LOCK);
+            // SAFETY: umask has no preconditions and cannot fail. `UMASK_LOCK` is held
+            // for both calls, so this round trip is race-free.
+            unsafe {
+                let m = libc::umask(0o000);
+                libc::umask(m);
+                m
+            }
+        };
+
+        // `bind_socket` calls `tokio::net::UnixListener::bind`, which needs an active
+        // Tokio reactor context even though `bind_socket` itself is synchronous; each
+        // plain `std::thread` below enters this runtime's context explicitly rather than
+        // being spawned as a `#[tokio::test]` task, so the burst is genuine OS-thread
+        // concurrency, not tasks cooperatively yielding on one or a few worker threads.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let handle = rt.handle().clone();
+        let threads: Vec<_> = (0..16)
+            .map(|i| {
+                let sock = dir.path().join(format!("umask-race-{i}.sock"));
+                let handle = handle.clone();
+                std::thread::spawn(move || {
+                    let _guard = handle.enter();
+                    let _listener = bind_socket(&sock).unwrap();
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+
+        let ending = {
+            let _guard = crate::lock(&UMASK_LOCK);
+            // SAFETY: see above.
+            unsafe {
+                let m = libc::umask(starting);
+                libc::umask(m);
+                m
+            }
+        };
+        assert_eq!(
+            ending, starting,
+            "16 concurrent bind_socket calls left the ambient umask changed: {ending:o} != {starting:o}"
         );
     }
 }

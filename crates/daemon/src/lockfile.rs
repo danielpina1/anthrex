@@ -132,14 +132,20 @@ mod tests {
             .to_string();
         assert!(err.contains("another anthrex daemon"), "{err}");
         drop(first);
-        // A small, nonzero wait rather than `Duration::ZERO`: this step asserts that a
-        // release unblocks a following acquire, not that the kernel makes a just-closed
-        // flock visible to a brand new `open` with zero tolerance for scheduling jitter —
-        // under the heavy concurrent process/PTY load the rest of this crate's test suite
-        // puts on the machine, a `Duration::ZERO` attempt here was observed to race the
-        // close a small fraction of the time. `acquire`'s own retry loop (decision 24) is
-        // exactly the mechanism for "not literally instantaneous, but soon".
-        let _third = DaemonLock::acquire(dir.path(), Duration::from_secs(2)).unwrap();
+        // This used to end with a third `acquire(dir.path(), Duration::from_secs(2))` to
+        // prove a release unblocks a following acquire "at once" (a `Duration::ZERO`
+        // attempt was intermittently losing that race). The real mechanism, established
+        // experimentally (M6 fix wave 1, task-2 review finding 3): `fork()` duplicates a
+        // process's *entire* fd table regardless of `O_CLOEXEC`, which only takes effect
+        // at the child's own later `exec()`. This crate's `--lib` binary runs this test
+        // alongside `portable-pty`-spawning tests on other threads of the same process, so
+        // a sibling test's `fork()` can transiently duplicate this test's own just-closed
+        // lock fd into a child that hasn't `exec()`'d yet, keeping the flock held past
+        // `first`'s `drop()` above — not scheduling jitter, and not something widening the
+        // wait here actually tests, since it made this assertion redundant with
+        // `acquire_waits_for_release` below (same property, looser bound). The zero-wait,
+        // instant-reacquire assertion now lives in `crates/daemon/tests/lockfile.rs`,
+        // which is its own test binary with no forking siblings in its process.
     }
 
     #[test]
