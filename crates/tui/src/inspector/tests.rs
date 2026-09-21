@@ -11,6 +11,9 @@ use proto::{
 };
 use std::path::PathBuf;
 
+#[path = "tests/render.rs"]
+mod render_tests;
+
 pub(super) fn window(id: u32, project: &str, name: &str, runtime: Runtime) -> WindowInfo {
     WindowInfo {
         id,

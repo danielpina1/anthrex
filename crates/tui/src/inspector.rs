@@ -1,22 +1,28 @@
 //! The node inspector: everything anthrex knows about the selected node, in a
 //! bordered panel below the graph overview's canvas (spec §3).
 //!
-//! Two halves, tested separately (decision 13). This is the first: `inspect`
-//! projects a `Row` and the `App` behind it into an `Inspection` — labels and
-//! values, and nothing that knows about a terminal — asserted by exact field
-//! lists. The renderer that lays an `Inspection` out follows.
+//! Two halves, tested separately (decision 13). `inspect` projects a `Row` and
+//! the `App` behind it into an `Inspection` — labels and values, and nothing
+//! that knows about a terminal. `render` lays that `Inspection` out. The
+//! projection is asserted by exact field lists, the renderer by exact rendered
+//! strings, the way the graph's painter is.
 
 use crate::app::App;
 use crate::theme;
 use crate::tree::{self, NodeKey, Row, RowKind, RuntimeCounts};
 use crate::ui::statusbar::git_spans;
 use crate::ui::terminal::shorten_home;
-use crate::ui::tree_view::counts_text;
+use crate::ui::tree_view::{counts_text, truncate};
 use proto::{GitState, Head, Status, SubagentInfo, SubagentState, WindowInfo};
-use ratatui::style::Style;
-use ratatui::text::Span;
+use ratatui::Frame;
+use ratatui::layout::Rect;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, Padding, Paragraph};
 use std::collections::BTreeSet;
 use std::path::Path;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 /// The panel's own height: a border, the title row, five field rows, a border
 /// (decision 2).
@@ -26,6 +32,12 @@ pub const INSPECTOR_HEIGHT: u16 = 8;
 /// 4.6's single line, so a short terminal loses the inspector and never the
 /// canvas (decision 6).
 pub const MIN_INTERIOR_FOR_PANEL: u16 = INSPECTOR_HEIGHT + 6;
+
+/// The two spaces between a label and its value — spec §2's `model  opus`.
+const LABEL_GAP: usize = 2;
+
+/// The two spaces between one column and the next (decision 4).
+const GUTTER: usize = 2;
 
 /// One labelled value. `wrap` marks the one field a column may not elide: the
 /// sub-agent's task, which the panel exists to show whole (decision 5).
@@ -273,6 +285,252 @@ fn git_text(state: &GitState) -> String {
         .iter()
         .map(|span| span.content.as_ref())
         .collect()
+}
+
+/// Lays an `Inspection` into a rounded panel: the title row, then the fields in
+/// columns below it.
+pub fn render(frame: &mut Frame, inspection: &Inspection, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme::border())
+        // One column in from the border on each side, so the fields do not sit
+        // flush against it the way the graph's boxes never do.
+        .padding(Padding::horizontal(1));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let lines = lines(
+        inspection,
+        usize::from(inner.width),
+        usize::from(inner.height),
+    );
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// The panel's interior, row by row: the title, the fields that fit in columns,
+/// and the wrapping field across whatever rows are left.
+///
+/// Never more than `height` lines: fields past the last slot are dropped from
+/// the end rather than spilling out of the panel (decision 2).
+fn lines(inspection: &Inspection, width: usize, height: usize) -> Vec<Line<'static>> {
+    let mut out = vec![title_line(inspection, width)];
+    let rows = height.saturating_sub(1);
+    if rows == 0 || width == 0 {
+        return out;
+    }
+
+    // The wrapping field leaves the column flow: it takes the rows the other
+    // fields do not, at the panel's full width, which is what "wraps across the
+    // remaining rows" means (decision 5).
+    let mut flow: Vec<&Field> = Vec::new();
+    let mut wrapping: Option<&Field> = None;
+    for field in &inspection.fields {
+        if field.wrap && wrapping.is_none() && !field.value.is_empty() {
+            wrapping = Some(field);
+        } else {
+            flow.push(field);
+        }
+    }
+    // One row is always held back for it, so the field the panel exists for
+    // survives even when the column flow would fill every row.
+    let flow_rows = if wrapping.is_some() { rows - 1 } else { rows };
+
+    let columns = choose_columns(&flow, flow_rows, width);
+    let shown = &flow[..flow.len().min(flow_rows.saturating_mul(columns))];
+    let widths = column_widths(shown, columns, width);
+    let used_rows = shown.len().div_ceil(columns);
+    for row in 0..used_rows {
+        out.push(flow_line(shown, row, columns, &widths));
+    }
+    if let Some(field) = wrapping {
+        out.extend(wrap_lines(field, width, rows - used_rows));
+    }
+    out
+}
+
+/// The status glyph in its status colour, then the name in bold (decision 3).
+fn title_line(inspection: &Inspection, width: usize) -> Line<'static> {
+    let glyph_width = UnicodeWidthStr::width(inspection.glyph.content.as_ref());
+    let name = truncate(&inspection.name, width.saturating_sub(glyph_width + 1));
+    Line::from(vec![
+        inspection.glyph.clone(),
+        Span::raw(" "),
+        Span::styled(name, Style::default().add_modifier(Modifier::BOLD)),
+    ])
+}
+
+/// How many columns to pack the fields into: as many as the width takes
+/// (decision 4). Columns are filled left to right and wrap to the next row, so
+/// column `j` holds fields `j`, `j + columns`, `j + 2 * columns` and so on, and
+/// each one is as wide as its own widest label and widest value.
+fn choose_columns(fields: &[&Field], rows: usize, width: usize) -> usize {
+    let mut best = 1;
+    if fields.is_empty() || rows == 0 {
+        return best;
+    }
+    for columns in 1..=fields.len() {
+        let shown = &fields[..fields.len().min(rows.saturating_mul(columns))];
+        let total: usize = natural_widths(shown, columns)
+            .iter()
+            .map(|(label, value)| label + LABEL_GAP + value)
+            .sum::<usize>()
+            + (columns - 1) * GUTTER;
+        if total <= width {
+            best = columns;
+        }
+    }
+    best
+}
+
+/// Each column's widest label and widest value, in display columns
+/// (decision 14).
+fn natural_widths(fields: &[&Field], columns: usize) -> Vec<(usize, usize)> {
+    let mut widths = vec![(0usize, 0usize); columns];
+    for (index, field) in fields.iter().enumerate() {
+        let (label, value) = &mut widths[index % columns];
+        *label = (*label).max(UnicodeWidthStr::width(field.label));
+        *value = (*value).max(UnicodeWidthStr::width(field.value.as_str()));
+    }
+    widths
+}
+
+/// The natural widths, with a lone column held to the panel so that a value
+/// too long for it is elided rather than pushing the border out (decision 5).
+/// With two or more columns `choose_columns` has already found them room.
+fn column_widths(fields: &[&Field], columns: usize, width: usize) -> Vec<(usize, usize)> {
+    let mut widths = natural_widths(fields, columns);
+    if columns == 1
+        && let Some((label, value)) = widths.first_mut()
+    {
+        *label = (*label).min(width);
+        *value = (*value).min(width.saturating_sub(*label + LABEL_GAP));
+    }
+    widths
+}
+
+/// One row of the column flow: each column's label, the gap, its value padded
+/// to the column's width, and the gutter before the next.
+fn flow_line(
+    fields: &[&Field],
+    row: usize,
+    columns: usize,
+    widths: &[(usize, usize)],
+) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (column, (label_width, value_width)) in widths.iter().copied().enumerate() {
+        if column > 0 {
+            spans.push(Span::raw(" ".repeat(GUTTER)));
+        }
+        let cell_width = label_width
+            + if value_width > 0 {
+                LABEL_GAP + value_width
+            } else {
+                0
+            };
+        match fields.get(row * columns + column) {
+            Some(field) => {
+                spans.push(Span::styled(
+                    pad(&truncate(field.label, label_width), label_width),
+                    theme::muted(),
+                ));
+                if value_width > 0 {
+                    spans.push(Span::raw(" ".repeat(LABEL_GAP)));
+                    spans.push(Span::raw(pad(
+                        &truncate(&field.value, value_width),
+                        value_width,
+                    )));
+                }
+            }
+            None => spans.push(Span::raw(" ".repeat(cell_width))),
+        }
+    }
+    Line::from(spans)
+}
+
+/// The wrapping field across the rows the column flow left: its label on the
+/// first line, its value wrapped to the panel's width under it.
+fn wrap_lines(field: &Field, width: usize, rows: usize) -> Vec<Line<'static>> {
+    let label_width = UnicodeWidthStr::width(field.label).min(width);
+    let value_width = width.saturating_sub(label_width + LABEL_GAP);
+    wrap_value(&field.value, value_width, rows)
+        .into_iter()
+        .enumerate()
+        .map(|(index, chunk)| {
+            let label = if index == 0 {
+                Span::styled(
+                    pad(&truncate(field.label, label_width), label_width),
+                    theme::muted(),
+                )
+            } else {
+                Span::raw(" ".repeat(label_width))
+            };
+            Line::from(vec![
+                label,
+                Span::raw(" ".repeat(LABEL_GAP)),
+                Span::raw(chunk),
+            ])
+        })
+        .collect()
+}
+
+/// Greedy word wrap to `width` display columns over at most `rows` lines. A
+/// word longer than the width is broken; text past the last line is elided,
+/// because the panel's height is fixed whatever the field would rather do.
+fn wrap_value(text: &str, width: usize, rows: usize) -> Vec<String> {
+    if width == 0 || rows == 0 {
+        return Vec::new();
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let joined = UnicodeWidthStr::width(current.as_str()) + 1 + UnicodeWidthStr::width(word);
+        if current.is_empty() {
+            current.push_str(word);
+        } else if joined <= width {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            lines.push(std::mem::take(&mut current));
+            current.push_str(word);
+        }
+        while UnicodeWidthStr::width(current.as_str()) > width {
+            let head = cut(&current, width);
+            current = current[head.len()..].to_owned();
+            lines.push(head);
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.len() > rows {
+        lines.truncate(rows);
+        let last = lines.len() - 1;
+        lines[last] = truncate(&format!("{}…", lines[last]), width);
+    }
+    lines
+}
+
+/// The longest prefix of `text` that fits `width` display columns, cut between
+/// graphemes so a wide character is never split in half.
+fn cut(text: &str, width: usize) -> String {
+    let mut end = 0;
+    for (index, grapheme) in text.grapheme_indices(true) {
+        let candidate = index + grapheme.len();
+        if UnicodeWidthStr::width(&text[..candidate]) > width {
+            break;
+        }
+        end = candidate;
+    }
+    text[..end].to_owned()
+}
+
+/// `text` followed by enough spaces to fill `width` display columns.
+fn pad(text: &str, width: usize) -> String {
+    let used = UnicodeWidthStr::width(text);
+    format!("{text}{}", " ".repeat(width.saturating_sub(used)))
 }
 
 #[cfg(test)]
