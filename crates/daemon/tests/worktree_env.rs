@@ -24,7 +24,7 @@
 //! in the binary. Keep this file to this one test.
 
 use daemon::worktree::run_git;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -79,7 +79,12 @@ fn the_git_helper_passes_no_optional_locks_and_scrubs_the_environment() {
 
     let dir = tempdir().unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
-    let result = run_git(script.as_os_str(), dir.path(), &["status"], deadline);
+    let result = run_git(
+        script.as_os_str(),
+        dir.path(),
+        &[OsStr::new("status")],
+        deadline,
+    );
 
     // SAFETY: same as above.
     unsafe {

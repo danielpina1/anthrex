@@ -124,7 +124,18 @@ pub fn shell_spec(name: &str) -> WindowSpec {
 }
 
 pub fn git(dir: &std::path::Path, args: &[&std::ffi::OsStr]) {
-    let output = std::process::Command::new("git")
+    let output = git_output(dir, args);
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// As [`git`], but hands back the result instead of asserting success, for the queries
+/// whose *failure* is the answer (`show-ref --verify` on a branch that does not exist).
+pub fn git_output(dir: &std::path::Path, args: &[&std::ffi::OsStr]) -> std::process::Output {
+    std::process::Command::new("git")
         .args([
             "-c",
             "user.name=t",
@@ -139,12 +150,125 @@ pub fn git(dir: &std::path::Path, args: &[&std::ffi::OsStr]) {
         .current_dir(dir)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
+        .unwrap()
+}
+
+/// A real repository in a temporary directory: one commit holding `README` and a
+/// `.gitignore` that ignores `ignored-*`, on the deterministic branch `main`.
+///
+/// The `.gitignore` is in that first commit deliberately: every linked worktree this
+/// repository grows starts from a commit that already has it, so an ignored file in a
+/// worktree really is ignored there. A `.gitignore` committed later, after the worktree
+/// was added, would leave the worktree's own branch without it and the "ignored files do
+/// not count" half of the dirty check would silently test nothing.
+pub struct TempRepo {
+    pub dir: tempfile::TempDir,
+    /// Canonical, because `project::detect_roots` canonicalizes both roots and every
+    /// path assertion here compares against what the daemon computed.
+    pub root: PathBuf,
+}
+
+impl TempRepo {
+    pub fn new() -> Self {
+        use std::ffi::OsStr;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path();
+        std::fs::write(path.join("README"), "one\n").unwrap();
+        std::fs::write(path.join(".gitignore"), "ignored-*\n").unwrap();
+        git(path, &[OsStr::new("init")]);
+        git(
+            path,
+            &[
+                OsStr::new("add"),
+                OsStr::new("README"),
+                OsStr::new(".gitignore"),
+            ],
+        );
+        git(
+            path,
+            &[OsStr::new("commit"), OsStr::new("-m"), OsStr::new("init")],
+        );
+        let root = path.canonicalize().unwrap();
+        Self { dir, root }
+    }
+
+    /// Runs git in the main checkout, asserting success.
+    pub fn git(&self, args: &[&std::ffi::OsStr]) {
+        git(&self.root, args);
+    }
+
+    pub fn branch_exists(&self, branch: &str) -> bool {
+        use std::ffi::OsStr;
+        git_output(
+            &self.root,
+            &[
+                OsStr::new("show-ref"),
+                OsStr::new("--verify"),
+                OsStr::new("--quiet"),
+                &std::ffi::OsString::from(format!("refs/heads/{branch}")),
+            ],
+        )
+        .status
+        .success()
+    }
+
+    /// Every checkout git still knows about, the main one first: the `worktree ` lines of
+    /// `git worktree list --porcelain`.
+    pub fn worktree_paths(&self) -> Vec<PathBuf> {
+        use std::ffi::OsStr;
+        let output = git_output(
+            &self.root,
+            &[
+                OsStr::new("worktree"),
+                OsStr::new("list"),
+                OsStr::new("--porcelain"),
+            ],
+        );
+        assert!(output.status.success(), "git worktree list failed");
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .filter_map(|line| line.strip_prefix("worktree ").map(PathBuf::from))
+            .collect()
+    }
+
+    /// Installs a `post-checkout` hook that sleeps, so a `git worktree add` in this
+    /// repository blocks *after* it has created the branch and checked the tree out —
+    /// the state a create must still clean up when its deadline strikes.
+    pub fn slow_post_checkout(&self, secs: u64) {
+        self.post_checkout_hook(&format!("sleep {secs}"));
+    }
+
+    /// Installs a `post-checkout` hook that exits non-zero, which makes `git worktree
+    /// add` itself exit non-zero *after* it has created the branch and checked the tree
+    /// out (verified against git 2.50.1: exit 3, worktree and branch both present). That
+    /// is the create-failed-part-way case without a timeout in it.
+    pub fn failing_post_checkout(&self) {
+        self.post_checkout_hook("exit 3");
+    }
+
+    fn post_checkout_hook(&self, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let hook = self.root.join(".git/hooks/post-checkout");
+        std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+        std::fs::write(&hook, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+/// The branch `path`'s `HEAD` points at, as `git worktree add` left it.
+pub fn head_branch(path: &std::path::Path) -> String {
+    use std::ffi::OsStr;
+    let output = git_output(
+        path,
+        &[
+            OsStr::new("rev-parse"),
+            OsStr::new("--abbrev-ref"),
+            OsStr::new("HEAD"),
+        ],
     );
+    assert!(output.status.success(), "git rev-parse failed");
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
 }
 
 pub async fn claude_window(d: &TestDaemon, name: &str) -> u32 {

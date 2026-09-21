@@ -14,8 +14,16 @@
 //! and `remove` are the real callers).
 //!
 //! `create`, `is_dirty`, `remove` and `discard_new` — the orchestration that actually
-//! creates and removes a worktree — are milestone task M5.3's job, built on top of
-//! [`run_git`] and the pieces here. Nothing in the daemon calls this module yet.
+//! creates and removes a worktree — live in the [`ops`] submodule and are re-exported
+//! here, so the module's public surface is the one the brief's interface block names
+//! while neither half grows past AGENTS.md rule 8's ~600 lines. The split is by
+//! responsibility: this file is *where a worktree lives and how git is invoked*, `ops` is
+//! *what the daemon does to one*. Nothing in the daemon calls the orchestration yet;
+//! `WindowManager` wires it up in task M5.4.
+
+mod ops;
+
+pub use ops::{Created, ManagedWorktree, create, discard_new, is_dirty, remove};
 
 use std::ffi::OsStr;
 use std::io;
@@ -179,15 +187,25 @@ pub fn check_branch_syntax(branch: &str) -> Result<(), WorktreeError> {
 ///
 /// `pub` and `#[doc(hidden)]`: see the module doc comment. This is not part of the
 /// module's public API.
+///
+/// `args` are [`OsStr`]s rather than `&str`s because two of them are paths the daemon
+/// itself chose — the worktree `git worktree add` creates and `git worktree remove`
+/// deletes. A `&str` signature would force a lossy conversion there, and a path that
+/// failed it would leave a worktree this daemon made but can never remove. Only the
+/// human-readable echo of the arguments in an error message is lossy.
 #[doc(hidden)]
 pub fn run_git(
     git: &OsStr,
     dir: &Path,
-    args: &[&str],
+    args: &[&OsStr],
     deadline: Instant,
 ) -> Result<GitOutput, WorktreeError> {
     let now = Instant::now();
-    let joined_args = args.join(" ");
+    let joined_args = args
+        .iter()
+        .map(|arg| arg.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(" ");
     if deadline <= now {
         return Err(WorktreeError::TimedOut {
             args: joined_args,
@@ -323,7 +341,12 @@ mod tests {
         let dir = tempdir().unwrap();
         let deadline = Instant::now() - Duration::from_secs(1);
 
-        let result = run_git(script.as_os_str(), dir.path(), &["status"], deadline);
+        let result = run_git(
+            script.as_os_str(),
+            dir.path(),
+            &[OsStr::new("status")],
+            deadline,
+        );
 
         assert!(
             matches!(result, Err(WorktreeError::TimedOut { .. })),
@@ -343,7 +366,7 @@ mod tests {
         let result = run_git(
             OsStr::new("/definitely/missing/git-xyz"),
             dir.path(),
-            &["status"],
+            &[OsStr::new("status")],
             deadline,
         );
 
