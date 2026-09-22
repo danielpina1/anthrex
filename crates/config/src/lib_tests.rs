@@ -717,3 +717,25 @@ color = "#778899"
     assert_eq!(badges.for_runtime(proto::Runtime::Codex).glyph, "\u{25bc}");
     assert_eq!(badges.for_runtime(proto::Runtime::Shell).glyph, "#");
 }
+
+/// Task M6.5.10 fix round 1 (F1): a whole conversation is sent in one frame, so
+/// `max_bytes` stops at `proto::MAX_FRAME` less the headroom. The last legal value is
+/// accepted and the next one refused.
+#[test]
+fn max_bytes_cannot_exceed_what_one_frame_carries() {
+    let ceiling = proto::MAX_FRAME as u64 - crate::CONVERSATION_MAX_BYTES_HEADROOM;
+    assert_eq!(ceiling, 15_728_640);
+    let (config, problems) = parse(&format!("[conversation]\nmax_bytes = {ceiling}\n"));
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(config.conversation.max_bytes, ceiling);
+
+    let (config, problems) = parse(&format!("[conversation]\nmax_bytes = {}\n", ceiling + 1));
+    assert_eq!(
+        keys(&problems),
+        HashSet::from(["conversation.max_bytes".to_string()])
+    );
+    assert_eq!(
+        config.conversation.max_bytes,
+        Conversation::default().max_bytes
+    );
+}

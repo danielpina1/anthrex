@@ -144,10 +144,20 @@ pub struct Conversation {
 /// show less history than a single turn of back-and-forth; above the upper one the cap
 /// stops capping anything a real overnight run produces (decision 7's own worry).
 pub const CONVERSATION_MAX_TURNS_RANGE: std::ops::RangeInclusive<u64> = 1..=10_000;
+/// What `conversation.max_bytes`'s ceiling leaves free below `proto::MAX_FRAME`: a whole
+/// conversation travels in one `ConversationSnapshot` frame, and this covers the
+/// snapshot's envelope and the turn that decision A9 keeps whole even past the cap.
+pub const CONVERSATION_MAX_BYTES_HEADROOM: u64 = 1_048_576;
 /// Inclusive bounds for `conversation.max_bytes`. Below the lower bound a single large
-/// tool result would blow the cap on its own; above the upper one the per-window cap is
-/// no longer the memory safety net decision 7 exists for.
-pub const CONVERSATION_MAX_BYTES_RANGE: std::ops::RangeInclusive<u64> = 65_536..=134_217_728;
+/// tool result would blow the cap on its own. The ceiling is derived from the frame the
+/// conversation has to fit in (the amendment under task M6.5.1), not typed: 15 MiB.
+pub const CONVERSATION_MAX_BYTES_RANGE: std::ops::RangeInclusive<u64> =
+    65_536..=(proto::MAX_FRAME as u64 - CONVERSATION_MAX_BYTES_HEADROOM);
+const _: () = assert!(
+    *CONVERSATION_MAX_BYTES_RANGE.end() + CONVERSATION_MAX_BYTES_HEADROOM
+        <= proto::MAX_FRAME as u64,
+    "a conversation at conversation.max_bytes must fit in one frame"
+);
 /// The floor of `conversation.max_result_bytes`. `crates/cli/src/hook.rs`'s
 /// `TOOL_RESULT_SUMMARY_MAX` (4 KiB) is a hook-delivered tool result's own hard cap, and its
 /// comment claims a hook result can never trip this config cap. That claim only holds if
