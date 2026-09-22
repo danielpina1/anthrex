@@ -357,11 +357,31 @@ up whenever TUI clock injection or manager lock instrumentation is next in scope
 
 ## From milestone 6's final verification
 
-- `server_git.rs::two_windows_in_one_worktree_register_once` failed once under contention from
-  parallel test binaries during milestone 6's last fix wave, and passed in isolation immediately
-  after. Same class as the bounds recorded in `docs/timing-budgets.md`. Three consecutive
-  `cargo test --workspace --no-fail-fast` runs on an idle host were clean (41 binaries, 855
-  passed), so it is intermittent rather than persistent.
+- **`server_git.rs`'s intermittent failures are environmental to the checkout path, not a code
+  defect.** They were first recorded here as one test that "passed in isolation immediately
+  after"; that characterisation was wrong twice over. The failures are not confined to
+  `two_windows_in_one_worktree_register_once` — `removing_the_last_window_unregisters_the_root`
+  and `a_fresh_client_receives_every_known_root_after_welcome` fail the same way, always as
+  `timed out: Elapsed(())` against `tests/support/mod.rs`'s 5 s `recv()` bound — and they do
+  **not** pass reliably in isolation. Measured 2026-09-22, same commit, same idle machine,
+  `cargo test -p anthrex-daemon --test server_git` run five times in each location:
+
+  | checkout | passed | wall clock |
+  |---|---|---|
+  | `~/Desktop/repos/anthrex/.worktrees/m6-persistence` | 4/5 | 5.10 - 7.01 s (spread 1.9 s) |
+  | `/private/tmp/anthrex-speedtest` | 5/5 | 3.07 - 3.11 s (spread 0.04 s) |
+
+  The spread matters more than the pass count: a 0.04 s spread in `/private/tmp` against 1.9 s
+  under `~/Desktop` means something on that tree (most likely macOS TCC or Spotlight indexing)
+  injects multi-second stalls into the real `git` subprocesses these tests spawn, pushing them
+  past a 5 s bound they otherwise clear in 3 s. An independent measurement during the launch-gate
+  work found the same tree ~10x slower on these tests. CI runs under `/home/runner` and
+  `/Users/runner` and has not reproduced it.
+
+  Two consequences. **Timing numbers measured from a `~/Desktop` checkout are not comparable to
+  CI's** — treat them as an upper bound only. And the 5 s `recv()` bound is still worth deriving
+  from the constants it wraps rather than left as a literal, which would make these tests
+  survive a slow host instead of merely usually beating it; that part is unfixed.
 - **`cargo test --workspace` fail-fast truncates the result lines.** When a binary fails, later
   binaries never run and never report, so a run that hit the flake above produced 28-29
   `test result:` lines instead of 41. Two separate parties read those truncated counts as a
