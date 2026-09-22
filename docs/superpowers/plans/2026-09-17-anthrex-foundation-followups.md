@@ -502,25 +502,45 @@ it described a fallback that did not exist, and reading for plausibility believe
 
 ## From milestone 6.5's reader and subscription task (2026-09-22), task M6.5.10
 
-- **`conversation.max_bytes` can still be configured past what one frame can carry.**
-  `crates/config/src/lib.rs` has `CONVERSATION_MAX_BYTES_RANGE = 65_536..=134_217_728`
-  (128 MiB), a literal. The brief's amendment under task M6.5.1 said task M6.5.3 must derive
-  the ceiling from `proto::codec::MAX_FRAME` (16 MiB) less a 1 MiB headroom, because a whole
-  `Conversation` travels in one `ConversationSnapshot` frame. Since task M6.5.10 that frame
-  is really sent: a conversation past 16 MiB fails `write_frame`, the connection's writer
-  task ends, and the client loses its connection with nothing said. The default (2 MiB) is
-  far from it. The fix is the derived bound in `crates/config`, plus a test that a
-  `max_bytes` above it is refused. Belongs to milestone 6.5's fix wave, before task M6.5.13
-  gives the view a client.
-- **A new session in the same window misaligns the conversation.** A `SessionStart` with a
-  new `transcript_path` (Claude's `/clear`, for one) makes the reader start the new file as
-  a restart, which is right for the file, but the hook timeline keeps every turn from the
-  old session. The new file's prompt ordinal 0 then maps onto the old session's first
-  `User` turn, and the enricher reports `Misaligned` from there on. A fix needs the
-  ordinal map to start at the first `User` turn of the current session, which `Draft` does
-  not record today.
 - **The transcript path is learned from `SessionStart` only.** `build::session_start` is the
   one place `Draft.transcript_path` is set, although Claude sends `transcript_path` on every
   hook. A window that missed its `SessionStart` (a hook dropped past `HOOK_DEADLINE`, or a
   session already running when the daemon restarted) degrades with `NoTranscriptPath`
   until the next session. Taking the path from any hook that carries one would close it.
+- **A transcript read that truly hangs (review F3, left for later).** Every constructible
+  path returns: `O_NONBLOCK` plus `fstat` refuses FIFOs and devices, and `read_more` stops
+  at its own deadline between 64 KiB reads. Only a regular file on a hung filesystem (NFS,
+  FUSE) can block one `read` forever. The review measured the result by mutation: one
+  blocking-pool thread held, no growth per poll, the lock and other windows unaffected,
+  but two defects. The stuck window's `degraded` stays `None`, and `#[tokio::main]`'s
+  runtime drop waits for the blocked thread, so `anthrex daemon stop` hangs. The fixes are
+  small: on an overrun, have `watch.rs` set `Unreadable`, waiting `2 * TRANSCRIPT_READ_TIMEOUT`
+  rather than 1x (a healthy pass may legitimately end one chunk read past the inner
+  deadline, which is the same constant). And have the foreground daemon
+  `std::process::exit` once `daemon::run` has returned, or use `shutdown_timeout`. Not done
+  in task M6.5.10's fix round 1: neither half can be made red-when-reverted without a
+  seam that injects a blocking pass into `conversation::watch`, and that seam is larger
+  than the fix.
+- **Every hook and every reader pass clones the whole conversation under the manager lock
+  (review F4).** `Entry::mutate` (`conversation/entry.rs`) builds
+  `before: HashMap<u64, Turn>` from every turn before it runs the change, and
+  `apply_transcript` calls `enrich` even for a pass with no records, so a subscribed idle
+  window pays it four times a second. Measured at 500 turns: 142 KB of conversation, 15 µs
+  to 100 µs per hook in release (158 µs to 764 µs in debug); 1.89 MB (near the default
+  `max_bytes`), 18 µs to 189 µs in release (161 µs to 890 µs in debug). It grows linearly;
+  at the config maximum (10,000 turns, 15 MiB) that extrapolates to about 1.5 ms per hook
+  and per poll, under the lock. Cheap fixes: return early from `apply_transcript` when a
+  pass has no records and nothing is parked, and diff only the turns the change can touch
+  (the open turn and anything after the first changed index).
+- **`crates/daemon/tests/server_restore_git.rs` is flaky (review F6).** Task M6.5.10's review
+  saw `a_restart_keeps_the_restored_root_watched` fail once in a full run and
+  `a_restored_plain_window_keeps_its_worktree_and_is_watched` once in another; 9/10 in
+  isolation. Milestone 6's code (`6590a90`, `4af1ccf`), untouched by task M6.5.10; the
+  coordinator is handling it separately. Task M6.5.10's fix round 1 also saw one
+  unattributed failure in a five-test daemon suite during a `cargo test -p anthrex-daemon`
+  run that two reruns did not reproduce.
+- **Two limits of the `/clear` fix (review F2).** A switch to a new session's file drops
+  whatever the old file still had unread; a final drain pass of the old `Tail` before the
+  switch would keep it. And a later shrink or replacement of the new session's file is a
+  restart, whose `reset` is window-wide, so it drops the old session's enrichment too;
+  scoping `enrich::reset` to turns at or after `session_base` would keep it.
