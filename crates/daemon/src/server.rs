@@ -445,6 +445,15 @@ async fn handle_client(
                 shutdown.cancel();
                 None
             }
+            // Landed ahead of the conversation view itself (task M6.5.1), the same way
+            // `ClientMsg::Restart` was landed before milestone 6 implemented it. Task
+            // M6.5.10 replaces this with the real subscribe/unsubscribe handling.
+            ClientMsg::SubscribeConversation { .. } | ClientMsg::UnsubscribeConversation { .. } => {
+                Some(error(
+                    "subscribe-conversation",
+                    "not supported by this daemon version",
+                ))
+            }
         };
         if let Some(reply) = reply
             && out_tx.send(reply).await.is_err()

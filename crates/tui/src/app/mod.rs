@@ -428,6 +428,12 @@ impl App {
                 }
                 vec![]
             }
+            // Landed ahead of the conversation view itself (task M6.5.1), the same way
+            // `ClientMsg::Restart` was landed before milestone 6 implemented it. Task
+            // M6.5.13 replaces this with the real handling.
+            DaemonMsg::ConversationSnapshot { .. }
+            | DaemonMsg::ConversationDelta { .. }
+            | DaemonMsg::ConversationGone { .. } => vec![],
         }
     }
 
