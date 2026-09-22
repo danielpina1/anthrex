@@ -189,6 +189,42 @@ DAEMON_STOP_CMD_TIMEOUT = 40.0
 # over their own worst cases above, rounded up to 90s.
 WORKTREE_CMD_TIMEOUT = 90.0
 
+# final-gate finding F2a: `run_worktree_form_stage` (W2, below `run_worktree_cli_stage`,
+# W1) drives the *same daemon create/remove operations* as `WORKTREE_CMD_TIMEOUT` above,
+# just through the TUI's broadcast protocol instead of the CLI's own request/reply. The
+# rule (`docs/timing-budgets.md` standing rule 1) applies here exactly as it does to W1 —
+# `server::requests::create`/`remove` run to the same daemon-side completion no matter
+# which client asked — but every previous sweep for this defect shape (including the one
+# that produced `WORKTREE_CMD_TIMEOUT`) grepped for `run_cmd` calls and `timeout=`
+# keyword args specifically, and W2's waits are neither: they are `wait_for`/
+# `wait_for_focused_window` calls (helper default 10s) and one hand-rolled
+# `deadline = time.monotonic() + 10.0` poll loop, so they matched nothing either sweep
+# grepped for. Per-site arithmetic, from the same constants `WORKTREE_CMD_TIMEOUT`'s own
+# comment above already names:
+#
+# - the worktree-create wait (`wait_for_focused_window("wt-form")` and the following
+#   `wait_for(branch, ...)`, both after the form is submitted): `server::requests::create`
+#   awaits project detection (`DETECT_TIMEOUT`, 5s, `crates/daemon/src/project.rs`) then
+#   `worktree::create`'s own `OPERATION_TIMEOUT` (30s, `crates/daemon/src/worktree.rs`) —
+#   5 + 30 = **35s** on the happy path this stage actually exercises. (A create that fails
+#   and runs `CLEANUP_TIMEOUT` never focuses the window at all, so that term does not
+#   belong in *this* wait's bound — the same reasoning `CREATE_WORST_CASE`'s 45s in
+#   `crates/cli/src/client.rs` does not apply to a wait that only fires on success.)
+# - the dirty-tree prompt wait (`wait_for("uncommitted or untracked", ...)`): one
+#   worktree-removal operation's own `OPERATION_TIMEOUT` (30s) — design decision 3's "the
+#   deadline shared by every git command one worktree operation runs" covers the dirty
+#   check itself, run as part of a removal.
+# - the forced-removal poll (the hand-rolled `deadline = time.monotonic() + 10.0` loop):
+#   `crates/cli/src/client.rs`'s own `REMOVAL_WORST_CASE` — `OPERATION_TIMEOUT` (30) +
+#   `KILL_GRACE` (3, `crates/daemon/src/process.rs`) = **33s**, the kill-then-remove path
+#   a forced removal actually takes.
+#
+# One shared bound, the same shape as `WORKTREE_CMD_TIMEOUT` above (a single constant
+# covering multiple operations with close but distinct worst cases): 35s is the largest
+# of the three, rounded up with the same ~40% margin `WORKTREE_CMD_TIMEOUT` carries over
+# its own 65.25s worst case (90 / 65.25 ≈ 1.38), to 50s.
+WORKTREE_FORM_TIMEOUT = 50.0
+
 
 def fail(msg):
     print(f"FAIL: {msg}")
@@ -407,16 +443,38 @@ class PtyProc:
             pass
 
 
-def run_cmd(args, expect_ok=True, timeout=15, env=None):
-    # The default above is generous for the ordinary fast commands most call sites
-    # wrap (`ls`, `new`, `rename`, `daemon status`: tens to low hundreds of ms on the
-    # Rust side, nothing near 15s). It is *not* generous enough for `restart`,
-    # `daemon stop`, or a worktree `new`/`rm` — pass `RESTART_CMD_TIMEOUT` /
-    # `DAEMON_STOP_CMD_TIMEOUT` / `WORKTREE_CMD_TIMEOUT` (above) explicitly for those,
-    # derived from the real Rust-side worst case each one has, rather than letting them
-    # silently fall through to a default that was never sized for them
-    # (whole-branch-review m16 / this file's own recurrence of timing-budgets class 1,
-    # at the Rust/Python language boundary).
+def run_cmd(args, expect_ok=True, timeout=20, env=None):
+    # final-gate finding F2b: the default used to be 15, numerically *equal* to
+    # `anthrex new`'s own legal worst case — the exact "bound equals what it wraps"
+    # shape `docs/timing-budgets.md`'s standing rule 1 exists to forbid, the same shape
+    # as the `restart`/`RESTART_REQUEST_TIMEOUT` = 15 coincidence fixed elsewhere in this
+    # file, just not noticed here because the previous pass reasoned from *observed*
+    # cost ("tens to low hundreds of ms") rather than from the worst case the code
+    # actually allows. `new`'s own chain, every constant read from source:
+    #
+    #   ensure_daemon (SPAWN_HANDOFF_GRACE 0.25s, `crates/tui/src/spawn.rs`, +
+    #                  ENSURE_DAEMON_SOCKET_WAIT 3s, same file)              = 3.25s
+    #   + CliClient::connect (HANDSHAKE_TIMEOUT 5s, `crates/proto/src/lib.rs`) =  5s
+    #   + request_with_timeout (CREATE_WINDOW_REPLY_TIMEOUT 7s =
+    #       DETECT_TIMEOUT 5s + CREATE_REPLY_ALLOWANCE 2s, `crates/cli/src/client.rs`)
+    #                                                                          =  7s
+    #                                                                  total   = 15.25s
+    #
+    # Verified against `crates/cli/src/main.rs`'s `Command::New`, which calls exactly
+    # this chain: `ensure_daemon`, then `connect`, then
+    # `request_with_timeout(CREATE_WINDOW_REPLY_TIMEOUT)`.
+    #
+    # The default is still generous for the ordinary fast commands most call sites wrap
+    # (`ls`, `rm`, `rename`, `daemon status`, `daemon start`: tens to low hundreds of ms
+    # on the Rust side) and is *not* generous enough for `restart`, `daemon stop`, or a
+    # worktree `new`/`rm` — pass `RESTART_CMD_TIMEOUT` / `DAEMON_STOP_CMD_TIMEOUT` /
+    # `WORKTREE_CMD_TIMEOUT` (above) explicitly for those, derived from the real
+    # Rust-side worst case each one has, rather than letting them silently fall through
+    # to a default that was never sized for them (whole-branch-review m16 / this file's
+    # own recurrence of timing-budgets class 1, at the Rust/Python language boundary).
+    # 20s clears `new`'s 15.25s worst case by the same ~30-40% margin this file uses
+    # elsewhere for a bound that must exceed what it wraps (`WORKTREE_CMD_TIMEOUT`'s 90s
+    # over its 65.25s worst case is a ~38% margin).
     #
     # fix-wave-12-re-review Major 2: `subprocess.run`'s own `timeout` raises
     # `TimeoutExpired` on expiry, which this used to leave uncaught — a bound exceeded
@@ -671,8 +729,8 @@ def run_worktree_form_stage(repo):
         b"\r",
     ):
         proc.send(chunk)
-    proc.wait_for_focused_window("wt-form")
-    proc.wait_for(branch, label=f"{branch} on screen after submit")
+    proc.wait_for_focused_window("wt-form", timeout=WORKTREE_FORM_TIMEOUT)
+    proc.wait_for(branch, timeout=WORKTREE_FORM_TIMEOUT, label=f"{branch} on screen after submit")
 
     proc.send(b"pwd\r")
     proc.wait_for("smoke-form", label="worktree directory name in pwd output")
@@ -695,10 +753,14 @@ def run_worktree_form_stage(repo):
     proc.wait_for("also remove worktree", label="remove-confirm worktree checkbox")
     proc.send(b" ")
     proc.send(b"\r")
-    proc.wait_for("uncommitted or untracked", label="dirty-tree force prompt")
+    proc.wait_for(
+        "uncommitted or untracked",
+        timeout=WORKTREE_FORM_TIMEOUT,
+        label="dirty-tree force prompt",
+    )
 
     proc.send(b"f")
-    deadline = time.monotonic() + 10.0
+    deadline = time.monotonic() + WORKTREE_FORM_TIMEOUT
     gone = False
     while time.monotonic() < deadline:
         remaining = json.loads(run_cmd(["ls", "--json"]).stdout)
@@ -714,7 +776,8 @@ def run_worktree_form_stage(repo):
         proc.read_available(timeout=0.2)
     if not gone:
         fail(
-            "wt-form was still listed 10s after forcing the dirty removal\n"
+            f"wt-form was still listed {WORKTREE_FORM_TIMEOUT}s after forcing the dirty "
+            "removal\n"
             f"--- screen ---\n{proc.screen_text()}\n"
             f"--- windows ---\n{remaining!r}"
         )
