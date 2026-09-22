@@ -81,12 +81,18 @@ fn a_misaligned_prompt_stops_positional_enrichment() {
         "ToolDetail joins by id, not by position"
     );
 
-    // A later batch cannot resume past the mismatch, even with a record that would
-    // line up: ordinal 2 against the hooks' "three" matches on its face.
+    // A later batch cannot resume past the mismatch, even with records that would line
+    // up: ordinal 1 against the hooks' "two", and ordinal 2 against the hooks' "three",
+    // both match on their face. Nothing at or past the first bad ordinal applies.
     let before = draft.turns.clone();
     assert!(!enrich(
         &mut draft,
-        &[user(2, "three"), said(2, "plausible, and wrong")]
+        &[
+            user(1, "two"),
+            said(1, "late, and unchecked"),
+            user(2, "three"),
+            said(2, "plausible, and wrong"),
+        ]
     ));
     assert_eq!(draft.turns, before);
     assert!(draft.enrichment.is_misaligned());

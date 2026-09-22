@@ -337,5 +337,9 @@ mod tests;
 mod alignment_tests;
 
 #[cfg(test)]
+#[path = "enrich_reset_tests.rs"]
+mod reset_tests;
+
+#[cfg(test)]
 #[path = "enrich_store_tests.rs"]
 mod store_tests;
