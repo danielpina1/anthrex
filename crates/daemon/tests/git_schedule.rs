@@ -113,6 +113,37 @@ fn only_one_probe_runs_at_a_time_per_root() {
     assert!(!scheduler.plan(t0 + secs(1)).probe);
 }
 
+/// The watcher finishing its setup asks for a probe of its own — the one that covers
+/// whatever changed before the watcher could see it. It is due at once, with no
+/// debounce, and it respects the one-probe-in-flight rule like any other refresh.
+#[test]
+fn a_requested_probe_is_due_at_once_and_waits_for_one_in_flight() {
+    let t0 = Instant::now();
+
+    // Idle: due at the very instant it is asked for.
+    let mut scheduler = settled(t0);
+    scheduler.request_probe();
+    assert!(scheduler.plan(t0 + millis(1)).probe);
+    scheduler.probe_finished();
+    assert!(
+        !scheduler.plan(t0 + millis(2)).probe,
+        "asked for once, runs once"
+    );
+
+    // In flight: exactly one more, when the outstanding probe returns.
+    let mut scheduler = Scheduler::new(t0, POLL_INTERVAL, DEBOUNCE);
+    assert!(
+        scheduler.plan(t0).probe,
+        "registration probe is outstanding"
+    );
+    scheduler.request_probe();
+    assert!(!scheduler.plan(t0 + millis(1)).probe);
+    scheduler.probe_finished();
+    assert!(scheduler.plan(t0 + millis(2)).probe);
+    scheduler.probe_finished();
+    assert!(!scheduler.plan(t0 + millis(3)).probe);
+}
+
 #[test]
 fn the_breaker_drops_a_noisy_root_to_poll_only() {
     let t0 = Instant::now();
