@@ -1,0 +1,2180 @@
+# Milestone 8a: Orchestration engine core
+
+> Written 2026-09-22 against `docs/superpowers/specs/2026-09-22-adaptive-orchestrator-design.md` (the adaptive-orchestrator spec, "the spec" below), which is binding for this milestone and wins wherever it amends an older document. Built on the refreshed milestone 8 brief (branch `docs/m8-brief-refresh`, `docs/milestones/M8-orchestration-engine.md`): its structure, its grounded file paths and every decision the spec does not change are reused here; everything the spec changes is changed. Checked against `main` at `2cb7e3c` (milestones 1 to 6 merged, protocol 5) and against branch `m6.5-conversation-view` at `9ec0a30` (milestone 6.5, in progress, protocol 6). The research report *Coding agent orchestrator design* (2026-09-22) lists, as its P0, the contradictions between the M8 and M9 brief refreshes; this brief resolves each in the spec's favour: strength tiers are restored (decision 23), review severities are restored (decision 35), the plan gate does not block a tool call (decision 14), the run branch is `anthrex/<run>/integration` (decision 16) and is created at `run start` (decision 14), and the protocol number is re-derived when work starts (decision 3).
+
+**Headless amendment (2026-09-22, same day).** The spec now makes the orchestrator the only interactive PTY window and runs every other agent headless (§4 "Only the orchestrator is an interactive terminal", §4.2). This brief follows it. Every worker and reviewer is a headless session: one long-lived `claude -p` stream-json process, or one `codex exec --json` process per turn. Each session is registered with the window manager as a window with no terminal (`proto::WindowKind::Headless`, decision 49). The following are gone: bracketed-paste delivery, the settle bit, the resume-dialog watch, the stuck-prompt timer, and idleness inferred from window status or PTY output. In their place: turn-based delivery (decision 29), stream signals (decision 27), a turn-end done fallback and a stream-silence stall watchdog (decision 32), budgets from stream tool use and usage (decision 40), and restart by resuming the persisted session with a hand-over message (decision 28). Decision numbers from 1 to 49 are unchanged in meaning where they are unchanged in text; 50 to 52 are new. A second amendment the same day follows the spec's §4 "Every headless agent is also contained" and §6 `generated`: headless Claude loads only the user's settings (decision 53), workers run in Claude Code's sandbox (decision 54), and a changed generated file outside `owns` is a rung-1 bounce, not a spill (decision 55). A third addition follows §4 "Codex loads only the user's config too" and §6 `protected`: decision 53 covers Codex's project config, and a change to an agent-config or instruction file is allowed only when `owns` names it exactly (decision 56).
+
+## Header
+
+| | |
+|--|--|
+| Status | `blocked` — depends on milestone 6 (`done`) and milestone 6.5 (in progress on `m6.5-conversation-view`, not merged). Becomes `ready` when milestone 6.5 merges. |
+| Depends on | Milestone 6 (persistence, `config` crate, restart) and milestone 6.5 (merged, because it raises the protocol and adds `proto::Role`, which this brief must not collide with). |
+| Spec sections | The spec §2 (terms), §4 (roles, headless sessions, read-only launch, "Every headless agent is also contained"), §4.1 (one writer per task), §4.2 (headless run agents, kill and remove refused), §5.3 steps 3–7, §6 (profile values only, `generated` and `protected` included; the onboarding scout is M8b), §7.1–§7.3, §8, §8.1, §9, §10, §11.1–§11.6, §12.1–§12.3, §13 items 2–5, §14 items 2, 3 (hooks still run in `-p`; the filter itself is M8b), 4, 7 and 8 (per-turn usage from the stream; OTLP for the orchestrator is M8b), §16.2 (an agent round points at a headless window; the node kinds are M8c), §16.4 "Navigation" (the conversation view is how a run agent is watched; the TUI part here is a placeholder, decision 49), §16.5 (snapshot and revision only; views are M8c), §17 in full, §22.1 (headless sessions on the user's login), §23 first two risks (`--bare`, the stream-json input envelope), §18 (the task record), §19 (worker and reviewer tools), §21 (M8a row and the scenario list). From the refreshed M8 brief: its decisions 1, 2, 4, 5, 7, 9, 10, 15, 20, 24, 34 and 44 as amended below; its 37–38 (paste delivery) are replaced by decision 29. |
+| Branch | `m8a-engine-core` |
+| Protocol version | **One above `PROTO_VERSION` on `main` at the moment M8a starts (7 if M6.5 has merged).** Read `crates/proto/src/lib.rs` on `main` that day, add one, and record the derivation under "Implementation notes". No acceptance criterion greps for a specific number. |
+
+## Starting point
+
+Names below are real on `main` at `2cb7e3c` unless the row says otherwise. If the merged code differs when this milestone starts, use the real names and record the mapping under "Implementation notes".
+
+| From | What this milestone uses |
+|------|--------------------------|
+| M3 | `crates/daemon/src/launch/mod.rs`: `LaunchPlan { program, args, cwd, env }`, `LaunchContext { window_id, name, socket_path, shell, exe, claude_bin, codex_bin, codex_hook_source, codex_bypass_hook_trust, resume }`, `plan(spec, ctx)`, `hook_command`, `shell_quote`. `launch/claude.rs`: `HOOK_EVENTS` (10 events: `Notification`, `PermissionRequest`, `PostToolUse`, `PreToolUse`, `SessionEnd`, `SessionStart`, `Stop`, `SubagentStart`, `SubagentStop`, `UserPromptSubmit`) and `settings(exe, window_id)`. `launch/codex.rs`: `args`, `HOOK_EVENTS` (8), `toml_string`. `crates/daemon/src/status.rs`: `StatusEvent`, `StatusContext`, `next(current, event, runtime, ctx)`. `crates/daemon/src/hooks.rs`: `HookKind`, `ParsedHook`, `parse`, `accepts`. `crates/fake-agent`: `script::Step { Print, Hook, Notify, Title, Bell, WaitMs, ReadLine, GitCommit, Exit, McpCall }` where `McpCall` prints `fake-agent: mcp_call arrives in milestone 8` and exits 3; `runtime::discover(args)`; `FAKE_AGENT_SCRIPT`, `FAKE_AGENT_ARGS_FILE`. `crates/cli/tests/support/mod.rs`: `tempdir`, `fake_agent_bin`, `isolated_command`, `TestDaemon`, `Client`. `crates/daemon/src/manager/entry.rs`: `pub(super) enum Process { Live(Window), Dormant { output, cols, rows } }`, which already routes `write_input`, `resize`, `attach`, `snapshot`, `signal_group` and `pid` for a window with no PTY behind it; `Entry`. `WindowInfo { id, name, runtime, cwd, project, worktree, branch, status, tool, since_secs, last_output_secs, session_id, model, subagents, exit }`. `ClientMsg::{Subscribe, Input, Resize, Kill, Remove, Restart, …}`. `proto::HookSource { Claude, CodexNotify, CodexHook }`. |
+| M4.5 | `crates/daemon/src/project.rs`: `detect_roots(cwd) -> DetectedRoots { project, worktree, detection_failed }`, `resolve_roots`. `crates/daemon/src/git/mod.rs`: `GitRegistry::{new(settings, publish), register, unregister, snapshot}`, `impl crate::manager::GitRoots for GitRegistry`. `DaemonMsg::Git { root, state }`. `ANTHREX_GIT=off`. |
+| M5 | `crate::subprocess::run_captured(command, max_output_bytes, max_stderr_bytes, timeout) -> Captured { outcome, stderr, spawn_error }`, which scrubs `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_PREFIX` and runs the child in its own process group. `crate::worktree::run_git(git: &OsStr, dir, args: &[&OsStr], deadline: Instant) -> Result<GitOutput, WorktreeError>`, which already passes `-C <dir> --no-optional-locks`, `LC_ALL=C`, `GIT_TERMINAL_PROMPT=0`; `GitOutput { stdout, stderr, success }` with `stderr_tail()`; `OPERATION_TIMEOUT`, `CLEANUP_TIMEOUT`, `RESERVED_DIR = "runs"`, `RESERVED_BRANCH_PREFIX = "anthrex/"`, `repo_worktrees_dir(worktrees_root, project_root)`, `hash8`, `check_branch_syntax`. `crate::manager::GitRoots` (in `manager/remove.rs`: `register(PathBuf)`, `unregister(&Path)`). The manager is split into `manager/{mod,config,create,entry,remove,restart,restore}.rs`; `WindowManager::create(&self, spec, project, worktree, cols, rows)` is `async`. `crates/daemon/tests/support/mod.rs`: `TempRepo`, `git`, `git_output`. |
+| M6 | `crates/config/src/lib.rs`: `Config { prefix, accent, bell, default_runtime, scrollback_lines, ui, panes, runtimes, git }`, `parse`, `load`, `Problem { key, message, default }`; `report_unknown_keys` skips `orchestrator` silently. `crates/daemon/src/state/`: `STATE_VERSION = 3`, `StateFile { version, next_id, windows, runs: Vec<serde_json::Value> }`, `WindowRecord { …, session_id: Option<String>, …, run: Option<serde_json::Value> }` (both carried verbatim, meaningless until this milestone), `save`, `load`, `spawn_persister`. `WindowManager::{restore, state_snapshot, restart(self: &Arc<Self>, id)}`; `Entry.run: Option<serde_json::Value>`. `LaunchContext.resume`. `launch::LaunchGate`. |
+| M6.5 (branch, `8230d36`) | `PROTO_VERSION = 6`. `proto::conversation` with `Role { User, Assistant, System }` and `ToolResult`, **both re-exported at the crate root** — so this milestone's agent role is `proto::AgentRole`, never `proto::Role`. `DaemonMsg::{ConversationSnapshot, ConversationDelta, ConversationGone}`, ignored by the TUI in one match arm in `crates/tui/src/app/mod.rs`. `ParsedHook` gains six fields (`transcript_path`, `tool_use_id`, `tool_response`, `tool_result_truncated`, `tool_result_stringified`, `prompt`). **The conversation model's two inputs** are the ones the headless mapping (decision 27) feeds: `crate::conversation::ConversationSet::on_hook(runtime, &ParsedHook, spawn, now_unix_secs, now, caps)`, which is authoritative and alone creates turns and tool calls, and `ConversationSet::enrich(&[transcript::Record], caps)`, which adds prose and tool detail. `transcript::Record` is `UserText { session_id, ordinal, text }`, `AssistantText { session_id, ordinal, text }` or `ToolDetail { tool_use_id, input, detail, ok }`. `Entry` gains `conversations: ConversationSet`. The M6.5 brief's manager methods are `subscribe_conversation`, `conversation_changes`, `conversation_snapshot` and `conversation_delta`, and its transcript reader is `conversation::watch::spawn_reader`. The manager wiring is not on the branch at `8230d36`, so use the merged names. `crates/config/src/lib.rs` grows to 1033 lines; `crates/daemon/src/server.rs` to 565; `crates/proto/src/messages.rs` to 500; `crates/tui/src/app/mod.rs` to 592. |
+
+Two signatures this milestone changes, as they stand on `main`:
+
+```rust
+// crates/daemon/src/server.rs — constructs its own GitRegistry today.
+pub async fn serve(listener: UnixListener, manager: Arc<WindowManager>,
+                   git: config::Git, shutdown: CancellationToken) -> anyhow::Result<()>;
+
+// crates/daemon/src/manager/create.rs
+pub async fn create(&self, spec: WindowSpec, project: PathBuf, worktree: Option<PathBuf>,
+                    cols: u16, rows: u16) -> anyhow::Result<WindowInfo>;
+```
+
+Why run agents are headless, in terms of today's code: the PTY status machine (`status.rs`) gets idleness from hooks and output quiet. `StopFailure`, `PreCompact` and `PostCompact` are not in `launch::claude::HOOK_EVENTS`, and `hooks::parse` drops them. So a turn that ends on an API error leaves the window `Working` forever, and `Stop` reads as done while sub-agents still run. Headless sessions do not have this problem: every turn ends with an explicit `result` (Claude) or `turn.completed` / `turn.failed` (Codex) event, and rate-limit retries arrive as `system/api_retry`. The PTY status machine is therefore left exactly as it is. Its `StopFailure` gap matters again only for the orchestrator's PTY window, which is M9's.
+
+## Goal
+
+A user writes a plan file — a goal, an optional `[profile]`, and a list of tasks, each with a size, a test mode, the paths it owns, a brief and acceptance criteria — and runs `anthrex run start --plan plan.toml`. The daemon validates it against the spec's size, test-mode, runtime and graph rules and returns at once with a run waiting for approval; the run branch and the first worktrees are prepared while the user reads the plan. `anthrex run approve` starts it (`--yes` skips the gate). The engine schedules tasks by critical path into separate writer and reviewer slots. It runs one headless Claude or Codex worker session per task, in the task's own worktree, and moves each task through the gates: the worker's explicit `task_done` (or, when a turn ends with commits but no `task_done`, one nudge turn and then the fallback), the fail-to-pass test proof for TDD tasks, the profile's check, a fresh cross-runtime review with severities, and a merge queue that tests the merged result before a compare-and-swap onto the run branch. Failures climb a four-rung escalation ladder. Budgets count tool calls, minutes and, when a task sets a token budget, tokens. Turn ends, rate-limit retries, permission denials, tool use and token usage all come from each session's structured event stream, never from a terminal. The user watches any agent through milestone 6.5's conversation view, which is fed from the same stream; no run agent has a terminal to type into. Every side effect is journaled before it happens and reconciled after a crash, dirty work is never deleted, and the base and run refs are checked before every merge. `anthrex run status` and a pushed snapshot with a revision counter show everything. Nothing reaches the base branch until `anthrex run accept`. Every transition is exercised in CI with `fake-agent`; no test needs a model.
+
+## Scope
+
+In:
+
+- The run engine in the daemon: the §18 task record, plan-file parsing, plan validation (§7.2, §8, §9, §12.1), plan edits (§12.1–§12.2), the plan gate engine side (§12.3), the scheduler (§13 items 2–5), the gates (§11.1–§11.5), the escalation ladder rungs 1–4 (§10), budgets by tool calls, wall-clock and optional tokens (§9, §14.7, §14.8), worktrees, branches, salvage and cleanup (§11.6, §17), the ref guard, the intent journal and reconciliation (§17), the run snapshot with a revision counter (§16.5), and the run report.
+- Repo-profile values (`modules`, `hub`, `source`, `check`, `single_test`, `test_passed`, `setup`, `env`) from a `[profile]` table in the plan file, over `[orchestrator.profile]` in `config.toml`.
+- The anthrex MCP server (`anthrex mcp`) with `task_done` and `task_blocked` for workers and `submit_review` for reviewers.
+- Headless sessions for workers and reviewers on both runtimes:
+  - Claude: `claude -p` in stream-json mode, one process per session.
+  - Codex: `codex exec --json`, then `codex exec resume` for each later turn.
+  - Read-only reviewers, a scrubbed environment, flags re-passed on every resume, and the `[orchestrator.claude] auth` switch.
+  - Each session is registered as a headless window (`WindowKind::Headless`) and fed into milestone 6.5's conversation model.
+- Stream parsers for both runtimes: turn start and end, rate-limit retries, permission denials, tool use, compaction and usage. They are tested against fixtures recorded from the installed CLIs. `SubagentStart`/`SubagentStop` hook pairing for Claude sessions (hooks still run in `-p`).
+- `anthrex run start|status|approve|reject|edit|retry|override|cancel|resume|accept|discard`, and the hidden `anthrex mcp`.
+- `fake-agent` additions: headless modes for both runtimes that read stream-json input and emit recorded-shape events, per-role scripts, working `mcp_call`, `read_message`, `sh`, `capture`, and argument templating.
+- End-to-end tests for every scenario of §21 that belongs to this milestone, and the M8a-level half of the others (see "Scenario map" in the Tasks section), plus one smoke stage.
+
+Out, each with the milestone that owns it:
+
+| Out | Owner |
+|-----|-------|
+| Deciders and `ANTHREX_DECIDER_BIN`, triage, the fast path, the size cross-check (§7.2 rule 5), the decider check summary (a deterministic 40-line tail stands in), classification of free-text `task_blocked` reasons (a missing `kind` becomes `question`) | M8b |
+| The repo profile file, `.anthrex/profile.toml`, the onboarding scout, profile re-proposal | M8b |
+| The output-filter `PreToolUse` hook, OTLP metering of the orchestrator's PTY session, `history.jsonl`, `anthrex run stats` (per-turn usage of headless sessions and token budgets are in this milestone, decision 40) | M8b |
+| The `C-b T` run view, `NodeKey::{Run, Planner, Scout, Task, AgentRound}`, the run inspector, run rows in the sidebar, Enter on an agent node opening its conversation (§16.4) | M8c |
+| The orchestrator's PTY window and its hook gaps (`StopFailure`, `PreCompact`, `PostCompact` in `launch::claude::HOOK_EVENTS`, the PTY status machine's idleness) | M9 |
+| The orchestrator window and contract, sub-planners, scouts, `get_context`, `edit_plan`, `spawn_scout`, `spawn_subplanner`, `run_status`, `task_result`, `submit_epic`, steering chat, the per-epic integration review of the large path, research and review task kinds | M9 |
+| Adaptive concurrency (§13 item 9), threshold and budget refit, racing, the test-writer-then-implementer pattern | M9.5 |
+
+Also out: a merge queue wider than 1, stub-then-fill, rebasing task branches, pruning old run records (follow-up), automatic conflict resolution (the engine never resolves a conflict; decision 36's hand-back asks the worker).
+
+## Design decisions
+
+Numbered and final. If one proves wrong or impossible, stop work on it, record the evidence under "Implementation notes", and continue with the tasks that do not depend on it.
+
+### Structure
+
+1. **Engine inside the daemon**, module tree `crates/daemon/src/run/`. No new crate: it needs the window manager, the git runner, the registry and the data directory, which all live in the daemon. *(Refreshed M8 decision 1.)*
+2. **A pure reducer.** The engine is `run::engine::step(state: EngineState, event: Event) -> (EngineState, Vec<Effect>)`; `Event` carries the clock (`Event { now, kind }`), so the reducer reads no clock, spawns nothing and touches no file. These files are pure — no `std::fs`, `std::process`, `std::thread`, `tokio` or `std::time::SystemTime`: `run/plan.rs`, `run/validate.rs`, `run/globs.rs`, `run/roster.rs`, `run/edits.rs`, `run/model.rs`, `run/engine/**`, `run/contract.rs`, `run/messages.rs`, `run/report.rs`, `run/role_launch.rs`, `run/snapshot.rs`, `run/env.rs`, and in the new `crates/daemon/src/headless/` module `argv.rs`, `claude_stream.rs`, `codex_stream.rs`, `conversation.rs` and `status.rs`. These do I/O: `run/git/**`, `run/exec.rs`, `run/proof.rs`, `run/journal.rs`, `run/reconcile.rs`, `run/driver.rs`, `run/driver/*.rs`, `headless/session.rs`. `headless/` sits outside `run/` because M9's scouts, sub-planners and deciders reuse it. `RunService` (in `driver.rs`) executes effects and feeds results back as events. *(Spec §23 first risk; refreshed M8 decision 2.)*
+3. **Protocol.** `proto::PROTO_VERSION` becomes one above the value on `main` when this milestone starts (header). Every run message is nested in one new variant on each side, `ClientMsg::Run(RunRequest)` and `DaemonMsg::Run(RunReply)`, with the enums in a new `crates/proto/src/run_wire.rs`, so `messages.rs` (500 lines after M6.5) grows by two variants. The agent role enum is `proto::AgentRole` because M6.5 re-exports `proto::Role`; the model strength enum is `proto::Strength` because the spec's route is `{runtime, model, strength, effort}` (§9, §18). The refreshed M9 brief's `proto::Role` and `proto::Tier` map to these names. `types.rs` gains `proto::WindowKind { Pty, Headless }` on `WindowInfo.kind` (decision 49). `messages.rs` gains `HookSource::Stream`, which marks a hook the daemon synthesised from a session's stream (decision 27); `hooks::accepts` returns `false` for it, so a client that sends one over the socket is ignored. *(AGENTS.md rule 4; spec §19.)*
+4. **MCP server crate.** New library crate `crates/mcp`, package `anthrex-mcp`, library name `mcp`; the hidden `anthrex mcp` subcommand in `crates/cli` calls `mcp::serve_stdio`. `rmcp` stays out of the daemon and the TUI. *(Refreshed M8 decision 4.)*
+5. **`rmcp` pinned** at `=3.4.0` with `default-features = false, features = ["server", "transport-io"]`, a hand-written `ServerHandler` and hand-built tool schemas, exactly as the refreshed M8 brief's decision 5 verified on 2026-09-18; M8a.1 re-verifies the API. *(Refreshed M8 decision 5.)*
+6. **Kinds executed in this milestone.** `TaskKind` has all four values of §5.1 (`code`, `docs`, `research`, `review`) so M9 needs no protocol change, but plan validation rejects `research` and `review` with `task <id>: kind: <kind> tasks are executed from milestone 9; use code or docs`. They need scouts and reviewer-only pipelines that are M9's. *(Spec §5.2, §21.)*
+
+### Plans and validation
+
+7. **The plan file is TOML**, parsed with the `toml` crate into `proto::Plan` with `deny_unknown_fields` at every level. Shape (every key not marked required is optional):
+
+   ```toml
+   goal = "Add password reset"           # required
+   max_writers = 3                       # 1..=8, else config
+   max_readers = 3                       # 1..=8, else config
+   max_bounces = 2                       # 1..=5, else config
+
+   [profile]                             # each key overrides [orchestrator.profile] from config.toml
+   modules = ["crates/*"]
+   hub = ["crates/proto/**"]
+   source = ["crates/*/src/**"]
+   check = "cargo test --workspace"
+   check_timeout_secs = 1800             # 10..=14400
+   single_test = "cargo test --workspace -- --exact {test}"
+   test_passed = 'test {test} \.\.\. ok'
+   setup = "cargo fetch"
+   generated = ["Cargo.lock"]              # rewritten by builds; outside owns it is a rung-1 bounce (decision 55)
+   protected = ["docs/agents/**"]           # added to the built-in agent-config list (decision 56)
+   [profile.env]
+   CARGO_TARGET_DIR = "{worktree}/target"
+
+   [[task]]
+   id = "t1"                             # required, ^[a-z0-9][a-z0-9-]{0,15}$, not "integration"
+   title = "Reset token model"           # required
+   kind = "code"                         # code | docs; default code
+   size = "M"                            # S | M | L; required
+   interface_change = false              # the planner's flag for §7.2 rule 2; default false
+   test_mode = "tdd"                     # tdd | check | none; default tdd for code, none for docs
+   test_mode_reason = ""                 # required unless tdd
+   owns = ["crates/auth/src/token.rs"]   # required, at least one glob
+   deps = []
+   priority = 0                          # i32, higher first among equals
+   brief = "..."                         # required
+   acceptance = ["..."]                  # at least one item
+   test_to_write = "token::expires_after_one_hour"
+   epic = "auth"                         # stored for M9, unused here
+   scout_refs = []                       # stored for M9, unused here
+   [task.route]                          # every key optional; policy fills the rest (decision 8)
+   runtime = "claude"
+   model = "claude-sonnet-5"
+   strength = "standard"
+   effort = "medium"
+   [task.budget]                         # optional; default by size (decision 40)
+   tool_calls = 150
+   minutes = 60
+   tokens = 3000000                      # optional; no default, enforced only when set
+   ```
+
+   Profile values are resolved per key: the plan's `[profile]` key when present, else `[orchestrator.profile]`, else empty (`check_timeout_secs` defaults to 1800, the spec's 30 minutes). `{worktree}` in an `env` value is replaced by the absolute path of the worktree the process runs in. *(Spec §6, §11.3, §18.)*
+8. **Route and budget resolution** (policy fills whatever the planner left out; the planner's value always wins when valid). Runtime: the task's, else `orchestrator.default_runtime` (default `claude`). Strength and effort by class: S → `standard`, `low`; M → `standard`, `medium`; hub → `frontier`, `high`. Model: the task's, which must be in the roster for that runtime and then fixes the strength (a given `strength` that disagrees is an error); else the first roster entry for the runtime at the strength. Budget: the task's, else by class (decision 40). The resolved route is stored as `proto::Route { runtime, model, strength, effort }`, `model == ""` meaning "omit `-m`/`--model`". *(Spec §9 table and "policy fills whatever it leaves out".)*
+9. **Size rules, §7.2**, applied to every task on every validation, only ever raising a size, each raise recorded as a note on the task (`size raised from S to M: owns spans 2 modules (rule 7.2.1)`):
+   1. `owns` spans more than one module → at least M.
+   2. `owns` spans more than one module and `interface_change = true` → L.
+   3. `owns` touches a hub glob → at least M, and `hub = true`.
+   4. A task left at L is an error: `task <id>: size: L tasks are never executed; split the task (rule 7.2.4)`.
+
+   **Modules.** Each `profile.modules` pattern has a component count `k` (`crates/*` has 2). For each `owns` glob, take its literal prefix (decision 11); if it has at least `k` components and its first `k` match the pattern component-wise (a `*` component matches any one component), its module is those `k` components joined with `/`; if it has fewer than `k` components but is a component-prefix of the pattern's literal part, it spans more than one module; otherwise its module is `.` (outside every module). With no `modules` configured, every glob's module is `.`. A task spans more than one module when its globs yield two or more distinct modules or any glob spans more than one. Rule 5 (the decider's cross-check) is M8b. *(Spec §7.2; `interface_change` is not in §18's struct but rule 2 needs the flag, so it is a task field.)*
+10. **Test-mode rules, §8.** A `code` task defaults to `tdd`, a `docs` task to `none`. Any non-`tdd` mode needs a non-blank `test_mode_reason` (`task <id>: test_mode_reason: required when test_mode is check or none`). A `code` task whose `owns` intersect `profile.source` cannot be `none` (`task <id>: test_mode: a code task whose owns touch the profile's source globs cannot be none (rule 8.1)`). A hub `code` task is forced to `tdd` (note `test mode forced to tdd: hub task (rule 8.2)`). A `tdd` task with an empty `profile.single_test` becomes `check` with its review raised one level (note `test mode check: the profile has no single_test (rule 8.3)`). *(Spec §8.)*
+11. **`owns` semantics.** Two helpers in `run/globs.rs`, both pure:
+    - **Intersection** (scheduling, hub, source and cross-runtime rules) is the refreshed M8 brief's conservative literal-prefix test: a glob's literal prefix is its path components before the first component containing `*`, `?` or `[`; two globs intersect when either prefix is a component-prefix of the other. `**/*.rs` intersects everything; two empty lists intersect nothing.
+    - **Matching** (the spill check of decision 32) uses `globset` with `literal_separator(true)`. An `owns` entry with no glob metacharacter matches the path itself and every path below it, so `crates/auth` covers `crates/auth/src/lib.rs`. A trailing `/` is ignored.
+
+    Absolute globs and globs with a `..` component are rejected. **Runtimes:** two tasks on different runtimes whose `owns` intersect are rejected on the later one (`task t2: owns: overlaps task t1's owns (crates/proto/**) and the two tasks run on different runtimes (claude, codex) (rule 9)`). *(Spec §9 "runtime spreading", §13 item 5; refreshed M8 decision 23.)*
+12. **Graph rules, §12.1.** Every `deps` entry names a task; no cycles (`deps: cycle t1 -> t2 -> t1`, reported once, starting from the first id in plan order); no dependency on a cancelled task (`task t3: deps: t2 is cancelled`). For an edit made under `EditScope::Area { globs }` (M9's sub-planner scope, implemented and unit-tested here), each `owns` glob must lie inside the area: an area glob must be `<literal>/**` or a literal path, and an `owns` glob is inside when its literal prefix starts with the area's literal prefix (`task t4: owns: crates/tui/** is outside the area crates/daemon/**`). *(Spec §12.1.)*
+13. **Plan edits, §12.1–§12.2.** One vocabulary, `proto::PlanEdit`: `add_task`, `split_task`, `cancel_task`, `amend_task` (brief, acceptance, route, test mode and reason, priority, size), `add_dep`, `answer`, `pause`, `resume`, `finish`. A batch is applied to a copy of the model and validated with every rule above over all tasks that are not `merged` or `cancelled`; any error rejects the whole batch with every error listed, and nothing changes. Per-state rules, each refusal naming the task and its state:
+    - `add_dep`, `split_task`, and `amend_task` of `route`, `size` or `test_mode`: only on `pending`, `queued` or `blocked` tasks.
+    - `amend_task` of `brief`, `acceptance` or `priority`: any unfinished task; on a task with a live worker the new brief and criteria are delivered as a message (decision 29).
+    - `cancel_task`: any unfinished task; a live worker is killed, its worktree salvaged and removed (decision 20), and every task depending on it becomes `blocked(dep_cancelled)`.
+    - `split_task { task_id, into }`: cancels `task_id` as above and inserts `into` at `task_id`'s position in plan order; every task that depended on `task_id` now depends on all of `into`.
+    - `answer { task_id, text }`: on `blocked(question)` or `working`; delivers `[anthrex] Answer to your question: <text>` as the session's next turn and returns a `blocked(question)` task to `working` in the same session (decision 29 resumes an ended session to carry it).
+    - `pause`, `resume`, `finish`: decisions 45 and 37.
+
+    **L exemption.** Rule 7.2.4 applies to tasks the batch adds or amends; a task raised to L by rung 3 (decision 38) is exempt until an edit touches it, and `run retry` refuses an L task with `task <id> is L; split it first`. Without the exemption, every unrelated edit would be rejected after any rung 3. *(Spec §12.1, §12.2.)*
+14. **The plan gate, §12.3, engine side.** `run start` validates, creates the run branch and the integration worktree **immediately** (not at approval), and returns at once with the run in `awaiting_approval`, unless `--yes`, which starts it and records `approved by --yes` in the report. While the gate is open the engine pre-warms: it prepares worktrees, with `setup` run, for up to `max_writers` tasks that have neither declared nor implicit dependencies, in dispatch order (decision 41), and starts no session. `anthrex run approve` moves the run to `running`; `anthrex run reject` discards it (decision 20's discard). `run edit` works while the gate is open; a pre-warmed worktree whose task is cancelled is removed. Nothing blocks a tool call or a client: the verdict is visible in the snapshot. `awaiting_approval` is persisted and **survives a restart unchanged** — it is not turned into `paused`, because nothing is running (conversation-view decision 15's intent). *(Spec §12.3, §5.3 step 3, §13 item 6.)*
+
+### Runs and git
+
+15. **Run id** is the slug of the refreshed M8 brief's decision 7 (lower-cased goal, non-alphanumerics to `-`, collapsed, trimmed, first 32 characters, `run` if empty, then `-` and 4 random lowercase hex digits), redrawn up to 5 times while `refs/heads/anthrex/<id>/integration` or `<data_dir>/runs/<id>` exists, then `could not pick a free run id`. The CLI accepts the full id, its 4 hex digits, or a unique prefix. *(Refreshed M8 decisions 6–7.)*
+16. **Layout.** `root` and `project` come from one `project::detect_roots(dir)`; `<wt>` is `worktree::repo_worktrees_dir(<data_dir>/worktrees, project)`.
+
+    | Thing | Branch | Path |
+    |-------|--------|------|
+    | Base | the branch checked out in `root` at start; commit `base_sha` | `root`, never written until accept |
+    | Run (integration) | `anthrex/<run>/integration` at `base_sha` | `<wt>/runs/<run>/integration` |
+    | Task | `anthrex/<run>/<task>` from the run head when dispatched | `<wt>/runs/<run>/<task>` |
+    | Review | detached at the task head | `<wt>/runs/<run>/<task>.review` |
+    | Proof | detached, scratch | `<wt>/runs/<run>/<task>.proof` |
+    | Engine state | none | `<data_dir>/runs/<run>/run.json`, `journal.jsonl`, `REPORT.md` |
+
+    A branch cannot be both `anthrex/<run>` and a parent of `anthrex/<run>/<task>` (git's directory/file ref conflict); `integration` resolves it and is why the task id `integration` is reserved. `.` cannot appear in a task id, so `<task>.review` and `<task>.proof` never collide with a task. Run sessions are registered as headless windows (decision 49) named `<h4>/<task>.w<session>` (workers) and `<h4>/<task>.r<round>` (reviewers), where `<h4>` is the run id's 4 hex digits. Every one counts toward `max_windows`, and a task that would exceed it is `blocked(environment)` with `run window limit (<n>) reached`. *(Spec §11.5 "Branch names", §11.6.)*
+17. **Start preflight**, in order, each failure an error from `run start`: `root` resolves (`not a git repository: <dir>`); `git version` is at least 2.38 (`anthrex runs need git 2.38 or newer for merge-tree --write-tree (found <v>)`); `HEAD` is on a branch (`<root> is on a detached HEAD; check out a branch first`); `HEAD` has a commit (`the repository has no commits yet`); `git var GIT_COMMITTER_IDENT` succeeds (`git has no user.name/user.email configured for <root>`); `git status --porcelain --untracked-files=no` in `root` prints nothing (`the working tree at <root> has uncommitted changes; commit or stash them first`); and, only when decision 53 applies, no untrusted project settings. Preflight also lists the tracked files at `base_sha` that match `profile.protected` (decision 56), for the plan warnings. *(Refreshed M8 decision 9; §11.5 needs merge-tree.)*
+18. **Git runner.** Every git command in `run/git/**` goes through `crate::worktree::run_git` with the program injected as `git: &OsStr` (so tests can pass a recording script), a deadline of `now + git_timeout` (`orchestrator.git_timeout_secs`, default 60), on `spawn_blocking` — AGENTS.md rules 10 and 11 hold by construction because `run_git` adds `--no-optional-locks` and `run_captured` scrubs the environment. Additionally:
+    - Every engine **write** in an engine-owned worktree (worktree add/remove/lock/unlock, checkout, `commit-tree`, `update-ref`, the hand-back merge, salvage) passes `-c core.hooksPath=/dev/null -c commit.gpgSign=false` so a user's hooks or signing pinentry cannot hang a run. `run accept`, the only write into the user's own checkout, passes neither.
+    - **One write queue per repository** (keyed by `project`): writes take the repository's `tokio::sync::Mutex` before `spawn_blocking`; reads (`rev-parse`, `status`, `diff`, `merge-tree`) do not. A write whose stderr contains `.lock': File exists` or `Unable to create` and `.lock` is retried up to 5 times after 200, 400, 800, 1600 and 3200 ms.
+    - **Worktree lock.** Every task and integration worktree is `git worktree lock --reason "anthrex run <run>"` right after creation and `git worktree unlock`ed right before removal.
+    - Session launches and resumes are jittered by `jitter_ms = 100 + (fnv1a(run, task, session) % 400)` — deterministic, so tests are unaffected. *(Spec §17 "Git safety".)*
+19. **Task branches start from merged work.** A task's worktree is created when it is dispatched — after every dependency (declared and implicit) is `merged` — with `git worktree add -b anthrex/<run>/<task> <path> <run_head>`; `start_commit` is `run_head` at that moment. An existing branch and path are reused (resume); an existing branch without its path is re-added. Pre-warmed worktrees (decision 14) are created from `base_sha`; at dispatch, a pre-warmed branch that still has no commit of its own and whose start is no longer the run head is re-pointed with `git checkout -B anthrex/<run>/<task> <run_head>` in its worktree (setup is not re-run), so no task ever starts from a stale base. *(Spec §11.6 "dependents start from merged work".)*
+20. **Salvage and cleanup.** Before any engine-owned worktree is removed — task cancel, task merged, review round done, proof done, run discard, run accept — the engine checks `git status --porcelain` (untracked included, ignored excluded). If dirty: `git add -A`, `git write-tree`, `git commit-tree <tree> -p HEAD -m "anthrex salvage <run>/<task>"`, `git update-ref refs/anthrex/salvage/<run>/<task>/<seq> <commit>` (`<seq>` counts from 1 per task), and the ref is recorded on the task and in the report. Then unlock and `git worktree remove --force`. A worktree is never deleted dirty without a salvage ref. Cleanup on merge removes the task, review and proof worktrees; the task branch is kept until accept or discard. **Discard** (and `run reject`): remove every run window, salvage-and-remove every worktree, `git worktree prune`, delete every `refs/heads/anthrex/<run>/*` branch, keep every `refs/anthrex/salvage/<run>/*` ref and the run's data directory, state `discarded`. **Accept**: the refreshed M8 brief's decision 14 (base branch checked out in `root`, tracked tree clean, `git merge --no-ff --no-edit -m "anthrex: accept run <run>: <goal>" anthrex/<run>/integration`), then salvage-and-remove every run worktree and delete the run's branches; state `accepted`. Both need `confirm == Some(<run id>)`, else `RunReply::ConfirmNeeded`. The spec's `refs/anthrex/salvage/<run>/<task>` becomes `…/<task>/<seq>` because one task can be salvaged more than once, and a bare `…/<task>` ref would conflict with its children. *(Spec §11.6 "Cleanup", §12.2, §17.)*
+21. **Ref guard.** The run records `base_sha` and `run_head` (updated on every CAS). Before every merge candidate (inside the op, before `merge-tree` and again before `update-ref`) and before `complete`, `refs/heads/<base>` must equal `base_sha` and `refs/heads/anthrex/<run>/integration` must equal `run_head`. Otherwise the run becomes `halted` with `halted_reason` `refs/heads/<name> moved from <old7> to <new7>`: no dispatch, no merge, windows keep running. `anthrex run resume <run> --rebaseline` records the current values of both refs and returns the run to `running`; without `--rebaseline`, resume of a halted run is refused with the reason. The optional `reference-transaction` hook is not installed. *(Spec §17 "The base branch is guarded twice".)*
+22. **Run worktrees are watched.** Task and integration worktrees are registered with `crate::manager::GitRoots::register` when created and unregistered before removal (never review or proof worktrees). `GitRegistry` construction moves from `server::serve` to `lifecycle::run` so `RunService` and the server share one (new `server::GitWiring`). With `ANTHREX_GIT=off` every call is a no-op and runs still work. *(Refreshed M8 decision 15.)*
+
+### Agents and signals
+
+23. **Roster with strength.** `proto::ModelEntry { runtime, model, strength, note }`. The built-in roster, in order: `claude`/`claude-haiku-4-5`/`fast`, `claude`/`claude-sonnet-5`/`standard`, `claude`/`claude-opus-5`/`frontier`, `codex`/`""`/`standard`. `model == ""` is allowed only for Codex and means "use Codex's configured default". `[[orchestrator.models]]` entries (`runtime`, `model`, `strength`, `note`) replace a built-in with the same `(runtime, model)` in place and append otherwise; `builtin_models = false` starts from nothing; an empty result falls back to the built-ins with a problem. Strength orders `fast < standard < frontier`. *(Spec §9 "strength"; research P1-4.)*
+24. **Claude headless sessions.** One long-lived process per session. `headless::argv::claude_args` builds its argv, in this order:
+    - `-p --input-format stream-json --output-format stream-json`, then `--verbose` when M8a.1 finds stream-json output requires it.
+    - `--permission-prompts none`. If M8a.1 finds the flag absent, a worker's `--permission-mode` below becomes `dontAsk` (which denies anything not allowed) and a reviewer keeps `plan`.
+    - `--session-id <uuid>` for a new session, or `--resume <session id>` for a resumed one.
+    - The user-settings-only flags of decision 53 (`CLI_CAPS.claude_user_settings_only`), on every launch and every resume.
+    - `--settings <json>`: `headless::argv::claude_settings`, which is M3's hook settings (`launch::claude::settings`, unchanged) plus, for a worker, decision 54's sandbox block. Hooks still run in `-p` (§14.3), and `SubagentStart` / `SubagentStop` are needed from them (decision 27).
+    - `--mcp-config <json>` and `--allowedTools <list>`, then `--append-system-prompt <contract>`.
+    - `--permission-mode <mode>`, then `--model <model>` when the route names one, then `--effort <low|medium|high>` when M8a.1 confirms the flag.
+    - The session's authentication flag (decision 50).
+
+    Per role:
+    - **Worker:** `--allowedTools` is `mcp__anthrex__task_done`, `mcp__anthrex__task_blocked` and every `orchestrator.worker_allowed_tools` entry. The default is `Bash,Edit,Write,Read,Glob,Grep,Agent,TodoWrite`, because nothing can grant a permission at run time. `--permission-mode` is `orchestrator.worker_permission_mode`, default `acceptEdits`.
+    - **Reviewer:** `--allowedTools mcp__anthrex__submit_review,Read,Glob,Grep`, and `--permission-mode plan`.
+
+    Other rules:
+    - The prompt is never on the argv. The first turn is a stream-json user message written to stdin (decision 29).
+    - `--mcp-config` is `{"mcpServers":{"anthrex":{"type":"stdio","command":"<exe>","args":[…headless::argv::mcp_args…]}}}`. `--mcp-config` and `--allowedTools` are variadic, so each is followed by another flag, which this order guarantees.
+    - `<uuid>` is `role_launch::session_uuid(run_id, op_id)`: a version-4-shaped UUID built from two FNV-1a 64-bit hashes of the run id and the `CreateWindow` op id. It is deterministic, so the reducer stays pure, and a re-issued op gets a new id, so it never collides with a half-created session.
+    - **If M8a.1 finds no `--effort` flag**, effort is recorded on the round and not passed. Rung 2 for a Claude worker already at `high` then goes straight to the peer runtime (decision 39).
+    - **If M8a.1 finds that plan mode blocks the allowed `submit_review` call in `-p`**, reviewers use `--permission-mode dontAsk --disallowedTools Edit,Write,NotebookEdit,Bash` instead. Record which in "Implementation notes".
+
+    *(Spec §4 "Only the orchestrator is an interactive terminal", read-only launch, §4.2, §19.)*
+25. **Codex headless sessions.** One `codex exec` process per turn. `headless::argv::codex_args` builds it:
+    - The first turn: `codex exec --json`.
+    - Every later turn: `codex exec resume <session id> --json`.
+    - Then, on both, in this order:
+      - `-c mcp_servers.anthrex.command=<toml exe>`, `-c mcp_servers.anthrex.args=<toml array>`, `-c mcp_servers.anthrex.tool_timeout_sec=120`, `-c mcp_servers.anthrex.default_tools_approval_mode="auto"`.
+      - `-c developer_instructions=<toml contract>`, `-c model_reasoning_effort=<toml effort>`, `-c approval_policy="never"`.
+      - `-s <sandbox>`.
+      - For a worker, `-c 'sandbox_workspace_write.writable_roots=[<toml git common dir>]'`.
+      - `-m <model>` when the route names one, then `--`, then the turn's message as the last argument.
+    - A worker's sandbox is `orchestrator.worker_codex_sandbox`, default `workspace-write`. A reviewer's is always `read-only`.
+    - The writable root is needed because a linked worktree's index, refs and objects live under the main repository's git directory, outside the worktree. Without it, every commit fails in the sandbox.
+    - The session id is the `thread_id` of the first turn's `thread.started` event.
+    - M8a.1 verifies that `exec resume` accepts the same `-c`, `-s` and `-m` options. If `-s` is refused on resume, the sandbox goes through `-c sandbox_mode=…` instead. Every TOML string comes from `launch::codex::toml_string`.
+
+    No hook configuration is passed. A Codex headless window gets its conversation and status from the stream alone (decision 27), so a hook that did fire in `exec` could not double-count. *(Spec §4, §4.2 "approvals set to never, inside its sandbox"; refreshed M8 decisions 33–34.)*
+26. **Agent environment.** `headless::session::spawn` starts every session process with `tokio::process::Command`, set up as follows:
+    - Its own process group and stdin, stdout and stderr all piped.
+    - Every inherited variable starting with `CLAUDE_CODE_`, plus `CLAUDECODE`, removed with `env_remove`.
+    - `ANTHREX_WINDOW_ID` and `ANTHREX_SOCKET` set to the session's own window and socket, exactly as `launch::plan` sets them for a PTY window (`launch/mod.rs`), because `anthrex hook` reads both.
+    - The profile's `env` set, with `{worktree}` substituted.
+
+    Engine commands (`setup`, `check`, proof runs) get the same removal and the same profile env. PTY windows and `launch::LaunchPlan` are unchanged. The follow-up from M6.5 calls the general policy a product decision, and this milestone applies it only to the unattended sessions that need it most. *(Spec §17 "Scrubbed agent environment", §6 `[env]`.)*
+27. **Stream signals, not terminal inference.** Each line of a session's stdout is parsed, purely, by `headless::claude_stream::parse_line` or `headless::codex_stream::parse_line` into zero or more `headless::SessionEvent`s. The Interfaces tables give the exact mapping; M8a.1's recorded fixtures are its test inputs. A line that does not parse, or has an unknown type, yields `SessionEvent::Unknown` and is kept in the window's last-10-lines ring for diagnosis; it never ends a turn.
+    - **Driver events.** The session driver adds `ProcessExited { code, signal }` and `StderrLine`.
+    - **Status.** `headless::status::next(state, &event)` updates the window, keeping these rules apart from the PTY status machine:
+      - `Starting` until the first event.
+      - `Working` while a turn is open.
+      - `Attention` while a rate-limit retry is pending, or after a turn failed.
+      - `Idle` between turns.
+      - `Exited` once the session has ended.
+
+      `WindowInfo.tool` is the latest top-level tool name; `WindowInfo.session_id` comes from `Init`.
+    - **The engine feed.** The manager publishes `WindowManager::signals() -> broadcast::Receiver<WindowSignal>`. Every session event is sent as `WindowSignalKind::Session(event)`. For a headless window, every parsed hook of kind `SubagentStart` or `SubagentStop` is also sent as `WindowSignalKind::Hook`. `launch::claude::settings` is reused unchanged, so its 10 events are what fire; compaction comes from the stream's `compact_boundary`. `broadcast::Sender::send` never blocks, so it may be called under the manager lock.
+    - **What each round tracks** from that feed:
+      - `turn_open`, set by the reducer when it delivers a turn and by `TurnStarted`, and cleared by `TurnEnded`.
+      - `last_event`, the time of any event.
+      - `tool_calls`: every `ToolUse`, sub-agents' included.
+      - `rate_limited_until`, set by `ApiRetry` from `now + delay_ms`, or by a turn that ends failed on a rate limit to the time its continue is due (decision 32), and cleared by any other event.
+      - `open_subagents`, a set keyed by `agent_id`: Claude's `SubagentStart` inserts and `SubagentStop` removes. Codex reports none.
+      - `denials`: every `PermissionDenied`, plus the count in a `TurnEnded`'s `permission_denials` that was not already seen.
+      - `usage`, summed from each `TurnEnded`.
+    - **Lagged or silent.** A lagged receiver logs a warning and continues. Counts may then be low, which budgets tolerate. Because no event ever arrives without a line of output, a silent stream is the stall signal (decision 32).
+    - **The conversation mapping.** `headless::conversation::map(runtime, hooks_fire, &event, &mut StreamCursor) -> ConversationInput { hooks: Vec<ParsedHook>, records: Vec<transcript::Record> }` turns each event into milestone 6.5's two inputs. Under the same lock, the manager applies the hooks with `ConversationSet::on_hook` and the records with `ConversationSet::enrich`.
+      - Claude's real hooks still arrive through `anthrex hook`, and M6.5 builds the timeline from them as it does for any window. So for Claude, `hooks_fire` is true and `map` returns records only.
+      - For Codex, and for Claude when M8a.1 finds that `UserPromptSubmit`, `PreToolUse` or `PostToolUse` do not fire in `-p`, `map` also synthesises the hooks, with `source: HookSource::Stream`.
+      - A headless window never starts M6.5's transcript reader, because the stream carries everything the transcript would.
+      - Real hooks for a headless window update its conversation and sub-agent rows, never its status.
+
+    *(Spec §4 "exact, structured signals", §11.1 "Turn ends are exact", §14.3, §16.2; research P1-2.)*
+28. **Session persistence and resume.**
+    - **What is persisted.** A headless window's `Entry` keeps a `headless::HeadlessSpec` (runtime, route, contract, tools, sandbox, env, the `RunRef`), serialized into the existing opaque `WindowRecord.run` together with `kind`. `WindowRecord.session_id`, which already exists, holds the runtime's session id, and so does the engine's `AgentRound.session_id` in `run.json`, which is the one the engine trusts. A value that fails to parse loads as a PTY record with a warning and is marked `Exited`. No `CreateWindow` from a client can create a headless window.
+    - **After a daemon restart.** Every session process is gone: its pipes were the daemon's.
+      - Reconcile (decision 44) first makes sure: for every persisted session with a recorded pid that is still alive, if `ps -o command= -p <pid>` contains that session's id, it sends `SIGTERM` to the process group, waits 2 s, then sends `SIGKILL`. It never signals a pid whose command line lacks the id. Two processes on one session would interleave its transcript.
+      - The restored window is `Exited`, with `Process::Headless(HeadlessHandle::ended())`.
+    - **Resume.** `anthrex run resume` resumes each live round's session with a hand-over message (`RESUME_WORKER` or `RESUME_REVIEWER`), rather than starting it over. The op is `OpKind::ResumeSession`:
+      - Claude: `claude_args` with `--resume <id>` and every flag re-passed (resume restores neither `--settings` nor `--mcp-config`), then the message on stdin.
+      - Codex: `codex exec resume <id>` with the message as its argument.
+      - If the resume fails — the process exits before `Init`, or its first turn fails with a "no such session" error (M8a.1 records the text) — the task gets a fresh session at the same rung with no failure counted, using decision 30's hand-over prompt.
+
+    *(Spec §17 "Headless sessions survive a daemon restart by resuming", "re-passed on every resume".)*
+29. **Turn-based message delivery.** Every engine message to an agent — a bounce, an answer, an amendment, a nudge, a hand-over, a resume — goes into the run's persisted outbox. The reducer emits `Effect::Deliver` for a window only when all of these hold:
+    - its round's turn is closed;
+    - it has no pending interrupt;
+    - it is not waiting out a rate-limit continue (decision 32).
+
+    **What a delivery sends.** Every queued message for that window, joined in queue order by a blank line, as **one new turn**:
+    - Claude: one stream-json user-message line written to the session's stdin through its writer thread (`headless::claude_stream::user_message`, the envelope M8a.1 pins). It never blocks a tokio worker, because a PTY-style full pipe is possible here too.
+    - Codex: a new `codex exec resume` process with the text as its last argument.
+
+    **Rules.**
+    - The reducer marks the turn open when it emits the delivery.
+    - `Delivered { ok: false }` puts the messages back at the head of the outbox and retries at the next `Tick` 5 s later; three failures in a row block the task as `blocked(environment)` with `could not deliver to the agent: <error>`.
+    - A message queued while a turn is open waits for its `TurnEnded`. That is how an `answer` or an amendment reaches a busy worker (§12.2).
+    - A message for a round whose session has ended — a Claude process that exited between turns, or any session after a restart — is carried by `Op ResumeSession` instead of `Deliver` (decision 28). If that resume fails, the task gets a fresh session whose prompt ends with the message.
+    - `MESSAGE_MAX_BYTES` (32 KiB) and its head-and-tail clamp and the `[anthrex]` prefix are kept.
+    - Delivery is at least once: a crash between the send and `Event::Delivered` repeats the message.
+    - Bracketed paste, `SUBMIT_DELAY`, the settle bit, `REDELIVER_AFTER` and `MESSAGE_ATTENTION_AFTER` are gone; there is no terminal to paste into.
+
+    *(Spec §4 "Follow-up messages are written to its stdin as user messages", §12.2; replaces refreshed M8 decisions 37–38.)*
+30. **Contracts and prompts.** `WORKER_CONTRACT` and `REVIEWER_CONTRACT` (exact text in Interfaces) are the system prompt; they never vary, so the cached prefix is stable (§14.2). Prompt order: the role contract (system prompt), then in the first turn's message a profile summary (check command, single-test command, test mode rules), then the task brief last. Model and effort are pinned at launch and never changed within a session. A **fresh session** (rung 2, or any resume that failed) gets `worker_prompt` plus `This is session <n> of this task.`, the reason, `git diff --stat <start>..HEAD`, the diff clamped to 16 KiB, and the failure record (every earlier bounce message's text). *(Spec §14.2, §10 rung 2, §11.6 "Sessions hand over by branch".)*
+
+### Gates
+
+31. **States.** `RunState { AwaitingApproval, Running, Paused, Halted, Complete, Accepted, Discarded, Failed }`; `Accepted`, `Discarded` and `Failed` are terminal; `Failed` is only for a run whose integration worktree could not be created. `TaskState { Pending, Queued, Preparing, Working, Proof, Check, Review, MergeQueue, Merged, Blocked, Cancelled }` with `block: Option<BlockInfo { reason, text }>` when `Blocked`, `BlockReason { MisSized, Human, Conflict, DepCancelled, Question, Environment }`. `Pending`: waiting on dependencies. `Queued`: runnable, waiting for a slot. `Preparing`: worktree and setup. `Working`: a worker session is live. `Proof`, `Check`, `Review`, `MergeQueue`: the gates. *(Spec §11, §16.3 glyph list.)*
+32. **The done gate, §11.1.**
+    - **`task_done { summary, test?, red? }`** from the task's current worker in `working`. The engine runs `VerifyDone` (each git call bounded by the smaller of `DONE_CHECK_GIT_TIMEOUT` = 10 s and `git_timeout_secs`, six calls at most, so the reply beats `TOOL_REPLY_TIMEOUT` = 100 s) and rejects, leaving the task `working` and counting nothing, with exactly one of: `task_done rejected: the branch has no commit since the task started; commit your work first`; `task_done rejected: the tracked tree has uncommitted changes (<n> files); commit or revert them first`; `task_done rejected: a merge is in progress; finish it with git commit first`; `task_done rejected: untracked files inside this task's owns are not committed: <files>`; `task_done rejected: this is a tdd task; name the test (test) and the commit where it was added and failed (red)`; `task_done rejected: red <sha> is not a commit on this task's branch after its start commit`. The untracked-inside-owns rule is added by this brief: a forgotten `git add` would otherwise pass the task-worktree check and fail only on the merged candidate. A diff that changes files outside `owns` — computed as `git diff --name-only <run_head>...HEAD` (three dots: the task's own net change, which stays correct after a hand-back merge brings the run head in) — is accepted as a signal and sends the task to rung 3 (`changed files outside owns: <files>`) — except paths that match `profile.protected` or `profile.generated`, which decisions 56 and 55 turn into rung-1 bounces; a task the user has overridden (decision 35) is exempt from all three. Accepted: `Done recorded. The engine is running the gates now; stop and wait. If anything fails you will get an [anthrex] message.`
+    - **`task_blocked { kind?, reason }`**: `kind` is `question`, `mis_sized` or `environment`, default `question` (M8b's decider classifies later). `question` → `blocked(question)`; `mis_sized` → rung 3; `environment` → `blocked(environment)`. Reply `Blocked recorded (<kind>). Stop and wait for an answer.`
+    - **Turn-end fallback.** A worker's turn can end (`TurnEnded` with outcome `Completed`) while its task is still `working` and no `task_done` was accepted in that turn. If sub-agents are still open, the check waits until the last `SubagentStop`, or until the next `TurnEnded`. Then the engine counts commits (`Op CountCommits`):
+      - With at least one commit, it queues `DONE_NUDGE`, which becomes the next turn. If that turn also ends without `task_done`, the task proceeds exactly as if `task_done` had been called with no `test` or `red`. A `tdd` task then fails its proof, with the message that names what is missing.
+      - With no commit, it queues `NO_COMMIT_NUDGE`. If that turn also ends with no commit and no `task_done`, it is a stall (below).
+
+      The task records `done_signal = task_done | turn_end_fallback` for the report.
+    - **Stall watchdog.** A round with an open turn that has no stream event for `stall_after_secs` (default 600, measured from `last_event`) is stalled. While `rate_limited_until` is in the future the clock is suspended: it restarts from `rate_limited_until`, because the CLI is waiting out its own retry.
+      - **First stall.** The engine emits `Effect::Interrupt`: the control request M8a.1 pins for Claude, else `SIGINT`, and `SIGINT` for Codex. It queues `stall_nudge`, which becomes the next turn once the interrupted turn ends.
+      - **If the interrupt does not end the turn** within `INTERRUPT_GRACE` (30 s), the session is killed.
+      - **Second stall.** Another `stall_after_secs` of silence in a later turn of the same session, or a kill after a failed interrupt, is a stall: rung 2 (decision 38).
+    - **Rate limits and failed turns.**
+      - A rate-limit retry (`ApiRetry` with error `rate_limit`) is never a turn end and never a stall.
+      - **Rate-limit events.** The run's `rate_limits[runtime]` counts rate-limit events: the start of a retry streak (a streak ends at the next non-retry event) is one, and a turn that ends failed with a rate-limit error is one, whether or not retries preceded it. The only exception is a failed turn that arrives while its round is still in a retry streak (`in_retry_streak`): the streak ran straight into the failure, so that is the same event and is not counted again. So a failed rate-limit turn with no retry before it, or after a streak that already ended, is counted, and M9.5's adaptive concurrency sees it.
+      - A turn that **ends** failed with a rate-limit error (Claude's `result` with `is_error` and a rate-limit error, Codex's `turn.failed` whose message M8a.1 records) waits `rate_limit_retry_secs` (default 300), with the round's `rate_limited_until` set to the end of that wait, so the round reads as rate-limited (`AgentRoundInfo.rate_limited`) while it waits. Then `rate_limit_continue` is queued as a new turn. It is not a failure.
+      - A turn that fails with `authentication_failed` or `billing_error` blocks the task as `blocked(environment)`, with the error.
+      - Any other failed turn gets one `rate_limit_continue` after the same wait. A second non-rate-limit failed turn in a row blocks the task as `blocked(environment)`.
+    - **Permission denials.** A worker never waits on a prompt, because none can be shown. `denials_before_block` (default 3) denials in one session block the task as `blocked(environment)` with `the agent was denied <n> times; last: <tool>: <reason>`, and the session is killed. Codex reports denials only if M8a.1 finds a structured marker in `exec --json`; otherwise its sandbox refusals surface as failed commands, and the stall and budget rules cover them.
+    - **A process that dies.** A session process that exits without the engine killing it:
+      - During an open turn, or for Codex before its turn's `turn.completed` / `turn.failed`: the first time in a round, the engine resumes the session (`ResumeSession` with `RESUME_AFTER_EXIT`). The second time in the same round, it is a stall.
+      - A Claude process that exits between turns is marked ended. The next delivery resumes it.
+      - A Codex process that exits 0 after its `turn.completed` is the normal end of a turn.
+    - Deadlines are fields of the persisted round (unix seconds). *(Spec §11.1; §4.2 "A task whose worker keeps hitting denials is blocked(environment)"; research P1-1, P1-3.)*
+33. **Test proof, §8.1.** For a `tdd` task after `task_done`: in the proof worktree (created on first use with `setup`), `git checkout --detach --force <red>` and `git clean -fd`, run `single_test` with `{test}` replaced by `launch::shell_quote(test)`; it must exit non-zero. Then `git checkout --detach --force <head>`, `git clean -fd`, run again; it must exit 0 **and** its output must match `test_passed` with `{test}` replaced by `regex::escape(test)`. Both runs use `check_timeout_secs`. A failure is a gate failure of `proof` (decision 38) with `proof_failed_message`, which quotes the command and the last 40 lines of the offending run. A red commit from an earlier session of the same task is valid (sessions hand over by branch). *(Spec §8.1, §23 second risk.)*
+34. **Check, §11.3.** `/bin/sh -c "{ <check>\n} 2>&1"` in the task worktree, own process group, stdin `/dev/null`, environment per decision 26, timeout `check_timeout_secs`; on timeout the group gets `SIGKILL`. A reader keeps the last 200 lines (each cut to 300 characters, invalid UTF-8 replaced) in the `CheckRecord`; the bounce message carries the last 40 (`CHECK_SUMMARY_LINES`), deterministically — the decider summary is M8b. No `check` in the profile skips the gate, raises every review one level, and marks the run `unverified` in the report. *(Spec §11.3, §6 "Degradation".)*
+35. **Review, §9 and §11.4.**
+    - **Level.** `S` → `small`, `M` → `medium`, hub → `frontier`; raised one level (to at most `frontier`) when the profile has no `check`, or the task is not `tdd` while its `owns` touch `source`. `review_small = false` skips review for non-hub S tasks at level `small` only.
+    - **Reviewer route**, `roster::pick_reviewer(roster, author, level)`: required strength `fast` (small), the author's (medium), `frontier` (frontier); the other runtime's roster entry with the lowest strength at or above the requirement, first in roster order; else the same runtime's, preferring a model different from the author's; else the highest-strength entry of the same runtime. Effort: `low`, `medium`, `high` by level.
+    - **Each round is a fresh reviewer session** in a fresh review worktree detached at the task head (`git worktree remove --force` of the previous round's path first). Its prompt has the brief, the acceptance criteria, `Base: <sha7>` and `Head: <sha7>` (it reads the diff itself), the last check's 40-line summary, and every earlier round's critical and important findings to confirm fixed — never the author's runtime, model or transcript. For a `tdd` task the prompt says to look first for weakened or trivial tests. At level `small` it says to review the diff only.
+    - **`submit_review { verdict, summary, findings }`**; findings have `severity` (`critical`, `important`, `minor`), `file?`, `line?`, `input?`, `text`. A critical or important finding must have `file` and `line`, or `input` (`invalid arguments: findings[<i>]: a critical or important finding needs file and line, or input`). `approve` with a critical or important finding is refused (`an approve verdict cannot carry critical or important findings; use changes`). **A rejection is any critical or important finding**; `changes` with only minor findings counts as approval. Minor findings go to the report.
+    - **Rejection flow:** the reviewer session is retired; the gate failure goes to decision 38's ladder (rung 1 sends only the critical and important findings to the same worker session; rung 2 a fresh session). The worker fixes, commits and calls `task_done`, and every gate runs again from the start, then a new review round.
+    - **A reviewer whose turn ends without `submit_review`** gets `REVIEW_NUDGE` as one more turn. If that turn also ends without a verdict, or the process dies twice (the same resume rule as decision 32), the round ends without a verdict. A new round starts at the same level, with no failure counted. A second verdict-less round in a row is `blocked(environment)` with `the reviewer stopped twice without a verdict`.
+    - **Dispute:** a worker that believes a finding is wrong calls `task_blocked { kind: "question" }`; the user answers with `run edit` (`answer`), or overrides. Nothing but the user can approve.
+    - **Override:** `anthrex run override <run> <task> --reason <text>` on a task in `review` or `blocked` with at least one commit sends it to the merge queue without review and exempts it from the spill check from then on (the user has accepted what it touched); it still passes the candidate check. The report marks it `merged without approval: <reason>`. *(Spec §9, §11.4.)*
+36. **Merge queue, §11.5.** Width 1, FIFO in the order tasks reached it. One op, `MergeCandidate`, per attempt:
+    1. Ref guard (decision 21).
+    2. `git merge-tree --write-tree --name-only --no-messages <run_head> <task_head>`: exit 0 → the tree; exit 1 → conflict, the file list from the lines after the tree.
+    3. Clean → `git commit-tree <tree> -p <run_head> -p <task_head> -m "anthrex: merge <task>: <title>"` → candidate; in the integration worktree `git checkout --detach --force <candidate>`, `git clean -fd`, and run `check` there (decision 34). No check → skip to 4.
+    4. Green → ref guard again, then `git update-ref refs/heads/anthrex/<run>/integration <candidate> <run_head>` (a compare-and-swap), then `git checkout --force anthrex/<run>/integration`. The task is `merged`, `run_head` and `last_green_candidate` become the candidate, cleanup runs (decision 20), the worker session is retired.
+    5. Red → `git checkout --force anthrex/<run>/integration` (back to the run head) and a gate failure of `merge` with `candidate_red_message`.
+    6. Conflict, first time for this task → **hand-back**: `git merge --no-ff --no-edit <run_head>` in the task worktree (conflict markers left, `MERGE_HEAD` set), `conflict_message` with the file list to the worker, as its session's next turn (decision 29 resumes an ended session to carry it); the task returns to `working`; its next accepted `task_done` sends it **straight back to the merge queue** (the candidate check re-tests it). A hand-back merge that turns out clean needs no worker and re-queues at once. A conflict is not a gate failure. Second conflict → `blocked(conflict)`.
+
+    The merge commit keeps task ancestry, so `git merge-base --is-ancestor <task> <run>` answers "was it merged". *(Spec §11.5; research P1-5, P3-1.)*
+37. **Completion.** A run is complete when every task is `merged` or `cancelled`, the merge queue is empty and no op is pending. Before `complete`: the ref guard, then, if `run_head` differs from `last_green_candidate` and from `base_sha`, `check` in the integration worktree (never true unless the run was rebaselined; a red result is an attention line `final check failed on the run head`, the run still completes). Blocked tasks keep the run `running` with attention lines — they wait for `retry`, `edit`, `override` or `cancel`. The `finish` edit cancels every task that has not reached `working`, lets live ones run to `merged` or `blocked`, then cancels (salvaging) the blocked ones and completes. `run cancel` kills every run session, salvages and cancels every unmerged task, and completes. *(Spec §5.3 step 6; the per-epic integration review is M9.)*
+
+### Ladder, budgets, scheduler
+
+38. **Escalation ladder, §10.** Each task counts `failures` (all gates), `bounces` per gate (`done` for decision 55's generated files, `proof`, `check`, `review`, `merge`), `stalls` and `budget_exceeded`. On a **gate failure**: `bounces[gate] += 1; failures += 1`; then rung 3 if `bounces[gate] > max_bounces` or `failures >= 3`; else rung 2 if `failures == 2`; else rung 1. On a **stall**: `stalls += 1; failures += 1`; rung 3 if `failures >= 3`, else rung 2. On a **hard budget breach**: `budget_exceeded += 1`; rung 3 if it is the second, else rung 2. **Diff outside `owns`** (non-generated paths only, decision 55) or **`task_blocked { kind: mis_sized }`** → rung 3. Actions:
+    - rung 1: the failure text to the **same** session as its next turn (decision 29), task back to `working`.
+    - rung 2: kill the session, start a **fresh** one in the same worktree and branch on `roster::escalate(route)` (decision 39), with decision 30's hand-over prompt; the session budget restarts, the task's cumulative spend does not.
+    - rung 3: `blocked(mis_sized)`, the size raised one step (S→M, M→L), the text naming the cause; the worker is killed and the worktree kept (the orchestrator's reaction is M9; here the user retries, edits or cancels).
+    - rung 4: when the task's cumulative spend reaches the **next size's ceiling** (S: the M budget; M or hub: `[orchestrator.budget.l]`, default 300 tool calls and 120 minutes), `blocked(human)`.
+
+    `max_bounces` (default 2) is frozen on the run at start. *(Spec §10, §11.4 last paragraph.)*
+39. **Rung-2 route**, `roster::escalate(roster, route)`: effort below `high` → same runtime and model, effort + 1; else the peer runtime's first entry at the same strength, effort `high`; else the same runtime's first entry one strength up, effort `high`; else the same route. *(Spec §10 rung 2.)*
+40. **Budgets.** A task's `[task.budget]` wins over the defaults:
+    - `[orchestrator.budget.s]`: 40 tool calls and 15 minutes.
+    - `[orchestrator.budget.m]`: 150 tool calls and 60 minutes. Hub tasks use M's.
+
+    **What is counted, per session:**
+    - Tool calls: every `ToolUse` stream event (decision 27), sub-agents' included, on both runtimes. Codex's `command_execution`, `mcp_tool_call`, `file_change` and `web_search` items count. Codex budgets are no longer wall-clock only.
+    - Wall-clock minutes since the session started. Time spent rate-limited is not subtracted.
+    - Tokens: from each `TurnEnded`'s usage. `Usage::billable()` is uncached input plus cache writes plus output: Claude's `input_tokens + cache_creation_input_tokens + output_tokens`, Codex's `input_tokens - cached_input_tokens + output_tokens`. M8a.1 pins the field names, and whether Claude's `result.usage` is per turn or cumulative. The parser always yields per-turn values.
+
+    **Token budgets are implemented here but off by default.** `Budget.tokens` is optional and absent from every default. §9 gives no token placeholder, and §14 warns that token use varies 30x, so an invented default would reject correct work. A plan or config that sets one gets it enforced. Usage arrives only at a turn's end, so a single turn can overshoot before the check runs. Tokens are always metered, shown in the snapshot and written to the report.
+
+    **Soft**: reaching the budget on any axis sends `budget_wrap_up` once per session. **Hard**: 1.5 × the budget on any axis is a breach (decision 38). *(Spec §9 "Budget", §14.7 "Runaway stops", §14.8 "Metering", §18 `budget: tool calls, wall-clock, tokens`.)*
+41. **Scheduler, §13 items 2–5.**
+    - **Runnable**: `pending`, every declared dependency `merged`, and every **implicit** dependency `merged` or `cancelled`. Implicit dependencies are recomputed on every step: for two unfinished tasks whose `owns` intersect (decision 11), a task that has not started waits for one that has (any state from `preparing` on, or `blocked` with a worktree); when neither has started, the later in plan order waits for the earlier. So a task added or split in later never runs beside a started task it overlaps.
+    - **Order**: by `critical_len` descending, then `priority` descending, then plan order. `critical_len(t) = weight(t) + max(critical_len(d))` over tasks that depend on `t` (declared and implicit), with weights S = 1, M = 3 (hub M = 3) until M9.5's history exists.
+    - **Writer slots** (`max_writers`, default 3, 1–8): held from `preparing` through `check`, and again while a handed-back task is `working`. **Reader slots** (`max_readers`, default 3, 1–8): held by a live reviewer. A reviewer never takes a writer slot. The merge queue and its candidate check use neither.
+    - **Hub alone**: a hub task starts only when no writer slot is held, and while it holds one nothing else starts.
+    - The snapshot marks `on_critical_path` (the chain of maximal `critical_len` among unmerged tasks) and `wave` (the longest dependency chain before the task). *(Spec §13.)*
+42. **Retry.** `anthrex run retry <run> <task>` on a `blocked` task (not L, not `dep_cancelled`) sets `failures = 1`, clears `bounces`, `budget_exceeded` and `conflicts`, sets rung 2 and starts a fresh session. *(Spec §10 last line.)*
+
+### Durability
+
+43. **Run persistence and the intent journal.** Each run has `<data_dir>/runs/<run>/run.json` (the whole `run::model::Run`, written to a temp file, `fsync`ed, renamed, directory `fsync`ed) and `journal.jsonl` (append, `fsync` per line) of `{"op":<id>,"intent":{…OpKind…}}` and `{"op":<id>,"done":{…OpResult…}}`. `RunService` handles each step's effects in this order: `Persist` (the new `run.json`), then for each `Op` its `intent` line, then the op itself; when the op returns, its `done` line, then the `OpDone` event. Counter-only changes (tool calls, activity) persist at most every 5 s. The journal is rewritten with only pending ops' intents when it passes 1 MiB. Runs do not live in `state.json`, whose persister is debounced and owned by the manager; `StateFile.runs` stays opaque and empty. *(Spec §17 "Intent log".)*
+44. **Reconcile on start**, in `lifecycle::run` after `WindowManager::restore` and before the socket is bound: for each `run.json`, every op in `pending_ops` is resolved against `journal.jsonl` and reality — `done` present → replay its result; `intent` only → `run::reconcile` checks reality per kind (table in Interfaces) and yields either a result to replay or `NotStarted`; neither → `NotStarted`. `NotStarted` ops are dropped and the engine re-issues whatever the task's state needs on resume. Session processes are checked too, as decision 28 describes. Every op is idempotent (worktree creation reuses, salvage checks its ref, the merge candidate recognises an already-advanced run branch whose parents are the expected pair, accept recognises a base that already contains the run head). *(Spec §17 "Reconcile on start".)*
+45. **Paused and resume.** On load, every run that is `running` becomes `paused` with `paused_from = running`. `halted`, `awaiting_approval`, `complete`, `paused` and terminal runs keep their state. A `halted` run's sessions are ended after the restart, and `resume --rebaseline` resumes them like any other resume. The `pause` edit pauses a running run with its sessions alive. It stops dispatch, gates and deliveries; a turn already open runs to its end.
+
+    `anthrex run resume <run>` (or the `resume` edit) returns the run to `paused_from`, then:
+    - Second-stage deadlines that already expired fire first: an interrupted stall's grace, a sent `stall_nudge`'s silence, a pending rate-limit continue.
+    - First-stage deadlines are re-armed from `now`, so downtime is not a stall.
+    - Each unfinished task's live round whose session has ended gets `Op ResumeSession` with `RESUME_WORKER` or `RESUME_REVIEWER` (decision 28).
+    - Tasks in `proof`, `check` or `merge_queue` re-issue their op, and `preparing` re-issues `PrepareWorktree`.
+    - A failed resume starts a fresh session.
+
+    *(Spec §11.1 persisted deadlines, §17; refreshed M8 decisions 43, 45.)*
+46. **Shutdown order.** `lifecycle::run` calls `RunService::stop()` before `manager.shutdown()`; after `stop` the service ignores every event, so sessions killed at shutdown do not become failures (the manager kills each session's process group; a Claude process also exits on stdin EOF), and the last `run.json` is the one written at `stop`. *(Refreshed M8 decision 44.)*
+47. **Snapshot, revision and push, §16.5.** Every run has `revision: u64` (starting at 1), bumped by any change to it; the engine keeps a global `revision` bumped with any run's. `RunService` keeps a `watch` of `proto::RunsSnapshot { revision, runs }`, published at once for structural changes and at most once per second for counter-only ones. A client sends `RunRequest::Subscribe` and receives `RunReply::Snapshot` immediately and on every publish until `Unsubscribe` or disconnect; `RunRequest::List` answers one snapshot. The TUI does not subscribe in this milestone. `anthrex run status --json` prints the same `RunsSnapshot`. *(Spec §16.5.)*
+48. **Crash injection for tests.** In debug builds only (`cfg!(debug_assertions)`), `RunService::new` reads `ANTHREX_TEST_ABORT_AFTER_INTENT=<op kind>[:<n>]`; after `fsync`ing the n-th (default first) intent line of that kind, the daemon calls `std::process::abort()`. It is how `e2e_crash_after_each_intent_kind_reconciles` kills the daemon at an exact point without timing. *(Spec §21 "a daemon killed after each logged intent".)*
+
+49. **Headless windows.** Each worker and reviewer session is registered with the window manager as a window with no terminal, so the machinery milestones 3 to 6.5 key by window id keeps working unchanged: the sidebar, status, sub-agent rows, `max_windows`, persistence and the conversation view.
+    - **Types.**
+      - `proto::WindowKind { Pty, Headless }` is a new field `WindowInfo.kind`, `#[serde(default)]` to `Pty`. `WindowRecord` gains the same field with the same default, so the state file needs no version bump.
+      - In the daemon, `manager::entry::Process` gains a third variant, `Headless(headless::HeadlessHandle)`, beside `Live` and `Dormant`.
+      - `WindowManager::create_headless` registers the window and spawns its first process.
+      - `apply_session_event` applies one parsed event under the lock: status, tool, session id, conversation inputs, then the feed send. No I/O happens under the lock.
+      - `headless_send`, `headless_interrupt`, `headless_kill` and `headless_resume` act on the handle outside the lock.
+    - **What the daemon refuses.** For a window whose kind is `Headless`:
+      - `ClientMsg::Subscribe` is answered with `DaemonMsg::Error { request: "subscribe", message: "window <id> is a headless session; open its conversation with C-b m" }`. `Entry::attach` is never reached.
+      - `Input`, `Kill`, `Remove` and `Restart` are refused with `DaemonMsg::Error { request: "input" | "kill" | "remove" | "restart", message: "window <id> is a headless session of run <run>; only the engine drives it. Use anthrex run cancel to stop it" }`.
+      - `Resize` is answered `Ack` and ignored.
+
+      There is no terminal to type into, so the refusal is by construction; the check keeps a client from reaching the handle. Every read works: list, rename, git state, and M6.5's conversation messages.
+    - **The engine** acts through the `headless_*` methods directly; none of them is reachable from a client message.
+    - **The orchestrator.** `proto::AgentRole` already has `Orchestrator` (Interfaces). M9 creates it as the one `Pty` run window; M8a creates none.
+    - **The user's recourse** is `run retry`, `run edit`, `run override` and `run cancel`, and from M9 the orchestrator.
+    - **In the TUI**, the smallest change that keeps a headless window from looking broken. `app/link.rs` never sends `Subscribe` for a `Headless` window. The focused pane shows `headless session · <runtime> · <status> · C-b m shows its conversation`, and forwards no keys (the prefix key and its commands still work). Opening the conversation from a run node is M8c's (§16.4).
+
+    *(Spec §4.2, §16.2 "It points at its headless session, which the daemon registers as a window with no terminal".)*
+50. **Claude authentication.** `[orchestrator.claude] auth = "login" | "api_key"`, default `login`.
+    - **`login`** passes no `--bare`, so `claude -p` reads the user's subscription login (§22.1). If M8a.1 finds an explicit opt-out flag (for example `--no-bare`), it is passed too, so the day `--bare` becomes the default for `-p` (§23) changes nothing.
+    - **`api_key`** passes `--bare`. `run start` then refuses a plan with any Claude task unless the daemon's environment has `ANTHROPIC_API_KEY`, or `orchestrator.claude.api_key_helper` is set, which is passed through `--settings` as `apiKeyHelper`. The refusal reads: `[orchestrator.claude] auth = "api_key" needs ANTHROPIC_API_KEY in the daemon's environment or orchestrator.claude.api_key_helper`.
+    - M8a.1 records whether `--settings` hooks and `--mcp-config` still apply under `--bare`. If they do not, `api_key` is refused at config load with a problem and `login` is kept.
+    - Codex sessions are unaffected. *(Spec §22.1, §23 first risk.)*
+51. **Recorded fixtures are the contract for both stream formats.**
+    - **Recording.** M8a.1 records real sessions from the installed CLIs into `crates/daemon/tests/fixtures/headless/`, following milestone 6.5's transcript fixtures (a `.jsonl` file plus a `.meta.json` with the CLI version, the date and the exact command). Personal paths are replaced by `/tmp/fixture`.
+    - **Parser tests.** The pure parsers are tested against those files.
+    - **Shape tests.** `fake-agent`'s headless output is tested against the same files: for every event type `fake-agent` emits, the fixture has an event of that type whose key set, recursively, contains every key `fake-agent` writes. A `fake-agent` that invents a field the real CLI does not send fails CI.
+    - **Input envelope.** The user-message envelope is pinned by a fixture of what was written to the real CLI's stdin and accepted. *(Spec §23 second risk; the recurring fixture defects of earlier milestones.)*
+52. **Session identity.**
+    - **Recorded on every round:** the runtime's session id, the current process's pid (for Claude, the long-lived process; for Codex, the running turn's process), and the op id that launched it.
+    - **One process per session.** A `CreateWindow` or `ResumeSession` never starts a second process on a session whose process is alive. The driver kills the old one first, because resuming one session from two processes interleaves its transcript.
+    - **Retirement.** A retired reviewer or merged worker has its Claude process's stdin closed (EOF) and, after `INTERRUPT_GRACE`, its group killed. Its window stays listed as `Exited` for `RETIRE_AFTER` (30 s), so a watcher sees the last turn, and is then removed. *(Spec §17.)*
+
+53. **Only the user's settings load.** Headless Claude sessions never run the repository's `.claude/settings.json` hooks or its `.mcp.json` servers (spec §4 "Only the user's own settings load", §23).
+    - **When the CLI can exclude them.** M8a.1 finds the mechanism: the working assumption is `--setting-sources user` (user settings only, so project and local settings are skipped) plus `--strict-mcp-config` (only `--mcp-config` servers load, so `.mcp.json` is ignored). M8a.1 records the real flags in `CLI_CAPS.claude_user_settings_only`, and proves them with a recorded session in a scratch repository that has both a project hook and an `.mcp.json`: neither runs, and anthrex's own `--settings` hooks still fire (the hooks fixture is recorded under exactly these flags, which also sets `claude_hooks_fire_in_print`). `claude_args` then passes those flags on every launch and resume, and `--trust-project` is accepted with no effect (the report says `project settings: excluded`).
+    - **When it cannot** (`claude_user_settings_only == None`), and only for a run with at least one Claude task: `run start` reads the base commit's tree with `run::git::project_settings(root, base_sha)`. It reports each tracked `.claude/settings.json` or `.claude/settings.local.json` with a non-empty `hooks` key, and each tracked `.mcp.json`. The tree is what matters, because every task worktree is checked out from it; an untracked file in `root` never reaches a worktree. If any is found, `run start` is refused with `this repository has project settings that headless Claude sessions would run without asking: <paths>; review them, then start again with --trust-project`. With `anthrex run start --trust-project`, the run starts, `Run.trusted_project` holds the paths, and the report says `project settings trusted by --trust-project: <paths>`.
+    - For tests only, debug builds read `ANTHREX_TEST_NO_SETTING_SOURCES=1`, which makes the daemon act as if `claude_user_settings_only` were `None`. It is how the refusal is tested whatever the installed CLI can do.
+    - **Codex loads only the user's config too.** M8a.1 item 7a records whether `codex exec` and `codex exec resume` read a repository's own Codex config (a project `.codex/config.toml`, project-scoped hooks, a trust level that enables either), in `CLI_CAPS.codex_loads_project_config: bool`, with the files it reads in `CLI_CAPS.codex_project_config_paths`. Three outcomes, three behaviours:
+      - **It does not load project config:** nothing changes; the brief's Codex argv is as decision 25 says, and the report says `codex project config: not loaded by this CLI`.
+      - **It loads it and can be told not to** (`CLI_CAPS.codex_user_config_only: Option<&'static [&'static str]>`, the flags or `-c` overrides M8a.1 finds): `codex_args` passes them on every first turn and every `exec resume`, and the report says `codex project config: excluded`.
+      - **It loads it and cannot be told not to:** decision 53's refusal extends to Codex. For a run with at least one Codex task, `run::git::project_settings` also reports each tracked path in `codex_project_config_paths` (at least `.codex/config.toml` and `.codex/hooks.json`). The refusal message names them, and `--trust-project` accepts them the same way, recorded in `Run.trusted_project` and the report.
+
+      Debug builds read `ANTHREX_TEST_CODEX_PROJECT_CONFIG=load` (act as if loaded with no exclusion) or `=exclude` (as if excluded by the placeholder flag `--anthrex-test-exclude-project-config`, which `fake-agent` accepts and records), so each branch is tested whatever the installed Codex does. `AGENTS.md` and `CLAUDE.md` are instructions both runtimes read by design, not config; decision 56 guards changes to them.
+
+    *(Spec §4 "Only the user's own settings load", "Codex loads only the user's config too", §23 second risk.)*
+54. **Workers run sandboxed.** Every Claude worker's `--settings` JSON enables Claude Code's sandbox with unsandboxed commands disallowed. So `Bash` runs confined, writable only in the task worktree (the session's cwd) and the repository's git common directory, which `git rev-parse --path-format=absolute --git-common-dir` gives. A commit in a linked worktree writes there, which is the same reason as decision 25's Codex writable root.
+    - **The block** is built by `headless::argv::claude_settings` from `HeadlessSpec.claude_sandbox`. The working shape is `"sandbox": {"enabled": true, "allowUnsandboxedCommands": false, "filesystem": {"allowWrite": ["<git common dir>"]}}`. M8a.1 pins the real key names in `CLI_CAPS.claude_sandbox_keys` and records a proof under `-p` on the implementer's platform: a write outside the worktree is denied, and a commit inside it succeeds. Linux is recorded as a second proof when available, else "not verified".
+    - **Denials.** A command the sandbox refuses is counted by decision 32's denial rule when it arrives as a `permission_denied` event or in `permission_denials`. If M8a.1 finds that it arrives only as a failed `Bash` result, it is not counted, and the stall and budget rules cover a worker that keeps trying; record which.
+    - **Network.** The sandbox blocks network access by default. Anything that needs the network belongs in the profile's `setup`, which the engine runs unsandboxed before the worker starts, as Codex's `workspace-write` already requires.
+    - **When the sandbox cannot start** (for example, bubblewrap is missing on Linux), the session fails with the text M8a.1 records. The engine blocks the task as `blocked(environment)` with `Claude Code's sandbox is unavailable here: <error>; set [orchestrator] worker_sandbox = false to run workers unsandboxed`.
+    - **`[orchestrator] worker_sandbox = true`** is the default; `false` omits the block. Then the snapshot's `worker_sandbox` is `false` and the report says `worker sandbox: off ([orchestrator] worker_sandbox = false)`.
+    - Reviewers stay as decision 24 has them: read-only through `--permission-mode plan` and their allowed tools, with no sandbox block.
+
+    *(Spec §4 "Workers run sandboxed".)*
+55. **Generated files bounce; they are not spills.** The profile gains `generated: Vec<String>` (plan `[profile]` over `[orchestrator.profile]`, per key like the rest; M8b's stored profile later fills it from lock files). `VerifyDone` splits the changed paths outside `owns` into `outside_owns` (not generated) and `generated_outside_owns` (matching `generated`, with decision 11's matching rules). Then:
+    - Any non-generated path outside `owns` → rung 3, as before, whatever else changed.
+    - Otherwise, generated paths outside `owns` → a gate failure of gate `done` (`bounces.done += 1; failures += 1`, decision 38's ladder). The `task_done` reply is `ToolResult { ok: false }` with `generated_files_message(files)`, which is the rung-1 message itself, so rung 1 queues nothing more; rung 2 or 3 act as for any gate. When the turn-end fallback made the claim, the same text is queued as the rung-1 message.
+    - A task whose `owns` covers the file passes.
+    - An overridden task is exempt, as from the spill check.
+    - Paths decision 56 catches are removed before this split, so a protected file outside `owns` is a decision-56 bounce, not a spill.
+
+    *(Spec §6 `generated`.)*
+56. **Protected agent-config paths.** The profile gains `protected: Vec<String>`. The built-in list is always included: `.claude/**`, `.mcp.json`, `.codex/**`, `**/CLAUDE.md`, `**/AGENTS.md`. `[orchestrator.profile] protected` and the plan's `[profile] protected` **add** to it; neither can remove a built-in. This is the one profile key that merges instead of overriding.
+    - **The rule.** A changed path (from `VerifyDone`'s `<run_head>...HEAD` diff) that matches `protected` (decision 11's matching) is allowed only if the task's `owns` contains that exact path **literally**. A literal entry has no glob metacharacter and equals the path after dropping a leading `./` and a trailing `/`. A wildcard never counts, and neither does a plain directory entry covering it (so `.claude` in `owns` does not allow `.claude/settings.json`).
+    - **Otherwise** it is a gate failure of gate `done` at rung 1, by exactly decision 55's mechanism: `bounces.done += 1; failures += 1`; the `task_done` reply is `ToolResult { ok: false }` with `protected_file_message(files)`, one line per file: `<path> configures or instructs future agents; this task may change it only if its owns names it exactly`, then `Revert it and call task_done again, or ask for the plan to be amended.`
+    - **Order.** `VerifyDone` checks `protected` first. If anything is caught, that is the failure, and nothing else outside `owns` is judged on this claim. Otherwise it goes on to decision 55's generated/spill split, with the protected paths removed.
+    - **Overridden tasks are exempt**, as from the spill check, because the user accepted what the task touched.
+    - **Plan validation warns; it does not reject.** `run start` (and every edit batch) computes, from the base tree, the tracked files that match `protected` (`Preflight.protected_files`, also kept as `Run.protected_files`). For each task, each of those files that the task's `owns` matches without naming it literally adds a note to the task, `owns <glob> covers protected <path>; name it exactly in owns if this task must change it (rule 6.protected)`. `run start` also prints each note as a warning line on stderr.
+    - The warning looks only at existing tracked files, so a nested `AGENTS.md` that a task creates is still caught by the rule above at `task_done`, just without a warning in advance.
+
+    *(Spec §6 `protected`.)*
+
+## Interfaces
+
+### `proto`
+
+`crates/proto/src/run.rs` (new; everything derives `Debug, Clone, PartialEq, Serialize, Deserialize`, and `Eq`, `Copy`, `Hash`, `PartialOrd`, `Ord` where noted):
+
+```rust
+#[serde(rename_all = "snake_case")] #[derive(Copy, Eq, Hash)]
+pub enum AgentRole { Orchestrator, Worker, Reviewer }        // Orchestrator used from M9
+// snake_case, not lowercase: the three variants' wire strings ("orchestrator", "worker", "reviewer") are the
+// same under both, and later multi-word variants (M9.5's TestWriter) then serialize as "test_writer".
+
+#[derive(Eq)]
+pub struct RunRef { pub run_id: String, pub task_id: Option<String>, pub role: AgentRole, pub session: u32 }
+
+#[serde(rename_all = "lowercase")] #[derive(Copy, Eq, Hash, PartialOrd, Ord)]
+pub enum Strength { Fast, Standard, Frontier }
+#[serde(rename_all = "lowercase")] #[derive(Copy, Eq, Hash, PartialOrd, Ord)]
+pub enum Effort { Low, Medium, High }
+#[derive(Copy, Eq, Hash, PartialOrd, Ord)]
+pub enum Size { S, M, L }                                    // serialized "S", "M", "L"
+#[serde(rename_all = "lowercase")] #[derive(Copy, Eq)]
+pub enum TaskKind { Code, Docs, Research, Review }
+#[serde(rename_all = "lowercase")] #[derive(Copy, Eq)]
+pub enum TestMode { Tdd, Check, None }
+
+#[serde(deny_unknown_fields)] #[derive(Default, Eq)]
+pub struct RouteSpec { #[serde(default)] pub runtime: Option<Runtime>, #[serde(default)] pub model: Option<String>,
+                       #[serde(default)] pub strength: Option<Strength>, #[serde(default)] pub effort: Option<Effort> }
+#[derive(Eq)]
+pub struct Route { pub runtime: Runtime, pub model: String, pub strength: Strength, pub effort: Effort }
+#[serde(deny_unknown_fields)] #[derive(Copy, Eq)]
+pub struct Budget { pub tool_calls: u32, pub minutes: u32, #[serde(default)] pub tokens: Option<u64> }  // tokens: decision 40
+
+#[serde(deny_unknown_fields)] #[derive(Default, Eq)]
+pub struct ProfileSpec {
+    #[serde(default)] pub modules: Option<Vec<String>>, #[serde(default)] pub hub: Option<Vec<String>>,
+    #[serde(default)] pub source: Option<Vec<String>>, #[serde(default)] pub check: Option<String>,
+    #[serde(default)] pub check_timeout_secs: Option<u64>, #[serde(default)] pub single_test: Option<String>,
+    #[serde(default)] pub test_passed: Option<String>, #[serde(default)] pub setup: Option<String>,
+    #[serde(default)] pub generated: Option<Vec<String>>,
+    #[serde(default)] pub protected: Option<Vec<String>>,   // added to the built-ins, never replacing them
+    #[serde(default)] pub env: Option<std::collections::BTreeMap<String, String>>,
+}
+
+#[serde(deny_unknown_fields)] #[derive(Eq)]
+pub struct PlanTask {
+    pub id: String, pub title: String,
+    #[serde(default)] pub epic: Option<String>,
+    #[serde(default = "default_kind")] pub kind: TaskKind,      // default_kind() == TaskKind::Code
+    pub size: Size,
+    #[serde(default)] pub interface_change: bool,
+    #[serde(default)] pub test_mode: Option<TestMode>,
+    #[serde(default)] pub test_mode_reason: Option<String>,
+    pub owns: Vec<String>,
+    #[serde(default)] pub deps: Vec<String>,
+    #[serde(default)] pub priority: i32,
+    pub brief: String,
+    pub acceptance: Vec<String>,
+    #[serde(default)] pub test_to_write: Option<String>,
+    #[serde(default)] pub scout_refs: Vec<String>,
+    #[serde(default)] pub route: RouteSpec,
+    #[serde(default)] pub budget: Option<Budget>,
+}
+
+#[serde(deny_unknown_fields)] #[derive(Eq)]
+pub struct Plan {
+    pub goal: String,
+    #[serde(default)] pub max_writers: Option<u8>,
+    #[serde(default)] pub max_readers: Option<u8>,
+    #[serde(default)] pub max_bounces: Option<u8>,
+    #[serde(default)] pub profile: ProfileSpec,
+    #[serde(rename = "task")] pub tasks: Vec<PlanTask>,
+}
+
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)] #[derive(Eq)]
+pub enum PlanEdit {
+    AddTask { task: PlanTask },
+    SplitTask { task_id: String, into: Vec<PlanTask> },
+    CancelTask { task_id: String },
+    AmendTask { task_id: String,
+                #[serde(default)] brief: Option<String>, #[serde(default)] acceptance: Option<Vec<String>>,
+                #[serde(default)] route: Option<RouteSpec>, #[serde(default)] test_mode: Option<TestMode>,
+                #[serde(default)] test_mode_reason: Option<String>, #[serde(default)] priority: Option<i32>,
+                #[serde(default)] size: Option<Size> },
+    AddDep { task_id: String, dep: String },
+    Answer { task_id: String, text: String },
+    Pause, Resume, Finish,
+}
+#[serde(deny_unknown_fields)] #[derive(Eq)]
+pub struct EditFile { #[serde(rename = "edit")] pub edits: Vec<PlanEdit> }   // `anthrex run edit --file`
+
+#[derive(Eq)]
+pub struct ModelEntry { pub runtime: Runtime, pub model: String, pub strength: Strength, pub note: String }
+
+#[serde(rename_all = "snake_case")] #[derive(Copy, Eq)]
+pub enum RunState { AwaitingApproval, Running, Paused, Halted, Complete, Accepted, Discarded, Failed }
+#[serde(rename_all = "snake_case")] #[derive(Copy, Eq)]
+pub enum TaskState { Pending, Queued, Preparing, Working, Proof, Check, Review, MergeQueue, Merged, Blocked, Cancelled }
+#[serde(rename_all = "snake_case")] #[derive(Copy, Eq)]
+pub enum BlockReason { MisSized, Human, Conflict, DepCancelled, Question, Environment }
+#[serde(rename_all = "snake_case")] #[derive(Copy, Eq)]
+pub enum GateKind { Done, Proof, Check, Review, Merge }
+#[derive(Copy, Eq, Default)]
+pub struct GateCounts { pub done: u8, pub proof: u8, pub check: u8, pub review: u8, pub merge: u8 }   // done: decision 55
+#[serde(rename_all = "lowercase")] #[derive(Copy, Eq)]
+pub enum Verdict { Approve, Changes }
+#[serde(rename_all = "lowercase")] #[derive(Copy, Eq, PartialOrd, Ord)]
+pub enum Severity { Critical, Important, Minor }
+#[derive(Eq)]
+pub struct Finding { pub severity: Severity, #[serde(default)] pub file: Option<String>, #[serde(default)] pub line: Option<u32>,
+                     #[serde(default)] pub input: Option<String>, pub text: String }
+#[serde(rename_all = "snake_case")] #[derive(Copy, Eq)]
+pub enum DoneSignal { TaskDone, TurnEndFallback }            // "task_done" | "turn_end_fallback"
+#[serde(rename_all = "lowercase")] #[derive(Copy, Eq)]
+pub enum FinishAction { Accept, Discard }
+
+impl RunState  { pub fn label(self) -> &'static str; pub fn is_terminal(self) -> bool; }
+impl TaskState { pub fn label(self) -> &'static str; pub fn is_finished(self) -> bool; } // merged | cancelled
+impl Size      { pub fn raised(self) -> Size; }                                          // S→M, M→L, L→L
+impl Effort    { pub fn raised(self) -> Option<Effort>; }                               // High → None
+```
+
+`crates/proto/src/run_info.rs` (new; the snapshot, every field `#[serde(default)]` where it is optional so M8c and M9 can add fields):
+
+```rust
+pub struct Spend { pub tool_calls: u32, pub secs: u64, pub tokens: u64 }  // Copy, Eq, Default
+pub struct TokenUsage { pub input: u64, pub output: u64, pub cache_read: u64, pub cache_write: u64 } // Copy, Eq, Default
+pub struct BlockInfo { pub reason: BlockReason, pub text: String }
+pub struct CheckInfo { pub at: u64, pub ok: bool, pub code: Option<i32>, pub timed_out: bool,
+                       pub secs: u64, pub summary: String, pub on_candidate: bool }
+pub struct ProofInfo { pub at: u64, pub test: String, pub red: String, pub red_failed: bool,
+                       pub head_passed: bool, pub matched: bool, pub ok: bool }
+pub struct ReviewInfo { pub round: u32, pub route: Route, pub verdict: Option<Verdict>,
+                        pub summary: String, pub findings: Vec<Finding>, pub blocking: bool }
+pub struct AgentRoundInfo {
+    pub role: AgentRole, pub session: u32, pub round: u32, pub window_id: Option<u32>, pub route: Route,
+    pub session_id: Option<String>,                   // the runtime's own session id (decision 52)
+    pub started_at: u64, pub ended_at: Option<u64>, pub tool_calls: u32, pub last_event: u64,
+    pub turn_open: bool, pub turns: u32, pub rate_limited: bool, pub open_subagents: u32,
+    pub denials: u32, pub usage: TokenUsage,
+}
+pub struct TaskInfo {
+    pub id: String, pub title: String, pub epic: Option<String>, pub kind: TaskKind,
+    pub size: Size, pub hub: bool, pub test_mode: TestMode, pub test_mode_reason: Option<String>,
+    pub notes: Vec<String>,                           // decision 9/10 raises, forced modes
+    pub owns: Vec<String>, pub deps: Vec<String>, pub implicit_deps: Vec<String>, pub priority: i32,
+    pub route: Route, pub review_route: Option<Route>, pub budget: Budget,
+    pub spent_session: Spend, pub spent_total: Spend,
+    pub state: TaskState, pub block: Option<BlockInfo>,
+    pub rung: u8, pub failures: u8, pub bounces: GateCounts, pub stalls: u8, pub budget_exceeded: u8, pub conflicts: u8,
+    pub branch: String, pub worktree: PathBuf, pub start_commit: Option<String>, pub head: Option<String>,
+    pub test: Option<String>, pub red: Option<String>, pub done_signal: Option<DoneSignal>,
+    pub rounds: Vec<AgentRoundInfo>, pub reviews: Vec<ReviewInfo>,
+    pub last_check: Option<CheckInfo>, pub last_proof: Option<ProofInfo>,
+    pub merge_commit: Option<String>, pub merged_without_approval: Option<String>,
+    pub salvage_refs: Vec<String>, pub on_critical_path: bool, pub wave: u32,
+    pub history: Vec<String>,                          // last 10 events, newest first, "<hh:mm> <text>"
+}
+pub struct RunInfo {
+    pub run_id: String, pub goal: String, pub project: PathBuf, pub root: PathBuf,
+    pub state: RunState, pub paused_from: Option<RunState>, pub halted_reason: Option<String>,
+    pub approved_by: Option<String>,                  // "user" | "--yes"
+    pub base_branch: String, pub base_sha: String, pub run_branch: String, pub run_head: String,
+    pub revision: u64, pub max_writers: u8, pub max_readers: u8, pub max_bounces: u8,
+    pub writers_busy: u8, pub readers_busy: u8, pub unverified: bool,
+    pub worker_sandbox: bool,                         // decision 54; false is reported
+    pub trusted_project: Vec<String>,                 // decision 53: the project settings --trust-project accepted
+    pub rate_limits: std::collections::BTreeMap<String, u32>, // per runtime label, for M9.5
+    pub tasks: Vec<TaskInfo>, pub critical_path: Vec<String>, pub attention: Vec<String>,
+    pub report_path: PathBuf, pub outcome: Option<String>, pub created_at: u64,
+}
+pub struct RunsSnapshot { pub revision: u64, pub runs: Vec<RunInfo> }
+```
+
+`crates/proto/src/run_wire.rs` (new):
+
+```rust
+pub struct ToolCall { pub run_id: String, pub task_id: Option<String>, pub role: AgentRole,
+                      pub window_id: u32, pub tool: String, pub args: serde_json::Value }
+pub enum RunRequest {
+    Start { plan_toml: String, dir: PathBuf, yes: bool, trust_project: bool },
+    Approve { run_id: String }, Reject { run_id: String },
+    Edit { run_id: String, edits: Vec<PlanEdit> },
+    Retry { run_id: String, task_id: String },
+    Override { run_id: String, task_id: String, reason: String },
+    Cancel { run_id: String },
+    Resume { run_id: String, rebaseline: bool },
+    Finish { run_id: String, action: FinishAction, confirm: Option<String> },
+    List, Subscribe, Unsubscribe,
+    Tool(ToolCall),
+}
+pub enum RunReply {
+    Started { run_id: String, state: RunState },
+    Done { request: String, message: String },
+    Refused { request: String, message: String },
+    ConfirmNeeded { run_id: String, prompt: String },
+    Snapshot(RunsSnapshot),
+    ToolResult { ok: bool, text: String },
+}
+pub mod request {   // the `request` labels a client matches on
+    pub const START: &str = "run start";     pub const APPROVE: &str = "run approve";
+    pub const REJECT: &str = "run reject";   pub const EDIT: &str = "run edit";
+    pub const RETRY: &str = "run retry";     pub const OVERRIDE: &str = "run override";
+    pub const CANCEL: &str = "run cancel";   pub const RESUME: &str = "run resume";
+    pub const FINISH: &str = "run finish";
+}
+```
+
+`messages.rs`: `ClientMsg::Run(RunRequest)` and `DaemonMsg::Run(RunReply)`; `HookSource` gains `Stream` (decision 3). `types.rs`: `#[derive(Default)] pub enum WindowKind { #[default] Pty, Headless }` (`rename_all = "lowercase"`, `Copy`, `Eq`); `WindowInfo` gains `#[serde(default)] pub kind: WindowKind` and `#[serde(default)] pub run: Option<RunRef>`; `ClientKind` gains `Mcp`. `lib.rs` re-exports the new modules' public types and bumps `PROTO_VERSION` (header).
+
+### `config` (`crates/config/src/orchestrator.rs`, new; `lib.rs` gains one field and one call)
+
+```rust
+pub struct Orchestrator {
+    pub max_writers: u8,            // 3, 1..=8
+    pub max_readers: u8,            // 3, 1..=8
+    pub max_bounces: u8,            // 2, 1..=5
+    pub max_tasks: u32,             // 50, 1..=200
+    pub max_windows: u32,           // 60, 1..=500
+    pub default_runtime: proto::Runtime,   // claude; claude | codex
+    pub review_small: bool,         // true
+    pub budget_s: proto::Budget,    // [orchestrator.budget.s] 40 / 15 / no tokens
+    pub budget_m: proto::Budget,    // [orchestrator.budget.m] 150 / 60 / no tokens
+    pub budget_l: proto::Budget,    // [orchestrator.budget.l] 300 / 120 / no tokens (rung-4 ceiling for M and hub)
+    pub stall_after_secs: u64,      // 600, 5..=7200
+    pub rate_limit_retry_secs: u64, // 300, 5..=3600
+    pub denials_before_block: u32,  // 3, 1..=50
+    pub git_timeout_secs: u64,      // 60, 5..=600
+    pub worker_permission_mode: String,        // "acceptEdits"; default | acceptEdits | dontAsk | bypassPermissions
+    pub worker_allowed_tools: Vec<String>,     // ["Bash","Edit","Write","Read","Glob","Grep","Agent","TodoWrite"]
+    pub worker_codex_sandbox: String,          // "workspace-write"; read-only | workspace-write | danger-full-access
+    pub worker_sandbox: bool,                  // true: Claude workers run in Claude Code's sandbox (decision 54)
+    pub claude: ClaudeHeadless,     // [orchestrator.claude] (decision 50)
+    pub builtin_models: bool,       // true
+    pub models: Vec<proto::ModelEntry>,        // merged roster (decision 23)
+    pub profile: proto::ProfileSpec,           // [orchestrator.profile], [orchestrator.profile.env]
+}
+impl Default for Orchestrator;
+#[derive(Default)] pub enum ClaudeAuth { #[default] Login, ApiKey }      // "login" | "api_key"
+pub struct ClaudeHeadless { pub auth: ClaudeAuth, pub api_key_helper: Option<String> }
+pub fn default_roster() -> Vec<proto::ModelEntry>;
+pub(crate) fn read(table: &toml::Table, problems: &mut Vec<Problem>) -> Orchestrator;
+```
+
+`Config` gains `pub orchestrator: Orchestrator`; `report_unknown_keys` stops skipping `orchestrator` silently and delegates its nested keys to `orchestrator.rs`. Parsing rules: each key validated on its own, an invalid value is a `Problem` and keeps the default (`orchestrator.max_writers: must be between 1 and 8 (using 3)`); a bad `[[orchestrator.models]]` entry is skipped with its index (`orchestrator.models[2]: empty model is only allowed for codex`); unknown keys `unknown key, ignored`.
+
+### `daemon`
+
+```rust
+// run/model.rs (pure). Everything derives Debug, Clone, PartialEq, Serialize, Deserialize.
+pub type OpId = u64;
+pub struct Profile { pub modules: Vec<String>, pub hub: Vec<String>, pub source: Vec<String>,
+                     pub check: Option<String>, pub check_timeout_secs: u64, pub single_test: Option<String>,
+                     pub test_passed: Option<String>, pub setup: Option<String>, pub generated: Vec<String>,
+                     pub protected: Vec<String>,                      // built-ins + config + plan (decision 56)
+                     pub env: BTreeMap<String, String> }
+pub struct RunLimits { pub max_writers: u8, pub max_readers: u8, pub max_bounces: u8, pub max_tasks: u32, pub max_windows: u32,
+                       pub default_runtime: Runtime,
+                       pub review_small: bool, pub budget_s: Budget, pub budget_m: Budget, pub budget_l: Budget,
+                       pub stall_after_secs: u64, pub rate_limit_retry_secs: u64, pub denials_before_block: u32,
+                       pub git_timeout_secs: u64, pub worker_permission_mode: String, pub worker_allowed_tools: Vec<String>,
+                       pub worker_codex_sandbox: String, pub worker_sandbox: bool, pub claude_auth: ClaudeAuth }
+pub enum ReviewLevel { Small, Medium, Frontier }
+pub enum FallbackState { None, Counting, Nudged { had_commits: bool } }          // decision 32 turn-end fallback
+pub enum StallState { Watching, Interrupted { deadline: u64 }, Nudged }          // decision 32 stall watchdog
+pub enum FailedTurn { None, WaitingContinue { at: u64, rate_limit: bool }, ContinueSent { rate_limit: bool } }
+pub struct AgentRound {
+    pub role: AgentRole, pub session: u32, pub round: u32, pub window_id: Option<u32>, pub route: Route,
+    pub launch_op: OpId, pub session_id: Option<String>, pub pid: Option<u32>, pub ended: bool,
+    pub started_at: u64, pub ended_at: Option<u64>,
+    pub turn_open: bool, pub turns: u32, pub turn_had_task_done: bool, pub last_event: u64,
+    pub tool_calls: u32, pub rate_limited_until: Option<u64>, pub in_retry_streak: bool,
+    pub open_subagents: BTreeSet<String>, pub denials: u32, pub usage: TokenUsage,
+    pub deaths: u8, pub fallback: FallbackState, pub stall: StallState, pub failed_turn: FailedTurn,
+    pub review_nudged: bool, pub wrap_up_sent: bool, pub retiring: bool, pub delivery_failures: u8,
+}
+pub struct CheckRecord { pub at: u64, pub ok: bool, pub code: Option<i32>, pub timed_out: bool,
+                         pub tail: String, pub secs: u64, pub on_candidate: bool }
+pub struct ProofRecord { pub at: u64, pub test: String, pub red: String, pub red_failed: bool,
+                         pub head_passed: bool, pub matched: bool, pub red_tail: String, pub head_tail: String }
+pub struct ReviewRecord { pub round: u32, pub route: Route, pub base: String, pub head: String,
+                          pub verdict: Option<Verdict>, pub summary: String, pub findings: Vec<Finding> }
+pub struct DoneClaim { pub summary: String, pub test: Option<String>, pub red: Option<String>, pub signal: DoneSignal }
+pub struct TaskEvent { pub at: u64, pub text: String }
+pub struct Task {
+    pub spec: PlanTask, pub size: Size, pub hub: bool, pub test_mode: TestMode, pub notes: Vec<String>,
+    pub review_level: Option<ReviewLevel>,          // None: not reviewed (review_small = false)
+    pub route: Route, pub review_route: Option<Route>, pub budget: Budget, pub implicit_deps: Vec<String>,
+    pub state: TaskState, pub block: Option<BlockInfo>,
+    pub rung: u8, pub failures: u8, pub bounces: GateCounts, pub stalls: u8, pub budget_exceeded: u8, pub conflicts: u8,
+    pub session: u32, pub spent_total: Spend,
+    pub branch: String, pub worktree: PathBuf, pub prewarmed: bool, pub start_commit: Option<String>, pub head: Option<String>,
+    pub done: Option<DoneClaim>, pub rounds: Vec<AgentRound>, pub reviews: Vec<ReviewRecord>,
+    pub checks: Vec<CheckRecord>, pub proofs: Vec<ProofRecord>, pub handed_back: bool,
+    pub merge_commit: Option<String>, pub merged_without_approval: Option<String>,
+    pub salvage_refs: Vec<String>, pub failure_log: Vec<String>, pub history: Vec<TaskEvent>,
+}
+pub struct Outgoing { pub id: u64, pub window_id: u32, pub task_id: String, pub text: String,
+                      pub queued_at: u64, pub delivered_at: Option<u64> }
+pub struct PendingOp { pub op: OpId, pub task_id: Option<String>, pub kind: OpKind }
+pub struct LogEntry { pub at: u64, pub text: String }                 // at most 500 per run
+pub struct Run {
+    pub id: String, pub goal: String, pub root: PathBuf, pub project: PathBuf, pub wt_dir: PathBuf, pub data_dir: PathBuf,
+    pub base_branch: String, pub base_sha: String, pub run_head: String, pub last_green_candidate: Option<String>,
+    pub state: RunState, pub paused_from: Option<RunState>, pub halted_reason: Option<String>,
+    pub approved_by: Option<String>, pub profile: Profile, pub limits: RunLimits, pub roster: Vec<ModelEntry>,
+    pub tasks: Vec<Task>, pub merge_queue: Vec<String>, pub outbox: Vec<Outgoing>, pub next_message: u64,
+    pub pending_ops: BTreeMap<OpId, PendingOp>, pub next_op: OpId, pub windows_created: u32,
+    pub revision: u64, pub unverified: bool, pub final_check_failed: bool, pub trusted_project: Vec<String>,
+    pub protected_files: Vec<String>,                 // tracked files at base_sha matching profile.protected (decision 56)
+    pub rate_limits: BTreeMap<String, u32>, pub outcome: Option<String>, pub log: Vec<LogEntry>, pub created_at: u64,
+}
+impl Run {
+    pub fn run_branch(&self) -> String;               // anthrex/<id>/integration
+    pub fn integration_path(&self) -> PathBuf;        // <wt_dir>/runs/<id>/integration
+    pub fn task_path(&self, task: &str) -> PathBuf;   // <wt_dir>/runs/<id>/<task>
+    pub fn review_path(&self, task: &str) -> PathBuf; // …/<task>.review
+    pub fn proof_path(&self, task: &str) -> PathBuf;  // …/<task>.proof
+    pub fn report_path(&self) -> PathBuf;             // <data_dir>/REPORT.md
+    pub fn short(&self) -> &str;                      // the 4 hex digits
+    pub fn task(&self, id: &str) -> Option<&Task>;
+}
+
+// run/globs.rs (pure)
+pub fn literal_prefix(glob: &str) -> Vec<&str>;
+pub fn intersects(a: &str, b: &str) -> bool;
+pub fn any_intersect(a: &[String], b: &[String]) -> bool;
+pub fn modules_spanned(owns: &[String], modules: &[String]) -> ModuleSpan;   // enum ModuleSpan { One(String), Many }
+pub fn inside_area(glob: &str, area: &[String]) -> bool;
+pub struct OwnsMatcher;                               // globset-backed
+impl OwnsMatcher { pub fn new(owns: &[String]) -> Result<Self, String>; pub fn matches(&self, path: &str) -> bool; }
+pub fn validate_glob(glob: &str) -> Result<(), String>;   // not blank, not absolute, no `..`
+
+// run/roster.rs (pure)
+pub fn find(roster: &[ModelEntry], runtime: Runtime, model: &str) -> Option<&ModelEntry>;
+pub fn first_at(roster: &[ModelEntry], runtime: Runtime, strength: Strength) -> Option<&ModelEntry>;
+pub fn peer(runtime: Runtime) -> Runtime;                                    // claude <-> codex
+pub fn pick_reviewer(roster: &[ModelEntry], author: &Route, level: ReviewLevel) -> Route;
+pub fn escalate(roster: &[ModelEntry], route: &Route) -> Route;
+
+// run/plan.rs and run/validate.rs (pure)
+pub fn parse_plan(text: &str) -> Result<Plan, String>;          // TOML, error names line and key
+pub fn parse_edits(text: &str) -> Result<Vec<PlanEdit>, String>;
+pub struct PlanError { pub task: Option<String>, pub field: String, pub rule: String, pub message: String } // Display: "task <id>: <field>: <message>" or "<field>: <message>"
+pub struct Preflight { pub root: PathBuf, pub project: PathBuf, pub base_branch: String, pub base_sha: String,
+                      pub protected_files: Vec<String> }
+pub const BUILTIN_PROTECTED: &[&str] = &[".claude/**", ".mcp.json", ".codex/**", "**/CLAUDE.md", "**/AGENTS.md"];
+pub fn names_literally(owns: &[String], path: &str) -> bool;   // run/globs.rs, decision 56
+pub struct BuildContext<'a> { pub id: String, pub wt_dir: PathBuf, pub data_dir: PathBuf,
+                              pub config: &'a config::Orchestrator, pub now: u64, pub yes: bool }
+pub fn resolve_profile(plan: &ProfileSpec, config: &ProfileSpec) -> Profile;
+pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Run, Vec<PlanError>>;
+pub fn resolve_task(spec: PlanTask, profile: &Profile, limits: &RunLimits, roster: &[ModelEntry],
+                    default_runtime: Runtime) -> Result<Task, Vec<PlanError>>;       // decisions 8-10
+pub enum EditScope { Run, Area { globs: Vec<String> } }
+pub fn validate_tasks(tasks: &[Task], touched: &BTreeSet<String>, scope: &EditScope,
+                      max_tasks: u32, profile: &Profile) -> Vec<PlanError>;           // decisions 9-13
+pub fn slug(goal: &str, suffix: u16) -> String;
+pub fn random_suffix() -> u16;
+
+// run/edits.rs (pure)
+pub fn apply_edits(run: &Run, edits: &[PlanEdit], scope: &EditScope, now: u64)
+    -> Result<(Run, Vec<EditConsequence>), Vec<PlanError>>;
+pub enum EditConsequence { CancelLive { task_id: String }, Deliver { task_id: String, text: String },
+                           Pause, Resume, Finish }
+
+// run/engine/mod.rs (pure)
+pub type ReplyId = u64;
+pub struct EngineState { pub runs: BTreeMap<String, Run>, pub revision: u64, pub stopped: bool } // Default
+pub struct Event { pub now: u64, pub kind: EventKind }
+pub enum EventKind {
+    Start { reply: ReplyId, run: Run },
+    Approve { reply: ReplyId, run_id: String }, Reject { reply: ReplyId, run_id: String },
+    Edit { reply: ReplyId, run_id: String, edits: Vec<PlanEdit>, scope: EditScope },
+    Retry { reply: ReplyId, run_id: String, task_id: String },
+    Override { reply: ReplyId, run_id: String, task_id: String, reason: String },
+    Cancel { reply: ReplyId, run_id: String },
+    Resume { reply: ReplyId, run_id: String, rebaseline: Option<(String, String)> }, // (base sha, run head) read by the driver
+    Finish { reply: ReplyId, run_id: String, action: FinishAction },
+    Tool { reply: ReplyId, call: ToolCall },
+    OpDone { run_id: String, op: OpId, result: OpResult },
+    Signal { window_id: u32, signal: AgentSignal },
+    Delivered { run_id: String, message_ids: Vec<u64>, ok: bool, error: Option<String> },
+    Restore { runs: Vec<Run>, replay: Vec<(String, OpId, OpResult)> },
+    Stop,
+    Tick,
+}
+pub enum AgentSignal {                                // the driver's translation of WindowSignal (decision 27)
+    Init { session_id: String }, TurnStarted, ToolUse { name: String },
+    TurnEnded { outcome: TurnOutcome, usage: Option<TokenUsage>, denials: u32 },
+    ApiRetry { error: String, delay_ms: u64 }, PermissionDenied { tool: String, reason: String },
+    SubagentStart { agent_id: String }, SubagentStop { agent_id: String },
+    Activity,                                         // any other event: text, tool result, compaction, unknown
+    ProcessExited { code: Option<i32>, killed_by_engine: bool, pid: u32 },
+    ProcessStarted { pid: u32 },
+}
+pub use crate::headless::TurnOutcome;                 // Completed | Failed { error: String, kind: FailureKind } | Interrupted
+pub enum OpKind {
+    CreateRunBranch { root: PathBuf, branch: String, base_sha: String, path: PathBuf, setup: Option<String>, env: Vec<(String, String)> },
+    PrepareWorktree { root: PathBuf, branch: String, from: String, path: PathBuf, setup: Option<String>, env: Vec<(String, String)> },
+    CreateWindow { name: String, spec: HeadlessSpec, session_uuid: Option<String>, first_turn: String,
+                   project: PathBuf, worktree: PathBuf, jitter_ms: u64 },   // registers a headless window, starts the session
+    ResumeSession { window_id: u32, session_id: String, message: String, jitter_ms: u64 },
+    VerifyDone { worktree: PathBuf, start: String, run_head: String, owns: Vec<String>, generated: Vec<String>, protected: Vec<String>, spill_exempt: bool, red: Option<String> },
+    CountCommits { worktree: PathBuf, start: String },
+    DiffSoFar { worktree: PathBuf, start: String },
+    Proof { root: PathBuf, path: PathBuf, red: String, head: String,
+            command: String,   // single_test with {test} already replaced by shell_quote(test)
+            passed: String,    // test_passed with {test} already replaced by regex::escape(test)
+            timeout_secs: u64, setup: Option<String>, env: Vec<(String, String)> },
+    Check { dir: PathBuf, command: String, timeout_secs: u64, env: Vec<(String, String)> },
+    PrepareReview { root: PathBuf, head_ref: String, base_ref: String, path: PathBuf },
+    MergeCandidate { root: PathBuf, integration: PathBuf, run_branch: String, expected_run_head: String,
+                     base_branch: String, expected_base: String, task_head: String, message: String,
+                     check: Option<String>, timeout_secs: u64, env: Vec<(String, String)> },
+    HandBack { worktree: PathBuf, run_head: String },
+    RemoveWorktree { root: PathBuf, path: PathBuf, salvage_ref: String },
+    VerifyRefs { root: PathBuf, base_branch: String, expected_base: String, run_branch: String, expected_run_head: String },
+    Accept { root: PathBuf, base_branch: String, run_branch: String, message: String, worktrees: Vec<(PathBuf, String)>, branch_prefix: String },
+    Discard { root: PathBuf, worktrees: Vec<(PathBuf, String)>, branch_prefix: String },
+}
+pub enum OpResult {
+    Worktree { head: String }, SetupFailed { output: String },
+    Window { window_id: u32 }, Resumed, ResumeFailed { error: String },
+    DoneChecked { commits: u32, dirty_tracked: u32, merge_in_progress: bool, untracked_in_owns: Vec<String>,
+                  outside_owns: Vec<String>, generated_outside_owns: Vec<String>, protected_changed: Vec<String>, red_ok: Option<bool>, head: String },
+    Commits { count: u32, head: String },
+    Diff { stat: String, patch: String },
+    Proof { red_failed: bool, head_passed: bool, matched: bool, red_tail: String, head_tail: String },
+    Check { ok: bool, code: Option<i32>, timed_out: bool, tail: String, secs: u64 },
+    Review { base: String, head: String },
+    Merged { commit: String }, Conflict { files: Vec<String> },
+    CandidateRed { code: Option<i32>, timed_out: bool, tail: String, secs: u64 },
+    RefMoved { reason: String },
+    HandedBack { files: Vec<String> },
+    Removed { salvage_ref: Option<String> },
+    RefsOk,
+    Finished { outcome: String },
+    Failed { message: String },
+}
+pub enum Effect {
+    Reply { reply: ReplyId, result: Result<String, String> },
+    Op { run_id: String, op: OpId, kind: OpKind },
+    Deliver { run_id: String, message_ids: Vec<u64>, window_id: u32, text: String },   // one new turn (decision 29)
+    Interrupt { window_id: u32 },
+    KillWindow { window_id: u32 }, RetireWindow { window_id: u32 }, RemoveWindow { window_id: u32 },
+    WatchWorktree { root: PathBuf }, UnwatchWorktree { root: PathBuf },
+    Persist { run_id: String, urgent: bool },
+    WriteReport { run_id: String },
+    Publish { structural: bool },
+}
+pub fn step(state: EngineState, event: Event) -> (EngineState, Vec<Effect>);
+pub fn snapshot(state: &EngineState, now: u64) -> RunsSnapshot;   // run/snapshot.rs
+
+// run/role_launch.rs (pure)
+pub fn worker_spec(run: &Run, task: &Task) -> HeadlessSpec;                          // decisions 24-26
+pub fn reviewer_spec(run: &Run, task: &Task, route: &Route) -> HeadlessSpec;
+pub fn session_uuid(run_id: &str, op: OpId) -> String;                                // decision 24
+
+// run/contract.rs (pure)
+pub const WORKER_CONTRACT: &str; pub const REVIEWER_CONTRACT: &str;
+pub fn worker_prompt(run: &Run, task: &Task) -> String;
+pub fn handover_prompt(run: &Run, task: &Task, reason: &str, stat: &str, patch: &str) -> String;
+pub fn reviewer_prompt(run: &Run, task: &Task, round: u32, base: &str, head: &str) -> String;
+pub fn check_failed_message(command: &str, c: &CheckRecord) -> String;
+pub fn proof_failed_message(command: &str, p: &ProofRecord, passed: &str) -> String;
+pub fn review_changes_message(review: &ReviewRecord) -> String;
+pub fn candidate_red_message(command: &str, c: &CheckRecord) -> String;
+pub fn conflict_message(files: &[String]) -> String;
+pub fn budget_wrap_up(spent: Spend, budget: Budget) -> String;
+pub fn stall_nudge(minutes: u64) -> String;
+pub fn rate_limit_continue(reason: &str) -> String;
+pub fn answer_message(text: &str) -> String;
+pub fn amend_message(task: &Task) -> String;
+pub const DONE_NUDGE: &str; pub const NO_COMMIT_NUDGE: &str; pub const REVIEW_NUDGE: &str;
+pub const RESUME_WORKER: &str; pub const RESUME_REVIEWER: &str; pub const RESUME_AFTER_EXIT: &str;
+pub fn denied_text(n: u32, tool: &str, reason: &str) -> String;
+pub fn generated_files_message(files: &[String]) -> String;       // decision 55
+pub fn protected_file_message(files: &[String]) -> String;        // decision 56
+
+// run/messages.rs (pure)
+pub const MESSAGE_MAX_BYTES: usize = 32 * 1024;
+pub const DELIVERY_RETRY_SECS: u64 = 5; pub const DELIVERY_MAX_FAILURES: u8 = 3;
+pub fn clamp(text: &str) -> String;
+pub fn join_turn(messages: &[&Outgoing]) -> String;   // queue order, blank line between, then clamp
+
+// run/env.rs (pure)
+pub fn profile_env(profile: &Profile, worktree: &Path) -> Vec<(String, String)>;   // {worktree} substituted
+
+// run/git/ (blocking; call only from spawn_blocking). Every fn takes `git: &OsStr` first and `timeout: Duration` last.
+pub fn preflight(git, dir, timeout) -> Result<Preflight, String>;                  // decision 17
+pub fn project_settings(git, root, base_sha, claude: bool, codex_paths: Option<&[&str]>, timeout) -> Result<Vec<String>, String>; // decision 53: Claude's hooks/.mcp.json when `claude`; the Codex paths when Some
+pub fn protected_files(git, root, base_sha, protected: &OwnsMatcher, timeout) -> Result<Vec<String>, String>;      // decision 56: git ls-tree -r --name-only
+pub fn create_run_branch(git, root, branch, base_sha, path, timeout) -> Result<String, String>;
+pub fn prepare_worktree(git, root, branch, from, path, timeout) -> Result<String, String>;   // HEAD sha; reuses; re-points a branch whose HEAD is an ancestor of `from`
+pub fn lock_worktree(git, root, path, reason, timeout) -> Result<(), String>;
+pub fn verify_done(git, worktree, start, run_head, owns: &[String], generated: &OwnsMatcher, protected: &OwnsMatcher, red: Option<&str>, timeout) -> Result<OpResult, String>; // spill diff is run_head...HEAD
+pub fn count_commits(git, worktree, start, timeout) -> Result<(u32, String), String>;
+pub fn diff_so_far(git, worktree, start, timeout) -> Result<(String, String), String>;
+pub fn prepare_review(git, root, head_ref, base_ref, path, timeout) -> Result<(String, String), String>;
+pub enum CandidateStep { Tree(String), Conflict(Vec<String>) }
+pub fn merge_tree(git, root, run_head, task_head, timeout) -> Result<CandidateStep, String>;
+pub fn commit_tree(git, root, tree, parents: &[&str], message, timeout) -> Result<String, String>;
+pub fn materialize(git, integration, commit, timeout) -> Result<(), String>;     // checkout --detach --force; clean -fd
+pub fn cas_update(git, root, branch, new, old, timeout) -> Result<bool, String>; // false: the ref was not <old>
+pub fn reattach(git, integration, branch, timeout) -> Result<(), String>;
+pub fn read_ref(git, root, refname, timeout) -> Result<Option<String>, String>;
+pub fn hand_back(git, worktree, run_head, timeout) -> Result<Vec<String>, String>; // conflicted files; empty = clean
+pub fn salvage(git, worktree, reference, message, timeout) -> Result<Option<String>, String>;
+pub fn remove_worktree(git, root, path, timeout) -> Result<(), String>;          // unlock, remove --force, prune
+pub fn delete_branches(git, root, prefix, timeout) -> Result<(), String>;
+pub fn accept(git, root, base_branch, run_branch, message, timeout) -> Result<String, String>;
+pub struct GitQueue;                                   // run/git/queue.rs
+impl GitQueue { pub fn new() -> Self; pub async fn write<T: Send + 'static>(&self, repo: &Path,
+                    f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String>; }
+pub const LOCK_RETRY_DELAYS_MS: [u64; 5] = [200, 400, 800, 1600, 3200];
+
+// run/exec.rs (blocking)
+pub const CHECK_TAIL_LINES: usize = 200; pub const CHECK_SUMMARY_LINES: usize = 40;
+pub struct ShellOutcome { pub ok: bool, pub code: Option<i32>, pub timed_out: bool, pub tail: String, pub secs: u64 }
+pub fn run_shell(dir: &Path, command: &str, env: &[(String, String)], timeout: Duration) -> ShellOutcome;
+pub fn summary(tail: &str) -> String;                 // last CHECK_SUMMARY_LINES lines
+// run/proof.rs (blocking)
+pub struct ProofOp { pub root: PathBuf, pub path: PathBuf, pub red: String, pub head: String, pub command: String,
+                     pub passed: String, pub timeout_secs: u64, pub setup: Option<String>, pub env: Vec<(String, String)> } // OpKind::Proof's fields
+pub fn run_proof(git: &OsStr, op: &ProofOp, git_timeout: Duration) -> OpResult;
+
+// run/journal.rs (blocking)
+pub enum JournalLine { Intent { op: OpId, kind: OpKind }, Done { op: OpId, result: OpResult } }
+pub fn save_run(run: &Run) -> std::io::Result<()>;    // temp, fsync, rename, fsync dir
+pub fn append(dir: &Path, line: &JournalLine) -> std::io::Result<()>;  // append + fsync
+pub fn load_all(data_dir: &Path) -> (Vec<(Run, Vec<JournalLine>)>, Vec<String>);  // runs, problems
+pub fn compact(dir: &Path, pending: &BTreeMap<OpId, PendingOp>) -> std::io::Result<()>;
+pub const COMPACT_AFTER_BYTES: u64 = 1 << 20;
+
+// run/reconcile.rs (blocking)
+pub enum Reconciled { Replay(OpResult), NotStarted }
+pub fn reconcile(git: &OsStr, run: &Run, journal: &[JournalLine], windows: &[WindowInfo], timeout: Duration)
+    -> Vec<(OpId, Reconciled)>;
+
+// run/driver.rs
+pub struct RunContext { pub data_dir: PathBuf, pub worktrees_root: PathBuf, pub exe: PathBuf, pub socket_path: PathBuf,
+                        pub orchestrator: config::Orchestrator, pub git_roots: Arc<dyn GitRoots>, pub git: OsString }
+pub struct RunService { /* Mutex<EngineState>, event channel, reply map, snapshot watch, GitQueue, retire deadlines */ }
+impl RunService {
+    pub fn new(manager: Arc<WindowManager>, ctx: RunContext) -> Arc<Self>;
+    pub async fn restore(&self);                      // decision 44: load, reconcile, Event::Restore
+    pub fn spawn(self: &Arc<Self>, shutdown: CancellationToken) -> tokio::task::JoinHandle<()>;
+    pub fn stop(&self);
+    pub fn snapshots(&self) -> tokio::sync::watch::Receiver<RunsSnapshot>;
+    pub async fn request(&self, request: RunRequest) -> RunReply;   // every RunRequest but Subscribe/Unsubscribe
+}
+pub const RETIRE_AFTER: Duration = Duration::from_secs(30);
+pub const INTERRUPT_GRACE: Duration = Duration::from_secs(30);
+pub const DONE_CHECK_GIT_TIMEOUT: Duration = Duration::from_secs(10);
+
+// manager (changed; new file manager/headless.rs holds these methods)
+impl WindowManager {
+    pub async fn create_headless(self: &Arc<Self>, name: String, spec: HeadlessSpec, session: SessionArg,
+                                 first_turn: String, project: PathBuf, worktree: PathBuf) -> anyhow::Result<WindowInfo>;
+    pub fn apply_session_event(&self, id: u32, event: &SessionEvent);   // under the lock: status, tool, session id,
+                                                                        // conversation inputs (decision 27), feed send
+    pub async fn headless_send(&self, id: u32, text: &str) -> anyhow::Result<()>;     // decision 29: one new turn
+    pub fn headless_interrupt(&self, id: u32) -> anyhow::Result<()>;
+    pub async fn headless_resume(self: &Arc<Self>, id: u32, session_id: &str, message: &str) -> anyhow::Result<()>;
+    pub fn headless_kill(&self, id: u32) -> anyhow::Result<()>;                        // group SIGTERM, then SIGKILL
+    pub fn signals(&self) -> broadcast::Receiver<WindowSignal>;
+}
+pub struct WindowSignal { pub window_id: u32, pub kind: WindowSignalKind }
+pub enum WindowSignalKind { Session(SessionEvent), Hook { kind: HookKind, agent_id: Option<String> } }
+pub const SIGNAL_CHANNEL_CAPACITY: usize = 4096;
+// manager/entry.rs: Process::Headless(headless::HeadlessHandle); Entry.headless: Option<HeadlessSpec> (persisted in WindowRecord.run).
+// manager/mod.rs: handle_hook leaves a Headless window's status alone (decision 27); the feed send for SubagentStart/Stop.
+// state/mod.rs: WindowRecord gains #[serde(default)] kind: WindowKind.
+// server.rs: decision 49's refusals; pub struct GitWiring { pub registry: Arc<GitRegistry>, pub publish_rx: mpsc::UnboundedReceiver<(PathBuf, Option<GitState>)> }
+//            impl GitWiring { pub fn new(settings: config::Git) -> Self }
+//            pub async fn serve(listener, manager, git: GitWiring, runs: Arc<RunService>, shutdown) -> anyhow::Result<()>
+
+// crates/daemon/src/headless/mod.rs — the headless session layer, shared with M9's scouts, sub-planners and deciders
+#[derive(Serialize, Deserialize)]
+pub struct HeadlessSpec {
+    pub runtime: Runtime, pub model: String, pub effort: Effort, pub cwd: PathBuf,
+    pub instructions: String,                         // --append-system-prompt | developer_instructions
+    pub mcp: Option<McpTarget>, pub allowed_tools: Vec<String>,
+    pub claude_permission_mode: Option<String>,       // None: omit the flag
+    pub claude_sandbox: Option<ClaudeSandbox>,        // workers only, when worker_sandbox (decision 54)
+    pub codex_sandbox: String, pub codex_writable_roots: Vec<PathBuf>,
+    pub env: Vec<(String, String)>, pub claude_auth: ClaudeAuth, pub api_key_helper: Option<String>,
+    pub run_ref: Option<RunRef>,                      // WindowInfo.run
+}
+#[derive(Serialize, Deserialize)]
+pub struct ClaudeSandbox { pub writable_roots: Vec<PathBuf> }   // the worktree is writable by default; this adds the git common dir
+#[derive(Serialize, Deserialize)]
+pub struct McpTarget { pub role: AgentRole, pub run_id: String, pub task_id: Option<String> }
+pub enum SessionArg { New { uuid: Option<String> }, Resume { session_id: String } }   // Codex New has no uuid
+pub enum SessionEvent {
+    Init { session_id: String, model: Option<String>, mcp_ok: Option<bool> },
+    TurnStarted,
+    UserText { text: String },                        // Claude echoes of what was sent, when the CLI replays them
+    AssistantText { text: String, parent: Option<String> },
+    ToolUse { id: String, name: String, input: serde_json::Value, parent: Option<String> },
+    ToolResult { id: String, text: String, ok: bool, parent: Option<String> },
+    ApiRetry { error: String, attempt: u32, delay_ms: u64 },
+    PermissionDenied { tool: String, reason: String },
+    Compacted,
+    Other { kind: String },                           // recognised, nothing to act on (reasoning, thinking, rate-limit info)
+    TurnEnded { outcome: TurnOutcome, usage: Option<TokenUsage>, denials: Vec<String> },
+    Unknown { line: String },                         // first 300 characters
+    StderrLine { line: String },                      // from the driver
+    ProcessExited { code: Option<i32>, signal: Option<i32> },   // from the driver
+}
+pub enum TurnOutcome { Completed, Failed { error: String, kind: FailureKind }, Interrupted }
+pub enum FailureKind { RateLimit, Authentication, Billing, SandboxUnavailable, Other }  // SandboxUnavailable: M8a.1 item 4b's text, in a failed result or in stderr before Init
+impl TokenUsage { pub fn billable(&self) -> u64; }  // decision 40
+// headless/argv.rs (pure)
+pub struct CliCaps { pub claude_verbose: bool, pub claude_permission_prompts: bool, pub claude_effort_flag: bool,
+                     pub claude_non_bare_flag: Option<&'static str>, pub claude_interrupt: InterruptMode,
+                     pub claude_hooks_fire_in_print: bool, pub codex_resume_takes_sandbox: bool,
+                     pub claude_user_settings_only: Option<&'static [&'static str]>,   // the flags that exclude project settings (decision 53), None: impossible
+                     pub claude_sandbox_keys: SandboxKeys,
+                     pub codex_loads_project_config: bool,                              // decision 53, M8a.1 item 7a
+                     pub codex_project_config_paths: &'static [&'static str],
+                     pub codex_user_config_only: Option<&'static [&'static str]> }                            // decision 54's JSON keys, as M8a.1 finds them
+pub struct SandboxKeys { pub enabled: &'static str, pub allow_unsandboxed: &'static str, pub write_allow: &'static str }
+pub fn claude_settings(exe: &Path, window_id: u32, sandbox: Option<&ClaudeSandbox>, caps: &CliCaps) -> serde_json::Value; // launch::claude::settings plus the sandbox block
+pub enum InterruptMode { ControlRequest, Sigint }
+pub const CLI_CAPS: CliCaps;                           // every field set from M8a.1's findings
+pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Vec<String>;   // the `anthrex mcp` argv of the CLI section
+pub fn claude_args(spec: &HeadlessSpec, session: &SessionArg, exe: &Path, window_id: u32, socket: &Path,
+                   caps: &CliCaps) -> Vec<String>;
+pub fn codex_args(spec: &HeadlessSpec, session: &SessionArg, message: &str, exe: &Path, window_id: u32,
+                  socket: &Path, caps: &CliCaps) -> Vec<String>;
+// headless/claude_stream.rs, headless/codex_stream.rs (pure)
+pub fn parse_line(line: &str) -> Vec<SessionEvent>;  // one per runtime module
+pub fn user_message(text: &str, session_id: Option<&str>) -> String;   // claude_stream only: the stdin envelope, one line
+pub fn interrupt_request(request_id: u64) -> String;                    // claude_stream only
+// headless/conversation.rs (pure)
+#[derive(Default)] pub struct StreamCursor { /* prompts sent, tool names by id, session id */ }
+pub struct ConversationInput { pub hooks: Vec<ParsedHook>, pub records: Vec<crate::transcript::Record> }
+pub fn map(runtime: Runtime, hooks_fire: bool, event: &SessionEvent, cursor: &mut StreamCursor) -> ConversationInput;
+pub fn sent_turn(runtime: Runtime, hooks_fire: bool, text: &str, cursor: &mut StreamCursor) -> ConversationInput; // the turn the daemon starts
+// headless/status.rs (pure)
+pub struct HeadlessStatus { pub status: Status, pub tool: Option<String>, pub turn_open: bool, pub rate_limited: bool }
+pub fn next(current: &HeadlessStatus, event: &SessionEvent) -> HeadlessStatus;
+// headless/session.rs (I/O)
+pub struct HeadlessHandle { /* runtime, current child (pid, group), stdin writer thread sender, reader task, ended */ }
+impl HeadlessHandle {
+    pub fn ended() -> Self;
+    pub fn spawn(program: &OsStr, args: &[String], cwd: &Path, env: &[(String, String)],
+                 on_event: impl Fn(SessionEvent) + Send + Sync + 'static) -> anyhow::Result<Self>;  // own process group
+    pub fn send_line(&self, line: String) -> anyhow::Result<()>;   // queued to the writer thread; never blocks
+    pub fn close_stdin(&self);
+    pub fn interrupt(&self, mode: InterruptMode, request_id: u64) -> anyhow::Result<()>;
+    pub fn kill(&self, grace: Duration);               // SIGTERM to the group, SIGKILL after grace, on a thread
+    pub fn pid(&self) -> Option<u32>;
+}
+pub const STDOUT_LINE_MAX: usize = 4 * 1024 * 1024;    // longer lines are cut and parsed as Unknown
+pub const SCRUB_PREFIXES: &[&str] = &["CLAUDE_CODE_"];
+pub const SCRUB_NAMES: &[&str] = &["CLAUDECODE"];
+```
+
+**Stream to `SessionEvent`** (`headless/claude_stream.rs`, `headless/codex_stream.rs`). These are the working shapes from the CLI documentation (research notes, "Agent control interfaces"). M8a.1 pins each one against a recorded fixture, and a field it finds under another name is renamed here and in the parser, not worked around.
+
+| Runtime | Line | Events |
+|---------|------|--------|
+| Claude | `{"type":"system","subtype":"init","session_id":…,"model":…,"mcp_servers":[{"name":…,"status":…}]}` | `Init { mcp_ok: Some(status of "anthrex" == "connected") }` |
+| Claude | `{"type":"assistant","message":{"content":[…]},"parent_tool_use_id":…}` | per block: `text` → `AssistantText`; `tool_use {id,name,input}` → `ToolUse`; `thinking` → `Other` |
+| Claude | `{"type":"user","message":{"content":[…]},"parent_tool_use_id":…}` | per block: `tool_result {tool_use_id,content,is_error}` → `ToolResult` (content string, or its text parts joined, cut to 4 KiB; `ok = !is_error`); `text` → `UserText` |
+| Claude | `{"type":"system","subtype":"api_retry","attempt":…,"retry_delay_ms":…,"error":…}` | `ApiRetry` |
+| Claude | `{"type":"system","subtype":"permission_denied",…}` | `PermissionDenied { tool, reason }` |
+| Claude | `{"type":"system","subtype":"compact_boundary",…}` | `Compacted` |
+| Claude | `{"type":"result","subtype":…,"is_error":…,"usage":{…},"permission_denials":[…]}` | `TurnEnded`: `Completed` when `subtype == "success"` and not `is_error`; `Interrupted` when M8a.1's interrupted marker is present; else `Failed { kind }` by the error category (`rate_limit`, `authentication_failed`, `billing_error`, else `Other`) |
+| Codex | `{"type":"thread.started","thread_id":…}` | `Init` |
+| Codex | `{"type":"turn.started"}` | `TurnStarted` |
+| Codex | `item.completed` with `item.type == "agent_message"` | `AssistantText` |
+| Codex | `item.started` / `item.completed` with `command_execution {id, command, aggregated_output, exit_code}` | `ToolUse { name: "Bash", input: {"command": command} }` / `ToolResult { ok: exit_code == 0 }` |
+| Codex | the same for `mcp_tool_call {id, server, tool, arguments, result}` | `ToolUse { name: "mcp__<server>__<tool>", input: arguments }` / `ToolResult` |
+| Codex | `file_change {id, changes, status}` (completed only) | `ToolUse { name: "apply_patch", input: {"changes": changes} }` then `ToolResult { ok: status == "completed" }` |
+| Codex | `web_search`, `reasoning`, `todo_list` items | `ToolUse { name: "WebSearch" }` for `web_search`; `Other` for the rest |
+| Codex | `{"type":"turn.completed","usage":{"input_tokens","cached_input_tokens","output_tokens"}}` | `TurnEnded { Completed }` |
+| Codex | `{"type":"turn.failed","error":{"message":…}}` | `TurnEnded { Failed { kind } }`, kind by the message patterns M8a.1 records |
+| Codex | `{"type":"error","message":…}` | `Other { kind: "error" }`, and the message is logged |
+| both | anything else, or invalid JSON | `Unknown` |
+
+**`SessionEvent` to milestone 6.5's conversation model** (`headless/conversation.rs`). Records always go to `ConversationSet::enrich`. Hooks are synthesised only when `hooks_fire` is false (every Codex session, and Claude only if M8a.1 finds its turn hooks do not fire in `-p`), with `source: HookSource::Stream` and `session_id` from `Init`. A synthesised `tool_response` is bounded exactly as `anthrex hook` bounds a real one (M6.5.2), setting `tool_result_truncated` and `tool_result_stringified`.
+
+| Input | `transcript::Record` | Synthesised `ParsedHook` |
+|-------|----------------------|--------------------------|
+| the daemon starts a turn with text `T` (`sent_turn`) | `UserText { ordinal: n, text: T }`, where `n` counts the turns sent in this session | `UserPromptSubmit { prompt: T }` |
+| `Init` | — | `SessionStart` |
+| `AssistantText`, no parent | `AssistantText { ordinal: n - 1 }` | — |
+| `ToolUse`, no parent | `ToolDetail { tool_use_id: id, input: Some(input) }` | `PreToolUse { tool_name, tool_input, tool_use_id }` |
+| `ToolResult`, no parent | `ToolDetail { tool_use_id: id, detail: Some(text), ok: Some(ok) }` | `PostToolUse { tool_name` (from the cursor)`, tool_use_id, tool_response: {"output": text}` or `{"error": text} }` |
+| `ToolUse` / `ToolResult` with a parent | the same `ToolDetail` (it joins by id) | — (M6.5 builds sub-agent conversations from `SubagentStart`/`SubagentStop`) |
+| `AssistantText` with a parent | — | — |
+| `TurnEnded` | — | `Stop` |
+| anything else | — | — |
+
+**Reconcile per kind** (`run/reconcile.rs`, decision 44):
+
+| `OpKind` | Reality checked | Replay | Otherwise |
+|----------|-----------------|--------|-----------|
+| `CreateRunBranch`, `PrepareWorktree` | `git worktree list --porcelain` lists the path on the branch | `Worktree { head }` if `setup` is `None`; else `NotStarted` (setup re-runs; it is idempotent) | `NotStarted`; a partial directory not in the list is removed and `git worktree prune` runs |
+| `CreateWindow` | a restored headless window whose `RunRef` equals the round's; any live process with the session's id on its command line (killed, decision 28) | `Window { window_id }` (its session is ended; resume restarts it) | `NotStarted` |
+| `ResumeSession` | a live process with the session id on its command line (killed) | — | `NotStarted` |
+| `VerifyDone`, `CountCommits`, `DiffSoFar`, `Proof`, `Check`, `PrepareReview` | none | — | `NotStarted` |
+| `MergeCandidate` | run branch head; the integration worktree's `HEAD` | head's parents are `(expected_run_head, task_head)` → `Merged { commit }`; head is `expected_run_head` → `NotStarted` after `reattach` | any other head → `RefMoved` |
+| `HandBack` | `MERGE_HEAD` in the task worktree | present → `HandedBack { files: <conflicted> }`; already a merge commit of the run head → `HandedBack { files: [] }` | `NotStarted` |
+| `RemoveWorktree` | the path; the salvage ref | path gone → `Removed { salvage_ref }` (the ref if it exists) | `NotStarted` |
+| `Accept` | `merge-base --is-ancestor <run branch> <base>` | ancestor → `Finished { outcome: "accepted as <base head7>" }` | `NotStarted` |
+| `Discard`, `VerifyRefs` | none (idempotent) | — | `NotStarted` |
+
+### MCP tools (`crates/mcp`, new)
+
+```rust
+pub struct McpOptions { pub role: proto::AgentRole, pub run_id: String, pub task_id: Option<String>,
+                        pub window_id: u32, pub socket: PathBuf }
+pub const TOOL_REPLY_TIMEOUT: Duration = Duration::from_secs(100);
+pub fn tools_for(role: proto::AgentRole) -> Vec<rmcp::model::Tool>;   // tools.rs
+pub async fn forward(opts: &McpOptions, tool: &str, args: serde_json::Value) -> (bool, String);
+pub async fn serve_on<R, W>(opts: McpOptions, reader: R, writer: W) -> anyhow::Result<()>
+    where R: tokio::io::AsyncRead + Unpin + Send + 'static, W: tokio::io::AsyncWrite + Unpin + Send + 'static;
+pub async fn serve_stdio(opts: McpOptions) -> anyhow::Result<()>;
+```
+
+Forwarding is the refreshed M8 brief's decision 41: a fresh socket connection per call (2 s connect timeout), `Hello { client: ClientKind::Mcp }`, `ClientMsg::Run(RunRequest::Tool(..))`, wait up to `TOOL_REPLY_TIMEOUT` for `RunReply::ToolResult`, skipping anything else; daemon down → `isError: true`, `cannot reach the anthrex daemon at <socket>: <error>`. A tool outside the role's list never reaches the daemon: `tool <tool> is not available to the <role> role`. `tools_for(Orchestrator)` is empty. Every schema is `{"type":"object","additionalProperties":false,…}`:
+
+| Role | Tool | Description | Properties (required in bold) |
+|------|------|-------------|-------------------------------|
+| worker | `task_done` | `Tell the engine the task is complete and committed. For a tdd task, name the test and the red commit.` | **`summary`** string 1–4000; `test` string 1–300; `red` string matching `^[0-9a-f]{7,40}$` |
+| worker | `task_blocked` | `Tell the engine you cannot continue, and why.` | `kind` enum `question`, `mis_sized`, `environment`; **`reason`** string 1–4000 |
+| reviewer | `submit_review` | `Submit your verdict and findings for this review round. Call it once.` | **`verdict`** enum `approve`, `changes`; **`summary`** string 1–4000; **`findings`** array ≤ 50 of objects with **`severity`** enum `critical`, `important`, `minor`; `file` string 1–500; `line` integer ≥ 1; `input` string 1–2000; **`text`** string 1–2000 |
+
+Engine-side acceptance texts (each a `ToolResult { ok: false }`): `unknown run <id>`; `run <id> is paused; the user must resume it`; `run <id> is <state>`; `this window is not the current worker of task <id>`; `this window is not the reviewer of task <id>`; `task_done is accepted only while the task is working (it is <state>)`; `submit_review is accepted only while the task is under review (it is <state>)`; `a review for round <n> was already submitted`; `invalid arguments: <field>: <problem>`; plus decision 32's and 35's texts. Successes: decision 32's texts and `Review recorded. You are done; end your turn now.`
+
+### Contracts and message texts (exact)
+
+```text
+WORKER_CONTRACT:
+You are a worker in an anthrex orchestration run.
+1. Work only in this worktree and only in the paths this task owns. Changing files outside them stops the task.
+2. Follow the test mode in your task prompt. For tdd: write the named test first, commit it while it fails (that commit is the red commit), then make it pass.
+3. Commit your work on this branch with clear messages. Never push, switch branches, or rewrite commits already there. Commit new files: untracked files are not part of your work.
+4. Use sub-agents to read and explore if you like; do all writing yourself.
+5. When the task is complete and committed, call the anthrex tool task_done with a summary (and, for tdd, the test and the red commit). Then stop.
+6. If you cannot continue, call task_blocked: kind question if you need an answer, mis_sized if the task is bigger than one task, environment if a tool or setup is broken. Then stop.
+7. If you believe a review finding is wrong, do not fix it: call task_blocked with kind question and say why.
+8. Messages that start with [anthrex] come from the orchestration engine. Do what they say, commit, and call task_done again.
+9. Nobody can answer a permission prompt. If a tool is denied, work without it or call task_blocked with kind environment.
+
+REVIEWER_CONTRACT:
+You are a reviewer in an anthrex orchestration run.
+1. This worktree is checked out at the change's head. Do not edit, create or delete files, and do not commit.
+2. Read the change with git diff <base>..<head> in this directory. Judge it against the brief and every acceptance criterion in your prompt.
+3. Run tests if that helps you judge.
+4. Call the anthrex tool submit_review exactly once, with verdict approve or changes, a summary, and findings.
+5. Every finding has a severity. critical: wrong or unsafe, must not merge. important: must be fixed before merging. minor: worth noting, does not block. Each critical or important finding must name a file and line, or a failing input.
+6. Use changes only when there is at least one critical or important finding. Earlier rounds' findings, if listed, must each be confirmed fixed.
+```
+
+| Name | Text |
+|------|------|
+| `check_failed_message` | `[anthrex] The check failed (<exit <code> \| timed out after <m> minutes>): <command>` / `Last 40 lines:` / the summary / `Fix it, commit, then call task_done again.` |
+| `proof_failed_message` | `[anthrex] The test proof failed: <reason>` where reason is one of `at the red commit <red7> the test passed, so it does not fail without your change`, `at your head <head7> the test failed`, `the output did not show that <test> ran and passed (expected a line matching <regex>)`, `this is a tdd task and no test or red commit was named; call task_done with test and red` / `Command: <command>` / `Last 40 lines:` / tail / `Fix it, commit, then call task_done again.` |
+| `review_changes_message` | `[anthrex] Review round <n> asked for changes. Fix every finding below, commit, then call task_done again.` then one line per critical or important finding: `- [<severity>] <file>:<line> <text>` or `- [<severity>] input <input>: <text>` |
+| `candidate_red_message` | `[anthrex] Your branch merged cleanly into the run branch, but the check failed on the merged result (<exit …>): <command>` / `Last 40 lines:` / summary / `Fix it on your branch, commit, then call task_done again.` |
+| `conflict_message` | `[anthrex] Your branch conflicts with the run branch. The run branch has been merged into your worktree with conflict markers left in:` / `- <file>` per file / `Resolve every conflict, commit the merge, then call task_done again.` |
+| `DONE_NUDGE` | `[anthrex] Your turn ended with commits on your branch and no task_done. If the task is complete, call task_done now (for a tdd task, with test and red). If you are stuck, call task_blocked.` |
+| `NO_COMMIT_NUDGE` | `[anthrex] Your turn ended and your branch has no commit yet. Continue the task and commit, or call task_blocked with the reason.` |
+| `REVIEW_NUDGE` | `[anthrex] Your turn ended without a verdict. Call submit_review now, exactly once.` |
+| `stall_nudge` | `[anthrex] Your last turn was interrupted after <n> minutes without any progress. Continue the task, or call task_blocked if you cannot.` |
+| `budget_wrap_up` | `[anthrex] This task has used its budget (<calls>/<limit> tool calls, <m>/<limit> minutes). Wrap up now: commit what works and call task_done, or call task_blocked with kind mis_sized.` |
+| `rate_limit_continue` | `[anthrex] Your last turn stopped on an API error (<reason>). Continue the task where you left off.` |
+| `answer_message` | `[anthrex] Answer to your question: <text>` |
+| `amend_message` | `[anthrex] The task was amended.` / `Brief: <brief>` / `Acceptance criteria:` / `- <item>` per item / `Continue with the amended task.` |
+| `RESUME_WORKER` | `[anthrex] The daemon restarted. Re-read your task above, continue, commit, and call task_done when complete.` |
+| `RESUME_REVIEWER` | `[anthrex] The daemon restarted. Finish your review and call submit_review.` |
+| `RESUME_AFTER_EXIT` | `[anthrex] Your session's process stopped in the middle of a turn and has been resumed. Check the state of your worktree, continue, commit, and call task_done when complete.` |
+| `denied_text` | `the agent was denied <n> times; last: <tool>: <reason>` |
+| `generated_files_message` | `[anthrex] task_done rejected: you changed generated files outside this task's owns: <files>. Revert them (git checkout <start> -- <files>, then commit), or this task must own them. Then call task_done again.` |
+| `protected_file_message` | `[anthrex] task_done rejected:` / per file: `<path> configures or instructs future agents; this task may change it only if its owns names it exactly` / `Revert it and call task_done again, or ask for the plan to be amended.` |
+
+`worker_prompt`: `[anthrex] Task <id>: <title>`, `Run goal: <goal>`, `Worktree: <path>`, `Branch: <branch>`, `Start commit: <sha7>`, `Size: <S|M>` (`, hub` when hub), `Test mode: <mode>` and, for tdd, `Test to write: <test_to_write>` when set and `Single-test command: <single_test>`, `Check command: <check>` (omitted when none), blank line, `This task owns:` with `- <glob>` lines, `Acceptance criteria:` with `- <item>` lines, blank line, the brief last. `reviewer_prompt`: `[anthrex] Review task <id> "<title>", round <n>, level <small|medium|frontier>.`, `Base: <sha7>`, `Head: <sha7>`, `Test mode: <mode>` (tdd adds `Look first for tests that were weakened or made trivial to pass.`), `small` adds `Review the diff only.`, `Acceptance criteria:` lines, `Last check (40 lines):` block when a check ran, `Earlier findings to confirm fixed:` lines when round > 1, blank line, the brief last.
+
+### CLI
+
+```
+anthrex run start --plan <file> [--yes] [--trust-project]
+anthrex run status [<run>] [--json]
+anthrex run approve <run>
+anthrex run reject <run> [--confirm <run-id>]
+anthrex run edit <run> --file <edits.toml>
+anthrex run retry <run> <task>
+anthrex run override <run> <task> --reason <text>
+anthrex run cancel <run>
+anthrex run resume <run> [--rebaseline]
+anthrex run accept <run> [--yes]
+anthrex run discard <run> [--confirm <run-id>]
+anthrex mcp --role <worker|reviewer> --run <run> [--task <task>] --window <id> [--socket <path>]   (hidden)
+```
+
+- `--trust-project` sets `RunRequest::Start.trust_project` (decision 53).
+- `--dir` is the existing global flag. `run start` auto-starts the daemon, prints the run id on stdout, and on stderr either `approve with: anthrex run approve <id>` followed by the plan table (`status` format), or `watch with: anthrex run status <id>` with `--yes`.
+- Every run request uses `CliClient::request_with_timeout` with `RUN_REQUEST_TIMEOUT` = 180 s (preflight's six git calls at the 60 s default could exceed a shorter bound; `start` is the slowest request).
+- `accept` asks `merge anthrex/<id>/integration into <base> in <root>? [y/N]` unless `--yes`; `discard` and `reject` ask the user to type the run id unless `--confirm`. A wrong id: `confirmation does not match the run id`, exit 1.
+- `status` text, one block per run, newest first:
+
+```
+add-reset-3f9a  running  2/4 merged  base main@1a2b3c4  writers 2/3  readers 1/3  rev 57
+  goal: Add password reset
+  report: /Users/me/Library/Application Support/anthrex/runs/add-reset-3f9a/REPORT.md
+  ID   SIZE MODE   STATE          RUNG BOUNCES        ROUTE                          WINDOWS
+  t1   M◆   tdd    merged         0    -              claude claude-opus-5 high      4 5
+  t2   M    tdd    review         1    review 1       codex (default) medium         6 9
+  t3   S    check  queued         0    -              claude claude-sonnet-5 low
+  t4   S    none   blocked        3    check 3        claude claude-sonnet-5 low     7
+  attention: t4 blocked (mis_sized): check failed 3 times
+```
+
+  Columns: id padded to 5, size to 5 (`◆` suffix for hub), mode to 7, state label to 15, rung to 5, bounces to 15 (`-`, or `<gate> <n>` joined with `, `), route to 31 (`<runtime> <model or (default)> <effort>`), then the live and past window ids. A paused run shows `paused (from running)`, a halted one `halted: <reason>` on its own line. `--json` prints `serde_json::to_string_pretty(&RunsSnapshot)`.
+
+### File sizes this milestone must respect
+
+AGENTS.md rule 8 puts the limit at about 600 lines. Counts on `main` at `2cb7e3c`, with M6.5's where it changes them:
+
+| File | Lines | Note |
+|------|------:|------|
+| `crates/config/src/lib.rs` | 730 (1033 after M6.5) | **Already over.** Add only the field, one `orchestrator::read` call and the `report_unknown_keys` arm; everything else, `[orchestrator.claude]` included, in `orchestrator.rs`. Record a follow-up to split `lib.rs`. |
+| `crates/daemon/src/server.rs` | 556 (565) | **35 lines.** Decision 49's refusals are one helper call per message kind; the helper lives in `server/headless_guard.rs` (task M8a.17) and the run requests in `server/run_api.rs` (task M8a.22); `GitWiring` replaces registry construction (net near zero). |
+| `crates/daemon/src/manager/mod.rs` | 478 (M6.5 unchanged at `8230d36`) | `handle_hook`'s headless branch and the feed send only; every headless method is in new `manager/headless.rs`. |
+| `crates/daemon/src/manager/entry.rs` | 331 | The `Process::Headless` arm in each routing method (`write_input`, `resize`, `attach`, `snapshot`, `signal_group`, `pid`) and `Entry.headless`. |
+| `crates/daemon/src/manager/restore.rs` | 509 | Parse `kind` and `run` into `Process::Headless(HeadlessHandle::ended())` and `Entry.headless`; at most 20 lines. |
+| `crates/daemon/src/manager/create.rs`, `restart.rs` | 559, 556 | **Untouched.** Headless windows never go through `create` or `restart`. |
+| `crates/daemon/src/state/mod.rs` | 203 | `WindowRecord.kind`. |
+| `crates/tui/src/app/mod.rs` | 586 (592) | Add `DaemonMsg::Run(_)` to M6.5's ignore arm, and one `is_headless` guard at each of the two `ClientMsg::Input` sites; at most 8 lines. |
+| `crates/tui/src/app/link.rs` | 262 | Skip `Subscribe` for a headless window (decision 49); the placeholder text goes in the existing pane renderer under `ui/`. |
+| `crates/cli/src/client.rs` | 541 | Untouched; `run_cmd.rs` uses `request_with_timeout`. |
+| `crates/cli/src/main.rs` | 527 | The `Run` and `Mcp` variants dispatch into `run_cmd.rs`; at most 25 lines here. |
+| `crates/proto/src/messages.rs` | 400 (500) | Two variants, `HookSource::Stream`, and their round-trip cases only (decision 3). |
+| `crates/proto/src/types.rs` | 384 | `WindowKind`, two `WindowInfo` fields, one `ClientKind` variant. |
+| `crates/daemon/src/lifecycle.rs` | 419 | `GitWiring`, `RunService` construction, restore, stop. |
+| `crates/daemon/src/status.rs`, `hooks.rs`, `launch/*.rs`, `window.rs` | 473, 313 (391), 427, 371 | **Untouched.** Headless status is `headless/status.rs`; the PTY status machine and launch path are M9's to amend for the orchestrator. `hooks::accepts` already returns `false` for a source it does not list. |
+| `crates/fake-agent/src/main.rs` | 319 (342) | Mode dispatch only; the headless modes go in new `headless.rs`, `stream_claude.rs`, `stream_codex.rs`, `roles.rs`, `mcp.rs`, and the step additions in `script.rs` (190). |
+| `scripts/pty-smoke.py` | 1572 | Already far over; the new stage is a new module `scripts/pty_smoke_run.py`, imported and called from `pty-smoke.py` in ≤ 10 lines. |
+
+No file under `crates/daemon/src/run/`, `crates/daemon/src/headless/`, `crates/mcp/src/` or `crates/proto/src/run*.rs` may exceed 600 lines. The engine is split by responsibility: `engine/mod.rs` (types, `step` dispatch), `engine/requests.rs` (start, approve, reject, edit, retry, override, cancel, resume, finish), `engine/dispatch.rs` (scheduler, slots, worktree and window launch), `engine/done.rs` (task_done, task_blocked, turn-end fallback, stall, rate limits, failed turns, denials, process exits, signals), `engine/gates.rs` (proof, check, review), `engine/merge.rs` (merge queue, hand-back, ref guard, completion), `engine/ladder.rs` (rungs, budgets, fresh sessions), `engine/outbox.rs` (turn-based delivery gate), `engine/restore.rs` (restore, pause, resume), with tests in `engine/tests/*.rs`.
+
+## Tasks
+
+Shared test helpers:
+
+- **Engine unit tests** use `engine/tests/fixture.rs`: `Fixture::new(plan_toml)` builds a `Run` through `plan::build_run` with a `Preflight` for `/tmp/x` (`base_sha` `b0` × 20 hex), `wt_dir` `/tmp/wt`, `data_dir` `/tmp/data/runs/<id>`, and the default config; `fx.send(now, kind) -> Vec<Effect>` runs `step`; `fx.op(kind_name) -> (OpId, OpKind)` finds the latest matching `Effect::Op`; `fx.done(op, result)`; `fx.task(id)`; `fx.status(window, Status)` and `fx.signal(window, AgentSignal)`. Assertions match on returned effects and on the task and run fields.
+- **Daemon git tests** use `crates/daemon/tests/support/mod.rs`'s `TempRepo`; a helper `recording_git(dir) -> PathBuf` writes a script that appends its argv and the `GIT_*` part of its environment to `<dir>/git.log` and execs the real `git`.
+- **End-to-end tests** live in `crates/cli/tests/run_e2e_*.rs` and share `crates/cli/tests/support/run_harness.rs`, declared from `support/mod.rs`. `RunHarness::new(config_toml)`: a temp dir from `tempfile::Builder::new().prefix("ax-run").tempdir_in("/tmp")`; a repo at `<tmp>/repo` (`git init -b main`, repo-local `user.name`, `user.email`, `commit.gpgsign false`, one commit of `README`); the config written to `<tmp>/config.toml` with `[orchestrator] git_timeout_secs = 5` and `[orchestrator.profile] check_timeout_secs = 10`, plus the caller's additions (test plans never set `check_timeout_secs`); the daemon started with `anthrex daemon start` and `ANTHREX_SOCKET=<tmp>/d.sock`, `ANTHREX_DATA_DIR=<tmp>/data`, `ANTHREX_CONFIG`, `ANTHREX_CLAUDE_BIN` and `ANTHREX_CODEX_BIN` both `fake_agent_bin()`, `FAKE_AGENT_ARGS_FILE` and `FAKE_AGENT_STDIN_FILE` both `<tmp>/agent-io/` (a test reads `worker-t1-1.args`, `worker-t1-1.stdin`), `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`, `ANTHREX_GIT=off` unless the test says otherwise. Methods: `script(name, steps: &[Value])` writes `<repo>/.git/fake-agent/<name>.jsonl`; `plan(toml) -> PathBuf` (outside the repo); `anthrex(args) -> Output`; `start(plan_toml, yes) -> String`; `subscribe() -> RunWatcher` (a raw socket client that sends `Subscribe` and keeps the latest `RunsSnapshot`); `wait_run(id, pred, RUN_WAIT) -> RunInfo` printing the last snapshot and the tail of `daemon.log` on timeout; `restart_daemon(extra_env)`; `git(args) -> String`. `Drop` runs `anthrex daemon stop` and waits for the socket to go. **`RUN_WAIT` = 300 s**, derived from the test configuration's own bounds, not observed cost: at most 40 sequential engine git calls on a task's path at `git_timeout_secs = 5` (200 s, `VerifyDone` included because it takes the smaller timeout), at most 4 sequential check or proof runs at `check_timeout_secs = 10` (40 s), and at most 20 s of scripted `wait_ms` on the critical path (an agent's idle wait for its next turn is not on it), together 260 s. Tests with more than one task in sequence or more than two review rounds (`e2e_two_rejections_…`, `e2e_second_conflict_…`, `e2e_mis_sized_…`, `e2e_a_second_death_…`, and each iteration of `e2e_crash_…`) wait `2 * RUN_WAIT`. Add both rows to `docs/timing-budgets.md`.
+- **Scripted agents.** `ANTHREX_CLAUDE_BIN` and `ANTHREX_CODEX_BIN` point at `fake-agent`, which picks its headless mode from its argv (M8a.20). A script's steps run inside the current turn, with these special cases:
+  - `{"read_message":{"expect":…}}` ends the turn and waits for the next message: for Claude, the next stdin line; for Codex, the next `exec resume` process's argument, with the script position kept in a sidecar file.
+  - `{"end_turn":{}}` ends the turn without waiting.
+  - The end of the script ends the turn and leaves the agent idle (a Claude process waits for stdin; a Codex process exits 0).
+  - A message that arrives after the script has ended gets an empty turn: an agent that ignores messages.
+
+  `DONE` below abbreviates `{"mcp_call":{"tool":"task_done","args":{…}}}` at the end of a script.
+
+### Scenario map (spec §21)
+
+| §21 scenario | Test here | What is left to a later milestone |
+|--------------|-----------|-----------------------------------|
+| A green S task on the fast path | `e2e_green_s_task_runs_to_merged` (plan path, `--yes`) | the fast path itself — M8b |
+| A TDD task whose red commit does not fail | `e2e_tdd_red_commit_that_passes_is_rejected` | — |
+| A TDD task whose test passes without the named test running | `e2e_tdd_test_that_did_not_run_is_rejected` | — |
+| A task that fails check once, then passes | `e2e_check_fails_once_then_passes` | — |
+| A stall → rung 2 on the peer runtime | `e2e_stall_escalates_to_a_fresh_session_on_the_peer_runtime` | — |
+| A mis-sized task → split by the orchestrator | `e2e_mis_sized_task_blocks_and_is_split_by_an_edit` (the user's `run edit` stands in for the orchestrator) | the orchestrator's `edit_plan` — M9 |
+| A merge conflict → hand-back → resolved | `e2e_conflict_is_handed_back_and_resolved` | — |
+| A second conflict → blocked | `e2e_second_conflict_blocks_the_task` | — |
+| A candidate merge that is red although both branches were green | `e2e_red_candidate_goes_back_to_the_worker` | — |
+| A cancel of a running task with dirty work (salvaged) | `e2e_cancel_of_a_dirty_running_task_is_salvaged` | — |
+| A ref moved behind the engine's back (run halts) | `e2e_moved_run_ref_halts_the_run`, `e2e_moved_base_ref_halts_the_run` | — |
+| A daemon killed after each logged intent | `e2e_crash_after_each_intent_kind_reconciles` | — |
+| A rate-limit event halving writers | `e2e_rate_limit_retry_is_not_a_stall_and_a_failed_turn_is_continued` (the event is seen, counted, never read as a turn end or a stall) | halving `max_writers` — M9.5 |
+| A race whose loser is stopped and salvaged | — (salvage itself is covered by the cancel test) | racing — M9.5 |
+| A test writer's red commit handed to an implementer | `proof_accepts_a_red_commit_from_an_earlier_session` (engine unit) and the rung-2 hand-over in `e2e_stall_…` | the test-writer pattern — M9.5 |
+| A review rejected twice → fresh worker on the peer runtime → approved | `e2e_two_rejections_then_a_fresh_peer_worker_is_approved` | — |
+| A worker that disputes a finding | `e2e_disputed_finding_blocks_as_a_question_and_the_answer_resumes_it` | the orchestrator answering — M9 |
+| A user override merged without approval, marked in the report | `e2e_override_merges_without_approval_and_is_reported` | — |
+| Input to a worker window refused by the daemon while engine messages still arrive | `e2e_headless_windows_refuse_client_control_while_the_engine_delivers` (headless form: `Subscribe`, `Input`, `Kill`, `Remove` and `Restart` refused, the engine's next turn still delivered) | — |
+| A worker stuck on a prompt nobody can answer → blocked(environment) | `e2e_permission_denials_block_the_task_as_environment` (headless form: no prompt can be shown; `denials_before_block` denials block the task) | — |
+| *(headless, beyond §21)* A process that dies mid-turn | `e2e_process_that_dies_mid_turn_is_resumed_once` | — |
+| *(headless, beyond §21)* Resume after a daemon restart | `e2e_daemon_restart_pauses_and_resume_continues` | — |
+| A plan edit that leaves an L task (rejected) | `e2e_plan_with_an_l_task_is_rejected`, `edit_leaving_an_l_task_is_rejected` | — |
+| A sub-planner edit outside its area (rejected) | `edit_outside_its_area_is_rejected` (engine unit, `EditScope::Area`) | the sub-planner's `submit_epic` — M9 |
+| Claude and Codex given overlapping `owns` (rejected) | `e2e_cross_runtime_overlapping_owns_are_rejected` | — |
+
+### M8a.1 Verify the external tools and record the stream fixtures
+
+**Files.** Create `crates/daemon/tests/fixtures/headless/` with `claude-<version>-stream.jsonl`, `claude-<version>-input.jsonl`, `claude-<version>-hooks.jsonl`, `claude-<version>-project-settings.jsonl`, `claude-<version>-sandbox.jsonl`, `codex-<version>-exec.jsonl`, `codex-<version>-project-config.jsonl`, `codex-<version>-resume.jsonl`, and a `.meta.json` beside each (CLI version, date, exact command, what was observed and what was only documented). Fill this brief's "Implementation notes".
+
+**Tests first.** None: this task records facts and fixtures. It is the only task that runs the real `claude` and `codex`. It uses the implementer's own login and a few turns of tokens, in `/tmp/anthrex-m8a1/`, and nothing in CI ever does. Replace personal paths with `/tmp/fixture` before committing.
+
+**Change.** Record each of the following with its command, the installed version and the relevant output. Together they set every field of `headless::argv::CLI_CAPS`.
+
+1. **Claude flags.** From `claude --version` and `claude --help`:
+   - `-p`, `--input-format stream-json`, `--output-format stream-json`, and whether stream-json output requires `--verbose` (`claude_verbose`).
+   - `--permission-prompts` and its values (`claude_permission_prompts`).
+   - `--session-id`, `--resume`, `--settings`, `--mcp-config`, and `--allowedTools` (one comma-separated value accepted).
+   - `--append-system-prompt`, and `--permission-mode` with `acceptEdits`, `dontAsk` and `plan`.
+   - `--effort` (`claude_effort_flag`), `--bare`, and any explicit opt-out of bare mode (`claude_non_bare_flag`, §23).
+2. **A recorded Claude session.** In a scratch repository, start one process with decision 24's flags for a worker. The `--settings` hook command must append each payload to `claude-…-hooks.jsonl`, and `--allowedTools Bash,Read` omits `Write` on purpose. Then write three stream-json user messages, each after the previous `result`:
+   1. "Run `ls` with Bash, then reply done".
+   2. "Create x.txt with the Write tool", which must be denied.
+   3. "Run `sleep 60` with Bash", interrupted after 5 s.
+
+   Record stdout and every stdin line. Then answer:
+   - The exact **user-message envelope** the CLI accepted, which fixes `claude_stream::user_message`.
+   - Whether the process stays alive after `result` and exits on stdin EOF.
+   - Whether the interrupt control request (`{"type":"control_request","request_id":…,"request":{"subtype":"interrupt"}}`) is accepted, and what it prints. If it is not accepted, what `SIGINT` does (`claude_interrupt`). What an interrupted turn's `result` looks like.
+   - Whether `result.usage` is per turn or cumulative (compare the first two), and its field names.
+   - The `permission_denied` event's shape and the result's `permission_denials`.
+   - Which hooks fired: `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, and `SubagentStart` (ask for one Agent call) (`claude_hooks_fire_in_print`).
+3. **Documented shapes that cannot be triggered on demand.** Copy these into the fixture with `"observed": false` in the meta, from the headless documentation for the installed version: `system/api_retry` (`error` values), `compact_boundary`, a `result` that failed on `rate_limit`, `authentication_failed` and `billing_error`.
+4. **Claude resume.** `claude -p --resume <the recorded id>` with every flag re-passed accepts a fourth message. With a random UUID, record the exact "no such session" text (decision 28's failed-resume marker).
+4a. **Project settings (decision 53).** In a scratch repository with a tracked `.claude/settings.json` holding a `PreToolUse` hook that writes a marker file, and a tracked `.mcp.json` naming a server whose command writes another marker:
+   - Find the flags that exclude them under `-p`. Try `--setting-sources user` and `--strict-mcp-config` first, then whatever `claude --help` offers.
+   - Record a session with decision 24's flags: neither marker appears; anthrex's `--settings` hooks still fire (they are in the hooks fixture); `system/init`'s `mcp_servers` lists only `anthrex`.
+   - Record the same session without the flags: both markers appear. That shows the test would catch a regression.
+   - Set `claude_user_settings_only` to the flags, or to `None` if no mechanism exists.
+4b. **Worker sandbox (decision 54).** Find the sandbox settings keys in the settings documentation for the installed version: enable, unsandboxed commands disallowed, extra writable paths. Then, in a *linked* worktree, run a worker session with decision 54's `--settings` block and ask it to (1) `touch` a file one directory above the worktree, and (2) commit a file inside the worktree.
+   - Record that (1) is refused, and how it appears in the stream: a `permission_denied` event, an entry in `permission_denials`, or only a failed `Bash` result.
+   - Record that (2) succeeds.
+   - Record the error text when the sandbox cannot start (for example, run once with `PATH` stripped of `bwrap` on Linux, if available).
+   - Do this on macOS, and on Linux when one is available; otherwise record Linux as "not verified". Set `claude_sandbox_keys`.
+5. **Claude authentication.** With `ANTHROPIC_API_KEY` unset, `-p` without `--bare` answers, which shows the login is used. With `--bare` it fails; record the text. If a key is available: under `--bare`, do `--settings` hooks and `--mcp-config` still apply (decision 50)? Otherwise record "not verified", and `api_key` stays refused at config load.
+6. **Codex flags.** From `codex --version`, `codex exec --help` and `codex exec resume --help`: `--json`, `-s`, `-m`, `-c`, and whether `resume` accepts `-s`, `-c` and `-m` (`codex_resume_takes_sandbox`). Confirm these config keys exist in the native binary (`strings … | grep -E …`): `mcp_servers.<n>.default_tools_approval_mode`, `mcp_servers.<n>.tool_timeout_sec`, `developer_instructions`, `model_reasoning_effort`, `approval_policy`, `sandbox_workspace_write.writable_roots`.
+7. **A recorded Codex session.** In a *linked* worktree of a scratch repository:
+   - `codex exec --json -s workspace-write -c approval_policy="never" -c 'sandbox_workspace_write.writable_roots=["<git common dir>"]' -- "create a.txt and commit it"`. The commit must succeed. Without the writable root it must fail; record how the failure appears in the stream (decision 25, review focus 5).
+   - `codex exec resume <thread_id> --json -- "append a line and commit"`.
+   - Then:
+     - Record both streams.
+     - Record `turn.completed`'s usage field names.
+     - Record `turn.failed`'s shape (`-m no-such-model`), and the rate-limit message pattern as documented.
+     - Record what `SIGINT` to an `exec` in progress prints.
+     - Record whether a write refused by `-s read-only` appears as a structured denial or only as a failed command.
+7a. **Codex project config (decision 53).** In a scratch repository, commit a `.codex/config.toml` that sets something visible (for example `developer_instructions = "Always answer PROJECT-CONFIG-LOADED"`, or an MCP server whose command writes a marker file) and a `.codex/hooks.json` hook that writes a marker.
+   - Record a `codex exec --json` turn and an `exec resume` turn with decision 25's flags into `codex-<version>-project-config.jsonl`: does either marker, or the instruction, appear?
+   - Repeat after marking the directory trusted in the user's config, if Codex has trust levels, since trust may be what enables project config.
+   - If it loads, look for a way to exclude it (a flag, or a `-c` override) in `codex exec --help` and the config reference, and prove it with the same recording.
+   - Set `codex_loads_project_config`, `codex_project_config_paths` and `codex_user_config_only`, or record "not loaded" with the evidence.
+8. **rmcp.** `cargo add rmcp@=3.4.0` in a throwaway crate outside the repository: decision 5's API names resolve.
+9. **git.** `git --version` is at least 2.38. Record the output of `git merge-tree --write-tree --name-only --no-messages A B` for a clean pair and a conflicting pair in a scratch repository: the tree on line 1, the conflicted paths after it.
+
+If a flag, key or event is missing, stop work on the item that uses it, as AGENTS.md says, record the evidence, and follow the fallback its decision names.
+
+**Acceptance.** "Implementation notes" has a dated "M8a.1 external tools" entry covering every item, 4a, 4b and 7a included, and states every `CLI_CAPS` value with the item that set it. The eight fixtures and their meta files exist, and every `.meta.json` names the CLI version.
+
+**Commit.** `test(daemon): record the headless stream fixtures and the verified external tool facts`
+### M8a.2 Protocol: run types, wire messages, the version bump
+
+**Files.** Create `crates/proto/src/run.rs`, `run_info.rs`, `run_wire.rs`, `run_tests.rs`. Modify `crates/proto/src/lib.rs`, `messages.rs`, `types.rs`; every `WindowInfo { … }` construction in the workspace (38 sites on `main`, tests included) gains `kind: WindowKind::Pty, run: None`; `crates/tui/src/app/mod.rs` (the ignore arm); `crates/cli/src/client.rs` only if a `match` on `DaemonMsg` is exhaustive there.
+
+**Tests first**, in `run_tests.rs` and `messages.rs`:
+
+- `plan_parses_the_brief_example`: decision 7's example parses with `toml::from_str::<Plan>` (dev-dependency `toml`) into one task with `size == Size::M`, `route.strength == Some(Strength::Standard)` and `profile.env["CARGO_TARGET_DIR"] == "{worktree}/target"`.
+- `plan_rejects_unknown_fields_at_every_level`: an unknown key at top level, in `[profile]`, in `[[task]]`, in `[task.route]` and in `[task.budget]` each fails and the error names the key.
+- `size_serializes_as_a_capital_letter` (`"S"`, `"M"`, `"L"`); `strength_and_effort_order` (`Fast < Standard < Frontier`, `Low < Medium < High`, `Effort::High.raised() == None`, `Size::M.raised() == Size::L`).
+- `plan_edits_parse_from_an_edit_file`: an `EditFile` with one of each of the nine ops round-trips through TOML; `op = "approve_task"` is rejected.
+- `states_serialize_snake_case`: `TaskState::MergeQueue` is `"merge_queue"`, `RunState::AwaitingApproval` is `"awaiting_approval"`, `BlockReason::MisSized` is `"mis_sized"`; `TaskState::is_finished` is true exactly for `Merged` and `Cancelled`; `RunState::is_terminal` exactly for `Accepted`, `Discarded`, `Failed`.
+- `every_run_request_and_reply_round_trips`: each `RunRequest` and `RunReply` variant, wrapped in `ClientMsg::Run` / `DaemonMsg::Run`, with a `RunsSnapshot` holding one `RunInfo` with one `TaskInfo` holding one `AgentRoundInfo` and one `ReviewInfo` with a `Finding`, and a `ToolCall` with `args` `{"summary":"ok"}`, survives MessagePack (`rmp_serde::to_vec_named`).
+- `window_info_run_defaults_to_none`: JSON without `run` deserializes with `run == None`; `window_info_kind_defaults_to_pty`: JSON without `kind` gives `WindowKind::Pty`, and `Headless` round-trips as `"headless"`.
+- `hook_source_stream_round_trips` (`HookSource::Stream` survives MessagePack).
+- `agent_role_serializes_snake_case`: `Orchestrator`, `Worker` and `Reviewer` are `"orchestrator"`, `"worker"` and `"reviewer"`, the strings `anthrex mcp --role` and `fake-agent` use.
+- `agent_role_does_not_shadow_the_conversation_role`: `proto::AgentRole::Worker` and `proto::Role::User` both resolve (compiles only after M6.5 merged; it is the guard for decision 3).
+- Update the `proto_version_is_*` test to the header's number.
+
+**Change.** Add the Interfaces types. Until M8a.22, the daemon answers every `RunRequest` with `RunReply::Refused { request: "run", message: "runs are not available yet" }` (and `Tool` with `ToolResult { ok: false, text: "runs are not available yet" }`); the TUI ignores `DaemonMsg::Run`.
+
+**Acceptance.** Workspace builds; all tests pass; `PROTO_VERSION` equals the header's derivation, recorded in "Implementation notes".
+
+**Commit.** `feat(proto): add run, task, plan-edit and snapshot types and the run wire messages`
+
+### M8a.3 The `[orchestrator]` config and the roster
+
+**Files.** Create `crates/config/src/orchestrator.rs`, `crates/config/src/orchestrator_tests.rs`. Modify `crates/config/src/lib.rs` (field, call, unknown-key arm only).
+
+**Tests first**, in `orchestrator_tests.rs`:
+
+- `defaults_when_absent`: every default of the Interfaces block; `models == default_roster()` (four entries in decision 23's order with their strengths).
+- `keys_are_read`: a config setting every key, including `[orchestrator.budget.s]`, `[[orchestrator.models]]` and `[orchestrator.profile.env]`, reads back exactly.
+- `out_of_range_values_fall_back_with_problems`: `max_writers = 0`, `max_writers = 9`, `stall_after_secs = 1`, `git_timeout_secs = 4`, `worker_codex_sandbox = "yolo"`, `default_runtime = "shell"`: one problem each, default kept, the exact message for `max_writers`.
+- `invalid_model_entries_are_skipped_with_their_index`: runtime `perl`, an empty Claude model, strength `huge`, an 81-character note.
+- `user_models_extend_and_replace_builtins` (a `claude-sonnet-5` entry with strength `frontier` replaces the built-in in place); `builtin_models_false_drops_builtins`; `no_valid_models_uses_the_default_roster`.
+- `unknown_orchestrator_keys_are_reported` (`orchestrator.max_parallel`, `orchestrator.budget.x.tool_calls` and `orchestrator.done_quiet_secs`, a key an earlier draft had, each `unknown key, ignored`).
+- `claude_auth_and_helper_are_read` (`auth = "api_key"` with `api_key_helper`; `auth = "token"` is a problem and keeps `login`); `worker_tools_and_sandbox` (`worker_allowed_tools` replaces the default list; an empty list is a problem and keeps the default; `worker_codex_sandbox = "yolo"` is a problem); `budget_tokens_is_optional` (absent by default, read when set, `0` is a problem); `worker_sandbox_defaults_to_true` (and `false` is read); `profile_generated_is_read` (`[orchestrator.profile] generated`); `profile_protected_adds_to_the_builtins` (config `protected = ["x/**"]` reads back as the five built-ins plus `x/**`).
+- In `lib_tests.rs`: `every_key_is_read` gains an `[orchestrator]` table; the test that `orchestrator` is silently skipped is replaced.
+
+**Change.** Implement per the Interfaces and decision 23.
+
+**Acceptance.** Tests pass. `crates/config/src/lib.rs` grows by at most 15 lines.
+
+**Commit.** `feat(config): add the [orchestrator] table with budgets, timings, roster strengths, headless session settings and profile defaults`
+
+### M8a.4 Globs and roster policy
+
+**Files.** Create `crates/daemon/src/run/mod.rs`, `run/globs.rs`, `run/roster.rs`. Modify `crates/daemon/src/lib.rs` (`pub mod run;`), `crates/daemon/Cargo.toml` (`globset = "0.4"`, `regex = "1"`, `toml` as workspace dependencies; add `globset` and `regex` to the workspace table).
+
+**Tests first.**
+
+- In `globs.rs`: `literal_prefix_stops_at_the_first_wildcard` (`crates/proto/**` → `["crates","proto"]`; `**/*.rs` → `[]`; `src/a[0-9].rs` → `["src"]`); `intersection_is_prefix_containment` (the refreshed M8 brief's four cases); `modules_spanned_cases` (with `modules = ["crates/*"]`: `crates/proto/**` → `One("crates/proto")`; `crates/proto/src/a.rs` and `crates/tui/**` → `Many`; `crates/**` → `Many`; `docs/x.md` → `One(".")`; no modules configured → `One(".")`); `owns_without_wildcard_covers_the_directory_below_it` (`crates/auth` matches `crates/auth/src/lib.rs` and not `crates/authz/lib.rs`; `crates/auth/` the same); `glob_matching_does_not_cross_separators` (`src/*.rs` does not match `src/a/b.rs`); `absolute_and_parent_globs_are_invalid`; `inside_area_cases` (`crates/daemon/src/**` inside `crates/daemon/**`; `crates/tui/**` not; `crates/daemon` exact inside `crates/daemon/**`); `names_literally_cases` (`AGENTS.md` in owns names `AGENTS.md`; `./AGENTS.md` too; `**`, `*.md`, `.claude/**` and the directory entry `.claude` name nothing; `docs/AGENTS.md` does not name `AGENTS.md`); `builtin_protected_matches_nested_instruction_files` (`**/AGENTS.md` matches `AGENTS.md` and `docs/AGENTS.md`; `.claude/**` matches `.claude/settings.json`; `.mcp.json` does not match `x/.mcp.json`).
+- In `roster.rs`, on the default roster: `pick_reviewer_prefers_the_other_runtime_at_or_above_the_author` (a Codex `standard` author at level `medium` gets `claude-sonnet-5`, effort `medium`); `small_level_takes_the_cheapest_other_runtime` (a Claude author at `small` gets Codex `""`, effort `low` — Codex has no `fast` entry, so the lowest at or above `fast`); `frontier_level_falls_back_to_the_same_runtime` (a Codex author at `frontier` gets `claude-opus-5`; a Claude `claude-opus-5` author at `frontier` with no Codex frontier entry gets `claude-opus-5` itself as the last resort); `escalate_raises_effort_then_changes_runtime` (`medium` → `high` same model; `high` Claude standard → Codex `""` high; `high` Claude `claude-haiku-4-5` on a Claude-only roster → `claude-sonnet-5` `high` (no peer, one strength up); `high` Claude `claude-opus-5` on the default roster → unchanged (no Codex frontier entry, nothing above frontier)).
+
+**Change.** Implement decisions 11, 23 (policy side), 35 (reviewer route) and 39.
+
+**Acceptance.** Tests pass; both files are pure (decision 2's grep).
+
+**Commit.** `feat(daemon): add owns glob rules and strength-aware roster policy for runs`
+
+### M8a.5 Plan parsing, resolution and validation
+
+**Files.** Create `run/model.rs`, `run/plan.rs`, `run/validate.rs`, `run/env.rs`, `run/plan_tests.rs`, `run/validate_tests.rs`.
+
+**Tests first.** Each rule test asserts the exact message and rule id.
+
+- `the_brief_example_builds_a_run`: decision 7's plan through `build_run` gives one task with branch `anthrex/<id>/t1`, worktree `/tmp/wt/runs/<id>/t1`, `route` resolved, `review_level == Some(Medium)`, `review_route` from `pick_reviewer`, and `limits` from config with the plan's `max_writers` winning.
+- `policy_fills_routes_by_class` (S → `standard`/`low`, M → `standard`/`medium`, hub → `frontier`/`high`, model the first roster entry at that strength) and `a_given_model_fixes_the_strength` and `a_contradicting_strength_is_an_error`.
+- `profile_keys_resolve_per_key`: plan `check` with config `single_test` gives both; plan `generated` overrides config `generated`; `check_timeout_secs` defaults to 1800; `profile_env` substitutes `{worktree}`. `generated_globs_are_validated` (absolute or `..` globs rejected like `owns`). `plan_protected_adds_to_config_and_builtins`. `owns_covering_a_protected_file_warns_without_rejecting`: with `Preflight.protected_files == ["AGENTS.md", ".claude/settings.json"]`, a task owning `**` gets two notes with the exact rule-6.protected text and the run still builds; a task owning `AGENTS.md` exactly gets no note for it; a task owning `.claude/**` gets a note for `.claude/settings.json`.
+- Size rules: `two_modules_raise_s_to_m`, `two_modules_with_interface_change_is_l_and_rejected`, `hub_touch_raises_to_m_and_sets_hub`, `l_is_rejected`, and `raises_are_recorded_as_notes` (exact note text).
+- Test-mode rules: `code_defaults_to_tdd_and_docs_to_none`, `non_tdd_needs_a_reason`, `none_on_source_is_rejected`, `hub_code_is_forced_to_tdd`, `tdd_without_single_test_becomes_check_and_raises_review`.
+- Review level: `no_check_raises_every_review`, `check_mode_on_source_raises_review`, `review_small_false_skips_s_but_not_hub`.
+- `cross_runtime_overlap_is_rejected_on_the_later_task`, `same_runtime_overlap_is_allowed_and_becomes_an_implicit_dep` (`implicit_deps == ["t1"]` on `t2` only).
+- Graph and fields: `duplicate_ids`, `id_syntax`, `reserved_id_integration`, `unknown_dependency`, `cycle_is_reported_once`, `blank_fields`, `owns_required`, `absolute_owns`, `research_and_review_kinds_are_deferred`, `too_many_tasks`, `limit_ranges`, `budget_ranges`, `single_test_must_contain_the_placeholder`, `test_passed_must_compile_as_a_regex`, `env_key_syntax`.
+- `all_errors_are_collected`: three problems, three `PlanError`s.
+- `slug_examples` (the refreshed M8 brief's four cases).
+
+**Change.** Implement decisions 7–12 and 15's slug; `Run` and `Task` types per Interfaces.
+
+**Acceptance.** Tests pass; the files are pure.
+
+**Commit.** `feat(daemon): parse, resolve and validate run plans against the size, test-mode and runtime rules`
+
+### M8a.6 Plan edits
+
+**Files.** Create `run/edits.rs`, `run/edits_tests.rs`.
+
+**Tests first.**
+
+- `add_task_is_validated_like_a_plan_task`; `amend_route_on_a_working_task_is_refused` (message `task t1 is working; route can be amended only on pending, queued or blocked tasks`); `amend_brief_on_a_working_task_yields_a_deliver_consequence` (text equals `amend_message`).
+- `cancel_of_a_pending_task_marks_dependents_dep_cancelled`; `cancel_of_a_working_task_yields_cancel_live`.
+- `split_rewires_dependents_to_every_child`: `t3` depended on `t2`; after `split_task t2 into [t2a, t2b]`, `t3.spec.deps == ["t2a","t2b"]` and `t2` is `cancelled`.
+- `add_dep_creating_a_cycle_is_rejected`; `dep_on_a_cancelled_task_is_rejected`.
+- `answer_only_on_blocked_question_or_working`.
+- `a_batch_is_atomic`: a batch of a valid `add_task` and an invalid `add_dep` changes nothing and returns one error.
+- `edit_leaving_an_l_task_is_rejected`: `amend_task size = "L"`.
+- `an_untouched_rung3_l_task_does_not_block_other_edits`: a task at L from rung 3 and an unrelated `answer` → accepted.
+- `edit_outside_its_area_is_rejected`: under `EditScope::Area { globs: ["crates/daemon/**"] }`, `add_task` owning `crates/tui/**` gives decision 12's message.
+- `pause_resume_finish_are_consequences`.
+
+**Change.** Implement decision 13.
+
+**Acceptance.** Tests pass; `edits.rs` is pure.
+
+**Commit.** `feat(daemon): apply and validate plan edits atomically`
+
+### M8a.7 Headless streams: parsers, status and the conversation mapping
+
+**Files.** Create `crates/daemon/src/headless/mod.rs` (types), `headless/claude_stream.rs`, `headless/codex_stream.rs`, `headless/status.rs`, `headless/conversation.rs`, `headless/argv.rs` (`CLI_CAPS`, `mcp_args` and the two argv builders, decisions 24–25), and a test file beside each. Modify `crates/daemon/src/lib.rs` (`pub mod headless;`), `crates/proto/src/messages.rs` only if M8a.2 did not add `HookSource::Stream`.
+
+**Tests first.** Every parser test reads M8a.1's fixtures from `crates/daemon/tests/fixtures/headless/` through `include_str!`, so a new fixture version is a new test, not an edit.
+
+- `claude_stream_parses_every_fixture_line`: every line of `claude-…-stream.jsonl` yields at least one event, and none yields `Unknown` except lines whose type the meta file lists as unmodelled. The event sequence of the three recorded turns is `Init`, then per turn tool and text events, then `TurnEnded`. Turn 2 has a `PermissionDenied` and `denials == ["Write"]`. Turn 3 is `Interrupted`.
+- `claude_usage_is_per_turn`: two consecutive `TurnEnded` usages are per turn even if the fixture's `result.usage` is cumulative. The parser keeps the previous total in the event when M8a.1 found it cumulative; otherwise it passes the value through.
+- `claude_failed_results_are_classified`: each documented failing `result` yields `Failed` with `RateLimit`, `Authentication`, `Billing`, or `Other` for an unknown category. `api_retry` yields `ApiRetry` with `delay_ms`.
+- `claude_user_message_matches_the_recorded_envelope`: `user_message("hello", Some(id))` is byte-for-byte the first line of `claude-…-input.jsonl` with its text replaced, compared as JSON values. The same holds for `interrupt_request` when M8a.1 found the control request accepted.
+- `codex_stream_parses_exec_and_resume`: `thread.started` gives `Init` with the thread id. `command_execution` gives a `ToolUse { name: "Bash" }` and `ToolResult` pair joined by id. `turn.completed` gives `TurnEnded { Completed, usage }` with the fixture's numbers. The failed-model fixture gives `Failed { Other }`.
+- `garbage_never_panics`: invalid JSON, a JSON array, a 5 MB line, an unknown `type`, and a `result` with no `usage` each yield `Unknown` or a best-effort event, never a panic. Also run as a `proptest` over arbitrary strings with 1000 cases.
+- `headless_status_transitions`: `Starting` → `Working` on `Init`/`TurnStarted`. `ApiRetry` → `Attention` with `rate_limited`, and any later event clears it. `TurnEnded Completed` → `Idle`, and `Failed` → `Attention`. `ProcessExited` → `Exited`. `tool` follows the latest top-level `ToolUse`.
+- `conversation_map_follows_the_table`: one case per row of the Interfaces mapping table, for both `hooks_fire` values. With `hooks_fire == true`, no hook is produced.
+- `a_codex_session_builds_a_real_conversation`: feed `codex-…-exec.jsonl` and the daemon's sent turn through `map` and `sent_turn` into a real M6.5 `ConversationSet` (`on_hook` then `enrich`). The snapshot has one `User` turn with the prompt text and one `Assistant` turn whose `ToolCall` for the command has `input` and a result. Without the synthesised hooks, the same records produce no turn, which is M6.5 decision 1.
+- `a_claude_session_enriches_hook_built_turns`: replay `claude-…-hooks.jsonl` through `on_hook` (as the real hook path would) and `claude-…-stream.jsonl` through `map`. The prose and tool details land, and no turn is duplicated.
+- `argv_builders`: the exact argv for a Claude worker, a Claude reviewer, a Claude resume, a Codex worker's first turn, a Codex resume and a Codex reviewer, each with the flags in decision 24's or 25's order (the `--mcp-config` JSON compared as a value). Also `claude_variadic_flags_are_followed_by_a_flag` over every combination of role, model, effort flag and session argument. `api_key_auth_adds_bare` and `login_adds_the_non_bare_flag_only_when_caps_say_so`. `codex_worker_args_add_the_git_common_dir_as_writable` (review focus 5). `claude_launches_load_only_user_settings`: with `claude_user_settings_only == Some(flags)`, every Claude argv (worker, reviewer, first launch, resume) contains the flags exactly once, before `--settings`; with `None` it contains none of them. `codex_launches_exclude_project_config_when_caps_say_so`: with `codex_user_config_only == Some(flags)`, the first-turn and resume argv both carry the flags exactly once, before `--`; with `None` neither does. `worker_settings_json_enables_the_sandbox`: `claude_settings` for a worker is exactly the M3 hook JSON plus the sandbox block with `CLI_CAPS.claude_sandbox_keys`, unsandboxed commands disallowed and `writable_roots == [<git common dir>]` (compared as JSON values); a reviewer's has no sandbox key; `worker_sandbox = false` gives none either. `toml_string_round_trips_through_the_toml_crate` covers the refreshed M8 brief's 20 strings plus both contracts.
+- `mcp_args_for_a_worker`: the exact vector `["mcp","--role","worker","--run","r-3f9a","--task","t1","--window","7","--socket","/tmp/a.sock"]`.
+
+**Change.** Implement decisions 24 and 25 (argv), 27 (parsers, status, mapping), 51 (the fixture contract), 53 (the user-settings flags) and 54 (the sandbox settings block), and the Interfaces tables.
+
+**Acceptance.** Tests pass, and every file in `headless/` except `session.rs` passes decision 2's purity grep.
+
+**Commit.** `feat(daemon): parse Claude stream-json and Codex exec events into session events, status and conversation inputs`
+### M8a.8 Run git operations I: preflight, branches, worktrees, the write queue
+
+**Files.** Create `run/git/mod.rs`, `run/git/worktrees.rs`, `run/git/queue.rs`, `crates/daemon/tests/run_git.rs`.
+
+**Tests first**, each with a fresh `TempRepo`:
+
+- `preflight_reports_branch_sha_and_roots`; `preflight_from_a_linked_worktree_keeps_root_and_project_apart`; `preflight_refusals` (dirty tracked tree, detached `HEAD`, no commits, not a repository, missing identity with `GIT_CONFIG_GLOBAL=/dev/null` and no repo identity) with decision 17's exact messages; `preflight_ignores_untracked_files`.
+- `run_branch_and_integration_worktree_are_created_and_locked`: `git worktree list --porcelain` shows the path on `anthrex/<id>/integration` with a `locked` line.
+- `task_branch_starts_at_the_given_run_head_and_is_reused`: create from a sha, then a second call returns the same head and changes nothing; after `git worktree remove --force` it is re-added on the existing branch; called again with a newer `from` while the branch has no commit of its own it re-points the branch to `from`; with a commit of its own it leaves the branch alone.
+- `a_task_branch_can_live_under_the_run_branch_name`: `anthrex/<id>/integration` and `anthrex/<id>/t1` coexist, and `git branch anthrex/<id>` fails (decision 16).
+- `verify_done_reports_each_condition`: no commits; one commit; a dirty tracked file; `MERGE_HEAD` present; an untracked file inside `owns` and one outside (only the inside one reported); a committed file outside `owns`; a committed `Cargo.lock` outside `owns` with `generated = ["Cargo.lock"]` (reported in `generated_outside_owns`, not `outside_owns`), and the same with `Cargo.lock` in `owns` (reported in neither); a changed `AGENTS.md` with owns `**` (in `protected_changed`), with owns `AGENTS.md` (in nothing), a changed `.claude/settings.json` with owns `.claude/**` (in `protected_changed`), and a new `docs/AGENTS.md` (in `protected_changed`, and not also in `outside_owns`); after merging a newer run head into the task branch, the run head's own files are **not** reported as outside `owns`; a `red` that is the start commit, a `red` on another branch, a valid `red` (`red_ok` `Some(false)`, `Some(false)`, `Some(true)`).
+- `count_commits_and_diff_so_far`.
+- `project_settings_are_found_in_the_base_tree`: a `TempRepo` whose base commit tracks `.claude/settings.json` with a `hooks` key → listed; one whose settings have no `hooks` key → not listed; one tracking `.mcp.json` → listed; an untracked `.mcp.json` in `root` only → not listed; invalid JSON in a tracked settings file → listed (it cannot be shown to be hook-free); with `codex_paths = Some([".codex/config.toml", ".codex/hooks.json"])` a tracked `.codex/config.toml` → listed, and with `None` → not listed; with `claude == false`, Claude's files are not listed.
+- `protected_files_lists_tracked_matches_only`: tracked `AGENTS.md`, `docs/AGENTS.md` and `.claude/settings.json` are listed; an untracked `CLAUDE.md` is not.
+- `review_worktree_is_detached_at_the_task_head_and_replaced`.
+- `every_run_git_call_passes_no_optional_locks_and_no_git_env`: every function in this task through `recording_git`, with `GIT_DIR` and `GIT_INDEX_FILE` set in the test process's environment under the crate's shared environment lock (edition 2024 makes `set_var` unsafe; AGENTS.md): every logged argv has `-C <dir> --no-optional-locks`, none of the five variables reached the child, and every write carries `-c core.hooksPath=/dev/null -c commit.gpgSign=false`.
+- `engine_writes_ignore_hooks_and_signing`: a repo with `commit.gpgsign = true`, `gpg.program = /bin/false` and a `post-checkout` hook that exits 1: worktree creation and checkout still succeed.
+- In `queue.rs` (tokio test): `writes_to_one_repo_are_serialized` (two writes that each hold for 200 ms never overlap, checked by timestamps recorded inside); `writes_to_two_repos_run_concurrently`; `lock_errors_are_retried_then_surface` (a closure that returns `Unable to create '/x/.git/index.lock': File exists` twice then succeeds is called three times; one that always fails is called six times and returns the last error).
+
+**Change.** Implement decisions 17, 18, 19, 53 (`project_settings`), 55 and 56 (the split of `VerifyDone`'s changed paths, and `protected_files`).
+
+**Acceptance.** Tests pass. No function in `run/git/` is `async` except `GitQueue::write`. Milestone 5's rule still holds: every `Command::new` that spawns git in `crates/daemon/src` also matches `no-optional-locks`.
+
+**Commit.** `feat(daemon): add run preflight, branch and worktree operations behind a per-repository git write queue`
+
+### M8a.9 Run git operations II: merge candidate, CAS, hand-back, salvage, finish
+
+**Files.** Create `run/git/merge.rs`, `run/git/salvage.rs`; add to `crates/daemon/tests/run_git.rs` (split into `run_git_merge.rs` if it passes 600 lines).
+
+**Tests first.**
+
+- `merge_tree_returns_a_tree_or_the_conflicted_files`.
+- `commit_tree_and_cas_advance_the_run_branch`: the candidate's parents are `(run_head, task_head)`; `cas_update` with the right `old` returns `true` and moves the branch; with a stale `old` returns `false` and moves nothing.
+- `materialize_and_reattach_leave_the_integration_worktree_on_its_branch`: after `materialize(candidate)` `HEAD` is detached at the candidate; after `reattach` `symbolic-ref HEAD` is the run branch.
+- `hand_back_leaves_markers_and_merge_head` (conflict: files returned, `MERGE_HEAD` exists, the file contains `<<<<<<<`); `hand_back_that_is_clean_commits_the_merge` (empty list, `HEAD` is a merge commit).
+- `salvage_of_a_clean_worktree_writes_nothing`; `salvage_captures_tracked_and_untracked_changes_but_not_ignored_files` (the salvage commit's tree contains the modified file and a new file, not an ignored `target/x`); `remove_refuses_nothing_after_salvage` (a locked, dirty worktree is salvaged, unlocked and removed).
+- `accept_requires_the_base_branch_and_a_clean_tree`; `accept_merges_no_ff`; `delete_branches_removes_every_run_branch_but_keeps_salvage_refs`.
+- `read_ref_reports_a_moved_branch`.
+
+**Change.** Implement decisions 20, 21 (the reads) and 36 (the git steps).
+
+**Acceptance.** Tests pass.
+
+**Commit.** `feat(daemon): add merge-tree candidates, compare-and-swap updates, conflict hand-back and salvage refs`
+
+### M8a.10 Shell execution: setup, check and the test proof
+
+**Files.** Create `run/exec.rs`, `run/proof.rs`, `crates/daemon/tests/run_exec.rs`.
+
+**Tests first.**
+
+- `check_captures_the_last_200_lines_and_exit_code` (`seq 1 500; exit 3`: `ok == false`, `code == Some(3)`, tail of 200 lines starting at `301`); `summary_is_the_last_40_lines`; `check_merges_stderr`.
+- `check_timeout_kills_the_process_group`: `sleep 30 & echo $! > <tmp>/bg; wait` with a 1 s timeout returns `timed_out` within 3 s, and the background pid is gone within `KILL_GRACE` + 1 s (`kill(pid, 0)` gives `ESRCH`).
+- `check_tail_survives_invalid_utf8_and_huge_lines` (a 1 MB line and bytes `0xff 0xfe`: the tail is valid UTF-8, lines cut to 300 characters).
+- `engine_commands_get_the_profile_env_and_lose_agent_variables`: with `CLAUDE_CODE_CHILD_SESSION=1`, `CLAUDECODE=1`, `ANTHREX_WINDOW_ID=9` set in the test process under the shared environment lock, a command printing `env` shows none of them and shows `CARGO_TARGET_DIR=<dir>/target` from the profile.
+- `run_proof` in a `TempRepo` with `single_test = "sh tests/{test}.sh"` and `test_passed = "PASS {test}"`: `proof_accepts_a_real_red_then_green` (red commit adds `tests/t_reset.sh` which greps `impl.txt` for `reset` and echoes `PASS t_reset`; head adds `impl.txt`); `proof_rejects_a_red_that_passes`; `proof_rejects_a_head_that_fails`; `proof_rejects_output_that_does_not_show_the_test` (the head script exits 0 and prints nothing); `proof_quotes_a_hostile_test_name` (test `a; touch pwned` leaves no `pwned` file anywhere in the proof worktree); `proof_runs_setup_once_per_new_worktree`.
+
+**Change.** Implement decisions 26 (engine commands), 33 and 34.
+
+**Acceptance.** Tests pass. `grep -n "thread::sleep" crates/daemon/src/run` prints nothing outside `exec.rs`'s poll loop.
+
+**Commit.** `feat(daemon): run setup, check and the fail-to-pass test proof with bounded, scrubbed shells`
+
+### M8a.11 Engine I: start, plan gate, scheduler and dispatch
+
+**Files.** Create `run/engine/mod.rs`, `engine/requests.rs`, `engine/dispatch.rs`, `engine/outbox.rs`, `run/snapshot.rs`, `run/role_launch.rs` (`worker_spec`, `reviewer_spec`, `session_uuid`), `run/contract.rs` (contracts and prompts), `engine/tests/fixture.rs`, `engine/tests/dispatch.rs`.
+
+**Tests first**, in `engine/tests/dispatch.rs`:
+
+- `start_creates_the_run_branch_before_approval`: `Start` without `yes` replies `Ok(<id>)`, state `awaiting_approval`, one `Op CreateRunBranch` with decision 16's branch and path, then after its `OpDone` a `WatchWorktree` for the integration path and `PrepareWorktree` for root tasks up to `max_writers` (the pre-warm), and no `CreateWindow`.
+- `approve_starts_dispatch_and_yes_skips_the_gate`: after `Approve`, or with `yes`, a pre-warmed task gets `Op CreateWindow` with:
+  - name `<h4>/t1.w1`, and a `HeadlessSpec` whose `cwd` is the task worktree;
+  - `mcp == Some(McpTarget { role: Worker, task_id: Some("t1"), .. })`;
+  - `allowed_tools` of `mcp__anthrex__task_done`, `mcp__anthrex__task_blocked`, then `worker_allowed_tools`;
+  - `instructions == WORKER_CONTRACT` and `first_turn == worker_prompt`;
+  - `session_uuid == Some(session_uuid(<id>, <op>))` for Claude and `None` for Codex;
+  - for Codex, `codex_writable_roots == [<root>/.git]`.
+
+  `approved_by` is `user` or `--yes`, and the round's `turn_open` is true from dispatch.
+- `session_uuids_are_valid_and_distinct`: `session_uuid` output parses as a UUID with version nibble 4, and a thousand op ids give a thousand distinct values.
+- `reject_discards`: `Reject` gives `Op Discard` with every worktree and prefix `anthrex/<id>/`.
+- `awaiting_approval_survives_restore`: `Restore` of an `awaiting_approval` run leaves it `awaiting_approval`.
+- `dependents_wait_for_merged_and_branch_from_the_run_head`: `t2` depends on `t1`; no `PrepareWorktree` for `t2` until `t1` is `merged`, then one with `from == run_head`.
+- `implicit_owns_deps_serialize_by_plan_order`; `cancelled_implicit_dep_releases_the_later_task`; `a_started_task_is_always_the_one_waited_for` (an `add_task` or `split_task` placing an overlapping task earlier in plan order than a `working` task makes the new task wait, not the working one).
+- `a_stale_prewarmed_branch_is_repointed_at_dispatch`: `t2` pre-warmed from `base_sha`, `t1` merges first, `t2`'s dispatch issues `PrepareWorktree` with `from == run_head` and the git layer re-points the untouched branch.
+- `critical_path_orders_dispatch`: tasks `a` (S, no dependents), `b` (M) with dependent `c` (M), `max_writers` 1: `b` dispatches first; ties break by `priority`, then plan order.
+- `writer_and_reader_slots_are_separate`: `max_writers` 1, `max_readers` 1: a task in `review` does not stop another from dispatching; a second reviewer waits for the reader slot.
+- `hub_runs_alone`: a hub task waits while any writer slot is held and blocks every dispatch while it holds one.
+- `window_limit_blocks_the_task_as_environment`.
+- `snapshot_marks_critical_path_and_wave` and `revision_bumps_on_every_change_and_only_then` (every event that changes a run raises its `revision` and the global one; `Tick` with nothing due changes neither).
+- `worker_prompt_layout`: starts with `[anthrex] Task t1: `, ends with the brief, has `Test mode: tdd` and `Single-test command:` for tdd, `Check command:` only when the profile has one; `WORKER_CONTRACT` names `task_done` and `task_blocked`.
+
+**Change.** Implement decisions 14, 19 (engine side), 41, 47 (engine side) and the prompts of 30.
+
+**Acceptance.** Tests pass; `run/engine/` is pure.
+
+**Commit.** `feat(daemon): add the run reducer with the plan gate, critical-path scheduler and dispatch`
+
+### M8a.12 Engine II: the done gate, turns, stalls, denials and budgets
+
+**Files.** Create `engine/done.rs`, `engine/ladder.rs` (budget and stall parts), `engine/tests/done.rs`, `engine/tests/turns.rs`. Modify `engine/mod.rs`, `engine/outbox.rs`.
+
+**Tests first**, in `engine/tests/done.rs` and `engine/tests/turns.rs`. The fixture's `fx.signal(window, AgentSignal)` drives every case.
+
+- `task_done_runs_verify_done_and_replies_after_it`: a `Tool` call from the task's worker window gives `Op VerifyDone` and no reply yet. `OpDone DoneChecked` with commits then gives `Reply Ok(<decision 32's accepted text>)`, and the state becomes `proof` (tdd), `check` (check mode with a check), `review` or `merge_queue`.
+- `task_done_rejections_leave_the_task_working`: one case per rejection text of decision 32, with no failure counted.
+- `task_done_with_files_outside_owns_goes_to_rung_3`: `blocked(mis_sized)`, size S→M, text `changed files outside owns: x.rs`.
+- `a_generated_file_outside_owns_bounces_at_rung_1`: with `generated = ["Cargo.lock"]`, `DoneChecked` with `generated_outside_owns == ["Cargo.lock"]` and nothing else outside replies `ToolResult { ok: false }` with `generated_files_message`. The task stays `working` in the same session with `bounces.done == 1`, `failures == 1` and no other message queued; a second such claim is rung 2.
+- `a_non_generated_path_outside_owns_still_goes_to_rung_3`: `outside_owns == ["x.rs"]` together with `generated_outside_owns == ["Cargo.lock"]` gives `blocked(mis_sized)`, not a bounce.
+- `a_task_that_owns_the_generated_file_passes`: `owns` includes `Cargo.lock`, and nothing is outside, so the task proceeds to its next gate.
+- `a_protected_file_changed_through_a_wildcard_bounces_at_rung_1`: owns `**`, `DoneChecked { protected_changed: ["AGENTS.md"] }` gives `ToolResult { ok: false }` with `protected_file_message` naming `AGENTS.md`, `bounces.done == 1`, the task still `working`.
+- `a_protected_file_named_exactly_passes`: owns `["src/**", "AGENTS.md"]`, and nothing is caught, so the task proceeds.
+- `a_directory_glob_over_claude_settings_still_bounces`: owns `.claude/**` and a changed `.claude/settings.json` is a bounce.
+- `a_nested_agents_md_is_protected`: a changed `docs/AGENTS.md` under owns `docs/**` is a bounce.
+- `protected_is_checked_before_the_spill_split`: `protected_changed == ["AGENTS.md"]` together with `outside_owns == ["x.rs"]` gives the rung-1 bounce, not rung 3.
+- `an_overridden_task_is_exempt_from_protected`.
+- `an_unavailable_sandbox_blocks_as_environment`: a `TurnEnded { Failed { SandboxUnavailable } }`, or a process exit before `Init` classified the same way, gives `blocked(environment)` with decision 54's text naming `worker_sandbox = false`, and no resume is attempted.
+- `tool_authorization`: every acceptance text of the MCP section (another window, a reviewer calling `task_done`, a paused run, a terminal run, a task not `working`, bad arguments).
+- `task_blocked_kinds`: `question` → `blocked(question)`; `mis_sized` → rung 3; `environment` → `blocked(environment)`; missing kind → `question`.
+- `deliveries_wait_for_the_turn_to_end`: two messages queued while `turn_open` give no `Deliver`. `TurnEnded` gives exactly one `Deliver` whose text joins both in queue order, and `turn_open` is set again. `Delivered { ok: false }` puts both back at the head and retries after `DELIVERY_RETRY_SECS`. The third failure blocks the task as `blocked(environment)` with `could not deliver to the agent: <error>`.
+- `turn_end_fallback_nudges_once_then_proceeds`: `TurnEnded Completed` with no `task_done` gives `Op CountCommits`. With 2 commits, `DONE_NUDGE` is delivered as the next turn. That turn's `TurnEnded` gives `Op VerifyDone` and, on success, `done_signal == TurnEndFallback`. A `task_done` accepted inside the nudge turn ends the fallback instead.
+- `turn_end_without_commits_nudges_then_counts_as_a_stall`.
+- `open_subagents_defer_the_fallback`: `SubagentStart{a1}`, then `TurnEnded`: no `CountCommits` until `SubagentStop{a1}`.
+- `stall_interrupts_then_nudges_then_goes_to_rung_2`:
+  - No event for `stall_after_secs` in an open turn gives `Effect::Interrupt`.
+  - The interrupted turn's `TurnEnded { Interrupted }` delivers `stall_nudge(10)`.
+  - Another `stall_after_secs` of silence gives `KillWindow` and a new session (rung 2, `stalls == 1`).
+  - An interrupt that produces no turn end within `INTERRUPT_GRACE` gives `KillWindow` and rung 2 directly.
+- `rate_limit_retry_suspends_the_stall_clock`: `ApiRetry { rate_limit, delay_ms: 900_000 }` followed by silence past `stall_after_secs` gives no interrupt until `rate_limited_until + stall_after_secs`. `rate_limits["claude"]` counts one per streak.
+- `failed_turns`: a `Failed { RateLimit }` turn gives `rate_limit_continue` after exactly `rate_limit_retry_secs`, with no failure counted, and the round is rate-limited until then. `Authentication` and `Billing` give `blocked(environment)` at once. Two `Other` failures in a row give `blocked(environment)`.
+- `a_failed_rate_limit_turn_is_a_rate_limit_event`: a `Failed { RateLimit }` turn with no `ApiRetry` in it gives `rate_limits["claude"] == 1`; an `ApiRetry { rate_limit }` streak that runs straight into a `Failed { RateLimit }` gives 1, not 2; a streak, then a `ToolUse` (the streak ends), then a `Failed { RateLimit }` gives 2.
+- `denials_block_at_the_threshold`: with `denials_before_block = 3`, two `PermissionDenied` and a `TurnEnded` carrying one more distinct denial give `blocked(environment)` with `denied_text`, plus `KillWindow`. A denial already seen as an event is not counted again from `permission_denials`.
+- `a_process_that_dies_mid_turn_is_resumed_once`: `ProcessExited` during an open turn gives `Op ResumeSession` with `RESUME_AFTER_EXIT`. A second one in the same round is a stall (rung 2).
+- `a_claude_process_that_exits_between_turns_is_resumed_on_the_next_delivery`: the round is marked `ended`, and the next queued message gives `Op ResumeSession` carrying it instead of a `Deliver`.
+- `a_codex_exit_after_turn_completed_is_normal`: `TurnEnded` then `ProcessExited { code: Some(0) }` changes nothing.
+- `a_session_the_engine_killed_is_not_treated_as_an_exit`: `ProcessExited { killed_by_engine: true }` changes nothing.
+- `budget_soft_then_hard`:
+  - With a budget of 4 tool calls, the 4th `ToolUse` queues `budget_wrap_up` once.
+  - The 6th (1.5 ×) is a breach: rung 2, a fresh session, the session spend reset and the total kept.
+  - A second breach gives rung 3.
+  - Minutes behave the same through `Tick`.
+  - With `tokens: Some(1000)`, a `TurnEnded` whose usage is 1600 billable tokens is a breach, and with `tokens: None` no usage ever is.
+- `usage_is_summed_per_round_and_task`: two turns' usage add up on the round, the task's `spent_total.tokens` and the snapshot.
+- `rung_4_blocks_on_the_next_size_ceiling`: an S task whose total reaches the M budget is `blocked(human)`.
+
+**Change.** Implement decisions 27 (engine side), 29 (gate), 32, 38 (the stall, budget and rung 4 parts), 40, 54 (the unavailable-sandbox block), 55 and 56.
+
+**Acceptance.** Tests pass, and purity holds.
+
+**Commit.** `feat(daemon): add explicit completion, turn-based delivery, the turn-end fallback, stall watchdog, denials and budgets to the reducer`
+### M8a.13 Engine III: proof, check and review
+
+**Files.** Create `engine/gates.rs`, `engine/tests/gates.rs`. Modify `engine/ladder.rs` (gate failures, rungs 1–3).
+
+**Tests first**, in `engine/tests/gates.rs`:
+
+- `proof_passes_to_check`; `proof_failure_is_rung_1_with_the_message` (each reason of `proof_failed_message`); `proof_accepts_a_red_commit_from_an_earlier_session` (a red committed in session 1 and named in session 2's `task_done` produces `Op Proof` with that red).
+- `turn_end_fallback_on_a_tdd_task_fails_the_proof_with_the_missing_names_message`.
+- `check_failure_goes_up_the_ladder`: first → rung 1 with `check_failed_message` to the same window; second → rung 2 (`KillWindow`, `Op DiffSoFar`, then `CreateWindow` with `handover_prompt` and `escalate`d route, name `<h4>/t1.w2`); third → rung 3.
+- `max_bounces_1_blocks_on_the_second_failure_of_a_gate`.
+- `no_check_skips_the_gate_and_marks_the_run_unverified`.
+- `review_round_uses_a_fresh_session_and_worktree`: `Op PrepareReview` at `<task>.review`, then a `CreateWindow` with:
+  - name `<h4>/t1.r1` and the review route;
+  - `mcp == Some(McpTarget { role: Reviewer, .. })` and `allowed_tools == ["mcp__anthrex__submit_review","Read","Glob","Grep"]`;
+  - for Claude, `claude_permission_mode == Some("plan")`; for Codex, `codex_sandbox == "read-only"` and no writable roots;
+  - and no `WatchWorktree`.
+
+  Round 2 gets `<h4>/t1.r2` and a prompt listing round 1's critical and important findings.
+- `approve_and_minor_only_changes_both_go_to_the_merge_queue`, minor findings kept.
+- `a_blocking_finding_is_a_review_failure`: rung 1 message lists only critical and important findings in decision 35's format.
+- `finding_validation`: a critical finding with neither `file`+`line` nor `input` → `invalid arguments: findings[0]: …`; `approve` with an important finding → refused.
+- `a_second_submit_in_the_same_round_is_refused`; `a_reviewer_turn_without_a_verdict_is_nudged_then_replaced` (`TurnEnded` without `submit_review` delivers `REVIEW_NUDGE`; a second verdict-less turn starts round 2 at the same level with no failure counted; a second verdict-less round in a row blocks as `environment`).
+- `review_small_false_skips_s_review`; `override_skips_review_and_marks_the_task`.
+- `the_reviewer_prompt_never_names_the_author`: for every route, the prompt contains neither the author's runtime label nor its model.
+
+**Change.** Implement decisions 33, 34 (engine side), 35 and 38 (gate failures).
+
+**Acceptance.** Tests pass; purity holds.
+
+**Commit.** `feat(daemon): add test proof, check and severity-aware review gates to the reducer`
+
+### M8a.14 Engine IV: merge queue, hand-back, ref guard, completion
+
+**Files.** Create `engine/merge.rs`, `engine/tests/merge.rs`.
+
+**Tests first**, in `engine/tests/merge.rs`:
+
+- `merges_are_one_at_a_time_in_arrival_order`.
+- `merged_updates_run_head_cleans_up_and_retires_the_worker`: `OpDone Merged` sets `run_head`, `last_green_candidate`, `merge_commit`, emits `RemoveWorktree` for task, review and proof paths with salvage refs `refs/anthrex/salvage/<id>/t1/<n>`, `UnwatchWorktree` before it, and `RetireWindow` for the worker; dependents become runnable.
+- `first_conflict_hands_back_then_requeues_after_task_done`: `Conflict` gives `Op HandBack`; `HandedBack{files}` queues `conflict_message` and returns the task to `working`; its next accepted `task_done` goes straight to `merge_queue` (no proof, check or review op).
+- `a_clean_hand_back_requeues_without_the_worker`.
+- `second_conflict_blocks_the_task_as_conflict`, and `conflicts` counts are not failures.
+- `red_candidate_is_a_merge_failure`: `CandidateRed` gives rung 1 with `candidate_red_message`.
+- `ref_moved_halts_the_run`: `RefMoved` sets `halted` with the reason; nothing dispatches or merges; `Resume` without rebaseline is refused with the reason; with `rebaseline` it records both values and continues.
+- `completion_checks_refs_then_completes`: all merged → `Op VerifyRefs` → `RefsOk` → `complete`, `WriteReport`; a run head differing from `last_green_candidate` runs `Op Check` in the integration worktree first.
+- `blocked_tasks_keep_the_run_running_with_attention`.
+- `finish_cancels_unstarted_then_completes_when_live_ones_end`; `cancel_kills_salvages_and_completes`.
+
+**Change.** Implement decisions 21 (engine side), 36 and 37.
+
+**Acceptance.** Tests pass; purity holds.
+
+**Commit.** `feat(daemon): add the tested merge queue, conflict hand-back, ref guard and completion to the reducer`
+
+### M8a.15 Engine V: edits, retry, override, pause, restore and resume
+
+**Files.** Create `engine/restore.rs`, `engine/tests/control.rs`. Modify `engine/requests.rs`.
+
+**Tests first**, in `engine/tests/control.rs`:
+
+- `edit_applies_and_delivers`: `Edit` with `amend_task brief` on a working task replies `Ok("applied 1 edit")` and queues `amend_message`; `cancel_task` on a working task gives `KillWindow`, then on `ProcessExited { killed_by_engine: true }` `RemoveWorktree` with a salvage ref, and dependents `blocked(dep_cancelled)`; a rejected batch replies `Err` with every error line.
+- `answer_resumes_a_question`: `blocked(question)` → `working` with `answer_message` delivered as the same session's next turn. If that session has ended, `Op ResumeSession` carries the answer instead. If that resume fails (`ResumeFailed`), a fresh session's prompt ends with the answer.
+- `retry_resets_counts_and_starts_a_fresh_session_at_rung_2`; `retry_refuses_l_and_dep_cancelled`.
+- `override_only_from_review_or_blocked_with_commits`.
+- `pause_edit_stops_dispatch_and_gates_but_keeps_windows`.
+- `restore_pauses_running_runs_only`: `running` → `paused` (`paused_from == running`); `halted`, `awaiting_approval`, `complete`, `accepted` unchanged.
+- `restore_replays_journaled_results`: a `Restore` with `replay` containing `(run, op, Merged{…})` for a pending op applies it.
+- `a_paused_run_refuses_tools_and_most_requests`: `task_done` → `run <id> is paused; the user must resume it`; `Finish` refused; `Cancel` and `Resume` accepted.
+- `resume_fires_only_second_stage_deadlines`: a round in `StallState::Interrupted` whose grace passed goes to rung 2 without resuming its old session. A `Watching` round is re-armed from `now` and gets `Op ResumeSession` with `RESUME_WORKER`.
+- `resume_resumes_sessions_and_reissues_gate_ops`: four tasks, all after `Restore`:
+  - a `working` task (worker 4, session `s-4`) gives `Op ResumeSession { window_id: 4, session_id: "s-4", message: RESUME_WORKER }`;
+  - a `review` task (reviewer 6, no verdict) gives `ResumeSession` for 6 with `RESUME_REVIEWER`;
+  - a `check` task gives `Op Check`;
+  - a `merge_queue` task gives `Op MergeCandidate`.
+- `a_failed_resume_starts_a_fresh_session`: `ResumeFailed` gives `CreateWindow` for session n+1 with `handover_prompt`, at the same rung, with no failure counted.
+- `restore_marks_every_session_ended`: after `Restore`, every live round has `ended == true`, `turn_open == false` and `pid == None`.
+- `stop_ignores_everything_after`.
+
+**Change.** Implement decisions 13 (engine side), 28 (resume and the failed-resume reaction), 35's override, 42, 45 and 46 (engine side).
+
+**Acceptance.** Tests pass; purity holds; no file under `run/engine/` exceeds 600 lines.
+
+**Commit.** `feat(daemon): add plan edits, retry, override, pause and resume to the reducer`
+
+### M8a.16 The run report
+
+**Files.** Create `run/report.rs`.
+
+**Tests first.**
+
+- `format_utc_vectors` (the refreshed M8 brief's three vectors).
+- `report_has_every_section` in order: `# anthrex run <id>`, `Goal:`, state, `approved by`, base and run branch, profile summary (check or `no check command: this run is unverified`), limits, `## Tasks` table (id, title, size, mode, state, rung, bounces, done signal, merge commit), then per task `## <id>: <title>` with notes, route, review route, budget and spend, each proof, each check (tail in a fenced block), each review round with verdict and findings grouped by severity, salvage refs, `merged without approval: <reason>` when set, the history; then `## Log`.
+- `minor_findings_are_listed_even_when_approved`; `turn_end_fallback_is_named`; `halted_and_rebaselined_runs_say_so`; `usage_and_denials_are_reported` (each round's turns, tool calls, billable tokens and denials); `containment_is_reported` (`project settings: excluded`, or `project settings trusted by --trust-project: <paths>`; `worker sandbox: off ([orchestrator] worker_sandbox = false)` when off).
+
+**Change.** Implement the report; `RunService` writes it on `WriteReport` (M8a.22) through a temp file and a rename, at most once per 500 ms per run.
+
+**Acceptance.** Tests pass; `report.rs` is pure.
+
+**Commit.** `feat(daemon): render the run report with gates, severities, rungs and salvage refs`
+
+### M8a.17 Headless sessions: the process driver and headless windows
+
+**Files.** Create `crates/daemon/src/headless/session.rs`, `crates/daemon/src/manager/headless.rs`, `crates/daemon/src/server/headless_guard.rs`, `crates/daemon/tests/headless_sessions.rs`, `crates/daemon/tests/headless_windows.rs`. Modify `manager/entry.rs` (`Process::Headless`, `Entry.headless`), `manager/mod.rs` (`handle_hook`'s headless branch, the feed), `manager/restore.rs`, `state/mod.rs` (`WindowRecord.kind`), `server.rs` (one guard call per refused message), `crates/tui/src/app/link.rs`, the key and mouse input paths (`crates/tui/src/app/mod.rs`'s two `Effect::Send(ClientMsg::Input { .. })` sites and `crates/tui/src/mouse.rs`'s one), and the pane renderer under `crates/tui/src/ui/`.
+
+**Tests first.** Every test uses real processes with real pipes. Until M8a.20, the "agent" is a `/bin/sh -c` program that prints M8a.1's fixture lines, or records its argv and stdin.
+
+- In `headless_sessions.rs`:
+  - `spawn_reads_events_in_order_and_reports_exit`: `sh -c 'cat <claude-…-stream.jsonl>; exit 3'` gives exactly the events `claude_stream::parse_line` gives for the fixture, then `ProcessExited { code: Some(3) }`.
+  - `send_line_never_blocks_on_a_full_pipe`: a child that never reads, and 300 lines of 8 KiB. Each `send_line` returns within 50 ms; past the writer's queue bound of 256 lines, the overflow comes back as errors.
+  - `interrupt_by_sigint_reaches_the_child`: a child that traps `INT` prints `interrupted`.
+  - `kill_terminates_the_process_group`: a child that starts a background `sleep 30`. After `kill(1 s)`, both pids are gone within 2 s (`kill(pid, 0)` gives `ESRCH`).
+  - `a_long_line_is_cut_and_parsed_as_unknown`.
+  - `the_environment_is_scrubbed`, holding the shared environment lock: with `CLAUDE_CODE_CHILD_SESSION=1`, `CLAUDECODE=1` and `ANTHREX_WINDOW_ID=9` set in the test process, the child's `env` shows neither `CLAUDE_*` variable. It shows `ANTHREX_WINDOW_ID` as the session's own window id, and `CARGO_TARGET_DIR=<dir>/target` from the profile.
+- In `headless_windows.rs`, against a real manager:
+  - `create_headless_registers_a_headless_window`: `WindowInfo.kind == Headless`, `run == Some(RunRef { role: Worker, .. })`, and `session_id` is set once `Init` arrives.
+  - `session_events_drive_status_and_the_conversation`: the Codex fixture moves the window `Starting → Working → Idle`. `conversation_snapshot(id, None)` has the prompt turn and the tool call.
+  - `real_hooks_do_not_change_a_headless_windows_status`: a `HookEvent` `PreToolUse` for the window leaves its status `Idle`. It still reaches the conversation, and a `SubagentStart` adds a sub-agent row and a feed `Hook` signal.
+  - `headless_windows_persist_and_restore_as_ended`: after `state_snapshot` and `restore`, the window has `kind == Headless`, status `Exited`, and the same `HeadlessSpec` and `session_id`. An unparseable `run` value restores as an `Exited` PTY record with a warning.
+  - `a_client_cannot_create_a_headless_window`: `CreateWindow` has no field that can set the kind.
+- In `headless_windows.rs`, over a real socket: `client_control_of_a_headless_window_is_refused`. `Subscribe`, `Input`, `Kill`, `Remove` and `Restart` each get decision 49's exact `DaemonMsg::Error` and leave the process running. `Resize` gets `Ack`. `ListWindows` lists the window.
+- In `crates/tui/src/app` tests:
+  - `focusing_a_headless_window_sends_no_subscribe`;
+  - `keys_are_not_forwarded_to_a_headless_window`: no `Effect::Send(ClientMsg::Input { .. })` when the focused window is `Headless`, while a PTY window still gets its keys;
+  - `mouse_input_is_not_forwarded_to_a_headless_window`;
+  - `prefix_commands_still_work_on_a_headless_window`: `C-b m` opens the conversation;
+  - the render test `the_headless_placeholder_names_the_conversation_key`, with the exact string of decision 49.
+
+**Change.** Implement decisions 26 (the session environment), 27 (the manager side), 49 and 52 (the driver side). `manager/headless.rs` holds `create_headless`, `apply_session_event`, `signals`, and the `headless_*` methods that M8a.18 fills in. Only `apply_session_event`'s status, conversation and feed updates run under the manager lock; spawning, writing and killing never do (AGENTS.md rule 2).
+
+**Acceptance.** Tests pass. `create.rs` and `restart.rs` are unchanged (`git diff --stat` shows neither). No `crate::lock` guard in `manager/headless.rs` is alive across `.await`, a spawn, a write or a kill.
+
+**Commit.** `feat(daemon): run headless agent sessions as manager windows with no terminal`
+
+### M8a.18 Turn delivery, interrupt and resume
+
+**Files.** Modify `headless/session.rs` and `manager/headless.rs`. Create `crates/daemon/tests/headless_turns.rs`.
+
+**Tests first**, in `headless_turns.rs`, with recording programs as `claude_bin` and `codex_bin` (a script that appends its argv to `args.log` and each stdin line to `stdin.log`, then prints a scripted fixture turn):
+- `claude_send_writes_one_envelope_line`: `headless_send(id, "hi")` writes exactly one line to the running process's stdin, equal to `claude_stream::user_message("hi", Some(<session>))`.
+- `codex_send_spawns_exec_resume_with_the_message_last`: the logged argv is decision 25's resume argv, ending in `--`, `hi`.
+- `a_send_while_a_codex_turn_is_running_is_refused`: `a turn is already running for window <id>`. The reducer never does this (decision 29), so it is an error, not a queue.
+- `claude_resume_kills_a_live_process_first`: while the first process is alive, `headless_resume` stops it (decision 52), then starts `--resume <id>` with every flag of the first argv present, and writes the message.
+- `interrupt_follows_cli_caps`: `InterruptMode::ControlRequest` writes `claude_stream::interrupt_request`, and `Sigint` signals the process. Codex always gets `SIGINT`.
+- `a_send_to_an_ended_session_is_an_error`: `session for window <id> has ended; resume it`.
+- `resume_failure_is_reported`: a program that exits 1 before printing `Init` makes `headless_resume` return an error whose text the driver maps to `ResumeFailed`.
+
+**Change.** Implement decision 29's I/O and decision 28's resume.
+- A Claude send is one `send_line` of `user_message(clamp(text))`.
+- A Codex send spawns `codex_args(spec, Resume { session_id }, text, …)` after `jitter_ms`.
+- A resume spawns the resume argv, then sends the message: on Claude's stdin, or as Codex's argument.
+- Nothing is written from under a lock, and nothing blocks a tokio worker.
+
+**Acceptance.** Tests pass. `rg -n "write_input" crates/daemon/src/run crates/daemon/src/headless` prints nothing.
+
+**Commit.** `feat(daemon): deliver engine messages to headless sessions as turns, and interrupt and resume them`
+### M8a.19 The MCP server
+
+**Files.** Create `crates/mcp/Cargo.toml`, `crates/mcp/src/lib.rs`, `src/tools.rs`, `src/forward.rs`, `crates/mcp/tests/stdio.rs`, `crates/cli/tests/mcp_cli.rs`. Modify the workspace `Cargo.toml` (member, `rmcp` pin), `crates/cli/Cargo.toml`, `crates/cli/src/main.rs` (hidden `mcp`).
+
+**Tests first.**
+
+- In `tools.rs`: `worker_tools_are_task_done_and_task_blocked`; `reviewer_tool_is_submit_review`; `orchestrator_tools_are_empty`; `every_schema_is_a_closed_object`; `schema_limits` (the enums, `maxItems: 50`, the `red` pattern).
+- In `crates/mcp/tests/stdio.rs`, against a stub daemon (a `UnixListener` under `/tmp` answering `Hello` with `Welcome` and each `Run(Tool)` with a scripted `ToolResult`, recording what it received), through `serve_on` over a `tokio::io::duplex` pair: `initialize_then_list_tools` (server name `anthrex`, protocol `2025-06-18`); `tool_call_is_forwarded_with_role_run_task_and_window`; `daemon_error_becomes_is_error`; `daemon_down_is_a_tool_error_not_a_crash`; `a_tool_outside_the_role_never_reaches_the_daemon`.
+- In `crates/cli/tests/mcp_cli.rs`: `mcp_subcommand_speaks_json_rpc_on_stdout_only`.
+
+**Change.** Implement decisions 4 and 5 and the MCP interface.
+
+**Acceptance.** Tests pass. `cargo tree -p anthrex-mcp` shows `rmcp v3.4.0`; `cargo tree -p anthrex-daemon` and `-p anthrex-tui` contain no `rmcp`.
+
+**Commit.** `feat(mcp): add the anthrex MCP server with the worker and reviewer tools`
+
+### M8a.20 `fake-agent` headless modes
+
+**Files.** Modify `crates/fake-agent/src/main.rs` (mode dispatch), `runtime.rs`, `script.rs`. Create `src/headless.rs`, `src/stream_claude.rs`, `src/stream_codex.rs`, `src/roles.rs`, `src/mcp.rs`, and `crates/fake-agent/tests/headless_modes.rs`.
+
+**Change.** Milestone 3's PTY behaviour stays unchanged for any argv without `-p` or `exec`. Add:
+
+1. **Mode detection.**
+   - Claude headless: argv has `-p` and `--input-format stream-json`.
+   - Codex headless: `exec` is the first argument, and `exec resume <id>` means resume. It accepts and ignores decision 53's test placeholder `--anthrex-test-exclude-project-config`, which the argv log records.
+   - Role and task: parsed from the MCP server's arguments in `--mcp-config <json>` (Claude) or in the `-c mcp_servers.anthrex.command=` / `-c mcp_servers.anthrex.args=` pairs (Codex, parsed with `toml`). The role is the value after `--role`, the task the value after `--task`.
+2. **Output shapes.** Output is only the shapes of M8a.1's fixtures (decision 51).
+   - Claude: `system/init` first, with `session_id` from `--session-id` or `--resume` and `mcp_servers: [{"name":"anthrex","status":"connected"}]`. Then `assistant` and `user` lines for text and tool use, and a `result` at every turn end with `usage`.
+   - Codex: `thread.started` (a fresh id, or the resumed one), then `turn.started`, `item.*` and `turn.completed` with `usage`.
+   - Each `mcp_call` is echoed as a `tool_use` / `tool_result` pair, or as an `mcp_tool_call` item.
+   - `FAKE_AGENT_ARGS_FILE` gets the argv, and new `FAKE_AGENT_STDIN_FILE` gets every stdin line. When either value is a directory, each claimed script gets its own `<script name>.args` or `<script name>.stdin` file there, with one line appended per process or per line, so a test can read one session's history.
+3. **Input.** In Claude mode, each stdin line must parse as M8a.1's user-message envelope; anything else exits 5 with `fake-agent: bad input line`. That is how a wrong envelope fails a test. A control request with subtype `interrupt` ends the running step and emits the interrupted `result`. In Codex mode, the turn's message is the last argument.
+4. **Per-role scripts.** In `<git common dir>/fake-agent/`, found with `git rev-parse --path-format=absolute --git-common-dir` in the cwd, take `<role>-<task>-<n>.jsonl` with the smallest `n` whose `<file>.claimed` does not exist, claimed with `OpenOptions::create_new`. With none, fall back to `FAKE_AGENT_SCRIPT`.
+   - A resumed session continues its claimed script: the claim file holds the session id, and `<file>.pos` holds the next step's index. This is how a Codex session spans processes and a Claude session survives `--resume`.
+5. **Steps**, added to M3's:
+   - **`mcp_call {tool, args, expect_error?}`** replaces the stub and its test `mcp_call_is_not_supported_yet`. It spawns the configured server, then sends `initialize` (`2025-06-18`), `notifications/initialized` and `tools/call`. It keeps the text as `FAKE_AGENT_RESULT`. A tool error exits 3 unless `expect_error`, and success with `expect_error` also exits 3.
+   - **`read_message {timeout_ms?, expect?}`** ends the turn and takes the next message. It exits 3 when `expect` is not contained and 4 on timeout; the message is kept as `FAKE_AGENT_MESSAGE`.
+   - **`end_turn`** ends the turn without waiting.
+   - **`sh {cmd}`**: runs `/bin/sh -c` in the cwd with `FAKE_AGENT_MESSAGE` and `FAKE_AGENT_RESULT` set, emitted as a `Bash` tool use; the step continues.
+   - **`capture {name, sh}`**: `{{name}}` in any later `mcp_call` argument is replaced by the trimmed stdout.
+   - **`api_retry {error, delay_ms, times}`**: emits `system/api_retry` `times` times, `delay_ms` apart (Claude only).
+   - **`fail_turn {error}`**: ends the turn failed. Claude emits a `result` with `is_error` and the error category; Codex emits `turn.failed` with the recorded rate-limit message when `error` is `rate_limit`.
+   - **`deny {tool, reason}`**: emits `permission_denied` (Claude only) and adds the denial to the turn's `permission_denials`.
+   - **`usage {input, output, cache_read, cache_write}`**: sets the next turn end's usage.
+   - **`hang`**: blocks with no output until killed or interrupted (the stall).
+   - M3's **`exit`**: mid-turn, it is a process that dies without a turn end.
+   - M3's `hook`: still sends a real hook through `anthrex hook`. Headless Claude scripts use it for `SubagentStart` / `SubagentStop`.
+6. **End of script and empty turns.** The end of the script ends the turn. Claude then waits on stdin, and exits 0 at EOF; Codex exits 0. A message arriving after the script has ended gets an empty turn.
+
+**Tests first**, in `headless_modes.rs`:
+- `claude_mode_output_conforms_to_the_fixture` and `codex_mode_output_conforms_to_the_fixture`: decision 51's shape test over every event type each mode emits.
+- `claude_mode_reads_the_recorded_envelope_and_rejects_others`.
+- `a_codex_session_continues_its_script_across_processes`.
+- `claims_scripts_in_order`.
+- `mcp_call_talks_to_a_real_mcp_server`: the real `anthrex mcp`, built behind a `OnceLock` when absent, against a stub daemon.
+- `mcp_call_expect_error`.
+- `sh_step_sees_the_message`.
+- `capture_fills_a_template`: a `capture` of `git rev-parse HEAD` appears as `red` in the recorded `task_done` arguments.
+- `interrupt_ends_a_hang`.
+- `api_retry_and_fail_turn_shapes`.
+- `resume_argv_is_recorded`.
+
+**Acceptance.** Tests pass, and milestone 3's `fake-agent` tests still pass.
+
+**Commit.** `feat(fake-agent): add headless Claude and Codex modes with recorded-shape events, per-role scripts and real MCP calls`
+### M8a.21 The intent journal and reconciliation
+
+**Files.** Create `run/journal.rs`, `run/reconcile.rs`, `crates/daemon/tests/run_journal.rs`.
+
+**Tests first.**
+
+- `save_run_is_atomic_and_round_trips` (a `Run` with every nested record saves and loads equal; a leftover `run.json.tmp` from a simulated crash is ignored and removed).
+- `journal_lines_round_trip_and_a_torn_last_line_is_dropped` (a final line without `\n` is ignored with a problem).
+- `load_all_skips_a_bad_run_with_a_problem`.
+- `compact_keeps_only_pending_intents`.
+- Reconcile, per row of the Interfaces table, each against a real `TempRepo` state built to match: `reconcile_prepare_worktree_done_and_not_started` (including a partial directory not in the worktree list, which is removed); `reconcile_create_window_finds_the_restored_window`; `reconcile_kills_a_leftover_session_process_by_its_session_id` (a `sleep` started with the session id in its argv is killed; a `sleep` without it is left alone and cleaned up by the test); `reconcile_merge_candidate_already_advanced`; `reconcile_merge_candidate_not_advanced_reattaches_the_integration_worktree` (the integration worktree left detached at an unmerged candidate is back on its branch afterwards); `reconcile_merge_candidate_ref_moved`; `reconcile_hand_back_with_merge_head`; `reconcile_remove_worktree_gone_with_salvage_ref`; `reconcile_accept_already_merged`; `reconcile_done_line_replays_without_touching_git` (a `done` line with no reality check: the recording git logs nothing).
+
+**Change.** Implement decisions 43 and 44 (the I/O parts).
+
+**Acceptance.** Tests pass; every write in `journal.rs` is followed by `sync_all` (checked by reading the code and named in the pull request).
+
+**Commit.** `feat(daemon): journal run intents with fsync and reconcile them against git and windows`
+
+### M8a.22 `RunService`, the server and lifecycle
+
+**Files.** Create `run/driver.rs`, `run/driver/ops.rs`, `run/driver/observe.rs`, `crates/daemon/src/server/run_api.rs`, `crates/cli/tests/support/run_harness.rs`, `crates/cli/tests/run_e2e_basic.rs`. Modify `run/mod.rs`, `server.rs`, `lifecycle.rs`, `crates/cli/tests/support/mod.rs`.
+
+**Tests first**, in `run_e2e_basic.rs`, with raw socket requests (the CLI arrives in M8a.23):
+
+- `e2e_green_s_task_runs_to_merged`: profile `check = "true"`, one S `check`-mode task (reason `smoke`), Claude worker, `yes`. `worker-t1-1`: `git_commit a.txt`, `DONE {"summary":"added a"}`. `reviewer-t1-1`: `mcp_call submit_review {"verdict":"approve","summary":"ok","findings":[]}`. Assert within `RUN_WAIT`: run `complete`; `t1` `merged` with `done_signal == task_done`; `git log --merges anthrex/<id>/integration` has one merge with parents `(base_sha, t1 head)`; the task, review and proof worktrees are gone and the integration worktree remains; `REPORT.md` contains `## t1:`; the worker's `WindowInfo` has `kind == Headless` and `run == Some(RunRef { task_id: Some("t1"), role: Worker, session: 1, .. })`; the reviewer's role is `Reviewer` on the Codex runtime; `FAKE_AGENT_STDIN_FILE` of the worker holds the first turn as one stream-json envelope; the reviewer window is `Exited` and then gone from `ListWindows` within `RETIRE_AFTER` + 5 s; the worker round's `usage` equals the scripted usage.
+- `e2e_plan_gate_waits_and_approve_runs`: without `yes`, the run stays `awaiting_approval` with the integration worktree existing and no window; `Approve` runs it to `complete`.
+- `e2e_plan_gate_survives_a_restart`: `awaiting_approval`, `restart_daemon()`, still `awaiting_approval`, then approve and complete.
+- `e2e_subscribe_pushes_snapshots_with_rising_revisions`: every `Snapshot` received has a revision greater than the previous one, and the task's state sequence contains `queued` or `preparing`, `working`, `check`, `review`, `merge_queue`, `merged` in that order.
+- `e2e_task_worktree_is_watched`: with `ANTHREX_GIT` unset, a `DaemonMsg::Git` arrives for the task worktree whose head is `Branch("anthrex/<id>/t1")`.
+- `e2e_a_worker_is_watchable_through_its_conversation`: with milestone 6.5's `subscribe_conversation` message for the worker window, the conversation shows the first turn's prompt text and the `mcp__anthrex__task_done` tool call.
+- `e2e_dirty_tree_refuses_to_start` and `e2e_validation_errors_come_back_together`.
+- `e2e_project_settings_are_refused_without_trust_project`: daemon started with `ANTHREX_TEST_NO_SETTING_SOURCES=1`. One repo whose base commit tracks `.claude/settings.json` with a `hooks` key, and one that tracks `.mcp.json`: each `Start` with a Claude task is `Refused` with decision 53's exact message naming the path, and no branch is created. A Codex-only plan in the same repo starts.
+- `e2e_trust_project_is_accepted_and_reported`: the same repo with `trust_project: true` starts and completes. `RunInfo.trusted_project` names the file, and `REPORT.md` contains `project settings trusted by --trust-project: .claude/settings.json`.
+- `e2e_codex_project_config_follows_cli_caps`, one case per branch of decision 53's Codex bullet:
+  - With `ANTHREX_TEST_CODEX_PROJECT_CONFIG=load`, a repo tracking `.codex/config.toml` refuses a plan with a Codex task, naming the file; `--trust-project` starts it and reports it; a Claude-only plan is not refused for it.
+  - With `=exclude`, the same plan starts, and the Codex worker's argv logs carry the placeholder flag on both the `exec` and the `exec resume` turns.
+  - With the variable unset and the real `CLI_CAPS`, the behaviour matches whichever branch `CLI_CAPS` names, and the assertion is chosen from `CLI_CAPS` at run time.
+- `e2e_protected_file_bounces_then_merges`: `t1` owns `src/**` and its worker commits `src/a.rs` and an edit to the base commit's `AGENTS.md`, then calls `task_done` (`expect_error`), reads `configures or instructs future agents` in the result, reverts `AGENTS.md` with `git checkout HEAD~1 -- AGENTS.md && git commit -qm revert`, and `DONE`. Assert `bounces.done == 1` and `merged`, and that `AGENTS.md` on the run branch is unchanged. A second task `t2` owning `AGENTS.md` exactly edits it and merges with no bounce.
+- `e2e_protected_warning_is_printed_at_start`: `anthrex run start` on a plan whose task owns `**` in a repo tracking `AGENTS.md` prints the rule-6.protected warning on stderr and still starts.
+- `e2e_claude_sessions_load_only_user_settings`: without the override, and with `claude_user_settings_only` set, the worker's recorded argv contains its flags.
+- `e2e_generated_file_bounces_then_merges`: the base commit tracks `Cargo.lock`, and the profile has `generated = ["Cargo.lock"]`. The worker commits `a.txt` (owned) together with a change to `Cargo.lock` (not owned), then calls `task_done`, whose result must fail (`expect_error`). It then runs `sh` `git checkout HEAD~1 -- Cargo.lock && git commit -qm "revert Cargo.lock"`, and `DONE`. Assert `bounces.done == 1`, `rung` stayed 1, and the task merges.
+
+**Change.**
+
+1. `RunService` owns `Mutex<EngineState>` (taken with `crate::lock`), an unbounded `mpsc` of events, a reply map from `ReplyId` to `oneshot::Sender`, the snapshot `watch`, the `GitQueue`, and retire deadlines.
+2. `spawn` starts three tasks:
+   - the event loop;
+   - a signal forwarder on `WindowManager::signals()`, which maps each `WindowSignal` of a run's headless window to `Event::Signal`: `Init`, `TurnStarted`, `ToolUse`, `TurnEnded`, `ApiRetry`, `PermissionDenied` and `ProcessExited` one to one, `SubagentStart` and `SubagentStop` from hooks, and everything else to `Activity`, at most one per window per second;
+   - a 1-second ticker feeding `Tick`, running retire checks, and flushing coalesced snapshots and counter-only persists.
+3. The event loop takes the engine lock only around `step` and `snapshot`, then executes effects in decision 43's order with the lock released: `Persist` → `journal::save_run` on `spawn_blocking`, awaited; `Op` → journal intent (awaited), crash injection (decision 48), then the op on its own task (git through `GitQueue` for writes, `spawn_blocking` for everything blocking, `create_headless`/`headless_resume` for sessions after `jitter_ms`, with the Claude binary from `ManagerConfig`'s `claude_bin`/`codex_bin`, so `ANTHREX_CLAUDE_BIN` and `ANTHREX_CODEX_BIN` apply), whose completion appends `done` and sends `OpDone`; `Deliver` → `headless_send` on a per-window task, then `Delivered`; `Interrupt` → `headless_interrupt`; `KillWindow`, `RemoveWindow` → `headless_kill` and removal; `RetireWindow` → close stdin, then a deadline; `WatchWorktree`/`UnwatchWorktree` → `GitRoots`; `WriteReport` → the report; `Publish` → the watch.
+4. `request(Start)` runs preflight on `spawn_blocking`, then decision 53's project-settings check when it applies, parses and builds the run (validation errors joined with `\n` into `Refused`), picks the id, then sends `Start`. `Finish` checks `confirm` first. `Resume { rebaseline: true }` reads both refs before sending the event.
+5. `server.rs`: `GitWiring` built in `lifecycle::run`; `serve` takes it and `Arc<RunService>`; `server/run_api.rs` answers each `RunRequest` on its own spawned task through a clone of the connection's outgoing channel, so a slow git operation never stalls the connection; `Subscribe` starts forwarding the snapshot watch to that connection until `Unsubscribe` or disconnect.
+6. `lifecycle::run`: after `manager.restore`, construct `RunService`, `await restore()` (load, reconcile, `Event::Restore`) before binding the socket; spawn it; call `stop()` before `manager.shutdown()`.
+
+**Acceptance.** Tests pass. Every `crate::lock(` in `run/driver*.rs` is released before any `.await`, `spawn_blocking`, git call or manager call — state this check in the pull request. `rg -n "GitRegistry::new" crates/daemon/src` prints only `server.rs`'s `GitWiring::new` and tests.
+
+**Commit.** `feat(daemon): drive the run reducer from RunService and serve runs over the socket`
+
+### M8a.23 The `anthrex run` commands
+
+**Files.** Create `crates/cli/src/run_cmd.rs`, `crates/cli/src/run_cmd/status.rs`, `crates/cli/tests/run_cli.rs`. Modify `crates/cli/src/main.rs`.
+
+**Tests first.**
+
+- Unit tests in `run_cmd.rs`: `resolve_run_by_id_suffix_and_prefix`; in `status.rs`: `status_text_matches_the_layout` (a fixed `RunsSnapshot` renders exactly the Interfaces example), `paused_and_halted_lines`, `bounces_column_text`.
+- In `run_cli.rs` with the harness: `start_approve_status_accept` (`run start` prints the id and the approve hint; `run approve`; `run status <id> --json` parses as `RunsSnapshot`; wait for `complete`; `run accept <id> --yes`; state `accepted`, `main` has the work, every `anthrex/<id>/` branch is gone); `reject_needs_the_id`; `discard_keeps_salvage_refs`; `edit_from_a_file` (an edits file cancelling a pending task); `retry_and_override_reach_the_daemon`; `trust_project_flag_reaches_the_daemon`; `accept_of_a_running_run_is_refused` (exit 1, the message).
+
+**Change.** Implement the CLI section. Exit 1 with the daemon's message on every `Refused`.
+
+**Acceptance.** Tests pass. `anthrex run --help` lists the eleven subcommands; `anthrex --help` does not list `mcp`.
+
+**Commit.** `feat(cli): add anthrex run start, status, approve, reject, edit, retry, override, cancel, resume, accept and discard`
+
+### M8a.24 End-to-end scenarios I: gates and review
+
+**Files.** Create `crates/cli/tests/run_e2e_gates.rs`, `crates/cli/tests/run_e2e_review.rs`.
+
+**Tests first.** Profile for tdd tests: `single_test = "sh tests/{test}.sh"`, `test_passed = "PASS {test}"`, `check = "sh check.sh"` where the repo's `check.sh` exits 0 unless a file `broken` exists. Workers Claude, reviewers the engine's choice (Codex) unless stated.
+
+- `e2e_tdd_red_commit_that_passes_is_rejected`: the red commit's test already passes; the worker then reads `The test proof failed: at the red commit`, commits a real red and green pair and `task_done`s again. Assert `bounces.proof == 1`, then `merged`.
+- `e2e_tdd_test_that_did_not_run_is_rejected`: the head test exits 0 without printing `PASS t_reset`; the message names the regex.
+- `e2e_check_fails_once_then_passes`: the first commit adds `broken`; `read_message {"expect":"The check failed"}`; the worker removes it and `task_done`s. Assert `bounces.check == 1`, two check records, `merged`.
+- `e2e_two_rejections_then_a_fresh_peer_worker_is_approved`: worker route `high` effort; `reviewer-t1-1` and `-2` submit `changes` with one `important` finding each; `worker-t1-1` fixes once (rung 1) and is killed at rung 2; `worker-t1-2` (a Codex fake agent, claimed by the fresh session) commits and `task_done`s; `reviewer-t1-3` approves. Assert the second session's window runtime is Codex, `rounds` shows sessions 1 and 2, `failures == 2`, `merged`.
+- `e2e_disputed_finding_blocks_as_a_question_and_the_answer_resumes_it`: the worker calls `task_blocked {"kind":"question","reason":"the finding is wrong"}` after the rejection; the run is `running` with `t1 blocked (question)` in `attention`; an `answer` edit is read by the worker (`read_message {"expect":"Answer to your question"}`), which `task_done`s; round 2 approves.
+- `e2e_override_merges_without_approval_and_is_reported`: plan `max_bounces = 1`; both review rounds submit `changes` with one `critical` finding; the second rejection makes `bounces.review == 2 > 1`, so the task is `blocked(mis_sized)` at rung 3; `run override <id> t1 --reason trusted` sends it to the merge queue, it passes the candidate check and merges; `merged_without_approval == Some("trusted")` and `REPORT.md` contains `merged without approval: trusted`.
+- `e2e_minor_findings_do_not_bounce`: `changes` with only `minor` findings merges at once and the report lists them.
+- `e2e_rate_limit_retry_is_not_a_stall_and_a_failed_turn_is_continued`: config `stall_after_secs = 5`, `rate_limit_retry_secs = 5`. The worker script:
+  1. commits;
+  2. `api_retry {"error":"rate_limit","delay_ms":8000,"times":1}`, then `wait_ms 9000` with no output;
+  3. `fail_turn {"error":"rate_limit"}`;
+  4. `read_message {"expect":"stopped on an API error"}`, then `DONE`.
+
+  Assert:
+  - no interrupt control request is in the worker's `FAKE_AGENT_STDIN_FILE`, because the 9 s silence was inside the suspended stall clock;
+  - the window showed `Attention` while rate-limited;
+  - the continue message arrived at least 5 s after the failed turn;
+  - `rate_limits["claude"] == 1`;
+  - the run completes.
+- `e2e_turn_end_fallback_completes_a_silent_worker`: the worker commits and its script ends without `task_done`. The engine's `DONE_NUDGE` gets an empty turn. The task proceeds with `done_signal == turn_end_fallback` and merges, and the worker's stdin file holds the nudge text.
+- `e2e_plan_with_an_l_task_is_rejected` and `e2e_cross_runtime_overlapping_owns_are_rejected`: `RunRequest::Start` returns `Refused` with the rule's exact line; no branch is created.
+
+**Change.** Only tests, `fake-agent` scripts, and the fixes they uncover.
+
+**Acceptance.** Tests pass.
+
+**Commit.** `test: cover the proof, check, review, dispute, override and done-signal scenarios end to end`
+
+### M8a.25 End-to-end scenarios II: ladder, merge, safety, sessions, crashes, and the smoke stage
+
+**Files.** Create `crates/cli/tests/run_e2e_merge.rs`, `crates/cli/tests/run_e2e_safety.rs`, `crates/cli/tests/run_e2e_crash.rs`, `crates/cli/tests/run_e2e_sessions.rs` (the restart, death, refusal and denial tests), `scripts/pty_smoke_run.py`. Modify `scripts/pty-smoke.py` (≤ 10 lines).
+
+**Tests first.**
+
+- `e2e_stall_escalates_to_a_fresh_session_on_the_peer_runtime`: `stall_after_secs = 5`; worker route Claude `standard` `high`. `worker-t1-1` commits a red test, then `hang`; the engine's interrupt ends it; `read_message {"expect":"interrupted after"}`; `hang` again. `worker-t1-2` (Codex) commits the green change and `task_done`s naming session 1's red commit (captured from `git log`). Assert: session 1's stdin file holds one interrupt control request (or the process saw `SIGINT`, per `CLI_CAPS`); `stalls == 1`; the second session's runtime is Codex and its prompt, the last argument in `FAKE_AGENT_ARGS_FILE`, contains `This is session 2 of this task.` and the diff stat; the task merges.
+- `e2e_mis_sized_task_blocks_and_is_split_by_an_edit`: the worker calls `task_blocked {"kind":"mis_sized",…}`; `t2` is `blocked(mis_sized)` with size M; a `split_task t2 into [t2a, t2b]` edit with disjoint `owns`; both run and merge; `t3`, which depended on `t2`, runs after both.
+- **How the conflict tests produce a conflict.** Under decision 41 two tasks whose `owns` intersect never run together, and under decision 32 a task cannot finish with a change outside its `owns`, so two legal tasks can never change the same path and never conflict. The one legal route to a real conflict is a task whose spill the user accepts with `run override` (decision 35 exempts an overridden task from the spill check). Both tests use it. Common setup: the initial commit contains `b/shared.txt` with the line `base`; profile `check = "true"`; `review_small = false`; `max_writers = 3`; every task S, `check` mode (reason `test`), Claude.
+- `e2e_conflict_is_handed_back_and_resolved`: `t1` owns `a/**`, `t2` owns `b/**`, independent. `worker-t1-1` commits `a/one.txt` and changes `b/shared.txt` to `from t1`, then `DONE`: `t1` is `blocked(mis_sized)` with `changed files outside owns: b/shared.txt`. `worker-t2-1` changes `b/shared.txt` to `from t2` and `DONE`; `t2` merges. The test then runs `run override <id> t1 --reason shared-ok`. The candidate conflicts on `b/shared.txt`. The engine hands back: rung 3 ended session 1, so decision 29 resumes it (`--resume <session 1's id>`) carrying the conflict message, and `worker-t1-1`'s script continues. After its first `DONE` it has `read_message {"expect":"conflicts with the run branch"}`, then `sh` `printf 'from t1 and t2\n' > b/shared.txt && git add b/shared.txt && git commit --no-edit`, then `DONE`. Assert `conflicts == 1`, the resume argv carries session 1's id, `t1` `merged` with `merged_without_approval == Some("shared-ok")`, `b/shared.txt` on the run branch reads `from t1 and t2`, and no proof, check or review op ran for `t1` between the hand-back and the merge (the report's history shows `hand-back` followed by `merge queue`).
+- `e2e_second_conflict_blocks_the_task`: as above, plus `t3` owning `b/**` (so it waits for `t2` by decision 41) whose worker changes `b/shared.txt` to `from t3`. `worker-t1-1`, resumed, reads the hand-back message, then waits with `sh` `for i in $(seq 1 600); do git log --all --format=%s | grep -q 'anthrex: merge t3' && exit 0; sleep 0.2; done; exit 1` until `t3` has merged, then resolves against its own merge and `DONE`s. The second candidate conflicts with `t3`'s change: `t1` is `blocked(conflict)`, `conflicts == 2`, and it received exactly one conflict message.
+- `e2e_red_candidate_goes_back_to_the_worker`: `t1` owns `a/**` and adds `a/flag`; `t2` owns `b/**` and adds `b/need-no-flag`; the repo's `check.sh` fails when both `a/flag` and `b/need-no-flag` exist. Both independent, `max_writers = 2`; `t1` merges first (its candidate check passes); `t2`'s task check passes in its own worktree (no `a/flag` there), its candidate check fails; the worker reads `merged cleanly into the run branch, but the check failed on the merged result`, deletes `b/need-no-flag`, `task_done`s, and merges. Assert `bounces.merge == 1`.
+- `e2e_cancel_of_a_dirty_running_task_is_salvaged`: the worker writes an uncommitted `a/wip.txt` with `sh`, then `hang`s; `cancel_task t1` edit; assert `t1` `cancelled`, the worktree path gone, `refs/anthrex/salvage/<id>/t1/1` exists and its tree contains `a/wip.txt`.
+- `e2e_moved_run_ref_halts_the_run`: while `t2` waits in the queue behind a scripted slow check, the test runs `git update-ref refs/heads/anthrex/<id>/integration <some other commit>`; assert `halted` with `refs/heads/anthrex/<id>/integration moved from`, no merge happens; `run resume --rebaseline` continues it to `complete`.
+- `e2e_moved_base_ref_halts_the_run`: the test commits on `main` in the repo while a task works; at its merge the run halts naming `refs/heads/main`.
+- `e2e_crash_after_each_intent_kind_reconciles`: for each kind in `CreateRunBranch`, `PrepareWorktree`, `CreateWindow`, `VerifyDone`, `Check`, `PrepareReview`, `MergeCandidate`, `RemoveWorktree`: start the daemon with `ANTHREX_TEST_ABORT_AFTER_INTENT=<kind>`, start the green one-task run with `yes`, wait until the daemon process has exited (socket gone), restart it without the variable, `run resume` if the run is `paused`, and wait for `complete`. Assert, for every kind, the same end state as `e2e_green_s_task_runs_to_merged`: one merge on the run branch with the same tree, no task, review or proof worktree left, the integration worktree present and on its branch, no duplicate `anthrex/<id>/t1` branch, and `journal.jsonl` has no intent without a `done` for a completed op.
+- `e2e_daemon_restart_pauses_and_resume_continues`: two independent tasks, `t1` on Claude and `t2` on Codex, with disjoint `owns`. Each worker commits, then `read_message {"expect":"The daemon restarted"}`, then `DONE`. The test waits until both rounds have a `session_id` and their turns have ended, then calls `restart_daemon()`.
+  - After the restart: the run is `paused (from running)`, both windows are `kind == Headless` and `Exited`, and no process whose argv holds either session id is alive.
+  - After `run resume`: `t1`'s new argv has `--resume <t1's session id>` and every other flag of its first argv; `t2`'s has `exec resume <t2's thread id>`, ending in `RESUME_WORKER`'s text.
+  - Both tasks merge, and `failures == 0` on both.
+- `e2e_process_that_dies_mid_turn_is_resumed_once`: `worker-t1-1` commits, then `exit 1` mid-turn with no `result`. The engine resumes the session; the script continues with `read_message {"expect":"stopped in the middle of a turn"}` and `DONE`. Assert the round's `deaths == 1`, `failures == 0`, the second argv carries `--resume`, and the task merges.
+- `e2e_a_second_death_in_a_round_is_a_stall`: the same, but the resumed script exits mid-turn again. Assert `stalls == 1`, a fresh session 2 (`worker-t1-2`) finishes, and the task merges.
+- `e2e_headless_windows_refuse_client_control_while_the_engine_delivers`: the worker calls `task_blocked {"kind":"question","reason":"which file?"}`, then `read_message {"expect":"Answer to your question: a.txt"}`, then commits and `DONE`s. While the task is `blocked(question)`, the test sends `Subscribe`, `Input`, `Kill`, `Remove` and `Restart` for the worker window over a raw client. Each gets decision 49's exact error, and the window is still listed with its process alive. Then `run edit` with an `answer` edit: the worker receives it as a turn, and the task merges.
+- `e2e_permission_denials_block_the_task_as_environment`: `denials_before_block = 2`. The worker runs `deny {"tool":"Write","reason":"not allowed"}` twice, then `hang`s. Assert `t1` is `blocked(environment)` with `the agent was denied 2 times; last: Write: not allowed`, the attention line names it, and the worker window is `Exited`.
+
+In `scripts/pty_smoke_run.py`, function `run_stage(env, bin_path)` called from `pty-smoke.py` before `== stage 12: stop the daemon, verify status ==`, printing `== stage 11c: a one-task run is approved, merged and accepted ==`: create `/tmp/anthrex-smoke-run-<pid>` (a repo with identity and one commit), write the worker and reviewer scripts of `e2e_green_s_task_runs_to_merged` and the plan to `/tmp/anthrex-smoke-plan-<pid>.toml`; `anthrex run start --plan … --dir <repo>`; `anthrex run approve <id>`; poll `anthrex run status <id> --json` every 0.5 s up to `RUN_WAIT` until `complete`; `anthrex run accept <id> --yes`; assert `git log -1 --format=%s` starts with `anthrex: accept run` and `a.txt` exists; remove both paths in `finally`.
+
+**Change.** Only tests, scripts and the fixes they uncover.
+
+**Acceptance.** All five commands from AGENTS.md pass.
+
+**Commit.** `test: cover the ladder, merge queue, salvage, ref guard, headless session and crash-reconcile scenarios end to end, and add a run smoke stage`
+
+## Verification
+
+```bash
+cargo build --workspace --all-targets
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all --check
+python3 scripts/pty-smoke.py
+```
+
+Milestone-specific checks:
+
+- `PROTO_VERSION` equals the header's derivation, recorded under "Implementation notes".
+- `rg -n "std::fs|std::process|std::thread|tokio|SystemTime" crates/daemon/src/run/engine crates/daemon/src/run/{plan,validate,globs,roster,edits,model,contract,messages,report,role_launch,snapshot,env}.rs crates/daemon/src/headless/{mod,argv,claude_stream,codex_stream,conversation,status}.rs` prints nothing.
+- `rg -n "write_input" crates/daemon/src/run crates/daemon/src/headless` prints nothing: no run agent is driven through a terminal.
+- Every `.meta.json` under `crates/daemon/tests/fixtures/headless/` names the CLI version it was recorded with, and the shape-conformance tests of M8a.20 pass against those files.
+- `cargo tree -p anthrex-daemon | grep rmcp` and `cargo tree -p anthrex-tui | grep rmcp` print nothing; `cargo tree -p anthrex-mcp | grep "rmcp v3.4.0"` matches.
+- `wc -l` on every file in the file-size table and every file under `crates/daemon/src/run/`, `crates/mcp/src/`, `crates/proto/src/run*.rs`: nothing new above 600, nothing existing grown beyond its row.
+- Every `Command::new` in `crates/daemon/src` that spawns git goes through `worktree::run_git` or matches `no-optional-locks`.
+- No `crate::lock` guard in `run/driver*.rs` or `manager/*.rs` is alive across `.await`, `spawn_blocking`, a git call, `Window::spawn` or `HeadlessHandle::spawn`/`send_line`/`kill`.
+- A run starts, completes and is accepted with `ANTHREX_GIT=off`.
+- After the tests and the smoke script, `pgrep -fl "anthrex daemon"` and `pgrep -fl fake-agent` show nothing of yours (a headless `fake-agent` left behind means a session was not killed at shutdown), and `/tmp/ax-run*`, `/tmp/anthrex-smoke-run-*` and `/tmp/anthrex-smoke-plan-*` are gone.
+
+## Manual check
+
+Use an isolated daemon, config and throwaway repository throughout:
+
+```bash
+export ANTHREX_SOCKET=/tmp/anthrex-m8a/daemon.sock ANTHREX_DATA_DIR=/tmp/anthrex-m8a/data ANTHREX_CONFIG=/tmp/anthrex-m8a/config.toml
+mkdir -p /tmp/anthrex-m8a && cd /tmp/anthrex-m8a && git init -b main demo && cd demo \
+  && printf '#!/bin/sh\ngrep -q hello hello.sh 2>/dev/null && echo "PASS $1"\n' > t.sh && git add . && git commit -m init
+```
+
+1. Write `/tmp/anthrex-m8a/plan.toml`:
+   - profile `check = "sh -n hello.sh"`, `single_test = "sh t.sh {test}"`, `test_passed = "PASS {test}"`;
+   - `t1`: a Codex M tdd task owning `hello.sh`;
+   - `t2`: a Claude S docs task owning `README.md`, depending on `t1`.
+
+   Leave `ANTHROPIC_API_KEY` unset in the shell that starts the daemon.
+2. `anthrex run start --plan /tmp/anthrex-m8a/plan.toml`:
+   - the id and the plan table print, and the state is `awaiting_approval`;
+   - `git worktree list` in `demo` shows the integration worktree and `t1`'s pre-warmed worktree;
+   - no run window exists.
+
+   Then `anthrex run approve <id>`.
+3. `anthrex` to attach. `t1`'s worker is listed as a window. Focusing it shows the headless placeholder, and typing does nothing. `C-b m` opens its conversation, which shows the prompt, each command and the `task_done` call live. `ps -o command= -p <pid>` shows `codex exec --json … -s workspace-write -c sandbox_workspace_write.writable_roots=…`. The worker's commit succeeds inside the sandbox, which confirms decision 25's writable root.
+4. Watch `anthrex run status` go `working → proof → check → review → merge_queue → merged` for `t1`, with the red commit named in the status JSON. The reviewer is a Claude session:
+   - `ps` shows `claude -p --input-format stream-json … --permission-mode plan`, with no `--bare`;
+   - it answers without an API key, which confirms the login is used (decision 50);
+   - its `submit_review` call is **not** blocked by plan mode. If it is, apply decision 24's fallback and record it.
+4a. **Project settings.** Add a tracked `.claude/settings.json` with a `PreToolUse` hook that runs `touch /tmp/anthrex-m8a/project-hook-ran`, and a tracked `.mcp.json`, and commit them. Start a second run with a Claude task:
+    - with `claude_user_settings_only` set, the run starts, `/tmp/anthrex-m8a/project-hook-ran` never appears, and the conversation shows anthrex's hooks at work (tool calls listed);
+    - otherwise `run start` is refused with decision 53's message; `--trust-project` starts it, and the report names both files.
+
+    Discard the run and remove the two files.
+4b. **Worker sandbox.** Give `t2`'s brief a first step: "run `touch ../outside-sandbox` with Bash, then continue". The conversation shows the command refused. `ls /tmp/anthrex-m8a/` in the worktrees' parent shows no `outside-sandbox`. `t2` still commits `README.md` and merges. Record whether the refusal appeared as a stream denial and was counted (the snapshot's `denials`).
+4c. **Protected files.** In a third run, give a task `owns = ["**"]` in a repo that tracks `AGENTS.md`, and a brief that asks it to append a line to `AGENTS.md`. Then:
+    - `run start` prints the protected warning;
+    - the worker's `task_done` is rejected with `AGENTS.md configures or instructs future agents…`, and after it reverts, the task merges;
+    - `AGENTS.md` on the run branch is unchanged.
+4d. **Codex project config.** If M8a.1 found that Codex loads project config, commit a `.codex/config.toml` and start a run with a Codex task. It is either excluded (the argv carries `codex_user_config_only`) or refused without `--trust-project`, as decision 53 says. Remove the file afterwards.
+5. In the TUI, typing into a focused worker window does nothing, and the kill and remove commands on it show decision 49's refusal. The run carries on.
+6. While `t2`'s worker runs, `anthrex daemon stop`:
+   - `pgrep -fl "claude -p"` shows nothing of this run.
+   - `anthrex daemon start`: `run status` shows `paused (from running)`.
+   - `anthrex run resume <id>`: `ps` shows `claude -p … --resume <session id>` with `--settings` and `--mcp-config` re-passed, and the conversation view shows `RESUME_WORKER` as a new user turn.
+7. When the run is `complete`, read `REPORT.md`: gates, rounds, severities, done signals, tokens per round. `anthrex run accept <id>` and answer `y`. `git log --oneline -3` on `main` shows the accept merge, and `git branch --list 'anthrex/*'` is empty.
+8. Start a second run and let a worker write an uncommitted file. `anthrex run cancel <id>`: the session's process is gone, and `git for-each-ref refs/anthrex/salvage` lists the salvage ref. Then `anthrex run discard <id>` and type the id.
+9. `anthrex daemon stop`. `pgrep -fl "anthrex daemon"`, `pgrep -fl "claude -p"` and `pgrep -fl "codex exec"` show nothing of yours. Remove `/tmp/anthrex-m8a`.
+
+## Review focus
+
+The five input classes or failure modes most likely to bite a user that the task tests above would not exercise without being told to. Each is given a test in its owning task; the reviewer checks those tests exist and fail without the fix.
+
+1. **A real repository's hooks and signing.** A user with `commit.gpgsign = true` and a pinentry, or a `post-checkout` hook that runs a build, would hang or fail every engine checkout and merge candidate. Test: `engine_writes_ignore_hooks_and_signing` (M8a.8), plus `accept` deliberately not overriding them (`accept_merges_no_ff` runs with the repo's own hook present and asserts it ran).
+2. **Hostile or odd test names and paths.** A worker controls the `test` string that is substituted into a shell command, and repository paths can contain spaces and non-ASCII. Tests: `proof_quotes_a_hostile_test_name` (M8a.10), and `engine_paths_with_spaces_and_unicode_work` (M8a.8: a `TempRepo` under `/tmp/ax run ü/` runs preflight, worktree creation, merge candidate and salvage).
+3. **Forgotten `git add`.** A new file left untracked passes the check in the task worktree, where the file exists, and fails only on the merged candidate. That spends a bounce on a mistake the engine can name. Tests: `verify_done_reports_each_condition`'s untracked-inside-owns case (M8a.8), and `task_done_rejections_leave_the_task_working` (M8a.12).
+4. **`owns` written as a plain directory.** Planners write `crates/auth` or `crates/auth/` as often as `crates/auth/**`. A literal globset match would flag every file under it as a spill and send correct work to rung 3. Test: `owns_without_wildcard_covers_the_directory_below_it` (M8a.4).
+5. **A sandboxed worker in a linked worktree.** A linked worktree's index, refs and objects live under the main repository's `.git`, outside the worktree that both sandboxes make writable: Codex's `workspace-write`, and Claude Code's sandbox (decision 54). Without the git common dir as a writable root, every worker's `git commit` fails inside its sandbox. The task stalls or loops through rung 2, and no test with `fake-agent` would notice, because `fake-agent` has no sandbox. Tests: `codex_worker_args_add_the_git_common_dir_as_writable` and `worker_settings_json_enables_the_sandbox` (M8a.7), M8a.1 items 4b and 7's recorded proofs, and manual check steps 3 and 4b.
+
+## Risks and gotchas
+
+1. **Conflicts are nearly unreachable, by design.** Decision 41 never runs two tasks whose `owns` intersect, and decision 32 stops a task that changes a path outside its `owns`. So between legal tasks a merge conflict cannot happen; §11.5's hand-back fires only after a `run override` accepts a spill, which is how M8a.25 builds its two conflict tests. If a conflict ever appears without an override, one of those two rules has a hole. Check `implicit_deps` and the spill diff (decision 32 diffs `<run_head>...HEAD`, three dots) before suspecting git.
+2. **The spill check versus generated files.** A build that regenerates a tracked lock file outside the task's `owns` would be a spill and go to rung 3. Decision 55 turns it into a rung-1 bounce instead, but only for files listed in `profile.generated`. A plan that leaves `generated` empty still sends a stray `Cargo.lock` to rung 3. The planner (and from M8b the onboarding scout) must list the repository's lock files, and a task that really changes dependencies must own the lock file. A bounce spent on a lock file still counts toward `max_bounces` and rung 2, so a worker that keeps regenerating it escalates.
+3. **Plan mode and MCP in `-p`.** If Claude's plan mode refuses the allowed `submit_review` call, every Claude review stalls. Decision 24 names the fallback, and manual check step 4 decides.
+4. **The stream-json input envelope is thinly documented (§23).** A wrong envelope makes Claude ignore or reject every message after the first. `claude_user_message_matches_the_recorded_envelope` and `fake-agent`'s refusal of any other envelope (M8a.20) are the guard. Re-record the fixture when the CLI's major version changes.
+5. **`--bare` may become the default for `-p` (§23).** On that day, `auth = "login"` sessions fail to authenticate unless M8a.1 found an explicit opt-out flag. The failure is a turn that fails with `authentication_failed`, which decision 32 turns into `blocked(environment)` with the CLI's text, so it is loud, not silent.
+6. **Project settings run unprompted in `-p`.** Without `--bare`, `claude -p` would run the repository's own `.claude/settings.json` hooks and `.mcp.json` servers with no trust dialog. Decision 53 excludes them with the CLI's own flags, or refuses the run without `--trust-project`.
+   - **What remains.** The fallback reads only the base commit. A task that adds a `.claude/settings.json` or `.mcp.json` during the run would have it loaded by a later resume of a session in that worktree. The spill check stops this unless the task owns those paths.
+   - A plugin or a user-level setting still loads. That is the user's own configuration, by design.
+7. **Workers are unattended with `Bash` allowed.** `--permission-prompts none` denies anything not allowed, so the default `worker_allowed_tools` must include `Bash`, or no worker can run a test. Decision 54 confines that `Bash` to the worktree and the git common dir through Claude Code's sandbox, just as Codex's `workspace-write` does.
+   - **What remains.** Reads are not confined, only writes and network. With `[orchestrator] worker_sandbox = false`, for a platform where the sandbox cannot start, a worker's shell is unconfined again. The report says so on every such run.
+   - Whether a sandbox refusal is counted as a denial depends on how it appears in the stream (M8a.1 item 4b). If it is not counted, a worker that keeps retrying is caught only by the stall and budget rules.
+8. **Codex sandbox network.** `workspace-write` blocks network access by default. A worker whose test needs a download fails, which is why `setup` (run by the engine, unsandboxed) is where fetching belongs.
+9. **Background sub-agents keep `-p` open**, up to its 10-minute idle ceiling. `open_subagents` defers the turn-end fallback (decision 32), and the stall clock keeps running on stream events, which sub-agents produce.
+10. **`SIGTERM` leaves a Claude turn unfinished**, and that is what shutdown sends. A resumed session may re-run the last tool call. Workers commit often and the gates re-check everything, so the cost is time, not correctness.
+11. **Usage semantics.** If Claude's `result.usage` is cumulative and the parser treats it as per turn (or the reverse), token spend is wrong by a large factor. `claude_usage_is_per_turn` pins it against the fixture.
+12. **Shutdown storm.** Without decision 46, killing sessions at shutdown would read as process deaths of working tasks. `e2e_daemon_restart_pauses_and_resume_continues` catches it.
+13. **fsync cost.** `Persist` and intent lines `fsync` on every structural step. On a slow disk this adds tens of milliseconds per step, which is fine at the rate tasks move, but counter-only changes are never `fsync`ed more than once every 5 s.
+14. **Watcher descriptors.** Each registered run worktree costs a recursive watcher (refreshed M8 risk 8), and large runs on Linux may degrade to polling.
+15. **Socket path length.** Test temp dirs go under `/tmp`, never `std::env::temp_dir()`.
+16. **`fake-agent` not built.** `cargo test -p anthrex` alone does not build it; use `--workspace`.
+17. **Stdout in `anthrex mcp`.** Any non-JSON-RPC byte on stdout breaks the session: no `println!`, and no tracing subscriber on stdout.
+18. **Protected paths and legitimate work.** A task that must edit `CLAUDE.md` or `.claude/` config must name each file exactly in `owns`. A planner that writes `docs/**` for a docs task that also touches `docs/AGENTS.md` gets a bounce the first time. The warning at `run start` (decision 56) shows this before approval, but only for files that already exist.
+19. **Codex project config is unverified until M8a.1.** If Codex loads project config and the recording misses the mechanism (for example, trust levels that only apply in the interactive TUI), decision 53's Codex branch would be wrong in a way no `fake-agent` test can see. Manual check step 4d is the backstop.
+20. **rmcp API drift.** Do not loosen `=3.4.0`. When a name differs, read the crate source under `~/.cargo/registry/src/*/rmcp-3.4.0/`.
+
+## Follow-ups handled
+
+- **From milestone 6.5's transcript capture: "Agents inherit the launcher's entire environment, including another agent's session markers."** Handled for headless run sessions and engine commands by decision 26 (`CLAUDE_CODE_*` and `CLAUDECODE` removed, profile env set). Not handled for PTY windows, which keep today's inheritance; update the follow-up entry to say so and leave it open for the general policy.
+
+New follow-ups to record in `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md` during implementation: split `crates/config/src/lib.rs` (already over 600 lines before this milestone); prune old run directories under `<data_dir>/runs/`; the environment policy for PTY windows; the PTY status machine's `StopFailure`/compaction gap, now only the orchestrator's (M9); re-recording the headless fixtures on each CLI major version.
+
+## Implementation notes
+
