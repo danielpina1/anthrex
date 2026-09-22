@@ -71,14 +71,24 @@ ENV["ANTHREX_GIT"] = "off"
 # `ANTHREX_CONFIG` is unset. Pointing it here instead means this script's daemon and
 # every client it drives never consult whatever a developer running this locally has
 # actually configured (a different prefix key would break every `\x02`-prefixed send
-# below in a way that has nothing to do with the product). This path is fixed, not a
-# `tempfile.mkdtemp`, and every stage but one (the resume stage below) never creates
-# it — the suite's own correctness depends on it staying absent for those stages, and
-# `ensure_config_path_absent` below is what makes that an enforced invariant instead
-# of a hope. See the M6.12/fix-wave-11 reviews for why a fixed, silently-poisonable
-# path was a Major finding: a stray file here used to fail stage 2 with "timed out
-# waiting for 'new-agent form'", an error that named the form, never this path.
-ENV["ANTHREX_CONFIG"] = "/tmp/anthrex-smoke-data/config.toml"
+# below in a way that has nothing to do with the product). Every stage but one (the
+# resume stage below) never creates it — the suite's own correctness depends on it
+# staying absent for those stages, and `ensure_config_path_absent` below is what makes
+# that an enforced invariant instead of a hope. See the M6.12/fix-wave-11 reviews for
+# why a fixed, silently-poisonable path was a Major finding: a stray file here used to
+# fail stage 2 with "timed out waiting for 'new-agent form'", an error that named the
+# form, never this path.
+#
+# Whole-branch-review m20: the path used to be `/tmp/anthrex-smoke-data/config.toml`
+# with no pid in it, the one piece of shared mutable state left after fix wave 11 —
+# `DATA_DIR` is a `mkdtemp` and `SMOKE_REPO` already carries the pid, but this path
+# did not, so two suites started a few seconds apart both passed the startup check
+# above, then the second one's stage 12b (the only stage that writes a real file here)
+# overwrote the first's config with a path inside a temp dir the first cannot use, and
+# whichever finished first deleted the file out from under the other. Fixed the same
+# way `SMOKE_REPO` already is: the pid goes in the directory name, so two concurrent
+# runs on one host can no longer collide on this path by construction.
+ENV["ANTHREX_CONFIG"] = f"/tmp/anthrex-smoke-data-{os.getpid()}/config.toml"
 
 
 def ensure_config_path_absent():

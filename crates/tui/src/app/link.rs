@@ -63,9 +63,13 @@ impl App {
 
     /// `C-b r` (decisions 23 and 32). Connected, it is a no-op affirmation. Not
     /// connected, it starts an attempt at once and opens a fresh 30 s window —
-    /// `lib.rs` is the one that actually checks "unless one is already in flight"
-    /// before spawning it, since `App` has no visibility into the event loop's
-    /// in-flight task.
+    /// `lib.rs`'s `ConnectionDriver::reconnect_now` is the one that actually acts on
+    /// this, since `App` has no visibility into the event loop's in-flight task.
+    /// Whole-branch-review m13a: this used to say `lib.rs` "checks 'unless one is
+    /// already in flight' before spawning" a fresh attempt, which fix wave 10
+    /// replaced — a manual press now *supersedes* an in-flight automatic attempt
+    /// (aborts it and spawns a fresh one that carries `daemon_exe`) rather than
+    /// deferring to it; see `reconnect_now`'s own doc comment for why.
     pub(super) fn reconnect_command(&mut self) -> Vec<Effect> {
         if self.connected() {
             self.toast("connected");

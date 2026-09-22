@@ -97,12 +97,30 @@ mod tests {
         assert_eq!(settings.tree_keep_finished_secs, 60);
     }
 
+    /// Whole-branch-review m17: this used to be `assert_eq!(f(x), f(x))` —
+    /// `UiSettings::default()` *is* `Self::from_config(&config::Config::default())`
+    /// (this file's own `impl Default`), so the old assertion passed for every
+    /// possible body `from_config` could have, including a wrong one. What decision
+    /// 4's table actually promises is that the client's built-in defaults are these
+    /// specific values; pin those instead.
     #[test]
-    fn defaults_match_the_config_crates_own_defaults() {
-        assert_eq!(
-            UiSettings::from_config(&config::Config::default()),
-            UiSettings::default()
-        );
+    fn defaults_match_decision_4s_table() {
+        let settings = UiSettings::from_config(&config::Config::default());
+        assert_eq!(settings.prefix, (KeyCode::Char('b'), KeyModifiers::CONTROL));
+        assert_eq!(settings.prefix_label, "C-b");
+        assert_eq!(settings.accent, Color::Rgb(0x89, 0xb4, 0xfa));
+        assert!(settings.bell_attention);
+        assert!(!settings.bell_done);
+        assert_eq!(settings.default_runtime, proto::Runtime::Shell);
+        assert_eq!(settings.scrollback_lines, 5000);
+        assert_eq!(settings.sidebar_width, crate::ui::DEFAULT_SIDEBAR_WIDTH);
+        assert_eq!(settings.tree_keep_finished_secs, 300);
+
+        // The property the old test's name actually promised, kept as a second,
+        // narrower assertion rather than dropped: `UiSettings::default()` must still
+        // agree with `from_config(&Config::default())`, now proven against a value
+        // this test has already pinned field-by-field, not against itself.
+        assert_eq!(settings, UiSettings::default());
     }
 
     #[test]

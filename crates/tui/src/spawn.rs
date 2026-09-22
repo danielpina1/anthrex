@@ -20,6 +20,16 @@ async fn is_up(socket: &Path) -> bool {
 /// `ensure_daemon`'s doc comment for what this does and does not close.
 const SPAWN_HANDOFF_GRACE: Duration = Duration::from_millis(250);
 
+/// How long `ensure_daemon` polls the socket after spawning (or finding) a daemon,
+/// before giving up. `pub`, not a bare literal at its one call site below, because
+/// whole-branch-review m19 found a test bound built from the exact number this
+/// evaluates to (`crates/cli/tests/codex_version.rs`'s `elapsed < Duration::from_secs(3)`,
+/// asserting a `daemon start` did not wait out a slow probe): that test's whole point
+/// *is* this wait, so a change here must change that assertion too, and a named,
+/// importable constant is what lets the compiler enforce that instead of two literals
+/// that can silently drift apart.
+pub const ENSURE_DAEMON_SOCKET_WAIT: Duration = Duration::from_secs(3);
+
 /// Opens `proto::paths::stderr_path()` for append, creating `data_dir` first if needed.
 /// A detached daemon has no terminal, and `logfile::RotatingFile` can only report a
 /// failed log rotation via a direct write to its own stderr (task-3 review; nothing else
@@ -179,7 +189,7 @@ pub async fn ensure_daemon(exe: &Path, socket: &Path) -> anyhow::Result<()> {
             drop(lock);
         }
     }
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + ENSURE_DAEMON_SOCKET_WAIT;
     while Instant::now() < deadline {
         if is_up(socket).await {
             return Ok(());
@@ -187,7 +197,8 @@ pub async fn ensure_daemon(exe: &Path, socket: &Path) -> anyhow::Result<()> {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     anyhow::bail!(
-        "the daemon did not start within 3 s; check {}",
+        "the daemon did not start within {} s; check {}",
+        ENSURE_DAEMON_SOCKET_WAIT.as_secs(),
         proto::paths::log_path().display()
     )
 }

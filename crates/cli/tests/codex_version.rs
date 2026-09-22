@@ -147,8 +147,16 @@ fn daemon_start_does_not_wait_on_a_slow_codex_probe() {
         "daemon start failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    // Whole-branch-review m19: `< 3s` used to be a bare literal, independently typed
+    // from `spawn::ensure_daemon`'s own socket-poll deadline (`crates/tui/src/spawn.rs`)
+    // that it happens to equal. The property under test is "it did not wait out the
+    // stub's 4 s sleep", which any bound comfortably under 4 s proves — but the
+    // assertion *is* that deadline (the appendix's own verdict: correct as written to
+    // equal it, not a margin question), so a change to the real constant should change
+    // this assertion too. Now imports the same constant instead of a second literal
+    // that could silently drift from it.
     assert!(
-        elapsed < Duration::from_secs(3),
+        elapsed < tui::spawn::ENSURE_DAEMON_SOCKET_WAIT,
         "daemon start took {elapsed:?}, meaning the socket bind waited on the codex probe"
     );
 }

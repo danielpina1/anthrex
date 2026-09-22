@@ -402,7 +402,12 @@ async fn persister_writes_changes_within_a_second() {
     let handle = state::spawn_persister(m.clone(), path.clone(), shutdown.clone());
 
     let id = create_id(&m, spec("original"), std::env::temp_dir(), 80, 24).await;
-    let deadline = Instant::now() + Duration::from_secs(1);
+    // Whole-branch-review m18: this used to be a bare `Duration::from_secs(1)`,
+    // numerically equal to `state::SAVE_MAX_DELAY` (1s) even though the burst below
+    // ends immediately, so the write actually settles on `SAVE_DEBOUNCE` (100ms) with
+    // roughly a 10x real margin -- derived from the constants instead, matching
+    // `state_tests.rs`'s own sibling sites.
+    let deadline = Instant::now() + state::SAVE_MAX_DELAY + state::SAVE_DEBOUNCE;
     loop {
         let (loaded, _problems) = state::load(&path);
         if loaded.windows.iter().any(|w| w.id == id) {
@@ -410,7 +415,7 @@ async fn persister_writes_changes_within_a_second() {
         }
         assert!(
             Instant::now() < deadline,
-            "state.json never listed the new window within 1s"
+            "state.json never listed the new window within SAVE_MAX_DELAY + SAVE_DEBOUNCE"
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
@@ -418,7 +423,7 @@ async fn persister_writes_changes_within_a_second() {
     for n in 0..20 {
         m.rename(id, format!("name-{n}")).unwrap();
     }
-    let deadline = Instant::now() + Duration::from_secs(1);
+    let deadline = Instant::now() + state::SAVE_MAX_DELAY + state::SAVE_DEBOUNCE;
     loop {
         let (loaded, _problems) = state::load(&path);
         if loaded
