@@ -26,8 +26,9 @@ impl Drop for StopOnDrop<'_> {
 /// Verified by reverting that one line and watching this test fail: see the task report.
 ///
 /// A production daemon almost always starts *detached* — `anthrex`'s auto-start path
-/// (`spawn::ensure_daemon` -> `spawn::spawn_detached` in `crates/cli/src/spawn.rs`) is
-/// what every ordinary `anthrex ls`, `anthrex attach`, etc. goes through, not
+/// (`spawn::ensure_daemon` -> `spawn::spawn_detached`, moved from `crates/cli/src/spawn.rs`
+/// to `crates/tui/src/spawn.rs` by task M6.11's `git mv`) is what every ordinary
+/// `anthrex ls`, `anthrex attach`, etc. goes through, not
 /// `--foreground` (that flag exists for exactly this test suite and for `daemon start
 /// --foreground` run by hand). `logfile::RotatingFile` can only report a failed
 /// rotation via a direct write to its own stderr — nothing else on that path can
