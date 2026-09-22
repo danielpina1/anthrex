@@ -96,6 +96,79 @@ async fn a_directory_gone_before_phase_c_does_not_leave_a_stale_cleanups_record(
     }
 }
 
+/// fix-wave-12-re-review Minor 2: `Restarting::drop`'s doc comment claimed
+/// `orphan_cleanup` was a no-op "when phase B was never reached (nothing was ever
+/// inserted under this id)". True before whole-branch-review Major 1 moved the cwd
+/// check ahead of phase B; false after — the new check can now bail *before* this
+/// restart attempt's own phase B ever calls `self.kill`, while `cleanups[id]` already
+/// holds a live record from a *prior*, unrelated `kill()`. The old, unconditional
+/// `orphan_cleanup` call evicted that record anyway, stranding it in
+/// `orphaned_cleanups` where nothing keyed on `id` will find it again: a later
+/// `start_cleanup(id)` no longer short-circuits on `cleanups.contains_key`, and spawns
+/// a second `escalate` on the same still-alive pid.
+///
+/// Events are deliberately never pumped (same technique as
+/// `restart_refuses_when_the_kill_wait_times_out` in
+/// `daemon/tests/manager/restart/shutdown_race.rs`), so `Entry.child_alive` can never
+/// observe the real process's actual fate — this pins the manager-visible race
+/// deterministically rather than depending on how fast a real shell dies to `SIGHUP`.
+#[tokio::test]
+async fn a_cwd_bail_before_phase_b_does_not_orphan_an_unrelated_kills_record() {
+    let (m, _events) = WindowManager::new(ManagerConfig::new(
+        "/tmp/unused-restart-cwd-bail-test.sock".into(),
+        "/bin/sh".into(),
+    ));
+
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    let info = m
+        .create(spec("cwd-bail", cwd.clone()), cwd.clone(), None, 80, 24)
+        .await
+        .unwrap();
+    let id = info.id;
+    assert!(
+        crate::lock(&m.inner)
+            .entries
+            .get(&id)
+            .is_some_and(|e| e.child_alive),
+        "sanity: the window starts out live"
+    );
+
+    // A separate, unrelated `kill()` — not through `restart` — inserts the cleanup
+    // record this test protects.
+    m.kill(id).unwrap();
+    assert!(
+        crate::lock(&m.inner).cleanups.contains_key(&id),
+        "sanity: kill() inserted a cleanup record"
+    );
+
+    // Remove the cwd out from under the still-"live" (per the manager's own
+    // bookkeeping — events are never pumped) window, then restart it: the new
+    // between-phase-A-and-B check must bail before this attempt ever touches phase B.
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::mem::forget(dir);
+    let err = m.restart(id).await.unwrap_err();
+    assert!(
+        err.to_string().contains("directory does not exist"),
+        "{err}"
+    );
+
+    // The record belongs to the earlier, unrelated kill() — this restart attempt never
+    // reached phase B, so it must be left exactly where it was, not moved into
+    // `orphaned_cleanups`.
+    let inner = crate::lock(&m.inner);
+    assert!(
+        inner.cleanups.contains_key(&id),
+        "cleanups[{id}] was moved to orphaned_cleanups by a restart attempt that never \
+         reached phase B — a later start_cleanup(id) would now spawn a second escalate \
+         on the same still-alive pid"
+    );
+    assert!(
+        inner.orphaned_cleanups.is_empty(),
+        "the unrelated kill()'s record should not have been orphaned"
+    );
+}
+
 /// Whole-branch-review Major 1: decision 19's cwd precondition used to be checked
 /// only in phase C, *after* phase B's kill had already ended the live process — a
 /// restart the user was told was refused had, in fact, destroyed their running

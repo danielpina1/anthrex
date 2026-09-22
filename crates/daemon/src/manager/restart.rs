@@ -162,10 +162,34 @@ const RESTART_POLL: Duration = Duration::from_millis(50);
 /// unconditionally, on the success path too, where this `Drop` never fires (`forget`
 /// clears `held` first) — its job is evicting the *outgoing* process's record to make
 /// room for the incoming one, not cleaning up after a failure.
+///
+/// fix-wave-12-re-review Minor 2: the doc comment above used to justify the
+/// unconditional `orphan_cleanup` call in `Drop` by claiming it is "a no-op when phase B
+/// was never reached (nothing was ever inserted under this id)". Whole-branch-review
+/// Major 1 (in the same wave) made that false: it moved the cwd precondition *ahead of*
+/// phase B, so `Drop` can now fire on a bail that happened before this restart attempt
+/// ever called `self.kill`. If a *prior*, unrelated `kill()` already inserted
+/// `cleanups[id]` and is still escalating, an unconditional `orphan_cleanup` here would
+/// strand that live record in `orphaned_cleanups`, where `id` can no longer find it — a
+/// later `start_cleanup(id)` would then spawn a second `escalate` on the same
+/// still-alive pid. Made structurally impossible rather than documented as an accepted
+/// exception (the instruction this class of bug has produced three times before): the
+/// guard now tracks whether *this attempt* actually entered phase B, via
+/// [`mark_phase_b_entered`](Self::mark_phase_b_entered), and `Drop` only evicts when it
+/// did. A record already present before this attempt's own kill was ever called belongs
+/// to someone else's operation and is never this guard's to move — the same principle
+/// `begin_restart`'s own early refusals (row 1 of fix wave 8's enumeration, where the
+/// guard does not even exist yet) already applied; this closes the gap for the one case
+/// where the guard exists but phase B still never ran.
 struct Restarting<'a> {
     manager: &'a WindowManager,
     id: u32,
     held: bool,
+    /// Set by [`mark_phase_b_entered`](Self::mark_phase_b_entered) right before this
+    /// restart attempt calls `self.kill`. `Drop` only evicts `cleanups[id]` when this is
+    /// true — see this struct's own doc comment for why evicting unconditionally is
+    /// wrong once a bail can land before phase B ever runs.
+    phase_b_entered: bool,
 }
 
 impl Restarting<'_> {
@@ -173,6 +197,14 @@ impl Restarting<'_> {
     /// the same lock as the swap (design decision 21). Nothing is left for `Drop` to do.
     fn forget(mut self) {
         self.held = false;
+    }
+
+    /// Called right before phase B's `self.kill(id)`, marking that any `cleanups[id]`
+    /// record from this point on — whether freshly inserted by this attempt's own kill,
+    /// or already there from an earlier one — is now this restart attempt's to account
+    /// for. See this struct's own doc comment.
+    fn mark_phase_b_entered(&mut self) {
+        self.phase_b_entered = true;
     }
 }
 
@@ -185,12 +217,14 @@ impl Drop for Restarting<'_> {
         if let Some(entry) = inner.entries.get_mut(&self.id) {
             entry.restarting = false;
         }
-        // Fix wave 8, Minor 1: see this struct's own doc comment. Safe to call
-        // unconditionally — `orphan_cleanup` is a no-op when phase B was never reached
-        // (nothing was ever inserted under this id) or `finish_restart` already evicted
-        // it (the success path, which never reaches here at all, since `forget` runs
-        // first).
-        inner.orphan_cleanup(self.id);
+        // Fix wave 8, Minor 1 / fix-wave-12-re-review Minor 2: see this struct's own
+        // doc comment. Only evicts when this attempt actually entered phase B — a bail
+        // between phase A and phase B (the cwd precondition) leaves whatever is under
+        // `cleanups[id]`, if anything, untouched, since it cannot belong to this
+        // attempt.
+        if self.phase_b_entered {
+            inner.orphan_cleanup(self.id);
+        }
     }
 }
 
@@ -213,7 +247,7 @@ impl WindowManager {
     /// needs it for the same reason `kill` itself does.
     pub async fn restart(self: &Arc<Self>, id: u32) -> anyhow::Result<()> {
         // Phase A.
-        let (was_live, cwd, guard) = self.begin_restart(id)?;
+        let (was_live, cwd, mut guard) = self.begin_restart(id)?;
 
         // Whole-branch-review Major 1: decision 19's cwd precondition used to be
         // checked only in phase C, *after* phase B's kill below had already ended the
@@ -250,6 +284,7 @@ impl WindowManager {
         // *not* fall through to phase C — see `wait_for_exit`'s own doc comment for why
         // restarting anyway is exactly the case the `child_alive` deviation cannot cover.
         if was_live {
+            guard.mark_phase_b_entered();
             self.kill(id)?;
             if !self.wait_for_exit(id).await {
                 // Minor 2 (fix wave 5 re-review) used to evict `cleanups[id]` here with a
@@ -328,6 +363,7 @@ impl WindowManager {
                 manager: self,
                 id,
                 held: true,
+                phase_b_entered: false,
             },
         ))
     }
