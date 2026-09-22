@@ -118,13 +118,13 @@ fn a_silent_daemon_costs_at_most_a_second() {
 }
 
 #[test]
-fn waits_for_hook_ack_and_strips_only_top_level_tool_response() {
+fn waits_for_hook_ack_and_bounds_only_the_top_level_tool_response() {
     let dir = tempdir();
     let rt = runtime();
     rt.block_on(async {
         let listener = UnixListener::bind(dir.path().join("daemon.sock")).unwrap();
-        let payload = json!({"hook_event_name":"PostToolUse", "tool_response":"huge",
-            "session_id":"x", "tool_input":{"tool_response":"keep"}, "unknown":[1, true]});
+        let payload = json!({"hook_event_name":"PostToolUse", "tool_response":"outer-result",
+            "session_id":"sess-x", "tool_input":{"tool_response":"inner-kept"}, "unknown":[1, true]});
         let mut child =
             RunningCommand::start(isolated_command(dir.path(), FLAGS).arg(payload.to_string()));
         let mut stream = accept(&listener).await;
@@ -143,8 +143,9 @@ fn waits_for_hook_ack_and_strips_only_top_level_tool_response() {
             ClientMsg::HookEvent {
                 window_id: 1,
                 source: HookSource::Claude,
-                payload: json!({"hook_event_name":"PostToolUse", "session_id":"x",
-                "tool_input":{"tool_response":"keep"}, "unknown":[1, true]})
+                payload: json!({"hook_event_name":"PostToolUse", "tool_response":"outer-result",
+                "tool_result_truncated": false, "session_id":"sess-x",
+                "tool_input":{"tool_response":"inner-kept"}, "unknown":[1, true]})
             }
         );
         proto::write_frame(
@@ -169,6 +170,195 @@ fn waits_for_hook_ack_and_strips_only_top_level_tool_response() {
         .await
         .unwrap();
         assert_silent_success(&child.finish(Duration::from_millis(500)));
+    });
+}
+
+/// `TOOL_RESULT_SUMMARY_MAX` (`crates/cli/src/hook.rs`) is 4096 bytes; a response well over
+/// that must come through truncated to exactly that many bytes with the flag set.
+#[test]
+fn an_oversized_tool_response_is_truncated_and_flagged() {
+    let dir = tempdir();
+    let rt = runtime();
+    rt.block_on(async {
+        let listener = UnixListener::bind(dir.path().join("daemon.sock")).unwrap();
+        let payload = json!({"hook_event_name":"PostToolUse", "tool_response":"x".repeat(10000),
+            "session_id":"sess-oversized"});
+        let child =
+            RunningCommand::start(isolated_command(dir.path(), FLAGS).arg(payload.to_string()));
+        let mut stream = accept(&listener).await;
+        hello(&mut stream).await;
+        welcome(&mut stream).await;
+        let event = tokio::time::timeout(
+            Duration::from_secs(1),
+            proto::read_frame::<_, ClientMsg>(&mut stream),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+        let ClientMsg::HookEvent {
+            payload: forwarded, ..
+        } = event
+        else {
+            panic!("expected a HookEvent");
+        };
+        let object = forwarded.as_object().unwrap();
+        let tool_response = object.get("tool_response").unwrap().as_str().unwrap();
+        assert_eq!(tool_response.len(), 4096);
+        assert_eq!(object.get("tool_result_truncated").unwrap(), &json!(true));
+        proto::write_frame(
+            &mut stream,
+            &DaemonMsg::Ack {
+                request: "hook".into(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_silent_success(&child.finish(Duration::from_millis(500)));
+    });
+}
+
+/// The 4096-byte cutoff must land on a UTF-8 character boundary. 3000 repetitions of the
+/// two-byte character `é` is 6000 bytes, well over the limit, and its 4096th byte falls
+/// inside a character (4096 is even, but the point of this fixture is that truncation must
+/// not simply cut at a fixed byte count without checking — proven by round-tripping the
+/// whole frame through `serde_json` rather than by reasoning about the code).
+#[test]
+fn a_multibyte_tool_response_truncates_on_a_char_boundary() {
+    let dir = tempdir();
+    let rt = runtime();
+    rt.block_on(async {
+        let listener = UnixListener::bind(dir.path().join("daemon.sock")).unwrap();
+        let payload = json!({"hook_event_name":"PostToolUse", "tool_response":"é".repeat(3000),
+            "session_id":"sess-multibyte"});
+        let child =
+            RunningCommand::start(isolated_command(dir.path(), FLAGS).arg(payload.to_string()));
+        let mut stream = accept(&listener).await;
+        hello(&mut stream).await;
+        welcome(&mut stream).await;
+        let event = tokio::time::timeout(
+            Duration::from_secs(1),
+            proto::read_frame::<_, ClientMsg>(&mut stream),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+        let ClientMsg::HookEvent {
+            payload: forwarded, ..
+        } = event
+        else {
+            panic!("expected a HookEvent");
+        };
+        // Prove the whole frame is valid UTF-8 / valid JSON by re-parsing its serialised
+        // bytes, rather than trusting that an in-memory `serde_json::Value` was built
+        // without panicking.
+        let reencoded = serde_json::to_vec(&forwarded).unwrap();
+        let reparsed: serde_json::Value = serde_json::from_slice(&reencoded).unwrap();
+        let tool_response = reparsed
+            .as_object()
+            .unwrap()
+            .get("tool_response")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert_eq!(tool_response.len() % 2, 0, "cut a multi-byte é in half");
+        assert!(tool_response.len() <= 4096);
+        assert_eq!(
+            reparsed
+                .as_object()
+                .unwrap()
+                .get("tool_result_truncated")
+                .unwrap(),
+            &json!(true)
+        );
+        proto::write_frame(
+            &mut stream,
+            &DaemonMsg::Ack {
+                request: "hook".into(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_silent_success(&child.finish(Duration::from_millis(500)));
+    });
+}
+
+#[test]
+fn an_object_tool_response_survives_under_the_limit() {
+    let dir = tempdir();
+    let rt = runtime();
+    rt.block_on(async {
+        let listener = UnixListener::bind(dir.path().join("daemon.sock")).unwrap();
+        let payload = json!({"hook_event_name":"PostToolUse",
+            "tool_response":{"stdout":"ok","exit":0}, "session_id":"sess-object"});
+        let child =
+            RunningCommand::start(isolated_command(dir.path(), FLAGS).arg(payload.to_string()));
+        let mut stream = accept(&listener).await;
+        hello(&mut stream).await;
+        welcome(&mut stream).await;
+        let event = tokio::time::timeout(
+            Duration::from_secs(1),
+            proto::read_frame::<_, ClientMsg>(&mut stream),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+        let ClientMsg::HookEvent {
+            payload: forwarded, ..
+        } = event
+        else {
+            panic!("expected a HookEvent");
+        };
+        let object = forwarded.as_object().unwrap();
+        assert_eq!(
+            object.get("tool_response").unwrap(),
+            &json!({"stdout":"ok","exit":0})
+        );
+        assert_eq!(object.get("tool_result_truncated").unwrap(), &json!(false));
+        proto::write_frame(
+            &mut stream,
+            &DaemonMsg::Ack {
+                request: "hook".into(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_silent_success(&child.finish(Duration::from_millis(500)));
+    });
+}
+
+/// Pins that decision 5a's bounded summary did not widen `HOOK_PAYLOAD_MAX`: a payload
+/// whose raw bytes exceed it is still dropped before it is ever parsed or forwarded.
+/// Delivered over stdin, not as a command-line argument, to stay clear of the OS's own
+/// `ARG_MAX` limit on a single process argument.
+#[test]
+fn a_payload_over_the_size_limit_is_still_dropped_whole() {
+    let dir = tempdir();
+    let rt = runtime();
+    rt.block_on(async {
+        let listener = UnixListener::bind(dir.path().join("daemon.sock")).unwrap();
+        // HOOK_PAYLOAD_MAX is 8 MiB; this payload's raw bytes exceed it on their own,
+        // before any JSON parsing.
+        let oversized = json!({"hook_event_name":"PostToolUse",
+            "tool_response":"x".repeat(9 * 1024 * 1024), "session_id":"sess-huge"})
+        .to_string()
+        .into_bytes();
+        let start = Instant::now();
+        let mut child = RunningCommand::start(&mut isolated_command(dir.path(), FLAGS));
+        child.input(oversized);
+        let output = child.finish(LIMIT);
+        assert_silent_success(&output);
+        assert!(start.elapsed() < LIMIT);
+        // The listener never receives a connection at all: the payload is dropped before
+        // the hook ever dials the daemon.
+        let accept_result =
+            tokio::time::timeout(Duration::from_millis(200), listener.accept()).await;
+        assert!(
+            accept_result.is_err(),
+            "hook connected to the daemon with an oversized payload"
+        );
     });
 }
 

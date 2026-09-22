@@ -9,6 +9,13 @@ use tokio::net::UnixStream;
 
 const HOOK_DEADLINE: Duration = Duration::from_secs(1);
 const HOOK_PAYLOAD_MAX: usize = 8 * 1024 * 1024;
+/// Spec decision 5a: the bound on what one hook may carry back about a tool's result.
+/// Well under `HOOK_PAYLOAD_MAX` (8 MiB, above), which still runs first on the raw stdin
+/// bytes and is untouched by this — an over-8-MiB payload is still dropped whole. This
+/// bound is smaller than the daemon's own `conversation.max_result_bytes` default
+/// (16 KiB) on purpose: a hook-delivered result therefore never trips the daemon's cap,
+/// and only enrichment can.
+const TOOL_RESULT_SUMMARY_MAX: usize = 4 * 1024;
 
 pub fn run(args: Vec<OsString>, started: Instant) {
     std::panic::set_hook(Box::new(|_| {}));
@@ -83,6 +90,44 @@ async fn stdin_payload() -> Option<Vec<u8>> {
     receive.await.ok().flatten()
 }
 
+/// Spec decision 5a: bound the top-level `tool_response`, in place, rather than strip it.
+///
+/// `encoded` is the byte sequence we measure and truncate. For a `Value::String` it is the
+/// string's own raw UTF-8 content, *not* `serde_json::to_string`'s JSON-quoted form: the
+/// quoted form prepends a one-byte `"`, which shifts every following multi-byte character
+/// off an even offset and makes the nearest-char-boundary search back off to an *odd*
+/// byte count whenever the true 4 KiB cut point lands inside a multi-byte character (proved
+/// by construction with 3000 repetitions of the two-byte `é` — the quoted-form reading
+/// truncates to 4095 bytes there, the raw-content reading to exactly 4096). Any other JSON
+/// type (object, array, number, bool, null) has no such raw byte form, so it falls back to
+/// its compact JSON encoding — truncating that can produce a string that is no longer valid
+/// JSON on its own, but it is wrapped in a fresh `Value::String` rather than re-parsed, so
+/// that is harmless; only UTF-8 validity of the byte slice matters, and the char-boundary
+/// search still guarantees that.
+fn bound_tool_response(object: &mut serde_json::Map<String, serde_json::Value>) {
+    let Some(value) = object.get("tool_response").cloned() else {
+        return;
+    };
+    let encoded = match &value {
+        serde_json::Value::String(s) => s.clone(),
+        other => serde_json::to_string(other).unwrap_or_default(),
+    };
+    let (tool_response, truncated) = if encoded.len() <= TOOL_RESULT_SUMMARY_MAX {
+        (value, false)
+    } else {
+        let mut end = TOOL_RESULT_SUMMARY_MAX.min(encoded.len());
+        while end > 0 && !encoded.is_char_boundary(end) {
+            end -= 1;
+        }
+        (serde_json::Value::String(encoded[..end].to_string()), true)
+    };
+    object.insert("tool_response".to_string(), tool_response);
+    object.insert(
+        "tool_result_truncated".to_string(),
+        serde_json::Value::Bool(truncated),
+    );
+}
+
 async fn forward(args: Vec<OsString>) -> Option<()> {
     let args = parse(args)?;
     let bytes = match args.payload {
@@ -94,7 +139,7 @@ async fn forward(args: Vec<OsString>) -> Option<()> {
     }
     let mut payload: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     if let Some(object) = payload.as_object_mut() {
-        object.remove("tool_response");
+        bound_tool_response(object);
     }
 
     let mut stream = UnixStream::connect(proto::paths::socket_path())
