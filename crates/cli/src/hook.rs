@@ -17,11 +17,11 @@ const HOOK_PAYLOAD_MAX: usize = 8 * 1024 * 1024;
 /// `conversation.max_result_bytes` (amendment, review finding F3: the original comment
 /// claimed this against only the *default* `max_result_bytes` (16 KiB), which is false at
 /// the low end of the range that existed at the time — `max_result_bytes = 2048` was legal
-/// and a 4096-byte hook result would trip it). `crates/config` does not define
-/// `[conversation]` until task M6.5.3, which raises the range's floor to match this
-/// constant and adds a `const _: () = assert!(...)` here to keep the two compiled together
-/// from then on — see that task's acceptance criteria.
+/// and a 4096-byte hook result would trip it). Task M6.5.3 raised `[conversation]`'s range
+/// floor to match this constant and, below, asserts the relationship at compile time so the
+/// two can never drift apart silently again.
 const TOOL_RESULT_SUMMARY_MAX: usize = 4 * 1024;
+const _: () = assert!(TOOL_RESULT_SUMMARY_MAX as u64 <= config::CONVERSATION_MAX_RESULT_BYTES_MIN);
 
 pub fn run(args: Vec<OsString>, started: Instant) {
     std::panic::set_hook(Box::new(|_| {}));
