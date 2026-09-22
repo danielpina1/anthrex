@@ -66,6 +66,25 @@ ENV["TERM"] = "xterm-256color"
 # whatever working tree the daemon happens to run in, so the daemon this script starts
 # never probes or watches git at all.
 ENV["ANTHREX_GIT"] = "off"
+# `crates/proto/src/paths.rs::config_path()` falls back to the real OS config
+# directory (e.g. `~/Library/Application Support/anthrex/config.toml`) whenever
+# `ANTHREX_CONFIG` is unset. Pointing it here instead means this script's daemon and
+# every client it drives never consult whatever a developer running this locally has
+# actually configured (a different prefix key would break every `\x02`-prefixed send
+# below in a way that has nothing to do with the product). This path is fixed, not a
+# `tempfile.mkdtemp`, and the script never creates it — see the hostile-config check
+# in the M6.12 report for why a fixed, always-absent path is the point, not an
+# oversight.
+ENV["ANTHREX_CONFIG"] = "/tmp/anthrex-smoke-data/config.toml"
+
+# `C-b Q`'s own wait for the daemon to confirm a stop is `STOPPING_TIMEOUT`, 5s
+# (crates/tui/src/app/link.rs). Past that the client gives up *without* quitting
+# (it only toasts), so a genuine quit must land well inside it — a client stuck on
+# the read-arm bug this stage guards against would just hang past any bound. Per
+# docs/timing-budgets.md's standing rule 1, the bound below is derived from that
+# constant plus generous slack for a freshly-spawned daemon with zero windows to
+# tear down, not tuned close to the real (sub-second) cost.
+TUI_QUIT_TIMEOUT = 15.0
 
 
 def fail(msg):
@@ -334,10 +353,17 @@ def write_fake_agent_script():
 def stop_daemon(timeout=30.0):
     """Stops the daemon and waits until it is really gone.
 
-    `anthrex daemon stop` returns as soon as the daemon closes its listener, but the
-    daemon still has to end every agent process group with SIGHUP (escalating if needed)
-    and removes the socket file only as its very last act. Returning before that lets the
-    next run bind a socket at the same path that the dying daemon then unlinks out from it.
+    `anthrex daemon stop` (`crates/cli/src/main.rs`, `DaemonAction::Stop`) now blocks
+    until the daemon has actually exited: it waits for the connection to close, then
+    for the daemon's own lifetime lock to be released, up to 10s. This function's own
+    socket-removal wait stays as a guard on top of that regardless — a defensive
+    backstop for the case where the `daemon stop` subprocess itself times out, errors,
+    or is not the one actually holding the socket, so that even a bare `stop_daemon()`
+    call from `finally` (which never checks `daemon stop`'s exit code) still confirms
+    the daemon is really gone before this run's temp dir is removed. The daemon ends
+    every agent process group with SIGHUP (escalating if needed) and removes the
+    socket file only as its very last act, so a stale socket here really does mean a
+    stale file, not a live daemon's.
     """
     subprocess.run([BIN, "daemon", "stop"], cwd=REPO, env=ENV, capture_output=True, text=True, timeout=timeout)
     deadline = time.monotonic() + timeout
@@ -778,13 +804,140 @@ def main():
     run_worktree_cli_stage(smoke_repo)
     run_worktree_form_stage(smoke_repo)
 
-    print("== stage 10: stop the daemon, verify status ==")
+    print("== stage 9 stop: stop the daemon ahead of the persistence stages ==")
+    # The persistence and reconnect stages below need to observe the daemon actually
+    # dying and coming back, so this is the same stop-and-verify shape the old final
+    # stage used, just moved earlier: it is the "last stop" the brief calls stage 9,
+    # kept in place immediately before the stages that depend on it.
+    stop_result = run_cmd(["daemon", "stop"])
+    print(f"daemon stop output: {stop_result.stdout.strip()!r}")
+    status_result = run_cmd(["daemon", "status"])
+    if "not running" not in status_result.stdout:
+        fail(
+            "`anthrex daemon status` did not report not running ahead of the "
+            f"persistence stages:\n{status_result.stdout}"
+        )
+    print("ok: daemon stopped ahead of the persistence and reconnect stages")
+
+    print("== stage 10: persistence and restart ==")
+    run_cmd(["daemon", "start"])
+    deadline = time.monotonic() + 5.0
+    windows_by_name = {}
+    while True:
+        windows_by_name = {w["name"]: w for w in json.loads(run_cmd(["ls", "--json"]).stdout)}
+        if all(
+            windows_by_name.get(name, {}).get("status") == "exited"
+            for name in ("shell-1", "shell-2", "shell-3", "shell-4")
+        ):
+            break
+        if time.monotonic() >= deadline:
+            fail(
+                "shell-1..4 were not all listed with status 'exited' within 5s of the "
+                f"daemon restarting:\n{windows_by_name!r}"
+            )
+        time.sleep(0.1)
+
+    run_cmd(["rename", "shell-1", "kept"])
+    renamed = run_cmd(["ls"]).stdout
+    if "kept" not in renamed:
+        fail(f"`anthrex ls` did not show 'kept' after renaming shell-1:\n{renamed}")
+
+    run_cmd(["restart", "kept"])
+
+    proc5 = PtyProc([BIN])
+    proc5.wait_for("agents", label="stage-10 attach banner")
+    proc5.send(b"\x021")
+    proc5.wait_for_focused_window("kept")
+    proc5.send(b"echo back-$((1+1))\r")
+    proc5.wait_for("back-2", label="restarted 'kept' shell echo")
+    proc5.send(b"\x02d")
+    status5 = proc5.wait_exit(timeout=5.0)
+    if not os.WIFEXITED(status5) or os.WEXITSTATUS(status5) != 0:
+        fail(f"stage-10 detach did not exit cleanly with status 0 (raw status {status5})")
+    proc5.close()
+    print(
+        "ok: a daemon restart marked shell-1..4 exited, 'kept' kept its name and its "
+        "restarted shell echoed a command"
+    )
+
+    print("== stage 11: reconnect ==")
+    proc6 = PtyProc([BIN])
+    proc6.wait_for("agents", label="stage-11 attach banner")
+    proc6.wait_for("kept", label="'kept' listed on stage-11 attach")
+    run_cmd(["daemon", "stop"])
+    proc6.wait_for(
+        "DISCONNECTED", label="disconnected badge after the daemon stopped under the client"
+    )
+    run_cmd(["daemon", "start"])
+    # RETRY_INTERVAL is 2s (crates/tui/src/reconnect.rs), so 10s covers five automatic
+    # reconnect attempts — the brief's own bound, kept verbatim.
+    deadline = time.monotonic() + 10.0
+    screen = proc6.screen_text()
+    while "DISCONNECTED" in screen or "kept" not in screen:
+        if time.monotonic() >= deadline:
+            fail(
+                "reconnect did not clear DISCONNECTED and keep 'kept' listed within "
+                f"10s:\n{screen}"
+            )
+        proc6.read_available(timeout=0.2)
+        screen = proc6.screen_text()
+    proc6.send(b"\x02d")
+    status6 = proc6.wait_exit(timeout=5.0)
+    if not os.WIFEXITED(status6) or os.WEXITSTATUS(status6) != 0:
+        fail(f"stage-11 detach did not exit cleanly with status 0 (raw status {status6})")
+    proc6.close()
+    print(
+        "ok: the client showed DISCONNECTED across a daemon stop/start cycle, "
+        "reconnected, and kept 'kept' listed"
+    )
+
+    print("== stage 12: stop the daemon, verify status ==")
     stop_result = run_cmd(["daemon", "stop"])
     print(f"daemon stop output: {stop_result.stdout.strip()!r}")
     status_result = run_cmd(["daemon", "status"])
     if "not running" not in status_result.stdout:
         fail(f"`anthrex daemon status` did not report not running:\n{status_result.stdout}")
     print("ok: daemon stopped and status reports not running")
+
+    print("== stage 13: quit through the TUI with C-b Q ==")
+    # The brief's stages 10 and 11 above only ever stop the daemon from the CLI. This
+    # stage presses the most destructive key the TUI has - the one that stops the
+    # daemon and kills every agent under it - and is the only thing in the project
+    # that does. A real Critical hid from every unit test in exactly this key: the
+    # event loop's read arm used to be gated on a flag `DaemonMsg::Bye`'s handler
+    # cleared before the socket had actually closed, so `on_link_lost` (and the
+    # `Effect::Quit` it produces for a pending `C-b Q`) never ran and the key just
+    # hung. The brief's own unit test called the handler directly and never drove the
+    # real event loop, so it never saw the hang. Only a real daemon, a real TUI and a
+    # real PTY - this script - could have caught it.
+    proc7 = PtyProc([BIN])
+    proc7.wait_for("agents", label="tui-quit attach banner")
+    proc7.send(b"\x02Q")
+    proc7.wait_for(
+        "Stop the daemon and kill every agent?", label="stop-daemon confirmation modal"
+    )
+    proc7.send(b"y")
+    status7 = proc7.wait_exit(timeout=TUI_QUIT_TIMEOUT)
+    if not os.WIFEXITED(status7) or os.WEXITSTATUS(status7) != 0:
+        fail(f"C-b Q did not exit the client cleanly with status 0 (raw status {status7})")
+    proc7.close()
+
+    # The client quits as soon as it observes the link drop, which can land slightly
+    # ahead of the daemon finishing its own teardown (releasing its lifetime lock and
+    # unlinking the socket only as its very last act - see `stop_daemon`'s docstring
+    # above). Same generous-not-tight reasoning as `TUI_QUIT_TIMEOUT`.
+    deadline = time.monotonic() + TUI_QUIT_TIMEOUT
+    while os.path.exists(SOCKET):
+        if time.monotonic() >= deadline:
+            fail(
+                f"the daemon socket {SOCKET} was still present {TUI_QUIT_TIMEOUT}s "
+                "after C-b Q quit the client"
+            )
+        time.sleep(0.1)
+    status_result = run_cmd(["daemon", "status"])
+    if "not running" not in status_result.stdout:
+        fail(f"`anthrex daemon status` did not report not running after C-b Q:\n{status_result.stdout}")
+    print("ok: C-b Q quit the client through the TUI, and the daemon it stopped is gone")
 
     print("\nALL SMOKE STAGES PASSED")
 
