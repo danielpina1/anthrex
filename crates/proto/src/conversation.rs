@@ -25,8 +25,10 @@ pub struct Conversation {
 pub struct Turn {
     pub id: u64,
     pub role: Role,
-    /// Absolute Unix seconds (decision A2), not a wall-clock timestamp type — those
-    /// are neither `Serialize` nor portable across the wire in a fixed shape.
+    /// Absolute Unix seconds (decision A2), not `SystemTime`. `SystemTime` *is*
+    /// `Serialize`, in a fixed shape — but that shape is a two-field struct
+    /// (`{"secs_since_epoch": .., "nanos_since_epoch": ..}`), not the single `u64` the
+    /// protocol wants, and it carries nanosecond precision this model has no use for.
     pub at_unix_secs: u64,
     pub state: TurnState,
     pub blocks: Vec<Block>,
@@ -151,8 +153,23 @@ pub enum TurnPatch {
 /// Fixed per-turn and per-block accounting overhead for `max_bytes` (decision 7), so the
 /// cap counts structure as well as content and a conversation of ten thousand empty turns
 /// is still bounded.
-pub const TURN_OVERHEAD: usize = 64;
-pub const BLOCK_OVERHEAD: usize = 32;
+///
+/// Amendment to task M6.5.1 (review finding F3): `byte_size` feeds a cap, so it must be a
+/// conservative *over*-estimate of the encoded size, never an under-estimate — an
+/// over-estimate only makes the cap bite a little early, while an under-estimate makes it
+/// not bite at all, which is unbounded. The original 64/32 were typed independently of
+/// what they stand for and were measured to be 23% under: an empty `ToolCall` turn
+/// (`rmp_serde::to_vec_named`) encodes to 125 bytes against a reported `byte_size()` of
+/// 96. These values are derived from the worst case they have to cover — the `ToolCall`
+/// variant with a populated `ToolResult`, every optional field present, and every string
+/// field long enough to need the largest MessagePack string-length header (5 bytes) —
+/// measured at 73 bytes of pure turn-level structure (`id`/`role`/`at_unix_secs`/`state`/
+/// the blocks array, each field at its own worst case) and 125 bytes of pure per-block
+/// structure on top, with roughly 10% headroom added to each. `byte_size_never_
+/// underestimates_its_encoded_size` in `conversation_tests.rs` pins the *direction* of
+/// the error — the actual guarantee — across every `Block` variant, not these two numbers.
+pub const TURN_OVERHEAD: usize = 80;
+pub const BLOCK_OVERHEAD: usize = 144;
 
 /// `ConversationGone.reason` values (decision-pinned wire strings; see `messages.rs`).
 pub const GONE_WINDOW_REMOVED: &str = "window removed";
@@ -166,11 +183,16 @@ fn json_byte_len(value: &serde_json::Value) -> usize {
 }
 
 impl Block {
-    fn byte_size(&self) -> usize {
+    /// One block's contribution to its turn's `byte_size`, including `BLOCK_OVERHEAD`.
+    /// `pub` because a later task needs a per-block measure — for `max_result_bytes`
+    /// enforcement and single-block trimming — and duplicating this formula there would
+    /// be worse than exposing it (review finding F7). `Turn::byte_size` is still the one
+    /// definition every *test* asserts through.
+    pub fn byte_size(&self) -> usize {
         let content = match self {
             Block::Text { text } => text.len(),
             Block::ToolCall {
-                id: _,
+                id,
                 name,
                 summary,
                 input,
@@ -178,10 +200,14 @@ impl Block {
                 state: _,
                 duration_ms: _,
             } => {
-                // `id` is the runtime's own correlation id, not content shown to the
-                // user, so it does not count toward the cap (task brief's
-                // `byte_size_counts_structure_and_content`).
-                name.len()
+                // `id` is `tool_use_id` from the runtime's own hook payload (amendment
+                // to task M6.5.1, review finding F2): its length is set by the runtime,
+                // not by us, so a cap that ignored it would be an under-estimate — and
+                // `byte_size` feeds a cap, where an under-estimate is unbounded while an
+                // over-estimate merely bites a little early. It counts like every other
+                // field here.
+                id.as_ref().map(|s| s.len()).unwrap_or(0)
+                    + name.len()
                     + summary.len()
                     + input.as_ref().map(json_byte_len).unwrap_or(0)
                     + result
