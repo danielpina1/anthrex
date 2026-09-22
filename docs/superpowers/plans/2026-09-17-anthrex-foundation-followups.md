@@ -488,3 +488,16 @@ it described a fallback that did not exist, and reading for plausibility believe
   Claude writes to `~/.claude/projects/<cwd with / and . replaced by ->/<session>.jsonl`,
   Codex to `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`. Recorded in the brief's
   Implementation notes too.
+
+## From milestone 6.5's enrichment task (2026-09-22), task M6.5.8
+
+- **Transcript records that arrive before their hook are lost for good.** `enrich::apply`
+  discards a `ToolDetail` whose call has no `result` yet (rule 3) and a `UserText` whose
+  `User` turn the hooks have not built yet (out of range), and the reader never re-reads a
+  line it has consumed. A transcript line written, and polled, before its `PostToolUse` or
+  `UserPromptSubmit` hook reaches the daemon therefore never enriches the timeline. How
+  often this happens is unmeasured; the poll interval (`TRANSCRIPT_POLL`, 250 ms) makes it
+  unlikely but not impossible. A fix would hold unmatched records (bounded) and retry them
+  after the next hook. Belongs with task M6.5.10 or its follow-up, once the reader exists
+  and the order can be observed.
+
