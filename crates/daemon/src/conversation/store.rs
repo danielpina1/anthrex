@@ -35,29 +35,38 @@ struct Entry {
     degraded: Option<DegradeReason>,
     dropped_turns: u32,
     dropped_by: Option<DropCause>,
-    /// Set once a single turn alone has exceeded `caps.max_bytes` and been kept anyway
-    /// (decision A9's "never trimmed to zero"). Sticky: nothing in this task clears it,
-    /// because the condition it records does not resolve itself -- the oversize turn
-    /// stays oversize until `max_turns` finally drops it via a fresh prompt, or the
-    /// whole conversation goes away. `ConversationSet::oversize` is the caller's read of
-    /// this flag; the brief's own wording ("the set records `oversize_logged`") is
-    /// followed literally, but the interfaces section (`docs/milestones/
-    /// M6.5-conversation-view.md`, the `ConversationSet` sketch) does not list an
-    /// accessor for it -- see the task report's "Implementation notes" for that gap.
+    /// Whether this conversation *currently* holds a single turn that alone exceeds
+    /// `caps.max_bytes` and was kept anyway (decision A9's "never trimmed to zero").
+    /// Fix round 1, finding F7: recomputed fresh on every `enforce_caps` call (not
+    /// merely set-once-true), so it is a genuine current-state query -- `oversize()`'s
+    /// own doc comment previously warned it could not be used that way.
     oversize_logged: bool,
+    /// Whether the *current* `oversize_logged == true` streak has already been reported
+    /// through `take_oversize`. Reset to `false` whenever `oversize_logged` goes back to
+    /// `false`, so a later re-entry into oversize is reported again -- "exactly once per
+    /// transition into oversize" (fix round 1, finding F7).
+    oversize_reported: bool,
     /// The last `DELTA_HISTORY` revisions' patch batches, oldest first.
     history: VecDeque<PatchBatch>,
 }
 
 impl Entry {
-    fn new(draft: Draft) -> Self {
+    /// `degraded` seeds from `ConversationSet::current_degraded` (fix round 1, finding
+    /// F6): a conversation created after the day's last `set_degraded` call used to
+    /// start at `None` regardless and could only ever catch up if `set_degraded` was
+    /// called *again* -- which never happens for a reason that stopped applying between
+    /// calls. Seeding at creation means a late-created conversation is correct from its
+    /// very first revision, with no extra revision bump needed (it starts at `rev 0`
+    /// either way).
+    fn new(draft: Draft, degraded: Option<DegradeReason>) -> Self {
         Entry {
             draft,
             rev: 0,
-            degraded: None,
+            degraded,
             dropped_turns: 0,
             dropped_by: None,
             oversize_logged: false,
+            oversize_reported: false,
             history: VecDeque::new(),
         }
     }
@@ -84,9 +93,9 @@ impl Entry {
     /// `turns` or their bytes: while `turns.len() > caps.max_turns || byte_size() >
     /// caps.max_bytes` and `turns.len() > 1`, drops `turns[0]`, counting it toward
     /// `dropped_turns` and recording which predicate was true (`max_turns` checked
-    /// first). Returns the `Drop` patches for whatever it removed. If the loop stops
-    /// with exactly one turn still over `max_bytes`, that turn is kept and
-    /// `oversize_logged` is set.
+    /// first). Returns the `Drop` patches for whatever it removed. `oversize_logged` is
+    /// then recomputed fresh (see its own doc comment) from whatever state the loop
+    /// left behind.
     fn enforce_caps(&mut self, caps: Caps) -> Vec<TurnPatch> {
         let mut drops = Vec::new();
         loop {
@@ -108,8 +117,10 @@ impl Entry {
             self.dropped_by = Some(cause);
             drops.push(TurnPatch::Drop { id: removed.id });
         }
-        if self.draft.turns.len() == 1 && self.draft.byte_size() > caps.max_bytes {
-            self.oversize_logged = true;
+        let is_oversize = self.draft.turns.len() == 1 && self.draft.byte_size() > caps.max_bytes;
+        self.oversize_logged = is_oversize;
+        if !is_oversize {
+            self.oversize_reported = false;
         }
         drops
     }
@@ -138,9 +149,10 @@ pub struct ConversationSet {
     window_id: u32,
     runtime: proto::Runtime,
     entries: HashMap<Option<String>, Entry>,
-    /// The reason last passed to `set_degraded`, used only to compute that call's `new`
-    /// return value -- distinct from any one entry's own `degraded` field, since a
-    /// conversation created after the last `set_degraded` call has not caught up yet.
+    /// The reason last passed to `set_degraded`, used both to compute that call's `new`
+    /// return value and to seed a conversation created afterwards (fix round 1, finding
+    /// F6) -- distinct from any one entry's own `degraded` field, which can lag behind
+    /// this until the entry is created or `set_degraded` runs again.
     current_degraded: Option<DegradeReason>,
 }
 
@@ -164,10 +176,14 @@ impl ConversationSet {
     /// is applied to the *parent's* draft unconditionally -- per the brief's table, the
     /// parent-side effect does not depend on `hook.agent_id` being present. The child's
     /// entry, which does need a real id, is created fresh here, directly, only when
-    /// `hook.agent_id` is `Some` and the set is under `MAX_CONVERSATIONS_PER_WINDOW`
-    /// (decision A8) -- holding one empty `Running` `Assistant` turn and nothing else.
-    /// Beyond the cap, no child conversation is created at all; the parent-side spawn
-    /// block, which always lands regardless, is the hook's only visible effect.
+    /// `hook.agent_id` is `Some` and the set has room for one more conversation
+    /// (`has_room_for_a_new_key`, decision A8) -- holding one empty `Running`
+    /// `Assistant` turn and nothing else. Beyond the cap, no child conversation is
+    /// created at all; the parent-side spawn block, which always lands regardless, is
+    /// the hook's only visible effect. The child is deliberately *not* routed through
+    /// `resolve_key`'s "redirect to the root" fallback the way the generic path is
+    /// (below): pushing the child's seed turn into the *root's* draft instead would
+    /// corrupt it with a stray empty turn that hook never meant for it.
     pub fn on_hook(
         &mut self,
         runtime: proto::Runtime,
@@ -179,22 +195,19 @@ impl ConversationSet {
     ) -> Vec<Option<String>> {
         if hook.kind == HookKind::SubagentStart {
             let mut changed = Vec::new();
-            let parent_key = self.ensure_key(spawn.and_then(|origin| origin.parent_id.clone()));
-            if self.touch(&parent_key, caps, |draft| {
+            let parent_key = spawn.and_then(|origin| origin.parent_id.clone());
+            if let Some(resolved) = self.touch(parent_key, caps, |draft| {
                 super::build::apply(draft, runtime, hook, spawn, now_unix_secs, now, caps)
             }) {
-                changed.push(parent_key);
+                changed.push(resolved);
             }
 
             if let Some(child_id) = hook.agent_id.clone() {
                 let child_key = Some(child_id);
                 let already_exists = self.entries.contains_key(&child_key);
-                if !already_exists && self.entries.len() < MAX_CONVERSATIONS_PER_WINDOW {
-                    self.entries.insert(
-                        child_key.clone(),
-                        Entry::new(Draft::new(self.window_id, child_key.clone(), runtime)),
-                    );
-                    if self.touch(&child_key, caps, |draft| {
+                if !already_exists
+                    && self.has_room_for_a_new_key()
+                    && let Some(resolved) = self.touch(child_key, caps, |draft| {
                         draft.push_turn(
                             proto::Role::Assistant,
                             proto::TurnState::Running,
@@ -202,22 +215,19 @@ impl ConversationSet {
                             now_unix_secs,
                         );
                         true
-                    }) {
-                        changed.push(child_key);
-                    }
+                    })
+                {
+                    changed.push(resolved);
                 }
             }
             return changed;
         }
 
-        let key = self.ensure_key(hook.agent_id.clone());
-        if self.touch(&key, caps, |draft| {
+        self.touch(hook.agent_id.clone(), caps, |draft| {
             super::build::apply(draft, runtime, hook, spawn, now_unix_secs, now, caps)
-        }) {
-            vec![key]
-        } else {
-            Vec::new()
-        }
+        })
+        .map(|resolved| vec![resolved])
+        .unwrap_or_default()
     }
 
     /// Sets or clears the degrade reason on every conversation in this set. Returns the
@@ -241,12 +251,39 @@ impl ConversationSet {
     }
 
     /// Whether `agent_id`'s conversation currently holds a single turn that alone
-    /// exceeds `caps.max_bytes` and was kept anyway (decision A9). `false` for an
+    /// exceeds `caps.max_bytes` and was kept anyway (decision A9). A genuine
+    /// current-state query (fix round 1, finding F7): recomputed on every cap
+    /// enforcement, not merely latched the first time it was seen. `false` for an
     /// unknown key.
     pub fn oversize(&self, agent_id: Option<&str>) -> bool {
         self.entries
             .get(&agent_id.map(str::to_owned))
             .is_some_and(|entry| entry.oversize_logged)
+    }
+
+    /// Reports a transition into `oversize` exactly once: `true` the first time
+    /// `agent_id`'s conversation is found oversize after not having been (or having
+    /// never been checked), `false` on every subsequent call until the condition
+    /// resolves (the oversize turn leaves via `max_turns`, or the conversation goes
+    /// away) and recurs. Fix round 1, finding F7: `oversize()` alone gives a caller no
+    /// way to log "once at `warn`" the way the brief's own wording asks for -- polling
+    /// `oversize()` after every hook and logging when true would log on every hook,
+    /// not once. Preferred over mirroring `set_degraded`'s `(changed, new)` shape
+    /// because `oversize` is inherently per-key, not a whole-call, whole-set action the
+    /// way `set_degraded` is; a bolted-on tuple return here would mean every caller of
+    /// `on_hook`/`enrich` has to thread an extra value through for a condition most
+    /// hooks never trigger, where `take_oversize` costs nothing until a caller actually
+    /// wants to know.
+    pub fn take_oversize(&mut self, agent_id: Option<&str>) -> bool {
+        let Some(entry) = self.entries.get_mut(&agent_id.map(str::to_owned)) else {
+            return false;
+        };
+        if entry.oversize_logged && !entry.oversize_reported {
+            entry.oversize_reported = true;
+            true
+        } else {
+            false
+        }
     }
 
     /// A snapshot of the conversation at `agent_id`, or `None` when no hook has ever
@@ -285,43 +322,86 @@ impl ConversationSet {
         self.entries.keys().cloned().collect()
     }
 
-    /// Resolves `key` to the key a *new* entry should actually be created under
-    /// (decision A8): an already-known key, or `None` itself, is always honored; a
-    /// brand-new key beyond `MAX_CONVERSATIONS_PER_WINDOW` is redirected to the root
-    /// (`None`) key instead of creating one more conversation. Creates the resolved
-    /// entry if it does not exist yet, and returns the resolved key.
-    fn ensure_key(&mut self, key: Option<String>) -> Option<String> {
-        let resolved = if key.is_none()
-            || self.entries.contains_key(&key)
-            || self.entries.len() < MAX_CONVERSATIONS_PER_WINDOW
-        {
-            key
-        } else {
-            None
-        };
-        let window_id = self.window_id;
-        let runtime = self.runtime;
-        self.entries
-            .entry(resolved.clone())
-            .or_insert_with(|| Entry::new(Draft::new(window_id, resolved.clone(), runtime)));
-        resolved
+    /// The root window's own `transcript_path`, as last set by a `SessionStart` hook --
+    /// which file `watch.rs` (task M6.5.10) needs to know to start tailing. `None` when
+    /// no `SessionStart` has landed for the root conversation yet, or when the root
+    /// conversation does not exist yet at all. Fix round 1, finding F9: this needs no
+    /// `crate::transcript::Record` (unlike `enrich`/`reset_enrichment`, still deferred
+    /// to tasks M6.5.7/8) -- it only reads `Draft.transcript_path`, which this task
+    /// already carries.
+    pub fn transcript_path(&self) -> Option<&str> {
+        self.entries.get(&None)?.draft.transcript_path.as_deref()
     }
 
-    /// Applies `f` to `key`'s draft, then -- only if `f` reports a change -- records
-    /// exactly one revision: an `Upsert` for every turn `f` created or modified (found
-    /// by comparing `turns` before and after, since `build::apply`'s own per-`HookKind`
-    /// effects vary too widely to track surgically) plus a `Drop` for every turn
-    /// `enforce_caps` trims in the same call. `key`'s entry must already exist
-    /// (`ensure_key` or the `SubagentStart` child-creation path is always called
-    /// first).
-    fn touch<F>(&mut self, key: &Option<String>, caps: Caps, f: F) -> bool
+    /// Whether the set has room for one more brand-new key without exceeding
+    /// `MAX_CONVERSATIONS_PER_WINDOW`, reserving the root's own slot when it does not
+    /// exist yet. Fix round 1, finding F2: the pre-fix version admitted a brand-new
+    /// named key whenever `entries.len() < MAX_CONVERSATIONS_PER_WINDOW`, with no
+    /// reservation for the root -- if 51 named keys arrived before the root's own first
+    /// hook, the root's creation (via `resolve_key`'s own `None` fallback) became a
+    /// 52nd conversation. Reserving one slot for the root here, in the one place both
+    /// `resolve_key` and the `SubagentStart` child-creation path consult, makes that
+    /// arithmetically unreachable rather than merely untested.
+    fn has_room_for_a_new_key(&self) -> bool {
+        let root_reserved = usize::from(!self.entries.contains_key(&None));
+        self.entries.len() + root_reserved < MAX_CONVERSATIONS_PER_WINDOW
+    }
+
+    /// Resolves `key` to the key a hook naming it should actually be applied to
+    /// (decision A8): an already-known key, or `None` itself, is always honored as-is;
+    /// a brand-new named key is redirected to the root (`None`) key once the set has no
+    /// room left for it (`has_room_for_a_new_key`). Pure -- creates nothing.
+    fn resolve_key(&self, key: &Option<String>) -> Option<String> {
+        if key.is_none() || self.entries.contains_key(key) || self.has_room_for_a_new_key() {
+            key.clone()
+        } else {
+            None
+        }
+    }
+
+    /// Applies `f` to the draft resolved from `key` (via `resolve_key`), returning the
+    /// resolved key when `f` reports a real change, `None` otherwise. Records exactly
+    /// one revision when it does: an `Upsert` for every turn `f` created or modified
+    /// (found by comparing `turns` before and after, since `build::apply`'s own
+    /// per-`HookKind` effects vary too widely to track surgically) plus a `Drop` for
+    /// every turn `enforce_caps` trims in the same call.
+    ///
+    /// Fix round 1, finding F2's folded minor: a brand-new entry is no longer inserted
+    /// unconditionally before `f` runs. It is built off to the side and only inserted
+    /// into `entries` if `f` actually changed something -- otherwise a stream of hooks
+    /// that change nothing (an unmatched `Notification`, for instance) could
+    /// permanently occupy a conversation slot for an agent id that never did anything,
+    /// crowding out real sub-agent conversations once `MAX_CONVERSATIONS_PER_WINDOW` is
+    /// reached.
+    fn touch<F>(&mut self, key: Option<String>, caps: Caps, f: F) -> Option<Option<String>>
     where
         F: FnOnce(&mut Draft) -> bool,
     {
-        let entry = self
-            .entries
-            .get_mut(key)
-            .expect("touch is only ever called against a key ensure_key just created");
+        let resolved = self.resolve_key(&key);
+        let changed = if let Some(entry) = self.entries.get_mut(&resolved) {
+            Self::mutate(entry, caps, f)
+        } else {
+            let mut entry = Entry::new(
+                Draft::new(self.window_id, resolved.clone(), self.runtime),
+                self.current_degraded,
+            );
+            let changed = Self::mutate(&mut entry, caps, f);
+            if changed {
+                self.entries.insert(resolved.clone(), entry);
+            }
+            changed
+        };
+        changed.then_some(resolved)
+    }
+
+    /// The "diff before/after, enforce caps, record one revision" logic `touch` runs
+    /// against an `Entry`, whether that entry is already in `entries` or is being
+    /// evaluated off to the side before its first insertion. Returns whether `f`
+    /// reported a change.
+    fn mutate<F>(entry: &mut Entry, caps: Caps, f: F) -> bool
+    where
+        F: FnOnce(&mut Draft) -> bool,
+    {
         let before: HashMap<u64, proto::Turn> = entry
             .draft
             .turns

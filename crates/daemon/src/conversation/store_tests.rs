@@ -311,13 +311,16 @@ fn an_old_rev_gets_no_delta() {
     }
     assert_eq!(set.snapshot(None).unwrap().rev, 70);
 
+    // Fix round 1, F8's related coverage gap: probe the exact 64/65 boundary rather
+    // than 68/2, which leaves a 63-revision-wide window in which the condition could be
+    // off by one and still pass.
     assert!(
-        set.delta_since(None, 2).is_none(),
-        "70 - 2 = 68 > DELTA_HISTORY (64)"
+        set.delta_since(None, 5).is_none(),
+        "70 - 5 = 65 > DELTA_HISTORY (64)"
     );
     assert!(
-        set.delta_since(None, 68).is_some(),
-        "70 - 68 = 2 <= DELTA_HISTORY (64)"
+        set.delta_since(None, 6).is_some(),
+        "70 - 6 = 64 <= DELTA_HISTORY (64)"
     );
 }
 
@@ -331,12 +334,23 @@ fn a_future_rev_gets_no_delta() {
     assert!(set.delta_since(None, rev + 1).is_none());
 }
 
-/// `caps.max_turns = 4`, six user-prompt/stop cycles with **distinct** prompt texts
-/// `"p1"`..`"p6"` (six, not a divisor or multiple of four, so a mapping that trims the
-/// wrong end or keeps the wrong count cannot pass by the fixture's own periodicity).
-/// Each cycle pushes a `User` and an `Assistant` turn, so the cap starts biting on the
-/// third cycle; the assertions on the third cycle's own revision confirm the trimming
-/// `Drop` patches land in the very revision that trimmed, not some later one.
+/// `caps.max_turns = 4`. Six user-prompt/stop cycles with **distinct** prompt texts
+/// `"p1"`..`"p6"`, each pushing exactly 2 turns (a `User` and an `Assistant`) -- plus
+/// one deliberately odd-turn-contributing step wedged between cycles 3 and 4: a bare
+/// `PreToolUse`/`Stop` pair with no preceding `UserPromptSubmit`, which opens and closes
+/// exactly *one* fresh turn on its own.
+///
+/// Fix round 1, finding F8: without that extra step, every cycle contributes turns in
+/// units of 2 against a bound of 4 -- 2 divides 4 -- so `turns.len()` only ever steps
+/// `2, 4, 6, 4, 6, 4, ...` before each trim, never landing on an odd value above the
+/// cap, and every trim removes exactly two turns. Two mutations (evicting from the back
+/// instead of the front; transposing `DropCause::Turns`/`Bytes`) both still fail this
+/// fixture even without the extra step, so the periodicity was not hiding a live
+/// defect -- but a fixture should not rely on that staying true, so the extra step
+/// breaks it: after cycle 3's trim (turns = `[3,4,5,6]`), the extra step pushes one more
+/// turn (`turns.len()` reaches 5, not 6) and the trim that follows removes exactly one
+/// turn, not two -- the assertion on that specific revision's `Drop` count pins the odd
+/// path directly, not just the final counts.
 #[test]
 fn the_turn_cap_drops_from_the_front_and_counts() {
     let mut set = ConversationSet::new(4, proto::Runtime::Claude);
@@ -350,33 +364,45 @@ fn the_turn_cap_drops_from_the_front_and_counts() {
         send_capped(set, &prompt(text), ts, now, caps);
         send_capped(set, &hook(HookKind::Stop), ts + 1, now, caps);
     };
+    let drops_in = |set: &ConversationSet, from_rev: u64| -> Vec<u64> {
+        set.delta_since(None, from_rev)
+            .unwrap()
+            .1
+            .iter()
+            .filter_map(|p| match p {
+                TurnPatch::Drop { id } => Some(*id),
+                _ => None,
+            })
+            .collect()
+    };
 
     cycle(&mut set, "p1", 1000);
     cycle(&mut set, "p2", 1002);
 
     let rev_before_p3 = set.snapshot(None).unwrap().rev;
     cycle(&mut set, "p3", 1004);
-    let (_, trimming_patches) = set.delta_since(None, rev_before_p3).unwrap();
-    let drops: Vec<u64> = trimming_patches
-        .iter()
-        .filter_map(|p| match p {
-            TurnPatch::Drop { id } => Some(*id),
-            _ => None,
-        })
-        .collect();
     assert_eq!(
-        drops,
+        drops_in(&set, rev_before_p3),
         vec![1, 2],
         "the revision that trimmed carries a Drop for each removed id"
     );
 
-    cycle(&mut set, "p4", 1006);
-    cycle(&mut set, "p5", 1008);
-    cycle(&mut set, "p6", 1010);
+    let rev_before_extra = set.snapshot(None).unwrap().rev;
+    send_capped(&mut set, &pre("tu-extra", "Ping"), 1006, now, caps);
+    assert_eq!(
+        drops_in(&set, rev_before_extra),
+        vec![3],
+        "turns.len() reached 5 here, not 6, so exactly one turn -- not two -- was trimmed"
+    );
+    send_capped(&mut set, &hook(HookKind::Stop), 1007, now, caps);
+
+    cycle(&mut set, "p4", 1008);
+    cycle(&mut set, "p5", 1010);
+    cycle(&mut set, "p6", 1012);
 
     let final_snapshot = set.snapshot(None).unwrap();
     assert_eq!(final_snapshot.turns.len(), 4, "the last 4 turns, in order");
-    assert_eq!(final_snapshot.dropped_turns, 8, "12 pushed, 4 survive");
+    assert_eq!(final_snapshot.dropped_turns, 9, "13 pushed, 4 survive");
     assert_eq!(final_snapshot.dropped_by, Some(proto::DropCause::Turns));
 
     let text = |turn: &proto::Turn| match &turn.blocks[0] {
@@ -631,4 +657,267 @@ fn draft_to_conversation_wires_rev_degraded_dropped_turns_and_dropped_by_by_name
     assert_eq!(conversation.degraded, Some(proto::DegradeReason::TooLarge));
     assert_eq!(conversation.dropped_turns, 3);
     assert_eq!(conversation.dropped_by, Some(proto::DropCause::Bytes));
+}
+
+/// Fix round 1, finding F2 (review reproduction): `conversations_are_capped_by_count`
+/// only ever drives `SubagentStart`, whose own `on_hook` arm always resolves the root's
+/// key (`None`) first -- creating it as entry #1 before any child -- so that test cannot
+/// see a root created *after* `MAX_CONVERSATIONS_PER_WINDOW - 1` named keys already
+/// exist. This drives the same number of distinct agent ids on the generic path instead
+/// (a `PreToolUse` naming a fresh `agent_id` each time, as a restarted daemon or a
+/// dropped `SubagentStart` could deliver in production), which is exactly the path that
+/// let the set grow to `MAX_CONVERSATIONS_PER_WINDOW + 1` (52, when the cap is 51)
+/// before this fix reserved the root's own slot.
+#[test]
+fn conversations_are_capped_by_count_via_the_generic_path() {
+    let mut set = ConversationSet::new(4, proto::Runtime::Claude);
+    let now = Instant::now();
+    let total = MAX_CONVERSATIONS_PER_WINDOW + 5;
+
+    for i in 0..total {
+        let mut h = pre(&format!("tu-{i}"), "Bash");
+        h.agent_id = Some(format!("agent-{i}"));
+        send(&mut set, &h, 1000 + i as u64, now);
+    }
+
+    assert_eq!(
+        set.keys().len(),
+        MAX_CONVERSATIONS_PER_WINDOW,
+        "the root's own slot must be reserved, never leaving room for a 52nd conversation"
+    );
+    assert!(
+        set.keys().contains(&None),
+        "the root must exist within the cap once overflow hooks start redirecting to it"
+    );
+}
+
+/// Fix round 1, finding F2's folded minor (review reproduction): a hook that changes
+/// nothing must not permanently occupy a conversation slot. Before this fix, `ensure_key`
+/// created and inserted an entry unconditionally, before the hook's own effect ever ran
+/// -- so a stream of `Notification`s the daemon never acts on (anything but
+/// `"permission_prompt"`) could each still claim a slot for a distinct `agent_id`,
+/// eventually locking out real sub-agent conversations once the cap was reached.
+#[test]
+fn ignored_hooks_do_not_consume_a_conversation_slot() {
+    let mut set = ConversationSet::new(4, proto::Runtime::Claude);
+    let now = Instant::now();
+    let total = MAX_CONVERSATIONS_PER_WINDOW + 5;
+
+    for i in 0..total {
+        let mut h = hook(HookKind::Notification);
+        h.notification_type = Some("idle_prompt".into());
+        h.agent_id = Some(format!("agent-{i}"));
+        let changed = send(&mut set, &h, 1000 + i as u64, now);
+        assert!(
+            changed.is_empty(),
+            "an ignored notification reports no change"
+        );
+    }
+
+    assert_eq!(
+        set.keys().len(),
+        0,
+        "no conversation should exist for a stream of hooks that changed nothing"
+    );
+}
+
+/// Fix round 1, finding F3 (review reproduction): deleting `compact_patches`'s one
+/// `retain` line left `cargo test -p anthrex-daemon --lib conversation::` at 51/51
+/// green, because the client fold applies patches in order and redundant `Upsert`s for
+/// the same id are idempotent. This asserts directly on the *compacted patch list*
+/// itself, not on replayed state: three `PreToolUse`/`PostToolUse` pairs all land on the
+/// same open `Assistant` turn, producing six revisions that each `Upsert` that one turn
+/// -- the compacted delta must carry exactly one.
+#[test]
+fn a_delta_carries_only_the_last_upsert_per_turn() {
+    let mut set = ConversationSet::new(4, proto::Runtime::Claude);
+    let now = Instant::now();
+    send(&mut set, &prompt("p1"), 1000, now);
+    let rev_after_prompt = set.snapshot(None).unwrap().rev;
+
+    for i in 0..3u64 {
+        let id = format!("tu-{i}");
+        send(&mut set, &pre(&id, "Bash"), 1001 + i * 2, now);
+        send(
+            &mut set,
+            &post(&id, serde_json::json!("ok")),
+            1002 + i * 2,
+            now,
+        );
+    }
+
+    let (_, patches) = set.delta_since(None, rev_after_prompt).unwrap();
+    let ids: Vec<u64> = patches
+        .iter()
+        .map(|p| match p {
+            TurnPatch::Upsert(t) => t.id,
+            TurnPatch::Drop { id } => *id,
+        })
+        .collect();
+    let mut sorted = ids.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(
+        ids.len(),
+        sorted.len(),
+        "no turn id appears twice in a compacted delta"
+    );
+    assert_eq!(
+        patches.len(),
+        1,
+        "all three pre/post pairs land on the same open turn"
+    );
+}
+
+/// The other half of the compaction rule (review's suggested second case): a turn
+/// `Upsert`ed and then `Drop`ped within the same delta window must not carry a stale
+/// `Upsert` for it. `max_turns = 2` makes the second `UserPromptSubmit` both modify
+/// turn 2 (closing it) and immediately evict turns 1 and 2 in that same revision, while
+/// turns 3 and 4 (the new prompt's own pair) survive.
+#[test]
+fn a_delta_drops_an_upsert_for_a_turn_a_later_drop_removed() {
+    let mut set = ConversationSet::new(4, proto::Runtime::Claude);
+    let now = Instant::now();
+    let caps = Caps {
+        max_turns: 2,
+        ..Caps::default()
+    };
+    send_capped(&mut set, &prompt("p1"), 1000, now, caps);
+    send_capped(&mut set, &prompt("p2"), 1001, now, caps);
+
+    let (_, patches) = set.delta_since(None, 0).unwrap();
+    let upserted_ids: Vec<u64> = patches
+        .iter()
+        .filter_map(|p| match p {
+            TurnPatch::Upsert(t) => Some(t.id),
+            _ => None,
+        })
+        .collect();
+    let dropped_ids: Vec<u64> = patches
+        .iter()
+        .filter_map(|p| match p {
+            TurnPatch::Drop { id } => Some(*id),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(dropped_ids, vec![1, 2], "turns 1 and 2 were evicted");
+    assert!(
+        !upserted_ids.contains(&1),
+        "turn 1's Upsert must not survive its own Drop"
+    );
+    assert!(
+        !upserted_ids.contains(&2),
+        "turn 2's Upsert must not survive its own Drop, even though it was re-upserted \
+         (closed) first"
+    );
+    assert_eq!(upserted_ids, vec![3, 4]);
+}
+
+/// Fix round 1, finding F6 (review reproduction): `Entry::new` used to hard-code
+/// `degraded: None` and never seed from `ConversationSet::current_degraded`, so a
+/// conversation created after `set_degraded` had already run started (and stayed)
+/// `None` regardless -- the old code comment's "has not caught up yet" overstated it,
+/// since it only ever catches up if `set_degraded` is called *again* for a reason that
+/// no longer applies.
+#[test]
+fn set_degraded_reaches_a_conversation_created_afterward() {
+    let mut set = ConversationSet::new(4, proto::Runtime::Claude);
+    set.set_degraded(Some(proto::DegradeReason::Unreadable));
+
+    let now = Instant::now();
+    send(&mut set, &prompt("late prompt"), 1000, now);
+
+    let late = set.snapshot(None).unwrap();
+    assert_eq!(late.degraded, Some(proto::DegradeReason::Unreadable));
+}
+
+/// Fix round 1, finding F7 (review reproduction): `oversize()` alone gives a caller no
+/// way to log "once at `warn`" -- polling it after every hook and logging when true
+/// would log on every hook, not once. `take_oversize` reports a transition into
+/// oversize exactly once; `oversize()` itself stays a sticky current-state query in
+/// between. Also exercises the companion fix (F7's second paragraph): `oversize_logged`
+/// is now recomputed fresh on every `enforce_caps` call, so it genuinely resolves once
+/// the oversized turn leaves, and a later re-entry into oversize is reported again.
+#[test]
+fn take_oversize_reports_the_transition_exactly_once() {
+    // Measure a normal small turn's size under generous caps first.
+    let mut scratch = ConversationSet::new(4, proto::Runtime::Claude);
+    let now = Instant::now();
+    send(&mut scratch, &pre("tu-small", "Bash"), 1000, now);
+    send(&mut scratch, &hook(HookKind::Stop), 1001, now);
+    let small_size = scratch.snapshot(None).unwrap().turns[0].byte_size();
+
+    let mut set = ConversationSet::new(4, proto::Runtime::Claude);
+    let caps = Caps {
+        max_bytes: small_size + 1,
+        max_turns: 1000,
+        ..Caps::default()
+    };
+
+    // Turn 1: oversized alone.
+    let mut big = pre("tu-big", "Bash");
+    big.tool_input = Some(serde_json::json!({"pattern": "z".repeat(2000)}));
+    send_capped(&mut set, &big, 1000, now, caps);
+    assert!(set.oversize(None));
+    assert!(
+        set.take_oversize(None),
+        "the first observation after the transition reports true"
+    );
+    assert!(
+        !set.take_oversize(None),
+        "a second call before anything changes reports false"
+    );
+    assert!(
+        set.oversize(None),
+        "oversize() itself is unaffected by take_oversize -- still a sticky current-state query"
+    );
+
+    // Turn 2: a small tool call, identical to the one used to measure `small_size`, so
+    // it fits under `caps.max_bytes` once turn 1 is evicted.
+    send_capped(&mut set, &hook(HookKind::Stop), 1001, now, caps);
+    send_capped(&mut set, &pre("tu-small", "Bash"), 1002, now, caps);
+
+    let snap = set.snapshot(None).unwrap();
+    assert_eq!(
+        snap.turns.len(),
+        1,
+        "the oversized turn 1 was evicted, leaving only turn 2"
+    );
+    assert!(
+        !set.oversize(None),
+        "oversize resolved once the oversized turn left"
+    );
+
+    // Re-enter oversize with a third, big turn.
+    send_capped(&mut set, &hook(HookKind::Stop), 1003, now, caps);
+    let mut big2 = pre("tu-big2", "Bash");
+    big2.tool_input = Some(serde_json::json!({"pattern": "z".repeat(2000)}));
+    send_capped(&mut set, &big2, 1004, now, caps);
+    assert!(set.oversize(None));
+    assert!(
+        set.take_oversize(None),
+        "a fresh transition into oversize is reported again"
+    );
+}
+
+/// Fix round 1, finding F9: `transcript_path` needs no `crate::transcript::Record` (the
+/// review pointed out the deferral was unnecessary) -- it only reads
+/// `Draft.transcript_path`, already populated by `build::session_start`.
+#[test]
+fn transcript_path_reads_the_root_drafts_own_field() {
+    let mut set = ConversationSet::new(4, proto::Runtime::Claude);
+    assert_eq!(
+        set.transcript_path(),
+        None,
+        "no root conversation exists yet"
+    );
+
+    let now = Instant::now();
+    let mut start = hook(HookKind::SessionStart);
+    start.session_id = Some("sess-a".into());
+    start.transcript_path = Some("/logs/agents/sess-a.jsonl".into());
+    send(&mut set, &start, 1000, now);
+
+    assert_eq!(set.transcript_path(), Some("/logs/agents/sess-a.jsonl"));
 }

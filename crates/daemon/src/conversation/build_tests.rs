@@ -178,10 +178,16 @@ fn a_completed_tool_calls_result_never_carries_a_detail() {
 fn apply_updates_the_drafts_runtime_from_the_per_call_argument() {
     let mut set = ConversationSet::new(4, proto::Runtime::Claude);
     let now = Instant::now();
-    spawn_hook(&mut set, &hook(HookKind::SessionStart), None, 1000, now);
+    // `session_id` must actually change (fix round 1, finding F2's folded minor: a
+    // conversation is no longer created for a hook that changes nothing) for the first
+    // hook to bring the root conversation into existence at all.
+    let mut first = hook(HookKind::SessionStart);
+    first.session_id = Some("sess-a".into());
+    spawn_hook(&mut set, &first, None, 1000, now);
     assert_eq!(set.snapshot(None).unwrap().runtime, proto::Runtime::Claude);
 
-    let codex_hook = hook(HookKind::SessionStart);
+    let mut codex_hook = hook(HookKind::SessionStart);
+    codex_hook.session_id = Some("sess-b".into());
     set.on_hook(
         proto::Runtime::Codex,
         &codex_hook,
