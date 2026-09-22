@@ -183,10 +183,30 @@ pub const GONE_WINDOW_REMOVED: &str = "window removed";
 pub const GONE_SUBAGENT_UNKNOWN: &str = "no such sub-agent in this window";
 pub const GONE_WINDOW_UNKNOWN: &str = "no such window";
 
-/// The compact-JSON length of a `serde_json::Value`, used to measure `input` and
-/// `result` fields the same way regardless of how they are stored in memory.
-fn json_byte_len(value: &serde_json::Value) -> usize {
-    serde_json::to_string(value).map(|s| s.len()).unwrap_or(0)
+/// An upper bound on a `serde_json::Value`'s MessagePack encoding, which is what a
+/// frame carries: every number as 9 bytes (a marker and an 8-byte float or integer),
+/// `null` and booleans as 1, and every string, array and map as its content plus a 5-byte
+/// header, the largest MessagePack uses. Task M6.5.10's review (F1) measured the compact
+/// JSON length this replaced at 2.25 times *under* the encoding for a float array (`0.5,`
+/// is 4 JSON bytes and 9 MessagePack bytes), and every cap built on `byte_size` assumes
+/// it over-estimates.
+pub fn value_byte_size(value: &serde_json::Value) -> usize {
+    const HEADER: usize = 5;
+    match value {
+        serde_json::Value::Null | serde_json::Value::Bool(_) => 1,
+        serde_json::Value::Number(_) => 9,
+        serde_json::Value::String(s) => HEADER + s.len(),
+        serde_json::Value::Array(items) => {
+            HEADER + items.iter().map(value_byte_size).sum::<usize>()
+        }
+        serde_json::Value::Object(map) => {
+            HEADER
+                + map
+                    .iter()
+                    .map(|(key, item)| HEADER + key.len() + value_byte_size(item))
+                    .sum::<usize>()
+        }
+    }
 }
 
 impl Block {
@@ -216,7 +236,7 @@ impl Block {
                 id.as_ref().map(|s| s.len()).unwrap_or(0)
                     + name.len()
                     + summary.len()
-                    + input.as_ref().map(json_byte_len).unwrap_or(0)
+                    + input.as_ref().map(value_byte_size).unwrap_or(0)
                     + result
                         .as_ref()
                         .map(|r| r.summary.len() + r.detail.as_ref().map(|d| d.len()).unwrap_or(0))

@@ -416,7 +416,7 @@ fn byte_size_counts_structure_and_content() {
         + id.len()
         + name.len()
         + summary.len()
-        + "{\"a\":1}".len()
+        + value_byte_size(&json!({"a": 1}))
         + result_summary.len()
         + result_detail.len();
     assert_eq!(tool_turn.byte_size(), expected);
@@ -610,7 +610,7 @@ fn every_block_variant_contributes_its_content() {
         id: Some("i".repeat(13)),
         name: "n".repeat(17),
         summary: "s".repeat(19),
-        input: Some(json!({"a": 1})), // encodes to `{"a":1}`, 7 bytes
+        input: Some(json!({"a": 1})), // bounded at 5 + (5 + 1 + 9) = 20 bytes
         result: Some(ToolResult {
             ok: true,
             summary: "r".repeat(23),
@@ -646,10 +646,7 @@ fn every_block_variant_contributes_its_content() {
                 id.as_ref().map(|s| s.len()).unwrap_or(0)
                     + name.len()
                     + summary.len()
-                    + input
-                        .as_ref()
-                        .map(|v| serde_json::to_string(v).unwrap().len())
-                        .unwrap_or(0)
+                    + input.as_ref().map(value_byte_size).unwrap_or(0)
                     + result
                         .as_ref()
                         .map(|r| r.summary.len() + r.detail.as_ref().map(|d| d.len()).unwrap_or(0))
@@ -822,4 +819,75 @@ fn delta_wire_shape_is_stable() {
     assert_eq!(degraded, Some(DegradeReason::Misaligned));
     assert_eq!(dropped_turns, 4);
     assert_eq!(dropped_by, Some(DropCause::Bytes));
+}
+
+/// Task M6.5.10 fix round 1 (F1): `byte_size` must bound the MessagePack encoding for
+/// every shape a tool `input` can take, not only for strings. The review's float array
+/// (`0.5` repeated) reported 7,600,242 bytes and encoded to 17,100,311. `value_byte_size`
+/// is also asserted directly against the value's own encoding.
+#[test]
+fn byte_size_bounds_the_encoding_of_every_input_shape() {
+    let deep = (0..40).fold(
+        json!("leaf"),
+        |inner, n| json!({ format!("k{n}"): [inner, n] }),
+    );
+    let inputs = [
+        ("floats", json!({"v": vec![0.5; 20_000]})),
+        (
+            "large floats",
+            json!({"v": vec![-1.234_567_890_123e300; 5_000]}),
+        ),
+        ("small integers", json!({"v": vec![1; 20_000]})),
+        (
+            "large integers",
+            json!({"v": vec![u64::MAX; 5_000], "w": vec![i64::MIN; 5_000]}),
+        ),
+        (
+            "strings",
+            json!({"v": vec!["abc"; 10_000], "long": "x".repeat(70_000)}),
+        ),
+        ("escapes", json!({"v": "\"\\\n\u{1}".repeat(5_000)})),
+        ("nested objects", deep),
+        (
+            "arrays of arrays",
+            json!([[[1, 2.5], [null, true]], [[false], []], {}]),
+        ),
+        (
+            "bools and nulls",
+            json!({"v": (0..20_000).map(|n| if n % 2 == 0 { json!(null) } else { json!(true) }).collect::<Vec<_>>()}),
+        ),
+        (
+            "many keys",
+            serde_json::Value::Object((0..5_000).map(|n| (format!("key-{n}"), json!(n))).collect()),
+        ),
+    ];
+    for (label, input) in inputs {
+        let encoded_value = rmp_serde::to_vec_named(&input).unwrap().len();
+        assert!(
+            value_byte_size(&input) >= encoded_value,
+            "{label}: value_byte_size {} < encoded {encoded_value}",
+            value_byte_size(&input)
+        );
+        let turn = Turn {
+            id: 1,
+            role: Role::Assistant,
+            at_unix_secs: u64::MAX,
+            state: TurnState::Running,
+            blocks: vec![Block::ToolCall {
+                id: Some("tu".into()),
+                name: "Write".into(),
+                summary: "s".into(),
+                input: Some(input),
+                result: None,
+                state: ToolState::Pending,
+                duration_ms: None,
+            }],
+        };
+        let encoded = rmp_serde::to_vec_named(&turn).unwrap().len();
+        assert!(
+            turn.byte_size() >= encoded,
+            "{label}: byte_size {} < encoded {encoded}",
+            turn.byte_size()
+        );
+    }
 }
