@@ -203,6 +203,59 @@ fn stop_daemon_send_failure_is_reported() {
     assert!(app.on_link_lost("connection closed").is_empty());
 }
 
+/// The double-press hazard the M6.10 review flagged as Minor: `Command::StopDaemon`
+/// used to reopen the confirm dialog with no check of `self.stopping`, so a second
+/// `C-b Q` before the daemon answered the first silently re-stamped the clock and
+/// pushed `STOPPING_TIMEOUT` back another 5 s. The property that must hold either way:
+/// the timeout fires relative to the *first* confirm, never the most recent keypress.
+#[test]
+fn double_c_b_q_does_not_restamp_the_timeout() {
+    let mut app = app_with(vec![win(1, "api", Status::Idle)]);
+    prefix(&mut app);
+    press(&mut app, KeyCode::Char('Q'), KeyModifiers::SHIFT);
+    assert_eq!(
+        press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE),
+        vec![Effect::Send(ClientMsg::Shutdown)]
+    );
+    let armed_at = app
+        .stopping
+        .expect("stopping must be armed after confirming");
+
+    // Half the timeout elapses with nothing back from the daemon yet.
+    app.stopping = Some(armed_at - Duration::from_secs(3));
+
+    // A second C-b Q before the daemon has responded to the first.
+    prefix(&mut app);
+    assert!(
+        press(&mut app, KeyCode::Char('Q'), KeyModifiers::SHIFT).is_empty(),
+        "an in-flight shutdown sends nothing new on a second attempt"
+    );
+    assert!(
+        app.modal.is_none(),
+        "a second C-b Q must not reopen the confirm dialog while a shutdown is pending"
+    );
+    assert_eq!(
+        app.stopping,
+        Some(armed_at - Duration::from_secs(3)),
+        "the second press must not re-stamp the timeout"
+    );
+    assert_eq!(
+        app.toast_text(),
+        Some("already waiting for the daemon to stop")
+    );
+
+    // Advance relative to whatever `stopping` currently holds, not a freshly captured
+    // `Instant::now()`: if the second press had re-stamped the clock, this would still
+    // land short of `STOPPING_TIMEOUT` and the assertion below would fail.
+    app.stopping = app.stopping.map(|at| at - Duration::from_secs(3));
+    assert!(app.on_tick().is_empty());
+    assert_eq!(
+        app.toast_text(),
+        Some("the daemon did not confirm the shutdown; run anthrex daemon stop"),
+        "the timeout must fire relative to the first confirm, not the most recent keypress"
+    );
+}
+
 #[test]
 fn stop_daemon_times_out() {
     let mut app = app_with(vec![win(1, "api", Status::Idle)]);

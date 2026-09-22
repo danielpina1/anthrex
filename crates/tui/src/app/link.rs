@@ -16,10 +16,16 @@
 //! toasts, `self.link` changes *only* when the channel actually closes, and
 //! `crates/tui/src/lib.rs`'s read arm is gated on the connection itself
 //! (`Option<Connection>::is_some()`), never on `self.link` or `self.connected()`.
+//!
+//! `stop_daemon_command` and `start_stopping` moved in from `app/lifecycle.rs` in a
+//! follow-up closing the M6.10 review's Minor finding and its own disclosed
+//! naming-mismatch: decision 39 names this file for "stopping", so the guard against
+//! a second `C-b Q` re-stamping the wait belongs alongside the three ways the wait
+//! already ends here, not split across two files.
 
-use super::{App, Effect};
+use super::{App, Effect, Modal, PendingAction};
 use proto::{ClientMsg, WindowInfo};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Decision 36's timeout, moved here from `app/lifecycle.rs` alongside
 /// `check_stopping_timeout`: how long `C-b Q` waits for the daemon to confirm a
@@ -91,6 +97,38 @@ impl App {
             }));
         }
         None
+    }
+
+    /// `C-b Q`, before the confirm dialog even opens. Decision 39 puts all of
+    /// `stopping`'s pure logic in this module, so the guard belongs here too, not as
+    /// an inline check in `app/mod.rs::run`. Already waiting for a confirmed
+    /// `Shutdown`, a second attempt does not reopen the dialog — reopening it would
+    /// let a second `y` call `start_stopping` again and re-stamp the clock, which is
+    /// exactly the M6.10 review's Minor finding. Silently doing nothing was rejected:
+    /// pressing `C-b Q` twice means the user thinks the first press had no effect, and
+    /// this codebase already has a precedent for saying so instead of staying quiet —
+    /// `app/modal_keys.rs::on_remove_confirm_key`'s `pending_worktree_remove` guard
+    /// toasts "already removing/still removing ..." rather than silently refusing.
+    pub(super) fn stop_daemon_command(&mut self) -> Vec<Effect> {
+        if self.stopping.is_some() {
+            self.toast("already waiting for the daemon to stop");
+            return vec![];
+        }
+        self.modal = Some(Modal::Confirm {
+            message: "Stop the daemon and kill every agent?".into(),
+            action: PendingAction::StopDaemon,
+        });
+        vec![]
+    }
+
+    /// `PendingAction::StopDaemon`'s confirm (`app/lifecycle.rs::perform`): arms the
+    /// wait and sends the one `Shutdown`. Moved here, alongside the other three ways
+    /// the wait ends (`on_link_lost`, `on_send_failed`, `check_stopping_timeout`), so
+    /// decision 39's "stopping" pure logic lives in one file instead of being split
+    /// between where the wait starts and where it can end.
+    pub(super) fn start_stopping(&mut self) -> Vec<Effect> {
+        self.stopping = Some(Instant::now());
+        vec![Effect::Send(ClientMsg::Shutdown)]
     }
 
     /// Called by the event loop when the daemon closes the connection or the socket

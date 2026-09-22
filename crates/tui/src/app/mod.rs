@@ -476,13 +476,10 @@ impl App {
                 vec![]
             }
             Command::Detach => vec![Effect::Quit],
-            Command::StopDaemon => {
-                self.modal = Some(Modal::Confirm {
-                    message: "Stop the daemon and kill every agent?".into(),
-                    action: PendingAction::StopDaemon,
-                });
-                vec![]
-            }
+            // `C-b Q`: `link::stop_daemon_command` guards against a second press while
+            // one is already in flight (decision 39 keeps all of `stopping`'s logic in
+            // `app/link.rs`).
+            Command::StopDaemon => self.stop_daemon_command(),
             Command::Help => {
                 self.modal = Some(Modal::Help);
                 vec![]

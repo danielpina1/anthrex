@@ -1,14 +1,15 @@
-//! Task M6.10: the restart confirmation (decision 23) and starting `C-b Q`'s wait to
-//! stop the daemon (decision 36). Split out of `app/mod.rs` (`AGENTS.md` hard rule 8)
-//! — the same shape `modal_keys.rs` and `windows.rs` already give their own tasks'
-//! `impl App` blocks. The other two ways that wait can end — a refused `Shutdown`
-//! send and `STOPPING_TIMEOUT` itself — moved to `app/link.rs` in task M6.11
-//! alongside `on_link_lost`, the third: all three are link-failure concerns once
-//! `on_link_lost` had to know about `Link`.
+//! Task M6.10: the restart confirmation (decision 23) and dispatching `PendingAction`.
+//! Split out of `app/mod.rs` (`AGENTS.md` hard rule 8) — the same shape
+//! `modal_keys.rs` and `windows.rs` already give their own tasks' `impl App` blocks.
+//! `C-b Q`'s wait to stop the daemon (decision 36) used to be armed here too, but
+//! decision 39 names `app/link.rs` as where all of `stopping`'s pure logic belongs;
+//! a follow-up (closing the M6.10 review's naming-mismatch finding) moved
+//! `start_stopping` and the pre-confirm guard there alongside `on_link_lost`,
+//! `on_send_failed` and `check_stopping_timeout`, the three ways the wait ends. This
+//! file's `perform` arm for `PendingAction::StopDaemon` only dispatches to it.
 
 use super::{App, Effect, Modal, PendingAction};
 use proto::{ClientMsg, Status};
-use std::time::Instant;
 
 impl App {
     pub(super) fn perform(&mut self, action: PendingAction) -> Vec<Effect> {
@@ -18,12 +19,10 @@ impl App {
                 vec![Effect::Send(ClientMsg::Restart { window_id: id })]
             }
             // Decision 36: only the send. Quitting happens once the daemon actually
-            // confirms — see `on_link_lost`, `on_send_failed` and
+            // confirms — see `app/link.rs`'s `on_link_lost`, `on_send_failed` and
             // `check_stopping_timeout` for the three ways that wait can end.
-            PendingAction::StopDaemon => {
-                self.stopping = Some(Instant::now());
-                vec![Effect::Send(ClientMsg::Shutdown)]
-            }
+            // `start_stopping` lives there too (decision 39): this arm only dispatches.
+            PendingAction::StopDaemon => self.start_stopping(),
         }
     }
 
