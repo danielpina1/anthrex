@@ -20,6 +20,7 @@ fn hook(kind: HookKind) -> ParsedHook {
         tool_result_truncated: None,
         tool_result_stringified: None,
         prompt: None,
+        session_source: None,
     }
 }
 

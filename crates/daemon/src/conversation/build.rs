@@ -48,13 +48,25 @@ fn session_start(draft: &mut Draft, hook: &ParsedHook) -> bool {
     // again, starting after every `User` turn the window has so far (review F2). A new
     // file in the *same* session is the reader's restart instead, and a first
     // `SessionStart` (no path before it) starts at the base the draft already has.
-    if draft.session_id != hook.session_id
+    //
+    // A resumed session (`source: "resume"`: `/resume`, or milestone 6's restore
+    // relaunching with `--resume`) switches to a file that already holds its earlier
+    // turns, first `SessionStart` or not (fix round 2, N1/N2). The reader opens that file
+    // at its end and sets the base then; the base set here only covers the switch.
+    let switching =
+        draft.session_id != hook.session_id || draft.transcript_path != hook.transcript_path;
+    let resume = hook.session_source.as_deref() == Some("resume")
+        && hook.transcript_path.is_some()
+        && switching;
+    if hook.transcript_path.is_some() && switching {
+        draft.resume_pending = resume;
+    }
+    let cleared = draft.session_id != hook.session_id
         && draft.transcript_path.is_some()
         && hook.transcript_path.is_some()
-        && draft.transcript_path != hook.transcript_path
-    {
-        let users = draft.turns.iter().filter(|t| t.role == Role::User).count() as u32;
-        draft.session_base = draft.dropped_user_turns.saturating_add(users);
+        && draft.transcript_path != hook.transcript_path;
+    if resume || cleared {
+        draft.session_base = super::enrich::user_count(draft);
         draft.new_session = true;
         changed |= super::enrich::begin_session(draft);
     }
@@ -400,6 +412,7 @@ mod test_support {
             tool_result_truncated: None,
             tool_result_stringified: None,
             prompt: None,
+            session_source: None,
         }
     }
 

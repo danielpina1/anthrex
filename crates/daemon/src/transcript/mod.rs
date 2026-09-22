@@ -62,6 +62,12 @@ impl Cursor {
         ordinal
     }
 
+    /// Forgets the prompts counted so far: a resumed session's reader skipped them
+    /// (`reader::Tail::at_end`), and its ordinals count from the first prompt after.
+    fn forget_prompts(&mut self) {
+        self.prompts = 0;
+    }
+
     /// The ordinal of the turn the current line follows, or `None` before any prompt:
     /// prose with no prompt ahead of it has no turn to land on.
     fn current_turn(&self) -> Option<u32> {

@@ -476,6 +476,27 @@ pub(super) fn begin_session(draft: &mut Draft) -> bool {
     was_misaligned
 }
 
+/// The draft's `User` turns so far, counting those the caps dropped: the absolute index
+/// the next prompt's turn will have.
+pub(super) fn user_count(draft: &Draft) -> u32 {
+    let users = draft.turns.iter().filter(|t| t.role == Role::User).count() as u32;
+    draft.dropped_user_turns.saturating_add(users)
+}
+
+/// A resumed session's file was just measured at its end (fix round 2, N1/N2): the
+/// records before that end are skipped, so the session's ordinal 0 is the window's next
+/// `User` turn. `ambiguous` degrades the session to `Misaligned` from its first ordinal
+/// (see `ConversationSet::open_at_end`). Returns whether anything visible changed.
+pub(super) fn open_session_at_end(draft: &mut Draft, ambiguous: bool) -> bool {
+    draft.session_base = user_count(draft);
+    let mut changed = begin_session(draft);
+    if ambiguous {
+        draft.enrichment.misaligned_at = Some(0);
+        changed = true;
+    }
+    changed
+}
+
 /// Undoes every enrichment-sourced value -- replaced prompts, inserted prose, tool
 /// `input`/`detail`, and the alignment state -- leaving the hook-built timeline exactly
 /// as the hooks made it, including anything a hook changed after enrichment. Returns

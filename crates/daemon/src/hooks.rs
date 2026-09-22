@@ -48,6 +48,10 @@ pub struct ParsedHook {
     pub tool_result_stringified: Option<bool>,
     /// `UserPromptSubmit`'s own text.
     pub prompt: Option<String>,
+    /// `SessionStart`'s `source` (`startup`, `resume`, `clear`, `compact` for Claude).
+    /// `resume` means the session's transcript already holds its earlier turns (task
+    /// M6.5.10 fix round 2, N1/N2).
+    pub session_source: Option<String>,
 }
 
 pub fn accepts(runtime: Runtime, source: HookSource) -> bool {
@@ -108,6 +112,7 @@ pub fn parse(source: HookSource, payload: &Value) -> Option<ParsedHook> {
         tool_result_truncated: boolean("tool_result_truncated"),
         tool_result_stringified: boolean("tool_result_stringified"),
         prompt: string("prompt"),
+        session_source: string("source"),
     })
 }
 
@@ -207,6 +212,7 @@ mod tests {
                 tool_result_truncated: Some(true),
                 tool_result_stringified: Some(false),
                 prompt: Some("refactor the parser".into()),
+                session_source: None,
             })
         );
     }
@@ -308,6 +314,7 @@ mod tests {
                 tool_result_truncated: None,
                 tool_result_stringified: None,
                 prompt: None,
+                session_source: None,
             })
         );
     }
@@ -386,6 +393,7 @@ mod tests {
             tool_result_truncated: None,
             tool_result_stringified: None,
             prompt: None,
+            session_source: None,
         }
     }
 }

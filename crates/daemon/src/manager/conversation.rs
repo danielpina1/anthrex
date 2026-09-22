@@ -49,6 +49,14 @@ pub(super) struct TranscriptSlot {
     reader_running: bool,
     /// When the window's last conversation subscriber left, while the reader lingers.
     idle_since: Option<Instant>,
+    /// The file the last applied pass read, for observing from outside which file the
+    /// reader is on (`conversation_transcript_read`).
+    last_read: Option<PathBuf>,
+    /// The root's `User` turn count when the pass in flight was handed out. A resumed
+    /// file measured on that pass (`ReadOutcome::opened_at_end`) is ambiguous if the
+    /// count moved before the pass was applied: that prompt's record may lie on either
+    /// side of the measured end.
+    users_before_pass: u32,
 }
 
 /// What the reader does next ([`WindowManager::reader_step`]).
@@ -215,6 +223,13 @@ impl WindowManager {
             .is_some_and(|entry| entry.transcript.reader_running)
     }
 
+    /// The transcript file the reader's last applied pass read, if any. Lets a caller
+    /// wait for the reader to have switched files, rather than sleeping.
+    pub fn conversation_transcript_read(&self, window_id: u32) -> Option<PathBuf> {
+        let inner = crate::lock(&self.inner);
+        inner.entries.get(&window_id)?.transcript.last_read.clone()
+    }
+
     /// The reader's decision point, between passes and never during one: stop, wait, or
     /// take the tail for one pass. Under the lock only long enough to decide and to move
     /// the `Tail` out.
@@ -247,6 +262,17 @@ impl WindowManager {
         // Consumed on every switch to a new `Tail`, so a flag left from a switch the
         // reader never saw cannot excuse a later same-session move from its restart.
         let new_session = |entry: &mut Entry| entry.conversations.take_new_session();
+        // A resumed session's file already holds its earlier turns, so it is opened at
+        // its end (fix round 2, N1/N2); the flag, like `new_session`, is consumed by
+        // whichever new `Tail` comes first.
+        let new_tail = |entry: &mut Entry, path: PathBuf| {
+            if entry.conversations.take_resume() {
+                Tail::at_end(path)
+            } else {
+                Tail::new(path)
+            }
+        };
+        entry.transcript.users_before_pass = entry.conversations.user_count();
         match entry.transcript.tail.take() {
             Some(tail) if tail.path() == path => ReaderStep::Read(tail),
             Some(_) => {
@@ -255,11 +281,11 @@ impl WindowManager {
                 // session in another file is a restart, so nothing the old file
                 // enriched outlives it.
                 entry.transcript.restart_next = !new_session(entry);
-                ReaderStep::Read(Tail::new(path))
+                ReaderStep::Read(new_tail(entry, path))
             }
             None => {
                 new_session(entry);
-                ReaderStep::Read(Tail::new(path))
+                ReaderStep::Read(new_tail(entry, path))
             }
         }
     }
@@ -285,7 +311,10 @@ impl WindowManager {
         }
         let restart = outcome.restarted || std::mem::take(&mut entry.transcript.restart_next);
         let set = &mut entry.conversations;
-        let changed = if restart {
+        let changed = if outcome.opened_at_end {
+            let ambiguous = set.user_count() != entry.transcript.users_before_pass;
+            set.open_at_end(&outcome.records, restart, ambiguous, caps)
+        } else if restart {
             set.restart_enrichment(&outcome.records, caps)
         } else {
             set.enrich(&outcome.records, caps)
@@ -296,6 +325,7 @@ impl WindowManager {
                 "a single conversation turn exceeds conversation.max_bytes; kept"
             );
         }
+        entry.transcript.last_read = Some(tail.path().to_path_buf());
         entry.transcript.tail = Some(tail);
         self.notify_conversations(window_id, &entry.conversations, &changed);
         self.degrade(window_id, entry, outcome.degraded);

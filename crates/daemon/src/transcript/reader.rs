@@ -49,8 +49,9 @@ const OPEN_FLAGS: i32 = libc::O_NONBLOCK | libc::O_NOCTTY;
 #[derive(Debug)]
 enum Format {
     /// `detect_head` has not answered yet; the complete lines seen so far, held (not
-    /// parsed) until it does or until `DETECT_LINES` of them have passed.
-    Detecting(Vec<String>),
+    /// parsed) until it does or until `DETECT_LINES` of them have passed, each with
+    /// whether it lies before the tail's `skip_until`.
+    Detecting(Vec<(String, bool)>),
     Known(Version),
     /// `DETECT_LINES` lines passed without an answer. Nothing more is parsed until the
     /// tail restarts.
@@ -79,6 +80,15 @@ pub struct Tail {
     /// `(dev, ino)` of the file last read, so a file replaced by a new one of the same
     /// or greater length is a restart too, not only one that shrank.
     identity: Option<(u64, u64)>,
+    /// Opened on a resumed session (task M6.5.10 fix round 2, N1/N2): everything the
+    /// file held when first read belongs to earlier turns, so it is read for the format
+    /// and the cursor but yields no records. Survives a restart, which measures again.
+    at_end: bool,
+    /// The file's length when an `at_end` tail first read it: a line that starts before
+    /// it is old. `None` until measured, and always for an ordinary tail.
+    skip_until: Option<u64>,
+    /// The offset of the first byte of `partial`: where the line being assembled began.
+    line_start: u64,
 }
 
 /// One pass's result.
@@ -91,6 +101,10 @@ pub struct ReadOutcome {
     /// True when the file shrank or was replaced and the tail restarted (decision A7):
     /// the caller discards its enrichment before applying `records`.
     pub restarted: bool,
+    /// An `at_end` tail measured the file on this pass: `records` hold only what was
+    /// written after that, with prompt ordinals counting from 0, and the caller starts
+    /// the session's ordinals at the window's current `User` turn count.
+    pub opened_at_end: bool,
 }
 
 impl Tail {
@@ -104,6 +118,18 @@ impl Tail {
             cursor: Cursor::default(),
             bad_record: false,
             identity: None,
+            at_end: false,
+            skip_until: None,
+            line_start: 0,
+        }
+    }
+
+    /// A tail for a resumed session's file (N1/N2): whatever the file already holds on
+    /// the first pass is skipped, and only lines that start after it yield records.
+    pub fn at_end(path: PathBuf) -> Self {
+        Tail {
+            at_end: true,
+            ..Tail::new(path)
         }
     }
 
@@ -145,6 +171,10 @@ impl Tail {
             outcome.restarted = true;
         }
         self.identity = Some(identity);
+        if self.at_end && self.skip_until.is_none() {
+            self.skip_until = Some(meta.len());
+            outcome.opened_at_end = true;
+        }
         if matches!(self.format, Format::Unknown) {
             return self.finish(outcome, None);
         }
@@ -167,8 +197,9 @@ impl Tail {
                 }
             };
             consumed += n;
+            let start = self.offset;
             self.offset += n as u64;
-            self.feed(parser, &buf[..n], &mut outcome.records);
+            self.feed(parser, start, &buf[..n], &mut outcome.records);
             if Instant::now() >= deadline {
                 break;
             }
@@ -187,20 +218,41 @@ impl Tail {
     }
 
     /// Decision A7: the offset, the partial line, the version and the cursor go back to
-    /// the start together.
+    /// the start together. An `at_end` tail stays one and measures the file again.
     fn restart(&mut self) {
+        let at_end = self.at_end;
         *self = Tail::new(std::mem::take(&mut self.path));
+        self.at_end = at_end;
     }
 
-    /// Splits `bytes` into lines, carrying an incomplete last line in `partial`.
-    fn feed(&mut self, parser: &dyn TranscriptParser, mut bytes: &[u8], out: &mut Vec<Record>) {
+    /// Whether the line that began at `start` was already in the file when an `at_end`
+    /// tail measured it.
+    fn is_old(&self, start: u64) -> bool {
+        self.skip_until.is_some_and(|end| start < end)
+    }
+
+    /// Splits `bytes`, which begin at file offset `start`, into lines, carrying an
+    /// incomplete last line in `partial`.
+    fn feed(
+        &mut self,
+        parser: &dyn TranscriptParser,
+        start: u64,
+        mut bytes: &[u8],
+        out: &mut Vec<Record>,
+    ) {
+        let mut pos = start;
         while !bytes.is_empty() {
             let newline = bytes.iter().position(|&b| b == b'\n');
             let (segment, rest) = match newline {
                 Some(at) => (&bytes[..at], &bytes[at + 1..]),
                 None => (bytes, &[][..]),
             };
+            pos += (bytes.len() - rest.len()) as u64;
             bytes = rest;
+            let began = self.line_start;
+            if newline.is_some() {
+                self.line_start = pos;
+            }
             if self.skipping {
                 if newline.is_some() {
                     self.skipping = false;
@@ -210,13 +262,14 @@ impl Tail {
             self.partial.extend_from_slice(segment);
             if self.partial.len() > TRANSCRIPT_LINE_MAX {
                 self.partial = Vec::new();
-                self.bad_record = true;
+                self.bad_record |= !self.is_old(began);
                 self.skipping = newline.is_none();
                 continue;
             }
             if newline.is_some() {
                 let line = std::mem::take(&mut self.partial);
-                self.line(parser, &line, out);
+                let old = self.is_old(began);
+                self.line(parser, &line, old, out);
                 if matches!(self.format, Format::Unknown) {
                     return;
                 }
@@ -224,9 +277,16 @@ impl Tail {
         }
     }
 
-    fn line(&mut self, parser: &dyn TranscriptParser, bytes: &[u8], out: &mut Vec<Record>) {
+    /// `old`: the line was in the file before an `at_end` tail measured it.
+    fn line(
+        &mut self,
+        parser: &dyn TranscriptParser,
+        bytes: &[u8],
+        old: bool,
+        out: &mut Vec<Record>,
+    ) {
         let Ok(line) = std::str::from_utf8(bytes) else {
-            self.bad_record = true;
+            self.bad_record |= !old;
             return;
         };
         let line = line.trim();
@@ -236,16 +296,16 @@ impl Tail {
         match &mut self.format {
             Format::Known(version) => {
                 let version = *version;
-                self.parse(parser, version, line, out);
+                self.parse(parser, version, line, old, out);
             }
             Format::Detecting(head) => {
-                head.push(line.to_owned());
-                match detect_head(parser, head.iter().map(String::as_str)) {
+                head.push((line.to_owned(), old));
+                match detect_head(parser, head.iter().map(|(line, _)| line.as_str())) {
                     Some(version) => {
                         let head = std::mem::take(head);
                         self.format = Format::Known(version);
-                        for held in &head {
-                            self.parse(parser, version, held, out);
+                        for (held, old) in &head {
+                            self.parse(parser, version, held, *old, out);
                         }
                     }
                     None if head.len() >= DETECT_LINES => self.format = Format::Unknown,
@@ -261,8 +321,17 @@ impl Tail {
         parser: &dyn TranscriptParser,
         version: Version,
         line: &str,
+        old: bool,
         out: &mut Vec<Record>,
     ) {
+        if old {
+            // Read for what the cursor carries (Codex's session id), never emitted, and
+            // its prompts forgotten: the first prompt after the skip is ordinal 0, and
+            // prose before it has no turn to land on.
+            let _ = parser.record(version, line, &mut self.cursor);
+            self.cursor.forget_prompts();
+            return;
+        }
         if parser.malformed(version, line) {
             self.bad_record = true;
             return;
@@ -274,3 +343,7 @@ impl Tail {
 #[cfg(test)]
 #[path = "reader_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "reader_at_end_tests.rs"]
+mod at_end_tests;

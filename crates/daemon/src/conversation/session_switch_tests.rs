@@ -172,3 +172,89 @@ fn only_a_new_session_with_a_new_file_is_a_switch() {
     apply(&mut set, &[session("sess-B")]);
     assert!(!set.take_new_session(), "a new session with no path");
 }
+
+fn resumed_at(id: &str, path: &str) -> ParsedHook {
+    let mut h = session_at(id, path);
+    h.session_source = Some("resume".into());
+    h
+}
+
+/// Fix round 2 (N1/N2): a resumed session is flagged for an at-end open whether or not a
+/// path came before it; an ordinary start, a `/clear`, or a resume onto the file already
+/// read is not.
+#[test]
+fn only_a_resume_onto_another_file_asks_for_an_at_end_open() {
+    let mut set = ConversationSet::new(1, proto::Runtime::Claude);
+    apply(&mut set, &[resumed_at("sess-A", "/t/a.jsonl")]);
+    assert!(set.take_resume(), "a window's first SessionStart, resumed");
+    assert!(!set.take_resume(), "once");
+    apply(&mut set, &[resumed_at("sess-A", "/t/a.jsonl")]);
+    assert!(!set.take_resume(), "the same session and file");
+    apply(&mut set, &[session_at("sess-B", "/t/b.jsonl")]);
+    assert!(!set.take_resume(), "a /clear");
+    apply(&mut set, &[resumed_at("sess-A", "/t/a.jsonl")]);
+    apply(&mut set, &[session_at("sess-C", "/t/c.jsonl")]);
+    assert!(
+        !set.take_resume(),
+        "a later ordinary switch replaces a resume the reader never saw"
+    );
+}
+
+/// The ordinal base is taken when the file is opened: the session's ordinal 0 is the
+/// window's next `User` turn, even when the resumed prompt repeats an old one.
+#[test]
+fn an_at_end_open_starts_the_sessions_ordinals_at_the_next_turn() {
+    let mut set = ConversationSet::new(1, proto::Runtime::Claude);
+    apply(
+        &mut set,
+        &[
+            session_at("sess-A", "/t/a.jsonl"),
+            prompt("continue"),
+            stop(),
+        ],
+    );
+    enrich(&mut set, &[user(0, "continue"), said(0, "A reply 1")]);
+    apply(&mut set, &[resumed_at("sess-B", "/t/b.jsonl")]);
+    set.open_at_end(&[], false, false, Caps::default());
+    apply(&mut set, &[prompt("continue"), stop()]);
+    enrich(&mut set, &[user(0, "continue"), said(0, "B reply 1")]);
+    assert_eq!(
+        shape(&set),
+        vec![
+            (Role::User, texts(&["continue"])),
+            (Role::Assistant, texts(&["A reply 1"])),
+            (Role::User, texts(&["continue"])),
+            (Role::Assistant, texts(&["B reply 1"])),
+        ]
+    );
+    assert_eq!(set.snapshot(None).unwrap().degraded, None);
+}
+
+/// A prompt that arrived while the file was being measured may have its record on either
+/// side of the measured end: the session degrades rather than guess.
+#[test]
+fn an_ambiguous_at_end_open_degrades_instead_of_enriching() {
+    let mut set = ConversationSet::new(1, proto::Runtime::Claude);
+    apply(
+        &mut set,
+        &[
+            resumed_at("sess-A", "/t/a.jsonl"),
+            prompt("continue"),
+            stop(),
+        ],
+    );
+    let changed = set.open_at_end(&[], false, true, Caps::default());
+    assert_eq!(changed, vec![None]);
+    enrich(&mut set, &[user(0, "continue"), said(0, "maybe mine")]);
+    assert_eq!(
+        shape(&set),
+        vec![
+            (Role::User, texts(&["continue"])),
+            (Role::Assistant, texts(&[])),
+        ]
+    );
+    assert_eq!(
+        set.snapshot(None).unwrap().degraded,
+        Some(proto::DegradeReason::Misaligned)
+    );
+}
