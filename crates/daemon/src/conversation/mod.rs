@@ -70,17 +70,18 @@ pub const DELTA_HISTORY: usize = 64;
 /// select_by_tier`, shared by both so the two selections cannot drift apart), immune to
 /// any later block-position mutation.
 ///
-/// Entries are removed when consumed (`take_tool_start`), and `close_open_turn` still
-/// clears every entry still queued when a turn closes -- kept deliberately, not removed
-/// as "no longer needed": without it, a tool denied by a turn closing (no matching
-/// `PostToolUse` ever arrives) leaves an orphaned entry that `take_tool_start`'s
-/// name-tier fallback could later match against an unrelated same-named tool in a
-/// *later* turn, since `take_tool_start` searches every queued entry, not (unlike
-/// `find_target`) only the blocks of the currently open turn. `close_open_turn`'s clear
-/// keeps the two searches over the same population. `push_turn`'s own clear is, by
-/// induction, always a no-op by the time it runs (the previous open turn, if any, must
-/// already have gone through `close_open_turn`) -- kept anyway as cheap defence in
-/// depth, per the review's own "fine, but should say so" note on this class.
+/// Entries are removed when consumed (`take_tool_start`). Both `push_turn` and
+/// `close_open_turn` also clear `tool_started` outright, and fix round 2's re-review
+/// measured that this pairing is deliberately redundant, not one load-bearing clear
+/// plus one no-op: with *either* clear alone, `take_tool_start`'s name-tier fallback
+/// cannot mismatch a denied tool's orphaned entry (left behind because no matching
+/// `PostToolUse` ever arrives) against an unrelated same-named tool in a later turn.
+/// The wrong pairing only reproduces when *both* clears are deleted at once
+/// (`review_denied_tool_does_not_leak_its_start_time_into_a_later_turn` in
+/// `build_tests.rs`, which goes red only in that combination). Each clear is kept as
+/// its own defence in depth against the other one someday being removed by a change
+/// that looks locally safe -- deleting either alone is *expected* to leave the suite
+/// green, and must not be read as proof the other is dead code.
 struct Draft {
     window_id: u32,
     agent_id: Option<String>,
@@ -114,10 +115,10 @@ impl Draft {
             .rposition(|turn| turn.state == proto::TurnState::Running)
     }
 
-    /// Appends a turn, returning its index. Clears `tool_started` too, though this is
-    /// provably a no-op by the time it runs (see the struct doc comment): the previous
-    /// open turn, if any, must already have gone through `close_open_turn`, which
-    /// clears it. Kept as cheap defence in depth.
+    /// Appends a turn, returning its index. Also clears `tool_started` (see the struct
+    /// doc comment): deliberately redundant with `close_open_turn`'s own clear, each
+    /// independently sufficient to keep a denied tool's orphaned entry from leaking
+    /// into a later turn -- not a no-op kept "just in case".
     fn push_turn(
         &mut self,
         role: proto::Role,
@@ -163,12 +164,13 @@ impl Draft {
     /// Closes the open turn, if any: `state = Complete`, and every still-`Pending`
     /// `ToolCall` in it becomes `Denied`. Returns whether anything changed.
     ///
-    /// `tool_started.clear()` below is load-bearing, not belt-and-braces (see the
-    /// struct doc comment): a denied `ToolCall` never gets a `PostToolUse`, so its
-    /// `tool_started` entry would otherwise never be consumed, and could later be
-    /// picked up by `take_tool_start`'s name-tier fallback for an unrelated same-named
-    /// tool in a *later* turn (`find_target` cannot make the same mistake, since it
-    /// only ever searches the currently open turn's own blocks).
+    /// `tool_started.clear()` below is deliberately redundant with `push_turn`'s own
+    /// clear (see the struct doc comment), each independently sufficient on its own: a
+    /// denied `ToolCall` never gets a `PostToolUse`, so its `tool_started` entry would
+    /// otherwise never be consumed, and could later be picked up by
+    /// `take_tool_start`'s name-tier fallback for an unrelated same-named tool in a
+    /// *later* turn (`find_target` cannot make the same mistake, since it only ever
+    /// searches the currently open turn's own blocks).
     fn close_open_turn(&mut self) -> bool {
         let Some(index) = self.open_turn_index() else {
             return false;

@@ -284,6 +284,51 @@ fn stop_denies_every_pending_tool() {
     assert_eq!(states, vec![ToolState::Ok, ToolState::Denied]);
 }
 
+/// Fix round 2, finding F5 (re-review): `Draft.tool_started` clears in both
+/// `push_turn` and `close_open_turn`. The re-review measured that either clear alone
+/// is sufficient -- the misattribution this test pins only reproduces when *both* are
+/// deleted at once. Scenario: a turn closes with a tool still `Pending` (denied, no
+/// `PostToolUse` ever arrives for it), a new turn opens, and an id-less tool with the
+/// *same name* runs in it. Distinct start times (`t0` for the denied tool, `t0 +
+/// 900ms` for the new one, `PostToolUse` at `t0 + 1200ms`) mean a wrong pairing
+/// produces a wrong duration (`1200ms`, `t0`'s own age) rather than a coincidentally
+/// right one -- the correct duration is `300ms` (`1200 - 900`).
+#[test]
+fn review_denied_tool_does_not_leak_its_start_time_into_a_later_turn() {
+    let mut draft = draft();
+    let t0 = Instant::now();
+
+    // Turn 1: a `Bash` call starts and is never completed.
+    assert!(run(&mut draft, &pre(Some("tu-A"), "Bash"), 1000, t0));
+
+    // The turn closes with `tu-A` still `Pending` -- it becomes `Denied`, and (with
+    // either clear present) `tool_started` no longer remembers `tu-A`'s start time.
+    assert!(run(&mut draft, &hook(HookKind::Stop), 1001, t0));
+
+    // Turn 2 opens implicitly: an id-less `Bash` call, same name, different start time.
+    let started_at = t0 + Duration::from_millis(900);
+    assert!(run(&mut draft, &pre(None, "Bash"), 1002, started_at));
+
+    let mut done = post(None, Some("Bash"));
+    done.tool_response = Some(json!("ran"));
+    let finished_at = t0 + Duration::from_millis(1200);
+    assert!(run(&mut draft, &done, 1003, finished_at));
+
+    let open = draft.open_turn_index().unwrap();
+    let Block::ToolCall { duration_ms, .. } = &draft.turns[open].blocks[0] else {
+        panic!(
+            "expected a ToolCall block, got {:?}",
+            draft.turns[open].blocks[0]
+        );
+    };
+    assert_eq!(
+        *duration_ms,
+        Some(300),
+        "turn 2's Bash call must be timed from its own PreToolUse (900ms), not tu-A's \
+         (0ms), which would report 1200ms"
+    );
+}
+
 #[test]
 fn a_truncated_hook_result_is_flagged() {
     let cases = [(Some(true), true), (Some(false), false), (None, false)];
