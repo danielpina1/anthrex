@@ -466,3 +466,25 @@ constructing an input and running it — a config file with a `[git]` table, a `
 handed to `restore` before `serve`, an `App` with its view moved. Reading the same code
 had already missed all three, twice, and the comment in `manager/restore.rs` is why:
 it described a fallback that did not exist, and reading for plausibility believed it.
+
+## From milestone 6.5's transcript capture (2026-09-22), task M6.5.7
+
+- **Agents inherit the launcher's entire environment, including another agent's session
+  markers.** Started from a shell inside Claude Code, the daemon inherited
+  `CLAUDE_CODE_CHILD_SESSION`, and the `claude` it launched printed "Transcript saving is off
+  — inherited CLAUDE_CODE_CHILD_SESSION marker": no transcript is ever written, so milestone
+  6.5's conversation view can never enrich a window started that way. The same inheritance
+  hands every agent roughly twenty other host variables, among them
+  `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN`, which connect it to the
+  launching session. Reproduce: from a Claude Code terminal, `anthrex daemon start`, then
+  `anthrex new --runtime claude --prompt hi`, and read the agent's status line. The fix is a
+  deliberate environment policy at spawn time — which variables an agent window inherits
+  and which it must not — and it is a product decision, not a one-line scrub: a user's own
+  `ANTHROPIC_BASE_URL` or proxy settings may be exactly what they want passed through.
+  Belongs with whichever milestone next touches `crates/daemon/src/window/spawn`
+  (orchestration, milestone 8, launches agents unattended and needs the policy most).
+- **The M6.5.7 brief's capture recipe does not work as written.** It finds the transcript
+  with `grep transcript_path daemon.log`, but the daemon does not log raw hook payloads.
+  Claude writes to `~/.claude/projects/<cwd with / and . replaced by ->/<session>.jsonl`,
+  Codex to `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`. Recorded in the brief's
+  Implementation notes too.
