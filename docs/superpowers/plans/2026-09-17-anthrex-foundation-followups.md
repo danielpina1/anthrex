@@ -544,3 +544,11 @@ it described a fallback that did not exist, and reading for plausibility believe
   switch would keep it. And a later shrink or replacement of the new session's file is a
   restart, whose `reset` is window-wide, so it drops the old session's enrichment too;
   scoping `enrich::reset` to turns at or after `session_base` would keep it.
+- **`crates/cli/tests/persistence.rs`'s `session_id_learned_from_a_hook_is_saved` races the
+  save debounce.** Seen once in three full workspace runs during task M6.5.10's fix round 1
+  (`left: None, right: Some("fake-session-1")`; 8/8 in isolation). The loop asserts on the
+  *first* `state.json` record it finds for the window, and a save from before the hook
+  (the window's creation) satisfies "found" while still holding `session_id: None`; the
+  save carrying the session lands up to `SAVE_DEBOUNCE` later. The loop should keep
+  polling until the record's session id is `Some` (or the deadline passes), then compare.
+  Milestone 6's test; not touched here.
