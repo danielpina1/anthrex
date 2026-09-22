@@ -7,6 +7,7 @@
 
 mod claude;
 mod codex;
+pub mod reader;
 
 /// A transcript format version, as recognised by a parser's `detect`. It names the
 /// shape of the file, not the CLI release that wrote it.
@@ -77,6 +78,15 @@ pub trait TranscriptParser: Send + Sync {
     /// Pure, total, and never an error: a line this version does not model yields an
     /// empty vec. `cursor` carries turn position across the lines of one file.
     fn record(&self, version: Version, line: &str, cursor: &mut Cursor) -> Vec<Record>;
+    /// Whether `line` is broken rather than merely uninteresting: not a JSON object at
+    /// all, or a record of a kind this version carries conversation in whose shape it
+    /// cannot read. `record` yields nothing for both a bookkeeping line and a broken one,
+    /// and only the second is `DegradeReason::BadRecord` (task M6.5.10), so the reader
+    /// asks this separately. Pure and total, like `record`.
+    fn malformed(&self, version: Version, line: &str) -> bool {
+        let _ = version;
+        object(line).is_none()
+    }
 }
 
 static CLAUDE: claude::ClaudeParser = claude::ClaudeParser;

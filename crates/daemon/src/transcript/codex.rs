@@ -59,6 +59,22 @@ impl TranscriptParser for CodexParser {
             _ => Vec::new(),
         }
     }
+
+    /// Every line is `{timestamp, type, payload}`; a `response_item`, the one kind this
+    /// parser reads conversation from, is broken without an object `payload` naming its
+    /// own `type`.
+    fn malformed(&self, _version: Version, line: &str) -> bool {
+        let Some(map) = object(line) else {
+            return true;
+        };
+        match map.get("type").and_then(Value::as_str) {
+            Some("response_item") => !map
+                .get("payload")
+                .and_then(|p| p.get("type"))
+                .is_some_and(Value::is_string),
+            _ => false,
+        }
+    }
 }
 
 fn response_item(payload: &Value, cursor: &mut Cursor) -> Vec<Record> {

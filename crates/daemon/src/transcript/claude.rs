@@ -71,6 +71,22 @@ impl TranscriptParser for ClaudeParser {
             _ => Vec::new(),
         }
     }
+
+    /// A `user` or `assistant` line is the only kind that carries conversation, and it
+    /// always has a `message.content` that is a string or a list of blocks; one without
+    /// is broken, where a bookkeeping line (`last-prompt`, `attachment`, ...) is not.
+    fn malformed(&self, _version: Version, line: &str) -> bool {
+        let Some(map) = object(line) else {
+            return true;
+        };
+        match map.get("type").and_then(Value::as_str) {
+            Some("user" | "assistant") => !matches!(
+                map.get("message").and_then(|m| m.get("content")),
+                Some(Value::String(_) | Value::Array(_))
+            ),
+            _ => false,
+        }
+    }
 }
 
 fn user(
