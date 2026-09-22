@@ -348,10 +348,7 @@ impl ConversationSet {
     /// The root window's own `transcript_path`, as last set by a `SessionStart` hook --
     /// which file `watch.rs` (task M6.5.10) needs to know to start tailing. `None` when
     /// no `SessionStart` has landed for the root conversation yet, or when the root
-    /// conversation does not exist yet at all. Fix round 1, finding F9: this needs no
-    /// `crate::transcript::Record` (unlike `enrich`/`reset_enrichment`, still deferred
-    /// to tasks M6.5.7/8) -- it only reads `Draft.transcript_path`, which this task
-    /// already carries.
+    /// conversation does not exist yet at all. It only reads `Draft.transcript_path`.
     pub fn transcript_path(&self) -> Option<&str> {
         self.entries.get(&None)?.draft.transcript_path.as_deref()
     }
