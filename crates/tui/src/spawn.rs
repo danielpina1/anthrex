@@ -1,4 +1,9 @@
 //! Starts the daemon in the background when none is running.
+//!
+//! Moved here from `crates/cli/src/spawn.rs` by task M6.11's `git mv`: `ensure_daemon`
+//! is now also the second half of `reconnect::attempt` (decision 32's `C-b r`, which
+//! may start a daemon the same way a cold `anthrex attach` does), so it belongs next
+//! to `reconnect.rs` and `connection.rs` rather than behind the CLI crate boundary.
 
 use std::fs::OpenOptions;
 use std::path::Path;
@@ -50,11 +55,10 @@ fn open_stderr_sink() -> Option<std::fs::File> {
         .ok()
 }
 
-/// Re-executes this binary as `anthrex daemon start --foreground` in its own session,
-/// with stdio detached, so it outlives the calling process.
-fn spawn_detached() -> anyhow::Result<()> {
+/// Re-executes `exe` as `anthrex daemon start --foreground` in its own session, with
+/// stdio detached, so it outlives the calling process.
+fn spawn_detached(exe: &Path) -> anyhow::Result<()> {
     use std::os::unix::process::CommandExt;
-    let exe = std::env::current_exe()?;
     let mut cmd = std::process::Command::new(exe);
     let stderr = match open_stderr_sink() {
         Some(file) => Stdio::from(file),
@@ -80,12 +84,16 @@ fn spawn_detached() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Connects if a daemon is running; otherwise starts one and waits up to 3 s for its socket.
-pub async fn ensure_daemon(socket: &Path) -> anyhow::Result<()> {
+/// Connects if a daemon is running; otherwise starts one and waits up to 3 s for its
+/// socket. `exe` is the binary to re-exec as the detached daemon — task M6.11 moved
+/// this out of an internal `std::env::current_exe()` call so a reconnect attempt
+/// (decision 32) can be driven with a fixed, test-supplied path instead of whatever
+/// binary happens to be running the test harness.
+pub async fn ensure_daemon(exe: &Path, socket: &Path) -> anyhow::Result<()> {
     if is_up(socket).await {
         return Ok(());
     }
-    spawn_detached()?;
+    spawn_detached(exe)?;
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {
         if is_up(socket).await {

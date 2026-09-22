@@ -1,6 +1,5 @@
 mod client;
 mod hook;
-mod spawn;
 mod tree_cmd;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -184,7 +183,7 @@ async fn run_cli() -> anyhow::Result<()> {
                 Some(r) => r.into(),
                 None => loaded_config.default_runtime,
             };
-            spawn::ensure_daemon(&socket).await?;
+            tui::spawn::ensure_daemon(&std::env::current_exe()?, &socket).await?;
             let mut c = client::CliClient::connect(&socket).await?;
             // A worktree create can make the daemon run git (decision 3's 30 s
             // operation deadline), so it needs the longer budget; a plain create is
@@ -323,7 +322,7 @@ async fn run_cli() -> anyhow::Result<()> {
 }
 
 async fn attach(socket: PathBuf, dir: PathBuf, target: Option<String>) -> anyhow::Result<()> {
-    spawn::ensure_daemon(&socket).await?;
+    tui::spawn::ensure_daemon(&std::env::current_exe()?, &socket).await?;
     // The config is loaded exactly once, here, and turned into the client's resolved
     // `UiSettings` before `tui::run` starts: nothing under `crates/tui/src/app/` or
     // `crates/tui/src/ui/` does I/O (task M6.9's layering rule), so the CLI is the only
@@ -354,7 +353,7 @@ async fn daemon_command(action: DaemonAction, socket: PathBuf) -> anyhow::Result
             .await
         }
         DaemonAction::Start { foreground: false } => {
-            spawn::ensure_daemon(&socket).await?;
+            tui::spawn::ensure_daemon(&std::env::current_exe()?, &socket).await?;
             println!("daemon running on {}", socket.display());
             Ok(())
         }
