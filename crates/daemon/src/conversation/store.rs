@@ -11,9 +11,10 @@
 //! where that bookkeeping actually lives, one level above `Draft`, not inside it, so a
 //! `Draft` on its own (as `build.rs`'s tests still use it) never has to fake a `rev`.
 
-use super::{Caps, DELTA_HISTORY, Draft, MAX_CONVERSATIONS_PER_WINDOW};
+use super::{Caps, DELTA_HISTORY, Draft, MAX_CONVERSATIONS_PER_WINDOW, enrich};
 use crate::hooks::{HookKind, ParsedHook};
 use crate::subagents::SpawnOrigin;
+use crate::transcript::Record;
 use proto::{DegradeReason, DropCause, TurnPatch};
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
@@ -71,9 +72,27 @@ impl Entry {
         }
     }
 
+    /// The reason a client sees. The reader's own reason (`degraded`, from
+    /// `set_degraded`) wins when there is one: a file that cannot be read is the more
+    /// fundamental problem. Otherwise a failed alignment check shows as `Misaligned`
+    /// (task M6.5.8). Kept apart from `degraded` so the reader's routine
+    /// `set_degraded(None)` after a clean pass cannot clear the enricher's reason; only
+    /// `reset_enrichment` does.
+    fn degraded(&self) -> Option<DegradeReason> {
+        self.degraded.or(self
+            .draft
+            .enrichment
+            .is_misaligned()
+            .then_some(DegradeReason::Misaligned))
+    }
+
     fn snapshot(&self) -> proto::Conversation {
-        self.draft
-            .to_conversation(self.rev, self.degraded, self.dropped_turns, self.dropped_by)
+        self.draft.to_conversation(
+            self.rev,
+            self.degraded(),
+            self.dropped_turns,
+            self.dropped_by,
+        )
     }
 
     /// Increments `rev` by exactly 1 and records `patches` as that revision's batch,
@@ -113,6 +132,10 @@ impl Entry {
                 DropCause::Bytes
             };
             let removed = self.draft.turns.remove(0);
+            if removed.role == proto::Role::User {
+                self.draft.dropped_user_turns = self.draft.dropped_user_turns.saturating_add(1);
+            }
+            self.draft.enrichment.forget_turn(removed.id);
             self.dropped_turns = self.dropped_turns.saturating_add(1);
             self.dropped_by = Some(cause);
             drops.push(TurnPatch::Drop { id: removed.id });
@@ -333,6 +356,44 @@ impl ConversationSet {
         self.entries.get(&None)?.draft.transcript_path.as_deref()
     }
 
+    /// Applies transcript records (decision 1: enrichment only) to the window's root
+    /// conversation, returning `[None]` when its `rev` advanced and nothing otherwise.
+    ///
+    /// Routing (task M6.5.8): the records come from one transcript file, and the file
+    /// the reader tails is the root's (`transcript_path` above). A sub-agent's transcript
+    /// is a separate file in practice (the Claude parser also skips `isSidechain` lines),
+    /// so every record -- text and `ToolDetail` alike -- belongs to the root, and none
+    /// reaches into a sub-agent's conversation. Never creates a conversation: records
+    /// with no hook-built root to land on change nothing.
+    pub fn enrich(&mut self, records: &[Record], caps: Caps) -> Vec<Option<String>> {
+        let Some(entry) = self.entries.get_mut(&None) else {
+            return Vec::new();
+        };
+        if Self::mutate(entry, Some(caps), |draft| {
+            enrich::apply(draft, records, caps)
+        }) {
+            vec![None]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Drops every enrichment-sourced value on every conversation, keeping the
+    /// hook-built timeline (decision A7), and returns the keys whose `rev` advanced.
+    /// Only a conversation that actually held enrichment changes.
+    pub fn reset_enrichment(&mut self) -> Vec<Option<String>> {
+        let mut changed = Vec::new();
+        for (key, entry) in &mut self.entries {
+            // Undoing enrichment only shrinks a conversation, so no cap can newly bite,
+            // and running `enforce_caps` without the caller's real caps would recompute
+            // `oversize_logged` against the wrong bound.
+            if Self::mutate(entry, None, enrich::reset) {
+                changed.push(key.clone());
+            }
+        }
+        changed
+    }
+
     /// Whether the set has room for one more brand-new key without exceeding
     /// `MAX_CONVERSATIONS_PER_WINDOW`, reserving the root's own slot when it does not
     /// exist yet. Fix round 1, finding F2: the pre-fix version admitted a brand-new
@@ -379,13 +440,13 @@ impl ConversationSet {
     {
         let resolved = self.resolve_key(&key);
         let changed = if let Some(entry) = self.entries.get_mut(&resolved) {
-            Self::mutate(entry, caps, f)
+            Self::mutate(entry, Some(caps), f)
         } else {
             let mut entry = Entry::new(
                 Draft::new(self.window_id, resolved.clone(), self.runtime),
                 self.current_degraded,
             );
-            let changed = Self::mutate(&mut entry, caps, f);
+            let changed = Self::mutate(&mut entry, Some(caps), f);
             if changed {
                 self.entries.insert(resolved.clone(), entry);
             }
@@ -397,8 +458,9 @@ impl ConversationSet {
     /// The "diff before/after, enforce caps, record one revision" logic `touch` runs
     /// against an `Entry`, whether that entry is already in `entries` or is being
     /// evaluated off to the side before its first insertion. Returns whether `f`
-    /// reported a change.
-    fn mutate<F>(entry: &mut Entry, caps: Caps, f: F) -> bool
+    /// reported a change. `caps: None` skips cap enforcement, for a change that can only
+    /// shrink the conversation (`reset_enrichment`).
+    fn mutate<F>(entry: &mut Entry, caps: Option<Caps>, f: F) -> bool
     where
         F: FnOnce(&mut Draft) -> bool,
     {
@@ -418,7 +480,9 @@ impl ConversationSet {
             .filter(|turn| before.get(&turn.id) != Some(turn))
             .map(|turn| TurnPatch::Upsert(turn.clone()))
             .collect();
-        patches.extend(entry.enforce_caps(caps));
+        if let Some(caps) = caps {
+            patches.extend(entry.enforce_caps(caps));
+        }
         entry.record_revision(patches);
         true
     }

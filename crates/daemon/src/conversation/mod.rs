@@ -2,12 +2,14 @@
 //! (task M6.5.4) renders a tool's one-line description; `build` (task M6.5.5) is the
 //! pure transform from one hook into one conversation's `Draft`; `store` (task M6.5.6)
 //! is `ConversationSet` -- revisions, the delta ring and the caps that turn a `Draft`
-//! into the `rev`/`degraded`/`dropped_turns` bookkeeping the wire protocol reports.
-//! Later tasks add `enrich` and `watch` beside them.
+//! into the `rev`/`degraded`/`dropped_turns` bookkeeping the wire protocol reports;
+//! `enrich` (task M6.5.8) lays transcript records onto that hook-built timeline. A later
+//! task adds `watch` beside them.
 
 use std::time::Instant;
 
 mod build;
+mod enrich;
 mod store;
 mod summary;
 pub use store::ConversationSet;
@@ -91,6 +93,16 @@ struct Draft {
     turns: Vec<proto::Turn>,
     next_turn_id: u64,
     tool_started: Vec<(Option<String>, String, Instant)>,
+    /// How many `User` turns the store's cap enforcement has dropped from the front
+    /// (task M6.5.8): transcript ordinal `k` maps to surviving `User` turn
+    /// `k - dropped_user_turns`. Maintained by `Entry::enforce_caps` beside
+    /// `dropped_turns`, and never reset -- it describes the hook-built timeline, not
+    /// enrichment.
+    dropped_user_turns: u32,
+    /// What `enrich::apply` changed, and the alignment state it carries across
+    /// batches (task M6.5.8): everything `enrich::reset` needs to undo exactly the
+    /// enrichment and nothing hook-built.
+    enrichment: enrich::Enrichment,
 }
 
 impl Draft {
@@ -104,6 +116,8 @@ impl Draft {
             turns: Vec::new(),
             next_turn_id: 1,
             tool_started: Vec::new(),
+            dropped_user_turns: 0,
+            enrichment: enrich::Enrichment::default(),
         }
     }
 

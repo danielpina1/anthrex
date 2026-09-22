@@ -250,7 +250,7 @@ fn render_response(value: Option<&serde_json::Value>) -> String {
 
 /// The first `max` bytes of `s`, backed off to the nearest char boundary, and whether
 /// that actually shortened it.
-fn cap_bytes(s: &str, max: usize) -> (String, bool) {
+pub(super) fn cap_bytes(s: &str, max: usize) -> (String, bool) {
     if s.len() <= max {
         return (s.to_string(), false);
     }
