@@ -229,7 +229,20 @@ impl WindowManager {
         // leaves the window exactly as untouched as one refused in phase A. Phase C's
         // own `spawn_for_restart` keeps its identical check as the TOCTOU backstop for
         // whatever changes between here and there — this does not replace it.
-        if !cwd.is_dir() {
+        //
+        // fix-wave-12-re-review Minor 1: holding no lock satisfies only the first half
+        // of hard rule 2 ("no blocking work under the manager lock **or on a tokio
+        // worker thread**"). `is_dir` is still a blocking stat, and `restart` is an
+        // async fn run on a tokio worker — a cwd on a hung NFS/SMB mount would block
+        // that worker for the mount's own timeout, exactly the class of bug rule 2
+        // exists to rule out. `create`'s identical check (`spawn_window`, called only
+        // from inside its own `spawn_blocking`) never has this problem; matched here by
+        // running the stat on the blocking pool instead of inline.
+        let cwd_for_stat = cwd.clone();
+        let cwd_exists = tokio::task::spawn_blocking(move || cwd_for_stat.is_dir())
+            .await
+            .map_err(|error| anyhow::anyhow!("restart failed: {error}"))?;
+        if !cwd_exists {
             anyhow::bail!("directory does not exist: {}", cwd.display());
         }
 
