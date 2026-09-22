@@ -58,7 +58,11 @@ pub const CODEX_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// not answering for up to `CODEX_PROBE_TIMEOUT`, inside a `daemon stop` whose own client
 /// gives the lock 10 s to be released. Losing an advisory line on a daemon that lived for
 /// under five seconds is the cheaper of the two.
-pub(super) fn start(program: String, gate: LaunchGate, shutdown: CancellationToken) -> JoinHandle<()> {
+pub(super) fn start(
+    program: String,
+    gate: LaunchGate,
+    shutdown: CancellationToken,
+) -> JoinHandle<()> {
     let deadline = Instant::now() + CODEX_PROBE_TIMEOUT;
     let probe_gate = gate.clone();
     let handle = tokio::task::spawn_blocking(move || {

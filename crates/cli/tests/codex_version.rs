@@ -114,11 +114,13 @@ fn probe(script: &str) -> (String, Duration, tempfile::TempDir) {
         .env("ANTHREX_LOG", "debug")
         .env("PROBE_DIR", dir.path());
     let daemon = RunningCommand::start(&mut command);
-    // Only the socket *file* has to exist here (`bind_socket` runs before the version
-    // probe); nothing reads or answers a connection queued on it until `server::serve`
-    // starts, which is what `LS_BOUND` below budgets for. 7s is far past the near-instant
-    // real cost of creating the file, so it is not itself an instance of this file's
-    // defect shape — it just is not the wait that gates the handshake.
+    // Only the socket *file* has to exist here: `bind_socket` runs before the version
+    // probe starts, and since the launch-gate fix `server::serve` is already accepting
+    // and answering by the time the probe is under way — so this wait is genuinely just
+    // "the daemon got far enough to bind". 7s is far past the near-instant real cost of
+    // creating the file, so it is not itself an instance of this file's defect shape.
+    // (It could not detect that defect either, which is what
+    // `daemon_start_does_not_wait_on_a_slow_codex_probe` below was strengthened over.)
     let deadline = Instant::now() + Duration::from_secs(7);
     while !dir.path().join("daemon.sock").exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
@@ -298,8 +300,8 @@ fn a_client_handshake_is_answered_while_the_codex_probe_is_still_running() {
     let daemon = daemon_with_a_stalled_probe(dir.path(), PROBE_STALL);
 
     let started = Instant::now();
-    let ls =
-        RunningCommand::start(&mut isolated_command(dir.path(), &["ls", "--json"])).finish(LS_BOUND);
+    let ls = RunningCommand::start(&mut isolated_command(dir.path(), &["ls", "--json"]))
+        .finish(LS_BOUND);
     let elapsed = started.elapsed();
     let order_when_answered = order(dir.path());
 
