@@ -11,10 +11,16 @@ const HOOK_DEADLINE: Duration = Duration::from_secs(1);
 const HOOK_PAYLOAD_MAX: usize = 8 * 1024 * 1024;
 /// Spec decision 5a: the bound on what one hook may carry back about a tool's result.
 /// Well under `HOOK_PAYLOAD_MAX` (8 MiB, above), which still runs first on the raw stdin
-/// bytes and is untouched by this — an over-8-MiB payload is still dropped whole. This
-/// bound is smaller than the daemon's own `conversation.max_result_bytes` default
-/// (16 KiB) on purpose: a hook-delivered result therefore never trips the daemon's cap,
-/// and only enrichment can.
+/// bytes and is untouched by this — an over-8-MiB payload is still dropped whole.
+///
+/// Also `<= config::CONVERSATION_MAX_RESULT_BYTES_MIN`, the smallest legally configured
+/// `conversation.max_result_bytes` (amendment, review finding F3: the original comment
+/// claimed this against only the *default* `max_result_bytes` (16 KiB), which is false at
+/// the low end of the range that existed at the time — `max_result_bytes = 2048` was legal
+/// and a 4096-byte hook result would trip it). `crates/config` does not define
+/// `[conversation]` until task M6.5.3, which raises the range's floor to match this
+/// constant and adds a `const _: () = assert!(...)` here to keep the two compiled together
+/// from then on — see that task's acceptance criteria.
 const TOOL_RESULT_SUMMARY_MAX: usize = 4 * 1024;
 
 pub fn run(args: Vec<OsString>, started: Instant) {
@@ -91,41 +97,157 @@ async fn stdin_payload() -> Option<Vec<u8>> {
 }
 
 /// Spec decision 5a: bound the top-level `tool_response`, in place, rather than strip it.
-///
-/// `encoded` is the byte sequence we measure and truncate. For a `Value::String` it is the
-/// string's own raw UTF-8 content, *not* `serde_json::to_string`'s JSON-quoted form: the
-/// quoted form prepends a one-byte `"`, which shifts every following multi-byte character
-/// off an even offset and makes the nearest-char-boundary search back off to an *odd*
-/// byte count whenever the true 4 KiB cut point lands inside a multi-byte character (proved
-/// by construction with 3000 repetitions of the two-byte `é` — the quoted-form reading
-/// truncates to 4095 bytes there, the raw-content reading to exactly 4096). Any other JSON
-/// type (object, array, number, bool, null) has no such raw byte form, so it falls back to
-/// its compact JSON encoding — truncating that can produce a string that is no longer valid
-/// JSON on its own, but it is wrapped in a fresh `Value::String` rather than re-parsed, so
-/// that is harmless; only UTF-8 validity of the byte slice matters, and the char-boundary
-/// search still guarantees that.
+/// Amended by wave-1 review finding F2: an over-limit *object* must not collapse into a
+/// plain string, because M6.5.5's `ok` predicate reads an object's `error`/`success` keys
+/// to tell a failed tool from a succeeded one — a stringified blob reads as `ok == true` no
+/// matter what it said, silently turning a failure into a success. So an object keeps its
+/// shape whenever it can be made to fit by shrinking its own string leaves; it is only
+/// collapsed to a string as a last resort, and that resort is flagged separately
+/// (`tool_result_stringified`) from ordinary truncation so the daemon can tell the two
+/// apart.
 fn bound_tool_response(object: &mut serde_json::Map<String, serde_json::Value>) {
     let Some(value) = object.get("tool_response").cloned() else {
         return;
     };
-    let encoded = match &value {
-        serde_json::Value::String(s) => s.clone(),
-        other => serde_json::to_string(other).unwrap_or_default(),
-    };
-    let (tool_response, truncated) = if encoded.len() <= TOOL_RESULT_SUMMARY_MAX {
-        (value, false)
-    } else {
-        let mut end = TOOL_RESULT_SUMMARY_MAX.min(encoded.len());
-        while end > 0 && !encoded.is_char_boundary(end) {
-            end -= 1;
-        }
-        (serde_json::Value::String(encoded[..end].to_string()), true)
-    };
+    let (tool_response, truncated, stringified) = bound_tool_response_value(value);
     object.insert("tool_response".to_string(), tool_response);
     object.insert(
         "tool_result_truncated".to_string(),
         serde_json::Value::Bool(truncated),
     );
+    object.insert(
+        "tool_result_stringified".to_string(),
+        serde_json::Value::Bool(stringified),
+    );
+}
+
+/// Truncates one already-extracted `tool_response` value to `TOOL_RESULT_SUMMARY_MAX`,
+/// returning the (possibly rewritten) value, whether it was truncated, and whether an
+/// object was collapsed into a string in the process (see `bound_tool_response`).
+///
+/// A `Value::String` is truncated on its own raw UTF-8 content, not on
+/// `serde_json::to_string(&value)`'s JSON-quoted form. The reason is semantic: the field
+/// carries the result's *text*, so the text is what gets truncated — matching M6.5.5's
+/// `summary` rule, which truncates the same field the same way. (An earlier version of
+/// this comment argued from byte parity instead — a leading JSON quote shifts every
+/// following multi-byte character off an even offset — but that argument is fixture-
+/// specific: it happens to distinguish the two readings for a run of 2-byte characters
+/// like `é`, and inverts for a run of 3-byte characters like `世`. The semantic argument
+/// holds regardless of character width; the parity argument does not, and is not the
+/// reason for this choice.)
+fn bound_tool_response_value(value: serde_json::Value) -> (serde_json::Value, bool, bool) {
+    match value {
+        serde_json::Value::String(s) => {
+            if s.len() <= TOOL_RESULT_SUMMARY_MAX {
+                (serde_json::Value::String(s), false, false)
+            } else {
+                (
+                    serde_json::Value::String(truncate_to_char_boundary(
+                        &s,
+                        TOOL_RESULT_SUMMARY_MAX,
+                    )),
+                    true,
+                    false,
+                )
+            }
+        }
+        serde_json::Value::Object(map) => bound_object(map),
+        other => {
+            let encoded = serde_json::to_string(&other).unwrap_or_default();
+            if encoded.len() <= TOOL_RESULT_SUMMARY_MAX {
+                (other, false, false)
+            } else {
+                (
+                    serde_json::Value::String(truncate_to_char_boundary(
+                        &encoded,
+                        TOOL_RESULT_SUMMARY_MAX,
+                    )),
+                    true,
+                    false,
+                )
+            }
+        }
+    }
+}
+
+/// The first `max` bytes of `s`, backed off to the nearest char boundary so the result is
+/// always valid UTF-8 (slicing a `String` at a byte index inside a multi-byte character
+/// panics).
+fn truncate_to_char_boundary(s: &str, max: usize) -> String {
+    let mut end = max.min(s.len());
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s[..end].to_string()
+}
+
+/// An over-limit JSON object keeps its shape by shrinking its own string leaves — the
+/// single longest one first, however many bytes the whole re-encoded object is still over
+/// budget by, backed off to a char boundary — walking into nested objects and arrays, until
+/// its compact encoding fits or every string leaf is already empty. Each pass strictly
+/// shrinks the targeted leaf (the byte count removed is always at least 1, since `overage`
+/// is always at least 1 whenever this loop runs), so it always terminates on its own inputs
+/// — bounded by the total bytes held in string leaves at the start, itself bounded by
+/// `HOOK_PAYLOAD_MAX` — with no separate iteration cap needed.
+///
+/// Falls back to a truncated, stringified blob only when the object's own skeleton (keys,
+/// braces, commas, non-string values) alone exceeds the bound even with every string leaf
+/// emptied — a pathological key count. That fallback is flagged with the second return
+/// value (`tool_result_stringified`) precisely because it is the one path that can hide a
+/// discriminating key like `error` or `success` from a downstream reader that only inspects
+/// `Value::Object`.
+fn bound_object(
+    map: serde_json::Map<String, serde_json::Value>,
+) -> (serde_json::Value, bool, bool) {
+    let original = serde_json::Value::Object(map);
+    let encoded_len = |v: &serde_json::Value| {
+        serde_json::to_string(v)
+            .map(|s| s.len())
+            .unwrap_or(usize::MAX)
+    };
+    if encoded_len(&original) <= TOOL_RESULT_SUMMARY_MAX {
+        return (original, false, false);
+    }
+    let mut shrinking = original.clone();
+    loop {
+        let current = encoded_len(&shrinking);
+        if current <= TOOL_RESULT_SUMMARY_MAX {
+            return (shrinking, true, false);
+        }
+        let overage = current - TOOL_RESULT_SUMMARY_MAX;
+        match largest_string_leaf(&mut shrinking) {
+            Some(leaf) if !leaf.is_empty() => {
+                let target = leaf.len().saturating_sub(overage);
+                let mut end = target.min(leaf.len());
+                while end > 0 && !leaf.is_char_boundary(end) {
+                    end -= 1;
+                }
+                leaf.truncate(end);
+            }
+            _ => break,
+        }
+    }
+    let encoded = serde_json::to_string(&original).unwrap_or_default();
+    let stringified = truncate_to_char_boundary(&encoded, TOOL_RESULT_SUMMARY_MAX);
+    (serde_json::Value::String(stringified), true, true)
+}
+
+/// Depth-first search for the longest non-empty string value anywhere inside `value`
+/// (recursing through objects and arrays), returning a mutable handle to it so the caller
+/// can shrink it in place. `None` once every string leaf is empty (or there are none).
+fn largest_string_leaf(value: &mut serde_json::Value) -> Option<&mut String> {
+    match value {
+        serde_json::Value::String(s) if !s.is_empty() => Some(s),
+        serde_json::Value::Array(items) => items
+            .iter_mut()
+            .filter_map(largest_string_leaf)
+            .max_by_key(|s| s.len()),
+        serde_json::Value::Object(map) => map
+            .values_mut()
+            .filter_map(largest_string_leaf)
+            .max_by_key(|s| s.len()),
+        _ => None,
+    }
 }
 
 async fn forward(args: Vec<OsString>) -> Option<()> {
