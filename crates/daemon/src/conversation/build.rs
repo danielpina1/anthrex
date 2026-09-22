@@ -32,7 +32,7 @@ pub(super) fn apply(
     match hook.kind {
         HookKind::SessionStart => session_start(draft, hook),
         HookKind::UserPromptSubmit => user_prompt_submit(draft, hook, now_unix_secs),
-        HookKind::PreToolUse => pre_tool_use(draft, hook, now_unix_secs, now),
+        HookKind::PreToolUse => pre_tool_use(draft, hook, now_unix_secs, now, caps),
         HookKind::PostToolUse => post_tool_use(draft, hook, now, caps),
         HookKind::PermissionRequest => permission_request(draft, hook, now_unix_secs),
         HookKind::Notification => notification(draft, hook, now_unix_secs),
@@ -73,14 +73,20 @@ fn user_prompt_submit(draft: &mut Draft, hook: &ParsedHook, now_unix_secs: u64) 
     true
 }
 
-fn pre_tool_use(draft: &mut Draft, hook: &ParsedHook, now_unix_secs: u64, now: Instant) -> bool {
+fn pre_tool_use(
+    draft: &mut Draft,
+    hook: &ParsedHook,
+    now_unix_secs: u64,
+    now: Instant,
+    caps: Caps,
+) -> bool {
     let name = hook.tool_name.clone().unwrap_or_else(|| "tool".into());
     let summary = summary::for_tool(&name, hook.tool_input.as_ref());
     let block = Block::ToolCall {
         id: hook.tool_use_id.clone(),
         name: name.clone(),
         summary,
-        input: hook.tool_input.clone(),
+        input: cap_input(hook.tool_input.as_ref(), caps.max_result_bytes),
         result: None,
         state: ToolState::Pending,
         duration_ms: None,
@@ -250,6 +256,21 @@ fn render_response(value: Option<&serde_json::Value>) -> String {
 
 /// The first `max` bytes of `s`, backed off to the nearest char boundary, and whether
 /// that actually shortened it.
+/// A tool `input` as it may be stored: whole, or not at all when its encoding could
+/// exceed `max` (`conversation.max_result_bytes`, the cap a result's detail already
+/// has). Task M6.5.10 review F1: `input` was capped nowhere, and one 6 MiB `Write` input
+/// was enough to push a single turn past a frame. Truncating a JSON value would leave
+/// something that is neither the input nor valid, so it is dropped whole; the summary,
+/// derived from the full input before this, still says what the call did.
+pub(super) fn cap_input(
+    input: Option<&serde_json::Value>,
+    max: usize,
+) -> Option<serde_json::Value> {
+    input
+        .filter(|value| proto::conversation::value_byte_size(value) <= max)
+        .cloned()
+}
+
 pub(super) fn cap_bytes(s: &str, max: usize) -> (String, bool) {
     if s.len() <= max {
         return (s.to_string(), false);

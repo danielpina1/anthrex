@@ -157,7 +157,7 @@ pub(super) fn apply(draft: &mut Draft, records: &[Record], caps: Caps) -> bool {
             } => {
                 let pending = PendingTool {
                     tool_use_id: tool_use_id.clone(),
-                    input: input.clone(),
+                    input: build::cap_input(input.as_ref(), caps.max_result_bytes),
                     detail: detail
                         .as_deref()
                         .map(|d| build::cap_bytes(d, caps.max_result_bytes)),
@@ -541,3 +541,7 @@ mod store_tests;
 #[cfg(test)]
 #[path = "revision_rule_tests.rs"]
 mod revision_rule_tests;
+
+#[cfg(test)]
+#[path = "input_cap_tests.rs"]
+mod input_cap_tests;
