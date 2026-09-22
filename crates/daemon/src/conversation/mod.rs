@@ -101,6 +101,15 @@ struct Draft {
     /// `dropped_turns`, and never reset -- it describes the hook-built timeline, not
     /// enrichment.
     dropped_user_turns: u32,
+    /// The absolute index (counting dropped turns) of the current session's first
+    /// `User` turn: transcript ordinal `k` is that session's `k`-th prompt, and the
+    /// transcript file starts again at 0 when a new session (Claude's `/clear`) starts a
+    /// new file in the same window. Task M6.5.10 fix round 1, review F2.
+    session_base: u32,
+    /// A new session with a new transcript file started since the reader last asked
+    /// (`ConversationSet::take_new_session`): the reader switches files without the
+    /// restart a path change in the same session would be.
+    new_session: bool,
     /// What `enrich::apply` changed, and the alignment state it carries across
     /// batches (task M6.5.8): everything `enrich::reset` needs to undo exactly the
     /// enrichment and nothing hook-built.
@@ -119,6 +128,8 @@ impl Draft {
             next_turn_id: 1,
             tool_started: Vec::new(),
             dropped_user_turns: 0,
+            session_base: 0,
+            new_session: false,
             enrichment: enrich::Enrichment::default(),
         }
     }

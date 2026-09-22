@@ -44,6 +44,20 @@ pub(super) fn apply(
 
 fn session_start(draft: &mut Draft, hook: &ParsedHook) -> bool {
     let mut changed = false;
+    // A new session writing a new file (Claude's `/clear`): its prompts count from 0
+    // again, starting after every `User` turn the window has so far (review F2). A new
+    // file in the *same* session is the reader's restart instead, and a first
+    // `SessionStart` (no path before it) starts at the base the draft already has.
+    if draft.session_id != hook.session_id
+        && draft.transcript_path.is_some()
+        && hook.transcript_path.is_some()
+        && draft.transcript_path != hook.transcript_path
+    {
+        let users = draft.turns.iter().filter(|t| t.role == Role::User).count() as u32;
+        draft.session_base = draft.dropped_user_turns.saturating_add(users);
+        draft.new_session = true;
+        changed |= super::enrich::begin_session(draft);
+    }
     if draft.session_id != hook.session_id {
         draft.session_id.clone_from(&hook.session_id);
         changed = true;

@@ -269,9 +269,11 @@ fn in_aligned_range(draft: &Draft, ordinal: u32) -> bool {
 }
 
 /// Where transcript ordinal `ordinal`'s `User` turn is: surviving `User` turn
-/// `ordinal - dropped_user_turns`.
+/// `session_base + ordinal - dropped_user_turns`, the current session's prompts
+/// counting from its own first turn (review F2).
 fn user_slot(draft: &Draft, ordinal: u32) -> Slot {
-    let Some(surviving) = ordinal.checked_sub(draft.dropped_user_turns) else {
+    let absolute = ordinal.saturating_add(draft.session_base);
+    let Some(surviving) = absolute.checked_sub(draft.dropped_user_turns) else {
         return Slot::Dropped;
     };
     draft
@@ -459,6 +461,21 @@ fn tool_detail(draft: &mut Draft, pending: PendingTool) -> (bool, Option<Pending
     (changed, None)
 }
 
+/// A new session's file is starting (review F2): its ordinals restart at 0, so the
+/// alignment state, which is about ordinals, starts over, and records still parked from
+/// the old file are dropped rather than laid onto the new session's turns. What the old
+/// session enriched stays, with its provenance, so a later `reset` still undoes it.
+/// Returns whether anything a client could see may have changed (a cleared
+/// `Misaligned`).
+pub(super) fn begin_session(draft: &mut Draft) -> bool {
+    let enrichment = &mut draft.enrichment;
+    let was_misaligned = enrichment.misaligned_at.is_some();
+    enrichment.misaligned_at = None;
+    enrichment.checked = None;
+    enrichment.pending_positional.clear();
+    was_misaligned
+}
+
 /// Undoes every enrichment-sourced value -- replaced prompts, inserted prose, tool
 /// `input`/`detail`, and the alignment state -- leaving the hook-built timeline exactly
 /// as the hooks made it, including anything a hook changed after enrichment. Returns
@@ -545,3 +562,7 @@ mod revision_rule_tests;
 #[cfg(test)]
 #[path = "input_cap_tests.rs"]
 mod input_cap_tests;
+
+#[cfg(test)]
+#[path = "session_switch_tests.rs"]
+mod session_switch_tests;

@@ -244,16 +244,23 @@ impl WindowManager {
             self.degrade(window_id, entry, Some(DegradeReason::NoTranscriptPath));
             return ReaderStep::Wait;
         };
-        let slot = &mut entry.transcript;
-        match slot.tail.take() {
+        // Consumed on every switch to a new `Tail`, so a flag left from a switch the
+        // reader never saw cannot excuse a later same-session move from its restart.
+        let new_session = |entry: &mut Entry| entry.conversations.take_new_session();
+        match entry.transcript.tail.take() {
             Some(tail) if tail.path() == path => ReaderStep::Read(tail),
             Some(_) => {
-                // A new session reported a new file: read it from the start, as a
-                // restart, so nothing the old file enriched outlives it.
-                slot.restart_next = true;
+                // Another file. A new session's (Claude's `/clear`) is read from its
+                // start with the old session's enrichment kept (review F2); the same
+                // session in another file is a restart, so nothing the old file
+                // enriched outlives it.
+                entry.transcript.restart_next = !new_session(entry);
                 ReaderStep::Read(Tail::new(path))
             }
-            None => ReaderStep::Read(Tail::new(path)),
+            None => {
+                new_session(entry);
+                ReaderStep::Read(Tail::new(path))
+            }
         }
     }
 
@@ -272,8 +279,8 @@ impl WindowManager {
             != Some(tail.path())
         {
             // The session moved to another file while this pass read the old one; the
-            // next step starts the new file as a restart.
-            entry.transcript.restart_next = true;
+            // next step starts the new file, as a restart unless it is a new session's.
+            entry.transcript.restart_next = !entry.conversations.take_new_session();
             return;
         }
         let restart = outcome.restarted || std::mem::take(&mut entry.transcript.restart_next);

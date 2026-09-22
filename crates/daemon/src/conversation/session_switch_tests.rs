@@ -1,0 +1,174 @@
+//! Task M6.5.10 fix round 1, review F2: a new session in the same window (Claude's
+//! `/clear`) starts a new transcript whose prompts count from 0 again. Its ordinals map
+//! onto the new session's own turns, the old session's enrichment stays, and nothing
+//! from one session lands on the other's turns.
+
+use super::tests::{prompt, said, session, stop, user};
+use crate::conversation::{Caps, ConversationSet};
+use crate::hooks::ParsedHook;
+use crate::transcript::Record;
+use proto::{Block, Role};
+use std::time::Instant;
+
+fn apply(set: &mut ConversationSet, hooks: &[ParsedHook]) {
+    for h in hooks {
+        set.on_hook(
+            proto::Runtime::Claude,
+            h,
+            None,
+            0,
+            Instant::now(),
+            Caps::default(),
+        );
+    }
+}
+
+fn session_at(id: &str, path: &str) -> ParsedHook {
+    let mut h = session(id);
+    h.transcript_path = Some(path.into());
+    h
+}
+
+fn enrich(set: &mut ConversationSet, records: &[Record]) {
+    set.enrich(records, Caps::default());
+}
+
+/// `(role, texts)` per turn, in order.
+fn shape(set: &ConversationSet) -> Vec<(Role, Vec<String>)> {
+    set.snapshot(None)
+        .unwrap()
+        .turns
+        .iter()
+        .map(|turn| {
+            let texts = turn
+                .blocks
+                .iter()
+                .filter_map(|b| match b {
+                    Block::Text { text } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect();
+            (turn.role, texts)
+        })
+        .collect()
+}
+
+fn texts(v: &[&str]) -> Vec<String> {
+    v.iter().map(|s| s.to_string()).collect()
+}
+
+/// Session A with one turn, enriched; `/clear`; session B with two turns, whose file
+/// counts from 0. All three replies land on their own turns.
+fn a_then_b(a_prompt: &str, b_prompts: [&str; 2]) -> ConversationSet {
+    let mut set = ConversationSet::new(1, proto::Runtime::Claude);
+    apply(
+        &mut set,
+        &[session_at("sess-A", "/t/a.jsonl"), prompt(a_prompt), stop()],
+    );
+    enrich(&mut set, &[user(0, a_prompt), said(0, "A reply 1")]);
+
+    apply(&mut set, &[session_at("sess-B", "/t/b.jsonl")]);
+    assert!(set.take_new_session(), "the reader is told to switch files");
+    assert!(!set.take_new_session(), "once");
+    apply(
+        &mut set,
+        &[prompt(b_prompts[0]), stop(), prompt(b_prompts[1]), stop()],
+    );
+    enrich(
+        &mut set,
+        &[
+            user(0, b_prompts[0]),
+            said(0, "B reply 1"),
+            user(1, b_prompts[1]),
+            said(1, "B reply 2"),
+        ],
+    );
+    set
+}
+
+#[test]
+fn a_new_session_enriches_its_own_turns_and_keeps_the_old_ones() {
+    let set = a_then_b("fix the bug", ["hello B", "second B"]);
+    assert_eq!(
+        shape(&set),
+        vec![
+            (Role::User, texts(&["fix the bug"])),
+            (Role::Assistant, texts(&["A reply 1"])),
+            (Role::User, texts(&["hello B"])),
+            (Role::Assistant, texts(&["B reply 1"])),
+            (Role::User, texts(&["second B"])),
+            (Role::Assistant, texts(&["B reply 2"])),
+        ]
+    );
+    assert_eq!(set.snapshot(None).unwrap().degraded, None);
+}
+
+/// The misattribution the alignment check exists to prevent: B's first prompt repeats
+/// A's, so without the session base B's ordinal 0 would line up with A's turn and B's
+/// reply would land on A's.
+#[test]
+fn a_repeated_first_prompt_does_not_put_the_new_sessions_reply_on_the_old_turn() {
+    let set = a_then_b("fix the bug", ["fix the bug", "second B"]);
+    assert_eq!(
+        shape(&set),
+        vec![
+            (Role::User, texts(&["fix the bug"])),
+            (Role::Assistant, texts(&["A reply 1"])),
+            (Role::User, texts(&["fix the bug"])),
+            (Role::Assistant, texts(&["B reply 1"])),
+            (Role::User, texts(&["second B"])),
+            (Role::Assistant, texts(&["B reply 2"])),
+        ]
+    );
+    assert_eq!(set.snapshot(None).unwrap().degraded, None);
+}
+
+/// Task M6.5.8's pending buffer across the switch. A's second prompt was read but its
+/// hook never came, so it and its reply are parked when B starts; they are dropped, not
+/// laid onto B's turns. B's own first prompt, read before its hook, parks and then lands.
+#[test]
+fn records_parked_across_a_session_switch_land_only_in_their_own_session() {
+    let mut set = ConversationSet::new(1, proto::Runtime::Claude);
+    apply(
+        &mut set,
+        &[session_at("sess-A", "/t/a.jsonl"), prompt("a-one"), stop()],
+    );
+    enrich(
+        &mut set,
+        &[
+            user(0, "a-one"),
+            said(0, "A reply 1"),
+            user(1, "a-two"),
+            said(1, "A reply 2"),
+        ],
+    );
+
+    apply(&mut set, &[session_at("sess-B", "/t/b.jsonl")]);
+    enrich(&mut set, &[user(0, "b-one"), said(0, "B reply 1")]);
+    apply(&mut set, &[prompt("b-one"), stop()]);
+
+    assert_eq!(
+        shape(&set),
+        vec![
+            (Role::User, texts(&["a-one"])),
+            (Role::Assistant, texts(&["A reply 1"])),
+            (Role::User, texts(&["b-one"])),
+            (Role::Assistant, texts(&["B reply 1"])),
+        ]
+    );
+    assert_eq!(set.snapshot(None).unwrap().degraded, None);
+}
+
+/// Only a new session is a switch: the same session moving files is the reader's
+/// restart (the revision rule's case 1 depends on it), and a first `SessionStart` with no
+/// path before it is neither.
+#[test]
+fn only_a_new_session_with_a_new_file_is_a_switch() {
+    let mut set = ConversationSet::new(1, proto::Runtime::Claude);
+    apply(&mut set, &[session_at("sess-A", "/t/a.jsonl")]);
+    assert!(!set.take_new_session(), "the first SessionStart");
+    apply(&mut set, &[session_at("sess-A", "/t/a2.jsonl")]);
+    assert!(!set.take_new_session(), "same session, another file");
+    apply(&mut set, &[session("sess-B")]);
+    assert!(!set.take_new_session(), "a new session with no path");
+}

@@ -251,6 +251,16 @@ impl ConversationSet {
         self.entries.get(&None)?.draft.transcript_path.as_deref()
     }
 
+    /// Whether a new session with its own transcript file has started since the last
+    /// call (review F2), clearing the flag. The reader asks when the path it tails no
+    /// longer matches: `true` means switch files as a new session, `false` means the same
+    /// session moved files, which is a restart.
+    pub fn take_new_session(&mut self) -> bool {
+        self.entries
+            .get_mut(&None)
+            .is_some_and(|entry| std::mem::take(&mut entry.draft.new_session))
+    }
+
     /// Applies transcript records (decision 1: enrichment only) to the window's root
     /// conversation, returning `[None]` when its `rev` advanced and nothing otherwise.
     ///
