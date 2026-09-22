@@ -466,3 +466,34 @@ constructing an input and running it — a config file with a `[git]` table, a `
 handed to `restore` before `serve`, an `App` with its view moved. Reading the same code
 had already missed all three, twice, and the comment in `manager/restore.rs` is why:
 it described a fallback that did not exist, and reading for plausibility believed it.
+
+## From the `server_restore_git.rs` flake fix (2026-09-22), deliberately deferred
+
+The fix (`run_root` no longer makes a root's first probe wait for its watcher; see
+`docs/timing-budgets.md`, "Fixed, from the `server_restore_git.rs` flake") changed only
+`crates/daemon/src/git/` and that one test file. It turned up three things outside that
+scope.
+
+- **`server_git.rs`'s intermittent failures, recorded above as environmental to the
+  checkout path, were probably this same mechanism.** Every wait there that failed was a
+  first-`Git` wait behind the same watcher-first path, bounded by `recv()`'s 5 s. The
+  earlier entry put the stall down to "the real `git` subprocesses", inferred from
+  wall-clock spread and never measured step by step. The step-level measurement this fix
+  made found `git` at ~25 ms and `Watcher::watch()` at 1.5–7.8 s, and found the stall
+  just as easily in `/private/tmp`. The production fix removes that stall from
+  `server_git.rs`'s first-`Git` waits too. Its bounds are still literals, though: an 8 s
+  `wait_for_created_and_git`, `recv()`'s 5 s, and the 1–2.5 s `assert_no_git_message`
+  windows. They should be derived the way `server_restore_git.rs`'s now are (`PROBE_TIMEOUT`,
+  `DETECT_TIMEOUT`, the configured `poll_secs`), and `wait_for_created_and_git` should
+  stop going through `recv()`'s own 5 s panic.
+- **`git_registry.rs`'s `a_real_write_triggers_a_probe` writes after the registration
+  probe's publication**, so if the watcher is slow to arm, the write is now caught by the
+  probe that follows arming rather than by a watcher event. Its deadline
+  (`PROBE_TIMEOUT + DEBOUNCE + 10 s` = 15.3 s) covers every arm time measured so far, but
+  it is not derived from anything that bounds arming. `server_restore_git.rs`'s
+  `change_deadline` (`poll_secs` + 2 × `PROBE_TIMEOUT` + slack) is the derived form.
+- **`git_probe.rs`'s `a_timeout_marks_the_state_stale` failed once** (`git_probe.rs:321`,
+  "a timeout still returns the state parsed so far") in one of three full-workspace runs,
+  which were run alongside a loop of `server_restore_git` on the same host. Not
+  investigated. It is a timeout test, so check its bound against the timeout it injects
+  before assuming load.

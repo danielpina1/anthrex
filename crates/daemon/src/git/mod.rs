@@ -47,6 +47,16 @@ use crate::git::schedule::{Plan, Publisher, Scheduler};
 /// publication rules without a repository, a `git` binary or a five second timeout.
 pub type ProbeFn = Arc<dyn Fn(&Path) -> Option<GitState> + Send + Sync>;
 
+/// How a root's watcher is built and armed: `(root, git.ignore, event sink)`. Blocking,
+/// so it only ever runs on [`tokio::task::spawn_blocking`]. Injected for the same reason
+/// as [`ProbeFn`]: arming a real watcher can take seconds (see [`run_root`]), and a test
+/// can only make that happen on demand by standing in for it.
+pub type ArmFn = Arc<
+    dyn Fn(&Path, &[String], UnboundedSender<()>) -> notify::Result<watch::WatchGuard>
+        + Send
+        + Sync,
+>;
+
 /// Where publications go: the daemon forwards each one as a `DaemonMsg::Git`.
 type Publish = UnboundedSender<(PathBuf, Option<GitState>)>;
 
@@ -134,6 +144,7 @@ struct Slot {
 pub struct GitRegistry {
     settings: config::Git,
     probe: ProbeFn,
+    arm: ArmFn,
     channel: Arc<Channel>,
     roots: Mutex<HashMap<PathBuf, Slot>>,
 }
@@ -155,9 +166,20 @@ impl GitRegistry {
     /// The same registry with the probe injected — the seam design decision 30 asks
     /// for, and the one the scheduling tests hang everything else off.
     pub fn with_probe(settings: config::Git, publish: Publish, probe: ProbeFn) -> Self {
+        Self::with_seams(
+            settings,
+            publish,
+            probe,
+            Arc::new(|root: &Path, ignore: &[String], events| watch::arm(root, ignore, events)),
+        )
+    }
+
+    /// [`Self::with_probe`] with the watcher builder injected as well.
+    pub fn with_seams(settings: config::Git, publish: Publish, probe: ProbeFn, arm: ArmFn) -> Self {
         Self {
             settings,
             probe,
+            arm,
             channel: Arc::new(Channel {
                 published: Mutex::new(HashMap::new()),
                 publish,
@@ -188,6 +210,7 @@ impl GitRegistry {
             root.clone(),
             self.settings.clone(),
             Arc::clone(&self.probe),
+            Arc::clone(&self.arm),
             Arc::clone(&self.channel),
             Arc::clone(&cancelled),
         ));
@@ -273,16 +296,31 @@ impl Drop for GitRegistry {
 /// Why the root's task woke up.
 enum Wake {
     Probe(Result<Option<GitState>, JoinError>),
+    Armed(Result<notify::Result<watch::WatchGuard>, JoinError>),
     Events,
     Deadline,
 }
 
-/// One root's whole life: build its watcher, then loop over "what does the scheduler
-/// say to do now, and what happens next".
+/// One root's whole life: a loop over "what does the scheduler say to do now, and what
+/// happens next", with its watcher being armed alongside.
+///
+/// **The first probe does not wait for the watcher.** Arming one is not bounded by
+/// anything here: on macOS it starts an FSEvents stream, and the first time a freshly
+/// built executable does that it has been measured taking 1.5 to 7.8 seconds, for every
+/// root in the process at once, while `git status` itself took about 25 ms. Probing
+/// only once the watcher was armed held design decision 13's "probe immediately on
+/// registration" hostage to that, and left every root blank for as long as it lasted.
+///
+/// **A root is probed again once its watcher is armed.** The first probe can read the
+/// worktree before the watcher exists, and a change that lands in between produces no
+/// event. Without that extra probe it would stay unpublished until the safety poll. It
+/// costs one `git status` per registration, and the [`Publisher`] republishes nothing
+/// if the state has not changed.
 async fn run_root(
     root: PathBuf,
     settings: config::Git,
     probe: ProbeFn,
+    arm: ArmFn,
     channel: Arc<Channel>,
     cancelled: Arc<AtomicBool>,
 ) {
@@ -295,31 +333,15 @@ async fn run_root(
     // `watch::build` walks the tree on the inotify backend, so it is blocking work.
     let watch_root = root.clone();
     let watch_ignore = settings.ignore.clone();
-    let built = tokio::task::spawn_blocking(move || {
-        // The watcher reports canonical paths, so the git dir the filter compares them
-        // against has to be canonical too; on macOS a `/var/folders/...` root is
-        // reported under `/private/var/folders/...`.
-        let canonical = std::fs::canonicalize(&watch_root).unwrap_or(watch_root);
-        let git_dir = probe::resolve_git_dir(&canonical)
-            .and_then(|git_dir| std::fs::canonicalize(git_dir).ok());
-        watch::build(&canonical, git_dir.as_deref(), &watch_ignore, sender)
-    })
-    .await;
+    // If this task is aborted while arming is still running, the handle is dropped and
+    // the guard `arm` returns is dropped by tokio on the blocking thread that built it,
+    // so it still never reaches a runtime worker.
+    let mut arming = Some(tokio::task::spawn_blocking(move || {
+        arm(&watch_root, &watch_ignore, sender)
+    }));
     // Held, not used: dropping the guard unwatches the root, on a blocking thread
     // rather than on the worker that drops this future (see `watch::WatchGuard`).
-    // Design decision 15 — a watcher that could not be built is logged once and the
-    // root stays on the safety poll.
-    let _watcher = match built {
-        Ok(Ok(watcher)) => Some(watcher),
-        Ok(Err(error)) => {
-            tracing::warn!(?root, %error, "git watcher unavailable; polling only");
-            None
-        }
-        Err(error) => {
-            tracing::warn!(?root, %error, "git watcher setup failed; polling only");
-            None
-        }
-    };
+    let mut _watcher: Option<watch::WatchGuard> = None;
 
     let mut scheduler = Scheduler::new(
         Instant::now(),
@@ -343,7 +365,7 @@ async fn run_root(
             in_flight = Some(tokio::task::spawn_blocking(move || probe(&root)));
         }
 
-        match wake(in_flight.as_mut(), &mut events, wake_at).await {
+        match wake(in_flight.as_mut(), arming.as_mut(), &mut events, wake_at).await {
             Wake::Probe(result) => {
                 in_flight = None;
                 scheduler.probe_finished();
@@ -353,6 +375,23 @@ async fn run_root(
                 });
                 if let Some(publication) = publisher.decide(state) {
                     channel.emit(&cancelled, &root, publication);
+                }
+            }
+            Wake::Armed(built) => {
+                arming = None;
+                // Design decision 15: a watcher that could not be built is logged once
+                // and the root stays on the safety poll.
+                match built {
+                    Ok(Ok(watcher)) => {
+                        _watcher = Some(watcher);
+                        scheduler.request_probe();
+                    }
+                    Ok(Err(error)) => {
+                        tracing::warn!(?root, %error, "git watcher unavailable; polling only");
+                    }
+                    Err(error) => {
+                        tracing::warn!(?root, %error, "git watcher setup failed; polling only");
+                    }
                 }
             }
             Wake::Events => {
@@ -375,27 +414,31 @@ async fn run_root(
     }
 }
 
-/// Waits for whichever comes first: the outstanding probe returning, a watcher event,
-/// or the scheduler's next deadline.
+/// Waits for whichever comes first: the outstanding probe returning, the watcher
+/// finishing arming, a watcher event, or the scheduler's next deadline.
 ///
-/// This is its own function so that the borrow of `in_flight` ends before the caller
-/// reassigns it.
+/// This is its own function so that the borrows of `in_flight` and `arming` end before
+/// the caller reassigns them.
 async fn wake(
     in_flight: Option<&mut JoinHandle<Option<GitState>>>,
+    arming: Option<&mut JoinHandle<notify::Result<watch::WatchGuard>>>,
     events: &mut UnboundedReceiver<()>,
     wake_at: Instant,
 ) -> Wake {
-    match in_flight {
-        Some(handle) => tokio::select! {
-            biased;
-            result = handle => Wake::Probe(result),
-            Some(()) = events.recv() => Wake::Events,
-            () = tokio::time::sleep_until(wake_at) => Wake::Deadline,
-        },
-        None => tokio::select! {
-            biased;
-            Some(()) = events.recv() => Wake::Events,
-            () = tokio::time::sleep_until(wake_at) => Wake::Deadline,
-        },
+    tokio::select! {
+        biased;
+        result = joined(in_flight) => Wake::Probe(result),
+        built = joined(arming) => Wake::Armed(built),
+        Some(()) = events.recv() => Wake::Events,
+        () = tokio::time::sleep_until(wake_at) => Wake::Deadline,
+    }
+}
+
+/// The handle's result, or never when there is no handle. A handle is only ever passed
+/// in until it has resolved once: the caller drops it on the result.
+async fn joined<T>(handle: Option<&mut JoinHandle<T>>) -> Result<T, JoinError> {
+    match handle {
+        Some(handle) => handle.await,
+        None => std::future::pending().await,
     }
 }

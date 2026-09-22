@@ -84,7 +84,9 @@ pub fn accepts(path: &Path, root: &Path, git_dir: Option<&Path>, ignore: &[Strin
 pub struct WatchGuard(Option<Box<dyn Any + Send>>);
 
 impl WatchGuard {
-    fn new<W: Send + 'static>(watcher: W) -> Self {
+    /// Takes ownership of `watcher`; dropping the guard disposes of it off the runtime.
+    /// Public so a test can hand [`crate::git::GitRegistry::with_seams`] a stand-in.
+    pub fn new<W: Send + 'static>(watcher: W) -> Self {
         Self(Some(Box::new(watcher)))
     }
 }
@@ -108,6 +110,22 @@ impl Drop for WatchGuard {
             Err(_) => drop(watcher),
         }
     }
+}
+
+/// The production [`crate::git::ArmFn`]: resolves `root`'s git dir and [`build`]s the
+/// watcher over both. Blocking, like `build` itself.
+pub fn arm(
+    root: &Path,
+    ignore: &[String],
+    events: UnboundedSender<()>,
+) -> notify::Result<WatchGuard> {
+    // The watcher reports canonical paths, so the git dir the filter compares them
+    // against has to be canonical too; on macOS a `/var/folders/...` root is reported
+    // under `/private/var/folders/...`.
+    let canonical = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let git_dir = crate::git::probe::resolve_git_dir(&canonical)
+        .and_then(|git_dir| std::fs::canonicalize(git_dir).ok());
+    build(&canonical, git_dir.as_deref(), ignore, events)
 }
 
 /// Builds and arms the watcher for one root, sending one `()` per accepted event.
