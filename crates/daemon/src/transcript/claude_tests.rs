@@ -293,3 +293,94 @@ fn detect_accepts_any_claude_envelope_but_not_a_bare_type() {
     let snapshot = CLAUDE_FIXTURE.lines().nth(5).unwrap();
     assert_eq!(parser().detect(snapshot), Some(Version(1)));
 }
+
+/// Review F2: a human-origin prompt whose content is a block list (a prompt with a pasted
+/// image, say) still opens the next turn, so every later ordinal stays right.
+#[test]
+fn a_human_prompt_whose_content_is_a_list_still_opens_a_turn() {
+    let listed = json!({"type":"user","sessionId":SESSION,"origin":{"kind":"human"},
+        "message":{"role":"user","content":[
+            {"type":"text","text":"two (with image)"},
+            {"type":"image","source":{"type":"base64","data":"x"}}]}})
+    .to_string();
+    let image_only = json!({"type":"user","sessionId":SESSION,"origin":{"kind":"human"},
+        "message":{"role":"user","content":[
+            {"type":"image","source":{"type":"base64","data":"y"}}]}})
+    .to_string();
+    let lines = [
+        prompt_line("one"),
+        reply_line("r1"),
+        listed,
+        reply_line("r2"),
+        prompt_line("three"),
+        reply_line("r3"),
+        image_only,
+        reply_line("r4"),
+        prompt_line("five"),
+    ];
+    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+    assert_eq!(
+        parse_lines(RUNTIME, &lines),
+        vec![
+            user_text(0, "one"),
+            assistant_text(0, "r1"),
+            user_text(1, "two (with image)"),
+            assistant_text(1, "r2"),
+            user_text(2, "three"),
+            assistant_text(2, "r3"),
+            // The image-only prompt opens turn 3 but has no text to offer.
+            assistant_text(3, "r4"),
+            user_text(4, "five"),
+        ]
+    );
+}
+
+/// Review F3: a meta or compact-summary line is something Claude wrote, even when it
+/// carries the human origin, and never opens a turn.
+#[test]
+fn meta_and_compact_summary_lines_are_never_prompts() {
+    let meta = json!({"type":"user","sessionId":SESSION,"isMeta":true,
+        "origin":{"kind":"human"},
+        "message":{"role":"user","content":"<local-command-caveat>Caveat</local-command-caveat>"}})
+    .to_string();
+    let summary = json!({"type":"user","sessionId":SESSION,"isCompactSummary":true,
+        "origin":{"kind":"human"},
+        "message":{"role":"user","content":"This session is being continued"}})
+    .to_string();
+    let lines = [
+        prompt_line("one"),
+        reply_line("r1"),
+        meta,
+        summary,
+        prompt_line("two"),
+        reply_line("r2"),
+    ];
+    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+    assert_eq!(
+        parse_lines(RUNTIME, &lines),
+        vec![
+            user_text(0, "one"),
+            assistant_text(0, "r1"),
+            user_text(1, "two"),
+            assistant_text(1, "r2"),
+        ]
+    );
+}
+
+/// Review F10: the id is what joins a call to the timeline, so a call without an
+/// `input` still yields its `ToolDetail`.
+#[test]
+fn a_tool_use_without_input_keeps_its_id() {
+    let line = json!({"type":"assistant","sessionId":SESSION,"message":{"role":"assistant",
+        "content":[{"type":"tool_use","id":"toolu_e","name":"N"}]}})
+    .to_string();
+    assert_eq!(
+        parse_lines(RUNTIME, &[&line]),
+        vec![Record::ToolDetail {
+            tool_use_id: "toolu_e".into(),
+            input: None,
+            detail: None,
+            ok: None,
+        }]
+    );
+}

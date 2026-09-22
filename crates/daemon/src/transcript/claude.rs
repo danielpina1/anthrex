@@ -79,15 +79,47 @@ fn user(
     session_id: Option<String>,
     cursor: &mut Cursor,
 ) -> Vec<Record> {
+    if is_human(map) {
+        // Claude's own meta and compact-summary lines never open a turn (review F3).
+        if flag(map, "isMeta") || flag(map, "isCompactSummary") {
+            return Vec::new();
+        }
+        // A human-origin line opens a turn whatever its content's shape, so a prompt
+        // with no readable text can cost its own `UserText` but never shift a later
+        // ordinal (review F2).
+        let ordinal = cursor.next_prompt();
+        let text = match content {
+            Value::String(text) => Some(text.clone()),
+            Value::Array(blocks) => joined_text(blocks),
+            _ => None,
+        };
+        return text
+            .map(|text| Record::UserText {
+                session_id,
+                ordinal,
+                text,
+            })
+            .into_iter()
+            .collect();
+    }
     match content {
-        Value::String(text) if is_human(map) => vec![Record::UserText {
-            session_id,
-            ordinal: cursor.next_prompt(),
-            text: text.clone(),
-        }],
         Value::Array(blocks) => blocks.iter().filter_map(tool_result).collect(),
         _ => Vec::new(),
     }
+}
+
+fn flag(map: &Map<String, Value>, key: &str) -> bool {
+    map.get(key).and_then(Value::as_bool) == Some(true)
+}
+
+/// The `text` of every `text` block, joined by newlines, or `None` when there is none.
+fn joined_text(blocks: &[Value]) -> Option<String> {
+    let texts: Vec<&str> = blocks
+        .iter()
+        .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|b| b.get("text").and_then(Value::as_str))
+        .collect();
+    (!texts.is_empty()).then(|| texts.join("\n"))
 }
 
 /// The capture marks a typed prompt three ways (`origin.kind`, `promptSource`,
@@ -144,7 +176,8 @@ fn assistant(content: &Value, session_id: Option<String>, cursor: &Cursor) -> Ve
             }),
             "tool_use" => Some(Record::ToolDetail {
                 tool_use_id: block.get("id")?.as_str()?.to_owned(),
-                input: Some(block.get("input")?.clone()),
+                // The id alone is what joins a call to the timeline (review F10).
+                input: block.get("input").cloned(),
                 detail: None,
                 ok: None,
             }),
