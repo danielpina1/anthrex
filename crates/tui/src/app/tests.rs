@@ -325,11 +325,14 @@ fn kill_asks_for_confirmation_first() {
         press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE),
         vec![Effect::Send(ClientMsg::Kill { window_id: 1 })]
     );
+    // Task M6.10, decision 36: `C-b Q` no longer quits immediately on `y`/`Enter` — see
+    // `lifecycle::stop_daemon_waits_for_confirmation` for the full three-path coverage of
+    // what it does instead.
     prefix(&mut app);
     press(&mut app, KeyCode::Char('Q'), KeyModifiers::SHIFT);
     assert_eq!(
         press(&mut app, KeyCode::Enter, KeyModifiers::NONE),
-        vec![Effect::Send(ClientMsg::Shutdown), Effect::Quit]
+        vec![Effect::Send(ClientMsg::Shutdown)]
     );
 }
 

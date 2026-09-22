@@ -18,6 +18,13 @@ pub enum Command {
     ToggleOverview,
     NarrowSidebar,
     WidenSidebar,
+    /// `C-b ,` (task M6.10, decision 23): renames the focused window, as in tmux.
+    RenameWindow,
+    /// `C-b R` (task M6.10, decision 23): restarts the focused window.
+    RestartWindow,
+    /// `C-b r` (task M6.10, decision 23): reconnects while disconnected, or toasts
+    /// `connected` while already connected.
+    Reconnect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,6 +107,9 @@ impl Keymap {
                 KeyCode::Char('>') => KeyAction::Run(Command::WidenSidebar),
                 KeyCode::Char('d') => KeyAction::Run(Command::Detach),
                 KeyCode::Char('Q') => KeyAction::Run(Command::StopDaemon),
+                KeyCode::Char(',') => KeyAction::Run(Command::RenameWindow),
+                KeyCode::Char('R') => KeyAction::Run(Command::RestartWindow),
+                KeyCode::Char('r') => KeyAction::Run(Command::Reconnect),
                 KeyCode::Char('?') => KeyAction::Run(Command::Help),
                 KeyCode::Esc => KeyAction::Cancel,
                 _ => KeyAction::Nothing,
@@ -490,6 +500,28 @@ mod tests {
         ] {
             assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
             assert_eq!(km.handle(key, false), KeyAction::Run(command));
+        }
+    }
+
+    /// Task M6.10, decision 23: `,` renames, `R` restarts, `r` reconnects. `R` must
+    /// match whether or not crossterm also reports the shift modifier (compare
+    /// `prefix_opens_tree_overview_and_width_commands`'s `T` cases above).
+    #[test]
+    fn rename_restart_and_reconnect_keys() {
+        let mut km = Keymap::new(Keymap::default_prefix());
+        let prefix = key(KeyCode::Char('b'), KeyModifiers::CONTROL);
+
+        for (k, command) in [
+            (key(KeyCode::Char(','), KeyModifiers::NONE), Command::RenameWindow),
+            (
+                key(KeyCode::Char('R'), KeyModifiers::SHIFT),
+                Command::RestartWindow,
+            ),
+            (key(KeyCode::Char('R'), KeyModifiers::NONE), Command::RestartWindow),
+            (key(KeyCode::Char('r'), KeyModifiers::NONE), Command::Reconnect),
+        ] {
+            assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
+            assert_eq!(km.handle(k, false), KeyAction::Run(command));
         }
     }
 

@@ -71,7 +71,7 @@ pub fn render(frame: &mut Frame, app: &App, layout: &Layout) {
     if app.windows.is_empty() {
         lines.push(Line::from(Span::styled(" no agents yet", theme::muted())));
         lines.push(Line::from(Span::styled(
-            " C-b c opens a shell",
+            format!(" {} c opens a shell", app.settings.prefix_label),
             theme::muted(),
         )));
     }

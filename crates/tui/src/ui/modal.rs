@@ -1,11 +1,14 @@
 use crate::app::{App, Modal};
+use crate::dialog::TextInput;
 use crate::theme;
 use crate::ui::dialog;
+use proto::Status;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use unicode_segmentation::UnicodeSegmentation;
 
 /// The help overlay's rows. Every hint that names the prefix key takes it from
 /// `prefix_label` instead of a hard-coded `C-b` (decision 38).
@@ -20,6 +23,9 @@ fn help_lines(prefix_label: &str) -> Vec<(String, String)> {
             "focus agent by number".to_string(),
         ),
         (format!("{prefix_label} c"), "new agent".to_string()),
+        (format!("{prefix_label} ,"), "rename agent".to_string()),
+        (format!("{prefix_label} R"), "restart agent".to_string()),
+        (format!("{prefix_label} r"), "reconnect".to_string()),
         (
             format!("{prefix_label} t"),
             "tree mode (j/k, h/l, Enter, Space, /)".to_string(),
@@ -55,6 +61,21 @@ fn help_lines(prefix_label: &str) -> Vec<(String, String)> {
     ]
 }
 
+/// `input`'s text with a solid block drawn at the cursor's grapheme position — the
+/// rename box's own way of showing a cursor (task M6.10 brief's mock), rather than the
+/// new-agent form's hardware cursor (`ui/dialog.rs`'s `render_new_agent`), because this
+/// box is a single line inside the generic (title, body) modal path below, which has
+/// nowhere to report a cursor position back to.
+fn text_with_cursor_block(input: &TextInput) -> String {
+    let graphemes: Vec<&str> = input.text().graphemes(true).collect();
+    let cursor = input.cursor().min(graphemes.len());
+    let mut out = String::with_capacity(input.text().len() + 3);
+    out.push_str(&graphemes[..cursor].concat());
+    out.push('█');
+    out.push_str(&graphemes[cursor..].concat());
+    out
+}
+
 fn centered(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(area.width);
     let height = height.min(area.height);
@@ -79,7 +100,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         Modal::ForceRemove { name, message, .. } => {
             return dialog::render_force_remove(frame, name, message, area, accent);
         }
-        Modal::Confirm { .. } | Modal::Help | Modal::Notice { .. } => {}
+        Modal::Confirm { .. } | Modal::Help | Modal::Notice { .. } | Modal::Rename(_) => {}
     }
     let (title, body): (String, Vec<Line>) = match modal {
         Modal::Confirm { message, .. } => (
@@ -105,6 +126,23 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         Modal::Notice { title, lines } => (
             title.clone(),
             lines.iter().map(|line| Line::raw(line.clone())).collect(),
+        ),
+        // Task M6.10 brief's mock: the input line, then the error (or a blank line
+        // when there is none, keeping the box a constant three body lines whether or
+        // not `error` is set), then the hint.
+        Modal::Rename(prompt) => (
+            " rename ".to_string(),
+            vec![
+                Line::raw(text_with_cursor_block(&prompt.input)),
+                match &prompt.error {
+                    Some(message) => Line::styled(
+                        message.clone(),
+                        Style::default().fg(theme::status_color(Status::Attention)),
+                    ),
+                    None => Line::raw(""),
+                },
+                Line::styled("Enter = rename    Esc = cancel", theme::muted()),
+            ],
         ),
         Modal::NewAgent(_) | Modal::Remove(_) | Modal::ForceRemove { .. } => {
             unreachable!("handled and returned from above")

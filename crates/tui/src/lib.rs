@@ -110,8 +110,20 @@ fn apply(effects: Vec<Effect>, conn: &Connection, app: &mut App) -> bool {
         match effect {
             Effect::Send(msg) => {
                 let is_input = matches!(msg, proto::ClientMsg::Input { .. });
-                if !conn.send(msg) && !is_input {
-                    app.toast("daemon is not responding");
+                // Decision 36: a refused `Shutdown` is reported through `App` itself
+                // (it must clear `stopping`, which lives there), so only that variant
+                // needs to survive the move into `conn.send`. Everything else keeps
+                // `lib.rs`'s own generic handling until decision 35 (M6.11) moves the
+                // rest of it into `App::on_send_failed` too.
+                let shutdown = matches!(msg, proto::ClientMsg::Shutdown).then(|| msg.clone());
+                if !conn.send(msg) {
+                    if let Some(msg) = shutdown {
+                        if apply(app.on_send_failed(&msg), conn, app) {
+                            return true;
+                        }
+                    } else if !is_input {
+                        app.toast("daemon is not responding");
+                    }
                 }
             }
             // `bell.attention` / `bell.done` (decision 4): a bare BEL byte on the outer
@@ -181,11 +193,10 @@ async fn event_loop(
             },
             msg = conn.recv(), if app.connected => match msg {
                 Some(msg) => app.on_daemon(msg),
-                None => {
-                    app.connected = false;
-                    app.toast("connection to daemon lost; C-b d to exit");
-                    vec![]
-                }
+                // Decision 36: routed through `App` itself rather than handled inline
+                // here, because it must clear `stopping` and end `C-b Q`'s wait with a
+                // `Quit` when that is what this drop actually is.
+                None => app.on_link_lost(),
             },
             _ = tick.tick() => app.on_tick(),
         };

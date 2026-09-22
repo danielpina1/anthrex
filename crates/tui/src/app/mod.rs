@@ -5,13 +5,17 @@ use crate::keymap::{Command, KeyAction, Keymap};
 use crate::settings::UiSettings;
 use crate::tree::{self, TreeState};
 use crossterm::event::KeyEvent;
-use proto::{ClientMsg, DaemonMsg, GitState, WindowInfo};
+use prompt::RenamePrompt;
+use proto::{ClientMsg, DaemonMsg, GitState, Status, WindowInfo};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 pub const TOAST_TTL: Duration = Duration::from_secs(4);
 pub const RESIZE_DEBOUNCE: Duration = Duration::from_millis(30);
+/// Decision 36: how long `C-b Q` waits for the daemon to confirm a `Shutdown` (by
+/// closing the link) before giving up and telling the user to stop it by hand.
+pub const STOPPING_TIMEOUT: Duration = Duration::from_secs(5);
 const BRACKETED_PASTE_START: &[u8] = b"\x1b[200~";
 const BRACKETED_PASTE_END: &[u8] = b"\x1b[201~";
 
@@ -54,6 +58,12 @@ pub enum Effect {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingAction {
     Kill(u32),
+    /// Decision 23: a live window's restart confirmation. Carries the window id
+    /// directly, the same way `Kill` does, rather than an index or a reliance on
+    /// `App.focused` staying put — a dialog that instead trusted focus to still name
+    /// the right window was milestone 5's worst defect (see `app/modal_keys.rs`'s
+    /// `open_force_remove` doc comment for the sibling case this mirrors).
+    Restart(u32),
     StopDaemon,
 }
 
@@ -80,6 +90,10 @@ pub enum Modal {
         title: String,
         lines: Vec<String>,
     },
+    /// The rename box (task M6.10, decision 23). `app/prompt.rs` is the pure state and
+    /// the client-side name check; key handling is `app/modal_keys.rs`'s
+    /// `on_rename_key`, and rendering is `ui/modal.rs`.
+    Rename(RenamePrompt),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,6 +148,13 @@ pub struct App {
     pending_worktree_remove: Option<u32>,
     /// Git state by worktree root; pruned to current windows' roots (see `prune_git`).
     pub git: HashMap<PathBuf, GitState>,
+    /// Decision 36: set the moment `C-b Q`'s confirm sends `Shutdown`, cleared the
+    /// moment the wait ends — by the link closing (`on_link_lost`, the daemon's `Bye`
+    /// alone does not end it: see that method's doc comment), by the send itself
+    /// failing (`on_send_failed`), or by `on_tick`'s `STOPPING_TIMEOUT`. Exactly one of
+    /// those three clears it on any given run, so a second `C-b Q` is always possible
+    /// once one of them has.
+    stopping: Option<Instant>,
     toast: Option<(String, Instant)>,
     windows_received_at: Instant,
     /// (cols, rows) of the main inner area; (0, 0) until the first draw.
@@ -173,6 +194,7 @@ impl App {
             },
             pending_worktree_remove: None,
             git: HashMap::new(),
+            stopping: None,
             toast: None,
             windows_received_at: Instant::now(),
             term_size: (0, 0),
@@ -401,6 +423,12 @@ impl App {
                 // never arrive.
                 self.pending_worktree_remove = None;
                 self.toast(format!("daemon: {reason}"));
+                // Task M6.10's decision 36: `Bye` is the daemon's own confirmation that
+                // it is stopping, but it is not the same event as the link actually
+                // closing — `on_link_lost` is what ends `C-b Q`'s wait, the moment
+                // after this one. Quitting here, before the socket has actually gone,
+                // would race the daemon's own exit and could tear the terminal down
+                // while the last bytes of its `Bye` frame are still in flight.
                 vec![]
             }
             DaemonMsg::Ack { request } => {
@@ -446,8 +474,69 @@ impl App {
     fn perform(&mut self, action: PendingAction) -> Vec<Effect> {
         match action {
             PendingAction::Kill(id) => vec![Effect::Send(ClientMsg::Kill { window_id: id })],
-            PendingAction::StopDaemon => vec![Effect::Send(ClientMsg::Shutdown), Effect::Quit],
+            PendingAction::Restart(id) => {
+                vec![Effect::Send(ClientMsg::Restart { window_id: id })]
+            }
+            // Decision 36: only the send. Quitting happens once the daemon actually
+            // confirms — see `on_link_lost`, `on_send_failed` and `on_tick`'s
+            // `STOPPING_TIMEOUT` for the three ways that wait can end.
+            PendingAction::StopDaemon => {
+                self.stopping = Some(Instant::now());
+                vec![Effect::Send(ClientMsg::Shutdown)]
+            }
         }
+    }
+
+    /// Decision 23: `C-b R`. An exited window restarts at once; a live one asks first,
+    /// through the same generic `Confirm` modal `confirm_focused` uses for `Kill`, with
+    /// `PendingAction::Restart(id)` carrying the window id so the eventual `y` cannot
+    /// act on whatever happens to be focused by the time it is pressed.
+    fn restart_focused(&mut self) -> Vec<Effect> {
+        let Some(w) = self.focused_window() else {
+            return vec![];
+        };
+        let (id, name) = (w.id, w.name.clone());
+        if w.status == Status::Exited {
+            self.toast(format!("restarting {name}"));
+            vec![Effect::Send(ClientMsg::Restart { window_id: id })]
+        } else {
+            self.modal = Some(Modal::Confirm {
+                message: format!("Restart '{name}'? It is running and will be stopped first."),
+                action: PendingAction::Restart(id),
+            });
+            vec![]
+        }
+    }
+
+    /// Called by the event loop when the daemon closes the connection or the socket
+    /// otherwise drops. Decision 36: if `C-b Q` was waiting for exactly this (`stopping`
+    /// is set), the drop *is* the confirmation, so the client quits; `DaemonMsg::Bye`
+    /// alone never does this (see its own doc comment above) because it can arrive
+    /// before the socket is actually gone. Otherwise this is an unplanned disconnect;
+    /// M6.11 (decisions 30-35) adds the reconnect attempt and its own status text, so
+    /// for now this only reports the drop.
+    pub fn on_link_lost(&mut self) -> Vec<Effect> {
+        self.connected = false;
+        if self.stopping.take().is_some() {
+            return vec![Effect::Quit];
+        }
+        self.toast(format!(
+            "connection to daemon lost; {} d to exit",
+            self.settings.prefix_label
+        ));
+        vec![]
+    }
+
+    /// Called by the event loop when `Connection::send` reports the outgoing queue is
+    /// full or gone. Decision 36's half of this: a refused `Shutdown` means `C-b Q`
+    /// cannot be confirmed by the daemon at all, so the wait ends right here rather
+    /// than sitting until `STOPPING_TIMEOUT`. Every other refused message still gets
+    /// `lib.rs`'s own generic handling (decision 35, M6.11, moves the rest of it here).
+    pub fn on_send_failed(&mut self, msg: &ClientMsg) -> Vec<Effect> {
+        if matches!(msg, ClientMsg::Shutdown) && self.stopping.take().is_some() {
+            self.toast("could not reach the daemon; run anthrex daemon stop");
+        }
+        vec![]
     }
 
     fn run(&mut self, cmd: Command) -> Vec<Effect> {
@@ -482,6 +571,25 @@ impl App {
             }
             Command::Help => {
                 self.modal = Some(Modal::Help);
+                vec![]
+            }
+            // Decision 23: `C-b ,` opens the rename box prefilled with the focused
+            // window's current name; the id travels with the modal itself
+            // (`RenamePrompt::window_id`), not through `self.focused`.
+            Command::RenameWindow => {
+                if let Some(w) = self.focused_window() {
+                    self.modal = Some(Modal::Rename(RenamePrompt::new(w.id, &w.name)));
+                }
+                vec![]
+            }
+            Command::RestartWindow => self.restart_focused(),
+            // Decision 23's connected half: a no-op affirmation. The disconnected half
+            // — starting an attempt, or spawning the daemon — is M6.11's (decisions
+            // 30-35), once `App.link` exists to attempt against.
+            Command::Reconnect => {
+                if self.connected {
+                    self.toast("connected");
+                }
                 vec![]
             }
             cmd @ (Command::ToggleTree
@@ -539,6 +647,15 @@ impl App {
         {
             self.toast = None;
         }
+        // Decision 36: the third of the three ways `C-b Q`'s wait can end — nothing
+        // arrived at all within `STOPPING_TIMEOUT`.
+        if self
+            .stopping
+            .is_some_and(|at| at.elapsed() >= STOPPING_TIMEOUT)
+        {
+            self.stopping = None;
+            self.toast("the daemon did not confirm the shutdown; run anthrex daemon stop");
+        }
         if self
             .pending_resize
             .is_some_and(|at| at.elapsed() >= RESIZE_DEBOUNCE)
@@ -558,6 +675,7 @@ impl App {
 }
 
 mod modal_keys;
+pub(crate) mod prompt;
 mod windows;
 
 #[cfg(test)]

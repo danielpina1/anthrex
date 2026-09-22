@@ -65,7 +65,10 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         let hint = vec![
             Line::raw(""),
             Line::styled(
-                "  No agents. Press C-b c to create one, or run `anthrex new`.",
+                format!(
+                    "  No agents. Press {} c to create one, or run `anthrex new`.",
+                    app.settings.prefix_label
+                ),
                 theme::muted(),
             ),
         ];

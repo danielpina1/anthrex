@@ -242,8 +242,9 @@ fn is_ctrl_c(key: &KeyEvent) -> bool {
 
 /// A text field's own key handling: printable characters insert, the usual editing
 /// keys move or erase, `Ctrl-U` clears. Shared by every `TextInput` field on the form
-/// so the rules in decision 29's table are written exactly once.
-fn apply_text_key(input: &mut TextInput, key: KeyEvent) {
+/// so the rules in decision 29's table are written exactly once, and by `app/prompt.rs`'s
+/// rename box (task M6.10), whose one field wants the same editing keys.
+pub(crate) fn apply_text_key(input: &mut TextInput, key: KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
     match key.code {
