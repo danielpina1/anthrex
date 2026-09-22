@@ -36,7 +36,7 @@ Generated from the execution ledger of `2026-09-17-anthrex-foundation.md` before
 - Final: parked — after a caught parser panic, a second Exited overwrites exit reason unpublished, child not signalled — Ruling: real, rare; defer to plan 2. Cost if wrong: stale exit reason, orphan child until removed.
 - Final: parked — bind-then-chmod window on the socket in a shared sticky dir — Ruling: real, only with an explicit override into /tmp; defer to plan 4 (umask around bind). Cost if wrong: brief window where another local user could connect.
 - Final: parked — C-b Q with a dropped Shutdown quits silently leaving the daemon running — Ruling: real, rare; defer to plan 4. Cost if wrong: user must run `anthrex daemon stop`.
-- M4.5 final review: the git watcher registers recursively (`watch(root, RecursiveMode::Recursive)` in `crates/daemon/src/git/watch.rs`), and `DENY_COMPONENTS` filters *events*, not *registration*. On inotify that walks the tree at registration and takes one descriptor per directory, including every directory under `target/`, `node_modules/` and `.next/` — tens of thousands in a Rust checkout with a populated `target/`. On a host still at `fs.inotify.max_user_watches = 8192` the watch fails outright, and the root falls back silently to the 30-second poll with one warning; M5 multiplies the count by the number of agents, since each gets its own worktree. Distinct from the CPU risk the debounce and the circuit breaker already cover: neither sees an event that was never registered for. Not fixed in M4.5 — the fix is a non-recursive watch plus a pruning walk that applies the deny list at registration time, which is real work of its own. Was assigned to M6, which already adds the `[git]` `ignore` list the pruning walk must share its filter with, but M6 did not implement it (whole-branch-review m11, fix wave 12: `watch.rs:139` still calls `RecursiveMode::Recursive`, `crates/config/src/lib.rs` still has no `[git]` section) — reassigned to M7 or later, whichever milestone next touches the git registry or the config crate's key list. Still real work of its own; not a fix-wave-sized change.
+- M4.5 final review: the git watcher registers recursively (`watch(root, RecursiveMode::Recursive)` in `crates/daemon/src/git/watch.rs`), and `DENY_COMPONENTS` filters *events*, not *registration*. On inotify that walks the tree at registration and takes one descriptor per directory, including every directory under `target/`, `node_modules/` and `.next/` — tens of thousands in a Rust checkout with a populated `target/`. On a host still at `fs.inotify.max_user_watches = 8192` the watch fails outright, and the root falls back silently to the 30-second poll with one warning; M5 multiplies the count by the number of agents, since each gets its own worktree. Distinct from the CPU risk the debounce and the circuit breaker already cover: neither sees an event that was never registered for. Not fixed in M4.5 — the fix is a non-recursive watch plus a pruning walk that applies the deny list at registration time, which is real work of its own. Was assigned to M6, which did not implement it (whole-branch-review m11, fix wave 12). **Status 2026-09-22, branch `m6-git-config`: deferred deliberately, with the list it needs already in place.** That branch added the `[git]` table the spec assigns to M6, so `git.ignore` now exists and extends `DENY_COMPONENTS` at *event* time (`watch::accepts`). The walk that would apply the same filter at *registration* time was declined there on the merits, not forgotten: it is a mitigation with no observed symptom, it is the largest piece of that milestone's remaining scope, and adding `ignore` to the event filter is complete and useful on its own — the walk consuming the same list later is a purely additive change to `watch::build`. **The descriptor risk is unchanged by that branch**: `crates/daemon/src/git/watch.rs` still calls `watcher.watch(root, RecursiveMode::Recursive)`, so a directory the filter rejects still costs a descriptor, and M5's one-worktree-per-agent still multiplies the count. No longer assigned to "whichever milestone next touches the git registry or the config crate's key list" — that milestone was `m6-git-config`, and it declined this consciously. It is unassigned, and stays real work of its own; not a fix-wave-sized change. Whoever picks it up: `watch::build` already takes the `ignore` slice and its doc comment names this item.
 - M3 final review: crossterm 0.29 ends a paste event at the first literal `ESC[201~`; the probe input `ESC[200~aESC[201~b\rESC[201~` produced `Paste("a")`, `Key('b')`, then `Enter`. After `EventStream` splits the input, the intended clipboard boundary is unrecoverable. M3 sanitizes only text delivered as one paste event and makes no end-to-end clipboard guarantee. Define a reliable terminal-input policy in M7 without timing filters or silent changes to ordinary key semantics.
 
 ## Rulings made during execution
@@ -78,7 +78,7 @@ Each open item above is closed by exactly one milestone. Its brief lists the ite
 | M3 Agent status | Kill by process group: SIGHUP, then SIGTERM, then SIGKILL via `killpg`. Cap the per-window input queue by bytes (1 MiB) as well as chunks. After a caught parser panic: signal the child, keep the first exit reason, and publish. Strip bracketed-paste markers from text delivered as one paste event. `status::next` doc comment. The Task 2 test-coverage minors: every message variant round-trips, and the serialized case of `HookSource` is asserted. |
 | M4 Project tree | Sidebar overflow: the tree scrolls to keep the selection visible. Hit-testing shares geometry with rendering. |
 | M5 Worktrees | The Task 8 minor "create() holds the Inner mutex across Window::spawn": `create` runs `Window::spawn` off the lock. |
-| M6 Persistence | The lifetime lock file, the unconditional socket unlink at shutdown, and the stale-socket TOCTOU. Umask around bind. Reconnect, including re-subscribe after a dropped Subscribe. `C-b Q` confirms that the shutdown was delivered before quitting. End-to-end `lifecycle::run` start and stop test. Log rotation. Handshake read timeout. **Not closed** (whole-branch-review m11, fix wave 12): register git watches non-recursively with a pruning walk, so a directory the deny list already rejects does not still cost a descriptor, sharing one filter with the `[git]` `ignore` list this milestone adds — this row previously claimed it, but `crates/daemon/src/git/watch.rs:139` still calls `watcher.watch(root, RecursiveMode::Recursive)`, and no `[git]` section exists in `crates/config/src/lib.rs`. Reassigned below, not implemented here; M6's own actual scope is the eight items above it in this cell. |
+| M6 Persistence | The lifetime lock file, the unconditional socket unlink at shutdown, and the stale-socket TOCTOU. Umask around bind. Reconnect, including re-subscribe after a dropped Subscribe. `C-b Q` confirms that the shutdown was delivered before quitting. End-to-end `lifecycle::run` start and stop test. Log rotation. Handshake read timeout. **Not closed** (whole-branch-review m11, fix wave 12): register git watches non-recursively with a pruning walk, so a directory the deny list already rejects does not still cost a descriptor. Half of what this row used to claim landed later on branch `m6-git-config`: the `[git]` table, `ignore` included, exists and filters events. The pruning walk itself is deferred, unassigned, and detailed above; the descriptor risk is unchanged. M6's own actual scope is the eight items above it in this cell. |
 | M7 Split panes | SIGWINCH jiggle on attach so full-screen apps repaint. Wheel scrolling for alternate-screen apps without mouse mode. Check `mouse_protocol_encoding()` instead of assuming SGR. Define terminal-input policy for embedded bracketed-paste end markers before crossterm splits the intended clipboard boundary. |
 | Not scheduled | Kitty keyboard protocol flags. Coalescing redraws. The remaining test-coverage minors from tasks 4, 5, 8 and 13. |
 
@@ -427,3 +427,42 @@ rather than its remaining budget; `TestDaemon::start`'s own 3 s socket wait (eve
 `TestDaemon` gets its own data directory, so its lock is never contended); and the TUI's
 create/remove form waits, whose `WORKTREE_FORM_TIMEOUT` (50 s) still clears the gate-widened
 worst case (5 + 5 + 30 = 40 s).
+
+## From the M6 spec-gap audit (2026-09-22), branch `m6-git-config`
+
+Milestone 6 was implemented from `docs/milestones/M6-persistence.md` as it stood on
+`main`. An unmerged refresh of that brief (`docs/m6-corrections`) had added scope to it
+before implementation and was never merged, so the milestone was built from a stale brief.
+The audit checked the refresh's claims against the specs — which bind — rather than
+against the refresh. Closed on this branch:
+
+- **The `[git]` table** (git-surface spec 3.7 line 140). Specified for M6, never
+  implemented; `[git]` in `config.toml` produced one `unknown key, ignored` problem and
+  nothing else. Now parsed, with the spec's own defaults, and threaded to the registry,
+  the scheduler and the watcher's filter.
+- **Restored windows were never watched.** Spec 3.3's registration rule and 3.5's
+  "never blank" promise both held only for created windows: `register` was called from
+  the `CreateWindow` handler alone. Every window restored from `state.json` came back
+  with a blank git segment and stayed that way, because `Restart` did not register
+  either — contradicting a comment in `manager/restore.rs` that claimed a restart was the
+  repair. `server::register_restored_roots` now registers them at startup, once per
+  window so the reference counting stays symmetric with `Remove`.
+- **The state file did not record the watched root at all**, only the checkout anthrex
+  created, so a window standing in someone else's checkout had nothing to re-register.
+  `WindowRecord` now carries `worktree` (the root) and `managed` (the created checkout)
+  separately, at `STATE_VERSION` 3, with version 1 and 2 files migrated on load.
+
+Checked and found already correct, so nothing was built: **a reconnect preserves the
+view** — the tree viewport and selection, collapse, filter, overview, milestone 4.7's
+inspector panel and the graph pan all survive `on_reconnected`. The refresh presented
+this as new scope; it has held since milestone 6, because `on_reconnected` goes through
+`replace_windows`. It had no test, and now does
+(`a_reconnect_leaves_the_view_where_the_user_left_it`).
+
+Deferred from the same audit: the non-recursive watch and pruning walk, above.
+
+Worth knowing for the next audit of this kind: every one of these was found by
+constructing an input and running it — a config file with a `[git]` table, a `StateFile`
+handed to `restore` before `serve`, an `App` with its view moved. Reading the same code
+had already missed all three, twice, and the comment in `manager/restore.rs` is why:
+it described a fallback that did not exist, and reading for plausibility believed it.

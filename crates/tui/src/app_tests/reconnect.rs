@@ -149,3 +149,59 @@ fn commands_while_disconnected_toast() {
     );
     assert_eq!(app.toast_text(), None, "an Input refusal stays silent");
 }
+
+/// Decision 33: a reconnect applies the new window list through `replace_windows` and
+/// resubscribes, and touches nothing else. The client process did not die, so the user
+/// must come back to the view they left — the tree viewport and selection, what is
+/// collapsed, the filter, the overview, milestone 4.7's inspector panel and the graph
+/// pan.
+///
+/// Written while auditing whether this actually held (it does, and has since milestone
+/// 6). It is here because nothing asserted it: the decision is spread across
+/// `on_reconnected`, `replace_windows` and `repair_selection`, and a later change to any
+/// of the three could reset the view with every other reconnect test still passing.
+#[test]
+fn a_reconnect_leaves_the_view_where_the_user_left_it() {
+    let windows: Vec<_> = (1..=12)
+        .map(|id| win(id, &format!("w{id}"), Status::Idle))
+        .collect();
+    let mut app = app_with(windows.clone());
+    app.focus(7);
+    app.overview = true;
+    app.inspector_visible = true;
+    app.sidebar_width = 41;
+    app.tree.filter = "w1".into();
+    app.tree.collapsed.insert(crate::tree::NodeKey::Window(3));
+    app.tree.selected = Some(crate::tree::NodeKey::Window(11));
+    app.tree.sidebar.top = 4;
+    app.tree.overview.top = 6;
+    app.graph_pan = crate::graph::Pan { x: 3, y: 2 };
+
+    let before = (
+        app.overview,
+        app.inspector_visible,
+        app.sidebar_width,
+        app.tree.filter.clone(),
+        app.tree.collapsed.clone(),
+        app.tree.selected.clone(),
+        app.tree.sidebar.top,
+        app.tree.overview.top,
+        app.graph_pan,
+        app.focused,
+    );
+
+    app.on_link_lost("x");
+    app.on_reconnect_failed("refused", false);
+    app.on_reconnected(windows);
+
+    assert_eq!(app.overview, before.0, "overview");
+    assert_eq!(app.inspector_visible, before.1, "inspector_visible");
+    assert_eq!(app.sidebar_width, before.2, "sidebar_width");
+    assert_eq!(app.tree.filter, before.3, "tree filter");
+    assert_eq!(app.tree.collapsed, before.4, "collapsed set");
+    assert_eq!(app.tree.selected, before.5, "tree selection");
+    assert_eq!(app.tree.sidebar.top, before.6, "sidebar viewport top");
+    assert_eq!(app.tree.overview.top, before.7, "overview viewport top");
+    assert_eq!(app.graph_pan, before.8, "graph pan");
+    assert_eq!(app.focused, before.9, "focused window");
+}
