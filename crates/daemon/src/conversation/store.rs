@@ -194,6 +194,11 @@ impl ConversationSet {
     /// `parent_id`) and for filling in a `SubagentSpawn` block's `label`/`model`
     /// (`build::apply`, task M6.5.6). Returns every key whose `rev` advanced.
     ///
+    /// Every hook also retries the draft's parked transcript records
+    /// (`enrich::retry`, task M6.5.8 fix round 1, F1) inside the hook's own revision, so
+    /// a record read before its hook lands the moment the hook does, without waiting for
+    /// another transcript line, and costs no extra revision.
+    ///
     /// A `SubagentStart` is the one hook that spans two conversations: `build::apply`'s
     /// own `SubagentStart` effect (appending a `SubagentSpawn` block to the open turn)
     /// is applied to the *parent's* draft unconditionally -- per the brief's table, the
@@ -221,6 +226,7 @@ impl ConversationSet {
             let parent_key = spawn.and_then(|origin| origin.parent_id.clone());
             if let Some(resolved) = self.touch(parent_key, caps, |draft| {
                 super::build::apply(draft, runtime, hook, spawn, now_unix_secs, now, caps)
+                    | super::enrich::retry(draft)
             }) {
                 changed.push(resolved);
             }
@@ -248,6 +254,7 @@ impl ConversationSet {
 
         self.touch(hook.agent_id.clone(), caps, |draft| {
             super::build::apply(draft, runtime, hook, spawn, now_unix_secs, now, caps)
+                | super::enrich::retry(draft)
         })
         .map(|resolved| vec![resolved])
         .unwrap_or_default()
