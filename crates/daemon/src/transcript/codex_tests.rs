@@ -286,3 +286,61 @@ fn detect_keys_on_session_meta_with_a_cli_version() {
         None
     );
 }
+
+/// Review F6: two `user.text` items are one prompt, joined by a newline.
+#[test]
+fn a_prompt_split_across_two_text_items_is_joined() {
+    let line = response_item(json!({"type":"message","role":"user",
+        "content":[{"type":"input_text","text":"a"},{"type":"input_text","text":"b"}],
+        "internal_chat_message_metadata_passthrough":
+            {"content_item_kinds":["user.text","user.text"]}}));
+    assert_eq!(
+        parse_lines(RUNTIME, &[session_line(), &line]),
+        vec![user_text(0, "a\nb")]
+    );
+}
+
+/// Review F5: a user message that is a prompt by any `user.*` kind opens a turn even
+/// when its kinds are missing, shorter than its content, or name no text at all.
+#[test]
+fn a_prompt_opens_a_turn_whatever_its_kinds_say() {
+    let short_kinds = response_item(json!({"type":"message","role":"user",
+        "content":[{"type":"input_image","image_url":"x"},{"type":"input_text","text":"two"}],
+        "internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.image"]}}));
+    let no_kinds = response_item(json!({"type":"message","role":"user",
+        "content":[{"type":"input_text","text":"four"}]}));
+    let image_only = response_item(json!({"type":"message","role":"user",
+        "content":[{"type":"input_image","image_url":"y"}],
+        "internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.image"]}}));
+    let lines = [
+        session_line().to_string(),
+        prompt_line("one"),
+        reply_line("r1"),
+        short_kinds,
+        reply_line("r2"),
+        prompt_line("three"),
+        reply_line("r3"),
+        no_kinds,
+        reply_line("r4"),
+        image_only,
+        reply_line("r5"),
+        prompt_line("six"),
+    ];
+    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+    assert_eq!(
+        parse_lines(RUNTIME, &lines),
+        vec![
+            user_text(0, "one"),
+            assistant_text(0, "r1"),
+            user_text(1, "two"),
+            assistant_text(1, "r2"),
+            user_text(2, "three"),
+            assistant_text(2, "r3"),
+            user_text(3, "four"),
+            assistant_text(3, "r4"),
+            // The image-only prompt opens turn 4 but has no text to offer.
+            assistant_text(4, "r5"),
+            user_text(5, "six"),
+        ]
+    );
+}

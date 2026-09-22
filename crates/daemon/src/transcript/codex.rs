@@ -76,25 +76,18 @@ fn message(payload: &Value, cursor: &mut Cursor) -> Vec<Record> {
     };
     match payload.get("role").and_then(Value::as_str) {
         Some("user") => {
-            let kinds = payload
-                .get("internal_chat_message_metadata_passthrough")
-                .and_then(|m| m.get("content_item_kinds"))
-                .and_then(Value::as_array);
-            let Some(kinds) = kinds else {
+            let Some(texts) = prompt_texts(payload, items) else {
                 return Vec::new();
             };
-            let texts: Vec<&str> = items
-                .iter()
-                .zip(kinds)
-                .filter(|(_, kind)| kind.as_str() == Some("user.text"))
-                .filter_map(|(item, _)| text_of(item, "input_text"))
-                .collect();
+            // A prompt opens a turn even when it has no text to offer, so an image-only
+            // prompt never shifts a later ordinal (review F5).
+            let ordinal = cursor.next_prompt();
             if texts.is_empty() {
                 return Vec::new();
             }
             vec![Record::UserText {
                 session_id: cursor.session_id.clone(),
-                ordinal: cursor.next_prompt(),
+                ordinal,
                 text: texts.join("\n"),
             }]
         }
@@ -114,6 +107,45 @@ fn message(payload: &Value, cursor: &mut Cursor) -> Vec<Record> {
         }
         _ => Vec::new(),
     }
+}
+
+/// The texts of a `role:"user"` message that is a real prompt, or `None` when it is
+/// injected context. In the capture `content_item_kinds` runs parallel to `content`, and
+/// a prompt's kinds are `user.*` while injected context's are not. A message is a prompt
+/// when any kind starts with `user.`, or when it has no kinds at all (review F5). Its
+/// text is the `user.text` items when the kinds line up with the content, and every
+/// `input_text` item when they are missing or do not.
+fn prompt_texts<'a>(payload: &'a Value, items: &'a [Value]) -> Option<Vec<&'a str>> {
+    let kinds = payload
+        .get("internal_chat_message_metadata_passthrough")
+        .and_then(|m| m.get("content_item_kinds"))
+        .and_then(Value::as_array);
+    let all_text = || {
+        items
+            .iter()
+            .filter_map(|i| text_of(i, "input_text"))
+            .collect()
+    };
+    let Some(kinds) = kinds else {
+        return Some(all_text());
+    };
+    let is_prompt = kinds
+        .iter()
+        .any(|k| k.as_str().is_some_and(|k| k.starts_with("user.")));
+    if !is_prompt {
+        return None;
+    }
+    if kinds.len() != items.len() {
+        return Some(all_text());
+    }
+    Some(
+        items
+            .iter()
+            .zip(kinds)
+            .filter(|(_, kind)| kind.as_str() == Some("user.text"))
+            .filter_map(|(item, _)| text_of(item, "input_text"))
+            .collect(),
+    )
 }
 
 fn text_of<'a>(item: &'a Value, kind: &str) -> Option<&'a str> {
