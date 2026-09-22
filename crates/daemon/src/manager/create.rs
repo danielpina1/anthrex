@@ -242,6 +242,18 @@ impl WindowManager {
             window,
             created,
         } = spawned;
+        // Fix wave 8, Minor (re-review of M6.5's Minor 3): `restore` sets `Entry.spec.name`
+        // to its record's own validated name (`restore.rs`'s
+        // `restore_sets_entrys_spec_name_to_the_records_own_name`); this used to leave it
+        // as the client's raw string instead — untrimmed when given, `None` when `admit`'s
+        // `<runtime>-<id>` default was used. Matching `restore`'s side rather than the
+        // reverse: both `Entry.name` and `Entry.spec.name` should read as "the name this
+        // window was actually given," not as an unvalidated echo of whatever the request
+        // said before `admit` ran.
+        let spec = WindowSpec {
+            name: Some(name.clone()),
+            ..spec
+        };
         let mut inner = crate::lock(&self.inner);
         if inner.shutting_down {
             drop(inner);
@@ -438,6 +450,7 @@ fn discard(created: &Created, error: anyhow::Error, cleanup_timeout: Duration) -
 mod tests {
     use super::*;
     use crate::worktree::ManagedWorktree;
+    use proto::Runtime;
 
     /// The second of decision 16's two suffixes, which no integration test can reach:
     /// `; the new worktree was removed` needs a cleanup that works, and this one needs a
@@ -473,6 +486,59 @@ mod tests {
         assert!(
             !message.contains("the new worktree was removed"),
             "{message}"
+        );
+    }
+
+    /// Minor (fix wave 8, re-review of M6.5's Minor 3): `admit` validates the client's
+    /// name into `Entry.name` (trimmed, and the `<runtime>-<id>` default when the client
+    /// sent none), but used to leave `Entry.spec.name` as the client's raw string —
+    /// untrimmed when given, `None` when the default was used. `restore` (`restore.rs`'s
+    /// own `restore_sets_entrys_spec_name_to_the_records_own_name`) sets `spec.name` to
+    /// its record's already-sanitized name instead, so the two producers of an `Entry`
+    /// disagreed about what the field means. Chose to match `restore`'s side rather than
+    /// the reverse: `Entry.name` and `Entry.spec.name` should both read as "the name this
+    /// window was actually given," not as "whatever the client's request said before
+    /// validation ran" — an unvalidated echo of user input sitting in a struct field is
+    /// the shape that costs the *next* reader who assumes any `Entry` field is
+    /// pre-validated, not just `Entry.name`.
+    #[tokio::test]
+    async fn create_sets_entrys_spec_name_to_the_same_validated_name_as_entry_name() {
+        let (m, mut events) = WindowManager::new(ManagerConfig::new(
+            "/tmp/unused-create-spec-name-test.sock".into(),
+            "/bin/sh".into(),
+        ));
+        let pump = m.clone();
+        tokio::spawn(async move {
+            while let Some((id, ev)) = events.recv().await {
+                pump.handle_event(id, ev);
+            }
+        });
+
+        let spec = WindowSpec {
+            name: Some("  spec-name-test  ".to_string()),
+            runtime: Runtime::Shell,
+            cwd: std::env::temp_dir(),
+            worktree_branch: None,
+            model: None,
+            initial_prompt: None,
+        };
+        let info = m
+            .create(spec, std::env::temp_dir(), None, 80, 24)
+            .await
+            .unwrap();
+
+        let inner = crate::lock(&m.inner);
+        let entry = inner.entries.get(&info.id).expect("created entry present");
+        assert_eq!(
+            entry.name, "spec-name-test",
+            "sanity: Entry.name is validate_name's trimmed output"
+        );
+        assert_eq!(
+            entry.spec.name.as_deref(),
+            Some(entry.name.as_str()),
+            "Entry.spec.name must agree with Entry.name: both producers of Entry -- \
+             create and restore -- must treat spec.name as the validated name, not the \
+             client's raw, untrimmed input"
         );
     }
 }
