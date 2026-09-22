@@ -190,7 +190,25 @@ impl WindowManager {
     /// needs it for the same reason `kill` itself does.
     pub async fn restart(self: &Arc<Self>, id: u32) -> anyhow::Result<()> {
         // Phase A.
-        let (was_live, guard) = self.begin_restart(id)?;
+        let (was_live, cwd, guard) = self.begin_restart(id)?;
+
+        // Whole-branch-review Major 1: decision 19's cwd precondition used to be
+        // checked only in phase C, *after* phase B's kill below had already ended the
+        // live process — a restart the user was told was refused had, in fact,
+        // destroyed their running agent (live repro: `rm -rf` a live shell's cwd, then
+        // `restart` — refused, and the window left `exited` anyway). A precondition
+        // must be checked before the destructive step, not after, so this check moves
+        // ahead of phase B. It cannot move into `begin_restart` itself: `is_dir` is a
+        // stat that can block, and `begin_restart` runs under the manager lock
+        // (AGENTS.md hard rule 2). Checking it here instead, holding no lock, still
+        // runs before any kill — `guard`'s `Drop` releases `restarting` on this early
+        // return exactly as it would on any other refusal, so a refused restart here
+        // leaves the window exactly as untouched as one refused in phase A. Phase C's
+        // own `spawn_for_restart` keeps its identical check as the TOCTOU backstop for
+        // whatever changes between here and there — this does not replace it.
+        if !cwd.is_dir() {
+            anyhow::bail!("directory does not exist: {}", cwd.display());
+        }
 
         // Phase B: never under the lock. Decision 18: if the wait times out, this does
         // *not* fall through to phase C — see `wait_for_exit`'s own doc comment for why
@@ -228,8 +246,10 @@ impl WindowManager {
         self.finish_restart(id, window, guard)
     }
 
-    /// Phase A. Nothing here can block.
-    fn begin_restart(&self, id: u32) -> anyhow::Result<(bool, Restarting<'_>)> {
+    /// Phase A. Nothing here can block. Returns the window's current `cwd` too, so the
+    /// caller can check decision 19's precondition before phase B's kill without a
+    /// blocking stat under this lock (see `restart`'s own comment on that check).
+    fn begin_restart(&self, id: u32) -> anyhow::Result<(bool, std::path::PathBuf, Restarting<'_>)> {
         let mut inner = crate::lock(&self.inner);
         // Major 3 (fix wave 5 review): the same admission check `create`'s `admit`
         // makes, and for the same reason — `shutdown` walks a snapshot of the ids it took
@@ -263,9 +283,11 @@ impl WindowManager {
             anyhow::bail!("window {id} is being removed");
         }
         let was_live = entry.child_alive;
+        let cwd = entry.spec.cwd.clone();
         entry.restarting = true;
         Ok((
             was_live,
+            cwd,
             Restarting {
                 manager: self,
                 id,
@@ -406,9 +428,12 @@ fn spawn_for_restart(
     events: mpsc::UnboundedSender<(u32, WindowEvent)>,
     info: ForRelaunch,
 ) -> anyhow::Result<Window> {
-    // Design decision 19: the same check `create`'s phase B makes, and the same message.
-    // A restart never calls `worktree::create` (decision 17), so this is the only
-    // precondition it has to check on its own.
+    // Design decision 19: the same check `create`'s phase B makes, and the same
+    // message. `restart`'s own copy of this check, ahead of phase B's kill, is what
+    // actually refuses the operation in the common case now (whole-branch-review Major
+    // 1) — this one is the TOCTOU backstop for whatever changed between that check and
+    // here (phase B's kill-and-wait ran with no lock held at all), not the first line
+    // of defense.
     if !info.spec.cwd.is_dir() {
         anyhow::bail!("directory does not exist: {}", info.spec.cwd.display());
     }
@@ -530,5 +555,90 @@ mod tests {
             );
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
+    }
+
+    /// Whole-branch-review Major 1: decision 19's cwd precondition used to be checked
+    /// only in phase C, *after* phase B's kill had already ended the live process — a
+    /// restart the user was told was refused had, in fact, destroyed their running
+    /// agent. Live reproduction from the review: `rm -rf` a live shell's cwd, run
+    /// `restart` → refused with `directory does not exist`, and the window is left
+    /// `exited` anyway. This pins the fix directly: the refusal must land *before* the
+    /// live process is touched at all, not merely before the caller sees the error.
+    #[tokio::test]
+    async fn a_refused_restart_does_not_kill_the_live_process() {
+        let (m, mut events) = WindowManager::new(ManagerConfig::new(
+            "/tmp/unused-restart-refusal-test.sock".into(),
+            "/bin/sh".into(),
+        ));
+        let pump = m.clone();
+        tokio::spawn(async move {
+            while let Some((id, ev)) = events.recv().await {
+                pump.handle_event(id, ev);
+            }
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().to_path_buf();
+        let info = m
+            .create(
+                spec("live-cwd-removed", cwd.clone()),
+                cwd.clone(),
+                None,
+                80,
+                24,
+            )
+            .await
+            .unwrap();
+        let id = info.id;
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let pid = loop {
+            if let Some(pid) = crate::lock(&m.inner)
+                .entries
+                .get(&id)
+                .filter(|e| e.child_alive)
+                .and_then(|e| e.pid())
+            {
+                break pid;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "window never came alive with a pid"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+
+        // The shell keeps running once its cwd is gone (its cwd is only a name); only
+        // the restart's own precondition check sees it missing.
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::mem::forget(dir);
+
+        let err = m.restart(id).await.unwrap_err();
+        assert!(
+            err.to_string().contains("directory does not exist"),
+            "{err}"
+        );
+
+        // The refusal must not have touched the live process at all: still alive at
+        // the OS level, and the manager must still consider it so — not the
+        // pre-fix behaviour, where the window came back listed as `exited`.
+        assert!(
+            // SAFETY: `pid` is this window's own live process, just reported by the
+            // manager itself; signal 0 performs only the existence check.
+            unsafe { libc::killpg(pid as libc::pid_t, 0) == 0 },
+            "a refused restart killed the live process anyway"
+        );
+        assert!(
+            crate::lock(&m.inner).entries.get(&id).unwrap().child_alive,
+            "a refused restart cleared child_alive on the live entry"
+        );
+        assert_ne!(
+            crate::lock(&m.inner).entries.get(&id).unwrap().status,
+            Status::Exited,
+            "a refused restart left the still-live window listed as exited"
+        );
+
+        // Clean up: this window still owns a real running shell.
+        let _ = m.kill(id);
     }
 }
