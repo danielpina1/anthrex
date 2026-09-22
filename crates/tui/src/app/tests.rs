@@ -29,6 +29,9 @@ mod lifecycle;
 #[path = "../app_tests/settings.rs"]
 mod settings_tests;
 
+#[path = "../app_tests/reconnect.rs"]
+mod reconnect;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

@@ -331,12 +331,17 @@ async fn attach(socket: PathBuf, dir: PathBuf, target: Option<String>) -> anyhow
     // and shown once, in a dismissable notice, instead of being lost to a log no one
     // watching the TUI would see.
     let (loaded_config, config_problems) = config::load(&proto::paths::config_path());
+    // Decision 32: `C-b r` may need to start the daemon the same way this cold
+    // attach just did, so it gets the same executable path `ensure_daemon` above
+    // used.
+    let daemon_exe = std::env::current_exe()?;
     tui::run(tui::TuiOptions {
         socket_path: socket,
         default_dir: dir,
         focus: target,
         settings: tui::settings::UiSettings::from_config(&loaded_config),
         config_problems: config_problems.iter().map(ToString::to_string).collect(),
+        daemon_exe: Some(daemon_exe),
     })
     .await
 }

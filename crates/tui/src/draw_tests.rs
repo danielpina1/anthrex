@@ -53,7 +53,7 @@ async fn production_draw_keeps_resize_render_and_click_on_the_same_row() {
     let (_dir, conn, mut peer) = connection(&windows).await;
     let mut app = App::new(windows, "/tmp".into(), UiSettings::default());
     let mut terminal = Terminal::new(TestBackend::new(120, 14)).unwrap();
-    draw(&mut terminal, &mut app, &conn).unwrap();
+    draw(&mut terminal, &mut app, Some(&conn)).unwrap();
     assert_eq!(
         tokio::time::timeout(
             Duration::from_secs(5),
@@ -69,11 +69,11 @@ async fn production_draw_keeps_resize_render_and_click_on_the_same_row() {
         })
     );
     app.focus(20);
-    draw(&mut terminal, &mut app, &conn).unwrap();
+    draw(&mut terminal, &mut app, Some(&conn)).unwrap();
     assert_eq!(app.tree.sidebar.top, 12);
 
     terminal.backend_mut().resize(120, 10);
-    let layout = draw(&mut terminal, &mut app, &conn).unwrap();
+    let layout = draw(&mut terminal, &mut app, Some(&conn)).unwrap();
     assert_eq!(layout.sidebar_list.height, 5);
     assert_eq!(app.tree.sidebar.top, 16);
     let list = layout.sidebar_list;
@@ -102,10 +102,10 @@ async fn production_draw_keeps_resize_render_and_click_on_the_same_row() {
     // Repeated draws at this size must not undo wheel scrolling.
     app.on_scroll(true, list.x, list.y, &layout);
     let top = app.tree.sidebar.top;
-    draw(&mut terminal, &mut app, &conn).unwrap();
+    draw(&mut terminal, &mut app, Some(&conn)).unwrap();
     assert_eq!(app.tree.sidebar.top, top);
     app.modal = Some(app::Modal::Help);
-    let layout = draw(&mut terminal, &mut app, &conn).unwrap();
+    let layout = draw(&mut terminal, &mut app, Some(&conn)).unwrap();
     assert!(
         app.on_click(layout.sidebar_list.x, layout.sidebar_list.y, &layout)
             .is_empty()

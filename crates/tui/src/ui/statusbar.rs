@@ -1,4 +1,4 @@
-use crate::app::{App, TreeInput};
+use crate::app::{App, Link, TreeInput};
 use crate::theme;
 use proto::{GitOperation, GitState, Head};
 use ratatui::Frame;
@@ -18,6 +18,19 @@ fn hints(prefix_label: &str) -> [(String, &'static str); 5] {
         (format!("{prefix_label} j/k"), "switch"),
         (format!("{prefix_label} d"), "detach"),
     ]
+}
+
+/// The red ` DISCONNECTED ` badge, common to both `Link::Reconnecting` and
+/// `Link::Lost` (decision 34); each pushes its own status text right after it.
+fn push_disconnected(spans: &mut Vec<Span<'static>>) {
+    spans.push(Span::styled(
+        " DISCONNECTED ",
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Red)
+            .add_modifier(Modifier::BOLD),
+    ));
+    spans.push(Span::raw(" "));
 }
 
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
@@ -45,17 +58,29 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::raw(" "));
-    } else if !app.connected {
-        spans.push(Span::styled(
-            " DISCONNECTED ",
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Red)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::raw(" "));
     } else {
-        spans.push(Span::raw(" "));
+        match &app.link {
+            Link::Connected => spans.push(Span::raw(" ")),
+            // Decision 34: the persistent status while a retry is scheduled or in
+            // flight.
+            Link::Reconnecting { attempts, .. } => {
+                push_disconnected(&mut spans);
+                spans.push(Span::styled(
+                    format!("reconnecting (attempt {attempts})"),
+                    theme::muted(),
+                ));
+                spans.push(Span::raw(" "));
+            }
+            // Decision 34: the 30 s window elapsed; only a fresh `C-b r` tries again.
+            Link::Lost { .. } => {
+                push_disconnected(&mut spans);
+                spans.push(Span::styled(
+                    format!("{} r to reconnect", app.settings.prefix_label),
+                    theme::muted(),
+                ));
+                spans.push(Span::raw(" "));
+            }
+        }
     }
 
     let toast_width = app

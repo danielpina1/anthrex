@@ -173,7 +173,7 @@ fn stop_daemon_waits_for_confirmation() {
         "Bye alone must not quit"
     );
 
-    assert_eq!(app.on_link_lost(), vec![Effect::Quit]);
+    assert_eq!(app.on_link_lost("shutting down"), vec![Effect::Quit]);
     // A second C-b Q must be possible: the wait ended, so `stopping` cannot still be set.
     prefix(&mut app);
     assert!(press(&mut app, KeyCode::Char('Q'), KeyModifiers::SHIFT).is_empty());
@@ -200,7 +200,7 @@ fn stop_daemon_send_failure_is_reported() {
     );
 
     // The wait already ended, so a later link loss must not also quit.
-    assert!(app.on_link_lost().is_empty());
+    assert!(app.on_link_lost("connection closed").is_empty());
 }
 
 #[test]
@@ -219,24 +219,31 @@ fn stop_daemon_times_out() {
 
     // A second C-b Q is possible once the timeout has cleared `stopping`.
     assert!(
-        app.on_link_lost().is_empty(),
+        app.on_link_lost("connection closed").is_empty(),
         "the timeout already ended the wait"
     );
 }
 
-/// The other half of finding A's fix (`lib.rs`'s disconnect toast was hard-coded to
-/// `C-b`, not `app.settings.prefix_label`).
+/// The other half of finding A's fix (`lib.rs`'s disconnect toast used to be
+/// hard-coded to `C-b`, not `app.settings.prefix_label`). Task M6.11 replaced that
+/// toast's own wording (`on_link_lost` no longer names a key at all — decision 34
+/// puts the reconnect hint in the persistent status bar instead), so the successor
+/// coverage for a hard-coded prefix is `on_send_failed`'s disconnected-command toast
+/// (decision 35), which is the one that still names a key.
 #[test]
-fn link_lost_toast_uses_the_configured_prefix() {
+fn disconnected_toast_uses_the_configured_prefix() {
     let settings = UiSettings {
         prefix_label: "C-a".into(),
         ..UiSettings::default()
     };
     let mut app = App::new(vec![win(1, "a", Status::Idle)], "/tmp".into(), settings);
     let _ = app.set_terminal_size(80, 24);
-    assert!(app.on_link_lost().is_empty());
-    assert_eq!(
-        app.toast_text(),
-        Some("connection to daemon lost; C-a d to exit")
+    assert!(app.on_link_lost("x").is_empty());
+    assert_eq!(app.toast_text(), Some("connection to the daemon lost"));
+
+    assert!(
+        app.on_send_failed(&ClientMsg::Kill { window_id: 1 })
+            .is_empty()
     );
+    assert_eq!(app.toast_text(), Some("not connected; C-a r to reconnect"));
 }

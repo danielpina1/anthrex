@@ -5,6 +5,7 @@ use crate::keymap::{Command, KeyAction, Keymap};
 use crate::settings::UiSettings;
 use crate::tree::{self, TreeState};
 use crossterm::event::KeyEvent;
+pub use link::Link;
 use prompt::RenamePrompt;
 use proto::{ClientMsg, DaemonMsg, GitState, WindowInfo};
 use std::collections::HashMap;
@@ -50,6 +51,9 @@ pub enum Effect {
     Quit,
     /// `bell.attention` / `bell.done` (decision 4): `lib.rs` writes the BEL byte.
     Bell,
+    /// Decision 32: `C-b r` while not connected. `lib.rs` starts an attempt at once
+    /// (unless one is already in flight) and opens a fresh 30 s window.
+    Reconnect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,7 +128,7 @@ pub struct App {
     /// scope (milestone 6's "Out of scope" list).
     pub settings: UiSettings,
     pub modal: Option<Modal>,
-    pub connected: bool,
+    pub link: Link,
     pub spinner_frame: usize,
     pub scroll_offset: usize,
     pub default_dir: PathBuf,
@@ -158,6 +162,13 @@ pub struct App {
     term_size: (u16, u16),
     pending_resize: Option<Instant>,
     pending_focus: Option<u32>,
+    /// Decision 35: the window whose `Subscribe` was last handed to the connection —
+    /// set optimistically by whatever emits the effect, cleared by `on_send_failed`
+    /// when that particular send is reported refused. `App::focus`'s early return for
+    /// the already-focused window also requires this to equal it, so a refused
+    /// `Subscribe` is retried (by `on_tick`, or by a later `focus` call) instead of
+    /// being masked forever by "we're already focused there."
+    subscribed: Option<u32>,
 }
 
 impl App {
@@ -179,7 +190,7 @@ impl App {
             graph_mouse: crate::mouse::MouseState::default(),
             keymap: Keymap::new(settings.prefix),
             modal: None,
-            connected: true,
+            link: Link::Connected,
             spinner_frame: 0,
             scroll_offset: 0,
             default_dir,
@@ -197,6 +208,7 @@ impl App {
             term_size: (0, 0),
             pending_resize: None,
             pending_focus: None,
+            subscribed: None,
             settings,
         }
     }
@@ -300,8 +312,10 @@ impl App {
         // Re-focusing the window we are already on would throw away a screen we have and
         // ask for a second subscription to the same window. The daemon then has to tear
         // the first forwarder down and race it against the new snapshot; nothing is
-        // gained, so do nothing at all.
-        if self.focused == Some(id) {
+        // gained, so do nothing at all — unless (decision 35) the `Subscribe` we
+        // believe is already active never actually made it out, in which case this is
+        // the retry, not a redundant resend.
+        if self.focused == Some(id) && self.subscribed == Some(id) {
             return vec![];
         }
         self.focused = Some(id);
@@ -309,6 +323,7 @@ impl App {
         self.scroll_offset = 0;
         let (cols, rows) = self.term_size;
         self.parser = vt100::Parser::new(rows.max(1), cols.max(1), self.settings.scrollback_lines);
+        self.subscribed = Some(id);
         vec![Effect::Send(ClientMsg::Subscribe {
             window_id: id,
             cols,
@@ -382,18 +397,20 @@ impl App {
                 vec![]
             }
             DaemonMsg::Bye { reason } => {
-                self.connected = false;
                 // Nothing is outstanding on a connection that is gone. Leaving the slot
                 // set would block every later worktree removal behind a reply that can
                 // never arrive.
                 self.pending_worktree_remove = None;
                 self.toast(format!("daemon: {reason}"));
-                // Task M6.10's decision 36: `Bye` is the daemon's own confirmation that
-                // it is stopping, but it is not the same event as the link actually
-                // closing — `on_link_lost` is what ends `C-b Q`'s wait, the moment
-                // after this one. Quitting here, before the socket has actually gone,
-                // would race the daemon's own exit and could tear the terminal down
-                // while the last bytes of its `Bye` frame are still in flight.
+                // Task M6.10's decision 36, sharpened by M6.11's decision 30: `Bye` is
+                // the daemon's own confirmation that it is stopping, but it is not the
+                // same event as the link actually closing, and `self.link` must not
+                // change here. The event loop keeps reading after `Bye` and only calls
+                // `on_link_lost` once the channel actually closes — the read arm used
+                // to be gated on a flag this handler set `false` right here, which
+                // meant the real close (and the `Quit` a pending `C-b Q` produces from
+                // it) was never observed at all. Quitting *here*, before the socket has
+                // actually gone, would race the daemon's own exit the same way.
                 vec![]
             }
             DaemonMsg::Ack { request } => {
@@ -480,14 +497,26 @@ impl App {
                 vec![]
             }
             Command::RestartWindow => self.restart_focused(),
-            // Decision 23's connected half: a no-op affirmation. The disconnected half
-            // — starting an attempt, or spawning the daemon — is M6.11's (decisions
-            // 30-35), once `App.link` exists to attempt against.
+            // Decision 23's connected half: a no-op affirmation, unchanged from
+            // M6.10. Decision 32's disconnected half: starts an attempt at once,
+            // opening a fresh 30 s window; `lib.rs` is the one that actually checks
+            // "unless one is already in flight" (`App` has no visibility into the
+            // event loop's in-flight task) before spawning it.
             Command::Reconnect => {
-                if self.connected {
+                if self.connected() {
                     self.toast("connected");
+                    vec![]
+                } else {
+                    let reason = match &self.link {
+                        Link::Reconnecting { reason, .. } | Link::Lost { reason } => reason.clone(),
+                        Link::Connected => String::new(),
+                    };
+                    self.link = Link::Reconnecting {
+                        attempts: 0,
+                        reason,
+                    };
+                    vec![Effect::Reconnect]
                 }
-                vec![]
             }
             cmd @ (Command::ToggleTree
             | Command::ToggleOverview
@@ -534,7 +563,8 @@ impl App {
         }
     }
 
-    /// Called every 100 ms: advances the spinner, expires toasts, flushes a debounced resize.
+    /// Called every 100 ms: advances the spinner, expires toasts, retries a dropped
+    /// `Subscribe`, flushes a debounced resize.
     pub fn on_tick(&mut self) -> Vec<Effect> {
         self.spinner_frame = self.spinner_frame.wrapping_add(1);
         if self
@@ -545,8 +575,25 @@ impl App {
             self.toast = None;
         }
         // Decision 36: the third of the three ways `C-b Q`'s wait can end — nothing
-        // arrived at all within `lifecycle::STOPPING_TIMEOUT`.
+        // arrived at all within `link::STOPPING_TIMEOUT`.
         self.check_stopping_timeout();
+        // Decision 35: a full outgoing queue drops a `Subscribe` silently (`Input`
+        // does the same on every keystroke, so this is the one command worth
+        // retrying instead of leaving the user stuck on a stale screen); retried here
+        // every 100 ms until it drains, i.e. until `subscribed` catches up with
+        // `focused` again.
+        if self.connected()
+            && let Some(id) = self.focused
+            && self.subscribed != Some(id)
+        {
+            let (cols, rows) = self.term_size;
+            self.subscribed = Some(id);
+            return vec![Effect::Send(ClientMsg::Subscribe {
+                window_id: id,
+                cols,
+                rows,
+            })];
+        }
         if self
             .pending_resize
             .is_some_and(|at| at.elapsed() >= RESIZE_DEBOUNCE)
@@ -566,6 +613,7 @@ impl App {
 }
 
 mod lifecycle;
+mod link;
 mod modal_keys;
 pub(crate) mod prompt;
 mod windows;

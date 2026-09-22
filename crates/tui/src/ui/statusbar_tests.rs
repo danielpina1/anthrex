@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::App;
+use crate::app::{App, Link};
 use crate::settings::UiSettings;
 use proto::{GitOperation, Runtime, Status, WindowInfo};
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
@@ -307,4 +307,25 @@ fn the_toast_is_never_overwritten_by_git() {
         rendered.trim_end().ends_with(toast_text),
         "toast cells were not intact: {rendered:?}"
     );
+}
+
+/// Task M6.11, decision 34: the persistent `DISCONNECTED` badge and its status text,
+/// for both `Link::Reconnecting` and `Link::Lost`.
+#[test]
+fn statusbar_shows_reconnect_state() {
+    let mut app = App::new(vec![window(1, None)], "/tmp".into(), UiSettings::default());
+    app.set_terminal_size(80, 24);
+
+    app.link = Link::Reconnecting {
+        attempts: 3,
+        reason: "x".into(),
+    };
+    let text = row_text(&render_row(&app, 80));
+    assert!(text.contains("DISCONNECTED"), "{text:?}");
+    assert!(text.contains("reconnecting (attempt 3)"), "{text:?}");
+
+    app.link = Link::Lost { reason: "x".into() };
+    let text = row_text(&render_row(&app, 80));
+    assert!(text.contains("DISCONNECTED"), "{text:?}");
+    assert!(text.contains("C-b r to reconnect"), "{text:?}");
 }
