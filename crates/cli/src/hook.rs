@@ -97,14 +97,17 @@ async fn stdin_payload() -> Option<Vec<u8>> {
 }
 
 /// Spec decision 5a: bound the top-level `tool_response`, in place, rather than strip it.
-/// Amended by wave-1 review finding F2: an over-limit *object* must not collapse into a
-/// plain string, because M6.5.5's `ok` predicate reads an object's `error`/`success` keys
-/// to tell a failed tool from a succeeded one — a stringified blob reads as `ok == true` no
-/// matter what it said, silently turning a failure into a success. So an object keeps its
-/// shape whenever it can be made to fit by shrinking its own string leaves; it is only
-/// collapsed to a string as a last resort, and that resort is flagged separately
-/// (`tool_result_stringified`) from ordinary truncation so the daemon can tell the two
-/// apart.
+/// Amended by wave-1 review finding F2, then amended again by wave 2: an over-limit
+/// *object* never collapses into a plain string at all, in any circumstance. M6.5.5's `ok`
+/// predicate reads an object's `error`/`success` keys to tell a failed tool from a succeeded
+/// one, and `ToolResult.ok` is a plain `bool` with no honest third "unknown" state — so a
+/// choice between "sometimes read a failure as a success" and "sometimes read a success as a
+/// failure" is a defect either way, not a tradeoff to make. The wave-2 fix instead
+/// guarantees the object always keeps its shape: `bound_object` builds the bounded object up
+/// from nothing (`error` first, then `success`, then whatever else fits), rather than
+/// shrinking the original down and falling back to text when shrinking runs out of leaves to
+/// cut. `tool_result_stringified` still exists, but only ever becomes `true` for a type with
+/// no `ok` predicate to protect (array, number, bool, null) — see `bound_tool_response_value`.
 fn bound_tool_response(object: &mut serde_json::Map<String, serde_json::Value>) {
     let Some(value) = object.get("tool_response").cloned() else {
         return;
@@ -152,6 +155,14 @@ fn bound_tool_response_value(value: serde_json::Value) -> (serde_json::Value, bo
             }
         }
         serde_json::Value::Object(map) => bound_object(map),
+        // Array, Number, Bool, Null: none of these carry an `ok` predicate downstream (only
+        // a `Value::Object`'s `error`/`success` keys do), so there is no structure to
+        // protect and converting one to text loses nothing M6.5.5 reads. `stringified` is
+        // `true` exactly when that conversion actually happened (wave-2 review ruling): it
+        // is honest documentation of what occurred, not a signal anything needs to branch
+        // on, since M6.5.5's documented default `ok == true` for a non-object
+        // `tool_response` is already correct for these types whether or not they were
+        // truncated.
         other => {
             let encoded = serde_json::to_string(&other).unwrap_or_default();
             if encoded.len() <= TOOL_RESULT_SUMMARY_MAX {
@@ -163,7 +174,7 @@ fn bound_tool_response_value(value: serde_json::Value) -> (serde_json::Value, bo
                         TOOL_RESULT_SUMMARY_MAX,
                     )),
                     true,
-                    false,
+                    true,
                 )
             }
         }
@@ -181,41 +192,94 @@ fn truncate_to_char_boundary(s: &str, max: usize) -> String {
     s[..end].to_string()
 }
 
-/// An over-limit JSON object keeps its shape by shrinking its own string leaves — the
-/// single longest one first, however many bytes the whole re-encoded object is still over
-/// budget by, backed off to a char boundary — walking into nested objects and arrays, until
-/// its compact encoding fits or every string leaf is already empty. Each pass strictly
-/// shrinks the targeted leaf (the byte count removed is always at least 1, since `overage`
-/// is always at least 1 whenever this loop runs), so it always terminates on its own inputs
-/// — bounded by the total bytes held in string leaves at the start, itself bounded by
-/// `HOOK_PAYLOAD_MAX` — with no separate iteration cap needed.
+/// An over-limit JSON object is rebuilt from nothing rather than shrunk down (wave-2 review
+/// ruling, replacing wave 1's shrink-then-fall-back-to-text approach): `error` goes in
+/// first, then `success`, each with its own value truncated if it has to be, so the two keys
+/// M6.5.5's `ok` predicate reads always survive, non-null, in an object it can still call
+/// `.is_object()` on. Every other key is then added, in whatever order `serde_json::Map`
+/// iterates them (this workspace does not enable serde_json's `preserve_order` feature, so
+/// that is sorted-by-key order, not the original payload's JSON-text order — "original
+/// order" in the sense the brief means it no longer survives parsing by the time this
+/// function sees the map), while the whole object's compact encoding still fits, truncating
+/// a key's own string content the same way `error`/`success` are. The moment one key cannot
+/// be made to fit at all, it and every key after it are dropped: the budget only shrinks as
+/// keys are added, so no later key could have fit either.
 ///
-/// Falls back to a truncated, stringified blob only when the object's own skeleton (keys,
-/// braces, commas, non-string values) alone exceeds the bound even with every string leaf
-/// emptied — a pathological key count. That fallback is flagged with the second return
-/// value (`tool_result_stringified`) precisely because it is the one path that can hide a
-/// discriminating key like `error` or `success` from a downstream reader that only inspects
-/// `Value::Object`.
+/// The result is always a `Value::Object` — `tool_result_stringified` is always `false` for
+/// this function's output; see `bound_tool_response_value` for the (unrelated) case where
+/// that flag is `true`.
 fn bound_object(
     map: serde_json::Map<String, serde_json::Value>,
 ) -> (serde_json::Value, bool, bool) {
-    let original = serde_json::Value::Object(map);
     let encoded_len = |v: &serde_json::Value| {
         serde_json::to_string(v)
             .map(|s| s.len())
             .unwrap_or(usize::MAX)
     };
-    if encoded_len(&original) <= TOOL_RESULT_SUMMARY_MAX {
-        return (original, false, false);
+    if encoded_len(&serde_json::Value::Object(map.clone())) <= TOOL_RESULT_SUMMARY_MAX {
+        return (serde_json::Value::Object(map), false, false);
     }
-    let mut shrinking = original.clone();
+
+    let mut result = serde_json::Map::new();
+    let mut truncated = false;
+
+    // `error`/`success` are the two keys M6.5.5's `ok` predicate reads; they must survive
+    // no matter what else has to give way.
+    for key in ["error", "success"] {
+        if let Some(value) = map.get(key) {
+            insert_shrinking(&mut result, key, value.clone(), false, &mut truncated);
+        }
+    }
+
+    for (key, value) in map.iter() {
+        if key == "error" || key == "success" {
+            continue;
+        }
+        if !insert_shrinking(&mut result, key, value.clone(), true, &mut truncated) {
+            break;
+        }
+    }
+
+    (serde_json::Value::Object(result), truncated, false)
+}
+
+/// Inserts `key: value` into `result`, shrinking `value`'s own content (its longest string
+/// leaf, recursing into nested objects/arrays, same as wave 1's leaf search) as many times
+/// as needed to bring the whole `result` back under `TOOL_RESULT_SUMMARY_MAX`. Returns
+/// whether the key ended up present.
+///
+/// `allow_drop = false` (for `error`/`success`) never removes the key. If leaf-shrinking
+/// alone cannot make it fit — no string leaf, or every leaf already empty — the value is
+/// replaced *once* by a truncated JSON-text rendering of itself (still present, still
+/// non-null), which the next pass through the loop then shrinks as an ordinary string leaf;
+/// this cannot recurse a second time, because once the value is a `Value::String` the
+/// `matches!` check below returns instead of re-rendering, which is what stops this from
+/// oscillating forever between an emptied string and its own 2-byte re-quoted rendering (an
+/// empty string is still non-null, so giving up at that point does not lose the signal
+/// `error`/`success` exists to carry). `allow_drop = true` (every other key) removes the key
+/// outright once it cannot be made to fit; the caller stops walking further keys at that
+/// point (see `bound_object`).
+fn insert_shrinking(
+    result: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    value: serde_json::Value,
+    allow_drop: bool,
+    truncated: &mut bool,
+) -> bool {
+    let encoded_len = |v: &serde_json::Value| {
+        serde_json::to_string(v)
+            .map(|s| s.len())
+            .unwrap_or(usize::MAX)
+    };
+    result.insert(key.to_string(), value);
     loop {
-        let current = encoded_len(&shrinking);
+        let current = encoded_len(&serde_json::Value::Object(result.clone()));
         if current <= TOOL_RESULT_SUMMARY_MAX {
-            return (shrinking, true, false);
+            return true;
         }
         let overage = current - TOOL_RESULT_SUMMARY_MAX;
-        match largest_string_leaf(&mut shrinking) {
+        let entry = result.get_mut(key).expect("just inserted");
+        match largest_string_leaf(entry) {
             Some(leaf) if !leaf.is_empty() => {
                 let target = leaf.len().saturating_sub(overage);
                 let mut end = target.min(leaf.len());
@@ -223,13 +287,26 @@ fn bound_object(
                     end -= 1;
                 }
                 leaf.truncate(end);
+                *truncated = true;
             }
-            _ => break,
+            _ if allow_drop => {
+                result.remove(key);
+                *truncated = true;
+                return false;
+            }
+            _ => {
+                if matches!(entry, serde_json::Value::String(_)) {
+                    // Already a string, and already fully shrunk: nothing more can be
+                    // done. Leave it (possibly empty, still non-null) and stop.
+                    *truncated = true;
+                    return true;
+                }
+                let rendered = serde_json::to_string(entry).unwrap_or_default();
+                *entry = serde_json::Value::String(rendered);
+                *truncated = true;
+            }
         }
     }
-    let encoded = serde_json::to_string(&original).unwrap_or_default();
-    let stringified = truncate_to_char_boundary(&encoded, TOOL_RESULT_SUMMARY_MAX);
-    (serde_json::Value::String(stringified), true, true)
 }
 
 /// Depth-first search for the longest non-empty string value anywhere inside `value`
