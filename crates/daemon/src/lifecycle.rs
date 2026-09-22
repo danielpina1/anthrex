@@ -5,6 +5,7 @@ use crate::manager::{ManagerConfig, WindowManager};
 
 mod codex_version;
 use crate::server;
+pub use codex_version::CODEX_PROBE_TIMEOUT;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;

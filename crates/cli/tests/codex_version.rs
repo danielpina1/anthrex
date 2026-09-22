@@ -5,6 +5,52 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 use support::{RunningCommand, isolated_command, tempdir};
 
+/// Generous margin over a derived bound for a test that spawns several real processes
+/// (the daemon, `ls`, `daemon stop`) end to end, matching the constant of the same name
+/// and purpose in `crates/daemon/tests/git_registry.rs` (`docs/timing-budgets.md` standing
+/// rule 1: derive a bound from the constants it wraps, then add slack for real subprocess
+/// spawns under load — not a literal that can coincide with the thing it bounds).
+const WALL_CLOCK_SLACK: Duration = Duration::from_secs(10);
+
+/// What a freshly connecting client (`ls`, here) can legitimately wait before the daemon
+/// answers its handshake: `bind_socket` runs before `codex_version::check`, so the socket
+/// exists and queues the connection immediately, but nothing reads or answers it until
+/// `server::serve` starts — which happens only after the version probe returns. The
+/// probe's own outer timeout is `daemon::lifecycle::CODEX_PROBE_TIMEOUT` (an async timer, so it
+/// fires close to on schedule regardless of how contended the blocking pool the probe's
+/// child-process handling runs on is); `serve` then still has to bind, accept the queued
+/// connection and answer the Hello. `WALL_CLOCK_SLACK` covers that plus ordinary
+/// contention.
+///
+///     CODEX_PROBE_TIMEOUT (5s) + WALL_CLOCK_SLACK (10s) = 15s
+const LS_BOUND: Duration = daemon::lifecycle::CODEX_PROBE_TIMEOUT.saturating_add(WALL_CLOCK_SLACK);
+
+/// `daemon stop`'s own worst case: a handshake (`proto::HANDSHAKE_TIMEOUT`) to connect,
+/// then `wait_released`'s own explicit cap (`crates/cli/src/main.rs`) before it bails.
+/// Both are named constants the CLI test can import directly, so this is exact rather
+/// than padded further — `WALL_CLOCK_SLACK` is still added for the real process spawn and
+/// scheduling on top of the two waits themselves.
+///
+///     HANDSHAKE_TIMEOUT (5s) + WAIT_RELEASED_CAP (10s) + WALL_CLOCK_SLACK (10s) = 25s
+const STOP_BOUND: Duration = proto::HANDSHAKE_TIMEOUT
+    .saturating_add(WAIT_RELEASED_CAP)
+    .saturating_add(WALL_CLOCK_SLACK);
+
+/// `daemon stop`'s own bound on how long it waits for the daemon's lifetime lock to be
+/// released (`crates/cli/src/main.rs`'s `daemon_command`, decision 27) before bailing with
+/// a "did not exit within 10 s" error. Not exported by `main.rs` (`anthrex` is a
+/// binary-only crate with no `lib.rs` — the same reason `hook_command.rs`'s `LIMIT` can
+/// only comment-couple to `HOOK_DEADLINE` rather than import it), so this is a named,
+/// commented literal rather than a bare one.
+const WAIT_RELEASED_CAP: Duration = Duration::from_secs(10);
+
+/// How long the daemon process itself may take to actually exit after `Shutdown`: the
+/// same handshake and lock-release wait `STOP_BOUND` derives (the CLI's `daemon stop`
+/// cannot report "stopped" before the daemon actually released its lock, so the daemon's
+/// own exit is bounded by the same terms), plus its own final-state-save work, which is
+/// not separately budgeted anywhere and is covered by `WALL_CLOCK_SLACK`.
+const DAEMON_EXIT_BOUND: Duration = STOP_BOUND;
+
 #[test]
 fn running_command_finishes_when_a_descendant_keeps_output_handles_open() {
     let mut command = Command::new("sh");
@@ -34,18 +80,40 @@ fn probe(script: &str) -> (String, Duration, tempfile::TempDir) {
         .env("ANTHREX_LOG", "debug")
         .env("PROBE_DIR", dir.path());
     let daemon = RunningCommand::start(&mut command);
+    // Only the socket *file* has to exist here (`bind_socket` runs before the version
+    // probe); nothing reads or answers a connection queued on it until `server::serve`
+    // starts, which is what `LS_BOUND` below budgets for. 7s is far past the near-instant
+    // real cost of creating the file, so it is not itself an instance of this file's
+    // defect shape — it just is not the wait that gates the handshake.
     let deadline = Instant::now() + Duration::from_secs(7);
-    // The normal client handshake must wait until the one startup probe has finished.
     while !dir.path().join("daemon.sock").exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
     }
     let ls = RunningCommand::start(&mut isolated_command(dir.path(), &["ls", "--json"]))
-        .finish(Duration::from_secs(7));
+        .finish(LS_BOUND);
     let elapsed = started.elapsed();
     let stop = RunningCommand::start(&mut isolated_command(dir.path(), &["daemon", "stop"]))
-        .finish(Duration::from_secs(3));
-    let output = daemon.finish(Duration::from_secs(3));
-    assert!(ls.status.success() && stop.status.success() && output.status.success());
+        .finish(STOP_BOUND);
+    let output = daemon.finish(DAEMON_EXIT_BOUND);
+    // Named, not combined: a combined boolean cannot say which of the three commands
+    // failed, its exit status, or its stderr — which is exactly what could not be told
+    // apart from the CI log that motivated this split.
+    for (name, out) in [
+        ("anthrex ls --json", &ls),
+        ("anthrex daemon stop", &stop),
+        (
+            "daemon start --foreground (the daemon process itself)",
+            &output,
+        ),
+    ] {
+        assert!(
+            out.status.success(),
+            "{name} exited with {:?}\n--- stderr ---\n{}\n--- stdout ---\n{}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr),
+            String::from_utf8_lossy(&out.stdout),
+        );
+    }
     assert!(
         output.stderr.is_empty(),
         "{}",
@@ -83,7 +151,15 @@ fn unreadable_codex_version_is_debug_only() {
 fn codex_probe_timeout_kills_and_reaps_its_owned_process() {
     let (log, elapsed, dir) =
         probe("printf '%s' \"$$\" > \"$PROBE_DIR/pid\"\ntrap '' TERM\nwhile :; do :; done");
-    assert!(elapsed < Duration::from_secs(6), "{elapsed:?}");
+    // `elapsed` is `started.elapsed()` taken right after `probe`'s own `ls.finish(LS_BOUND)`
+    // returns, so its legal worst case is exactly `LS_BOUND` — the same bound `ls` was
+    // just held to, not a second, independently guessed number. The old `< 6s` was one
+    // second over the probe's bare `CODEX_PROBE_TIMEOUT` (5s) with no room for the accept/reply
+    // epsilon or scheduling jitter `LS_BOUND` accounts for; reproduced failing at 6.32s
+    // and 6.42s (this assertion, pre-fix) under deliberate CPU contention (`timeout N yes
+    // > /dev/null &` spinners), confirming the margin was too thin rather than merely
+    // imprecise.
+    assert!(elapsed < LS_BOUND, "{elapsed:?}");
     assert!(log.contains("could not read Codex version"), "{log}");
     let pid: i32 = std::fs::read_to_string(dir.path().join("pid"))
         .unwrap()
@@ -100,7 +176,8 @@ fn codex_probe_timeout_kills_and_reaps_its_owned_process() {
 #[test]
 fn codex_probe_does_not_wait_forever_for_inherited_stdout() {
     let (log, elapsed, _) = probe("sleep 30 &\nprintf 'codex-cli 0.155.0\\n'");
-    assert!(elapsed < Duration::from_secs(6), "{elapsed:?}");
+    // See the identical comment in `codex_probe_timeout_kills_and_reaps_its_owned_process`.
+    assert!(elapsed < LS_BOUND, "{elapsed:?}");
     assert!(log.contains("could not read Codex version"), "{log}");
 }
 
@@ -138,8 +215,12 @@ fn daemon_start_does_not_wait_on_a_slow_codex_probe() {
         std::thread::sleep(Duration::from_millis(20));
     }
     if sock.exists() {
+        // Same shape, same fix as `probe`'s own `stop`: `daemon stop`'s legal worst case
+        // (`STOP_BOUND`, above) is 15s before any slack, well past the `6s` this used to
+        // be pinned to — a bound that happened not to matter yet only because nothing
+        // asserts on this particular `finish()`'s result, not because it was wide enough.
         let _ = RunningCommand::start(&mut isolated_command(dir.path(), &["daemon", "stop"]))
-            .finish(Duration::from_secs(6));
+            .finish(STOP_BOUND);
     }
 
     assert!(

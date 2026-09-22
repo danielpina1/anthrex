@@ -8,11 +8,25 @@ use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+/// The whole startup probe's wall-clock budget: `check` never blocks `daemon start`'s
+/// caller-visible startup (and, downstream, any client's first handshake) past this,
+/// because the outer `tokio::time::timeout` below is an async timer that fires on
+/// schedule regardless of how the probe's own `spawn_blocking` closure is doing.
+///
+/// `pub` (not `pub(super)`) so a bound outside this crate that must legitimately exceed
+/// a daemon startup delayed by this probe — `crates/cli/tests/codex_version.rs`'s own
+/// `probe()` helper being the motivating case — can derive its bound from this constant
+/// instead of retyping `5` and hoping it never drifts (`docs/timing-budgets.md` standing
+/// rule 1). Named `CODEX_PROBE_TIMEOUT` rather than `PROBE_TIMEOUT` because
+/// `daemon::git::probe` already has an unrelated constant of that bare name; keeping them
+/// textually distinct avoids a same-name-different-thing mixup at any call site that ends
+/// up needing both.
+pub const CODEX_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+
 pub(super) async fn check(program: String) {
-    let timeout = Duration::from_secs(5);
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + CODEX_PROBE_TIMEOUT;
     let result = tokio::time::timeout(
-        timeout,
+        CODEX_PROBE_TIMEOUT,
         tokio::task::spawn_blocking(move || probe(&program, deadline)),
     )
     .await;
