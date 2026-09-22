@@ -544,6 +544,12 @@ it described a fallback that did not exist, and reading for plausibility believe
   switch would keep it. And a later shrink or replacement of the new session's file is a
   restart, whose `reset` is window-wide, so it drops the old session's enrichment too;
   scoping `enrich::reset` to turns at or after `session_base` would keep it.
+- **A resumed session opened late loses the prose of its early turns (fix round 2, N1/N2).**
+  A resumed session's file is opened at its end when the reader first reaches it. If no
+  one was subscribed at the resume, or the reader was busy, turns made in between get no
+  prose. The ambiguous case, a prompt landing while the file is being measured, degrades
+  to `Misaligned`. Aligning by the records' timestamps against the hooks' `at_unix_secs`
+  would recover both.
 - **`crates/cli/tests/persistence.rs`'s `session_id_learned_from_a_hook_is_saved` races the
   save debounce.** Seen once in three full workspace runs during task M6.5.10's fix round 1
   (`left: None, right: Some("fake-session-1")`; 8/8 in isolation). The loop asserts on the
