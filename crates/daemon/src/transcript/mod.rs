@@ -70,8 +70,9 @@ impl Cursor {
 
 pub trait TranscriptParser: Send + Sync {
     fn runtime(&self) -> proto::Runtime;
-    /// Recognises a transcript by its first line. `None` means the format is unknown,
-    /// and the conversation degrades rather than guessing.
+    /// Recognises a transcript format from one line. `None` means this line does not
+    /// show the format; the reader asks [`detect_head`], which tries the first
+    /// [`DETECT_LINES`] lines, and degrades rather than guessing when none is recognised.
     fn detect(&self, first_line: &str) -> Option<Version>;
     /// Pure, total, and never an error: a line this version does not model yields an
     /// empty vec. `cursor` carries turn position across the lines of one file.
@@ -88,6 +89,26 @@ pub fn parser_for(runtime: proto::Runtime) -> Option<&'static dyn TranscriptPars
         proto::Runtime::Codex => Some(&CODEX),
         proto::Runtime::Shell => None,
     }
+}
+
+/// How many lines at the head of a file `detect_head` tries.
+pub const DETECT_LINES: usize = 16;
+
+/// Recognises a transcript by the first line among its first [`DETECT_LINES`] that the
+/// parser recognises. The reader calls this, never `detect` directly.
+///
+/// A Claude file's first line is a bookkeeping record, and one without a `sessionId`
+/// (an old `summary`, say) says nothing about the format, while a message record follows
+/// within a few lines (review F1). Codex's first line is always `session_meta`, so the
+/// lookahead is harmless there.
+pub fn detect_head<'a>(
+    parser: &dyn TranscriptParser,
+    lines: impl IntoIterator<Item = &'a str>,
+) -> Option<Version> {
+    lines
+        .into_iter()
+        .take(DETECT_LINES)
+        .find_map(|line| parser.detect(line))
 }
 
 /// Parses a line as a JSON object, or `None` for anything else.

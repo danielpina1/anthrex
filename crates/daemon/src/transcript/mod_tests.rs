@@ -166,3 +166,60 @@ fn an_unknown_version_yields_nothing() {
         assert_eq!(cursor, Cursor::default());
     }
 }
+
+/// Review F1: the first lines of the user's 94 real Claude transcripts, measured by
+/// key presence: `queue-operation` 52, `bridge-session` 28, `last-prompt` 10,
+/// `custom-title` 4, every one with a string `sessionId`. Each shape is detected alone.
+#[test]
+fn every_measured_claude_first_line_shape_is_detected() {
+    let claude = parser_for(proto::Runtime::Claude).unwrap();
+    for line in [
+        r#"{"type":"queue-operation","operation":"enqueue","timestamp":"t","sessionId":"s","content":"x"}"#,
+        r#"{"type":"bridge-session","sessionId":"s"}"#,
+        r#"{"type":"last-prompt","leafUuid":"u","sessionId":"s"}"#,
+        r#"{"type":"custom-title","customTitle":"x","sessionId":"s"}"#,
+    ] {
+        assert_eq!(claude.detect(line), Some(Version(1)), "{line}");
+    }
+}
+
+/// Review F1: a head whose first lines carry no `sessionId` is still detected by the
+/// first message record behind them.
+#[test]
+fn detect_head_looks_past_a_first_line_without_a_session() {
+    let claude = parser_for(proto::Runtime::Claude).unwrap();
+    let prompt = CLAUDE_FIXTURE.lines().nth(7).unwrap();
+    let head = [
+        r#"{"type":"summary","summary":"x","leafUuid":"u"}"#,
+        r#"{"type":"queue-operation","operation":"enqueue","timestamp":"t","content":"x"}"#,
+        prompt,
+    ];
+    assert_eq!(claude.detect(head[0]), None);
+    assert_eq!(claude.detect(head[1]), None);
+    assert_eq!(detect_head(claude, head), Some(Version(1)));
+}
+
+#[test]
+fn detect_head_stops_after_its_bound() {
+    let claude = parser_for(proto::Runtime::Claude).unwrap();
+    let prompt = CLAUDE_FIXTURE.lines().nth(7).unwrap();
+    let filler = r#"{"type":"summary","summary":"x"}"#;
+    let mut head = vec![filler; DETECT_LINES - 1];
+    head.push(prompt);
+    assert_eq!(detect_head(claude, head.iter().copied()), Some(Version(1)));
+    head.insert(0, filler);
+    assert_eq!(detect_head(claude, head.iter().copied()), None);
+}
+
+#[test]
+fn detect_head_keeps_each_parser_to_its_own_fixture() {
+    let claude = parser_for(proto::Runtime::Claude).unwrap();
+    let codex = parser_for(proto::Runtime::Codex).unwrap();
+    assert_eq!(
+        detect_head(claude, CLAUDE_FIXTURE.lines()),
+        Some(Version(1))
+    );
+    assert_eq!(detect_head(codex, CODEX_FIXTURE.lines()), Some(Version(1)));
+    assert_eq!(detect_head(claude, CODEX_FIXTURE.lines()), None);
+    assert_eq!(detect_head(codex, CLAUDE_FIXTURE.lines()), None);
+}
