@@ -65,6 +65,29 @@
 //!   theoretical one — left unaddressed here because closing it needs a generation counter
 //!   on `Entry` or a per-spawn tag on `WindowEvent`, which is a wider change than this fix
 //!   wave's scope.
+//!
+//!   Whole-branch-review Minor (fix wave 12): `ClientMsg::HookEvent` is the same shape and
+//!   was not disclosed here. `WindowManager::handle_hook` (`manager/mod.rs`) looks up
+//!   `entries.get_mut(&id)` by id alone, exactly like `handle_event`'s `WindowEvent` arms
+//!   above, and `anthrex hook` (`crates/cli/src/hook.rs`) is a separate, short-lived
+//!   process a running agent spawns on its own — it can still be connecting to the
+//!   socket, or have already written its frame and be waiting on the reply, at the exact
+//!   moment this window's id gets killed and restarted out from under it. If that frame
+//!   is still in flight when phase D's swap happens, `handle_hook` applies it to the
+//!   *new* `Entry` once it arrives — there is no queue to drain at swap time the way
+//!   `WindowEvent`'s `handle_event` has one, because each hook connection is its own
+//!   server task with no buffering inside this crate, so the only defense would be the
+//!   same fix as above: a generation the hook's own payload could carry back, which needs
+//!   a `ClientMsg::HookEvent` field (a protocol change, `PROTO_VERSION` bump, and updating
+//!   every client per AGENTS.md hard rule 4) — not something this fix wave's scope
+//!   covers either. Narrower still than the `WindowEvent` case in practice: `anthrex
+//!   hook` is fast (single-digit-to-low-double-digit milliseconds,
+//!   `docs/timing-budgets.md`'s idle table), and the realistic consequence is a stale
+//!   `SessionStart`/`Stop`/tool-use event momentarily relabelling the fresh spawn's
+//!   status or session id, not a crash or a lost process — but it is the same class,
+//!   and it belongs in this disclosure and in the followups doc alongside the
+//!   generation-counter fix, not silently absent from both the way it was before this
+//!   note.
 //! - **Phase C**, one `spawn_blocking` call, no lock: re-read the window's current spec,
 //!   name and session id — never phase A's own snapshot, which the window could have
 //!   outgrown while phase B ran with no lock held at all (this task's second named

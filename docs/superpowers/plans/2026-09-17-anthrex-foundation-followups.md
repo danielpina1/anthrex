@@ -294,3 +294,34 @@ up whenever TUI clock injection or manager lock instrumentation is next in scope
   out of a fix wave's scope. Not reproduced with a running test in this fix wave (it needs a
   slow or hook-stalled `git worktree remove` racing an actual process exit, not just
   `shutdown()` returning); recorded here from the code reading that found it.
+
+## From the M6 whole-branch review (2026-09-22), deferred by fix wave 12
+
+- **A generation counter on `Entry`, or a per-spawn tag on the events keyed by window
+  id, to close the restart id-reuse staleness hazard for good.** `restart`'s own doc
+  comment (`crates/daemon/src/manager/restart.rs`) already disclosed this for
+  `WindowEvent::Output`/`Title`/`ParserPanicked` (fix wave 5 review, Minor 8): those
+  come from the `pty-read-{id}` thread, a different sender than the `pty-wait-{id}`
+  thread `child_alive`'s confirmation depends on, so a stale event already enqueued but
+  not yet delivered at swap time can still land on the fresh `Entry` phase D swaps in
+  under the same id. The whole-branch review found the same shape, undisclosed, in
+  `ClientMsg::HookEvent`: `WindowManager::handle_hook` looks up `entries.get_mut(&id)`
+  by id alone, and `anthrex hook` (`crates/cli/src/hook.rs`) is a separate, short-lived
+  process a running agent spawns on its own — it can still be connecting or have
+  already written its frame when this window's id gets killed and restarted out from
+  under it, with no queue to drain at swap time the way `WindowEvent`'s `handle_event`
+  has one (each hook connection is its own server task, unbuffered inside this crate).
+  Fix wave 12 extended `restart.rs`'s own disclosure to cover this case rather than
+  leaving it unmentioned, but did not implement a fix: closing either instance for real
+  needs a generation counter on `Entry`, bumped on every `finish_restart` swap, plus a
+  way for the stale sender to carry its own generation back — for `WindowEvent` that is
+  free (the event already flows through an in-process channel `handle_event` could tag
+  at send time); for `HookEvent` it needs a new field on the wire message itself, which
+  is a protocol change (`PROTO_VERSION` bump, updating the TUI, the CLI client and
+  `anthrex hook` together, per AGENTS.md hard rule 4) — real work with its own round-trip
+  tests, not a point fix either instance's own fix wave had room for. Both instances are
+  narrow in practice (the panic itself is rare for `WindowEvent`; `anthrex hook` is fast,
+  single-digit-to-low-double-digit milliseconds per `docs/timing-budgets.md`'s idle
+  table, for `HookEvent`) but real, not theoretical — a stale event or hook payload can
+  relabel a freshly restarted window's status or session id. One counter closes both at
+  once, which is the reason to do this as a single follow-up rather than two.
