@@ -456,21 +456,31 @@ async fn handle_client(
                 agent_id,
                 from_rev,
             } => {
-                conversations.send(conversation::Command::Subscribe {
-                    window_id,
-                    agent_id,
-                    from_rev,
-                });
+                if !conversations
+                    .send(conversation::Command::Subscribe {
+                        window_id,
+                        agent_id,
+                        from_rev,
+                    })
+                    .await
+                {
+                    break;
+                }
                 None
             }
             ClientMsg::UnsubscribeConversation {
                 window_id,
                 agent_id,
             } => {
-                conversations.send(conversation::Command::Unsubscribe {
-                    window_id,
-                    agent_id,
-                });
+                if !conversations
+                    .send(conversation::Command::Unsubscribe {
+                        window_id,
+                        agent_id,
+                    })
+                    .await
+                {
+                    break;
+                }
                 None
             }
         };

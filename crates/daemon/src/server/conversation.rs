@@ -30,9 +30,14 @@ pub(super) enum Command {
     },
 }
 
+/// How many commands may wait for the task. The request loop awaits room, so a client
+/// that sends subscriptions faster than it reads their answers slows only itself, the
+/// same backpressure its own `out_tx` already applies to the PTY subscription.
+const COMMAND_QUEUE: usize = 64;
+
 /// The task and the channel into it.
 pub(super) struct ConversationTask {
-    commands: mpsc::UnboundedSender<Command>,
+    commands: mpsc::Sender<Command>,
     task: JoinHandle<()>,
 }
 
@@ -44,14 +49,15 @@ impl ConversationTask {
         out: mpsc::Sender<DaemonMsg>,
         shutdown: CancellationToken,
     ) -> Self {
-        let (commands, commands_rx) = mpsc::unbounded_channel();
+        let (commands, commands_rx) = mpsc::channel(COMMAND_QUEUE);
         let changes = manager.conversation_changes();
         let task = tokio::spawn(run(manager, commands_rx, changes, out, shutdown));
         ConversationTask { commands, task }
     }
 
-    pub(super) fn send(&self, command: Command) {
-        let _ = self.commands.send(command);
+    /// Fails only once the task has ended, which it does when the client is gone.
+    pub(super) async fn send(&self, command: Command) -> bool {
+        self.commands.send(command).await.is_ok()
     }
 
     /// Ends the task and waits until it has released every subscription it held, the
@@ -104,7 +110,7 @@ impl Subscriptions {
 
 async fn run(
     manager: Arc<WindowManager>,
-    mut commands: mpsc::UnboundedReceiver<Command>,
+    mut commands: mpsc::Receiver<Command>,
     mut changes: broadcast::Receiver<(u32, Option<String>, u64)>,
     out: mpsc::Sender<DaemonMsg>,
     shutdown: CancellationToken,
