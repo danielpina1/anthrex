@@ -78,67 +78,110 @@ fn pre_tool_use(draft: &mut Draft, hook: &ParsedHook, now_unix_secs: u64, now: I
     let summary = summary::for_tool(&name, hook.tool_input.as_ref());
     let block = Block::ToolCall {
         id: hook.tool_use_id.clone(),
-        name,
+        name: name.clone(),
         summary,
         input: hook.tool_input.clone(),
         result: None,
         state: ToolState::Pending,
         duration_ms: None,
     };
-    let index = draft.append_to_open_turn(block, now_unix_secs);
-    draft.tool_started.insert(index, now);
+    draft.append_to_open_turn(block, now_unix_secs);
+    // Identity-keyed (fix round 1, F1), not by the block index just returned: the
+    // index is a snapshot of a position that a later turn-8 front-insert can shift.
+    draft
+        .tool_started
+        .push((hook.tool_use_id.clone(), name, now));
     true
 }
 
-/// Finds the target `ToolCall` in the open turn.
+/// The two-tier matching rule `find_target` (selecting a pending `ToolCall` block) and
+/// `take_tool_start` (selecting a queued start time, fix round 1, finding F1) both need,
+/// factored out once so the two cannot drift apart the way the review warned they would
+/// if written twice: given `tool_use_id`, the id tier is the *only* tier tried -- the
+/// **last** (by `index`) eligible candidate whose id equals it, or `None` when there is
+/// no such candidate. (Wave-1 review finding F1: an explicit id that matches nothing is
+/// evidence of a mismatch, not absence of evidence, so this must never fall through to
+/// matching by name -- that would let an unrelated `Post` for a stale or foreign id
+/// complete whatever else happens to share the same tool name.)
 ///
-/// When `hook.tool_use_id` is `Some`, the id tier is the *only* tier tried: the last
-/// still-`Pending` block whose `id` equals it, or `None` when there is no such block.
-/// (Wave-1 review finding F1: an explicit id that matches nothing is evidence of a
-/// mismatch, not absence of evidence, so this must never fall through to matching by
-/// name -- that would let an unrelated `Post` for a stale or foreign id complete
-/// whatever else happens to be `Pending` under the same tool name.) The `Pending` guard
-/// (finding F7) also stops a redelivered `PostToolUse` for an id that already completed
-/// from rewriting a finished call's result.
+/// Only when `tool_use_id` is `None` is the name tier tried: the **oldest** (first, by
+/// `index`) eligible candidate whose name equals `tool_name` (finding F2: results arrive
+/// FIFO, so for two concurrent id-less calls to the same tool, the first `Post` belongs
+/// to the first `Pre` -- searching newest-first would silently swap two unrelated
+/// results between two different tool calls).
 ///
-/// Only when `hook.tool_use_id` is `None` is the name tier tried: the **oldest**
-/// still-`Pending` block whose `name` equals `hook.tool_name` (finding F2: results
-/// arrive FIFO, so for two concurrent id-less calls to the same tool, the first `Post`
-/// belongs to the first `Pre` -- searching newest-first would silently swap two
-/// unrelated results between two different tool calls, both reporting `Ok`, with
-/// nothing to signal it).
+/// `candidates` must already be filtered to whatever "still open" means to the caller --
+/// `find_target` filters to `Pending` blocks; `take_tool_start`'s candidates need no
+/// such filter, since a `tool_started` entry is removed the moment it is consumed.
+fn select_by_tier(
+    candidates: &[(usize, Option<&str>, &str)],
+    tool_use_id: Option<&str>,
+    tool_name: Option<&str>,
+) -> Option<usize> {
+    match tool_use_id {
+        Some(want) => candidates
+            .iter()
+            .rev()
+            .find(|(_, id, _)| *id == Some(want))
+            .map(|(index, _, _)| *index),
+        None => tool_name.and_then(|want| {
+            candidates
+                .iter()
+                .find(|(_, _, name)| *name == want)
+                .map(|(index, _, _)| *index)
+        }),
+    }
+}
+
+/// Finds the target `ToolCall` in the open turn, via `select_by_tier`. The `Pending`
+/// guard (wave-1 review finding F7) stops a redelivered `PostToolUse` for an id that
+/// already completed from rewriting a finished call's result.
 ///
 /// `None` when the applicable tier finds nothing -- a `PostToolUse` with no matching
 /// `PreToolUse` (never arrived, already matched and completed by an earlier `Post`, or
 /// its whole turn already closed) is a no-op, not an error.
 fn find_target(blocks: &[Block], hook: &ParsedHook) -> Option<usize> {
-    match hook.tool_use_id.as_deref() {
-        Some(want) => blocks
-            .iter()
-            .enumerate()
-            .rev()
-            .find_map(|(index, block)| match block {
-                Block::ToolCall {
-                    id: Some(id),
-                    state: ToolState::Pending,
-                    ..
-                } if id == want => Some(index),
-                _ => None,
-            }),
-        None => hook.tool_name.as_deref().and_then(|want| {
-            blocks
-                .iter()
-                .enumerate()
-                .find_map(|(index, block)| match block {
-                    Block::ToolCall {
-                        name,
-                        state: ToolState::Pending,
-                        ..
-                    } if name == want => Some(index),
-                    _ => None,
-                })
-        }),
-    }
+    let candidates: Vec<(usize, Option<&str>, &str)> = blocks
+        .iter()
+        .enumerate()
+        .filter_map(|(index, block)| match block {
+            Block::ToolCall {
+                id,
+                name,
+                state: ToolState::Pending,
+                ..
+            } => Some((index, id.as_deref(), name.as_str())),
+            _ => None,
+        })
+        .collect();
+    select_by_tier(
+        &candidates,
+        hook.tool_use_id.as_deref(),
+        hook.tool_name.as_deref(),
+    )
+}
+
+/// Finds and removes the `tool_started` entry matching `hook`, via the same
+/// `select_by_tier` rule `find_target` uses, returning its recorded start time. Fix
+/// round 1, finding F1: this used to be `draft.tool_started.get(&index)`, keyed by a
+/// block index that a later task's front-insert (task M6.5.8 rule 2) can shift out from
+/// under it; re-keying by tool identity needs its own selection over `tool_started`'s
+/// own entries, done here rather than reusing `find_target`'s block-shaped one, but via
+/// the one shared tier rule so the two selections cannot disagree about which tool call
+/// a given hook means.
+fn take_tool_start(draft: &mut Draft, hook: &ParsedHook) -> Option<Instant> {
+    let candidates: Vec<(usize, Option<&str>, &str)> = draft
+        .tool_started
+        .iter()
+        .enumerate()
+        .map(|(index, (id, name, _))| (index, id.as_deref(), name.as_str()))
+        .collect();
+    let index = select_by_tier(
+        &candidates,
+        hook.tool_use_id.as_deref(),
+        hook.tool_name.as_deref(),
+    )?;
+    Some(draft.tool_started.remove(index).2)
 }
 
 fn post_tool_use(draft: &mut Draft, hook: &ParsedHook, now: Instant, caps: Caps) -> bool {
@@ -155,8 +198,8 @@ fn post_tool_use(draft: &mut Draft, hook: &ParsedHook, now: Instant, caps: Caps)
     let first_line = capped.lines().next().unwrap_or("");
     let text = summary::truncate_graphemes(first_line);
     let truncated = hook.tool_result_truncated == Some(true) || byte_capped;
-    let duration_ms = draft.tool_started.get(&index).map(|started| {
-        let millis = now.saturating_duration_since(*started).as_millis();
+    let duration_ms = take_tool_start(draft, hook).map(|started| {
+        let millis = now.saturating_duration_since(started).as_millis();
         u32::try_from(millis).unwrap_or(u32::MAX)
     });
 

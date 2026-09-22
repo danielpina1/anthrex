@@ -7,6 +7,8 @@
 //! logic the milestone's own review history calls out both defect shapes for by name.
 
 use super::*;
+use crate::conversation::build;
+use std::time::Duration;
 
 fn hook(kind: HookKind) -> ParsedHook {
     ParsedHook {
@@ -73,6 +75,141 @@ fn send_capped(
     caps: Caps,
 ) -> Vec<Option<String>> {
     set.on_hook(proto::Runtime::Claude, hook, None, ts, now, caps)
+}
+
+/// Fix round 1, finding F1 (review reproduction): `Draft.tool_started` used to be keyed
+/// by a `ToolCall` block's index within the open turn's `blocks`. Task M6.5.8's own
+/// brief (rule 2) is specified to insert a `Text` block at the *front* of an open
+/// `Assistant` turn that has none -- exactly what `enrich::apply` will do for
+/// `Record::AssistantText` once task 8 lands. This reproduces that insert by hand
+/// (`enrich.rs` does not exist yet) against two pending tools, and asserts the exact
+/// durations the review measured: under the old index-keyed scheme, `Bash` reported
+/// `Some(100)` ms against a true 1000 ms (picking up `Read`'s start time instead of its
+/// own), because the insert shifted every block after it down by one index.
+#[test]
+fn review_front_insert_two_tools_keeps_correct_durations() {
+    let t0 = Instant::now();
+    let mut draft = Draft::new(4, None, proto::Runtime::Claude);
+    let caps = Caps::default();
+
+    assert!(build::apply(
+        &mut draft,
+        proto::Runtime::Claude,
+        &pre("tu-A", "Bash"),
+        None,
+        1000,
+        t0,
+        caps
+    ));
+    assert!(build::apply(
+        &mut draft,
+        proto::Runtime::Claude,
+        &pre("tu-B", "Read"),
+        None,
+        1000,
+        t0 + Duration::from_millis(900),
+        caps
+    ));
+
+    // The task-8-style front-insert (rule 2): a `Text` block lands at index 0 of the
+    // open turn, shifting both `ToolCall` blocks after it down by one.
+    let open = draft.open_turn_index().unwrap();
+    draft.turns[open].blocks.insert(
+        0,
+        proto::Block::Text {
+            text: "thinking".into(),
+        },
+    );
+
+    assert!(build::apply(
+        &mut draft,
+        proto::Runtime::Claude,
+        &post("tu-A", serde_json::json!("ok")),
+        None,
+        1001,
+        t0 + Duration::from_millis(1000),
+        caps
+    ));
+    assert!(build::apply(
+        &mut draft,
+        proto::Runtime::Claude,
+        &post("tu-B", serde_json::json!("ok")),
+        None,
+        1002,
+        t0 + Duration::from_millis(1200),
+        caps
+    ));
+
+    let open = draft.open_turn_index().unwrap();
+    let duration_of = |name: &str| {
+        draft.turns[open]
+            .blocks
+            .iter()
+            .find_map(|b| match b {
+                proto::Block::ToolCall {
+                    name: n,
+                    duration_ms,
+                    ..
+                } if n == name => Some(*duration_ms),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no ToolCall block named {name}"))
+    };
+    assert_eq!(duration_of("Bash"), Some(1000), "Bash: t0+1000ms - t0");
+    assert_eq!(duration_of("Read"), Some(300), "Read: t0+1200ms - t0+900ms");
+}
+
+/// The single-pending-tool half of the same reproduction: under the old index-keyed
+/// scheme, the front-insert shifted the one `ToolCall` block from index 0 to index 1,
+/// so `tool_started.get(&0)` missed entirely and `duration_ms` silently stayed `None`
+/// while `state` still reported `Ok`.
+#[test]
+fn review_front_insert_single_tool_keeps_its_duration() {
+    let t0 = Instant::now();
+    let mut draft = Draft::new(4, None, proto::Runtime::Claude);
+    let caps = Caps::default();
+
+    assert!(build::apply(
+        &mut draft,
+        proto::Runtime::Claude,
+        &pre("tu-A", "Bash"),
+        None,
+        1000,
+        t0,
+        caps
+    ));
+
+    let open = draft.open_turn_index().unwrap();
+    draft.turns[open].blocks.insert(
+        0,
+        proto::Block::Text {
+            text: "thinking".into(),
+        },
+    );
+
+    assert!(build::apply(
+        &mut draft,
+        proto::Runtime::Claude,
+        &post("tu-A", serde_json::json!("ok")),
+        None,
+        1001,
+        t0 + Duration::from_millis(1000),
+        caps
+    ));
+
+    let open = draft.open_turn_index().unwrap();
+    let proto::Block::ToolCall {
+        duration_ms, state, ..
+    } = draft.turns[open]
+        .blocks
+        .iter()
+        .find(|b| matches!(b, proto::Block::ToolCall { name, .. } if name == "Bash"))
+        .unwrap()
+    else {
+        panic!("expected a ToolCall block");
+    };
+    assert_eq!(*state, proto::ToolState::Ok);
+    assert_eq!(*duration_ms, Some(1000));
 }
 
 #[test]
