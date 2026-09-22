@@ -42,7 +42,7 @@ Why run agents are headless, in terms of today's code: the PTY status machine (`
 
 ## Goal
 
-A user writes a plan file — a goal, an optional `[profile]`, and a list of tasks, each with a size, a test mode, the paths it owns, a brief and acceptance criteria — and runs `anthrex run start --plan plan.toml`. The daemon validates it against the spec's size, test-mode, runtime and graph rules and returns at once with a run waiting for approval; the run branch and the first worktrees are prepared while the user reads the plan. `anthrex run approve` starts it (`--yes` skips the gate). The engine schedules tasks by critical path into separate writer and reviewer slots. It runs one headless Claude or Codex worker session per task, in the task's own worktree, and moves each task through the gates: the worker's explicit `task_done` (or, when a turn ends with commits but no `task_done`, one nudge turn and then the fallback), the fail-to-pass test proof for TDD tasks, the profile's check, a fresh cross-runtime review with severities, and a merge queue that tests the merged result before a compare-and-swap onto the run branch. Failures climb a four-rung escalation ladder. Budgets count tool calls, minutes and, when a task sets a token budget, tokens. Turn ends, rate-limit retries, permission denials, tool use and token usage all come from each session's structured event stream, never from a terminal. The user watches any agent through milestone 6.5's conversation view, which is fed from the same stream; no run agent has a terminal to type into. Every side effect is journaled before it happens and reconciled after a crash, dirty work is never deleted, and the base and run refs are checked before every merge. `anthrex run status` and a pushed snapshot with a revision counter show everything. Nothing reaches the base branch until `anthrex run accept`. Every transition is exercised in CI with `fake-agent`; no test needs a model.
+A user writes a plan file — a goal, an optional `[profile]`, and a list of tasks, each with a size, a test mode, the paths it owns, a brief and acceptance criteria — and runs `anthrex run start --plan plan.toml`. The daemon validates it against the spec's size, test-mode, runtime and graph rules and returns at once with a run waiting for approval; the run branch and the first worktrees are prepared while the user reads the plan. `anthrex run approve` starts it (`--yes` skips the gate). The engine schedules tasks by critical path into separate writer and reviewer slots. It runs one headless Claude or Codex worker session per task, in the task's own worktree, and moves each task through the gates: the worker's explicit `task_done` (or, when a turn ends with commits but no `task_done`, one nudge turn and then the fallback), the fail-to-pass test proof for TDD tasks, the profile's check, a fresh cross-runtime review with severities, and a merge queue that tests the merged result before a compare-and-swap onto the run branch. Failures climb a four-rung escalation ladder. Budgets count tool calls, minutes and, when a task sets a token budget, tokens. Turn ends, rate-limit retries, permission denials, tool use and token usage all come from each session's structured event stream, never from a terminal. The user watches any agent through milestone 6.5's conversation view, which is fed from the same stream; no run agent has a terminal to type into. Every side effect is journaled before it happens and reconciled after a crash, dirty work is never deleted, and the run ref is checked before every merge: a run ref that moved, or a base branch that was rewritten, halts the run, while a base branch that only advanced is recorded and listed for the user's confirmation at accept. `anthrex run status` and a pushed snapshot with a revision counter show everything. Nothing reaches the base branch until `anthrex run accept`. Every transition is exercised in CI with `fake-agent`; no test needs a model.
 
 ## Scope
 
@@ -188,8 +188,16 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
     - **Worktree lock.** Every task and integration worktree is `git worktree lock --reason "anthrex run <run>"` right after creation and `git worktree unlock`ed right before removal.
     - Session launches and resumes are jittered by `jitter_ms = 100 + (fnv1a(run, task, session) % 400)` — deterministic, so tests are unaffected. *(Spec §17 "Git safety".)*
 19. **Task branches start from merged work.** A task's worktree is created when it is dispatched — after every dependency (declared and implicit) is `merged` — with `git worktree add -b anthrex/<run>/<task> <path> <run_head>`; `start_commit` is `run_head` at that moment. An existing branch and path are reused (resume); an existing branch without its path is re-added. Pre-warmed worktrees (decision 14) are created from `base_sha`; at dispatch, a pre-warmed branch that still has no commit of its own and whose start is no longer the run head is re-pointed with `git checkout -B anthrex/<run>/<task> <run_head>` in its worktree (setup is not re-run), so no task ever starts from a stale base. *(Spec §11.6 "dependents start from merged work".)*
-20. **Salvage and cleanup.** Before any engine-owned worktree is removed — task cancel, task merged, review round done, proof done, run discard, run accept — the engine checks `git status --porcelain` (untracked included, ignored excluded). If dirty: `git add -A`, `git write-tree`, `git commit-tree <tree> -p HEAD -m "anthrex salvage <run>/<task>"`, `git update-ref refs/anthrex/salvage/<run>/<task>/<seq> <commit>` (`<seq>` counts from 1 per task), and the ref is recorded on the task and in the report. Then unlock and `git worktree remove --force`. A worktree is never deleted dirty without a salvage ref. Cleanup on merge removes the task, review and proof worktrees; the task branch is kept until accept or discard. **Discard** (and `run reject`): remove every run window, salvage-and-remove every worktree, `git worktree prune`, delete every `refs/heads/anthrex/<run>/*` branch, keep every `refs/anthrex/salvage/<run>/*` ref and the run's data directory, state `discarded`. **Accept**: the refreshed M8 brief's decision 14 (base branch checked out in `root`, tracked tree clean, `git merge --no-ff --no-edit -m "anthrex: accept run <run>: <goal>" anthrex/<run>/integration`), then salvage-and-remove every run worktree and delete the run's branches; state `accepted`. Both need `confirm == Some(<run id>)`, else `RunReply::ConfirmNeeded`. The spec's `refs/anthrex/salvage/<run>/<task>` becomes `…/<task>/<seq>` because one task can be salvaged more than once, and a bare `…/<task>` ref would conflict with its children. *(Spec §11.6 "Cleanup", §12.2, §17.)*
-21. **Ref guard.** The run records `base_sha` and `run_head` (updated on every CAS). Before every merge candidate (inside the op, before `merge-tree` and again before `update-ref`) and before `complete`, `refs/heads/<base>` must equal `base_sha` and `refs/heads/anthrex/<run>/integration` must equal `run_head`. Otherwise the run becomes `halted` with `halted_reason` `refs/heads/<name> moved from <old7> to <new7>`: no dispatch, no merge, windows keep running. `anthrex run resume <run> --rebaseline` records the current values of both refs and returns the run to `running`; without `--rebaseline`, resume of a halted run is refused with the reason. The optional `reference-transaction` hook is not installed. *(Spec §17 "The base branch is guarded twice".)*
+20. **Salvage and cleanup.** Before any engine-owned worktree is removed — task cancel, task merged, review round done, proof done, run discard, run accept — the engine checks `git status --porcelain` (untracked included, ignored excluded). If dirty: `git add -A`, `git write-tree`, `git commit-tree <tree> -p HEAD -m "anthrex salvage <run>/<task>"`, `git update-ref refs/anthrex/salvage/<run>/<task>/<seq> <commit>` (`<seq>` counts from 1 per task), and the ref is recorded on the task and in the report. Then unlock and `git worktree remove --force`. A worktree is never deleted dirty without a salvage ref. Cleanup on merge removes the task, review and proof worktrees; the task branch is kept until accept or discard. **Discard** (and `run reject`): remove every run window, salvage-and-remove every worktree, `git worktree prune`, delete every `refs/heads/anthrex/<run>/*` branch, keep every `refs/anthrex/salvage/<run>/*` ref and the run's data directory, state `discarded`. **Accept**: the refreshed M8 brief's decision 14 (base branch checked out in `root`, tracked tree clean, `git merge --no-ff --no-edit -m "anthrex: accept run <run>: <goal>" anthrex/<run>/integration`), then salvage-and-remove every run worktree and delete the run's branches; state `accepted`. Both need `confirm == Some(<run id>)`, else `RunReply::ConfirmNeeded`. **A moved base at accept** (settled 2026-09-22, spec §22 item 5): before the merge, the driver reads `refs/heads/<base>` on `spawn_blocking`.
+    - Equal to `base_sha`: as above.
+    - Advanced (decision 21's classification): `ConfirmNeeded` carries `base_moved: Some(BaseMovedInfo { from, to, commits, total })`, where `commits` is `run::git::commits_since(root, base_sha, to, ACCEPT_LIST_MAX)` — `git log --format='%h %an: %s' <base_sha>..<to>` (the `--oneline` form with authors), newest first, at most `ACCEPT_LIST_MAX` = 50 lines — and `total` is the full count. For this case accept needs `confirm == Some("<run id>@<to>")` (the full sha of the base head that was listed), so a base that moves again between the prompt and the answer is listed again, never merged unseen. `Accept` then merges onto the current base head, with `expected_base = to`: a base head that differs from `expected_base` inside the op is `Failed { message: "the base branch moved again; run accept again" }`.
+    - Rewritten (`base_sha` not an ancestor): accept is refused with `refs/heads/<base> was rewritten since the run started (<old7> is not an ancestor of <new7>); merge anthrex/<run>/integration by hand, or discard the run`.
+    - **A conflict at accept** is possible only against an advanced base. `git merge` exits non-zero with unmerged paths; the op runs `git merge --abort`, so `root` and the base branch are exactly as they were, and returns `AcceptConflict { files }`. The run stays `complete`, its branches and worktrees are kept, and the reply is `Refused` with `accept conflicts with <n> commits on <base>: <files>; resolve by merging anthrex/<run>/integration into <base> yourself, or discard the run`. The report's log records it. The spec's `refs/anthrex/salvage/<run>/<task>` becomes `…/<task>/<seq>` because one task can be salvaged more than once, and a bare `…/<task>` ref would conflict with its children. *(Spec §11.6 "Cleanup", §12.2, §17.)*
+21. **Ref guard.** The run records `base_sha` and `run_head` (updated on every CAS). Before every merge candidate (inside the op, before `merge-tree` and again before `update-ref`) and before `complete`, `run::git::guard_refs` reads both refs and classifies them (`RefCheck`, Interfaces):
+    - **Run ref.** `refs/heads/anthrex/<run>/integration` must equal `run_head`; only the engine writes it. Otherwise the run becomes `halted` with `halted_reason` `refs/heads/anthrex/<run>/integration moved from <old7> to <new7>`: no dispatch, no merge, windows keep running.
+    - **Base ref, advanced.** `refs/heads/<base>` differs from `base_sha` and `git merge-base --is-ancestor <base_sha> refs/heads/<base>` succeeds: someone committed on the base branch. This is **not** a halt. The run keeps building on its recorded `base_sha`; the op goes on, and the driver sends `Event::BaseAdvanced { run_id, to, commits }` (`commits` from `git rev-list --count <base_sha>..<to>`). The reducer sets `Run.base_moved = Some(BaseMoved { from: base_sha, to, commits, seen_at: now })` (a later, different `to` replaces `to`, `commits` and `seen_at`; the same `to` changes nothing, not even the revision), logs it, and the snapshot carries the attention line `base <base> moved from <from7> to <to7> (<commits> new commits); accept will list them`. Dispatch and merges continue. Decision 20's accept lists the new commits for confirmation.
+    - **Base ref, rewritten.** `refs/heads/<base>` differs from `base_sha` and `base_sha` is **not** an ancestor of it (history rewritten, or the branch deleted): accept could no longer be a clean merge onto what the run was built from, so the run becomes `halted` with `halted_reason` `refs/heads/<base> was rewritten: <old7> is not an ancestor of <new7>` (or `refs/heads/<base> was deleted`).
+    - `anthrex run resume <run> --rebaseline` records the current values of both refs (`base_sha` becomes the base head, `base_moved` is cleared) and returns the run to `running`; without `--rebaseline`, resume of a halted run is refused with the reason. The optional `reference-transaction` hook is not installed. *(Spec §17 "The run branch is guarded; the base branch is watched"; settled 2026-09-22, spec §22 item 5.)*
 22. **Run worktrees are watched.** Task and integration worktrees are registered with `crate::manager::GitRoots::register` when created and unregistered before removal (never review or proof worktrees). `GitRegistry` construction moves from `server::serve` to `lifecycle::run` so `RunService` and the server share one (new `server::GitWiring`). With `ANTHREX_GIT=off` every call is a no-op and runs still work. *(Refreshed M8 decision 15.)*
 
 ### Agents and signals
@@ -345,7 +353,7 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
     6. Conflict, first time for this task → **hand-back**: `git merge --no-ff --no-edit <run_head>` in the task worktree (conflict markers left, `MERGE_HEAD` set), `conflict_message` with the file list to the worker, as its session's next turn (decision 29 resumes an ended session to carry it); the task returns to `working`; its next accepted `task_done` sends it **straight back to the merge queue** (the candidate check re-tests it). A hand-back merge that turns out clean needs no worker and re-queues at once. A conflict is not a gate failure. Second conflict → `blocked(conflict)`.
 
     The merge commit keeps task ancestry, so `git merge-base --is-ancestor <task> <run>` answers "was it merged". *(Spec §11.5; research P1-5, P3-1.)*
-37. **Completion.** A run is complete when every task is `merged` or `cancelled`, the merge queue is empty and no op is pending. Before `complete`: the ref guard, then, if `run_head` differs from `last_green_candidate` and from `base_sha`, `check` in the integration worktree (never true unless the run was rebaselined; a red result is an attention line `final check failed on the run head`, the run still completes). Blocked tasks keep the run `running` with attention lines — they wait for `retry`, `edit`, `override` or `cancel`. The `finish` edit cancels every task that has not reached `working`, lets live ones run to `merged` or `blocked`, then cancels (salvaging) the blocked ones and completes. `run cancel` kills every run session, salvages and cancels every unmerged task, and completes. *(Spec §5.3 step 6; the per-epic integration review is M9.)*
+37. **Completion.** A run is complete when every task is `merged` or `cancelled`, the merge queue is empty and no op is pending. Before `complete`: the ref guard (a run ref that moved or a base that was rewritten halts; a base that only advanced is recorded in `base_moved` and completion goes on, decision 21), then, if `run_head` differs from `last_green_candidate` and from `base_sha`, `check` in the integration worktree (never true unless the run was rebaselined; a red result is an attention line `final check failed on the run head`, the run still completes). Blocked tasks keep the run `running` with attention lines — they wait for `retry`, `edit`, `override` or `cancel`. The `finish` edit cancels every task that has not reached `working`, lets live ones run to `merged` or `blocked`, then cancels (salvaging) the blocked ones and completes. `run cancel` kills every run session, salvages and cancels every unmerged task, and completes. *(Spec §5.3 step 6; the per-epic integration review is M9.)*
 
 ### Ladder, budgets, scheduler
 
@@ -381,7 +389,7 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
 
 43. **Run persistence and the intent journal.** Each run has `<data_dir>/runs/<run>/run.json` (the whole `run::model::Run`, written to a temp file, `fsync`ed, renamed, directory `fsync`ed) and `journal.jsonl` (append, `fsync` per line) of `{"op":<id>,"intent":{…OpKind…}}` and `{"op":<id>,"done":{…OpResult…}}`. `RunService` handles each step's effects in this order: `Persist` (the new `run.json`), then for each `Op` its `intent` line, then the op itself; when the op returns, its `done` line, then the `OpDone` event. Counter-only changes (tool calls, activity) persist at most every 5 s. The journal is rewritten with only pending ops' intents when it passes 1 MiB. Runs do not live in `state.json`, whose persister is debounced and owned by the manager; `StateFile.runs` stays opaque and empty. *(Spec §17 "Intent log".)*
 44. **Reconcile on start**, in `lifecycle::run` after `WindowManager::restore` and before the socket is bound: for each `run.json`, every op in `pending_ops` is resolved against `journal.jsonl` and reality — `done` present → replay its result; `intent` only → `run::reconcile` checks reality per kind (table in Interfaces) and yields either a result to replay or `NotStarted`; neither → `NotStarted`. `NotStarted` ops are dropped and the engine re-issues whatever the task's state needs on resume. Session processes are checked too, as decision 28 describes. Every op is idempotent (worktree creation reuses, salvage checks its ref, the merge candidate recognises an already-advanced run branch whose parents are the expected pair, accept recognises a base that already contains the run head). *(Spec §17 "Reconcile on start".)*
-45. **Paused and resume.** On load, every run that is `running` becomes `paused` with `paused_from = running`. `halted`, `awaiting_approval`, `complete`, `paused` and terminal runs keep their state. A `halted` run's sessions are ended after the restart, and `resume --rebaseline` resumes them like any other resume. The `pause` edit pauses a running run with its sessions alive. It stops dispatch, gates and deliveries; a turn already open runs to its end.
+45. **Paused and resume.** On load, every run that is `running` becomes `paused` with `paused_from = running`. `halted`, `awaiting_approval`, `complete`, `paused` and terminal runs keep their state. A `halted` run (its run ref moved, or its base was rewritten, decision 21) has its sessions ended after the restart, and `resume --rebaseline` resumes them like any other resume. `base_moved` is part of `run.json` and survives a restart; a base that advanced while the daemon was down is seen at the next guard, never at load. The `pause` edit pauses a running run with its sessions alive. It stops dispatch, gates and deliveries; a turn already open runs to its end.
 
     `anthrex run resume <run>` (or the `resume` edit) returns the run to `paused_from`, then:
     - Second-stage deadlines that already expired fire first: an interrupted stall's grace, a sent `stall_nudge`'s silence, a pending rate-limit continue.
@@ -632,6 +640,7 @@ pub struct RunInfo {
     pub state: RunState, pub paused_from: Option<RunState>, pub halted_reason: Option<String>,
     pub approved_by: Option<String>,                  // "user" | "--yes"
     pub base_branch: String, pub base_sha: String, pub run_branch: String, pub run_head: String,
+    pub base_moved: Option<BaseMovedInfo>,            // decision 21: the base advanced; not a halt
     pub revision: u64, pub max_writers: u8, pub max_readers: u8, pub max_bounces: u8,
     pub writers_busy: u8, pub readers_busy: u8, pub unverified: bool,
     pub worker_sandbox: bool,                         // decision 54; false is reported
@@ -639,6 +648,11 @@ pub struct RunInfo {
     pub rate_limits: std::collections::BTreeMap<String, u32>, // per runtime label, for M9.5
     pub tasks: Vec<TaskInfo>, pub critical_path: Vec<String>, pub attention: Vec<String>,
     pub report_path: PathBuf, pub outcome: Option<String>, pub created_at: u64,
+}
+pub struct BaseMovedInfo {                            // decisions 20, 21
+    pub from: String, pub to: String,                 // base_sha, and the base head last seen
+    pub commits: Vec<String>,                         // "<sha7> <author>: <subject>", newest first, at most 50; empty in a snapshot, filled in ConfirmNeeded
+    pub total: u32,                                   // every commit in from..to
 }
 pub struct RunsSnapshot { pub revision: u64, pub runs: Vec<RunInfo> }
 ```
@@ -664,7 +678,7 @@ pub enum RunReply {
     Started { run_id: String, state: RunState },
     Done { request: String, message: String },
     Refused { request: String, message: String },
-    ConfirmNeeded { run_id: String, prompt: String },
+    ConfirmNeeded { run_id: String, prompt: String, base_moved: Option<BaseMovedInfo> }, // Some: accept onto an advanced base; confirm "<run id>@<to>"
     Snapshot(RunsSnapshot),
     ToolResult { ok: bool, text: String },
 }
@@ -770,9 +784,11 @@ pub struct Outgoing { pub id: u64, pub window_id: u32, pub task_id: String, pub 
                       pub queued_at: u64, pub delivered_at: Option<u64> }
 pub struct PendingOp { pub op: OpId, pub task_id: Option<String>, pub kind: OpKind }
 pub struct LogEntry { pub at: u64, pub text: String }                 // at most 500 per run
+pub struct BaseMoved { pub from: String, pub to: String, pub commits: u32, pub seen_at: u64 } // decision 21
 pub struct Run {
     pub id: String, pub goal: String, pub root: PathBuf, pub project: PathBuf, pub wt_dir: PathBuf, pub data_dir: PathBuf,
     pub base_branch: String, pub base_sha: String, pub run_head: String, pub last_green_candidate: Option<String>,
+    pub base_moved: Option<BaseMoved>,                // decision 21; #[serde(default)]
     pub state: RunState, pub paused_from: Option<RunState>, pub halted_reason: Option<String>,
     pub approved_by: Option<String>, pub profile: Profile, pub limits: RunLimits, pub roster: Vec<ModelEntry>,
     pub tasks: Vec<Task>, pub merge_queue: Vec<String>, pub outbox: Vec<Outgoing>, pub next_message: u64,
@@ -847,6 +863,7 @@ pub enum EventKind {
     Override { reply: ReplyId, run_id: String, task_id: String, reason: String },
     Cancel { reply: ReplyId, run_id: String },
     Resume { reply: ReplyId, run_id: String, rebaseline: Option<(String, String)> }, // (base sha, run head) read by the driver
+    BaseAdvanced { run_id: String, to: String, commits: u32 },          // decision 21: sent by the driver when a guard sees an advanced base
     Finish { reply: ReplyId, run_id: String, action: FinishAction },
     Tool { reply: ReplyId, call: ToolCall },
     OpDone { run_id: String, op: OpId, result: OpResult },
@@ -887,7 +904,7 @@ pub enum OpKind {
     HandBack { worktree: PathBuf, run_head: String },
     RemoveWorktree { root: PathBuf, path: PathBuf, salvage_ref: String },
     VerifyRefs { root: PathBuf, base_branch: String, expected_base: String, run_branch: String, expected_run_head: String },
-    Accept { root: PathBuf, base_branch: String, run_branch: String, message: String, worktrees: Vec<(PathBuf, String)>, branch_prefix: String },
+    Accept { root: PathBuf, base_branch: String, expected_base: String, run_branch: String, message: String, worktrees: Vec<(PathBuf, String)>, branch_prefix: String }, // expected_base: base_sha, or the confirmed advanced head (decision 20)
     Discard { root: PathBuf, worktrees: Vec<(PathBuf, String)>, branch_prefix: String },
 }
 pub enum OpResult {
@@ -902,7 +919,8 @@ pub enum OpResult {
     Review { base: String, head: String },
     Merged { commit: String }, Conflict { files: Vec<String> },
     CandidateRed { code: Option<i32>, timed_out: bool, tail: String, secs: u64 },
-    RefMoved { reason: String },
+    RefMoved { reason: String },                    // run ref moved, or base rewritten (decision 21)
+    AcceptConflict { files: Vec<String> },          // merge aborted; base untouched; run stays complete (decision 20)
     HandedBack { files: Vec<String> },
     Removed { salvage_ref: Option<String> },
     RefsOk,
@@ -976,11 +994,15 @@ pub fn materialize(git, integration, commit, timeout) -> Result<(), String>;    
 pub fn cas_update(git, root, branch, new, old, timeout) -> Result<bool, String>; // false: the ref was not <old>
 pub fn reattach(git, integration, branch, timeout) -> Result<(), String>;
 pub fn read_ref(git, root, refname, timeout) -> Result<Option<String>, String>;
+pub enum RefCheck { Ok, BaseAdvanced { to: String, commits: u32 }, Halt { reason: String } } // decision 21
+pub fn guard_refs(git, root, base_branch, base_sha, run_branch, run_head, timeout) -> Result<RefCheck, String>; // run ref first; then base: equal, ancestor (advanced) or not (rewritten/deleted → Halt)
+pub fn commits_since(git, root, from, to, limit, timeout) -> Result<(Vec<String>, u32), String>; // decision 20: git log --format='%h %an: %s' from..to, at most `limit`, and the total
 pub fn hand_back(git, worktree, run_head, timeout) -> Result<Vec<String>, String>; // conflicted files; empty = clean
 pub fn salvage(git, worktree, reference, message, timeout) -> Result<Option<String>, String>;
 pub fn remove_worktree(git, root, path, timeout) -> Result<(), String>;          // unlock, remove --force, prune
 pub fn delete_branches(git, root, prefix, timeout) -> Result<(), String>;
-pub fn accept(git, root, base_branch, run_branch, message, timeout) -> Result<String, String>;
+pub fn accept(git, root, base_branch, expected_base, run_branch, message, timeout) -> Result<AcceptOutcome, String>;
+pub enum AcceptOutcome { Merged { commit: String }, Conflict { files: Vec<String> } } // Conflict: `git merge --abort` already ran
 pub struct GitQueue;                                   // run/git/queue.rs
 impl GitQueue { pub fn new() -> Self; pub async fn write<T: Send + 'static>(&self, repo: &Path,
                     f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String>; }
@@ -1178,7 +1200,7 @@ pub const SCRUB_NAMES: &[&str] = &["CLAUDECODE"];
 | `MergeCandidate` | run branch head; the integration worktree's `HEAD` | head's parents are `(expected_run_head, task_head)` → `Merged { commit }`; head is `expected_run_head` → `NotStarted` after `reattach` | any other head → `RefMoved` |
 | `HandBack` | `MERGE_HEAD` in the task worktree | present → `HandedBack { files: <conflicted> }`; already a merge commit of the run head → `HandedBack { files: [] }` | `NotStarted` |
 | `RemoveWorktree` | the path; the salvage ref | path gone → `Removed { salvage_ref }` (the ref if it exists) | `NotStarted` |
-| `Accept` | `merge-base --is-ancestor <run branch> <base>` | ancestor → `Finished { outcome: "accepted as <base head7>" }` | `NotStarted` |
+| `Accept` | `merge-base --is-ancestor <run branch> <base>`; `MERGE_HEAD` in `root` | ancestor → `Finished { outcome: "accepted as <base head7>" }` | `MERGE_HEAD` equal to the run branch head (a crash inside a conflicted accept) → `git merge --abort`, then `NotStarted`; otherwise `NotStarted` |
 | `Discard`, `VerifyRefs` | none (idempotent) | — | `NotStarted` |
 
 ### MCP tools (`crates/mcp`, new)
@@ -1265,7 +1287,7 @@ anthrex run retry <run> <task>
 anthrex run override <run> <task> --reason <text>
 anthrex run cancel <run>
 anthrex run resume <run> [--rebaseline]
-anthrex run accept <run> [--yes]
+anthrex run accept <run> [--yes] [--base <sha>]
 anthrex run discard <run> [--confirm <run-id>]
 anthrex mcp --role <worker|reviewer> --run <run> [--task <task>] --window <id> [--socket <path>]   (hidden)
 ```
@@ -1273,7 +1295,7 @@ anthrex mcp --role <worker|reviewer> --run <run> [--task <task>] --window <id> [
 - `--trust-project` sets `RunRequest::Start.trust_project` (decision 53).
 - `--dir` is the existing global flag. `run start` auto-starts the daemon, prints the run id on stdout, and on stderr either `approve with: anthrex run approve <id>` followed by the plan table (`status` format), or `watch with: anthrex run status <id>` with `--yes`.
 - Every run request uses `CliClient::request_with_timeout` with `RUN_REQUEST_TIMEOUT` = 180 s (preflight's six git calls at the 60 s default could exceed a shorter bound; `start` is the slowest request).
-- `accept` asks `merge anthrex/<id>/integration into <base> in <root>? [y/N]` unless `--yes`; `discard` and `reject` ask the user to type the run id unless `--confirm`. A wrong id: `confirmation does not match the run id`, exit 1.
+- `accept` asks `merge anthrex/<id>/integration into <base> in <root>? [y/N]` unless `--yes`. When the reply is a `ConfirmNeeded` with `base_moved` (decision 20), it prints `<base> moved since the run started (<from7>..<to7>, <total> commits):`, the listed commits one per line indented two spaces, `… and <total - 50> more` when capped, and asks `merge onto <base> at <to7> including these commits? [y/N]`; `--yes` does not answer this question, only `--base <to sha>` naming the listed head does (for scripts). A yes resends with `confirm = "<id>@<to>"`. An accept conflict prints the daemon's message and exits 1; `discard` and `reject` ask the user to type the run id unless `--confirm`. A wrong id: `confirmation does not match the run id`, exit 1.
 - `status` text, one block per run, newest first:
 
 ```
@@ -1345,7 +1367,9 @@ Shared test helpers:
 | A second conflict → blocked | `e2e_second_conflict_blocks_the_task` | — |
 | A candidate merge that is red although both branches were green | `e2e_red_candidate_goes_back_to_the_worker` | — |
 | A cancel of a running task with dirty work (salvaged) | `e2e_cancel_of_a_dirty_running_task_is_salvaged` | — |
-| A ref moved behind the engine's back (run halts) | `e2e_moved_run_ref_halts_the_run`, `e2e_moved_base_ref_halts_the_run` | — |
+| The run ref moved behind the engine's back (run halts) | `e2e_moved_run_ref_halts_the_run` | — |
+| The base branch advanced during the run (fast-forward: the run continues, accept lists the new commits for confirmation) | `e2e_base_advanced_during_run_continues_and_accept_lists_it` | — |
+| The base branch rewritten during the run (run halts) | `e2e_base_rewritten_halts_the_run` | — |
 | A daemon killed after each logged intent | `e2e_crash_after_each_intent_kind_reconciles` | — |
 | A rate-limit event halving writers | `e2e_rate_limit_retry_is_not_a_stall_and_a_failed_turn_is_continued` (the event is seen, counted, never read as a turn end or a stall) | halving `max_writers` — M9.5 |
 | A race whose loser is stopped and salvaged | — (salvage itself is covered by the cancel test) | racing — M9.5 |
@@ -1589,8 +1613,10 @@ If a flag, key or event is missing, stop work on the item that uses it, as AGENT
 - `materialize_and_reattach_leave_the_integration_worktree_on_its_branch`: after `materialize(candidate)` `HEAD` is detached at the candidate; after `reattach` `symbolic-ref HEAD` is the run branch.
 - `hand_back_leaves_markers_and_merge_head` (conflict: files returned, `MERGE_HEAD` exists, the file contains `<<<<<<<`); `hand_back_that_is_clean_commits_the_merge` (empty list, `HEAD` is a merge commit).
 - `salvage_of_a_clean_worktree_writes_nothing`; `salvage_captures_tracked_and_untracked_changes_but_not_ignored_files` (the salvage commit's tree contains the modified file and a new file, not an ignored `target/x`); `remove_refuses_nothing_after_salvage` (a locked, dirty worktree is salvaged, unlocked and removed).
-- `accept_requires_the_base_branch_and_a_clean_tree`; `accept_merges_no_ff`; `delete_branches_removes_every_run_branch_but_keeps_salvage_refs`.
+- `accept_requires_the_base_branch_and_a_clean_tree`; `accept_merges_no_ff`; `accept_onto_an_advanced_base_merges_no_ff` (a commit on `main` touching another file; the merge's parents are `(the advanced head, run head)`); `accept_conflict_with_an_advanced_base_aborts_and_leaves_base_untouched` (a commit on `main` changing the same line as the run: `Conflict { files }` names it, `refs/heads/main` and `git status --porcelain` in `root` are exactly as before, no `MERGE_HEAD`); `accept_refuses_when_the_base_moved_again` (`expected_base` stale → error, nothing merged); `delete_branches_removes_every_run_branch_but_keeps_salvage_refs`.
 - `read_ref_reports_a_moved_branch`.
+- `guard_refs_classifies_each_case`, against real `TempRepo` states: both equal → `Ok`; a commit on `main` → `BaseAdvanced { to, commits: 1 }`; `main` reset to a sibling commit (`git reset --hard <base_sha>~` plus a new commit) → `Halt` with `was rewritten`; `main` deleted → `Halt` with `was deleted`; the run branch moved → `Halt` naming it, checked first even when the base also advanced.
+- `commits_since_caps_and_counts`: 55 commits → 50 lines newest first, each `<sha7> <author>: <subject>`, total 55.
 
 **Change.** Implement decisions 20, 21 (the reads) and 36 (the git steps).
 
@@ -1746,7 +1772,9 @@ If a flag, key or event is missing, stop work on the item that uses it, as AGENT
 - `a_clean_hand_back_requeues_without_the_worker`.
 - `second_conflict_blocks_the_task_as_conflict`, and `conflicts` counts are not failures.
 - `red_candidate_is_a_merge_failure`: `CandidateRed` gives rung 1 with `candidate_red_message`.
-- `ref_moved_halts_the_run`: `RefMoved` sets `halted` with the reason; nothing dispatches or merges; `Resume` without rebaseline is refused with the reason; with `rebaseline` it records both values and continues.
+- `ref_moved_halts_the_run`: `RefMoved` (a moved run ref, or a rewritten base) sets `halted` with the reason; nothing dispatches or merges; `Resume` without rebaseline is refused with the reason; with `rebaseline` it records both values, clears `base_moved` and continues.
+- `base_advanced_is_recorded_and_the_run_goes_on`: `BaseAdvanced { to: X, commits: 2 }` during a merge sets `base_moved` (`from == base_sha`, `to == X`, `seen_at == now`) and the attention line, bumps the revision and persists; the state stays `running`, the pending `MergeCandidate` completes with `Merged`, and the next queued task is dispatched; a second `BaseAdvanced` with the same `to` changes nothing (revision unchanged); one with a new `to` replaces it.
+- `accept_conflict_keeps_the_run_complete`: `OpDone AcceptConflict { files }` replies `Refused` with the conflict message, leaves the run `complete` with its branches, and logs it.
 - `completion_checks_refs_then_completes`: all merged → `Op VerifyRefs` → `RefsOk` → `complete`, `WriteReport`; a run head differing from `last_green_candidate` runs `Op Check` in the integration worktree first.
 - `blocked_tasks_keep_the_run_running_with_attention`.
 - `finish_cancels_unstarted_then_completes_when_live_ones_end`; `cancel_kills_salvages_and_completes`.
@@ -1795,7 +1823,7 @@ If a flag, key or event is missing, stop work on the item that uses it, as AGENT
 
 - `format_utc_vectors` (the refreshed M8 brief's three vectors).
 - `report_has_every_section` in order: `# anthrex run <id>`, `Goal:`, state, `approved by`, base and run branch, profile summary (check or `no check command: this run is unverified`), limits, `## Tasks` table (id, title, size, mode, state, rung, bounces, done signal, merge commit), then per task `## <id>: <title>` with notes, route, review route, budget and spend, each proof, each check (tail in a fenced block), each review round with verdict and findings grouped by severity, salvage refs, `merged without approval: <reason>` when set, the history; then `## Log`.
-- `minor_findings_are_listed_even_when_approved`; `turn_end_fallback_is_named`; `halted_and_rebaselined_runs_say_so`; `usage_and_denials_are_reported` (each round's turns, tool calls, billable tokens and denials); `containment_is_reported` (`project settings: excluded`, or `project settings trusted by --trust-project: <paths>`; `worker sandbox: off ([orchestrator] worker_sandbox = false)` when off).
+- `minor_findings_are_listed_even_when_approved`; `turn_end_fallback_is_named`; `halted_and_rebaselined_runs_say_so`; `base_moved_and_accept_conflict_are_reported` (`base <base> moved during the run: <from7>..<to7>, <n> commits, listed at accept`; an aborted accept's files in `## Log`); `usage_and_denials_are_reported` (each round's turns, tool calls, billable tokens and denials); `containment_is_reported` (`project settings: excluded`, or `project settings trusted by --trust-project: <paths>`; `worker sandbox: off ([orchestrator] worker_sandbox = false)` when off).
 
 **Change.** Implement the report; `RunService` writes it on `WriteReport` (M8a.22) through a temp file and a rename, at most once per 500 ms per run.
 
@@ -1973,7 +2001,7 @@ If a flag, key or event is missing, stop work on the item that uses it, as AGENT
    - a signal forwarder on `WindowManager::signals()`, which maps each `WindowSignal` of a run's headless window to `Event::Signal`: `Init`, `TurnStarted`, `ToolUse`, `TurnEnded`, `ApiRetry`, `PermissionDenied` and `ProcessExited` one to one, `SubagentStart` and `SubagentStop` from hooks, and everything else to `Activity`, at most one per window per second;
    - a 1-second ticker feeding `Tick`, running retire checks, and flushing coalesced snapshots and counter-only persists.
 3. The event loop takes the engine lock only around `step` and `snapshot`, then executes effects in decision 43's order with the lock released: `Persist` → `journal::save_run` on `spawn_blocking`, awaited; `Op` → journal intent (awaited), crash injection (decision 48), then the op on its own task (git through `GitQueue` for writes, `spawn_blocking` for everything blocking, `create_headless`/`headless_resume` for sessions after `jitter_ms`, with the Claude binary from `ManagerConfig`'s `claude_bin`/`codex_bin`, so `ANTHREX_CLAUDE_BIN` and `ANTHREX_CODEX_BIN` apply), whose completion appends `done` and sends `OpDone`; `Deliver` → `headless_send` on a per-window task, then `Delivered`; `Interrupt` → `headless_interrupt`; `KillWindow`, `RemoveWindow` → `headless_kill` and removal; `RetireWindow` → close stdin, then a deadline; `WatchWorktree`/`UnwatchWorktree` → `GitRoots`; `WriteReport` → the report; `Publish` → the watch.
-4. `request(Start)` runs preflight on `spawn_blocking`, then decision 53's project-settings check when it applies, parses and builds the run (validation errors joined with `\n` into `Refused`), picks the id, then sends `Start`. `Finish` checks `confirm` first. `Resume { rebaseline: true }` reads both refs before sending the event.
+4. `request(Start)` runs preflight on `spawn_blocking`, then decision 53's project-settings check when it applies, parses and builds the run (validation errors joined with `\n` into `Refused`), picks the id, then sends `Start`. `Finish` checks `confirm` first; for accept it reads `refs/heads/<base>` first and, when the base advanced, builds `ConfirmNeeded.base_moved` with `commits_since` and requires `confirm == "<run id>@<to>"` (decision 20). `Resume { rebaseline: true }` reads both refs before sending the event. A `MergeCandidate` or `VerifyRefs` op whose `guard_refs` returns `BaseAdvanced` sends `Event::BaseAdvanced` before its `OpDone` and carries on (decision 21).
 5. `server.rs`: `GitWiring` built in `lifecycle::run`; `serve` takes it and `Arc<RunService>`; `server/run_api.rs` answers each `RunRequest` on its own spawned task through a clone of the connection's outgoing channel, so a slow git operation never stalls the connection; `Subscribe` starts forwarding the snapshot watch to that connection until `Unsubscribe` or disconnect.
 6. `lifecycle::run`: after `manager.restore`, construct `RunService`, `await restore()` (load, reconcile, `Event::Restore`) before binding the socket; spawn it; call `stop()` before `manager.shutdown()`.
 
@@ -1987,7 +2015,7 @@ If a flag, key or event is missing, stop work on the item that uses it, as AGENT
 
 **Tests first.**
 
-- Unit tests in `run_cmd.rs`: `resolve_run_by_id_suffix_and_prefix`; in `status.rs`: `status_text_matches_the_layout` (a fixed `RunsSnapshot` renders exactly the Interfaces example), `paused_and_halted_lines`, `bounces_column_text`.
+- Unit tests in `run_cmd.rs`: `resolve_run_by_id_suffix_and_prefix`; in `status.rs`: `status_text_matches_the_layout` (a fixed `RunsSnapshot` renders exactly the Interfaces example), `paused_and_halted_lines`, `base_moved_prompt_lists_the_commits` (a `ConfirmNeeded` with 53 commits prints 50 lines and `… and 3 more`), `bounces_column_text`.
 - In `run_cli.rs` with the harness: `start_approve_status_accept` (`run start` prints the id and the approve hint; `run approve`; `run status <id> --json` parses as `RunsSnapshot`; wait for `complete`; `run accept <id> --yes`; state `accepted`, `main` has the work, every `anthrex/<id>/` branch is gone); `reject_needs_the_id`; `discard_keeps_salvage_refs`; `edit_from_a_file` (an edits file cancelling a pending task); `retry_and_override_reach_the_daemon`; `trust_project_flag_reaches_the_daemon`; `accept_of_a_running_run_is_refused` (exit 1, the message).
 
 **Change.** Implement the CLI section. Exit 1 with the daemon's message on every `Refused`.
@@ -2044,7 +2072,8 @@ If a flag, key or event is missing, stop work on the item that uses it, as AGENT
 - `e2e_red_candidate_goes_back_to_the_worker`: `t1` owns `a/**` and adds `a/flag`; `t2` owns `b/**` and adds `b/need-no-flag`; the repo's `check.sh` fails when both `a/flag` and `b/need-no-flag` exist. Both independent, `max_writers = 2`; `t1` merges first (its candidate check passes); `t2`'s task check passes in its own worktree (no `a/flag` there), its candidate check fails; the worker reads `merged cleanly into the run branch, but the check failed on the merged result`, deletes `b/need-no-flag`, `task_done`s, and merges. Assert `bounces.merge == 1`.
 - `e2e_cancel_of_a_dirty_running_task_is_salvaged`: the worker writes an uncommitted `a/wip.txt` with `sh`, then `hang`s; `cancel_task t1` edit; assert `t1` `cancelled`, the worktree path gone, `refs/anthrex/salvage/<id>/t1/1` exists and its tree contains `a/wip.txt`.
 - `e2e_moved_run_ref_halts_the_run`: while `t2` waits in the queue behind a scripted slow check, the test runs `git update-ref refs/heads/anthrex/<id>/integration <some other commit>`; assert `halted` with `refs/heads/anthrex/<id>/integration moved from`, no merge happens; `run resume --rebaseline` continues it to `complete`.
-- `e2e_moved_base_ref_halts_the_run`: the test commits on `main` in the repo while a task works; at its merge the run halts naming `refs/heads/main`.
+- `e2e_base_advanced_during_run_continues_and_accept_lists_it`: two tasks; the test commits `other.txt` on `main` in the repo while `t1` works. Assert `t1` and `t2` both merge, the run is `complete` (never `halted`), `base_moved.to` is the new `main` head and `attention` holds the `base main moved` line. `run accept <id> --yes` alone does not merge: the CLI prints the commit with its author and asks. `run accept <id> --base <new head>` merges; `main`'s merge commit has parents `(new head, run head)` and `other.txt` is still there. Then a second run whose task and a commit on `main` change the same line: accept with `--base` exits 1 with `accept conflicts with`, `main` is unchanged, `root` has no `MERGE_HEAD`, and the run is still `complete`.
+- `e2e_base_rewritten_halts_the_run`: while a task works, the test runs `git update-ref refs/heads/main <a commit that is not a descendant of base_sha>`; at its merge the run halts with `refs/heads/main was rewritten`; `run resume --rebaseline` continues it to `complete`.
 - `e2e_crash_after_each_intent_kind_reconciles`: for each kind in `CreateRunBranch`, `PrepareWorktree`, `CreateWindow`, `VerifyDone`, `Check`, `PrepareReview`, `MergeCandidate`, `RemoveWorktree`: start the daemon with `ANTHREX_TEST_ABORT_AFTER_INTENT=<kind>`, start the green one-task run with `yes`, wait until the daemon process has exited (socket gone), restart it without the variable, `run resume` if the run is `paused`, and wait for `complete`. Assert, for every kind, the same end state as `e2e_green_s_task_runs_to_merged`: one merge on the run branch with the same tree, no task, review or proof worktree left, the integration worktree present and on its branch, no duplicate `anthrex/<id>/t1` branch, and `journal.jsonl` has no intent without a `done` for a completed op.
 - `e2e_daemon_restart_pauses_and_resume_continues`: two independent tasks, `t1` on Claude and `t2` on Codex, with disjoint `owns`. Each worker commits, then `read_message {"expect":"The daemon restarted"}`, then `DONE`. The test waits until both rounds have a `session_id` and their turns have ended, then calls `restart_daemon()`.
   - After the restart: the run is `paused (from running)`, both windows are `kind == Headless` and `Exited`, and no process whose argv holds either session id is alive.
@@ -2129,7 +2158,7 @@ mkdir -p /tmp/anthrex-m8a && cd /tmp/anthrex-m8a && git init -b main demo && cd 
    - `pgrep -fl "claude -p"` shows nothing of this run.
    - `anthrex daemon start`: `run status` shows `paused (from running)`.
    - `anthrex run resume <id>`: `ps` shows `claude -p … --resume <session id>` with `--settings` and `--mcp-config` re-passed, and the conversation view shows `RESUME_WORKER` as a new user turn.
-7. When the run is `complete`, read `REPORT.md`: gates, rounds, severities, done signals, tokens per round. `anthrex run accept <id>` and answer `y`. `git log --oneline -3` on `main` shows the accept merge, and `git branch --list 'anthrex/*'` is empty.
+7. While the run works, commit a one-line change to an unrelated file on `main` in the repository (`git commit` in `root`, as a user would). The run does not halt; `run status` shows the `base main moved` attention line. When the run is `complete`, read `REPORT.md`: gates, rounds, severities, done signals, tokens per round, and the base-moved line. `anthrex run accept <id>`: it lists your commit with your name and asks `merge onto main at <sha7> including these commits?`; answer `y`. `git log --oneline -3` on `main` shows the accept merge above your commit, and `git branch --list 'anthrex/*'` is empty.
 8. Start a second run and let a worker write an uncommitted file. `anthrex run cancel <id>`: the session's process is gone, and `git for-each-ref refs/anthrex/salvage` lists the salvage ref. Then `anthrex run discard <id>` and type the id.
 9. `anthrex daemon stop`. `pgrep -fl "anthrex daemon"`, `pgrep -fl "claude -p"` and `pgrep -fl "codex exec"` show nothing of yours. Remove `/tmp/anthrex-m8a`.
 
@@ -2169,6 +2198,7 @@ The five input classes or failure modes most likely to bite a user that the task
 18. **Protected paths and legitimate work.** A task that must edit `CLAUDE.md` or `.claude/` config must name each file exactly in `owns`. A planner that writes `docs/**` for a docs task that also touches `docs/AGENTS.md` gets a bounce the first time. The warning at `run start` (decision 56) shows this before approval, but only for files that already exist.
 19. **Codex project config is unverified until M8a.1.** If Codex loads project config and the recording misses the mechanism (for example, trust levels that only apply in the interactive TUI), decision 53's Codex branch would be wrong in a way no `fake-agent` test can see. Manual check step 4d is the backstop.
 20. **rmcp API drift.** Do not loosen `=3.4.0`. When a name differs, read the crate source under `~/.cargo/registry/src/*/rmcp-3.4.0/`.
+21. **A busy base branch.** Committing to the base branch during a run no longer halts it (decision 21); the run builds on its recorded `base_sha` and the new base commits are listed at accept for confirmation. Two consequences: the run's check never ran against those commits, so the accept merge is the first time run and base meet — a semantic clash that merges cleanly is not caught by any gate (the list at accept is the user's chance to see it); and a textual clash surfaces only at accept, as an aborted merge the user resolves by hand. A rewritten or deleted base still halts.
 
 ## Follow-ups handled
 
