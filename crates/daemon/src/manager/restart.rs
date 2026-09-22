@@ -253,6 +253,15 @@ impl WindowManager {
     /// `self: &Arc<Self>`, not `&self`, only because phase B calls `Self::kill`, which
     /// needs it for the same reason `kill` itself does.
     pub async fn restart(self: &Arc<Self>, id: u32) -> anyhow::Result<()> {
+        // Ahead of phase A, and for a sharper reason than `create`'s own identical wait
+        // (see its comment): phase B *kills* the live process, and phase C is what brings
+        // one back. Waiting after the kill would leave the user's agent dead for as long
+        // as the startup probe still had to run, and waiting after phase A would hold
+        // `restarting` set for that whole time, refusing every other restart of this
+        // window meanwhile. Nothing has been touched at this point, so a restart held
+        // here is indistinguishable from one that has not been asked for yet.
+        self.config.launch_gate.wait().await;
+
         // Phase A.
         let (was_live, cwd, mut guard) = self.begin_restart(id)?;
 

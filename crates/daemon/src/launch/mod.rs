@@ -2,6 +2,9 @@
 
 pub mod claude;
 pub mod codex;
+mod gate;
+
+pub use gate::LaunchGate;
 
 use proto::{HookSource, Runtime, WindowSpec};
 use std::path::{Path, PathBuf};

@@ -5,7 +5,7 @@ use crate::manager::{ManagerConfig, WindowManager};
 
 mod codex_version;
 use crate::server;
-pub use codex_version::CODEX_PROBE_TIMEOUT;
+pub use codex_version::{CODEX_PROBE_TIMEOUT, PROBE_FINISHED};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -264,6 +264,13 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     // the probe's own 5 s budget) made every auto-spawning entry point report a failed
     // start even though the daemon was starting up fine.
     let codex_bin = config.codex_bin.clone();
+    // The probe's invariant is about *window launches*, so this is what carries it: the
+    // manager waits on this gate at each of its two launch sites, and nothing else in the
+    // daemon does. Every other `ManagerConfig` in the workspace keeps the default
+    // already-open gate (`LaunchGate::default`), so only a daemon started through this
+    // function has a probe to wait for.
+    let launch_gate = crate::launch::LaunchGate::closed();
+    config.launch_gate = launch_gate.clone();
     let (manager, mut events) = WindowManager::new(config);
     // Decision 12/14: every restored window is listed, dormant and viewable before
     // anything can connect.
@@ -280,6 +287,14 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     tracing::info!(socket = %opts.socket_path.display(), pid = std::process::id(), "daemon started");
 
     let shutdown = CancellationToken::new();
+    // The probe's own stop signal, separate from `shutdown` on purpose. `shutdown` is
+    // cancelled at a point in the teardown below that decision 11 fixes exactly (after
+    // `manager.shutdown()`, before the persister is awaited); the probe has to be stopped
+    // *before* any of that, because its child must be killed and reaped while this
+    // process is still alive. Reusing `shutdown` would mean either moving decision 11's
+    // cancel or leaving the probe running through the whole teardown — a token of its own
+    // keeps each cancellation saying exactly one thing.
+    let probe_shutdown = CancellationToken::new();
 
     let pump = manager.clone();
     tokio::spawn(async move {
@@ -319,11 +334,16 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     let persister =
         crate::state::spawn_persister(manager.clone(), state_path.clone(), shutdown.clone());
 
-    // Complete the only version probe before any window launch is accepted — `serve` is
-    // what actually accepts window launches, so immediately before it is where this
-    // invariant is preserved without also holding up the socket bind above (fix wave 4,
-    // item 1).
-    codex_version::check(codex_bin).await;
+    // Complete the only version probe before any window launch is *launched* — which is
+    // what `launch_gate` now says, and all it says. Awaiting the probe here, as this used
+    // to, expressed the same invariant by holding up everything `serve` does, the
+    // handshake included: a client that connected while the probe ran sat unanswered in
+    // the listen backlog, racing its own `proto::HANDSHAKE_TIMEOUT` (5 s) against
+    // `CODEX_PROBE_TIMEOUT` (5 s) — two independent constants, measured 60-140 ms apart
+    // on an idle machine. `serve` starts immediately now; the gate is what still keeps a
+    // window launch behind the probe (`crate::launch::gate`, and the two `wait` calls in
+    // `manager/create.rs` and `manager/restart.rs`).
+    let probe = codex_version::start(codex_bin, launch_gate, probe_shutdown.clone());
 
     let served = server::serve(
         listener,
@@ -335,6 +355,15 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     if let Err(e) = &served {
         tracing::error!(error = %e, "server exited with an error");
     }
+    // First thing in the teardown, before the agents are stopped and long before this
+    // process can exit: the probe runs beside `serve` now, so it can still be holding a
+    // `codex --version` child of its own when a client asks the daemon to stop. That
+    // child is killed and reaped by `ProbeChild::drop`, which only runs if the blocking
+    // closure actually finishes — cancelling and awaiting it here is what guarantees it
+    // does. Costs one poll interval (5 ms) plus the reap, not the probe's remaining
+    // budget, because `probe`'s own loop checks this token on every turn.
+    probe_shutdown.cancel();
+    let _ = probe.await;
     tracing::info!("stopping agents");
     manager.shutdown().await;
 

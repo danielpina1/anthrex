@@ -54,6 +54,15 @@ pub struct ManagerConfig {
     /// and unconfigurable — instead of racing two constants that merely happened not to
     /// coincide.
     pub restart_wait_deadline: Duration,
+    /// The gate both launch paths — [`super::WindowManager::create`]'s phase B and
+    /// [`super::WindowManager::restart`]'s phase C — wait on before they spawn anything.
+    ///
+    /// Defaults to an already-open gate ([`launch::LaunchGate::open_already`]), so every
+    /// manager built anywhere but `lifecycle::run` launches with no gate at all; only
+    /// `lifecycle::run` replaces it with a closed one and hands the Codex version probe
+    /// the job of opening it. See `crate::launch::gate`'s module doc for why the probe
+    /// gates launches specifically rather than everything `server::serve` does.
+    pub launch_gate: launch::LaunchGate,
 }
 
 impl ManagerConfig {
@@ -71,6 +80,7 @@ impl ManagerConfig {
             cleanup_timeout: worktree::CLEANUP_TIMEOUT,
             kill_grace: crate::process::KILL_GRACE,
             restart_wait_deadline: crate::process::KILL_GRACE + Duration::from_secs(2),
+            launch_gate: launch::LaunchGate::open_already(),
         }
     }
 
@@ -101,6 +111,7 @@ impl ManagerConfig {
             cleanup_timeout: worktree::CLEANUP_TIMEOUT,
             kill_grace: crate::process::KILL_GRACE,
             restart_wait_deadline: crate::process::KILL_GRACE + Duration::from_secs(2),
+            launch_gate: launch::LaunchGate::open_already(),
         }
     }
 

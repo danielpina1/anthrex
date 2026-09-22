@@ -132,6 +132,14 @@ impl WindowManager {
             detection_failed: false,
         };
 
+        // Before phase A, not between A and B: a create held here has spent no id and
+        // reserved no name, so a daemon whose startup probe is still running looks
+        // exactly like one that has not been asked to create anything yet. The gate is
+        // open within `lifecycle::CODEX_PROBE_TIMEOUT` of daemon start and forever after
+        // (`crate::launch::gate`), and is open from the start for every manager built
+        // outside `lifecycle::run`.
+        self.config.launch_gate.wait().await;
+
         // Phase A: under the lock, and nothing here can block.
         let (id, reservation) = self.admit(&spec, &roots.project)?;
         let name = reservation.name.clone();
