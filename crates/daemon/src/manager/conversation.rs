@@ -254,34 +254,30 @@ impl WindowManager {
             self.degrade(window_id, entry, Some(DegradeReason::NoTranscriptPath));
             return ReaderStep::Wait;
         };
-        // Consumed on every switch to a new `Tail`, so a flag left from a switch the
-        // reader never saw cannot excuse a later same-session move from its restart.
-        let new_session = |entry: &mut Entry| entry.conversations.take_new_session();
-        // A resumed session's file already holds its earlier turns, so it is opened at
-        // its end (fix round 2, N1/N2); the flag, like `new_session`, is consumed by
-        // whichever new `Tail` comes first.
-        let new_tail = |entry: &mut Entry, path: PathBuf| {
-            if entry.conversations.take_resume() {
-                Tail::at_end(path)
-            } else {
-                Tail::new(path)
-            }
-        };
+        // Both flags are consumed at every step, so one left from a switch the reader
+        // never saw cannot excuse a later same-session move from its restart. Either one
+        // pending means the session changed since the kept `Tail` was made, even when the
+        // path is the same again (re-review 2, I2: `/clear` then `/resume` back while
+        // nobody watched), so that `Tail` is never continued.
+        let at_end = entry.conversations.take_resume();
+        let new_session = entry.conversations.take_new_session();
         match entry.transcript.tail.take() {
-            Some(tail) if tail.path() == path => ReaderStep::Read(tail),
-            Some(_) => {
-                // Another file. A new session's (Claude's `/clear`) is read from its
-                // start with the old session's enrichment kept (review F2); the same
-                // session in another file is a restart, so nothing the old file
-                // enriched outlives it.
-                entry.transcript.restart_next = !new_session(entry);
-                ReaderStep::Read(new_tail(entry, path))
+            Some(tail) if tail.path() == path && !at_end && !new_session => {
+                return ReaderStep::Read(tail);
             }
-            None => {
-                new_session(entry);
-                ReaderStep::Read(new_tail(entry, path))
-            }
+            // Another file. A new session's (Claude's `/clear`) is read from its start
+            // with the old session's enrichment kept (review F2); the same session in
+            // another file is a restart, so nothing the old file enriched outlives it.
+            Some(tail) if tail.path() != path => entry.transcript.restart_next = !new_session,
+            _ => {}
         }
+        // A resumed session's file already holds its earlier turns, so it is opened at
+        // its end (fix round 2, N1/N2).
+        ReaderStep::Read(if at_end {
+            Tail::at_end(path)
+        } else {
+            Tail::new(path)
+        })
     }
 
     /// Applies one pass's outcome and takes the tail back. The records enrich the root

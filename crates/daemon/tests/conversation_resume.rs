@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use std::io::Write;
 use std::path::Path;
 use std::time::{Duration, Instant};
-use support::{Client, TestDaemon, claude_window, start_daemon};
+use support::{Client, TestDaemon, claude_window, start_daemon, start_daemon_configured};
 
 /// One poll interval and one full pass (`conversation/watch.rs`,
 /// `transcript/reader.rs`), twice, since a switch can take a pass on the old file first,
@@ -299,4 +299,91 @@ async fn the_readers_first_tail_consumes_the_new_session_flag() {
         owned(&[&[]]),
         "the same session moved files: a restart, so b's prose is gone"
     );
+}
+
+/// Re-review 2, I2: the reader stops while on A and keeps its `Tail`. With nobody
+/// watching, the window `/clear`s to B and `/resume`s back to A, and the resumed turn is
+/// taken. When a viewer returns, the kept `Tail` on A must not simply continue: its
+/// offset and prompt count are from before the switches.
+async fn a_stale_tail(next_prompt: &str) {
+    let d = start_daemon_configured(true, |c| c.conversation.linger_secs = 0).await;
+    let id = claude_window(&d, "stale").await;
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (dir.path().join("a.jsonl"), dir.path().join("b.jsonl"));
+    {
+        let _c = subscribed(&d, id).await;
+        append(
+            &a,
+            &[
+                prompt_line("sess-A", "continue"),
+                reply_line("sess-A", "A reply 1"),
+            ],
+        );
+        session_start(&d, id, "sess-A", "startup", &a);
+        turn(&d, id, "sess-A", "continue");
+        until_reply(&d, id, 0).await;
+    }
+    until("the reader stopped", || {
+        !d.manager.conversation_reader_running(id)
+    })
+    .await;
+
+    append(
+        &b,
+        &[
+            prompt_line("sess-B", "hello B"),
+            reply_line("sess-B", "B reply 1"),
+        ],
+    );
+    session_start(&d, id, "sess-B", "clear", &b);
+    turn(&d, id, "sess-B", "hello B");
+    session_start(&d, id, "sess-A", "resume", &a);
+    turn(&d, id, "sess-A", "continue");
+    append(
+        &a,
+        &[
+            prompt_line("sess-A", "continue"),
+            reply_line("sess-A", "A reply 2 after resume"),
+        ],
+    );
+
+    let _c = subscribed(&d, id).await;
+    until_reading(&d, id, &a).await;
+    turn(&d, id, "sess-A", next_prompt);
+    append(
+        &a,
+        &[
+            prompt_line("sess-A", next_prompt),
+            reply_line("sess-A", "A reply 3 to next"),
+        ],
+    );
+    // Two more passes, so anything the file can still move has moved.
+    let read_again = Instant::now() + (TRANSCRIPT_POLL + TRANSCRIPT_READ_TIMEOUT) * 2;
+    while Instant::now() < read_again {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let own = [
+        "A reply 1",
+        "B reply 1",
+        "A reply 2 after resume",
+        "A reply 3 to next",
+    ];
+    let got = replies(&d, id);
+    assert_eq!(got.len(), own.len(), "{got:?}");
+    for (i, (prose, mine)) in got.iter().zip(own).enumerate() {
+        assert!(
+            prose.is_empty() || prose == &[mine.to_string()],
+            "turn {i} shows {prose:?}, not its own {mine:?} (all: {got:?})"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_stale_tail_on_a_resumed_file_never_shifts_a_reply_repeated_prompt() {
+    a_stale_tail("continue").await;
+}
+
+#[tokio::test]
+async fn a_stale_tail_on_a_resumed_file_never_shifts_a_reply_new_prompt() {
+    a_stale_tail("different").await;
 }
