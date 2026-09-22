@@ -13,14 +13,17 @@ that were not shared one defect shape.
 ## The defect shape: a bound at or below the code's own legal worst case
 
 This is a defect independent of machine speed — it needs no slow CI runner to be wrong,
-only for the code under test to use the budget it is legitimately entitled to. Three sites
-had this shape; two are fixed, one is intentional and correct as written.
+only for the code under test to use the budget it is legitimately entitled to. It is also
+independent of language: the shape is "a bound at or below a constant it depends on,"
+and that relationship does not stop existing at a process boundary. Four sites had this
+shape; three are fixed, one is intentional and correct as written.
 
 | Test | Site | Bound (as found) | The code's own legal worst case | Status |
 |---|---|---|---|---|
 | `a_real_write_triggers_a_probe`, `a_commit_in_a_linked_worktree_triggers_a_probe` | `daemon/tests/git_registry.rs` (`wait_for_state`) | `secs(5)` | `PROBE_TIMEOUT` (5s) + `DEBOUNCE` (300ms) + watcher latency, on top | **Fixed** (earlier in this branch, before this work): the deadline is now `PROBE_TIMEOUT + WALL_CLOCK_SLACK` (write) and `PROBE_TIMEOUT + DEBOUNCE + WALL_CLOCK_SLACK` (linked-worktree commit) — derived from the same constants the code runs against, not a literal that can coincide with them again. |
 | `without_a_daemon_it_exits_zero_silently_and_fast` | `cli/tests/hook_command.rs:22` (constant now `LIMIT`) | `< 1s` | `HOOK_DEADLINE` (1s), plus a real process spawn on top | **Fixed** (this work): widened to `LIMIT` (3s). `HOOK_DEADLINE` cannot be imported into the test (`anthrex` is a binary-only crate, no `lib.rs`), so the coupling is a comment, not a compiler-enforced constant — see "standing rules" below for why that is still the right shape of fix. |
 | `stderr_is_bounded_and_does_not_block_the_child` | `daemon/tests/subprocess.rs:~101` | `< 10s` | injected timeout, `10s` | **Not a defect — left alone.** The bound *is* the injected timeout, and the assertion's whole content is "the child did not hit its own timeout." Zero margin here is the correct thing to say, not tightness to fix. |
+| `run_cmd`'s calls wrapping `anthrex restart` and `anthrex daemon stop` | `scripts/pty-smoke.py:346` (`run_cmd`'s default `timeout`), used at 9 call sites (3 `restart`, 6 `daemon stop`) | `15s` (the default every one of those 9 call sites fell through to, unchanged) | `restart`: `HANDSHAKE_TIMEOUT` (5s) + `RESTART_REQUEST_TIMEOUT` (15s) = 20s. `daemon stop`: `HANDSHAKE_TIMEOUT` (5s) + `HUP_GRACE` (1s) + `KILL_GRACE` (3s) + `wait_released`'s own 10s cap = 19s | **Fixed** (whole-branch-review m16, fix wave 12): the third instance of this shape in the workspace, and the first found at a language boundary — every earlier sweep for it only ever read Rust constants, never the Python that wraps the binary they belong to. `restart`'s old bound was not merely below its own worst case, it was *numerically equal* to `RESTART_REQUEST_TIMEOUT` (15s), the exact coincidence standing rule 1 already named. Both call sites now pass an explicit `RESTART_CMD_TIMEOUT` / `DAEMON_STOP_CMD_TIMEOUT` (40s each), derived and commented the same way as the Rust-side constants they cannot literally import (same shape as `hook_command.rs`'s `LIMIT`, below — a comment-enforced coupling, not a compiler-enforced one, because these are two different binaries in two different languages). |
 
 A related but distinct case, from `an_exited_window_is_removed_without_waiting`
 (`daemon/tests/manager_worktree/removal/ordering.rs`): its old `< 1s` bound was not below
@@ -101,6 +104,21 @@ close to genuine danger today.
    next to a `PROBE_TIMEOUT` of `Duration::from_secs(5)` is not "tight," it is arithmetic
    equality with the thing it is supposed to bound. Write `PROBE_TIMEOUT + slack`, not the
    number you compute `PROBE_TIMEOUT` currently evaluates to.
+
+   **This rule does not stop at a process or language boundary.** `scripts/pty-smoke.py`
+   drives the real `anthrex` binary from Python, and its own `run_cmd` timeouts wrap the
+   exact same CLI request/reply cycles the Rust-side constants above are named for —
+   `RESTART_REQUEST_TIMEOUT`, `HANDSHAKE_TIMEOUT`, `KILL_GRACE` and the rest all still
+   apply to how long that subprocess can legitimately take, whether the thing waiting on
+   it is another `tokio::select!` or a Python `subprocess.run(timeout=...)`. A sweep that
+   only greps Rust source for this defect shape will not find an instance that lives in a
+   `.py` file; whole-branch-review m16 (`pty-smoke.py:346`) was missed by two prior sweeps
+   for exactly that reason. When a Rust constant cannot be imported into the wrapper
+   (different language, different binary), the coupling has to be a comment instead of a
+   compiler-enforced reference — see the table's `hook_command.rs` row above, or
+   `pty-smoke.py`'s own `RESTART_CMD_TIMEOUT`/`DAEMON_STOP_CMD_TIMEOUT` — but the rule
+   itself, "derive it, don't pick it," is unchanged by which side of the boundary the
+   bound lives on.
 
 2. **A test that fails on timing has a wrong assumption, not bad luck.** Every negative- or
    thin-margin site in this investigation had a comment or a name explaining what should

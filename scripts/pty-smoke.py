@@ -125,6 +125,34 @@ def ensure_config_path_absent():
 # tear down, not tuned close to the real (sub-second) cost.
 TUI_QUIT_TIMEOUT = 15.0
 
+# Whole-branch-review m16 / timing-budgets class 1, its third instance and the first at
+# the Rust/Python language boundary: `run_cmd`'s own default `timeout` (below) is 15s,
+# and two of the CLI subcommands this script wraps with `run_cmd` have a legal worst
+# case *above* that default — one of them, `restart`, has a worst case built in part
+# from a constant that is *numerically equal* to the old 15s default, the exact
+# coincidence `docs/timing-budgets.md`'s standing rule 1 exists to rule out, just never
+# checked on this side of the process boundary before. Every earlier sweep for this
+# defect shape only ever read Rust constants; nothing had read the Python that wraps
+# them.
+#
+# `anthrex restart`'s own client-side ceiling: `HANDSHAKE_TIMEOUT` (5s,
+# `crates/proto/src/lib.rs`) to connect, then `RESTART_REQUEST_TIMEOUT` (15s,
+# `crates/cli/src/client.rs`) for the reply — the CLI gives up and reports its own
+# timeout at 5 + 15 = 20s. Neither constant can be imported here (this is a separate
+# process across a language boundary, the same reason `hook_command.rs`'s `LIMIT`
+# couples to `HOOK_DEADLINE` only by comment), so, same as that site, the coupling is
+# recorded here instead: change either Rust constant, update this comment and the value
+# below.
+RESTART_CMD_TIMEOUT = 40.0
+
+# `anthrex daemon stop`'s own worst case: `HANDSHAKE_TIMEOUT` (5s) to connect, then the
+# daemon's shutdown sequence escalating any still-live window through `HUP_GRACE` (1s,
+# `crates/daemon/src/process.rs`) then `KILL_GRACE` (3s) before the final flush and
+# socket unlink can even start, then the CLI's own post-shutdown poll,
+# `wait_released`, capped at 10s (`crates/cli/src/main.rs`'s `DaemonAction::Stop`) —
+# 5 + 1 + 3 + 10 = 19s before the CLI itself gives up and reports a timeout.
+DAEMON_STOP_CMD_TIMEOUT = 40.0
+
 
 def fail(msg):
     print(f"FAIL: {msg}")
@@ -344,6 +372,14 @@ class PtyProc:
 
 
 def run_cmd(args, expect_ok=True, timeout=15, env=None):
+    # The default above is generous for the ordinary fast commands most call sites
+    # wrap (`ls`, `new`, `rename`, `daemon status`: tens to low hundreds of ms on the
+    # Rust side, nothing near 15s). It is *not* generous enough for `restart` or
+    # `daemon stop` — pass `RESTART_CMD_TIMEOUT` / `DAEMON_STOP_CMD_TIMEOUT` (above)
+    # explicitly for those, derived from the real Rust-side worst case each one has,
+    # rather than letting them silently fall through to a default that was never sized
+    # for them (whole-branch-review m16 / this file's own recurrence of timing-budgets
+    # class 1, at the Rust/Python language boundary).
     result = subprocess.run(
         [BIN] + args, cwd=REPO, env=env if env is not None else ENV, capture_output=True, text=True, timeout=timeout
     )
@@ -827,7 +863,7 @@ def run_resume_stage():
         os.remove(claude_log)
         os.remove(codex_log)
 
-        run_cmd(["daemon", "stop"])
+        run_cmd(["daemon", "stop"], timeout=DAEMON_STOP_CMD_TIMEOUT)
         status_result = run_cmd(["daemon", "status"])
         if "not running" not in status_result.stdout:
             fail(
@@ -840,8 +876,8 @@ def run_resume_stage():
         # entries exist only because `restore()` rebuilt them from `state.json` on
         # this fresh start, dormant, with the session id the hooks above saved.
         run_cmd(["daemon", "start"], env=resume_env)
-        run_cmd(["restart", "resume-claude"])
-        run_cmd(["restart", "resume-codex"])
+        run_cmd(["restart", "resume-claude"], timeout=RESTART_CMD_TIMEOUT)
+        run_cmd(["restart", "resume-codex"], timeout=RESTART_CMD_TIMEOUT)
 
         claude_argv = wait_for_argv_log(claude_log)
         codex_argv = wait_for_argv_log(codex_log)
@@ -865,7 +901,7 @@ def run_resume_stage():
 
         run_cmd(["rm", "resume-claude"])
         run_cmd(["rm", "resume-codex"])
-        run_cmd(["daemon", "stop"])
+        run_cmd(["daemon", "stop"], timeout=DAEMON_STOP_CMD_TIMEOUT)
         status_result = run_cmd(["daemon", "status"])
         if "not running" not in status_result.stdout:
             fail(
@@ -1086,7 +1122,7 @@ def main():
     # dying and coming back, so this is the same stop-and-verify shape the old final
     # stage used, just moved earlier: it is the "last stop" the brief calls stage 9,
     # kept in place immediately before the stages that depend on it.
-    stop_result = run_cmd(["daemon", "stop"])
+    stop_result = run_cmd(["daemon", "stop"], timeout=DAEMON_STOP_CMD_TIMEOUT)
     print(f"daemon stop output: {stop_result.stdout.strip()!r}")
     status_result = run_cmd(["daemon", "status"])
     if "not running" not in status_result.stdout:
@@ -1119,7 +1155,7 @@ def main():
     if "kept" not in renamed:
         fail(f"`anthrex ls` did not show 'kept' after renaming shell-1:\n{renamed}")
 
-    run_cmd(["restart", "kept"])
+    run_cmd(["restart", "kept"], timeout=RESTART_CMD_TIMEOUT)
 
     proc5 = PtyProc([BIN])
     proc5.wait_for("agents", label="stage-10 attach banner")
@@ -1141,7 +1177,7 @@ def main():
     proc6 = PtyProc([BIN])
     proc6.wait_for("agents", label="stage-11 attach banner")
     proc6.wait_for("kept", label="'kept' listed on stage-11 attach")
-    run_cmd(["daemon", "stop"])
+    run_cmd(["daemon", "stop"], timeout=DAEMON_STOP_CMD_TIMEOUT)
     proc6.wait_for(
         "DISCONNECTED", label="disconnected badge after the daemon stopped under the client"
     )
@@ -1196,7 +1232,7 @@ def main():
     proc6b = PtyProc([BIN])
     proc6b.wait_for("agents", label="stage-11b attach banner")
     proc6b.wait_for("kept", label="'kept' listed on stage-11b attach")
-    run_cmd(["daemon", "stop"])
+    run_cmd(["daemon", "stop"], timeout=DAEMON_STOP_CMD_TIMEOUT)
     link_lost_at = time.monotonic()
     proc6b.wait_for(
         "DISCONNECTED",
@@ -1274,7 +1310,7 @@ def main():
     print("ok: the client could still detach cleanly after giving up and reconnecting")
 
     print("== stage 12: stop the daemon, verify status ==")
-    stop_result = run_cmd(["daemon", "stop"])
+    stop_result = run_cmd(["daemon", "stop"], timeout=DAEMON_STOP_CMD_TIMEOUT)
     print(f"daemon stop output: {stop_result.stdout.strip()!r}")
     status_result = run_cmd(["daemon", "status"])
     if "not running" not in status_result.stdout:
