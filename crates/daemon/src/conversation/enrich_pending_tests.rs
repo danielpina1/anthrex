@@ -354,3 +354,30 @@ fn reset_clears_the_pending_buffer() {
     super::reset(&mut draft);
     assert_eq!(draft.enrichment.pending(), (0, 0));
 }
+
+/// `apply` retries the buffer first, so a record parked before a hook that reached the
+/// draft without `retry` (here `build::apply` alone) still lands with the next batch,
+/// ahead of that batch's own records.
+#[test]
+fn apply_retries_the_buffer_before_its_own_records() {
+    let mut draft = draft_of(&[prompt("p-zero"), stop()]);
+    enrich(
+        &mut draft,
+        &[user(0, "p-zero"), user(1, "p-one"), said(1, "first")],
+    );
+    build::apply(
+        &mut draft,
+        proto::Runtime::Claude,
+        &prompt("p-one"),
+        None,
+        1,
+        Instant::now(),
+        Caps::default(),
+    );
+    assert!(enrich(&mut draft, &[said(1, "second")]));
+    assert_eq!(
+        leading_text(&draft.turns, 3).as_deref(),
+        Some("first\n\nsecond")
+    );
+    assert_eq!(draft.enrichment.pending(), (0, 0));
+}
