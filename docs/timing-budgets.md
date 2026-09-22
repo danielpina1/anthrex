@@ -32,6 +32,20 @@ sweep found sitting in the same file the previous sweep had just edited.
 | `run_worktree_form_stage`'s worktree-create wait, dirty-tree prompt wait, and forced-removal poll (the TUI half of the same feature, one function below the row above) | `scripts/pty-smoke.py`'s `wait_for_focused_window`/`wait_for` helper default (10s, ×3) and one hand-rolled `deadline = time.monotonic() + 10.0` | `10s` at all four sites | create wait: `DETECT_TIMEOUT` (5s) + `OPERATION_TIMEOUT` (30s) = 35s. Dirty-tree wait: `OPERATION_TIMEOUT` (30s). Forced-removal poll: `OPERATION_TIMEOUT` (30s) + `KILL_GRACE` (3s) = 33s | **Fixed** (final-gate finding F2a): the fifth instance, and the third at the language boundary. These waits drive the *same* daemon create/remove operations as the row above, just through the TUI's broadcast protocol, which has no client-side reply ceiling of its own to truncate the daemon's real budget — but they are `wait_for`/`wait_for_focused_window` calls and a bare `deadline =` loop, neither the `run_cmd` nor the `timeout=` shape either earlier sweep grepped for, so both missed them, including the sweep that produced the row above in the same file. Fixed with a shared `WORKTREE_FORM_TIMEOUT` (50s) covering all four sites. |
 | `run_cmd`'s own default `timeout`, wrapping `anthrex new` at the three call sites that pass no explicit timeout | `scripts/pty-smoke.py`'s `run_cmd(args, expect_ok=True, timeout=15, ...)` | `15s` — **numerically equal** to `new`'s own worst case | `ensure_daemon` (`SPAWN_HANDOFF_GRACE` 0.25s + `ENSURE_DAEMON_SOCKET_WAIT` 3s = 3.25s) + `CliClient::connect` (`HANDSHAKE_TIMEOUT` 5s) + `request_with_timeout` (`CREATE_WINDOW_REPLY_TIMEOUT` 7s) = 15.25s | **Fixed** (final-gate finding F2b): the sixth instance — the exact "bound equals what it wraps" shape standing rule 1 exists to forbid, and sharper than a missed site: the fix wave that produced the two rows above **rewrote this default's own comment** and reaffirmed `new` as safe, reasoning from observed cost ("tens to low hundreds of ms") rather than from the legal worst case the code actually allows. Fixed by raising the default to 20s, with the 15.25s derivation now in the comment it replaces. |
 
+### Open, from the codex-probe launch-gate fix (2026-09-22)
+
+One row the fix that added `daemon::launch::LaunchGate` could not close itself, because
+it lives in a file that change was asked not to touch:
+
+| Test | Site | Bound (as found) | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `run_cmd`'s own default `timeout`, wrapping `anthrex new` at the three call sites that pass no explicit timeout | `scripts/pty-smoke.py`'s `run_cmd(args, expect_ok=True, timeout=20, ...)` | `20s` | `ensure_daemon` (3.25s) + `HANDSHAKE_TIMEOUT` (5s) + `CREATE_WINDOW_REPLY_TIMEOUT`, which the launch gate raised from 7s to **12s** (`LAUNCH_GATE_WAIT` 5 + `DETECT_TIMEOUT` 5 + `CREATE_REPLY_ALLOWANCE` 2) = **20.25s** | **Open.** The seventh instance of this shape, and the first produced by a change to a *daemon* constant rather than by a bound being chosen badly: `run_cmd`'s 20s was correctly derived against the old 15.25s worst case (finding F2b) and went negative when `WindowManager::create` gained a wait the CLI budget then had to cover. ~28s restores F2b's own ~38% margin. Unreachable in that script as written — its `ANTHREX_CODEX_BIN` is `fake-agent`, which answers `--version` in milliseconds, so the gate term is never actually paid — but standing rule 1 exists precisely to stop "observed cost" from being the argument, and F2b is the row where reasoning that way is recorded as the error. |
+
+The same fix's own sweep found two production-side instances of the wider behaviour
+("a client deadline that must outlast a server-side startup step") that are not test
+bounds and so are recorded in
+`docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md` instead.
+
 A related but distinct case, from `an_exited_window_is_removed_without_waiting`
 (`daemon/tests/manager_worktree/removal/ordering.rs`): its old `< 1s` bound was not below
 the code's legal worst case (the removal has no timeout of its own to butt up against),
