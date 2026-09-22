@@ -24,6 +24,7 @@ shape; three are fixed, one is intentional and correct as written.
 | `without_a_daemon_it_exits_zero_silently_and_fast` | `cli/tests/hook_command.rs:22` (constant now `LIMIT`) | `< 1s` | `HOOK_DEADLINE` (1s), plus a real process spawn on top | **Fixed** (this work): widened to `LIMIT` (3s). `HOOK_DEADLINE` cannot be imported into the test (`anthrex` is a binary-only crate, no `lib.rs`), so the coupling is a comment, not a compiler-enforced constant — see "standing rules" below for why that is still the right shape of fix. |
 | `stderr_is_bounded_and_does_not_block_the_child` | `daemon/tests/subprocess.rs:~101` | `< 10s` | injected timeout, `10s` | **Not a defect — left alone.** The bound *is* the injected timeout, and the assertion's whole content is "the child did not hit its own timeout." Zero margin here is the correct thing to say, not tightness to fix. |
 | `run_cmd`'s calls wrapping `anthrex restart` and `anthrex daemon stop` | `scripts/pty-smoke.py:346` (`run_cmd`'s default `timeout`), used at 9 call sites (3 `restart`, 6 `daemon stop`) | `15s` (the default every one of those 9 call sites fell through to, unchanged) | `restart`: `HANDSHAKE_TIMEOUT` (5s) + `RESTART_REQUEST_TIMEOUT` (15s) = 20s. `daemon stop`: `HANDSHAKE_TIMEOUT` (5s) + `HUP_GRACE` (1s) + `KILL_GRACE` (3s) + `wait_released`'s own 10s cap = 19s | **Fixed** (whole-branch-review m16, fix wave 12): the third instance of this shape in the workspace, and the first found at a language boundary — every earlier sweep for it only ever read Rust constants, never the Python that wraps the binary they belong to. `restart`'s old bound was not merely below its own worst case, it was *numerically equal* to `RESTART_REQUEST_TIMEOUT` (15s), the exact coincidence standing rule 1 already named. Both call sites now pass an explicit `RESTART_CMD_TIMEOUT` / `DAEMON_STOP_CMD_TIMEOUT` (40s each), derived and commented the same way as the Rust-side constants they cannot literally import (same shape as `hook_command.rs`'s `LIMIT`, below — a comment-enforced coupling, not a compiler-enforced one, because these are two different binaries in two different languages). |
+| `run_worktree_cli_stage`'s `anthrex new --worktree` (×2) and `anthrex rm --worktree` | `scripts/pty-smoke.py:548-551`, `:577-581`, `:585` (a bare `timeout=60` keyword argument at each site, not a call to a named helper) | `60s` at all three | `new --worktree`: `ENSURE_DAEMON_SOCKET_WAIT` (3s) + `HANDSHAKE_TIMEOUT` (5s) + `WORKTREE_REQUEST_TIMEOUT` (57s) = 65s. `rm --worktree`: `HANDSHAKE_TIMEOUT` (5s) + `WORKTREE_REQUEST_TIMEOUT` (57s) = 62s | **Fixed** (fix-wave-12-re-review Major 2): the fourth instance of this shape in the workspace, and the second found at the Rust/Python language boundary. The same fix wave that landed `RESTART_CMD_TIMEOUT` / `DAEMON_STOP_CMD_TIMEOUT` (the row above) added `HANDSHAKE_TIMEOUT` to those two paths in that very commit, but never re-checked these three worktree sites against the new total — its own sweep enumerated `run_cmd` call sites (the *construct*) rather than every wait whose bound must exceed a daemon budget (the *behaviour*), and these three sat as a bare `timeout=` keyword argument, not a `run_cmd`/`RESTART_CMD_TIMEOUT`-shaped call, so they matched neither grep. Fixed with a derived `WORKTREE_CMD_TIMEOUT` (90s) applied at all three sites; `run_cmd` was also given a `try`/`except subprocess.TimeoutExpired` so an exceeded bound reports through `fail()` and names the command, rather than killing the whole suite with a traceback that blames the script. |
 
 A related but distinct case, from `an_exited_window_is_removed_without_waiting`
 (`daemon/tests/manager_worktree/removal/ordering.rs`): its old `< 1s` bound was not below
@@ -119,6 +120,20 @@ close to genuine danger today.
    `pty-smoke.py`'s own `RESTART_CMD_TIMEOUT`/`DAEMON_STOP_CMD_TIMEOUT` — but the rule
    itself, "derive it, don't pick it," is unchanged by which side of the boundary the
    bound lives on.
+
+   **Sweep by behaviour, not by construct.** A sweep that greps for a named helper
+   (`run_cmd`, `RESTART_CMD_TIMEOUT`-shaped call sites) finds every instance that
+   happens to share that helper's shape and silently skips every instance that does the
+   same thing a different way — a bare `subprocess.run(..., timeout=60)`, a plain
+   `timeout=` keyword argument, a hand-rolled deadline loop. `run_worktree_cli_stage`'s
+   three worktree-CLI sites (the table row above this one) are exactly that: the fix
+   wave that added `HANDSHAKE_TIMEOUT` to `restart` and `daemon stop`'s bounds, in the
+   very same commit, never re-derived these three because they were not `run_cmd` calls
+   wrapping a named constant — they were a bare `timeout=60` at each site. The rule to
+   sweep for is "every wait whose bound must exceed a daemon budget," not "every call to
+   this particular wrapper" — the construct is an implementation detail of how a given
+   site happens to be written today, and a future site can and will pick a different
+   one.
 
 2. **A test that fails on timing has a wrong assumption, not bad luck.** Every negative- or
    thin-margin site in this investigation had a comment or a name explaining what should

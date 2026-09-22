@@ -163,6 +163,32 @@ RESTART_CMD_TIMEOUT = 40.0
 # 5 + 1 + 3 + 10 = 19s before the CLI itself gives up and reports a timeout.
 DAEMON_STOP_CMD_TIMEOUT = 40.0
 
+# fix-wave-12-re-review Major 2: `run_worktree_cli_stage`'s three `anthrex new
+# --worktree` / `anthrex rm --worktree` calls sat at a bare `timeout=60`, below their
+# own legal worst case, because the sweep above enumerated `run_cmd` *call sites*
+# rather than *every wait whose bound must exceed a daemon budget* — these three never
+# matched the construct the previous sweep grepped for (they were plain `timeout=`
+# keyword args, not a distinct wrapper function), so they were missed even though the
+# rule (`docs/timing-budgets.md` standing rule 1) applies to them exactly as it does to
+# `RESTART_CMD_TIMEOUT` / `DAEMON_STOP_CMD_TIMEOUT` above. Per-site arithmetic, from the
+# constants each path actually depends on (`crates/cli/src/client.rs`'s
+# `WORKTREE_REQUEST_TIMEOUT`, `crates/proto/src/lib.rs`'s `HANDSHAKE_TIMEOUT`,
+# `crates/tui/src/spawn.rs`'s `ENSURE_DAEMON_SOCKET_WAIT`):
+#
+# - `anthrex new --worktree` (`main.rs`'s `Command::New`): calls `ensure_daemon` first
+#   (worst case `ENSURE_DAEMON_SOCKET_WAIT`, 3s, paid whenever the daemon is not yet up
+#   at that exact moment — a legal state, not a bug), then `CliClient::connect` (worst
+#   case `HANDSHAKE_TIMEOUT`, 5s), then `WORKTREE_REQUEST_TIMEOUT` (57s) for the reply —
+#   3 + 5 + 57 = **65s**.
+# - `anthrex rm --worktree` (`main.rs`'s `Command::Rm`): no `ensure_daemon` call (a
+#   removal never spawns a daemon), so just `CliClient::connect` (5s) +
+#   `WORKTREE_REQUEST_TIMEOUT` (57s) = **62s**.
+#
+# Both exceed the previous `timeout=60`. The bound below is the larger of the two (65s)
+# plus the same shape of margin `RESTART_CMD_TIMEOUT` / `DAEMON_STOP_CMD_TIMEOUT` carry
+# over their own worst cases above, rounded up to 90s.
+WORKTREE_CMD_TIMEOUT = 90.0
+
 
 def fail(msg):
     print(f"FAIL: {msg}")
@@ -384,15 +410,34 @@ class PtyProc:
 def run_cmd(args, expect_ok=True, timeout=15, env=None):
     # The default above is generous for the ordinary fast commands most call sites
     # wrap (`ls`, `new`, `rename`, `daemon status`: tens to low hundreds of ms on the
-    # Rust side, nothing near 15s). It is *not* generous enough for `restart` or
-    # `daemon stop` — pass `RESTART_CMD_TIMEOUT` / `DAEMON_STOP_CMD_TIMEOUT` (above)
-    # explicitly for those, derived from the real Rust-side worst case each one has,
-    # rather than letting them silently fall through to a default that was never sized
-    # for them (whole-branch-review m16 / this file's own recurrence of timing-budgets
-    # class 1, at the Rust/Python language boundary).
-    result = subprocess.run(
-        [BIN] + args, cwd=REPO, env=env if env is not None else ENV, capture_output=True, text=True, timeout=timeout
-    )
+    # Rust side, nothing near 15s). It is *not* generous enough for `restart`,
+    # `daemon stop`, or a worktree `new`/`rm` — pass `RESTART_CMD_TIMEOUT` /
+    # `DAEMON_STOP_CMD_TIMEOUT` / `WORKTREE_CMD_TIMEOUT` (above) explicitly for those,
+    # derived from the real Rust-side worst case each one has, rather than letting them
+    # silently fall through to a default that was never sized for them
+    # (whole-branch-review m16 / this file's own recurrence of timing-budgets class 1,
+    # at the Rust/Python language boundary).
+    #
+    # fix-wave-12-re-review Major 2: `subprocess.run`'s own `timeout` raises
+    # `TimeoutExpired` on expiry, which this used to leave uncaught — a bound exceeded
+    # (even a correctly-sized one, under real contention) used to kill the whole suite
+    # with a Python traceback pointing at this line, blaming the script rather than
+    # naming which `anthrex` invocation actually ran out of time. Caught here and
+    # reported through `fail()` like every other failure in this script.
+    try:
+        result = subprocess.run(
+            [BIN] + args,
+            cwd=REPO,
+            env=env if env is not None else ENV,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as error:
+        fail(
+            f"`anthrex {' '.join(args)}` did not finish within {timeout}s "
+            f"(stdout so far: {error.stdout!r}, stderr so far: {error.stderr!r})"
+        )
     if expect_ok and result.returncode != 0:
         fail(f"`anthrex {' '.join(args)}` exited {result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}")
     return result
@@ -547,7 +592,7 @@ def run_worktree_cli_stage(repo):
     branch = "smoke/cli"
     run_cmd(
         ["new", "--runtime", "shell", "--name", "wt-cli", "--dir", repo, "--worktree", branch],
-        timeout=60,
+        timeout=WORKTREE_CMD_TIMEOUT,
     )
     listed = run_cmd(["ls"]).stdout
     if "wt-cli" not in listed or branch not in listed:
@@ -577,12 +622,12 @@ def run_worktree_cli_stage(repo):
     dup = run_cmd(
         ["new", "--runtime", "shell", "--name", "wt-dup", "--dir", repo, "--worktree", branch],
         expect_ok=False,
-        timeout=60,
+        timeout=WORKTREE_CMD_TIMEOUT,
     )
     if dup.returncode == 0 or "already checked out" not in dup.stderr:
         fail(f"a duplicate worktree create should have failed with 'already checked out':\n{dup.stderr}")
 
-    run_cmd(["rm", "wt-cli", "--worktree"], timeout=60)
+    run_cmd(["rm", "wt-cli", "--worktree"], timeout=WORKTREE_CMD_TIMEOUT)
     if os.path.exists(worktree_path):
         fail(f"worktree directory {worktree_path!r} still exists after `anthrex rm --worktree`")
     branch_list = subprocess.run(
@@ -1268,31 +1313,70 @@ def main():
         fail(f"give-up status line did not appear after RETRY_WINDOW elapsed:\n{screen}")
     print("ok: the client survived past RETRY_WINDOW and shows the give-up status line")
 
-    # Sample CPU while parked, twice a couple of seconds apart. macOS's `ps %cpu` is a
-    # decaying average, so one reading right after the retries above could still carry
-    # some of their cost; two readings, taken after the process has had nothing to do
-    # for several seconds, catch a genuine busy loop (measured 95-97% for the
-    # `else => vec![]` shape) without being tunable-flaky the way a tight bound on a
-    # single instantaneous sample would be.
-    cpu_samples = []
-    for _ in range(2):
-        time.sleep(2.0)
+    # Sample CPU while parked, over a wall-clock window during which the pty is kept
+    # drained. fix-wave-12-re-review Major 1: the previous version of this loop did
+    # `time.sleep(2.0)` between two `ps %cpu` reads and never called `read_available` —
+    # with the pty undrained, a parked client fills the kernel's ~64KB buffer, blocks on
+    # its next `write`, and stops consuming CPU regardless of whether it is genuinely
+    # idle or busy-looping. Measured against the exact regression this stage exists to
+    # catch (`else => vec![]` in `crates/tui/src/lib.rs`'s `event_loop`, which spins at
+    # ~97% real CPU): the undrained sampling read the busy-loop build at ~1.0%, *lower*
+    # than the correctly-parking build's ~3.4%, so the stage passed on both — inverted,
+    # not merely blind. Draining continuously while sampling removes the backpressure
+    # that masked it. A cumulative CPU-time delta (`ps -o cputime=`, seconds of actual
+    # CPU consumed) over the drained wall-clock window replaces the two discrete
+    # `ps %cpu` reads for the same reason `docs/timing-budgets.md` standing rule 4
+    # gives: `%cpu` is a decaying average of unspecified window, `cputime` is an exact
+    # count, and a delta over a window this script itself times cannot be fooled by
+    # sampling right after the retries above the way a single decaying-average read
+    # could be.
+    def cpu_time_seconds(pid):
         try:
             sample = subprocess.run(
-                ["ps", "-o", "%cpu=", "-p", str(proc6b.pid)],
+                ["ps", "-o", "cputime=", "-p", str(pid)],
                 capture_output=True,
                 text=True,
                 timeout=5,
             )
-            cpu_samples.append(float(sample.stdout.strip() or "0"))
-        except (subprocess.TimeoutExpired, ValueError) as error:
-            fail(f"could not sample CPU for the parked client (pid {proc6b.pid}): {error}")
-    print(f"give-up-state CPU samples (ps %cpu, 2s apart): {cpu_samples}")
-    if any(sample > 25.0 for sample in cpu_samples):
+        except subprocess.TimeoutExpired as error:
+            fail(f"could not sample cumulative CPU time for the parked client (pid {pid}): {error}")
+        raw = sample.stdout.strip()
+        # fix-wave-12-re-review Minor 6: an empty `ps` result (the pid already gone, or
+        # a transient `ps` hiccup) used to be coerced by `float(... or "0")` into a
+        # passing sample — an instrument failure could only ever push this stage toward
+        # passing. Failing loudly here instead.
+        if not raw:
+            fail(
+                f"could not sample cumulative CPU time for the parked client (pid "
+                f"{pid}): `ps` produced no output"
+            )
+        try:
+            seconds = 0.0
+            for part in raw.split(":"):
+                seconds = seconds * 60 + float(part)
+        except ValueError as error:
+            fail(f"could not parse `ps -o cputime=` output {raw!r} for pid {pid}: {error}")
+        return seconds
+
+    cpu_before = cpu_time_seconds(proc6b.pid)
+    sample_start = time.monotonic()
+    sample_deadline = sample_start + 4.0
+    while time.monotonic() < sample_deadline:
+        proc6b.read_available(timeout=0.2)
+    sample_wall = time.monotonic() - sample_start
+    cpu_after = cpu_time_seconds(proc6b.pid)
+    cpu_delta = cpu_after - cpu_before
+    cpu_percent = 100.0 * cpu_delta / sample_wall
+    print(
+        f"give-up-state CPU over {sample_wall:.1f}s, pty drained throughout "
+        f"(cputime delta {cpu_delta:.2f}s): {cpu_percent:.1f}%"
+    )
+    if cpu_percent > 25.0:
         fail(
-            f"parked give-up state used {cpu_samples} CPU%; a busy loop (the "
-            "`else => vec![]` shape this stage guards against) reads 95-97%, so this "
-            "is a regression even though the process did not panic"
+            f"parked give-up state used {cpu_percent:.1f}% CPU over {sample_wall:.1f}s "
+            "(drained, cputime delta); a busy loop (the `else => vec![]` shape this "
+            "stage guards against) reads ~97%, so this is a regression even though "
+            "the process did not panic"
         )
     print("ok: the parked give-up state used negligible CPU (no busy loop)")
 
