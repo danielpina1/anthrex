@@ -491,13 +491,11 @@ it described a fallback that did not exist, and reading for plausibility believe
 
 ## From milestone 6.5's enrichment task (2026-09-22), task M6.5.8
 
-- **Transcript records that arrive before their hook are lost for good.** `enrich::apply`
-  discards a `ToolDetail` whose call has no `result` yet (rule 3) and a `UserText` whose
-  `User` turn the hooks have not built yet (out of range), and the reader never re-reads a
-  line it has consumed. A transcript line written, and polled, before its `PostToolUse` or
-  `UserPromptSubmit` hook reaches the daemon therefore never enriches the timeline. How
-  often this happens is unmeasured; the poll interval (`TRANSCRIPT_POLL`, 250 ms) makes it
-  unlikely but not impossible. A fix would hold unmatched records (bounded) and retry them
-  after the next hook. Belongs with task M6.5.10 or its follow-up, once the reader exists
-  and the order can be observed.
+- **Repeated identical prompts defeat the alignment check when a hook is lost.** The
+  enricher checks each transcript prompt's text against the hook-built prompt its
+  ordinal maps to. With hook prompts `go, go` against transcript prompts `go, go, go`
+  (the first hook lost), ordinal 0 lines up with the hook turn that is really prompt 1,
+  so its prose is misattributed and nothing flags it. Inherent to text alignment; a fix
+  needs a second key both sides share (a timestamp window, or a prompt id the runtime
+  puts in both the hook payload and the transcript). Found by task M6.5.8's review.
 
