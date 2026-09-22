@@ -16,13 +16,18 @@ fn link_lost_then_reconnected_resubscribes_the_focused_window() {
         bytes: vec![],
     });
 
+    // Whole-branch-review Minor m2: `attempts` starts at 1, not 0. `statusbar.rs`
+    // renders it verbatim as `reconnecting (attempt {attempts})`, so a 0 here used to
+    // put "reconnecting (attempt 0)" on screen for the first ~2s of every disconnect —
+    // the very first thing a user sees when the daemon dies — while decision 34's own
+    // mock-up shows a number that reads as "which attempt is this", never zero.
     assert!(app.on_link_lost("x").is_empty());
-    assert!(matches!(app.link, Link::Reconnecting { attempts: 0, .. }));
+    assert!(matches!(app.link, Link::Reconnecting { attempts: 1, .. }));
     assert_eq!(app.toast_text(), Some("connection to the daemon lost"));
 
     assert!(app.on_reconnect_failed("refused", false).is_empty());
     match &app.link {
-        Link::Reconnecting { attempts, .. } => assert_eq!(*attempts, 1),
+        Link::Reconnecting { attempts, .. } => assert_eq!(*attempts, 2),
         other => panic!("expected Link::Reconnecting, got {other:?}"),
     }
 

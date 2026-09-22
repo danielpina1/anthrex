@@ -109,6 +109,50 @@ fn bells_follow_settings() {
     );
 }
 
+/// Decision 37's own last sentence: "It sends at most one bell per `WindowsChanged`."
+/// Whole-branch-review Minor m1: `replace_windows` pushed one `Effect::Bell` per
+/// transitioning background window inside its loop, so two background windows
+/// transitioning in the same `WindowsChanged` rang twice — two `0x07` bytes written to
+/// the real terminal for what decision 34's status line still shows as a single event.
+/// `bells_follow_settings` above only ever asserts `contains(&Effect::Bell)`, which
+/// passes identically whether one bell or five were queued, so it could not have caught
+/// this.
+#[test]
+fn at_most_one_bell_per_windows_changed() {
+    let settings = UiSettings {
+        bell_attention: true,
+        bell_done: true,
+        ..UiSettings::default()
+    };
+    let mut app = App::new(
+        vec![
+            win(1, "focused", Status::Idle),
+            win(2, "b", Status::Idle),
+            win(3, "c", Status::Idle),
+        ],
+        "/tmp".into(),
+        settings,
+    );
+    let _ = app.set_terminal_size(80, 24);
+    assert_eq!(app.focused, Some(1));
+
+    // Two background windows transition in the same batch: one to Attention, one to
+    // Done. Both individually qualify for a bell (decision 4), but decision 37 caps
+    // the *event*, not the window count.
+    let effects = app.on_daemon(DaemonMsg::WindowsChanged {
+        windows: vec![
+            win(1, "focused", Status::Idle),
+            win(2, "b", Status::Attention),
+            win(3, "c", Status::Done),
+        ],
+    });
+    let bells = effects.iter().filter(|e| **e == Effect::Bell).count();
+    assert_eq!(
+        bells, 1,
+        "at most one bell per WindowsChanged (decision 37): {effects:?}"
+    );
+}
+
 #[test]
 fn new_window_uses_the_default_runtime() {
     let settings = UiSettings {

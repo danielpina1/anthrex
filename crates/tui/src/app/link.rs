@@ -39,8 +39,12 @@ pub const STOPPING_TIMEOUT: Duration = Duration::from_secs(5);
 pub enum Link {
     Connected,
     /// An automatic or manual reconnect attempt is scheduled or in flight.
-    /// `attempts` counts failed attempts within the current 30 s window (decision 34's
-    /// "reconnecting (attempt N)").
+    /// `attempts` is the 1-indexed number of the attempt currently scheduled or in
+    /// flight within the current 30 s window (decision 34's "reconnecting (attempt
+    /// N)") — never 0: the moment the link drops (or a manual `C-b r` starts a fresh
+    /// window), attempt 1 is the one about to run, and `statusbar.rs` renders this
+    /// field verbatim, so a 0 here would put "reconnecting (attempt 0)" on screen
+    /// (whole-branch-review Minor m2).
     Reconnecting {
         attempts: u32,
         reason: String,
@@ -72,7 +76,7 @@ impl App {
             Link::Connected => String::new(),
         };
         self.link = Link::Reconnecting {
-            attempts: 0,
+            attempts: 1,
             reason,
         };
         vec![Effect::Reconnect]
@@ -144,7 +148,7 @@ impl App {
             return vec![Effect::Quit];
         }
         self.link = Link::Reconnecting {
-            attempts: 0,
+            attempts: 1,
             reason: reason.into(),
         };
         self.toast("connection to the daemon lost");

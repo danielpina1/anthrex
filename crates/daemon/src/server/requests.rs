@@ -182,12 +182,24 @@ pub(super) fn remove_with_worktree(
 /// window's `restarting` flag set with nothing left to clear it, or worse, leave the kill
 /// half-delivered and the old process neither confirmed dead nor replaced.
 pub(super) fn restart(manager: Arc<WindowManager>, out: mpsc::Sender<DaemonMsg>, window_id: u32) {
+    // Whole-branch-review Minor m13: this label appeared twice as an independent bare
+    // literal (the `Ack` below and the `error` call), unlike `request::CREATE` /
+    // `request::REMOVE`'s own single, deliberately-shared spelling — a typo in one copy
+    // and not the other would silently desync the success and failure paths' labels.
+    // Not lifted into `proto::messages::request` alongside those two: that module's own
+    // doc comment restricts that list to strings *both ends compare* (the client
+    // pattern-matches `CREATE`/`REMOVE` to decide behaviour); nothing in the TUI or CLI
+    // matches on `"restart"`, it is display-only, which is exactly the case that same
+    // doc comment says should "stay a literal at its one site" — this just makes it one
+    // site instead of two, without misrepresenting it as a wire contract client code
+    // depends on.
+    const REQUEST: &str = "restart";
     detach(async move {
         let reply = match manager.restart(window_id).await {
             Ok(()) => DaemonMsg::Ack {
-                request: "restart".to_string(),
+                request: REQUEST.to_string(),
             },
-            Err(e) => error("restart", e.to_string()),
+            Err(e) => error(REQUEST, e.to_string()),
         };
         reply_to(&out, reply).await;
     });

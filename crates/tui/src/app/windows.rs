@@ -65,8 +65,15 @@ impl App {
     pub(super) fn replace_windows(&mut self, windows: Vec<WindowInfo>) -> Vec<Effect> {
         // `bell.attention` / `bell.done` (decision 4): only a *background* window's
         // transition rings, matching the toast right above it — the focused window is
-        // already on screen and needs neither.
+        // already on screen and needs neither. Decision 37's own last sentence: "It
+        // sends at most one bell per `WindowsChanged`" — so `rings` tracks only
+        // whether *any* transition in this batch wants one, and a single
+        // `Effect::Bell` is pushed after the loop, not once per qualifying window
+        // (whole-branch-review Minor m1: two background windows transitioning in one
+        // `WindowsChanged` used to queue two bells, two real `0x07` bytes for what the
+        // status line still shows as a single event).
         let mut effects = Vec::new();
+        let mut rings = false;
         for w in &windows {
             if Some(w.id) == self.focused {
                 continue;
@@ -80,19 +87,18 @@ impl App {
                 match w.status {
                     Status::Attention => {
                         self.toast(format!("{} needs attention", w.name));
-                        if self.settings.bell_attention {
-                            effects.push(Effect::Bell);
-                        }
+                        rings |= self.settings.bell_attention;
                     }
                     Status::Done => {
                         self.toast(format!("{} finished", w.name));
-                        if self.settings.bell_done {
-                            effects.push(Effect::Bell);
-                        }
+                        rings |= self.settings.bell_done;
                     }
                     _ => {}
                 }
             }
+        }
+        if rings {
+            effects.push(Effect::Bell);
         }
         // One derivation of the outgoing rows serves both readers below: the
         // agent order the focus falls back through, and the keys the reveal

@@ -90,7 +90,6 @@ name = "anthrex-config"
 version = "0.1.0"
 dependencies = [
  "anthrex-proto",
- "serde",
  "tempfile",
  "toml",
 ]

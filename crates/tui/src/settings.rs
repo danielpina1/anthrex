@@ -21,7 +21,6 @@ pub struct UiSettings {
     pub scrollback_lines: usize,
     pub sidebar_width: u16,
     pub tree_keep_finished_secs: u64,
-    pub panes_max: u8,
 }
 
 impl Default for UiSettings {
@@ -49,8 +48,12 @@ impl UiSettings {
                 .ui
                 .sidebar_width
                 .unwrap_or(crate::ui::DEFAULT_SIDEBAR_WIDTH),
+            // Whole-branch-review Minor: `config::Panes::max` deliberately has no
+            // field here to receive it — M7 (split panes, deferred) is what will
+            // actually read it. A `panes_max` field threaded this far and read
+            // nowhere is dead code by this milestone's own hard rule 8, not
+            // forward-compatibility; add it back alongside its first real reader.
             tree_keep_finished_secs: c.ui.tree_keep_finished_secs,
-            panes_max: c.panes.max,
         }
     }
 }
@@ -92,7 +95,6 @@ mod tests {
         assert_eq!(settings.scrollback_lines, 1234);
         assert_eq!(settings.sidebar_width, 40);
         assert_eq!(settings.tree_keep_finished_secs, 60);
-        assert_eq!(settings.panes_max, 3);
     }
 
     #[test]

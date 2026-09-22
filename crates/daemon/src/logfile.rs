@@ -69,7 +69,7 @@ impl RotatingFile {
     /// [`Write::write`] below only ever checks the cap when it has bytes of its own to
     /// add; a caller that opens a `RotatingFile` purely to enforce decision 28's bound at
     /// *open* time — `anthrex`'s CLI parent, capping `daemon.stderr.log` before handing
-    /// the file to a detached child as its raw stderr fd (`crates/cli/src/spawn.rs`),
+    /// the file to a detached child as its raw stderr fd (`crates/tui/src/spawn.rs`),
     /// where nothing afterwards funnels through this `Write` impl at all — needs a way to
     /// ask "is this already too big?" without writing anything. This is that: the same
     /// rotate-or-recover logic `write` uses, with zero incoming bytes.
@@ -179,7 +179,7 @@ impl RotatingFile {
     /// every write in that span re-enters here. Reporting once per failure *episode*
     /// (latched here, cleared in `rotate_if_needed` the moment a rotation next succeeds)
     /// is what keeps the diagnostic's own destination, `daemon.stderr.log`
-    /// (`crates/cli/src/spawn.rs`), bounded on its own; the cap
+    /// (`crates/tui/src/spawn.rs`), bounded on its own; the cap
     /// `RotatingFile::rotate_if_over_cap` gives it at open time is only a backstop for
     /// growth this latch cannot see (many separate failure/recovery episodes over a long
     /// run, or an unrelated panic).
@@ -605,7 +605,7 @@ mod tests {
         );
     }
 
-    /// `rotate_if_over_cap` is `open_stderr_sink`'s hook (`crates/cli/src/spawn.rs`) for
+    /// `rotate_if_over_cap` is `open_stderr_sink`'s hook (`crates/tui/src/spawn.rs`) for
     /// bounding `daemon.stderr.log` at open time, since nothing after that point writes
     /// to it through a `Write` call this crate controls. Pinned here at the `RotatingFile`
     /// level: a file already over the cap, with nothing new to write, must still rotate.

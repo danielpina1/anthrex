@@ -160,7 +160,7 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     // Test-only: `crates/cli/tests/daemon_spawn_stderr.rs`'s
     // `detached_daemon_captures_its_stderr_to_a_file` needs to assert that a detached
     // daemon's *actual* stderr writes reach `daemon.stderr.log`, not just that the file
-    // exists — `open_stderr_sink` (`crates/cli/src/spawn.rs`) creates the file as a
+    // exists — `open_stderr_sink` (`crates/tui/src/spawn.rs`) creates the file as a
     // side effect in the CLI parent regardless of whether the child's stdio is ever
     // wired to it, which is exactly what let that test stay green after a mutation
     // that discarded the child's stderr outright. Forcing a real rotation failure to

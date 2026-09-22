@@ -190,7 +190,13 @@ impl WindowManager {
         // task's review found twice in `state.rs`, now in the code that actually spends
         // an id.
         let Some(next_id) = id.checked_add(1) else {
-            anyhow::bail!("no window ids remain; restart the daemon to reclaim them");
+            // Whole-branch-review Minor: this used to say "restart the daemon to
+            // reclaim them", which does not work — `restore` recomputes `next_id` as
+            // the saturating max of every loaded record's own id plus one
+            // (`manager/restore.rs`), so a restart brings back exactly `u32::MAX`
+            // again, verified live. The only way out is removing whichever window
+            // record is actually holding the top of the id space.
+            anyhow::bail!("no window ids remain; remove a window holding a high id to free one up");
         };
         // Decision 22: an explicitly given name is validated by the same `validate_name`
         // `rename` calls — a name a create rejects must never be reachable through a
