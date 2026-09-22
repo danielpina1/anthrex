@@ -47,6 +47,95 @@ async fn a_version_2_client_is_rejected() {
     }
 }
 
+/// Decision 29: a client that connects and then never says anything must not hold the
+/// daemon's connection task (and its socket fd) open forever. The daemon must drop it on
+/// its own once `HANDSHAKE_TIMEOUT` passes, which the client observes as EOF.
+#[tokio::test]
+async fn a_client_that_never_says_hello_is_dropped() {
+    use tokio::io::AsyncReadExt;
+    let d = start_daemon().await;
+    let stream = tokio::net::UnixStream::connect(&d.socket).await.unwrap();
+    // Both halves stay open (nothing sent, nothing closed) so the only thing that can end
+    // the connection is the daemon's own handshake timeout, not an EOF the client caused.
+    let (mut rd, _wr) = stream.into_split();
+
+    let started = std::time::Instant::now();
+    let mut buf = [0u8; 1];
+    let n = tokio::time::timeout(Duration::from_secs(8), rd.read(&mut buf))
+        .await
+        .expect("the daemon never closed the connection")
+        .unwrap();
+    let elapsed = started.elapsed();
+
+    assert_eq!(n, 0, "expected EOF, read {n} bytes instead");
+    assert!(
+        elapsed >= Duration::from_millis(4500),
+        "dropped too early: {elapsed:?} (HANDSHAKE_TIMEOUT is 5 s)"
+    );
+    assert!(
+        elapsed <= Duration::from_secs(7),
+        "dropped too late: {elapsed:?} (HANDSHAKE_TIMEOUT is 5 s)"
+    );
+}
+
+/// A client that sends part of a frame's length header and then stops (never completes
+/// it, never closes) is exactly as stuck as one that sends nothing: `read_frame` is
+/// blocked inside `read_exact` on the header's remaining bytes, and only the handshake
+/// timeout can free the connection task.
+#[tokio::test]
+async fn a_client_with_a_partial_frame_is_dropped_after_the_timeout() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let d = start_daemon().await;
+    let stream = tokio::net::UnixStream::connect(&d.socket).await.unwrap();
+    let (mut rd, mut wr) = stream.into_split();
+    // Two of the 4-byte length header's bytes, then stop. `wr` is kept alive (not
+    // dropped) so this is a stall, not a disconnect.
+    wr.write_all(&[0u8, 0u8]).await.unwrap();
+
+    let started = std::time::Instant::now();
+    let mut buf = [0u8; 1];
+    let n = tokio::time::timeout(Duration::from_secs(8), rd.read(&mut buf))
+        .await
+        .expect("the daemon never closed the connection")
+        .unwrap();
+    let elapsed = started.elapsed();
+
+    assert_eq!(n, 0, "expected EOF, read {n} bytes instead");
+    assert!(elapsed >= Duration::from_millis(4500), "{elapsed:?}");
+    assert!(elapsed <= Duration::from_secs(7), "{elapsed:?}");
+}
+
+/// A client that disconnects mid-handshake (as opposed to one that merely stalls) must
+/// not wait out the handshake timeout at all: `read_frame` sees the early EOF as a real
+/// error the instant it happens, so the connection task ends with it right away rather
+/// than idling until `HANDSHAKE_TIMEOUT` elapses. Half-closing only the write direction
+/// (`shutdown`, not `drop`) keeps the read half open so this test can observe, from the
+/// client side, exactly when the daemon's task ends and drops its own end of the socket.
+#[tokio::test]
+async fn a_client_that_disconnects_mid_handshake_ends_the_connection_promptly() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let d = start_daemon().await;
+    let stream = tokio::net::UnixStream::connect(&d.socket).await.unwrap();
+    let (mut rd, mut wr) = stream.into_split();
+    wr.write_all(&[0u8, 0u8]).await.unwrap(); // Two of the header's four bytes.
+    let started = std::time::Instant::now();
+    wr.shutdown().await.unwrap();
+
+    let mut buf = [0u8; 1];
+    let n = tokio::time::timeout(Duration::from_secs(3), rd.read(&mut buf))
+        .await
+        .expect("the daemon did not close its end promptly")
+        .unwrap();
+    let elapsed = started.elapsed();
+
+    assert_eq!(n, 0, "expected EOF, read {n} bytes instead");
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "a real disconnect must end the connection immediately, not wait out the \
+         handshake timeout: {elapsed:?}"
+    );
+}
+
 #[tokio::test]
 async fn created_windows_carry_their_project_root() {
     use std::ffi::OsStr;

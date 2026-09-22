@@ -3,7 +3,11 @@
 use proto::{Status, SubagentInfo, SubagentState};
 use ratatui::style::{Color, Modifier, Style};
 
-pub const ACCENT: Color = Color::Rgb(0x89, 0xb4, 0xfa);
+/// The built-in accent, used until `config.toml`'s `accent` (decision 4) says
+/// otherwise. Every renderer takes its accent from `app.settings.accent`
+/// instead of this constant directly (decision 38); it survives only as
+/// `UiSettings::default`'s source of truth and this module's own tests.
+pub const DEFAULT_ACCENT: Color = Color::Rgb(0x89, 0xb4, 0xfa);
 pub const DIM: Color = Color::DarkGray;
 pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -55,12 +59,12 @@ pub fn subagent_color(info: &SubagentInfo) -> Color {
     }
 }
 
-pub fn border_focused() -> Style {
-    Style::default().fg(ACCENT)
+pub fn border_focused(accent: Color) -> Style {
+    Style::default().fg(accent)
 }
 
-pub fn title() -> Style {
-    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+pub fn title(accent: Color) -> Style {
+    Style::default().fg(accent).add_modifier(Modifier::BOLD)
 }
 
 pub fn muted() -> Style {

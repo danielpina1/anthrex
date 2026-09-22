@@ -20,6 +20,7 @@ anthrex is a terminal multiplexer for coding agents, written in Rust. A backgrou
 | `docs/milestones/` | One implementation brief per milestone. The brief is your requirements. |
 | `docs/superpowers/specs/` | Design specs. They are the binding authority when a brief is unclear. |
 | `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md` | Findings deferred from milestone 1, mapped to later milestones. |
+| `docs/timing-budgets.md` | Measured costs behind every wall-clock test bound in the workspace, and the rules for writing a new one. Read before adding `assert!(elapsed < ...)` or a sleep-then-assert. |
 
 ## How to pick up work
 

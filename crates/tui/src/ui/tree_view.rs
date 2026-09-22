@@ -122,7 +122,7 @@ pub fn narrow_line(
                     Span::raw(row.guides.clone()),
                     Span::styled(
                         if focused { "▎" } else { " " },
-                        Style::default().fg(theme::ACCENT),
+                        Style::default().fg(app.settings.accent),
                     ),
                     Span::raw(if *collapsed && *has_subagents {
                         "▸"

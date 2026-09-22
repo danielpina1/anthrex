@@ -14,6 +14,7 @@
 //! common dirty-refusal path the agent is still running when this dialog is on screen,
 //! so a prompt that claimed otherwise would be wrong exactly when it matters most.
 
+use crate::app::prompt::{self, RenameOutcome, RenamePrompt};
 use crate::app::{App, Effect, Modal, PendingAction};
 use crate::dialog::{FormContext, FormDefaults, FormOutcome, NewAgentForm, RemoveConfirm};
 use crossterm::event::{KeyCode, KeyEvent};
@@ -120,8 +121,8 @@ impl App {
             return vec![];
         };
         match modal {
-            // Any key closes the help overlay; nothing to restore.
-            Modal::Help => vec![],
+            // Any key closes the help overlay or the config notice; nothing to restore.
+            Modal::Help | Modal::Notice { .. } => vec![],
             Modal::Confirm { message, action } => match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => self.perform(action),
                 KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => vec![],
@@ -137,6 +138,36 @@ impl App {
                 name,
                 message,
             } => self.on_force_remove_key(window_id, name, message, key),
+            Modal::Rename(prompt) => self.on_rename_key(prompt, key),
+        }
+    }
+
+    /// Task M6.10, decision 23: the rename box. `prompt::on_key` handles editing and
+    /// hands `Enter` back as a raw `Submit(text)` — `prompt.rs` has no view of the
+    /// other windows' names, so the check against them (`prompt::validate`) happens
+    /// here, against `self.windows`, the same way `on_new_agent_key` validates against
+    /// `self.windows` through `FormContext::existing_names`.
+    fn on_rename_key(&mut self, mut prompt: RenamePrompt, key: KeyEvent) -> Vec<Effect> {
+        match prompt::on_key(&mut prompt, key) {
+            RenameOutcome::Cancel => vec![],
+            RenameOutcome::Stay => {
+                self.modal = Some(Modal::Rename(prompt));
+                vec![]
+            }
+            RenameOutcome::Submit(name) => {
+                let existing = self.windows.iter().map(|w| (w.id, w.name.as_str()));
+                match prompt::validate(&name, prompt.window_id, existing) {
+                    Ok(name) => vec![Effect::Send(ClientMsg::Rename {
+                        window_id: prompt.window_id,
+                        name,
+                    })],
+                    Err(message) => {
+                        prompt.error = Some(message);
+                        self.modal = Some(Modal::Rename(prompt));
+                        vec![]
+                    }
+                }
+            }
         }
     }
 

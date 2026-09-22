@@ -19,10 +19,13 @@ pub mod git;
 pub mod hooks;
 pub mod launch;
 pub mod lifecycle;
+pub mod lockfile;
+pub mod logfile;
 pub mod manager;
 mod process;
 pub mod project;
 pub mod server;
+pub mod state;
 pub mod status;
 pub mod subagents;
 /// `#[doc(hidden)] pub` rather than private only so that `crates/daemon/tests/subprocess.rs`
@@ -35,7 +38,7 @@ pub mod subprocess;
 pub mod window;
 pub mod worktree;
 
-pub use lifecycle::{DaemonOptions, run};
+pub use lifecycle::{DaemonOptions, LOCK_WAIT, run};
 
 #[cfg(test)]
 mod tests {

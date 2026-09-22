@@ -291,7 +291,9 @@ fn glyph_and_color(kind: &RowKind<'_>, app: &App) -> (&'static str, Color) {
 /// uses the plain one (decision 12).
 fn border_style(row: &Row<'_>, app: &App) -> Style {
     match &row.kind {
-        RowKind::Window { info, .. } if app.focused == Some(info.id) => theme::border_focused(),
+        RowKind::Window { info, .. } if app.focused == Some(info.id) => {
+            theme::border_focused(app.settings.accent)
+        }
         _ => theme::border(),
     }
 }

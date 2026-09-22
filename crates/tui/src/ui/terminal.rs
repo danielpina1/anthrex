@@ -46,7 +46,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         None => " no window ".to_string(),
     };
     let border = if app.modal.is_none() {
-        theme::border_focused()
+        theme::border_focused(app.settings.accent)
     } else {
         theme::border()
     };
@@ -54,7 +54,10 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(border)
-        .title(Line::from(Span::styled(title, theme::title())));
+        .title(Line::from(Span::styled(
+            title,
+            theme::title(app.settings.accent),
+        )));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -62,7 +65,10 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         let hint = vec![
             Line::raw(""),
             Line::styled(
-                "  No agents. Press C-b c to create one, or run `anthrex new`.",
+                format!(
+                    "  No agents. Press {} c to create one, or run `anthrex new`.",
+                    app.settings.prefix_label
+                ),
                 theme::muted(),
             ),
         ];

@@ -39,7 +39,11 @@ pub fn data_dir() -> PathBuf {
         .join("anthrex")
 }
 
+/// The config file. `ANTHREX_CONFIG` overrides it.
 pub fn config_path() -> PathBuf {
+    if let Some(p) = std::env::var_os("ANTHREX_CONFIG") {
+        return PathBuf::from(p);
+    }
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("anthrex")
@@ -50,12 +54,32 @@ pub fn log_path() -> PathBuf {
     data_dir().join("daemon.log")
 }
 
+/// Where a detached daemon's raw stderr is captured — a plain append-only file, opened
+/// once before the daemon does anything else, separate from `daemon.log` (`log_path`)
+/// on purpose: `daemon.log` goes through `tracing`/`RotatingFile`, and a message that
+/// only ever reaches `eprintln!` (e.g. `logfile::RotatingFile` reporting that it could
+/// not rotate, because `data_dir` has gone read-only or the disk is full) must land
+/// somewhere that does not depend on that same layer. Opening this file early means a
+/// later loss of write permission on `data_dir` does not stop writes to the
+/// already-open handle (only creating/renaming/deleting a directory entry needs that
+/// permission; appending to bytes already held open does not), so the message a daemon
+/// spawned detached (stdio redirected, no terminal to write to) needs to surface still
+/// reaches disk even in the exact failure this file exists to report.
+pub fn stderr_path() -> PathBuf {
+    data_dir().join("daemon.stderr.log")
+}
+
 pub fn pid_path() -> PathBuf {
     data_dir().join("daemon.pid")
 }
 
 pub fn state_path() -> PathBuf {
     data_dir().join("state.json")
+}
+
+/// The daemon's `flock`-based lifetime lock.
+pub fn lock_path() -> PathBuf {
+    data_dir().join("daemon.lock")
 }
 
 #[cfg(test)]
@@ -94,6 +118,11 @@ mod tests {
         assert_eq!(log_path(), PathBuf::from("/tmp/x/data/daemon.log"));
         assert_eq!(pid_path(), PathBuf::from("/tmp/x/data/daemon.pid"));
         assert_eq!(state_path(), PathBuf::from("/tmp/x/data/state.json"));
+        assert_eq!(lock_path(), PathBuf::from("/tmp/x/data/daemon.lock"));
+        assert_eq!(
+            stderr_path(),
+            PathBuf::from("/tmp/x/data/daemon.stderr.log")
+        );
         unsafe {
             std::env::remove_var("ANTHREX_SOCKET");
             std::env::remove_var("ANTHREX_DATA_DIR");
@@ -103,8 +132,20 @@ mod tests {
     #[test]
     fn default_data_dir_ends_with_anthrex() {
         let _guard = ENV_LOCK.lock().unwrap();
-        unsafe { std::env::remove_var("ANTHREX_DATA_DIR") };
+        unsafe {
+            std::env::remove_var("ANTHREX_DATA_DIR");
+            std::env::remove_var("ANTHREX_CONFIG");
+        }
         assert_eq!(data_dir().file_name().unwrap(), "anthrex");
         assert_eq!(config_path().file_name().unwrap(), "config.toml");
+    }
+
+    #[test]
+    fn config_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        // SAFETY: see above.
+        unsafe { std::env::set_var("ANTHREX_CONFIG", "/tmp/x/c.toml") };
+        assert_eq!(config_path(), PathBuf::from("/tmp/x/c.toml"));
+        unsafe { std::env::remove_var("ANTHREX_CONFIG") };
     }
 }

@@ -27,7 +27,26 @@ pub fn args(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> Vec<String> {
     ] {
         args.extend(["-c".into(), value]);
     }
-    if let Some(source) = ctx.codex_hook_source {
+    if ctx.codex_bypass_hook_trust {
+        // Config decision 4: `--dangerously-bypass-hook-trust` right after the five `-c`
+        // flags above, then the eight `hooks.<Event>` flags with no `hooks.state` trust
+        // hashes — Codex is told to run the hooks without needing them trusted, so the
+        // hashes `codex_hook_source` would otherwise add serve no purpose. This applies
+        // whether or not `codex_hook_source` is set: the bypass turns lifecycle hooks on
+        // by itself.
+        args.push("--dangerously-bypass-hook-trust".into());
+        let command = hook_command(ctx.exe, ctx.window_id, HookSource::CodexHook);
+        for (event, _label) in HOOK_EVENTS {
+            args.extend([
+                "-c".into(),
+                format!(
+                    "hooks.{event}=[{{hooks=[{{type={},command={}}}]}}]",
+                    toml_string("command"),
+                    toml_string(&command)
+                ),
+            ]);
+        }
+    } else if let Some(source) = ctx.codex_hook_source {
         let command = hook_command(ctx.exe, ctx.window_id, HookSource::CodexHook);
         let mut trust_entries = Vec::new();
         for (event, label) in HOOK_EVENTS {
@@ -51,9 +70,16 @@ pub fn args(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> Vec<String> {
         }
     }
     if let Some(model) = &spec.model {
+        // Design decision 16: kept on resume too. `codex resume --help` on codex-cli
+        // 0.155.0 still lists `-m, --model <MODEL>`, and `codex -C /tmp -m gpt-x -c
+        // 'tui.notification_method="bel"' resume --help` exits 0, confirming these root
+        // options are accepted ahead of `resume`.
         args.extend(["-m".into(), model.clone()]);
     }
-    if let Some(prompt) = &spec.initial_prompt {
+    if let Some(id) = ctx.resume {
+        // Design decision 15: the initial prompt is never sent on resume.
+        args.extend(["resume".into(), id.to_string()]);
+    } else if let Some(prompt) = &spec.initial_prompt {
         args.extend(["--".into(), prompt.clone()]);
     }
     args
@@ -175,7 +201,64 @@ pub fn parse_version(output: &str) -> Option<(u64, u64, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proto::Runtime;
     use serde_json::json;
+    use std::path::Path;
+
+    fn spec() -> WindowSpec {
+        WindowSpec {
+            name: Some("api".into()),
+            runtime: Runtime::Codex,
+            cwd: "/tmp/repo".into(),
+            worktree_branch: None,
+            model: None,
+            initial_prompt: None,
+        }
+    }
+
+    fn ctx() -> LaunchContext<'static> {
+        LaunchContext {
+            window_id: 4,
+            name: "api",
+            socket_path: Path::new("/tmp/a.sock"),
+            shell: "/bin/zsh",
+            exe: Path::new("/opt/anthrex/bin/anthrex"),
+            claude_bin: "/opt/agents/claude",
+            codex_bin: "/opt/agents/codex",
+            codex_hook_source: None,
+            codex_bypass_hook_trust: false,
+            resume: None,
+        }
+    }
+
+    /// Config decision 4: with `codex_bypass_hook_trust: true` and no
+    /// `codex_hook_source`, the bypass flag and the eight hook flags appear with no trust
+    /// hashes at all; with it `false`, neither appears, exactly as in milestone 3.
+    #[test]
+    fn bypass_hook_trust_adds_the_flag_and_drops_trust_hashes() {
+        let mut context = ctx();
+        context.codex_bypass_hook_trust = true;
+        let bypassed = args(&spec(), &context);
+        // The five `-c` flags of milestone 3's decision 19 occupy indices 2..=11 (`-C`,
+        // cwd, then five `-c`/value pairs); the bypass flag comes right after them.
+        assert_eq!(&bypassed[..2], ["-C", "/tmp/repo"]);
+        assert_eq!(bypassed[12], "--dangerously-bypass-hook-trust");
+        let command = hook_command(context.exe, context.window_id, HookSource::CodexHook);
+        for (index, (event, _label)) in HOOK_EVENTS.iter().enumerate() {
+            assert_eq!(bypassed[13 + index * 2], "-c");
+            assert_eq!(
+                bypassed[14 + index * 2],
+                format!("hooks.{event}=[{{hooks=[{{type=\"command\",command=\"{command}\"}}]}}]")
+            );
+        }
+        assert_eq!(bypassed.len(), 13 + HOOK_EVENTS.len() * 2);
+        assert!(!bypassed.iter().any(|a| a.starts_with("hooks.state")));
+
+        context.codex_bypass_hook_trust = false;
+        let plain = args(&spec(), &context);
+        assert!(!plain.iter().any(|a| a == "--dangerously-bypass-hook-trust"));
+        assert!(!plain.iter().any(|a| a.starts_with("hooks.")));
+    }
 
     #[test]
     fn canonical_json_sorts_keys_recursively_and_is_compact() {

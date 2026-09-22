@@ -10,6 +10,10 @@
 //! in the instant between the kill and `worktree::remove`. That is the window every hazard
 //! here lives in, and reaching it through test-owned code is what makes these deterministic
 //! instead of races the test has to win.
+//!
+//! The two `restart`-vs-`remove_with_worktree` tests near the end of this file are timed a
+//! different way — see their own doc comments — because the hazard they cover starts
+//! *before* `FakeRoots` is ever called: at admission, not at the kill/deletion boundary.
 
 use super::*;
 
@@ -258,12 +262,21 @@ async fn a_parser_panicked_window_is_killed_before_its_checkout_goes() {
 }
 
 /// Design decision 19 step 3 waits for the child only when there is one. A window that has
-/// already exited must not spend `KILL_GRACE` waiting for an exit that happened minutes
-/// ago — in the TUI that is three seconds of a dialog that looks hung.
+/// already exited must not spend the kill grace waiting for an exit that happened minutes
+/// ago — in the TUI that is a dialog that looks hung for however long the grace is.
+///
+/// The property is "took the early return", not "was fast": the honest cost of this path
+/// is three real git subprocesses (the dirty check's two plus `worktree remove`), which on
+/// a loaded machine can themselves approach a 1s bound, making "waited" and "didn't wait"
+/// nearly the same size. So `kill_grace` is injected to 60s — an order of magnitude past
+/// what the git calls could plausibly cost — and the assertion is `< 10s`: a removal that
+/// takes the early return finishes in a fraction of a second regardless of git's cost, and
+/// one that regresses to actually waiting out the grace takes 60s. 10s is miles from
+/// either, so this discriminates the behaviour instead of the machine's speed.
 #[tokio::test]
 async fn an_exited_window_is_removed_without_waiting() {
     let repo = TempRepo::new();
-    let (m, _keep, _wt_root) = manager();
+    let (m, _keep, _wt_root) = manager_with_kill_grace(Duration::from_secs(60));
     let roots = FakeRoots::new();
     let agent = worktree_agent(&m, &repo, "done", "feat/done").await;
 
@@ -280,10 +293,124 @@ async fn an_exited_window_is_removed_without_waiting() {
     let took = started.elapsed();
 
     assert!(
-        took < Duration::from_secs(1),
-        "an exited window waited {took:?} for a child that was already gone"
+        took < Duration::from_secs(10),
+        "an exited window waited {took:?} for a child that was already gone \
+         (kill_grace is 60s in this test, so anything near it means the code actually \
+         waited instead of taking the early return)"
     );
     assert!(!listed(&m, agent.id));
     assert!(!agent.path.exists());
     roots.assert_one_unregister_before_the_removal(&agent.path);
+}
+
+// ---------------------------------------------------------------------------
+// `restart` vs `remove_with_worktree` (fix wave 5 review, Major 4)
+// ---------------------------------------------------------------------------
+//
+// Neither `begin_restart` nor `begin_removal` checked the other's flag, so both long
+// operations could hold the same window at once — which defeats step 3's guarantee
+// (`remove.rs`'s own module doc) that the checkout is never deleted out from under a live
+// process. The review flagged this as reasoned from the code, not executed; the two tests
+// below construct it.
+//
+// Neither needs `FakeRoots`' `unregister` hook, because the hazard starts earlier than
+// that hook fires: at *admission*, before either operation has done anything slow.
+// `tokio::join!` polls its arguments in argument order on this crate's single-threaded
+// test runtime — the same reasoning `manager.rs`'s `concurrent_restart_is_refused` already
+// documents for restart-vs-restart — so whichever call is listed first runs its whole
+// synchronous prefix (through `begin_removal` or `begin_restart`, which are pure
+// lock-and-check) up to its own first `.await` before the second call is polled at all.
+// That makes "which one was admitted first" deterministic, not a race either test has to
+// win.
+
+/// The order the brief's own guarantee depends on: removal is admitted first, so a
+/// concurrently issued restart must be refused rather than racing removal to swap a live
+/// process into a checkout that is about to be deleted.
+#[tokio::test]
+async fn a_restart_admitted_after_a_removal_is_refused() {
+    let repo = TempRepo::new();
+    let (m, _keep, _wt_root) = manager();
+    let roots = FakeRoots::new();
+    let agent = worktree_agent(&m, &repo, "remove-first", "feat/remove-first").await;
+
+    let (removal, restart) = tokio::join!(
+        m.remove_with_worktree(agent.id, true, &roots),
+        m.restart(agent.id),
+    );
+
+    removal.expect("the removal admitted first must still finish");
+    let err = restart.expect_err(
+        "a restart admitted while remove_with_worktree owns this window must be refused, \
+         not race it to spawn a live process pointed at a checkout being deleted",
+    );
+    let message = err.to_string();
+    assert!(
+        message.contains("being removed") || message.contains("no window with id"),
+        "{message}"
+    );
+}
+
+/// The other order: a restart is admitted first, so a concurrently issued
+/// `remove_with_worktree` must be refused rather than deleting the checkout a freshly
+/// spawned, live process is running in.
+#[tokio::test]
+async fn a_removal_admitted_after_a_restart_is_refused() {
+    let repo = TempRepo::new();
+    let (m, _keep, _wt_root) = manager();
+    let roots = FakeRoots::new();
+    let agent = worktree_agent(&m, &repo, "restart-first", "feat/restart-first").await;
+
+    let (restart, removal) = tokio::join!(
+        m.restart(agent.id),
+        m.remove_with_worktree(agent.id, true, &roots),
+    );
+
+    restart.expect("the restart admitted first must still finish");
+    let error = removal.expect_err(
+        "a remove_with_worktree admitted while a restart owns this window must be refused",
+    );
+    assert!(matches!(error, RemoveError::Failed(_)), "{error:?}");
+    assert!(error.to_string().contains("restarting"), "{error}");
+
+    // The restart's own process is still live and still pointed at the checkout: clean it
+    // up rather than leaving it for the test binary's exit.
+    drain(&m);
+}
+
+// ---------------------------------------------------------------------------
+// `remove_with_worktree` vs `shutdown` (fix wave 7 re-review, item 1's audit of every
+// admission-time check in this milestone, alongside `restart`'s own Major 1)
+// ---------------------------------------------------------------------------
+//
+// `begin_removal` had no `shutting_down` check at all — not even the admission-only guard
+// `create`'s `admit` and `begin_restart` already had before their own fixes for the same
+// flag. Unlike `restart`'s hazard, no race is needed to see this one: calling the removal
+// strictly *after* `shutdown()` has already returned is enough, because nothing ever
+// refused it.
+
+/// The straightforward case, no interleaving required: `shutdown` to completion, then the
+/// removal. Before this fix it ran anyway — deleting a checkout, dropping the git watch,
+/// and leaving the window unlisted — while the daemon believed every window was already
+/// accounted for and was on its way out.
+#[tokio::test]
+async fn a_removal_is_refused_after_shutdown() {
+    let repo = TempRepo::new();
+    let (m, _keep, _wt_root) = manager();
+    let roots = FakeRoots::new();
+    let agent = worktree_agent(&m, &repo, "post-shutdown", "feat/post-shutdown").await;
+
+    m.shutdown().await;
+
+    let error = m
+        .remove_with_worktree(agent.id, true, &roots)
+        .await
+        .expect_err("a removal admitted after shutdown must be refused");
+    assert!(matches!(error, RemoveError::Failed(_)), "{error:?}");
+    assert!(error.to_string().contains("shutting down"), "{error}");
+    assert!(agent.path.is_dir(), "the checkout must be left untouched");
+    assert!(listed(&m, agent.id), "the window must still be listed");
+    assert!(
+        roots.calls().is_empty(),
+        "the registry must never be touched by a removal that never started"
+    );
 }

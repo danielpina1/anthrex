@@ -101,11 +101,14 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(if app.modal.is_none() {
-            theme::border_focused()
+            theme::border_focused(app.settings.accent)
         } else {
             theme::border()
         })
-        .title(Line::from(Span::styled(" tree overview ", theme::title())));
+        .title(Line::from(Span::styled(
+            " tree overview ",
+            theme::title(app.settings.accent),
+        )));
     frame.render_widget(block, area);
 
     // One row build for the whole frame: the layout, the painter and the

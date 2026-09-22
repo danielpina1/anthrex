@@ -2,6 +2,9 @@
 
 pub mod claude;
 pub mod codex;
+mod gate;
+
+pub use gate::LaunchGate;
 
 use proto::{HookSource, Runtime, WindowSpec};
 use std::path::{Path, PathBuf};
@@ -26,6 +29,14 @@ pub struct LaunchContext<'a> {
     pub claude_bin: &'a str,
     pub codex_bin: &'a str,
     pub codex_hook_source: Option<&'a str>,
+    /// `runtimes.codex.bypass_hook_trust` (config decision 4): every Codex window gets
+    /// `--dangerously-bypass-hook-trust` and the eight `hooks.<Event>` flags without their
+    /// `hooks.state` trust hashes, whether or not `codex_hook_source` is set.
+    pub codex_bypass_hook_trust: bool,
+    /// The session id to resume (design decisions 15-16), or `None` for a fresh launch.
+    /// When set, the initial prompt is left out: it already belongs to the session being
+    /// resumed. Ignored for `Runtime::Shell`.
+    pub resume: Option<&'a str>,
 }
 
 pub fn shell_quote(s: &str) -> String {
@@ -69,7 +80,13 @@ pub fn plan(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> LaunchPlan {
                 args.push("--model".to_string());
                 args.push(model.clone());
             }
-            if let Some(prompt) = &spec.initial_prompt {
+            if let Some(id) = ctx.resume {
+                // Design decision 15: the initial prompt is never sent on resume — it
+                // already belongs to the session being resumed. `claude --help` on 2.1.276
+                // and 2.1.278 lists `-r, --resume [value]`.
+                args.push("--resume".to_string());
+                args.push(id.to_string());
+            } else if let Some(prompt) = &spec.initial_prompt {
                 // `--` first: a prompt that starts with a dash is a prompt, not an option.
                 // Verified that `claude --prompt --version` printed the version and exited.
                 args.push("--".to_string());
@@ -114,6 +131,8 @@ mod tests {
             claude_bin: "/opt/agents/claude",
             codex_bin: "/opt/agents/codex",
             codex_hook_source: None,
+            codex_bypass_hook_trust: false,
+            resume: None,
         }
     }
 
@@ -167,6 +186,64 @@ mod tests {
                 "fix the tests"
             ]
         );
+    }
+
+    /// Design decisions 15-16: on resume, the initial prompt is left out and `--resume
+    /// <id>` is appended after milestone 3's `--name`, `--settings` and `--model`.
+    #[test]
+    fn claude_resume_adds_resume_and_drops_the_prompt() {
+        let mut s = spec(Runtime::Claude);
+        s.model = Some("opus".into());
+        s.initial_prompt = Some("fix it".into());
+        let mut context = ctx();
+        context.resume = Some("sess-1");
+        let p = plan(&s, &context);
+        let settings =
+            serde_json::to_string(&claude::settings(Path::new("/opt/anthrex/bin/anthrex"), 4))
+                .unwrap();
+        assert_eq!(
+            p.args,
+            vec![
+                "--name",
+                "api",
+                "--settings",
+                &settings,
+                "--model",
+                "opus",
+                "--resume",
+                "sess-1"
+            ]
+        );
+        assert!(!p.args.iter().any(|a| a == "--"));
+        assert!(!p.args.iter().any(|a| a == "fix it"));
+    }
+
+    /// Design decision 16: on resume, the global options come first and `resume <id>` is
+    /// last; the initial prompt is left out.
+    #[test]
+    fn codex_resume_puts_resume_last_and_drops_the_prompt() {
+        let mut s = spec(Runtime::Codex);
+        s.model = Some("m1".into());
+        s.initial_prompt = Some("hello".into());
+        let mut context = ctx();
+        context.resume = Some("thr-1");
+        let p = plan(&s, &context);
+        assert_eq!(&p.args[..2], ["-C", "/tmp/repo"]);
+        let m_index = p.args.iter().position(|a| a == "-m").expect("-m present");
+        assert_eq!(p.args[m_index + 1], "m1");
+        assert_eq!(&p.args[p.args.len() - 2..], ["resume", "thr-1"]);
+        assert!(!p.args.iter().any(|a| a == "--"));
+        assert!(!p.args.iter().any(|a| a == "hello"));
+    }
+
+    /// Design decision 15: `Runtime::Shell` never reads `LaunchContext.resume`.
+    #[test]
+    fn shell_ignores_resume() {
+        let mut context = ctx();
+        context.resume = Some("sess-1");
+        let p = plan(&spec(Runtime::Shell), &context);
+        assert_eq!(p.args, vec!["-l".to_string()]);
+        assert!(!p.args.iter().any(|a| a.contains("sess-1")));
     }
 
     #[test]

@@ -12,12 +12,12 @@ path = "src/main.rs"
 
 [dependencies]
 proto.workspace = true
+config.workspace = true
 daemon.workspace = true
 tui.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 tokio.workspace = true
-libc.workspace = true
 crossterm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -26,3 +26,4 @@ serde_json.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
+libc.workspace = true

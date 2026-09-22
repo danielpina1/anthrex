@@ -66,6 +66,164 @@ ENV["TERM"] = "xterm-256color"
 # whatever working tree the daemon happens to run in, so the daemon this script starts
 # never probes or watches git at all.
 ENV["ANTHREX_GIT"] = "off"
+# `crates/proto/src/paths.rs::config_path()` falls back to the real OS config
+# directory (e.g. `~/Library/Application Support/anthrex/config.toml`) whenever
+# `ANTHREX_CONFIG` is unset. Pointing it here instead means this script's daemon and
+# every client it drives never consult whatever a developer running this locally has
+# actually configured (a different prefix key would break every `\x02`-prefixed send
+# below in a way that has nothing to do with the product). Every stage but one (the
+# resume stage below) never creates it — the suite's own correctness depends on it
+# staying absent for those stages, and `ensure_config_path_absent` below is what makes
+# that an enforced invariant instead of a hope. See the M6.12/fix-wave-11 reviews for
+# why a fixed, silently-poisonable path was a Major finding: a stray file here used to
+# fail stage 2 with "timed out waiting for 'new-agent form'", an error that named the
+# form, never this path.
+#
+# Whole-branch-review m20: the path used to be `/tmp/anthrex-smoke-data/config.toml`
+# with no pid in it, the one piece of shared mutable state left after fix wave 11 —
+# `DATA_DIR` is a `mkdtemp` and `SMOKE_REPO` already carries the pid, but this path
+# did not, so two suites started a few seconds apart both passed the startup check
+# above, then the second one's stage 12b (the only stage that writes a real file here)
+# overwrote the first's config with a path inside a temp dir the first cannot use, and
+# whichever finished first deleted the file out from under the other. Fixed the same
+# way `SMOKE_REPO` already is: the pid goes in the directory name, so two concurrent
+# runs on one host can no longer collide on this path by construction.
+ENV["ANTHREX_CONFIG"] = f"/tmp/anthrex-smoke-data-{os.getpid()}/config.toml"
+
+
+def ensure_config_path_absent():
+    """Refuses to run against a pre-existing file at `ANTHREX_CONFIG`'s fixed path.
+
+    fix-wave-11 review, Major: the suite's own correctness depends on this path being
+    absent (every `\\x02`-prefixed send below assumes the default `C-b` prefix, which
+    a real file here could override), but nothing ever checked that before stage 1
+    ran — a stray file (a previous run killed hard enough to skip its own cleanup, a
+    manual `ANTHREX_CONFIG=... anthrex ...` debugging session, a typo'd `mkdir -p`)
+    silently poisoned every future run with a misdirecting failure at stage 2 that
+    named the form, never this path.
+
+    Chosen fix: fail loudly and name the path, rather than `rm -f` it ourselves.
+    Removing a file this script did not create is a side effect on something that
+    might not be this script's to delete — a developer's own accidental override they
+    still care about, say — and the cost of being wrong there (silently destroying
+    it) is worse than the cost of being right here (one failed run with a clear
+    message). The one stage that legitimately needs a real file at this path (the
+    resume stage below) creates it itself, after this check has already passed, and
+    owns removing it again itself, in its own `try`/`finally` — deliberately not the
+    module-level `finally` below, which cannot tell "this run created the file" from
+    "a file was already here and `ensure_config_path_absent` just refused to touch
+    it", and must not delete the latter.
+    """
+    path = ENV["ANTHREX_CONFIG"]
+    if os.path.exists(path):
+        fail(
+            f"a file already exists at {path!r}, the fixed path this suite always "
+            "points ANTHREX_CONFIG at so a developer's own real config can never "
+            "apply. Every stage in this suite assumes that path starts absent (a "
+            "real config there can override the C-b prefix every \\x02 send below "
+            "depends on) — left in place, the suite fails downstream with an error "
+            "that gives no hint this path is the cause. Remove it by hand "
+            f"(`rm -rf {os.path.dirname(path)}`) and re-run."
+        )
+
+# `C-b Q`'s own wait for the daemon to confirm a stop is `STOPPING_TIMEOUT`, 5s
+# (crates/tui/src/app/link.rs). Past that the client gives up *without* quitting
+# (it only toasts), so a genuine quit must land well inside it — a client stuck on
+# the read-arm bug this stage guards against would just hang past any bound. Per
+# docs/timing-budgets.md's standing rule 1, the bound below is derived from that
+# constant plus generous slack for a freshly-spawned daemon with zero windows to
+# tear down, not tuned close to the real (sub-second) cost.
+TUI_QUIT_TIMEOUT = 15.0
+
+# Whole-branch-review m16 / timing-budgets class 1, its third instance and the first at
+# the Rust/Python language boundary: `run_cmd`'s own default `timeout` (below) is 15s,
+# and two of the CLI subcommands this script wraps with `run_cmd` have a legal worst
+# case *above* that default — one of them, `restart`, has a worst case built in part
+# from a constant that is *numerically equal* to the old 15s default, the exact
+# coincidence `docs/timing-budgets.md`'s standing rule 1 exists to rule out, just never
+# checked on this side of the process boundary before. Every earlier sweep for this
+# defect shape only ever read Rust constants; nothing had read the Python that wraps
+# them.
+#
+# `anthrex restart`'s own client-side ceiling: `HANDSHAKE_TIMEOUT` (5s,
+# `crates/proto/src/lib.rs`) to connect, then `RESTART_REQUEST_TIMEOUT` (15s,
+# `crates/cli/src/client.rs`) for the reply — the CLI gives up and reports its own
+# timeout at 5 + 15 = 20s. Neither constant can be imported here (this is a separate
+# process across a language boundary, the same reason `hook_command.rs`'s `LIMIT`
+# couples to `HOOK_DEADLINE` only by comment), so, same as that site, the coupling is
+# recorded here instead: change either Rust constant, update this comment and the value
+# below.
+RESTART_CMD_TIMEOUT = 40.0
+
+# `anthrex daemon stop`'s own worst case: `HANDSHAKE_TIMEOUT` (5s) to connect, then the
+# daemon's shutdown sequence escalating any still-live window through `HUP_GRACE` (1s,
+# `crates/daemon/src/process.rs`) then `KILL_GRACE` (3s) before the final flush and
+# socket unlink can even start, then the CLI's own post-shutdown poll,
+# `wait_released`, capped at 10s (`crates/cli/src/main.rs`'s `DaemonAction::Stop`) —
+# 5 + 1 + 3 + 10 = 19s before the CLI itself gives up and reports a timeout.
+DAEMON_STOP_CMD_TIMEOUT = 40.0
+
+# fix-wave-12-re-review Major 2: `run_worktree_cli_stage`'s three `anthrex new
+# --worktree` / `anthrex rm --worktree` calls sat at a bare `timeout=60`, below their
+# own legal worst case, because the sweep above enumerated `run_cmd` *call sites*
+# rather than *every wait whose bound must exceed a daemon budget* — these three never
+# matched the construct the previous sweep grepped for (they were plain `timeout=`
+# keyword args, not a distinct wrapper function), so they were missed even though the
+# rule (`docs/timing-budgets.md` standing rule 1) applies to them exactly as it does to
+# `RESTART_CMD_TIMEOUT` / `DAEMON_STOP_CMD_TIMEOUT` above. Per-site arithmetic, from the
+# constants each path actually depends on (`crates/cli/src/client.rs`'s
+# `WORKTREE_REQUEST_TIMEOUT`, `crates/proto/src/lib.rs`'s `HANDSHAKE_TIMEOUT`,
+# `crates/tui/src/spawn.rs`'s `ENSURE_DAEMON_SOCKET_WAIT`):
+#
+# - `anthrex new --worktree` (`main.rs`'s `Command::New`): calls `ensure_daemon` first
+#   (worst case `ENSURE_DAEMON_SOCKET_WAIT`, 3s, paid whenever the daemon is not yet up
+#   at that exact moment — a legal state, not a bug), then `CliClient::connect` (worst
+#   case `HANDSHAKE_TIMEOUT`, 5s), then `WORKTREE_REQUEST_TIMEOUT` (57s) for the reply —
+#   3 + 5 + 57 = **65s**.
+# - `anthrex rm --worktree` (`main.rs`'s `Command::Rm`): no `ensure_daemon` call (a
+#   removal never spawns a daemon), so just `CliClient::connect` (5s) +
+#   `WORKTREE_REQUEST_TIMEOUT` (57s) = **62s**.
+#
+# Both exceed the previous `timeout=60`. The bound below is the larger of the two (65s)
+# plus the same shape of margin `RESTART_CMD_TIMEOUT` / `DAEMON_STOP_CMD_TIMEOUT` carry
+# over their own worst cases above, rounded up to 90s.
+WORKTREE_CMD_TIMEOUT = 90.0
+
+# final-gate finding F2a: `run_worktree_form_stage` (W2, below `run_worktree_cli_stage`,
+# W1) drives the *same daemon create/remove operations* as `WORKTREE_CMD_TIMEOUT` above,
+# just through the TUI's broadcast protocol instead of the CLI's own request/reply. The
+# rule (`docs/timing-budgets.md` standing rule 1) applies here exactly as it does to W1 —
+# `server::requests::create`/`remove` run to the same daemon-side completion no matter
+# which client asked — but every previous sweep for this defect shape (including the one
+# that produced `WORKTREE_CMD_TIMEOUT`) grepped for `run_cmd` calls and `timeout=`
+# keyword args specifically, and W2's waits are neither: they are `wait_for`/
+# `wait_for_focused_window` calls (helper default 10s) and one hand-rolled
+# `deadline = time.monotonic() + 10.0` poll loop, so they matched nothing either sweep
+# grepped for. Per-site arithmetic, from the same constants `WORKTREE_CMD_TIMEOUT`'s own
+# comment above already names:
+#
+# - the worktree-create wait (`wait_for_focused_window("wt-form")` and the following
+#   `wait_for(branch, ...)`, both after the form is submitted): `server::requests::create`
+#   awaits project detection (`DETECT_TIMEOUT`, 5s, `crates/daemon/src/project.rs`) then
+#   `worktree::create`'s own `OPERATION_TIMEOUT` (30s, `crates/daemon/src/worktree.rs`) —
+#   5 + 30 = **35s** on the happy path this stage actually exercises. (A create that fails
+#   and runs `CLEANUP_TIMEOUT` never focuses the window at all, so that term does not
+#   belong in *this* wait's bound — the same reasoning `CREATE_WORST_CASE`'s 45s in
+#   `crates/cli/src/client.rs` does not apply to a wait that only fires on success.)
+# - the dirty-tree prompt wait (`wait_for("uncommitted or untracked", ...)`): one
+#   worktree-removal operation's own `OPERATION_TIMEOUT` (30s) — design decision 3's "the
+#   deadline shared by every git command one worktree operation runs" covers the dirty
+#   check itself, run as part of a removal.
+# - the forced-removal poll (the hand-rolled `deadline = time.monotonic() + 10.0` loop):
+#   `crates/cli/src/client.rs`'s own `REMOVAL_WORST_CASE` — `OPERATION_TIMEOUT` (30) +
+#   `KILL_GRACE` (3, `crates/daemon/src/process.rs`) = **33s**, the kill-then-remove path
+#   a forced removal actually takes.
+#
+# One shared bound, the same shape as `WORKTREE_CMD_TIMEOUT` above (a single constant
+# covering multiple operations with close but distinct worst cases): 35s is the largest
+# of the three, rounded up with the same ~40% margin `WORKTREE_CMD_TIMEOUT` carries over
+# its own 65.25s worst case (90 / 65.25 ≈ 1.38), to 50s.
+WORKTREE_FORM_TIMEOUT = 50.0
 
 
 def fail(msg):
@@ -285,8 +443,68 @@ class PtyProc:
             pass
 
 
-def run_cmd(args, expect_ok=True, timeout=15):
-    result = subprocess.run([BIN] + args, cwd=REPO, env=ENV, capture_output=True, text=True, timeout=timeout)
+def run_cmd(args, expect_ok=True, timeout=28, env=None):
+    # The launch gate (`crates/daemon/src/launch/gate.rs`) added `LAUNCH_GATE_WAIT` (5s)
+    # to `CREATE_WINDOW_REPLY_TIMEOUT`, taking it 7s -> 12s and `new`'s worst case
+    # 15.25s -> 20.25s. That put the previous default of 20 *below* the worst case it
+    # wraps — F2b's own defect, reintroduced from the Rust side of the language boundary
+    # rather than by editing this line. 28 restores F2b's ~38% margin over 20.25s.
+    # Unreachable in this script (its `ANTHREX_CODEX_BIN` is `fake-agent`, so the gate is
+    # already open by the time any `new` runs) but a bound is derived from what the code
+    # *allows*, never from what this script happens to exercise.
+    #
+    # final-gate finding F2b: the default used to be 15, numerically *equal* to
+    # `anthrex new`'s own legal worst case — the exact "bound equals what it wraps"
+    # shape `docs/timing-budgets.md`'s standing rule 1 exists to forbid, the same shape
+    # as the `restart`/`RESTART_REQUEST_TIMEOUT` = 15 coincidence fixed elsewhere in this
+    # file, just not noticed here because the previous pass reasoned from *observed*
+    # cost ("tens to low hundreds of ms") rather than from the worst case the code
+    # actually allows. `new`'s own chain, every constant read from source:
+    #
+    #   ensure_daemon (SPAWN_HANDOFF_GRACE 0.25s, `crates/tui/src/spawn.rs`, +
+    #                  ENSURE_DAEMON_SOCKET_WAIT 3s, same file)              = 3.25s
+    #   + CliClient::connect (HANDSHAKE_TIMEOUT 5s, `crates/proto/src/lib.rs`) =  5s
+    #   + request_with_timeout (CREATE_WINDOW_REPLY_TIMEOUT 12s = LAUNCH_GATE_WAIT 5s +
+    #       DETECT_TIMEOUT 5s + CREATE_REPLY_ALLOWANCE 2s, `crates/cli/src/client.rs`)
+    #                                                                          = 12s
+    #                                                                  total   = 20.25s
+    #
+    # Verified against `crates/cli/src/main.rs`'s `Command::New`, which calls exactly
+    # this chain: `ensure_daemon`, then `connect`, then
+    # `request_with_timeout(CREATE_WINDOW_REPLY_TIMEOUT)`.
+    #
+    # The default is still generous for the ordinary fast commands most call sites wrap
+    # (`ls`, `rm`, `rename`, `daemon status`, `daemon start`: tens to low hundreds of ms
+    # on the Rust side) and is *not* generous enough for `restart`, `daemon stop`, or a
+    # worktree `new`/`rm` — pass `RESTART_CMD_TIMEOUT` / `DAEMON_STOP_CMD_TIMEOUT` /
+    # `WORKTREE_CMD_TIMEOUT` (above) explicitly for those, derived from the real
+    # Rust-side worst case each one has, rather than letting them silently fall through
+    # to a default that was never sized for them (whole-branch-review m16 / this file's
+    # own recurrence of timing-budgets class 1, at the Rust/Python language boundary).
+    # 20s clears `new`'s 15.25s worst case by the same ~30-40% margin this file uses
+    # elsewhere for a bound that must exceed what it wraps (`WORKTREE_CMD_TIMEOUT`'s 90s
+    # over its 65.25s worst case is a ~38% margin).
+    #
+    # fix-wave-12-re-review Major 2: `subprocess.run`'s own `timeout` raises
+    # `TimeoutExpired` on expiry, which this used to leave uncaught — a bound exceeded
+    # (even a correctly-sized one, under real contention) used to kill the whole suite
+    # with a Python traceback pointing at this line, blaming the script rather than
+    # naming which `anthrex` invocation actually ran out of time. Caught here and
+    # reported through `fail()` like every other failure in this script.
+    try:
+        result = subprocess.run(
+            [BIN] + args,
+            cwd=REPO,
+            env=env if env is not None else ENV,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as error:
+        fail(
+            f"`anthrex {' '.join(args)}` did not finish within {timeout}s "
+            f"(stdout so far: {error.stdout!r}, stderr so far: {error.stderr!r})"
+        )
     if expect_ok and result.returncode != 0:
         fail(f"`anthrex {' '.join(args)}` exited {result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}")
     return result
@@ -334,10 +552,17 @@ def write_fake_agent_script():
 def stop_daemon(timeout=30.0):
     """Stops the daemon and waits until it is really gone.
 
-    `anthrex daemon stop` returns as soon as the daemon closes its listener, but the
-    daemon still has to end every agent process group with SIGHUP (escalating if needed)
-    and removes the socket file only as its very last act. Returning before that lets the
-    next run bind a socket at the same path that the dying daemon then unlinks out from it.
+    `anthrex daemon stop` (`crates/cli/src/main.rs`, `DaemonAction::Stop`) now blocks
+    until the daemon has actually exited: it waits for the connection to close, then
+    for the daemon's own lifetime lock to be released, up to 10s. This function's own
+    socket-removal wait stays as a guard on top of that regardless — a defensive
+    backstop for the case where the `daemon stop` subprocess itself times out, errors,
+    or is not the one actually holding the socket, so that even a bare `stop_daemon()`
+    call from `finally` (which never checks `daemon stop`'s exit code) still confirms
+    the daemon is really gone before this run's temp dir is removed. The daemon ends
+    every agent process group with SIGHUP (escalating if needed) and removes the
+    socket file only as its very last act, so a stale socket here really does mean a
+    stale file, not a live daemon's.
     """
     subprocess.run([BIN, "daemon", "stop"], cwd=REPO, env=ENV, capture_output=True, text=True, timeout=timeout)
     deadline = time.monotonic() + timeout
@@ -434,7 +659,7 @@ def run_worktree_cli_stage(repo):
     branch = "smoke/cli"
     run_cmd(
         ["new", "--runtime", "shell", "--name", "wt-cli", "--dir", repo, "--worktree", branch],
-        timeout=60,
+        timeout=WORKTREE_CMD_TIMEOUT,
     )
     listed = run_cmd(["ls"]).stdout
     if "wt-cli" not in listed or branch not in listed:
@@ -464,12 +689,12 @@ def run_worktree_cli_stage(repo):
     dup = run_cmd(
         ["new", "--runtime", "shell", "--name", "wt-dup", "--dir", repo, "--worktree", branch],
         expect_ok=False,
-        timeout=60,
+        timeout=WORKTREE_CMD_TIMEOUT,
     )
     if dup.returncode == 0 or "already checked out" not in dup.stderr:
         fail(f"a duplicate worktree create should have failed with 'already checked out':\n{dup.stderr}")
 
-    run_cmd(["rm", "wt-cli", "--worktree"], timeout=60)
+    run_cmd(["rm", "wt-cli", "--worktree"], timeout=WORKTREE_CMD_TIMEOUT)
     if os.path.exists(worktree_path):
         fail(f"worktree directory {worktree_path!r} still exists after `anthrex rm --worktree`")
     branch_list = subprocess.run(
@@ -513,8 +738,8 @@ def run_worktree_form_stage(repo):
         b"\r",
     ):
         proc.send(chunk)
-    proc.wait_for_focused_window("wt-form")
-    proc.wait_for(branch, label=f"{branch} on screen after submit")
+    proc.wait_for_focused_window("wt-form", timeout=WORKTREE_FORM_TIMEOUT)
+    proc.wait_for(branch, timeout=WORKTREE_FORM_TIMEOUT, label=f"{branch} on screen after submit")
 
     proc.send(b"pwd\r")
     proc.wait_for("smoke-form", label="worktree directory name in pwd output")
@@ -537,10 +762,14 @@ def run_worktree_form_stage(repo):
     proc.wait_for("also remove worktree", label="remove-confirm worktree checkbox")
     proc.send(b" ")
     proc.send(b"\r")
-    proc.wait_for("uncommitted or untracked", label="dirty-tree force prompt")
+    proc.wait_for(
+        "uncommitted or untracked",
+        timeout=WORKTREE_FORM_TIMEOUT,
+        label="dirty-tree force prompt",
+    )
 
     proc.send(b"f")
-    deadline = time.monotonic() + 10.0
+    deadline = time.monotonic() + WORKTREE_FORM_TIMEOUT
     gone = False
     while time.monotonic() < deadline:
         remaining = json.loads(run_cmd(["ls", "--json"]).stdout)
@@ -556,7 +785,8 @@ def run_worktree_form_stage(repo):
         proc.read_available(timeout=0.2)
     if not gone:
         fail(
-            "wt-form was still listed 10s after forcing the dirty removal\n"
+            f"wt-form was still listed {WORKTREE_FORM_TIMEOUT}s after forcing the dirty "
+            "removal\n"
             f"--- screen ---\n{proc.screen_text()}\n"
             f"--- windows ---\n{remaining!r}"
         )
@@ -579,7 +809,256 @@ def run_worktree_form_stage(repo):
     print("ok: the new-agent form created a worktree, a dirty removal was refused, then forced")
 
 
+# fix-wave-11 review: this milestone's headline feature - restarting a Claude or Codex
+# window and resuming its prior session - had no end-to-end coverage anywhere. Stage 10
+# above only ever restarts a `shell`, which has no session identity at all, so it is
+# structurally incapable of reaching `manager/restore.rs`/`restart.rs`'s real
+# `session_id` logic. `run_resume_stage` below closes that gap using a fake runtime
+# script (never a real agent - this suite's own rule, and the pattern task M6.7
+# established for `crates/daemon/tests/lifecycle.rs`'s
+# `restart_resumes_claude_and_codex_sessions`, replayed here against the real `anthrex`
+# binary and a real daemon process instead of `daemon::run` called in-process).
+ANTHREX_CONFIG_PATH = ENV["ANTHREX_CONFIG"]
+RESUME_CONFIG_DIR = os.path.dirname(ANTHREX_CONFIG_PATH)
+
+
+def _write_resume_runtime_script(resume_dir):
+    """A fake `claude`/`codex` binary: prints every argument it is given to a
+    per-window log file, then blocks with `exec sleep 60` so the window stays alive
+    to be restarted later. `--version` is answered directly and fast, the same
+    special case `fake-agent` makes for itself (`crates/fake-agent/src/main.rs`) for
+    the same reason: `crates/daemon/src/lifecycle/codex_version.rs`'s startup probe
+    runs this binary with `--version` before any window launch is accepted, and
+    without a fast, successful reply every daemon start below would stall for that
+    probe's own 5s timeout.
+    """
+    script_path = os.path.join(resume_dir, "resume-runtime.sh")
+    with open(script_path, "w", encoding="utf-8") as handle:
+        handle.write(
+            "#!/bin/sh\n"
+            'if [ "$1" = "--version" ]; then\n'
+            "  printf 'codex-cli 0.155.0\\n'\n"
+            "  exit 0\n"
+            "fi\n"
+            f'out="{resume_dir}/argv-$ANTHREX_WINDOW_ID.log"\n'
+            "{\n"
+            "  printf 'ARGV:'\n"
+            "  for a in \"$@\"; do printf ' [%s]' \"$a\"; done\n"
+            "  printf '\\n'\n"
+            "} > \"$out\"\n"
+            "printf 'READY\\n'\n"
+            "exec sleep 60\n"
+        )
+    os.chmod(script_path, 0o755)
+    return script_path
+
+
+def run_hook(window_id, source, payload, timeout=10):
+    """Fires a real hook the way a real agent's own hook command would: a real
+    `anthrex hook` child process, over the real socket - the same mechanism
+    `crates/cli/tests/persistence.rs`'s `session_id_learned_from_a_hook_is_saved`
+    checks at the Rust integration level, driven here from outside the window's own
+    process (the fake runtime script above never fires a hook itself) rather than
+    from within a scripted fake agent. `anthrex hook` always exits 0 regardless of
+    whether the daemon actually accepted the payload (`crates/cli/src/hook.rs`'s own
+    "the caller always exits zero afterwards"), so a nonzero exit here is a distinct,
+    earlier failure - process spawn, argument parsing - not evidence either way about
+    whether the daemon learned the session id; that is checked separately by
+    `wait_for_session_id`.
+    """
+    result = subprocess.run(
+        [BIN, "hook", "--window", str(window_id), "--source", source, json.dumps(payload)],
+        cwd=REPO,
+        env=ENV,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    if result.returncode != 0:
+        fail(
+            f"`anthrex hook --window {window_id} --source {source}` exited "
+            f"{result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+
+
+def wait_for_session_id(window_id, expected, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    seen = None
+    while time.monotonic() < deadline:
+        windows = json.loads(run_cmd(["ls", "--json"]).stdout)
+        window = next((w for w in windows if w["id"] == window_id), None)
+        seen = window.get("session_id") if window else None
+        if seen == expected:
+            return
+        time.sleep(0.1)
+    fail(f"window {window_id} never reported session_id {expected!r} (last saw {seen!r})")
+
+
+def wait_for_argv_log(path, timeout=10.0):
+    """Wait for a *complete* argv line, not merely a non-empty file.
+
+    This used to return as soon as the file had any content at all, which made the
+    caller's `endswith("[resume] [<session>]")` a race against the writer: the resumed
+    Codex argv is several kilobytes (the `hooks.state` flags are quadratic in hook count
+    — each one must repeat every earlier entry, because Codex *replaces* rather than
+    merges a repeated `-c` key), and a write that large is not delivered atomically. A
+    reader that caught it mid-write got a prefix, and the assertion failed on an argv
+    that was in fact correct. It fired on ubuntu in CI run 35707817474.
+
+    "Non-empty" is not a completeness criterion; a trailing newline is the one the writer
+    actually emits, so wait for that.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as handle:
+                content = handle.read()
+            if content.endswith("\n"):
+                return content
+        time.sleep(0.1)
+    fail(f"{path} never held a newline-terminated line within {timeout}s")
+
+
+def run_resume_stage():
+    """Covers the restore-to-argv path for both runtime shapes: create a window on a
+    fake runtime, give it a session id the way the daemon actually learns one (a real
+    `SessionStart` hook), stop and restart the daemon so the window is restored from
+    `state.json`, restart the window, and assert the resumed process's argv carries
+    `--resume <session>` (Claude, design decision 15) or a trailing `resume <session>`
+    (Codex, design decision 16), with the original prompt gone either way.
+
+    `runtimes.claude.command`/`runtimes.codex.command` must be resolved from
+    `config.toml` at `ANTHREX_CONFIG`, not from `ANTHREX_CLAUDE_BIN`/`ANTHREX_CODEX_BIN`
+    - config decision 6's precedence puts the environment variables first, and every
+    other stage in this suite relies on exactly that override (`ANTHREX_CLAUDE_BIN`/
+    `ANTHREX_CODEX_BIN` point at `FAKE_AGENT_BIN` for the whole module). This stage's
+    own daemon starts below run with those two variables removed from the environment,
+    so the config file it writes here is what actually resolves `claude_bin`/
+    `codex_bin` - the same production config path
+    `crates/daemon/tests/lifecycle.rs`'s own `restart_resumes_claude_and_codex_sessions`
+    exercises in-process, replayed here against the real binary.
+
+    Reads the resumed argv from a file the fake runtime script writes, rather than
+    scraping it off the TUI's rendered screen the way most other stages in this file
+    assert things: Claude's `--settings` argument alone is a full JSON blob covering
+    all ten hook events, long enough to wrap across many rows of even a 120-column
+    pane, and this script's reconstructed screen buffer (see the module docstring)
+    has no notion of a soft-wrapped row the way `vt100::Screen::row_wrapped` does -
+    joining its rows with a literal newline would split a wrapped argv line exactly
+    where a substring check needs it whole. The daemon spawn, the socket, the restart
+    and the restore-from-`state.json` this stage exercises are all real regardless of
+    which side effect the assertion reads back.
+    """
+    print("== stage 12b: restart resumes a Claude/Codex window's prior session ==")
+    resume_dir = os.path.join(DATA_DIR, "resume-argv")
+    os.makedirs(resume_dir, exist_ok=True)
+    script_path = _write_resume_runtime_script(resume_dir)
+
+    os.makedirs(RESUME_CONFIG_DIR, exist_ok=True)
+    try:
+        with open(ANTHREX_CONFIG_PATH, "w", encoding="utf-8") as handle:
+            handle.write(
+                f"[runtimes.claude]\ncommand = {json.dumps(script_path)}\n\n"
+                f"[runtimes.codex]\ncommand = {json.dumps(script_path)}\n"
+            )
+
+        resume_env = dict(ENV)
+        resume_env.pop("ANTHREX_CLAUDE_BIN", None)
+        resume_env.pop("ANTHREX_CODEX_BIN", None)
+
+        run_cmd(["daemon", "start"], env=resume_env)
+
+        seed_prompt = "seed prompt must vanish on resume"
+        created_claude = run_cmd(
+            ["new", "--runtime", "claude", "--name", "resume-claude", "--prompt", seed_prompt]
+        )
+        created_codex = run_cmd(
+            ["new", "--runtime", "codex", "--name", "resume-codex", "--prompt", seed_prompt]
+        )
+        try:
+            claude_id = int(created_claude.stdout.strip())
+            codex_id = int(created_codex.stdout.strip())
+        except ValueError:
+            fail(
+                "`anthrex new` did not print a window id for the resume stage: "
+                f"claude={created_claude.stdout!r} codex={created_codex.stdout!r}"
+            )
+
+        claude_log = os.path.join(resume_dir, f"argv-{claude_id}.log")
+        codex_log = os.path.join(resume_dir, f"argv-{codex_id}.log")
+        wait_for_argv_log(claude_log)
+        wait_for_argv_log(codex_log)
+        print("ok: both windows launched through the fake runtime script")
+
+        claude_session = f"resume-claude-session-{claude_id}"
+        codex_session = f"resume-codex-session-{codex_id}"
+        run_hook(claude_id, "claude", {"hook_event_name": "SessionStart", "session_id": claude_session})
+        run_hook(codex_id, "codex-hook", {"hook_event_name": "SessionStart", "session_id": codex_session})
+        wait_for_session_id(claude_id, claude_session)
+        wait_for_session_id(codex_id, codex_session)
+        print("ok: a real SessionStart hook gave both windows a session id")
+
+        # Removed so the post-restart wait below unambiguously observes the *new*
+        # invocation's argv rather than a stale read of this first one's.
+        os.remove(claude_log)
+        os.remove(codex_log)
+
+        run_cmd(["daemon", "stop"], timeout=DAEMON_STOP_CMD_TIMEOUT)
+        status_result = run_cmd(["daemon", "status"])
+        if "not running" not in status_result.stdout:
+            fail(
+                "`anthrex daemon status` did not report not running ahead of the "
+                f"resume restart:\n{status_result.stdout}"
+            )
+
+        # The restore-from-state.json path (design decision 14): the daemon that
+        # comes back up here has no in-memory record of either window at all: both
+        # entries exist only because `restore()` rebuilt them from `state.json` on
+        # this fresh start, dormant, with the session id the hooks above saved.
+        run_cmd(["daemon", "start"], env=resume_env)
+        run_cmd(["restart", "resume-claude"], timeout=RESTART_CMD_TIMEOUT)
+        run_cmd(["restart", "resume-codex"], timeout=RESTART_CMD_TIMEOUT)
+
+        claude_argv = wait_for_argv_log(claude_log)
+        codex_argv = wait_for_argv_log(codex_log)
+
+        if f"[--resume] [{claude_session}]" not in claude_argv:
+            fail(f"resumed claude argv did not carry --resume {claude_session}:\n{claude_argv}")
+        if f"[--] [{seed_prompt}]" in claude_argv:
+            fail(f"resumed claude argv still carried the original prompt:\n{claude_argv}")
+        # Design decision 16: `resume <id>` must be the trailing pair of Codex's argv,
+        # not merely present anywhere in it - pinned here the same way
+        # `crates/daemon/tests/lifecycle.rs`'s own resume test pins it.
+        if not codex_argv.strip().endswith(f"[resume] [{codex_session}]"):
+            fail(f"resumed codex argv did not end with resume {codex_session}:\n{codex_argv}")
+        if f"[--] [{seed_prompt}]" in codex_argv:
+            fail(f"resumed codex argv still carried the original prompt:\n{codex_argv}")
+        print(
+            "ok: restarting each window after a daemon restart resumed its session - "
+            "claude via --resume, codex via a trailing resume - with the original "
+            "prompt gone from both"
+        )
+
+        run_cmd(["rm", "resume-claude"])
+        run_cmd(["rm", "resume-codex"])
+        run_cmd(["daemon", "stop"], timeout=DAEMON_STOP_CMD_TIMEOUT)
+        status_result = run_cmd(["daemon", "status"])
+        if "not running" not in status_result.stdout:
+            fail(
+                "`anthrex daemon status` did not report not running after the resume "
+                f"stage:\n{status_result.stdout}"
+            )
+    finally:
+        # This stage is the only thing in the suite that ever writes a real file to
+        # ANTHREX_CONFIG's fixed path (`ensure_config_path_absent`'s own doc comment
+        # explains why every other stage needs that path to start absent). Removed
+        # here, unconditionally, on every exit from this stage - success or failure -
+        # so this run never poisons the next one.
+        shutil.rmtree(RESUME_CONFIG_DIR, ignore_errors=True)
+
+
 def main():
+    ensure_config_path_absent()
     ensure_binary()
     write_fake_agent_script()
 
@@ -778,13 +1257,290 @@ def main():
     run_worktree_cli_stage(smoke_repo)
     run_worktree_form_stage(smoke_repo)
 
-    print("== stage 10: stop the daemon, verify status ==")
-    stop_result = run_cmd(["daemon", "stop"])
+    print("== stage 9 stop: stop the daemon ahead of the persistence stages ==")
+    # The persistence and reconnect stages below need to observe the daemon actually
+    # dying and coming back, so this is the same stop-and-verify shape the old final
+    # stage used, just moved earlier: it is the "last stop" the brief calls stage 9,
+    # kept in place immediately before the stages that depend on it.
+    stop_result = run_cmd(["daemon", "stop"], timeout=DAEMON_STOP_CMD_TIMEOUT)
+    print(f"daemon stop output: {stop_result.stdout.strip()!r}")
+    status_result = run_cmd(["daemon", "status"])
+    if "not running" not in status_result.stdout:
+        fail(
+            "`anthrex daemon status` did not report not running ahead of the "
+            f"persistence stages:\n{status_result.stdout}"
+        )
+    print("ok: daemon stopped ahead of the persistence and reconnect stages")
+
+    print("== stage 10: persistence and restart ==")
+    run_cmd(["daemon", "start"])
+    deadline = time.monotonic() + 5.0
+    windows_by_name = {}
+    while True:
+        windows_by_name = {w["name"]: w for w in json.loads(run_cmd(["ls", "--json"]).stdout)}
+        if all(
+            windows_by_name.get(name, {}).get("status") == "exited"
+            for name in ("shell-1", "shell-2", "shell-3", "shell-4")
+        ):
+            break
+        if time.monotonic() >= deadline:
+            fail(
+                "shell-1..4 were not all listed with status 'exited' within 5s of the "
+                f"daemon restarting:\n{windows_by_name!r}"
+            )
+        time.sleep(0.1)
+
+    run_cmd(["rename", "shell-1", "kept"])
+    renamed = run_cmd(["ls"]).stdout
+    if "kept" not in renamed:
+        fail(f"`anthrex ls` did not show 'kept' after renaming shell-1:\n{renamed}")
+
+    run_cmd(["restart", "kept"], timeout=RESTART_CMD_TIMEOUT)
+
+    proc5 = PtyProc([BIN])
+    proc5.wait_for("agents", label="stage-10 attach banner")
+    proc5.send(b"\x021")
+    proc5.wait_for_focused_window("kept")
+    proc5.send(b"echo back-$((1+1))\r")
+    proc5.wait_for("back-2", label="restarted 'kept' shell echo")
+    proc5.send(b"\x02d")
+    status5 = proc5.wait_exit(timeout=5.0)
+    if not os.WIFEXITED(status5) or os.WEXITSTATUS(status5) != 0:
+        fail(f"stage-10 detach did not exit cleanly with status 0 (raw status {status5})")
+    proc5.close()
+    print(
+        "ok: a daemon restart marked shell-1..4 exited, 'kept' kept its name and its "
+        "restarted shell echoed a command"
+    )
+
+    print("== stage 11: reconnect ==")
+    proc6 = PtyProc([BIN])
+    proc6.wait_for("agents", label="stage-11 attach banner")
+    proc6.wait_for("kept", label="'kept' listed on stage-11 attach")
+    run_cmd(["daemon", "stop"], timeout=DAEMON_STOP_CMD_TIMEOUT)
+    proc6.wait_for(
+        "DISCONNECTED", label="disconnected badge after the daemon stopped under the client"
+    )
+    run_cmd(["daemon", "start"])
+    # 10s is the brief's own literal bound, kept verbatim — it is not derived from a
+    # single constant, and in particular it is *not* "five attempts at RETRY_INTERVAL"
+    # (fix-wave-11 review, Minor: that was this comment's previous, wrong
+    # justification). The client's actual legal retry budget is RETRY_WINDOW, 30s
+    # (crates/tui/src/reconnect.rs) — the ceiling after which the client gives up
+    # retrying automatically; RETRY_INTERVAL, 2s (same file), only says how often it
+    # tries within that window, and citing it alone understates how long a legitimate
+    # reconnect is allowed to take by 3x. What this bound actually races is
+    # `ensure_daemon`'s own ~3s socket-wait deadline (crates/tui/src/spawn.rs) plus
+    # about one more RETRY_INTERVAL — a realistic ~5s, not RETRY_WINDOW's full 30s.
+    # 10s held with room to spare in every run measured, including under deliberate
+    # CPU contention, but a daemon slow enough to miss it would still be legitimately
+    # retrying inside its documented 30s RETRY_WINDOW — a false failure in this
+    # script, not a real bug in the client.
+    deadline = time.monotonic() + 10.0
+    screen = proc6.screen_text()
+    while "DISCONNECTED" in screen or "kept" not in screen:
+        if time.monotonic() >= deadline:
+            fail(
+                "reconnect did not clear DISCONNECTED and keep 'kept' listed within "
+                f"10s:\n{screen}"
+            )
+        proc6.read_available(timeout=0.2)
+        screen = proc6.screen_text()
+    proc6.send(b"\x02d")
+    status6 = proc6.wait_exit(timeout=5.0)
+    if not os.WIFEXITED(status6) or os.WEXITSTATUS(status6) != 0:
+        fail(f"stage-11 detach did not exit cleanly with status 0 (raw status {status6})")
+    proc6.close()
+    print(
+        "ok: the client showed DISCONNECTED across a daemon stop/start cycle, "
+        "reconnected, and kept 'kept' listed"
+    )
+
+    print("== stage 11b: the client survives its own give-up state and C-b r revives it ==")
+    # Whole-branch-review Critical 1: `ConnectionDriver::step`'s `select!` used to have
+    # no `else` arm, and decision 31's give-up path (automatic retries exhausted after
+    # RETRY_WINDOW, 30s — crates/tui/src/reconnect.rs) sets every one of that
+    # `select!`'s three guards false at once. Every other reconnect coverage in this
+    # suite (stage 11 above) and in `crates/tui/src/reconnect_tests.rs` brings the
+    # daemon back inside that window, so none of it ever reached the all-disabled
+    # state — this stage is the one place anything actually lets the full window
+    # elapse against the real binary. It also stands in for the CPU measurement no
+    # unit test can make: `else => vec![]` (the obvious, wrong fix) returns
+    # immediately on every poll and spins `event_loop`'s redraw-every-pass loop at
+    # ~95-97% CPU with a normal-looking status bar, which this stage's sampling would
+    # catch and a mere "is it still alive" check would not.
+    proc6b = PtyProc([BIN])
+    proc6b.wait_for("agents", label="stage-11b attach banner")
+    proc6b.wait_for("kept", label="'kept' listed on stage-11b attach")
+    run_cmd(["daemon", "stop"], timeout=DAEMON_STOP_CMD_TIMEOUT)
+    link_lost_at = time.monotonic()
+    proc6b.wait_for(
+        "DISCONNECTED",
+        label="disconnected badge after the daemon stopped under the client (stage 11b)",
+    )
+
+    # RETRY_WINDOW (crates/tui/src/reconnect.rs) is 30s from link loss. Wait past it
+    # with margin, without ever starting a daemon back up, so the give-up path is the
+    # only way out — then confirm the process is still alive at all (pre-fix, it
+    # panicked in the same frame the badge below appeared, rc 101) and is showing
+    # decision 34's give-up status line, not still "reconnecting".
+    giveup_deadline = link_lost_at + 33.0
+    while time.monotonic() < giveup_deadline:
+        proc6b.read_available(timeout=0.5)
+    pid, status = os.waitpid(proc6b.pid, os.WNOHANG)
+    if pid == proc6b.pid:
+        fail(
+            "the client exited on its own while giving up on reconnecting "
+            f"(raw status {status}) — this is the select!-with-no-else panic"
+        )
+    screen = proc6b.screen_text()
+    if "C-b r to reconnect" not in screen:
+        fail(f"give-up status line did not appear after RETRY_WINDOW elapsed:\n{screen}")
+    print("ok: the client survived past RETRY_WINDOW and shows the give-up status line")
+
+    # Sample CPU while parked, over a wall-clock window during which the pty is kept
+    # drained. fix-wave-12-re-review Major 1: the previous version of this loop did
+    # `time.sleep(2.0)` between two `ps %cpu` reads and never called `read_available` —
+    # with the pty undrained, a parked client fills the kernel's ~64KB buffer, blocks on
+    # its next `write`, and stops consuming CPU regardless of whether it is genuinely
+    # idle or busy-looping. Measured against the exact regression this stage exists to
+    # catch (`else => vec![]` in `crates/tui/src/lib.rs`'s `event_loop`, which spins at
+    # ~97% real CPU): the undrained sampling read the busy-loop build at ~1.0%, *lower*
+    # than the correctly-parking build's ~3.4%, so the stage passed on both — inverted,
+    # not merely blind. Draining continuously while sampling removes the backpressure
+    # that masked it, and **the drain is what makes this stage catch the regression at
+    # all** (final-gate review, correcting the diagnosis above): measured directly,
+    # same process and build, back-to-back — undrained reads ~0.7%, drained reads
+    # ~97.0%, on the *same* busy-loop build. A cumulative CPU-time delta
+    # (`ps -o cputime=`, seconds of actual CPU consumed) over the drained wall-clock
+    # window replaces the two discrete `ps %cpu` reads this stage used to take, for the
+    # reason `docs/timing-budgets.md` standing rule 4 gives — `%cpu` is a decaying
+    # average of unspecified window, `cputime` is an exact count — but that switch is
+    # robustness, not the fix: undrained, *both* metrics read low (`%cpu` 0.0%,
+    # `cputime` delta 0.7%), and drained, *both* read ~97%. Do not drop the drain on the
+    # theory that `cputime` alone would have caught this: it would not have.
+    def cpu_time_seconds(pid):
+        try:
+            sample = subprocess.run(
+                ["ps", "-o", "cputime=", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except subprocess.TimeoutExpired as error:
+            fail(f"could not sample cumulative CPU time for the parked client (pid {pid}): {error}")
+        raw = sample.stdout.strip()
+        # fix-wave-12-re-review Minor 6: an empty `ps` result (the pid already gone, or
+        # a transient `ps` hiccup) used to be coerced by `float(... or "0")` into a
+        # passing sample — an instrument failure could only ever push this stage toward
+        # passing. Failing loudly here instead.
+        if not raw:
+            fail(
+                f"could not sample cumulative CPU time for the parked client (pid "
+                f"{pid}): `ps` produced no output"
+            )
+        try:
+            seconds = 0.0
+            for part in raw.split(":"):
+                seconds = seconds * 60 + float(part)
+        except ValueError as error:
+            fail(f"could not parse `ps -o cputime=` output {raw!r} for pid {pid}: {error}")
+        return seconds
+
+    cpu_before = cpu_time_seconds(proc6b.pid)
+    sample_start = time.monotonic()
+    sample_deadline = sample_start + 4.0
+    while time.monotonic() < sample_deadline:
+        proc6b.read_available(timeout=0.2)
+    sample_wall = time.monotonic() - sample_start
+    cpu_after = cpu_time_seconds(proc6b.pid)
+    cpu_delta = cpu_after - cpu_before
+    cpu_percent = 100.0 * cpu_delta / sample_wall
+    print(
+        f"give-up-state CPU over {sample_wall:.1f}s, pty drained throughout "
+        f"(cputime delta {cpu_delta:.2f}s): {cpu_percent:.1f}%"
+    )
+    if cpu_percent > 25.0:
+        fail(
+            f"parked give-up state used {cpu_percent:.1f}% CPU over {sample_wall:.1f}s "
+            "(drained, cputime delta); a busy loop (the `else => vec![]` shape this "
+            "stage guards against) reads ~97%, so this is a regression even though "
+            "the process did not panic"
+        )
+    print("ok: the parked give-up state used negligible CPU (no busy loop)")
+
+    # Decision 32: a manual `C-b r` must still re-arm the driver from `Link::Lost`.
+    run_cmd(["daemon", "start"])
+    proc6b.send(b"\x02r")
+    reconnect_deadline = time.monotonic() + 10.0
+    screen = proc6b.screen_text()
+    while "DISCONNECTED" in screen or "kept" not in screen:
+        if time.monotonic() >= reconnect_deadline:
+            fail(
+                "C-b r from Link::Lost did not clear DISCONNECTED and keep 'kept' "
+                f"listed within 10s:\n{screen}"
+            )
+        proc6b.read_available(timeout=0.2)
+        screen = proc6b.screen_text()
+    print("ok: C-b r re-armed the driver from Link::Lost and reconnected")
+
+    # The user must still be able to quit from here, same as any other state.
+    proc6b.send(b"\x02d")
+    status6b = proc6b.wait_exit(timeout=5.0)
+    if not os.WIFEXITED(status6b) or os.WEXITSTATUS(status6b) != 0:
+        fail(f"stage-11b detach did not exit cleanly with status 0 (raw status {status6b})")
+    proc6b.close()
+    print("ok: the client could still detach cleanly after giving up and reconnecting")
+
+    print("== stage 12: stop the daemon, verify status ==")
+    stop_result = run_cmd(["daemon", "stop"], timeout=DAEMON_STOP_CMD_TIMEOUT)
     print(f"daemon stop output: {stop_result.stdout.strip()!r}")
     status_result = run_cmd(["daemon", "status"])
     if "not running" not in status_result.stdout:
         fail(f"`anthrex daemon status` did not report not running:\n{status_result.stdout}")
     print("ok: daemon stopped and status reports not running")
+
+    run_resume_stage()
+
+    print("== stage 13: quit through the TUI with C-b Q ==")
+    # The brief's stages 10 and 11 above only ever stop the daemon from the CLI. This
+    # stage presses the most destructive key the TUI has - the one that stops the
+    # daemon and kills every agent under it - and is the only thing in the project
+    # that does. A real Critical hid from every unit test in exactly this key: the
+    # event loop's read arm used to be gated on a flag `DaemonMsg::Bye`'s handler
+    # cleared before the socket had actually closed, so `on_link_lost` (and the
+    # `Effect::Quit` it produces for a pending `C-b Q`) never ran and the key just
+    # hung. The brief's own unit test called the handler directly and never drove the
+    # real event loop, so it never saw the hang. Only a real daemon, a real TUI and a
+    # real PTY - this script - could have caught it.
+    proc7 = PtyProc([BIN])
+    proc7.wait_for("agents", label="tui-quit attach banner")
+    proc7.send(b"\x02Q")
+    proc7.wait_for(
+        "Stop the daemon and kill every agent?", label="stop-daemon confirmation modal"
+    )
+    proc7.send(b"y")
+    status7 = proc7.wait_exit(timeout=TUI_QUIT_TIMEOUT)
+    if not os.WIFEXITED(status7) or os.WEXITSTATUS(status7) != 0:
+        fail(f"C-b Q did not exit the client cleanly with status 0 (raw status {status7})")
+    proc7.close()
+
+    # The client quits as soon as it observes the link drop, which can land slightly
+    # ahead of the daemon finishing its own teardown (releasing its lifetime lock and
+    # unlinking the socket only as its very last act - see `stop_daemon`'s docstring
+    # above). Same generous-not-tight reasoning as `TUI_QUIT_TIMEOUT`.
+    deadline = time.monotonic() + TUI_QUIT_TIMEOUT
+    while os.path.exists(SOCKET):
+        if time.monotonic() >= deadline:
+            fail(
+                f"the daemon socket {SOCKET} was still present {TUI_QUIT_TIMEOUT}s "
+                "after C-b Q quit the client"
+            )
+        time.sleep(0.1)
+    status_result = run_cmd(["daemon", "status"])
+    if "not running" not in status_result.stdout:
+        fail(f"`anthrex daemon status` did not report not running after C-b Q:\n{status_result.stdout}")
+    print("ok: C-b Q quit the client through the TUI, and the daemon it stopped is gone")
 
     print("\nALL SMOKE STAGES PASSED")
 
@@ -805,3 +1561,12 @@ if __name__ == "__main__":
         # W1 and W2's fixture repository is not the daemon's data, so it is removed
         # unconditionally, keep-flag or not.
         shutil.rmtree(SMOKE_REPO, ignore_errors=True)
+        # ANTHREX_CONFIG's own fixed-path directory is deliberately *not* removed
+        # here. Unlike DATA_DIR and SMOKE_REPO, this run does not necessarily own
+        # whatever is (or isn't) at that path — `ensure_config_path_absent` may have
+        # failed before anything below ever ran, in which case a stray file there was
+        # never this run's to begin with, and unconditionally `rmtree`-ing it here
+        # would silently delete it anyway, defeating that check's whole point. The one
+        # stage that does create a real file there (the resume stage below) owns its
+        # own cleanup instead, in its own try/finally, precisely so this block never
+        # has to guess whether a given run is the one that created it.

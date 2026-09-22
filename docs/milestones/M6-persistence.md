@@ -20,7 +20,7 @@ Milestone 3 is merged before this one starts. This brief uses the names of `docs
 
 - `anthrex hook` exists, and Claude windows launch with `--settings '<json>'` carrying the hook commands.
 - `WindowInfo.session_id: Option<String>` has replaced `has_session`. `WindowInfo.model` and `WindowInfo.subagents` exist. The daemon records a window's session id when a hook or Codex `notify` delivers it.
-- `proto::PROTO_VERSION` is 3 in roadmap order (2 if milestone 4 is not merged, 4 if milestone 7 is).
+- `proto::PROTO_VERSION` is whatever is on `main` when this milestone starts (`docs/ROADMAP.md`'s convention: each milestone re-derives its number as one more than the value already on `main`, rather than trusting a number written into an older brief). This milestone does not change any message's shape, so it does not bump the number (see Header).
 - `crates/daemon/src/launch/` is a directory module: `mod.rs` (`LaunchContext`, `plan`, `shell_quote`, `hook_command`), `claude.rs` and `codex.rs`. `LaunchContext` carries `exe`, `claude_bin`, `codex_bin` and `codex_hook_source`.
 - `WindowManager::new(config: ManagerConfig)`. `ManagerConfig` holds `socket_path`, `shell`, `exe`, `claude_bin`, `codex_bin` and `codex_hook_source`; `ManagerConfig::from_vars` reads `ANTHREX_CLAUDE_BIN` and `ANTHREX_CODEX_BIN` through a closure, and `from_env` wraps it.
 - `crates/fake-agent` builds the `fake-agent` binary. The end-to-end harness `crates/cli/tests/support/mod.rs` has `fake_agent_bin()` and `TestDaemon` (`start`, `client`, `anthrex`, `data_dir`).
@@ -28,11 +28,11 @@ Milestone 3 is merged before this one starts. This brief uses the names of `docs
 
 If the merged code differs from these names, use the real names and record the mapping under "Implementation notes".
 
-In roadmap order milestones 4 and 5 are merged before this one and milestone 7 is not. The roadmap also allows this milestone right after milestone 3, so every place this brief touches their work says what to do in both cases:
+Milestones 4 and 5 are merged before this one starts; milestone 7 is not. Where this brief touches milestone 7's future work it says so, framed as what changes once milestone 7 lands:
 
-- **Milestone 4 absent**: `WindowInfo.project` does not exist. The state file writes `"project": null`. **Present**: the state file saves the project root, and restore uses the saved value. Restore computes it the way milestone 4 does at window creation only when the saved value is null.
-- **Milestone 5 absent**: `WindowSpec.worktree_branch` is still refused with `daemon::WORKTREE_UNSUPPORTED`, so the state file writes `"worktree": null`. **Present**: the state file saves milestone 5's `Entry.worktree` (`worktree::Worktree { repo_root, path, branch }`), restore puts it back on the entry, and `Remove { remove_worktree, force }` works on restored windows as it does on live ones.
-- **Milestone 7 absent**: a client has one subscription. **Present**: reconnect resubscribes every visible pane, and the restart re-attach rule in decision 21 applies to each subscription's forwarder.
+- `WindowInfo.project: PathBuf` exists (milestone 4). The state file saves the project root, and restore uses the saved value. Restore computes it the way milestone 4 does at window creation only when the saved value is null.
+- `WindowSpec.worktree_branch` is handled by milestone 5's worktree support (`crates/daemon/src/worktree/ops.rs`, `crates/daemon/src/manager/create.rs`). A window the daemon created a worktree for carries `Entry.managed: Option<worktree::ManagedWorktree>` (`ManagedWorktree { repo_root, path, branch }`, `crates/daemon/src/worktree/ops.rs:38`); a window merely inside an existing worktree it did not create has `Entry.managed == None`. `Entry.worktree: Option<PathBuf>` is a different field (milestone 4.5): the checkout root the daemon watches for git status, set for any window under a worktree whether or not this daemon created it. The state file saves `Entry.managed` as `WorktreeRecord`, restore puts it back on the entry, and `Remove { remove_worktree, force }` (`crates/proto/src/messages.rs`) works on restored windows as it does on live ones, including a `DaemonMsg::RemoveDirty { window_id, message }` refusal when the checkout still holds work.
+- Milestone 7 is not merged: a client has one subscription today. Once it lands, reconnect resubscribes every visible pane, and the restart re-attach rule in decision 21 applies to each subscription's forwarder.
 
 Two facts about the current code, because they differ from what one might expect:
 
@@ -77,10 +77,10 @@ Out of scope:
    | `accent` | `"#89b4fa"` | `#` and six hex digits | client theme |
    | `bell.attention` | `true` | boolean | client: ring the outer terminal's bell when a background window enters Attention |
    | `bell.done` | `false` | boolean | client: ring it when a background window enters Done |
-   | `default_runtime` | `"shell"` | `"claude"`, `"codex"`, `"shell"` | `C-b c` (the new-agent dialog's preselected runtime if milestone 5 is merged), `anthrex new` without `--runtime` |
+   | `default_runtime` | `"shell"` | `"claude"`, `"codex"`, `"shell"` | `C-b c` (the new-agent dialog's preselected runtime), `anthrex new` without `--runtime` |
    | `scrollback_lines` | `5000` | 0 to 100000 | client parsers |
-   | `ui.sidebar_width` | the client's built-in width: `tui::ui::SIDEBAR_WIDTH` (30) today, milestone 4's `DEFAULT_SIDEBAR_WIDTH` (34) once it lands | 24 to 60 | client layout; with milestone 4 it is the starting width that `C-b <` and `C-b >` adjust |
-   | `ui.tree_keep_finished_secs` | `300` | 0 to 300. The daemon drops finished sub-agents after 300 seconds (product spec 4.4 rule 3), so more would have no effect | milestone 4's tree hides finished sub-agent rows older than this (task M6.9). If milestone 4 is absent, the value is carried in `UiSettings` and milestone 4 reads it from there |
+   | `ui.sidebar_width` | the client's built-in width, `tui::ui::DEFAULT_SIDEBAR_WIDTH` (34) | 24 to 60 | client layout: the starting width that `C-b <` and `C-b >` adjust |
+   | `ui.tree_keep_finished_secs` | `300` | 0 to 300. The daemon drops finished sub-agents after 300 seconds (product spec 4.4 rule 3), so more would have no effect | milestone 4's tree hides finished sub-agent rows older than this (task M6.9) |
    | `panes.max` | `6` | 1 to 16 | milestone 7's pane limit. The value is carried in `UiSettings` for it |
    | `runtimes.claude.command` | `"claude"` | a non-empty string | daemon launcher |
    | `runtimes.codex.command` | `"codex"` | a non-empty string | daemon launcher and the Codex version probe |
@@ -118,7 +118,7 @@ Out of scope:
    }
    ```
 
-   `runtime` and `status` use the existing lowercase serde names of `proto::Runtime` and `proto::Status`. `created_at` is Unix seconds. `model` and `initial_prompt` are the values from the window's `WindowSpec`, not what hooks reported. `worktree`, when milestone 5 is merged, is `{"repo_root": "...", "path": "...", "branch": "..."}`. `project` and `worktree` follow "Starting point". `run` is always `null` and `runs` always `[]` in this milestone.
+   `runtime` and `status` use the existing lowercase serde names of `proto::Runtime` and `proto::Status`. `created_at` is Unix seconds. `model` and `initial_prompt` are the values from the window's `WindowSpec`, not what hooks reported. `worktree` is `{"repo_root": "...", "path": "...", "branch": "..."}` when the window's `Entry.managed` is `Some`, `null` otherwise. `project` and `worktree` follow "Starting point". `run` is always `null` and `runs` always `[]` in this milestone.
 9. **Saving.** The daemon saves whenever the window list changes. A new persister task subscribes to `WindowManager::watch()`. Every name, status, session-id and project change already publishes on that channel. On a change it waits 100 ms, collecting any further changes. Then it takes `WindowManager::state_snapshot()`, a clone taken under the manager lock with no I/O under it, and writes the file on `tokio::task::spawn_blocking`. It skips the write when the serialized bytes equal the last ones it wrote. A failed write is logged at `warn` and tried again on the next change.
 10. **Atomic write.** `state::save` serializes with `serde_json::to_vec_pretty`. It writes `<data_dir>/state.json.tmp`, created with mode `0o600` because prompts can be private, then calls `sync_all` on it. It renames the file over `state.json`, then opens `<data_dir>` and calls `sync_all` on the directory so the rename itself is durable. Only one writer exists at a time: the persister, or the final flush after the persister has stopped (decision 11).
 11. **Shutdown order.** In `lifecycle::run`, after `server::serve` returns: `manager.shutdown().await`; await the persister task, which stops on the same `CancellationToken`; save once more from `state_snapshot()` on `spawn_blocking`, awaited; unlink the socket (decision 26); remove `daemon.pid`; release the lock last. A socket file that has disappeared therefore means the state is on disk.
@@ -146,15 +146,15 @@ Out of scope:
 
     The initial prompt is never sent on resume. It already belongs to the session being resumed, and sending it again would start the task over. A restart without a known session id is a fresh launch, exactly like the original create, initial prompt included. Claude `--resume <session_id>` is verified for Claude Code 2.1.x in core spec section 10. `claude --help` on 2.1.276 (checked 2026-09-18) lists `-r, --resume` and `-n, --name`.
 16. **Codex resume options.** Core spec 3.2 and risk 4 say to check which of `-m` and a prompt `codex resume` accepts, and to drop the rest on resume only. Checked on 2026-09-18 against codex-cli 0.155.0, which is newer than the 0.135.0 the spec cites. `codex resume --help` prints `Usage: codex resume [OPTIONS] [SESSION_ID] [PROMPT]` and lists `-C, --cd`, `-c, --config` and `-m, --model`. `codex -C /tmp -m gpt-x -c 'tui.notification_method="bel"' resume --help` exits 0, so the parser accepts root options before `resume`. Decision: keep `-m` on resume, and never pass a prompt on resume (decision 15). Task M6.6 repeats the check against the implementer's installed `codex` and records the output. If `-m` is not listed there, `launch::plan` drops `-m` on resume only. Whether Codex applies root options to the `resume` subcommand is confirmed by the manual check, step 6. If it does not, move the options after `resume` and record it; both forms appear in `codex resume --help` on 0.155.0.
-17. **Restarting an exited window.** It relaunches at once. It gets the same id, name and spec, and a fresh `Window` from `Window::spawn` at the last known size. `resume` is the saved session id. The process is swapped in under the manager lock. The window's status becomes `Starting` as on create, `exit`, `tool` and the sub-agent list are cleared, and the session id is kept. A restart never creates a worktree: it runs in the saved `cwd`, which for a worktree window is the worktree path (milestone 5 decision 10), and keeps `Entry.worktree`. It never calls `worktree::create` from `spec.worktree_branch`.
+17. **Restarting an exited window.** It relaunches at once. It gets the same id, name and spec, and a fresh `Window` from `Window::spawn` at the last known size. `resume` is the saved session id. The process is swapped in under the manager lock. The window's status becomes `Starting` as on create, `exit`, `tool` and the sub-agent list are cleared, and the session id is kept. A restart never creates a worktree: it runs in the saved `cwd`, which for a worktree window is the worktree path (milestone 5 decision 11), and leaves `Entry.managed` and `Entry.worktree` untouched. It never calls `worktree::create` from `spec.worktree_branch`.
 18. **Restarting a live window.** It kills the window first through milestone 3's kill path. It waits on a spawned task, never under the lock, polling every 50 ms until the status is `Exited`, for at most the kill escalation's total grace plus 2 seconds, then relaunches as in decision 17. When the wait runs out, the reply is `Error { request: "restart", message: "window <id> did not exit; not restarted" }`. A second `Restart` for a window already being restarted gets `Error { request: "restart", message: "window <id> is already restarting" }`. `Entry` gains `restarting: bool` for this.
-19. **Restart preconditions.** A window whose `cwd` no longer exists gets `Error { request: "restart", message: "directory does not exist: <cwd>" }`. `create` already checks the same. With milestone 5, a removed worktree path fails the same way.
+19. **Restart preconditions.** A window whose `cwd` no longer exists gets `Error { request: "restart", message: "directory does not exist: <cwd>" }`. `create` already checks the same (`crates/daemon/src/manager/create.rs`). A removed worktree path fails the same way, since a worktree window's `cwd` is the worktree path itself (decision 17).
 20. **The Restart request.** `handle_client` runs `manager.restart(window_id)` on a `tokio::spawn`ed task. That task sends `Ack { request: "restart" }` or `Error { request: "restart", .. }` through a clone of `out_tx`. The client's request loop keeps serving other messages while a live window is being stopped.
 21. **Subscribers follow a restart.** Swapping the process drops the old `Window`, or the dormant sender, and so closes the broadcast channel a forwarder is reading. In `forward_output_from`, `RecvError::Closed` no longer ends the loop at once. It calls `reattach()`. On success it replaces the receiver and sends a fresh `Snapshot`, exactly like the `Lagged` branch. On failure, because the window was removed, it ends. The swap happens under the same lock `attach` takes, so a re-attach always sees the new process. No protocol change is needed: every viewer of the window gets the new screen.
 
 ### Rename
 
-22. **Rename rules.** A window name is trimmed, and must be 1 to 64 characters with no control characters. The manager enforces this on both `create` and `rename`, with the errors `name must not be empty`, `name must be at most 64 characters` and `name must not contain control characters`. The existing duplicate check stays. The client checks the same rules before it sends, so an error shows inside the prompt, and it still shows a daemon `Error` as a toast. The next resume of a Claude window passes the new name to `--name`.
+22. **Rename rules.** A window name is trimmed, and must be 1 to 64 characters with no control characters (Unicode category `Cc`, `char::is_control()`) and no bidi text-direction override characters — U+202A through U+202E and U+2066 through U+2069 — refused with the same message as a control character. **Amended, fix wave 6 (task 8 review, Minor):** the original wording ("no control characters", implemented with `char::is_control()`) let U+202E RIGHT-TO-LEFT OVERRIDE through, because it is Unicode category `Cf` ("format"), not `Cc`. Confirmed live against the daemon: `anthrex rename 1 "bad\u{202e}name"` succeeded, and `anthrex ls` rendered the name with its glyphs reordered — the "Trojan Source" spoofing class, and a real security surface here specifically, because anthrex renders window names as labels distinguishing several agents running side by side with different worktrees and permissions. The fix rejects exactly this list of bidi formatting characters, not the whole `Cf` category: `Cf` also contains U+200D ZERO WIDTH JOINER, which a legitimate multi-codepoint emoji sequence needs to fuse into the single grapheme cluster this decision's own 64-character limit is built to count (a family emoji, `man+ZWJ+woman+ZWJ+girl+ZWJ+boy`, at exactly 64 repetitions, must keep being accepted) — rejecting the category would break that case to fix this one. The manager enforces this on both `create` and `rename`, with the errors `name must not be empty`, `name must be at most 64 characters` and `name must not contain control characters`. The existing duplicate check stays. The client checks the same rules before it sends, so an error shows inside the prompt, and it still shows a daemon `Error` as a toast. The next resume of a Claude window passes the new name to `--name`.
 
 ### Keys
 
@@ -196,7 +196,7 @@ Out of scope:
 ### Client: settings and file layout
 
 38. **`UiSettings`.** The client's view of the config is the new struct `tui::settings::UiSettings` (decision 4 lists its fields' sources). `App::new(windows, default_dir, settings)` replaces the current `App::new(windows, default_dir, prefix)`. `UiSettings::default()` matches `config::Config::default()`. `app::SCROLLBACK_LINES` goes away in favour of `settings.scrollback_lines`. `theme::ACCENT` becomes `theme::DEFAULT_ACCENT`. Every renderer takes the accent from `app.settings.accent`, and every piece of help or hint text takes the prefix label from `app.settings.prefix_label` instead of a hard-coded `C-b`.
-39. **Splitting `app.rs`.** Before adding to it, turn `crates/tui/src/app.rs` into `crates/tui/src/app/mod.rs` with `git mv`. Milestone 4 moved its tests into `crates/tui/src/app_tests.rs` (included with `#[path]`); move that file to `crates/tui/src/app/tests.rs` with `git mv` and include it as a plain `#[cfg(test)] mod tests;`. Without milestone 4, move the inline `#[cfg(test)] mod tests` there instead. Milestone 4's `crates/tui/src/tree_input.rs` stays where it is. If milestone 5 created `crates/tui/src/app/modal_keys.rs`, it stays a submodule of `app`. New pure code goes into `crates/tui/src/app/link.rs` (link state, reconnect transitions, stopping) and `crates/tui/src/app/prompt.rs` (the rename prompt). The purity rule in `AGENTS.md` applies to everything under `crates/tui/src/app/`.
+39. **Splitting `app.rs`.** Before adding to it, turn `crates/tui/src/app.rs` into `crates/tui/src/app/mod.rs` with `git mv`. Milestone 4 moved its tests into `crates/tui/src/app_tests.rs` (included with `#[path]`); move that file to `crates/tui/src/app/tests.rs` with `git mv` and include it as a plain `#[cfg(test)] mod tests;`. Milestone 4's `crates/tui/src/tree_input.rs` stays where it is. Milestone 5 already created `crates/tui/src/app/modal_keys.rs` (declared as `mod modal_keys;` inside `app.rs`); it stays a submodule of `app`. New pure code goes into `crates/tui/src/app/link.rs` (link state, reconnect transitions, stopping) and `crates/tui/src/app/prompt.rs` (the rename prompt). The purity rule in `AGENTS.md` applies to everything under `crates/tui/src/app/`.
 
 ## Interfaces
 
@@ -320,7 +320,17 @@ pub struct WindowRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorktreeRecord { pub repo_root: PathBuf, pub path: PathBuf, pub branch: String }
 
-pub fn load(path: &Path) -> (StateFile, Vec<String>);   // blocking; Vec = warnings to log
+// Fix wave 1 (task-2/3/4 review): decision 12 distinguishes "log at error" for an
+// unreadable file (real data loss for this boot) from "log at warn" for a corrupt/
+// unsupported file or a skipped record (already recovered) — a bare Vec<String> cannot
+// carry that. Problem mirrors config::Problem (crates/config/src/lib.rs) with a Severity
+// field added; load's warnings become Vec<Problem>.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity { Error, Warn }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Problem { pub severity: Severity, pub key: String, pub message: String } // Display: "{key}: {message}"
+
+pub fn load(path: &Path) -> (StateFile, Vec<Problem>);   // blocking; levelled problems to log
 pub fn save(path: &Path, state: &StateFile) -> std::io::Result<()>; // blocking, atomic
 pub fn spawn_persister(manager: Arc<WindowManager>, path: PathBuf, shutdown: CancellationToken)
     -> tokio::task::JoinHandle<()>;
@@ -504,7 +514,7 @@ The end of `run` unlinks by inode. Add `config_path` and `lock_wait` to `DaemonO
 - `corrupt_file_is_moved_aside`: write `{not json`. `load` gives an empty state and one warning naming the new path. `state.json` is gone, and exactly one `state.json.corrupt-*` file holds the original bytes. A second corrupt load in the same second produces a name ending in `-1`.
 - `newer_version_is_moved_aside`: `{"version": 3, "next_id": 1, "windows": []}` ends up as `state.json.unsupported-*`.
 - `version_1_file_loads`: a hand-written version-1 file with the core spec 3.6 fields, one record without `session_id` and one with `"status": "sleeping"`. It loads with `project == None`, `run == None`, the missing `session_id == None`, and the unknown status as `Exited`.
-- `bad_records_are_skipped`: three records. One has `"runtime": "perl"`. One repeats the first record's name. The loaded state holds the other one plus the first, with two warnings.
+- `bad_records_are_skipped`: four records: a valid one, one with `"runtime": "perl"`, one that repeats the first record's name, and a second valid record positioned after both bad ones (order-independence: a rejected record must not poison the records that follow it, decision 12's reason for rejecting per-record rather than per-file). The loaded state holds both valid records, with two warnings.
 - `next_id_is_never_below_a_loaded_id`: `next_id: 2` with a record of id 7 loads as `next_id == 8`.
 - `record_json_shape`: serializing the example record from decision 8 matches the example JSON, field names and order included.
 
@@ -514,7 +524,9 @@ The end of `run` unlinks by inode. Add `config_path` and `lock_wait` to `DaemonO
 
 ### M6.5 Restored windows and the persister
 
-**Files.** Modify `crates/daemon/src/manager.rs`, `crates/daemon/src/state.rs` (add `spawn_persister`), `crates/daemon/src/lifecycle.rs`, `crates/daemon/tests/manager.rs` and `crates/daemon/tests/lifecycle.rs`. If `manager.rs` would pass about 600 lines, turn it into `crates/daemon/src/manager/mod.rs`, put the restore and restart code in `crates/daemon/src/manager/restore.rs`, and make `Entry` `pub(super)`.
+**Files.** Modify `crates/daemon/src/manager.rs`, `crates/daemon/src/state.rs` (add `spawn_persister`), `crates/daemon/src/lifecycle.rs`, `crates/daemon/tests/manager.rs` and `crates/daemon/tests/lifecycle.rs`. If `manager.rs` would pass about 600 lines, turn it into `crates/daemon/src/manager/mod.rs`, and put the restore and restart code in `crates/daemon/src/manager/restore.rs`.
+
+  *Correction (fix wave 4, item 8, M6.5 review): leave `Entry` private, not `pub(super)`.* `Entry` is declared in `manager/mod.rs`; every module that names it (`manager/create.rs`, `manager/remove.rs`, `manager/restore.rs`) is a descendant of `manager`, and Rust already gives a descendant access to a private item of an ancestor module — `pub(super)` is not needed for that. Worse, `pub(super)` on an item declared at the crate's `manager/mod.rs` resolves to the *crate root*, so it would expose `Entry` to every module in `anthrex-daemon`, wider than intended. The brief's instruction rested on a wrong model of Rust visibility (that a sibling file needs `pub(super)` to see a parent's private item); the implementation left `Entry` private, correctly.
 
 **Tests first.**
 - In `crates/daemon/tests/manager.rs`: `restored_windows_are_exited_and_viewable`. `restore` a `StateFile` with one shell record (cwd a temp dir, session id `s-1`, name `kept`). `list()` shows it with status `Exited`, exit reason `daemon restarted`, the same id and name, and session id `s-1`. `attach` returns a snapshot whose text, fed into a `vt100::Parser`, contains `this window stopped when the daemon restarted` and `resumes session s-1`. `write_input` fails with a message containing `not running`. `kill` returns `Ok`. `create` with the name `kept` fails as a duplicate. The next created window gets an id greater than the restored one.
@@ -598,23 +610,23 @@ In `handle_client`, replace the `Restart` error arm with the spawned task from d
 
 ### M6.9 Client settings from config
 
-**Files.** Run `git mv crates/tui/src/app.rs crates/tui/src/app/mod.rs` and, with milestone 4, `git mv crates/tui/src/app_tests.rs crates/tui/src/app/tests.rs` (decision 39). Create `crates/tui/src/settings.rs`. Modify `crates/tui/src/tree.rs` (with milestone 4), `crates/tui/src/lib.rs`, `crates/tui/src/theme.rs`, `crates/tui/src/ui/mod.rs`, `crates/tui/src/ui/modal.rs`, `crates/tui/src/ui/sidebar.rs`, `crates/tui/src/ui/statusbar.rs`, `crates/tui/src/ui/terminal.rs`, `crates/tui/Cargo.toml` (add `config`) and `crates/cli/src/main.rs`.
+**Files.** Run `git mv crates/tui/src/app.rs crates/tui/src/app/mod.rs` and `git mv crates/tui/src/app_tests.rs crates/tui/src/app/tests.rs` (decision 39). Create `crates/tui/src/settings.rs`. Modify `crates/tui/src/tree.rs`, `crates/tui/src/lib.rs`, `crates/tui/src/theme.rs`, `crates/tui/src/ui/mod.rs`, `crates/tui/src/ui/modal.rs`, `crates/tui/src/ui/sidebar.rs`, `crates/tui/src/ui/statusbar.rs`, `crates/tui/src/ui/terminal.rs`, `crates/tui/Cargo.toml` (add `config`) and `crates/cli/src/main.rs`.
 
 **Tests first.**
-- In `settings.rs`: `from_config_maps_every_field`. The example config maps to prefix `(Char('a'), CONTROL)`, label `C-a`, accent `Color::Rgb(0xf5, 0xc2, 0xe7)`, sidebar width 40, and so on. `UiSettings::from_config(&Config::default()) == UiSettings::default()`. A `None` sidebar width maps to the built-in width (`ui::SIDEBAR_WIDTH`, or `ui::DEFAULT_SIDEBAR_WIDTH` with milestone 4).
+- In `settings.rs`: `from_config_maps_every_field`. The example config maps to prefix `(Char('a'), CONTROL)`, label `C-a`, accent `Color::Rgb(0xf5, 0xc2, 0xe7)`, sidebar width 40, and so on. `UiSettings::from_config(&Config::default()) == UiSettings::default()`. A `None` sidebar width maps to the built-in width, `ui::DEFAULT_SIDEBAR_WIDTH`.
 - In `app/tests.rs`:
   - `custom_prefix_drives_the_keymap`: with prefix `C-a`, `C-a j` switches windows and `C-b` goes to the PTY as byte `0x02`.
   - `scrollback_follows_settings`: with `scrollback_lines = 10`, after 50 lines of output, scrolling up by 100 stops at offset 10.
   - `bells_follow_settings`: `bell_attention = true` and `bell_done = false`. A background window going to `Attention` returns `Effect::Bell`, and one going to `Done` does not. The focused window never rings.
-  - `new_window_uses_the_default_runtime`: with `default_runtime = Claude`, `C-b c` sends `CreateWindow` with `runtime == Claude`. If milestone 5 is merged, assert the dialog preselects Claude instead.
+  - `new_window_uses_the_default_runtime`: with `default_runtime = Claude`, `C-b c` opens `Modal::NewAgent` (milestone 5's new-agent dialog) with its form preselecting Claude, where `App::new_agent_defaults` (`crates/tui/src/app/modal_keys.rs`) hard-codes `Runtime::Claude` today.
   - `config_problems_open_a_notice`: `App` created from `TuiOptions`-like input with one problem has `Modal::Notice` open. Any key closes it and sends nothing to the PTY.
 - In `ui/mod.rs` tests:
   - `help_and_hints_use_the_configured_prefix`: with prefix `C-a`, the help overlay and the status bar show `C-a ?` and no `C-b`.
-  - `layout_uses_the_configured_sidebar_width`: a client built with `sidebar_width = 40` draws a 40-column sidebar. Without milestone 4, assert `layout(area, true, 40).sidebar.width == 40`. With milestone 4, assert `App::sidebar_width` starts at 40 and `C-b <` still steps it by 4.
+  - `layout_uses_the_configured_sidebar_width`: a client built with `sidebar_width = 40` draws a 40-column sidebar. Assert `App::sidebar_width` starts at 40 and `C-b <` still steps it by 4.
   - `accent_colours_the_focused_border`: the focused main border cell's foreground is the configured accent, read from the `TestBackend` buffer.
-- In `tree.rs` tests (with milestone 4): `finished_subagents_older_than_the_setting_are_hidden`. With `keep_finished_secs = 120`, a `Done` sub-agent with `ended_secs` 150 has no row and one with `ended_secs` 60 has one; a `Running` sub-agent always has one. With the default 300, both finished rows show.
+- In `tree.rs` tests: `finished_subagents_older_than_the_setting_are_hidden`. With `keep_finished_secs = 120`, a `Done` sub-agent with `ended_secs` 150 has no row and one with `ended_secs` 60 has one; a `Running` sub-agent always has one. With the default 300, both finished rows show.
 
-**Change.** Implement decisions 37 to 39 and the `bell.*`, `default_runtime`, `scrollback_lines` and `ui.tree_keep_finished_secs` rows of decision 4. With milestone 4, `tree::TreeState` gains `pub keep_finished_secs: u64` (default 300), set from `settings.tree_keep_finished_secs`; `tree::build` skips a finished sub-agent whose `ended_secs` exceeds it, and its descendants are attached to the nearest shown ancestor, as orphans are. With milestone 5, the new-agent form's first open uses `settings.default_runtime` in place of Claude. Without milestone 4, `ui::layout` gains a `sidebar_width: u16` parameter. With milestone 4, `layout(area, sidebar_width)` already takes it, so initialise `App::sidebar_width` from `settings.sidebar_width` instead of the constant. `modal::render` takes `&App` so it can reach the accent and the prefix label. `HELP` becomes a function of the prefix label. `lib.rs` writes the bell byte for `Effect::Bell`. The CLI's `attach` loads the config once, builds `UiSettings::from_config`, formats the problems, and passes them in `TuiOptions`. Update every existing `App::new` call in tests to pass `UiSettings::default()`.
+**Change.** Implement decisions 37 to 39 and the `bell.*`, `default_runtime`, `scrollback_lines` and `ui.tree_keep_finished_secs` rows of decision 4. `tree::TreeState` gains `pub keep_finished_secs: u64` (default 300), set from `settings.tree_keep_finished_secs`; `tree::build` skips a finished sub-agent whose `ended_secs` exceeds it, and its descendants are attached to the nearest shown ancestor, as orphans are. The new-agent form's first open uses `settings.default_runtime` in place of Claude. `layout(area, sidebar_width)` already takes a `sidebar_width: u16` parameter, so initialise `App::sidebar_width` from `settings.sidebar_width` instead of the constant. `modal::render` takes `&App` so it can reach the accent and the prefix label. `HELP` becomes a function of the prefix label. `lib.rs` writes the bell byte for `Effect::Bell`. The CLI's `attach` loads the config once, builds `UiSettings::from_config`, formats the problems, and passes them in `TuiOptions`. Update every existing `App::new` call in tests to pass `UiSettings::default()`.
 
 **Acceptance.** All tests pass. No file under `crates/tui/src/app/` or `crates/tui/src/ui/` does I/O. `crates/tui/src/app/mod.rs` is under 600 lines.
 
@@ -749,7 +761,7 @@ export ANTHREX_SOCKET=/tmp/m6.sock ANTHREX_DATA_DIR=/tmp/m6-data ANTHREX_CONFIG=
 9. **Timing-sensitive tests.** The handshake tests take about 5 seconds and the live-restart tests take the kill grace. Use deadline loops with generous upper bounds, as `AGENTS.md` requires, and never rely on a fixed sleep alone.
 10. **Protocol mismatch after an upgrade.** A client reconnecting to a daemon built from another version gets a handshake `Error`. That counts as a failed attempt, and once the link is `Lost` its message is shown. The user then runs `anthrex daemon stop` and attaches again.
 11. **The persister and the final flush writing at once.** Both use `state.json.tmp`. Await the persister's `JoinHandle` before the final save. Two concurrent writers would produce a torn temp file.
-12. **`app.rs` split conflicts.** Milestones 4 and 7 also edit the client state. If either is merged, rebase the `git mv` onto their layout rather than re-splitting.
+12. **`app.rs` split conflicts.** Milestone 7 also edits the client state, and is not merged yet. If it lands first, rebase the `git mv` onto its layout rather than re-splitting.
 
 ## Follow-ups handled
 
@@ -769,4 +781,131 @@ From `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`, "Assig
 
 ## Implementation notes
 
-The implementer fills in this section with every deviation, surprise and decision made during implementation.
+Twelve tasks, fourteen fix waves, a whole-branch review and a final gate. Every deviation below was raised by an implementer or a reviewer
+rather than discovered afterwards.
+
+### Amendments to the decisions in this brief
+
+- **Decision 12 (state file problems).** `state::load` returns `Vec<Problem>` carrying a
+  `Severity`, not `Vec<String>`. The decision specifies two severities — `error` for an unreadable
+  file, `warn` for corrupt, unsupported or skipped records — and a bare string cannot carry the
+  distinction. `config::Problem` deliberately has **no** severity: an unreadable config falls back
+  to defaults and loses nothing, while an unreadable state file loses the user's window list. The
+  asymmetry is intentional; do not "fix" it into symmetry.
+- **Decision 18 (kill wait).** `restart` polls `child_alive`, not status `Exited`. Restart reuses a
+  live window id, so a stale `WindowEvent::Exited` from the old process can be applied to the new
+  one; `ParserPanicked` reaches status `Exited` without touching `child_alive`. Because
+  `child_alive = false` is written in exactly one place, observing it false *is* observing the old
+  exit was consumed. The decision's literal wording does not close that race.
+- **Decision 22 (name rules).** Extended beyond `char::is_control()` to reject the bidi formatting
+  characters U+202A–U+202E and U+2066–U+2069. They are category `Cf`, not `Cc`, so they passed the
+  original rule while reordering rendered text — a spoofing surface in a tool that runs several
+  agents side by side. The rule is that explicit list, **not** the `Cf` category, because `Cf` also
+  contains the zero-width joiner that legitimate emoji names need.
+- **Decision 39 (file layout).** `Entry` stays private rather than `pub(super)`: every referencing
+  file is a descendant of `manager` and already sees a private ancestor item, and `pub(super)`
+  there resolves to the crate root — wider than intended. `stopping`'s logic lives in
+  `app/link.rs` as the decision says; it was briefly in `app/lifecycle.rs` and was moved back.
+
+### Deviations from the task list
+
+- `init_logging` returns `anyhow::Result<WorkerGuard>`. `RotatingFile::open` can fail where the old
+  rolling-appender constructor could not.
+- A restored record's `project` is **never fabricated**. The brief's shape invited falling back to
+  `cwd`, but `state_snapshot` writes unconditionally, so the fallback would bake itself into the
+  file permanently and no later boot could re-derive it. A re-probe was rejected because the only
+  non-blocking slot for it is before the socket bind, which is where a slow `codex` probe broke
+  daemon auto-start (see below).
+- `bad_records_are_skipped` uses **four** records, not the three the task text said: two survivors
+  and two rejections require four, and the fourth must sit *after* both bad ones, since
+  order-independence is the property decision 12 exists to provide.
+- Several files outside a task's stated list had to change: removing `theme::ACCENT` and adding a
+  parameter to `subagent_forest` are breaking changes the brief did not anticipate.
+- Module splits beyond those named: `manager/{entry,restore,restart,create}.rs`, `app/windows.rs`,
+  `app/lifecycle.rs`, `app/link.rs`, `tree/{forest,names}.rs`, `server_tests.rs`, and several test
+  modules. Each was verified as a pure move by direct content comparison, never by relying on
+  `git`'s rename detection.
+- `scripts/pty-smoke.py` gained two stages beyond the brief: **stage 13** quits through the TUI
+  with `C-b Q`, and **stage 12b** covers restart-and-resume against a fake runtime. Both were added
+  because the defects below were invisible without them.
+
+### Surprises worth recording
+
+- **`anthrex daemon start` is timing-sensitive to anything before the socket bind.** Moving
+  `codex_version::check` (5 s timeout) ahead of the bind broke auto-start entirely, because
+  `ensure_daemon` waits only 3 s for the socket. Only the state-file load belongs before the bind.
+  **Moving it back was not enough, and the landing spot fix wave 4 chose was wrong too.** With the
+  probe between `bind_socket` and `server::serve`, the socket file exists and connections queue in
+  the listen backlog while nothing reads or answers them — so the probe stopped delaying the
+  *bind* and started delaying the *handshake* instead, where `proto::HANDSHAKE_TIMEOUT` (5 s) sat
+  racing `CODEX_PROBE_TIMEOUT` (5 s) with a measured 60-140 ms of margin. The lesson generalises
+  past this one probe: **"before the socket bind" and "before `serve`" are not the only two places,
+  and neither of them is where this invariant belonged.** The invariant was about *window
+  launches*; `serve` was only a convenient chokepoint that happened to contain them, along with
+  everything else. It is now carried by `daemon::launch::LaunchGate`, which the manager's two
+  launch sites wait on and nothing else does. A guard placed at a chokepoint because the thing it
+  must constrain passes through it will also constrain everything else that does.
+- **Restart is the first code in this project that reuses a live window id.** Every structure keyed
+  by id that assumed one process per id became suspect; the cleanup map produced the same defect
+  **five** separate times before this milestone closed it, not three: fix wave 8's structural
+  `Drop`-based eviction closed the first three (the timeout refusal, `finish_restart`'s own call,
+  and phase C's failure path); fix-wave-12-re-review found a fourth (an unconditional `Drop` could
+  evict a foreign record on a bail that landed before phase B ever ran, closed with a
+  `phase_b_entered` flag set ahead of the kill call); the final gate found a fifth (that flag was
+  set from *reaching the kill call*, not from *the kill call actually inserting a record* —
+  `start_cleanup` short-circuits, inserting nothing, whenever an unrelated record already occupies
+  `cleanups[id]`, so an attempt could mark itself as owning phase B while owning no record at all,
+  and `Drop` would then evict someone else's). Do not claim this closes the class: the guarantee now
+  rests on `Restarting::owns_cleanup_record` being *derived* from
+  `WindowManager::kill_reporting_insert`'s own report of whether its call actually inserted the
+  record (`crates/daemon/src/manager/entry.rs`'s `start_cleanup` returning `Result<bool>`), never
+  asserted at the call site ahead of it — a property that holds only as long as every future kill
+  path threading into `cleanups[id]` continues to report insertion rather than presence. A new kill
+  path that sets ownership before calling, the way this one used to, reopens the same shape.
+- **Two Criticals were invisible to a green suite** and were found only by driving the real product
+  over a PTY: `restart` worked exactly once per window, and `C-b Q` never quit. Both lived in the
+  wiring rather than in any unit — the second because its test called the handler directly,
+  bypassing the event-loop guard that contained the bug.
+- **A guard at admission does not constrain work already in flight.** `restart` and
+  `remove_with_worktree` both needed their `shutting_down` check repeated inside the operation.
+- **A bound must exceed the code's own legal worst case, in any language.** Six instances found so
+  far, not four: two purely in Rust, then four more in `scripts/pty-smoke.py` at the Rust/Python
+  language boundary — `run_cmd`'s calls wrapping `restart`/`daemon stop`, `run_worktree_cli_stage`'s
+  worktree `new`/`rm`, `run_worktree_form_stage`'s TUI-driven equivalents of that same worktree
+  create/remove (missed by the sweep that had just fixed the CLI stage one function above it), and
+  `run_cmd`'s own default `timeout`, numerically equal to `anthrex new`'s worst case (missed by the
+  same sweep that rewrote that default's comment and reaffirmed `new` as safe from observed cost
+  rather than the budget). Every sweep for this class enumerated a rule narrower than "every wait
+  whose bound must exceed a daemon budget" and missed whatever did not match its narrower
+  construct. See `docs/timing-budgets.md`.
+
+### Runtime verification (run 2026-09-21 against the binaries installed on this machine)
+
+```
+$ codex --version
+codex-cli 0.155.0
+
+$ claude --version
+2.1.278 (Claude Code)
+```
+
+`codex resume --help` **does** list `-m, --model <MODEL>`, so the conditional in task M6.6 — drop
+`-m` on resume if the flag is absent — does not apply and `-m` is kept. It also lists
+`--dangerously-bypass-hook-trust`, used by decision 4. `claude --help` lists `-r, --resume [value]`
+and `-n, --name <name>`. Root options precede the `resume` subcommand for Codex; the full transcript
+was captured in the task's report and reproduced independently by its reviewer.
+
+### Accepted residuals
+
+Both are recorded in `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`.
+
+- **The `ensure_daemon` phantom-daemon race** is closed in two layers. The first, `acquire_or_yield`,
+  has no timing bet in it and is what prevents a loser becoming a daemon. The second, a 250 ms
+  spawn-claim grace, is a bounded heuristic that only reduces how often a redundant child is
+  spawned at all; its worst case is a redundant process that exits 0. Measured 0/50 after versus
+  100 % before. Whoever revisits this should first reproduce the mechanism at `c1b4555~1` — a clean
+  number with no demonstrated failing baseline is the shape of measurement this milestone withdrew
+  three times.
+- **`handle_hook` is keyed by window id with no per-spawn tag**, so a hook from a replaced process
+  can in principle land on its successor. Same shape as the accepted `WindowEvent` staleness; a real
+  fix needs a protocol-level generation counter, which is a protocol bump and every client updated.

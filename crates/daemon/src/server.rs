@@ -154,10 +154,24 @@ async fn handle_client(
 ) -> anyhow::Result<()> {
     let (mut rd, mut wr) = stream.into_split();
 
+    // Decision 29: a client that connects and then says nothing (or stalls mid-frame)
+    // must not hold this task, and the socket fd underneath it, forever.
+    let hello = match tokio::time::timeout(
+        proto::HANDSHAKE_TIMEOUT,
+        read_frame::<_, ClientMsg>(&mut rd),
+    )
+    .await
+    {
+        Ok(frame) => frame?,
+        Err(_) => {
+            tracing::debug!("client did not send Hello within the handshake timeout; dropping");
+            return Ok(());
+        }
+    };
     let Some(ClientMsg::Hello {
         proto_version,
         client,
-    }) = read_frame::<_, ClientMsg>(&mut rd).await?
+    }) = hello
     else {
         return Ok(()); // EOF or a client that skipped the handshake: drop silently.
     };
@@ -374,10 +388,15 @@ async fn handle_client(
             ClientMsg::Rename { window_id, name } => {
                 Some(ack_or_error("rename", manager.rename(window_id, name)))
             }
-            ClientMsg::Restart { .. } => Some(error(
-                "restart",
-                "restart is not supported by this daemon version",
-            )),
+            ClientMsg::Restart { window_id } => {
+                // Design decision 20: on its own spawned task, never awaited in this
+                // loop. A live window's restart kills the old process and waits for it
+                // to be gone (up to several seconds), and this loop must keep answering
+                // every other message on the connection — in particular `ListWindows` —
+                // for as long as that takes.
+                requests::restart(manager.clone(), out_tx.clone(), window_id);
+                None
+            }
             ClientMsg::HookEvent {
                 window_id,
                 source,
@@ -451,110 +470,52 @@ async fn forward_output_from(
                 // replay up to a full channel's worth of output on top of the snapshot,
                 // so the receiver is replaced by the one `attach` takes under the same
                 // lock as the snapshot.
-                match reattach() {
-                    Ok(att) => {
-                        output = att.output;
-                        let snapshot = DaemonMsg::Snapshot {
-                            window_id,
-                            cols: att.cols,
-                            rows: att.rows,
-                            bytes: att.snapshot,
-                        };
-                        if out.send(snapshot).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
+                match reattach_with_snapshot(window_id, &out, &reattach).await {
+                    Some(new_output) => output = new_output,
+                    None => break,
                 }
             }
-            Err(broadcast::error::RecvError::Closed) => break,
+            // Design decision 21: a restart swaps the window's `Process`, which drops
+            // whatever this receiver was subscribed to — the old `Window`'s broadcast
+            // sender, or a dormant window's capacity-1 sender that nothing was ever sent
+            // on — and that is exactly what closes this channel. Ending the loop here, as
+            // it used to, would silently stop forwarding a window's output the moment it
+            // was restarted. `reattach()` under the hood takes the same lock as the swap
+            // (`attach`), so it always sees whatever `Process` is current by the time it
+            // runs: the new one if the swap already happened, or — if this task races
+            // ahead of it — `reattach` simply fails and this loop ends, same as a window
+            // that was removed outright.
+            Err(broadcast::error::RecvError::Closed) => {
+                match reattach_with_snapshot(window_id, &out, &reattach).await {
+                    Some(new_output) => output = new_output,
+                    None => break,
+                }
+            }
         }
     }
+}
+
+/// Shared by both `forward_output_from` recovery paths: re-attaches, sends a fresh
+/// `Snapshot` built from what it got back, and hands the caller the new receiver to keep
+/// reading from. `None` means either the re-attach itself failed (the window is gone) or
+/// the snapshot could not be sent (the client is gone) — either way the caller's loop
+/// ends.
+async fn reattach_with_snapshot(
+    window_id: u32,
+    out: &mpsc::Sender<DaemonMsg>,
+    reattach: &(impl Fn() -> anyhow::Result<Attachment> + Send),
+) -> Option<broadcast::Receiver<Bytes>> {
+    let att = reattach().ok()?;
+    let snapshot = DaemonMsg::Snapshot {
+        window_id,
+        cols: att.cols,
+        rows: att.rows,
+        bytes: att.snapshot,
+    };
+    out.send(snapshot).await.ok()?;
+    Some(att.output)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::launch::LaunchPlan;
-    use crate::window::Window;
-    use std::time::{Duration, Instant};
-
-    /// I1: after `Lagged`, the forwarder must not replay the chunks the fresh snapshot
-    /// already contains. The mirror a client would build from the forwarded messages has
-    /// to match the daemon's own screen exactly.
-    ///
-    /// The child is long finished before anything is drained, so the snapshot taken on
-    /// the lag provably contains every chunk still retained by the broadcast channel -
-    /// continuing with the old receiver replays exactly those, and the twelve printed
-    /// lines all fit on one screen, so a duplicate cannot scroll out of sight.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn a_lagged_subscriber_is_resynced_without_replaying_retained_chunks() {
-        let plan = LaunchPlan {
-            program: "sh".into(),
-            args: vec![
-                "-c".into(),
-                "i=1; while [ $i -le 12 ]; do echo line-$i; sleep 0.03; i=$((i+1)); done".into(),
-            ],
-            cwd: std::env::temp_dir(),
-            env: vec![("TERM".into(), "xterm-256color".into())],
-        };
-        let (events, _events_rx) = mpsc::unbounded_channel();
-        // `Window` is Send but not Sync, so the mutex is what lets the forwarder task
-        // and the test share it. Capacity 2: the forwarder lags as soon as it waits.
-        let window = Arc::new(std::sync::Mutex::new(
-            Window::spawn_with_output_capacity(1, &plan, 80, 24, events, 2).unwrap(),
-        ));
-
-        let first = window.lock().unwrap().attach();
-        let mut mirror = vt100::Parser::new(first.rows, first.cols, 0);
-        mirror.process(&first.snapshot);
-
-        // A one-slot outgoing channel that nobody drains: exactly the shape of a client
-        // that cannot keep up.
-        let (out, mut out_rx) = mpsc::channel::<DaemonMsg>(1);
-        let forwarder = {
-            let window = Arc::clone(&window);
-            tokio::spawn(forward_output_from(1, first.output, out, move || {
-                Ok(window.lock().unwrap().attach())
-            }))
-        };
-
-        // Long enough for every line to be printed and the child to exit.
-        tokio::time::sleep(Duration::from_millis(1500)).await;
-        let expected = window.lock().unwrap().screen_text();
-        assert!(
-            expected.contains("line-12"),
-            "the child did not finish: {expected:?}"
-        );
-
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let mut lagged = false;
-        loop {
-            match tokio::time::timeout(Duration::from_millis(500), out_rx.recv()).await {
-                Ok(Some(DaemonMsg::Snapshot {
-                    cols, rows, bytes, ..
-                })) => {
-                    lagged = true;
-                    mirror = vt100::Parser::new(rows, cols, 0);
-                    mirror.process(&bytes);
-                }
-                Ok(Some(DaemonMsg::Output { bytes, .. })) => mirror.process(&bytes),
-                Ok(Some(_)) => {}
-                Ok(None) => break,
-                Err(_) => break, // quiet for 500 ms: nothing more is coming
-            }
-            assert!(Instant::now() < deadline, "the forwarder never went quiet");
-        }
-        forwarder.abort();
-
-        assert!(
-            lagged,
-            "the subscriber never lagged; the test did not exercise the recovery path"
-        );
-        assert_eq!(
-            mirror.screen().contents(),
-            expected,
-            "the mirror diverged from the daemon's screen (chunks replayed on top of a snapshot that held them)"
-        );
-    }
-}
+#[path = "server_tests.rs"]
+mod tests;

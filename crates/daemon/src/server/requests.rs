@@ -170,6 +170,41 @@ pub(super) fn remove_with_worktree(
     });
 }
 
+/// `Restart` (design decision 20): relaunch the window's agent, resuming its last known
+/// session, killing whatever was running first if the window was live.
+///
+/// Detached like `create` and `remove_with_worktree`, and for the closest of the three
+/// reasons: `WindowManager::restart`'s own phase B can sit in a kill wait for several
+/// seconds, and its phase C spawns a real PTY, neither of which this connection's request
+/// loop may be blocked on (design decision 20 — a live window's restart must not stop a
+/// `ListWindows` on the same connection from being answered). Not aborting when the
+/// client disconnects mid-restart matters here too: an aborted restart could leave the
+/// window's `restarting` flag set with nothing left to clear it, or worse, leave the kill
+/// half-delivered and the old process neither confirmed dead nor replaced.
+pub(super) fn restart(manager: Arc<WindowManager>, out: mpsc::Sender<DaemonMsg>, window_id: u32) {
+    // Whole-branch-review Minor m13: this label appeared twice as an independent bare
+    // literal (the `Ack` below and the `error` call), unlike `request::CREATE` /
+    // `request::REMOVE`'s own single, deliberately-shared spelling — a typo in one copy
+    // and not the other would silently desync the success and failure paths' labels.
+    // Not lifted into `proto::messages::request` alongside those two: that module's own
+    // doc comment restricts that list to strings *both ends compare* (the client
+    // pattern-matches `CREATE`/`REMOVE` to decide behaviour); nothing in the TUI or CLI
+    // matches on `"restart"`, it is display-only, which is exactly the case that same
+    // doc comment says should "stay a literal at its one site" — this just makes it one
+    // site instead of two, without misrepresenting it as a wire contract client code
+    // depends on.
+    const REQUEST: &str = "restart";
+    detach(async move {
+        let reply = match manager.restart(window_id).await {
+            Ok(()) => DaemonMsg::Ack {
+                request: REQUEST.to_string(),
+            },
+            Err(e) => error(REQUEST, e.to_string()),
+        };
+        reply_to(&out, reply).await;
+    });
+}
+
 /// `Remove { remove_worktree: false }`: the window only, with any worktree left on disk
 /// (design decision 18).
 ///

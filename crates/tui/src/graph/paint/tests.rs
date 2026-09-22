@@ -6,7 +6,7 @@
 use super::*;
 use crate::app::App;
 use crate::graph::layout;
-use crate::keymap::Keymap;
+use crate::settings::UiSettings;
 use crate::tree::NodeKey;
 use proto::{Runtime, Status, SubagentInfo, SubagentState, WindowInfo};
 use ratatui::style::Modifier;
@@ -36,7 +36,7 @@ fn window(id: u32, project: &str, name: &str, status: Status) -> WindowInfo {
 }
 
 fn app_with(windows: Vec<WindowInfo>) -> App {
-    App::new(windows, "/tmp".into(), Keymap::default_prefix())
+    App::new(windows, "/tmp".into(), UiSettings::default())
 }
 
 /// Hangs one finished sub-agent per `kind` under `window`. `Done` keeps the
@@ -294,7 +294,10 @@ fn the_focused_windows_box_uses_the_focused_border_style() {
     app.focused = Some(1);
     let focused = paint(&layout, area, pan, &app.rows(), &app);
     assert_eq!(focused[0].spans.len(), 1);
-    assert_eq!(focused[0].spans[0].style, crate::theme::border_focused());
+    assert_eq!(
+        focused[0].spans[0].style,
+        crate::theme::border_focused(crate::theme::DEFAULT_ACCENT)
+    );
 }
 
 #[test]

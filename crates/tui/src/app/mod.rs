@@ -2,14 +2,16 @@
 
 use crate::dialog::{FormDefaults, NewAgentForm, RemoveConfirm};
 use crate::keymap::{Command, KeyAction, Keymap};
+use crate::settings::UiSettings;
 use crate::tree::{self, TreeState};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use proto::{ClientMsg, DaemonMsg, GitState, Runtime, Status, WindowInfo};
-use std::collections::{HashMap, HashSet};
+use crossterm::event::KeyEvent;
+pub use link::Link;
+use prompt::RenamePrompt;
+use proto::{ClientMsg, DaemonMsg, GitState, WindowInfo};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-pub const SCROLLBACK_LINES: usize = 5000;
 pub const TOAST_TTL: Duration = Duration::from_secs(4);
 pub const RESIZE_DEBOUNCE: Duration = Duration::from_millis(30);
 const BRACKETED_PASTE_START: &[u8] = b"\x1b[200~";
@@ -47,11 +49,22 @@ fn sanitize_paste(text: &str) -> Vec<u8> {
 pub enum Effect {
     Send(ClientMsg),
     Quit,
+    /// `bell.attention` / `bell.done` (decision 4): `lib.rs` writes the BEL byte.
+    Bell,
+    /// Decision 32: `C-b r` while not connected. `lib.rs` starts an attempt at once
+    /// (unless one is already in flight) and opens a fresh 30 s window.
+    Reconnect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingAction {
     Kill(u32),
+    /// Decision 23: a live window's restart confirmation. Carries the window id
+    /// directly, the same way `Kill` does, rather than an index or a reliance on
+    /// `App.focused` staying put — a dialog that instead trusted focus to still name
+    /// the right window was milestone 5's worst defect (see `app/modal_keys.rs`'s
+    /// `open_force_remove` doc comment for the sibling case this mirrors).
+    Restart(u32),
     StopDaemon,
 }
 
@@ -72,6 +85,16 @@ pub enum Modal {
         name: String,
         message: String,
     },
+    /// Every config `Problem` the CLI found, already formatted, shown once at start
+    /// (decision 7). Dismissed by any key, like `Help`.
+    Notice {
+        title: String,
+        lines: Vec<String>,
+    },
+    /// The rename box (task M6.10, decision 23). `app/prompt.rs` is the pure state and
+    /// the client-side name check; key handling is `app/modal_keys.rs`'s
+    /// `on_rename_key`, and rendering is `ui/modal.rs`.
+    Rename(RenamePrompt),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,8 +123,12 @@ pub struct App {
     pub(crate) graph_area: ratatui::layout::Rect,
     pub(crate) graph_mouse: crate::mouse::MouseState,
     pub keymap: Keymap,
+    /// The client's resolved view of `config.toml` (task M6.9); loaded once by the
+    /// CLI's `attach` and never touched again — reloading it while running is out of
+    /// scope (milestone 6's "Out of scope" list).
+    pub settings: UiSettings,
     pub modal: Option<Modal>,
-    pub connected: bool,
+    pub link: Link,
     pub spinner_frame: usize,
     pub scroll_offset: usize,
     pub default_dir: PathBuf,
@@ -122,52 +149,67 @@ pub struct App {
     pending_worktree_remove: Option<u32>,
     /// Git state by worktree root; pruned to current windows' roots (see `prune_git`).
     pub git: HashMap<PathBuf, GitState>,
+    /// Decision 36: set the moment `C-b Q`'s confirm sends `Shutdown`, cleared the
+    /// moment the wait ends — by the link closing (`on_link_lost`, the daemon's `Bye`
+    /// alone does not end it: see that method's doc comment), by the send itself
+    /// failing (`on_send_failed`), or by `on_tick`'s `STOPPING_TIMEOUT`. Exactly one of
+    /// those three clears it on any given run, so a second `C-b Q` is always possible
+    /// once one of them has.
+    stopping: Option<Instant>,
     toast: Option<(String, Instant)>,
     windows_received_at: Instant,
     /// (cols, rows) of the main inner area; (0, 0) until the first draw.
     term_size: (u16, u16),
     pending_resize: Option<Instant>,
     pending_focus: Option<u32>,
+    /// Decision 35: the window whose `Subscribe` was last handed to the connection —
+    /// set optimistically by whatever emits the effect, cleared by `on_send_failed`
+    /// when that particular send is reported refused. `App::focus`'s early return for
+    /// the already-focused window also requires this to equal it, so a refused
+    /// `Subscribe` is retried (by `on_tick`, or by a later `focus` call) instead of
+    /// being masked forever by "we're already focused there."
+    subscribed: Option<u32>,
 }
 
 impl App {
-    pub fn new(
-        windows: Vec<WindowInfo>,
-        default_dir: PathBuf,
-        prefix: (KeyCode, KeyModifiers),
-    ) -> Self {
+    pub fn new(windows: Vec<WindowInfo>, default_dir: PathBuf, settings: UiSettings) -> Self {
+        let mut tree = TreeState::default();
+        tree.keep_finished_secs = settings.tree_keep_finished_secs;
         Self {
             windows,
             focused: None,
-            parser: vt100::Parser::new(24, 80, SCROLLBACK_LINES),
+            parser: vt100::Parser::new(24, 80, settings.scrollback_lines),
             sidebar_visible: true,
-            sidebar_width: crate::ui::DEFAULT_SIDEBAR_WIDTH,
-            tree: TreeState::default(),
+            sidebar_width: settings.sidebar_width,
+            tree,
             tree_input: None,
             overview: false,
             inspector_visible: true,
             graph_pan: crate::graph::Pan::default(),
             graph_area: ratatui::layout::Rect::default(),
             graph_mouse: crate::mouse::MouseState::default(),
-            keymap: Keymap::new(prefix),
+            keymap: Keymap::new(settings.prefix),
             modal: None,
-            connected: true,
+            link: Link::Connected,
             spinner_frame: 0,
             scroll_offset: 0,
             default_dir,
             home_dir: None,
             form_defaults: FormDefaults {
-                runtime: Runtime::Claude,
+                runtime: settings.default_runtime,
                 dir: String::new(),
                 model: String::new(),
             },
             pending_worktree_remove: None,
             git: HashMap::new(),
+            stopping: None,
             toast: None,
             windows_received_at: Instant::now(),
             term_size: (0, 0),
             pending_resize: None,
             pending_focus: None,
+            subscribed: None,
+            settings,
         }
     }
 
@@ -203,6 +245,18 @@ impl App {
 
     pub fn toast(&mut self, text: impl Into<String>) {
         self.toast = Some((text.into(), Instant::now()));
+    }
+
+    /// Decision 7: every config `Problem` `attach` found, already formatted, shown
+    /// once at start in a dismissable notice. Called right after `App::new`; does
+    /// nothing when there is nothing to report.
+    pub fn report_config_problems(&mut self, problems: Vec<String>) {
+        if !problems.is_empty() {
+            self.modal = Some(Modal::Notice {
+                title: " config ".to_string(),
+                lines: problems,
+            });
+        }
     }
 
     /// Focus this window as soon as it appears in the list (used for `Created` and `attach <name>`).
@@ -258,52 +312,23 @@ impl App {
         // Re-focusing the window we are already on would throw away a screen we have and
         // ask for a second subscription to the same window. The daemon then has to tear
         // the first forwarder down and race it against the new snapshot; nothing is
-        // gained, so do nothing at all.
-        if self.focused == Some(id) {
+        // gained, so do nothing at all — unless (decision 35) the `Subscribe` we
+        // believe is already active never actually made it out, in which case this is
+        // the retry, not a redundant resend.
+        if self.focused == Some(id) && self.subscribed == Some(id) {
             return vec![];
         }
         self.focused = Some(id);
         self.reveal_tree_anchor();
         self.scroll_offset = 0;
         let (cols, rows) = self.term_size;
-        self.parser = vt100::Parser::new(rows.max(1), cols.max(1), SCROLLBACK_LINES);
+        self.parser = vt100::Parser::new(rows.max(1), cols.max(1), self.settings.scrollback_lines);
+        self.subscribed = Some(id);
         vec![Effect::Send(ClientMsg::Subscribe {
             window_id: id,
             cols,
             rows,
         })]
-    }
-
-    fn focus_relative(&mut self, delta: isize) -> Vec<Effect> {
-        let visible = tree::agent_order(&self.rows());
-        if visible.is_empty() {
-            return vec![];
-        }
-        let len = visible.len() as isize;
-        let id = if let Some(current) = self
-            .focused
-            .and_then(|id| visible.iter().position(|candidate| *candidate == id))
-        {
-            visible[(current as isize + delta).rem_euclid(len) as usize]
-        } else {
-            let expanded = tree::agent_order(&tree::build(&self.windows, &TreeState::default()));
-            let current = self
-                .focused
-                .and_then(|id| expanded.iter().position(|candidate| *candidate == id));
-            current
-                .and_then(|current| {
-                    (1..=expanded.len()).find_map(|offset| {
-                        let index = (current as isize + delta.signum() * offset as isize)
-                            .rem_euclid(expanded.len() as isize)
-                            as usize;
-                        visible
-                            .contains(&expanded[index])
-                            .then_some(expanded[index])
-                    })
-                })
-                .unwrap_or(visible[0])
-        };
-        self.focus(id)
     }
 
     pub fn on_daemon(&mut self, msg: DaemonMsg) -> Vec<Effect> {
@@ -331,7 +356,11 @@ impl App {
                 bytes,
             } => {
                 if Some(window_id) == self.focused {
-                    self.parser = vt100::Parser::new(rows.max(1), cols.max(1), SCROLLBACK_LINES);
+                    self.parser = vt100::Parser::new(
+                        rows.max(1),
+                        cols.max(1),
+                        self.settings.scrollback_lines,
+                    );
                     self.parser.process(&bytes);
                     self.scroll_offset = 0;
                 }
@@ -368,12 +397,20 @@ impl App {
                 vec![]
             }
             DaemonMsg::Bye { reason } => {
-                self.connected = false;
                 // Nothing is outstanding on a connection that is gone. Leaving the slot
                 // set would block every later worktree removal behind a reply that can
                 // never arrive.
                 self.pending_worktree_remove = None;
                 self.toast(format!("daemon: {reason}"));
+                // Task M6.10's decision 36, sharpened by M6.11's decision 30: `Bye` is
+                // the daemon's own confirmation that it is stopping, but it is not the
+                // same event as the link actually closing, and `self.link` must not
+                // change here. The event loop keeps reading after `Bye` and only calls
+                // `on_link_lost` once the channel actually closes — the read arm used
+                // to be gated on a flag this handler set `false` right here, which
+                // meant the real close (and the `Quit` a pending `C-b Q` produces from
+                // it) was never observed at all. Quitting *here*, before the socket has
+                // actually gone, would race the daemon's own exit the same way.
                 vec![]
             }
             DaemonMsg::Ack { request } => {
@@ -392,84 +429,6 @@ impl App {
                 vec![]
             }
         }
-    }
-
-    /// The daemon never publishes `None` for an unregistered root, so the client prunes its
-    /// own `git` map to the current windows' roots on every window-list change.
-    fn prune_git(&mut self) {
-        let live: HashSet<PathBuf> = self
-            .windows
-            .iter()
-            .filter_map(|w| w.worktree.clone())
-            .collect();
-        self.git.retain(|root, _| live.contains(root));
-    }
-
-    fn replace_windows(&mut self, windows: Vec<WindowInfo>) -> Vec<Effect> {
-        for w in &windows {
-            if Some(w.id) == self.focused {
-                continue;
-            }
-            let previous = self
-                .windows
-                .iter()
-                .find(|old| old.id == w.id)
-                .map(|old| old.status);
-            if previous != Some(w.status) {
-                match w.status {
-                    Status::Attention => self.toast(format!("{} needs attention", w.name)),
-                    Status::Done => self.toast(format!("{} finished", w.name)),
-                    _ => {}
-                }
-            }
-        }
-        // One derivation of the outgoing rows serves both readers below: the
-        // agent order the focus falls back through, and the keys the reveal
-        // compares against.
-        let previous_rows = self.rows();
-        let previous_order = tree::agent_order(&previous_rows);
-        let previous_keys: Vec<_> = previous_rows.iter().map(|row| row.key.clone()).collect();
-        let previous_index = self
-            .focused
-            .and_then(|id| previous_order.iter().position(|candidate| *candidate == id));
-        let previous_selection = self.tree.selected.clone();
-        self.windows = windows;
-        self.prune_git();
-        self.windows_received_at = Instant::now();
-        self.tree.prune(&self.windows);
-        let rows = tree::build(&self.windows, &self.tree);
-        self.tree.repair_selection(&rows);
-        // Only on the edges decision 15 names, never on every list. The daemon
-        // republishes on every status flip and every output event — several
-        // times a second while agents work — and revealing unconditionally
-        // would snap the canvas back to the selection about as fast as a
-        // person can scroll away from it, undoing what decision 16 grants.
-        // A change of focus is the third edge and reveals from `focus` itself,
-        // which is the only thing that moves it from here.
-        if self.tree.selected != previous_selection
-            || rows.iter().map(|row| &row.key).ne(previous_keys.iter())
-        {
-            self.reveal_tree_anchor();
-        }
-
-        if let Some(id) = self.pending_focus
-            && self.windows.iter().any(|w| w.id == id)
-        {
-            self.pending_focus = None;
-            return self.focus(id);
-        }
-        if self.focused_window().is_none() {
-            if let Some(i) = previous_index
-                && !self.windows.is_empty()
-            {
-                let order = tree::agent_order(&self.rows());
-                if let Some(id) = order.get(i.min(order.len().saturating_sub(1))).copied() {
-                    return self.focus(id);
-                }
-            }
-            return self.ensure_focus();
-        }
-        vec![]
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Effect> {
@@ -491,13 +450,6 @@ impl App {
             KeyAction::Run(cmd) => self.run(cmd),
             KeyAction::Tree(key) => self.on_tree_key(key),
             KeyAction::AwaitPrefix | KeyAction::Cancel | KeyAction::Nothing => vec![],
-        }
-    }
-
-    fn perform(&mut self, action: PendingAction) -> Vec<Effect> {
-        match action {
-            PendingAction::Kill(id) => vec![Effect::Send(ClientMsg::Kill { window_id: id })],
-            PendingAction::StopDaemon => vec![Effect::Send(ClientMsg::Shutdown), Effect::Quit],
         }
     }
 
@@ -524,17 +476,26 @@ impl App {
                 vec![]
             }
             Command::Detach => vec![Effect::Quit],
-            Command::StopDaemon => {
-                self.modal = Some(Modal::Confirm {
-                    message: "Stop the daemon and kill every agent?".into(),
-                    action: PendingAction::StopDaemon,
-                });
-                vec![]
-            }
+            // `C-b Q`: `link::stop_daemon_command` guards against a second press while
+            // one is already in flight (decision 39 keeps all of `stopping`'s logic in
+            // `app/link.rs`).
+            Command::StopDaemon => self.stop_daemon_command(),
             Command::Help => {
                 self.modal = Some(Modal::Help);
                 vec![]
             }
+            // Decision 23: `C-b ,` opens the rename box prefilled with the focused
+            // window's current name; the id travels with the modal itself
+            // (`RenamePrompt::window_id`), not through `self.focused`.
+            Command::RenameWindow => {
+                if let Some(w) = self.focused_window() {
+                    self.modal = Some(Modal::Rename(RenamePrompt::new(w.id, &w.name)));
+                }
+                vec![]
+            }
+            Command::RestartWindow => self.restart_focused(),
+            // `C-b r`: `link::reconnect_command` (decisions 23 and 32).
+            Command::Reconnect => self.reconnect_command(),
             cmd @ (Command::ToggleTree
             | Command::ToggleOverview
             | Command::NarrowSidebar
@@ -580,7 +541,8 @@ impl App {
         }
     }
 
-    /// Called every 100 ms: advances the spinner, expires toasts, flushes a debounced resize.
+    /// Called every 100 ms: advances the spinner, expires toasts, retries a dropped
+    /// `Subscribe`, flushes a debounced resize.
     pub fn on_tick(&mut self) -> Vec<Effect> {
         self.spinner_frame = self.spinner_frame.wrapping_add(1);
         if self
@@ -589,6 +551,12 @@ impl App {
             .is_some_and(|(_, at)| at.elapsed() >= TOAST_TTL)
         {
             self.toast = None;
+        }
+        // Decision 36: the third of the three ways `C-b Q`'s wait can end — nothing
+        // arrived at all within `link::STOPPING_TIMEOUT`.
+        self.check_stopping_timeout();
+        if let Some(effect) = self.retry_dropped_subscribe() {
+            return vec![effect];
         }
         if self
             .pending_resize
@@ -608,8 +576,11 @@ impl App {
     }
 }
 
+mod lifecycle;
+mod link;
 mod modal_keys;
+pub(crate) mod prompt;
+mod windows;
 
 #[cfg(test)]
-#[path = "app_tests.rs"]
 mod tests;

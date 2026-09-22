@@ -1,95 +1,35 @@
 //! Owns every window, applies status events, and broadcasts the window list.
 
+mod config;
 mod create;
+mod entry;
 mod remove;
+mod restart;
+mod restore;
 
+pub use config::ManagerConfig;
 pub use remove::{GitRoots, RemoveError};
 
-use crate::agent_state::AgentState;
 use crate::hooks;
 use crate::launch;
-use crate::status::{self, StatusContext, StatusEvent};
-use crate::window::{Attachment, Window, WindowEvent};
-use crate::worktree::{self, ManagedWorktree};
-use proto::{ExitInfo, HookSource, Status, WindowInfo, WindowSpec};
+use crate::status::StatusEvent;
+use crate::window::{Attachment, WindowEvent};
+use crate::worktree;
+use entry::{Entry, Inner};
+use proto::{ExitInfo, HookSource, Status, WindowInfo};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch};
-
-#[derive(Debug, Clone)]
-pub struct ManagerConfig {
-    pub socket_path: PathBuf,
-    pub shell: String,
-    pub exe: PathBuf,
-    pub claude_bin: String,
-    pub codex_bin: String,
-    pub codex_hook_source: Option<String>,
-    /// `<data_dir>/worktrees`, the `worktrees_root` every window's linked worktree is
-    /// laid out under. `new` and `from_vars` pick a temporary directory so a manager
-    /// built without a data directory — every test that does not exercise worktrees —
-    /// still has somewhere harmless to point; `lifecycle::run` overrides it.
-    pub worktrees_root: PathBuf,
-    /// `worktree::OPERATION_TIMEOUT`, injected here rather than read from the constant
-    /// directly, exactly like `worktrees_root` above: production always gets the real
-    /// value (`new`, `from_vars`), and a test that wants to drive `spawn_window`'s create
-    /// path to its deadline without waiting out the real 30 s sets this field instead
-    /// (fix wave C item 7 — the cheap version of
-    /// `new_worktree_waits_out_the_daemons_whole_create_budget`).
-    pub operation_timeout: Duration,
-    /// `worktree::CLEANUP_TIMEOUT`, `operation_timeout`'s companion: the other term the
-    /// create path's worst-case budget is built from, for the `git worktree add` failure
-    /// or timeout that follows.
-    pub cleanup_timeout: Duration,
-}
-
-impl ManagerConfig {
-    pub fn new(socket_path: PathBuf, shell: String) -> Self {
-        Self {
-            socket_path,
-            shell,
-            exe: PathBuf::from("anthrex"),
-            claude_bin: "claude".to_string(),
-            codex_bin: "codex".to_string(),
-            codex_hook_source: None,
-            worktrees_root: std::env::temp_dir().join("anthrex-worktrees"),
-            operation_timeout: worktree::OPERATION_TIMEOUT,
-            cleanup_timeout: worktree::CLEANUP_TIMEOUT,
-        }
-    }
-
-    pub fn from_vars(
-        socket_path: PathBuf,
-        shell: String,
-        exe: PathBuf,
-        var: impl Fn(&str) -> Option<String>,
-    ) -> Self {
-        let nonempty = |key| var(key).filter(|value| !value.is_empty());
-        Self {
-            socket_path,
-            shell,
-            exe,
-            claude_bin: nonempty("ANTHREX_CLAUDE_BIN").unwrap_or_else(|| "claude".to_string()),
-            codex_bin: nonempty("ANTHREX_CODEX_BIN").unwrap_or_else(|| "codex".to_string()),
-            codex_hook_source: None,
-            worktrees_root: std::env::temp_dir().join("anthrex-worktrees"),
-            operation_timeout: worktree::OPERATION_TIMEOUT,
-            cleanup_timeout: worktree::CLEANUP_TIMEOUT,
-        }
-    }
-
-    pub fn from_env(socket_path: PathBuf, shell: String) -> anyhow::Result<Self> {
-        let exe = std::env::current_exe()?;
-        let mut config = Self::from_vars(socket_path, shell, exe, |key| std::env::var(key).ok());
-        config.codex_hook_source = launch::codex::default_hook_source();
-        Ok(config)
-    }
-}
+use unicode_segmentation::UnicodeSegmentation;
 
 /// A Working window with no output for this long becomes Idle.
 pub const QUIET_AFTER: Duration = Duration::from_secs(3);
 pub use crate::process::{HUP_GRACE, KILL_GRACE};
+
+/// The `ExitInfo.reason` a restored window carries until it is restarted (decision 14).
+pub const DAEMON_RESTARTED: &str = "daemon restarted";
 
 /// The git program every worktree operation this manager runs is spawned as (design
 /// decision 1). `worktree` takes it as a parameter so its own tests can hand it a
@@ -102,114 +42,105 @@ fn git() -> &'static std::ffi::OsStr {
     std::ffi::OsStr::new("git")
 }
 
-struct Entry {
-    id: u32,
-    name: String,
-    spec: WindowSpec,
-    project: PathBuf,
-    /// The git worktree *root* this window's git state is keyed on: milestone 4.5's
-    /// field, which the registry watches. For a window this daemon made a worktree for
-    /// it is that new checkout (design decision 21), which is why it is not the same
-    /// question as `managed` below.
-    worktree: Option<PathBuf>,
-    /// The worktree this daemon created *for* this window, `None` for every other
-    /// window. Not to be confused with `worktree`: that one answers "which checkout do
-    /// we watch", this one answers "did we make it, and may we remove it".
-    // milestone 6: restart re-attaches to this, not to `spec.worktree_branch` (risk 7).
-    managed: Option<ManagedWorktree>,
-    /// A `remove_with_worktree` is in flight for this window (design decision 19 step 1).
-    /// The window stays listed and keeps running while it is set, because the removal can
-    /// still be refused; what the flag stops is a *second* removal reaching git for the
-    /// same checkout, which would have two `git worktree remove` calls and two
-    /// `unregister`s for one directory.
-    removing: bool,
-    status: Status,
-    state: AgentState,
-    viewers: u32,
-    since: Instant,
-    last_output: Instant,
-    exit: Option<ExitInfo>,
-    child_alive: bool,
-    window: Window,
+/// Fix wave 6, Minor finding: whether `c` is one of the bidi text-direction override
+/// characters — U+202A LRE through U+202E RLO, and U+2066 LRI through U+2069 PDI. Unicode
+/// category `Cf` ("format"), not `Cc` ("control"), so `char::is_control()` alone (decision
+/// 22 exactly as first written) does not catch it. U+202E RIGHT-TO-LEFT OVERRIDE is the
+/// character behind "Trojan Source" spoofing: it reorders a name's *rendered* glyphs
+/// without changing its bytes, confirmed live against the daemon (`anthrex rename 1
+/// "bad\u{202e}name"` succeeded, and `anthrex ls` rendered the reordered glyphs). That
+/// matters specifically because anthrex renders window names as labels distinguishing
+/// several agents running side by side with different worktrees and permissions — a window
+/// that renders as a different window is a security surface, not a cosmetic one.
+///
+/// This rejects exactly these nine bidi formatting characters, not the whole `Cf`
+/// category: `Cf` also contains U+200D ZERO WIDTH JOINER, required to fuse a legitimate
+/// multi-codepoint emoji sequence (a family emoji, `man+ZWJ+woman+ZWJ+girl+ZWJ+boy`) into
+/// the single grapheme cluster decision 22's own 64-*grapheme* limit exists to count
+/// correctly — rejecting the category would refuse exactly the input that limit was built
+/// to accept.
+fn is_bidi_override(c: char) -> bool {
+    matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
-impl Entry {
-    fn info(&self, now: Instant) -> WindowInfo {
-        WindowInfo {
-            id: self.id,
-            name: self.name.clone(),
-            runtime: self.spec.runtime,
-            cwd: self.spec.cwd.clone(),
-            project: self.project.clone(),
-            worktree: self.worktree.clone(),
-            branch: self.spec.worktree_branch.clone(),
-            status: self.status,
-            tool: self.state.tool.clone(),
-            since_secs: self.since.elapsed().as_secs(),
-            last_output_secs: self.last_output.elapsed().as_secs(),
-            session_id: self.state.session_id.clone(),
-            model: self.spec.model.clone(),
-            subagents: self.state.subagents.infos(now),
-            exit: self.exit.clone(),
-        }
-    }
-
-    /// Applies a status event; returns whether the status changed.
-    fn apply(&mut self, event: StatusEvent) -> bool {
-        self.apply_with_context(event, self.state.context(self.viewers > 0))
-    }
-
-    fn apply_with_context(&mut self, event: StatusEvent, ctx: StatusContext) -> bool {
-        let next = status::next(self.status, event, self.spec.runtime, ctx);
-        if next == self.status {
-            return false;
-        }
-        self.status = next;
-        self.since = Instant::now();
-        true
-    }
+/// The full set of characters decision 22 refuses in a name: the Unicode `Cc` control
+/// category (`char::is_control()`) plus the bidi overrides above. One predicate shared by
+/// [`validate_name`] and [`sanitize_name`] so the rule enforced on `create`/`rename` and
+/// the rule repaired on `restore` can never drift apart.
+fn is_disallowed_name_char(c: char) -> bool {
+    c.is_control() || is_bidi_override(c)
 }
 
-struct Inner {
-    next_id: u32,
-    shutting_down: bool,
-    entries: BTreeMap<u32, Entry>,
-    /// Names of creates that have been admitted but whose window does not exist yet
-    /// (design decision 15, phase A). A name is taken from the moment a create is
-    /// admitted, because phase B can sit in `git worktree add` for seconds and two
-    /// creates racing on one name would otherwise both pass the duplicate check.
-    reserved_names: BTreeSet<String>,
-    /// Worktree directories that admitted creates are on their way to making, held for
-    /// exactly as long as `reserved_names` holds their window's name.
-    ///
-    /// Without this, two creates with different names and the same branch in one
-    /// repository both enter phase B and run git concurrently: the second one's
-    /// pre-flight checks pass before the first's `worktree add` has registered anything,
-    /// so it goes on to `worktree add` itself, fails with "already exists", and cleans up
-    /// after what it thinks is its own half-made worktree — which is the first agent's
-    /// live checkout, removed with `--force`, and its branch deleted with it. Running
-    /// parallel agents on one repository is what this milestone is *for*, so that is the
-    /// normal case, not an exotic one.
-    reserved_worktrees: BTreeSet<PathBuf>,
-    // Cleanup owns a group beyond the leader's exit and even after window removal.
-    cleanups: BTreeMap<u32, watch::Receiver<bool>>,
+/// Design decision 22: a window name is trimmed, then must be 1 to 64 characters with no
+/// control characters (amended, fix wave 6: and no bidi override characters — see
+/// [`is_bidi_override`]). `create` (`manager::create::admit`) and `rename` both call this —
+/// one validator, not two copies that could drift — so a name the CLI or TUI cannot get
+/// through creation can never be reached through a rename either.
+///
+/// The 64-character limit is counted in *grapheme clusters*
+/// (`UnicodeSegmentation::graphemes`), not bytes and not `char`s: this is the same unit
+/// `crates/tui` already uses everywhere it counts or truncates user-facing text (see
+/// `tree.rs`, `dialog.rs`, `tree_input.rs`, `ui/tree_view.rs`, `graph/paint.rs`), because a
+/// name is rendered in the TUI sidebar and tree, where a multi-codepoint glyph (an accented
+/// letter typed as a base character plus a combining mark, a flag, a family emoji) must
+/// count as the one character it is perceived and rendered as, not as however many Unicode
+/// scalar values happen to encode it.
+fn validate_name(name: &str) -> anyhow::Result<String> {
+    let trimmed = name.trim().to_string();
+    if trimmed.is_empty() {
+        anyhow::bail!("name must not be empty");
+    }
+    if trimmed.graphemes(true).count() > 64 {
+        anyhow::bail!("name must be at most 64 characters");
+    }
+    if trimmed.chars().any(is_disallowed_name_char) {
+        anyhow::bail!("name must not contain control characters");
+    }
+    Ok(trimmed)
 }
 
-impl Inner {
-    fn start_cleanup(&mut self, id: u32) -> anyhow::Result<()> {
-        if self.cleanups.contains_key(&id) {
-            return Ok(());
-        }
-        let entry = self
-            .entries
-            .get(&id)
-            .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
-        if entry.child_alive
-            && let Some(pid) = entry.window.pid()
-        {
-            self.cleanups.insert(id, crate::process::escalate(pid)?);
-        }
-        Ok(())
+/// Fix wave 6, Major finding: repairs a name that fails [`validate_name`] instead of
+/// refusing it, for `restore` (`manager::restore`) to apply to every record loaded from
+/// `state.json` — a file a user can hand-edit, that another tool could write, and that
+/// survives across daemon versions, none of which `validate_name` ever saw before this.
+///
+/// Ruling: sanitize, do not reject. Losing a user's window over a display string is the
+/// exact trade this milestone has refused everywhere else (a corrupt *file* is moved aside,
+/// never deleted; one bad *record* among good ones is skipped, never the whole load) — a
+/// name is a label, not data the user cannot reconstruct, so it is repaired in place.
+///
+/// Each disallowed character ([`is_disallowed_name_char`] — the exact rule
+/// [`validate_name`] enforces, so a sanitized name can never itself fail validation on the
+/// next save) is replaced with `_` rather than stripped, so two differently-placed bad
+/// characters cannot collapse two names into the same string by deleting the gap between
+/// them (`"a\x1bb"` becomes `"a_b"`, not `"ab"`). The result is then truncated to 64
+/// grapheme clusters, the same unit and limit `validate_name` counts by. An input that is
+/// empty, trims to empty, or sanitizes to nothing usable falls back to `"window-<id>"`,
+/// which is always inside the limit and free of disallowed characters.
+///
+/// Idempotent by construction: every character this function can produce (`_`, and
+/// whatever safe characters survived from the input) is itself allowed, and the result is
+/// never longer than the limit, so calling this again on its own output is always a no-op —
+/// the round-trip stability decision 12's "one bad field must not cost the user their work"
+/// promise needs, so a restored name does not change on every subsequent restart.
+///
+/// This does not resolve a collision with another window's name; the caller
+/// (`manager::restore::restore`) does that, the same way it already disambiguates ids.
+fn sanitize_name(id: u32, name: &str) -> String {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return format!("window-{id}");
+    }
+    let cleaned: String = trimmed
+        .chars()
+        .map(|c| if is_disallowed_name_char(c) { '_' } else { c })
+        .collect();
+    let truncated: String = cleaned.graphemes(true).take(64).collect();
+    let truncated = truncated.trim();
+    if truncated.is_empty() {
+        format!("window-{id}")
+    } else {
+        truncated.to_string()
     }
 }
 
@@ -233,6 +164,8 @@ impl WindowManager {
                 reserved_names: BTreeSet::new(),
                 reserved_worktrees: BTreeSet::new(),
                 cleanups: BTreeMap::new(),
+                orphaned_cleanups: Vec::new(),
+                runs: Vec::new(),
             }),
             changed,
             events,
@@ -359,9 +292,13 @@ impl WindowManager {
         let now = Instant::now();
         let mut inner = crate::lock(&self.inner);
         let Inner {
-            entries, cleanups, ..
+            entries,
+            cleanups,
+            orphaned_cleanups,
+            ..
         } = &mut *inner;
         cleanups.retain(|id, done| entries.contains_key(id) || !*done.borrow());
+        orphaned_cleanups.retain(|done| !*done.borrow());
         let mut changed = false;
         for entry in inner.entries.values_mut() {
             changed |= entry.state.subagents.prune(now);
@@ -394,7 +331,7 @@ impl WindowManager {
             .entries
             .get_mut(&id)
             .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
-        entry.window.write_input(bytes)?;
+        entry.write_input(bytes)?;
         let status_changed = entry.apply(StatusEvent::InputSent);
         let subagents_changed = entry.state.subagents.input_sent();
         if status_changed || subagents_changed {
@@ -404,21 +341,21 @@ impl WindowManager {
     }
 
     pub fn resize(&self, id: u32, cols: u16, rows: u16) -> anyhow::Result<()> {
-        self.with_entry(id, |e| e.window.resize(cols.max(1), rows.max(1)))?
+        self.with_entry(id, |e| e.resize(cols.max(1), rows.max(1)))?
     }
 
     pub fn attach(&self, id: u32) -> anyhow::Result<Attachment> {
-        self.with_entry(id, |e| e.window.attach())
+        self.with_entry(id, |e| e.attach())
     }
 
     pub fn child_pid(&self, id: u32) -> anyhow::Result<Option<u32>> {
-        self.with_entry(id, |e| e.window.pid())
+        self.with_entry(id, |e| e.pid())
     }
 
     pub fn snapshot(&self, id: u32) -> anyhow::Result<(Vec<u8>, u16, u16)> {
         self.with_entry(id, |e| {
-            let (cols, rows) = e.window.size();
-            (e.window.snapshot(), cols, rows)
+            let (cols, rows) = e.size();
+            (e.snapshot(), cols, rows)
         })
     }
 
@@ -443,6 +380,17 @@ impl WindowManager {
 
     /// SIGHUP now, SIGTERM after one second, SIGKILL after three seconds.
     pub fn kill(self: &Arc<Self>, id: u32) -> anyhow::Result<()> {
+        self.kill_reporting_insert(id).map(|_inserted| ())
+    }
+
+    /// Same as [`kill`](Self::kill), but also reports whether this call actually
+    /// inserted a `cleanups[id]` record, rather than finding one already there or
+    /// finding no live child to escalate. `restart.rs`'s `Restarting` guard uses this to
+    /// derive ownership of the record structurally instead of asserting it
+    /// (final-gate finding F1) — see that module's own doc comment for why "did this
+    /// call reach the kill line" and "does this attempt own the record" are not the
+    /// same question.
+    pub(super) fn kill_reporting_insert(self: &Arc<Self>, id: u32) -> anyhow::Result<bool> {
         let mut inner = crate::lock(&self.inner);
         anyhow::ensure!(inner.entries.contains_key(&id), "no window with id {id}");
         inner.start_cleanup(id)
@@ -470,7 +418,7 @@ impl WindowManager {
         }
         let entry = inner.entries.remove(&id).expect("looked up a line above");
         if entry.child_alive {
-            let _ = entry.window.signal_group(libc::SIGKILL);
+            let _ = entry.signal_group(libc::SIGKILL);
         }
         drop(entry);
         tracing::info!(id, "window removed");
@@ -479,10 +427,7 @@ impl WindowManager {
     }
 
     pub fn rename(&self, id: u32, name: String) -> anyhow::Result<()> {
-        let name = name.trim().to_string();
-        if name.is_empty() {
-            anyhow::bail!("name must not be empty");
-        }
+        let name = validate_name(&name)?;
         let mut inner = crate::lock(&self.inner);
         // A name a create is still holding is taken just as firmly as one a window has:
         // letting a rename win the race would leave two windows named the same the
@@ -514,41 +459,20 @@ impl WindowManager {
                     tracing::error!(id, %error, "shutdown cleanup failed");
                 }
             }
-            inner.cleanups.values().cloned().collect()
+            // Every live id's own cleanup, plus any `orphaned_cleanups` a prior restart
+            // evicted from `cleanups`: those escalation threads still own a process group
+            // this daemon spawned, and exiting before they finish would take them down
+            // mid-HUP/TERM/KILL and leave a descendant behind (`entry.rs`'s
+            // `orphaned_cleanups` doc comment).
+            inner
+                .cleanups
+                .values()
+                .cloned()
+                .chain(inner.orphaned_cleanups.iter().cloned())
+                .collect()
         };
         for mut done in pending {
             let _ = done.wait_for(|finished| *finished).await;
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashMap;
-
-    #[test]
-    fn bin_overrides_come_from_the_environment_variables() {
-        let vars = HashMap::from([
-            ("ANTHREX_CLAUDE_BIN", "/opt/agents/claude"),
-            ("ANTHREX_CODEX_BIN", "/opt/agents/codex"),
-        ]);
-        let config = ManagerConfig::from_vars(
-            "/tmp/a.sock".into(),
-            "/bin/zsh".into(),
-            "/opt/anthrex/bin/anthrex".into(),
-            |key| vars.get(key).map(|value| (*value).to_string()),
-        );
-        assert_eq!(config.claude_bin, "/opt/agents/claude");
-        assert_eq!(config.codex_bin, "/opt/agents/codex");
-
-        let defaults = ManagerConfig::from_vars(
-            "/tmp/a.sock".into(),
-            "/bin/zsh".into(),
-            "/opt/anthrex/bin/anthrex".into(),
-            |key| (key == "ANTHREX_CLAUDE_BIN").then(String::new),
-        );
-        assert_eq!(defaults.claude_bin, "claude");
-        assert_eq!(defaults.codex_bin, "codex");
     }
 }

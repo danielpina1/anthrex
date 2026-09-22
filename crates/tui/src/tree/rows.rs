@@ -56,13 +56,14 @@ pub(super) fn visible_windows<'a>(
     filtering: bool,
     project_matches: bool,
     filter: &str,
+    keep_finished_secs: u64,
 ) -> Vec<VisibleWindow<'a>> {
     members
         .into_iter()
         .filter_map(|member| match member {
             ProjectChild::Window(window) => {
                 let window_matches = filtering && matches_filter(&window.name, filter);
-                let forest = subagent_forest(&window.subagents);
+                let forest = subagent_forest(&window.subagents, keep_finished_secs);
                 let subagent_matches = filtering
                     && forest
                         .iter()

@@ -2,23 +2,35 @@ use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use proto::{Runtime, Status};
 
-#[path = "app_tests/tree_mode.rs"]
+// These stay under the old `crates/tui/src/app_tests/` directory (task M6.9's `git mv`
+// only moves `app.rs` and `app_tests.rs` itself); the path is relative to this file's own
+// directory, `crates/tui/src/app/`, hence `../`.
+#[path = "../app_tests/tree_mode.rs"]
 mod tree_mode;
 
-#[path = "app_tests/tree_interaction.rs"]
+#[path = "../app_tests/tree_interaction.rs"]
 mod tree_interaction;
 
-#[path = "app_tests/overview.rs"]
+#[path = "../app_tests/overview.rs"]
 mod overview;
 
-#[path = "app_tests/git.rs"]
+#[path = "../app_tests/git.rs"]
 mod git;
 
-#[path = "app_tests/dialog.rs"]
+#[path = "../app_tests/dialog.rs"]
 mod dialog;
 
-#[path = "app_tests/remove.rs"]
+#[path = "../app_tests/remove.rs"]
 mod remove;
+
+#[path = "../app_tests/lifecycle.rs"]
+mod lifecycle;
+
+#[path = "../app_tests/settings.rs"]
+mod settings_tests;
+
+#[path = "../app_tests/reconnect.rs"]
+mod reconnect;
 
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
@@ -56,7 +68,7 @@ fn project_windows() -> Vec<WindowInfo> {
 }
 
 fn app_with(windows: Vec<WindowInfo>) -> App {
-    let mut app = App::new(windows, "/tmp".into(), Keymap::default_prefix());
+    let mut app = App::new(windows, "/tmp".into(), UiSettings::default());
     // The renderer reports the size on the first draw; simulate that.
     let _ = app.set_terminal_size(80, 24);
     app
@@ -79,7 +91,7 @@ fn first_size_report_subscribes_to_the_first_window() {
     let mut app = App::new(
         vec![win(4, "a", Status::Idle), win(5, "b", Status::Idle)],
         "/tmp".into(),
-        Keymap::default_prefix(),
+        UiSettings::default(),
     );
     assert_eq!(app.focused, None);
     let effects = app.set_terminal_size(100, 30);
@@ -100,7 +112,7 @@ fn focus_requested_before_the_first_size_report_subscribes_once_sized() {
     let mut app = App::new(
         vec![win(4, "a", Status::Idle), win(5, "b", Status::Idle)],
         "/tmp".into(),
-        Keymap::default_prefix(),
+        UiSettings::default(),
     );
     assert!(app.focus(5).is_empty());
     assert_eq!(app.focused, None);
@@ -231,7 +243,7 @@ fn number_keys_use_visible_positions() {
 
 #[test]
 fn first_focus_is_the_first_visible_window() {
-    let mut app = App::new(project_windows(), "/tmp".into(), Keymap::default_prefix());
+    let mut app = App::new(project_windows(), "/tmp".into(), UiSettings::default());
 
     assert_eq!(
         app.set_terminal_size(100, 30),
@@ -322,11 +334,14 @@ fn kill_asks_for_confirmation_first() {
         press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE),
         vec![Effect::Send(ClientMsg::Kill { window_id: 1 })]
     );
+    // Task M6.10, decision 36: `C-b Q` no longer quits immediately on `y`/`Enter` — see
+    // `lifecycle::stop_daemon_waits_for_confirmation` for the full three-path coverage of
+    // what it does instead.
     prefix(&mut app);
     press(&mut app, KeyCode::Char('Q'), KeyModifiers::SHIFT);
     assert_eq!(
         press(&mut app, KeyCode::Enter, KeyModifiers::NONE),
-        vec![Effect::Send(ClientMsg::Shutdown), Effect::Quit]
+        vec![Effect::Send(ClientMsg::Shutdown)]
     );
 }
 
@@ -500,3 +515,8 @@ fn wheel_scrolls_the_local_scrollback_and_any_key_snaps_back() {
         })]
     );
 }
+
+// Task M6.9's settings tests (custom prefix, scrollback, bells, default runtime, the
+// startup config-problems notice) live in `app_tests/settings.rs`; task M6.10's rename,
+// restart and quit tests live in `app_tests/lifecycle.rs` (both declared above, per
+// `AGENTS.md` hard rule 8).

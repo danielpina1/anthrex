@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/proto", "crates/daemon", "crates/tui", "crates/cli", "crates/fake-agent"]
+members = ["crates/proto", "crates/config", "crates/daemon", "crates/tui", "crates/cli", "crates/fake-agent"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,7 @@ license = "MIT"
 
 [workspace.dependencies]
 proto = { path = "crates/proto", package = "anthrex-proto" }
+config = { path = "crates/config", package = "anthrex-config" }
 daemon = { path = "crates/daemon", package = "anthrex-daemon" }
 tui = { path = "crates/tui", package = "anthrex-tui" }
 anyhow = "1"
@@ -21,6 +22,7 @@ sha2 = "0.10"
 rmp-serde = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal"] }
 tokio-util = "0.7"
+toml = "1"
 bytes = "1"
 dirs = "6"
 libc = "0.2"

@@ -13,6 +13,13 @@
 /// the number moves and the handshake refuses the pairing instead.
 pub const PROTO_VERSION: u32 = 5;
 
+/// How long the daemon waits for a freshly connected client's `Hello`, and how long a
+/// client waits for the daemon's `Welcome`, before giving up on the handshake. Design
+/// decision 29: a client that connects and then says nothing must not hold a daemon
+/// resource forever, and a daemon that accepted but never answers must not hang a client
+/// indefinitely either.
+pub const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 pub mod codec;
 pub mod messages;
 pub mod paths;
@@ -30,5 +37,10 @@ mod tests {
     #[test]
     fn proto_version_is_five() {
         assert_eq!(super::PROTO_VERSION, 5);
+    }
+
+    #[test]
+    fn handshake_timeout_is_five_seconds() {
+        assert_eq!(super::HANDSHAKE_TIMEOUT, std::time::Duration::from_secs(5));
     }
 }

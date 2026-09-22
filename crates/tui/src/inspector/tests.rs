@@ -4,7 +4,7 @@
 //! not a property several wrong projections could satisfy.
 
 use super::*;
-use crate::keymap::Keymap;
+use crate::settings::UiSettings;
 use crate::tree::NodeKey;
 use proto::{
     GitOperation, GitState, Head, Runtime, Status, SubagentInfo, SubagentState, WindowInfo,
@@ -48,7 +48,7 @@ fn subagent(id: &str, kind: &str, label: Option<&str>) -> SubagentInfo {
 }
 
 fn app(windows: Vec<WindowInfo>) -> App {
-    App::new(windows, "/tmp".into(), Keymap::default_prefix())
+    App::new(windows, "/tmp".into(), UiSettings::default())
 }
 
 fn clean_git() -> GitState {

@@ -1,11 +1,11 @@
 mod client;
 mod hook;
-mod spawn;
 mod tree_cmd;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use proto::{ClientMsg, DaemonMsg, Runtime, WindowSpec};
 use std::path::PathBuf;
+use std::time::Duration;
 use tokio::net::UnixStream;
 
 #[derive(Parser)]
@@ -37,8 +37,9 @@ enum Command {
     },
     /// Create a window and print its id
     New {
-        #[arg(long, value_enum, default_value_t = RuntimeArg::Shell)]
-        runtime: RuntimeArg,
+        /// Defaults to the config's `default_runtime` (decision 7)
+        #[arg(long, value_enum)]
+        runtime: Option<RuntimeArg>,
         #[arg(long)]
         name: Option<String>,
         /// Create a git worktree on this branch and start the window in it
@@ -77,9 +78,13 @@ enum Command {
         #[arg(long, requires = "worktree")]
         force: bool,
     },
+    /// Rename a window
+    Rename { target: String, name: String },
+    /// Restart a window, resuming its session when known
+    Restart { target: String },
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum RuntimeArg {
     Claude,
     Codex,
@@ -166,7 +171,19 @@ async fn run_cli() -> anyhow::Result<()> {
             prompt,
         }) => {
             let dir = resolve_dir(cli.dir)?;
-            spawn::ensure_daemon(&socket).await?;
+            // Decision 7: `new` is the only one-shot command that reads the config, to
+            // fall back to `default_runtime` when `--runtime` was not given. Every
+            // problem it finds is printed to stderr, never stdout — stdout is reserved
+            // for the created window's id, which downstream scripts parse.
+            let (loaded_config, config_problems) = config::load(&proto::paths::config_path());
+            for problem in &config_problems {
+                eprintln!("anthrex: config: {}: {}", problem.key, problem.message);
+            }
+            let runtime: Runtime = match runtime {
+                Some(r) => r.into(),
+                None => loaded_config.default_runtime,
+            };
+            tui::spawn::ensure_daemon(&std::env::current_exe()?, &socket).await?;
             let mut c = client::CliClient::connect(&socket).await?;
             // A worktree create can make the daemon run git (decision 3's 30 s
             // operation deadline), so it needs the longer budget; a plain create is
@@ -178,7 +195,7 @@ async fn run_cli() -> anyhow::Result<()> {
             };
             let spec = WindowSpec {
                 name,
-                runtime: runtime.into(),
+                runtime,
                 cwd: dir,
                 worktree_branch: worktree,
                 model,
@@ -232,6 +249,28 @@ async fn run_cli() -> anyhow::Result<()> {
             let id = client::resolve_target(&c.windows, &target)?;
             expect_ack(c.request(ClientMsg::Kill { window_id: id }).await?)
         }
+        Some(Command::Rename { target, name }) => {
+            let mut c = client::CliClient::connect(&socket).await?;
+            let id = client::resolve_target(&c.windows, &target)?;
+            expect_ack(
+                c.request(ClientMsg::Rename {
+                    window_id: id,
+                    name,
+                })
+                .await?,
+            )
+        }
+        Some(Command::Restart { target }) => {
+            let mut c = client::CliClient::connect(&socket).await?;
+            let id = client::resolve_target(&c.windows, &target)?;
+            expect_ack(
+                c.request_with_timeout(
+                    ClientMsg::Restart { window_id: id },
+                    client::RESTART_REQUEST_TIMEOUT,
+                )
+                .await?,
+            )
+        }
         Some(Command::Rm {
             target,
             worktree,
@@ -283,11 +322,26 @@ async fn run_cli() -> anyhow::Result<()> {
 }
 
 async fn attach(socket: PathBuf, dir: PathBuf, target: Option<String>) -> anyhow::Result<()> {
-    spawn::ensure_daemon(&socket).await?;
+    tui::spawn::ensure_daemon(&std::env::current_exe()?, &socket).await?;
+    // The config is loaded exactly once, here, and turned into the client's resolved
+    // `UiSettings` before `tui::run` starts: nothing under `crates/tui/src/app/` or
+    // `crates/tui/src/ui/` does I/O (task M6.9's layering rule), so the CLI is the only
+    // place `config::load` can run for the TUI. Every problem it found is formatted
+    // (decision 7's `<key>: <message> (using <default>)`, `Problem`'s own `Display`)
+    // and shown once, in a dismissable notice, instead of being lost to a log no one
+    // watching the TUI would see.
+    let (loaded_config, config_problems) = config::load(&proto::paths::config_path());
+    // Decision 32: `C-b r` may need to start the daemon the same way this cold
+    // attach just did, so it gets the same executable path `ensure_daemon` above
+    // used.
+    let daemon_exe = std::env::current_exe()?;
     tui::run(tui::TuiOptions {
         socket_path: socket,
         default_dir: dir,
         focus: target,
+        settings: tui::settings::UiSettings::from_config(&loaded_config),
+        config_problems: config_problems.iter().map(ToString::to_string).collect(),
+        daemon_exe: Some(daemon_exe),
     })
     .await
 }
@@ -298,11 +352,13 @@ async fn daemon_command(action: DaemonAction, socket: PathBuf) -> anyhow::Result
             daemon::run(daemon::DaemonOptions {
                 socket_path: socket,
                 data_dir: proto::paths::data_dir(),
+                config_path: proto::paths::config_path(),
+                lock_wait: daemon::LOCK_WAIT,
             })
             .await
         }
         DaemonAction::Start { foreground: false } => {
-            spawn::ensure_daemon(&socket).await?;
+            tui::spawn::ensure_daemon(&std::env::current_exe()?, &socket).await?;
             println!("daemon running on {}", socket.display());
             Ok(())
         }
@@ -312,6 +368,20 @@ async fn daemon_command(action: DaemonAction, socket: PathBuf) -> anyhow::Result
                 .map_err(|_| anyhow::anyhow!("no daemon is running"))?;
             c.send(ClientMsg::Shutdown).await?;
             c.wait_close().await;
+            // Decision 27: only report the daemon stopped once its lifetime lock is
+            // free, so an `anthrex` right after this never races a daemon that is still
+            // tearing down.
+            let lock_path = proto::paths::lock_path();
+            let released = tokio::task::spawn_blocking(move || {
+                daemon::lockfile::wait_released(&lock_path, Duration::from_secs(10))
+            })
+            .await?;
+            if !released {
+                anyhow::bail!(
+                    "the daemon did not exit within 10 s; see {}",
+                    proto::paths::log_path().display()
+                );
+            }
             println!("daemon stopped");
             Ok(())
         }
@@ -406,6 +476,40 @@ mod tests {
             vec!["anthrex", "tree", "--project", "/r/shop/src", "--json"],
         ] {
             assert!(Cli::try_parse_from(&args).is_ok(), "{args:?}");
+        }
+    }
+
+    /// `rename` and `restart` parse into their new variants, and `new` with no
+    /// `--runtime` parses with `runtime == None` — the flag now falls back to the
+    /// config's `default_runtime` instead of defaulting to `RuntimeArg::Shell` at parse
+    /// time.
+    #[test]
+    fn rename_and_restart_parse() {
+        match Cli::try_parse_from(["anthrex", "rename", "3", "new name"])
+            .expect("rename <target> <name> parses")
+            .command
+        {
+            Some(Command::Rename { target, name }) => {
+                assert_eq!(target, "3");
+                assert_eq!(name, "new name");
+            }
+            other => panic!("expected Rename, got {other:?}"),
+        }
+
+        match Cli::try_parse_from(["anthrex", "restart", "api"])
+            .expect("restart <target> parses")
+            .command
+        {
+            Some(Command::Restart { target }) => assert_eq!(target, "api"),
+            other => panic!("expected Restart, got {other:?}"),
+        }
+
+        match Cli::try_parse_from(["anthrex", "new"])
+            .expect("new with no --runtime parses")
+            .command
+        {
+            Some(Command::New { runtime, .. }) => assert_eq!(runtime, None),
+            other => panic!("expected New, got {other:?}"),
         }
     }
 

@@ -24,7 +24,8 @@
 //! back on every exit path — an early return, a panic in phase B, or a caller that drops
 //! the future.
 
-use super::{Entry, Inner, ManagerConfig, WindowManager, git};
+use super::entry::{Entry, Inner, Process};
+use super::{ManagerConfig, WindowManager, git, validate_name};
 use crate::agent_state::AgentState;
 use crate::launch::{self, LaunchContext};
 use crate::project::DetectedRoots;
@@ -131,6 +132,14 @@ impl WindowManager {
             detection_failed: false,
         };
 
+        // Before phase A, not between A and B: a create held here has spent no id and
+        // reserved no name, so a daemon whose startup probe is still running looks
+        // exactly like one that has not been asked to create anything yet. The gate is
+        // open within `lifecycle::CODEX_PROBE_TIMEOUT` of daemon start and forever after
+        // (`crate::launch::gate`), and is open from the start for every manager built
+        // outside `lifecycle::run`.
+        self.config.launch_gate.wait().await;
+
         // Phase A: under the lock, and nothing here can block.
         let (id, reservation) = self.admit(&spec, &roots.project)?;
         let name = reservation.name.clone();
@@ -181,13 +190,28 @@ impl WindowManager {
         let mut inner = crate::lock(&self.inner);
         anyhow::ensure!(!inner.shutting_down, "daemon is shutting down");
         let id = inner.next_id;
-        let name = match spec
-            .name
-            .as_deref()
-            .map(str::trim)
-            .filter(|n| !n.is_empty())
-        {
-            Some(n) => n.to_string(),
+        // `next_id` saturates at `u32::MAX` rather than wrapping when a restored record
+        // already held it (`state::load`'s own doc comment on this exact boundary), so
+        // there is no larger id left to hand out. Refusing here, before `next_id` is
+        // touched, is what stops that saturation from turning into a silently reused id
+        // the moment a `+= 1` wrapped it back to 0 — the same class of bug the previous
+        // task's review found twice in `state.rs`, now in the code that actually spends
+        // an id.
+        let Some(next_id) = id.checked_add(1) else {
+            // Whole-branch-review Minor: this used to say "restart the daemon to
+            // reclaim them", which does not work — `restore` recomputes `next_id` as
+            // the saturating max of every loaded record's own id plus one
+            // (`manager/restore.rs`), so a restart brings back exactly `u32::MAX`
+            // again, verified live. The only way out is removing whichever window
+            // record is actually holding the top of the id space.
+            anyhow::bail!("no window ids remain; remove a window holding a high id to free one up");
+        };
+        // Decision 22: an explicitly given name is validated by the same `validate_name`
+        // `rename` calls — a name a create rejects must never be reachable through a
+        // rename either. No name at all (`None`) is not "an invalid name"; it is the
+        // request for the auto-generated default, which is always valid on its own.
+        let name = match spec.name.as_deref() {
+            Some(n) => validate_name(n)?,
             None => format!("{}-{id}", spec.runtime.label()),
         };
         if inner.entries.values().any(|e| e.name == name) || inner.reserved_names.contains(&name) {
@@ -201,7 +225,7 @@ impl WindowManager {
             // believe the directory was its own to clean up.
             anyhow::bail!("a worktree at {} is already being created", path.display());
         }
-        inner.next_id += 1;
+        inner.next_id = next_id;
         inner.reserved_names.insert(name.clone());
         if let Some(path) = &claim {
             inner.reserved_worktrees.insert(path.clone());
@@ -232,6 +256,18 @@ impl WindowManager {
             window,
             created,
         } = spawned;
+        // Fix wave 8, Minor (re-review of M6.5's Minor 3): `restore` sets `Entry.spec.name`
+        // to its record's own validated name (`restore.rs`'s
+        // `restore_sets_entrys_spec_name_to_the_records_own_name`); this used to leave it
+        // as the client's raw string instead — untrimmed when given, `None` when `admit`'s
+        // `<runtime>-<id>` default was used. Matching `restore`'s side rather than the
+        // reverse: both `Entry.name` and `Entry.spec.name` should read as "the name this
+        // window was actually given," not as an unvalidated echo of whatever the request
+        // said before `admit` ran.
+        let spec = WindowSpec {
+            name: Some(name.clone()),
+            ..spec
+        };
         let mut inner = crate::lock(&self.inner);
         if inner.shutting_down {
             drop(inner);
@@ -242,7 +278,11 @@ impl WindowManager {
             id,
             name,
             spec,
-            project,
+            // A live `create` always resolves a concrete project root before this point
+            // (`DetectedRoots.project`, `detect_roots`'s own `cwd` fallback when git
+            // finds nothing better) — only a restored record can leave `Entry.project`
+            // unknown (fix wave 4, ruling 7).
+            project: Some(project),
             // Design decision 21: a worktree window's watched root is its *own* linked
             // checkout, not the directory the user pointed at. The server resolved
             // `worktree` from `spec.cwd` before this create ran, so for such a window it
@@ -254,14 +294,17 @@ impl WindowManager {
                 .or(worktree),
             managed: created.map(|created| created.worktree),
             removing: false,
+            restarting: false,
             status: Status::Starting,
             state: AgentState::default(),
             viewers: 0,
             since: now,
             last_output: now,
+            created_at: std::time::SystemTime::now(),
             exit: None,
             child_alive: true,
-            window,
+            process: Process::Live(window),
+            run: None,
         };
         let info = entry.info(now);
         tracing::info!(
@@ -379,6 +422,10 @@ fn spawn_window(
             claude_bin: &config.claude_bin,
             codex_bin: &config.codex_bin,
             codex_hook_source: config.codex_hook_source.as_deref(),
+            codex_bypass_hook_trust: config.codex_bypass_hook_trust,
+            // A fresh `create` is never a resume; only a later task's `restart` (design
+            // decision 17) resumes a known session id.
+            resume: None,
         },
     );
 
@@ -418,6 +465,7 @@ fn discard(created: &Created, error: anyhow::Error, cleanup_timeout: Duration) -
 mod tests {
     use super::*;
     use crate::worktree::ManagedWorktree;
+    use proto::Runtime;
 
     /// The second of decision 16's two suffixes, which no integration test can reach:
     /// `; the new worktree was removed` needs a cleanup that works, and this one needs a
@@ -453,6 +501,59 @@ mod tests {
         assert!(
             !message.contains("the new worktree was removed"),
             "{message}"
+        );
+    }
+
+    /// Minor (fix wave 8, re-review of M6.5's Minor 3): `admit` validates the client's
+    /// name into `Entry.name` (trimmed, and the `<runtime>-<id>` default when the client
+    /// sent none), but used to leave `Entry.spec.name` as the client's raw string —
+    /// untrimmed when given, `None` when the default was used. `restore` (`restore.rs`'s
+    /// own `restore_sets_entrys_spec_name_to_the_records_own_name`) sets `spec.name` to
+    /// its record's already-sanitized name instead, so the two producers of an `Entry`
+    /// disagreed about what the field means. Chose to match `restore`'s side rather than
+    /// the reverse: `Entry.name` and `Entry.spec.name` should both read as "the name this
+    /// window was actually given," not as "whatever the client's request said before
+    /// validation ran" — an unvalidated echo of user input sitting in a struct field is
+    /// the shape that costs the *next* reader who assumes any `Entry` field is
+    /// pre-validated, not just `Entry.name`.
+    #[tokio::test]
+    async fn create_sets_entrys_spec_name_to_the_same_validated_name_as_entry_name() {
+        let (m, mut events) = WindowManager::new(ManagerConfig::new(
+            "/tmp/unused-create-spec-name-test.sock".into(),
+            "/bin/sh".into(),
+        ));
+        let pump = m.clone();
+        tokio::spawn(async move {
+            while let Some((id, ev)) = events.recv().await {
+                pump.handle_event(id, ev);
+            }
+        });
+
+        let spec = WindowSpec {
+            name: Some("  spec-name-test  ".to_string()),
+            runtime: Runtime::Shell,
+            cwd: std::env::temp_dir(),
+            worktree_branch: None,
+            model: None,
+            initial_prompt: None,
+        };
+        let info = m
+            .create(spec, std::env::temp_dir(), None, 80, 24)
+            .await
+            .unwrap();
+
+        let inner = crate::lock(&m.inner);
+        let entry = inner.entries.get(&info.id).expect("created entry present");
+        assert_eq!(
+            entry.name, "spec-name-test",
+            "sanity: Entry.name is validate_name's trimmed output"
+        );
+        assert_eq!(
+            entry.spec.name.as_deref(),
+            Some(entry.name.as_str()),
+            "Entry.spec.name must agree with Entry.name: both producers of Entry -- \
+             create and restore -- must treat spec.name as the validated name, not the \
+             client's raw, untrimmed input"
         );
     }
 }

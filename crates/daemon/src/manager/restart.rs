@@ -1,0 +1,556 @@
+//! `WindowManager::restart`: bringing a window whose process died — or whose daemon
+//! restarted — back to life, resuming the agent's previous session (design decisions
+//! 17-21, task M6.7).
+//!
+//! Like [`super::create`], this is a phase split forced by the same rule (AGENTS.md hard
+//! rules 2 and 10): nothing that can block — killing a live child and waiting for it,
+//! checking a directory, building a launch plan, spawning a PTY — may run under the
+//! manager lock or on a tokio worker thread.
+//!
+//! - **Phase A**, under the lock and nowhere near a syscall that can stall: refuse a
+//!   window that does not exist or is already restarting, note whether it is live, and
+//!   set `restarting`. A [`Restarting`] guard gives the flag back on every exit path that
+//!   does not reach phase D's swap — an early return, a panic on the blocking pool, or a
+//!   caller that drops the future. This is the fix for this task's first named hazard: a
+//!   flag left set after a failed restart would brick the window, every later restart
+//!   refused, with nothing short of a daemon restart able to clear it.
+//! - **Phase B**, no lock: if the window was live, kill it through milestone 3's kill
+//!   path and wait — polling, never under the lock — until the child is actually gone.
+//!
+//!   Design decision 18 says to poll "until the status is Exited". This implementation
+//!   polls `Entry.child_alive` instead, and that is a deliberate deviation, not an
+//!   oversight: `manager/remove.rs`'s `kill_and_await_exit` already established, with a
+//!   long comment, why status and child-liveness are not the same question. A
+//!   `WindowEvent::ParserPanicked` sets the status to `Exited` immediately while the
+//!   child is still being escalated through HUP/TERM/KILL on a background thread —
+//!   `child_alive` only goes false once `WindowEvent::Exited` actually arrives. Restart
+//!   has a sharper reason than removal to get this right: phase D reuses this window's
+//!   *id* for a brand new `Process`, and every `WindowEvent` this crate delivers is keyed
+//!   by id alone, with nothing distinguishing "the old spawn" from "the new spawn" of the
+//!   same id. Swapping the process in while the old child's `WindowEvent::Exited` is
+//!   still in flight would let that stale event land on the new `Entry` once it finally
+//!   arrives — `handle_event`'s `Exited` arm sets `child_alive = false` and re-applies
+//!   `StatusEvent::Exited` unconditionally, which would silently mark a freshly
+//!   restarted, live window as exited. Waiting on `child_alive` closes that window;
+//!   waiting on `status` alone, as decision 18 literally says, would not.
+//!
+//!   Decision 18 also specifies what happens when the wait itself runs out: the restart
+//!   is refused — `Error { request: "restart", message: "window <id> did not exit; not
+//!   restarted" }` — rather than proceeding anyway. This is not merely what the brief
+//!   says; it is the one path the paragraph above's safety argument does not cover. That
+//!   argument is that phase D never reuses this id for a new `Process` until
+//!   `child_alive` is confirmed false, so a stale `Exited` can never reach the
+//!   replacement. A timeout means `child_alive` was *not* confirmed false — restarting
+//!   anyway would swap in a new `Process` with the old child's `Exited` still able to
+//!   arrive later and land on it, which is exactly the corruption decision 18's refusal
+//!   exists to rule out.
+//!
+//!   What none of the above closes (fix wave 5 review, Minor 8) is the same hazard for
+//!   `WindowEvent::Output`, `Title` and `ParserPanicked`: those come from the `pty-read-{id}`
+//!   thread, a *different* thread than the `pty-wait-{id}` one that sends `Exited`, and
+//!   both send on the same shared, unbounded channel with no ordering guarantee between
+//!   two different senders. Confirming `child_alive` false only proves the *`Exited`*
+//!   message was dequeued and processed — it says nothing about whatever the old reader
+//!   thread had already enqueued but not yet delivered at that moment, which can still
+//!   arrive after phase D's swap and land on the new `Entry`. `Output`/`Title` are
+//!   transient and self-correcting; a stale `ParserPanicked` is not — `handle_event`'s arm
+//!   for it sets `exit` and drives the status to `Exited` unconditionally, exactly like the
+//!   `Exited` arm does, so it can mark a freshly restarted, live window as exited the same
+//!   way. This is not closed by decision 18's timeout refusal above either: that refusal is
+//!   keyed on `child_alive`, which this hazard does not touch at all — a read-thread event
+//!   can be in flight whether or not the wait timed out. Narrower than Critical 1 in
+//!   practice (the panic itself is rare, and the reader thread's last events are usually
+//!   drained by the time `child.wait()` even returns, since PTY EOF typically precedes or
+//!   coincides with the child's own exit), but it is a real, unclosed gap, not a
+//!   theoretical one — left unaddressed here because closing it needs a generation counter
+//!   on `Entry` or a per-spawn tag on `WindowEvent`, which is a wider change than this fix
+//!   wave's scope.
+//!
+//!   Whole-branch-review Minor (fix wave 12): `ClientMsg::HookEvent` is the same shape and
+//!   was not disclosed here. `WindowManager::handle_hook` (`manager/mod.rs`) looks up
+//!   `entries.get_mut(&id)` by id alone, exactly like `handle_event`'s `WindowEvent` arms
+//!   above, and `anthrex hook` (`crates/cli/src/hook.rs`) is a separate, short-lived
+//!   process a running agent spawns on its own — it can still be connecting to the
+//!   socket, or have already written its frame and be waiting on the reply, at the exact
+//!   moment this window's id gets killed and restarted out from under it. If that frame
+//!   is still in flight when phase D's swap happens, `handle_hook` applies it to the
+//!   *new* `Entry` once it arrives — there is no queue to drain at swap time the way
+//!   `WindowEvent`'s `handle_event` has one, because each hook connection is its own
+//!   server task with no buffering inside this crate, so the only defense would be the
+//!   same fix as above: a generation the hook's own payload could carry back, which needs
+//!   a `ClientMsg::HookEvent` field (a protocol change, `PROTO_VERSION` bump, and updating
+//!   every client per AGENTS.md hard rule 4) — not something this fix wave's scope
+//!   covers either. Narrower still than the `WindowEvent` case in practice: `anthrex
+//!   hook` is fast (single-digit-to-low-double-digit milliseconds,
+//!   `docs/timing-budgets.md`'s idle table), and the realistic consequence is a stale
+//!   `SessionStart`/`Stop`/tool-use event momentarily relabelling the fresh spawn's
+//!   status or session id, not a crash or a lost process — but it is the same class,
+//!   and it belongs in this disclosure and in the followups doc alongside the
+//!   generation-counter fix, not silently absent from both the way it was before this
+//!   note.
+//! - **Phase C**, one `spawn_blocking` call, no lock: re-read the window's current spec,
+//!   name and session id — never phase A's own snapshot, which the window could have
+//!   outgrown while phase B ran with no lock held at all (this task's second named
+//!   hazard) — check its cwd still exists, build the resume plan, and spawn a fresh
+//!   `Window`.
+//! - **Phase D**, under the lock again: the window may have been removed while phases B
+//!   and C ran, so this re-checks it is still there before touching anything, rather than
+//!   trusting phase A's finding. Gone means the freshly spawned process is killed at once
+//!   and the restart fails without resurrecting an entry nothing references any more.
+//!   Still there means the old `Process` is swapped for the new one — closing whatever
+//!   broadcast channel a subscriber was reading, which is what wakes `forward_output_from`
+//!   into reattaching (design decision 21) — the status fields are reset as for a fresh
+//!   create, and the change is published.
+//!
+//!   Fix wave 5 **re-review**, Major 1: phase A's `shutting_down` check only guards
+//!   *admission*. It cannot constrain a restart that was already admitted before
+//!   `shutdown` ran — none of the phases in between re-read the flag, so a restart whose
+//!   phase B kill wait was still outstanding when `shutdown` began could complete
+//!   afterward and swap a live process in regardless, using a flag it read seconds
+//!   earlier. `finish_restart` re-checks `shutting_down` here, under the same lock the
+//!   swap itself takes and `shutdown` uses to snapshot the ids it will wait for — the one
+//!   place the two operations cannot land ambiguously, because whichever acquires the
+//!   lock first is what the other observes. If `shutdown` won, this treats the situation
+//!   exactly like the "entry gone" case above: the fresh process is killed at once and the
+//!   restart fails, rather than resurrecting a process nothing will ever signal again.
+
+use super::entry::Process;
+use super::{ManagerConfig, WindowManager};
+use crate::agent_state::AgentState;
+use crate::launch::{self, LaunchContext};
+use crate::window::{Window, WindowEvent};
+use proto::{Status, WindowSpec};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
+
+/// How often phase B asks whether the killed child is gone. Never with the manager lock
+/// held (design decision 18).
+const RESTART_POLL: Duration = Duration::from_millis(50);
+
+/// Holds a window's `restarting` flag for as long as one restart owns it, and gives it
+/// back on every exit path that leaves the window in the table — an early return, a
+/// panic on the blocking pool, or a caller that drops the future.
+///
+/// Exactly the shape of `create`'s `Reservation` and `remove`'s `Removing`, guarding the
+/// same class of resource for the same reason: see this module's own doc comment for why
+/// a leaked flag here is worse than cosmetic.
+///
+/// **This guards the flag only, not the spawned process** (fix wave 5 review, Minor 9,
+/// narrowing a claim this comment used to make more broadly). A future dropped while
+/// phase C's `spawn_blocking` is in flight does give this window's `restarting` flag
+/// back — `Drop` below still runs — but the blocking closure itself keeps running to
+/// completion regardless (`spawn_blocking` cannot be cancelled), and the `Window` it
+/// returns is then dropped with nobody left to kill its child: `Window` has no `Drop` impl
+/// of its own, and dropping it only closes the master PTY. This is exactly `create`'s own
+/// decision 17 in the sibling module, restated here because phase C has the identical
+/// shape: "once phase B has started it always runs to completion... the server therefore
+/// must never abort a [restart] task, or it would leak [the process]." Unreachable today
+/// because `requests::restart` detaches rather than aborting, which is what makes that
+/// invariant hold — not anything this guard does.
+///
+/// Fix wave 8, Minor 1: also evicts this window's `cleanups[id]` record, on the same
+/// every-non-swap-exit-path basis, so a killed-but-not-yet-restarted window never leaves
+/// one behind. Before this, eviction was three separate point fixes on three separate
+/// exit paths — the timeout refusal (fix wave 5 re-review, Minor 2), `finish_restart`'s
+/// own unconditional call (fix wave 5, Critical 1), and nothing at all on phase C's own
+/// failure path (this wave's Minor 1) — and the third one was reachable on the first
+/// try, because point-fixing a path at a time had already failed twice to be exhaustive.
+/// `Drop` is the one place every path that does *not* reach phase D's swap already goes
+/// through, including a path nobody has written yet, so this moves the eviction here
+/// instead of adding a fourth site. `finish_restart`'s own call stays: it runs
+/// unconditionally, on the success path too, where this `Drop` never fires (`forget`
+/// clears `held` first) — its job is evicting the *outgoing* process's record to make
+/// room for the incoming one, not cleaning up after a failure.
+///
+/// fix-wave-12-re-review Minor 2: the doc comment above used to justify the
+/// unconditional `orphan_cleanup` call in `Drop` by claiming it is "a no-op when phase B
+/// was never reached (nothing was ever inserted under this id)". Whole-branch-review
+/// Major 1 (in the same wave) made that false: it moved the cwd precondition *ahead of*
+/// phase B, so `Drop` can now fire on a bail that happened before this restart attempt
+/// ever called `self.kill`. If a *prior*, unrelated `kill()` already inserted
+/// `cleanups[id]` and is still escalating, an unconditional `orphan_cleanup` here would
+/// strand that live record in `orphaned_cleanups`, where `id` can no longer find it — a
+/// later `start_cleanup(id)` would then spawn a second `escalate` on the same
+/// still-alive pid.
+///
+/// Final-gate finding F1: the fix above landed as a flag — `phase_b_entered` — set
+/// unconditionally *right before* phase B's own `self.kill(id)` call, on the reasoning
+/// that reaching that line meant this attempt was about to own whatever ended up under
+/// `cleanups[id]`. That reasoning is false: `Inner::start_cleanup` returns `Ok(false)`
+/// (inserting nothing) whenever `cleanups[id]` is already occupied by someone else's
+/// still-escalating record — reaching the kill line proves nothing about who owns the
+/// result. So the flag is no longer set ahead of the call; `owns_cleanup_record` is set
+/// *from* [`kill_reporting_insert`](WindowManager::kill_reporting_insert)'s own return
+/// value, once that call has actually run and reported whether it was this attempt that
+/// inserted the record. That value **is** the fact `Drop` needs — "does this attempt
+/// own the record under `id`" — rather than a proxy for it that a fifth exit path (a
+/// foreign record already occupying `cleanups[id]` when phase B's own kill runs) could
+/// falsify. A record this attempt did not insert is never this guard's to move — the
+/// same principle `begin_restart`'s own early refusals (row 1 of fix wave 8's
+/// enumeration, where the guard does not even exist yet) already applied, and the same
+/// principle fix-wave-12-re-review's cwd-precondition case (row 2 below) already
+/// applied for bails before phase B runs at all; this closes the last gap, where phase B
+/// *does* run but does not insert.
+struct Restarting<'a> {
+    manager: &'a WindowManager,
+    id: u32,
+    held: bool,
+    /// `true` only when this attempt's own `self.kill(id)` call
+    /// ([`kill_reporting_insert`](WindowManager::kill_reporting_insert)) actually
+    /// inserted the `cleanups[id]` record — set from that call's return value, never
+    /// asserted ahead of it. `Drop` only evicts `cleanups[id]` when this is true — see
+    /// this struct's own doc comment for why a flag set before the call, rather than
+    /// derived from what the call reports, is exactly the bug this field replaced.
+    owns_cleanup_record: bool,
+}
+
+impl Restarting<'_> {
+    /// The restart reached phase D's swap, which already cleared the flag itself under
+    /// the same lock as the swap (design decision 21). Nothing is left for `Drop` to do.
+    fn forget(mut self) {
+        self.held = false;
+    }
+}
+
+impl Drop for Restarting<'_> {
+    fn drop(&mut self) {
+        if !self.held {
+            return;
+        }
+        let mut inner = crate::lock(&self.manager.inner);
+        if let Some(entry) = inner.entries.get_mut(&self.id) {
+            entry.restarting = false;
+        }
+        // Fix wave 8, Minor 1 / fix-wave-12-re-review Minor 2 / final-gate F1: see this
+        // struct's own doc comment. Only evicts when this attempt actually owns the
+        // record under `id` — a bail between phase A and phase B (the cwd precondition)
+        // never called `self.kill` at all, and a bail after phase B's own kill found
+        // `cleanups[id]` already occupied by someone else's record never inserted one of
+        // its own; both leave whatever is under `cleanups[id]` untouched, since neither
+        // case makes it this attempt's to move.
+        if self.owns_cleanup_record {
+            inner.orphan_cleanup(self.id);
+        }
+    }
+}
+
+/// What phase C needs, read fresh under the lock right before the blocking work starts —
+/// never phase A's own snapshot (this task's second named hazard).
+struct ForRelaunch {
+    spec: WindowSpec,
+    name: String,
+    session_id: Option<String>,
+    cols: u16,
+    rows: u16,
+}
+
+impl WindowManager {
+    /// Restarts a window: relaunches its agent, resuming the session it last knew about
+    /// (design decision 15), killing whatever was running first if the window was live
+    /// (design decisions 17-18).
+    ///
+    /// `self: &Arc<Self>`, not `&self`, only because phase B calls `Self::kill`, which
+    /// needs it for the same reason `kill` itself does.
+    pub async fn restart(self: &Arc<Self>, id: u32) -> anyhow::Result<()> {
+        // Ahead of phase A, and for a sharper reason than `create`'s own identical wait
+        // (see its comment): phase B *kills* the live process, and phase C is what brings
+        // one back. Waiting after the kill would leave the user's agent dead for as long
+        // as the startup probe still had to run, and waiting after phase A would hold
+        // `restarting` set for that whole time, refusing every other restart of this
+        // window meanwhile. Nothing has been touched at this point, so a restart held
+        // here is indistinguishable from one that has not been asked for yet.
+        self.config.launch_gate.wait().await;
+
+        // Phase A.
+        let (was_live, cwd, mut guard) = self.begin_restart(id)?;
+
+        // Whole-branch-review Major 1: decision 19's cwd precondition used to be
+        // checked only in phase C, *after* phase B's kill below had already ended the
+        // live process — a restart the user was told was refused had, in fact,
+        // destroyed their running agent (live repro: `rm -rf` a live shell's cwd, then
+        // `restart` — refused, and the window left `exited` anyway). A precondition
+        // must be checked before the destructive step, not after, so this check moves
+        // ahead of phase B. It cannot move into `begin_restart` itself: `is_dir` is a
+        // stat that can block, and `begin_restart` runs under the manager lock
+        // (AGENTS.md hard rule 2). Checking it here instead, holding no lock, still
+        // runs before any kill — `guard`'s `Drop` releases `restarting` on this early
+        // return exactly as it would on any other refusal, so a refused restart here
+        // leaves the window exactly as untouched as one refused in phase A. Phase C's
+        // own `spawn_for_restart` keeps its identical check as the TOCTOU backstop for
+        // whatever changes between here and there — this does not replace it.
+        //
+        // fix-wave-12-re-review Minor 1: holding no lock satisfies only the first half
+        // of hard rule 2 ("no blocking work under the manager lock **or on a tokio
+        // worker thread**"). `is_dir` is still a blocking stat, and `restart` is an
+        // async fn run on a tokio worker — a cwd on a hung NFS/SMB mount would block
+        // that worker for the mount's own timeout, exactly the class of bug rule 2
+        // exists to rule out. `create`'s identical check (`spawn_window`, called only
+        // from inside its own `spawn_blocking`) never has this problem; matched here by
+        // running the stat on the blocking pool instead of inline.
+        let cwd_for_stat = cwd.clone();
+        let cwd_exists = tokio::task::spawn_blocking(move || cwd_for_stat.is_dir())
+            .await
+            .map_err(|error| anyhow::anyhow!("restart failed: {error}"))?;
+        if !cwd_exists {
+            anyhow::bail!("directory does not exist: {}", cwd.display());
+        }
+
+        // Phase B: never under the lock. Decision 18: if the wait times out, this does
+        // *not* fall through to phase C — see `wait_for_exit`'s own doc comment for why
+        // restarting anyway is exactly the case the `child_alive` deviation cannot cover.
+        if was_live {
+            // Final-gate F1: `owns_cleanup_record` is set *from* this call's own return
+            // value, not asserted ahead of it — see `Restarting`'s doc comment for why
+            // "this attempt reached the kill line" and "this attempt owns the record"
+            // are different facts, and `kill_reporting_insert`'s own doc comment for
+            // what the return value means. When this is `false` (an unrelated,
+            // still-escalating record already occupied `cleanups[id]`), this attempt
+            // never owns anything to evict, no matter how phase B ends.
+            guard.owns_cleanup_record = self.kill_reporting_insert(id)?;
+            if !self.wait_for_exit(id).await {
+                // Minor 2 (fix wave 5 re-review) used to evict `cleanups[id]` here with a
+                // point fix; fix wave 8, Minor 1 replaced it with a general one —
+                // `Restarting::drop` now evicts on every exit path that does not reach
+                // phase D's swap, this one included, since `guard` (still held here) is
+                // about to go out of scope on this `bail!` without ever calling
+                // `forget()`. See that struct's own doc comment for why a point fix here
+                // stopped being the right shape once a *third* path needed the same
+                // eviction.
+                anyhow::bail!("window {id} did not exit; not restarted");
+            }
+        }
+
+        // Phase C: no lock, not on a tokio worker. Re-read fresh rather than trusting
+        // phase A's own snapshot, which could be stale by now — the window could have
+        // been removed, resized, or (in a later milestone) had its spec changed while
+        // phase B ran with no lock held at all.
+        let Some(info) = self.snapshot_for_relaunch(id) else {
+            anyhow::bail!("window {id} was removed while it was restarting");
+        };
+        let config = self.config.clone();
+        let events = self.events.clone();
+        let window =
+            tokio::task::spawn_blocking(move || spawn_for_restart(id, &config, events, info))
+                .await
+                .map_err(|error| anyhow::anyhow!("restart failed: {error}"))??;
+
+        // Phase D.
+        self.finish_restart(id, window, guard)
+    }
+
+    /// Phase A. Nothing here can block. Returns the window's current `cwd` too, so the
+    /// caller can check decision 19's precondition before phase B's kill without a
+    /// blocking stat under this lock (see `restart`'s own comment on that check).
+    fn begin_restart(&self, id: u32) -> anyhow::Result<(bool, std::path::PathBuf, Restarting<'_>)> {
+        let mut inner = crate::lock(&self.inner);
+        // Major 3 (fix wave 5 review): the same admission check `create`'s `admit`
+        // makes, and for the same reason — `shutdown` walks a snapshot of the ids it took
+        // at the instant it set this flag, and anything admitted afterward is invisible to
+        // it. `requests::restart` reaches the manager through `detach`, which
+        // `server/requests.rs`'s own doc comment says is deliberately never aborted, so a
+        // restart whose phase B kill wait is still running when `lifecycle::run` calls
+        // `manager.shutdown().await` (after `serve` returns) would otherwise complete
+        // afterward and spawn a PTY `shutdown` has already walked past — a child that
+        // outlives the daemon with nothing left holding its pid.
+        anyhow::ensure!(!inner.shutting_down, "daemon is shutting down");
+        let entry = inner
+            .entries
+            .get_mut(&id)
+            .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
+        if entry.restarting {
+            anyhow::bail!("window {id} is already restarting");
+        }
+        // Major 4 (fix wave 5 review): the symmetric half of `begin_removal`'s own new
+        // check below. `remove_with_worktree` deletes this window's checkout between its
+        // own kill and `worktree::remove`; a restart admitted while that is in flight
+        // could pass phase C's `cwd.is_dir()` check against a directory about to be
+        // removed and swap a live process into it mid-deletion, or lose the race and fail
+        // with a confusing "directory does not exist" instead of a clean refusal — both
+        // observed by constructing the interleaving before this fix existed (see
+        // `manager_worktree/removal/ordering.rs`'s `a_restart_admitted_after_a_removal_is_refused`
+        // and `a_removal_admitted_after_a_restart_is_refused`). Neither flag alone was
+        // enough: each guarded only its own operation against a second instance of
+        // itself, not against the other one.
+        if entry.removing {
+            anyhow::bail!("window {id} is being removed");
+        }
+        let was_live = entry.child_alive;
+        let cwd = entry.spec.cwd.clone();
+        entry.restarting = true;
+        Ok((
+            was_live,
+            cwd,
+            Restarting {
+                manager: self,
+                id,
+                held: true,
+                owns_cleanup_record: false,
+            },
+        ))
+    }
+
+    /// Phase B's wait. See this module's doc comment for why this polls `child_alive`
+    /// rather than the status decision 18 names, and never with the lock held.
+    ///
+    /// Returns `true` once the child is confirmed gone (or the window itself is gone —
+    /// phase C's own fresh read handles that case), `false` if the kill grace ran out
+    /// first. Decision 18 is explicit that a timeout here must not restart anyway: `window
+    /// <id> did not exit; not restarted`, not a warning and a fall-through. This matters
+    /// beyond the literal wording — the `child_alive` deviation this module's own doc
+    /// comment explains only closes the stale-`Exited` race *because* phase D never swaps
+    /// in a new `Process` until `child_alive` is confirmed false. Restarting on a timeout
+    /// would swap one in anyway, with the old child's `Exited` still unconfirmed and
+    /// therefore still able to arrive after the swap and land on the live replacement —
+    /// exactly the corruption the deviation exists to rule out, reopened on precisely the
+    /// path a timeout takes.
+    ///
+    /// Bounded by `self.config.restart_wait_deadline` (decision 18): production sets it to
+    /// the kill escalation's own total grace plus two seconds, `crate::process::KILL_GRACE`
+    /// being the exact deadline `crate::process::escalate` is built around, so this can
+    /// never give up while that escalation could legitimately still be running. A separate
+    /// field from `kill_grace` (fix wave 8, Minor) — see `ManagerConfig::restart_wait_deadline`'s
+    /// own doc comment for why the two must not be derived from one another.
+    async fn wait_for_exit(&self, id: u32) -> bool {
+        let deadline = Instant::now() + self.config.restart_wait_deadline;
+        loop {
+            let child_alive = {
+                let inner = crate::lock(&self.inner);
+                inner.entries.get(&id).map(|entry| entry.child_alive)
+            };
+            match child_alive {
+                Some(true) => {}
+                Some(false) | None => return true,
+            }
+            if Instant::now() >= deadline {
+                tracing::warn!(
+                    id,
+                    "window's child did not exit within the restart kill grace; not restarting"
+                );
+                return false;
+            }
+            tokio::time::sleep(RESTART_POLL).await;
+        }
+    }
+
+    /// What phase C needs, read fresh right before the blocking work starts. `None` means
+    /// the window is gone — removed while phase B's kill wait ran with no lock held.
+    fn snapshot_for_relaunch(&self, id: u32) -> Option<ForRelaunch> {
+        let inner = crate::lock(&self.inner);
+        let entry = inner.entries.get(&id)?;
+        let (cols, rows) = entry.size();
+        Some(ForRelaunch {
+            spec: entry.spec.clone(),
+            name: entry.name.clone(),
+            session_id: entry.state.session_id.clone(),
+            cols,
+            rows,
+        })
+    }
+
+    /// Phase D. Re-checks the window is still there before touching anything (this
+    /// task's second named hazard): gone means the freshly spawned process is killed at
+    /// once and the restart fails without resurrecting an entry nothing references any
+    /// more. Still there means the swap happens under the same lock `attach` takes, so a
+    /// re-attach always sees the new process (design decision 21).
+    fn finish_restart(&self, id: u32, window: Window, guard: Restarting<'_>) -> anyhow::Result<()> {
+        let mut inner = crate::lock(&self.inner);
+        // Critical 1 (fix wave 5): this id is about to be reused for `window`, so any
+        // cleanup record `start_cleanup` left under `id` belongs to the process being
+        // replaced. Left in place, it would make `kill`, this same id's next `restart`,
+        // and `shutdown` all believe the *new* process already has a cleanup in flight and
+        // signal nothing — see `Inner::orphan_cleanup` and `orphaned_cleanups`'s own doc
+        // comment for why this evicts rather than drops. Done before the "gone" check
+        // below too: a window removed mid-restart can still have a stale record from
+        // phase B's kill, and `tick` already keeps that alive by id-absence alone, but
+        // evicting it here is harmless and keeps this one call site unconditional.
+        inner.orphan_cleanup(id);
+        // Major 1 (fix wave 5 **re-review**): `begin_restart`'s `shutting_down` check
+        // (phase A, above) guards admission only — nothing in phases B, C or D re-read it,
+        // so a restart already admitted before `shutdown` set the flag would sail through
+        // and swap a live process in here regardless, using a flag read up to several
+        // seconds earlier (phase B's kill wait). This is the one place that gap can be
+        // closed for real: `shutdown` walks a snapshot of `inner.entries` it takes under
+        // this very lock, so re-reading the flag here — still holding that lock, still
+        // before the swap — means whichever side acquires it first is the one the other
+        // observes. If `shutdown` got here first, this restart must not complete: the
+        // fresh process is killed at once, the same way the "entry gone" arm below already
+        // kills one nothing will ever reference.
+        if inner.shutting_down {
+            drop(inner);
+            let _ = window.signal_group(libc::SIGKILL);
+            anyhow::bail!("daemon is shutting down");
+        }
+        let Some(entry) = inner.entries.get_mut(&id) else {
+            drop(inner);
+            let _ = window.signal_group(libc::SIGKILL);
+            anyhow::bail!("window {id} was removed while it was restarting");
+        };
+        let now = Instant::now();
+        let session_id = entry.state.session_id.clone();
+        entry.process = Process::Live(window);
+        entry.status = Status::Starting;
+        // Decision 17: the session id is kept, `exit`, `tool` and the sub-agent list are
+        // cleared — the same shape `AgentState::default()` gives a fresh create, with the
+        // one field carried over.
+        entry.state = AgentState {
+            session_id,
+            ..AgentState::default()
+        };
+        entry.since = now;
+        entry.last_output = now;
+        entry.exit = None;
+        entry.child_alive = true;
+        // Cleared here, under the same lock as the swap, rather than left for the
+        // guard's `Drop` a moment later: this is the one lock acquisition decision 21
+        // requires the swap to happen under, so the flag's own release rides along with
+        // it instead of taking the lock a second time for nothing.
+        entry.restarting = false;
+        tracing::info!(id, name = %entry.name, "window restarted");
+        self.publish(&inner);
+        drop(inner);
+        guard.forget();
+        Ok(())
+    }
+}
+
+/// Phase C, the only phase that can take real time: called only from `spawn_blocking`,
+/// holding no lock of any kind.
+fn spawn_for_restart(
+    id: u32,
+    config: &ManagerConfig,
+    events: mpsc::UnboundedSender<(u32, WindowEvent)>,
+    info: ForRelaunch,
+) -> anyhow::Result<Window> {
+    // Design decision 19: the same check `create`'s phase B makes, and the same
+    // message. `restart`'s own copy of this check, ahead of phase B's kill, is what
+    // actually refuses the operation in the common case now (whole-branch-review Major
+    // 1) — this one is the TOCTOU backstop for whatever changed between that check and
+    // here (phase B's kill-and-wait ran with no lock held at all), not the first line
+    // of defense.
+    if !info.spec.cwd.is_dir() {
+        anyhow::bail!("directory does not exist: {}", info.spec.cwd.display());
+    }
+    let plan = launch::plan(
+        &info.spec,
+        &LaunchContext {
+            window_id: id,
+            // The window's *current* name, not `spec.name` (its name at creation time):
+            // decision 22 says a resume passes a renamed window's new name to `--name`.
+            name: &info.name,
+            socket_path: &config.socket_path,
+            shell: &config.shell,
+            exe: &config.exe,
+            claude_bin: &config.claude_bin,
+            codex_bin: &config.codex_bin,
+            codex_hook_source: config.codex_hook_source.as_deref(),
+            codex_bypass_hook_trust: config.codex_bypass_hook_trust,
+            resume: info.session_id.as_deref(),
+        },
+    );
+    Window::spawn(id, &plan, info.cols.max(1), info.rows.max(1), events)
+}
+
+#[cfg(test)]
+#[path = "restart_tests.rs"]
+mod tests;

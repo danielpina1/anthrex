@@ -250,6 +250,21 @@ impl TestDaemon {
 }
 
 impl Drop for TestDaemon {
+    /// Waits for the daemon to actually be reaped rather than granting it a grace period
+    /// and moving on. The previous version polled `try_wait` for up to 5s and then handed
+    /// off to `terminate`, which itself could give up after another 500ms with the child
+    /// still alive — so a test binary could go on to its next `TestDaemon::start` while
+    /// this one's daemon was still dying. Since every `TestDaemon` gets its own tempdir
+    /// and socket path, that never produced a resource collision, but it did mean
+    /// consecutive daemons could overlap in the process table, which is exactly the
+    /// process contention the loop-vs-suite gap in `hook_command` was suspected to come
+    /// from (unconfirmed, per docs/timing-budgets.md, the surviving distillate of the
+    /// investigation that raised it; this fix stands on its own merits regardless of
+    /// whether it was the cause).
+    ///
+    /// `Child::wait` is a blocking `waitpid`: once SIGKILL is delivered it cannot return
+    /// early the way a polling loop with a deadline could, so this cannot leave the child
+    /// half-dead the way the old code structurally could.
     fn drop(&mut self) {
         let rt = runtime();
         let _ = rt.block_on(async {
@@ -275,7 +290,11 @@ impl Drop for TestDaemon {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        terminate(&mut self.child);
+        // The graceful shutdown did not finish inside the grace period. Escalate and
+        // block until the OS confirms the reap, instead of polling a second bounded
+        // window and returning regardless of the outcome.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
@@ -330,9 +349,20 @@ impl Client {
         });
     }
 
-    pub fn receive(&mut self, mut pred: impl FnMut(&DaemonMsg) -> bool) -> DaemonMsg {
+    pub fn receive(&mut self, pred: impl FnMut(&DaemonMsg) -> bool) -> DaemonMsg {
+        self.receive_within(Duration::from_secs(2), pred)
+    }
+
+    /// [`Client::receive`] with a caller-chosen timeout, for a reply this task's own
+    /// production code can legitimately take longer than 2s to send — e.g. a restart's
+    /// `Ack`, which can wait out a live window's whole kill grace first.
+    pub fn receive_within(
+        &mut self,
+        timeout: Duration,
+        mut pred: impl FnMut(&DaemonMsg) -> bool,
+    ) -> DaemonMsg {
         self.rt.block_on(async {
-            tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::time::timeout(timeout, async {
                 loop {
                     let message = proto::read_frame::<_, DaemonMsg>(&mut self.stream)
                         .await
@@ -346,6 +376,22 @@ impl Client {
             })
             .await
             .expect("client reply timeout")
+        })
+    }
+
+    /// Reads one frame if it arrives within `timeout`, otherwise `None` — unlike
+    /// [`Client::receive`], a timeout here is not a test failure. Used to drain whatever
+    /// is already queued on the connection (an unrelated `WindowsChanged` broadcast, in
+    /// particular) before a test starts timing a specific reply, so that reply is not
+    /// mistaken for one already in flight.
+    pub fn try_receive(&mut self, timeout: Duration) -> Option<DaemonMsg> {
+        self.rt.block_on(async {
+            match tokio::time::timeout(timeout, proto::read_frame::<_, DaemonMsg>(&mut self.stream))
+                .await
+            {
+                Ok(frame) => frame.unwrap(),
+                Err(_) => None,
+            }
         })
     }
 

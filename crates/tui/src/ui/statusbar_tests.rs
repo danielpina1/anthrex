@@ -1,6 +1,6 @@
 use super::*;
-use crate::app::App;
-use crate::keymap::Keymap;
+use crate::app::{App, Link};
+use crate::settings::UiSettings;
 use proto::{GitOperation, Runtime, Status, WindowInfo};
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 use std::path::PathBuf;
@@ -217,11 +217,7 @@ fn row_text(buffer: &Buffer) -> String {
 
 #[test]
 fn no_segment_without_a_focused_worktree() {
-    let mut app = App::new(
-        vec![window(1, None)],
-        "/tmp".into(),
-        Keymap::default_prefix(),
-    );
+    let mut app = App::new(vec![window(1, None)], "/tmp".into(), UiSettings::default());
     app.set_terminal_size(80, 24);
     let buffer = render_row(&app, 80);
     let text = row_text(&buffer);
@@ -246,7 +242,7 @@ fn hints_drop_from_the_right_one_at_a_time() {
     let mut app = App::new(
         vec![window(1, Some("/repo".into()))],
         "/tmp".into(),
-        Keymap::default_prefix(),
+        UiSettings::default(),
     );
     app.set_terminal_size(50, 24);
     let mut state = clean_state();
@@ -281,7 +277,7 @@ fn the_toast_is_never_overwritten_by_git() {
     let mut app = App::new(
         vec![window(1, Some("/repo".into()))],
         "/tmp".into(),
-        Keymap::default_prefix(),
+        UiSettings::default(),
     );
     app.set_terminal_size(80, 24);
     let mut state = clean_state();
@@ -311,4 +307,25 @@ fn the_toast_is_never_overwritten_by_git() {
         rendered.trim_end().ends_with(toast_text),
         "toast cells were not intact: {rendered:?}"
     );
+}
+
+/// Task M6.11, decision 34: the persistent `DISCONNECTED` badge and its status text,
+/// for both `Link::Reconnecting` and `Link::Lost`.
+#[test]
+fn statusbar_shows_reconnect_state() {
+    let mut app = App::new(vec![window(1, None)], "/tmp".into(), UiSettings::default());
+    app.set_terminal_size(80, 24);
+
+    app.link = Link::Reconnecting {
+        attempts: 3,
+        reason: "x".into(),
+    };
+    let text = row_text(&render_row(&app, 80));
+    assert!(text.contains("DISCONNECTED"), "{text:?}");
+    assert!(text.contains("reconnecting (attempt 3)"), "{text:?}");
+
+    app.link = Link::Lost { reason: "x".into() };
+    let text = row_text(&render_row(&app, 80));
+    assert!(text.contains("DISCONNECTED"), "{text:?}");
+    assert!(text.contains("C-b r to reconnect"), "{text:?}");
 }

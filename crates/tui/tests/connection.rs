@@ -6,10 +6,11 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tui::connection::Connection;
 
-async fn start_daemon() -> (tempfile::TempDir, PathBuf, CancellationToken) {
-    let dir = tempfile::tempdir().unwrap();
-    let socket = dir.path().join("d.sock");
-    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+/// Starts a daemon listening at exactly `socket`, rather than one of its own
+/// choosing, so a test can assert on `reconnect::attempt` against a known-dead path
+/// that then comes alive.
+async fn start_daemon_at(socket: &PathBuf) -> CancellationToken {
+    let listener = tokio::net::UnixListener::bind(socket).unwrap();
     let (manager, mut events) =
         WindowManager::new(ManagerConfig::new(socket.clone(), "/bin/sh".into()));
     let pump = manager.clone();
@@ -20,6 +21,13 @@ async fn start_daemon() -> (tempfile::TempDir, PathBuf, CancellationToken) {
     });
     let token = CancellationToken::new();
     tokio::spawn(serve(listener, manager, true, token.clone()));
+    token
+}
+
+async fn start_daemon() -> (tempfile::TempDir, PathBuf, CancellationToken) {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("d.sock");
+    let token = start_daemon_at(&socket).await;
     (dir, socket, token)
 }
 
@@ -137,6 +145,37 @@ async fn send_never_suspends_and_reports_a_dead_connection() {
     }
 }
 
+/// Decision 29: a daemon that accepted the connection but never answers the handshake
+/// must not hang the client forever either. A plain `UnixListener` that accepts and then
+/// writes nothing stands in for that daemon.
+#[tokio::test]
+async fn connect_times_out_on_a_silent_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("silent.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let _silent_server = tokio::spawn(async move {
+        // Accept and hold the connection open for longer than the test can possibly take,
+        // writing nothing back — never a `Welcome`.
+        let (_stream, _) = listener.accept().await.unwrap();
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    });
+
+    let started = std::time::Instant::now();
+    let err = tokio::time::timeout(Duration::from_secs(7), Connection::connect(&socket))
+        .await
+        .expect("connect did not return within 7 s")
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("timed out"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(7),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
 #[tokio::test]
 async fn connect_fails_cleanly_without_a_daemon() {
     let dir = tempfile::tempdir().unwrap();
@@ -144,4 +183,19 @@ async fn connect_fails_cleanly_without_a_daemon() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("missing.sock"));
+}
+
+/// Task M6.11's `reconnect::attempt`, with `daemon_exe: None` — the automatic-retry
+/// path (decision 31), which must never spawn a daemon. It only ever connects.
+#[tokio::test]
+async fn attempt_fails_without_a_daemon_and_succeeds_with_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("d.sock");
+
+    let err = tui::reconnect::attempt(&socket, None).await.unwrap_err();
+    assert!(!err.to_string().is_empty());
+
+    let _token = start_daemon_at(&socket).await;
+    let conn = tui::reconnect::attempt(&socket, None).await.unwrap();
+    assert!(conn.windows.is_empty());
 }

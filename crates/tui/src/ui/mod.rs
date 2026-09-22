@@ -85,8 +85,8 @@ pub fn draw(frame: &mut Frame, app: &App) -> Layout {
         terminal::render(frame, app, l.main);
     }
     statusbar::render(frame, app, l.statusbar);
-    if let Some(m) = &app.modal {
-        modal::render(frame, m, frame.area());
+    if app.modal.is_some() {
+        modal::render(frame, app, frame.area());
     }
     l
 }

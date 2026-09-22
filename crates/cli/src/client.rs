@@ -8,8 +8,29 @@ use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const CREATE_REPLY_ALLOWANCE: Duration = Duration::from_secs(2);
-pub const CREATE_WINDOW_REPLY_TIMEOUT: Duration =
-    daemon::project::DETECT_TIMEOUT.saturating_add(CREATE_REPLY_ALLOWANCE);
+
+/// What a window launch can legitimately wait on the daemon's startup before it starts:
+/// `WindowManager::create` and `WindowManager::restart` wait on
+/// `daemon::launch::LaunchGate`, which the Codex version probe holds for at most
+/// `CODEX_PROBE_TIMEOUT` after the daemon binds its socket.
+///
+/// This term is new, and it is new *here* rather than being new in absolute terms: the
+/// same five seconds used to be spent inside `CliClient::connect`'s handshake instead,
+/// where it had no budget of its own at all and simply raced `proto::HANDSHAKE_TIMEOUT`
+/// — the defect the gate exists to remove. Moving the wait to where it belongs means the
+/// budgets that cover that wait have to say so.
+///
+/// It applies to every reply budget below that wraps a request the daemon answers by
+/// launching a process — `CreateWindow` and `Restart`, and no others — because
+/// `spawn::ensure_daemon` returns as soon as the socket *file* exists, which
+/// `lifecycle::run` creates before the probe starts. A CLI invocation that starts the
+/// daemon itself is therefore the *likely* case for paying this, not an exotic one.
+const LAUNCH_GATE_WAIT: Duration = daemon::lifecycle::CODEX_PROBE_TIMEOUT;
+
+///     LAUNCH_GATE_WAIT (5) + DETECT_TIMEOUT (5) + CREATE_REPLY_ALLOWANCE (2) = 12 s
+pub const CREATE_WINDOW_REPLY_TIMEOUT: Duration = LAUNCH_GATE_WAIT
+    .saturating_add(daemon::project::DETECT_TIMEOUT)
+    .saturating_add(CREATE_REPLY_ALLOWANCE);
 
 /// Room left over the longer of the two worst cases below, so the CLI's own deadline
 /// never fires before the daemon's (decision 38 of the M5 worktrees brief).
@@ -27,7 +48,12 @@ const REMOVAL_WORST_CASE: Duration =
 /// What `new --worktree` can cost the daemon — the term-by-term derivation, because two
 /// earlier reviews disagreed about it (35 s and 50 s) and the constant sat between them:
 ///
-///     DETECT_TIMEOUT (5) + OPERATION_TIMEOUT (30) + CLEANUP_TIMEOUT (10) = 45 s
+///     LAUNCH_GATE_WAIT (5) + DETECT_TIMEOUT (5) + OPERATION_TIMEOUT (30)
+///       + CLEANUP_TIMEOUT (10) = 50 s
+///
+/// - **`LAUNCH_GATE_WAIT` (5 s)** — `WindowManager::create` waits on the launch gate
+///   before phase A, so this sits ahead of everything below rather than overlapping any
+///   of it. See [`LAUNCH_GATE_WAIT`] for why it is charged here now and was not before.
 ///
 /// - **`DETECT_TIMEOUT` (5 s)** — `server::requests::create` awaits
 ///   `project::resolve_roots(spec.cwd)` before the manager is called at all.
@@ -48,7 +74,8 @@ const REMOVAL_WORST_CASE: Duration =
 /// The sum is a supremum rather than an attainable time — a detection that actually
 /// reaches `DETECT_TIMEOUT` falls back and the create is then refused without touching
 /// git — which is exactly why the budget must *exceed* it rather than match it.
-const CREATE_WORST_CASE: Duration = daemon::project::DETECT_TIMEOUT
+const CREATE_WORST_CASE: Duration = LAUNCH_GATE_WAIT
+    .saturating_add(daemon::project::DETECT_TIMEOUT)
     .saturating_add(daemon::worktree::OPERATION_TIMEOUT)
     .saturating_add(daemon::worktree::CLEANUP_TIMEOUT);
 
@@ -64,11 +91,30 @@ const fn longer(a: Duration, b: Duration) -> Duration {
 /// whether a checkout was left on disk (design decision 16's two suffixes).
 ///
 /// Both call sites take the same budget, so it is the larger of the two paths plus
-/// [`WORKTREE_TIMEOUT_MARGIN`]: max(45, 33) + 12 = 57 s. It was 45 s, derived from the
+/// [`WORKTREE_TIMEOUT_MARGIN`]: max(50, 33) + 12 = 62 s. It was 45 s, derived from the
 /// removal path alone and applied to both, which left the create path with no margin at
-/// all — 45 s against a 45 s supremum.
+/// all — 45 s against a then-45 s supremum.
 pub const WORKTREE_REQUEST_TIMEOUT: Duration =
     longer(CREATE_WORST_CASE, REMOVAL_WORST_CASE).saturating_add(WORKTREE_TIMEOUT_MARGIN);
+
+/// What `restart` can cost the daemon (`manager::restart`, task M6.7/M6.8's brief for the
+/// exact derivation): phase A and D are lock-only and cost nothing measurable; phase B, for
+/// a live window, kills it and polls `child_alive` up to
+/// `daemon::manager::KILL_GRACE` (3 s) + 2 s of its own margin — 5 s, decision 18's own
+/// number; phase C spawns a fresh PTY with no git involved, the same cheap `Window::spawn`
+/// `create`'s phase B pays, never separately budgeted elsewhere in this file. 15 s is a
+/// literal from the milestone brief, not derived from `RESTART_WORST_CASE` (see this
+/// module's tests), but it must still clear it with real margin and never coincide with a
+/// constant the restart path itself is built from (`docs/timing-budgets.md`'s standing
+/// rule 1) — asserted below.
+/// `WindowManager::restart` also waits on the launch gate, ahead of its phase A, so
+/// [`LAUNCH_GATE_WAIT`] is a term here too — the test below asserts 15 s still clears the
+/// result with real margin rather than assuming it.
+pub const RESTART_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+#[cfg(test)]
+const RESTART_WORST_CASE: Duration = LAUNCH_GATE_WAIT
+    .saturating_add(daemon::manager::KILL_GRACE)
+    .saturating_add(Duration::from_secs(2));
 
 pub struct CliClient {
     rd: OwnedReadHalf,
@@ -91,7 +137,20 @@ impl CliClient {
             },
         )
         .await?;
-        match read_frame::<_, DaemonMsg>(&mut rd).await? {
+        // Decision 29: a daemon that accepted the connection but never answers must not
+        // hang the client forever either.
+        let welcome = tokio::time::timeout(
+            proto::HANDSHAKE_TIMEOUT,
+            read_frame::<_, DaemonMsg>(&mut rd),
+        )
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "timed out waiting for the daemon's handshake at {}",
+                socket.display()
+            )
+        })?;
+        match welcome? {
             Some(DaemonMsg::Welcome {
                 daemon_version,
                 windows,
@@ -201,6 +260,37 @@ pub fn format_table(windows: &[WindowInfo]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Decision 29: a daemon that accepted the connection but never answers the handshake
+    /// must not hang the CLI client forever either, same as `tui::connection::Connection`.
+    #[tokio::test]
+    async fn connect_times_out_on_a_silent_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("silent.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        let _silent_server = tokio::spawn(async move {
+            let (_stream, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+
+        let started = std::time::Instant::now();
+        let result = tokio::time::timeout(Duration::from_secs(7), CliClient::connect(&socket))
+            .await
+            .expect("connect did not return within 7 s");
+        let err = match result {
+            Ok(_) => panic!("expected a timeout error, got a connection"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("timed out"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(7),
+            "{:?}",
+            started.elapsed()
+        );
+    }
 
     /// M4.5.6 review finding: `request_with_timeout` skips `WindowsChanged` and `Git`
     /// broadcasts, but nothing pinned that deterministically — the daemon integration
@@ -362,7 +452,12 @@ mod tests {
         assert_eq!(REQUEST_TIMEOUT, Duration::from_secs(5));
         assert_eq!(
             CREATE_WINDOW_REPLY_TIMEOUT,
-            daemon::project::DETECT_TIMEOUT + CREATE_REPLY_ALLOWANCE,
+            LAUNCH_GATE_WAIT + daemon::project::DETECT_TIMEOUT + CREATE_REPLY_ALLOWANCE,
+        );
+        assert_eq!(
+            CREATE_WINDOW_REPLY_TIMEOUT,
+            Duration::from_secs(12),
+            "LAUNCH_GATE_WAIT (5) + DETECT_TIMEOUT (5) + CREATE_REPLY_ALLOWANCE (2)"
         );
         assert!(
             WORKTREE_REQUEST_TIMEOUT > CREATE_WINDOW_REPLY_TIMEOUT
@@ -390,8 +485,9 @@ mod tests {
         );
         assert_eq!(
             CREATE_WORST_CASE,
-            Duration::from_secs(45),
-            "DETECT_TIMEOUT (5) + OPERATION_TIMEOUT (30) + CLEANUP_TIMEOUT (10)"
+            Duration::from_secs(50),
+            "LAUNCH_GATE_WAIT (5) + DETECT_TIMEOUT (5) + OPERATION_TIMEOUT (30) \
+             + CLEANUP_TIMEOUT (10)"
         );
         assert!(
             WORKTREE_REQUEST_TIMEOUT > CREATE_WORST_CASE,
@@ -402,6 +498,44 @@ mod tests {
             WORKTREE_REQUEST_TIMEOUT > REMOVAL_WORST_CASE,
             "{WORKTREE_REQUEST_TIMEOUT:?} vs {REMOVAL_WORST_CASE:?}",
         );
-        assert_eq!(WORKTREE_REQUEST_TIMEOUT, Duration::from_secs(57));
+        assert_eq!(WORKTREE_REQUEST_TIMEOUT, Duration::from_secs(62));
+    }
+
+    /// M6.8: `restart`'s 15 s budget must exceed `RESTART_WORST_CASE` (the daemon's own
+    /// kill-wait deadline, decision 18) with real margin, and must not equal any
+    /// production constant the restart path is built from — `docs/timing-budgets.md`'s
+    /// standing rule 1, the defect shape that investigation found three times elsewhere
+    /// in this workspace.
+    #[test]
+    fn restart_timeout_clears_the_kill_wait_with_real_margin() {
+        assert_eq!(
+            RESTART_WORST_CASE,
+            Duration::from_secs(10),
+            "LAUNCH_GATE_WAIT (5) + KILL_GRACE (3) + wait_for_exit's own 2s margin \
+             (decision 18)"
+        );
+        assert!(
+            RESTART_REQUEST_TIMEOUT > RESTART_WORST_CASE,
+            "{RESTART_REQUEST_TIMEOUT:?} vs {RESTART_WORST_CASE:?}",
+        );
+        assert_ne!(
+            RESTART_REQUEST_TIMEOUT,
+            daemon::manager::KILL_GRACE,
+            "must never coincide with the constant the restart path itself runs against"
+        );
+        assert_ne!(
+            RESTART_REQUEST_TIMEOUT, RESTART_WORST_CASE,
+            "must never coincide with the deadline it is supposed to exceed"
+        );
+        // 1.5x margin over the worst case, down from 3x when the launch gate added its
+        // own term: 15 s against 10 s, five seconds of absolute headroom. Still a
+        // supremum rather than an attainable time — the gate term is only ever paid
+        // inside the daemon's first `CODEX_PROBE_TIMEOUT`, and the `KILL_GRACE` term only
+        // by a child that ignores every signal up to SIGKILL, so a restart paying both in
+        // full is a restart issued in the daemon's first five seconds against a window
+        // that also has to be killed the hard way. The remaining work it has to cover is
+        // the process spawn phase C pays, which `create`'s own phase B measures at tens of
+        // milliseconds, never the seconds git can cost.
+        assert_eq!(RESTART_REQUEST_TIMEOUT, Duration::from_secs(15));
     }
 }
