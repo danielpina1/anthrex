@@ -93,6 +93,7 @@ impl WindowManager {
                 cwd,
                 project,
                 worktree,
+                managed,
                 model,
                 initial_prompt,
                 session_id,
@@ -148,7 +149,7 @@ impl WindowManager {
                 continue;
             }
 
-            let managed = worktree.map(
+            let managed = managed.map(
                 |WorktreeRecord {
                      repo_root,
                      path,
@@ -165,19 +166,20 @@ impl WindowManager {
             // across a restore, so a future restart runs in the same checkout without
             // ever calling `worktree::create` again.
             //
-            // `Entry.worktree` — the *watched* root, milestone 4.5's field — is only
-            // recoverable here for a window this daemon made the worktree for; a window
-            // merely standing inside someone else's existing worktree has no saved record
-            // of that at all (decision 8 only captures `managed`), so it comes back
-            // without one.
+            // `Entry.worktree` — the *watched* root, milestone 4.5's field — comes from
+            // the record's own `worktree`, which every window inside a checkout has,
+            // whoever created that checkout. `server::register_restored_roots` puts these
+            // roots back under the watcher at startup.
             //
-            // The root that *is* recovered here is put back under the watcher by
-            // `server::register_restored_roots`, at startup. This comment used to end "so
-            // it comes back unwatched until it is restarted", which was false in both
-            // halves: nothing registered a restored root at startup, and `requests::restart`
-            // never took the registry either, so a restart did not repair it. See
-            // `crates/daemon/tests/server_restore_git.rs`.
-            let watched_worktree = managed.as_ref().map(|m| m.path.clone());
+            // The fallback to `managed.path` is for a file written before the two were
+            // separate keys whose migration could not recover one, and for a hand-edited
+            // file: when both are present they are equal anyway.
+            //
+            // This comment used to end "so it comes back unwatched until it is
+            // restarted". Both halves were false — nothing registered a restored root at
+            // startup, and `requests::restart` never took the registry either, so a
+            // restart did not repair it. See `crates/daemon/tests/server_restore_git.rs`.
+            let watched_worktree = worktree.or_else(|| managed.as_ref().map(|m| m.path.clone()));
             let spec = WindowSpec {
                 name: Some(name.clone()),
                 runtime,
@@ -279,7 +281,12 @@ impl WindowManager {
                 // cycles instead of being baked into the file as a derived guess (fix
                 // wave 4, ruling 7).
                 project: entry.project.clone(),
-                worktree: entry.managed.as_ref().map(|m| WorktreeRecord {
+                // The two are saved separately because they are different things and
+                // neither derives from the other: `worktree` is the root the git
+                // registry watches, which a window has whenever it sits in a checkout;
+                // `managed` is the checkout anthrex made, which most windows do not have.
+                worktree: entry.worktree.clone(),
+                managed: entry.managed.as_ref().map(|m| WorktreeRecord {
                     repo_root: m.repo_root.clone(),
                     path: m.path.clone(),
                     branch: m.branch.clone(),
@@ -394,6 +401,7 @@ mod tests {
                 cwd: PathBuf::from("/tmp"),
                 project: None,
                 worktree: None,
+                managed: None,
                 model: None,
                 initial_prompt: None,
                 session_id: Some("session-id-value".into()),
@@ -423,6 +431,7 @@ mod tests {
             cwd: PathBuf::from("/tmp"),
             project: None,
             worktree: None,
+            managed: None,
             model: None,
             initial_prompt: None,
             session_id: None,

@@ -44,14 +44,18 @@ async fn init_repo() -> (tempfile::TempDir, PathBuf) {
     .unwrap()
 }
 
-fn record(id: u32, name: &str, cwd: &Path, worktree: Option<WorktreeRecord>) -> WindowRecord {
+/// A record for a window in `cwd`. `managed` is the linked worktree anthrex made, when
+/// it made one; `worktree` — the watched root — is derived from it here the way a real
+/// managed window's is, and set explicitly by the plain-window test below.
+fn record(id: u32, name: &str, cwd: &Path, managed: Option<WorktreeRecord>) -> WindowRecord {
     WindowRecord {
         id,
         name: name.to_string(),
         runtime: Runtime::Shell,
         cwd: cwd.to_path_buf(),
         project: Some(cwd.to_path_buf()),
-        worktree,
+        worktree: managed.as_ref().map(|m| m.path.clone()),
+        managed,
         model: None,
         initial_prompt: None,
         session_id: None,
@@ -95,7 +99,7 @@ async fn start_daemon_restoring(state: StateFile) -> TestDaemon {
 
 fn state_with(windows: Vec<WindowRecord>) -> StateFile {
     StateFile {
-        version: 2,
+        version: daemon::state::STATE_VERSION,
         next_id: 9,
         windows,
         runs: Vec::new(),
@@ -270,4 +274,32 @@ async fn saw_git_within(client: &mut Client, root: &std::path::Path, within: Dur
     })
     .await
     .is_ok()
+}
+
+/// The case the state file could not represent at all until `WindowRecord.worktree`
+/// became its own field: a window that merely stood inside a checkout nobody asked
+/// anthrex to make. Git-surface spec 3.4 gives it a `WindowInfo.worktree` like any
+/// other, so a restart must not lose it — and spec 3.3 then has it watched.
+#[tokio::test]
+async fn a_restored_plain_window_keeps_its_worktree_and_is_watched() {
+    let (_repo, root) = init_repo().await;
+    let d = start_daemon_restoring(state_with(vec![WindowRecord {
+        worktree: Some(root.clone()),
+        ..record(4, "plain", &root, None)
+    }]))
+    .await;
+
+    let (mut client, welcome) = Client::connect(&d, PROTO_VERSION).await;
+    let DaemonMsg::Welcome { windows, .. } = welcome else {
+        panic!("expected Welcome");
+    };
+    assert_eq!(
+        windows[0].worktree.as_deref(),
+        Some(root.as_path()),
+        "a restored window inside a checkout must still record its worktree root"
+    );
+    assert!(
+        saw_git_within(&mut client, &root, Duration::from_secs(4)).await,
+        "and that root must be watched"
+    );
 }

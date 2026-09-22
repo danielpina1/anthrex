@@ -155,7 +155,15 @@ pub fn load_with(path: &Path, now: SystemTime) -> (StateFile, Vec<Problem>) {
     let mut seen_ids = HashSet::new();
     let mut seen_names = HashSet::new();
     for (index, entry) in raw_windows.iter().enumerate() {
-        match serde_json::from_value::<WindowRecord>(entry.clone()) {
+        let mut entry = entry.clone();
+        if let Some(message) = migrate_worktree_key(&mut entry) {
+            problems.push(Problem {
+                severity: Severity::Warn,
+                key: format!("windows[{index}]"),
+                message,
+            });
+        }
+        match serde_json::from_value::<WindowRecord>(entry) {
             Ok(record) => {
                 // Both uniqueness checks run *before* either `HashSet` is touched: a
                 // record that is ultimately rejected must never claim the id or the
@@ -233,6 +241,66 @@ pub fn load_with(path: &Path, now: SystemTime) -> (StateFile, Vec<Problem>) {
         },
         problems,
     )
+}
+
+/// Rewrites one window record from the shape [`STATE_VERSION`] 2 and 1 wrote into the
+/// shape [`WindowRecord`] has now. Returns a message to report when something was lost.
+///
+/// Up to version 2 there was one key, `worktree`, and what it held depended on the
+/// version: version 1 (core spec 3.6) wrote a *string*, the worktree root; version 2
+/// wrote an *object*, the linked worktree anthrex created, and never recorded the root
+/// at all. Version 3 has both, under `worktree` (the root) and `managed` (the object),
+/// so:
+///
+/// * a string stays where it is — that is already the new `worktree`'s meaning, and the
+///   version-1 window loads watchable but not worktree-removable, which is right: nothing
+///   recorded that anthrex had made it;
+/// * an object moves to `managed`, and its `path` becomes `worktree`, because a managed
+///   window sits in the checkout anthrex made for it. This is the same derivation
+///   `manager::restore` used to do in memory, now done once on the way in;
+/// * anything else (an object with no usable `path`) is dropped with a warning rather
+///   than failing the record — the rest of the window is intact and a window is worth
+///   more than a field.
+///
+/// Deliberately a JSON-level rewrite rather than a custom `Deserialize`: one key has to
+/// become two, the rule differs by file version, and a `deserialize_with` that quietly
+/// did this would be far harder to see than a function named after what it is.
+///
+/// A version-3 record passes through untouched: its `worktree` is a string, which the
+/// first arm leaves alone, and its `managed` is not this function's business.
+fn migrate_worktree_key(entry: &mut serde_json::Value) -> Option<String> {
+    let object = entry.as_object_mut()?;
+    match object.get("worktree") {
+        // Already the new meaning (a root), or explicitly absent. `managed`, if the
+        // record has one, is left exactly as it is.
+        None | Some(serde_json::Value::Null) | Some(serde_json::Value::String(_)) => None,
+        Some(serde_json::Value::Object(_)) => {
+            let legacy = object.remove("worktree")?;
+            let path = legacy.get("path").cloned();
+            match path {
+                Some(path @ serde_json::Value::String(_)) => {
+                    object.insert("worktree".to_string(), path);
+                    object.insert("managed".to_string(), legacy);
+                    None
+                }
+                _ => Some(
+                    "the saved worktree has no usable \"path\"; \
+                     the window loads without its worktree"
+                        .to_string(),
+                ),
+            }
+        }
+        // A number, a bool, an array: not a root and not a managed worktree. Dropped
+        // rather than left in place, where it would fail the whole record.
+        Some(_) => {
+            object.remove("worktree");
+            Some(
+                "the saved \"worktree\" is neither a path nor a worktree record; \
+                 the window loads without it"
+                    .to_string(),
+            )
+        }
+    }
 }
 
 /// Renames `path` aside (decision 12) and returns an empty state plus one [`Severity::Warn`]
