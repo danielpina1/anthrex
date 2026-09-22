@@ -315,23 +315,35 @@ async fn restart_resumes_claude_and_codex_sessions() {
                     // the 24-row screen well before the whole line has arrived, while the
                     // tail end — what this assertion actually cares about — is still on
                     // screen by construction.
+                    //
+                    // The comment above had vt100's two readers exactly backwards, and CI
+                    // run 35707817474 collected on it. `Screen::contents()` rejoins a soft
+                    // wrap *seamlessly*; it is `Screen::rows()` that splits there. So a
+                    // marker straddling a column boundary is present in the `contents()`
+                    // string this loop gates on and in no single row — the gate passed and
+                    // searching row by row panicked. Whether it straddles is a function of
+                    // the argv's length modulo 80, and the argv embeds absolute temp paths,
+                    // so it fired on macOS CI and never here. Rejoin the wrapped rows into
+                    // logical lines *first* and search those: now a marker is missing only
+                    // when it is genuinely absent, at any width and any argv length.
                     let vt = mirror.screen();
                     let (rows, cols) = vt.size();
                     let row_texts: Vec<String> = vt.rows(0, cols).collect();
-                    let hit_row = row_texts
+                    let mut logical: Vec<String> = Vec::new();
+                    let mut current = String::new();
+                    for row in 0..rows {
+                        current.push_str(&row_texts[usize::from(row)]);
+                        if !vt.row_wrapped(row) {
+                            logical.push(std::mem::take(&mut current));
+                        }
+                    }
+                    if !current.is_empty() {
+                        logical.push(current);
+                    }
+                    let argv_line = logical
                         .iter()
-                        .position(|r| r.contains("[resume] [thr-1]"))
-                        .unwrap_or_else(|| panic!("[resume] [thr-1] not found: {row_texts:?}"));
-                    let mut start_row = hit_row as u16;
-                    while start_row > 0 && vt.row_wrapped(start_row - 1) {
-                        start_row -= 1;
-                    }
-                    let mut end_row = hit_row as u16;
-                    while end_row + 1 < rows && vt.row_wrapped(end_row) {
-                        end_row += 1;
-                    }
-                    let argv_line: String =
-                        row_texts[usize::from(start_row)..=usize::from(end_row)].concat();
+                        .find(|line| line.contains("[resume] [thr-1]"))
+                        .unwrap_or_else(|| panic!("[resume] [thr-1] not found: {logical:?}"));
                     assert!(
                         argv_line.trim_end().ends_with("[resume] [thr-1]"),
                         "the argv line must end with resume last: {argv_line:?}"

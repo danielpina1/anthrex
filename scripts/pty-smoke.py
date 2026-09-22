@@ -443,7 +443,16 @@ class PtyProc:
             pass
 
 
-def run_cmd(args, expect_ok=True, timeout=20, env=None):
+def run_cmd(args, expect_ok=True, timeout=28, env=None):
+    # The launch gate (`crates/daemon/src/launch/gate.rs`) added `LAUNCH_GATE_WAIT` (5s)
+    # to `CREATE_WINDOW_REPLY_TIMEOUT`, taking it 7s -> 12s and `new`'s worst case
+    # 15.25s -> 20.25s. That put the previous default of 20 *below* the worst case it
+    # wraps — F2b's own defect, reintroduced from the Rust side of the language boundary
+    # rather than by editing this line. 28 restores F2b's ~38% margin over 20.25s.
+    # Unreachable in this script (its `ANTHREX_CODEX_BIN` is `fake-agent`, so the gate is
+    # already open by the time any `new` runs) but a bound is derived from what the code
+    # *allows*, never from what this script happens to exercise.
+    #
     # final-gate finding F2b: the default used to be 15, numerically *equal* to
     # `anthrex new`'s own legal worst case — the exact "bound equals what it wraps"
     # shape `docs/timing-budgets.md`'s standing rule 1 exists to forbid, the same shape
@@ -455,10 +464,10 @@ def run_cmd(args, expect_ok=True, timeout=20, env=None):
     #   ensure_daemon (SPAWN_HANDOFF_GRACE 0.25s, `crates/tui/src/spawn.rs`, +
     #                  ENSURE_DAEMON_SOCKET_WAIT 3s, same file)              = 3.25s
     #   + CliClient::connect (HANDSHAKE_TIMEOUT 5s, `crates/proto/src/lib.rs`) =  5s
-    #   + request_with_timeout (CREATE_WINDOW_REPLY_TIMEOUT 7s =
+    #   + request_with_timeout (CREATE_WINDOW_REPLY_TIMEOUT 12s = LAUNCH_GATE_WAIT 5s +
     #       DETECT_TIMEOUT 5s + CREATE_REPLY_ALLOWANCE 2s, `crates/cli/src/client.rs`)
-    #                                                                          =  7s
-    #                                                                  total   = 15.25s
+    #                                                                          = 12s
+    #                                                                  total   = 20.25s
     #
     # Verified against `crates/cli/src/main.rs`'s `Command::New`, which calls exactly
     # this chain: `ensure_daemon`, then `connect`, then
@@ -886,15 +895,28 @@ def wait_for_session_id(window_id, expected, timeout=5.0):
 
 
 def wait_for_argv_log(path, timeout=10.0):
+    """Wait for a *complete* argv line, not merely a non-empty file.
+
+    This used to return as soon as the file had any content at all, which made the
+    caller's `endswith("[resume] [<session>]")` a race against the writer: the resumed
+    Codex argv is several kilobytes (the `hooks.state` flags are quadratic in hook count
+    — each one must repeat every earlier entry, because Codex *replaces* rather than
+    merges a repeated `-c` key), and a write that large is not delivered atomically. A
+    reader that caught it mid-write got a prefix, and the assertion failed on an argv
+    that was in fact correct. It fired on ubuntu in CI run 35707817474.
+
+    "Non-empty" is not a completeness criterion; a trailing newline is the one the writer
+    actually emits, so wait for that.
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if os.path.exists(path):
             with open(path, encoding="utf-8") as handle:
                 content = handle.read()
-            if content:
+            if content.endswith("\n"):
                 return content
         time.sleep(0.1)
-    fail(f"{path} never appeared with content within {timeout}s")
+    fail(f"{path} never held a newline-terminated line within {timeout}s")
 
 
 def run_resume_stage():
