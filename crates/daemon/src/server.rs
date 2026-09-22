@@ -244,9 +244,10 @@ async fn handle_client(
         while let Some(msg) = out_rx.recv().await {
             match write_frame(&mut wr, &msg).await {
                 Ok(()) => {}
-                // `encode` refuses before a byte is written, so skipping this one message
-                // leaves the framing intact; ending here would cost the client its whole
-                // connection for one oversized message (task M6.5.10 review F1).
+                // Defence in depth behind `fit_in_frame`, which an undercounting bound
+                // (re-review N3) still gets past. `encode` refuses before a byte is
+                // written, so skipping keeps the framing; ending here would cost the
+                // client its connection for one message (task M6.5.10 review F1).
                 Err(proto::CodecError::TooLarge(bytes)) => {
                     tracing::warn!(bytes, "dropped a message larger than MAX_FRAME")
                 }

@@ -6,7 +6,8 @@
 //! These run the real reader over real files, with hooks driven into the manager and a
 //! subscriber on a real socket, because the fault is in what the reader does with a file
 //! that is not empty, which no `ConversationSet`-level test can express. Every reply text
-//! is distinct, so a transposition cannot pass by coincidence.
+//! is distinct, so a transposition cannot pass by coincidence. The last test pins the
+//! other flag a session switch hands the reader, `new_session` (re-review nit).
 
 mod support;
 
@@ -301,4 +302,42 @@ async fn a_fresh_session_is_still_read_from_its_start() {
     turn(&d, id, "sess-A", "first");
     until_reply(&d, id, 0).await;
     assert_eq!(replies(&d, id), owned(&[&["first reply"]]));
+}
+
+/// Re-review nit: the reader's first `Tail` consumes the new-session flag. A `/clear`
+/// made while no reader ran leaves the flag set; if the first `Tail` left it there, a
+/// later move of the *same* session to another file would be taken for a new session
+/// and skip its restart, so the old file's enrichment would outlive it.
+#[tokio::test]
+async fn the_readers_first_tail_consumes_the_new_session_flag() {
+    let d = start_daemon().await;
+    let id = claude_window(&d, "first-tail").await;
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b, b2) = (
+        dir.path().join("a.jsonl"),
+        dir.path().join("b.jsonl"),
+        dir.path().join("b2.jsonl"),
+    );
+    append(&a, &[]);
+    append(
+        &b,
+        &[
+            prompt_line("sess-B", "hello B"),
+            reply_line("sess-B", "B reply from b"),
+        ],
+    );
+    append(&b2, &[]);
+    session_start(&d, id, "sess-A", "startup", &a);
+    session_start(&d, id, "sess-B", "clear", &b);
+    turn(&d, id, "sess-B", "hello B");
+
+    let _c = subscribed(&d, id).await;
+    until_reply(&d, id, 0).await;
+    session_start(&d, id, "sess-B", "startup", &b2);
+    until_reading(&d, id, &b2).await;
+    assert_eq!(
+        replies(&d, id),
+        owned(&[&[]]),
+        "the same session moved files: a restart, so b's prose is gone"
+    );
 }
