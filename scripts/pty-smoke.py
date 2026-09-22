@@ -1386,13 +1386,17 @@ def main():
     # ~97% real CPU): the undrained sampling read the busy-loop build at ~1.0%, *lower*
     # than the correctly-parking build's ~3.4%, so the stage passed on both — inverted,
     # not merely blind. Draining continuously while sampling removes the backpressure
-    # that masked it. A cumulative CPU-time delta (`ps -o cputime=`, seconds of actual
-    # CPU consumed) over the drained wall-clock window replaces the two discrete
-    # `ps %cpu` reads for the same reason `docs/timing-budgets.md` standing rule 4
-    # gives: `%cpu` is a decaying average of unspecified window, `cputime` is an exact
-    # count, and a delta over a window this script itself times cannot be fooled by
-    # sampling right after the retries above the way a single decaying-average read
-    # could be.
+    # that masked it, and **the drain is what makes this stage catch the regression at
+    # all** (final-gate review, correcting the diagnosis above): measured directly,
+    # same process and build, back-to-back — undrained reads ~0.7%, drained reads
+    # ~97.0%, on the *same* busy-loop build. A cumulative CPU-time delta
+    # (`ps -o cputime=`, seconds of actual CPU consumed) over the drained wall-clock
+    # window replaces the two discrete `ps %cpu` reads this stage used to take, for the
+    # reason `docs/timing-budgets.md` standing rule 4 gives — `%cpu` is a decaying
+    # average of unspecified window, `cputime` is an exact count — but that switch is
+    # robustness, not the fix: undrained, *both* metrics read low (`%cpu` 0.0%,
+    # `cputime` delta 0.7%), and drained, *both* read ~97%. Do not drop the drain on the
+    # theory that `cputime` alone would have caught this: it would not have.
     def cpu_time_seconds(pid):
         try:
             sample = subprocess.run(
