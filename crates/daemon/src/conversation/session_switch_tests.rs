@@ -215,7 +215,7 @@ fn an_at_end_open_starts_the_sessions_ordinals_at_the_next_turn() {
     );
     enrich(&mut set, &[user(0, "continue"), said(0, "A reply 1")]);
     apply(&mut set, &[resumed_at("sess-B", "/t/b.jsonl")]);
-    set.open_at_end(&[], false, false, Caps::default());
+    set.open_at_end(&[], false, Caps::default());
     apply(&mut set, &[prompt("continue"), stop()]);
     enrich(&mut set, &[user(0, "continue"), said(0, "B reply 1")]);
     assert_eq!(
@@ -230,8 +230,8 @@ fn an_at_end_open_starts_the_sessions_ordinals_at_the_next_turn() {
     assert_eq!(set.snapshot(None).unwrap().degraded, None);
 }
 
-/// A prompt that arrived while the file was being measured may have its record on either
-/// side of the measured end: the session degrades rather than guess.
+/// A prompt that arrived after the resume's `SessionStart` and before the open may have
+/// its record on either side of the measured end: the session degrades rather than guess.
 #[test]
 fn an_ambiguous_at_end_open_degrades_instead_of_enriching() {
     let mut set = ConversationSet::new(1, proto::Runtime::Claude);
@@ -243,7 +243,7 @@ fn an_ambiguous_at_end_open_degrades_instead_of_enriching() {
             stop(),
         ],
     );
-    let changed = set.open_at_end(&[], false, true, Caps::default());
+    let changed = set.open_at_end(&[], false, Caps::default());
     assert_eq!(changed, vec![None]);
     enrich(&mut set, &[user(0, "continue"), said(0, "maybe mine")]);
     assert_eq!(

@@ -52,11 +52,6 @@ pub(super) struct TranscriptSlot {
     /// The file the last applied pass read, for observing from outside which file the
     /// reader is on (`conversation_transcript_read`).
     last_read: Option<PathBuf>,
-    /// The root's `User` turn count when the pass in flight was handed out. A resumed
-    /// file measured on that pass (`ReadOutcome::opened_at_end`) is ambiguous if the
-    /// count moved before the pass was applied: that prompt's record may lie on either
-    /// side of the measured end.
-    users_before_pass: u32,
 }
 
 /// What the reader does next ([`WindowManager::reader_step`]).
@@ -272,7 +267,6 @@ impl WindowManager {
                 Tail::new(path)
             }
         };
-        entry.transcript.users_before_pass = entry.conversations.user_count();
         match entry.transcript.tail.take() {
             Some(tail) if tail.path() == path => ReaderStep::Read(tail),
             Some(_) => {
@@ -312,8 +306,7 @@ impl WindowManager {
         let restart = outcome.restarted || std::mem::take(&mut entry.transcript.restart_next);
         let set = &mut entry.conversations;
         let changed = if outcome.opened_at_end {
-            let ambiguous = set.user_count() != entry.transcript.users_before_pass;
-            set.open_at_end(&outcome.records, restart, ambiguous, caps)
+            set.open_at_end(&outcome.records, restart, caps)
         } else if restart {
             set.restart_enrichment(&outcome.records, caps)
         } else {

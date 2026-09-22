@@ -485,9 +485,16 @@ pub(super) fn user_count(draft: &Draft) -> u32 {
 
 /// A resumed session's file was just measured at its end (fix round 2, N1/N2): the
 /// records before that end are skipped, so the session's ordinal 0 is the window's next
-/// `User` turn. `ambiguous` degrades the session to `Misaligned` from its first ordinal
-/// (see `ConversationSet::open_at_end`). Returns whether anything visible changed.
-pub(super) fn open_session_at_end(draft: &mut Draft, ambiguous: bool) -> bool {
+/// `User` turn. Returns whether anything visible changed.
+///
+/// `session_base` holds the `User` count as of the session's `SessionStart` (or of the
+/// last open). If a prompt has arrived since, its own line may lie on either side of the
+/// measured end — before it, and it was skipped; after it, and it is ordinal 0 of a
+/// session whose base already counts it — and nothing says which. The session then
+/// degrades to `Misaligned` from its first ordinal rather than guess (re-review 2, I1 and
+/// M3), whether the prompt came before the reader's first step or during its pass.
+pub(super) fn open_session_at_end(draft: &mut Draft) -> bool {
+    let ambiguous = user_count(draft) != draft.session_base;
     draft.session_base = user_count(draft);
     let mut changed = begin_session(draft);
     if ambiguous {

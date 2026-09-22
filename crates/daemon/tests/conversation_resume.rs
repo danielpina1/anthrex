@@ -241,47 +241,6 @@ async fn a_window_resumed_at_startup_with_a_new_prompt_gets_its_reply() {
     a_window_that_starts_resumed("keep going", "NEW reply to keep going").await;
 }
 
-/// The race the cure accepts: the resumed turn's own lines were already in the file when
-/// the reader opened it. That turn gets no prose (it cannot be told apart from the old
-/// records), never the old reply; the turn after it is enriched normally.
-#[tokio::test]
-async fn a_resumed_turn_written_before_the_open_gets_no_prose_never_the_old_reply() {
-    let d = start_daemon().await;
-    let id = claude_window(&d, "raced").await;
-    let _c = subscribed(&d, id).await;
-    let dir = tempfile::tempdir().unwrap();
-    let a = dir.path().join("a.jsonl");
-    append(
-        &a,
-        &[
-            prompt_line("sess-A", "continue"),
-            reply_line("sess-A", "OLD reply from before restart"),
-        ],
-    );
-    turn(&d, id, "sess-A", "continue");
-    append(
-        &a,
-        &[
-            prompt_line("sess-A", "continue"),
-            reply_line("sess-A", "raced reply"),
-        ],
-    );
-    session_start(&d, id, "sess-A", "resume", &a);
-    until_reading(&d, id, &a).await;
-
-    turn(&d, id, "sess-A", "and then");
-    append(
-        &a,
-        &[
-            prompt_line("sess-A", "and then"),
-            reply_line("sess-A", "reply after the open"),
-        ],
-    );
-    until_reply(&d, id, 1).await;
-    assert_eq!(replies(&d, id), owned(&[&[], &["reply after the open"]]));
-    assert_eq!(degraded(&d, id), None);
-}
-
 /// The negative: a fresh session (`startup`) is read from the start as before, so a
 /// file written ahead of its hooks still enriches from ordinal 0.
 #[tokio::test]

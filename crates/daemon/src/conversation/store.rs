@@ -269,25 +269,16 @@ impl ConversationSet {
             .is_some_and(|entry| std::mem::take(&mut entry.draft.resume_pending))
     }
 
-    /// The root's `User` turns so far, counting those the caps dropped.
-    pub fn user_count(&self) -> u32 {
-        self.entries
-            .get(&None)
-            .map_or(0, |entry| enrich::user_count(&entry.draft))
-    }
-
     /// Applies the pass on which a resumed session's file was opened at its end
     /// (`ReadOutcome::opened_at_end`) as one step: a restart's reset if `restart`, then
     /// the session's ordinals start at the window's current `User` turn count
-    /// (`enrich::open_session_at_end`), then `records`. `ambiguous`: a prompt arrived
-    /// while the file was being measured, so whether its own record is before or after
-    /// the measured end cannot be known, and the session degrades to `Misaligned`
-    /// rather than risk laying one turn's reply onto another.
+    /// (`enrich::open_session_at_end`), then `records`. A prompt that arrived since the
+    /// session's `SessionStart` makes the open ambiguous, and the session degrades to
+    /// `Misaligned` rather than risk laying one turn's reply onto another.
     pub fn open_at_end(
         &mut self,
         records: &[Record],
         restart: bool,
-        ambiguous: bool,
         caps: Caps,
     ) -> Vec<Option<String>> {
         let mut changed = Vec::new();
@@ -295,9 +286,7 @@ impl ConversationSet {
             let revised = if key.is_none() {
                 entry.mutate(Some(caps), |draft| {
                     let reset = restart && enrich::reset(draft);
-                    reset
-                        | enrich::open_session_at_end(draft, ambiguous)
-                        | enrich::apply(draft, records, caps)
+                    reset | enrich::open_session_at_end(draft) | enrich::apply(draft, records, caps)
                 })
             } else if restart {
                 entry.mutate(None, enrich::reset)
