@@ -138,3 +138,72 @@ fn a_duplicated_tool_use_id_enriches_and_restores_only_the_last_call() {
     assert!(reset(&mut draft));
     assert_eq!(conversation(&draft), before);
 }
+
+/// Fix round 1, F2: the hook's `truncated` records that the CLI cut `tool_response`, the
+/// summary's source. Once the transcript's full detail replaces `detail`, `truncated`
+/// describes that detail: it is `false` when the detail fit the cap. A reset restores the
+/// hook's flag.
+#[test]
+fn a_complete_detail_clears_the_hooks_truncated_flag_until_reset() {
+    let mut cut = post("tu-2", "summary two");
+    cut.tool_result_truncated = Some(true);
+    let mut draft = draft_of(&[
+        prompt("p-two"),
+        pre("tu-2", "Read", json!({"file_path": "/a"})),
+        cut,
+    ]);
+    let hook_flag = |draft: &crate::conversation::Draft| {
+        tool_result(tool(&draft.turns, "tu-2"))
+            .as_ref()
+            .map(|r| r.truncated)
+    };
+    assert_eq!(hook_flag(&draft), Some(true), "fixture: the hook was cut");
+    assert!(enrich(&mut draft, &[result("tu-2", "D2 full", true)]));
+    let enriched = tool_result(tool(&draft.turns, "tu-2")).as_ref().unwrap();
+    assert_eq!(enriched.detail.as_deref(), Some("D2 full"));
+    assert!(!enriched.truncated);
+    assert!(reset(&mut draft));
+    assert_eq!(hook_flag(&draft), Some(true));
+}
+
+/// Fix round 1, F3: the same tool-use id in two different turns. The detail joins the
+/// newest turn's call, as `build.rs`'s id tier does; the older call is untouched, and a
+/// reset restores only the one that changed.
+#[test]
+fn a_tool_use_id_reused_in_a_later_turn_enriches_the_later_call() {
+    let mut draft = draft_of(&[
+        prompt("first"),
+        pre("tu-1", "Bash", json!({"command": "old"})),
+        post("tu-1", "old output"),
+        stop(),
+        prompt("second"),
+        pre("tu-1", "Bash", json!({"command": "new"})),
+        post("tu-1", "new output"),
+        stop(),
+    ]);
+    let before = conversation(&draft);
+    assert!(enrich(
+        &mut draft,
+        &[
+            call("tu-1", json!({"command": "new, from the transcript"})),
+            result("tu-1", "new detail", true),
+        ]
+    ));
+    assert_eq!(
+        draft.turns[1].blocks, before.turns[1].blocks,
+        "older call untouched"
+    );
+    let newer = &draft.turns[3].blocks[0];
+    assert_eq!(
+        tool_input(newer),
+        &Some(json!({"command": "new, from the transcript"}))
+    );
+    assert_eq!(
+        tool_result(newer)
+            .as_ref()
+            .and_then(|r| r.detail.as_deref()),
+        Some("new detail")
+    );
+    assert!(reset(&mut draft));
+    assert_eq!(conversation(&draft), before);
+}

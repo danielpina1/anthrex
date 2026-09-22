@@ -255,7 +255,11 @@ fn tool_detail(
     // exactly as the hooks left it.
     if let (Some(detail), Some(result)) = (detail, result.as_mut()) {
         let (capped, byte_capped) = build::cap_bytes(detail, caps.max_result_bytes);
-        let truncated = result.truncated || byte_capped;
+        // The hook's flag says the CLI cut `tool_response`, the summary's source. Once
+        // the transcript's detail replaces `detail`, the flag describes that detail:
+        // truncated exactly when it was over the cap (fix round 1, F2). `reset`
+        // restores the hook's flag.
+        let truncated = byte_capped;
         if result.detail.as_deref() != Some(capped.as_str()) || result.truncated != truncated {
             let original = draft.enrichment.tools.entry(key).or_default();
             original
