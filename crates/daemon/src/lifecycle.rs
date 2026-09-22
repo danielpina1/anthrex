@@ -256,6 +256,7 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     let mut config =
         ManagerConfig::from_env(opts.socket_path.clone(), shell, &loaded_config.runtimes)?;
     config.worktrees_root = opts.data_dir.join("worktrees");
+    config.conversation = loaded_config.conversation.clone();
     // Fix wave 4, item 1: `codex_bin` is cloned out here, before `WindowManager::new`
     // consumes `config`, so the probe itself can run later — immediately before
     // `server::serve`, not here. Only decision 12's state-file load needs to precede the

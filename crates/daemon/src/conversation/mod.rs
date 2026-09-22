@@ -3,8 +3,8 @@
 //! pure transform from one hook into one conversation's `Draft`; `store` (task M6.5.6)
 //! is `ConversationSet` -- revisions, the delta ring and the caps that turn a `Draft`
 //! into the `rev`/`degraded`/`dropped_turns` bookkeeping the wire protocol reports;
-//! `enrich` (task M6.5.8) lays transcript records onto that hook-built timeline. A later
-//! task adds `watch` beside them.
+//! `enrich` (task M6.5.8) lays transcript records onto that hook-built timeline;
+//! `watch` (task M6.5.10) runs the transcript reader while a client is subscribed.
 
 use std::time::Instant;
 
@@ -12,6 +12,7 @@ mod build;
 mod enrich;
 mod store;
 mod summary;
+pub mod watch;
 pub use store::{ConversationSet, Visible};
 pub use summary::{SUMMARY_MAX_GRAPHEMES, for_tool};
 

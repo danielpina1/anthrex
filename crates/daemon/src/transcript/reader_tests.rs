@@ -5,6 +5,7 @@ use super::*;
 use crate::transcript::tests::{CLAUDE_FIXTURE, CODEX_FIXTURE, parse_all};
 use crate::transcript::{Record, parser_for};
 use serde_json::json;
+use std::fs::File;
 use std::io::Write;
 
 const SESSION: &str = "sess-reader";

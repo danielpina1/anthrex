@@ -274,6 +274,7 @@ impl WindowManager {
             return Err(refuse_after_shutdown(window, created));
         }
         let now = Instant::now();
+        let runtime = spec.runtime;
         let entry = Entry {
             id,
             name,
@@ -303,6 +304,9 @@ impl WindowManager {
             created_at: std::time::SystemTime::now(),
             exit: None,
             child_alive: true,
+            conversations: crate::conversation::ConversationSet::new(id, runtime),
+            conversation_viewers: 0,
+            transcript: Default::default(),
             process: Process::Live(window),
             run: None,
         };

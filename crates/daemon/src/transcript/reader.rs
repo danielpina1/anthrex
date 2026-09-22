@@ -10,7 +10,6 @@
 
 use super::{Cursor, DETECT_LINES, Record, TranscriptParser, Version, detect_head};
 use proto::DegradeReason;
-use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};

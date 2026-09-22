@@ -239,6 +239,9 @@ impl WindowManager {
                 // Whole-branch-review Major 2: carried verbatim, not discarded — see
                 // `Entry.run`'s own doc comment.
                 run,
+                conversations: crate::conversation::ConversationSet::new(id, runtime),
+                conversation_viewers: 0,
+                transcript: Default::default(),
             };
 
             next_id = next_id.max(id.saturating_add(1));

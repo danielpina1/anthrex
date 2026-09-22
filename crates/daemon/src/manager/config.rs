@@ -63,6 +63,10 @@ pub struct ManagerConfig {
     /// the job of opening it. See `crate::launch::gate`'s module doc for why the probe
     /// gates launches specifically rather than everything `server::serve` does.
     pub launch_gate: launch::LaunchGate,
+    /// `[conversation]` from `config.toml`: the caps and the reader's linger. Spelled
+    /// `::config::Conversation`, never bare: `proto::Conversation` and
+    /// `crate::conversation` share the name.
+    pub conversation: ::config::Conversation,
 }
 
 impl ManagerConfig {
@@ -81,6 +85,7 @@ impl ManagerConfig {
             kill_grace: crate::process::KILL_GRACE,
             restart_wait_deadline: crate::process::KILL_GRACE + Duration::from_secs(2),
             launch_gate: launch::LaunchGate::open_already(),
+            conversation: ::config::Conversation::default(),
         }
     }
 
@@ -112,6 +117,7 @@ impl ManagerConfig {
             kill_grace: crate::process::KILL_GRACE,
             restart_wait_deadline: crate::process::KILL_GRACE + Duration::from_secs(2),
             launch_gate: launch::LaunchGate::open_already(),
+            conversation: ::config::Conversation::default(),
         }
     }
 
