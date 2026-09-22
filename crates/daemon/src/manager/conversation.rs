@@ -379,7 +379,7 @@ fn reply(
         && let (Some((to_rev, turns)), Some(visible)) =
             (set.delta_since(key, from_rev), set.visible(key))
     {
-        return delta(window_id, agent_id, from_rev, to_rev, turns, visible);
+        return conversation_delta_message(window_id, agent_id, from_rev, to_rev, turns, visible);
     }
     DaemonMsg::ConversationSnapshot {
         window_id,
@@ -388,7 +388,8 @@ fn reply(
     }
 }
 
-pub(crate) fn delta(
+/// Builds a `ConversationDelta` from `conversation_delta`'s parts.
+pub fn conversation_delta_message(
     window_id: u32,
     agent_id: Option<String>,
     from_rev: u64,

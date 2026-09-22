@@ -1,5 +1,6 @@
 //! Accepts client connections and speaks the protocol from spec section 4.
 
+mod conversation;
 mod requests;
 
 use crate::git::GitRegistry;
@@ -283,6 +284,11 @@ async fn handle_client(
         }
     });
 
+    // Conversation subscriptions (task M6.5.10): answered and kept current by their own
+    // task, so this loop never waits on one.
+    let conversations =
+        conversation::ConversationTask::spawn(manager.clone(), out_tx.clone(), shutdown.clone());
+
     let mut subscription: Option<Subscription> = None;
     let mut connection_error = None;
     loop {
@@ -445,14 +451,27 @@ async fn handle_client(
                 shutdown.cancel();
                 None
             }
-            // Landed ahead of the conversation view itself (task M6.5.1), the same way
-            // `ClientMsg::Restart` was landed before milestone 6 implemented it. Task
-            // M6.5.10 replaces this with the real subscribe/unsubscribe handling.
-            ClientMsg::SubscribeConversation { .. } | ClientMsg::UnsubscribeConversation { .. } => {
-                Some(error(
-                    "subscribe-conversation",
-                    "not supported by this daemon version",
-                ))
+            ClientMsg::SubscribeConversation {
+                window_id,
+                agent_id,
+                from_rev,
+            } => {
+                conversations.send(conversation::Command::Subscribe {
+                    window_id,
+                    agent_id,
+                    from_rev,
+                });
+                None
+            }
+            ClientMsg::UnsubscribeConversation {
+                window_id,
+                agent_id,
+            } => {
+                conversations.send(conversation::Command::Unsubscribe {
+                    window_id,
+                    agent_id,
+                });
+                None
             }
         };
         if let Some(reply) = reply
@@ -465,6 +484,9 @@ async fn handle_client(
     if let Some(previous) = subscription.take() {
         previous.stop().await;
     }
+    // Every conversation this client held is unsubscribed before the connection is
+    // reported closed, as the PTY subscription above is unfocused.
+    conversations.stop().await;
     changes_task.abort();
     git_task.abort();
     drop(out_tx);

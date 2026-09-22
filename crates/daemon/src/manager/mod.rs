@@ -9,7 +9,7 @@ mod restart;
 mod restore;
 
 pub use config::ManagerConfig;
-pub use conversation::{CONVERSATION_GONE, ReaderStep};
+pub use conversation::{CONVERSATION_GONE, ReaderStep, conversation_delta_message};
 pub use remove::{GitRoots, RemoveError};
 
 use crate::hooks;
