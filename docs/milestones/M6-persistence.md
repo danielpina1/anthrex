@@ -781,4 +781,100 @@ From `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`, "Assig
 
 ## Implementation notes
 
-The implementer fills in this section with every deviation, surprise and decision made during implementation.
+Twelve tasks, twelve fix waves. Every deviation below was raised by an implementer or a reviewer
+rather than discovered afterwards.
+
+### Amendments to the decisions in this brief
+
+- **Decision 12 (state file problems).** `state::load` returns `Vec<Problem>` carrying a
+  `Severity`, not `Vec<String>`. The decision specifies two severities — `error` for an unreadable
+  file, `warn` for corrupt, unsupported or skipped records — and a bare string cannot carry the
+  distinction. `config::Problem` deliberately has **no** severity: an unreadable config falls back
+  to defaults and loses nothing, while an unreadable state file loses the user's window list. The
+  asymmetry is intentional; do not "fix" it into symmetry.
+- **Decision 18 (kill wait).** `restart` polls `child_alive`, not status `Exited`. Restart reuses a
+  live window id, so a stale `WindowEvent::Exited` from the old process can be applied to the new
+  one; `ParserPanicked` reaches status `Exited` without touching `child_alive`. Because
+  `child_alive = false` is written in exactly one place, observing it false *is* observing the old
+  exit was consumed. The decision's literal wording does not close that race.
+- **Decision 22 (name rules).** Extended beyond `char::is_control()` to reject the bidi formatting
+  characters U+202A–U+202E and U+2066–U+2069. They are category `Cf`, not `Cc`, so they passed the
+  original rule while reordering rendered text — a spoofing surface in a tool that runs several
+  agents side by side. The rule is that explicit list, **not** the `Cf` category, because `Cf` also
+  contains the zero-width joiner that legitimate emoji names need.
+- **Decision 39 (file layout).** `Entry` stays private rather than `pub(super)`: every referencing
+  file is a descendant of `manager` and already sees a private ancestor item, and `pub(super)`
+  there resolves to the crate root — wider than intended. `stopping`'s logic lives in
+  `app/link.rs` as the decision says; it was briefly in `app/lifecycle.rs` and was moved back.
+
+### Deviations from the task list
+
+- `init_logging` returns `anyhow::Result<WorkerGuard>`. `RotatingFile::open` can fail where the old
+  rolling-appender constructor could not.
+- A restored record's `project` is **never fabricated**. The brief's shape invited falling back to
+  `cwd`, but `state_snapshot` writes unconditionally, so the fallback would bake itself into the
+  file permanently and no later boot could re-derive it. A re-probe was rejected because the only
+  non-blocking slot for it is before the socket bind, which is where a slow `codex` probe broke
+  daemon auto-start (see below).
+- `bad_records_are_skipped` uses **four** records, not the three the task text said: two survivors
+  and two rejections require four, and the fourth must sit *after* both bad ones, since
+  order-independence is the property decision 12 exists to provide.
+- Several files outside a task's stated list had to change: removing `theme::ACCENT` and adding a
+  parameter to `subagent_forest` are breaking changes the brief did not anticipate.
+- Module splits beyond those named: `manager/{entry,restore,restart,create}.rs`, `app/windows.rs`,
+  `app/lifecycle.rs`, `app/link.rs`, `tree/{forest,names}.rs`, `server_tests.rs`, and several test
+  modules. Each was verified as a pure move by direct content comparison, never by relying on
+  `git`'s rename detection.
+- `scripts/pty-smoke.py` gained two stages beyond the brief: **stage 13** quits through the TUI
+  with `C-b Q`, and **stage 12b** covers restart-and-resume against a fake runtime. Both were added
+  because the defects below were invisible without them.
+
+### Surprises worth recording
+
+- **`anthrex daemon start` is timing-sensitive to anything before the socket bind.** Moving
+  `codex_version::check` (5 s timeout) ahead of the bind broke auto-start entirely, because
+  `ensure_daemon` waits only 3 s for the socket. Only the state-file load belongs before the bind.
+- **Restart is the first code in this project that reuses a live window id.** Every structure keyed
+  by id that assumed one process per id became suspect; the cleanup map produced the same defect on
+  three separate paths before it was fixed structurally, by evicting from the `Restarting` guard's
+  `Drop` so no exit path can leak a record.
+- **Two Criticals were invisible to a green suite** and were found only by driving the real product
+  over a PTY: `restart` worked exactly once per window, and `C-b Q` never quit. Both lived in the
+  wiring rather than in any unit — the second because its test called the handler directly,
+  bypassing the event-loop guard that contained the bug.
+- **A guard at admission does not constrain work already in flight.** `restart` and
+  `remove_with_worktree` both needed their `shutting_down` check repeated inside the operation.
+- **A bound must exceed the code's own legal worst case, in any language.** Three instances in
+  Rust, then a fourth in `scripts/pty-smoke.py`, where a Python timeout equalled the Rust constant
+  it wrapped. See `docs/timing-budgets.md`.
+
+### Runtime verification (run 2026-09-21 against the binaries installed on this machine)
+
+```
+$ codex --version
+codex-cli 0.155.0
+
+$ claude --version
+2.1.278 (Claude Code)
+```
+
+`codex resume --help` **does** list `-m, --model <MODEL>`, so the conditional in task M6.6 — drop
+`-m` on resume if the flag is absent — does not apply and `-m` is kept. It also lists
+`--dangerously-bypass-hook-trust`, used by decision 4. `claude --help` lists `-r, --resume [value]`
+and `-n, --name <name>`. Root options precede the `resume` subcommand for Codex; the full transcript
+was captured in the task's report and reproduced independently by its reviewer.
+
+### Accepted residuals
+
+Both are recorded in `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`.
+
+- **The `ensure_daemon` phantom-daemon race** is closed in two layers. The first, `acquire_or_yield`,
+  has no timing bet in it and is what prevents a loser becoming a daemon. The second, a 250 ms
+  spawn-claim grace, is a bounded heuristic that only reduces how often a redundant child is
+  spawned at all; its worst case is a redundant process that exits 0. Measured 0/50 after versus
+  100 % before. Whoever revisits this should first reproduce the mechanism at `c1b4555~1` — a clean
+  number with no demonstrated failing baseline is the shape of measurement this milestone withdrew
+  three times.
+- **`handle_hook` is keyed by window id with no per-spawn tag**, so a hook from a replaced process
+  can in principle land on its successor. Same shape as the accepted `WindowEvent` staleness; a real
+  fix needs a protocol-level generation counter, which is a protocol bump and every client updated.
