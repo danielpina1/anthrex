@@ -88,10 +88,11 @@ async fn restart_of_a_restored_shell_runs_it_again() {
 /// more, for a 5 s internal deadline, on top of which a PTY spawn and shell round trip
 /// cost tens of milliseconds (`docs/timing-budgets.md`). It is deliberately *not* written
 /// as `assert!(elapsed < Duration::from_secs(5))`: that literal would coincide exactly
-/// with `restart`'s own `kill_grace + 2s` deadline, the arithmetic-equality shape
-/// `docs/timing-budgets.md`'s standing rule 1 flags as a defect regardless of how the
-/// number was arrived at. In the ordinary case here the shell dies on SIGHUP at once
-/// (AGENTS.md), so the real cost is nowhere near either bound.
+/// with `restart`'s own `restart_wait_deadline` (production default `KILL_GRACE + 2s`),
+/// the arithmetic-equality shape `docs/timing-budgets.md`'s standing rule 1 flags as a
+/// defect regardless of how the number was arrived at. In the ordinary case here the
+/// shell dies on SIGHUP at once (AGENTS.md), so the real cost is nowhere near either
+/// bound.
 #[tokio::test]
 async fn restart_of_a_live_window_replaces_the_process() {
     let m = manager();
@@ -354,15 +355,15 @@ async fn shutdown_after_a_restart_ends_the_restarted_child() {
 /// manager built with `WindowManager::new` whose event receiver is never pumped can never
 /// learn that `WindowEvent::Exited` arrived, so `Entry.child_alive` can never go false —
 /// deterministically reproducing "the wait ran out" without needing a process that
-/// actually refuses to die. `config.kill_grace` is shortened only so the test does not
-/// have to sit through the real, unrelated `KILL_GRACE` this window's `kill()` also starts
+/// actually refuses to die. `config.restart_wait_deadline` is shortened only so the test
+/// does not have to sit through its real, production-sized default; `kill_grace` is left
+/// alone, since the real, unrelated `KILL_GRACE` this window's `kill()` also starts
 /// escalating on (`crate::process::escalate` reads that constant directly, not
-/// `ManagerConfig.kill_grace`, so shortening this field changes nothing about what
-/// actually happens to the real child — only how long `wait_for_exit`'s own deadline is).
+/// `ManagerConfig.kill_grace`) is unaffected either way.
 #[tokio::test]
 async fn restart_refuses_when_the_kill_wait_times_out() {
     let mut config = ManagerConfig::new("/tmp/unused.sock".into(), "/bin/sh".into());
-    config.kill_grace = Duration::from_millis(1);
+    config.restart_wait_deadline = Duration::from_millis(1);
     let (m, _events) = WindowManager::new(config);
     let id = create_id(
         &m,
@@ -443,11 +444,10 @@ async fn restart_admitted_before_shutdown_is_refused_and_leaves_no_process_behin
     .unwrap();
     std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    // `ManagerConfig::new`'s default `kill_grace` is the real `KILL_GRACE` (process.rs),
-    // giving `wait_for_exit` its production deadline of `kill_grace + 2s` — comfortably
-    // past the ~3s the stubborn shell actually takes to die to `SIGKILL`, so phase B's own
-    // wait succeeds for the right reason rather than timing out (that is Minor 2's
-    // scenario, not this one).
+    // `ManagerConfig::new`'s default `restart_wait_deadline` is `KILL_GRACE + 2s` —
+    // comfortably past the ~3s the stubborn shell actually takes to die to `SIGKILL`, so
+    // phase B's own wait succeeds for the right reason rather than timing out (that is
+    // Minor 2's scenario, not this one).
     let config = ManagerConfig::new("/tmp/unused.sock".into(), shell.display().to_string());
     let (m, mut events) = WindowManager::new(config);
     let pump = m.clone();
@@ -600,10 +600,20 @@ async fn restart_admitted_before_shutdown_ordinary_shell_variant() {
 /// Driven with a real, *non*-ignoring script that logs each `HUP`/`TERM` it receives rather
 /// than exiting on them, so a *second*, independent signal delivery is directly observable
 /// (a repeat of the same eventual death is not: nothing distinguishes "a fresh escalation
-/// re-signalled" from "the original one was always going to get there"). `config.kill_grace`
-/// is shortened so `wait_for_exit`'s own deadline (`kill_grace + 2s`) falls before the real,
-/// hardcoded `KILL_GRACE` (`process.rs`, unaffected by this) the original escalation needs
-/// to finally force the issue with `SIGKILL` — guaranteeing a genuine timeout, not a race.
+/// re-signalled" from "the original one was always going to get there").
+///
+/// `config.restart_wait_deadline` is shortened so `wait_for_exit` gives up long before the
+/// real, hardcoded `KILL_GRACE` (`process.rs`, unaffected by this) the original escalation
+/// needs to finally force the issue with `SIGKILL` — guaranteeing a genuine timeout, not a
+/// race. Fix wave 8, Minor: this used to shorten `config.kill_grace` instead, relying on
+/// `wait_for_exit`'s deadline being computed as `kill_grace + 2s` — an injected value
+/// racing a hardcoded one with a margin of 900ms (`3s - (100ms + 2s)`), the exact
+/// injected-vs-hardcoded near-equality shape `docs/timing-budgets.md`'s standing rule 1
+/// warns about, even though the margin was provably positive by construction. Now that
+/// `wait_for_exit` reads its own field, this sets it directly to a small value with no
+/// relationship to `kill_grace` at all (left at its default, `KILL_GRACE`, since nothing
+/// here uses it) — a ~2.9s margin against the real `KILL_GRACE`, about 3x wider than
+/// before, and no longer built from two constants that merely happened not to coincide.
 #[tokio::test]
 async fn kill_after_a_timed_out_restart_still_signals_the_window() {
     use std::os::unix::fs::PermissionsExt;
@@ -626,10 +636,10 @@ async fn kill_after_a_timed_out_restart_still_signals_the_window() {
     std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     let mut config = ManagerConfig::new("/tmp/unused.sock".into(), shell.display().to_string());
-    // `wait_for_exit`'s deadline is `kill_grace + 2s`; 100ms here gives ~2.1s, comfortably
-    // short of the real, hardcoded `KILL_GRACE` (3s) the original escalation needs to reach
-    // its own `SIGKILL` — so the timeout is genuine, not a race against real death.
-    config.kill_grace = Duration::from_millis(100);
+    // See this test's own doc comment: `restart_wait_deadline` is independent of
+    // `kill_grace` (left at its default), so this sets `wait_for_exit`'s own deadline
+    // directly rather than deriving it from a value the real escalation also depends on.
+    config.restart_wait_deadline = Duration::from_millis(100);
     let (m, mut events) = WindowManager::new(config);
     let pump = m.clone();
     tokio::spawn(async move {

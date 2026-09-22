@@ -58,6 +58,24 @@ pub struct ManagerConfig {
     /// asserts the removal finishes in under 10 s — a 6x separation between "waited" and
     /// "didn't wait" instead of the ~1x a shared 1 s bound gave it.
     pub kill_grace: Duration,
+    /// `restart`'s own `wait_for_exit` deadline (design decision 18): how long phase B
+    /// waits for a killed child to be confirmed gone before refusing the restart.
+    /// Production sets this to `crate::process::KILL_GRACE + 2s` — comfortably past the
+    /// real escalation's own worst case, so a genuine child cannot cause a false timeout
+    /// (`wait_for_exit`'s own doc comment).
+    ///
+    /// Fix wave 8, Minor: kept as its own field rather than derived from `kill_grace` at
+    /// the call site, the shape it had before this fix. That shape gave
+    /// `restart`'s timeout test only a 900ms margin between an injected `kill_grace` and
+    /// the real, hardcoded `crate::process::KILL_GRACE` its own child's death actually
+    /// depends on — an injected-versus-hardcoded near-equality, the exact shape
+    /// `docs/timing-budgets.md`'s standing rule 1 warns about, even though the margin
+    /// happened to be provably positive by construction. A test that wants a genuine
+    /// timeout can now shrink this field alone, to any margin it likes, without touching
+    /// `kill_grace` — which the real child's own escalation still runs against, unaffected
+    /// and unconfigurable — instead of racing two constants that merely happened not to
+    /// coincide.
+    pub restart_wait_deadline: Duration,
 }
 
 impl ManagerConfig {
@@ -74,6 +92,7 @@ impl ManagerConfig {
             operation_timeout: worktree::OPERATION_TIMEOUT,
             cleanup_timeout: worktree::CLEANUP_TIMEOUT,
             kill_grace: crate::process::KILL_GRACE,
+            restart_wait_deadline: crate::process::KILL_GRACE + Duration::from_secs(2),
         }
     }
 
@@ -103,6 +122,7 @@ impl ManagerConfig {
             operation_timeout: worktree::OPERATION_TIMEOUT,
             cleanup_timeout: worktree::CLEANUP_TIMEOUT,
             kill_grace: crate::process::KILL_GRACE,
+            restart_wait_deadline: crate::process::KILL_GRACE + Duration::from_secs(2),
         }
     }
 

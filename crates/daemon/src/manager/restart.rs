@@ -289,12 +289,14 @@ impl WindowManager {
     /// exactly the corruption the deviation exists to rule out, reopened on precisely the
     /// path a timeout takes.
     ///
-    /// Bounded by the kill escalation's own total grace plus two seconds (decision 18):
-    /// production's `self.config.kill_grace` is `crate::process::KILL_GRACE`, the exact
-    /// deadline `crate::process::escalate` is built around, so this can never give up
-    /// while that escalation could legitimately still be running.
+    /// Bounded by `self.config.restart_wait_deadline` (decision 18): production sets it to
+    /// the kill escalation's own total grace plus two seconds, `crate::process::KILL_GRACE`
+    /// being the exact deadline `crate::process::escalate` is built around, so this can
+    /// never give up while that escalation could legitimately still be running. A separate
+    /// field from `kill_grace` (fix wave 8, Minor) — see `ManagerConfig::restart_wait_deadline`'s
+    /// own doc comment for why the two must not be derived from one another.
     async fn wait_for_exit(&self, id: u32) -> bool {
-        let deadline = Instant::now() + self.config.kill_grace + Duration::from_secs(2);
+        let deadline = Instant::now() + self.config.restart_wait_deadline;
         loop {
             let child_alive = {
                 let inner = crate::lock(&self.inner);
