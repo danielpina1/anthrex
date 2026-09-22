@@ -175,10 +175,27 @@ pub async fn ensure_daemon(exe: &Path, socket: &Path) -> anyhow::Result<()> {
     match claim {
         Claim::Contended => {}
         Claim::Unknown => {
-            spawn_detached(exe)?;
+            // final-gate finding F3: `spawn_detached` was called inline here, on the
+            // tokio worker running this async fn — the same AGENTS.md hard rule 2
+            // violation as the `create_dir_all`/`try_claim` call fifteen lines above,
+            // just introduced later on this branch: at the merge base, `spawn_detached`
+            // used `Stdio::null()` for every stream and touched no filesystem at all, so
+            // wrapping it was unnecessary then. `open_stderr_sink` (this branch) changed
+            // that — `create_dir_all`, a `RotatingFile::open` (another `create_dir_all`,
+            // an `open`, a `metadata`), up to `LOG_KEEP` renames, and a second `open`,
+            // all inline, ahead of the fork/exec itself — strictly more filesystem work
+            // than the call already wrapped above it. `exe` is cloned to an owned
+            // `PathBuf` because `spawn_blocking`'s closure must be `'static`.
+            let exe = exe.to_path_buf();
+            tokio::task::spawn_blocking(move || spawn_detached(&exe))
+                .await
+                .map_err(|error| anyhow::anyhow!("daemon spawn failed: {error}"))??;
         }
         Claim::Won(lock) => {
-            spawn_detached(exe)?;
+            let exe_owned = exe.to_path_buf();
+            tokio::task::spawn_blocking(move || spawn_detached(&exe_owned))
+                .await
+                .map_err(|error| anyhow::anyhow!("daemon spawn failed: {error}"))??;
             // Give the just-spawned child a real chance to reach its own acquire
             // before releasing: `docs/timing-budgets.md` measured a plain `anthrex`
             // binary spawn at a 39ms median / 85ms max (idle) — this is several times
