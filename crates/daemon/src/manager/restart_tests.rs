@@ -1,0 +1,182 @@
+use super::*;
+use proto::Runtime;
+
+fn spec(name: &str, cwd: std::path::PathBuf) -> WindowSpec {
+    WindowSpec {
+        name: Some(name.to_string()),
+        runtime: Runtime::Shell,
+        cwd,
+        worktree_branch: None,
+        model: None,
+        initial_prompt: None,
+    }
+}
+
+/// Minor 1 (fix wave 8 re-review): the third instance of the same defect shape —
+/// phase C's own failure path (the window's `cwd` no longer exists by the time
+/// `spawn_for_restart` checks it, `spawn_for_restart`'s own `directory does not
+/// exist` bail above) left `cleanups[id]` behind. Phase B's `self.kill(id)?` inserts
+/// the record and confirms the child dead; `finish_restart`, the only site that used
+/// to evict it, is never reached because phase C bails first. `tick`'s retain
+/// (`entries.contains_key(id) || !*done.borrow()`) then keeps the stale record for as
+/// long as the window itself exists — forever, for a window merely refused, not
+/// removed.
+///
+/// Reaches `Inner.cleanups` directly (`pub(super)`, visible from this descendant of
+/// `manager`) rather than trying to observe the leak from outside the crate: every
+/// black-box consequence this record could have (masking a fresh `kill`, blocking a
+/// later `start_cleanup`) is gated on `entry.child_alive`, which is already `false`
+/// by the time phase C runs, on every path that reaches it — exactly why the
+/// re-review calls this Minor, not Major. That does not make the record itself
+/// harmless to leave behind, only harmless *today*; this test pins the record's
+/// absence directly rather than waiting for a future path to make it observable from
+/// outside the crate.
+#[tokio::test]
+async fn a_directory_gone_before_phase_c_does_not_leave_a_stale_cleanups_record() {
+    let (m, mut events) = WindowManager::new(ManagerConfig::new(
+        "/tmp/unused-restart-cleanup-test.sock".into(),
+        "/bin/sh".into(),
+    ));
+    let pump = m.clone();
+    tokio::spawn(async move {
+        while let Some((id, ev)) = events.recv().await {
+            pump.handle_event(id, ev);
+        }
+    });
+
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    let info = m
+        .create(
+            spec("vanishing-cwd", cwd.clone()),
+            cwd.clone(),
+            None,
+            80,
+            24,
+        )
+        .await
+        .unwrap();
+    let id = info.id;
+    assert!(
+        crate::lock(&m.inner)
+            .entries
+            .get(&id)
+            .is_some_and(|e| e.child_alive),
+        "sanity: the window starts out live"
+    );
+
+    // Deleting the directory out from under the still-live shell: the shell keeps
+    // running (its cwd is only a name, not a hold on the directory's existence), so
+    // phase B's kill-and-wait still confirms a clean exit; only phase C's fresh
+    // `cwd.is_dir()` check, which the restarted process would need to actually start
+    // in, sees it gone. `TempDir`'s own `Drop` is skipped since this removes the
+    // directory itself.
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::mem::forget(dir);
+
+    let err = m.restart(id).await.unwrap_err();
+    assert!(
+        err.to_string().contains("directory does not exist"),
+        "{err}"
+    );
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let stale = crate::lock(&m.inner).cleanups.contains_key(&id);
+        if !stale {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "cleanups[{id}] was still present after phase C's own failure path — \
+             the third instance of the stale-record defect, now on the \
+             directory-gone path"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// Whole-branch-review Major 1: decision 19's cwd precondition used to be checked
+/// only in phase C, *after* phase B's kill had already ended the live process — a
+/// restart the user was told was refused had, in fact, destroyed their running
+/// agent. Live reproduction from the review: `rm -rf` a live shell's cwd, run
+/// `restart` → refused with `directory does not exist`, and the window is left
+/// `exited` anyway. This pins the fix directly: the refusal must land *before* the
+/// live process is touched at all, not merely before the caller sees the error.
+#[tokio::test]
+async fn a_refused_restart_does_not_kill_the_live_process() {
+    let (m, mut events) = WindowManager::new(ManagerConfig::new(
+        "/tmp/unused-restart-refusal-test.sock".into(),
+        "/bin/sh".into(),
+    ));
+    let pump = m.clone();
+    tokio::spawn(async move {
+        while let Some((id, ev)) = events.recv().await {
+            pump.handle_event(id, ev);
+        }
+    });
+
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    let info = m
+        .create(
+            spec("live-cwd-removed", cwd.clone()),
+            cwd.clone(),
+            None,
+            80,
+            24,
+        )
+        .await
+        .unwrap();
+    let id = info.id;
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let pid = loop {
+        if let Some(pid) = crate::lock(&m.inner)
+            .entries
+            .get(&id)
+            .filter(|e| e.child_alive)
+            .and_then(|e| e.pid())
+        {
+            break pid;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "window never came alive with a pid"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+
+    // The shell keeps running once its cwd is gone (its cwd is only a name); only
+    // the restart's own precondition check sees it missing.
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::mem::forget(dir);
+
+    let err = m.restart(id).await.unwrap_err();
+    assert!(
+        err.to_string().contains("directory does not exist"),
+        "{err}"
+    );
+
+    // The refusal must not have touched the live process at all: still alive at
+    // the OS level, and the manager must still consider it so — not the
+    // pre-fix behaviour, where the window came back listed as `exited`.
+    assert!(
+        // SAFETY: `pid` is this window's own live process, just reported by the
+        // manager itself; signal 0 performs only the existence check.
+        unsafe { libc::killpg(pid as libc::pid_t, 0) == 0 },
+        "a refused restart killed the live process anyway"
+    );
+    assert!(
+        crate::lock(&m.inner).entries.get(&id).unwrap().child_alive,
+        "a refused restart cleared child_alive on the live entry"
+    );
+    assert_ne!(
+        crate::lock(&m.inner).entries.get(&id).unwrap().status,
+        Status::Exited,
+        "a refused restart left the still-live window listed as exited"
+    );
+
+    // Clean up: this window still owns a real running shell.
+    let _ = m.kill(id);
+}
