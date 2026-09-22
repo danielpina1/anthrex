@@ -27,6 +27,17 @@ use std::time::Duration;
 use daemon::git::probe::PROBE_TIMEOUT;
 use daemon::git::schedule::DEBOUNCE;
 use daemon::git::{GitRegistry, ProbeFn};
+
+/// The `[git]` settings these tests run on: the defaults, with `enabled` set. Milestone
+/// 6 replaced `GitRegistry::new`'s bare `enabled: bool` with the whole table, so
+/// `a_disabled_registry_never_probes` below is now also the test that the table's
+/// `enabled` key is honoured.
+fn git_settings(enabled: bool) -> config::Git {
+    config::Git {
+        enabled,
+        ..config::Git::default()
+    }
+}
 use proto::{GitState, Head};
 use tempfile::{TempDir, tempdir};
 use tokio::sync::mpsc;
@@ -151,7 +162,7 @@ async fn registering_a_root_probes_it_immediately() {
         mut starts,
     } = scripted(vec![Some(state(0))]);
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let registry = GitRegistry::with_probe(true, tx, probe);
+    let registry = GitRegistry::with_probe(git_settings(true), tx, probe);
 
     registry.register(root.clone());
 
@@ -174,7 +185,7 @@ async fn a_disabled_registry_never_probes() {
         starts: _starts,
     } = scripted(vec![Some(state(0))]);
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let registry = GitRegistry::with_probe(false, tx, probe);
+    let registry = GitRegistry::with_probe(git_settings(false), tx, probe);
 
     registry.register(root);
 
@@ -198,7 +209,7 @@ async fn state_changes_are_published_once() {
         Some(state(2)),
     ]);
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let registry = GitRegistry::with_probe(true, tx, probe);
+    let registry = GitRegistry::with_probe(git_settings(true), tx, probe);
 
     registry.register(root.clone());
 
@@ -237,7 +248,7 @@ async fn a_transient_failure_republishes_the_last_state_as_stale_through_the_reg
         starts: _starts,
     } = scripted(vec![Some(state(1)), None, Some(state(1))]);
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let registry = GitRegistry::with_probe(true, tx, probe);
+    let registry = GitRegistry::with_probe(git_settings(true), tx, probe);
 
     registry.register(root.clone());
 
@@ -265,7 +276,7 @@ async fn a_root_that_never_succeeded_publishes_none_once_through_the_registry() 
         starts: _starts,
     } = scripted(vec![None]);
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let registry = GitRegistry::with_probe(true, tx, probe);
+    let registry = GitRegistry::with_probe(git_settings(true), tx, probe);
 
     registry.register(root.clone());
 
@@ -287,7 +298,7 @@ async fn unregistering_stops_the_probes() {
         starts: _starts,
     } = scripted(vec![Some(state(1))]);
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let registry = GitRegistry::with_probe(true, tx, probe);
+    let registry = GitRegistry::with_probe(git_settings(true), tx, probe);
 
     registry.register(root.clone());
     assert_eq!(
@@ -331,7 +342,7 @@ async fn unregistering_during_a_probe_publishes_nothing_afterwards() {
         mut starts,
     } = fake_probe(vec![Some(state(7))], Some(gate));
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let registry = GitRegistry::with_probe(true, tx, probe);
+    let registry = GitRegistry::with_probe(git_settings(true), tx, probe);
 
     registry.register(root.clone());
     tokio::time::timeout(SOON, starts.recv())
@@ -365,7 +376,7 @@ async fn a_root_survives_until_every_registration_is_released() {
         starts: _starts,
     } = scripted(vec![Some(state(0))]);
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let registry = GitRegistry::with_probe(true, tx, probe);
+    let registry = GitRegistry::with_probe(git_settings(true), tx, probe);
 
     registry.register(root.clone());
     registry.register(root.clone());
@@ -508,7 +519,7 @@ async fn a_real_write_triggers_a_probe() {
     let repo = repo_with_one_committed_file();
     let root = repo.path().to_path_buf();
     let (tx, mut rx) = mpsc::unbounded_channel::<Publication>();
-    let registry = GitRegistry::new(true, tx);
+    let registry = GitRegistry::new(git_settings(true), tx);
     registry.register(root.clone());
 
     // The registration probe sees a clean tree.
@@ -562,7 +573,7 @@ async fn a_commit_in_a_linked_worktree_triggers_a_probe() {
     );
 
     let (tx, mut rx) = mpsc::unbounded_channel::<Publication>();
-    let registry = GitRegistry::new(true, tx);
+    let registry = GitRegistry::new(git_settings(true), tx);
     registry.register(linked.clone());
 
     let first = tokio::time::timeout(registration_probe_deadline(), rx.recv())

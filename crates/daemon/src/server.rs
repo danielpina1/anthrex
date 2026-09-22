@@ -39,11 +39,11 @@ use tokio_util::sync::CancellationToken;
 pub async fn serve(
     listener: UnixListener,
     manager: Arc<WindowManager>,
-    git_enabled: bool,
+    git: config::Git,
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
     let (git_publish_tx, git_publish_rx) = mpsc::unbounded_channel();
-    let git_registry = Arc::new(GitRegistry::new(git_enabled, git_publish_tx));
+    let git_registry = Arc::new(GitRegistry::new(git, git_publish_tx));
     let (git_tx, _) = broadcast::channel::<DaemonMsg>(256);
     tokio::spawn(pump_git(git_publish_rx, git_tx.clone(), shutdown.clone()));
 

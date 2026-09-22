@@ -348,7 +348,9 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     let served = server::serve(
         listener,
         manager.clone(),
-        crate::git::enabled_from_env(),
+        // `ANTHREX_GIT` can only turn git off; `config.toml`'s `git.enabled` cannot turn
+        // it back on (`git::settings_with`).
+        crate::git::settings_from_env(loaded_config.git.clone()),
         shutdown.clone(),
     )
     .await;

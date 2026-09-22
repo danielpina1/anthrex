@@ -20,7 +20,12 @@ async fn start_daemon_at(socket: &PathBuf) -> CancellationToken {
         }
     });
     let token = CancellationToken::new();
-    tokio::spawn(serve(listener, manager, true, token.clone()));
+    tokio::spawn(serve(
+        listener,
+        manager,
+        config::Git::default(),
+        token.clone(),
+    ));
     token
 }
 
