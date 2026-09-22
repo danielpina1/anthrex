@@ -28,6 +28,25 @@ struct PatchBatch {
     patches: Vec<TurnPatch>,
 }
 
+/// Everything a client can observe of one conversation besides its turns: the fields a
+/// snapshot and a delta both carry at their current values (decision A4, and
+/// `session_id` since task M6.5.10). With the turns, it is the whole of what the one
+/// revision rule compares (see `ConversationSet::mutate`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Visible {
+    pub session_id: Option<String>,
+    pub degraded: Option<DegradeReason>,
+    pub dropped_turns: u32,
+    pub dropped_by: Option<DropCause>,
+}
+
+/// What `ConversationSet::mutate` did: whether the draft's state changed at all, and
+/// whether a client could see it (a new revision).
+struct Mutation {
+    changed: bool,
+    revised: bool,
+}
+
 /// One conversation's full bookkeeping: `draft` is the hook-built timeline; everything
 /// else is this store's own layer on top of it.
 struct Entry {
@@ -84,6 +103,15 @@ impl Entry {
             .enrichment
             .is_misaligned()
             .then_some(DegradeReason::Misaligned))
+    }
+
+    fn visible(&self) -> Visible {
+        Visible {
+            session_id: self.draft.session_id.clone(),
+            degraded: self.degraded(),
+            dropped_turns: self.dropped_turns,
+            dropped_by: self.dropped_by,
+        }
     }
 
     fn snapshot(&self) -> proto::Conversation {
@@ -271,8 +299,11 @@ impl ConversationSet {
         let keys: Vec<Option<String>> = self.entries.keys().cloned().collect();
         for key in keys {
             let entry = self.entries.get_mut(&key).expect("key just listed");
-            if entry.degraded != reason {
-                entry.degraded = reason;
+            // The stored reason always follows the reader; a revision only when what a
+            // client sees moved with it (task M6.5.10's one rule, `mutate`).
+            let before = entry.visible();
+            entry.degraded = reason;
+            if entry.visible() != before {
                 entry.record_revision(Vec::new());
                 changed.push(key);
             }
@@ -347,6 +378,40 @@ impl ConversationSet {
         Some((entry.rev, patches))
     }
 
+    /// The conversation's current revision, without building a snapshot. `None` for an
+    /// unknown key.
+    pub fn rev(&self, agent_id: Option<&str>) -> Option<u64> {
+        self.entries
+            .get(&agent_id.map(str::to_owned))
+            .map(|e| e.rev)
+    }
+
+    /// The fields a delta carries beside its patches, at their current values. `None`
+    /// for an unknown key.
+    pub fn visible(&self, agent_id: Option<&str>) -> Option<Visible> {
+        self.entries
+            .get(&agent_id.map(str::to_owned))
+            .map(Entry::visible)
+    }
+
+    /// A snapshot of `agent_id`'s conversation, or of the empty conversation it would
+    /// start as (rev 0, no turns, the set's current degrade reason) when no hook has
+    /// touched it yet. What a subscriber is sent for a window whose agent has not said
+    /// anything, so that a subscription always answers with a conversation (task
+    /// M6.5.10's `a_shell_window_has_an_empty_degraded_conversation`). Built by the
+    /// same `Entry::new` a first hook would use, so the two agree on revision 0.
+    pub fn snapshot_or_empty(&self, agent_id: Option<&str>) -> proto::Conversation {
+        let key = agent_id.map(str::to_owned);
+        match self.entries.get(&key) {
+            Some(entry) => entry.snapshot(),
+            None => Entry::new(
+                Draft::new(self.window_id, key, self.runtime),
+                self.current_degraded,
+            )
+            .snapshot(),
+        }
+    }
+
     /// Every key this set currently holds a conversation for.
     pub fn keys(&self) -> Vec<Option<String>> {
         self.entries.keys().cloned().collect()
@@ -375,11 +440,38 @@ impl ConversationSet {
         };
         if Self::mutate(entry, Some(caps), |draft| {
             enrich::apply(draft, records, caps)
-        }) {
+        })
+        .revised
+        {
             vec![None]
         } else {
             Vec::new()
         }
+    }
+
+    /// The reader's restart (decision A7) as one step: drop every enrichment-sourced
+    /// value, then apply `records` from the start of the file, and record a revision only
+    /// if the result differs from what a client saw before (task M6.5.10's one rule). A
+    /// file rewritten with the same content therefore costs no revision at all, where
+    /// `reset_enrichment` then `enrich` would cost two. A re-read longer than one
+    /// `TRANSCRIPT_READ_BUDGET` pass still shows its later turns un-enriched until the
+    /// passes that bring them back, and each of those is a real, visible change.
+    pub fn restart_enrichment(&mut self, records: &[Record], caps: Caps) -> Vec<Option<String>> {
+        let mut changed = Vec::new();
+        for (key, entry) in &mut self.entries {
+            let revised = if key.is_none() {
+                Self::mutate(entry, Some(caps), |draft| {
+                    enrich::reset(draft) | enrich::apply(draft, records, caps)
+                })
+            } else {
+                Self::mutate(entry, None, enrich::reset)
+            }
+            .revised;
+            if revised {
+                changed.push(key.clone());
+            }
+        }
+        changed
     }
 
     /// Drops every enrichment-sourced value on every conversation, keeping the
@@ -391,7 +483,7 @@ impl ConversationSet {
             // Undoing enrichment only shrinks a conversation, so no cap can newly bite,
             // and running `enforce_caps` without the caller's real caps would recompute
             // `oversize_logged` against the wrong bound.
-            if Self::mutate(entry, None, enrich::reset) {
+            if Self::mutate(entry, None, enrich::reset).revised {
                 changed.push(key.clone());
             }
         }
@@ -443,31 +535,43 @@ impl ConversationSet {
         F: FnOnce(&mut Draft) -> bool,
     {
         let resolved = self.resolve_key(&key);
-        let changed = if let Some(entry) = self.entries.get_mut(&resolved) {
+        let mutation = if let Some(entry) = self.entries.get_mut(&resolved) {
             Self::mutate(entry, Some(caps), f)
         } else {
             let mut entry = Entry::new(
                 Draft::new(self.window_id, resolved.clone(), self.runtime),
                 self.current_degraded,
             );
-            let changed = Self::mutate(&mut entry, Some(caps), f);
-            if changed {
+            let mutation = Self::mutate(&mut entry, Some(caps), f);
+            // Kept whenever its state changed, visibly or not: a `SessionStart` that only
+            // sets `transcript_path` is no revision, but the reader needs the path.
+            if mutation.changed {
                 self.entries.insert(resolved.clone(), entry);
             }
-            changed
+            mutation
         };
-        changed.then_some(resolved)
+        mutation.revised.then_some(resolved)
     }
 
     /// The "diff before/after, enforce caps, record one revision" logic `touch` runs
     /// against an `Entry`, whether that entry is already in `entries` or is being
-    /// evaluated off to the side before its first insertion. Returns whether `f`
-    /// reported a change. `caps: None` skips cap enforcement, for a change that can only
-    /// shrink the conversation (`reset_enrichment`).
-    fn mutate<F>(entry: &mut Entry, caps: Option<Caps>, f: F) -> bool
+    /// evaluated off to the side before its first insertion. `caps: None` skips cap
+    /// enforcement, for a change that can only shrink the conversation
+    /// (`reset_enrichment`).
+    ///
+    /// **One rule for revisions: no observable change, no new `rev`** (task M6.5.10).
+    /// A revision is recorded only when a turn differs or `Visible` does, compared
+    /// before and after; `f` reporting a change is necessary, not sufficient. That one
+    /// comparison settles the three cases that used to advance `rev` with nothing to
+    /// see: a `SessionStart` that changes only `transcript_path` (task M6.5.6 F4), a
+    /// restart that re-applies the same records (`restart_enrichment`), and a
+    /// `Misaligned` set underneath the reader's own degrade reason, which the reader's
+    /// reason hides (task M6.5.8 F4). `set_degraded` compares `Visible` the same way.
+    fn mutate<F>(entry: &mut Entry, caps: Option<Caps>, f: F) -> Mutation
     where
         F: FnOnce(&mut Draft) -> bool,
     {
+        let visible = entry.visible();
         let before: HashMap<u64, proto::Turn> = entry
             .draft
             .turns
@@ -475,7 +579,10 @@ impl ConversationSet {
             .map(|turn| (turn.id, turn.clone()))
             .collect();
         if !f(&mut entry.draft) {
-            return false;
+            return Mutation {
+                changed: false,
+                revised: false,
+            };
         }
         let mut patches: Vec<TurnPatch> = entry
             .draft
@@ -487,8 +594,14 @@ impl ConversationSet {
         if let Some(caps) = caps {
             patches.extend(entry.enforce_caps(caps));
         }
-        entry.record_revision(patches);
-        true
+        let revised = !patches.is_empty() || entry.visible() != visible;
+        if revised {
+            entry.record_revision(patches);
+        }
+        Mutation {
+            changed: true,
+            revised,
+        }
     }
 }
 

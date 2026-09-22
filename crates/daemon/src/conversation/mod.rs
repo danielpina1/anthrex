@@ -12,7 +12,7 @@ mod build;
 mod enrich;
 mod store;
 mod summary;
-pub use store::ConversationSet;
+pub use store::{ConversationSet, Visible};
 pub use summary::{SUMMARY_MAX_GRAPHEMES, for_tool};
 
 /// The three caps from `[conversation]`, resolved to `usize` (spec decision 7).

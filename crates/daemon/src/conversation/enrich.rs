@@ -537,3 +537,7 @@ mod pending_tests;
 #[cfg(test)]
 #[path = "enrich_store_tests.rs"]
 mod store_tests;
+
+#[cfg(test)]
+#[path = "revision_rule_tests.rs"]
+mod revision_rule_tests;
