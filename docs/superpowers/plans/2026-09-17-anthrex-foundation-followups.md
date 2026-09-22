@@ -367,3 +367,43 @@ up whenever TUI clock injection or manager lock instrumentation is next in scope
   `test result:` lines instead of 41. Two separate parties read those truncated counts as a
   missing-tests discrepancy and spent effort reconciling it. Anyone counting tests on this repo
   should pass `--no-fail-fast` and capture the exit code without a pipe in between.
+
+## From the codex-probe handshake fix (2026-09-22), found by its own sweep
+
+The fix itself (`launch::LaunchGate`) removed one instance of "a client deadline racing a
+server-side startup step": `proto::HANDSHAKE_TIMEOUT` (5 s) against
+`CODEX_PROBE_TIMEOUT` (5 s), with the probe sitting between `bind_socket` and
+`server::serve`. Sweeping for the same *behaviour* rather than the same construct turned
+up two more sites. Neither is caused by that fix; both are recorded here rather than
+changed, because each one's fix ripples into bounds outside this change's scope.
+
+- **`ENSURE_DAEMON_SOCKET_WAIT` (3 s) must outlast `LOCK_WAIT` (5 s), and does not.**
+  `spawn::ensure_daemon` (`crates/tui/src/spawn.rs`) spawns a detached `anthrex daemon
+  start --foreground` and then polls the socket for 3 s. That child's very first act
+  (`lifecycle::run`) is `DaemonLock::acquire_or_yield(.., opts.lock_wait, ..)`, and
+  `crates/cli/src/main.rs:356` passes `daemon::LOCK_WAIT` — five seconds of retrying
+  another daemon's lock, entirely ahead of `bind_socket`. The `already_running` probe
+  shortens that wait only when the *other* daemon is answering on the socket; a daemon
+  that is in its own teardown (holding the lock through `manager.shutdown`, the persister
+  await and the final state save, with its listener already dropped) is exactly the case
+  where the probe says "no" and the full five seconds can be spent. The caller reports
+  "the daemon did not start within 3 s" while its child comes up fine a moment later —
+  the same two-independent-constants shape, with the client's being the smaller. Fixing it
+  means deriving `ENSURE_DAEMON_SOCKET_WAIT` from `LOCK_WAIT`, which changes
+  `daemon_start_does_not_wait_on_a_slow_codex_probe`'s assertion (it imports that constant
+  deliberately, whole-branch-review m19) and every `pty-smoke.py` bound that includes an
+  `ensure_daemon` term.
+- **Nothing bounds the pre-bind startup work itself.** Decision 12 requires `state::load`
+  and `config::load` to precede `bind_socket`, and `manager.restore` runs there too. None
+  of the three has a deadline, so a large or slow-to-read `state.json` delays the bind by
+  an unbounded amount — under the same 3 s client wait as above. Deliberate ordering, but
+  worth an explicit budget (or a bounded read) before anybody relies on the 3 s.
+
+Checked and found clean in the same sweep: `anthrex hook`'s `HOOK_DEADLINE` (1 s) over the
+daemon's handshake — reachable only from a running agent, which only exists after a window
+launch, which the gate itself orders after the probe; `daemon stop`'s `WAIT_RELEASED_CAP`
+(10 s) over the teardown, to which the probe's cancel-and-await adds one 5 ms poll interval
+rather than its remaining budget; `TestDaemon::start`'s own 3 s socket wait (every
+`TestDaemon` gets its own data directory, so its lock is never contended); and the TUI's
+create/remove form waits, whose `WORKTREE_FORM_TIMEOUT` (50 s) still clears the gate-widened
+worst case (5 + 5 + 30 = 40 s).
