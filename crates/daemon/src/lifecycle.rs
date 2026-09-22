@@ -177,15 +177,28 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
         Acquired::Locked(lock) => lock,
         Acquired::AlreadyRunning => {
             // Nothing has been created yet beyond `opts.data_dir` itself (idempotent to
-            // recreate), so there is nothing to unwind here. Logging is not set up yet
-            // — decision 24 puts the lock before it — so this goes straight to this
-            // process's own stderr; for the real caller (a detached `spawn_detached`
-            // child) that is `daemon.stderr.log`, exactly where an operator would look.
-            eprintln!(
-                "anthrex daemon: a daemon is already running on {}; not starting a second one",
-                opts.socket_path.display()
+            // recreate), so there is nothing to unwind here.
+            //
+            // Whole-branch-review Major 4: this used to `eprintln!` and `return Ok(())`
+            // — fix wave 10 needed `B` (the loser of a race between two `ensure_daemon`
+            // callers) to stop waiting and return the instant it saw a live daemon,
+            // rather than possibly winning the lock later and becoming a second,
+            // unrequested one, but that fix accidentally ate decision 24's own refusal
+            // along with it: `anthrex daemon start --foreground` against a live daemon
+            // started exiting 0 instead of failing with "another anthrex daemon is
+            // running", failing the brief's own manual check 10. The two are separable:
+            // not becoming a phantom daemon only needs this arm to bind nothing and
+            // return promptly, which an `Err` does exactly as well as an `Ok` did — nothing
+            // downstream of `ensure_daemon`'s `spawn_detached` inspects this process's
+            // exit code (the phantom-avoidance guarantee lives entirely in
+            // `acquire_or_yield`'s lock-and-probe mechanism above), so restoring the
+            // refusal here is free for that caller and restores the intended failure
+            // for `--foreground`'s.
+            anyhow::bail!(
+                "another anthrex daemon is running with data directory {} (pid {})",
+                opts.data_dir.display(),
+                crate::lockfile::holder_pid(&opts.data_dir)
             );
-            return Ok(());
         }
     };
     let _log_guard = init_logging(&opts.data_dir)?;

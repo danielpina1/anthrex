@@ -184,18 +184,28 @@ async fn second_daemon_with_the_same_data_dir_is_refused() {
 /// (the same entry point two racing `anthrex new` calls' detached
 /// `daemon start --foreground` children actually run), not a throwaway script:
 ///
-/// Before the fix, a daemon that lost the race for `DaemonLock` just sat in its retry
-/// loop for up to `lock_wait`, and would win the lock — and go on to become a live,
-/// unrequested second daemon — the moment the winner released it, including by the
-/// winner simply being told to stop. So `B` here is given a `lock_wait` many times
-/// longer than this test could plausibly take: with the bug, `B` would sit blocked for
+/// Before fix wave 10, a daemon that lost the race for `DaemonLock` just sat in its
+/// retry loop for up to `lock_wait`, and would win the lock — and go on to become a
+/// live, unrequested second daemon — the moment the winner released it, including by
+/// the winner simply being told to stop. So `B` here is given a `lock_wait` many times
+/// longer than this test could plausibly take: with that bug, `B` would sit blocked for
 /// that whole duration (or until `A` released, whichever came first) before this
-/// assertion could even run. The fix means `B` must instead notice `A`'s socket
-/// answering on its very first contended lock attempt and return successfully, having
-/// bound nothing, well before any of that — so this is deterministic, not a race won by
-/// timing luck: `A` is not stopped until well after `B` has already returned.
+/// assertion could even run. `B` must instead notice `A`'s socket answering on its very
+/// first contended lock attempt and return well before any of that — so this is
+/// deterministic, not a race won by timing luck: `A` is not stopped until well after
+/// `B` has already returned.
+///
+/// Whole-branch-review Major 4: fix wave 10 made `B` return `Ok(())` here, which fixed
+/// the phantom-daemon hazard above but silently ate decision 24's own refusal at the
+/// same time — `anthrex daemon start --foreground` against a live daemon exited 0
+/// instead of failing with `another anthrex daemon is running`, failing the brief's own
+/// manual check 10. `B` not becoming a second daemon (no socket of its own, no bound
+/// listener, A completely unaffected) and `B` *reporting* that refusal to its caller
+/// are two different guarantees — fix wave 10 only needed the first. This test now pins
+/// both: `B` must still return promptly (the phantom-avoidance mechanism, unchanged),
+/// but it must do so with the exact `Err` decision 24 specifies, not `Ok(())`.
 #[tokio::test]
-async fn a_racing_second_start_yields_instead_of_becoming_a_phantom_daemon() {
+async fn a_racing_second_start_is_refused_and_does_not_become_a_phantom_daemon() {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("d.sock");
     let data_dir = dir.path().join("data");
@@ -204,17 +214,27 @@ async fn a_racing_second_start_yields_instead_of_becoming_a_phantom_daemon() {
     wait_for_path(&socket, Duration::from_secs(5)).await;
 
     // B races in against the same socket and data dir while A is fully up and serving
-    // — exactly the reported scenario. Its own `lock_wait` (2s) is deliberately much
-    // larger than the near-instant return the fix should produce.
+    // — exactly the reported scenario, and exactly decision 24's manual check 10. Its
+    // own `lock_wait` (2s) is deliberately much larger than the near-instant return the
+    // fix should produce.
     let mut b_opts = opts(socket.clone(), data_dir.clone());
     b_opts.lock_wait = Duration::from_secs(2);
     let started = std::time::Instant::now();
     let b_result = run(b_opts).await;
     let elapsed = started.elapsed();
 
+    let err = b_result.expect_err(
+        "B raced against a live A on the same socket and data dir; decision 24 says \
+         this must be refused, not silently succeed",
+    );
     assert!(
-        b_result.is_ok(),
-        "B should yield cleanly once it sees A already running, not error: {b_result:?}"
+        err.to_string()
+            .contains("another anthrex daemon is running"),
+        "{err}"
+    );
+    assert!(
+        err.to_string().contains(&data_dir.display().to_string()),
+        "the error must name the data directory (decision 24): {err}"
     );
     assert!(
         elapsed < Duration::from_millis(500),

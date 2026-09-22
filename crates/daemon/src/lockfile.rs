@@ -77,7 +77,12 @@ pub fn try_claim(data_dir: &Path) -> io::Result<Option<DaemonLock>> {
 }
 
 /// Reads the pid recorded in `<data_dir>/daemon.pid`, or `"unknown"` if it cannot be read.
-fn holder_pid(data_dir: &Path) -> String {
+///
+/// `pub(crate)`, not private: `lifecycle::run`'s `Acquired::AlreadyRunning` arm needs
+/// this same pid to build decision 24's exact refusal message itself (whole-branch-
+/// review Major 4) — `acquire_or_yield` only builds it internally for its own deadline
+/// bail below, not for a caller that already knows the goal is met some other way.
+pub(crate) fn holder_pid(data_dir: &Path) -> String {
     std::fs::read_to_string(data_dir.join("daemon.pid"))
         .ok()
         .map(|s| s.trim().to_string())
