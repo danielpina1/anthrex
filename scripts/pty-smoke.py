@@ -72,10 +72,49 @@ ENV["ANTHREX_GIT"] = "off"
 # every client it drives never consult whatever a developer running this locally has
 # actually configured (a different prefix key would break every `\x02`-prefixed send
 # below in a way that has nothing to do with the product). This path is fixed, not a
-# `tempfile.mkdtemp`, and the script never creates it — see the hostile-config check
-# in the M6.12 report for why a fixed, always-absent path is the point, not an
-# oversight.
+# `tempfile.mkdtemp`, and every stage but one (the resume stage below) never creates
+# it — the suite's own correctness depends on it staying absent for those stages, and
+# `ensure_config_path_absent` below is what makes that an enforced invariant instead
+# of a hope. See the M6.12/fix-wave-11 reviews for why a fixed, silently-poisonable
+# path was a Major finding: a stray file here used to fail stage 2 with "timed out
+# waiting for 'new-agent form'", an error that named the form, never this path.
 ENV["ANTHREX_CONFIG"] = "/tmp/anthrex-smoke-data/config.toml"
+
+
+def ensure_config_path_absent():
+    """Refuses to run against a pre-existing file at `ANTHREX_CONFIG`'s fixed path.
+
+    fix-wave-11 review, Major: the suite's own correctness depends on this path being
+    absent (every `\\x02`-prefixed send below assumes the default `C-b` prefix, which
+    a real file here could override), but nothing ever checked that before stage 1
+    ran — a stray file (a previous run killed hard enough to skip its own cleanup, a
+    manual `ANTHREX_CONFIG=... anthrex ...` debugging session, a typo'd `mkdir -p`)
+    silently poisoned every future run with a misdirecting failure at stage 2 that
+    named the form, never this path.
+
+    Chosen fix: fail loudly and name the path, rather than `rm -f` it ourselves.
+    Removing a file this script did not create is a side effect on something that
+    might not be this script's to delete — a developer's own accidental override they
+    still care about, say — and the cost of being wrong there (silently destroying
+    it) is worse than the cost of being right here (one failed run with a clear
+    message). The one stage that legitimately needs a real file at this path (the
+    resume stage below) creates it itself, after this check has already passed, and
+    owns removing it again itself, in its own `try`/`finally` — deliberately not the
+    module-level `finally` below, which cannot tell "this run created the file" from
+    "a file was already here and `ensure_config_path_absent` just refused to touch
+    it", and must not delete the latter.
+    """
+    path = ENV["ANTHREX_CONFIG"]
+    if os.path.exists(path):
+        fail(
+            f"a file already exists at {path!r}, the fixed path this suite always "
+            "points ANTHREX_CONFIG at so a developer's own real config can never "
+            "apply. Every stage in this suite assumes that path starts absent (a "
+            "real config there can override the C-b prefix every \\x02 send below "
+            "depends on) — left in place, the suite fails downstream with an error "
+            "that gives no hint this path is the cause. Remove it by hand "
+            f"(`rm -rf {os.path.dirname(path)}`) and re-run."
+        )
 
 # `C-b Q`'s own wait for the daemon to confirm a stop is `STOPPING_TIMEOUT`, 5s
 # (crates/tui/src/app/link.rs). Past that the client gives up *without* quitting
@@ -606,6 +645,7 @@ def run_worktree_form_stage(repo):
 
 
 def main():
+    ensure_config_path_absent()
     ensure_binary()
     write_fake_agent_script()
 
@@ -869,8 +909,20 @@ def main():
         "DISCONNECTED", label="disconnected badge after the daemon stopped under the client"
     )
     run_cmd(["daemon", "start"])
-    # RETRY_INTERVAL is 2s (crates/tui/src/reconnect.rs), so 10s covers five automatic
-    # reconnect attempts — the brief's own bound, kept verbatim.
+    # 10s is the brief's own literal bound, kept verbatim — it is not derived from a
+    # single constant, and in particular it is *not* "five attempts at RETRY_INTERVAL"
+    # (fix-wave-11 review, Minor: that was this comment's previous, wrong
+    # justification). The client's actual legal retry budget is RETRY_WINDOW, 30s
+    # (crates/tui/src/reconnect.rs) — the ceiling after which the client gives up
+    # retrying automatically; RETRY_INTERVAL, 2s (same file), only says how often it
+    # tries within that window, and citing it alone understates how long a legitimate
+    # reconnect is allowed to take by 3x. What this bound actually races is
+    # `ensure_daemon`'s own ~3s socket-wait deadline (crates/tui/src/spawn.rs) plus
+    # about one more RETRY_INTERVAL — a realistic ~5s, not RETRY_WINDOW's full 30s.
+    # 10s held with room to spare in every run measured, including under deliberate
+    # CPU contention, but a daemon slow enough to miss it would still be legitimately
+    # retrying inside its documented 30s RETRY_WINDOW — a false failure in this
+    # script, not a real bug in the client.
     deadline = time.monotonic() + 10.0
     screen = proc6.screen_text()
     while "DISCONNECTED" in screen or "kept" not in screen:
@@ -958,3 +1010,12 @@ if __name__ == "__main__":
         # W1 and W2's fixture repository is not the daemon's data, so it is removed
         # unconditionally, keep-flag or not.
         shutil.rmtree(SMOKE_REPO, ignore_errors=True)
+        # ANTHREX_CONFIG's own fixed-path directory is deliberately *not* removed
+        # here. Unlike DATA_DIR and SMOKE_REPO, this run does not necessarily own
+        # whatever is (or isn't) at that path — `ensure_config_path_absent` may have
+        # failed before anything below ever ran, in which case a stray file there was
+        # never this run's to begin with, and unconditionally `rmtree`-ing it here
+        # would silently delete it anyway, defeating that check's whole point. The one
+        # stage that does create a real file there (the resume stage below) owns its
+        # own cleanup instead, in its own try/finally, precisely so this block never
+        # has to guess whether a given run is the one that created it.
