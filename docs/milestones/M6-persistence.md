@@ -835,18 +835,38 @@ rather than discovered afterwards.
   `codex_version::check` (5 s timeout) ahead of the bind broke auto-start entirely, because
   `ensure_daemon` waits only 3 s for the socket. Only the state-file load belongs before the bind.
 - **Restart is the first code in this project that reuses a live window id.** Every structure keyed
-  by id that assumed one process per id became suspect; the cleanup map produced the same defect on
-  three separate paths before it was fixed structurally, by evicting from the `Restarting` guard's
-  `Drop` so no exit path can leak a record.
+  by id that assumed one process per id became suspect; the cleanup map produced the same defect
+  **five** separate times before this milestone closed it, not three: fix wave 8's structural
+  `Drop`-based eviction closed the first three (the timeout refusal, `finish_restart`'s own call,
+  and phase C's failure path); fix-wave-12-re-review found a fourth (an unconditional `Drop` could
+  evict a foreign record on a bail that landed before phase B ever ran, closed with a
+  `phase_b_entered` flag set ahead of the kill call); the final gate found a fifth (that flag was
+  set from *reaching the kill call*, not from *the kill call actually inserting a record* —
+  `start_cleanup` short-circuits, inserting nothing, whenever an unrelated record already occupies
+  `cleanups[id]`, so an attempt could mark itself as owning phase B while owning no record at all,
+  and `Drop` would then evict someone else's). Do not claim this closes the class: the guarantee now
+  rests on `Restarting::owns_cleanup_record` being *derived* from
+  `WindowManager::kill_reporting_insert`'s own report of whether its call actually inserted the
+  record (`crates/daemon/src/manager/entry.rs`'s `start_cleanup` returning `Result<bool>`), never
+  asserted at the call site ahead of it — a property that holds only as long as every future kill
+  path threading into `cleanups[id]` continues to report insertion rather than presence. A new kill
+  path that sets ownership before calling, the way this one used to, reopens the same shape.
 - **Two Criticals were invisible to a green suite** and were found only by driving the real product
   over a PTY: `restart` worked exactly once per window, and `C-b Q` never quit. Both lived in the
   wiring rather than in any unit — the second because its test called the handler directly,
   bypassing the event-loop guard that contained the bug.
 - **A guard at admission does not constrain work already in flight.** `restart` and
   `remove_with_worktree` both needed their `shutting_down` check repeated inside the operation.
-- **A bound must exceed the code's own legal worst case, in any language.** Three instances in
-  Rust, then a fourth in `scripts/pty-smoke.py`, where a Python timeout equalled the Rust constant
-  it wrapped. See `docs/timing-budgets.md`.
+- **A bound must exceed the code's own legal worst case, in any language.** Six instances found so
+  far, not four: two purely in Rust, then four more in `scripts/pty-smoke.py` at the Rust/Python
+  language boundary — `run_cmd`'s calls wrapping `restart`/`daemon stop`, `run_worktree_cli_stage`'s
+  worktree `new`/`rm`, `run_worktree_form_stage`'s TUI-driven equivalents of that same worktree
+  create/remove (missed by the sweep that had just fixed the CLI stage one function above it), and
+  `run_cmd`'s own default `timeout`, numerically equal to `anthrex new`'s worst case (missed by the
+  same sweep that rewrote that default's comment and reaffirmed `new` as safe from observed cost
+  rather than the budget). Every sweep for this class enumerated a rule narrower than "every wait
+  whose bound must exceed a daemon budget" and missed whatever did not match its narrower
+  construct. See `docs/timing-budgets.md`.
 
 ### Runtime verification (run 2026-09-21 against the binaries installed on this machine)
 
