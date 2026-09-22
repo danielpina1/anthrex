@@ -1,6 +1,10 @@
+mod forest;
+mod names;
 mod rows;
 
-use proto::{Runtime, Status, SubagentInfo, SubagentState, WindowInfo};
+use proto::{Runtime, Status, SubagentInfo, WindowInfo};
+pub use forest::{SubagentNode, subagent_forest};
+pub use names::display_names;
 use rows::{SubagentWalk, emit_subagents, guide_prefix, visible_windows};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -198,11 +202,6 @@ impl TreeState {
     }
 }
 
-pub struct SubagentNode<'a> {
-    pub info: &'a SubagentInfo,
-    pub children: Vec<SubagentNode<'a>>,
-}
-
 struct ProjectGroup<'a> {
     root: &'a Path,
     name: String,
@@ -378,67 +377,6 @@ pub fn row_index(rows: &[Row<'_>], key: &NodeKey) -> Option<usize> {
     rows.iter().position(|row| &row.key == key)
 }
 
-pub fn display_names<'a>(roots: impl IntoIterator<Item = &'a Path>) -> HashMap<PathBuf, String> {
-    let roots: Vec<PathBuf> = roots
-        .into_iter()
-        .map(Path::to_path_buf)
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
-    let mut by_base: HashMap<String, Vec<&PathBuf>> = HashMap::new();
-    for root in &roots {
-        by_base.entry(base_name(root)).or_default().push(root);
-    }
-
-    let mut names = HashMap::new();
-    for (base, group) in by_base {
-        if group.len() == 1 {
-            names.insert(group[0].clone(), base);
-            continue;
-        }
-
-        let candidates: Vec<_> = group
-            .iter()
-            .map(|root| {
-                let parent = root
-                    .parent()
-                    .and_then(Path::file_name)
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| root.display().to_string());
-                format!("{base} ({parent})")
-            })
-            .collect();
-        let mut candidate_counts: HashMap<String, usize> = HashMap::new();
-        for candidate in &candidates {
-            *candidate_counts.entry(candidate.clone()).or_default() += 1;
-        }
-        for (root, candidate) in group.into_iter().zip(candidates) {
-            let name = if candidate_counts[&candidate] > 1 {
-                root.display().to_string()
-            } else {
-                candidate
-            };
-            names.insert(root.clone(), name);
-        }
-    }
-    let mut name_counts: HashMap<String, usize> = HashMap::new();
-    for name in names.values() {
-        *name_counts.entry(name.clone()).or_default() += 1;
-    }
-    for (root, name) in &mut names {
-        if name_counts[name] > 1 {
-            *name = root.display().to_string();
-        }
-    }
-    names
-}
-
-fn base_name(root: &Path) -> String {
-    root.file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| root.display().to_string())
-}
-
 pub fn urgency(status: Status) -> u8 {
     match status {
         Status::Attention => 0,
@@ -510,107 +448,6 @@ pub fn format_elapsed(secs: u64) -> String {
     } else {
         format!("{}h", secs / 3600)
     }
-}
-
-pub fn subagent_forest(
-    subagents: &[SubagentInfo],
-    keep_finished_secs: u64,
-) -> Vec<SubagentNode<'_>> {
-    let index_by_id: HashMap<&str, usize> = subagents
-        .iter()
-        .enumerate()
-        .map(|(index, info)| (info.id.as_str(), index))
-        .collect();
-    let parent_indices: Vec<_> = subagents
-        .iter()
-        .map(|info| {
-            info.parent_id
-                .as_deref()
-                .and_then(|parent_id| index_by_id.get(parent_id).copied())
-        })
-        .collect();
-
-    let mut cycle_members = HashSet::new();
-    for start in 0..subagents.len() {
-        let mut path = Vec::new();
-        let mut path_positions = HashMap::new();
-        let mut current = Some(start);
-        while let Some(index) = current {
-            if let Some(cycle_start) = path_positions.get(&index).copied() {
-                cycle_members.extend(path[cycle_start..].iter().copied());
-                break;
-            }
-            path_positions.insert(index, path.len());
-            path.push(index);
-            current = parent_indices[index];
-        }
-    }
-
-    let mut roots = Vec::new();
-    let mut children = vec![Vec::new(); subagents.len()];
-    for (index, parent) in parent_indices.into_iter().enumerate() {
-        if cycle_members.contains(&index) {
-            roots.push(index);
-        } else if let Some(parent) = parent {
-            children[parent].push(index);
-        } else {
-            roots.push(index);
-        }
-    }
-    sort_subagents(&mut roots, subagents);
-    for siblings in &mut children {
-        sort_subagents(siblings, subagents);
-    }
-    build_visible_forest(&roots, subagents, &children, keep_finished_secs)
-}
-
-/// Task M6.9: a `Done` or `Failed` sub-agent whose `ended_secs` is older than
-/// `keep_finished_secs` gets no row of its own.
-fn is_hidden_finished(info: &SubagentInfo, keep_finished_secs: u64) -> bool {
-    info.state != SubagentState::Running
-        && info
-            .ended_secs
-            .is_some_and(|secs| secs > keep_finished_secs)
-}
-
-/// Builds the forest for one level of `indices` (siblings, by index into `subagents`),
-/// recursing into `children` first so a hidden node's own descendants are already
-/// resolved before the decision to hide it is made.
-///
-/// A hidden node's resolved children are spliced into the list at the position the
-/// hidden node itself held — the same reattach-to-the-nearest-shown-ancestor rule
-/// `subagent_forest`'s cycle/orphan handling above already gives a sub-agent whose
-/// `parent_id` cannot be found (it becomes a root instead of vanishing); here the
-/// ancestor being skipped is known and hidden by age rather than missing, but a hidden
-/// node's children must survive it exactly the same way.
-fn build_visible_forest<'a>(
-    indices: &[usize],
-    subagents: &'a [SubagentInfo],
-    children: &[Vec<usize>],
-    keep_finished_secs: u64,
-) -> Vec<SubagentNode<'a>> {
-    let mut result = Vec::new();
-    for &index in indices {
-        let kids = build_visible_forest(&children[index], subagents, children, keep_finished_secs);
-        if is_hidden_finished(&subagents[index], keep_finished_secs) {
-            result.extend(kids);
-        } else {
-            result.push(SubagentNode {
-                info: &subagents[index],
-                children: kids,
-            });
-        }
-    }
-    result
-}
-
-fn sort_subagents(indices: &mut [usize], subagents: &[SubagentInfo]) {
-    indices.sort_by(|left, right| {
-        subagents[*right]
-            .started_secs
-            .cmp(&subagents[*left].started_secs)
-            .then_with(|| subagents[*left].id.cmp(&subagents[*right].id))
-    });
 }
 
 #[cfg(test)]
