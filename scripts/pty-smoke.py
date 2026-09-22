@@ -1180,6 +1180,99 @@ def main():
         "reconnected, and kept 'kept' listed"
     )
 
+    print("== stage 11b: the client survives its own give-up state and C-b r revives it ==")
+    # Whole-branch-review Critical 1: `ConnectionDriver::step`'s `select!` used to have
+    # no `else` arm, and decision 31's give-up path (automatic retries exhausted after
+    # RETRY_WINDOW, 30s — crates/tui/src/reconnect.rs) sets every one of that
+    # `select!`'s three guards false at once. Every other reconnect coverage in this
+    # suite (stage 11 above) and in `crates/tui/src/reconnect_tests.rs` brings the
+    # daemon back inside that window, so none of it ever reached the all-disabled
+    # state — this stage is the one place anything actually lets the full window
+    # elapse against the real binary. It also stands in for the CPU measurement no
+    # unit test can make: `else => vec![]` (the obvious, wrong fix) returns
+    # immediately on every poll and spins `event_loop`'s redraw-every-pass loop at
+    # ~95-97% CPU with a normal-looking status bar, which this stage's sampling would
+    # catch and a mere "is it still alive" check would not.
+    proc6b = PtyProc([BIN])
+    proc6b.wait_for("agents", label="stage-11b attach banner")
+    proc6b.wait_for("kept", label="'kept' listed on stage-11b attach")
+    run_cmd(["daemon", "stop"])
+    link_lost_at = time.monotonic()
+    proc6b.wait_for(
+        "DISCONNECTED",
+        label="disconnected badge after the daemon stopped under the client (stage 11b)",
+    )
+
+    # RETRY_WINDOW (crates/tui/src/reconnect.rs) is 30s from link loss. Wait past it
+    # with margin, without ever starting a daemon back up, so the give-up path is the
+    # only way out — then confirm the process is still alive at all (pre-fix, it
+    # panicked in the same frame the badge below appeared, rc 101) and is showing
+    # decision 34's give-up status line, not still "reconnecting".
+    giveup_deadline = link_lost_at + 33.0
+    while time.monotonic() < giveup_deadline:
+        proc6b.read_available(timeout=0.5)
+    pid, status = os.waitpid(proc6b.pid, os.WNOHANG)
+    if pid == proc6b.pid:
+        fail(
+            "the client exited on its own while giving up on reconnecting "
+            f"(raw status {status}) — this is the select!-with-no-else panic"
+        )
+    screen = proc6b.screen_text()
+    if "C-b r to reconnect" not in screen:
+        fail(f"give-up status line did not appear after RETRY_WINDOW elapsed:\n{screen}")
+    print("ok: the client survived past RETRY_WINDOW and shows the give-up status line")
+
+    # Sample CPU while parked, twice a couple of seconds apart. macOS's `ps %cpu` is a
+    # decaying average, so one reading right after the retries above could still carry
+    # some of their cost; two readings, taken after the process has had nothing to do
+    # for several seconds, catch a genuine busy loop (measured 95-97% for the
+    # `else => vec![]` shape) without being tunable-flaky the way a tight bound on a
+    # single instantaneous sample would be.
+    cpu_samples = []
+    for _ in range(2):
+        time.sleep(2.0)
+        try:
+            sample = subprocess.run(
+                ["ps", "-o", "%cpu=", "-p", str(proc6b.pid)],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            cpu_samples.append(float(sample.stdout.strip() or "0"))
+        except (subprocess.TimeoutExpired, ValueError) as error:
+            fail(f"could not sample CPU for the parked client (pid {proc6b.pid}): {error}")
+    print(f"give-up-state CPU samples (ps %cpu, 2s apart): {cpu_samples}")
+    if any(sample > 25.0 for sample in cpu_samples):
+        fail(
+            f"parked give-up state used {cpu_samples} CPU%; a busy loop (the "
+            "`else => vec![]` shape this stage guards against) reads 95-97%, so this "
+            "is a regression even though the process did not panic"
+        )
+    print("ok: the parked give-up state used negligible CPU (no busy loop)")
+
+    # Decision 32: a manual `C-b r` must still re-arm the driver from `Link::Lost`.
+    run_cmd(["daemon", "start"])
+    proc6b.send(b"\x02r")
+    reconnect_deadline = time.monotonic() + 10.0
+    screen = proc6b.screen_text()
+    while "DISCONNECTED" in screen or "kept" not in screen:
+        if time.monotonic() >= reconnect_deadline:
+            fail(
+                "C-b r from Link::Lost did not clear DISCONNECTED and keep 'kept' "
+                f"listed within 10s:\n{screen}"
+            )
+        proc6b.read_available(timeout=0.2)
+        screen = proc6b.screen_text()
+    print("ok: C-b r re-armed the driver from Link::Lost and reconnected")
+
+    # The user must still be able to quit from here, same as any other state.
+    proc6b.send(b"\x02d")
+    status6b = proc6b.wait_exit(timeout=5.0)
+    if not os.WIFEXITED(status6b) or os.WEXITSTATUS(status6b) != 0:
+        fail(f"stage-11b detach did not exit cleanly with status 0 (raw status {status6b})")
+    proc6b.close()
+    print("ok: the client could still detach cleanly after giving up and reconnecting")
+
     print("== stage 12: stop the daemon, verify status ==")
     stop_result = run_cmd(["daemon", "stop"])
     print(f"daemon stop output: {stop_result.stdout.strip()!r}")

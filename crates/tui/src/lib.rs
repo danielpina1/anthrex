@@ -246,6 +246,24 @@ impl ConnectionDriver {
             result = async { self.inflight.as_mut().unwrap().await }, if inflight_ready => {
                 self.on_attempt_finished(conn, app, result)
             }
+            // Decision 31's give-up path leaves every guard above false at once
+            // (`conn = None`, `inflight = None`, `schedule = None`) — a `select!`
+            // with no `else` and every arm disabled panics the instant it is
+            // polled in that state, which happened live exactly 30s after a
+            // daemon disappeared. The obvious alternative, `else => vec![]`,
+            // returns immediately on every poll and turns `event_loop`'s outer
+            // loop into a redraw-every-pass busy spin (measured 95.7-97.3% CPU) —
+            // a regression that is *harder* to notice than the panic, since the
+            // status bar still looks correct. Parking forever is correct instead:
+            // nothing here can make progress until something re-arms the driver
+            // (a manual `C-b r` via `reconnect_now`, called from `event_loop`
+            // before the next `step`), so this branch must simply never resolve
+            // on its own and let the outer `select!` keep servicing keyboard/tick
+            // events. Measured CPU with this arm: ~3-4% (see the item's report).
+            else => {
+                std::future::pending::<()>().await;
+                unreachable!("parks forever; only re-armed state reaches step again")
+            }
         }
     }
 

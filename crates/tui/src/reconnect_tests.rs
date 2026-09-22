@@ -215,3 +215,34 @@ async fn reconnect_now_supersedes_an_in_flight_automatic_attempt() {
         let _ = tokio::time::timeout(Duration::from_secs(5), inflight).await;
     }
 }
+
+/// Decision 31's give-up path (`on_attempt_finished`'s `Err` arm when `after_failure`
+/// returns false) leaves `conn = None`, `inflight = None` and `schedule = None` all at
+/// once — every guard in `step`'s `select!` false simultaneously. Before this file's
+/// fix, `tokio::select!` with no `else` branch and every arm disabled panics with
+/// "all branches are disabled and there is no else branch" the instant `step` is
+/// polled in that state, which is exactly what happened live 30s after a daemon
+/// disappeared (the status bar showed `DISCONNECTED  C-b r to reconnect` for one frame
+/// and then the process died, rc 101). `step` must instead park forever — never
+/// resolving on its own — so the outer `event_loop` keeps servicing keyboard/tick
+/// events until something (a manual `C-b r`) re-arms the driver.
+#[tokio::test]
+async fn step_parks_instead_of_panicking_when_every_branch_is_disabled() {
+    let mut app = App::new(vec![], "/tmp".into(), UiSettings::default());
+    let mut conn: Option<Connection> = None;
+    let mut driver = ConnectionDriver::new();
+    assert!(driver.schedule.is_none());
+    assert!(driver.inflight.is_none());
+    assert!(conn.is_none());
+
+    let socket = PathBuf::from("/tmp/anthrex-give-up-test.sock");
+    let result = tokio::time::timeout(
+        Duration::from_millis(200),
+        driver.step(&mut conn, &mut app, &socket),
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "step must park rather than resolve (or panic) when every branch is disabled"
+    );
+}
