@@ -92,6 +92,7 @@ dependencies = [
  "anthrex-proto",
  "tempfile",
  "toml",
+ "unicode-width",
 ]
 
 [[package]]

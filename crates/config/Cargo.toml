@@ -12,6 +12,7 @@ path = "src/lib.rs"
 [dependencies]
 proto.workspace = true
 toml.workspace = true
+unicode-width.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
