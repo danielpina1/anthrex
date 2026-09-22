@@ -834,6 +834,17 @@ rather than discovered afterwards.
 - **`anthrex daemon start` is timing-sensitive to anything before the socket bind.** Moving
   `codex_version::check` (5 s timeout) ahead of the bind broke auto-start entirely, because
   `ensure_daemon` waits only 3 s for the socket. Only the state-file load belongs before the bind.
+  **Moving it back was not enough, and the landing spot fix wave 4 chose was wrong too.** With the
+  probe between `bind_socket` and `server::serve`, the socket file exists and connections queue in
+  the listen backlog while nothing reads or answers them — so the probe stopped delaying the
+  *bind* and started delaying the *handshake* instead, where `proto::HANDSHAKE_TIMEOUT` (5 s) sat
+  racing `CODEX_PROBE_TIMEOUT` (5 s) with a measured 60-140 ms of margin. The lesson generalises
+  past this one probe: **"before the socket bind" and "before `serve`" are not the only two places,
+  and neither of them is where this invariant belonged.** The invariant was about *window
+  launches*; `serve` was only a convenient chokepoint that happened to contain them, along with
+  everything else. It is now carried by `daemon::launch::LaunchGate`, which the manager's two
+  launch sites wait on and nothing else does. A guard placed at a chokepoint because the thing it
+  must constrain passes through it will also constrain everything else that does.
 - **Restart is the first code in this project that reuses a live window id.** Every structure keyed
   by id that assumed one process per id became suspect; the cleanup map produced the same defect
   **five** separate times before this milestone closed it, not three: fix wave 8's structural
