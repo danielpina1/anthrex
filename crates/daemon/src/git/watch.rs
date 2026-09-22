@@ -25,7 +25,11 @@ pub const DENY_COMPONENTS: [&str; 6] =
 /// canonicalised, because the paths a watcher reports are canonical on macOS (a
 /// `/var/folders/...` root is reported under `/private/var/folders/...`) and a prefix
 /// test against an uncanonicalised one would silently never match.
-pub fn accepts(path: &Path, root: &Path, git_dir: Option<&Path>) -> bool {
+/// `ignore` is `config.toml`'s `git.ignore` (git-surface spec 3.7: "an `ignore` list
+/// appended to the built-in filter"). It is appended, never substituted: a name here
+/// can only make the filter reject more, so a mistyped entry cannot switch
+/// [`DENY_COMPONENTS`] off.
+pub fn accepts(path: &Path, root: &Path, git_dir: Option<&Path>, ignore: &[String]) -> bool {
     // `*.lock` catches `index.lock`, `config.lock`, `packed-refs.lock` and the rest of
     // git's own transient files. It is a name test, not a component test: a directory
     // called `x.lock` is not a thing, and a file is what the churn is.
@@ -45,7 +49,8 @@ pub fn accepts(path: &Path, root: &Path, git_dir: Option<&Path>) -> bool {
         .unwrap_or(path);
     if inside.components().any(|component| {
         matches!(component, Component::Normal(name)
-            if DENY_COMPONENTS.iter().any(|deny| name == OsStr::new(deny)))
+            if DENY_COMPONENTS.iter().any(|deny| name == OsStr::new(deny))
+                || ignore.iter().any(|deny| name == OsStr::new(deny)))
     }) {
         return false;
     }
@@ -115,24 +120,36 @@ impl Drop for WatchGuard {
 ///
 /// Failure is not fatal (design decision 15): the caller logs it once and leaves the
 /// root on the 30-second poll.
+///
+/// **`ignore` filters events, not registration.** The watch is still armed recursively,
+/// so on the inotify backend a directory this filter would reject still costs a
+/// descriptor. Replacing that with a pruning walk that applies this same filter at
+/// registration time is git-surface spec section 9's descriptor-exhaustion item; it is
+/// deliberately deferred (see `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`),
+/// and this list is the one it will consume when it lands.
 pub fn build(
     root: &Path,
     git_dir: Option<&Path>,
+    ignore: &[String],
     events: UnboundedSender<()>,
 ) -> notify::Result<WatchGuard> {
     let filter_root = root.to_path_buf();
     let filter_git_dir: Option<PathBuf> = git_dir.map(Path::to_path_buf);
+    let filter_ignore = ignore.to_vec();
     let mut watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
         let Ok(event) = result else {
             // A watcher-level error (an overflowed queue, a vanished directory) is not
             // information about the worktree; the safety poll covers what it lost.
             return;
         };
-        if event
-            .paths
-            .iter()
-            .any(|path| accepts(path, &filter_root, filter_git_dir.as_deref()))
-        {
+        if event.paths.iter().any(|path| {
+            accepts(
+                path,
+                &filter_root,
+                filter_git_dir.as_deref(),
+                &filter_ignore,
+            )
+        }) {
             let _ = events.send(());
         }
     })?;

@@ -138,6 +138,7 @@ fn restart_test_record(
         cwd,
         project: None,
         worktree: None,
+        managed: None,
         model: Some(model.to_string()),
         initial_prompt: Some(initial_prompt.to_string()),
         session_id: Some(session_id.to_string()),

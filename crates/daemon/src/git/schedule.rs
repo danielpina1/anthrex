@@ -71,12 +71,23 @@ pub struct Scheduler {
     /// A refresh was asked for while a probe was outstanding. Exactly one further
     /// probe runs when that one returns — a bit, never a queue (design decision 10).
     pending: bool,
+    /// `config.toml`'s `git.poll_secs`, defaulting to [`POLL_INTERVAL`]. Held per
+    /// scheduler rather than read from the constant so the configured value is the one
+    /// thing that decides, with no second path back to the default (milestone 6's
+    /// `[git]` table; git-surface spec 3.7).
+    poll_interval: Duration,
+    /// `config.toml`'s `git.debounce_ms`, defaulting to [`DEBOUNCE`].
+    debounce_interval: Duration,
 }
 
 impl Scheduler {
     /// A freshly registered root: due for a probe at `now` (design decision 13,
     /// "immediately on registration").
-    pub fn new(now: Instant) -> Self {
+    ///
+    /// `poll_interval` and `debounce_interval` come from `config.toml`'s `[git]` table;
+    /// [`POLL_INTERVAL`] and [`DEBOUNCE`] are their defaults, and `config::Git`'s own
+    /// defaults are asserted equal to them in `crates/daemon/tests/git_schedule.rs`.
+    pub fn new(now: Instant, poll_interval: Duration, debounce_interval: Duration) -> Self {
         Self {
             next_poll: now,
             debounce: None,
@@ -84,6 +95,8 @@ impl Scheduler {
             breaker_until: None,
             in_flight: false,
             pending: false,
+            poll_interval,
+            debounce_interval,
         }
     }
 
@@ -105,7 +118,7 @@ impl Scheduler {
             self.debounce = None;
             return true;
         }
-        self.debounce = Some(now + DEBOUNCE);
+        self.debounce = Some(now + self.debounce_interval);
         false
     }
 
@@ -139,7 +152,7 @@ impl Scheduler {
         // a probe starts for any other reason: the poll exists to bound how stale the
         // state can get, and a probe that has just started is that bound being met.
         if poll_due || probe {
-            self.next_poll = now + POLL_INTERVAL;
+            self.next_poll = now + self.poll_interval;
         }
 
         Plan {

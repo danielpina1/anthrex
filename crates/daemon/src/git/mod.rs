@@ -34,6 +34,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use proto::GitState;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -54,6 +55,28 @@ type Publish = UnboundedSender<(PathBuf, Option<GitState>)>;
 /// value and an unset variable — leaves it on.
 pub fn enabled_from_env() -> bool {
     !matches!(std::env::var("ANTHREX_GIT").as_deref(), Ok("off") | Ok("0"))
+}
+
+/// The `[git]` settings the daemon actually runs on: the file's table, with `enabled`
+/// resolved against `ANTHREX_GIT`.
+///
+/// The environment can only turn git *off*. `ANTHREX_GIT=off` is the escape hatch
+/// git-surface spec 3.7 gives, and the smoke script and CI depend on it winning; a
+/// config file able to switch git back on against it would not be an escape hatch. The
+/// file's own power is the other direction — `git.enabled = false` with the variable
+/// unset turns git off.
+pub fn settings_from_env(settings: config::Git) -> config::Git {
+    settings_with(enabled_from_env(), settings)
+}
+
+/// The pure half of [`settings_from_env`], separated so the rule can be tested without
+/// writing the process environment — `crates/daemon/tests/git_env.rs` must stay a
+/// single test in a binary of its own (see its module docs).
+pub fn settings_with(env_enabled: bool, settings: config::Git) -> config::Git {
+    config::Git {
+        enabled: env_enabled && settings.enabled,
+        ..settings
+    }
 }
 
 /// The last published state of every registered root, and the sink they go to.
@@ -109,7 +132,7 @@ struct Slot {
 /// end state no matter which lands first, instead of depending on a snapshot of the
 /// window table taken by the caller.
 pub struct GitRegistry {
-    enabled: bool,
+    settings: config::Git,
     probe: ProbeFn,
     channel: Arc<Channel>,
     roots: Mutex<HashMap<PathBuf, Slot>>,
@@ -117,9 +140,13 @@ pub struct GitRegistry {
 
 impl GitRegistry {
     /// The production registry: the real `git` binary, the real probe.
-    pub fn new(enabled: bool, publish: Publish) -> Self {
+    ///
+    /// `settings` is `config.toml`'s `[git]` table as [`settings_from_env`] resolved it
+    /// — `enabled` decides whether anything runs at all, and `poll_secs`,
+    /// `debounce_ms` and `ignore` reach each root's scheduler and watcher.
+    pub fn new(settings: config::Git, publish: Publish) -> Self {
         Self::with_probe(
-            enabled,
+            settings,
             publish,
             Arc::new(|root: &Path| probe::probe(OsStr::new("git"), root, probe::PROBE_TIMEOUT)),
         )
@@ -127,9 +154,9 @@ impl GitRegistry {
 
     /// The same registry with the probe injected — the seam design decision 30 asks
     /// for, and the one the scheduling tests hang everything else off.
-    pub fn with_probe(enabled: bool, publish: Publish, probe: ProbeFn) -> Self {
+    pub fn with_probe(settings: config::Git, publish: Publish, probe: ProbeFn) -> Self {
         Self {
-            enabled,
+            settings,
             probe,
             channel: Arc::new(Channel {
                 published: Mutex::new(HashMap::new()),
@@ -148,7 +175,7 @@ impl GitRegistry {
     /// Must be called from inside a tokio runtime: the first reference spawns the
     /// root's task.
     pub fn register(&self, root: PathBuf) {
-        if !self.enabled {
+        if !self.settings.enabled {
             return;
         }
         let mut roots = crate::lock(&self.roots);
@@ -159,6 +186,7 @@ impl GitRegistry {
         let cancelled = Arc::new(AtomicBool::new(false));
         let handle = tokio::spawn(run_root(
             root.clone(),
+            self.settings.clone(),
             Arc::clone(&self.probe),
             Arc::clone(&self.channel),
             Arc::clone(&cancelled),
@@ -253,6 +281,7 @@ enum Wake {
 /// say to do now, and what happens next".
 async fn run_root(
     root: PathBuf,
+    settings: config::Git,
     probe: ProbeFn,
     channel: Arc<Channel>,
     cancelled: Arc<AtomicBool>,
@@ -265,6 +294,7 @@ async fn run_root(
 
     // `watch::build` walks the tree on the inotify backend, so it is blocking work.
     let watch_root = root.clone();
+    let watch_ignore = settings.ignore.clone();
     let built = tokio::task::spawn_blocking(move || {
         // The watcher reports canonical paths, so the git dir the filter compares them
         // against has to be canonical too; on macOS a `/var/folders/...` root is
@@ -272,7 +302,7 @@ async fn run_root(
         let canonical = std::fs::canonicalize(&watch_root).unwrap_or(watch_root);
         let git_dir = probe::resolve_git_dir(&canonical)
             .and_then(|git_dir| std::fs::canonicalize(git_dir).ok());
-        watch::build(&canonical, git_dir.as_deref(), sender)
+        watch::build(&canonical, git_dir.as_deref(), &watch_ignore, sender)
     })
     .await;
     // Held, not used: dropping the guard unwatches the root, on a blocking thread
@@ -291,7 +321,11 @@ async fn run_root(
         }
     };
 
-    let mut scheduler = Scheduler::new(Instant::now());
+    let mut scheduler = Scheduler::new(
+        Instant::now(),
+        Duration::from_secs(settings.poll_secs),
+        Duration::from_millis(settings.debounce_ms),
+    );
     let mut publisher = Publisher::default();
     let mut in_flight: Option<JoinHandle<Option<GitState>>> = None;
 

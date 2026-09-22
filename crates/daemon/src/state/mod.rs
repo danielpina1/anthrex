@@ -43,7 +43,16 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 
 /// The state file format this build writes, and the newest version it will load.
-pub const STATE_VERSION: u32 = 2;
+///
+/// Version 3 splits milestone 6's single `worktree` key into [`WindowRecord::worktree`]
+/// (the watched root, a path) and [`WindowRecord::managed`] (the checkout anthrex made,
+/// an object). That is a type change to an existing key, not an added field, so it is
+/// the first change here that an older daemon cannot read: version 2 and 1 files are
+/// migrated on the way in (`load::migrate_worktree_key`), and a version-2 daemon handed
+/// a version-3 file takes decision 12's "unsupported" path — it renames the file aside,
+/// bytes intact, and starts empty, rather than skipping every record it cannot parse and
+/// then saving the survivors over them.
+pub const STATE_VERSION: u32 = 3;
 
 /// The whole state file: format version, the id the next created window gets, and the
 /// windows themselves. This milestone never populates `runs` on its own — a daemon that
@@ -90,8 +99,24 @@ pub struct WindowRecord {
     pub cwd: PathBuf,
     #[serde(default)]
     pub project: Option<PathBuf>,
+    /// The git worktree *root* this window sits in: `Entry.worktree`, milestone 4.5's
+    /// field, and the root the git registry watches. Saved for every window inside a
+    /// checkout, whoever created it, so a restored window's bottom bar is not blank —
+    /// `server::register_restored_roots` registers exactly these.
+    ///
+    /// Distinct from [`Self::managed`] and not derivable from it: a window that merely
+    /// stood inside an existing checkout has a root and no managed record at all. When
+    /// both are set they are equal, because a managed window sits in the checkout
+    /// anthrex made for it.
     #[serde(default)]
-    pub worktree: Option<WorktreeRecord>,
+    pub worktree: Option<PathBuf>,
+    /// The linked worktree anthrex itself created for this window (`Entry.managed`),
+    /// present only for those — and what `Remove { remove_worktree }` acts on.
+    ///
+    /// Held this key's *old* name, `worktree`, up to and including [`STATE_VERSION`] 2,
+    /// which is why that version needs migrating on load (`load::migrate_worktree_key`).
+    #[serde(default)]
+    pub managed: Option<WorktreeRecord>,
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
@@ -122,8 +147,9 @@ where
     Ok(serde_json::from_value::<Status>(value).unwrap_or(Status::Exited))
 }
 
-/// A window's worktree, as decision 8 shapes it: `null` when the window's `Entry.managed`
-/// is `None`, otherwise the repo root, the worktree's own path, and its branch.
+/// The linked worktree anthrex created for a window: the repo root, the worktree's own
+/// path, and its branch. Mirrors `worktree::ManagedWorktree`. Stored under `managed`
+/// since [`STATE_VERSION`] 3, and under `worktree` before that.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorktreeRecord {
     pub repo_root: PathBuf,

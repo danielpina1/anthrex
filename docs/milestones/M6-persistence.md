@@ -909,3 +909,43 @@ Both are recorded in `docs/superpowers/plans/2026-09-17-anthrex-foundation-follo
 - **`handle_hook` is keyed by window id with no per-spawn tag**, so a hook from a replaced process
   can in principle land on its successor. Same shape as the accepted `WindowEvent` staleness; a real
   fix needs a protocol-level generation counter, which is a protocol bump and every client updated.
+
+### Landed after the milestone, on branch `m6-git-config` (2026-09-22)
+
+This brief was stale when the milestone was implemented: an unmerged refresh
+(`docs/m6-corrections`) had added scope to it beforehand. An audit against the specs —
+not against the refresh — found three genuine gaps, closed on that branch. They belong to
+this milestone's scope and are recorded here rather than pretending a later milestone owns
+them.
+
+1. **Decision 4's key table was missing `[git]`.** Git-surface spec 3.7 line 140 assigns
+   the table to this milestone: `enabled`, `poll_secs`, `debounce_ms`, `ignore`. Defaults
+   are that spec's own numbers (30 s poll, 300 ms debounce, enabled, empty list); the
+   ranges (poll 5–3600 s, debounce 50–5000 ms, at most 32 entries of at most 64
+   characters) are not in any spec and were settled on that branch. Out of range keeps the
+   default and reports a `Problem`, as every other key here does — the crate does not
+   clamp, and this key does not start. `ANTHREX_GIT` can only turn git *off*:
+   `git::settings_with` ANDs it with `git.enabled`.
+2. **Decision 18 did not exist: restored windows were never watched again.** Registration
+   happened only in the `CreateWindow` handler, so after a daemon restart every window's
+   git segment was blank and stayed blank — `Restart` did not register either, contrary to
+   a comment in `manager/restore.rs` that claimed it was the repair. `serve` now registers
+   each restored window's root before the accept loop, once per window (not per distinct
+   root) so the reference counting stays symmetric with `Remove`.
+3. **Decision 8's record could not represent the watched root.** Its single `worktree` key
+   held `Entry.managed` only, so a window inside a checkout anthrex did not create had
+   nothing saved to re-register. The record now carries `worktree` (the root) and
+   `managed` (the created checkout) as separate keys. **`STATE_VERSION` is 3, not 2**: the
+   existing key changed type, which an older daemon cannot read, so the bump routes it to
+   decision 12's "unsupported" path (file renamed aside, bytes intact) instead of letting
+   it skip records and save the survivors over them. Version 1 and 2 files are migrated on
+   load.
+
+Decision 33 (reconnect) needed no change: the view — tree viewport and selection, collapse,
+filter, overview, the inspector panel, the graph pan — already survived a reconnect,
+because `on_reconnected` goes through `replace_windows`. The refresh presented that as new
+scope; it was not. It now has the test it lacked.
+
+Still open from this milestone, deliberately: the non-recursive watch and pruning walk
+(git-surface spec section 9). `git.ignore` exists for it to consume; the descriptor risk is
+unchanged. See `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`.

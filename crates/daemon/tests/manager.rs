@@ -349,6 +349,7 @@ fn window_record(id: u32, name: &str, cwd: PathBuf, session_id: Option<&str>) ->
         cwd,
         project: None,
         worktree: None,
+        managed: None,
         model: None,
         initial_prompt: None,
         session_id: session_id.map(str::to_string),

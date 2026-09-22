@@ -64,7 +64,10 @@ pub async fn start_daemon_with_git(git_enabled: bool) -> TestDaemon {
     tokio::spawn(serve(
         listener,
         manager.clone(),
-        git_enabled,
+        config::Git {
+            enabled: git_enabled,
+            ..config::Git::default()
+        },
         shutdown.clone(),
     ));
     TestDaemon {

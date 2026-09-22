@@ -23,7 +23,12 @@ fn sample_state() -> StateFile {
                 runtime: Runtime::Claude,
                 cwd: PathBuf::from("/Users/me/repos/shop/packages/api"),
                 project: Some(PathBuf::from("/Users/me/repos/shop")),
-                worktree: Some(WorktreeRecord {
+                // Deliberately *not* equal to `managed.path`, though production keeps
+                // the two equal when both are set: equal values would make a
+                // transposition between the watched root and the managed checkout
+                // invisible here, which is the whole point of this fixture.
+                worktree: Some(PathBuf::from("/Users/me/repos/shop-worktrees/watched")),
+                managed: Some(WorktreeRecord {
                     repo_root: PathBuf::from("/Users/me/repos/.bare/shop"),
                     path: PathBuf::from("/Users/me/repos/shop-worktrees/api-worker"),
                     branch: "feature/api-worker".into(),
@@ -42,6 +47,7 @@ fn sample_state() -> StateFile {
                 cwd: PathBuf::from("/tmp/scratch"),
                 project: None,
                 worktree: None,
+                managed: None,
                 model: None,
                 initial_prompt: None,
                 session_id: None,
@@ -64,7 +70,7 @@ fn sample_state() -> StateFile {
 fn sample_state_fields_are_pairwise_distinct() {
     let state = sample_state();
     let record = &state.windows[0];
-    let worktree = record.worktree.as_ref().expect("fixture sets worktree");
+    let managed = record.managed.as_ref().expect("fixture sets managed");
 
     let paths: Vec<(&str, &PathBuf)> = vec![
         ("cwd", &record.cwd),
@@ -72,8 +78,12 @@ fn sample_state_fields_are_pairwise_distinct() {
             "project",
             record.project.as_ref().expect("fixture sets project"),
         ),
-        ("worktree.repo_root", &worktree.repo_root),
-        ("worktree.path", &worktree.path),
+        (
+            "worktree",
+            record.worktree.as_ref().expect("fixture sets worktree"),
+        ),
+        ("managed.repo_root", &managed.repo_root),
+        ("managed.path", &managed.path),
     ];
     for i in 0..paths.len() {
         for j in (i + 1)..paths.len() {
@@ -105,7 +115,7 @@ fn sample_state_fields_are_pairwise_distinct() {
                 .as_deref()
                 .expect("fixture sets session_id"),
         ),
-        ("worktree.branch", worktree.branch.as_str()),
+        ("managed.branch", managed.branch.as_str()),
     ];
     for i in 0..strings.len() {
         for j in (i + 1)..strings.len() {
@@ -350,3 +360,6 @@ mod schema;
 
 #[path = "state_tests/persister.rs"]
 mod persister_tests;
+
+#[path = "state_tests/migration.rs"]
+mod migration;

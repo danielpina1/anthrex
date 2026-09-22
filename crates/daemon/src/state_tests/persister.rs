@@ -46,6 +46,7 @@ fn seed_one_window(m: &WindowManager, id: u32, name: &str) {
             cwd: PathBuf::from("/tmp"),
             project: None,
             worktree: None,
+            managed: None,
             model: None,
             initial_prompt: None,
             session_id: None,

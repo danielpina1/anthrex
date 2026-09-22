@@ -39,13 +39,14 @@ use tokio_util::sync::CancellationToken;
 pub async fn serve(
     listener: UnixListener,
     manager: Arc<WindowManager>,
-    git_enabled: bool,
+    git: config::Git,
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
     let (git_publish_tx, git_publish_rx) = mpsc::unbounded_channel();
-    let git_registry = Arc::new(GitRegistry::new(git_enabled, git_publish_tx));
+    let git_registry = Arc::new(GitRegistry::new(git, git_publish_tx));
     let (git_tx, _) = broadcast::channel::<DaemonMsg>(256);
     tokio::spawn(pump_git(git_publish_rx, git_tx.clone(), shutdown.clone()));
+    register_restored_roots(&manager, &git_registry);
 
     loop {
         tokio::select! {
@@ -73,6 +74,40 @@ pub async fn serve(
                     }
                 });
             }
+        }
+    }
+}
+
+/// Registers the worktree root of every window already in the table, before the first
+/// client can connect.
+///
+/// At this point in `lifecycle::run` those are exactly the windows `WindowManager::restore`
+/// loaded from `state.json`. Their checkouts are still on disk and still changing, so
+/// git-surface spec 3.3's rule — "a root is registered when at least one window records
+/// it" — applies to them no differently than to a created window; without this the
+/// bottom bar is blank for every restored window, and stays blank, because `Restart`
+/// does not register either (and must not: see below).
+///
+/// **Once per window, not once per distinct root.** Registration is reference counted
+/// (`GitRegistry::register`), and every other site in this file pairs exactly one
+/// `register` with one `unregister` per *window* — `requests::create` and
+/// `requests::remove_window`. Deduplicating roots here would register one reference for
+/// two restored windows on the same checkout, and the first `Remove` would then tear the
+/// watcher down while the second window is still looking at it. Two restored windows on
+/// one root have to behave exactly like two created ones, which means counting like
+/// them.
+///
+/// **A restart registers nothing new**, for the same reason: a restarted window keeps
+/// the record's root, which this call already holds a reference for. Adding a
+/// `register` to the restart path would leak a reference per restart and leave the
+/// watcher running after the window was removed.
+///
+/// Off the manager lock (AGENTS.md hard rule 10): `list()` returns owned `WindowInfo`s
+/// and has released the lock before the first `register` runs.
+fn register_restored_roots(manager: &WindowManager, git_registry: &GitRegistry) {
+    for window in manager.list() {
+        if let Some(root) = window.worktree {
+            git_registry.register(root);
         }
     }
 }

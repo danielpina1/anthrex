@@ -260,9 +260,14 @@ async fn state_snapshot_reflects_the_window_table() {
 
 /// A fixture with a distinct, recognisable value for every same-typed field pair
 /// `restore` or `state_snapshot`'s hand-written mapping could silently swap: `cwd` vs
-/// `project`, `worktree.repo_root` vs `worktree.path`, `model` vs `initial_prompt`, and
-/// `name` vs `session_id`. A record where any of these pairs coincide cannot catch a
-/// transposition between them — see `restore_and_state_snapshot_do_not_transpose_a_same_typed_field_pair`.
+/// `project`, `worktree` (the watched root) vs `managed.path` (the checkout anthrex
+/// made) vs `managed.repo_root`, `model` vs `initial_prompt`, and `name` vs
+/// `session_id`. A record where any of these pairs coincide cannot catch a transposition
+/// between them — see `restore_and_state_snapshot_do_not_transpose_a_same_typed_field_pair`.
+///
+/// `worktree` and `managed.path` are deliberately different here even though production
+/// keeps them equal for a managed window: equal values are exactly what would hide a
+/// transposition between the two fields this milestone split apart.
 fn distinct_record() -> WindowRecord {
     WindowRecord {
         id: 5,
@@ -270,9 +275,10 @@ fn distinct_record() -> WindowRecord {
         runtime: Runtime::Claude,
         cwd: PathBuf::from("/tmp/distinct/cwd-value"),
         project: Some(PathBuf::from("/tmp/distinct/project-value")),
-        worktree: Some(state::WorktreeRecord {
+        worktree: Some(PathBuf::from("/tmp/distinct/watched-root-value")),
+        managed: Some(state::WorktreeRecord {
             repo_root: PathBuf::from("/tmp/distinct/repo-root-value"),
-            path: PathBuf::from("/tmp/distinct/worktree-path-value"),
+            path: PathBuf::from("/tmp/distinct/managed-path-value"),
             branch: "feature/distinct".into(),
         }),
         model: Some("model-value".into()),
@@ -309,9 +315,13 @@ async fn restore_and_state_snapshot_do_not_transpose_a_same_typed_field_pair() {
     assert_eq!(info.name, record.name);
     assert_eq!(info.cwd, record.cwd);
     assert_eq!(info.project, record.project.clone().unwrap());
-    let worktree = record.worktree.clone().unwrap();
-    assert_eq!(info.worktree, Some(worktree.path.clone()));
-    assert_eq!(info.branch, Some(worktree.branch.clone()));
+    let managed = record.managed.clone().unwrap();
+    assert_eq!(
+        info.worktree,
+        record.worktree.clone(),
+        "the watched root comes from `worktree`, not from `managed.path`"
+    );
+    assert_eq!(info.branch, Some(managed.branch.clone()));
     assert_eq!(info.session_id, record.session_id);
     assert_eq!(info.model, record.model);
 

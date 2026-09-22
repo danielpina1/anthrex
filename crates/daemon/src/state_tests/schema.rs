@@ -171,7 +171,15 @@ fn runs_field_with_array_content_loads_and_round_trips() {
 fn newer_version_is_moved_aside() {
     let dir = tempfile::tempdir().unwrap();
     let path = state_path(&dir);
-    std::fs::write(&path, br#"{"version": 3, "next_id": 1, "windows": []}"#).unwrap();
+    // Derived from `STATE_VERSION` rather than written out: this test asserts "newer
+    // than whatever this build writes", and a literal silently stops testing that the
+    // moment the version moves (it did, when the worktree split took it to 3).
+    let newer = STATE_VERSION + 1;
+    std::fs::write(
+        &path,
+        format!(r#"{{"version": {newer}, "next_id": 1, "windows": []}}"#),
+    )
+    .unwrap();
 
     let (state, warnings) = load(&path);
 
@@ -532,6 +540,7 @@ fn record_json_shape() {
         cwd: PathBuf::from("/Users/me/repos/shop"),
         project: Some(PathBuf::from("/Users/me/repos/shop")),
         worktree: None,
+        managed: None,
         model: Some("opus".into()),
         initial_prompt: Some("fix the failing tests".into()),
         session_id: Some("5f0c2d1e-8a8b-4c1e-9d55-2b7e9f1a0c11".into()),
@@ -542,7 +551,7 @@ fn record_json_shape() {
 
     let json = serde_json::to_string(&record).unwrap();
     let expected = "{\"id\":3,\"name\":\"api-worker\",\"runtime\":\"claude\",\"cwd\":\"/Users/me/repos/shop\",\
-\"project\":\"/Users/me/repos/shop\",\"worktree\":null,\"model\":\"opus\",\
+\"project\":\"/Users/me/repos/shop\",\"worktree\":null,\"managed\":null,\"model\":\"opus\",\
 \"initial_prompt\":\"fix the failing tests\",\
 \"session_id\":\"5f0c2d1e-8a8b-4c1e-9d55-2b7e9f1a0c11\",\"created_at\":1789123456,\
 \"status\":\"working\",\"run\":null}";
