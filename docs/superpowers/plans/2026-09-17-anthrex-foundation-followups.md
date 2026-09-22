@@ -499,3 +499,28 @@ it described a fallback that did not exist, and reading for plausibility believe
   needs a second key both sides share (a timestamp window, or a prompt id the runtime
   puts in both the hook payload and the transcript). Found by task M6.5.8's review.
 
+
+## From milestone 6.5's reader and subscription task (2026-09-22), task M6.5.10
+
+- **`conversation.max_bytes` can still be configured past what one frame can carry.**
+  `crates/config/src/lib.rs` has `CONVERSATION_MAX_BYTES_RANGE = 65_536..=134_217_728`
+  (128 MiB), a literal. The brief's amendment under task M6.5.1 said task M6.5.3 must derive
+  the ceiling from `proto::codec::MAX_FRAME` (16 MiB) less a 1 MiB headroom, because a whole
+  `Conversation` travels in one `ConversationSnapshot` frame. Since task M6.5.10 that frame
+  is really sent: a conversation past 16 MiB fails `write_frame`, the connection's writer
+  task ends, and the client loses its connection with nothing said. The default (2 MiB) is
+  far from it. The fix is the derived bound in `crates/config`, plus a test that a
+  `max_bytes` above it is refused. Belongs to milestone 6.5's fix wave, before task M6.5.13
+  gives the view a client.
+- **A new session in the same window misaligns the conversation.** A `SessionStart` with a
+  new `transcript_path` (Claude's `/clear`, for one) makes the reader start the new file as
+  a restart, which is right for the file, but the hook timeline keeps every turn from the
+  old session. The new file's prompt ordinal 0 then maps onto the old session's first
+  `User` turn, and the enricher reports `Misaligned` from there on. A fix needs the
+  ordinal map to start at the first `User` turn of the current session, which `Draft` does
+  not record today.
+- **The transcript path is learned from `SessionStart` only.** `build::session_start` is the
+  one place `Draft.transcript_path` is set, although Claude sends `transcript_path` on every
+  hook. A window that missed its `SessionStart` (a hook dropped past `HOOK_DEADLINE`, or a
+  session already running when the daemon restarted) degrades with `NoTranscriptPath`
+  until the next session. Taking the path from any hook that carries one would close it.
