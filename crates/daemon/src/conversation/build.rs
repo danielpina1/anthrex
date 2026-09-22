@@ -85,28 +85,45 @@ fn pre_tool_use(draft: &mut Draft, hook: &ParsedHook, now_unix_secs: u64, now: I
     true
 }
 
-/// Finds the target `ToolCall` in the open turn: the **last** one whose `id` is `Some`
-/// and equals `hook.tool_use_id` when both are `Some`; otherwise the last `Pending` one
-/// whose `name` equals `hook.tool_name`. `None` when neither search finds one -- a
-/// `PostToolUse` with no matching `PreToolUse` (never arrived, already matched by an
-/// earlier `Post`, or its whole turn already closed) is a no-op, not an error.
+/// Finds the target `ToolCall` in the open turn.
+///
+/// When `hook.tool_use_id` is `Some`, the id tier is the *only* tier tried: the last
+/// still-`Pending` block whose `id` equals it, or `None` when there is no such block.
+/// (Wave-1 review finding F1: an explicit id that matches nothing is evidence of a
+/// mismatch, not absence of evidence, so this must never fall through to matching by
+/// name -- that would let an unrelated `Post` for a stale or foreign id complete
+/// whatever else happens to be `Pending` under the same tool name.) The `Pending` guard
+/// (finding F7) also stops a redelivered `PostToolUse` for an id that already completed
+/// from rewriting a finished call's result.
+///
+/// Only when `hook.tool_use_id` is `None` is the name tier tried: the **oldest**
+/// still-`Pending` block whose `name` equals `hook.tool_name` (finding F2: results
+/// arrive FIFO, so for two concurrent id-less calls to the same tool, the first `Post`
+/// belongs to the first `Pre` -- searching newest-first would silently swap two
+/// unrelated results between two different tool calls, both reporting `Ok`, with
+/// nothing to signal it).
+///
+/// `None` when the applicable tier finds nothing -- a `PostToolUse` with no matching
+/// `PreToolUse` (never arrived, already matched and completed by an earlier `Post`, or
+/// its whole turn already closed) is a no-op, not an error.
 fn find_target(blocks: &[Block], hook: &ParsedHook) -> Option<usize> {
-    let by_id = hook.tool_use_id.as_deref().and_then(|want| {
-        blocks
+    match hook.tool_use_id.as_deref() {
+        Some(want) => blocks
             .iter()
             .enumerate()
             .rev()
             .find_map(|(index, block)| match block {
-                Block::ToolCall { id: Some(id), .. } if id == want => Some(index),
+                Block::ToolCall {
+                    id: Some(id),
+                    state: ToolState::Pending,
+                    ..
+                } if id == want => Some(index),
                 _ => None,
-            })
-    });
-    by_id.or_else(|| {
-        hook.tool_name.as_deref().and_then(|want| {
+            }),
+        None => hook.tool_name.as_deref().and_then(|want| {
             blocks
                 .iter()
                 .enumerate()
-                .rev()
                 .find_map(|(index, block)| match block {
                     Block::ToolCall {
                         name,
@@ -115,8 +132,8 @@ fn find_target(blocks: &[Block], hook: &ParsedHook) -> Option<usize> {
                     } if name == want => Some(index),
                     _ => None,
                 })
-        })
-    })
+        }),
+    }
 }
 
 fn post_tool_use(draft: &mut Draft, hook: &ParsedHook, now: Instant, caps: Caps) -> bool {
@@ -252,6 +269,131 @@ fn subagent_start(draft: &mut Draft, hook: &ParsedHook, now_unix_secs: u64) -> b
     true
 }
 
+/// Shared fixture and driver helpers for `build_tests.rs` and
+/// `match_tool_call_tests.rs` -- both test files are `apply`'s tests, split by
+/// responsibility (the general per-`HookKind` transform vs. `find_target`'s matcher
+/// specifically) rather than duplicated, since `build_tests.rs` alone grew well past
+/// the repository's ~600-line guideline once the matcher's own coverage gaps were
+/// closed. `pub(super)` so both sibling test modules (`build`'s descendants) can use
+/// them without re-declaring anything.
+#[cfg(test)]
+mod test_support {
+    use super::*;
+    use crate::conversation::ConversationSet;
+    use proto::HookSource;
+
+    pub(super) fn hook(kind: HookKind) -> ParsedHook {
+        ParsedHook {
+            source: HookSource::Claude,
+            kind,
+            session_id: None,
+            agent_id: None,
+            agent_type: None,
+            tool_name: None,
+            tool_input: None,
+            notification_type: None,
+            transcript_path: None,
+            tool_use_id: None,
+            tool_response: None,
+            tool_result_truncated: None,
+            tool_result_stringified: None,
+            prompt: None,
+        }
+    }
+
+    pub(super) fn prompt(text: &str) -> ParsedHook {
+        let mut h = hook(HookKind::UserPromptSubmit);
+        h.prompt = Some(text.to_owned());
+        h
+    }
+
+    pub(super) fn pre(id: Option<&str>, name: &str) -> ParsedHook {
+        let mut h = hook(HookKind::PreToolUse);
+        h.tool_use_id = id.map(str::to_owned);
+        h.tool_name = Some(name.to_owned());
+        h
+    }
+
+    pub(super) fn post(id: Option<&str>, name: Option<&str>) -> ParsedHook {
+        let mut h = hook(HookKind::PostToolUse);
+        h.tool_use_id = id.map(str::to_owned);
+        h.tool_name = name.map(str::to_owned);
+        h
+    }
+
+    pub(super) fn draft() -> Draft {
+        Draft::new(4, None, proto::Runtime::Claude)
+    }
+
+    /// `apply` against a fresh `Caps::default()`, since most fixtures don't care.
+    pub(super) fn run(draft: &mut Draft, hook: &ParsedHook, ts: u64, now: Instant) -> bool {
+        apply(
+            draft,
+            proto::Runtime::Claude,
+            hook,
+            ts,
+            now,
+            Caps::default(),
+        )
+    }
+
+    pub(super) fn run_capped(
+        draft: &mut Draft,
+        hook: &ParsedHook,
+        ts: u64,
+        now: Instant,
+        caps: Caps,
+    ) -> bool {
+        apply(draft, proto::Runtime::Claude, hook, ts, now, caps)
+    }
+
+    pub(super) fn spawn_hook(
+        set: &mut ConversationSet,
+        hook: &ParsedHook,
+        parent: Option<&str>,
+        ts: u64,
+        now: Instant,
+    ) -> Vec<Option<String>> {
+        set.on_hook(
+            proto::Runtime::Claude,
+            hook,
+            parent,
+            ts,
+            now,
+            Caps::default(),
+        )
+    }
+
+    pub(super) fn tool_call(
+        block: &Block,
+    ) -> (&Option<String>, &String, &ToolState, &Option<ToolResult>) {
+        match block {
+            Block::ToolCall {
+                id,
+                name,
+                state,
+                result,
+                ..
+            } => (id, name, state, result),
+            _ => panic!("expected a ToolCall block, got {block:?}"),
+        }
+    }
+
+    /// The open turn's blocks' `ToolState`s, in order. Panics if any block is not a
+    /// `ToolCall` -- every caller already knows it should be.
+    pub(super) fn tool_states(draft: &Draft, open: usize) -> Vec<ToolState> {
+        draft.turns[open]
+            .blocks
+            .iter()
+            .map(|b| *tool_call(b).2)
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[path = "build_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "match_tool_call_tests.rs"]
+mod match_tool_call_tests;

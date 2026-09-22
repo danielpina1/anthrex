@@ -189,10 +189,17 @@ impl ConversationSet {
     ///
     /// A `SubagentStart` is the one hook that spans two conversations: `build::apply`'s
     /// own `SubagentStart` effect (appending a `SubagentSpawn` block to the open turn)
-    /// is applied to the *parent's* draft; the *child's* draft is created fresh here,
-    /// directly, holding one empty `Running` `Assistant` turn and nothing else --
-    /// running `build::apply` on it too would append a second, spurious spawn block to
-    /// its own conversation instead of its parent's.
+    /// is applied to the *parent's* draft unconditionally -- per the brief's table, the
+    /// parent-side effect does not depend on `hook.agent_id` being present (wave-1
+    /// review finding F9: an earlier version skipped it entirely when `agent_id` was
+    /// absent, so the parent never learned a sub-agent started, while `build::
+    /// subagent_start` itself already defends that same case with
+    /// `unwrap_or_default()` -- two layers disagreeing on whether the case is handled
+    /// was the bug). The *child's* draft, which does need a real id, is created fresh
+    /// here, directly, only when `hook.agent_id` is `Some` -- holding one empty
+    /// `Running` `Assistant` turn and nothing else. Running `build::apply` on the child
+    /// too would append a second, spurious spawn block to its own conversation instead
+    /// of its parent's.
     pub fn on_hook(
         &mut self,
         runtime: proto::Runtime,
@@ -204,24 +211,23 @@ impl ConversationSet {
     ) -> Vec<Option<String>> {
         if hook.kind == crate::hooks::HookKind::SubagentStart {
             let mut changed = Vec::new();
-            let Some(child_id) = hook.agent_id.clone() else {
-                return changed;
-            };
             let parent_key = spawn_parent.map(str::to_owned);
             let parent = self.draft_mut(parent_key.clone());
             if build::apply(parent, runtime, hook, now_unix_secs, now, caps) {
                 changed.push(parent_key);
             }
-            let child_key = Some(child_id);
-            if !self.drafts.contains_key(&child_key) {
-                let child = self.draft_mut(child_key.clone());
-                child.push_turn(
-                    proto::Role::Assistant,
-                    proto::TurnState::Running,
-                    Vec::new(),
-                    now_unix_secs,
-                );
-                changed.push(child_key);
+            if let Some(child_id) = hook.agent_id.clone() {
+                let child_key = Some(child_id);
+                if !self.drafts.contains_key(&child_key) {
+                    let child = self.draft_mut(child_key.clone());
+                    child.push_turn(
+                        proto::Role::Assistant,
+                        proto::TurnState::Running,
+                        Vec::new(),
+                        now_unix_secs,
+                    );
+                    changed.push(child_key);
+                }
             }
             return changed;
         }

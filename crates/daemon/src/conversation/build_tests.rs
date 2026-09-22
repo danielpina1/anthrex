@@ -1,113 +1,44 @@
-//! Tests for `build::apply`, the pure hook-to-turn transform (task M6.5.5). Every
+//! Tests for `build::apply`, the pure hook-to-turn transform (task M6.5.5), covering
+//! every row of the per-`HookKind` table except `PostToolUse`'s matcher, which has its
+//! own file (`match_tool_call_tests.rs`) -- see that file's header for why. Every
 //! fixture's `session_id`, `agent_id` and `tool_use_id` use the brief's distinct values
 //! (`"sess-a"`, `"agent-b"`, `"tu-c"`) where a test needs one at all, `window_id: 4`
-//! throughout, and timestamps a second apart starting at `1000` -- so a matcher bug that
+//! throughout, and timestamps a second apart starting at `1000` -- so a bug that
 //! transposes two same-typed fields (id for name, parent for child, ...) fails a test
 //! instead of passing by coincidence.
 
+use super::test_support::*;
 use super::*;
 use crate::conversation::ConversationSet;
-use proto::HookSource;
 use serde_json::json;
 use std::time::Duration;
 
-fn hook(kind: HookKind) -> ParsedHook {
-    ParsedHook {
-        source: HookSource::Claude,
-        kind,
-        session_id: None,
-        agent_id: None,
-        agent_type: None,
-        tool_name: None,
-        tool_input: None,
-        notification_type: None,
-        transcript_path: None,
-        tool_use_id: None,
-        tool_response: None,
-        tool_result_truncated: None,
-        tool_result_stringified: None,
-        prompt: None,
-    }
-}
+/// Wave-1 review finding F3, highest priority: `SessionStart` writes two same-typed
+/// `Option<String>` fields (`session_id`, `transcript_path`) and nothing previously
+/// asserted either by name -- a transposition between them was green, and so was
+/// deleting the whole arm's body in favor of an unconditional `false`. Distinct values,
+/// asserted by field name, close both: `transcript_path` is what task M6.5.12's watcher
+/// opens and `session_id` is what `Conversation.session_id` reports, so a transposition
+/// here would ship a watcher pointed at a session id.
+#[test]
+fn session_start_records_session_id_and_transcript_path_by_name() {
+    let mut draft = draft();
+    let now = Instant::now();
+    let mut start = hook(HookKind::SessionStart);
+    start.session_id = Some("sess-a".into());
+    start.transcript_path = Some("/logs/agents/sess-a.jsonl".into());
 
-fn prompt(text: &str) -> ParsedHook {
-    let mut h = hook(HookKind::UserPromptSubmit);
-    h.prompt = Some(text.to_owned());
-    h
-}
+    assert!(run(&mut draft, &start, 1000, now));
+    assert_eq!(draft.session_id.as_deref(), Some("sess-a"));
+    assert_eq!(
+        draft.transcript_path.as_deref(),
+        Some("/logs/agents/sess-a.jsonl")
+    );
 
-fn pre(id: Option<&str>, name: &str) -> ParsedHook {
-    let mut h = hook(HookKind::PreToolUse);
-    h.tool_use_id = id.map(str::to_owned);
-    h.tool_name = Some(name.to_owned());
-    h
-}
-
-fn post(id: Option<&str>, name: Option<&str>) -> ParsedHook {
-    let mut h = hook(HookKind::PostToolUse);
-    h.tool_use_id = id.map(str::to_owned);
-    h.tool_name = name.map(str::to_owned);
-    h
-}
-
-fn draft() -> Draft {
-    Draft::new(4, None, proto::Runtime::Claude)
-}
-
-/// `apply` against a fresh `Caps::default()`, since most fixtures don't care.
-fn run(draft: &mut Draft, hook: &ParsedHook, ts: u64, now: Instant) -> bool {
-    apply(
-        draft,
-        proto::Runtime::Claude,
-        hook,
-        ts,
-        now,
-        Caps::default(),
-    )
-}
-
-fn run_capped(draft: &mut Draft, hook: &ParsedHook, ts: u64, now: Instant, caps: Caps) -> bool {
-    apply(draft, proto::Runtime::Claude, hook, ts, now, caps)
-}
-
-fn spawn_hook(
-    set: &mut ConversationSet,
-    hook: &ParsedHook,
-    parent: Option<&str>,
-    ts: u64,
-    now: Instant,
-) -> Vec<Option<String>> {
-    set.on_hook(
-        proto::Runtime::Claude,
-        hook,
-        parent,
-        ts,
-        now,
-        Caps::default(),
-    )
-}
-
-fn tool_call(block: &Block) -> (&Option<String>, &String, &ToolState, &Option<ToolResult>) {
-    match block {
-        Block::ToolCall {
-            id,
-            name,
-            state,
-            result,
-            ..
-        } => (id, name, state, result),
-        _ => panic!("expected a ToolCall block, got {block:?}"),
-    }
-}
-
-/// The open turn's blocks' `ToolState`s, in order. Panics if any block is not a
-/// `ToolCall` -- every caller already knows it should be.
-fn tool_states(draft: &Draft, open: usize) -> Vec<ToolState> {
-    draft.turns[open]
-        .blocks
-        .iter()
-        .map(|b| *tool_call(b).2)
-        .collect()
+    // A second SessionStart with the same values is not a change.
+    assert!(!run(&mut draft, &start, 1001, now));
+    // No turn is ever created by SessionStart.
+    assert!(draft.turns.is_empty());
 }
 
 #[test]
@@ -173,78 +104,93 @@ fn a_tool_call_is_pending_until_its_post_hook() {
     assert!(duration_ms.is_some());
 }
 
+/// Wave-1 review finding F8: `PreToolUse`'s `input` passthrough and its `"tool"` name
+/// default (when `hook.tool_name` is absent) were read by no test -- deleting either
+/// (`input: None` regardless of the hook, or `hook.tool_name.clone().unwrap_or_default()`
+/// producing `""` instead of `"tool"`) was green.
 #[test]
-fn post_tool_use_matches_by_id_not_by_position() {
+fn pre_tool_use_records_input_and_defaults_an_absent_name_to_tool() {
     let mut draft = draft();
     let now = Instant::now();
-    for (id, name) in [("tu-1", "Grep"), ("tu-2", "Read"), ("tu-3", "Bash")] {
-        run(&mut draft, &pre(Some(id), name), 1000, now);
-    }
+    let mut untitled = hook(HookKind::PreToolUse);
+    untitled.tool_use_id = Some("tu-c".into());
+    untitled.tool_input = Some(json!({"path": "/tmp/example.rs"}));
+    // `tool_name` deliberately left `None`.
+    run(&mut draft, &untitled, 1000, now);
 
-    let mut post = post(Some("tu-2"), None);
-    post.tool_response = Some(json!("done"));
+    let open = draft.open_turn_index().unwrap();
+    let Block::ToolCall { name, input, .. } = &draft.turns[open].blocks[0] else {
+        panic!(
+            "expected a ToolCall block, got {:?}",
+            draft.turns[open].blocks[0]
+        );
+    };
+    assert_eq!(name, "tool");
+    assert_eq!(input, &Some(json!({"path": "/tmp/example.rs"})));
+}
+
+/// Wave-1 review finding F5: "then to the first line" was read by no test --
+/// substituting the whole capped string for just its first line was green.
+#[test]
+fn only_the_first_line_of_a_multiline_result_is_kept() {
+    let mut draft = draft();
+    let now = Instant::now();
+    run(&mut draft, &pre(Some("tu-c"), "Bash"), 1000, now);
+
+    let mut post = post(Some("tu-c"), None);
+    post.tool_response = Some(json!("first line\nsecond line\nthird line"));
     run(&mut draft, &post, 1001, now);
 
     let open = draft.open_turn_index().unwrap();
-    assert_eq!(
-        tool_states(&draft, open),
-        vec![ToolState::Pending, ToolState::Ok, ToolState::Pending]
-    );
+    let (_, _, _, result) = tool_call(&draft.turns[open].blocks[0]);
+    assert_eq!(result.as_ref().unwrap().summary, "first line");
 }
 
-/// Two `PreToolUse`s can share a `tool_use_id` (a runtime bug, a retried call, or two
-/// distinct tool invocations the runtime happened to number the same). `find_target`
-/// takes the **last** match, per the brief's exact wording -- so the earlier one is
-/// never completed by this `PostToolUse` and stays `Pending` until the turn closes and
-/// denies it. This is a defensible reading, not an accident: "last" is also what makes
-/// `post_tool_use_matches_by_id_not_by_position` and the name-fallback searches correct
-/// (the most recently opened pending call is the most likely match), and it is
-/// consistent across both search tiers.
+/// Wave-1 review finding F8: `detail: None` -- "only enrichment supplies detail" -- was
+/// read by no test.
 #[test]
-fn a_repeated_tool_use_id_completes_only_the_most_recent_call() {
+fn a_completed_tool_calls_result_never_carries_a_detail() {
     let mut draft = draft();
     let now = Instant::now();
-    run(&mut draft, &pre(Some("tu-dup"), "Bash"), 1000, now);
-    run(&mut draft, &pre(Some("tu-dup"), "Edit"), 1001, now);
+    run(&mut draft, &pre(Some("tu-c"), "Bash"), 1000, now);
 
-    let mut post = post(Some("tu-dup"), None);
-    post.tool_response = Some(json!("done"));
-    run(&mut draft, &post, 1002, now);
+    let mut post = post(Some("tu-c"), None);
+    post.tool_response = Some(json!("output"));
+    run(&mut draft, &post, 1001, now);
 
     let open = draft.open_turn_index().unwrap();
-    assert_eq!(
-        tool_states(&draft, open),
-        vec![ToolState::Pending, ToolState::Ok]
-    );
+    let (_, _, _, result) = tool_call(&draft.turns[open].blocks[0]);
+    assert_eq!(result.as_ref().unwrap().detail, None);
 }
 
+/// Wave-1 review finding F11: `apply`'s `runtime` parameter updates `Draft::runtime`,
+/// but nothing asserted it was ever read -- deleting `draft.runtime = runtime;`
+/// entirely was green. This `ConversationSet` is created with `Runtime::Claude`; a hook
+/// applied with `Runtime::Codex` must still make the resulting `Conversation.runtime`
+/// report `Codex`, proving the per-call parameter -- not the set's own stored value --
+/// is what actually lands on the draft. (I kept the parameter rather than dropping it
+/// as redundant: `build::apply`'s signature is the documented milestone interface, and
+/// a freshly created child `Draft`, per `ConversationSet::on_hook`'s `SubagentStart`
+/// case, is seeded before any hook has told it what runtime it belongs to -- so the
+/// per-call value is the only source of truth available at that point, not a
+/// duplicate of one already known.)
 #[test]
-fn post_tool_use_falls_back_to_the_name_when_there_is_no_id() {
-    let mut draft = draft();
+fn apply_updates_the_drafts_runtime_from_the_per_call_argument() {
+    let mut set = ConversationSet::new(4, proto::Runtime::Claude);
     let now = Instant::now();
-    run(&mut draft, &pre(None, "Read"), 1000, now);
-    run(&mut draft, &pre(None, "Bash"), 1001, now);
+    spawn_hook(&mut set, &hook(HookKind::SessionStart), None, 1000, now);
+    assert_eq!(set.snapshot(None).unwrap().runtime, proto::Runtime::Claude);
 
-    let mut post = post(None, Some("Read"));
-    post.tool_response = Some(json!("contents"));
-    run(&mut draft, &post, 1002, now);
-
-    let open = draft.open_turn_index().unwrap();
-    let states: Vec<_> = draft.turns[open]
-        .blocks
-        .iter()
-        .map(|b| {
-            let (_, name, state, _) = tool_call(b);
-            (name.to_string(), *state)
-        })
-        .collect();
-    assert_eq!(
-        states,
-        vec![
-            ("Read".to_string(), ToolState::Ok),
-            ("Bash".to_string(), ToolState::Pending),
-        ]
+    let codex_hook = hook(HookKind::SessionStart);
+    set.on_hook(
+        proto::Runtime::Codex,
+        &codex_hook,
+        None,
+        1001,
+        now,
+        Caps::default(),
     );
+    assert_eq!(set.snapshot(None).unwrap().runtime, proto::Runtime::Codex);
 }
 
 #[test]
@@ -352,6 +298,18 @@ fn a_truncated_hook_result_is_flagged() {
     }
 }
 
+/// Wave-1 review finding F4: the original fixture (64 identical `'z'`s, capped to 16
+/// bytes) was green even for two real bugs -- truncating to a single byte, and deleting
+/// the char-boundary backoff in `cap_bytes` entirely -- because a run of one repeated
+/// byte carries no positional information (its unit size, 1, divides every candidate
+/// cap). This is the fourth instance of "the fixture's period divides the bound" on
+/// this project. The fixed fixture is 15 ASCII bytes followed by three 3-byte "€"
+/// characters (24 bytes, 18 chars total): `max_result_bytes: 16` falls *inside* the
+/// first "€"'s encoding, so the exact expected output -- the 15-byte ASCII prefix, not
+/// 16 bytes and not 1 -- can only be produced by backing off to the nearest earlier
+/// char boundary. Deleting that backoff does not silently pass a weaker assertion here;
+/// it panics (`s[..16]` on a non-char-boundary), which this test's own passing is proof
+/// against.
 #[test]
 fn a_long_hook_result_is_capped_by_max_result_bytes() {
     let mut draft = draft();
@@ -359,7 +317,7 @@ fn a_long_hook_result_is_capped_by_max_result_bytes() {
     run(&mut draft, &pre(Some("tu-c"), "Bash"), 1000, now);
 
     let mut post = post(Some("tu-c"), None);
-    post.tool_response = Some(json!("z".repeat(64)));
+    post.tool_response = Some(json!(format!("{}€€€", "z".repeat(15))));
     let caps = Caps {
         max_result_bytes: 16,
         ..Caps::default()
@@ -369,7 +327,7 @@ fn a_long_hook_result_is_capped_by_max_result_bytes() {
     let open = draft.open_turn_index().unwrap();
     let (_, _, _, result) = tool_call(&draft.turns[open].blocks[0]);
     let result = result.as_ref().unwrap();
-    assert!(result.summary.len() <= 16);
+    assert_eq!(result.summary, "z".repeat(15));
     assert!(result.truncated);
 }
 
@@ -459,6 +417,7 @@ fn a_subagent_spawn_lands_in_the_parent_and_opens_the_child() {
     assert_eq!(changed, vec![None, Some("agent-b".to_string())]);
 
     let parent = set.snapshot(None).unwrap();
+    assert_eq!(parent.agent_id, None);
     assert_eq!(
         parent.turns.len(),
         2,
@@ -477,10 +436,43 @@ fn a_subagent_spawn_lands_in_the_parent_and_opens_the_child() {
     assert_eq!(kind, "Explore");
 
     let child = set.snapshot(Some("agent-b")).unwrap();
+    assert_eq!(child.agent_id.as_deref(), Some("agent-b"));
     assert_eq!(child.turns.len(), 1);
     assert_eq!(child.turns[0].role, Role::Assistant);
     assert_eq!(child.turns[0].state, TurnState::Running);
     assert!(child.turns[0].blocks.is_empty());
+}
+
+/// Wave-1 review finding F9: the parent-side effect of a `SubagentStart` -- appending
+/// the `SubagentSpawn` block -- must happen even when `hook.agent_id` is absent (a
+/// malformed or degraded hook). Only the *child* side, which genuinely needs a real id
+/// to key a new conversation, is conditional on it. Before this fix, a missing
+/// `agent_id` skipped the parent notification entirely, so the parent's conversation
+/// never learned a sub-agent had started at all.
+#[test]
+fn a_subagent_start_without_an_agent_id_still_notifies_the_parent() {
+    let mut set = ConversationSet::new(4, proto::Runtime::Claude);
+    let now = Instant::now();
+
+    let mut start = hook(HookKind::SubagentStart);
+    start.agent_type = Some("Explore".into());
+    // `agent_id` deliberately left `None`.
+    let changed = spawn_hook(&mut set, &start, None, 1000, now);
+    assert_eq!(changed, vec![None]);
+
+    let parent = set.snapshot(None).unwrap();
+    assert_eq!(parent.turns.len(), 1);
+    let Block::SubagentSpawn { agent_id, kind, .. } = &parent.turns[0].blocks[0] else {
+        panic!(
+            "expected a SubagentSpawn block, got {:?}",
+            parent.turns[0].blocks[0]
+        );
+    };
+    assert_eq!(agent_id, "");
+    assert_eq!(kind, "Explore");
+
+    // No child conversation was created: there was no id to key one by.
+    assert_eq!(set.keys(), vec![None]);
 }
 
 #[test]
