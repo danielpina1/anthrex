@@ -781,7 +781,7 @@ From `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`, "Assig
 
 ## Implementation notes
 
-Twelve tasks, twelve fix waves. Every deviation below was raised by an implementer or a reviewer
+Twelve tasks, fourteen fix waves, a whole-branch review and a final gate. Every deviation below was raised by an implementer or a reviewer
 rather than discovered afterwards.
 
 ### Amendments to the decisions in this brief
