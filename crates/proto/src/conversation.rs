@@ -87,6 +87,10 @@ pub enum DegradeReason {
     /// At least one line was valid JSON of a shape the parser does not model, or
     /// exceeded `TRANSCRIPT_LINE_MAX`.
     BadRecord,
+    /// A transcript prompt did not match the hook-built prompt its ordinal maps to, so
+    /// positional enrichment stopped there (task M6.5.8). Prose before that prompt is
+    /// kept; tool detail still joins by tool-use id.
+    Misaligned,
 }
 
 impl DegradeReason {
@@ -101,6 +105,9 @@ impl DegradeReason {
             DegradeReason::UnknownFormat => "transcript format not recognised — timeline only",
             DegradeReason::TooLarge => "transcript too large to read — timeline only",
             DegradeReason::BadRecord => "transcript partly unreadable — timeline only",
+            DegradeReason::Misaligned => {
+                "the transcript's prompts do not line up with the hook timeline — timeline only"
+            }
         }
     }
 }

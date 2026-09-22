@@ -229,6 +229,31 @@ fn serde_names_are_stable() {
         serde_json::to_value(DegradeReason::BadRecord).unwrap(),
         json!("bad_record")
     );
+    assert_eq!(
+        serde_json::to_value(DegradeReason::Misaligned).unwrap(),
+        json!("misaligned")
+    );
+}
+
+/// Task M6.5.8: `Misaligned` crosses the wire as itself. A round trip alone pins only
+/// the structure (a codec that decoded every reason as `BadRecord` would still compare
+/// equal to a `BadRecord` it encoded), so the decoded value is also asserted by name,
+/// field by field, against `Misaligned` specifically.
+#[test]
+fn misaligned_round_trips_by_name() {
+    let conversation = Conversation {
+        degraded: Some(DegradeReason::Misaligned),
+        ..distinct_conversation()
+    };
+    let packed = rmp_serde::to_vec_named(&conversation).unwrap();
+    let back: Conversation = rmp_serde::from_slice(&packed).unwrap();
+    assert_eq!(back.degraded, Some(DegradeReason::Misaligned));
+    assert_ne!(back.degraded, Some(DegradeReason::BadRecord));
+    assert_eq!(back, conversation);
+    assert_eq!(
+        DegradeReason::Misaligned.message(),
+        "the transcript's prompts do not line up with the hook timeline — timeline only"
+    );
 }
 
 #[test]
@@ -294,6 +319,7 @@ fn degrade_messages_are_distinct_and_end_the_same_way() {
         DegradeReason::UnknownFormat,
         DegradeReason::TooLarge,
         DegradeReason::BadRecord,
+        DegradeReason::Misaligned,
     ];
     let messages: Vec<&str> = reasons.iter().map(|r| r.message()).collect();
 
