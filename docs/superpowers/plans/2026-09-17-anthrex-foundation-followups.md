@@ -328,3 +328,29 @@ up whenever TUI clock injection or manager lock instrumentation is next in scope
   table, for `HookEvent`) but real, not theoretical — a stale event or hook payload can
   relabel a freshly restarted window's status or session id. One counter closes both at
   once, which is the reason to do this as a single follow-up rather than two.
+
+## From fix-wave-12-re-review (2026-09-22), left open by the M6 pre-PR fix pass
+
+- **Decision 24's "another anthrex daemon is running..." message is built from two
+  independent format literals.** `crates/daemon/src/lockfile.rs:172` and
+  `crates/daemon/src/lifecycle.rs:209` each construct the same user-facing string
+  separately, so a future wording change to one can silently drift from the other. Same
+  class as m13, which fix wave 12 fixed the same way in `server/requests.rs`: a shared
+  helper beside `holder_pid` would close it.
+- **`crates/daemon/src/manager/restart.rs` and `state.rs` are now past AGENTS.md rule
+  8's ~600-line guideline** (534→667 and 592→607 lines respectively, per
+  fix-wave-12-re-review Minor 3), putting the milestone brief's own check 4
+  (`wc -l crates/tui/src/app/*.rs crates/daemon/src/*.rs`) at three files over 600
+  instead of the two the M6.12 write-up named. Both crossings came from comment prose,
+  not new logic; a later pass should look at splitting `restart.rs`'s phase
+  documentation out of the module doc comment, or moving `state.rs`'s persistence
+  helpers into their own file, if either file grows again.
+- **`stop_daemon` (`scripts/pty-smoke.py`)'s own `daemon stop` bound was left at 30s**
+  while the nine `run_cmd`-wrapped call sites moved to `DAEMON_STOP_CMD_TIMEOUT` (40s).
+  Not a defect on its own — 30s still exceeds the 19s real worst case — but it is the
+  same scoping gap that produced the worktree-CLI timeouts fix (fix-wave-12-re-review
+  Major 2): the sweep that raised the nine `run_cmd` sites never revisited this direct
+  `subprocess.run` call outside `run_cmd`, which also has no `TimeoutExpired` handler of
+  its own. Worth folding into `DAEMON_STOP_CMD_TIMEOUT` (or its own named constant) and
+  the same `try`/`except` the fix pass added to `run_cmd`, the next time this file is
+  touched for timing reasons.
