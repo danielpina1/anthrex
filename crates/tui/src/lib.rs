@@ -364,5 +364,17 @@ async fn event_loop(
     }
 }
 
+/// `ANTHREX_DATA_DIR`/`ANTHREX_SOCKET` are process-global. Every test in this crate's
+/// `--lib` binary that touches them (`spawn::tests`, `reconnect_tests`) shares this one
+/// lock rather than each defining its own — two independent, module-private locks
+/// would not actually serialize against each other, since `cargo test` runs every
+/// `#[test]`/`#[tokio::test]` in a binary concurrently by default. A `tokio::sync::Mutex`
+/// rather than `std::sync::Mutex`: `reconnect_tests`'s use of it holds the guard across
+/// `.await` points (waiting out a real `ensure_daemon` attempt with the variables set),
+/// which a `std` guard cannot do; plain `#[test]`s (`spawn::tests`) use
+/// [`tokio::sync::Mutex::blocking_lock`] instead, which needs no runtime.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[cfg(test)]
 mod reconnect_tests;

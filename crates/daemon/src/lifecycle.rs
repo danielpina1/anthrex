@@ -1,6 +1,6 @@
 //! Socket setup, logging, pid file, signals, and the top-level daemon loop. Spec section 3.7.
 
-use crate::lockfile::DaemonLock;
+use crate::lockfile::{Acquired, DaemonLock};
 use crate::manager::{ManagerConfig, WindowManager};
 
 mod codex_version;
@@ -131,6 +131,16 @@ fn init_logging(data_dir: &Path) -> anyhow::Result<tracing_appender::non_blockin
     Ok(guard)
 }
 
+/// Synchronous counterpart to `spawn::is_up` (`crates/tui/src/spawn.rs`): a plain,
+/// blocking connect attempt, usable as the `already_running` probe inside
+/// `DaemonLock::acquire_or_yield`'s own blocking retry loop below — that loop runs
+/// synchronously on whatever thread is executing this async fn (not on
+/// `spawn_blocking`; see the comment at its call site), so the probe it takes must be
+/// synchronous too.
+fn daemon_is_reachable(socket: &Path) -> bool {
+    std::os::unix::net::UnixStream::connect(socket).is_ok()
+}
+
 /// Runs the daemon in the current process until a signal or a client asks it to stop.
 ///
 /// Decision 24: the lifetime lock is acquired first, right after the data directory
@@ -138,6 +148,14 @@ fn init_logging(data_dir: &Path) -> anyhow::Result<tracing_appender::non_blockin
 /// two daemons can never share a data directory. `_lock` is otherwise unused: dropping it
 /// at the end of this function, after every other cleanup below has run, is what releases
 /// it (decision 24, decision 26).
+///
+/// Fix wave 10, item 1: acquiring the lock is not actually this function's goal — a
+/// live daemon on `opts.socket_path` is. `DaemonLock::acquire_or_yield` is given a
+/// probe for exactly that, so a caller that loses the race to become the daemon (the
+/// two-`ensure_daemon`-calls scenario the review reproduced) stops waiting the moment
+/// the winner's socket answers, rather than treating "the lock is now free" — which can
+/// become true moments after the winner *stops*, e.g. via `anthrex daemon stop` — as
+/// its cue to become a second, unrequested daemon.
 pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     // Test-only: `crates/cli/tests/daemon_spawn_stderr.rs`'s
     // `detached_daemon_captures_its_stderr_to_a_file` needs to assert that a detached
@@ -153,7 +171,23 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
         let _ = std::io::Write::write_all(&mut std::io::stderr(), b"anthrex-test-stderr-probe\n");
     }
     std::fs::create_dir_all(&opts.data_dir)?;
-    let _lock = DaemonLock::acquire(&opts.data_dir, opts.lock_wait)?;
+    let _lock = match DaemonLock::acquire_or_yield(&opts.data_dir, opts.lock_wait, || {
+        daemon_is_reachable(&opts.socket_path)
+    })? {
+        Acquired::Locked(lock) => lock,
+        Acquired::AlreadyRunning => {
+            // Nothing has been created yet beyond `opts.data_dir` itself (idempotent to
+            // recreate), so there is nothing to unwind here. Logging is not set up yet
+            // — decision 24 puts the lock before it — so this goes straight to this
+            // process's own stderr; for the real caller (a detached `spawn_detached`
+            // child) that is `daemon.stderr.log`, exactly where an operator would look.
+            eprintln!(
+                "anthrex daemon: a daemon is already running on {}; not starting a second one",
+                opts.socket_path.display()
+            );
+            return Ok(());
+        }
+    };
     let _log_guard = init_logging(&opts.data_dir)?;
 
     // Decision 12: loaded once, on `spawn_blocking`, before the socket is bound, so the

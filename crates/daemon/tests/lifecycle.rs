@@ -180,6 +180,70 @@ async fn second_daemon_with_the_same_data_dir_is_refused() {
         .expect("run returned an error");
 }
 
+/// Fix wave 10, item 1 — the review's reproduction, run directly against `daemon::run`
+/// (the same entry point two racing `anthrex new` calls' detached
+/// `daemon start --foreground` children actually run), not a throwaway script:
+///
+/// Before the fix, a daemon that lost the race for `DaemonLock` just sat in its retry
+/// loop for up to `lock_wait`, and would win the lock — and go on to become a live,
+/// unrequested second daemon — the moment the winner released it, including by the
+/// winner simply being told to stop. So `B` here is given a `lock_wait` many times
+/// longer than this test could plausibly take: with the bug, `B` would sit blocked for
+/// that whole duration (or until `A` released, whichever came first) before this
+/// assertion could even run. The fix means `B` must instead notice `A`'s socket
+/// answering on its very first contended lock attempt and return successfully, having
+/// bound nothing, well before any of that — so this is deterministic, not a race won by
+/// timing luck: `A` is not stopped until well after `B` has already returned.
+#[tokio::test]
+async fn a_racing_second_start_yields_instead_of_becoming_a_phantom_daemon() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("d.sock");
+    let data_dir = dir.path().join("data");
+
+    let handle_a = tokio::spawn(run(opts(socket.clone(), data_dir.clone())));
+    wait_for_path(&socket, Duration::from_secs(5)).await;
+
+    // B races in against the same socket and data dir while A is fully up and serving
+    // — exactly the reported scenario. Its own `lock_wait` (2s) is deliberately much
+    // larger than the near-instant return the fix should produce.
+    let mut b_opts = opts(socket.clone(), data_dir.clone());
+    b_opts.lock_wait = Duration::from_secs(2);
+    let started = std::time::Instant::now();
+    let b_result = run(b_opts).await;
+    let elapsed = started.elapsed();
+
+    assert!(
+        b_result.is_ok(),
+        "B should yield cleanly once it sees A already running, not error: {b_result:?}"
+    );
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "B took {elapsed:?} to return — the old bug blocked for the full lock_wait \
+         (2s) before either winning the lock or bailing; the fix must notice A on the \
+         very first contended attempt instead"
+    );
+
+    // A must be completely unaffected: still the only daemon, still answering, right up
+    // until this test stops it itself.
+    let (mut c, welcome) = Client::connect(&socket).await;
+    assert!(matches!(welcome, DaemonMsg::Welcome { .. }), "{welcome:?}");
+    c.send(ClientMsg::Shutdown).await;
+    c.recv_until(|m| matches!(m, DaemonMsg::Bye { .. })).await;
+    tokio::time::timeout(Duration::from_secs(10), handle_a)
+        .await
+        .expect("daemon::run did not return within 10s")
+        .expect("the daemon task panicked")
+        .expect("run returned an error");
+
+    // Now that A is fully gone, nothing must be listening — not A (it stopped on
+    // request), and not some lingering B that had actually bound a second socket
+    // before this function ever got control back.
+    assert!(
+        UnixStream::connect(&socket).await.is_err(),
+        "no daemon should be reachable once A stopped and B had already yielded"
+    );
+}
+
 /// Decision 26's other adversarial case: a daemon mid-shutdown must unlink its socket
 /// path only if the file there is still the one it bound — never a replacement that
 /// another daemon (here, a plain listener standing in for one) bound at the same path in
