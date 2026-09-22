@@ -2,7 +2,7 @@ mod runtime;
 mod script;
 
 use std::env;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -131,6 +131,7 @@ fn run_step(
             content,
             message,
         } => git_commit(&file, &content, &message)?,
+        Step::Transcript(entry) => write_transcript(&entry)?,
         Step::Exit(code) => return Ok(Some(code)),
         Step::McpCall { tool, args } => {
             let _ = (tool, args);
@@ -141,6 +142,23 @@ fn run_step(
         }
     }
     Ok(None)
+}
+
+fn write_transcript(entry: &Value) -> Result<()> {
+    let Some(path) = env::var_os("FAKE_AGENT_TRANSCRIPT") else {
+        return Ok(());
+    };
+    let mut line = serde_json::to_string(entry).context("encode transcript entry")?;
+    line.push('\n');
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .with_context(|| format!("open transcript file {}", path.to_string_lossy()))?;
+    file.write_all(line.as_bytes())
+        .context("write transcript entry")?;
+    file.flush().context("flush transcript entry")?;
+    Ok(())
 }
 
 fn default_session_id() -> String {
@@ -166,6 +184,11 @@ fn fill_hook_payload(payload: &mut Value, event: &str) -> Result<()> {
             .to_string_lossy()
             .into_owned();
         object.insert("cwd".into(), Value::String(cwd));
+    }
+    if let Some(transcript_path) = env::var_os("FAKE_AGENT_TRANSCRIPT") {
+        object
+            .entry("transcript_path")
+            .or_insert_with(|| Value::String(transcript_path.to_string_lossy().into_owned()));
     }
     Ok(())
 }
