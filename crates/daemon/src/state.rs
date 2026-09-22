@@ -38,10 +38,25 @@ use tokio_util::sync::CancellationToken;
 pub const STATE_VERSION: u32 = 2;
 
 /// The whole state file: format version, the id the next created window gets, and the
-/// windows themselves. `runs` is always empty and always serialized as `[]` in this
-/// milestone — milestone 8 gives it a real element type; here it is opaque JSON so a
-/// newer daemon's runs survive a round trip through an older build without this module
-/// having to know their shape.
+/// windows themselves. This milestone never populates `runs` on its own — a daemon that
+/// has never loaded a file with real content in it writes `[]`, and `create` never adds
+/// anything here either (decision 8; milestone 8 gives this field a real element type
+/// and something that actually writes to it) — but it is opaque JSON, not `()` or a
+/// field this crate omits, precisely so that a *loaded* value survives a round trip
+/// through this build unchanged: `WindowManager::restore` keeps whatever was here
+/// (`Inner.runs`) and `state_snapshot` writes it back verbatim, rather than the module
+/// needing to know the real element type milestone 8 eventually gives it. (Whole-branch-
+/// review Major 2: this rationale used to be false as written — `state_snapshot` zeroed
+/// `runs` and every record's `run` unconditionally, so the first save after loading a
+/// file with real content in either erased it. Fixed at the `WindowManager` layer, not
+/// here — this module's own `load`/`save` round trip was already faithful; see
+/// `manager/restore.rs`.)
+///
+/// `STATE_VERSION` does not need to change for this: the whole point of keeping both
+/// fields opaque is that carrying them through verbatim needs no knowledge of their
+/// shape, so nothing about *this* fix depends on the format version at all. A version
+/// bump remains milestone 8's call to make, if and when it gives `runs`/`run` an actual
+/// schema this module needs to validate against.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StateFile {
     pub version: u32,

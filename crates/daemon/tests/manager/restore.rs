@@ -47,6 +47,63 @@ async fn a_null_project_survives_a_restore_and_state_snapshot_cycle_still_null()
     );
 }
 
+/// Whole-branch-review Major 2: `state.rs`'s own forward-compatibility rationale for
+/// carrying `runs`/`run` as opaque JSON is "a newer daemon's runs survive a round trip
+/// through an older build without this module having to know their shape" — but
+/// `state_snapshot` used to write `runs: Vec::new()` and every record's `run: None`
+/// unconditionally, so the *first save* after loading a file with real `runs`/`run` data
+/// erased it, exactly contradicting that rationale. This pins the fix: both a top-level
+/// `runs` entry and a per-window `run` value must survive load (`restore`) -> save
+/// (`state_snapshot`) -> load again, byte-for-byte, even though this milestone gives
+/// neither field any real meaning of its own yet (decision 8).
+#[tokio::test]
+async fn runs_and_run_survive_a_restore_and_state_snapshot_cycle_unchanged() {
+    let m = manager();
+    let run_value = serde_json::json!({"id": "r1", "label": "keep me", "future_field": 42});
+    let mut record = window_record(1, "has-run", std::env::temp_dir(), None);
+    record.run = Some(run_value.clone());
+    let runs_value = vec![serde_json::json!({"id": "r1", "label": "keep me"})];
+
+    m.restore(StateFile {
+        version: state::STATE_VERSION,
+        next_id: 2,
+        windows: vec![record],
+        runs: runs_value.clone(),
+    });
+
+    let snapshot = m.state_snapshot();
+    assert_eq!(
+        snapshot.runs, runs_value,
+        "top-level `runs` did not survive restore -> state_snapshot unchanged"
+    );
+    let saved_record = snapshot
+        .windows
+        .iter()
+        .find(|w| w.id == 1)
+        .expect("restored record is in the snapshot");
+    assert_eq!(
+        saved_record.run,
+        Some(run_value),
+        "the window's `run` did not survive restore -> state_snapshot unchanged"
+    );
+
+    // And a second restore from that very snapshot must see the same data again —
+    // the actual load -> save -> load shape decision 8's rationale is about.
+    let m2 = manager();
+    m2.restore(snapshot.clone());
+    let round_tripped = m2.state_snapshot();
+    assert_eq!(round_tripped.runs, snapshot.runs);
+    assert_eq!(
+        round_tripped
+            .windows
+            .iter()
+            .find(|w| w.id == 1)
+            .unwrap()
+            .run,
+        saved_record.run
+    );
+}
+
 /// M6.5's headline acceptance test (decision 14): a restored window is listed as exited,
 /// carries its saved identity, is viewable with a placeholder screen, refuses input,
 /// tolerates `kill`, still guards its name against a duplicate `create`, and never lets a

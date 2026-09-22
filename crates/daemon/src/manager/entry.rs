@@ -97,6 +97,13 @@ pub(super) struct Entry {
     pub(super) exit: Option<ExitInfo>,
     pub(super) child_alive: bool,
     pub(super) process: Process,
+    /// The loaded `WindowRecord.run` this window's entry came in with, kept opaque and
+    /// carried verbatim (whole-branch-review Major 2). This milestone gives it no
+    /// meaning of its own (decision 8) — `None` for every window `create` makes — but
+    /// `state.rs`'s own forward-compatibility rationale for typing `run` as opaque JSON
+    /// only holds if a value loaded from a newer daemon's file survives back out to
+    /// `state_snapshot` unchanged instead of being zeroed on the first save.
+    pub(super) run: Option<serde_json::Value>,
 }
 
 impl Entry {
@@ -274,6 +281,15 @@ pub(super) struct Inner {
     /// that no longer has one. `tick` prunes finished entries the same way it prunes
     /// `cleanups`.
     pub(super) orphaned_cleanups: Vec<watch::Receiver<bool>>,
+    /// The loaded state file's top-level `runs`, kept opaque and carried verbatim
+    /// (whole-branch-review Major 2), for the same reason as `Entry.run` above: this
+    /// milestone never populates or reads it (decision 8), but `restore` must not
+    /// silently drop what a newer daemon's file put here, or the first `state_snapshot`
+    /// after loading would erase it instead of round-tripping it unchanged. Overwritten,
+    /// not merged, on every `restore` call — the same "the loaded file is the new
+    /// starting point" treatment `next_id` gets, since `restore` runs once at startup in
+    /// production and this field has no shape of its own for this module to merge by.
+    pub(super) runs: Vec<serde_json::Value>,
 }
 
 impl Inner {

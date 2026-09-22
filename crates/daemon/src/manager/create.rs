@@ -290,6 +290,7 @@ impl WindowManager {
             exit: None,
             child_alive: true,
             process: Process::Live(window),
+            run: None,
         };
         let info = entry.info(now);
         tracing::info!(

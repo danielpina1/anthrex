@@ -285,6 +285,7 @@ impl WindowManager {
                 reserved_worktrees: BTreeSet::new(),
                 cleanups: BTreeMap::new(),
                 orphaned_cleanups: Vec::new(),
+                runs: Vec::new(),
             }),
             changed,
             events,

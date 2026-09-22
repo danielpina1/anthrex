@@ -98,7 +98,7 @@ impl WindowManager {
                 session_id,
                 created_at,
                 status: _saved_status,
-                run: _,
+                run,
             } = record;
 
             if inner.entries.contains_key(&id) {
@@ -225,6 +225,9 @@ impl WindowManager {
                     cols: RESTORED_SIZE.0,
                     rows: RESTORED_SIZE.1,
                 },
+                // Whole-branch-review Major 2: carried verbatim, not discarded — see
+                // `Entry.run`'s own doc comment.
+                run,
             };
 
             next_id = next_id.max(id.saturating_add(1));
@@ -232,14 +235,25 @@ impl WindowManager {
         }
 
         inner.next_id = next_id.max(state.next_id);
+        // Whole-branch-review Major 2: see `Inner.runs`'s own doc comment. Overwrites
+        // rather than extends — `restore` runs once at startup in production, and a
+        // test calling it more than once is building up a fresh scenario each time, not
+        // accumulating history this module has no way to deduplicate anyway (the
+        // elements are opaque `serde_json::Value`s with no id this module understands).
+        inner.runs = state.runs;
         self.publish(&inner);
     }
 
     /// A clone of the live window table as a [`StateFile`] (decision 9), taken under the
     /// manager lock with no I/O of any kind — every field below is already resident in
-    /// `Entry`, `Entry.spec` or `Entry.state`, so this is a handful of clones, not a
-    /// filesystem call. `runs` is always empty and every record's `run` is always `null`
-    /// in this milestone (decision 8); milestone 8 gives them real content.
+    /// `Entry`, `Entry.spec`, `Entry.state` or `Inner` itself, so this is a handful of
+    /// clones, not a filesystem call. This milestone never gives `runs` or `run` any
+    /// meaning of its own (decision 8) — neither is read anywhere, and `create` always
+    /// leaves `Entry.run` `None` — but whole-branch-review Major 2 established that
+    /// "never given meaning" must not mean "discarded": both are written back exactly as
+    /// `restore` last saw them (`Inner.runs`, `Entry.run`), which is what makes
+    /// `state.rs`'s own forward-compatibility rationale for typing them as opaque JSON
+    /// actually true.
     pub fn state_snapshot(&self) -> StateFile {
         let inner = crate::lock(&self.inner);
         let windows = inner
@@ -270,14 +284,14 @@ impl WindowManager {
                     .unwrap_or_default()
                     .as_secs(),
                 status: entry.status,
-                run: None,
+                run: entry.run.clone(),
             })
             .collect();
         StateFile {
             version: state::STATE_VERSION,
             next_id: inner.next_id,
             windows,
-            runs: Vec::new(),
+            runs: inner.runs.clone(),
         }
     }
 }
