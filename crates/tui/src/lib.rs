@@ -313,12 +313,28 @@ impl ConnectionDriver {
     }
 
     /// `Effect::Reconnect` (decision 32, `C-b r`): starts an attempt at once and opens
-    /// a fresh 30 s window, unless one is already in flight.
+    /// a fresh 30 s window.
+    ///
+    /// Fix wave 10, item 2: the user's intent in pressing `C-b r` is "try now, and
+    /// start the daemon if it is not running" — decision 32's whole reason a manual
+    /// attempt is allowed to carry `daemon_exe` where an automatic one never does. If
+    /// an automatic retry (spawned by the "due" branch in `step`, always with
+    /// `daemon_exe: None` per decision 31) is already running, that in-flight attempt
+    /// cannot be handed this press's `daemon_exe` after the fact — a running future's
+    /// captured arguments cannot be mutated, and reworking `reconnect::attempt` to poll
+    /// a late-bound signal is a bigger change than this fix needs. So this press
+    /// supersedes it instead: abort the stale attempt and spawn a fresh one that
+    /// actually carries `daemon_exe`. The stale attempt was never going to start the
+    /// daemon anyway (it is automatic), so it has nothing this fresh one loses by being
+    /// replaced; `JoinHandle::abort` (AGENTS.md's own facts-learned-the-hard-way) takes
+    /// effect at the aborted task's next yield point, and its `Connection`, if it had
+    /// already connected, still drops and cleans itself up normally.
     fn reconnect_now(&mut self, socket: &Path, daemon_exe: Option<PathBuf>) {
         self.schedule = Some(reconnect::RetrySchedule::manual(Instant::now()));
-        if self.inflight.is_none() {
-            self.inflight = Some(spawn_attempt(socket.to_path_buf(), daemon_exe));
+        if let Some(stale) = self.inflight.take() {
+            stale.abort();
         }
+        self.inflight = Some(spawn_attempt(socket.to_path_buf(), daemon_exe));
     }
 }
 

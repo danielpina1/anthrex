@@ -116,3 +116,102 @@ async fn drives_a_real_reconnect_twice() {
         );
     }
 }
+
+/// Fix wave 10, item 2: `C-b r` while an automatic retry (`daemon_exe: None`) is
+/// already in flight used to just reset the schedule and leave that stale attempt
+/// running, silently dropping this press's "start the daemon if it is not running"
+/// intent for the whole cycle. `reconnect_now` must instead supersede it: abort the
+/// stale attempt and spawn a fresh one that actually carries `daemon_exe`.
+///
+/// Deterministic, not timing luck: the stale attempt is controlled by a `oneshot`
+/// receiver that is never sent to, so it is provably still in flight (not finished on
+/// its own) at the moment `reconnect_now` is called — no race against when it happens
+/// to complete.
+#[tokio::test]
+async fn reconnect_now_supersedes_an_in_flight_automatic_attempt() {
+    let _env_guard = crate::ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let data_dir = dir.path().join("data");
+    // Nothing ever listens here; `reconnect::attempt`'s own `Connection::connect` must
+    // fail so the only way `daemon_exe` can be observed is via `ensure_daemon` actually
+    // trying to start it.
+    let socket = dir.path().join("d.sock");
+
+    // SAFETY: serialized by `ENV_LOCK`; nothing else in this process reads the
+    // variable concurrently.
+    unsafe { std::env::set_var("ANTHREX_DATA_DIR", &data_dir) };
+
+    // Stands in for the real `anthrex` binary: records that it was launched as
+    // `daemon start --foreground`, which is the one observable proof that this
+    // press's `daemon_exe` reached a real attempt, then exits without binding the
+    // socket (so `ensure_daemon`'s own poll just runs out its 3s budget harmlessly).
+    let marker = dir.path().join("started.log");
+    let script = dir.path().join("fake_daemon.sh");
+    std::fs::write(
+        &script,
+        format!("#!/bin/sh\necho invoked >> {:?}\nexit 0\n", marker),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let mut driver = ConnectionDriver::new();
+
+    // A stale automatic attempt, already in flight, that never resolves on its own —
+    // the `_release_tx` sender is held but never sent on, so `release_rx.await` blocks
+    // for as long as the task survives.
+    let (_release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+    let stale = tokio::spawn(async move {
+        let _ = release_rx.await;
+        unreachable!("the stale attempt must be aborted, never run to completion");
+    });
+    let stale_abort = stale.abort_handle();
+    driver.inflight = Some(stale);
+
+    // The manual press.
+    driver.reconnect_now(&socket, Some(script.clone()));
+
+    // The stale attempt must have been superseded (aborted), not left running to
+    // decide this cycle on its own. `abort()` takes effect at its next yield point
+    // (AGENTS.md's own facts-learned-the-hard-way), so poll for it rather than assume
+    // one `yield_now` is enough.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if stale_abort.is_finished() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the stale in-flight attempt was never aborted"
+        );
+        tokio::task::yield_now().await;
+    }
+
+    // The fresh attempt this press spawned must actually try to start the daemon —
+    // wait for its spawned child to prove it, not just for `reconnect_now` to return
+    // (which only spawns the attempt task; it does not wait for it).
+    let marker_deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if marker.exists() {
+            break;
+        }
+        assert!(
+            Instant::now() < marker_deadline,
+            "the manual press's own attempt never tried to start the daemon — \
+             daemon_exe was lost"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    // SAFETY: see above.
+    unsafe { std::env::remove_var("ANTHREX_DATA_DIR") };
+
+    // Let the fresh attempt finish on its own (the stub never binds the socket, so it
+    // eventually times out) so nothing of this test's outlives it.
+    if let Some(inflight) = driver.inflight.take() {
+        let _ = tokio::time::timeout(Duration::from_secs(5), inflight).await;
+    }
+}
