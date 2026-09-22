@@ -2,9 +2,9 @@ mod forest;
 mod names;
 mod rows;
 
-use proto::{Runtime, Status, SubagentInfo, WindowInfo};
 pub use forest::{SubagentNode, subagent_forest};
 pub use names::display_names;
+use proto::{Runtime, Status, SubagentInfo, WindowInfo};
 use rows::{SubagentWalk, emit_subagents, guide_prefix, visible_windows};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

@@ -512,13 +512,22 @@ mod tests {
         let prefix = key(KeyCode::Char('b'), KeyModifiers::CONTROL);
 
         for (k, command) in [
-            (key(KeyCode::Char(','), KeyModifiers::NONE), Command::RenameWindow),
+            (
+                key(KeyCode::Char(','), KeyModifiers::NONE),
+                Command::RenameWindow,
+            ),
             (
                 key(KeyCode::Char('R'), KeyModifiers::SHIFT),
                 Command::RestartWindow,
             ),
-            (key(KeyCode::Char('R'), KeyModifiers::NONE), Command::RestartWindow),
-            (key(KeyCode::Char('r'), KeyModifiers::NONE), Command::Reconnect),
+            (
+                key(KeyCode::Char('R'), KeyModifiers::NONE),
+                Command::RestartWindow,
+            ),
+            (
+                key(KeyCode::Char('r'), KeyModifiers::NONE),
+                Command::Reconnect,
+            ),
         ] {
             assert_eq!(km.handle(prefix, false), KeyAction::AwaitPrefix);
             assert_eq!(km.handle(k, false), KeyAction::Run(command));

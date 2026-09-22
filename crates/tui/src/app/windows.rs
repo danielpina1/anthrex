@@ -28,7 +28,10 @@ impl App {
         {
             visible[(current as isize + delta).rem_euclid(len) as usize]
         } else {
-            let expanded = tree::agent_order(&tree::build(&self.windows, &crate::tree::TreeState::default()));
+            let expanded = tree::agent_order(&tree::build(
+                &self.windows,
+                &crate::tree::TreeState::default(),
+            ));
             let current = self
                 .focused
                 .and_then(|id| expanded.iter().position(|candidate| *candidate == id));

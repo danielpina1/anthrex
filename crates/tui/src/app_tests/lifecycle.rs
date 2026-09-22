@@ -88,7 +88,10 @@ fn rename_prompt_checks_before_sending() {
         press(&mut app, KeyCode::Char('a'), KeyModifiers::NONE);
     }
     assert!(press(&mut app, KeyCode::Enter, KeyModifiers::NONE).is_empty());
-    assert!(matches!(app.modal, Some(Modal::Rename(_))), "modal stays open");
+    assert!(
+        matches!(app.modal, Some(Modal::Rename(_))),
+        "modal stays open"
+    );
     assert_eq!(
         rename_prompt(&app).error.as_deref(),
         Some("name must be at most 64 characters")
@@ -112,7 +115,10 @@ fn restart_of_an_exited_window_is_immediate() {
 /// `y`-time, because focus can move while the dialog is open.
 #[test]
 fn restart_of_a_live_window_asks_first() {
-    let mut app = app_with(vec![win(1, "api", Status::Working), win(2, "web", Status::Idle)]);
+    let mut app = app_with(vec![
+        win(1, "api", Status::Working),
+        win(2, "web", Status::Idle),
+    ]);
     prefix(&mut app);
     assert!(press(&mut app, KeyCode::Char('R'), KeyModifiers::SHIFT).is_empty());
     assert!(matches!(
@@ -212,7 +218,10 @@ fn stop_daemon_times_out() {
     );
 
     // A second C-b Q is possible once the timeout has cleared `stopping`.
-    assert!(app.on_link_lost().is_empty(), "the timeout already ended the wait");
+    assert!(
+        app.on_link_lost().is_empty(),
+        "the timeout already ended the wait"
+    );
 }
 
 /// The other half of finding A's fix (`lib.rs`'s disconnect toast was hard-coded to
