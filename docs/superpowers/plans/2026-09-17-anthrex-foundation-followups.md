@@ -354,3 +354,16 @@ up whenever TUI clock injection or manager lock instrumentation is next in scope
   its own. Worth folding into `DAEMON_STOP_CMD_TIMEOUT` (or its own named constant) and
   the same `try`/`except` the fix pass added to `run_cmd`, the next time this file is
   touched for timing reasons.
+
+## From milestone 6's final verification
+
+- `server_git.rs::two_windows_in_one_worktree_register_once` failed once under contention from
+  parallel test binaries during milestone 6's last fix wave, and passed in isolation immediately
+  after. Same class as the bounds recorded in `docs/timing-budgets.md`. Three consecutive
+  `cargo test --workspace --no-fail-fast` runs on an idle host were clean (41 binaries, 855
+  passed), so it is intermittent rather than persistent.
+- **`cargo test --workspace` fail-fast truncates the result lines.** When a binary fails, later
+  binaries never run and never report, so a run that hit the flake above produced 28-29
+  `test result:` lines instead of 41. Two separate parties read those truncated counts as a
+  missing-tests discrepancy and spent effort reconciling it. Anyone counting tests on this repo
+  should pass `--no-fail-fast` and capture the exit code without a pipe in between.
