@@ -9,7 +9,7 @@
 
 use crate::manager::{CONVERSATION_GONE, WindowManager};
 use proto::DaemonMsg;
-use proto::conversation::GONE_WINDOW_REMOVED;
+use proto::conversation::{GONE_TOO_LARGE, GONE_WINDOW_REMOVED};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
@@ -149,6 +149,7 @@ async fn run(
             },
         };
         for message in outgoing {
+            let message = fit_in_frame(&mut subs, message);
             // Task M6.5.1's envelope invariant, checked on everything this task sends.
             debug_assert!(message.conversation_envelope_is_consistent(), "{message:?}");
             if out.send(message).await.is_err() {
@@ -238,4 +239,66 @@ fn window_gone(subs: &mut Subscriptions, window_id: u32) -> Vec<DaemonMsg> {
             }
         })
         .collect()
+}
+
+/// Room a snapshot's or delta's own fields take beside its turns: field names, the
+/// window id, revisions, the degrade reason and drop counts, all small and fixed.
+const ENVELOPE: usize = 1024;
+/// A generous bound on one encoded `TurnPatch::Drop`.
+const DROP_PATCH: usize = 64;
+
+/// A snapshot or delta that cannot be encoded into one frame becomes
+/// `ConversationGone { GONE_TOO_LARGE }`, recorded so the viewer is given back (task
+/// M6.5.10 review F1). `byte_size` is an upper bound on the encoding, so the message is
+/// encoded to check only when that bound does not already prove it fits.
+fn fit_in_frame(subs: &mut Subscriptions, message: DaemonMsg) -> DaemonMsg {
+    let (window_id, agent_id, bound) = match &message {
+        DaemonMsg::ConversationSnapshot {
+            window_id,
+            agent_id,
+            conversation,
+        } => (
+            *window_id,
+            agent_id.clone(),
+            conversation.byte_size()
+                + 2 * agent_id.as_ref().map_or(0, String::len)
+                + conversation.session_id.as_ref().map_or(0, String::len),
+        ),
+        DaemonMsg::ConversationDelta {
+            window_id,
+            agent_id,
+            turns,
+            session_id,
+            ..
+        } => (
+            *window_id,
+            agent_id.clone(),
+            turns
+                .iter()
+                .map(|patch| match patch {
+                    proto::TurnPatch::Upsert(turn) => turn.byte_size(),
+                    proto::TurnPatch::Drop { .. } => DROP_PATCH,
+                })
+                .sum::<usize>()
+                + agent_id.as_ref().map_or(0, String::len)
+                + session_id.as_ref().map_or(0, String::len),
+        ),
+        _ => return message,
+    };
+    if bound + ENVELOPE <= proto::MAX_FRAME || proto::encode(&message).is_ok() {
+        return message;
+    }
+    tracing::warn!(
+        window_id,
+        ?agent_id,
+        bound,
+        "conversation too large for one frame"
+    );
+    let gone = DaemonMsg::ConversationGone {
+        window_id,
+        agent_id: agent_id.clone(),
+        reason: GONE_TOO_LARGE.to_string(),
+    };
+    subs.record((window_id, agent_id), &gone);
+    gone
 }

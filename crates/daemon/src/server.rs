@@ -242,8 +242,15 @@ async fn handle_client(
     let (out_tx, mut out_rx) = mpsc::channel::<DaemonMsg>(256);
     let writer: JoinHandle<()> = tokio::spawn(async move {
         while let Some(msg) = out_rx.recv().await {
-            if write_frame(&mut wr, &msg).await.is_err() {
-                break;
+            match write_frame(&mut wr, &msg).await {
+                Ok(()) => {}
+                // `encode` refuses before a byte is written, so skipping this one message
+                // leaves the framing intact; ending here would cost the client its whole
+                // connection for one oversized message (task M6.5.10 review F1).
+                Err(proto::CodecError::TooLarge(bytes)) => {
+                    tracing::warn!(bytes, "dropped a message larger than MAX_FRAME")
+                }
+                Err(_) => break,
             }
         }
     });

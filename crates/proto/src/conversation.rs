@@ -182,6 +182,9 @@ pub const BLOCK_OVERHEAD: usize = 144;
 pub const GONE_WINDOW_REMOVED: &str = "window removed";
 pub const GONE_SUBAGENT_UNKNOWN: &str = "no such sub-agent in this window";
 pub const GONE_WINDOW_UNKNOWN: &str = "no such window";
+/// The daemon could not fit this conversation, or the change to it, in one frame
+/// (`codec::MAX_FRAME`), and has ended the subscription rather than the connection.
+pub const GONE_TOO_LARGE: &str = "conversation too large to send";
 
 /// An upper bound on a `serde_json::Value`'s MessagePack encoding, which is what a
 /// frame carries: every number as 9 bytes (a marker and an 8-byte float or integer),
