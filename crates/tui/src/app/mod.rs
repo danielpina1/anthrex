@@ -497,27 +497,8 @@ impl App {
                 vec![]
             }
             Command::RestartWindow => self.restart_focused(),
-            // Decision 23's connected half: a no-op affirmation, unchanged from
-            // M6.10. Decision 32's disconnected half: starts an attempt at once,
-            // opening a fresh 30 s window; `lib.rs` is the one that actually checks
-            // "unless one is already in flight" (`App` has no visibility into the
-            // event loop's in-flight task) before spawning it.
-            Command::Reconnect => {
-                if self.connected() {
-                    self.toast("connected");
-                    vec![]
-                } else {
-                    let reason = match &self.link {
-                        Link::Reconnecting { reason, .. } | Link::Lost { reason } => reason.clone(),
-                        Link::Connected => String::new(),
-                    };
-                    self.link = Link::Reconnecting {
-                        attempts: 0,
-                        reason,
-                    };
-                    vec![Effect::Reconnect]
-                }
-            }
+            // `C-b r`: `link::reconnect_command` (decisions 23 and 32).
+            Command::Reconnect => self.reconnect_command(),
             cmd @ (Command::ToggleTree
             | Command::ToggleOverview
             | Command::NarrowSidebar
@@ -577,22 +558,8 @@ impl App {
         // Decision 36: the third of the three ways `C-b Q`'s wait can end — nothing
         // arrived at all within `link::STOPPING_TIMEOUT`.
         self.check_stopping_timeout();
-        // Decision 35: a full outgoing queue drops a `Subscribe` silently (`Input`
-        // does the same on every keystroke, so this is the one command worth
-        // retrying instead of leaving the user stuck on a stale screen); retried here
-        // every 100 ms until it drains, i.e. until `subscribed` catches up with
-        // `focused` again.
-        if self.connected()
-            && let Some(id) = self.focused
-            && self.subscribed != Some(id)
-        {
-            let (cols, rows) = self.term_size;
-            self.subscribed = Some(id);
-            return vec![Effect::Send(ClientMsg::Subscribe {
-                window_id: id,
-                cols,
-                rows,
-            })];
+        if let Some(effect) = self.retry_dropped_subscribe() {
+            return vec![effect];
         }
         if self
             .pending_resize

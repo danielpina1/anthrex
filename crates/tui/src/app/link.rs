@@ -51,6 +51,48 @@ impl App {
         matches!(self.link, Link::Connected)
     }
 
+    /// `C-b r` (decisions 23 and 32). Connected, it is a no-op affirmation. Not
+    /// connected, it starts an attempt at once and opens a fresh 30 s window —
+    /// `lib.rs` is the one that actually checks "unless one is already in flight"
+    /// before spawning it, since `App` has no visibility into the event loop's
+    /// in-flight task.
+    pub(super) fn reconnect_command(&mut self) -> Vec<Effect> {
+        if self.connected() {
+            self.toast("connected");
+            return vec![];
+        }
+        let reason = match &self.link {
+            Link::Reconnecting { reason, .. } | Link::Lost { reason } => reason.clone(),
+            Link::Connected => String::new(),
+        };
+        self.link = Link::Reconnecting {
+            attempts: 0,
+            reason,
+        };
+        vec![Effect::Reconnect]
+    }
+
+    /// `on_tick`'s decision 35 share: a full outgoing queue drops a `Subscribe`
+    /// silently (`Input` does the same on every keystroke, so this is the one
+    /// command worth retrying instead of leaving the user stuck on a stale screen);
+    /// retried every 100 ms until it drains, i.e. until `subscribed` catches up with
+    /// `focused` again.
+    pub(super) fn retry_dropped_subscribe(&mut self) -> Option<Effect> {
+        if self.connected()
+            && let Some(id) = self.focused
+            && self.subscribed != Some(id)
+        {
+            let (cols, rows) = self.term_size;
+            self.subscribed = Some(id);
+            return Some(Effect::Send(ClientMsg::Subscribe {
+                window_id: id,
+                cols,
+                rows,
+            }));
+        }
+        None
+    }
+
     /// Called by the event loop when the daemon closes the connection or the socket
     /// otherwise drops — never when `DaemonMsg::Bye` merely *arrives* (see this
     /// module's doc comment on why those are different events). `reason` is the last
