@@ -38,6 +38,13 @@ pub const TRANSCRIPT_LINE_MAX: usize = 4 * 1024 * 1024;
 /// deadline; the pass as a whole is bounded by `TRANSCRIPT_READ_BUDGET`.
 const CHUNK: usize = 64 * 1024;
 
+/// Flags beyond read-only for every open of the transcript path. `O_NONBLOCK`: a FIFO
+/// planted at the path cannot hang the blocking thread in `open`; for a regular file it
+/// changes nothing. `O_NOCTTY` (task M6.5.10 review F5): a terminal device at the path
+/// can never become the daemon's controlling terminal, which on Linux an `open` without
+/// it can do. Anything that is not a regular file is then refused by `fstat`.
+const OPEN_FLAGS: i32 = libc::O_NONBLOCK | libc::O_NOCTTY;
+
 /// What the tail knows about the file's format.
 #[derive(Debug)]
 enum Format {
@@ -116,11 +123,9 @@ impl Tail {
 
     fn read_more_until(&mut self, parser: &dyn TranscriptParser, deadline: Instant) -> ReadOutcome {
         let mut outcome = ReadOutcome::default();
-        // Non-blocking, so a FIFO planted at the path cannot hang the blocking thread in
-        // `open`; for a regular file the flag changes nothing.
         let file = std::fs::OpenOptions::new()
             .read(true)
-            .custom_flags(libc::O_NONBLOCK)
+            .custom_flags(OPEN_FLAGS)
             .open(&self.path);
         let Ok(mut file) = file else {
             return self.finish(outcome, Some(DegradeReason::Unreadable));

@@ -461,3 +461,12 @@ fn a_codex_response_item_without_a_payload_degrades_bad_record() {
     let outcome = Tail::new(path).read_more(codex);
     assert_eq!(outcome.degraded, Some(DegradeReason::BadRecord));
 }
+
+/// Review F5. On macOS, the platform these tests run on, opening a terminal never makes
+/// it the controlling terminal (only `TIOCSCTTY` does), so no file this test could build
+/// behaves differently without the flag; the flag itself is pinned instead.
+#[test]
+fn the_transcript_is_opened_without_becoming_a_controlling_terminal() {
+    assert_eq!(OPEN_FLAGS & libc::O_NOCTTY, libc::O_NOCTTY);
+    assert_eq!(OPEN_FLAGS & libc::O_NONBLOCK, libc::O_NONBLOCK);
+}
