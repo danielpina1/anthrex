@@ -343,8 +343,10 @@ class PtyProc:
             pass
 
 
-def run_cmd(args, expect_ok=True, timeout=15):
-    result = subprocess.run([BIN] + args, cwd=REPO, env=ENV, capture_output=True, text=True, timeout=timeout)
+def run_cmd(args, expect_ok=True, timeout=15, env=None):
+    result = subprocess.run(
+        [BIN] + args, cwd=REPO, env=env if env is not None else ENV, capture_output=True, text=True, timeout=timeout
+    )
     if expect_ok and result.returncode != 0:
         fail(f"`anthrex {' '.join(args)}` exited {result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}")
     return result
@@ -642,6 +644,241 @@ def run_worktree_form_stage(repo):
         fail(f"worktree-form detach did not exit cleanly with status 0 (raw status {status})")
     proc.close()
     print("ok: the new-agent form created a worktree, a dirty removal was refused, then forced")
+
+
+# fix-wave-11 review: this milestone's headline feature - restarting a Claude or Codex
+# window and resuming its prior session - had no end-to-end coverage anywhere. Stage 10
+# above only ever restarts a `shell`, which has no session identity at all, so it is
+# structurally incapable of reaching `manager/restore.rs`/`restart.rs`'s real
+# `session_id` logic. `run_resume_stage` below closes that gap using a fake runtime
+# script (never a real agent - this suite's own rule, and the pattern task M6.7
+# established for `crates/daemon/tests/lifecycle.rs`'s
+# `restart_resumes_claude_and_codex_sessions`, replayed here against the real `anthrex`
+# binary and a real daemon process instead of `daemon::run` called in-process).
+ANTHREX_CONFIG_PATH = ENV["ANTHREX_CONFIG"]
+RESUME_CONFIG_DIR = os.path.dirname(ANTHREX_CONFIG_PATH)
+
+
+def _write_resume_runtime_script(resume_dir):
+    """A fake `claude`/`codex` binary: prints every argument it is given to a
+    per-window log file, then blocks with `exec sleep 60` so the window stays alive
+    to be restarted later. `--version` is answered directly and fast, the same
+    special case `fake-agent` makes for itself (`crates/fake-agent/src/main.rs`) for
+    the same reason: `crates/daemon/src/lifecycle/codex_version.rs`'s startup probe
+    runs this binary with `--version` before any window launch is accepted, and
+    without a fast, successful reply every daemon start below would stall for that
+    probe's own 5s timeout.
+    """
+    script_path = os.path.join(resume_dir, "resume-runtime.sh")
+    with open(script_path, "w", encoding="utf-8") as handle:
+        handle.write(
+            "#!/bin/sh\n"
+            'if [ "$1" = "--version" ]; then\n'
+            "  printf 'codex-cli 0.155.0\\n'\n"
+            "  exit 0\n"
+            "fi\n"
+            f'out="{resume_dir}/argv-$ANTHREX_WINDOW_ID.log"\n'
+            "{\n"
+            "  printf 'ARGV:'\n"
+            "  for a in \"$@\"; do printf ' [%s]' \"$a\"; done\n"
+            "  printf '\\n'\n"
+            "} > \"$out\"\n"
+            "printf 'READY\\n'\n"
+            "exec sleep 60\n"
+        )
+    os.chmod(script_path, 0o755)
+    return script_path
+
+
+def run_hook(window_id, source, payload, timeout=10):
+    """Fires a real hook the way a real agent's own hook command would: a real
+    `anthrex hook` child process, over the real socket - the same mechanism
+    `crates/cli/tests/persistence.rs`'s `session_id_learned_from_a_hook_is_saved`
+    checks at the Rust integration level, driven here from outside the window's own
+    process (the fake runtime script above never fires a hook itself) rather than
+    from within a scripted fake agent. `anthrex hook` always exits 0 regardless of
+    whether the daemon actually accepted the payload (`crates/cli/src/hook.rs`'s own
+    "the caller always exits zero afterwards"), so a nonzero exit here is a distinct,
+    earlier failure - process spawn, argument parsing - not evidence either way about
+    whether the daemon learned the session id; that is checked separately by
+    `wait_for_session_id`.
+    """
+    result = subprocess.run(
+        [BIN, "hook", "--window", str(window_id), "--source", source, json.dumps(payload)],
+        cwd=REPO,
+        env=ENV,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    if result.returncode != 0:
+        fail(
+            f"`anthrex hook --window {window_id} --source {source}` exited "
+            f"{result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+
+
+def wait_for_session_id(window_id, expected, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    seen = None
+    while time.monotonic() < deadline:
+        windows = json.loads(run_cmd(["ls", "--json"]).stdout)
+        window = next((w for w in windows if w["id"] == window_id), None)
+        seen = window.get("session_id") if window else None
+        if seen == expected:
+            return
+        time.sleep(0.1)
+    fail(f"window {window_id} never reported session_id {expected!r} (last saw {seen!r})")
+
+
+def wait_for_argv_log(path, timeout=10.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as handle:
+                content = handle.read()
+            if content:
+                return content
+        time.sleep(0.1)
+    fail(f"{path} never appeared with content within {timeout}s")
+
+
+def run_resume_stage():
+    """Covers the restore-to-argv path for both runtime shapes: create a window on a
+    fake runtime, give it a session id the way the daemon actually learns one (a real
+    `SessionStart` hook), stop and restart the daemon so the window is restored from
+    `state.json`, restart the window, and assert the resumed process's argv carries
+    `--resume <session>` (Claude, design decision 15) or a trailing `resume <session>`
+    (Codex, design decision 16), with the original prompt gone either way.
+
+    `runtimes.claude.command`/`runtimes.codex.command` must be resolved from
+    `config.toml` at `ANTHREX_CONFIG`, not from `ANTHREX_CLAUDE_BIN`/`ANTHREX_CODEX_BIN`
+    - config decision 6's precedence puts the environment variables first, and every
+    other stage in this suite relies on exactly that override (`ANTHREX_CLAUDE_BIN`/
+    `ANTHREX_CODEX_BIN` point at `FAKE_AGENT_BIN` for the whole module). This stage's
+    own daemon starts below run with those two variables removed from the environment,
+    so the config file it writes here is what actually resolves `claude_bin`/
+    `codex_bin` - the same production config path
+    `crates/daemon/tests/lifecycle.rs`'s own `restart_resumes_claude_and_codex_sessions`
+    exercises in-process, replayed here against the real binary.
+
+    Reads the resumed argv from a file the fake runtime script writes, rather than
+    scraping it off the TUI's rendered screen the way most other stages in this file
+    assert things: Claude's `--settings` argument alone is a full JSON blob covering
+    all ten hook events, long enough to wrap across many rows of even a 120-column
+    pane, and this script's reconstructed screen buffer (see the module docstring)
+    has no notion of a soft-wrapped row the way `vt100::Screen::row_wrapped` does -
+    joining its rows with a literal newline would split a wrapped argv line exactly
+    where a substring check needs it whole. The daemon spawn, the socket, the restart
+    and the restore-from-`state.json` this stage exercises are all real regardless of
+    which side effect the assertion reads back.
+    """
+    print("== stage 12b: restart resumes a Claude/Codex window's prior session ==")
+    resume_dir = os.path.join(DATA_DIR, "resume-argv")
+    os.makedirs(resume_dir, exist_ok=True)
+    script_path = _write_resume_runtime_script(resume_dir)
+
+    os.makedirs(RESUME_CONFIG_DIR, exist_ok=True)
+    try:
+        with open(ANTHREX_CONFIG_PATH, "w", encoding="utf-8") as handle:
+            handle.write(
+                f"[runtimes.claude]\ncommand = {json.dumps(script_path)}\n\n"
+                f"[runtimes.codex]\ncommand = {json.dumps(script_path)}\n"
+            )
+
+        resume_env = dict(ENV)
+        resume_env.pop("ANTHREX_CLAUDE_BIN", None)
+        resume_env.pop("ANTHREX_CODEX_BIN", None)
+
+        run_cmd(["daemon", "start"], env=resume_env)
+
+        seed_prompt = "seed prompt must vanish on resume"
+        created_claude = run_cmd(
+            ["new", "--runtime", "claude", "--name", "resume-claude", "--prompt", seed_prompt]
+        )
+        created_codex = run_cmd(
+            ["new", "--runtime", "codex", "--name", "resume-codex", "--prompt", seed_prompt]
+        )
+        try:
+            claude_id = int(created_claude.stdout.strip())
+            codex_id = int(created_codex.stdout.strip())
+        except ValueError:
+            fail(
+                "`anthrex new` did not print a window id for the resume stage: "
+                f"claude={created_claude.stdout!r} codex={created_codex.stdout!r}"
+            )
+
+        claude_log = os.path.join(resume_dir, f"argv-{claude_id}.log")
+        codex_log = os.path.join(resume_dir, f"argv-{codex_id}.log")
+        wait_for_argv_log(claude_log)
+        wait_for_argv_log(codex_log)
+        print("ok: both windows launched through the fake runtime script")
+
+        claude_session = f"resume-claude-session-{claude_id}"
+        codex_session = f"resume-codex-session-{codex_id}"
+        run_hook(claude_id, "claude", {"hook_event_name": "SessionStart", "session_id": claude_session})
+        run_hook(codex_id, "codex-hook", {"hook_event_name": "SessionStart", "session_id": codex_session})
+        wait_for_session_id(claude_id, claude_session)
+        wait_for_session_id(codex_id, codex_session)
+        print("ok: a real SessionStart hook gave both windows a session id")
+
+        # Removed so the post-restart wait below unambiguously observes the *new*
+        # invocation's argv rather than a stale read of this first one's.
+        os.remove(claude_log)
+        os.remove(codex_log)
+
+        run_cmd(["daemon", "stop"])
+        status_result = run_cmd(["daemon", "status"])
+        if "not running" not in status_result.stdout:
+            fail(
+                "`anthrex daemon status` did not report not running ahead of the "
+                f"resume restart:\n{status_result.stdout}"
+            )
+
+        # The restore-from-state.json path (design decision 14): the daemon that
+        # comes back up here has no in-memory record of either window at all: both
+        # entries exist only because `restore()` rebuilt them from `state.json` on
+        # this fresh start, dormant, with the session id the hooks above saved.
+        run_cmd(["daemon", "start"], env=resume_env)
+        run_cmd(["restart", "resume-claude"])
+        run_cmd(["restart", "resume-codex"])
+
+        claude_argv = wait_for_argv_log(claude_log)
+        codex_argv = wait_for_argv_log(codex_log)
+
+        if f"[--resume] [{claude_session}]" not in claude_argv:
+            fail(f"resumed claude argv did not carry --resume {claude_session}:\n{claude_argv}")
+        if f"[--] [{seed_prompt}]" in claude_argv:
+            fail(f"resumed claude argv still carried the original prompt:\n{claude_argv}")
+        # Design decision 16: `resume <id>` must be the trailing pair of Codex's argv,
+        # not merely present anywhere in it - pinned here the same way
+        # `crates/daemon/tests/lifecycle.rs`'s own resume test pins it.
+        if not codex_argv.strip().endswith(f"[resume] [{codex_session}]"):
+            fail(f"resumed codex argv did not end with resume {codex_session}:\n{codex_argv}")
+        if f"[--] [{seed_prompt}]" in codex_argv:
+            fail(f"resumed codex argv still carried the original prompt:\n{codex_argv}")
+        print(
+            "ok: restarting each window after a daemon restart resumed its session - "
+            "claude via --resume, codex via a trailing resume - with the original "
+            "prompt gone from both"
+        )
+
+        run_cmd(["rm", "resume-claude"])
+        run_cmd(["rm", "resume-codex"])
+        run_cmd(["daemon", "stop"])
+        status_result = run_cmd(["daemon", "status"])
+        if "not running" not in status_result.stdout:
+            fail(
+                "`anthrex daemon status` did not report not running after the resume "
+                f"stage:\n{status_result.stdout}"
+            )
+    finally:
+        # This stage is the only thing in the suite that ever writes a real file to
+        # ANTHREX_CONFIG's fixed path (`ensure_config_path_absent`'s own doc comment
+        # explains why every other stage needs that path to start absent). Removed
+        # here, unconditionally, on every exit from this stage - success or failure -
+        # so this run never poisons the next one.
+        shutil.rmtree(RESUME_CONFIG_DIR, ignore_errors=True)
 
 
 def main():
@@ -950,6 +1187,8 @@ def main():
     if "not running" not in status_result.stdout:
         fail(f"`anthrex daemon status` did not report not running:\n{status_result.stdout}")
     print("ok: daemon stopped and status reports not running")
+
+    run_resume_stage()
 
     print("== stage 13: quit through the TUI with C-b Q ==")
     # The brief's stages 10 and 11 above only ever stop the daemon from the CLI. This
