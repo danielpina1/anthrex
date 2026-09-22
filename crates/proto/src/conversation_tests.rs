@@ -738,4 +738,13 @@ fn conversation_wire_shape_is_stable() {
     let back: DaemonMsg = rmp_serde::from_slice(&packed).unwrap();
     assert_eq!(back, message);
     assert_eq!(serde_json::to_value(back).unwrap(), value);
+    // Tie each wire key to the Rust field it must land in, by name. The comparisons
+    // above cannot do this: json -> struct -> json is a bijection that commutes with a
+    // symmetric rename of two same-typed fields, so swapping the serde names of
+    // `agent_id` and `session_id` leaves every comparison equal.
+    let DaemonMsg::ConversationSnapshot { conversation, .. } = &message else {
+        panic!("not a snapshot");
+    };
+    assert_eq!(conversation.agent_id.as_deref(), Some("agent-3"));
+    assert_eq!(conversation.session_id.as_deref(), Some("sess-9"));
 }
