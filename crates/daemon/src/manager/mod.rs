@@ -380,6 +380,17 @@ impl WindowManager {
 
     /// SIGHUP now, SIGTERM after one second, SIGKILL after three seconds.
     pub fn kill(self: &Arc<Self>, id: u32) -> anyhow::Result<()> {
+        self.kill_reporting_insert(id).map(|_inserted| ())
+    }
+
+    /// Same as [`kill`](Self::kill), but also reports whether this call actually
+    /// inserted a `cleanups[id]` record, rather than finding one already there or
+    /// finding no live child to escalate. `restart.rs`'s `Restarting` guard uses this to
+    /// derive ownership of the record structurally instead of asserting it
+    /// (final-gate finding F1) — see that module's own doc comment for why "did this
+    /// call reach the kill line" and "does this attempt own the record" are not the
+    /// same question.
+    pub(super) fn kill_reporting_insert(self: &Arc<Self>, id: u32) -> anyhow::Result<bool> {
         let mut inner = crate::lock(&self.inner);
         anyhow::ensure!(inner.entries.contains_key(&id), "no window with id {id}");
         inner.start_cleanup(id)

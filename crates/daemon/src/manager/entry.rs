@@ -293,9 +293,16 @@ pub(super) struct Inner {
 }
 
 impl Inner {
-    pub(super) fn start_cleanup(&mut self, id: u32) -> anyhow::Result<()> {
+    /// Returns whether this call actually inserted a `cleanups[id]` record — `false`
+    /// both when one was already there (short-circuited below) and when the window has
+    /// no live child to escalate. Callers that need to know whether *they* now own the
+    /// record under `id` (`restart.rs`'s `Restarting` guard, final-gate finding F1) must
+    /// use this return value rather than assuming that reaching this call at all means
+    /// ownership: an already-occupied `cleanups[id]` belongs to whoever inserted it
+    /// first, and this call does nothing to it either way.
+    pub(super) fn start_cleanup(&mut self, id: u32) -> anyhow::Result<bool> {
         if self.cleanups.contains_key(&id) {
-            return Ok(());
+            return Ok(false);
         }
         let entry = self
             .entries
@@ -305,8 +312,9 @@ impl Inner {
             && let Some(pid) = entry.pid()
         {
             self.cleanups.insert(id, crate::process::escalate(pid)?);
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
 
     /// `restart`'s `finish_restart`: this id's `Process` is about to be swapped for a new

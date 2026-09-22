@@ -169,6 +169,87 @@ async fn a_cwd_bail_before_phase_b_does_not_orphan_an_unrelated_kills_record() {
     );
 }
 
+/// Final-gate finding F1: `phase_b_entered` used to be set unconditionally right
+/// before phase B's `self.kill(id)`, not derived from whether that kill actually
+/// inserted a `cleanups[id]` record. `start_cleanup` (`entry.rs`) returns `Ok(())`
+/// early — inserting nothing — when `cleanups[id]` is already occupied, which happens
+/// whenever an *unrelated*, earlier `kill()` on the same id is still escalating. This
+/// attempt then owns no record at all, yet used to mark itself as having entered phase
+/// B regardless, and `Restarting::drop` evicted the *other* operation's live record on
+/// this attempt's own timeout — exactly the harm the eviction was built to prevent,
+/// just reached by a fifth path instead of the four already named in `restart.rs`'s
+/// module doc comment.
+///
+/// `restart_wait_deadline` is set to 1ms so phase B's wait times out virtually
+/// immediately. Events are deliberately never pumped (same technique as
+/// `a_cwd_bail_before_phase_b_does_not_orphan_an_unrelated_kills_record`), so
+/// `Entry.child_alive` never observes the real process's actual death — without that,
+/// a real shell can die to `SIGHUP` inside the 1ms deadline and `wait_for_exit` would
+/// see `child_alive == false` and return `true` before the deadline is ever checked,
+/// making the restart succeed instead of timing out and turning this into a flaky
+/// test of the wrong path.
+#[tokio::test]
+async fn a_kill_wait_timeout_does_not_orphan_an_unrelated_kills_record() {
+    let mut config = ManagerConfig::new(
+        "/tmp/unused-restart-foreign-record-test.sock".into(),
+        "/bin/sh".into(),
+    );
+    config.restart_wait_deadline = Duration::from_millis(1);
+    let (m, _events) = WindowManager::new(config);
+
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    let info = m
+        .create(
+            spec("foreign-cleanup-record", cwd.clone()),
+            cwd.clone(),
+            None,
+            80,
+            24,
+        )
+        .await
+        .unwrap();
+    let id = info.id;
+    assert!(
+        crate::lock(&m.inner)
+            .entries
+            .get(&id)
+            .is_some_and(|e| e.child_alive),
+        "sanity: the window starts out live"
+    );
+
+    // A separate, unrelated `kill()` — not through `restart` — inserts the cleanup
+    // record this test protects. Its escalation thread is real and will eventually
+    // reap the child; the point is that phase B's own `self.kill(id)` call below finds
+    // `cleanups[id]` already occupied and inserts nothing of its own.
+    m.kill(id).unwrap();
+    assert!(
+        crate::lock(&m.inner).cleanups.contains_key(&id),
+        "sanity: kill() inserted a cleanup record"
+    );
+
+    // `restart_wait_deadline` is 1ms, so phase B's wait times out almost immediately —
+    // this attempt calls `self.kill(id)` (short-circuiting on the unrelated record
+    // above, inserting nothing), then bails with "did not exit" before the child is
+    // actually confirmed gone.
+    let err = m.restart(id).await.unwrap_err();
+    assert!(err.to_string().contains("did not exit"), "{err}");
+
+    // The record belongs to the earlier, unrelated kill() — this restart attempt never
+    // inserted a record of its own, so it must be left exactly where it was, not moved
+    // into `orphaned_cleanups` out from under the operation that actually owns it.
+    let inner = crate::lock(&m.inner);
+    assert!(
+        inner.cleanups.contains_key(&id),
+        "LEAK: cleanups[{id}] (from the unrelated kill) was moved into \
+         orphaned_cleanups by a restart attempt whose own kill inserted nothing"
+    );
+    assert!(
+        inner.orphaned_cleanups.is_empty(),
+        "the unrelated kill()'s record should not have been orphaned"
+    );
+}
+
 /// Whole-branch-review Major 1: decision 19's cwd precondition used to be checked
 /// only in phase C, *after* phase B's kill had already ended the live process — a
 /// restart the user was told was refused had, in fact, destroyed their running
