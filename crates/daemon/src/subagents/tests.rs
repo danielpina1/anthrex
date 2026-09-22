@@ -411,13 +411,16 @@ fn infos_report_seconds_since_start_and_end() {
     assert_eq!(info.ended_secs, Some(5));
 }
 
+/// Wave-1 review finding shape: `SpawnOrigin` carries four fields, two of them
+/// same-typed (`parent_id: Option<String>`, `label: Option<String>`); a transposition
+/// between them must fail this test, so every value here is distinct from every other.
 #[test]
-fn parent_of_returns_the_recorded_parent() {
+fn spawn_origin_returns_the_matched_parent_kind_label_and_model() {
     let base = Instant::now();
     let mut tracker = SubagentTracker::default();
     apply(
         &mut tracker,
-        &spawn(Some("agent-root"), Some("Explore"), "scout"),
+        &spawn(Some("agent-root"), Some("Explore"), "scout-the-repo"),
         base,
     );
     apply(
@@ -425,11 +428,14 @@ fn parent_of_returns_the_recorded_parent() {
         &start("agent-child", Some("Explore")),
         base + Duration::from_secs(1),
     );
-    assert_eq!(
-        tracker.parent_of("agent-child"),
-        Some("agent-root".to_string())
-    );
-    assert_eq!(tracker.parent_of("agent-other"), None);
+
+    let origin = tracker.spawn_origin("agent-child").unwrap();
+    assert_eq!(origin.parent_id.as_deref(), Some("agent-root"));
+    assert_eq!(origin.kind, "Explore");
+    assert_eq!(origin.label.as_deref(), Some("scout-the-repo"));
+    assert_eq!(origin.model.as_deref(), Some("haiku"));
+
+    assert_eq!(tracker.spawn_origin("agent-other"), None);
 }
 
 #[test]

@@ -42,6 +42,18 @@ pub struct SubagentTracker {
     pending: VecDeque<PendingEntry>,
 }
 
+/// What `SubagentTracker::spawn_origin` hands back for one entry: everything
+/// `crate::conversation`'s `SubagentStart` handling needs to place a spawn block in the
+/// right conversation and fill it in, without duplicating the label/model matching this
+/// tracker already did against the `PendingSpawn` at `SubagentStart` time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpawnOrigin {
+    pub parent_id: Option<String>,
+    pub kind: String,
+    pub label: Option<String>,
+    pub model: Option<String>,
+}
+
 impl SubagentTracker {
     pub fn apply(&mut self, runtime: Runtime, hook: &ParsedHook, now: Instant) -> bool {
         let mut changed = false;
@@ -194,14 +206,23 @@ impl SubagentTracker {
             .collect()
     }
 
-    /// The `parent_id` recorded for `id`, or `None` when the id is unknown or has no
-    /// recorded parent. Used by `handle_hook` to place a `SubagentStart` spawn block in
-    /// the right conversation (`crate::conversation`).
-    pub fn parent_of(&self, id: &str) -> Option<String> {
+    /// The full origin recorded for `id` -- its parent, kind, label and model -- or
+    /// `None` when the id is unknown. Used by `handle_hook` to place a `SubagentStart`
+    /// spawn block in the right conversation, with the right label and model
+    /// (`crate::conversation`, task M6.5.6): the matched `PendingSpawn`'s `label` and
+    /// `model` never reached `Block::SubagentSpawn` before this accessor existed,
+    /// because `ParsedHook` carries neither field and `parent_of` (this accessor's
+    /// predecessor) surfaced only the parent id.
+    pub fn spawn_origin(&self, id: &str) -> Option<SpawnOrigin> {
         self.entries
             .iter()
             .find(|entry| entry.id == id)
-            .and_then(|entry| entry.parent_id.clone())
+            .map(|entry| SpawnOrigin {
+                parent_id: entry.parent_id.clone(),
+                kind: entry.kind.clone(),
+                label: entry.label.clone(),
+                model: entry.model.clone(),
+            })
     }
 
     fn entry_mut(&mut self, id: Option<&str>) -> Option<&mut Entry> {

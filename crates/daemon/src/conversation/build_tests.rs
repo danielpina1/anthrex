@@ -393,14 +393,14 @@ fn a_notification_that_is_not_a_permission_prompt_does_nothing() {
     let mut draft = draft();
     let now = Instant::now();
     run(&mut draft, &prompt("looks good"), 1000, now);
-    let before = draft.to_conversation();
+    let before = draft.to_conversation(0, None, 0, None);
 
     let mut notification = hook(HookKind::Notification);
     notification.notification_type = Some("idle_prompt".into());
     let changed = run(&mut draft, &notification, 1001, now);
 
     assert!(!changed);
-    assert_eq!(draft.to_conversation(), before);
+    assert_eq!(draft.to_conversation(0, None, 0, None), before);
 }
 
 #[test]

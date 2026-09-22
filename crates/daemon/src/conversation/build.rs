@@ -5,15 +5,20 @@
 
 use super::{Caps, Draft, summary};
 use crate::hooks::{HookKind, ParsedHook};
+use crate::subagents::SpawnOrigin;
 use proto::{Block, NoticeKind, Role, ToolResult, ToolState, TurnState};
 use std::time::Instant;
 
-/// Applies one hook to `draft`, per the table in the M6.5.5 brief. Returns whether
-/// anything changed.
+/// Applies one hook to `draft`, per the table in the M6.5.5 brief. `spawn` is the
+/// matched `SubagentTracker::spawn_origin` for `hook.agent_id`, resolved by the caller;
+/// it is read only for a `SubagentStart` (task M6.5.6: it carries the `label` and
+/// `model` a `SubagentSpawn` block needs, which `ParsedHook` itself never has). Returns
+/// whether anything changed.
 pub(super) fn apply(
     draft: &mut Draft,
     runtime: proto::Runtime,
     hook: &ParsedHook,
+    spawn: Option<&SpawnOrigin>,
     now_unix_secs: u64,
     now: Instant,
     caps: Caps,
@@ -32,7 +37,7 @@ pub(super) fn apply(
         HookKind::PermissionRequest => permission_request(draft, hook, now_unix_secs),
         HookKind::Notification => notification(draft, hook, now_unix_secs),
         HookKind::Stop | HookKind::SessionEnd | HookKind::TurnComplete => draft.close_open_turn(),
-        HookKind::SubagentStart => subagent_start(draft, hook, now_unix_secs),
+        HookKind::SubagentStart => subagent_start(draft, hook, spawn, now_unix_secs),
         HookKind::SubagentStop => draft.close_open_turn(),
     }
 }
@@ -248,21 +253,39 @@ fn notification(draft: &mut Draft, hook: &ParsedHook, now_unix_secs: u64) -> boo
 /// `apply`'s: applying this same function to the child's own draft would append a
 /// second, spurious spawn block there instead of the parent's.
 ///
-/// `label` and `model` are not populated here: `ParsedHook` carries no field for
-/// either at a `SubagentStart` event (only `agent_id` and `agent_type`, confirmed by
-/// `hooks::tests::sub_agent_fields_are_read`), and the value `SubagentTracker` computed
-/// from the matching `PreToolUse`'s spawn request is not threaded through `on_hook`'s
-/// documented signature (only `spawn_parent` is). See the task report's "Implementation
-/// notes" for this brief gap.
-fn subagent_start(draft: &mut Draft, hook: &ParsedHook, now_unix_secs: u64) -> bool {
+/// `label` and `model` come from `spawn` (task M6.5.6), the caller-resolved
+/// `SubagentTracker::spawn_origin` for `hook.agent_id` -- `ParsedHook` itself carries
+/// neither field at a `SubagentStart` event (only `agent_id` and `agent_type`, confirmed
+/// by `hooks::tests::sub_agent_fields_are_read`). `kind` prefers `spawn.kind`, which the
+/// tracker already derived from `hook.agent_type` with the same `"agent"` fallback this
+/// function used to duplicate; `hook.agent_type` is read directly only when `spawn` is
+/// `None` (an id beyond `MAX_CONVERSATIONS_PER_WINDOW`, or a test driving `apply`
+/// without a tracker), so the fallback exists in exactly one place now.
+fn subagent_start(
+    draft: &mut Draft,
+    hook: &ParsedHook,
+    spawn: Option<&SpawnOrigin>,
+    now_unix_secs: u64,
+) -> bool {
     let agent_id = hook.agent_id.clone().unwrap_or_default();
-    let kind = hook.agent_type.clone().unwrap_or_else(|| "agent".into());
+    let (kind, label, model) = match spawn {
+        Some(origin) => (
+            origin.kind.clone(),
+            origin.label.clone().unwrap_or_default(),
+            origin.model.clone(),
+        ),
+        None => (
+            hook.agent_type.clone().unwrap_or_else(|| "agent".into()),
+            String::new(),
+            None,
+        ),
+    };
     draft.append_to_open_turn(
         Block::SubagentSpawn {
             agent_id,
             kind,
-            label: String::new(),
-            model: None,
+            label,
+            model,
         },
         now_unix_secs,
     );
@@ -280,6 +303,7 @@ fn subagent_start(draft: &mut Draft, hook: &ParsedHook, now_unix_secs: u64) -> b
 mod test_support {
     use super::*;
     use crate::conversation::ConversationSet;
+    use crate::subagents::SpawnOrigin;
     use proto::HookSource;
 
     pub(super) fn hook(kind: HookKind) -> ParsedHook {
@@ -325,12 +349,14 @@ mod test_support {
         Draft::new(4, None, proto::Runtime::Claude)
     }
 
-    /// `apply` against a fresh `Caps::default()`, since most fixtures don't care.
+    /// `apply` against a fresh `Caps::default()` and no spawn origin, since most
+    /// fixtures don't care about either.
     pub(super) fn run(draft: &mut Draft, hook: &ParsedHook, ts: u64, now: Instant) -> bool {
         apply(
             draft,
             proto::Runtime::Claude,
             hook,
+            None,
             ts,
             now,
             Caps::default(),
@@ -344,9 +370,34 @@ mod test_support {
         now: Instant,
         caps: Caps,
     ) -> bool {
-        apply(draft, proto::Runtime::Claude, hook, ts, now, caps)
+        apply(draft, proto::Runtime::Claude, hook, None, ts, now, caps)
     }
 
+    /// `apply` with an explicit spawn origin, for tests pinning `SubagentSpawn`'s
+    /// `label`/`model` (task M6.5.6) rather than routing.
+    pub(super) fn run_spawn(
+        draft: &mut Draft,
+        hook: &ParsedHook,
+        spawn: &SpawnOrigin,
+        ts: u64,
+        now: Instant,
+    ) -> bool {
+        apply(
+            draft,
+            proto::Runtime::Claude,
+            hook,
+            Some(spawn),
+            ts,
+            now,
+            Caps::default(),
+        )
+    }
+
+    /// Drives `ConversationSet::on_hook` with a synthesized `SpawnOrigin` built from
+    /// `parent` and `hook.agent_type` -- reproducing the routing and `kind` fallback
+    /// `on_hook`'s pre-M6.5.6 `spawn_parent: Option<&str>` gave for free, since most of
+    /// this file's `SubagentStart` fixtures only care about routing, not about `label`/
+    /// `model`. Tests that care about the latter use `run_spawn` directly instead.
     pub(super) fn spawn_hook(
         set: &mut ConversationSet,
         hook: &ParsedHook,
@@ -354,10 +405,16 @@ mod test_support {
         ts: u64,
         now: Instant,
     ) -> Vec<Option<String>> {
+        let origin = SpawnOrigin {
+            parent_id: parent.map(str::to_owned),
+            kind: hook.agent_type.clone().unwrap_or_else(|| "agent".into()),
+            label: None,
+            model: None,
+        };
         set.on_hook(
             proto::Runtime::Claude,
             hook,
-            parent,
+            Some(&origin),
             ts,
             now,
             Caps::default(),
@@ -397,3 +454,7 @@ mod tests;
 #[cfg(test)]
 #[path = "match_tool_call_tests.rs"]
 mod match_tool_call_tests;
+
+#[cfg(test)]
+#[path = "spawn_origin_tests.rs"]
+mod spawn_origin_tests;

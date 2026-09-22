@@ -16,7 +16,9 @@ pub use spawn::{
     CODEX_SPAWN_TOOL_ALIAS, CODEX_SPAWN_TYPE_KEY, LABEL_MAX_CHARS, PendingSpawn, make_label,
     spawn_request,
 };
-pub use tracker::{MAX_PENDING_SPAWNS, MAX_SUBAGENTS, SUBAGENT_RETENTION, SubagentTracker};
+pub use tracker::{
+    MAX_PENDING_SPAWNS, MAX_SUBAGENTS, SUBAGENT_RETENTION, SpawnOrigin, SubagentTracker,
+};
 
 #[cfg(test)]
 mod tests;
