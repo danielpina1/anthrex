@@ -10,6 +10,7 @@ use std::time::Instant;
 
 mod build;
 mod enrich;
+mod entry;
 mod store;
 mod summary;
 pub mod watch;

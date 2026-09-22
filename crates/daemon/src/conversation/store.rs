@@ -11,189 +11,15 @@
 //! where that bookkeeping actually lives, one level above `Draft`, not inside it, so a
 //! `Draft` on its own (as `build.rs`'s tests still use it) never has to fake a `rev`.
 
+pub use super::entry::Visible;
+use super::entry::{Entry, compact_patches};
 use super::{Caps, DELTA_HISTORY, Draft, MAX_CONVERSATIONS_PER_WINDOW, enrich};
 use crate::hooks::{HookKind, ParsedHook};
 use crate::subagents::SpawnOrigin;
 use crate::transcript::Record;
-use proto::{DegradeReason, DropCause, TurnPatch};
-use std::collections::{HashMap, VecDeque};
+use proto::{DegradeReason, TurnPatch};
+use std::collections::HashMap;
 use std::time::Instant;
-
-/// One revision's patch batch, tagged with the revision it belongs to so
-/// `delta_since` can select the range it needs out of the ring without also keeping a
-/// separate index.
-#[derive(Debug, Clone)]
-struct PatchBatch {
-    rev: u64,
-    patches: Vec<TurnPatch>,
-}
-
-/// Everything a client can observe of one conversation besides its turns: the fields a
-/// snapshot and a delta both carry at their current values (decision A4, and
-/// `session_id` since task M6.5.10). With the turns, it is the whole of what the one
-/// revision rule compares (see `ConversationSet::mutate`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Visible {
-    pub session_id: Option<String>,
-    pub degraded: Option<DegradeReason>,
-    pub dropped_turns: u32,
-    pub dropped_by: Option<DropCause>,
-}
-
-/// What `ConversationSet::mutate` did: whether the draft's state changed at all, and
-/// whether a client could see it (a new revision).
-struct Mutation {
-    changed: bool,
-    revised: bool,
-}
-
-/// One conversation's full bookkeeping: `draft` is the hook-built timeline; everything
-/// else is this store's own layer on top of it.
-struct Entry {
-    draft: Draft,
-    rev: u64,
-    degraded: Option<DegradeReason>,
-    dropped_turns: u32,
-    dropped_by: Option<DropCause>,
-    /// Whether this conversation *currently* holds a single turn that alone exceeds
-    /// `caps.max_bytes` and was kept anyway (decision A9's "never trimmed to zero").
-    /// Fix round 1, finding F7: recomputed fresh on every `enforce_caps` call (not
-    /// merely set-once-true), so it is a genuine current-state query -- `oversize()`'s
-    /// own doc comment previously warned it could not be used that way.
-    oversize_logged: bool,
-    /// Whether the *current* `oversize_logged == true` streak has already been reported
-    /// through `take_oversize`. Reset to `false` whenever `oversize_logged` goes back to
-    /// `false`, so a later re-entry into oversize is reported again -- "exactly once per
-    /// transition into oversize" (fix round 1, finding F7).
-    oversize_reported: bool,
-    /// The last `DELTA_HISTORY` revisions' patch batches, oldest first.
-    history: VecDeque<PatchBatch>,
-}
-
-impl Entry {
-    /// `degraded` seeds from `ConversationSet::current_degraded` (fix round 1, finding
-    /// F6): a conversation created after the day's last `set_degraded` call used to
-    /// start at `None` regardless and could only ever catch up if `set_degraded` was
-    /// called *again* -- which never happens for a reason that stopped applying between
-    /// calls. Seeding at creation means a late-created conversation is correct from its
-    /// very first revision, with no extra revision bump needed (it starts at `rev 0`
-    /// either way).
-    fn new(draft: Draft, degraded: Option<DegradeReason>) -> Self {
-        Entry {
-            draft,
-            rev: 0,
-            degraded,
-            dropped_turns: 0,
-            dropped_by: None,
-            oversize_logged: false,
-            oversize_reported: false,
-            history: VecDeque::new(),
-        }
-    }
-
-    /// The reason a client sees. The reader's own reason (`degraded`, from
-    /// `set_degraded`) wins when there is one: a file that cannot be read is the more
-    /// fundamental problem. Otherwise a failed alignment check shows as `Misaligned`
-    /// (task M6.5.8). Kept apart from `degraded` so the reader's routine
-    /// `set_degraded(None)` after a clean pass cannot clear the enricher's reason; only
-    /// `reset_enrichment` does.
-    fn degraded(&self) -> Option<DegradeReason> {
-        self.degraded.or(self
-            .draft
-            .enrichment
-            .is_misaligned()
-            .then_some(DegradeReason::Misaligned))
-    }
-
-    fn visible(&self) -> Visible {
-        Visible {
-            session_id: self.draft.session_id.clone(),
-            degraded: self.degraded(),
-            dropped_turns: self.dropped_turns,
-            dropped_by: self.dropped_by,
-        }
-    }
-
-    fn snapshot(&self) -> proto::Conversation {
-        self.draft.to_conversation(
-            self.rev,
-            self.degraded(),
-            self.dropped_turns,
-            self.dropped_by,
-        )
-    }
-
-    /// Increments `rev` by exactly 1 and records `patches` as that revision's batch,
-    /// evicting the oldest batch once the ring holds `DELTA_HISTORY` of them.
-    fn record_revision(&mut self, patches: Vec<TurnPatch>) {
-        self.rev += 1;
-        if self.history.len() == DELTA_HISTORY {
-            self.history.pop_front();
-        }
-        self.history.push_back(PatchBatch {
-            rev: self.rev,
-            patches,
-        });
-    }
-
-    /// Enforces `caps` (the brief's exact rules) after a change that may have grown
-    /// `turns` or their bytes: while `turns.len() > caps.max_turns || byte_size() >
-    /// caps.max_bytes` and `turns.len() > 1`, drops `turns[0]`, counting it toward
-    /// `dropped_turns` and recording which predicate was true (`max_turns` checked
-    /// first). Returns the `Drop` patches for whatever it removed. `oversize_logged` is
-    /// then recomputed fresh (see its own doc comment) from whatever state the loop
-    /// left behind.
-    fn enforce_caps(&mut self, caps: Caps) -> Vec<TurnPatch> {
-        let mut drops = Vec::new();
-        loop {
-            if self.draft.turns.len() <= 1 {
-                break;
-            }
-            let over_turns = self.draft.turns.len() > caps.max_turns;
-            let over_bytes = self.draft.byte_size() > caps.max_bytes;
-            if !over_turns && !over_bytes {
-                break;
-            }
-            let cause = if over_turns {
-                DropCause::Turns
-            } else {
-                DropCause::Bytes
-            };
-            let removed = self.draft.turns.remove(0);
-            if removed.role == proto::Role::User {
-                self.draft.dropped_user_turns = self.draft.dropped_user_turns.saturating_add(1);
-            }
-            self.draft.enrichment.forget_turn(removed.id);
-            self.dropped_turns = self.dropped_turns.saturating_add(1);
-            self.dropped_by = Some(cause);
-            drops.push(TurnPatch::Drop { id: removed.id });
-        }
-        let is_oversize = self.draft.turns.len() == 1 && self.draft.byte_size() > caps.max_bytes;
-        self.oversize_logged = is_oversize;
-        if !is_oversize {
-            self.oversize_reported = false;
-        }
-        drops
-    }
-}
-
-/// Concatenates a delta window's patches with the compaction `delta_since` promises:
-/// only the last `Upsert` per turn id, and no `Upsert` for a turn a later `Drop`
-/// removed. Patches are folded in revision order, which is also the order `patches`
-/// arrives in (each batch's own patches, batches already filtered and ordered by the
-/// caller).
-fn compact_patches(patches: impl Iterator<Item = TurnPatch>) -> Vec<TurnPatch> {
-    let mut result: Vec<TurnPatch> = Vec::new();
-    for patch in patches {
-        let id = match &patch {
-            TurnPatch::Upsert(turn) => turn.id,
-            TurnPatch::Drop { id } => *id,
-        };
-        result.retain(|existing| !matches!(existing, TurnPatch::Upsert(t) if t.id == id));
-        result.push(patch);
-    }
-    result
-}
 
 /// Every conversation belonging to one window, keyed by `agent_id` (decision A1).
 pub struct ConversationSet {
@@ -438,10 +264,9 @@ impl ConversationSet {
         let Some(entry) = self.entries.get_mut(&None) else {
             return Vec::new();
         };
-        if Self::mutate(entry, Some(caps), |draft| {
-            enrich::apply(draft, records, caps)
-        })
-        .revised
+        if entry
+            .mutate(Some(caps), |draft| enrich::apply(draft, records, caps))
+            .revised
         {
             vec![None]
         } else {
@@ -460,11 +285,11 @@ impl ConversationSet {
         let mut changed = Vec::new();
         for (key, entry) in &mut self.entries {
             let revised = if key.is_none() {
-                Self::mutate(entry, Some(caps), |draft| {
+                entry.mutate(Some(caps), |draft| {
                     enrich::reset(draft) | enrich::apply(draft, records, caps)
                 })
             } else {
-                Self::mutate(entry, None, enrich::reset)
+                entry.mutate(None, enrich::reset)
             }
             .revised;
             if revised {
@@ -483,7 +308,7 @@ impl ConversationSet {
             // Undoing enrichment only shrinks a conversation, so no cap can newly bite,
             // and running `enforce_caps` without the caller's real caps would recompute
             // `oversize_logged` against the wrong bound.
-            if Self::mutate(entry, None, enrich::reset).revised {
+            if entry.mutate(None, enrich::reset).revised {
                 changed.push(key.clone());
             }
         }
@@ -536,13 +361,13 @@ impl ConversationSet {
     {
         let resolved = self.resolve_key(&key);
         let mutation = if let Some(entry) = self.entries.get_mut(&resolved) {
-            Self::mutate(entry, Some(caps), f)
+            entry.mutate(Some(caps), f)
         } else {
             let mut entry = Entry::new(
                 Draft::new(self.window_id, resolved.clone(), self.runtime),
                 self.current_degraded,
             );
-            let mutation = Self::mutate(&mut entry, Some(caps), f);
+            let mutation = entry.mutate(Some(caps), f);
             // Kept whenever its state changed, visibly or not: a `SessionStart` that only
             // sets `transcript_path` is no revision, but the reader needs the path.
             if mutation.changed {
@@ -551,57 +376,6 @@ impl ConversationSet {
             mutation
         };
         mutation.revised.then_some(resolved)
-    }
-
-    /// The "diff before/after, enforce caps, record one revision" logic `touch` runs
-    /// against an `Entry`, whether that entry is already in `entries` or is being
-    /// evaluated off to the side before its first insertion. `caps: None` skips cap
-    /// enforcement, for a change that can only shrink the conversation
-    /// (`reset_enrichment`).
-    ///
-    /// **One rule for revisions: no observable change, no new `rev`** (task M6.5.10).
-    /// A revision is recorded only when a turn differs or `Visible` does, compared
-    /// before and after; `f` reporting a change is necessary, not sufficient. That one
-    /// comparison settles the three cases that used to advance `rev` with nothing to
-    /// see: a `SessionStart` that changes only `transcript_path` (task M6.5.6 F4), a
-    /// restart that re-applies the same records (`restart_enrichment`), and a
-    /// `Misaligned` set underneath the reader's own degrade reason, which the reader's
-    /// reason hides (task M6.5.8 F4). `set_degraded` compares `Visible` the same way.
-    fn mutate<F>(entry: &mut Entry, caps: Option<Caps>, f: F) -> Mutation
-    where
-        F: FnOnce(&mut Draft) -> bool,
-    {
-        let visible = entry.visible();
-        let before: HashMap<u64, proto::Turn> = entry
-            .draft
-            .turns
-            .iter()
-            .map(|turn| (turn.id, turn.clone()))
-            .collect();
-        if !f(&mut entry.draft) {
-            return Mutation {
-                changed: false,
-                revised: false,
-            };
-        }
-        let mut patches: Vec<TurnPatch> = entry
-            .draft
-            .turns
-            .iter()
-            .filter(|turn| before.get(&turn.id) != Some(turn))
-            .map(|turn| TurnPatch::Upsert(turn.clone()))
-            .collect();
-        if let Some(caps) = caps {
-            patches.extend(entry.enforce_caps(caps));
-        }
-        let revised = !patches.is_empty() || entry.visible() != visible;
-        if revised {
-            entry.record_revision(patches);
-        }
-        Mutation {
-            changed: true,
-            revised,
-        }
     }
 }
 
