@@ -13,6 +13,9 @@
 /// on a connection that otherwise looks healthy. The version bump turns that into a clean
 /// handshake refusal instead, which is what every earlier bump on this line has done for
 /// a genuinely new shape, not only for a changed one.
+///
+/// Task M6.5.10 added `session_id` to `ConversationDelta` without a further bump: version
+/// 6 has not shipped, so no client or daemon speaking a 6 without it exists.
 pub const PROTO_VERSION: u32 = 6;
 
 /// How long the daemon waits for a freshly connected client's `Hello`, and how long a

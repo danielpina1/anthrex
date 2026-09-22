@@ -85,6 +85,7 @@ fn every_conversation_message_round_trips() {
             TurnPatch::Upsert(conversation.turns[0].clone()),
             TurnPatch::Drop { id: 12 },
         ],
+        session_id: Some("sess-9".into()),
         degraded: Some(DegradeReason::BadRecord),
         dropped_turns: 4,
         dropped_by: Some(DropCause::Turns),
@@ -773,4 +774,52 @@ fn conversation_wire_shape_is_stable() {
     };
     assert_eq!(conversation.agent_id.as_deref(), Some("agent-3"));
     assert_eq!(conversation.session_id.as_deref(), Some("sess-9"));
+}
+
+/// Task M6.5.10 (task M6.5.6 review F4): `ConversationDelta` carries `session_id`. Its
+/// same-typed neighbours are `agent_id` (an `Option<String>`, like it) and the two
+/// revisions (`u64`s, like each other), so the literal wire shape is pinned and each key
+/// is tied to its field by name: a symmetric rename of `agent_id` and `session_id`, or
+/// of `from_rev` and `to_rev`, round-trips cleanly and only these by-name checks see it.
+#[test]
+fn delta_wire_shape_is_stable() {
+    let value = serde_json::json!({"ConversationDelta": {
+        "window_id": 7,
+        "agent_id": "agent-3",
+        "from_rev": 200,
+        "to_rev": 214,
+        "turns": [{"drop": {"id": 12}}],
+        "session_id": "sess-9",
+        "degraded": "misaligned",
+        "dropped_turns": 4,
+        "dropped_by": "bytes"
+    }});
+    let message: DaemonMsg = serde_json::from_value(value.clone()).unwrap();
+    let packed = rmp_serde::to_vec_named(&message).unwrap();
+    let back: DaemonMsg = rmp_serde::from_slice(&packed).unwrap();
+    assert_eq!(back, message);
+    assert_eq!(serde_json::to_value(back).unwrap(), value);
+    let DaemonMsg::ConversationDelta {
+        window_id,
+        agent_id,
+        from_rev,
+        to_rev,
+        turns,
+        session_id,
+        degraded,
+        dropped_turns,
+        dropped_by,
+    } = message
+    else {
+        panic!("not a delta");
+    };
+    assert_eq!(window_id, 7);
+    assert_eq!(agent_id.as_deref(), Some("agent-3"));
+    assert_eq!(session_id.as_deref(), Some("sess-9"));
+    assert_eq!(from_rev, 200);
+    assert_eq!(to_rev, 214);
+    assert_eq!(turns, vec![TurnPatch::Drop { id: 12 }]);
+    assert_eq!(degraded, Some(DegradeReason::Misaligned));
+    assert_eq!(dropped_turns, 4);
+    assert_eq!(dropped_by, Some(DropCause::Bytes));
 }

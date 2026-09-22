@@ -143,6 +143,11 @@ pub enum DaemonMsg {
         from_rev: u64,
         to_rev: u64,
         turns: Vec<TurnPatch>,
+        /// The conversation's current session id, carried like decision A4's fields
+        /// (task M6.5.6 review F4, settled in task M6.5.10): a `SessionStart` can change
+        /// it with no turn changing, and a client that only follows deltas would
+        /// otherwise keep the one from its last snapshot forever.
+        session_id: Option<String>,
         /// Decision A4: carried on the delta, never inferred by the client.
         degraded: Option<DegradeReason>,
         dropped_turns: u32,
@@ -452,6 +457,7 @@ mod tests {
                 from_rev: 3,
                 to_rev: 4,
                 turns: vec![crate::conversation::TurnPatch::Drop { id: 1 }],
+                session_id: Some("sess-2".into()),
                 degraded: Some(crate::conversation::DegradeReason::TooLarge),
                 dropped_turns: 1,
                 dropped_by: Some(crate::conversation::DropCause::Bytes),
