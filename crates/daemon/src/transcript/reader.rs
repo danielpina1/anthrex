@@ -1,8 +1,8 @@
 //! Tails one transcript file (decisions A6 and A7). Blocking and synchronous: the daemon
 //! drives [`Tail::read_more`] from `tokio::task::spawn_blocking`
 //! (`crate::conversation::watch`), never from a tokio worker and never under the manager
-//! lock (AGENTS.md hard rule 2). No subprocess, no tokio, no clock beyond one pass's own
-//! deadline.
+//! lock (AGENTS.md hard rule 2). No child process, no tokio, no clock beyond one pass's
+//! own deadline (decision A6).
 //!
 //! Every failure is a [`proto::DegradeReason`], never an `Err` (spec decision 2): a
 //! transcript problem may cost the conversation its prose and tool detail, but never its
