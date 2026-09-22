@@ -1,13 +1,17 @@
 //! Per-window conversation state (spec decision 5 onward, milestone 6.5). `summary`
 //! (task M6.5.4) renders a tool's one-line description; `build` (task M6.5.5) is the
-//! pure transform from one hook into one conversation's `Draft`. Later tasks in this
-//! milestone add `store`, `enrich` and `watch` beside them.
+//! pure transform from one hook into one conversation's `Draft`; `store` (task M6.5.6)
+//! is `ConversationSet` -- revisions, the delta ring and the caps that turn a `Draft`
+//! into the `rev`/`degraded`/`dropped_turns` bookkeeping the wire protocol reports.
+//! Later tasks add `enrich` and `watch` beside them.
 
 use std::collections::HashMap;
 use std::time::Instant;
 
 mod build;
+mod store;
 mod summary;
+pub use store::ConversationSet;
 pub use summary::{SUMMARY_MAX_GRAPHEMES, for_tool};
 
 /// The three caps from `[conversation]`, resolved to `usize` (spec decision 7).
@@ -33,6 +37,16 @@ impl Default for Caps {
         Caps::from_config(&config::Conversation::default())
     }
 }
+
+/// Decision A8, derived from the tracker's own cap rather than typed independently
+/// (`docs/timing-budgets.md` standing rule 1): the tracker already refuses to hold more
+/// than `MAX_SUBAGENTS` sub-agents, so `MAX_SUBAGENTS + 1` (the sub-agents plus the
+/// window's own root conversation) is the most conversations a window can legitimately
+/// need.
+pub const MAX_CONVERSATIONS_PER_WINDOW: usize = crate::subagents::MAX_SUBAGENTS + 1;
+/// Decision A3: how many revisions' patch batches `ConversationSet::delta_since` can
+/// still answer without falling back to a full snapshot.
+pub const DELTA_HISTORY: usize = 64;
 
 /// One conversation's working state: everything `build::apply` (and, later, `enrich`)
 /// needs to turn hooks and transcript records into `proto::Turn`s, minus the
@@ -143,122 +157,36 @@ impl Draft {
         changed
     }
 
-    fn to_conversation(&self) -> proto::Conversation {
+    /// Sum of `proto::Turn::byte_size` over every turn currently held -- the same
+    /// measure `store.rs`'s cap enforcement bounds. Not cached: recomputed on demand,
+    /// same as `proto::Conversation::byte_size` it mirrors.
+    fn byte_size(&self) -> usize {
+        self.turns.iter().map(proto::Turn::byte_size).sum()
+    }
+
+    /// Builds the wire `Conversation`. `rev`, `degraded`, `dropped_turns` and
+    /// `dropped_by` are not `Draft`'s own state -- they are `store.rs`'s revision and
+    /// cap bookkeeping, kept per-key one level up rather than here, so every caller
+    /// passes them in explicitly rather than this method hard-coding a placeholder
+    /// (task M6.5.6: the previous placeholders -- `rev: 0`, `degraded: None`,
+    /// `dropped_turns: 0`, `dropped_by: None` -- had no test asserting any of them).
+    fn to_conversation(
+        &self,
+        rev: u64,
+        degraded: Option<proto::DegradeReason>,
+        dropped_turns: u32,
+        dropped_by: Option<proto::DropCause>,
+    ) -> proto::Conversation {
         proto::Conversation {
             window_id: self.window_id,
             agent_id: self.agent_id.clone(),
             session_id: self.session_id.clone(),
             runtime: self.runtime,
-            rev: 0,
-            degraded: None,
-            dropped_turns: 0,
-            dropped_by: None,
+            rev,
+            degraded,
+            dropped_turns,
+            dropped_by,
             turns: self.turns.clone(),
         }
-    }
-}
-
-/// Every conversation belonging to one window, keyed by `agent_id` (decision A1).
-/// Entirely pure: no I/O, no clock of its own -- every entry point takes
-/// `now_unix_secs` and `now: Instant`.
-///
-/// Task M6.5.5 gives this only what `build::apply`'s own tests need in order to drive
-/// hook routing across more than one conversation: a `SubagentStart` touches both the
-/// parent's conversation (a `SubagentSpawn` block) and the child's (a fresh, empty
-/// conversation). The revision counter, delta history, degrade tracking and cap
-/// enforcement this type's final shape (see `docs/milestones/M6.5-conversation-view.md`)
-/// needs belong to task M6.5.6, the store, and are not implemented here.
-pub struct ConversationSet {
-    window_id: u32,
-    runtime: proto::Runtime,
-    drafts: HashMap<Option<String>, Draft>,
-}
-
-impl ConversationSet {
-    pub fn new(window_id: u32, runtime: proto::Runtime) -> Self {
-        ConversationSet {
-            window_id,
-            runtime,
-            drafts: HashMap::new(),
-        }
-    }
-
-    /// Applies one hook. `spawn_parent` is the `agent_id` of the parent of
-    /// `hook.agent_id`, resolved by the caller from `SubagentTracker::parent_of`, and is
-    /// read only for a `SubagentStart`. Returns every key whose draft changed.
-    ///
-    /// A `SubagentStart` is the one hook that spans two conversations: `build::apply`'s
-    /// own `SubagentStart` effect (appending a `SubagentSpawn` block to the open turn)
-    /// is applied to the *parent's* draft unconditionally -- per the brief's table, the
-    /// parent-side effect does not depend on `hook.agent_id` being present (wave-1
-    /// review finding F9: an earlier version skipped it entirely when `agent_id` was
-    /// absent, so the parent never learned a sub-agent started, while `build::
-    /// subagent_start` itself already defends that same case with
-    /// `unwrap_or_default()` -- two layers disagreeing on whether the case is handled
-    /// was the bug). The *child's* draft, which does need a real id, is created fresh
-    /// here, directly, only when `hook.agent_id` is `Some` -- holding one empty
-    /// `Running` `Assistant` turn and nothing else. Running `build::apply` on the child
-    /// too would append a second, spurious spawn block to its own conversation instead
-    /// of its parent's.
-    pub fn on_hook(
-        &mut self,
-        runtime: proto::Runtime,
-        hook: &crate::hooks::ParsedHook,
-        spawn_parent: Option<&str>,
-        now_unix_secs: u64,
-        now: Instant,
-        caps: Caps,
-    ) -> Vec<Option<String>> {
-        if hook.kind == crate::hooks::HookKind::SubagentStart {
-            let mut changed = Vec::new();
-            let parent_key = spawn_parent.map(str::to_owned);
-            let parent = self.draft_mut(parent_key.clone());
-            if build::apply(parent, runtime, hook, now_unix_secs, now, caps) {
-                changed.push(parent_key);
-            }
-            if let Some(child_id) = hook.agent_id.clone() {
-                let child_key = Some(child_id);
-                if !self.drafts.contains_key(&child_key) {
-                    let child = self.draft_mut(child_key.clone());
-                    child.push_turn(
-                        proto::Role::Assistant,
-                        proto::TurnState::Running,
-                        Vec::new(),
-                        now_unix_secs,
-                    );
-                    changed.push(child_key);
-                }
-            }
-            return changed;
-        }
-
-        let key = hook.agent_id.clone();
-        let draft = self.draft_mut(key.clone());
-        if build::apply(draft, runtime, hook, now_unix_secs, now, caps) {
-            vec![key]
-        } else {
-            Vec::new()
-        }
-    }
-
-    /// A snapshot of the conversation at `agent_id`, or `None` when no hook has ever
-    /// touched that key.
-    pub fn snapshot(&self, agent_id: Option<&str>) -> Option<proto::Conversation> {
-        self.drafts
-            .get(&agent_id.map(str::to_owned))
-            .map(Draft::to_conversation)
-    }
-
-    /// Every key this set currently holds a conversation for.
-    pub fn keys(&self) -> Vec<Option<String>> {
-        self.drafts.keys().cloned().collect()
-    }
-
-    fn draft_mut(&mut self, key: Option<String>) -> &mut Draft {
-        let window_id = self.window_id;
-        let runtime = self.runtime;
-        self.drafts
-            .entry(key.clone())
-            .or_insert_with(|| Draft::new(window_id, key, runtime))
     }
 }

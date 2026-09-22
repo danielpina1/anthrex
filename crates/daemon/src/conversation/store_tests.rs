@@ -1,0 +1,497 @@
+//! Tests for `ConversationSet` (task M6.5.6): revisions, the delta ring and the caps.
+//! Every fixture uses distinct prompt texts, tool ids and tool names within a test
+//! (`"p1"`..`"p6"`, `"tu-1"`..`"tu-3"`, `"Bash"`/`"Read"`/`"Grep"`) for the same reason
+//! `build_tests.rs`'s header gives: a bug that transposes two same-typed values, or a
+//! fixture whose period divides the cap it is meant to exercise, must fail a test here
+//! rather than pass by coincidence -- this file drives the cap-trimming and delta-replay
+//! logic the milestone's own review history calls out both defect shapes for by name.
+
+use super::*;
+
+fn hook(kind: HookKind) -> ParsedHook {
+    ParsedHook {
+        source: proto::HookSource::Claude,
+        kind,
+        session_id: None,
+        agent_id: None,
+        agent_type: None,
+        tool_name: None,
+        tool_input: None,
+        notification_type: None,
+        transcript_path: None,
+        tool_use_id: None,
+        tool_response: None,
+        tool_result_truncated: None,
+        tool_result_stringified: None,
+        prompt: None,
+    }
+}
+
+fn prompt(text: &str) -> ParsedHook {
+    let mut h = hook(HookKind::UserPromptSubmit);
+    h.prompt = Some(text.to_owned());
+    h
+}
+
+fn pre(id: &str, name: &str) -> ParsedHook {
+    let mut h = hook(HookKind::PreToolUse);
+    h.tool_use_id = Some(id.to_owned());
+    h.tool_name = Some(name.to_owned());
+    h
+}
+
+fn post(id: &str, response: serde_json::Value) -> ParsedHook {
+    let mut h = hook(HookKind::PostToolUse);
+    h.tool_use_id = Some(id.to_owned());
+    h.tool_response = Some(response);
+    h
+}
+
+fn start(id: &str) -> ParsedHook {
+    let mut h = hook(HookKind::SubagentStart);
+    h.agent_id = Some(id.to_owned());
+    h.agent_type = Some("Explore".into());
+    h
+}
+
+/// Drives one hook against `set` with no spawn origin and `Caps::default()`, since most
+/// fixtures here don't care about either.
+fn send(
+    set: &mut ConversationSet,
+    hook: &ParsedHook,
+    ts: u64,
+    now: Instant,
+) -> Vec<Option<String>> {
+    set.on_hook(proto::Runtime::Claude, hook, None, ts, now, Caps::default())
+}
+
+fn send_capped(
+    set: &mut ConversationSet,
+    hook: &ParsedHook,
+    ts: u64,
+    now: Instant,
+    caps: Caps,
+) -> Vec<Option<String>> {
+    set.on_hook(proto::Runtime::Claude, hook, None, ts, now, caps)
+}
+
+#[test]
+fn rev_advances_only_on_a_real_change() {
+    let mut set = ConversationSet::new(4, proto::Runtime::Claude);
+    let now = Instant::now();
+
+    send(&mut set, &prompt("p1"), 1000, now);
+    assert_eq!(set.snapshot(None).unwrap().rev, 1);
+
+    let mut idle = hook(HookKind::Notification);
+    idle.notification_type = Some("idle_prompt".into());
+    let changed = send(&mut set, &idle, 1001, now);
+    assert_eq!(changed, Vec::<Option<String>>::new());
+    assert_eq!(set.snapshot(None).unwrap().rev, 1);
+
+    send(&mut set, &prompt("p2"), 1002, now);
+    assert_eq!(set.snapshot(None).unwrap().rev, 2);
+}
+
+/// The test that makes the delta path meaningful (per the brief): applying
+/// `delta_since`'s patches to a snapshot taken mid-stream must reconstruct exactly what
+/// a fresh snapshot at the final revision shows, turn for turn, block for block. A delta
+/// that omitted a modified turn -- or replayed stale content for one -- passes nothing
+/// weaker than a full equality check here.
+#[test]
+fn a_delta_replays_to_the_same_state_as_a_snapshot() {
+    let mut set = ConversationSet::new(4, proto::Runtime::Claude);
+    let now = Instant::now();
+
+    send(&mut set, &prompt("p1"), 1000, now); // rev 1
+    send(&mut set, &pre("tu-1", "Bash"), 1001, now); // rev 2
+    send(
+        &mut set,
+        &post("tu-1", serde_json::json!("out-1")),
+        1002,
+        now,
+    ); // rev 3
+    let at_rev_3 = set.snapshot(None).unwrap();
+    assert_eq!(at_rev_3.rev, 3);
+
+    send(&mut set, &hook(HookKind::Stop), 1003, now); // rev 4
+    send(&mut set, &prompt("p2"), 1004, now); // rev 5
+    send(&mut set, &pre("tu-2", "Read"), 1005, now); // rev 6
+    send(
+        &mut set,
+        &post("tu-2", serde_json::json!("out-2")),
+        1006,
+        now,
+    ); // rev 7
+    send(&mut set, &hook(HookKind::Stop), 1007, now); // rev 8
+    send(&mut set, &prompt("p3"), 1008, now); // rev 9
+    send(&mut set, &pre("tu-3", "Grep"), 1009, now); // rev 10
+    send(
+        &mut set,
+        &post("tu-3", serde_json::json!("out-3")),
+        1010,
+        now,
+    ); // rev 11
+    send(&mut set, &hook(HookKind::Stop), 1011, now); // rev 12
+
+    let final_snapshot = set.snapshot(None).unwrap();
+    assert_eq!(final_snapshot.rev, 12);
+
+    let (to_rev, patches) = set.delta_since(None, 3).unwrap();
+    assert_eq!(to_rev, 12);
+
+    let mut replayed = at_rev_3;
+    for patch in patches {
+        match patch {
+            TurnPatch::Upsert(turn) => {
+                if let Some(existing) = replayed.turns.iter_mut().find(|t| t.id == turn.id) {
+                    *existing = turn;
+                } else {
+                    replayed.turns.push(turn);
+                }
+            }
+            TurnPatch::Drop { id } => replayed.turns.retain(|t| t.id != id),
+        }
+    }
+    // `rev`/`degraded`/`dropped_turns`/`dropped_by` are not part of `TurnPatch` (decision
+    // A4: they are carried directly on `ConversationDelta`, always at their current
+    // value, never diffed) -- the client combines them with the replayed `turns` the
+    // same way.
+    replayed.rev = final_snapshot.rev;
+    replayed.degraded = final_snapshot.degraded;
+    replayed.dropped_turns = final_snapshot.dropped_turns;
+    replayed.dropped_by = final_snapshot.dropped_by;
+
+    assert_eq!(replayed, final_snapshot);
+}
+
+#[test]
+fn an_old_rev_gets_no_delta() {
+    let mut set = ConversationSet::new(4, proto::Runtime::Claude);
+    let now = Instant::now();
+    for i in 0..70 {
+        send(&mut set, &prompt(&format!("p{i}")), 1000 + i as u64, now);
+    }
+    assert_eq!(set.snapshot(None).unwrap().rev, 70);
+
+    assert!(
+        set.delta_since(None, 2).is_none(),
+        "70 - 2 = 68 > DELTA_HISTORY (64)"
+    );
+    assert!(
+        set.delta_since(None, 68).is_some(),
+        "70 - 68 = 2 <= DELTA_HISTORY (64)"
+    );
+}
+
+#[test]
+fn a_future_rev_gets_no_delta() {
+    let mut set = ConversationSet::new(4, proto::Runtime::Claude);
+    let now = Instant::now();
+    send(&mut set, &prompt("p1"), 1000, now);
+    let rev = set.snapshot(None).unwrap().rev;
+
+    assert!(set.delta_since(None, rev + 1).is_none());
+}
+
+/// `caps.max_turns = 4`, six user-prompt/stop cycles with **distinct** prompt texts
+/// `"p1"`..`"p6"` (six, not a divisor or multiple of four, so a mapping that trims the
+/// wrong end or keeps the wrong count cannot pass by the fixture's own periodicity).
+/// Each cycle pushes a `User` and an `Assistant` turn, so the cap starts biting on the
+/// third cycle; the assertions on the third cycle's own revision confirm the trimming
+/// `Drop` patches land in the very revision that trimmed, not some later one.
+#[test]
+fn the_turn_cap_drops_from_the_front_and_counts() {
+    let mut set = ConversationSet::new(4, proto::Runtime::Claude);
+    let now = Instant::now();
+    let caps = Caps {
+        max_turns: 4,
+        ..Caps::default()
+    };
+
+    let cycle = |set: &mut ConversationSet, text: &str, ts: u64| {
+        send_capped(set, &prompt(text), ts, now, caps);
+        send_capped(set, &hook(HookKind::Stop), ts + 1, now, caps);
+    };
+
+    cycle(&mut set, "p1", 1000);
+    cycle(&mut set, "p2", 1002);
+
+    let rev_before_p3 = set.snapshot(None).unwrap().rev;
+    cycle(&mut set, "p3", 1004);
+    let (_, trimming_patches) = set.delta_since(None, rev_before_p3).unwrap();
+    let drops: Vec<u64> = trimming_patches
+        .iter()
+        .filter_map(|p| match p {
+            TurnPatch::Drop { id } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        drops,
+        vec![1, 2],
+        "the revision that trimmed carries a Drop for each removed id"
+    );
+
+    cycle(&mut set, "p4", 1006);
+    cycle(&mut set, "p5", 1008);
+    cycle(&mut set, "p6", 1010);
+
+    let final_snapshot = set.snapshot(None).unwrap();
+    assert_eq!(final_snapshot.turns.len(), 4, "the last 4 turns, in order");
+    assert_eq!(final_snapshot.dropped_turns, 8, "12 pushed, 4 survive");
+    assert_eq!(final_snapshot.dropped_by, Some(proto::DropCause::Turns));
+
+    let text = |turn: &proto::Turn| match &turn.blocks[0] {
+        proto::Block::Text { text } => text.clone(),
+        other => panic!("expected a Text block, got {other:?}"),
+    };
+    assert_eq!(text(&final_snapshot.turns[0]), "p5");
+    assert_eq!(text(&final_snapshot.turns[2]), "p6");
+}
+
+/// `caps.max_bytes` is measured directly off the first (real) turn's own `byte_size` --
+/// not a guessed literal -- so the margin is exactly "fits one turn, not two", and
+/// `caps.max_turns` is set far out of the way so only the byte predicate can be
+/// responsible for the trim.
+#[test]
+fn the_byte_cap_drops_from_the_front_and_says_so() {
+    let mut set = ConversationSet::new(4, proto::Runtime::Claude);
+    let now = Instant::now();
+
+    // Turn 1: one small `ToolCall`, its own turn (a `PreToolUse` on an empty draft opens
+    // a fresh turn), closed so its size is final.
+    send(&mut set, &pre("tu-1", "Bash"), 1000, now);
+    send(&mut set, &hook(HookKind::Stop), 1001, now);
+    let turn_1_size = set.snapshot(None).unwrap().turns[0].byte_size();
+
+    let caps = Caps {
+        max_bytes: turn_1_size + 1,
+        max_turns: 1000,
+        ..Caps::default()
+    };
+
+    // Turn 2: a deliberately much larger `ToolCall`, big enough on its own that turn 1 +
+    // turn 2 together blow past `caps.max_bytes` even though turn 2 alone still fits.
+    let mut big = pre(
+        "tu-2",
+        "VeryLongToolNameChosenSoThisTurnIsClearlyBiggerThanTurnOne",
+    );
+    big.tool_input = Some(serde_json::json!({
+        "pattern": "x".repeat(200),
+        "path": "y".repeat(200),
+    }));
+    send_capped(&mut set, &big, 1002, now, caps);
+
+    let after_trim = set.snapshot(None).unwrap();
+    assert_eq!(
+        after_trim.turns.len(),
+        1,
+        "turn 1 was dropped the moment turn 2 pushed the total over max_bytes"
+    );
+    assert_eq!(after_trim.dropped_turns, 1);
+    assert_eq!(after_trim.dropped_by, Some(proto::DropCause::Bytes));
+    assert!(
+        after_trim.turns[0].byte_size() > turn_1_size,
+        "the surviving turn is turn 2, the bigger one"
+    );
+}
+
+#[test]
+fn a_single_oversize_turn_is_kept() {
+    let mut set = ConversationSet::new(4, proto::Runtime::Claude);
+    let now = Instant::now();
+    let caps = Caps {
+        max_bytes: 10,
+        ..Caps::default()
+    };
+
+    let mut big = pre("tu-1", "Bash");
+    big.tool_input = Some(serde_json::json!({"pattern": "z".repeat(500)}));
+    send_capped(&mut set, &big, 1000, now, caps);
+
+    let snapshot = set.snapshot(None).unwrap();
+    assert_eq!(snapshot.turns.len(), 1, "never trimmed to zero turns");
+    assert_eq!(snapshot.dropped_turns, 0);
+    assert!(set.oversize(None));
+}
+
+#[test]
+fn degradation_changes_the_rev_and_is_reported_once() {
+    let mut set = ConversationSet::new(4, proto::Runtime::Claude);
+    let now = Instant::now();
+    send(&mut set, &prompt("p1"), 1000, now);
+    assert_eq!(set.snapshot(None).unwrap().rev, 1);
+
+    let (changed, is_new) = set.set_degraded(Some(proto::DegradeReason::Unreadable));
+    assert_eq!(changed, vec![None]);
+    assert!(is_new);
+    let after_first = set.snapshot(None).unwrap();
+    assert_eq!(after_first.rev, 2);
+    assert_eq!(after_first.degraded, Some(proto::DegradeReason::Unreadable));
+
+    let (changed, is_new) = set.set_degraded(Some(proto::DegradeReason::Unreadable));
+    assert!(changed.is_empty());
+    assert!(!is_new);
+    assert_eq!(set.snapshot(None).unwrap().rev, 2, "no change, no revision");
+
+    let (changed, is_new) = set.set_degraded(Some(proto::DegradeReason::UnknownFormat));
+    assert_eq!(changed, vec![None]);
+    assert!(is_new);
+    let after_third = set.snapshot(None).unwrap();
+    assert_eq!(after_third.rev, 3);
+    assert_eq!(
+        after_third.degraded,
+        Some(proto::DegradeReason::UnknownFormat)
+    );
+
+    let (changed, is_new) = set.set_degraded(None);
+    assert_eq!(changed, vec![None]);
+    assert!(is_new);
+    let after_fourth = set.snapshot(None).unwrap();
+    assert_eq!(after_fourth.rev, 4);
+    assert_eq!(after_fourth.degraded, None);
+}
+
+#[test]
+fn conversations_are_capped_by_count() {
+    let mut set = ConversationSet::new(4, proto::Runtime::Claude);
+    let now = Instant::now();
+    let total = MAX_CONVERSATIONS_PER_WINDOW + 5;
+
+    for i in 0..total {
+        let id = format!("agent-{i}");
+        set.on_hook(
+            proto::Runtime::Claude,
+            &start(&id),
+            None,
+            1000 + i as u64,
+            now,
+            Caps::default(),
+        );
+    }
+
+    assert_eq!(set.keys().len(), MAX_CONVERSATIONS_PER_WINDOW);
+
+    let root = set.snapshot(None).unwrap();
+    let spawned_ids: Vec<String> = root
+        .turns
+        .iter()
+        .flat_map(|t| t.blocks.iter())
+        .filter_map(|b| match b {
+            proto::Block::SubagentSpawn { agent_id, .. } => Some(agent_id.clone()),
+            _ => None,
+        })
+        .collect();
+
+    // The root got a spawn block for every one of the `total` hooks (the parent-side
+    // effect always runs), but only the first `MAX_CONVERSATIONS_PER_WINDOW - 1` (the
+    // cap minus the root's own slot) got their own conversation.
+    assert_eq!(spawned_ids.len(), total);
+    for i in 0..(MAX_CONVERSATIONS_PER_WINDOW - 1) {
+        let id = format!("agent-{i}");
+        assert!(
+            set.snapshot(Some(&id)).is_some(),
+            "{id} should have its own conversation"
+        );
+    }
+    for i in (MAX_CONVERSATIONS_PER_WINDOW - 1)..total {
+        let id = format!("agent-{i}");
+        assert!(
+            set.snapshot(Some(&id)).is_none(),
+            "{id} is beyond the cap and has no conversation of its own"
+        );
+        assert!(
+            spawned_ids.contains(&id),
+            "{id}'s spawn block still landed in the root conversation"
+        );
+    }
+}
+
+#[test]
+fn each_conversation_has_its_own_rev() {
+    let mut set = ConversationSet::new(4, proto::Runtime::Claude);
+    let now = Instant::now();
+    send(&mut set, &prompt("root only line"), 1000, now);
+    set.on_hook(
+        proto::Runtime::Claude,
+        &start("agent-b"),
+        None,
+        1001,
+        now,
+        Caps::default(),
+    );
+
+    let root = set.snapshot(None).unwrap();
+    let child = set.snapshot(Some("agent-b")).unwrap();
+    assert_ne!(root.rev, child.rev);
+    assert_eq!(
+        child.rev, 1,
+        "a fresh child's first hook is its own first revision"
+    );
+
+    // `delta_since` is scoped strictly by key: agent-b's own delta never carries root's
+    // content (its `SubagentSpawn` block), and root's own delta never carries agent-b's
+    // seed turn in its place.
+    let (_, child_patches) = set.delta_since(Some("agent-b"), 0).unwrap();
+    for patch in &child_patches {
+        if let TurnPatch::Upsert(turn) = patch {
+            assert!(
+                turn.blocks.is_empty(),
+                "agent-b's only turn is its own empty seed turn"
+            );
+        }
+    }
+    let (_, root_patches) = set.delta_since(None, 0).unwrap();
+    assert!(
+        root_patches.iter().any(|p| matches!(
+            p,
+            TurnPatch::Upsert(t) if t.blocks.iter().any(|b| matches!(b, proto::Block::SubagentSpawn { .. }))
+        )),
+        "root's own delta carries the spawn block"
+    );
+}
+
+#[test]
+fn caps_come_from_the_config_defaults() {
+    let caps = Caps::from_config(&config::Conversation::default());
+    assert_eq!(
+        caps,
+        Caps {
+            max_turns: 500,
+            max_bytes: 2_097_152,
+            max_result_bytes: 16384,
+        }
+    );
+}
+
+/// Task M6.5.6, item 2: `Draft::to_conversation` used to hard-code `rev: 0, degraded:
+/// None, dropped_turns: 0, dropped_by: None` with no test asserting any of them. Every
+/// value here is distinct from every other of the same type where the type itself
+/// doesn't already forbid a transposition (`rev: u64` vs `dropped_turns: u32` cannot be
+/// swapped without a compile error; `degraded: Option<DegradeReason>` vs `dropped_by:
+/// Option<DropCause>` likewise), so this pins every field by name against a real,
+/// non-default value.
+#[test]
+fn draft_to_conversation_wires_rev_degraded_dropped_turns_and_dropped_by_by_name() {
+    let mut draft = Draft::new(7, Some("agent-x".into()), proto::Runtime::Codex);
+    draft.push_turn(
+        proto::Role::User,
+        proto::TurnState::Complete,
+        vec![proto::Block::Text { text: "hi".into() }],
+        1000,
+    );
+
+    let conversation = draft.to_conversation(
+        9,
+        Some(proto::DegradeReason::TooLarge),
+        3,
+        Some(proto::DropCause::Bytes),
+    );
+    assert_eq!(conversation.window_id, 7);
+    assert_eq!(conversation.agent_id.as_deref(), Some("agent-x"));
+    assert_eq!(conversation.rev, 9);
+    assert_eq!(conversation.degraded, Some(proto::DegradeReason::TooLarge));
+    assert_eq!(conversation.dropped_turns, 3);
+    assert_eq!(conversation.dropped_by, Some(proto::DropCause::Bytes));
+}
