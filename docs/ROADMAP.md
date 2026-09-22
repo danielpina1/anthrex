@@ -11,7 +11,7 @@ The design is layered, newest first:
 5. `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` — milestones 2 to 9.
 6. `docs/superpowers/specs/2026-09-17-anthrex-design.md` — milestone 1 and the parts of the core it still governs.
 
-The protocol version currently on `main` is **4**, raised from 3 by milestone 4.5. Protocol numbers written in the milestone 5 to 9 briefs predate this and are wrong; each is re-derived from this line when that milestone is implemented.
+The protocol version currently on `main` is **5**, raised from 4 by milestone 5. Milestone 6 did not change it. Protocol numbers written in the milestone 5 to 9 briefs predate this and are wrong; each is re-derived from this line when that milestone is implemented.
 
 ## What anthrex does when all milestones are done
 
