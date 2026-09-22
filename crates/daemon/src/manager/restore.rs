@@ -163,11 +163,20 @@ impl WindowManager {
             );
             // Decision 14 leaves `Entry.managed` and a worktree window's `cwd` untouched
             // across a restore, so a future restart runs in the same checkout without
-            // ever calling `worktree::create` again. `Entry.worktree` — the *watched*
-            // root, milestone 4.5's field — is only recoverable here for a window this
-            // daemon made the worktree for; a window merely standing inside someone
-            // else's existing worktree has no saved record of that at all (decision 8
-            // only captures `managed`), so it comes back unwatched until it is restarted.
+            // ever calling `worktree::create` again.
+            //
+            // `Entry.worktree` — the *watched* root, milestone 4.5's field — is only
+            // recoverable here for a window this daemon made the worktree for; a window
+            // merely standing inside someone else's existing worktree has no saved record
+            // of that at all (decision 8 only captures `managed`), so it comes back
+            // without one.
+            //
+            // The root that *is* recovered here is put back under the watcher by
+            // `server::register_restored_roots`, at startup. This comment used to end "so
+            // it comes back unwatched until it is restarted", which was false in both
+            // halves: nothing registered a restored root at startup, and `requests::restart`
+            // never took the registry either, so a restart did not repair it. See
+            // `crates/daemon/tests/server_restore_git.rs`.
             let watched_worktree = managed.as_ref().map(|m| m.path.clone());
             let spec = WindowSpec {
                 name: Some(name.clone()),
