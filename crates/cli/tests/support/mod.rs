@@ -258,8 +258,9 @@ impl Drop for TestDaemon {
     /// and socket path, that never produced a resource collision, but it did mean
     /// consecutive daemons could overlap in the process table, which is exactly the
     /// process contention the loop-vs-suite gap in `hook_command` was suspected to come
-    /// from (flake-diagnosis.md §3.4.1 — unconfirmed there; this fix stands on its own
-    /// merits regardless of whether it was the cause).
+    /// from (unconfirmed, per docs/timing-budgets.md, the surviving distillate of the
+    /// investigation that raised it; this fix stands on its own merits regardless of
+    /// whether it was the cause).
     ///
     /// `Child::wait` is a blocking `waitpid`: once SIGKILL is delivered it cannot return
     /// early the way a polling loop with a deadline could, so this cannot leave the child

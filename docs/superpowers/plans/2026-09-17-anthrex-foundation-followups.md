@@ -36,7 +36,7 @@ Generated from the execution ledger of `2026-09-17-anthrex-foundation.md` before
 - Final: parked — after a caught parser panic, a second Exited overwrites exit reason unpublished, child not signalled — Ruling: real, rare; defer to plan 2. Cost if wrong: stale exit reason, orphan child until removed.
 - Final: parked — bind-then-chmod window on the socket in a shared sticky dir — Ruling: real, only with an explicit override into /tmp; defer to plan 4 (umask around bind). Cost if wrong: brief window where another local user could connect.
 - Final: parked — C-b Q with a dropped Shutdown quits silently leaving the daemon running — Ruling: real, rare; defer to plan 4. Cost if wrong: user must run `anthrex daemon stop`.
-- M4.5 final review: the git watcher registers recursively (`watch(root, RecursiveMode::Recursive)` in `crates/daemon/src/git/watch.rs`), and `DENY_COMPONENTS` filters *events*, not *registration*. On inotify that walks the tree at registration and takes one descriptor per directory, including every directory under `target/`, `node_modules/` and `.next/` — tens of thousands in a Rust checkout with a populated `target/`. On a host still at `fs.inotify.max_user_watches = 8192` the watch fails outright, and the root falls back silently to the 30-second poll with one warning; M5 multiplies the count by the number of agents, since each gets its own worktree. Distinct from the CPU risk the debounce and the circuit breaker already cover: neither sees an event that was never registered for. Not fixed in M4.5 — the fix is a non-recursive watch plus a pruning walk that applies the deny list at registration time, which is real work of its own. Assigned to M6, which already adds the `[git]` `ignore` list the pruning walk must share its filter with.
+- M4.5 final review: the git watcher registers recursively (`watch(root, RecursiveMode::Recursive)` in `crates/daemon/src/git/watch.rs`), and `DENY_COMPONENTS` filters *events*, not *registration*. On inotify that walks the tree at registration and takes one descriptor per directory, including every directory under `target/`, `node_modules/` and `.next/` — tens of thousands in a Rust checkout with a populated `target/`. On a host still at `fs.inotify.max_user_watches = 8192` the watch fails outright, and the root falls back silently to the 30-second poll with one warning; M5 multiplies the count by the number of agents, since each gets its own worktree. Distinct from the CPU risk the debounce and the circuit breaker already cover: neither sees an event that was never registered for. Not fixed in M4.5 — the fix is a non-recursive watch plus a pruning walk that applies the deny list at registration time, which is real work of its own. Was assigned to M6, which already adds the `[git]` `ignore` list the pruning walk must share its filter with, but M6 did not implement it (whole-branch-review m11, fix wave 12: `watch.rs:139` still calls `RecursiveMode::Recursive`, `crates/config/src/lib.rs` still has no `[git]` section) — reassigned to M7 or later, whichever milestone next touches the git registry or the config crate's key list. Still real work of its own; not a fix-wave-sized change.
 - M3 final review: crossterm 0.29 ends a paste event at the first literal `ESC[201~`; the probe input `ESC[200~aESC[201~b\rESC[201~` produced `Paste("a")`, `Key('b')`, then `Enter`. After `EventStream` splits the input, the intended clipboard boundary is unrecoverable. M3 sanitizes only text delivered as one paste event and makes no end-to-end clipboard guarantee. Define a reliable terminal-input policy in M7 without timing filters or silent changes to ordinary key semantics.
 
 ## Rulings made during execution
@@ -78,7 +78,7 @@ Each open item above is closed by exactly one milestone. Its brief lists the ite
 | M3 Agent status | Kill by process group: SIGHUP, then SIGTERM, then SIGKILL via `killpg`. Cap the per-window input queue by bytes (1 MiB) as well as chunks. After a caught parser panic: signal the child, keep the first exit reason, and publish. Strip bracketed-paste markers from text delivered as one paste event. `status::next` doc comment. The Task 2 test-coverage minors: every message variant round-trips, and the serialized case of `HookSource` is asserted. |
 | M4 Project tree | Sidebar overflow: the tree scrolls to keep the selection visible. Hit-testing shares geometry with rendering. |
 | M5 Worktrees | The Task 8 minor "create() holds the Inner mutex across Window::spawn": `create` runs `Window::spawn` off the lock. |
-| M6 Persistence | The lifetime lock file, the unconditional socket unlink at shutdown, and the stale-socket TOCTOU. Umask around bind. Reconnect, including re-subscribe after a dropped Subscribe. `C-b Q` confirms that the shutdown was delivered before quitting. End-to-end `lifecycle::run` start and stop test. Log rotation. Handshake read timeout. Register git watches non-recursively with a pruning walk, so a directory the deny list already rejects does not still cost a descriptor, sharing one filter with the `[git]` `ignore` list this milestone adds. |
+| M6 Persistence | The lifetime lock file, the unconditional socket unlink at shutdown, and the stale-socket TOCTOU. Umask around bind. Reconnect, including re-subscribe after a dropped Subscribe. `C-b Q` confirms that the shutdown was delivered before quitting. End-to-end `lifecycle::run` start and stop test. Log rotation. Handshake read timeout. **Not closed** (whole-branch-review m11, fix wave 12): register git watches non-recursively with a pruning walk, so a directory the deny list already rejects does not still cost a descriptor, sharing one filter with the `[git]` `ignore` list this milestone adds — this row previously claimed it, but `crates/daemon/src/git/watch.rs:139` still calls `watcher.watch(root, RecursiveMode::Recursive)`, and no `[git]` section exists in `crates/config/src/lib.rs`. Reassigned below, not implemented here; M6's own actual scope is the eight items above it in this cell. |
 | M7 Split panes | SIGWINCH jiggle on attach so full-screen apps repaint. Wheel scrolling for alternate-screen apps without mouse mode. Check `mouse_protocol_encoding()` instead of assuming SGR. Define terminal-input policy for embedded bracketed-paste end markers before crossterm splits the intended clipboard boundary. |
 | Not scheduled | Kitty keyboard protocol flags. Coalescing redraws. The remaining test-coverage minors from tasks 4, 5, 8 and 13. |
 
@@ -227,8 +227,10 @@ negative or thin margin and a cheap seam. Two more sites have a real margin prob
 cheap fix, and are recorded here rather than patched with a wider number, which would either
 do nothing (the first) or silently delete the property under test (the second).
 
-- **`later_size_changes_are_debounced_into_a_resize`** (`crates/tui/src/app_tests.rs:125`,
-  the test for `RESIZE_DEBOUNCE` = 30ms, `crates/tui/src/app.rs:14`). The tightest bound in
+- **`later_size_changes_are_debounced_into_a_resize`** (`crates/tui/src/app/tests.rs:137`,
+  the test for `RESIZE_DEBOUNCE` = 30ms, `crates/tui/src/app/mod.rs:16` — updated from
+  `app_tests.rs:125`/`app.rs:14`, whole-branch-review m11: commit `8e2abc2` on the M6
+  branch deleted both of the original paths via task M6.9's `git mv`). The tightest bound in
   the workspace: `set_terminal_size` stamps `Instant::now()` and the very next statement
   asserts `on_tick()` still sees the debounce as unexpired. There is no I/O and no
   subprocess between the two lines — the entire budget is scheduler slack, so a 30ms
@@ -244,8 +246,9 @@ do nothing (the first) or silently delete the property under test (the second).
   crate from the rest of this work, not a test-file change.
 
 - **The four `< 100ms` lock-latency assertions** — `a_program_that_ignores_stdin_never_blocks_write_input_or_list`
-  in `crates/daemon/tests/manager.rs` (three call sites, currently around `:215`, `:302`,
-  `:310`) and `a_slow_worktree_create_does_not_block_the_manager` in
+  in `crates/daemon/tests/manager.rs` (three call sites, currently around `:238`, `:325`,
+  `:333` — updated from `:215`, `:302`, `:310`, whole-branch-review m11) and
+  `a_slow_worktree_create_does_not_block_the_manager` in
   `crates/daemon/tests/manager_worktree/admission.rs` (currently around `:191`, plus a
   second `< 1s` bound around `:212` covering a PTY spawn). These are **load-bearing**: the
   property under test is that `list()`/`write_input()` never wait on the manager lock while

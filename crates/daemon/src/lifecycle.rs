@@ -171,6 +171,17 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
         let _ = std::io::Write::write_all(&mut std::io::stderr(), b"anthrex-test-stderr-probe\n");
     }
     std::fs::create_dir_all(&opts.data_dir)?;
+    // Whole-branch-review Minor m5: `acquire_or_yield` runs its retry loop
+    // synchronously on whatever thread calls it (`std::thread::sleep`, not
+    // `tokio::time::sleep` — see its own doc comment) and is called directly from this
+    // async fn, not via `spawn_blocking`, which is AGENTS.md hard rule 2 as literally
+    // written ("no blocking work under ... a tokio worker thread"). The exception is
+    // safe *here* specifically: `run` is called once, at the very top of the daemon's
+    // startup, before the socket is bound, before the manager exists, and before
+    // anything else is scheduled on this runtime — there is nothing else this blocked
+    // worker thread could be starving. It would not be safe to call this anywhere
+    // else, including a later refactor of this same function, without moving it back
+    // onto `spawn_blocking` first.
     let _lock = match DaemonLock::acquire_or_yield(&opts.data_dir, opts.lock_wait, || {
         daemon_is_reachable(&opts.socket_path)
     })? {

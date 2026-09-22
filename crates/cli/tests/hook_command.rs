@@ -17,8 +17,9 @@ use tokio::net::{UnixListener, UnixStream};
 /// than tight: 3s is provably clear of `HOOK_DEADLINE + spawn` (measured 33-85ms loaded,
 /// see docs/timing-budgets.md) by a wide margin, so an assertion here fails only on an
 /// actual regression to the hook exceeding its own deadline, never on ordinary process
-/// spawn variance (flake-diagnosis.md §2.5, §3.4 — the previous 1500ms bound left only
-/// 500ms for the spawn and produced a 58% failure rate when the binary was looped).
+/// spawn variance (the investigation distilled into docs/timing-budgets.md found the
+/// previous 1500ms bound left only 500ms for the spawn, producing a 58% failure rate
+/// when the binary was looped).
 const LIMIT: Duration = Duration::from_secs(3);
 const FLAGS: &[&str] = &["hook", "--window", "1", "--source", "claude"];
 
@@ -30,7 +31,7 @@ fn without_a_daemon_it_exits_zero_silently_and_fast() {
     assert_silent_success(&output);
     // Not `< 1s`: that bound *is* HOOK_DEADLINE, with a process spawn stacked on top, so
     // it coincided with the hook's own legal worst case rather than bounding a regression
-    // (flake-diagnosis.md §1.1 item 2). Nothing here actually waits close to a second —
+    // (docs/timing-budgets.md's standing rule 1 is this exact shape). Nothing here actually waits close to a second —
     // there is no daemon to connect to, so `forward()` fails fast — so `LIMIT` still
     // catches a real hang while leaving room for spawn variance.
     assert!(start.elapsed() < LIMIT);
@@ -199,7 +200,8 @@ fn one_deadline_covers_stdin_handshake_and_ack() {
         // already spent 700ms of that budget on its own sleeps before ever calling
         // `finish` — leaving well under 300ms of real slack for process teardown, which
         // is exactly the tightest bound in this file and caused 5 of 7 failures when
-        // this binary was looped (flake-diagnosis.md §3.4). `LIMIT` gives it real room:
+        // this binary was looped (see docs/timing-budgets.md, the surviving distillate of
+        // the investigation that measured it). `LIMIT` gives it real room:
         // the child still exits ~1s after `start` regardless, so `finish` returns long
         // before its own deadline and `start.elapsed()` below stays far under `LIMIT` too.
         assert_silent_success(&child.finish(LIMIT));
