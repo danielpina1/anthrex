@@ -6,16 +6,13 @@ use crate::settings::UiSettings;
 use crate::tree::{self, TreeState};
 use crossterm::event::KeyEvent;
 use prompt::RenamePrompt;
-use proto::{ClientMsg, DaemonMsg, GitState, Status, WindowInfo};
+use proto::{ClientMsg, DaemonMsg, GitState, WindowInfo};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 pub const TOAST_TTL: Duration = Duration::from_secs(4);
 pub const RESIZE_DEBOUNCE: Duration = Duration::from_millis(30);
-/// Decision 36: how long `C-b Q` waits for the daemon to confirm a `Shutdown` (by
-/// closing the link) before giving up and telling the user to stop it by hand.
-pub const STOPPING_TIMEOUT: Duration = Duration::from_secs(5);
 const BRACKETED_PASTE_START: &[u8] = b"\x1b[200~";
 const BRACKETED_PASTE_END: &[u8] = b"\x1b[201~";
 
@@ -319,38 +316,6 @@ impl App {
         })]
     }
 
-    fn focus_relative(&mut self, delta: isize) -> Vec<Effect> {
-        let visible = tree::agent_order(&self.rows());
-        if visible.is_empty() {
-            return vec![];
-        }
-        let len = visible.len() as isize;
-        let id = if let Some(current) = self
-            .focused
-            .and_then(|id| visible.iter().position(|candidate| *candidate == id))
-        {
-            visible[(current as isize + delta).rem_euclid(len) as usize]
-        } else {
-            let expanded = tree::agent_order(&tree::build(&self.windows, &TreeState::default()));
-            let current = self
-                .focused
-                .and_then(|id| expanded.iter().position(|candidate| *candidate == id));
-            current
-                .and_then(|current| {
-                    (1..=expanded.len()).find_map(|offset| {
-                        let index = (current as isize + delta.signum() * offset as isize)
-                            .rem_euclid(expanded.len() as isize)
-                            as usize;
-                        visible
-                            .contains(&expanded[index])
-                            .then_some(expanded[index])
-                    })
-                })
-                .unwrap_or(visible[0])
-        };
-        self.focus(id)
-    }
-
     pub fn on_daemon(&mut self, msg: DaemonMsg) -> Vec<Effect> {
         match msg {
             DaemonMsg::Welcome { windows, .. } | DaemonMsg::WindowsChanged { windows } => {
@@ -471,74 +436,6 @@ impl App {
         }
     }
 
-    fn perform(&mut self, action: PendingAction) -> Vec<Effect> {
-        match action {
-            PendingAction::Kill(id) => vec![Effect::Send(ClientMsg::Kill { window_id: id })],
-            PendingAction::Restart(id) => {
-                vec![Effect::Send(ClientMsg::Restart { window_id: id })]
-            }
-            // Decision 36: only the send. Quitting happens once the daemon actually
-            // confirms — see `on_link_lost`, `on_send_failed` and `on_tick`'s
-            // `STOPPING_TIMEOUT` for the three ways that wait can end.
-            PendingAction::StopDaemon => {
-                self.stopping = Some(Instant::now());
-                vec![Effect::Send(ClientMsg::Shutdown)]
-            }
-        }
-    }
-
-    /// Decision 23: `C-b R`. An exited window restarts at once; a live one asks first,
-    /// through the same generic `Confirm` modal `confirm_focused` uses for `Kill`, with
-    /// `PendingAction::Restart(id)` carrying the window id so the eventual `y` cannot
-    /// act on whatever happens to be focused by the time it is pressed.
-    fn restart_focused(&mut self) -> Vec<Effect> {
-        let Some(w) = self.focused_window() else {
-            return vec![];
-        };
-        let (id, name) = (w.id, w.name.clone());
-        if w.status == Status::Exited {
-            self.toast(format!("restarting {name}"));
-            vec![Effect::Send(ClientMsg::Restart { window_id: id })]
-        } else {
-            self.modal = Some(Modal::Confirm {
-                message: format!("Restart '{name}'? It is running and will be stopped first."),
-                action: PendingAction::Restart(id),
-            });
-            vec![]
-        }
-    }
-
-    /// Called by the event loop when the daemon closes the connection or the socket
-    /// otherwise drops. Decision 36: if `C-b Q` was waiting for exactly this (`stopping`
-    /// is set), the drop *is* the confirmation, so the client quits; `DaemonMsg::Bye`
-    /// alone never does this (see its own doc comment above) because it can arrive
-    /// before the socket is actually gone. Otherwise this is an unplanned disconnect;
-    /// M6.11 (decisions 30-35) adds the reconnect attempt and its own status text, so
-    /// for now this only reports the drop.
-    pub fn on_link_lost(&mut self) -> Vec<Effect> {
-        self.connected = false;
-        if self.stopping.take().is_some() {
-            return vec![Effect::Quit];
-        }
-        self.toast(format!(
-            "connection to daemon lost; {} d to exit",
-            self.settings.prefix_label
-        ));
-        vec![]
-    }
-
-    /// Called by the event loop when `Connection::send` reports the outgoing queue is
-    /// full or gone. Decision 36's half of this: a refused `Shutdown` means `C-b Q`
-    /// cannot be confirmed by the daemon at all, so the wait ends right here rather
-    /// than sitting until `STOPPING_TIMEOUT`. Every other refused message still gets
-    /// `lib.rs`'s own generic handling (decision 35, M6.11, moves the rest of it here).
-    pub fn on_send_failed(&mut self, msg: &ClientMsg) -> Vec<Effect> {
-        if matches!(msg, ClientMsg::Shutdown) && self.stopping.take().is_some() {
-            self.toast("could not reach the daemon; run anthrex daemon stop");
-        }
-        vec![]
-    }
-
     fn run(&mut self, cmd: Command) -> Vec<Effect> {
         match cmd {
             Command::NextWindow => self.focus_relative(1),
@@ -648,14 +545,8 @@ impl App {
             self.toast = None;
         }
         // Decision 36: the third of the three ways `C-b Q`'s wait can end — nothing
-        // arrived at all within `STOPPING_TIMEOUT`.
-        if self
-            .stopping
-            .is_some_and(|at| at.elapsed() >= STOPPING_TIMEOUT)
-        {
-            self.stopping = None;
-            self.toast("the daemon did not confirm the shutdown; run anthrex daemon stop");
-        }
+        // arrived at all within `lifecycle::STOPPING_TIMEOUT`.
+        self.check_stopping_timeout();
         if self
             .pending_resize
             .is_some_and(|at| at.elapsed() >= RESIZE_DEBOUNCE)
@@ -674,6 +565,7 @@ impl App {
     }
 }
 
+mod lifecycle;
 mod modal_keys;
 pub(crate) mod prompt;
 mod windows;

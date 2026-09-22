@@ -12,6 +12,42 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 impl App {
+    /// `C-b j`/`C-b k`: focus the next or previous window in tree (agent) order,
+    /// wrapping around. Moved here from `app/mod.rs` (task M6.10's file-size finding
+    /// B) — it is about picking a window from the current list, the same concern
+    /// `replace_windows` below handles for a list that just changed.
+    pub(super) fn focus_relative(&mut self, delta: isize) -> Vec<Effect> {
+        let visible = tree::agent_order(&self.rows());
+        if visible.is_empty() {
+            return vec![];
+        }
+        let len = visible.len() as isize;
+        let id = if let Some(current) = self
+            .focused
+            .and_then(|id| visible.iter().position(|candidate| *candidate == id))
+        {
+            visible[(current as isize + delta).rem_euclid(len) as usize]
+        } else {
+            let expanded = tree::agent_order(&tree::build(&self.windows, &crate::tree::TreeState::default()));
+            let current = self
+                .focused
+                .and_then(|id| expanded.iter().position(|candidate| *candidate == id));
+            current
+                .and_then(|current| {
+                    (1..=expanded.len()).find_map(|offset| {
+                        let index = (current as isize + delta.signum() * offset as isize)
+                            .rem_euclid(expanded.len() as isize)
+                            as usize;
+                        visible
+                            .contains(&expanded[index])
+                            .then_some(expanded[index])
+                    })
+                })
+                .unwrap_or(visible[0])
+        };
+        self.focus(id)
+    }
+
     /// The daemon never publishes `None` for an unregistered root, so the client prunes its
     /// own `git` map to the current windows' roots on every window-list change.
     fn prune_git(&mut self) {
