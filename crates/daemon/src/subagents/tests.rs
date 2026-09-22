@@ -14,6 +14,12 @@ fn hook(kind: HookKind) -> ParsedHook {
         tool_name: None,
         tool_input: None,
         notification_type: None,
+        transcript_path: None,
+        tool_use_id: None,
+        tool_response: None,
+        tool_result_truncated: None,
+        tool_result_stringified: None,
+        prompt: None,
     }
 }
 
@@ -403,6 +409,27 @@ fn infos_report_seconds_since_start_and_end() {
     let info = &tracker.infos(base + Duration::from_secs(8))[0];
     assert_eq!(info.started_secs, 8);
     assert_eq!(info.ended_secs, Some(5));
+}
+
+#[test]
+fn parent_of_returns_the_recorded_parent() {
+    let base = Instant::now();
+    let mut tracker = SubagentTracker::default();
+    apply(
+        &mut tracker,
+        &spawn(Some("agent-root"), Some("Explore"), "scout"),
+        base,
+    );
+    apply(
+        &mut tracker,
+        &start("agent-child", Some("Explore")),
+        base + Duration::from_secs(1),
+    );
+    assert_eq!(
+        tracker.parent_of("agent-child"),
+        Some("agent-root".to_string())
+    );
+    assert_eq!(tracker.parent_of("agent-other"), None);
 }
 
 #[test]

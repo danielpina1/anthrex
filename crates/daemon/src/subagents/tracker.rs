@@ -194,6 +194,16 @@ impl SubagentTracker {
             .collect()
     }
 
+    /// The `parent_id` recorded for `id`, or `None` when the id is unknown or has no
+    /// recorded parent. Used by `handle_hook` to place a `SubagentStart` spawn block in
+    /// the right conversation (`crate::conversation`).
+    pub fn parent_of(&self, id: &str) -> Option<String> {
+        self.entries
+            .iter()
+            .find(|entry| entry.id == id)
+            .and_then(|entry| entry.parent_id.clone())
+    }
+
     fn entry_mut(&mut self, id: Option<&str>) -> Option<&mut Entry> {
         let id = id?;
         self.entries.iter_mut().find(|entry| entry.id == id)
