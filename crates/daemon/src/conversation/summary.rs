@@ -141,7 +141,11 @@ fn fallback(obj: &Map<String, Value>) -> String {
 /// truncation occurred. Counting and slicing by grapheme cluster, not by byte or `char`,
 /// keeps a multi-codepoint cluster (a family emoji, a combining-mark sequence) intact --
 /// slicing by `char` would split it and corrupt what the terminal renders.
-fn truncate_graphemes(s: &str) -> String {
+///
+/// `pub(super)`: `build::apply`'s `ToolResult.summary` (task M6.5.5) truncates a hook's
+/// `tool_response` text the same way and by the same cap, so it reuses this rather than
+/// duplicating the grapheme-cluster-safe truncation logic.
+pub(super) fn truncate_graphemes(s: &str) -> String {
     let graphemes: Vec<&str> = s.graphemes(true).collect();
     if graphemes.len() <= SUMMARY_MAX_GRAPHEMES {
         return s.to_string();
