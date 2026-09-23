@@ -103,7 +103,8 @@ fn a_codex_session_builds_a_real_conversation() {
     else {
         panic!("{calls:?}");
     };
-    assert_eq!(id.as_deref(), Some("item_2"));
+    // Namespaced by the sent turn: Codex numbers items from 0 in every process.
+    assert_eq!(id.as_deref(), Some("t0:item_2"));
     assert_eq!(name, "Bash");
     assert_eq!(
         input
@@ -297,4 +298,162 @@ fn a_claude_session_enriches_hook_built_turns() {
             _ => None,
         });
     assert_eq!(before, Some(None));
+}
+
+/// Ruling T7-I1: with Claude's hooks firing, a turn Claude Code starts by itself (a
+/// background sub-agent finishing) gets a `User` turn from its `UserPromptSubmit` hook,
+/// so the cursor must count it, or every later prompt is checked against the wrong turn.
+#[test]
+fn an_unprompted_claude_turn_keeps_later_turns_aligned() {
+    let session = "00000000-0000-4000-8000-000000000003";
+    let hook = |event: &str, prompt: Option<&str>| {
+        let mut payload = json!({"hook_event_name": event, "session_id": session});
+        if let Some(p) = prompt {
+            payload["prompt"] = json!(p);
+        }
+        crate::hooks::parse(HookSource::Claude, &payload).unwrap()
+    };
+    let init = lines(CLAUDE_STREAM)[12];
+    let text = |t: &str| {
+        json!({"type": "assistant", "parent_tool_use_id": null,
+               "message": {"content": [{"type": "text", "text": t}]}})
+        .to_string()
+    };
+    let result = r#"{"type":"result","subtype":"success","is_error":false}"#;
+
+    let mut set = ConversationSet::new(3, Runtime::Claude);
+    let mut parser = ClaudeStream::default();
+    let mut cursor = StreamCursor::default();
+    let now = Instant::now();
+    let turn = |set: &mut ConversationSet,
+                prompt: &str,
+                sent: bool,
+                reply: &str,
+                parser: &mut ClaudeStream,
+                cursor: &mut StreamCursor| {
+        set.on_hook(
+            Runtime::Claude,
+            &hook("UserPromptSubmit", Some(prompt)),
+            None,
+            0,
+            now,
+            Caps::default(),
+        );
+        if sent {
+            apply(
+                set,
+                Runtime::Claude,
+                sent_turn(Runtime::Claude, true, prompt, cursor),
+            );
+        }
+        for line in [init.to_string(), text(reply), result.to_string()] {
+            for event in parser.parse_line(&line) {
+                apply(
+                    set,
+                    Runtime::Claude,
+                    map(Runtime::Claude, true, &event, cursor),
+                );
+            }
+        }
+        set.on_hook(
+            Runtime::Claude,
+            &hook("Stop", None),
+            None,
+            0,
+            now,
+            Caps::default(),
+        );
+    };
+    turn(
+        &mut set,
+        "first",
+        true,
+        "reply one",
+        &mut parser,
+        &mut cursor,
+    );
+    turn(
+        &mut set,
+        "<task-notification>agent done</task-notification>",
+        false,
+        "bg reply",
+        &mut parser,
+        &mut cursor,
+    );
+    turn(
+        &mut set,
+        "second",
+        true,
+        "reply two",
+        &mut parser,
+        &mut cursor,
+    );
+
+    let conversation = set.snapshot(None).unwrap();
+    assert_eq!(conversation.degraded, None);
+    assert_eq!(conversation.turns.len(), 6);
+    assert_eq!(
+        conversation.turns[1].blocks,
+        [Block::Text {
+            text: "reply one".into()
+        }]
+    );
+    // The unprompted turn's prose is not put anywhere: no prompt was sent for it.
+    assert!(conversation.turns[3].blocks.is_empty());
+    assert_eq!(
+        conversation.turns[5].blocks,
+        [Block::Text {
+            text: "reply two".into()
+        }]
+    );
+}
+
+/// M8a.7 fix round 1, M2: every Codex process numbers its items from `item_0`, so a
+/// later turn's result must not land on an earlier turn's call with the same id.
+#[test]
+fn a_repeated_codex_item_id_stays_on_its_own_turn() {
+    let mut set = ConversationSet::new(4, Runtime::Codex);
+    let mut cursor = StreamCursor::default();
+    let first = [
+        r#"{"type":"thread.started","thread_id":"th"}"#,
+        r#"{"type":"turn.started"}"#,
+        r#"{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"echo FIRST","aggregated_output":"","exit_code":null,"status":"in_progress"}}"#,
+        r#"{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"echo FIRST","aggregated_output":"FIRST","exit_code":0,"status":"completed"}}"#,
+        r#"{"type":"turn.completed","usage":{}}"#,
+    ];
+    let second = [
+        r#"{"type":"thread.started","thread_id":"th"}"#,
+        r#"{"type":"turn.started"}"#,
+        r#"{"type":"item.completed","item":{"id":"item_2","type":"mcp_tool_call","server":"anthrex","tool":"task_done","arguments":{},"result":{"content":[{"type":"text","text":"SECOND"}]},"error":null,"status":"completed"}}"#,
+        r#"{"type":"turn.completed","usage":{}}"#,
+    ];
+    for (prompt, turn) in [("one", &first[..]), ("two", &second[..])] {
+        apply(
+            &mut set,
+            Runtime::Codex,
+            sent_turn(Runtime::Codex, false, prompt, &mut cursor),
+        );
+        for line in turn {
+            for event in codex_stream::parse_line(line) {
+                apply(
+                    &mut set,
+                    Runtime::Codex,
+                    map(Runtime::Codex, false, &event, &mut cursor),
+                );
+            }
+        }
+    }
+    let conversation = set.snapshot(None).unwrap();
+    let details: Vec<(Option<String>, Option<String>)> = conversation
+        .turns
+        .iter()
+        .flat_map(|t| &t.blocks)
+        .filter_map(|b| match b {
+            Block::ToolCall { id, result, .. } => {
+                Some((id.clone(), result.as_ref().and_then(|r| r.detail.clone())))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(details, [(Some("t0:item_2".into()), Some("FIRST".into()))]);
 }

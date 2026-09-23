@@ -141,3 +141,51 @@ fn tool_follows_the_latest_top_level_tool_use() {
     assert_eq!(state.tool.as_deref(), Some("Read"));
     assert_eq!(next(&state, &ended(TurnOutcome::Completed)).tool, None);
 }
+
+#[test]
+fn a_retry_restores_the_status_it_interrupted_and_ignores_bookkeeping_lines() {
+    let bookkeeping = [
+        SessionEvent::Other {
+            kind: "rate_limit_event".into(),
+        },
+        SessionEvent::Other {
+            kind: "system/thinking_tokens".into(),
+        },
+        SessionEvent::Unknown { line: "?".into() },
+        SessionEvent::StderrLine { line: "w".into() },
+        SessionEvent::Diagnostic { text: "d".into() },
+    ];
+    // A retry inside an open turn: bookkeeping lines keep it pending.
+    let mut state = run(&[init(), retry()]);
+    for line in &bookkeeping {
+        state = next(&state, line);
+        assert_eq!(state.status, Status::Attention, "{line:?}");
+        assert!(state.rate_limited, "{line:?}");
+    }
+    let back = next(
+        &state,
+        &SessionEvent::AssistantText {
+            text: "ok".into(),
+            parent: None,
+        },
+    );
+    assert_eq!((back.status, back.rate_limited), (Status::Working, false));
+
+    // A retry after a failed turn gives back the failed turn's Attention, not Idle.
+    let failed = run(&[
+        init(),
+        ended(TurnOutcome::Failed {
+            error: "x".into(),
+            kind: FailureKind::Other,
+        }),
+        retry(),
+    ]);
+    let after = next(&failed, &tool("Bash", None));
+    assert_eq!(
+        (after.status, after.rate_limited),
+        (Status::Attention, false)
+    );
+    // And one before any turn gives back Starting.
+    let early = next(&run(&[retry()]), &tool("Bash", None));
+    assert_eq!(early.status, Status::Starting);
+}

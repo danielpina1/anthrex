@@ -53,6 +53,15 @@ fn primed(runtime: Runtime, hooks_fire: bool) -> StreamCursor {
     cursor
 }
 
+/// A tool id as the mapping gives it: Codex ids are namespaced by the latest sent turn's
+/// ordinal (1 after `primed`), because every Codex process numbers its items from 0.
+fn tool_id(runtime: Runtime, id: &str) -> String {
+    match runtime {
+        Runtime::Codex => format!("t1:{id}"),
+        _ => id.to_string(),
+    }
+}
+
 /// Runs one table row for both `hooks_fire` values: the records are the same either
 /// way, and hooks appear only when the runtime's own do not fire.
 fn row(
@@ -134,7 +143,7 @@ fn conversation_map_follows_the_table() {
             &[],
             Some(&tool_use),
             vec![Record::ToolDetail {
-                tool_use_id: "tu-1".into(),
+                tool_use_id: tool_id(runtime, "tu-1"),
                 input: Some(json!({"command": "ls"})),
                 detail: None,
                 ok: None,
@@ -142,7 +151,7 @@ fn conversation_map_follows_the_table() {
             vec![ParsedHook {
                 tool_name: Some("Bash".into()),
                 tool_input: Some(json!({"command": "ls"})),
-                tool_use_id: Some("tu-1".into()),
+                tool_use_id: Some(tool_id(runtime, "tu-1")),
                 ..stream_hook(HookKind::PreToolUse, Some("s-7"))
             }],
         );
@@ -158,14 +167,14 @@ fn conversation_map_follows_the_table() {
                     parent: None,
                 }),
                 vec![Record::ToolDetail {
-                    tool_use_id: "tu-1".into(),
+                    tool_use_id: tool_id(runtime, "tu-1"),
                     input: None,
                     detail: Some("a.txt".into()),
                     ok: Some(ok),
                 }],
                 vec![ParsedHook {
                     tool_name: Some("Bash".into()),
-                    tool_use_id: Some("tu-1".into()),
+                    tool_use_id: Some(tool_id(runtime, "tu-1")),
                     tool_response: Some(json!({ key: "a.txt" })),
                     tool_result_truncated: Some(false),
                     tool_result_stringified: Some(false),
@@ -184,7 +193,7 @@ fn conversation_map_follows_the_table() {
                 parent: Some("tu-agent".into()),
             }),
             vec![Record::ToolDetail {
-                tool_use_id: "tu-2".into(),
+                tool_use_id: tool_id(runtime, "tu-2"),
                 input: Some(json!({"file_path": "a"})),
                 detail: None,
                 ok: None,
@@ -201,7 +210,7 @@ fn conversation_map_follows_the_table() {
                 parent: Some("tu-agent".into()),
             }),
             vec![Record::ToolDetail {
-                tool_use_id: "tu-2".into(),
+                tool_use_id: tool_id(runtime, "tu-2"),
                 input: None,
                 detail: Some("contents".into()),
                 ok: Some(false),
@@ -305,6 +314,46 @@ fn prose_of_a_turn_the_daemon_did_not_send_is_not_put_on_the_last_one() {
         map(Runtime::Codex, false, &text("early"), &mut fresh),
         ConversationInput::default()
     );
+}
+
+#[test]
+fn only_an_init_after_a_turn_with_hooks_firing_counts_as_an_unprompted_turn() {
+    let ordinal_of_next_sent = |runtime: Runtime, hooks_fire: bool, events: &[SessionEvent]| {
+        let mut cursor = StreamCursor::default();
+        for e in events {
+            map(runtime, hooks_fire, e, &mut cursor);
+        }
+        match sent_turn(runtime, hooks_fire, "next", &mut cursor)
+            .records
+            .as_slice()
+        {
+            [Record::UserText { ordinal, .. }] => *ordinal,
+            other => panic!("{other:?}"),
+        }
+    };
+    let end = SessionEvent::TurnEnded {
+        outcome: TurnOutcome::Completed,
+        usage: None,
+        denials: vec![],
+    };
+    // The session's first `Init`, before any turn: not an unprompted turn.
+    assert_eq!(ordinal_of_next_sent(Runtime::Claude, true, &[init("s")]), 0);
+    // After a sent turn ends, an `Init` with no turn sent is one, counted once.
+    let mut cursor = StreamCursor::default();
+    sent_turn(Runtime::Claude, true, "go", &mut cursor);
+    for e in [init("s"), end.clone(), init("s"), init("s")] {
+        map(Runtime::Claude, true, &e, &mut cursor);
+    }
+    match sent_turn(Runtime::Claude, true, "next", &mut cursor)
+        .records
+        .as_slice()
+    {
+        [Record::UserText { ordinal, .. }] => assert_eq!(*ordinal, 2),
+        other => panic!("{other:?}"),
+    }
+    // Without hooks nothing builds that turn, so nothing is counted.
+    let codex = [init("s"), end.clone(), init("s")];
+    assert_eq!(ordinal_of_next_sent(Runtime::Codex, false, &codex), 0);
 }
 
 #[test]

@@ -530,3 +530,7 @@ fn largest_string_leaf(value: &mut serde_json::Value) -> Option<&mut String> {
 #[cfg(test)]
 #[path = "conversation_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "conversation_bound_tests.rs"]
+mod bound_tests;

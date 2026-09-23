@@ -729,3 +729,34 @@ scope.
   M8a. The full text is the enriched `detail`, which is right. M8c, which puts headless
   conversations in front of the user, should decide whether the summary should read an
   object's single text field (`output`, `error`, `stdout`) instead.
+
+## From M8a.7's fix round 1 (2026-09-23), for M8a.12, M8a.18, M9.5 and M8c
+
+- **A Codex usage limit names when it resets; mark the runtime unavailable until
+  then** (ruling T7-C2, for M8a.12's rate-limit handling and M9.5's adaptive
+  concurrency). The captured `turn.failed` reads `You’ve hit your usage limit. Visit
+  https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Sep
+  25th, 2026 11:33 AM.` (`crates/daemon/tests/fixtures/headless/codex-0.156.1-usage-limit.jsonl`).
+  Today it parses as `Failed { RateLimit }`, and decision 32 retries every
+  `rate_limit_retry_secs`, which can mean dozens of doomed turns over two days. Parse the
+  `try again at <date>` time. Mark the Codex runtime unavailable until then: no dispatch
+  or delivery to Codex sessions, and route new work to the peer runtime where the roster
+  allows it. Do not retry.
+- **An interrupted turn stays `Running` in the conversation** (M8a.7 review M3, for M8a.18
+  and M8c). An interrupted Codex turn ends with `ProcessExited` and no `turn.*` line.
+  Claude fires no `Stop` hook for an interrupted turn, and with `hooks_fire` the
+  synthesised `Stop` is dropped. The Assistant turn therefore stays `Running` with its
+  call `Pending`, and the next prompt closes that call as `Denied`. The daemon knows the
+  turn ended. `TurnEnded { Interrupted }`, and a Codex `ProcessExited` while a sent turn is
+  open, could synthesise `Stop` even when `hooks_fire` is true.
+- **`server_git`'s `two_windows_in_one_worktree_register_once` fails when built into
+  `.worktrees/m8a-engine-core/target`** (found during M8a.7's fix round 1, not caused by
+  it). Load average was about 20. In that target dir the binary takes 5.5–6.8 s and fails
+  about 2 runs in 3 on the `Client::recv` 5 s timeout
+  (`crates/daemon/tests/support/mod.rs:118`). It fails there even when built from the
+  base commit `b5173fb`. The same code built into a target dir under the session
+  scratchpad takes 3.0–3.6 s and passes every time, for both the base and the fix-round
+  code. `git_registry`'s `a_commit_in_a_linked_worktree_triggers_a_probe` failed once in
+  a full parallel run and then passed three times alone. Worth a look at what in a
+  `target/` inside a git worktree slows the window-creation path (a file watcher or git
+  probe walking `target/`?). Worth an owner in M8a.8's git work or a flake pass.

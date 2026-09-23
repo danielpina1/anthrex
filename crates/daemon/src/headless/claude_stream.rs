@@ -42,14 +42,18 @@ impl ClaudeStream {
         let subtype = object.get("subtype").and_then(Value::as_str).unwrap_or("");
         let parent = string(&object, "parent_tool_use_id");
         match (kind, subtype) {
-            ("system", "init") => vec![
-                SessionEvent::Init {
-                    session_id: string(&object, "session_id").unwrap_or_default(),
-                    model: string(&object, "model"),
-                    mcp_ok: mcp_ok(object.get("mcp_servers")),
-                },
-                SessionEvent::TurnStarted,
-            ],
+            ("system", "init") => {
+                // A new turn: a category whose `result` never arrived is not this turn's.
+                self.pending_failure = None;
+                vec![
+                    SessionEvent::Init {
+                        session_id: string(&object, "session_id").unwrap_or_default(),
+                        model: string(&object, "model"),
+                        mcp_ok: mcp_ok(object.get("mcp_servers")),
+                    },
+                    SessionEvent::TurnStarted,
+                ]
+            }
             ("system", "api_retry") => vec![SessionEvent::ApiRetry {
                 error: string(&object, "error").unwrap_or_default(),
                 attempt: number(&object, "attempt")
@@ -68,18 +72,28 @@ impl ClaudeStream {
                 kind: format!("system/{other}"),
             }],
             ("assistant", _) => {
-                if let Some(category) = object.get("error").and_then(Value::as_str) {
+                // Only the top-level line's category is the turn's: a sub-agent's failed
+                // API call is the sub-agent's.
+                if parent.is_none()
+                    && let Some(category) = object.get("error").and_then(Value::as_str)
+                {
                     self.pending_failure = Some(category_kind(category));
                 }
+                or_unknown(
+                    blocks(&object)
+                        .iter()
+                        .filter_map(|block| assistant_block(block, &parent))
+                        .collect(),
+                    line,
+                )
+            }
+            ("user", _) => or_unknown(
                 blocks(&object)
                     .iter()
-                    .filter_map(|block| assistant_block(block, &parent))
-                    .collect()
-            }
-            ("user", _) => blocks(&object)
-                .iter()
-                .filter_map(|block| user_block(block, &parent))
-                .collect(),
+                    .filter_map(|block| user_block(block, &parent))
+                    .collect(),
+                line,
+            ),
             ("result", _) => vec![self.result(&object)],
             (other, _) if RECOGNISED_TYPES.contains(&other) => {
                 vec![SessionEvent::Other { kind: other.into() }]
@@ -186,6 +200,16 @@ pub fn interrupt_request(request_id: u64) -> String {
     format!(
         r#"{{"type":"control_request","request_id":"{request_id}","request":{{"subtype":"interrupt"}}}}"#
     )
+}
+
+/// A known line type in a shape that gave no event is kept as `Unknown`, so it reaches
+/// the window's diagnostic ring instead of vanishing.
+fn or_unknown(events: Vec<SessionEvent>, line: &str) -> Vec<SessionEvent> {
+    if events.is_empty() {
+        vec![unknown(line)]
+    } else {
+        events
+    }
 }
 
 fn string(object: &serde_json::Map<String, Value>, key: &str) -> Option<String> {

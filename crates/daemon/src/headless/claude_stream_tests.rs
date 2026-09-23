@@ -413,3 +413,109 @@ fn a_tool_result_is_cut_on_a_char_boundary() {
         other => panic!("{other:?}"),
     }
 }
+
+fn failed_kind(events: &[SessionEvent]) -> FailureKind {
+    match events {
+        [
+            SessionEvent::TurnEnded {
+                outcome: TurnOutcome::Failed { kind, .. },
+                ..
+            },
+        ] => *kind,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_failure_category_comes_only_from_the_top_level_line_of_the_same_turn() {
+    let (assistant, _) = failed_pair("rate_limit");
+    let failed =
+        r#"{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["boom"]}"#;
+    // A category whose `result` never came (the line was cut), then a new turn.
+    let mut parser = ClaudeStream::default();
+    parser.parse_line(&assistant);
+    parser.parse_line(lines(CLAUDE_STREAM)[12]);
+    assert_eq!(failed_kind(&parser.parse_line(failed)), FailureKind::Other);
+
+    // A sub-agent's failed API call is not the turn's.
+    let mut sub: Value = serde_json::from_str(&assistant).unwrap();
+    sub["error"] = json!("billing_error");
+    sub["parent_tool_use_id"] = json!("toolu_1");
+    let mut parser = ClaudeStream::default();
+    parser.parse_line(&sub.to_string());
+    let max_turns = r#"{"type":"result","subtype":"error_max_turns","is_error":true}"#;
+    assert_eq!(
+        failed_kind(&parser.parse_line(max_turns)),
+        FailureKind::Other
+    );
+}
+
+#[test]
+fn a_known_type_in_an_unknown_shape_is_unknown() {
+    for line in [
+        r#"{"type":"user","message":{"role":"user","content":"hello"}}"#,
+        r#"{"type":"assistant","message":{"content":[]}}"#,
+        r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":7}]}}"#,
+        r#"{"type":"user"}"#,
+    ] {
+        assert!(
+            matches!(
+                ClaudeStream::default().parse_line(line).as_slice(),
+                [SessionEvent::Unknown { .. }]
+            ),
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn an_aborted_stream_is_an_interrupt() {
+    let line = r#"{"type":"result","subtype":"error_during_execution","is_error":true,"terminal_reason":"aborted_streaming"}"#;
+    assert!(matches!(
+        ClaudeStream::default().parse_line(line).as_slice(),
+        [SessionEvent::TurnEnded {
+            outcome: TurnOutcome::Interrupted,
+            ..
+        }]
+    ));
+}
+
+#[test]
+fn mcp_ok_reads_the_anthrex_server_status() {
+    let init = |servers: &str| {
+        let line = format!(
+            r#"{{"type":"system","subtype":"init","session_id":"s","mcp_servers":{servers}}}"#
+        );
+        match ClaudeStream::default().parse_line(&line).first() {
+            Some(SessionEvent::Init { mcp_ok, .. }) => *mcp_ok,
+            other => panic!("{other:?}"),
+        }
+    };
+    assert_eq!(
+        init(r#"[{"name":"anthrex","status":"connected"}]"#),
+        Some(true)
+    );
+    assert_eq!(
+        init(r#"[{"name":"other","status":"connected"},{"name":"anthrex","status":"failed"}]"#),
+        Some(false)
+    );
+    assert_eq!(init(r#"[{"name":"other","status":"connected"}]"#), None);
+}
+
+#[test]
+fn tool_result_text_parts_are_joined_by_newlines() {
+    let line = json!({"type": "user", "parent_tool_use_id": null, "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "t1", "is_error": false,
+         "content": [{"type": "text", "text": "one"}, {"type": "image"}, {"type": "text", "text": "two"}]}
+    ]}})
+    .to_string();
+    assert_eq!(
+        ClaudeStream::default().parse_line(&line),
+        [SessionEvent::ToolResult {
+            id: "t1".into(),
+            text: "one\ntwo".into(),
+            ok: true,
+            parent: None,
+        }]
+    );
+}

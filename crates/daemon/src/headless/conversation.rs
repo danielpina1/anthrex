@@ -16,6 +16,10 @@ pub struct StreamCursor {
     /// Whether the latest sent turn is still open: prose after its `TurnEnded` belongs
     /// to a turn the daemon did not send.
     turn_open: bool,
+    /// A turn has ended and no turn has been sent since: an `Init` now starts a turn
+    /// Claude Code began by itself. False at the session's start, so its first `Init`
+    /// is never mistaken for one.
+    after_turn_end: bool,
     /// Top-level tool names by id, for the synthesised `PostToolUse`.
     tool_names: HashMap<String, String>,
     session_id: Option<String>,
@@ -34,18 +38,23 @@ pub struct ConversationInput {
 /// turn hooks did not fire in `-p`, which M8a.1 found they do), with `source: Stream`,
 /// `session_source: None` and the session id from `Init`.
 ///
-/// Two refinements of the table, both from M8a.1's recordings:
+/// Refinements of the table, from M8a.1's recordings and M8a.7's review:
 ///
 /// - Claude repeats `Init` every turn and Codex every process, so `SessionStart` is
 ///   synthesised only when the session id changes.
-/// - Top-level prose is put on the latest sent turn only while that turn is open. A turn
-///   Claude Code starts by itself (a background sub-agent finishing) has no sent prompt,
-///   and its prose would otherwise be appended to the previous reply.
-///
-/// `runtime` is not read: the mapping is the same for both, and the caller passes
-/// `hooks_fire` for the difference.
+/// - A turn Claude Code starts by itself (a background sub-agent finishing) begins with
+///   an `Init` after a `TurnEnded`, with no turn sent in between. The caller must apply
+///   `sent_turn` before it writes the turn's message, or the `Init` that message starts
+///   could be taken for such a turn. With `hooks_fire`, its own `UserPromptSubmit`
+///   hook builds a `User` turn for it, so the cursor counts it as a prompt (ruling
+///   T7-I1) and later ordinals keep matching the hook-built turns. Its prose gets no
+///   record, since no prompt text was sent for it. Without hooks nothing builds that
+///   turn, so it is not counted.
+/// - Codex numbers the items of every process from `item_0`, so one session repeats ids
+///   across turns. Codex tool ids are namespaced as `t<k>:<id>`, `k` the latest sent
+///   turn's ordinal, in both the hooks and the records.
 pub fn map(
-    _runtime: Runtime,
+    runtime: Runtime,
     hooks_fire: bool,
     event: &SessionEvent,
     cursor: &mut StreamCursor,
@@ -53,6 +62,10 @@ pub fn map(
     let mut input = ConversationInput::default();
     match event {
         SessionEvent::Init { session_id, .. } => {
+            if hooks_fire && !cursor.turn_open && cursor.after_turn_end {
+                cursor.prompts_sent = cursor.prompts_sent.saturating_add(1);
+                cursor.after_turn_end = false;
+            }
             if cursor.session_id.as_deref() != Some(session_id.as_str()) {
                 cursor.session_id = Some(session_id.clone());
                 input.hooks.push(cursor.hook(HookKind::SessionStart));
@@ -70,11 +83,12 @@ pub fn map(
             }
         }
         SessionEvent::ToolUse {
-            id,
+            id: raw_id,
             name,
             input: tool_input,
             parent,
         } => {
+            let id = &cursor.tool_id(runtime, raw_id);
             input.records.push(Record::ToolDetail {
                 tool_use_id: id.clone(),
                 input: Some(tool_input.clone()),
@@ -94,11 +108,12 @@ pub fn map(
             }
         }
         SessionEvent::ToolResult {
-            id,
+            id: raw_id,
             text,
             ok,
             parent,
         } => {
+            let id = &cursor.tool_id(runtime, raw_id);
             input.records.push(Record::ToolDetail {
                 tool_use_id: id.clone(),
                 input: None,
@@ -121,6 +136,7 @@ pub fn map(
         }
         SessionEvent::TurnEnded { .. } => {
             cursor.turn_open = false;
+            cursor.after_turn_end = true;
             cursor.tool_names.clear();
             input.hooks.push(cursor.hook(HookKind::Stop));
         }
@@ -144,6 +160,7 @@ pub fn sent_turn(
     let ordinal = cursor.prompts_sent;
     cursor.prompts_sent = cursor.prompts_sent.saturating_add(1);
     cursor.turn_open = true;
+    cursor.after_turn_end = false;
     let hooks = if hooks_fire {
         Vec::new()
     } else {
@@ -168,6 +185,14 @@ pub fn sent_turn(
 const TOOL_NAMES_MAX: usize = 1024;
 
 impl StreamCursor {
+    /// The tool id the conversation uses: Codex's namespaced by the latest sent turn.
+    fn tool_id(&self, runtime: Runtime, id: &str) -> String {
+        match runtime {
+            Runtime::Codex => format!("t{}:{id}", self.prompts_sent.saturating_sub(1)),
+            _ => id.to_owned(),
+        }
+    }
+
     /// A synthesised hook of `kind` with every optional field empty.
     fn hook(&self, kind: HookKind) -> ParsedHook {
         ParsedHook {

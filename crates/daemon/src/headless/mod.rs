@@ -126,6 +126,12 @@ pub enum SessionEvent {
         usage: Option<TokenUsage>,
         denials: Vec<String>,
     },
+    /// A runtime's own error notice (Codex's top-level `error` line), nothing to act on.
+    /// The parsers are pure, so the session driver logs it and keeps it in the window's
+    /// last-lines ring.
+    Diagnostic {
+        text: String,
+    },
     /// The first [`UNKNOWN_LINE_CHARS`] characters of a line that did not parse.
     Unknown {
         line: String,

@@ -314,7 +314,7 @@ fn argv_builders() {
             "-c",
             "mcp_servers.anthrex.tool_timeout_sec=120",
             "-c",
-            "mcp_servers.anthrex.default_tools_approval_mode=\"auto\"",
+            "mcp_servers.anthrex.default_tools_approval_mode=\"approve\"",
             "-c",
             "developer_instructions=\"Say \\\"done\\\" when done.\\nThen stop.\"",
             "-c",
@@ -370,7 +370,7 @@ fn argv_builders() {
             "-c",
             "mcp_servers.anthrex.tool_timeout_sec=120",
             "-c",
-            "mcp_servers.anthrex.default_tools_approval_mode=\"auto\"",
+            "mcp_servers.anthrex.default_tools_approval_mode=\"approve\"",
             "-c",
             "developer_instructions=\"Review it.\"",
             "-c",
@@ -385,6 +385,31 @@ fn argv_builders() {
             "Review t2",
         ])
     );
+}
+
+/// Ruling T7-C1 (codex 0.156.1, `codex-0.156.1-mcp-approval-*.jsonl`): under
+/// `approval_policy="never"`, `"auto"` fails every MCP call and `"approve"` completes it.
+#[test]
+fn the_anthrex_mcp_server_is_approved_under_never() {
+    for spec in [worker(Runtime::Codex), reviewer(Runtime::Codex)] {
+        for session in [
+            SessionArg::New { uuid: None },
+            SessionArg::Resume {
+                session_id: "th-1".into(),
+            },
+        ] {
+            let argv = codex(&spec, &session, "go", &CLI_CAPS);
+            let modes: Vec<&String> = argv
+                .iter()
+                .filter(|a| a.contains("default_tools_approval_mode"))
+                .collect();
+            assert_eq!(
+                modes,
+                ["mcp_servers.anthrex.default_tools_approval_mode=\"approve\""]
+            );
+            assert!(argv.contains(&"approval_policy=\"never\"".to_string()));
+        }
+    }
 }
 
 #[test]

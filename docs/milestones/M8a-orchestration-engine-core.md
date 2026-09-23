@@ -234,7 +234,7 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
     - The first turn: `codex exec --json`.
     - Every later turn: `codex exec resume <session id> --json`.
     - Then, on both, in this order:
-      - `-c mcp_servers.anthrex.command=<toml exe>`, `-c mcp_servers.anthrex.args=<toml array>`, `-c mcp_servers.anthrex.tool_timeout_sec=120`, `-c mcp_servers.anthrex.default_tools_approval_mode="auto"`.
+      - `-c mcp_servers.anthrex.command=<toml exe>`, `-c mcp_servers.anthrex.args=<toml array>`, `-c mcp_servers.anthrex.tool_timeout_sec=120`, `-c mcp_servers.anthrex.default_tools_approval_mode="approve"`. Not `"auto"`: against codex-cli 0.156.1, `"auto"` together with `approval_policy="never"` fails every call to the server with `MCP tool call requires approval, but approval policy is never`, under both `-s read-only` and `-s workspace-write`, and `"approve"` completes it (`crates/daemon/tests/fixtures/headless/codex-0.156.1-mcp-approval-auto.jsonl` and `-approve.jsonl`; ruling T7-C1, M8a.7 fix round 1). The key is scoped to the `anthrex` server, so it approves only anthrex's own tools.
       - `-c developer_instructions=<toml contract>`, `-c model_reasoning_effort=<toml effort>`, `-c approval_policy="never"`.
       - `-s <sandbox>`.
       - For a worker, `-c 'sandbox_workspace_write.writable_roots=[<toml git common dir>]'`.
@@ -461,7 +461,7 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
     - **Network.** The sandbox blocks network access by default. Anything that needs the network belongs in the profile's `setup`, which the engine runs unsandboxed before the worker starts, as Codex's `workspace-write` already requires.
     - **When the sandbox cannot start** (for example, bubblewrap is missing on Linux), the session fails with the text M8a.1 records. The engine blocks the task as `blocked(environment)` with `Claude Code's sandbox is unavailable here: <error>; set [orchestrator] worker_sandbox = false to run workers unsandboxed`.
     - **`[orchestrator] worker_sandbox = true`** is the default; `false` omits the block. Then the snapshot's `worker_sandbox` is `false` and the report says `worker sandbox: off ([orchestrator] worker_sandbox = false)`.
-    - Reviewers stay as decision 24 has them: read-only through `--permission-mode plan` and their allowed tools, with no sandbox block.
+    - Reviewers stay as decision 24 has them after M8a.1: read-only through `--permission-mode dontAsk`, `--disallowedTools Edit,Write,NotebookEdit` and their allowed tools (plan mode blocks the reviewer's MCP call in `-p`), with no sandbox block.
 
     *(Spec §4 "Workers run sandboxed".)*
 55. **Generated files bounce; they are not spills.** The profile gains `generated: Vec<String>` (plan `[profile]` over `[orchestrator.profile]`, per key like the rest; M8b's stored profile later fills it from lock files). `VerifyDone` splits the changed paths outside `owns` into `outside_owns` (not generated) and `generated_outside_owns` (matching `generated`, with decision 11's matching rules). Then:
@@ -1093,6 +1093,7 @@ pub struct HeadlessSpec {
     pub instructions: String,                         // --append-system-prompt | developer_instructions
     pub mcp: Option<McpTarget>, pub allowed_tools: Vec<String>,
     pub claude_permission_mode: Option<String>,       // None: omit the flag
+    pub claude_disallowed_tools: Vec<String>,          // --disallowedTools; a reviewer's Edit,Write,NotebookEdit (M8a.7)
     pub claude_sandbox: Option<ClaudeSandbox>,        // workers only, when worker_sandbox (decision 54)
     pub codex_sandbox: String, pub codex_writable_roots: Vec<PathBuf>,
     pub env: Vec<(String, String)>, pub claude_auth: ClaudeAuth, pub api_key_helper: Option<String>,
@@ -1115,6 +1116,7 @@ pub enum SessionEvent {
     Compacted,
     Other { kind: String },                           // recognised, nothing to act on (reasoning, thinking, rate-limit info)
     TurnEnded { outcome: TurnOutcome, usage: Option<TokenUsage>, denials: Vec<String> },
+    Diagnostic { text: String },                      // a runtime's own error notice (Codex's `error` line); the driver logs it (M8a.7 fix round 1)
     Unknown { line: String },                         // first 300 characters
     StderrLine { line: String },                      // from the driver
     ProcessExited { code: Option<i32>, signal: Option<i32> },   // from the driver
@@ -1153,7 +1155,8 @@ pub struct ConversationInput { pub hooks: Vec<ParsedHook>, pub records: Vec<crat
 pub fn map(runtime: Runtime, hooks_fire: bool, event: &SessionEvent, cursor: &mut StreamCursor) -> ConversationInput;
 pub fn sent_turn(runtime: Runtime, hooks_fire: bool, text: &str, cursor: &mut StreamCursor) -> ConversationInput; // the turn the daemon starts
 // headless/status.rs (pure)
-pub struct HeadlessStatus { pub status: Status, pub tool: Option<String>, pub turn_open: bool, pub rate_limited: bool }
+pub struct HeadlessStatus { pub status: Status, pub tool: Option<String>, pub turn_open: bool, pub rate_limited: bool,
+                            pub before_retry: Status }   // the status a pending retry interrupted (M8a.7 fix round 1)
 pub fn next(current: &HeadlessStatus, event: &SessionEvent) -> HeadlessStatus;
 // headless/session.rs (I/O)
 pub struct HeadlessHandle { /* runtime, current child (pid, group), stdin writer thread sender, reader task, ended */ }
@@ -1194,7 +1197,7 @@ pub const SCRUB_NAMES: &[&str] = &["CLAUDECODE"];
 | Codex | `web_search`, `reasoning`, `todo_list` items | `ToolUse { name: "WebSearch" }` for `web_search`; `Other` for the rest |
 | Codex | `{"type":"turn.completed","usage":{"input_tokens","cached_input_tokens","output_tokens"}}` | `TurnEnded { Completed }` |
 | Codex | `{"type":"turn.failed","error":{"message":…}}` | `TurnEnded { Failed { kind } }`, kind by the message patterns M8a.1 records |
-| Codex | `{"type":"error","message":…}` | `Other { kind: "error" }`, and the message is logged |
+| Codex | `{"type":"error","message":…}` | `Diagnostic { text: message }`, which the session driver logs (M8a.7 fix round 1) |
 | both | anything else, or invalid JSON | `Unknown` |
 
 **`SessionEvent` to milestone 6.5's conversation model** (`headless/conversation.rs`). Records always go to `ConversationSet::enrich`. Hooks are synthesised only when `hooks_fire` is false (every Codex session, and Claude only if M8a.1 finds its turn hooks do not fire in `-p`), with `source: HookSource::Stream`, `session_source: None` and `session_id` from `Init`. A synthesised `tool_response` is bounded exactly as `anthrex hook` bounds a real one (M6.5.2), setting `tool_result_truncated` and `tool_result_stringified`. On `main` that bounding is private to the CLI binary (`crates/cli/src/hook.rs`: `TOOL_RESULT_SUMMARY_MAX` at `:23`, `bound_tool_response` at `:111`, `bound_tool_response_value` at `:141`), which the daemon cannot call. M8a.7 therefore moves those three items, unchanged, into `proto::conversation` (pure; `crates/cli` and `crates/daemon` both depend on `proto`), `hook.rs` calls them from there, and their existing tests move with them; `hook.rs`'s static assertion against `config::CONVERSATION_MAX_RESULT_BYTES_MIN` stays where it is.
@@ -3263,3 +3266,103 @@ once implemented. Two tests could not fail that way:
 - `toml_string_round_trips_through_the_toml_crate` tests M3's existing `toml_string`, so
   its 20-string half passes on `main`'s code. It failed first only through its tail,
   which parses `codex_args`' TOML values.
+
+### M8a.7 fix round 1 (2026-09-23)
+
+Review `.superpowers/sdd/M8a-orchestration-engine-core/task-7-review.md` (0 Critical,
+3 Important, 10 Minor) and the controller's capture against codex-cli 0.156.1 (one
+Critical). Each ruling, and what was done:
+
+- **Ruling T7-C1 (Critical): the anthrex MCP server is `"approve"`, not `"auto"`.**
+  - The controller's capture: `default_tools_approval_mode="auto"` with
+    `approval_policy="never"` fails every MCP call with `MCP tool call requires approval,
+    but approval policy is never`, in both sandboxes. `"approve"` completes it. As
+    decision 25 stood, no Codex worker could ever call `task_done`.
+  - `codex_args` now passes `-c mcp_servers.anthrex.default_tools_approval_mode="approve"`.
+    Decision 25's text now says so, with the evidence.
+  - Tests: `argv_builders`, and `the_anthrex_mcp_server_is_approved_under_never` (first
+    turn and resume, worker and reviewer).
+- **Ruling T7-I1: an unprompted Claude turn is counted.**
+  - With `hooks_fire`, an `Init` that follows a `TurnEnded`, with no turn sent in
+    between, is a turn Claude Code started by itself (a background sub-agent finishing).
+    Its `UserPromptSubmit` hook builds a `User` turn for it, so `StreamCursor` now
+    counts it as a prompt. Its prose still gets no record.
+  - Without that count, the next sent prompt was checked against the unprompted turn.
+    The view went `Misaligned` and every later reply was lost.
+  - The session's first `Init` never counts (`after_turn_end` starts false).
+  - Without hooks (Codex) nothing builds such a turn, so nothing is counted.
+  - A requirement on M8a.17 and M8a.18: the driver must apply `sent_turn` before it
+    writes the turn's message. Otherwise a fast `Init` could be taken for an unprompted
+    turn.
+  - Tests: `an_unprompted_claude_turn_keeps_later_turns_aligned` (the reviewer's three-turn
+    case through a real `ConversationSet`: `degraded == None`, `reply two` on turn 5),
+    and `only_an_init_after_a_turn_with_hooks_firing_counts_as_an_unprompted_turn`. Three
+    mutants of the rule were killed.
+- **Ruling T7-I2: `429` counts only as a token of its own**, or as the JSON `status`. It
+  counts with no ASCII letter, digit or `_` on either side.
+  - The ruling said "whole number". Digits alone let `a429` in a UUID segment through
+    (the test caught it), so letters and `_` count as word characters too.
+  - The phrases `rate limit`, `usage limit` and `too many requests` are unchanged.
+  - Test: `a_429_inside_an_id_or_a_count_is_not_a_rate_limit`. `req_8429`, `142913`,
+    a UUID and `4290` are `Other`; `HTTP 429`, `status 429.`, `429 Too Many`, `(429)` and
+    a JSON `status: 429` are `RateLimit`.
+- **Ruling T7-I3: real captures replace the documented Codex shapes.** Four codex-cli
+  0.156.1 fixtures were added, each with a `.meta.json` (`observed: true`):
+  - `codex-0.156.1-item-shapes.jsonl`, `-mcp-approval-auto.jsonl`,
+    `-mcp-approval-approve.jsonl` and `-usage-limit.jsonl`.
+  - `codex_0_156_captures_parse_every_line` parses every line of them, none `Unknown`.
+  - `recorded_item_shapes_map_as_the_table_says` checks the mapping:
+    - The failed `mcp_tool_call` is a failed `ToolResult` whose text is the error message.
+    - The completed one's text is `probe says: hi`.
+    - `file_change` keeps its absolute path and kind.
+    - The `web_search` item names `"id"` twice (`item_3`, then `exec-<uuid>`).
+      `serde_json::Value` keeps the last key, so the line parses, and the use and result
+      pair up on `exec-<uuid>`, with its query as input.
+  - `a_usage_limit_is_a_rate_limit`: the usage-limit `turn.failed` is `Failed { RateLimit }`.
+  - The constructed-line test stays for the shapes the captures do not cover.
+  - The usage-limit text names its reset time. A follow-up asks M8a.12/M9.5 to mark the
+    runtime unavailable until then rather than retry every `rate_limit_retry_secs`
+    (ruling T7-C2).
+- **The minors, all fixed:**
+  - **M1: a failure category comes only from the top-level line of the same turn.** It
+    is taken only from an `assistant` line whose `parent_tool_use_id` is null, and it is
+    cleared at `system/init`. Test: `a_failure_category_comes_only_from_the_top_level_line_of_the_same_turn`.
+  - **M2: Codex tool ids are namespaced `t<k>:<id>`** in hooks and records, `k` the
+    latest sent turn's ordinal. Test: `a_repeated_codex_item_id_stays_on_its_own_turn`.
+    The table test and the Codex session test now expect namespaced ids.
+  - **M3: interrupted turns.** Recorded as a follow-up for M8a.18/M8c. The table is
+    unchanged.
+  - **M4: a known line type in a shape that yields no event is `Unknown`.** Test:
+    `a_known_type_in_an_unknown_shape_is_unknown`.
+  - **M5: a retry gives back the status it interrupted.** `HeadlessStatus.before_retry`
+    holds it. Bookkeeping events (`Other`, `Unknown`, `StderrLine`, `Diagnostic`) no
+    longer end a retry.
+    - This narrows the brief's "any later event clears it". Claude emits
+      `rate_limit_event`, `thinking_tokens` and hook lines constantly, and they say
+      nothing about whether the retry is over.
+    - The engine's own `rate_limited_until` (decision 27) is M8a.12's and is not
+      affected.
+    - Test: `a_retry_restores_the_status_it_interrupted_and_ignores_bookkeeping_lines`.
+  - **M6: the seven surviving mutants are killed** (`n`, `v`, `x`, `ae`, `ag`, `aj`,
+    `ak`), each re-run against the tests. The tests are `an_aborted_stream_is_an_interrupt`,
+    `mcp_ok_reads_the_anthrex_server_status`, `tool_result_text_parts_are_joined_by_newlines`,
+    `a_failed_mcp_call_is_failed_even_when_its_status_says_completed`,
+    `codex_usage_counts_cache_writes_inside_input_and_never_goes_negative` (distinct
+    non-zero fields; more cached than input) and the recorded `web_search` query.
+  - **M7: Codex `cache_write` is 0.** Decision 40 defines Codex billable as input minus
+    cached plus output. Cache writes are part of `input_tokens`, as cached reads are, so
+    counting `cache_write_input_tokens` again would bill them twice.
+  - **M8: documentation.** The Interfaces `HeadlessSpec` has `claude_disallowed_tools`.
+    `SessionEvent` has `Diagnostic` and `HeadlessStatus` has `before_retry`. Decision
+    54's reviewer bullet now says `dontAsk`. The report's line count is corrected.
+  - **M9: the parser no longer logs.** Codex's top-level `error` line yields
+    `SessionEvent::Diagnostic { text }`, a new variant. M8a.17's driver logs it and keeps
+    it in the window's last-lines ring. This supersedes the M8a.7 note that it is
+    `Other { kind: "error" }` and logged from the parser. Status and the conversation
+    ignore it.
+  - **M10: the moved bounding functions have unit tests in `proto`**
+    (`crates/proto/src/conversation_bound_tests.rs`): the 3-byte back-off (4095), the
+    4-byte mixed case (4093), string, object and array bounding, and the top-level
+    rewrite.
+    - They test existing code, so they passed at once.
+    - Changing the back-off to step two bytes made two of them fail.

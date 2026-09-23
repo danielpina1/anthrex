@@ -50,16 +50,9 @@ pub fn parse_line(line: &str) -> Vec<SessionEvent> {
                 denials: Vec::new(),
             }]
         }
-        "error" => {
-            let message = string(&object, "message").unwrap_or_default();
-            tracing::warn!(
-                message = %message.chars().take(super::UNKNOWN_LINE_CHARS).collect::<String>(),
-                "codex reported an error"
-            );
-            vec![SessionEvent::Other {
-                kind: "error".into(),
-            }]
-        }
+        "error" => vec![SessionEvent::Diagnostic {
+            text: string(&object, "message").unwrap_or_default(),
+        }],
         phase @ ("item.started" | "item.updated" | "item.completed") => {
             match object.get("item").and_then(Value::as_object) {
                 Some(item) => item_events(phase, item),
@@ -182,7 +175,8 @@ fn classify(message: &str) -> (String, FailureKind) {
         .and_then(Value::as_str);
     let lower = message.to_lowercase();
     let rate_limited = status == Some(429)
-        || ["429", "rate limit", "usage limit", "too many requests"]
+        || has_whole_number(message, "429")
+        || ["rate limit", "usage limit", "too many requests"]
             .iter()
             .any(|p| lower.contains(p));
     let kind = if rate_limited {
@@ -191,6 +185,19 @@ fn classify(message: &str) -> (String, FailureKind) {
         FailureKind::Other
     };
     (inner.unwrap_or(message).to_owned(), kind)
+}
+
+/// Whether `number` occurs in `text` as a token of its own, with no ASCII letter, digit
+/// or `_` on either side: `429` in `HTTP 429` or `(429)` counts, and in `req_8429`,
+/// `142913` or a UUID segment like `a429` does not (M8a.7 fix round 1, I2).
+fn has_whole_number(text: &str, number: &str) -> bool {
+    let bytes = text.as_bytes();
+    text.match_indices(number).any(|(at, _)| {
+        let before = at.checked_sub(1).map(|i| bytes[i]);
+        let after = bytes.get(at + number.len()).copied();
+        let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+        !before.is_some_and(word) && !after.is_some_and(word)
+    })
 }
 
 fn string(object: &Map<String, Value>, key: &str) -> Option<String> {
@@ -205,7 +212,9 @@ fn usage(value: &Value) -> Option<TokenUsage> {
         input: n("input_tokens").saturating_sub(cached),
         output: n("output_tokens"),
         cache_read: cached,
-        cache_write: n("cache_write_input_tokens"),
+        // Decision 40: Codex billable is input - cached + output. Cache writes are part
+        // of `input_tokens` like cached reads, so they are not counted a second time.
+        cache_write: 0,
     })
 }
 

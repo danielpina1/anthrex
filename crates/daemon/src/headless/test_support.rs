@@ -20,6 +20,14 @@ pub const CODEX_RESUME: &str =
     include_str!("../../tests/fixtures/headless/codex-0.155.0-resume.jsonl");
 pub const CODEX_PROJECT_CONFIG: &str =
     include_str!("../../tests/fixtures/headless/codex-0.155.0-project-config.jsonl");
+pub const CODEX_ITEM_SHAPES: &str =
+    include_str!("../../tests/fixtures/headless/codex-0.156.1-item-shapes.jsonl");
+pub const CODEX_MCP_AUTO: &str =
+    include_str!("../../tests/fixtures/headless/codex-0.156.1-mcp-approval-auto.jsonl");
+pub const CODEX_MCP_APPROVE: &str =
+    include_str!("../../tests/fixtures/headless/codex-0.156.1-mcp-approval-approve.jsonl");
+pub const CODEX_USAGE_LIMIT: &str =
+    include_str!("../../tests/fixtures/headless/codex-0.156.1-usage-limit.jsonl");
 
 /// The non-empty lines of a fixture, in order.
 pub fn lines(fixture: &str) -> Vec<&str> {

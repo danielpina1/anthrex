@@ -270,7 +270,7 @@ pub fn codex_args(
         config("mcp_servers.anthrex.tool_timeout_sec=120".into());
         config(format!(
             "mcp_servers.anthrex.default_tools_approval_mode={}",
-            toml_string("auto")
+            toml_string("approve")
         ));
     }
     config(format!(

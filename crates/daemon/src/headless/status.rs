@@ -10,6 +10,8 @@ pub struct HeadlessStatus {
     pub tool: Option<String>,
     pub turn_open: bool,
     pub rate_limited: bool,
+    /// The status a pending retry interrupted, given back when the retry ends.
+    pub before_retry: Status,
 }
 
 impl Default for HeadlessStatus {
@@ -19,6 +21,7 @@ impl Default for HeadlessStatus {
             tool: None,
             turn_open: false,
             rate_limited: false,
+            before_retry: Status::Starting,
         }
     }
 }
@@ -29,8 +32,10 @@ impl Default for HeadlessStatus {
 ///   progress) keep it.
 /// - `Working` while a turn is open. Claude repeats `Init` at every turn's start (M8a.1),
 ///   so a later `Init` opens a turn, including one Claude Code starts by itself.
-/// - `Attention` while a rate-limit retry is pending (cleared by any later event), or
-///   after a failed turn (cleared by the next turn).
+/// - `Attention` while a rate-limit retry is pending, or after a failed turn (cleared by
+///   the next turn). A retry ends at the next event that is not bookkeeping (`Other`,
+///   `Unknown`, `StderrLine`, `Diagnostic`, which Claude emits constantly and which say
+///   nothing about the retry), and gives back the status it interrupted.
 /// - `Idle` between turns, after a completed or interrupted one.
 /// - `Exited` once the process has ended.
 ///
@@ -38,8 +43,19 @@ impl Default for HeadlessStatus {
 /// cleared when the turn ends.
 pub fn next(current: &HeadlessStatus, event: &SessionEvent) -> HeadlessStatus {
     let mut state = current.clone();
-    let was_rate_limited = state.rate_limited;
-    state.rate_limited = false;
+    if matches!(
+        event,
+        SessionEvent::Other { .. }
+            | SessionEvent::Unknown { .. }
+            | SessionEvent::StderrLine { .. }
+            | SessionEvent::Diagnostic { .. }
+    ) {
+        return state;
+    }
+    if state.rate_limited {
+        state.rate_limited = false;
+        state.status = state.before_retry;
+    }
     match event {
         SessionEvent::ProcessExited { .. } => {
             state.status = Status::Exited;
@@ -51,6 +67,7 @@ pub fn next(current: &HeadlessStatus, event: &SessionEvent) -> HeadlessStatus {
             state.turn_open = true;
         }
         SessionEvent::ApiRetry { .. } => {
+            state.before_retry = state.status;
             state.status = Status::Attention;
             state.rate_limited = true;
         }
@@ -62,21 +79,12 @@ pub fn next(current: &HeadlessStatus, event: &SessionEvent) -> HeadlessStatus {
             state.turn_open = false;
             state.tool = None;
         }
-        other => {
-            if let SessionEvent::ToolUse {
-                name, parent: None, ..
-            } = other
-            {
-                state.tool = Some(name.clone());
-            }
-            if was_rate_limited {
-                state.status = if state.turn_open {
-                    Status::Working
-                } else {
-                    Status::Idle
-                };
-            }
+        SessionEvent::ToolUse {
+            name, parent: None, ..
+        } => {
+            state.tool = Some(name.clone());
         }
+        _ => {}
     }
     state
 }
