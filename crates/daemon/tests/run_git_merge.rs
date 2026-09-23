@@ -318,6 +318,23 @@ fn hand_back_that_is_clean_commits_the_merge() {
 }
 
 #[test]
+fn hand_back_blocked_by_an_untracked_file_is_an_error() {
+    let repo = repo();
+    let (_keep, task) = task_worktree(&repo, "hb3", "b.txt", "task\n");
+    let task_head = head(&task);
+    write(&task, "a.txt", "the worker's own, untracked\n");
+    let run_head = commit_on(&repo.root, "anthrex/hb3/integration", "a.txt", "run\n");
+
+    let result = hand_back(real_git(), &task, &run_head, T);
+    assert!(result.is_err(), "not a clean hand-back: {result:?}");
+    assert_eq!(head(&task), task_head);
+    assert_eq!(
+        std::fs::read_to_string(task.join("a.txt")).unwrap(),
+        "the worker's own, untracked\n"
+    );
+}
+
+#[test]
 fn read_ref_reports_a_moved_branch() {
     let repo = repo();
     let first = head(&repo.root);

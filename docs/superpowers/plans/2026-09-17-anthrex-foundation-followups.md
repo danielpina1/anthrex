@@ -760,3 +760,18 @@ scope.
   a full parallel run and then passed three times alone. Worth a look at what in a
   `target/` inside a git worktree slows the window-creation path (a file watcher or git
   probe walking `target/`?). Worth an owner in M8a.8's git work or a flake pass.
+
+## From M8a.9's review (2026-09-23), for M8a (salvage)
+
+- **A git repository nested in a task worktree is salvaged as a gitlink only, and its
+  content is lost when the worktree is removed** (task-9 review m3, ruling T9-m3). This
+  happens when a worker runs `git init` in `nested/`, commits, and leaves `p.txt`
+  uncommitted. Decision 20's `git add -A` then records `160000 commit <sha> nested`. That
+  commit is not in the run repository's object store, and `p.txt` is not saved at all.
+  `git worktree remove --force` then deletes `nested/`. The salvage ref exists, but it
+  does not hold the work.
+  - A cheap guard: refuse the salvage, and so the removal, when the written tree has a
+    gitlink that `HEAD` does not have. The error would name the path.
+  - A fuller fix: salvage the nested repository into its own ref, or copy the directory
+    aside.
+  - Decision 20 prescribes exactly `add -A`, so this needs a ruling before code.

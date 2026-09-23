@@ -3732,3 +3732,105 @@ Deviations, resolutions and invented text:
     `commit_tree`, `materialize`, `cas_update`, `reattach`, `salvage` and
     `remove_worktree` under `/tmp/ax run ü …`. `merge_tree`'s own test has a
     conflicted non-ASCII file.
+
+### M8a.9 fix round 1 (2026-09-23)
+
+Review `task-9-review.md` found 2 Important and 6 Minor issues. Controller rulings
+T9-I1, T9-I2 and T9-m1 to m6 apply. Each behaviour fix has a test that failed first.
+
+- **I1: accept never merges over, or aborts, the user's own operation (ruling T9-I1).**
+  - Before anything else, `accept` reads `rev-parse --absolute-git-dir`, which is `root`'s
+    own git directory, including for a linked worktree. It refuses when any of these
+    exists there: `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `rebase-merge/` or
+    `rebase-apply/`.
+  - The refusal is the invented `a <merge|cherry-pick|revert|rebase> is in progress in
+    <root>; finish or abort it first`.
+  - It runs first because a rebase detaches `HEAD`, and "a rebase is in progress" is more
+    useful than "currently a detached HEAD".
+  - Any `MERGE_HEAD` seen afterwards is accept's own, so accept only ever aborts its own
+    merge.
+  - Test `accept_refuses_while_a_merge_cherry_pick_or_rebase_is_in_progress`. It covers a
+    `merge --no-commit -s ours` state with a clean porcelain status, a stopped
+    cherry-pick, and a stopped rebase. Before the fix: `left: Err("git merge … failed:
+    fatal: You have not concluded your merge (MERGE_HEAD exists)…")`. The old code then
+    ran `merge --abort` and destroyed the user's pending merge.
+- **I2: a merge that fails in any way, including a timeout, is aborted (ruling T9-I2).**
+  - `ACCEPT_MERGE_TIMEOUT` = 600 s is accept's own deadline for its `git merge`, because
+    the user's hooks and signing run inside it. Every other command in accept keeps
+    `git_timeout`.
+  - Test seam: `accept_with_merge_timeout(…, merge_timeout, timeout)`. `accept` calls it
+    with the constant.
+  - When the merge returns `Err` (timed out, or could not start), or fails, accept aborts
+    any `MERGE_HEAD` with `merge --abort` under a fresh `git_timeout` deadline.
+  - If the abort fails too, for example on a leftover `index.lock`, the error is the
+    invented `<root> is mid-merge: accept's merge failed (<cause>) and could not be
+    aborted (<abort error>); run git merge --abort in <root>`.
+  - Test `accept_merge_that_outlives_its_deadline_is_aborted`. A `commit-msg` hook writes
+    a marker and sleeps 30 s. A local `core.hooksPath` is set so a global one cannot hide
+    it. The merge deadline is 2 s. Before the fix: `MERGE_HEAD` was left behind ("the
+    half-done merge was aborted"). After it: no `MERGE_HEAD`, the original porcelain
+    status, and `main` unchanged.
+  - Git 2.50.1 does run `commit-msg` for a merge, which the marker shows. The runner kills
+    the whole process group, so the hook dies with git and leaves no `index.lock`.
+- **m1: the first parent is checked after a successful merge (ruling T9-m1).**
+  - `accept` reads the run branch's head before merging. After success, `HEAD` must be a
+    merge whose parents are `(expected_base, run head)`.
+  - A merge whose second parent is the run head but whose first parent is not
+    `expected_base` is undone with `git reset -q --keep HEAD^1`. That keeps the commit
+    that landed on the base, and refuses to lose local changes. Accept then returns `the
+    base branch moved again; run accept again`.
+  - A `HEAD` that is not accept's merge means git found nothing to merge. It counts as
+    accepted only when `HEAD == expected_base`, and is otherwise refused the same way,
+    with nothing reset. This keeps `reset --keep` from ever undoing a commit that is not
+    accept's.
+  - No decision 18 flags are passed, and `reset` runs no hooks.
+  - If the reset fails, the invented error names the merge commit `root` is on.
+  - Test `accept_undoes_its_merge_when_the_base_moved_under_it`. A wrapper git (the new
+    test helper `support::run_git::wrapper_git`) commits `sneak` on `main` just before
+    the `--no-ff` merge runs. Before the fix: `left: Ok(Merged { … })`. After it: the
+    error above, `main` at `sneak`, whose parent is `base`, and a clean tree.
+  - The review's optional `ORIG_HEAD` pre-merge guard was not added. The ruling asked
+    only for the first-parent check.
+- **m2: `delete_branches` passes `--no-deref` and skips checked-out branches (ruling
+  T9-m2).**
+  - Each delete is `update-ref --no-deref -d <ref> <sha>`, so a symbolic ref under the
+    prefix is removed itself, never its target.
+  - Branches that `worktree list --porcelain -z` shows checked out in any worktree are
+    skipped.
+  - **Interface change:** the return type is now `Result<Vec<String>, String>`, the
+    skipped branches' short names, for the report.
+  - Test `delete_branches_skips_a_checked_out_branch_and_never_follows_a_symref`. Before
+    the fix, `refs/heads/main` was deleted through `refs/heads/anthrex/sy01/link`.
+- **m4: a refused salvage leaves the index untouched (ruling T9-m4).**
+  - When the salvage ref already exists, `salvage` decides before `add -A` whether this
+    is a replay: no `ls-files --others --exclude-standard`, and `git diff --quiet <ref>
+    --` clean. It returns the ref if so and refuses otherwise, and in both cases touches
+    no index.
+  - A first salvage's `add -A` made every untracked file tracked, so a real replay
+    matches.
+  - Test `a_refused_salvage_leaves_the_index_untouched`. A hand-back conflict meets a
+    `<seq>` ref that holds other work. Before the fix, `diff --diff-filter=U` was empty
+    after the refusal ("the conflict is still unresolved").
+- **m6: tests that kill the three surviving mutants (ruling T9-m6).** Each test passes
+  on the current code and was seen failing under its mutant:
+  - `hand_back_blocked_by_an_untracked_file_is_an_error` (H1);
+  - `accept_merges_the_run_branch_not_a_tag_of_the_same_name` (A4), with a tag
+    `anthrex/tg01/integration` on a decoy commit;
+  - `salvage_never_overwrites_a_ref_created_under_it` (S1), where a wrapper git creates
+    the ref just before salvage's `update-ref`.
+  - C1, `cas_update` turning a ref-at-old failure into `Ok(false)`, needs lock contention
+    to provoke and is left as the review accepted it.
+- **m5, documented, no code change (ruling T9-m5).** `merge_tree`'s conflict list has two
+  known limits:
+  - Past 64 MiB of NUL-separated names, the rest is dropped silently, along with the last,
+    possibly cut, name. The list the worker gets is then short.
+  - A file name that is not UTF-8 is decoded lossily, with `U+FFFD`, so the worker is
+    handed a name that does not exist.
+  - Both are far-fetched. Every constructed case in the review parsed correctly.
+- **m3, a follow-up, no code change (ruling T9-m3).** A git repository nested in a
+  worktree is salvaged only as a gitlink, and its content is lost when the worktree is
+  removed. This is recorded under "From M8a.9's review" in the foundation follow-ups
+  file.
+- **Test layout.** The accept tests moved from `run_git_finish.rs` to a new
+  `tests/run_git_accept.rs` (9 tests), to keep both files under 600 lines.
+  `run_git_finish.rs` now has 8 tests and `run_git_merge.rs` has 9.

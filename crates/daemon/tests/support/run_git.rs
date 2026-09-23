@@ -82,3 +82,27 @@ pub fn worktree_block(root: &Path, path: &Path) -> Option<String> {
         .find(|block| block.lines().next() == Some(wanted.as_str()))
         .map(str::to_string)
 }
+
+/// A `git` stand-in in `dir` that runs the shell `before` (with `$REAL` the real git's
+/// absolute path, and the stand-in's own arguments in `$@`, so `$2` is the `-C`
+/// directory every run-git call passes first), then execs the real git. It lets a test
+/// make something happen at an exact point inside an operation — another writer's ref
+/// appearing just before an `update-ref`, a commit landing on the base just before a
+/// merge — with no timing involved.
+pub fn wrapper_git(dir: &Path, before: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let which = std::process::Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    let real = String::from_utf8(which.stdout).unwrap().trim().to_string();
+    assert!(!real.is_empty(), "no git on PATH");
+    let script = dir.join("wrapper-git");
+    std::fs::write(
+        &script,
+        format!("#!/bin/sh\nREAL='{real}'\n{before}\nexec \"$REAL\" \"$@\"\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    script
+}

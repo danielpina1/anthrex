@@ -1,17 +1,14 @@
-//! M8a.9: salvage and cleanup (decision 20), accept onto the base branch (decision 20,
-//! including an advanced base and a conflict against one), and deleting a run's
-//! branches. Split from `run_git_merge.rs` to keep both under AGENTS.md rule 8's ~600
-//! lines.
+//! M8a.9: salvage and cleanup (decision 20) and deleting a run's branches. Accept is in
+//! `run_git_accept.rs`. Split from `run_git_merge.rs` to keep each under AGENTS.md rule
+//! 8's ~600 lines.
 
 mod support;
 
-use daemon::run::git::{
-    AcceptOutcome, accept, delete_branches, prepare_worktree, remove_worktree, salvage,
-};
+use daemon::run::git::{delete_branches, prepare_worktree, remove_worktree, salvage};
 use std::path::{Path, PathBuf};
 use support::TempRepo;
 use support::run_git::{
-    T, commit_file, head, out, real_git, repo, try_git, worktree_block, write, wt_dir,
+    T, commit_file, head, out, real_git, repo, try_git, worktree_block, wrapper_git, write, wt_dir,
 };
 
 fn task_worktree(repo: &TempRepo, run: &str, task: &str) -> (tempfile::TempDir, PathBuf) {
@@ -200,162 +197,6 @@ fn remove_refuses_nothing_after_salvage() {
     assert_eq!(worktree_block(&repo.root, &gone), None);
 }
 
-/// A run branch `anthrex/<run>/integration` one commit ahead of `main`'s current head,
-/// changing `file`. Returns `(base_sha, run_head)`.
-fn run_branch(repo: &TempRepo, run: &str, file: &str, content: &str) -> (String, String) {
-    let base = head(&repo.root);
-    let branch = format!("anthrex/{run}/integration");
-    out(&repo.root, &["checkout", "-q", "-b", &branch]);
-    let run_head = commit_file(&repo.root, file, content, "run work");
-    out(&repo.root, &["checkout", "-q", "main"]);
-    (base, run_head)
-}
-
-fn parents(dir: &Path, commit: &str) -> Vec<String> {
-    out(dir, &["rev-list", "--parents", "-n", "1", commit])
-        .split_whitespace()
-        .skip(1)
-        .map(str::to_string)
-        .collect()
-}
-
-fn accept_run(repo: &TempRepo, run: &str, expected_base: &str) -> Result<AcceptOutcome, String> {
-    accept(
-        real_git(),
-        &repo.root,
-        "main",
-        expected_base,
-        &format!("anthrex/{run}/integration"),
-        &format!("anthrex: accept run {run}: do the thing"),
-        T,
-    )
-}
-
-#[test]
-fn accept_requires_the_base_branch_and_a_clean_tree() {
-    let repo = repo();
-    let (base, _run_head) = run_branch(&repo, "ac01", "a.txt", "run\n");
-
-    out(&repo.root, &["checkout", "-q", "-b", "feature"]);
-    assert_eq!(
-        accept_run(&repo, "ac01", &base),
-        Err(format!(
-            "check out main in {} first (currently feature)",
-            repo.root.display()
-        ))
-    );
-    out(&repo.root, &["checkout", "-q", "--detach"]);
-    assert_eq!(
-        accept_run(&repo, "ac01", &base),
-        Err(format!(
-            "check out main in {} first (currently a detached HEAD)",
-            repo.root.display()
-        ))
-    );
-    out(&repo.root, &["checkout", "-q", "main"]);
-
-    write(&repo.root, "README", "uncommitted\n");
-    assert_eq!(
-        accept_run(&repo, "ac01", &base),
-        Err(format!(
-            "the working tree at {} has uncommitted changes; commit or stash them first",
-            repo.root.display()
-        ))
-    );
-    assert_eq!(out(&repo.root, &["rev-parse", "main"]), base);
-    assert!(!repo.root.join("a.txt").exists());
-
-    // Untracked files alone do not block (decision 17's check is of tracked files).
-    out(&repo.root, &["checkout", "--", "README"]);
-    write(&repo.root, "notes.txt", "mine\n");
-    assert!(matches!(
-        accept_run(&repo, "ac01", &base),
-        Ok(AcceptOutcome::Merged { .. })
-    ));
-}
-
-#[test]
-fn accept_merges_no_ff() {
-    let repo = repo();
-    let (base, run_head) = run_branch(&repo, "ac02", "a.txt", "run\n");
-
-    let outcome = accept_run(&repo, "ac02", &base).unwrap();
-    let AcceptOutcome::Merged { commit } = outcome else {
-        panic!("{outcome:?}");
-    };
-    assert_eq!(out(&repo.root, &["rev-parse", "main"]), commit);
-    assert_eq!(parents(&repo.root, &commit), vec![base, run_head]);
-    assert_eq!(
-        out(&repo.root, &["log", "-1", "--format=%B", &commit]),
-        "anthrex: accept run ac02: do the thing"
-    );
-    assert_eq!(
-        out(&repo.root, &["symbolic-ref", "--short", "HEAD"]),
-        "main"
-    );
-    assert_eq!(out(&repo.root, &["status", "--porcelain"]), "");
-    assert_eq!(out(&repo.root, &["show", "HEAD:a.txt"]), "run");
-}
-
-#[test]
-fn accept_onto_an_advanced_base_merges_no_ff() {
-    let repo = repo();
-    let (_base, run_head) = run_branch(&repo, "ac03", "a.txt", "run\n");
-    let advanced = commit_file(&repo.root, "other.txt", "user\n", "user work");
-
-    let outcome = accept_run(&repo, "ac03", &advanced).unwrap();
-    let AcceptOutcome::Merged { commit } = outcome else {
-        panic!("{outcome:?}");
-    };
-    assert_eq!(out(&repo.root, &["rev-parse", "main"]), commit);
-    assert_eq!(parents(&repo.root, &commit), vec![advanced, run_head]);
-    assert!(repo.root.join("a.txt").exists());
-    assert!(repo.root.join("other.txt").exists());
-}
-
-#[test]
-fn accept_conflict_with_an_advanced_base_aborts_and_leaves_base_untouched() {
-    let repo = repo();
-    let (_base, _run_head) = run_branch(&repo, "ac04", "README", "run line\n");
-    let advanced = commit_file(&repo.root, "README", "user line\n", "user edit");
-    write(&repo.root, "notes.txt", "untracked, mine\n");
-    let status_before = out(&repo.root, &["status", "--porcelain"]);
-
-    let outcome = accept_run(&repo, "ac04", &advanced).unwrap();
-    assert_eq!(
-        outcome,
-        AcceptOutcome::Conflict {
-            files: vec!["README".to_string()]
-        }
-    );
-    assert_eq!(out(&repo.root, &["rev-parse", "refs/heads/main"]), advanced);
-    assert_eq!(out(&repo.root, &["status", "--porcelain"]), status_before);
-    assert!(
-        !try_git(&repo.root, &["rev-parse", "-q", "--verify", "MERGE_HEAD"])
-            .status
-            .success()
-    );
-    assert_eq!(
-        std::fs::read_to_string(repo.root.join("README")).unwrap(),
-        "user line\n"
-    );
-}
-
-#[test]
-fn accept_refuses_when_the_base_moved_again() {
-    let repo = repo();
-    let (base, _run_head) = run_branch(&repo, "ac05", "a.txt", "run\n");
-    let moved = commit_file(&repo.root, "other.txt", "user\n", "user work");
-
-    assert_eq!(
-        accept_run(&repo, "ac05", &base),
-        Err("the base branch moved again; run accept again".to_string())
-    );
-    assert_eq!(out(&repo.root, &["rev-parse", "main"]), moved);
-    assert!(!repo.root.join("a.txt").exists());
-    assert_eq!(out(&repo.root, &["status", "--porcelain"]), "");
-}
-
 #[test]
 fn delete_branches_removes_every_run_branch_but_keeps_salvage_refs() {
     let repo = repo();
@@ -375,7 +216,10 @@ fn delete_branches_removes_every_run_branch_but_keeps_salvage_refs() {
     );
     let branches = || out(&repo.root, &["for-each-ref", "--format=%(refname)"]);
 
-    delete_branches(real_git(), &repo.root, "anthrex/db01/", T).unwrap();
+    assert_eq!(
+        delete_branches(real_git(), &repo.root, "anthrex/db01/", T).unwrap(),
+        Vec::<String>::new()
+    );
     assert_eq!(
         branches(),
         [
@@ -398,4 +242,105 @@ fn delete_branches_removes_every_run_branch_but_keeps_salvage_refs() {
     assert!(delete_branches(real_git(), &repo.root, "", T).is_err());
     assert!(delete_branches(real_git(), &repo.root, "/", T).is_err());
     assert!(repo.branch_exists("main"));
+}
+
+#[test]
+fn a_refused_salvage_leaves_the_index_untouched() {
+    let repo = repo();
+    commit_file(&repo.root, "shared.txt", "base\n", "shared");
+    let (_keep, task) = task_worktree(&repo, "sv04", "t1");
+    let task_head = commit_file(&task, "shared.txt", "task\n", "task");
+    let run_head = commit_file(&repo.root, "shared.txt", "run\n", "run");
+    assert!(
+        !try_git(&task, &["merge", "--no-edit", &run_head])
+            .status
+            .success()
+    );
+    // A caller that reused a `<seq>`: the ref holds other work.
+    let reference = "refs/anthrex/salvage/sv04/t1/1";
+    out(&repo.root, &["update-ref", reference, &task_head]);
+    let unmerged = || out(&task, &["diff", "--name-only", "--diff-filter=U"]);
+    assert_eq!(unmerged(), "shared.txt");
+
+    let refused = salvage(real_git(), &task, reference, "anthrex salvage sv04/t1", T);
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!(unmerged(), "shared.txt", "the conflict is still unresolved");
+    assert_eq!(out(&repo.root, &["rev-parse", reference]), task_head);
+}
+
+#[test]
+fn salvage_never_overwrites_a_ref_created_under_it() {
+    let repo = repo();
+    let (_keep, task) = task_worktree(&repo, "sv05", "t1");
+    let task_head = head(&task);
+    write(&task, "wip.txt", "uncommitted\n");
+    // Another writer creates the salvage ref just before salvage's own `update-ref`.
+    let tools = tempfile::tempdir().unwrap();
+    let git = wrapper_git(
+        tools.path(),
+        r#"prev=""
+for a in "$@"; do
+  if [ "$prev" = "update-ref" ]; then
+    case "$a" in refs/anthrex/salvage/*) "$REAL" -C "$2" update-ref "$a" HEAD || exit 99 ;; esac
+  fi
+  prev="$a"
+done"#,
+    );
+    let reference = "refs/anthrex/salvage/sv05/t1/1";
+    let result = salvage(
+        git.as_os_str(),
+        &task,
+        reference,
+        "anthrex salvage sv05/t1",
+        T,
+    );
+    assert!(result.is_err(), "{result:?}");
+    assert_eq!(out(&repo.root, &["rev-parse", reference]), task_head);
+}
+
+#[test]
+fn delete_branches_skips_a_checked_out_branch_and_never_follows_a_symref() {
+    let repo = repo();
+    let base = head(&repo.root);
+    // A symbolic ref under the prefix pointing at `main`: the link goes, `main` stays.
+    out(
+        &repo.root,
+        &[
+            "symbolic-ref",
+            "refs/heads/anthrex/sy01/link",
+            "refs/heads/main",
+        ],
+    );
+    assert_eq!(
+        delete_branches(real_git(), &repo.root, "anthrex/sy01", T).unwrap(),
+        Vec::<String>::new()
+    );
+    assert_eq!(out(&repo.root, &["rev-parse", "refs/heads/main"]), base);
+    assert!(
+        !try_git(
+            &repo.root,
+            &[
+                "rev-parse",
+                "-q",
+                "--verify",
+                "refs/heads/anthrex/sy01/link"
+            ]
+        )
+        .status
+        .success()
+    );
+
+    // The user checked a run branch out in `root` to try it: it is skipped and named.
+    out(&repo.root, &["branch", "anthrex/co01/integration", &base]);
+    out(&repo.root, &["branch", "anthrex/co01/t1", &base]);
+    out(&repo.root, &["checkout", "-q", "anthrex/co01/integration"]);
+    let mine = commit_file(&repo.root, "mine.txt", "mine\n", "trying the run");
+    assert_eq!(
+        delete_branches(real_git(), &repo.root, "anthrex/co01", T).unwrap(),
+        vec!["anthrex/co01/integration".to_string()]
+    );
+    assert!(repo.branch_exists("anthrex/co01/integration"));
+    assert!(!repo.branch_exists("anthrex/co01/t1"));
+    assert_eq!(head(&repo.root), mine);
+    assert_eq!(out(&repo.root, &["status", "--porcelain"]), "");
 }

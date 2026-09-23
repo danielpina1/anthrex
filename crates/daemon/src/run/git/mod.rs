@@ -26,7 +26,10 @@ pub use merge::{
     ACCEPT_LIST_MAX, AcceptOutcome, CandidateStep, RefCheck, cas_update, commit_tree,
     commits_since, guard_refs, hand_back, materialize, merge_tree, read_ref, reattach,
 };
-pub use salvage::{accept, delete_branches, remove_worktree, salvage};
+pub use salvage::{
+    ACCEPT_MERGE_TIMEOUT, accept, accept_with_merge_timeout, delete_branches, remove_worktree,
+    salvage,
+};
 
 pub use queue::{GitQueue, LOCK_RETRY_DELAYS_MS};
 pub use worktrees::{create_run_branch, lock_worktree, prepare_review, prepare_worktree};
