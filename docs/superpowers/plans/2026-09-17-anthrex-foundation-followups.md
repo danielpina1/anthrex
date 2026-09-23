@@ -689,3 +689,17 @@ scope.
   Seen in the conversation view with real Codex 0.155.0: one reply shows as two assistant
   turns, the calls in one and the prose in the other. Not investigated; start from how the
   Codex hooks open and close turns against `codex-0.155.0.jsonl`.
+
+## From the M8a brief refresh (2026-09-23), for the user to decide
+
+- **AGENTS.md's environment-lock rule differs from landed practice.** `AGENTS.md:70` says
+  "Tests that change environment variables must hold a shared lock." The landed code does
+  not do that: each env-mutating test lives alone in its own test binary
+  (`crates/daemon/tests/worktree_env.rs`, `crates/daemon/tests/git_env.rs`), and the
+  daemon crate has no shared env mutex. `worktree_env.rs:1–20` explains why: the hazard
+  is a `set_var` racing a child-process spawn on another libtest thread, which reads the
+  whole `environ` block without taking any lock the crate controls, so a lock around the
+  mutation alone does not help. The M8a brief follows the landed practice
+  (`run_git_env.rs`, `run_exec_env.rs`, `headless_env.rs`). AGENTS.md was left unchanged;
+  the user decides whether to reword the rule to "put the test alone in its own test
+  binary".
