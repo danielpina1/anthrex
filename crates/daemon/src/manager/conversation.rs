@@ -263,7 +263,7 @@ impl WindowManager {
         // pending means the session changed since the kept `Tail` was made, even when the
         // path is the same again (re-review 2, I2: `/clear` then `/resume` back while
         // nobody watched), so that `Tail` is never continued.
-        let resume = entry.conversations.take_resume();
+        let resume = entry.conversations.take_at_end();
         let new_session = entry.conversations.take_new_session();
         match entry.transcript.tail.take() {
             Some(tail) if tail.path() == path && !resume && !new_session => {

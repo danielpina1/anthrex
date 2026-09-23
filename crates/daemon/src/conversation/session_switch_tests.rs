@@ -23,9 +23,16 @@ fn apply(set: &mut ConversationSet, hooks: &[ParsedHook]) {
     }
 }
 
+/// A `SessionStart` onto `path` whose source promises a fresh file (`startup`; `clear`
+/// is the same to this code).
 fn session_at(id: &str, path: &str) -> ParsedHook {
+    sourced(id, path, Some("startup"))
+}
+
+fn sourced(id: &str, path: &str, source: Option<&str>) -> ParsedHook {
     let mut h = session(id);
     h.transcript_path = Some(path.into());
+    h.session_source = source.map(str::to_owned);
     h
 }
 
@@ -179,24 +186,44 @@ fn resumed_at(id: &str, path: &str) -> ParsedHook {
     h
 }
 
-/// Fix round 2 (N1/N2): a resumed session is flagged for an at-end open whether or not a
-/// path came before it; an ordinary start, a `/clear`, or a resume onto the file already
-/// read is not.
+/// Fix round 2 (N1/N2) and re-review 2 (M1): only `startup` and `clear` promise a fresh
+/// file. Any other source that switches session or file asks for an at-end open, a
+/// window's first `SessionStart` included; the same session and file again asks for
+/// nothing, whatever the source.
 #[test]
-fn only_a_resume_onto_another_file_asks_for_an_at_end_open() {
+fn every_switch_but_startup_and_clear_asks_for_an_at_end_open() {
     let mut set = ConversationSet::new(1, proto::Runtime::Claude);
     apply(&mut set, &[resumed_at("sess-A", "/t/a.jsonl")]);
-    assert!(set.take_resume(), "a window's first SessionStart, resumed");
-    assert!(!set.take_resume(), "once");
+    assert!(set.take_at_end(), "a window's first SessionStart, resumed");
+    assert!(!set.take_at_end(), "once");
+    for source in [
+        Some("resume"),
+        Some("compact"),
+        Some("clear"),
+        Some("fork"),
+        None,
+    ] {
+        apply(&mut set, &[sourced("sess-A", "/t/a.jsonl", source)]);
+        assert!(!set.take_at_end(), "the same session and file, {source:?}");
+    }
+    let switches = [
+        ("sess-B", Some("clear"), false),
+        ("sess-C", Some("startup"), false),
+        ("sess-D", Some("fork"), true),
+        ("sess-E", Some("compact"), true),
+        ("sess-F", Some("resume"), true),
+        ("sess-G", Some("something-new"), true),
+        ("sess-H", None, true),
+    ];
+    for (id, source, at_end) in switches {
+        apply(&mut set, &[sourced(id, &format!("/t/{id}.jsonl"), source)]);
+        assert_eq!(set.take_at_end(), at_end, "{source:?}");
+    }
     apply(&mut set, &[resumed_at("sess-A", "/t/a.jsonl")]);
-    assert!(!set.take_resume(), "the same session and file");
-    apply(&mut set, &[session_at("sess-B", "/t/b.jsonl")]);
-    assert!(!set.take_resume(), "a /clear");
-    apply(&mut set, &[resumed_at("sess-A", "/t/a.jsonl")]);
-    apply(&mut set, &[session_at("sess-C", "/t/c.jsonl")]);
+    apply(&mut set, &[session_at("sess-Z", "/t/z.jsonl")]);
     assert!(
-        !set.take_resume(),
-        "a later ordinary switch replaces a resume the reader never saw"
+        !set.take_at_end(),
+        "a later fresh switch replaces an at-end one the reader never saw"
     );
 }
 

@@ -387,3 +387,109 @@ async fn a_stale_tail_on_a_resumed_file_never_shifts_a_reply_repeated_prompt() {
 async fn a_stale_tail_on_a_resumed_file_never_shifts_a_reply_new_prompt() {
     a_stale_tail("different").await;
 }
+
+/// Re-review 2, M1: Codex's `SessionStart` also has `source: "fork"`, and a fork's file
+/// may start with the parent's history. Only `startup` and `clear` promise a fresh file;
+/// any other source switching session or file is opened at its end.
+async fn a_switch_with_source(source: Option<&str>) {
+    let d = start_daemon().await;
+    let id = claude_window(&d, "forked").await;
+    let _c = subscribed(&d, id).await;
+    let dir = tempfile::tempdir().unwrap();
+    let (a, f) = (dir.path().join("a.jsonl"), dir.path().join("f.jsonl"));
+    append(
+        &a,
+        &[
+            prompt_line("sess-A", "continue"),
+            reply_line("sess-A", "A reply 1"),
+        ],
+    );
+    session_start(&d, id, "sess-A", "startup", &a);
+    turn(&d, id, "sess-A", "continue");
+    until_reply(&d, id, 0).await;
+
+    append(
+        &f,
+        &[
+            prompt_line("sess-F", "continue"),
+            reply_line("sess-F", "A reply 1 (copied into the fork)"),
+        ],
+    );
+    let mut start = json!({"hook_event_name":"SessionStart","session_id":"sess-F",
+        "transcript_path":f.to_str().unwrap()});
+    if let Some(source) = source {
+        start["source"] = json!(source);
+    }
+    hook(&d, id, start);
+    until_reading(&d, id, &f).await;
+    turn(&d, id, "sess-F", "continue");
+    append(
+        &f,
+        &[
+            prompt_line("sess-F", "continue"),
+            reply_line("sess-F", "F reply 1"),
+        ],
+    );
+    until_reply(&d, id, 1).await;
+    assert_eq!(replies(&d, id), owned(&[&["A reply 1"], &["F reply 1"]]));
+    assert_eq!(degraded(&d, id), None);
+}
+
+#[tokio::test]
+async fn a_fork_repeating_the_parents_prompt_gets_its_own_reply() {
+    a_switch_with_source(Some("fork")).await;
+}
+
+#[tokio::test]
+async fn a_compact_onto_another_session_is_opened_at_its_end() {
+    a_switch_with_source(Some("compact")).await;
+}
+
+#[tokio::test]
+async fn an_unknown_source_is_opened_at_its_end() {
+    a_switch_with_source(Some("something-new")).await;
+}
+
+#[tokio::test]
+async fn an_absent_source_is_opened_at_its_end() {
+    a_switch_with_source(None).await;
+}
+
+/// The same session and file again, whatever the source, is no switch: every turn keeps
+/// its own reply and nothing is re-read.
+#[tokio::test]
+async fn the_same_session_and_file_again_changes_nothing() {
+    let d = start_daemon().await;
+    let id = claude_window(&d, "same").await;
+    let _c = subscribed(&d, id).await;
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.jsonl");
+    append(
+        &a,
+        &[
+            prompt_line("sess-A", "q1"),
+            reply_line("sess-A", "reply q1"),
+        ],
+    );
+    session_start(&d, id, "sess-A", "startup", &a);
+    turn(&d, id, "sess-A", "q1");
+    until_reply(&d, id, 0).await;
+    for (n, source) in [(2, "compact"), (3, "clear"), (4, "resume"), (5, "fork")] {
+        session_start(&d, id, "sess-A", source, &a);
+        let (q, r) = (format!("q{n}"), format!("reply q{n}"));
+        turn(&d, id, "sess-A", &q);
+        append(&a, &[prompt_line("sess-A", &q), reply_line("sess-A", &r)]);
+        until_reply(&d, id, n - 1).await;
+    }
+    assert_eq!(
+        replies(&d, id),
+        owned(&[
+            &["reply q1"],
+            &["reply q2"],
+            &["reply q3"],
+            &["reply q4"],
+            &["reply q5"]
+        ])
+    );
+    assert_eq!(degraded(&d, id), None);
+}

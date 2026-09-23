@@ -254,7 +254,7 @@ async fn the_reader_runs_only_while_subscribed() {
     hook(
         &d,
         id,
-        json!({"hook_event_name":"SessionStart","session_id":"sess-1",
+        json!({"hook_event_name":"SessionStart","session_id":"sess-1","source":"startup",
             "transcript_path":path.to_str().unwrap()}),
     );
 
@@ -390,7 +390,7 @@ async fn a_transcript_enriches_the_root_conversation_only() {
     hook(
         &d,
         id,
-        json!({"hook_event_name":"SessionStart","session_id":"sess-1",
+        json!({"hook_event_name":"SessionStart","session_id":"sess-1","source":"startup",
             "transcript_path":path.to_str().unwrap()}),
     );
     hook(&d, id, prompt("go"));

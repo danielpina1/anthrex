@@ -110,10 +110,11 @@ struct Draft {
     /// (`ConversationSet::take_new_session`): the reader switches files without the
     /// restart a path change in the same session would be.
     new_session: bool,
-    /// The new session is a resumed one whose file already holds its earlier turns
-    /// (`ConversationSet::take_resume`, fix round 2 N1/N2): the reader opens it at its
-    /// end and the session's base is set then (`enrich::open_session_at_end`).
-    resume_pending: bool,
+    /// The new session's file may already hold earlier turns — any switch whose source
+    /// is not `startup` or `clear` (`ConversationSet::take_at_end`, fix round 2 N1/N2,
+    /// re-review 2 M1): the reader opens it at its end and the session's base is set
+    /// then (`enrich::open_session_at_end`).
+    at_end_pending: bool,
     /// What `enrich::apply` changed, and the alignment state it carries across
     /// batches (task M6.5.8): everything `enrich::reset` needs to undo exactly the
     /// enrichment and nothing hook-built.
@@ -134,7 +135,7 @@ impl Draft {
             dropped_user_turns: 0,
             session_base: 0,
             new_session: false,
-            resume_pending: false,
+            at_end_pending: false,
             enrichment: enrich::Enrichment::default(),
         }
     }

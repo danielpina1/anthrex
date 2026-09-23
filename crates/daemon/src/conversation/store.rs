@@ -261,12 +261,13 @@ impl ConversationSet {
             .is_some_and(|entry| std::mem::take(&mut entry.draft.new_session))
     }
 
-    /// Whether the reader's next new file is a resumed session's, to open at its end
-    /// (`transcript::reader::Tail::at_end`, fix round 2 N1/N2), clearing the flag.
-    pub fn take_resume(&mut self) -> bool {
+    /// Whether the reader's next new file is to be opened at its end
+    /// (`transcript::reader::Tail::at_end`): a switch whose source was not `startup` or
+    /// `clear` (fix round 2 N1/N2, re-review 2 M1). Clears the flag.
+    pub fn take_at_end(&mut self) -> bool {
         self.entries
             .get_mut(&None)
-            .is_some_and(|entry| std::mem::take(&mut entry.draft.resume_pending))
+            .is_some_and(|entry| std::mem::take(&mut entry.draft.at_end_pending))
     }
 
     /// Applies the pass on which a resumed session's file was opened at its end

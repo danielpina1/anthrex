@@ -93,7 +93,7 @@ fn script(order: Order) -> Vec<Value> {
         json!({"read_line": true}),
         // The fixture's first line, a bookkeeping record: detection alone.
         json!({"transcript": fixture_line(1)}),
-        json!({"hook": "SessionStart", "payload": {"session_id": session}}),
+        json!({"hook": "SessionStart", "payload": {"session_id": session, "source": "startup"}}),
     ];
     steps.extend(pair(
         order,
@@ -263,7 +263,10 @@ fn clear_run(b_first_prompt: &str) -> (Vec<Vec<String>>, Option<proto::DegradeRe
     let stop = |session: &str| hook("Stop", json!({"session_id": session}));
     let mut script = vec![
         json!({"read_line": true}),
-        hook("SessionStart", json!({"session_id": "sess-A"})),
+        hook(
+            "SessionStart",
+            json!({"session_id": "sess-A", "source": "startup"}),
+        ),
     ];
     for (text, reply) in [("fix the bug", "A reply 1"), ("second A", "A reply 2")] {
         script.push(json!({"transcript": prompt_line("sess-A", text)}));

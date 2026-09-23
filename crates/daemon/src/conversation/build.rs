@@ -49,23 +49,24 @@ fn session_start(draft: &mut Draft, hook: &ParsedHook) -> bool {
     // file in the *same* session is the reader's restart instead, and a first
     // `SessionStart` (no path before it) starts at the base the draft already has.
     //
-    // A resumed session (`source: "resume"`: `/resume`, or milestone 6's restore
-    // relaunching with `--resume`) switches to a file that already holds its earlier
-    // turns, first `SessionStart` or not (fix round 2, N1/N2). The reader opens that file
-    // at its end and sets the base then; the base set here only covers the switch.
+    // Only `startup` and `clear` promise a fresh file. Any other source that switches
+    // session or file — `resume` (`/resume`, or milestone 6's restore relaunching with
+    // `--resume`), Codex's `fork`, `compact` onto another session, a source this code
+    // does not know, or none at all — may be a file that already holds earlier turns
+    // (fix round 2, N1/N2; re-review 2, M1). The reader opens that file at its end and
+    // sets the base then; the base set here is the count the open compares against.
     let switching =
         draft.session_id != hook.session_id || draft.transcript_path != hook.transcript_path;
-    let resume = hook.session_source.as_deref() == Some("resume")
-        && hook.transcript_path.is_some()
-        && switching;
+    let fresh = matches!(hook.session_source.as_deref(), Some("startup" | "clear"));
+    let at_end = hook.transcript_path.is_some() && switching && !fresh;
     if hook.transcript_path.is_some() && switching {
-        draft.resume_pending = resume;
+        draft.at_end_pending = at_end;
     }
     let cleared = draft.session_id != hook.session_id
         && draft.transcript_path.is_some()
         && hook.transcript_path.is_some()
         && draft.transcript_path != hook.transcript_path;
-    if resume || cleared {
+    if at_end || cleared {
         draft.session_base = super::enrich::user_count(draft);
         draft.new_session = true;
         changed |= super::enrich::begin_session(draft);
