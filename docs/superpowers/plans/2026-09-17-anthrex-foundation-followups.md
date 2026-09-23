@@ -689,3 +689,19 @@ scope.
   Seen in the conversation view with real Codex 0.155.0: one reply shows as two assistant
   turns, the calls in one and the prose in the other. Not investigated; start from how the
   Codex hooks open and close turns against `codex-0.155.0.jsonl`.
+
+## From the main-branch CI failures (2026-09-23), deliberately deferred
+
+- **The main pane can switch to a new window while the new-agent form is still open and
+  swallowing keys.** A client with nothing focused focuses the first window a
+  `WindowsChanged` lists (`crates/tui/src/app/windows.rs`, the `ensure_focus` fallback).
+  The daemon can send that `WindowsChanged` before the `Created` reply that closes the form
+  (`crates/daemon/src/server/requests.rs`, `create`). Until `Created` arrives, the new
+  window's title shows behind a form that is still `submitting`, and `NewAgentForm::on_key`
+  drops every key but `Esc` and `Ctrl-C`. Ubuntu CI run 35792210390 lost the leading `e` of
+  `echo smoke-$((40+2))` this way. `scripts/pty-smoke.py` now waits for the form to close
+  as well as for the title. Delaying the `Created` reply by 1 s reproduces the failure every
+  time; with the new wait the smoke passes. The client still behaves this way: the form is
+  visible while it happens, so a user is unlikely to type into it. The remaining question
+  is whether focus should wait for `Created` while a create is submitting. Belongs with the
+  next TUI milestone that touches the form.

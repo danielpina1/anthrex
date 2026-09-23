@@ -71,6 +71,16 @@ assertion — a 60x separation between "took the early return" and "waited out t
 immune to how fast git happens to run that day. See that file's doc comment for the full
 reasoning.
 
+### Fixed, from the main-branch CI failures (2026-09-23)
+
+| Test | Site | Bound (as found) | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `restart_resumes_claude_and_codex_sessions` | `crates/daemon/tests/lifecycle/restart_persistence.rs` (every `Client::recv()` after the first `Restart`, 5 s each) | `secs(5)` | `CODEX_PROBE_TIMEOUT` (5 s). The fixture `argv.sh` is also `runtimes.codex.command`, so `lifecycle::run` probed it with `--version`. It never exited, and the launch gate held the first restart for 4.90 s, measured. The test passed only because the probe's clock started a few milliseconds before `recv()`'s did. | **Fixed**: the fixture answers `--version` and exits, so nothing waits behind the probe (test time 5.14 s → 0.42 s). The test now asserts each restart is acked within `CODEX_PROBE_TIMEOUT / 2`. macOS CI run 35822907546 failed on it. |
+
+The same rule applies to any fixture a test puts in `runtimes.codex.command` or
+`ANTHREX_CODEX_BIN`: it has to answer `--version` promptly. `fake-agent` and
+`pty-smoke.py`'s resume script already do.
+
 ## Measured primitive costs
 
 Two independent measurement passes, both worth keeping because they were taken under
