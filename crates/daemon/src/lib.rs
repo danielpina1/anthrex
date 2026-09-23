@@ -25,6 +25,7 @@ pub mod logfile;
 pub mod manager;
 mod process;
 pub mod project;
+pub mod run;
 pub mod server;
 pub mod state;
 pub mod status;

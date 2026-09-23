@@ -40,6 +40,8 @@ futures = "0.3"
 tempfile = "3"
 unicode-width = "0.2"
 unicode-segmentation = "1"
+globset = "0.4"
+regex = "1"
 
 [profile.release]
 lto = "thin"

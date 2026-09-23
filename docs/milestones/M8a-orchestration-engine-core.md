@@ -2608,3 +2608,53 @@ warnings` (clean) and `cargo fmt --all --check` (clean, after one `cargo fmt --a
 pass) all passed. `python3 scripts/pty-smoke.py` was also run to satisfy the standing
 five-gate rule; this task touches no daemon or PTY behaviour, so it exercises no new
 code path.
+
+### M8a.4 globs and roster policy (2026-09-23)
+
+Implemented as specified. `crates/daemon/src/run/{mod,model,globs,roster}.rs` created,
+`lib.rs` gained `pub mod run;` (coexisting with the `run` function re-exported from
+`lifecycle`, as the brief's note says: a module and a function are different
+namespaces), and `Cargo.toml` / `crates/daemon/Cargo.toml` gained `globset`, `regex`
+and `toml` as workspace dependencies (`regex` and `toml` are unused by this task; they
+are here because later M8a tasks in `run/` need them and the brief asked for all three
+now).
+
+- **Test files are split out**, `globs_tests.rs` and `roster_tests.rs`, `#[path = …]`
+  declared from the bottom of `globs.rs`/`roster.rs`, following `config/orchestrator.rs`'s
+  and `worktree.rs`'s existing conventions in this repository, rather than an inline
+  `mod tests`. Both source files stay well under the ~600-line guidance (214 and 155
+  lines).
+- **`run/model.rs` holds only `ReviewLevel`** as the brief and refresh note C41 specify;
+  the rest of the pure model (`Profile`, `RunLimits`, `Task`, `Run`, …) is M8a.5's.
+- **`pick_reviewer`'s "preferring a model different from the author's" fallback**
+  (decision 35's middle case) is read as: among the same-runtime candidates at or above
+  the required strength, first exclude any entry whose model equals the author's, and
+  pick the lowest strength among what remains; only if nothing remains (every
+  same-runtime candidate at the required strength *is* the author's own model) does the
+  policy fall through to the third case, the same runtime's highest-strength entry
+  regardless of model. This is what makes `frontier_level_falls_back_to_the_same_runtime`
+  (a Claude `claude-opus-5` author with no Codex frontier entry) land on the third case
+  and return `claude-opus-5` "as the last resort", per the test's own wording, rather
+  than stopping at the second case with the same result for a different reason. Not
+  pinned verbatim by the brief; this is this task's reading of "preferring", verified
+  against all four `pick_reviewer`/`escalate` test cases the brief gives.
+- **`roster::peer`** maps `Shell` to itself; the brief only defines Claude/Codex
+  swapping, and no test exercises `Shell` (it is never an authored or reviewer runtime
+  in this milestone), so this is a defensive default rather than a decision.
+- **Decision 2's grep** (`grep -nE 'std::fs|std::process|std::thread|tokio|std::time::SystemTime'`
+  against `globs.rs`, `roster.rs` and `model.rs`) matches only each file's own doc
+  comment naming the forbidden APIs it avoids; no code path in any of the three files
+  uses them.
+- **TDD**: each of the 13 named tests was shown red first by temporarily replacing
+  `globs.rs` and `roster.rs` with `unimplemented!()` stubs of the same public
+  signatures and running `cargo test -p anthrex-daemon --lib run::`; all 13 panicked
+  with "not implemented". The real implementations were then restored and every test
+  passed.
+
+Verification run 2026-09-23: `cargo build --workspace --all-targets`, `cargo test
+--workspace` (all crates, 0 failures, including the 13 new `run::globs`/`run::roster`
+tests), `cargo clippy --workspace --all-targets -- -D warnings` (clean, after
+collapsing one nested `if let` in `roster::escalate`) and `cargo fmt --all --check`
+(clean, after one `cargo fmt --all` pass) all passed. `python3 scripts/pty-smoke.py`
+passed (`ALL SMOKE STAGES PASSED`); this task touches no daemon or PTY behaviour, so it
+exercises no new code path.
