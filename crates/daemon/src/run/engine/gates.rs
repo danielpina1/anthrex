@@ -11,7 +11,8 @@ use proto::{BlockReason, GateKind, RunState, TaskState, TestMode};
 
 use super::dispatch::{block, history};
 use super::{
-    Effect, EngineState, OpId, OpKind, OpResult, ReplyId, emit_op, ladder, next_op, review,
+    Effect, EngineState, OpId, OpKind, OpResult, ReplyId, ScratchAt, emit_op, ladder, next_op,
+    review,
 };
 use crate::run::contract::{check_failed_message, proof_failed_message};
 use crate::run::env::profile_env;
@@ -77,6 +78,10 @@ fn passed(run: &mut Run, i: usize, gate: TaskState, now: u64) {
 pub(super) fn start_gates(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     for i in 0..run.tasks.len() {
         let state = run.tasks[i].state;
+        // Ruling T13-minors (m4): the verdict-less count is review's alone.
+        if state != TaskState::Review {
+            run.tasks[i].review_misses = 0;
+        }
         if !matches!(
             state,
             TaskState::Proof | TaskState::Check | TaskState::Review
@@ -147,13 +152,21 @@ fn start_check(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
         // No check: the gate is skipped (the run is `unverified` from its start).
         return passed(run, i, TaskState::Check, now);
     };
+    // Ruling T13-I3: on the claimed commit, in the task's scratch worktree, never on
+    // whatever the branch tip has become since the claim.
     let task = &run.tasks[i];
-    let (id, dir) = (task.id().to_string(), task.worktree.clone());
+    let id = task.id().to_string();
+    let dir = run.proof_path(&id);
     let kind = OpKind::Check {
         env: profile_env(&run.profile, &dir),
         dir,
         command,
         timeout_secs: run.profile.check_timeout_secs,
+        scratch: Some(ScratchAt {
+            root: run.root.clone(),
+            commit: task.head.clone().unwrap_or_default(),
+            setup: run.profile.setup.clone(),
+        }),
     };
     let op = next_op(run);
     run.tasks[i].gate_op = Some(op);
@@ -282,6 +295,10 @@ pub(super) fn check_done(
                 ladder::gate_failure(run, i, GateKind::Check, text, false, now, fx);
             }
         }
+        OpResult::SetupFailed { output } => {
+            let text = format!("setup failed in the check worktree:\n{output}");
+            block(run, i, BlockReason::Environment, text, now);
+        }
         OpResult::Failed { message } => {
             let text = format!("could not run the check: {message}");
             block(run, i, BlockReason::Environment, text, now);
@@ -333,7 +350,7 @@ pub(super) fn override_task(
         )));
     }
     let mut effects = Vec::new();
-    review::stop_reviewers(run, i, &mut effects);
+    review::stop_reviewers(run, i, now, &mut effects);
     let task = &mut run.tasks[i];
     task.merged_without_approval = Some(reason.to_string());
     task.block = None;

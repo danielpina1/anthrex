@@ -100,10 +100,18 @@ pub(super) fn assert_gates_alive(fx: &Fixture) {
                     .outbox
                     .iter()
                     .any(|m| m.task_id == address && (m.delivered_at.is_some() || resumable));
+                // Ruling T13-I1: a failed turn's wait; T13-I2: a given-up reviewer's
+                // exit; m6: every dispatch waits while a hub holds a writer slot.
+                let timer = reviewer.is_some_and(|r| {
+                    matches!(r.failed_turn, FailedTurn::WaitingContinue { .. })
+                        || r.delivery_retry_at.is_some()
+                });
+                let killing = reviewer.is_some_and(|r| r.retiring && !r.ended);
                 let slot_wait = reviewer.is_none_or(|r| r.retiring || r.ended)
-                    && super::super::schedule::readers_busy(run)
-                        >= usize::from(run.limits.max_readers);
-                op || watched || mail || slot_wait
+                    && (super::super::schedule::readers_busy(run)
+                        >= usize::from(run.limits.max_readers)
+                        || super::super::schedule::hub_holds_slot(run));
+                op || watched || mail || timer || killing || slot_wait
             }
         };
         assert!(

@@ -146,7 +146,7 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
     }
 }
 
-fn count_rate_limit(run: &mut Run, i: usize, r: usize) {
+pub(super) fn count_rate_limit(run: &mut Run, i: usize, r: usize) {
     let label = runtime_label(run.tasks[i].rounds[r].route.runtime);
     *run.rate_limits.entry(label).or_insert(0) += 1;
 }
@@ -225,7 +225,7 @@ fn turn_ended(
         round.stall = StallState::Nudged;
     }
     if !worker {
-        return review::turn_ended(run, i, r, now, fx);
+        return review::turn_ended(run, i, r, outcome, streak, now, fx);
     }
     if run.tasks[i].state != TaskState::Working {
         return;
@@ -327,6 +327,8 @@ fn exited(run: &mut Run, i: usize, r: usize, killed: bool, now: u64, fx: &mut Ve
     let round = &mut run.tasks[i].rounds[r];
     let worker = round.role == AgentRole::Worker;
     // Codex runs one process per turn: its exit between turns is the normal end of one.
+    // (A retiring round ignores `TurnEnded`, so its turn stays open until this exit,
+    // which then ends it: ruling T13-I2.)
     if !killed && !round.turn_open && round.route.runtime == Runtime::Codex {
         return;
     }

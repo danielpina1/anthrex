@@ -44,7 +44,7 @@ mod signals;
 mod tools;
 
 pub use crate::headless::TurnOutcome;
-pub use ops::{OpKind, OpResult};
+pub use ops::{OpKind, OpResult, ScratchAt};
 pub use signals::INTERRUPT_GRACE_SECS;
 
 /// Identifies a client request waiting for its [`Effect::Reply`].

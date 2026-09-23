@@ -36,13 +36,15 @@ pub fn op_in_flight(run: &Run, task: &str, pred: impl Fn(&OpKind) -> bool) -> bo
 }
 
 /// A task in `review` holds a reader slot from its `PrepareReview` until its reviewer
-/// round ends (decision 41: "held by a live reviewer").
+/// round ends (decision 41: "held by a live reviewer"). A reviewer given up or retired
+/// holds it until its process has exited (ruling T13-I2), so the next round never
+/// starts beside it.
 pub fn holds_reader(run: &Run, task: &Task) -> bool {
     task.state == TaskState::Review
         && (task
             .rounds
             .iter()
-            .any(|r| r.role == AgentRole::Reviewer && !r.ended && !r.retiring)
+            .any(|r| r.role == AgentRole::Reviewer && !r.ended)
             || op_in_flight(run, task.id(), |k| {
                 matches!(k, OpKind::PrepareReview { .. })
             }))

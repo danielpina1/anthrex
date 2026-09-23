@@ -56,8 +56,8 @@ minutes = 45
 tokens = 3000000
 "#;
 
-/// A profile with modules, hub, source, check and single_test all set, so a test that
-/// wants one of them missing overrides it explicitly.
+/// A profile with modules, hub, source, check, single_test and test_passed all set, so a
+/// test that wants one of them missing overrides it explicitly.
 pub const PROFILE: &str = r#"
 goal = "Test goal"
 
@@ -67,6 +67,7 @@ hub = ["crates/proto/**"]
 source = ["crates/*/src/**"]
 check = "cargo test"
 single_test = "cargo test -- --exact {test}"
+test_passed = 'test {test} \.\.\. ok'
 "#;
 
 pub const RUN_ID: &str = "add-password-reset-3f9a";

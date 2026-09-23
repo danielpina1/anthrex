@@ -91,7 +91,7 @@ fn review_round_uses_a_fresh_session_and_worktree() {
             kind,
             OpKind::PrepareReview {
                 root: "/tmp/x".into(),
-                head_ref: t1.branch.clone(),
+                head_ref: HEAD.into(),
                 base_ref: BASE.into(),
                 path: task_path("t1.review"),
             }
@@ -155,6 +155,8 @@ fn review_round_uses_a_fresh_session_and_worktree() {
     // findings to confirm fixed.
     let (mut fx, window, rwindow) = reviewed(PROFILE, "");
     submit(&mut fx, rwindow, verdict("changes", blocking()));
+    // The retired reviewer's process ends (T13-I2: round 2 waits for it).
+    super::turns::exited(&mut fx, rwindow);
     fx.turn_completed(window);
     let (op, _) = in_review(&mut fx, window);
     let (_, kind) = reviewer(&mut fx, op, "diff --git a/x b/x");
@@ -340,9 +342,11 @@ fn a_reviewer_turn_without_a_verdict_is_nudged_then_replaced() {
 
     // The nudge's turn also ends without a verdict: round 2, same level, no failure.
     let effects = fx.turn_completed(rwindow);
-    assert!(effects.contains(&Effect::KillWindow { window_id: rwindow }));
+    // A Codex reviewer between turns has no process: its round ends at once (T13-I2).
+    let last = fx.task("t1").rounds.last().unwrap().clone();
+    assert!(last.retiring && last.ended, "{last:#?}");
+    only_op(&effects, "PrepareReview");
     assert_alive(&fx);
-    super::turns::killed_exit(&mut fx, rwindow);
     let (op, _) = fx.op("PrepareReview");
     let (rwindow2, kind) = reviewer(&mut fx, op, "diff --git a/x b/x");
     let OpKind::CreateWindow { name, .. } = kind else {
@@ -358,10 +362,9 @@ fn a_reviewer_turn_without_a_verdict_is_nudged_then_replaced() {
 
     // A second verdict-less round in a row blocks the task.
     fx.turn_completed(rwindow2);
-    let effects = fx.turn_completed(rwindow2);
-    assert!(effects.contains(&Effect::KillWindow {
-        window_id: rwindow2
-    }));
+    fx.turn_completed(rwindow2);
+    let last = fx.task("t1").rounds.last().unwrap().clone();
+    assert!(last.retiring && last.ended, "{last:#?}");
     let t1 = fx.task("t1");
     assert_eq!(t1.state, TaskState::Blocked);
     assert_eq!(t1.failures, 0);

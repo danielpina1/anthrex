@@ -64,6 +64,11 @@ fn is_valid_id(id: &str) -> bool {
 /// Resolves one planned task: size rules (decision 9), route (decision 8), budget
 /// (decision 40), test mode (decision 10) and review (decision 35). `branch` and
 /// `worktree` are left empty for the caller, which knows the run id.
+/// Ruling T13-minors (m1): the note on a tdd task whose profile has no `test_passed`.
+/// The proof then asks for the test's name on a line of the head run's output
+/// (M8a.13), which a runner that does not echo test names never shows.
+pub const NO_TEST_PASSED_NOTE: &str = "the profile has no test_passed: the test proof will require the test's name in the single-test command's output (rule 8.1)";
+
 pub fn resolve_task(
     spec: PlanTask,
     profile: &Profile,
@@ -175,6 +180,9 @@ pub(super) fn resolve_task_lenient(
         test_mode = TestMode::Check;
         rule_8_3 = true;
         notes.push("test mode check: the profile has no single_test (rule 8.3)".to_string());
+    }
+    if test_mode == TestMode::Tdd && profile.test_passed.is_none() {
+        notes.push(NO_TEST_PASSED_NOTE.to_string());
     }
 
     // Route, decision 8.

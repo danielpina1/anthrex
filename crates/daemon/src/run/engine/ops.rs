@@ -96,11 +96,20 @@ pub enum OpKind {
         setup: Option<String>,
         env: Vec<(String, String)>,
     },
+    /// Decision 34's check. With `scratch` (ruling T13-I3), `dir` is the task's scratch
+    /// worktree (`<task>.proof`, the proof's) and the check runs on the claimed commit,
+    /// never the branch tip: **executor contract (M8a.22)** — as `run_proof` does, through
+    /// the same `git_write` hook, `prepare_scratch(root, dir, commit)`, `setup` once per
+    /// new worktree (the `anthrex-setup-ok` marker), then `materialize(dir, commit)`,
+    /// then the command. A setup failure is `OpResult::SetupFailed`. Without `scratch`
+    /// (M8a.14's final check in the integration worktree) it runs in `dir` as it is.
     Check {
         dir: PathBuf,
         command: String,
         timeout_secs: u64,
         env: Vec<(String, String)>,
+        #[serde(default)]
+        scratch: Option<ScratchAt>,
     },
     PrepareReview {
         root: PathBuf,
@@ -156,6 +165,15 @@ pub enum OpKind {
         worktrees: Vec<(PathBuf, String)>,
         branch_prefix: String,
     },
+}
+
+/// Where a scratch-worktree check runs (ruling T13-I3): the repository, the claimed
+/// commit to materialize, and the profile's `setup` for a new scratch worktree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScratchAt {
+    pub root: PathBuf,
+    pub commit: String,
+    pub setup: Option<String>,
 }
 
 /// What an op returned.

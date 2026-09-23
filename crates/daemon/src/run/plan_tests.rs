@@ -173,7 +173,7 @@ fn protected_note(glob: &str, path: &str) -> String {
 #[test]
 fn owns_covering_a_protected_file_warns_without_rejecting() {
     // No modules, hub or source, so no size or test-mode note mixes in.
-    let profile = "goal = \"g\"\n[profile]\ncheck = \"c\"\nsingle_test = \"s {test}\"\n";
+    let profile = "goal = \"g\"\n[profile]\ncheck = \"c\"\nsingle_test = \"s {test}\"\ntest_passed = \"{test} ok\"\n";
     let text = plan_with(
         profile,
         &[
@@ -504,7 +504,7 @@ fn single_test_must_contain_the_placeholder() {
 #[test]
 fn test_passed_must_compile_as_a_regex() {
     let text = plan_with(
-        &format!("{PROFILE}test_passed = 'test {{test}} (ok'\n"),
+        &PROFILE.replace("\\.\\.\\. ok'", "(ok'"),
         &[task_toml("t1", "S", r#"["crates/a/src/lib.rs"]"#, "")],
     );
     // Built at run time: clippy rejects an invalid regex literal.
@@ -522,7 +522,7 @@ fn test_passed_must_compile_as_a_regex() {
 
     // `{test}` itself is a placeholder, not a regex repetition, so this one compiles.
     let good = plan_with(
-        &format!("{PROFILE}test_passed = 'test {{test}} \\.\\.\\. ok'\n"),
+        PROFILE,
         &[task_toml("t1", "S", r#"["crates/a/src/lib.rs"]"#, "")],
     );
     run_ok(&good);

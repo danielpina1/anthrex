@@ -136,13 +136,16 @@ fn proof_passes_to_check() {
     assert_eq!(
         kind,
         OpKind::Check {
-            dir: task_path("t1"),
+            dir: proof_path.clone(),
             command: "cargo test".into(),
             timeout_secs: 1800,
-            env: vec![(
-                "TARGET".into(),
-                format!("{}/target", task_path("t1").display())
-            )],
+            env: vec![("TARGET".into(), format!("{}/target", proof_path.display()))],
+            // Ruling T13-I3: on the claimed commit, in the scratch worktree.
+            scratch: Some(crate::run::engine::ScratchAt {
+                root: "/tmp/x".into(),
+                commit: HEAD.into(),
+                setup: Some("make deps".into()),
+            }),
         }
     );
     assert_eq!(fx.task("t1").gate_op, Some(check_op));

@@ -5407,8 +5407,8 @@ Decisions 33, 34 (engine side), 35 and 38 (gate failures) are in the reducer. De
     `Handle::block_on` inside `spawn_blocking` needs the multi-thread runtime, which the
     daemon has (`#[tokio::main]` in `crates/cli/src/main.rs`, multi-thread by default);
     on a current-thread runtime it would deadlock.
-- **The check (decision 34).** `Op Check { dir: worktree, command: check, timeout:
-  check_timeout_secs, env }`; the result becomes a `CheckRecord` (`on_candidate:
+- **The check (decision 34).** `Op Check { dir, command: check, timeout:
+  check_timeout_secs, env, scratch }` (`dir` and `scratch`: fix round 1, below); the result becomes a `CheckRecord` (`on_candidate:
   false`). `check_failed_message`'s parenthesis is `exit <code>`, `timed out after <m>
   minutes` (`secs / 60`), or, for a run with no code that did not time out, `no exit
   code` (invented). A `Failed` result blocks on the environment (`could not run the
@@ -5438,8 +5438,7 @@ Decisions 33, 34 (engine side), 35 and 38 (gate failures) are in the reducer. De
     `REVIEW_NUDGE`; the next one ends the round: the reviewer is killed and a new round
     starts at the same level, no failure counted. The second such round in a row blocks
     the task as `environment` with `REVIEWER_STOPPED_TWICE`. A failed reviewer turn
-    counts as a turn without a verdict (follow-up recorded: reviewers get no
-    rate-limit wait).
+    follows the worker's rules instead (fix round 1, ruling T13-I1, below).
   - **Exits.** A Claude reviewer whose process ends between turns is marked ended and
     resumed by the delivery of its nudge. A mid-turn death is resumed once with
     `REVIEWER_RESUME_AFTER_EXIT`; the second in the round, a death before a session
@@ -5501,8 +5500,8 @@ Decisions 33, 34 (engine side), 35 and 38 (gate failures) are in the reducer. De
 - **Carry for M8a.15.** Restore must clear `Task.gate_op` for an op dropped as
   `NotStarted`, or `start_gates` never re-issues it (decision 45's "tasks in proof,
   check or merge_queue re-issue their op").
-- **Carry for M8a.22.** The proof executor (above); a `PrepareReview` may run while the
-  given-up reviewer is still being killed (follow-up recorded).
+- **Carry for M8a.22.** The proof executor (above), and the check's `scratch` (fix
+  round 1, below).
 
 **One earlier test changed.** `turns::turn_end_fallback_nudges_once_then_proceeds`
 expected a fallback-claimed tdd task to stay in `proof`; the proof now fails at once, so
@@ -5551,3 +5550,107 @@ it asserts rung 1 with one proof record.
   noted), which the engine does not touch; the full re-run passed.
 - No file passes 600 lines: `review.rs` 423, `gates.rs` 354, `dispatch.rs` 511,
   `contract.rs` 531, `tests/gates.rs` 547, `tests/gates_review.rs` 582.
+
+#### M8a.13 fix round 1
+
+The review found 3 Important and 6 Minor issues. Each ruling's probe became a
+regression test in `engine/tests/gates_fixes.rs`, run red first, and each ends with the
+liveness check.
+
+- **T13-I1: reviewers get the worker's failed-turn rules.** `review::turn_ended` takes
+  the turn's outcome and the rate-limit streak. A `RateLimit` failure is not a
+  verdict-less turn: the round waits `rate_limit_retry_secs` (`FailedTurn::WaitingContinue`,
+  `rate_limited_until` set), is counted in `rate_limits` once per streak, and the
+  watch then queues `rate_limit_continue(<error>)` to `<task>.review`.
+  `Authentication`, `Billing` and `SandboxUnavailable` stop the reviewer and block the
+  task as `environment` with the error's own text, no miss counted. `Other` waits
+  and continues the same way, and blocks the task only when the previous failed
+  turn was also `Other` with no completed turn between them (a completed turn resets
+  `ContinueSent`). Tests `a_rate_limited_reviewer_waits_and_continues`,
+  `a_reviewers_rate_limit_streak_counts_once`,
+  `a_reviewer_auth_or_billing_failure_blocks_at_once`,
+  `two_other_reviewer_failures_in_a_row_block`,
+  `a_completed_reviewer_turn_resets_the_other_failure_count`.
+- **T13-I2: a reviewer holds its reader slot until its process exits.**
+  `schedule::holds_reader` counts every reviewer round that has not ended, including
+  a retiring one, so the next round's `PrepareReview` waits for the old reviewer's
+  exit. A retiring round ignores `TurnEnded`, so a Codex reviewer retired mid-turn
+  keeps its turn open and its process exit ends the round. A Codex reviewer
+  **between** turns has no process (one per turn), so giving it up (`review::give_up`,
+  now shared by the verdict-less rule and `stop_reviewers`) ends its round at once
+  with no `KillWindow` (deviation: three existing tests that expected a `KillWindow`
+  for a Codex reviewer between turns now assert the ended round). Tests
+  `the_next_review_round_waits_for_the_last_reviewers_exit` (a Claude reviewer, then a
+  retired one) and `a_retired_codex_reviewer_ends_with_its_process`. Two existing tests
+  gained the retired reviewer's exit before the next round.
+- **T13-I3: the gates run on the claimed commit and worker mail is held in them.**
+  `outbox` holds a worker's mail while its task is in `proof`, `check`, `review` or
+  `merge_queue`. The mail goes out only once the task is `working` again, with the
+  next bounce. The review worktree's `head_ref` is `task.head`, the claimed commit
+  (the branch only when no claim recorded one). **Deviation from decision 34's "the
+  task's worktree":** the check now runs in the `<task>.proof` scratch worktree,
+  materialized at `task.head`. `OpKind::Check` gained
+  `scratch: Option<ScratchAt { root, commit, setup }>`. Its doc states the executor
+  contract for M8a.22. The executor goes through the same `git_write` hook as
+  `run_proof`: it runs `prepare_scratch(root, dir, commit)`, then `setup` once per new
+  worktree (with the `anthrex-setup-ok` marker), then `materialize(dir, commit)`, then
+  the command. With `None`, the command runs in `dir` as it is, which is what M8a.14's
+  final check in the integration worktree needs. A `SetupFailed` result blocks the
+  task on its environment with `setup failed in the check worktree:\n<output>`
+  (invented). Before this fix, `check_done` ignored that result, and the scheduler
+  re-issued the check forever. Test
+  `a_check_whose_setup_fails_blocks_on_the_environment`, red first: it showed a second
+  `Check` op. A worker commit after `task_done` is not in the claim, so
+  it does not enter the gates; the worker's next claim covers it. Tests
+  `worker_mail_is_held_while_the_task_is_in_a_gate`,
+  `worker_mail_is_held_in_the_merge_queue`, `the_gates_run_on_the_claimed_commit`.
+- **Minors.**
+  - m1: a tdd task whose profile has no `test_passed` gets a plan-time note
+    (`validate::NO_TEST_PASSED_NOTE`, invented text citing rule 8.1). The shared test
+    `PROFILE` in `test_support.rs` (and one inline profile in `plan_tests.rs`) now sets
+    `test_passed`, so other tests' note lists are unchanged; the regex test replaces it
+    instead of appending a duplicate key. Test
+    `a_tdd_task_without_test_passed_gets_a_plan_note`.
+  - m2: `override_refuses_a_held_task` (passed at red: the refusal already existed).
+  - m3: rung 3 re-resolves `review_level`, `review_route` (against the task's current
+    route) and `budget` for the raised size (`ladder::reresolve`, through
+    `resolve_task_lenient`). Test `rung_3_re_resolves_review_and_budget_for_the_raised_size`.
+  - m4: `review_misses` resets whenever the task is outside `review`. Test
+    `the_verdictless_count_resets_when_the_task_leaves_review`.
+  - m5: override does not stop the worker: its session keeps running (idle, its mail
+    held by I3) until the merge or a later bounce. Only a live reviewer is stopped.
+  - m6: `assert_gates_alive` accepts a `review` task that waits on a reader slot a hub
+    task holds. Test `a_review_waiting_for_a_hub_is_alive`.
+
+**Red first.** The red run had 11 failures: 10 of the first 12 new tests, and
+`gates::proof_passes_to_check`, whose expected `Check` took the new form. Sample lines: the
+`Check` op had `dir: t1, scratch: None` where `t1.proof` and `Some` were expected;
+`no nudge` (a rate-limited reviewer was nudged); `t1 is in Review with nothing
+pending`; rung 3's `review_level` was `None`, expected `Some(Medium)`; `(Blocked, 1)`
+against `(Blocked, 0)` for the misses reset; the continue was never delivered.
+`override_refuses_a_held_task` and `a_retired_codex_reviewer_ends_with_its_process`
+passed at red and are kept as pins. The mutation run found five survivors. The three
+tests added for them are `a_reviewers_rate_limit_streak_counts_once`,
+`a_completed_reviewer_turn_resets_the_other_failure_count` and
+`worker_mail_is_held_in_the_merge_queue`.
+
+**Mutations.** 23 mutants of the fix; 21 killed (the `SetupFailed` arm's removal is
+the red run of its test). Killed: the rate-limit branch, the
+`Other` rule both ways, the reviewer stop on an environment failure, the rate-limit
+count, the count on a streak, `rate_limited_until`, the continue's due time, the
+`ContinueSent` reset, Codex's immediate end, the review `head_ref`, the retiring
+reader slot, the mail hold, the mail hold in `merge_queue`, the check's commit, the
+note both ways, `reresolve` and its route and budget, and the misses reset. Equivalent:
+`scratch: None.or(Some(..))` (a no-op; the full `Check` kind is asserted), and a
+`!round.retiring` guard in `signals::exited`. That guard was unreachable for the
+reason given under T13-I2, so it was removed.
+
+**Gates (fix round 1).** `cargo build --workspace --all-targets`, clippy with
+`-D warnings` and `cargo fmt --all --check` are clean. `cargo test -p anthrex-daemon
+--no-fail-fast`: 34 binaries, 1101 passed, 2 failed. The failures were
+`tests/git_registry.rs`'s `a_commit_in_a_linked_worktree_triggers_a_probe` (the
+load-sensitive test above) and `tests/server_git.rs`'s
+`two_windows_in_one_worktree_register_once`, a socket wait in `support/mod.rs`. Both
+binaries pass when re-run alone (10/10, 6/6), and the engine touches neither. Unit
+tests: 328 of `run::` pass. No file passes 600 lines: `review.rs` 513,
+`tests/gates_review.rs` 585, `tests/gates_fixes.rs` 471.

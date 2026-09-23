@@ -10,7 +10,8 @@ use super::schedule::op_in_flight;
 use super::{Effect, OpKind, OpResult, done, emit_op, next_op, outbox};
 use crate::run::contract::budget_wrap_up;
 use crate::run::model::{AgentRound, FreshSession, Run, Task};
-use crate::run::roster::escalate;
+use crate::run::roster::{escalate, pick_reviewer};
+use crate::run::validate::resolve_task_lenient;
 
 /// The note rung 3 adds to a task it raises (M8a.6's `rung3` fixture uses the same).
 const RAISED_NOTE: &str = "size raised by rung 3 (decision 38)";
@@ -226,11 +227,35 @@ pub(super) fn rung3(run: &mut Run, i: usize, text: String, now: u64, fx: &mut Ve
     task.size = task.size.raised();
     task.raised_size = Some(task.size);
     task.rung = 3;
+    reresolve(run, i);
+    let task = &mut run.tasks[i];
     task.fresh_session = None;
     if !task.notes.iter().any(|n| n == RAISED_NOTE) {
         task.notes.push(RAISED_NOTE.to_string());
     }
     block(run, i, BlockReason::MisSized, text, now);
+}
+
+/// Ruling T13-minors (m3): what depends on the size is resolved again for the raised
+/// size — the review level, its reviewer and a budget the plan did not set — as an
+/// edit's re-resolution does (`edits.rs`), so a retried task is reviewed and budgeted
+/// as what it now is. The route is the task's own (rung 2 may have escalated it).
+fn reresolve(run: &mut Run, i: usize) {
+    let mut spec = run.tasks[i].spec.clone();
+    spec.size = spec.size.max(run.tasks[i].size);
+    let (resolved, _) = resolve_task_lenient(
+        spec,
+        &run.profile,
+        &run.limits,
+        &run.roster,
+        run.limits.default_runtime,
+    );
+    let task = &mut run.tasks[i];
+    task.review_level = resolved.review_level;
+    task.review_route = resolved
+        .review_level
+        .map(|level| pick_reviewer(&run.roster, &task.route, level));
+    task.budget = resolved.budget;
 }
 
 /// Rung 4: `blocked(human)`, the worker killed.

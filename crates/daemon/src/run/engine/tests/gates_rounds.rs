@@ -110,6 +110,7 @@ fn a_verdict_resets_the_verdictless_count() {
     let (rwindow2, _) = reviewer(&mut fx, op, "p");
     // Round 2 asks for changes: rung 1.
     submit(&mut fx, rwindow2, verdict("changes", blocking()));
+    super::turns::exited(&mut fx, rwindow2);
     assert_eq!(fx.task("t1").review_misses, 0);
     assert_eq!(fx.task("t1").state, TaskState::Working);
     fx.turn_completed(window);
@@ -242,8 +243,10 @@ fn failures_of_different_gates_share_the_ladder() {
 fn a_given_up_reviewer_cannot_submit() {
     let (mut fx, _, rwindow) = reviewed(PROFILE, "");
     fx.turn_completed(rwindow);
-    let effects = fx.turn_completed(rwindow);
-    assert!(effects.contains(&Effect::KillWindow { window_id: rwindow }));
+    fx.turn_completed(rwindow);
+    // A Codex reviewer between turns has no process: its round ends at once (T13-I2).
+    let last = fx.task("t1").rounds.last().unwrap().clone();
+    assert!(last.retiring && last.ended, "{last:#?}");
     let effects = submit(&mut fx, rwindow, verdict("approve", vec![]));
     assert_eq!(
         replies(&effects),

@@ -89,11 +89,19 @@ pub(super) fn deliver(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             continue;
         };
         // A blocked task holds its messages (M8a.6 ruling N5: an answer waits for new
-        // dependencies); a finished one never takes a turn.
+        // dependencies); a finished one never takes a turn. Ruling T13-I3: nor does a
+        // worker whose task is in a gate, which runs on the claimed commit; its mail
+        // goes out if the task comes back to `working`.
+        let state = run.tasks[i].state;
+        let in_gate = matches!(
+            state,
+            TaskState::Proof | TaskState::Check | TaskState::Review | TaskState::MergeQueue
+        );
         if matches!(
-            run.tasks[i].state,
+            state,
             TaskState::Blocked | TaskState::Merged | TaskState::Cancelled
-        ) {
+        ) || (in_gate && !reviewer)
+        {
             continue;
         }
         // Ruling T12-I3: a fresh session still to start takes the messages in its prompt.

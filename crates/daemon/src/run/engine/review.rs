@@ -10,14 +10,17 @@ use proto::{AgentRole, BlockReason, GateKind, Runtime, Severity, TaskState, Tool
 
 use super::dispatch::{block, history, new_round, window_limit_reached};
 use super::schedule::{hub_holds_slot, needs_reviewer, readers_busy};
-use super::signals::end_round;
+use super::signals::{count_rate_limit, end_round};
 use super::tools::parse_review;
-use super::{Effect, OpId, OpKind, OpResult, ReplyId, emit_op, gates, ladder, next_op, outbox};
+use super::{
+    Effect, OpId, OpKind, OpResult, ReplyId, TurnOutcome, emit_op, gates, ladder, next_op, outbox,
+};
+use crate::headless::FailureKind;
 use crate::run::contract::{
     APPROVE_WITH_BLOCKING, REVIEW_NUDGE, REVIEW_RECORDED, REVIEWER_RESUME_AFTER_EXIT,
-    REVIEWER_STOPPED_TWICE, review_changes_message, reviewer_prompt,
+    REVIEWER_STOPPED_TWICE, rate_limit_continue, review_changes_message, reviewer_prompt,
 };
-use crate::run::model::{ReviewLevel, ReviewRecord, Run};
+use crate::run::model::{AgentRound, FailedTurn, ReviewLevel, ReviewRecord, Run};
 use crate::run::role_launch::{jitter_ms, reviewer_spec, session_uuid};
 use crate::run::roster::pick_reviewer;
 
@@ -57,7 +60,8 @@ pub(super) fn dispatch_reviewers(run: &mut Run, fx: &mut Vec<Effect>) {
         let task = &run.tasks[i];
         let kind = OpKind::PrepareReview {
             root: run.root.clone(),
-            head_ref: task.branch.clone(),
+            // Ruling T13-I3: the claimed commit, never the branch tip.
+            head_ref: task.head.clone().unwrap_or_else(|| task.branch.clone()),
             base_ref: task
                 .start_commit
                 .clone()
@@ -151,19 +155,32 @@ pub(super) fn review_ready(
 
 /// Stops task `i`'s live reviewer (a round given up, or a task overridden): the
 /// engine's kill, and the mailbox and any resume it awaited dropped.
-pub(super) fn stop_reviewers(run: &mut Run, i: usize, fx: &mut Vec<Effect>) {
+pub(super) fn stop_reviewers(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
     for round in run.tasks[i]
         .rounds
         .iter_mut()
         .filter(|r| r.role == AgentRole::Reviewer && !r.retiring)
     {
-        round.retiring = true;
-        round.resume_op = None;
-        if let (Some(window_id), false) = (round.window_id, round.ended) {
-            fx.push(Effect::KillWindow { window_id });
-        }
+        give_up(round, now, fx);
     }
     drop_mail(run, i);
+}
+
+/// The engine gives up a reviewer round: its process is killed, and the round holds
+/// its reader slot until that exit (ruling T13-I2). A Codex reviewer between turns has
+/// no process (one per turn), so its round ends at once.
+fn give_up(round: &mut AgentRound, now: u64, fx: &mut Vec<Effect>) {
+    round.retiring = true;
+    round.resume_op = None;
+    if round.ended {
+        return;
+    }
+    if round.route.runtime == Runtime::Codex && !round.turn_open {
+        return end_round(round, now);
+    }
+    if let Some(window_id) = round.window_id {
+        fx.push(Effect::KillWindow { window_id });
+    }
 }
 
 fn drop_mail(run: &mut Run, i: usize) {
@@ -285,19 +302,83 @@ fn owes_verdict(run: &Run, i: usize, r: usize) -> bool {
 }
 
 /// A reviewer's turn ended (decision 35): with no verdict, `REVIEW_NUDGE` is one more
-/// turn; a second verdict-less turn ends the round. A failed turn counts as a turn
-/// without a verdict (decision 32's failed-turn rules are the worker's).
-pub(super) fn turn_ended(run: &mut Run, i: usize, r: usize, now: u64, fx: &mut Vec<Effect>) {
+/// turn; a second verdict-less turn ends the round. A failed turn follows decision 32's
+/// failed-turn rules, as a worker's does (ruling T13-I1), and is no verdict-less turn.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn turn_ended(
+    run: &mut Run,
+    i: usize,
+    r: usize,
+    outcome: TurnOutcome,
+    streak: bool,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
     if !owes_verdict(run, i, r) {
         return;
     }
     let round = &mut run.tasks[i].rounds[r];
+    if let TurnOutcome::Failed { error, kind } = outcome {
+        return failed_turn(run, i, r, error, kind, streak, now, fx);
+    }
+    if matches!(round.failed_turn, FailedTurn::ContinueSent { .. }) {
+        round.failed_turn = FailedTurn::None;
+        round.failed_error = None;
+    }
     if round.review_nudged {
         return verdictless(run, i, r, "its turn ended twice without a verdict", now, fx);
     }
     round.review_nudged = true;
     let address = mailbox(run.tasks[i].id());
     outbox::queue_to(run, &address, r, REVIEW_NUDGE.to_string(), now);
+}
+
+/// Ruling T13-I1: decision 32's failed turns for a reviewer. A rate limit is counted
+/// and waited out (`rate_limit_retry_secs`, then `rate_limit_continue` as its next
+/// turn); authentication and billing failures block the task on its environment at
+/// once, with the error; any other failure gets one continue after the same wait, and
+/// the second in a row blocks. A reviewer has no sandbox, so an unavailable one is
+/// treated as an environment failure too. The reviewer of a blocked task is stopped.
+#[allow(clippy::too_many_arguments)]
+fn failed_turn(
+    run: &mut Run,
+    i: usize,
+    r: usize,
+    error: String,
+    kind: FailureKind,
+    streak: bool,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
+    let wait = run.limits.rate_limit_retry_secs;
+    let round = &mut run.tasks[i].rounds[r];
+    let rate_limit = match kind {
+        FailureKind::RateLimit => true,
+        FailureKind::Other
+            if !matches!(
+                round.failed_turn,
+                FailedTurn::ContinueSent { rate_limit: false }
+            ) =>
+        {
+            false
+        }
+        _ => {
+            stop_reviewers(run, i, now, fx);
+            return block(run, i, BlockReason::Environment, error, now);
+        }
+    };
+    round.failed_turn = FailedTurn::WaitingContinue {
+        at: now + wait,
+        rate_limit,
+    };
+    if rate_limit {
+        round.rate_limited_until = Some(now + wait);
+    }
+    round.failed_error = Some(error);
+    // One event, unless a retry streak ran straight into this failure (decision 32).
+    if rate_limit && !streak {
+        count_rate_limit(run, i, r);
+    }
 }
 
 /// A reviewer's process exited without the engine killing it (decision 35, with
@@ -371,12 +452,7 @@ pub(super) fn resume_failed(
 /// round starts at the same level, with no failure counted; the second such round in a
 /// row blocks the task as `blocked(environment)`.
 fn verdictless(run: &mut Run, i: usize, r: usize, why: &str, now: u64, fx: &mut Vec<Effect>) {
-    let round = &mut run.tasks[i].rounds[r];
-    if let (Some(window_id), false) = (round.window_id, round.ended) {
-        fx.push(Effect::KillWindow { window_id });
-    }
-    round.retiring = true;
-    round.resume_op = None;
+    give_up(&mut run.tasks[i].rounds[r], now, fx);
     drop_mail(run, i);
     let task = &mut run.tasks[i];
     task.review_misses = task.review_misses.saturating_add(1);
@@ -409,8 +485,22 @@ pub(super) fn watch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         let Some(r) = reviewer_round(run, i) else {
             continue;
         };
+        if !owes_verdict(run, i, r) {
+            continue;
+        }
+        // Ruling T13-I1: a failed turn's continue, once its wait is over.
+        let round = &mut run.tasks[i].rounds[r];
+        if let FailedTurn::WaitingContinue { at, rate_limit } = round.failed_turn
+            && now >= at
+        {
+            round.failed_turn = FailedTurn::ContinueSent { rate_limit };
+            round.rate_limited_until = None;
+            let reason = round.failed_error.clone().unwrap_or_default();
+            let address = mailbox(run.tasks[i].id());
+            outbox::queue_to(run, &address, r, rate_limit_continue(&reason), now);
+        }
         let round = &run.tasks[i].rounds[r];
-        if !owes_verdict(run, i, r) || round.ended || !round.turn_open {
+        if round.ended || !round.turn_open {
             continue;
         }
         let quiet = round.last_event.max(round.rate_limited_until.unwrap_or(0));
