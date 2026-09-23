@@ -631,6 +631,9 @@ scope.
   mojibake, and for a Pending call the spinner is the only state glyph. Fix it once for the
   whole TUI: an ASCII spinner (for example `| / - \`) chosen from the same A5 decision,
   which `UiSettings.badges.ascii` already carries. Milestone 6.5 or later.
+- **The sidebar still draws box glyphs in ASCII mode** (milestone 6.5's manual check,
+  2026-09-23). The same A5 decision should reach the sidebar's borders; fold it into the
+  TUI-wide ASCII fix above rather than fixing the sidebar alone.
 
 ## From milestone 6.5's final review (2026-09-23), left open by its fix pass
 
@@ -675,3 +678,14 @@ scope.
   named, `crates/config/src/lib.rs`, was split in the fix pass; these were left as they are.
   Split each by the concern its tests cover, as `lib_tests.rs` could follow `lib.rs`'s new
   `conversation.rs` and `git.rs`.
+
+## From milestone 6.5's manual check (2026-09-23)
+
+- **The title shows no model unless `--model` is given.** A window started without
+  `--model` has no model to name. Learn it from the transcript instead: every Claude
+  assistant record carries `message.model`. The transcript reader already parses those
+  records, so it could report the model it sees.
+- **Codex 0.155.0's tool calls land in a separate assistant turn from that turn's prose.**
+  Seen in the conversation view with real Codex 0.155.0: one reply shows as two assistant
+  turns, the calls in one and the prose in the other. Not investigated; start from how the
+  Codex hooks open and close turns against `codex-0.155.0.jsonl`.
