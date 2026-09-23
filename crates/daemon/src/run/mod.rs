@@ -13,10 +13,13 @@
 //! decisions 11–13), `env.rs`
 //! (the profile environment) and the rest of `model.rs`. M8a.6 adds `edits.rs` (plan
 //! edits, decision 13) and starts `contract.rs` with the two message texts edits need.
+//! M8a.8 adds `git/` (preflight, worktrees, the done check and the per-repository
+//! write queue; blocking I/O) and `contract.rs`'s `REVIEW_DIFF_MAX` diff clamp.
 
 pub mod contract;
 pub mod edits;
 pub mod env;
+pub mod git;
 pub mod globs;
 pub mod model;
 pub mod plan;

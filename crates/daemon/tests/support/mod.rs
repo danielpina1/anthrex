@@ -5,6 +5,8 @@
 //! guideline once `tests/server_git.rs` needed the same harness.
 #![allow(dead_code)]
 
+pub mod run_git;
+
 use daemon::manager::{ManagerConfig, WindowManager};
 use daemon::server::serve;
 use proto::{ClientKind, ClientMsg, DaemonMsg, Runtime, WindowSpec, read_frame, write_frame};
@@ -225,8 +227,22 @@ pub struct TempRepo {
 
 impl TempRepo {
     pub fn new() -> Self {
+        Self::init_in(tempfile::tempdir().unwrap())
+    }
+
+    /// As [`TempRepo::new`], in a fresh directory under `/tmp` whose name starts with
+    /// `prefix` — for paths with spaces and non-ASCII characters in them.
+    pub fn with_prefix(prefix: &str) -> Self {
+        Self::init_in(
+            tempfile::Builder::new()
+                .prefix(prefix)
+                .tempdir_in("/tmp")
+                .unwrap(),
+        )
+    }
+
+    fn init_in(dir: tempfile::TempDir) -> Self {
         use std::ffi::OsStr;
-        let dir = tempfile::tempdir().unwrap();
         let path = dir.path();
         std::fs::write(path.join("README"), "one\n").unwrap();
         std::fs::write(path.join(".gitignore"), "ignored-*\n").unwrap();
@@ -352,4 +368,27 @@ pub async fn claude_window(d: &TestDaemon, name: &str) -> u32 {
         .await
         .unwrap()
         .id
+}
+
+/// A `git` stand-in for tests: a script in `dir` that appends one `argv` line (each
+/// argument after a tab) and one `env` line per `GIT_*` variable it was given to
+/// `<dir>/git.log`, then execs the real `git` with the same arguments.
+pub fn recording_git(dir: &std::path::Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let log = dir.join("git.log");
+    let script = dir.join("recording-git");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\n\
+             log='{log}'\n\
+             {{ printf 'argv'; for a in \"$@\"; do printf '\\t%s' \"$a\"; done; printf '\\n'; }} >> \"$log\"\n\
+             env | grep '^GIT_' | while IFS= read -r l; do printf 'env\\t%s\\n' \"$l\"; done >> \"$log\"\n\
+             exec git \"$@\"\n",
+            log = log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    script
 }

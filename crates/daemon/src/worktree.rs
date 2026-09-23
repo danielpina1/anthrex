@@ -233,6 +233,21 @@ pub fn run_git(
     args: &[&OsStr],
     deadline: Instant,
 ) -> Result<GitOutput, WorktreeError> {
+    run_git_with_cap(git, dir, args, deadline, MAX_OUTPUT_BYTES)
+}
+
+/// As [`run_git`], with a caller-chosen cap on stdout instead of 256 KiB. Milestone 8a's
+/// run git operations (`crate::run::git`) read whole-tree listings and diffs, which a
+/// real repository can push past the default cap; everything else about the invocation
+/// — `-C <dir> --no-optional-locks`, the scrubbed environment, the deadline — is
+/// identical, because it is the same code.
+pub fn run_git_with_cap(
+    git: &OsStr,
+    dir: &Path,
+    args: &[&OsStr],
+    deadline: Instant,
+    max_output_bytes: usize,
+) -> Result<GitOutput, WorktreeError> {
     let now = Instant::now();
     let joined_args = args
         .iter()
@@ -257,7 +272,7 @@ pub fn run_git(
         .env("GIT_TERMINAL_PROMPT", "0");
 
     let captured =
-        subprocess::run_captured(&mut command, MAX_OUTPUT_BYTES, MAX_STDERR_BYTES, timeout);
+        subprocess::run_captured(&mut command, max_output_bytes, MAX_STDERR_BYTES, timeout);
 
     if let Some(kind) = captured.spawn_error {
         return if kind == io::ErrorKind::NotFound {

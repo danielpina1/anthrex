@@ -3453,3 +3453,115 @@ item addressed, except that I1 was partial (cases D and E) and a new N1 remained
   - Two of the five (dropping stale sent texts, claiming a late `sent_turn`) first
     survived and were then killed by assertions added to
     `a_sent_prompt_is_human_and_an_unprompted_one_is_not`.
+
+### M8a.8 run git operations I: preflight, branches, worktrees, the write queue (2026-09-23)
+
+Built `run/git/mod.rs` (preflight, `project_settings`, `protected_files`, `verify_done`,
+`count_commits`, `diff_so_far`, the shared `Git` runner), `run/git/worktrees.rs`
+(`create_run_branch`, `prepare_worktree`, `lock_worktree`, `prepare_review`) and
+`run/git/queue.rs` (`GitQueue`). Deviations, resolutions and invented text:
+
+- **`GitQueue::write` takes `Fn`, not `FnOnce`.** The interface block has
+  `f: impl FnOnce() -> Result<T, String> + Send + 'static`, but decision 18 retries a
+  lock failure up to five times, and the brief's own test calls one closure three and
+  six times. The bound is `F: Fn() -> Result<T, String> + Send + Sync + 'static`; the
+  closure is shared through an `Arc`. The repository's `tokio::sync::Mutex` is held for
+  the whole write, retries and their back-off included, so a retried write keeps its
+  place ahead of later writes to the same repository.
+- **`verify_done` returns `run::git::DoneChecked`, not `OpResult`.** `OpResult` does not
+  exist until M8a.11. `DoneChecked` has exactly `OpResult::DoneChecked`'s fields, and
+  M8a.11 wraps it. `spill_exempt` is not a parameter, as in the interface block. The
+  engine applies the override exemption.
+- **What "commits" and a valid `red` mean.** `commits` counts `git rev-list HEAD ^<start>
+  ^<run_head>`: the task's own commits. After a hand-back merge, the run head's merged
+  commits are not the task's, but the merge commit is. `red_ok` is `Some(true)` only
+  when `red^{commit}` resolves to one of those commits. So the start commit, a commit on
+  another branch, a merged run-head commit and an unresolvable name all give
+  `Some(false)`. `verify_done` makes six git calls at most: `HEAD`, that list,
+  `status --porcelain -z --untracked-files=all`, `MERGE_HEAD`, the spill diff, and
+  `red`, only when one is given.
+- **The spill diff passes `--no-renames`.** A file moved out of `owns` then reports both
+  its old and new paths, not just the new one. Protected paths come first (decision 56):
+  a protected path that `owns` does not name literally goes into `protected_changed` and
+  into nothing else, and a protected path that `owns` does name goes into nothing. The
+  rest split per decision 55.
+- **`Preflight.protected_files` is left empty by `preflight`.** `preflight(git, dir,
+  timeout)` has no profile, and decision 56's list is the resolved profile's (built-ins
+  plus config plus plan). The driver (M8a.22) calls `protected_files` with that list's
+  `OwnsMatcher` and fills the field. The same goes for decision 53's refusal: the driver
+  calls `project_settings` only when that decision applies.
+- **The identity check is `git -c user.useConfigOnly=true var GIT_COMMITTER_IDENT`.**
+  Evidence (git 2.50.1, macOS): with `GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1`
+  and no repository identity, plain `git var GIT_COMMITTER_IDENT` exits 0 with the
+  identity git invented from the login name and host name. With `user.useConfigOnly=true` it
+  exits 128 with `no email was given and auto-detection is disabled`. Without the
+  override, decision 17's check would never fire on a machine whose host name contains a
+  dot.
+- **Invented message:** when `project::detect_roots_with` reports `detection_failed` (git
+  could not be started, timed out, or printed nothing parseable), preflight says `could
+  not tell whether <dir> is a git repository: git did not answer; try again`, not `not a
+  git repository: <dir>`, following M5's rule that "not a repository" is said only on
+  git's own negative answer.
+- **The git version check** reads the first whitespace token that starts with a digit
+  (`2.50.1` in `git version 2.50.1 (Apple Git-155)`) and compares major and minor.
+  `(found <v>)` names that token, or the whole line when no token parses.
+- **Worktrees are locked on creation with `git worktree add --lock --reason "anthrex run
+  <run>"`, not by a separate `lock` afterwards.** Decision 18 asks for the lock "right
+  after creation", and this closes even that gap. `<run>` is read from the branch
+  (`anthrex/<run>/<task>`). A reused worktree that is not locked is locked with
+  `lock_worktree`, which treats `is already locked` as success.
+- **Reuse, re-add, re-point.**
+  - An existing registered worktree on another branch is refused with the invented `worktree
+    <path> is not on <branch> (git lists <refs/heads/… or a detached HEAD>)`.
+  - A registered worktree whose directory is gone is unlocked (git never prunes a locked
+    entry), `git worktree prune`d, then re-added.
+  - Re-pointing (decision 19) happens when the branch head differs from `from` and is an
+    ancestor of it (`merge-base --is-ancestor`, exit 1 with empty stderr = no). It runs
+    `git checkout -q -B <branch> <from>` in the worktree.
+  - `create_run_branch` shares this code without re-pointing.
+- **The brief's test says "after `git worktree remove --force`".** A task worktree is
+  locked, and git refuses a single `--force` on a locked worktree. The test uses `git
+  worktree remove --force --force`.
+- **`prepare_review`** resolves both refs with `rev-parse --verify <ref>^{commit}`. An
+  unresolvable ref fails with the invented `<ref> is not a commit`. It replaces the earlier
+  round's worktree: unlock if locked, then `worktree remove --force`, or prune if its
+  directory is gone. Then it runs `worktree add --detach <path> <head>`.
+- **The patch and `REVIEW_DIFF_MAX`.**
+  - `REVIEW_DIFF_MAX`, `clamp_diff` and `DIFF_CUT_MARKER` are added to `run/contract.rs`
+    now, where the Interfaces put `REVIEW_DIFF_MAX`, because the git layer clamps.
+  - The clamp keeps a head and a tail on character boundaries with the invented marker
+    line `[anthrex: the middle of this diff was cut to fit]` between them. The whole is
+    at most `REVIEW_DIFF_MAX` and at most 3 bytes short: the tail takes whatever the
+    head's cut left.
+  - **M8a.13 note:** `reviewer_prompt` receives a patch that is already at most
+    `REVIEW_DIFF_MAX`, so its own `[diff clamped: …]` line fires only for a longer
+    patch. To say that the git layer cut the diff, look for `DIFF_CUT_MARKER`.
+  - `diff_so_far`'s patch (decision 30) is clamped by the same function.
+  - Both diffs pass `--no-ext-diff --no-color`, whatever the user's config says.
+- **`worktree::run_git_with_cap` is new** (`crates/daemon/src/worktree.rs`, outside the
+  brief's file list). `run_git`'s 256 KiB stdout cap would fail `ls-tree -r` on any
+  sizeable repository, and would fail a review diff larger than 256 KiB, instead of
+  clamping it. `run_git` now delegates to `run_git_with_cap` with its old cap. Every
+  `run/git` command uses 64 MiB, so it is still one `Command::new`, still with
+  `--no-optional-locks`.
+- **`project_settings`** lists the candidates with `git ls-tree -r -z --name-only
+  <base_sha> -- <paths>`, and reads each tracked Claude settings file with `git cat-file
+  blob <base_sha>:<path>`. A settings file "has hooks" unless it parses and its `hooks`
+  is absent, `null`, `{}` or `[]`; invalid JSON counts as hooks. The result is sorted.
+- **Test layout.**
+  - `tests/run_git.rs` (12 tests), `tests/run_git_done.rs` (`verify_done` and
+    `count_commits_and_diff_so_far`, split to stay under 600 lines) and
+    `tests/run_git_env.rs` (the one environment test).
+  - Shared helpers are in `tests/support/run_git.rs`: `TempRepo` with a
+    repository-local identity, `commit_file`, `worktree_block`. `tests/support/mod.rs`
+    gains `recording_git` and `TempRepo::with_prefix`.
+  - The project-settings fixture uses `git add -f`, because a global excludes file
+    (this machine's does) may ignore `.claude/settings.local.json`.
+- **`engine_paths_with_spaces_and_unicode_work`** (Risks item 2, assigned to M8a.8)
+  covers only what exists so far: preflight, the run and task worktrees, `verify_done`
+  on a non-ASCII path, and the review worktree, all under `/tmp/ax run ü …`. **M8a.9
+  must extend it** with the merge candidate and salvage.
+- **Cost.** A git spawn on this machine takes about 0.1 to 0.2 s of wall time.
+  `verify_done_reports_each_condition` makes about 150 git calls and takes about 15 s.
+  `lock_errors_are_retried_then_surface` takes about 6.2 s by construction (the sum of
+  `LOCK_RETRY_DELAYS_MS`). Neither asserts a wall-clock bound.
