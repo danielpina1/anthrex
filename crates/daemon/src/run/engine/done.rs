@@ -165,6 +165,8 @@ pub(super) fn claim(
         protected: run.profile.protected.clone(),
         spill_exempt: spill_exempt(run, i),
         red: args.red.clone(),
+        // Set exactly while `handed_back` is (merge::handed_back, ladder::end_hand_back).
+        resolution: task.resolution.clone(),
     };
     let task_id = task.id().to_string();
     let window_id = session_window(run, i);
@@ -322,18 +324,20 @@ pub(super) fn checked(
     if pending.reply.is_none() && run.tasks[i].rounds[r].turns != pending.turn {
         return fallback::drop_stale(run, i, r, fx);
     }
-    let (outside, generated, protected, head) = match &result {
+    let (outside, generated, protected, head, resolution_only) = match &result {
         OpResult::DoneChecked {
             outside_owns,
             generated_outside_owns,
             protected_changed,
             head,
+            resolution_only,
             ..
         } => (
             outside_owns.clone(),
             generated_outside_owns.clone(),
             protected_changed.clone(),
             head.clone(),
+            *resolution_only,
         ),
         OpResult::Failed { message } => {
             let text = format!("task_done could not be checked: {message}; call task_done again");
@@ -373,7 +377,7 @@ pub(super) fn checked(
         }
     }
     let id = pending.reply;
-    accept(run, i, pending, head, now, fx);
+    accept(run, i, pending, head, resolution_only, now);
     if let Some(id) = id {
         reply(fx, id, Ok(DONE_ACCEPTED.to_string()));
     }
@@ -446,8 +450,8 @@ fn accept(
     i: usize,
     pending: PendingClaim,
     head: String,
+    resolution_only: Option<bool>,
     now: u64,
-    fx: &mut Vec<Effect>,
 ) {
     let task = &mut run.tasks[i];
     // Ruling T14-I3: an accepted claim ends the conflict it resolved.
@@ -467,10 +471,14 @@ fn accept(
             DoneSignal::TurnEndFallback => "the turn-end fallback",
         };
         history(run, i, now, format!("done ({how}); the run head first"));
-        return super::merge::hand_back_due(run, i, now, fx);
+        return super::merge::hand_back_due(run, i, now);
     }
     let task = &mut run.tasks[i];
-    let next = if std::mem::take(&mut task.handed_back) {
+    // Ruling T14-R2: straight back to the queue only for the conflict's resolution and
+    // nothing more; any other claim passes every gate.
+    let resolved = std::mem::take(&mut task.handed_back) && resolution_only == Some(true);
+    task.resolution = None;
+    let next = if resolved {
         TaskState::MergeQueue
     } else {
         gates::next_gate(run, i, None)

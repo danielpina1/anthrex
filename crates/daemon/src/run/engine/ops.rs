@@ -60,6 +60,12 @@ pub enum OpKind {
         protected: Vec<String>,
         spill_exempt: bool,
         red: Option<String>,
+        /// Ruling T14-R2: set for a claim after the merge queue's conflicted hand-back.
+        /// **Executor contract (M8a.22):** after `verify_done`, run
+        /// `git::resolution_only(worktree, head, onto, run_head, files)` (a read) and
+        /// return it as `DoneChecked.resolution_only`.
+        #[serde(default)]
+        resolution: Option<ResolutionAt>,
     },
     /// `run_head`: M8a.8's interface change (the task's own commits exclude a merged
     /// run head).
@@ -212,6 +218,15 @@ pub enum OpKind {
     },
 }
 
+/// The merge queue's conflicted hand-back a claim may resolve (ruling T14-R2): the tip
+/// the run head was merged onto, that run head, and the files that conflicted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolutionAt {
+    pub onto: String,
+    pub run_head: String,
+    pub files: Vec<String>,
+}
+
 /// Where a scratch-worktree check runs (ruling T13-I3): the repository, the claimed
 /// commit to materialize, and the profile's `setup` for a new scratch worktree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -250,6 +265,10 @@ pub enum OpResult {
         red_ok: Option<bool>,
         head: String,
         head_branch: Option<String>,
+        /// Ruling T14-R2: `git::resolution_only`'s answer when `VerifyDone` carried a
+        /// resolution; `None` otherwise.
+        #[serde(default)]
+        resolution_only: Option<bool>,
     },
     Commits {
         count: u32,

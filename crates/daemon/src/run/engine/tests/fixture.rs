@@ -315,6 +315,7 @@ impl Fixture {
             red_ok: Some(true),
             head: HEAD.into(),
             head_branch: Some(self.task(id).branch.clone()),
+            resolution_only: None,
         }
     }
 

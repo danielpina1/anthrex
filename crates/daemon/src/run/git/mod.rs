@@ -18,6 +18,7 @@
 mod done;
 mod merge;
 mod queue;
+mod resolution;
 mod salvage;
 mod worktrees;
 
@@ -32,6 +33,7 @@ pub use salvage::{
 };
 
 pub use queue::{GitQueue, LOCK_RETRY_DELAYS_MS};
+pub use resolution::resolution_only;
 pub use worktrees::{
     absolute_git_dir, create_run_branch, lock_worktree, prepare_review, prepare_scratch,
     prepare_worktree,

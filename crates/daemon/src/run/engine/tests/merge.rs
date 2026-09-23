@@ -90,12 +90,29 @@ pub(super) fn pending_one(fx: &Fixture, name: &str, task: Option<&str>) -> (OpId
 /// `id` claims done with `head` from `window`, and the claim is accepted; the worker
 /// ends its turn. Returns the effects of the accepting step.
 pub(super) fn claim(fx: &mut Fixture, id: &str, window: u32, head: &str) -> Vec<Effect> {
+    claim_as(fx, id, window, head, None)
+}
+
+/// `claim`, with `VerifyDone`'s `resolution_only` answer (ruling T14-R2).
+pub(super) fn claim_as(
+    fx: &mut Fixture,
+    id: &str,
+    window: u32,
+    head: &str,
+    resolution: Option<bool>,
+) -> Vec<Effect> {
     let args = json!({"summary": "done"});
     let effects = fx.tool_as(AgentRole::Worker, window, id, "task_done", args);
     let (op, _) = ops_in(&effects, "VerifyDone")[0].clone();
     let mut result = fx.clean_check(id);
-    if let OpResult::DoneChecked { head: h, .. } = &mut result {
+    if let OpResult::DoneChecked {
+        head: h,
+        resolution_only,
+        ..
+    } = &mut result
+    {
         *h = head.to_string();
+        *resolution_only = resolution;
     }
     let effects = fx.done(op, result);
     assert_eq!(replies(&effects), vec![Ok(DONE_ACCEPTED.to_string())]);
@@ -312,7 +329,8 @@ fn salvage_numbers_follow_the_highest_recorded_ref() {
 }
 
 /// The first conflict hands the run head back; the worker's merge and its next
-/// accepted `task_done` go straight back to the merge queue, with no gate op.
+/// accepted `task_done`, when it is only the resolution (ruling T14-R2), go straight
+/// back to the merge queue, with no gate op.
 #[test]
 fn first_conflict_hands_back_then_requeues_after_task_done() {
     let (mut fx, windows) = start(&[doc_task("t1", "")]);
@@ -359,7 +377,7 @@ fn first_conflict_hands_back_then_requeues_after_task_done() {
 
     // The worker commits the merge and claims again: straight to the merge queue.
     let merged_head = head_of("t1m");
-    let effects = claim(&mut fx, "t1", window, &merged_head);
+    let effects = claim_as(&mut fx, "t1", window, &merged_head, Some(true));
     assert_eq!(fx.task("t1").state, TaskState::MergeQueue);
     for gate in ["Proof", "Check", "PrepareReview"] {
         assert!(ops_in(&effects, gate).is_empty(), "no {gate}: {effects:#?}");

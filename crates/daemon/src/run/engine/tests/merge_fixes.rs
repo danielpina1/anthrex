@@ -9,8 +9,8 @@ use super::fixture::*;
 use super::gates::check_result;
 use super::holds::delivers;
 use super::merge::{
-    candidate, claim, commit, doc_task, head_of, merge, pending, pending_one, start, start_on,
-    to_queue, window_of,
+    candidate, claim, claim_as, commit, doc_task, head_of, merge, pending, pending_one, start,
+    start_on, to_queue, window_of,
 };
 use super::turns_fixes::assert_alive;
 use crate::run::contract::{UNCLAIMED_COMMITS, answer_message, conflict_message};
@@ -366,7 +366,8 @@ fn a_told_conflict_is_not_handed_back_into_when_the_task_is_held() {
         } else {
             assert_eq!(fx.task("t1").state, TaskState::Working);
             assert_eq!(delivers(&effects), vec![conflict_message(&files)]);
-            claim(&mut fx, "t1", window, &head_of("t1s"));
+            // Even a pure resolution: the claim before it never passed the gates.
+            claim_as(&mut fx, "t1", window, &head_of("t1s"), Some(true));
             assert_eq!(
                 fx.task("t1").state,
                 TaskState::Check,

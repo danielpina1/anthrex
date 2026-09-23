@@ -193,6 +193,18 @@ pub(super) fn edit(
             return reply(fx, id, Err(lines.join("\n")));
         }
     };
+    // Ruling T14-R2 (#4): the reply says which cancels wait on an in-flight merge.
+    let deferred: Vec<String> = edited
+        .tasks
+        .iter()
+        .filter(|t| t.cancel_deferred)
+        .filter(|t| {
+            !run.tasks
+                .iter()
+                .any(|was| was.id() == t.id() && was.cancel_deferred)
+        })
+        .map(|t| t.id().to_string())
+        .collect();
     *run = edited;
     for consequence in consequences {
         match consequence {
@@ -213,11 +225,11 @@ pub(super) fn edit(
         now,
         format!("applied {n} plan edit{}", if n == 1 { "" } else { "s" }),
     );
-    reply(
-        fx,
-        id,
-        Ok(format!("applied {n} edit{}", if n == 1 { "" } else { "s" })),
-    );
+    let mut text = format!("applied {n} edit{}", if n == 1 { "" } else { "s" });
+    for task in &deferred {
+        text.push_str(&super::complete::deferred_note(task));
+    }
+    reply(fx, id, Ok(text));
 }
 
 fn kill_sessions(run: &mut Run, task_id: &str, fx: &mut Vec<Effect>) {

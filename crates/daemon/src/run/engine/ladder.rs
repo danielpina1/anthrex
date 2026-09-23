@@ -64,9 +64,18 @@ pub(super) fn supersede(run: &mut Run, i: usize) {
         round.resume_op = None;
         round.count_op = None;
     }
+    // Ruling T14-R2 (N2): a replaced or stopped session ends the hand-back it was
+    // resolving, so its successor's claim passes every gate.
+    end_hand_back(&mut run.tasks[i]);
     let id = run.tasks[i].id().to_string();
     run.outbox
         .retain(|m| m.task_id != id || m.delivered_at.is_none());
+}
+
+/// Ruling T14-R2 (N2): the hand-back context ends; a later claim is not a resolution.
+pub(super) fn end_hand_back(task: &mut crate::run::model::Task) {
+    task.handed_back = false;
+    task.resolution = None;
 }
 
 /// Undelivered messages to task `i`'s worker are dropped when its session is replaced

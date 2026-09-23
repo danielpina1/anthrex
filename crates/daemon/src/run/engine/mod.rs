@@ -50,7 +50,7 @@ mod signals;
 mod tools;
 
 pub use crate::headless::TurnOutcome;
-pub use ops::{OpKind, OpResult, ScratchAt};
+pub use ops::{OpKind, OpResult, ResolutionAt, ScratchAt};
 pub use signals::INTERRUPT_GRACE_SECS;
 
 /// Identifies a client request waiting for its [`Effect::Reply`].
@@ -428,8 +428,8 @@ fn op_done(
         (OpKind::PrepareReview { .. }, Some(i)) => {
             review::review_ready(run, i, op, result, now, fx)
         }
-        (OpKind::HandBack { .. }, Some(i)) if merge::awaits(run, i, op) => {
-            merge::handed_back(run, i, op, result, now, fx)
+        (OpKind::HandBack { run_head, .. }, Some(i)) if merge::awaits(run, i, op) => {
+            merge::handed_back(run, i, op, &run_head, result, now, fx)
         }
         (OpKind::HandBack { .. }, Some(i)) => holds::handed_back(run, i, result, now, fx),
         (OpKind::AbortMerge { .. }, Some(i)) => holds::merge_aborted(run, i, result, now),

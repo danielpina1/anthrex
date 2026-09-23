@@ -446,6 +446,7 @@ fn new_task(
         resolving: false,
         handback_due: false,
         gates_after_handback: false,
+        resolution: None,
         start_commit: None,
         head: None,
         done: None,

@@ -10,7 +10,7 @@ use super::dispatch::{edit, replies};
 use super::fixture::*;
 use super::holds::delivers;
 use super::merge::{
-    candidate, claim, commit, doc_task, head_of, merge, pending_one, start, to_queue, window_of,
+    candidate, claim_as, commit, doc_task, head_of, merge, pending_one, start, to_queue, window_of,
 };
 use super::turns_fixes::assert_alive;
 use crate::run::engine::{AgentSignal, Effect, EventKind, OpResult};
@@ -155,7 +155,7 @@ fn a_resolved_conflict_does_not_skip_a_later_hand_back() {
     let window = window_of(&windows, "t1");
     to_queue(&mut fx, "t1", window);
     handed_back_with_conflicts(&mut fx);
-    claim(&mut fx, "t1", window, &head_of("t1r"));
+    claim_as(&mut fx, "t1", window, &head_of("t1r"), Some(true));
     let (op, _) = candidate(&fx, "t1");
     fx.done(
         op,

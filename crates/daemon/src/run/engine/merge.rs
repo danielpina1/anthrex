@@ -10,6 +10,7 @@
 
 use proto::{AgentRole, BlockReason, GateKind, RunState, Runtime, TaskState};
 
+use super::ResolutionAt;
 use super::dispatch::{block, history, salvage_ref};
 use super::requests::log;
 use super::signals::end_round;
@@ -269,6 +270,7 @@ pub(super) fn handed_back(
     run: &mut Run,
     i: usize,
     op: OpId,
+    run_head: &str,
     result: OpResult,
     now: u64,
     _fx: &mut Vec<Effect>,
@@ -312,6 +314,12 @@ pub(super) fn handed_back(
     let task = &mut run.tasks[i];
     task.state = TaskState::Working;
     task.handed_back = claimed && !gates_after;
+    // Ruling T14-R2: the claim that resolves this conflict is checked against it.
+    task.resolution = task.handed_back.then(|| ResolutionAt {
+        onto: onto.clone().unwrap_or_default(),
+        run_head: run_head.to_string(),
+        files: files.clone(),
+    });
     // As at rung 1: the time the merge took is not the worker's silence.
     if let Some(r) = ladder::worker_round(task) {
         task.rounds[r].last_event = now;
@@ -329,13 +337,35 @@ pub(super) fn handed_back(
 /// Ruling T14-I3: the task's dependencies finished while its worker resolved a told
 /// conflict, so the run head is handed back now that its claim was accepted, before
 /// any gate. The task waits in `merge_queue` (out of the queue) for the result.
-pub(super) fn hand_back_due(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
+pub(super) fn hand_back_due(run: &mut Run, i: usize, now: u64) {
     let task = &mut run.tasks[i];
-    task.handback_due = false;
     task.handed_back = false;
+    task.resolution = None;
     task.gates_after_handback = true;
     task.state = TaskState::MergeQueue;
     task.gate_op = None;
+    history(
+        run,
+        i,
+        now,
+        "the run head its dependencies left is handed back first",
+    );
+}
+
+/// Ruling T14-R2 (N3): each running pass sends the due hand-back of a task whose claim
+/// was accepted (`hand_back_due`), never while the run is halted.
+pub(super) fn start_due_hand_backs(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+    for i in 0..run.tasks.len() {
+        let task = &run.tasks[i];
+        if task.state == TaskState::MergeQueue && task.handback_due {
+            send_due(run, i, now, fx);
+        }
+    }
+}
+
+fn send_due(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
+    let task = &mut run.tasks[i];
+    task.handback_due = false;
     let id = task.id().to_string();
     let kind = OpKind::HandBack {
         worktree: task.worktree.clone(),

@@ -35,6 +35,7 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 ladder::start_fresh_sessions(run, fx);
                 complete::finish_pass(run, now, fx);
                 gates::start_gates(run, now, fx);
+                merge::start_due_hand_backs(run, now, fx);
                 merge::start_merge(run, now, fx);
                 review::watch(run, now, fx);
                 launch_ready(run, now, fx);

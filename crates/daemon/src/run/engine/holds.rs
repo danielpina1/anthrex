@@ -77,6 +77,7 @@ fn abort_untold_conflict(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>
     run.outbox.retain(|m| !untold(m));
     // Nothing is left to resolve once the merge is undone.
     run.tasks[i].resolving = false;
+    super::ladder::end_hand_back(&mut run.tasks[i]);
     let worktree = run.tasks[i].worktree.clone();
     let op = next_op(run);
     emit_op(run, op, Some(&id), OpKind::AbortMerge { worktree }, fx);
@@ -197,6 +198,8 @@ pub(super) fn handed_back(
                 return;
             }
             if !files.is_empty() {
+                // Ruling T14-R2 (N1): the worker now resolves a told conflict.
+                run.tasks[i].resolving = true;
                 outbox::queue(run, &id, conflict_message(&files), now);
             }
             if !held {

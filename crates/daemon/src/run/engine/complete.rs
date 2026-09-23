@@ -28,6 +28,11 @@ fn live(state: TaskState) -> bool {
     )
 }
 
+/// The reply's note for a cancel deferred behind task `id`'s in-flight merge.
+pub(super) fn deferred_note(id: &str) -> String {
+    format!("; {id}'s merge is in flight: it is cancelled only if that merge does not land")
+}
+
 /// Task `i` is cancelled as the run ends, or, while its `MergeCandidate` runs, marked to
 /// be once that merge does not land (ruling T14-I1). Returns whether it was deferred.
 fn cancel_task(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut Vec<Effect>) -> bool {
@@ -256,9 +261,7 @@ pub(super) fn cancel(
     log(run, now, "cancelled by the user");
     let mut text = format!("run {run_id} cancelled; it completes once its sessions have ended");
     for id in merging {
-        text.push_str(&format!(
-            "; {id}'s merge is in flight: it is cancelled only if that merge does not land"
-        ));
+        text.push_str(&deferred_note(&id));
     }
     answer(fx, Ok(text));
 }

@@ -396,6 +396,10 @@ pub struct Task {
     /// through the gates, not straight to the merge queue.
     #[serde(default)]
     pub gates_after_handback: bool,
+    /// Ruling T14-R2: the conflicted hand-back `handed_back` refers to. A claim that is
+    /// only its resolution goes straight back to the merge queue.
+    #[serde(default)]
+    pub resolution: Option<super::engine::ResolutionAt>,
     pub start_commit: Option<String>,
     pub head: Option<String>,
     pub done: Option<DoneClaim>,

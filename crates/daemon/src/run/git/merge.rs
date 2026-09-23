@@ -314,8 +314,9 @@ pub fn commits_since(
 /// A clean merge is committed and gives no files. A conflict leaves its markers and
 /// `MERGE_HEAD` for the worker and gives the unmerged files. Any other failure
 /// (untracked files in the way, say), or a merge already in progress, is an error.
-/// The result names the tip the merge was made onto (ruling T14-C1): the engine
-/// re-queues a hand-back only when that tip is the claimed commit.
+/// The result names the tip the merge was made onto (ruling T14-C1), read after the
+/// merge (`HEAD^1` of a clean merge commit, `HEAD` of a conflicted one; review N4):
+/// the engine re-queues a hand-back only when that tip is the claimed commit.
 pub fn hand_back(
     git: &OsStr,
     worktree: &Path,
@@ -342,10 +343,13 @@ pub fn hand_back(
         read(g, worktree, "HEAD")?
             .ok_or_else(|| format!("{} has no HEAD commit", worktree.display()))
     };
-    let onto = tip(g)?;
     let output = g.write_raw(worktree, &args)?;
+    // Review N4: `onto` is read from what the merge did, never before it, so a commit
+    // that lands in between is reported as the tip the merge was made onto.
     if output.success {
         let head = tip(g)?;
+        let onto = read(g, worktree, "HEAD^1")?
+            .ok_or_else(|| format!("{} has no merge commit at HEAD", worktree.display()))?;
         return Ok(HandBack {
             onto,
             head,
@@ -356,6 +360,8 @@ pub fn hand_back(
     if files.is_empty() {
         Err(failure(&args, &output))
     } else {
+        // A conflicted merge leaves `HEAD` where the merge was made.
+        let onto = tip(g)?;
         Ok(HandBack {
             head: onto.clone(),
             onto,

@@ -3844,6 +3844,26 @@ T9-I1, T9-I2 and T9-m1 to m6 apply. Each behaviour fix has a test that failed fi
   The engine re-queues a hand-back only when `onto` is the claimed commit. New real-git
   test `hand_back_reports_the_tip_it_merged_onto` (a commit after the claim is the
   reported tip); the existing hand-back tests assert the new fields.
+- **Later change, from M8a.14 fix round 2 (ruling T14-R2, N4): `onto` is read after
+  the merge.** A clean merge reports `onto` as `HEAD^1` of the merge commit it made, so a
+  commit that lands between a read of `HEAD` and the merge cannot be reported as the
+  merged-onto tip. A conflicted merge reports `onto = head = HEAD`, read after it. Test
+  `hand_back_reports_the_tip_it_actually_merged_onto` in the new
+  `tests/run_git_handback.rs` (a wrapper `git` commits a "sneak" right before
+  `merge --no-ff`).
+- **New read `resolution_only(git, worktree, head, onto, run_head, files, timeout)`**
+  (`git/resolution.rs`, ruling T14-R2 #3). True only when `head` is a merge commit
+  whose parents are exactly `(onto, run_head)`, in that order (`rev-list --parents -n
+  1`), and whose tree differs from git's own automatic merge of the two (`merge-tree
+  --write-tree --name-only --no-messages -z onto run_head`, the first NUL field, conflict
+  markers included) only in `files` (`diff --no-renames --name-only -z`). Tests
+  `resolution_only_accepts_a_pure_conflict_resolution` and
+  `resolution_only_refuses_a_claim_that_carries_more`: an extra feature commit after
+  the merge, a merge that also changes a non-conflicted task file, a merge that undoes
+  the run side's auto-merged file, a plain non-merge commit, the resolution squashed
+  into a single-parent commit, and the resolution's tree on swapped parents. A
+  `rev-list <head> ^onto ^run_head` check was written first and dropped: the parent
+  check implies it (its mutant survived).
 - **`hand_back` refuses a merge already in progress.** If `MERGE_HEAD` already exists in
   the task worktree (`rev-parse -q --verify MERGE_HEAD`), `hand_back` returns `Err("a
   merge is already in progress in <worktree>; finish it or run git merge --abort")` and
@@ -6020,3 +6040,83 @@ file passes 600 lines: `merge.rs` 458, `complete.rs` 418, `dispatch.rs` 553,
 `edits.rs` 569, `model.rs` 573, `tests/merge_fixes.rs` 520, `tests/run_git_merge.rs`
 598.
 
+#### M8a.14 fix round 2
+
+The re-review (`task-14-rereview-1.md`) found N1–N4 and two carried items (#3, #4).
+Ruling T14-R2 applies. Each probe became a regression test, red first, in the new
+`engine/tests/merge_fixes2.rs` (6 tests) or `tests/run_git_handback.rs` (3 real-git
+tests); each engine test ends with the liveness check.
+
+- **#3: straight to the queue only for the resolution and nothing more** (resolves the
+  fix-round-1 spec risk).
+  - A conflicted hand-back onto the claimed commit (queue's, not due) sets
+    `handed_back` and `Task.resolution = ResolutionAt { onto, run_head, files }`; the
+    `HandBack` op's `run_head` is passed through `op_done`. `resolution` is set exactly
+    while `handed_back` is.
+  - The next `VerifyDone` carries `resolution` (serde default `None`). The executor
+    answers `DoneChecked.resolution_only` from `git::resolution_only` (M8a.9 notes);
+    `None` when it was not asked.
+  - `done::accept` goes straight to `merge_queue` only when `handed_back` and
+    `resolution_only == Some(true)`; any other claim takes `next_gate(None)`. Both
+    flags clear on every accept.
+  - A due hand-back's conflict (`gates_after_handback`) never sets `handed_back`: even a
+    pure resolution passes the gates there, since the claim before it never did
+    (pinned by `a_told_conflict_is_not_handed_back_into_when_the_task_is_held`, now
+    claiming with `resolution_only: Some(true)`).
+  - Tests `a_resolution_skips_the_gates_only_when_it_is_only_the_resolution` and the
+    extended `task_done_runs_verify_done_and_replies_after_it` (`Some(true)` →
+    `merge_queue`; `Some(false)` and `None` → `proof`). Red: `resolution left: None`.
+- **N1:** the N5 hand-back's conflict arm (`holds::handed_back`) sets `resolving`, so
+  a later hold of a worker resolving it sends no second `HandBack` into the mid-merge
+  worktree. Test `an_n5_told_conflict_is_not_handed_back_into`. Red: the `resolving`
+  assertion.
+- **N2:** the hand-back context ends (`ladder::end_hand_back` clears `handed_back` and
+  `resolution`) in `abort_untold_conflict` and in `ladder::supersede`, which every
+  replaced or stopped worker session goes through (`kill_worker` for rungs 2 and 3 and
+  every other kill, `dispatch::launch` for every new session, a failed resume). The
+  successor's claim passes every gate. Tests `an_undone_conflict_ends_the_straight_to_queue_pass`
+  and `rung_2_during_a_resolution_ends_the_straight_to_queue_pass`. Red: `assertion
+  failed: !fx.task("t1").handed_back`.
+- **N3:** `done::accept` with `handback_due` only parks the task (`merge_queue`, out of
+  the queue, `gates_after_handback`) and emits nothing. The running pass
+  (`merge::start_due_hand_backs`, before `start_merge` in `dispatch::schedule`) sends
+  the `HandBack` with the run head of that moment and clears `handback_due`. A claim
+  accepted while halted waits for the resume, and a rebaseline's new run head is the
+  one handed back. `assert_run_alive` accepts a `merge_queue` task with `handback_due`
+  in a halted or paused run. Test `a_due_hand_back_waits_for_the_run_to_run`. Red: a
+  `HandBack` emitted while halted.
+- **N4:** `git::hand_back` reads `onto` as `HEAD^1` after a clean merge (M8a.9 notes).
+- **#4:** a `cancel_task` edit deferred behind an in-flight merge adds `; <id>'s merge is
+  in flight: it is cancelled only if that merge does not land` to `applied <n> edit(s)`
+  (the same text as `run cancel`, `complete::deferred_note`). Only cancels newly
+  deferred by this batch are named. Test `a_deferred_cancel_edit_says_so`. Red: `left:
+  [Ok("applied 1 edit")]`.
+
+**Carry for M8a.15.**
+- Retry (`run retry`) clears `handed_back`, `resolution`, `resolving`,
+  `handback_due` and `gates_after_handback` on the retried task.
+- Restore honours `cancel_deferred` (a deferred cancel whose `MergeCandidate` did not
+  survive the restart is applied) and due hand-backs (a `merge_queue` task with
+  `handback_due` is sent again by the running pass; one with an in-flight `HandBack`
+  that did not survive needs `merge_op` cleared and `handback_due` set again).
+- The executor maps `VerifyDone.resolution` to `git::resolution_only` and fills
+  `DoneChecked.resolution_only`.
+- Mutants R9, R10, R12, R14 stay equivalent until pause and restore exist (see fix
+  round 1, m3).
+
+**Mutations** (scratchpad script, not committed): 17 new mutants over the new guards,
+all killed: the `resolution_only == Some(true)` condition (ignored, `None` as true),
+`VerifyDone.resolution` not sent, a wrong `run_head` in it, `handed_back` without the
+claim check or after a due hand-back, N1's `resolving`, N2's two clears, N3's running
+pass (removed, ignoring the task state, keeping the due flag), #4's note (removed,
+repeated for an earlier deferral), the git parent check, the diff subset, and N4's
+`HEAD^1`. Three written guards were redundant, their mutants surviving, and were
+removed: a `handed_back` filter on `resolution` (the two are set together), a
+`!files.is_empty()` term (the clean claimed case returns earlier), and a
+`merge_op.is_none()` term in the running pass (the due flag is cleared on sending).
+Fix round 1's 23 mutants were re-run: all still killed; R9, R10, R12, R14 still survive.
+
+**Gates.** Build, clippy with `-D warnings` and `cargo fmt --all --check` are clean.
+`cargo test -p anthrex-daemon --no-fail-fast`: 35 binaries, 1147 passed, 0 failed. No
+file passes 600 lines: `merge.rs` 488, `done.rs` 492, `dispatch.rs` 554, `model.rs` 577,
+`tests/merge_fixes2.rs` 365.

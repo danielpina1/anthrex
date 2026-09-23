@@ -106,6 +106,17 @@ fn protected(files: &[&str]) -> impl FnOnce(&mut OpResult) {
     }
 }
 
+fn resolution_only(only: Option<bool>) -> impl FnOnce(&mut OpResult) {
+    move |r| {
+        if let OpResult::DoneChecked {
+            resolution_only, ..
+        } = r
+        {
+            *resolution_only = only;
+        }
+    }
+}
+
 /// The claim is accepted: `Ok(DONE_ACCEPTED)` and the task moves to `state`.
 fn assert_accepted(fx: &Fixture, effects: &[Effect], state: TaskState) {
     assert_eq!(one_reply(effects), Ok(DONE_ACCEPTED.to_string()));
@@ -161,13 +172,24 @@ fn task_done_runs_verify_done_and_replies_after_it() {
     let effects = verify(&mut fx, op, |_| {});
     assert_accepted(&fx, &effects, TaskState::Review);
 
-    // A handed-back task goes straight back to the merge queue (decision 36).
+    // A handed-back task whose claim is only the resolution goes straight back to the
+    // merge queue (decision 36, ruling T14-R2)...
     let (mut fx, window) = working();
     fx.task_mut("t1").handed_back = true;
     let op = claim(&mut fx, window);
-    let effects = verify(&mut fx, op, |_| {});
+    let effects = verify(&mut fx, op, resolution_only(Some(true)));
     assert_accepted(&fx, &effects, TaskState::MergeQueue);
     assert_eq!(fx.run().merge_queue, vec!["t1".to_string()]);
+
+    // ...and one that carries more passes the gates.
+    for only in [Some(false), None] {
+        let (mut fx, window) = working();
+        fx.task_mut("t1").handed_back = true;
+        let op = claim(&mut fx, window);
+        let effects = verify(&mut fx, op, resolution_only(only));
+        assert_accepted(&fx, &effects, TaskState::Proof);
+        assert!(fx.run().merge_queue.is_empty());
+    }
 }
 
 #[test]

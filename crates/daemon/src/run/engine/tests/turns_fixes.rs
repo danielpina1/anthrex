@@ -124,7 +124,12 @@ pub(super) fn assert_gates_alive(fx: &Fixture) {
             TaskState::Proof | TaskState::Check => op,
             // M8a.14: queued (the run-level check wants a merge in flight while the run
             // runs), or its candidate or hand-back in flight.
-            TaskState::MergeQueue => op || run.merge_queue.iter().any(|q| q == t.id()),
+            // Ruling T14-R2 (N3): a due hand-back waits for a halted or paused run.
+            TaskState::MergeQueue => {
+                op || run.merge_queue.iter().any(|q| q == t.id())
+                    || (t.handback_due
+                        && matches!(run.state, proto::RunState::Halted | proto::RunState::Paused))
+            }
             _ => {
                 let reviewer = t
                     .rounds
