@@ -52,6 +52,10 @@ pub(super) struct TranscriptSlot {
     /// The file the last applied pass read, for observing from outside which file the
     /// reader is on (`conversation_transcript_read`).
     last_read: Option<PathBuf>,
+    /// The file the current session's reader opened at its end, if it did. A `Tail`
+    /// rebuilt for it without a switch (after `transcript_lost`) is opened at the end
+    /// again, never read from the start at the open-time base (re-review 2, M2).
+    at_end_path: Option<PathBuf>,
 }
 
 /// What the reader does next ([`WindowManager::reader_step`]).
@@ -259,10 +263,10 @@ impl WindowManager {
         // pending means the session changed since the kept `Tail` was made, even when the
         // path is the same again (re-review 2, I2: `/clear` then `/resume` back while
         // nobody watched), so that `Tail` is never continued.
-        let at_end = entry.conversations.take_resume();
+        let resume = entry.conversations.take_resume();
         let new_session = entry.conversations.take_new_session();
         match entry.transcript.tail.take() {
-            Some(tail) if tail.path() == path && !at_end && !new_session => {
+            Some(tail) if tail.path() == path && !resume && !new_session => {
                 return ReaderStep::Read(tail);
             }
             // Another file. A new session's (Claude's `/clear`) is read from its start
@@ -272,7 +276,11 @@ impl WindowManager {
             _ => {}
         }
         // A resumed session's file already holds its earlier turns, so it is opened at
-        // its end (fix round 2, N1/N2).
+        // its end (fix round 2, N1/N2), and so is a `Tail` rebuilt for that same file
+        // with no switch since, after a lost pass (re-review 2, M2).
+        let at_end = resume
+            || (!new_session && entry.transcript.at_end_path.as_deref() == Some(path.as_path()));
+        entry.transcript.at_end_path = at_end.then(|| path.clone());
         ReaderStep::Read(if at_end {
             Tail::at_end(path)
         } else {

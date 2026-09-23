@@ -238,3 +238,27 @@ async fn a_prompt_after_the_open_gets_its_own_reply() {
         )
     );
 }
+
+/// Re-review 2, M2: a pass on the resumed file panics and takes its `Tail` with it. The
+/// rebuilt tail must still skip what the file held, not re-read it from the start at
+/// the open-time base.
+#[tokio::test]
+async fn a_lost_pass_on_a_resumed_file_never_rereads_it_from_the_start() {
+    let d = start_daemon().await;
+    let (id, _dir, a) = resumed_window(&d).await;
+    pass(&d, id);
+    prompt(&d, id, "continue");
+    append(&a, &exchange("continue", "resumed reply R1"));
+    stop(&d, id);
+    pass(&d, id);
+    assert_eq!(
+        replies(&d, id).0,
+        vec![vec!["resumed reply R1".to_string()]]
+    );
+
+    drop(step(&d, id));
+    d.manager.transcript_lost(id);
+    pass(&d, id);
+    next_turn(&d, id, &a);
+    assert_never_misattributed(&d, id, &["resumed reply R1", "second reply R2"]);
+}
