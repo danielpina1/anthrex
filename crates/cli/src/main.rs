@@ -335,11 +335,20 @@ async fn attach(socket: PathBuf, dir: PathBuf, target: Option<String>) -> anyhow
     // attach just did, so it gets the same executable path `ensure_daemon` above
     // used.
     let daemon_exe = std::env::current_exe()?;
+    // Decision A5: ASCII badges are chosen by `conversation.badges.force_ascii`
+    // (already applied by `from_config`) or by the first set, non-empty value of
+    // `LC_ALL`, `LC_CTYPE`, `LANG` not naming UTF-8. Reading the environment happens
+    // only here, never in `crates/tui/src/ui/badge.rs` (`AGENTS.md` hard rule 5).
+    let locale = ["LC_ALL", "LC_CTYPE", "LANG"]
+        .into_iter()
+        .find_map(|key| std::env::var(key).ok().filter(|v| !v.is_empty()));
+    let settings =
+        tui::settings::UiSettings::from_config(&loaded_config).with_locale(locale.as_deref());
     tui::run(tui::TuiOptions {
         socket_path: socket,
         default_dir: dir,
         focus: target,
-        settings: tui::settings::UiSettings::from_config(&loaded_config),
+        settings,
         config_problems: config_problems.iter().map(ToString::to_string).collect(),
         daemon_exe: Some(daemon_exe),
     })
