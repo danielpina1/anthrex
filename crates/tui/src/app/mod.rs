@@ -7,7 +7,7 @@ use crate::tree::{self, TreeState};
 use crossterm::event::KeyEvent;
 pub use link::Link;
 use prompt::RenamePrompt;
-use proto::{ClientMsg, DaemonMsg, GitState, WindowInfo};
+use proto::{ClientMsg, GitState, WindowInfo};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -123,6 +123,14 @@ pub struct App {
     pub(crate) graph_area: ratatui::layout::Rect,
     pub(crate) graph_mouse: crate::mouse::MouseState,
     pub keymap: Keymap,
+    /// The conversation view (task M6.5.12); `app/conversation.rs` keeps the keymap's
+    /// conversation mode in step with it.
+    pub conversation: crate::conversation::ConversationView,
+    /// Review M3: the window whose removal just closed the view (its root's
+    /// `ConversationGone` arrived before the window list). The next focus change opens
+    /// the view again on the window that took over, as it would have followed had the
+    /// list come first.
+    conversation_follow: Option<u32>,
     /// The client's resolved view of `config.toml` (task M6.9); loaded once by the
     /// CLI's `attach` and never touched again — reloading it while running is out of
     /// scope (milestone 6's "Out of scope" list).
@@ -130,6 +138,9 @@ pub struct App {
     pub modal: Option<Modal>,
     pub link: Link,
     pub spinner_frame: usize,
+    /// The local zone's offset from UTC, in seconds, for the conversation view's turn
+    /// times. `lib.rs` reads it once at start (reading the zone is I/O); 0 until then.
+    pub utc_offset_secs: i64,
     pub scroll_offset: usize,
     pub default_dir: PathBuf,
     /// Set by `tui::run` from `dirs::home_dir()`.
@@ -189,9 +200,12 @@ impl App {
             graph_area: ratatui::layout::Rect::default(),
             graph_mouse: crate::mouse::MouseState::default(),
             keymap: Keymap::new(settings.prefix),
+            conversation: Default::default(),
+            conversation_follow: None,
             modal: None,
             link: Link::Connected,
             spinner_frame: 0,
+            utc_offset_secs: 0,
             scroll_offset: 0,
             default_dir,
             home_dir: None,
@@ -266,6 +280,9 @@ impl App {
 
     /// The renderer calls this with the main inner area after every draw.
     pub fn set_terminal_size(&mut self, cols: u16, rows: u16) -> Vec<Effect> {
+        // The conversation view draws in the same main area, so its interior is this
+        // size too; set before the early return so it is right from the first frame.
+        self.conversation.set_interior_width(cols);
         if cols == 0 || rows == 0 || (cols, rows) == self.term_size {
             return vec![];
         }
@@ -296,7 +313,7 @@ impl App {
             Some(id) => self.focus(id),
             None => {
                 self.focused = None;
-                vec![]
+                self.follow_no_focus()
             }
         }
     }
@@ -324,111 +341,13 @@ impl App {
         let (cols, rows) = self.term_size;
         self.parser = vt100::Parser::new(rows.max(1), cols.max(1), self.settings.scrollback_lines);
         self.subscribed = Some(id);
-        vec![Effect::Send(ClientMsg::Subscribe {
+        let mut effects = vec![Effect::Send(ClientMsg::Subscribe {
             window_id: id,
             cols,
             rows,
-        })]
-    }
-
-    pub fn on_daemon(&mut self, msg: DaemonMsg) -> Vec<Effect> {
-        match msg {
-            DaemonMsg::Welcome { windows, .. } | DaemonMsg::WindowsChanged { windows } => {
-                self.replace_windows(windows)
-            }
-            DaemonMsg::Created { window_id } => {
-                // Decision 34: a still-open form closes and hands its values on.
-                match self.modal.take() {
-                    Some(Modal::NewAgent(form)) => self.form_defaults = form.defaults(),
-                    other => self.modal = other,
-                }
-                if self.windows.iter().any(|w| w.id == window_id) {
-                    self.focus(window_id)
-                } else {
-                    self.pending_focus = Some(window_id);
-                    vec![]
-                }
-            }
-            DaemonMsg::Snapshot {
-                window_id,
-                cols,
-                rows,
-                bytes,
-            } => {
-                if Some(window_id) == self.focused {
-                    self.parser = vt100::Parser::new(
-                        rows.max(1),
-                        cols.max(1),
-                        self.settings.scrollback_lines,
-                    );
-                    self.parser.process(&bytes);
-                    self.scroll_offset = 0;
-                }
-                vec![]
-            }
-            DaemonMsg::Output { window_id, bytes } => {
-                if Some(window_id) == self.focused {
-                    self.parser.process(&bytes);
-                }
-                vec![]
-            }
-            DaemonMsg::Error { request, message } => {
-                // Decision 33: a submitting `create` failure goes inline, not a toast.
-                if request == proto::messages::request::CREATE
-                    && let Some(Modal::NewAgent(form)) = &mut self.modal
-                    && form.submitting
-                {
-                    form.error = Some(message);
-                    form.submitting = false;
-                } else {
-                    self.clear_pending_worktree_remove_on(&request);
-                    self.toast(message);
-                }
-                vec![]
-            }
-            // Decision 36: the force-or-keep follow-up, but only when this client asked
-            // for *this* window's worktree to be removed. A refusal that cannot be
-            // matched to an outstanding removal is shown as a toast and nothing is
-            // offered to force — see `open_force_remove`.
-            DaemonMsg::RemoveDirty { window_id, message } => {
-                if !self.open_force_remove(window_id, message.clone()) {
-                    self.toast(message);
-                }
-                vec![]
-            }
-            DaemonMsg::Bye { reason } => {
-                // Nothing is outstanding on a connection that is gone. Leaving the slot
-                // set would block every later worktree removal behind a reply that can
-                // never arrive.
-                self.pending_worktree_remove = None;
-                self.toast(format!("daemon: {reason}"));
-                // Task M6.10's decision 36, sharpened by M6.11's decision 30: `Bye` is
-                // the daemon's own confirmation that it is stopping, but it is not the
-                // same event as the link actually closing, and `self.link` must not
-                // change here. The event loop keeps reading after `Bye` and only calls
-                // `on_link_lost` once the channel actually closes — the read arm used
-                // to be gated on a flag this handler set `false` right here, which
-                // meant the real close (and the `Quit` a pending `C-b Q` produces from
-                // it) was never observed at all. Quitting *here*, before the socket has
-                // actually gone, would race the daemon's own exit the same way.
-                vec![]
-            }
-            DaemonMsg::Ack { request } => {
-                self.clear_pending_worktree_remove_on(&request);
-                vec![]
-            }
-            DaemonMsg::Git { root, state } => {
-                match state {
-                    Some(state) => {
-                        self.git.insert(root, state);
-                    }
-                    None => {
-                        self.git.remove(&root);
-                    }
-                }
-                vec![]
-            }
-        }
+        })];
+        effects.extend(self.follow_focus(id));
+        effects
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Effect> {
@@ -449,6 +368,7 @@ impl App {
             }
             KeyAction::Run(cmd) => self.run(cmd),
             KeyAction::Tree(key) => self.on_tree_key(key),
+            KeyAction::Conversation(key) => self.on_conversation_key(key),
             KeyAction::AwaitPrefix | KeyAction::Cancel | KeyAction::Nothing => vec![],
         }
     }
@@ -496,6 +416,7 @@ impl App {
             Command::RestartWindow => self.restart_focused(),
             // `C-b r`: `link::reconnect_command` (decisions 23 and 32).
             Command::Reconnect => self.reconnect_command(),
+            Command::ToggleConversation => self.toggle_conversation(),
             cmd @ (Command::ToggleTree
             | Command::ToggleOverview
             | Command::NarrowSidebar
@@ -510,6 +431,12 @@ impl App {
             if let Modal::NewAgent(form) = modal {
                 form.on_paste(&text);
             }
+            return vec![];
+        }
+        // Decision 11: the conversation view is read-only, so a paste while it is open
+        // goes to its search query or nowhere — never to the PTY underneath.
+        if self.conversation.is_open() {
+            self.conversation.on_paste(&text);
             return vec![];
         }
         if self.tree_input.is_some() {
@@ -576,6 +503,8 @@ impl App {
     }
 }
 
+mod conversation;
+mod daemon;
 mod lifecycle;
 mod link;
 mod modal_keys;

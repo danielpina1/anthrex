@@ -104,6 +104,15 @@ pub(super) struct Entry {
     /// only holds if a value loaded from a newer daemon's file survives back out to
     /// `state_snapshot` unchanged instead of being zeroed on the first save.
     pub(super) run: Option<serde_json::Value>,
+    /// Every conversation of this window, the root's and its sub-agents' (milestone 6.5).
+    /// Kept across a restart, like `state`: the timeline is the window's, not the
+    /// process's.
+    pub(super) conversations: crate::conversation::ConversationSet,
+    /// Conversation subscriptions held by clients, summed over every key of this
+    /// window. The transcript reader runs while this is non-zero, plus the linger
+    /// (decision 9).
+    pub(super) conversation_viewers: u32,
+    pub(super) transcript: super::conversation::TranscriptSlot,
 }
 
 impl Entry {

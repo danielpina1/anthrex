@@ -21,6 +21,13 @@ pub struct UiSettings {
     pub scrollback_lines: usize,
     pub sidebar_width: u16,
     pub tree_keep_finished_secs: u64,
+    pub badges: crate::ui::badge::BadgeSet,
+    // Kept so `with_locale` can rebuild `badges` once the CLI has read the environment
+    // (decision A5): `from_config` alone only has `force_ascii`, never the locale.
+    // `pub(crate)` rather than private so the struct-update syntax (`..UiSettings::default()`)
+    // used throughout `crates/tui/src/app_tests/` and `crates/tui/src/ui/tests.rs` still
+    // compiles from outside this module.
+    pub(crate) badges_config: config::Badges,
 }
 
 impl Default for UiSettings {
@@ -54,7 +61,23 @@ impl UiSettings {
             // nowhere is dead code by this milestone's own hard rule 8, not
             // forward-compatibility; add it back alongside its first real reader.
             tree_keep_finished_secs: c.ui.tree_keep_finished_secs,
+            badges: crate::ui::badge::BadgeSet::from_config(
+                &c.conversation.badges,
+                c.conversation.badges.force_ascii,
+            ),
+            badges_config: c.conversation.badges.clone(),
         }
+    }
+
+    /// Applies decision A5's locale rule on top of `from_config`'s `force_ascii`-only
+    /// choice: `conversation.badges.force_ascii` still wins outright, but a set,
+    /// non-UTF-8 locale now also switches to the ASCII badges. Tests do not have to call
+    /// this — only `crates/cli/src/main.rs`'s `attach`, which is where the environment is
+    /// read (`AGENTS.md` hard rule 5).
+    pub fn with_locale(mut self, locale: Option<&str>) -> Self {
+        let ascii = crate::ui::badge::prefers_ascii(self.badges_config.force_ascii, locale);
+        self.badges = crate::ui::badge::BadgeSet::from_config(&self.badges_config, ascii);
+        self
     }
 }
 
@@ -115,6 +138,12 @@ mod tests {
         assert_eq!(settings.scrollback_lines, 5000);
         assert_eq!(settings.sidebar_width, crate::ui::DEFAULT_SIDEBAR_WIDTH);
         assert_eq!(settings.tree_keep_finished_secs, 300);
+        assert_eq!(settings.badges.claude.text, "\u{25c6}");
+        assert_eq!(settings.badges.codex.text, "\u{25c7}");
+        assert_eq!(settings.badges.shell.text, "$");
+        assert_eq!(settings.badges.claude.color, Color::Rgb(0xd7, 0x9b, 0x61));
+        assert_eq!(settings.badges.codex.color, Color::Rgb(0x7f, 0xc8, 0xb4));
+        assert_eq!(settings.badges.shell.color, Color::Rgb(0x9a, 0xa0, 0xb5));
 
         // The property the old test's name actually promised, kept as a second,
         // narrower assertion rather than dropped: `UiSettings::default()` must still
@@ -127,5 +156,24 @@ mod tests {
     fn an_unset_sidebar_width_falls_back_to_the_built_in_default() {
         let settings = UiSettings::from_config(&config::Config::default());
         assert_eq!(settings.sidebar_width, crate::ui::DEFAULT_SIDEBAR_WIDTH);
+    }
+
+    #[test]
+    fn with_locale_overrides_the_glyphs() {
+        let ascii = UiSettings::from_config(&config::Config::default()).with_locale(Some("C"));
+        assert_eq!(ascii.badges.claude.text, "[C]");
+        assert_eq!(ascii.badges.codex.text, "[X]");
+        assert_eq!(ascii.badges.shell.text, "[$]");
+
+        let unicode =
+            UiSettings::from_config(&config::Config::default()).with_locale(Some("en_US.UTF-8"));
+        assert_eq!(unicode.badges.claude.text, "\u{25c6}");
+        assert_eq!(unicode.badges.codex.text, "\u{25c7}");
+        assert_eq!(unicode.badges.shell.text, "$");
+
+        let absent = UiSettings::from_config(&config::Config::default()).with_locale(None);
+        assert_eq!(absent.badges.claude.text, "\u{25c6}");
+        assert_eq!(absent.badges.codex.text, "\u{25c7}");
+        assert_eq!(absent.badges.shell.text, "$");
     }
 }

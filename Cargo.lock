@@ -92,6 +92,7 @@ dependencies = [
  "anthrex-proto",
  "tempfile",
  "toml",
+ "unicode-width",
 ]
 
 [[package]]
@@ -157,6 +158,7 @@ dependencies = [
  "futures",
  "libc",
  "ratatui",
+ "serde_json",
  "tempfile",
  "tokio",
  "tokio-util",

@@ -1,6 +1,6 @@
 use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use proto::{Runtime, Status};
+use proto::{DaemonMsg, Runtime, Status};
 
 // These stay under the old `crates/tui/src/app_tests/` directory (task M6.9's `git mv`
 // only moves `app.rs` and `app_tests.rs` itself); the path is relative to this file's own
@@ -31,6 +31,12 @@ mod settings_tests;
 
 #[path = "../app_tests/reconnect.rs"]
 mod reconnect;
+
+#[path = "../app_tests/conversation.rs"]
+mod conversation;
+
+#[path = "../app_tests/conversation_follow.rs"]
+mod conversation_follow;
 
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {

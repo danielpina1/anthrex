@@ -1,3 +1,4 @@
+use crate::conversation::{Conversation, DegradeReason, DropCause, TurnPatch};
 use crate::types::{ClientKind, GitState, WindowInfo, WindowSpec};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -60,6 +61,18 @@ pub enum ClientMsg {
         source: HookSource,
         payload: serde_json::Value,
     },
+    SubscribeConversation {
+        window_id: u32,
+        agent_id: Option<String>,
+        /// `None` asks for a full snapshot. `Some(rev)` asks for a delta from that
+        /// revision, and gets a snapshot instead when the daemon no longer holds it
+        /// (decision A3).
+        from_rev: Option<u64>,
+    },
+    UnsubscribeConversation {
+        window_id: u32,
+        agent_id: Option<String>,
+    },
     Shutdown,
 }
 
@@ -119,6 +132,51 @@ pub enum DaemonMsg {
         root: PathBuf,
         state: Option<GitState>,
     },
+    ConversationSnapshot {
+        window_id: u32,
+        agent_id: Option<String>,
+        conversation: Conversation,
+    },
+    ConversationDelta {
+        window_id: u32,
+        agent_id: Option<String>,
+        from_rev: u64,
+        to_rev: u64,
+        turns: Vec<TurnPatch>,
+        /// The conversation's current session id, carried like decision A4's fields
+        /// (task M6.5.6 review F4, settled in task M6.5.10): a `SessionStart` can change
+        /// it with no turn changing, and a client that only follows deltas would
+        /// otherwise keep the one from its last snapshot forever.
+        session_id: Option<String>,
+        /// Decision A4: carried on the delta, never inferred by the client.
+        degraded: Option<DegradeReason>,
+        dropped_turns: u32,
+        dropped_by: Option<DropCause>,
+    },
+    ConversationGone {
+        window_id: u32,
+        agent_id: Option<String>,
+        reason: String,
+    },
+}
+
+impl DaemonMsg {
+    /// The invariant a `ConversationSnapshot` must hold: its envelope fields
+    /// (`window_id`, `agent_id`) agree with the ones on the `Conversation` it carries.
+    /// Every other variant has no such envelope to check and is vacuously consistent.
+    /// `debug_assert`-free so tests can assert on the failing case directly, rather than
+    /// only observing a panic; the daemon is expected to `debug_assert!` on this before
+    /// it sends a `ConversationSnapshot`.
+    pub fn conversation_envelope_is_consistent(&self) -> bool {
+        match self {
+            DaemonMsg::ConversationSnapshot {
+                window_id,
+                agent_id,
+                conversation,
+            } => conversation.window_id == *window_id && conversation.agent_id == *agent_id,
+            _ => true,
+        }
+    }
 }
 
 /// The values of `DaemonMsg::Ack`'s and `DaemonMsg::Error`'s `request` field that a
@@ -316,6 +374,15 @@ mod tests {
                 source: HookSource::CodexHook,
                 payload: serde_json::json!({"event": "agent-turn-complete"}),
             },
+            ClientMsg::SubscribeConversation {
+                window_id: 1,
+                agent_id: Some("agent-2".into()),
+                from_rev: Some(9),
+            },
+            ClientMsg::UnsubscribeConversation {
+                window_id: 1,
+                agent_id: Some("agent-2".into()),
+            },
             ClientMsg::Shutdown,
         ];
         for message in client_messages {
@@ -360,6 +427,45 @@ mod tests {
             DaemonMsg::Git {
                 root: "/tmp/repo".into(),
                 state: None,
+            },
+            DaemonMsg::ConversationSnapshot {
+                window_id: 1,
+                agent_id: Some("agent-2".into()),
+                conversation: crate::conversation::Conversation {
+                    window_id: 1,
+                    agent_id: Some("agent-2".into()),
+                    session_id: Some("sess-1".into()),
+                    runtime: Runtime::Claude,
+                    rev: 3,
+                    degraded: None,
+                    dropped_turns: 0,
+                    dropped_by: None,
+                    turns: vec![crate::conversation::Turn {
+                        id: 1,
+                        role: crate::conversation::Role::User,
+                        at_unix_secs: 1_700_000_000,
+                        state: crate::conversation::TurnState::Complete,
+                        blocks: vec![crate::conversation::Block::Text {
+                            text: "hello".into(),
+                        }],
+                    }],
+                },
+            },
+            DaemonMsg::ConversationDelta {
+                window_id: 1,
+                agent_id: Some("agent-2".into()),
+                from_rev: 3,
+                to_rev: 4,
+                turns: vec![crate::conversation::TurnPatch::Drop { id: 1 }],
+                session_id: Some("sess-2".into()),
+                degraded: Some(crate::conversation::DegradeReason::TooLarge),
+                dropped_turns: 1,
+                dropped_by: Some(crate::conversation::DropCause::Bytes),
+            },
+            DaemonMsg::ConversationGone {
+                window_id: 1,
+                agent_id: Some("agent-2".into()),
+                reason: crate::conversation::GONE_WINDOW_REMOVED.into(),
             },
         ];
         for message in daemon_messages {

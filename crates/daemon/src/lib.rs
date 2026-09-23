@@ -15,6 +15,7 @@ pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, 
 }
 
 pub mod agent_state;
+pub mod conversation;
 pub mod git;
 pub mod hooks;
 pub mod launch;
@@ -35,6 +36,7 @@ pub mod subagents;
 /// `worktree::run_git`, the module's real callers, all live inside this crate.
 #[doc(hidden)]
 pub mod subprocess;
+pub mod transcript;
 pub mod window;
 pub mod worktree;
 

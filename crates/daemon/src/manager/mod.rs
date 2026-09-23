@@ -1,6 +1,7 @@
 //! Owns every window, applies status events, and broadcasts the window list.
 
 mod config;
+mod conversation;
 mod create;
 mod entry;
 mod remove;
@@ -8,6 +9,7 @@ mod restart;
 mod restore;
 
 pub use config::ManagerConfig;
+pub use conversation::{CONVERSATION_GONE, ReaderStep, conversation_delta_message};
 pub use remove::{GitRoots, RemoveError};
 
 use crate::hooks;
@@ -21,7 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{broadcast, mpsc, watch};
 use unicode_segmentation::UnicodeSegmentation;
 
 /// A Working window with no output for this long becomes Idle.
@@ -147,6 +149,9 @@ fn sanitize_name(id: u32, name: &str) -> String {
 pub struct WindowManager {
     inner: Mutex<Inner>,
     changed: watch::Sender<Vec<WindowInfo>>,
+    /// `(window_id, agent_id, rev)` for every conversation revision (task M6.5.10); see
+    /// `conversation_changes`.
+    conversations: broadcast::Sender<(u32, Option<String>, u64)>,
     events: mpsc::UnboundedSender<(u32, WindowEvent)>,
     config: ManagerConfig,
 }
@@ -156,6 +161,7 @@ impl WindowManager {
     pub fn new(config: ManagerConfig) -> (Arc<Self>, mpsc::UnboundedReceiver<(u32, WindowEvent)>) {
         let (events, events_rx) = mpsc::unbounded_channel();
         let (changed, _) = watch::channel(Vec::new());
+        let (conversations, _) = broadcast::channel(conversation::CONVERSATION_CHANGES_CAPACITY);
         let manager = Arc::new(Self {
             inner: Mutex::new(Inner {
                 next_id: 1,
@@ -168,6 +174,7 @@ impl WindowManager {
                 runs: Vec::new(),
             }),
             changed,
+            conversations,
             events,
             config,
         });
@@ -229,6 +236,9 @@ impl WindowManager {
         let ctx = entry.state.context(entry.viewers > 0);
         let now = Instant::now();
         let outcome = entry.state.on_hook(entry.spec.runtime, &hook, now);
+        // After the tracker has seen the hook, so a `SubagentStart`'s spawn origin is
+        // already there to route it by.
+        self.conversation_hook(id, entry, &hook, now);
         let status_changed = outcome
             .status_event
             .is_some_and(|event| entry.apply_with_context(event, ctx));
@@ -422,6 +432,7 @@ impl WindowManager {
         }
         drop(entry);
         tracing::info!(id, "window removed");
+        self.notify_window_gone(id);
         self.publish(&inner);
         Ok(())
     }

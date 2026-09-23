@@ -26,6 +26,7 @@ pub enum Step {
         tool: String,
         args: Value,
     },
+    Transcript(Value),
 }
 
 pub fn parse_script(reader: impl BufRead) -> Result<Vec<Step>> {
@@ -96,6 +97,12 @@ fn parse_step(value: Value) -> Result<Step> {
                 args: call["args"].clone(),
             })
         }
+        Some("transcript") if has_keys(object, &["transcript"]) => {
+            object["transcript"]
+                .as_object()
+                .context("transcript must be an object")?;
+            Ok(Step::Transcript(object["transcript"].clone()))
+        }
         _ => bail!("unknown or malformed step"),
     }
 }
@@ -127,6 +134,7 @@ mod tests {
             "{\"git_commit\":{\"file\":\"a.txt\",\"content\":\"x\",\"message\":\"m\"}}\n",
             "{\"exit\":4}\n",
             "{\"mcp_call\":{\"tool\":\"report_done\",\"args\":{\"ok\":true}}}\n",
+            "{\"transcript\":{\"type\":\"x\"}}\n",
         );
 
         let steps = parse_script(Cursor::new(input)).unwrap();
@@ -154,8 +162,23 @@ mod tests {
                     tool: "report_done".into(),
                     args: json!({"ok": true}),
                 },
+                Step::Transcript(json!({"type": "x"})),
             ]
         );
+    }
+
+    #[test]
+    fn transcript_step_requires_an_object() {
+        let error = parse_script(Cursor::new("{\"transcript\":3}\n")).unwrap_err();
+
+        assert!(error.to_string().contains("line 1"), "{error:#}");
+    }
+
+    #[test]
+    fn transcript_step_rejects_extra_keys() {
+        let error = parse_script(Cursor::new("{\"transcript\":{},\"extra\":1}\n")).unwrap_err();
+
+        assert!(error.to_string().contains("line 1"), "{error:#}");
     }
 
     #[test]

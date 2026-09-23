@@ -120,6 +120,13 @@ mod tests {
             tool_name: None,
             tool_input: None,
             notification_type: None,
+            transcript_path: None,
+            tool_use_id: None,
+            tool_response: None,
+            tool_result_truncated: None,
+            tool_result_stringified: None,
+            prompt: None,
+            session_source: None,
         }
     }
 

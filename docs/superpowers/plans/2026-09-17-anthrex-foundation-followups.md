@@ -467,6 +467,124 @@ handed to `restore` before `serve`, an `App` with its view moved. Reading the sa
 had already missed all three, twice, and the comment in `manager/restore.rs` is why:
 it described a fallback that did not exist, and reading for plausibility believed it.
 
+## From milestone 6.5's transcript capture (2026-09-22), task M6.5.7
+
+- **Agents inherit the launcher's entire environment, including another agent's session
+  markers.** Started from a shell inside Claude Code, the daemon inherited
+  `CLAUDE_CODE_CHILD_SESSION`, and the `claude` it launched printed "Transcript saving is off
+  — inherited CLAUDE_CODE_CHILD_SESSION marker": no transcript is ever written, so milestone
+  6.5's conversation view can never enrich a window started that way. The same inheritance
+  hands every agent roughly twenty other host variables, among them
+  `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN`, which connect it to the
+  launching session. Reproduce: from a Claude Code terminal, `anthrex daemon start`, then
+  `anthrex new --runtime claude --prompt hi`, and read the agent's status line. The fix is a
+  deliberate environment policy at spawn time — which variables an agent window inherits
+  and which it must not — and it is a product decision, not a one-line scrub: a user's own
+  `ANTHROPIC_BASE_URL` or proxy settings may be exactly what they want passed through.
+  Belongs with whichever milestone next touches `crates/daemon/src/window/spawn`
+  (orchestration, milestone 8, launches agents unattended and needs the policy most).
+- **The M6.5.7 brief's capture recipe does not work as written.** It finds the transcript
+  with `grep transcript_path daemon.log`, but the daemon does not log raw hook payloads.
+  Claude writes to `~/.claude/projects/<cwd with / and . replaced by ->/<session>.jsonl`,
+  Codex to `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`. Recorded in the brief's
+  Implementation notes too.
+
+## From milestone 6.5's enrichment task (2026-09-22), task M6.5.8
+
+- **Repeated identical prompts defeat the alignment check when a hook is lost.** The
+  enricher checks each transcript prompt's text against the hook-built prompt its
+  ordinal maps to. With hook prompts `go, go` against transcript prompts `go, go, go`
+  (the first hook lost), ordinal 0 lines up with the hook turn that is really prompt 1,
+  so its prose is misattributed and nothing flags it. Inherent to text alignment; a fix
+  needs a second key both sides share (a timestamp window, or a prompt id the runtime
+  puts in both the hook payload and the transcript). Found by task M6.5.8's review.
+
+
+## From milestone 6.5's reader and subscription task (2026-09-22), task M6.5.10
+
+- **The transcript path is learned from `SessionStart` only.** `build::session_start` is the
+  one place `Draft.transcript_path` is set, although Claude sends `transcript_path` on every
+  hook. A window that missed its `SessionStart` (a hook dropped past `HOOK_DEADLINE`, or a
+  session already running when the daemon restarted) degrades with `NoTranscriptPath`
+  until the next session. Taking the path from any hook that carries one would close it.
+- **A transcript read that truly hangs (review F3, left for later).** Every constructible
+  path returns: `O_NONBLOCK` plus `fstat` refuses FIFOs and devices, and `read_more` stops
+  at its own deadline between 64 KiB reads. Only a regular file on a hung filesystem (NFS,
+  FUSE) can block one `read` forever. The review measured the result by mutation: one
+  blocking-pool thread held, no growth per poll, the lock and other windows unaffected,
+  but two defects. The stuck window's `degraded` stays `None`, and `#[tokio::main]`'s
+  runtime drop waits for the blocked thread, so `anthrex daemon stop` hangs. The fixes are
+  small: on an overrun, have `watch.rs` set `Unreadable`, waiting `2 * TRANSCRIPT_READ_TIMEOUT`
+  rather than 1x (a healthy pass may legitimately end one chunk read past the inner
+  deadline, which is the same constant). And have the foreground daemon
+  `std::process::exit` once `daemon::run` has returned, or use `shutdown_timeout`. Not done
+  in task M6.5.10's fix round 1: neither half can be made red-when-reverted without a
+  seam that injects a blocking pass into `conversation::watch`, and that seam is larger
+  than the fix.
+- **Every hook and every reader pass clones the whole conversation under the manager lock
+  (review F4).** `Entry::mutate` (`conversation/entry.rs`) builds
+  `before: HashMap<u64, Turn>` from every turn before it runs the change, and
+  `apply_transcript` calls `enrich` even for a pass with no records, so a subscribed idle
+  window pays it four times a second. Measured at 500 turns: 142 KB of conversation, 15 µs
+  to 100 µs per hook in release (158 µs to 764 µs in debug); 1.89 MB (near the default
+  `max_bytes`), 18 µs to 189 µs in release (161 µs to 890 µs in debug). It grows linearly;
+  at the config maximum (10,000 turns, 15 MiB) that extrapolates to about 1.5 ms per hook
+  and per poll, under the lock. Cheap fixes: return early from `apply_transcript` when a
+  pass has no records and nothing is parked, and diff only the turns the change can touch
+  (the open turn and anything after the first changed index).
+- **`crates/daemon/tests/server_restore_git.rs` was flaky (review F6); fixed.** Task
+  M6.5.10's review saw `a_restart_keeps_the_restored_root_watched` and
+  `a_restored_plain_window_keeps_its_worktree_and_is_watched` each fail once. PR #12 fixed
+  it (a root's first probe no longer waits for its watcher to arm), and it is merged into
+  this branch (`1a76965`); see "From the `server_restore_git.rs` flake fix" below. What
+  still flakes is `server_git.rs`'s first-`Git` timeout, recorded there. Task M6.5.10's
+  fix round 1 also saw one unattributed failure in a five-test daemon suite during a
+  `cargo test -p anthrex-daemon` run that two reruns did not reproduce.
+- **Two limits of the `/clear` fix (review F2).** A switch to a new session's file drops
+  whatever the old file still had unread; a final drain pass of the old `Tail` before the
+  switch would keep it. And a later shrink or replacement of the new session's file is a
+  restart, whose `reset` is window-wide, so it drops the old session's enrichment too;
+  scoping `enrich::reset` to turns at or after `session_base` would keep it.
+- **A session opened at its end after a prompt degrades to `Misaligned` for the whole
+  session (fix rounds 2 and 3, N1/N2, re-review 2 I1, re-review 3 m2).** Any switch whose
+  source is not `startup` or `clear` (`resume`, `fork`, `compact` onto another session,
+  unknown, or absent) is opened at its end when the reader first reaches it. If a prompt
+  arrived between the `SessionStart` and that open, the prompt's own line may lie on
+  either side of the measured end. The session is then `Misaligned` from its first
+  ordinal: every later turn of that session gets no prose, not only the turns before the
+  open. For Claude this happens when no viewer was subscribed at the resume, or when a
+  scripted prompt beats the first poll. For Codex it is the normal case for every resume
+  or fork, not an edge case: the 0.155.0 binary defers `SessionStart` to the first turn
+  (`run_pending_session_start_hooks` in `core/src/hook_runtime.rs`), so `UserPromptSubmit`
+  follows within milliseconds and the reader's first step is almost always after the
+  prompt has already moved the count. Whether Codex's `SessionStart` can land *after* its
+  own `UserPromptSubmit` — which would misattribute the old file's reply instead of only
+  degrading (re-review 3, m1; guarded in fix round 4) — is still unverified; check both
+  the deferral and the hook order in M6.5.14's manual step. It lasts until the next
+  session switch. Aligning by the records' timestamps against the hooks' `at_unix_secs`
+  would recover all of it.
+- **Which `SessionStart` sources real runtimes send is unverified (re-review 2, M1;
+  re-review 3, n1).** The rule reads from the start only for `startup` and `clear`. A
+  runtime that omits `source` on a fresh session has that session opened at its end
+  instead of from the start, and that end-open is `Misaligned`: not only when the viewer
+  opens late, but even when a viewer subscribes before the session starts, because the
+  file does not exist yet at the reader's first step, so no measure is taken before the
+  prompt moves the count. This path is unreachable with real runtimes (Claude's
+  `SessionStart` schema requires `source`; Codex's `CodexHook` schema does too, with the
+  enum `startup | resume | clear | compact | fork`), so only the wording was wrong, not
+  the behaviour. Codex's embedded schema lists `startup`, `resume`, `clear`, `compact` and
+  `fork`. Check the values real Claude and Codex send, and whether a Codex fork's rollout
+  copies the parent's history, in M6.5.14's manual step. fake-agent sends no `source`
+  unless a script gives one; the fixtures now send `startup`.
+- **`crates/cli/tests/persistence.rs`'s `session_id_learned_from_a_hook_is_saved` races the
+  save debounce.** Seen once in three full workspace runs during task M6.5.10's fix round 1
+  (`left: None, right: Some("fake-session-1")`; 8/8 in isolation). The loop asserts on the
+  *first* `state.json` record it finds for the window, and a save from before the hook
+  (the window's creation) satisfies "found" while still holding `session_id: None`; the
+  save carrying the session lands up to `SAVE_DEBOUNCE` later. The loop should keep
+  polling until the record's session id is `Some` (or the deadline passes), then compare.
+  Milestone 6's test; not touched here.
+
 ## From the `server_restore_git.rs` flake fix (2026-09-22), deliberately deferred
 
 The fix (`run_root` no longer makes a root's first probe wait for its watcher; see
@@ -480,8 +598,13 @@ scope.
   earlier entry put the stall down to "the real `git` subprocesses", inferred from
   wall-clock spread and never measured step by step. The step-level measurement this fix
   made found `git` at ~25 ms and `Watcher::watch()` at 1.5–7.8 s, and found the stall
-  just as easily in `/private/tmp`. The production fix removes that stall from
-  `server_git.rs`'s first-`Git` waits too. Its bounds are still literals, though: an 8 s
+  just as easily in `/private/tmp`. The production fix was expected to remove that stall
+  from `server_git.rs`'s first-`Git` waits too, but it did not remove every failure there:
+  milestone 6.5's final review (2026-09-23) saw
+  `server_git::two_windows_in_one_worktree_register_once` time out at `recv()`'s 5 s bound
+  (`crates/daemon/tests/support/mod.rs:118`) in one of three full runs, after this fix was
+  merged in. So `server_git`'s first-`Git` timeout still flakes. Its bounds are still
+  literals, too: an 8 s
   `wait_for_created_and_git`, `recv()`'s 5 s, and the 1–2.5 s `assert_no_git_message`
   windows. They should be derived the way `server_restore_git.rs`'s now are (`PROBE_TIMEOUT`,
   `DETECT_TIMEOUT`, the configured `poll_secs`), and `wait_for_created_and_git` should
@@ -497,3 +620,72 @@ scope.
   which were run alongside a loop of `server_restore_git` on the same host. Not
   investigated. It is a timeout test, so check its bound against the timeout it injects
   before assuming load.
+
+## From milestone 6.5's rendering task (2026-09-23), task M6.5.13's review M2
+
+- **TUI-wide ASCII spinner.** In ASCII mode (decision A5) the conversation view draws only
+  ASCII — its border, separators and footers included, since the final review's M4 — except
+  `theme::SPINNER`'s braille frames for a Pending call. That spinner is the only non-ASCII
+  thing left in the view. The rest of the TUI draws the spinner (and its own borders and
+  `·` separators) unconditionally, so on a genuinely non-UTF-8 terminal they render as
+  mojibake, and for a Pending call the spinner is the only state glyph. Fix it once for the
+  whole TUI: an ASCII spinner (for example `| / - \`) chosen from the same A5 decision,
+  which `UiSettings.badges.ascii` already carries. Milestone 6.5 or later.
+- **The sidebar still draws box glyphs in ASCII mode** (milestone 6.5's manual check,
+  2026-09-23). The same A5 decision should reach the sidebar's borders; fold it into the
+  TUI-wide ASCII fix above rather than fixing the sidebar alone.
+
+## From milestone 6.5's final review (2026-09-23), left open by its fix pass
+
+- **A conversation revision means nothing across a daemon restart (review M1).** A restored
+  window's conversation starts again at rev 0 and turn id 1, and
+  `crates/daemon/src/manager/conversation.rs`'s `reply` sends a delta whenever its store
+  holds the `from_rev` it is asked for. So a `from_rev` learned from one daemon instance is
+  answered by the next with a delta against a different conversation; the review built
+  `[user "old prompt A", assistant [Bash "echo new"]]`, a conversation that never existed,
+  and decision A12's guard cannot catch it because the client's rev equals `from_rev`.
+  Latent today: the TUI always sends `from_rev: None`, including when it resubscribes after
+  a reconnect (the fix for review I1 chose `None` for exactly this reason). It becomes live
+  the moment any client resubscribes with a rev, which decision 8 intends for milestones 8
+  and 9. Fix before then: tag revisions with a daemon epoch (a start nonce on `Welcome`, or
+  on the conversation), or state in `proto` that `from_rev` is valid only on the daemon
+  instance that issued it.
+- **A turn's prose always leads it (review N1).** Enrichment joins all of a turn's transcript
+  prose into one leading `Text` block (brief task M6.5.8, rule 2), so a closing remark
+  renders above the tool calls it followed. As briefed, but spec §6's mock interleaves prose
+  and calls. Worth revisiting for milestone 8's run view.
+- **Missing prose after a `max_turns` drop is not flagged (review N5).** When the cap drops a
+  `User` turn before the reader has aligned its ordinal, that turn's reply gets no prose and
+  `degraded` stays `None`. The brief accepts this ("missing prose is the accepted cost"),
+  but it is timing-dependent: the review saw a reply's prose in one run and not in another.
+  A `Misaligned`-style reason for "prose lost to the cap" would make it visible.
+- **A sub-agent's `degraded` is the root file's reason (review M2's other half).**
+  `ConversationSet::set_degraded` copies the root transcript's reason to every key, so a
+  sub-agent level can show "transcript unreadable" about a file its own prose never came
+  from. Since the fix pass every sub-agent level also shows the client-side footer
+  "sub-agent transcript not read — timeline only", so nothing is silent; keeping a reason
+  per key would make the copied line accurate.
+- **`WindowManager::unsubscribe_conversation` ignores its `agent_id` (review N4).** The
+  viewer count, and the transcript reader it gates, are per window by design (decision 9),
+  so there is nothing per key for the parameter to act on. Honouring it would mean per-key
+  viewer counts that nothing reads; not cheap for no behaviour. Either drop the parameter
+  or give it a use when a per-key subscription needs one.
+- **Six test files are over the 600-line rule (review M5).** `crates/cli/tests/hook_command.rs`
+  (977), `crates/daemon/src/conversation/store_tests.rs` (924),
+  `crates/proto/src/conversation_tests.rs` (893), `crates/config/src/lib_tests.rs` (741),
+  `crates/fake-agent/tests/script.rs` (681) and
+  `crates/daemon/src/conversation/build_tests.rs` (617). The production file the review
+  named, `crates/config/src/lib.rs`, was split in the fix pass; these were left as they are.
+  Split each by the concern its tests cover, as `lib_tests.rs` could follow `lib.rs`'s new
+  `conversation.rs` and `git.rs`.
+
+## From milestone 6.5's manual check (2026-09-23)
+
+- **The title shows no model unless `--model` is given.** A window started without
+  `--model` has no model to name. Learn it from the transcript instead: every Claude
+  assistant record carries `message.model`. The transcript reader already parses those
+  records, so it could report the model it sees.
+- **Codex 0.155.0's tool calls land in a separate assistant turn from that turn's prose.**
+  Seen in the conversation view with real Codex 0.155.0: one reply shows as two assistant
+  turns, the calls in one and the prose in the other. Not investigated; start from how the
+  Codex hooks open and close turns against `codex-0.155.0.jsonl`.

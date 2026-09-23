@@ -292,3 +292,105 @@ fn the_graph_stays_inside_tiny_main_areas() {
         }
     }
 }
+
+/// A conversation for window 1 with enough prose rows for the wheel to move through.
+fn prose_snapshot() -> DaemonMsg {
+    DaemonMsg::ConversationSnapshot {
+        window_id: 1,
+        agent_id: None,
+        conversation: proto::Conversation {
+            window_id: 1,
+            agent_id: None,
+            session_id: None,
+            runtime: proto::Runtime::Shell,
+            rev: 3,
+            degraded: None,
+            dropped_turns: 0,
+            dropped_by: None,
+            turns: vec![proto::Turn {
+                id: 30,
+                role: proto::Role::Assistant,
+                at_unix_secs: 0,
+                state: proto::TurnState::Complete,
+                blocks: (0..10)
+                    .map(|i| proto::Block::Text {
+                        text: format!("line {i}"),
+                    })
+                    .collect(),
+            }],
+        },
+    }
+}
+
+/// Review M3: the open conversation view covers the main area, so nothing under it —
+/// the overview's graph, the terminal's scrollback, or an agent in mouse mode — gets a
+/// click, a double click, a drag or the wheel. The wheel moves the view's cursor.
+#[test]
+fn the_mouse_never_reaches_what_the_conversation_view_covers() {
+    let (mut app, layout) = opened_at(200, 50);
+    assert_eq!(app.focused, Some(1));
+    app.toggle_conversation();
+    assert!(app.conversation.is_open());
+    app.on_daemon(prose_snapshot());
+    let selected = app.tree.selected.clone();
+    let pan = app.graph_pan;
+
+    // A double click over a box the overview would have focused.
+    let (x, y) = box_middle(&app, layout.main, &NodeKey::Window(4));
+    assert!(app.on_click(x, y, &layout).is_empty());
+    assert!(app.on_click(x, y, &layout).is_empty());
+    assert_eq!(app.focused, Some(1), "a double click moved the focus");
+    assert_eq!(
+        app.tree.selected, selected,
+        "a click selected a hidden node"
+    );
+    assert!(app.on_drag(x + 5, y + 3, &layout).is_empty());
+    assert_eq!(app.graph_pan, pan, "a drag panned the hidden graph");
+
+    // The wheel moves the view's cursor, three rows a notch, and nothing else.
+    app.conversation
+        .set_cursor(crate::conversation::Cursor::Turn(30));
+    assert!(app.on_scroll(false, x, y, &layout).is_empty());
+    assert_eq!(app.graph_pan, pan, "the wheel panned the hidden graph");
+    assert_eq!(
+        app.conversation.cursor(),
+        Some(&crate::conversation::Cursor::Block(30, 2))
+    );
+    assert!(app.on_scroll(true, x, y, &layout).is_empty());
+    assert_eq!(
+        app.conversation.cursor(),
+        Some(&crate::conversation::Cursor::Turn(30))
+    );
+
+    // Over the terminal instead, with the agent in SGR mouse mode: no report is
+    // forwarded, and the local scrollback does not move.
+    app.overview = false;
+    app.parser.process(b"\x1b[?1000h\x1b[?1006h");
+    assert_ne!(
+        app.parser.screen().mouse_protocol_mode(),
+        vt100::MouseProtocolMode::None
+    );
+    let (x, y) = (layout.main_inner.x + 3, layout.main_inner.y + 3);
+    assert!(app.on_scroll(true, x, y, &layout).is_empty());
+    assert!(app.on_click(x, y, &layout).is_empty());
+    assert!(app.on_click(x, y, &layout).is_empty());
+    assert_eq!(app.scroll_offset, 0);
+    assert_eq!(app.focused, Some(1));
+}
+
+/// Re-review finding: a drag that began on the graph before the view opened must not
+/// pan the hidden graph once it is open. The press is made with the view closed, so
+/// `drag_from` is still set when the drag arrives and only `on_drag`'s own guard stops
+/// it. At 120×30 the example graph is larger than its canvas, so an unguarded drag
+/// really does pan (to `Pan { x: 8, y: 5 }`); at 200×50 it fits and the pan clamps to 0.
+#[test]
+fn a_drag_begun_before_the_view_opened_does_not_pan_the_hidden_graph() {
+    let (mut app, layout) = opened();
+    let (x, y) = box_middle(&app, layout.main, &NodeKey::Window(4));
+    assert!(app.on_click(x, y, &layout).is_empty());
+    app.toggle_conversation();
+    assert!(app.conversation.is_open());
+    let pan = app.graph_pan;
+    assert!(app.on_drag(x - 8, y - 5, &layout).is_empty());
+    assert_eq!(app.graph_pan, pan, "the drag panned the hidden graph");
+}

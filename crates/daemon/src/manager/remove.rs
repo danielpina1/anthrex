@@ -358,6 +358,7 @@ impl WindowManager {
         }
         drop(entry);
         tracing::info!(id, path = ?wt.path, branch = %wt.branch, "window and worktree removed");
+        self.notify_window_gone(id);
         self.publish(&inner);
     }
 }

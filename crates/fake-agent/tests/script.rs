@@ -547,6 +547,110 @@ fn mcp_call_is_not_supported_yet() {
 }
 
 #[test]
+fn a_transcript_step_appends_one_line() {
+    let temp = tempfile::tempdir_in("/tmp").unwrap();
+    let transcript_path = temp.path().join("transcript.jsonl");
+    let script = script_file(
+        &temp,
+        &[
+            json!({"transcript": {"type": "user", "text": "hello"}}),
+            json!({"transcript": {"type": "assistant", "text": "world", "extra": true}}),
+            json!({"exit": 0}),
+        ],
+    );
+    let mut command = command(&script);
+    command.env("FAKE_AGENT_TRANSCRIPT", &transcript_path);
+
+    let output = run(command);
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let contents = fs::read_to_string(&transcript_path).unwrap();
+    assert!(contents.ends_with('\n'));
+    let lines: Vec<&str> = contents.trim_end_matches('\n').split('\n').collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(
+        serde_json::from_str::<Value>(lines[0]).unwrap(),
+        json!({"type": "user", "text": "hello"})
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(lines[1]).unwrap(),
+        json!({"type": "assistant", "text": "world", "extra": true})
+    );
+    assert_eq!(contents.matches('\n').count(), 2);
+}
+
+#[test]
+fn a_transcript_step_without_the_variable_is_a_no_op() {
+    let temp = tempfile::tempdir_in("/tmp").unwrap();
+    let script = script_file(
+        &temp,
+        &[
+            json!({"transcript": {"type": "user", "text": "hello"}}),
+            json!({"exit": 0}),
+        ],
+    );
+
+    let output = run(command(&script));
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn hook_payloads_carry_the_transcript_path() {
+    let temp = tempfile::tempdir_in("/tmp").unwrap();
+    let transcript_path = temp.path().join("transcript.jsonl");
+    let payload_path = temp.path().join("p.json");
+    let explicit_payload_path = temp.path().join("explicit.json");
+    let script = script_file(
+        &temp,
+        &[
+            json!({"hook": "SessionStart", "payload": {}}),
+            json!({"hook": "Stop", "payload": {"transcript_path": "mine"}}),
+            json!({"exit": 0}),
+        ],
+    );
+    let settings = json!({
+        "hooks": {
+            "SessionStart": [{"hooks": [{
+                "command": format!("cat > {}", payload_path.display())
+            }]}],
+            "Stop": [{"hooks": [{
+                "command": format!("cat > {}", explicit_payload_path.display())
+            }]}]
+        }
+    });
+    let mut command = command(&script);
+    command
+        .env("FAKE_AGENT_TRANSCRIPT", &transcript_path)
+        .arg("--settings")
+        .arg(settings.to_string());
+
+    let output = run(command);
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload = json_file(&payload_path);
+    assert_eq!(
+        payload["transcript_path"],
+        transcript_path.to_string_lossy().into_owned()
+    );
+    let explicit_payload = json_file(&explicit_payload_path);
+    assert_eq!(explicit_payload["transcript_path"], "mine");
+}
+
+#[test]
 fn hook_timeout_includes_blocked_stdin_delivery() {
     let temp = tempfile::tempdir_in("/tmp").unwrap();
     let large = "x".repeat(2 * 1024 * 1024);

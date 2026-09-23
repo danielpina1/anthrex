@@ -14,6 +14,13 @@ fn hook(kind: HookKind) -> ParsedHook {
         tool_name: None,
         tool_input: None,
         notification_type: None,
+        transcript_path: None,
+        tool_use_id: None,
+        tool_response: None,
+        tool_result_truncated: None,
+        tool_result_stringified: None,
+        prompt: None,
+        session_source: None,
     }
 }
 
@@ -403,6 +410,33 @@ fn infos_report_seconds_since_start_and_end() {
     let info = &tracker.infos(base + Duration::from_secs(8))[0];
     assert_eq!(info.started_secs, 8);
     assert_eq!(info.ended_secs, Some(5));
+}
+
+/// Wave-1 review finding shape: `SpawnOrigin` carries four fields, two of them
+/// same-typed (`parent_id: Option<String>`, `label: Option<String>`); a transposition
+/// between them must fail this test, so every value here is distinct from every other.
+#[test]
+fn spawn_origin_returns_the_matched_parent_kind_label_and_model() {
+    let base = Instant::now();
+    let mut tracker = SubagentTracker::default();
+    apply(
+        &mut tracker,
+        &spawn(Some("agent-root"), Some("Explore"), "scout-the-repo"),
+        base,
+    );
+    apply(
+        &mut tracker,
+        &start("agent-child", Some("Explore")),
+        base + Duration::from_secs(1),
+    );
+
+    let origin = tracker.spawn_origin("agent-child").unwrap();
+    assert_eq!(origin.parent_id.as_deref(), Some("agent-root"));
+    assert_eq!(origin.kind, "Explore");
+    assert_eq!(origin.label.as_deref(), Some("scout-the-repo"));
+    assert_eq!(origin.model.as_deref(), Some("haiku"));
+
+    assert_eq!(tracker.spawn_origin("agent-other"), None);
 }
 
 #[test]

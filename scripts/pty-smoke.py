@@ -21,6 +21,7 @@ every byte seen so far into it, and asserts against the reconstructed grid
 instead of the raw stream.
 """
 import fcntl
+import glob
 import json
 import os
 import pty
@@ -60,6 +61,11 @@ ENV["ANTHREX_DATA_DIR"] = DATA_DIR
 ENV["ANTHREX_CLAUDE_BIN"] = FAKE_AGENT_BIN
 ENV["ANTHREX_CODEX_BIN"] = FAKE_AGENT_BIN
 ENV["FAKE_AGENT_SCRIPT"] = FAKE_AGENT_SCRIPT
+# Where fake-agent's `transcript` steps append, and the `transcript_path` it puts in every
+# hook payload. Only the conversation-view stage (stage 14) writes a transcript; for every
+# other stage the path simply never exists, which the daemon's reader must tolerate.
+FAKE_AGENT_TRANSCRIPT = os.path.join(DATA_DIR, "fake-agent-transcript.jsonl")
+ENV["FAKE_AGENT_TRANSCRIPT"] = FAKE_AGENT_TRANSCRIPT
 ENV["TERM"] = "xterm-256color"
 # This script compares rendered screens against literal text. The bottom-bar git
 # segment (design decision 21) would make those comparisons depend on the state of
@@ -1057,6 +1063,196 @@ def run_resume_stage():
         shutil.rmtree(RESUME_CONFIG_DIR, ignore_errors=True)
 
 
+# The conversation view's worst case from `anthrex new` returning to the view being
+# populated, derived from the constants it actually waits on rather than from observed
+# cost (docs/timing-budgets.md standing rule 1 and finding F2b):
+#   fake-agent runs 5 hook steps, each bounded by STEP_TIMEOUT (5s,
+#     crates/fake-agent/src/main.rs)                                        = 25s
+#   + the daemon's transcript poll interval (TRANSCRIPT_POLL, 250ms,
+#     crates/daemon/src/conversation/watch.rs)                              =  0.25s
+#   + one transcript read pass (TRANSCRIPT_READ_TIMEOUT, 2s,
+#     crates/daemon/src/transcript/reader.rs)                               =  2s
+#   + the client's own event-loop tick (100ms, crates/tui/src/lib.rs)       =  0.1s
+#                                                                          = 27.35s
+# 45s keeps roughly the same ~60% margin the other derived bounds in this file carry.
+CONVERSATION_VIEW_TIMEOUT = 45.0
+
+# What fake-agent prints to its own terminal in stage 14, so the stage can tell the
+# terminal's output apart from the conversation view drawn over it.
+CONVERSATION_TERMINAL_MARKER = "fake-agent conversation smoke terminal"
+
+
+def conversation_fixture():
+    """The one committed Claude golden transcript, found by glob rather than by a
+    guessed version number, so a re-recorded fixture is picked up without editing this
+    file. Only `claude-<version>.jsonl` is the golden one: a scenario fixture such as
+    `claude-2.1.278-background-agent.jsonl` carries a suffix after the version. More
+    than one golden fixture is ambiguous, so it fails rather than picking one.
+    """
+    fixtures = sorted(
+        path
+        for path in glob.glob(
+            os.path.join(REPO, "crates/daemon/tests/fixtures/transcripts/claude-*.jsonl")
+        )
+        if re.fullmatch(r"claude-\d+(\.\d+)*\.jsonl", os.path.basename(path))
+    )
+    if len(fixtures) != 1:
+        fail(f"expected exactly one Claude transcript fixture, found {fixtures!r}")
+    with open(fixtures[0], encoding="utf-8") as handle:
+        lines = [json.loads(line) for line in handle if line.strip()]
+    return fixtures[0], lines
+
+
+def screen_has_row(screen, expected):
+    """Whether some row of `screen`, split on the box-drawing borders the sidebar and the
+    view draw, has a segment whose trimmed text is exactly `expected` — a whole row,
+    not a substring of a longer one.
+    """
+    for row in screen.splitlines():
+        for segment in re.split(r"[│┃|]", row):
+            if segment.strip() == expected:
+                return True
+    return False
+
+
+def run_conversation_view_stage():
+    """Stage 14: the conversation view, end to end (task M6.5.14).
+
+    fake-agent writes the committed golden Claude transcript line for line, then fires
+    the hooks of a turn: the daemon builds the timeline from the hooks, enriches it from
+    the transcript, and the TUI draws it behind `C-b m`. The prose row "Starting the
+    check." is the transcript's alone: the hook prompt contains those words too, but
+    only inside a longer row, so a row that is *exactly* that text proves enrichment ran.
+    """
+    print("== stage 14: the conversation view, from hooks and transcript ==")
+    started = time.monotonic()
+    fixture_path, fixture = conversation_fixture()
+    prompts = [
+        line["message"]["content"]
+        for line in fixture
+        if line.get("type") == "user" and isinstance(line.get("message", {}).get("content"), str)
+    ]
+    if len(prompts) != 1:
+        fail(f"{fixture_path} should hold exactly one user prompt, found {prompts!r}")
+    prompt = prompts[0]
+    session = fixture[0]["sessionId"]
+    prose = "Starting the check."
+    if not prompt.startswith("First say exactly: " + prose):
+        fail(f"{fixture_path}'s prompt changed; this stage's assertions depend on it: {prompt!r}")
+
+    # Hooks carry the fixture's own session id (enrichment treats a record from another
+    # session as a different prompt) and SessionStart carries `source: startup`, as real
+    # Claude always does: without it the reader opens the transcript at its end and
+    # never attributes the lines written before it.
+    steps = [{"print": CONVERSATION_TERMINAL_MARKER + "\r\n"}]
+    steps += [{"transcript": line} for line in fixture]
+    steps += [
+        {"hook": "SessionStart", "payload": {"session_id": session, "source": "startup"}},
+        {"hook": "UserPromptSubmit", "payload": {"session_id": session, "prompt": prompt}},
+        {
+            "hook": "PreToolUse",
+            "payload": {
+                "session_id": session,
+                "tool_name": "Edit",
+                "tool_use_id": "tu-smoke",
+                "tool_input": {
+                    "file_path": "/tmp/parse.rs",
+                    "old_string": "fn parse_all(src: &str) {",
+                    "new_string": "fn parse_all(src: &str) -> Result<Ast> {",
+                },
+            },
+        },
+        {
+            "hook": "PostToolUse",
+            "payload": {
+                "session_id": session,
+                "tool_name": "Edit",
+                "tool_use_id": "tu-smoke",
+                "tool_response": "edited 1 file",
+            },
+        },
+        {"hook": "Stop", "payload": {"session_id": session}},
+        {"read_line": True},
+    ]
+    with open(FAKE_AGENT_SCRIPT, "w", encoding="utf-8") as script:
+        for step in steps:
+            script.write(json.dumps(step) + "\n")
+    try:
+        os.unlink(FAKE_AGENT_TRANSCRIPT)
+    except FileNotFoundError:
+        pass
+
+    run_cmd(["daemon", "start"])
+    run_cmd(["new", "--runtime", "claude", "--name", "conv"])
+    proc = PtyProc([BIN, "attach", "conv"])
+    proc.wait_for("agents", label="conversation-stage attach banner")
+    proc.wait_for(CONVERSATION_TERMINAL_MARKER, label="conv's own terminal output")
+
+    proc.send(b"\x02m")
+    prompt_prefix = "First say exactly: Starting the check. Then read"
+    deadline = time.monotonic() + CONVERSATION_VIEW_TIMEOUT
+    while True:
+        screen = proc.screen_text()
+        if (
+            prompt_prefix in screen
+            and "Edit" in screen
+            and "parse.rs" in screen
+            and screen_has_row(screen, prose)
+        ):
+            break
+        if time.monotonic() >= deadline:
+            fail(
+                "the conversation view never showed the prompt, the Edit call and the "
+                f"transcript's own prose row within {CONVERSATION_VIEW_TIMEOUT}s\n"
+                f"--- rendered screen ---\n{screen}"
+            )
+        proc.read_available(timeout=0.2)
+    if "timeline only" in screen or "transcript partly unreadable" in screen:
+        fail(f"the conversation view came up degraded:\n{screen}")
+    print("ok: the view shows the hook timeline, enriched with the transcript's prose")
+
+    # No cursor yet means the newest row, the Edit call: Enter unfolds its diff.
+    proc.send(b"\r")
+    removed = "-fn parse_all(src: &str) {"
+    added = "+fn parse_all(src: &str) -> Result<Ast> {"
+    proc.wait_for(removed, timeout=CONVERSATION_VIEW_TIMEOUT, label="the Edit's removed line")
+    proc.wait_for(added, timeout=CONVERSATION_VIEW_TIMEOUT, label="the Edit's added line")
+    print("ok: Enter unfolds the Edit call into its diff")
+
+    # Esc at the root, with no crumbs, closes the view (task 12).
+    proc.send(b"\x1b")
+    deadline = time.monotonic() + CONVERSATION_VIEW_TIMEOUT
+    while True:
+        screen = proc.screen_text()
+        if (
+            removed not in screen
+            and added not in screen
+            and prompt_prefix not in screen
+            and CONVERSATION_TERMINAL_MARKER in screen
+        ):
+            break
+        if time.monotonic() >= deadline:
+            fail(
+                "Esc did not close the view back to conv's own terminal within "
+                f"{CONVERSATION_VIEW_TIMEOUT}s\n--- rendered screen ---\n{screen}"
+            )
+        proc.read_available(timeout=0.2)
+    print("ok: Esc closes the view and the terminal's own output is back")
+
+    proc.send(b"\x02d")
+    status = proc.wait_exit(timeout=5.0)
+    if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+        fail(f"conversation-stage detach did not exit cleanly with status 0 (raw status {status})")
+    proc.close()
+    run_cmd(["rm", "conv"])
+    elapsed = time.monotonic() - started
+    run_cmd(["daemon", "stop"], timeout=DAEMON_STOP_CMD_TIMEOUT)
+    print(
+        f"ok: conversation view stage took {elapsed:.2f}s "
+        f"(bound per wait {CONVERSATION_VIEW_TIMEOUT:.0f}s)"
+    )
+
+
 def main():
     ensure_config_path_absent()
     ensure_binary()
@@ -1541,6 +1737,8 @@ def main():
     if "not running" not in status_result.stdout:
         fail(f"`anthrex daemon status` did not report not running after C-b Q:\n{status_result.stdout}")
     print("ok: C-b Q quit the client through the TUI, and the daemon it stopped is gone")
+
+    run_conversation_view_stage()
 
     print("\nALL SMOKE STAGES PASSED")
 

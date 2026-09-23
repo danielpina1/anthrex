@@ -321,6 +321,21 @@ async fn run_cli() -> anyhow::Result<()> {
     }
 }
 
+/// Decision A5's locale precedence: the first of `lc_all`, `lc_ctype`, `lang` that is
+/// `Some` and non-empty, in that order. Pure — `attach` is the only caller, and it is the
+/// one that reads `std::env::var` (`AGENTS.md` hard rule 5 keeps `crates/tui` I/O-free;
+/// this crate keeps the read and the precedence logic separate so the precedence itself
+/// is unit-testable without touching the environment).
+fn resolve_locale(
+    lc_all: Option<&str>,
+    lc_ctype: Option<&str>,
+    lang: Option<&str>,
+) -> Option<String> {
+    [lc_all, lc_ctype, lang]
+        .into_iter()
+        .find_map(|v| v.filter(|s| !s.is_empty()).map(str::to_string))
+}
+
 async fn attach(socket: PathBuf, dir: PathBuf, target: Option<String>) -> anyhow::Result<()> {
     tui::spawn::ensure_daemon(&std::env::current_exe()?, &socket).await?;
     // The config is loaded exactly once, here, and turned into the client's resolved
@@ -335,11 +350,23 @@ async fn attach(socket: PathBuf, dir: PathBuf, target: Option<String>) -> anyhow
     // attach just did, so it gets the same executable path `ensure_daemon` above
     // used.
     let daemon_exe = std::env::current_exe()?;
+    // Decision A5: ASCII badges are chosen by `conversation.badges.force_ascii`
+    // (already applied by `from_config`) or by the first set, non-empty value of
+    // `LC_ALL`, `LC_CTYPE`, `LANG` not naming UTF-8. Reading the environment happens
+    // only here, never in `crates/tui/src/ui/badge.rs` (`AGENTS.md` hard rule 5); the
+    // precedence itself is `resolve_locale`, tested below without touching the
+    // environment.
+    let lc_all = std::env::var("LC_ALL").ok();
+    let lc_ctype = std::env::var("LC_CTYPE").ok();
+    let lang = std::env::var("LANG").ok();
+    let locale = resolve_locale(lc_all.as_deref(), lc_ctype.as_deref(), lang.as_deref());
+    let settings =
+        tui::settings::UiSettings::from_config(&loaded_config).with_locale(locale.as_deref());
     tui::run(tui::TuiOptions {
         socket_path: socket,
         default_dir: dir,
         focus: target,
-        settings: tui::settings::UiSettings::from_config(&loaded_config),
+        settings,
         config_problems: config_problems.iter().map(ToString::to_string).collect(),
         daemon_exe: Some(daemon_exe),
     })
@@ -411,8 +438,36 @@ async fn daemon_command(action: DaemonAction, socket: PathBuf) -> anyhow::Result
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Command, dirty_hint};
+    use super::{Cli, Command, dirty_hint, resolve_locale};
     use clap::Parser;
+
+    /// Decision A5's precedence, pairwise-distinct per case per the review's Finding 1:
+    /// all three set (LC_ALL wins over both distinct others); LC_ALL empty with LC_CTYPE
+    /// set (LC_CTYPE wins, not the empty LC_ALL); LC_ALL and LC_CTYPE both unset/empty
+    /// with LANG set (LANG wins); everything empty or unset (None).
+    #[test]
+    fn resolve_locale_follows_lc_all_then_lc_ctype_then_lang() {
+        assert_eq!(
+            resolve_locale(Some("en_US.UTF-8"), Some("C"), Some("POSIX")),
+            Some("en_US.UTF-8".to_string()),
+            "LC_ALL must win when all three are set"
+        );
+        assert_eq!(
+            resolve_locale(Some(""), Some("de_DE.UTF-8"), Some("POSIX")),
+            Some("de_DE.UTF-8".to_string()),
+            "an empty LC_ALL must not beat a set LC_CTYPE"
+        );
+        assert_eq!(
+            resolve_locale(None, Some(""), Some("ja_JP.UTF-8")),
+            Some("ja_JP.UTF-8".to_string()),
+            "LANG must win once LC_ALL and LC_CTYPE are unset/empty"
+        );
+        assert_eq!(
+            resolve_locale(Some(""), None, Some("")),
+            None,
+            "every variable empty or unset must resolve to None"
+        );
+    }
 
     #[test]
     fn rm_force_requires_worktree() {

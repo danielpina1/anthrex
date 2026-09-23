@@ -1,5 +1,6 @@
 //! Accepts client connections and speaks the protocol from spec section 4.
 
+mod conversation;
 mod requests;
 
 use crate::git::GitRegistry;
@@ -241,8 +242,16 @@ async fn handle_client(
     let (out_tx, mut out_rx) = mpsc::channel::<DaemonMsg>(256);
     let writer: JoinHandle<()> = tokio::spawn(async move {
         while let Some(msg) = out_rx.recv().await {
-            if write_frame(&mut wr, &msg).await.is_err() {
-                break;
+            match write_frame(&mut wr, &msg).await {
+                Ok(()) => {}
+                // Defence in depth behind `fit_in_frame`, which an undercounting bound
+                // (re-review N3) still gets past. `encode` refuses before a byte is
+                // written, so skipping keeps the framing; ending here would cost the
+                // client its connection for one message (task M6.5.10 review F1).
+                Err(proto::CodecError::TooLarge(bytes)) => {
+                    tracing::warn!(bytes, "dropped a message larger than MAX_FRAME")
+                }
+                Err(_) => break,
             }
         }
     });
@@ -282,6 +291,11 @@ async fn handle_client(
             }
         }
     });
+
+    // Conversation subscriptions (task M6.5.10): answered and kept current by their own
+    // task, so this loop never waits on one.
+    let conversations =
+        conversation::ConversationTask::spawn(manager.clone(), out_tx.clone(), shutdown.clone());
 
     let mut subscription: Option<Subscription> = None;
     let mut connection_error = None;
@@ -445,6 +459,38 @@ async fn handle_client(
                 shutdown.cancel();
                 None
             }
+            ClientMsg::SubscribeConversation {
+                window_id,
+                agent_id,
+                from_rev,
+            } => {
+                if !conversations
+                    .send(conversation::Command::Subscribe {
+                        window_id,
+                        agent_id,
+                        from_rev,
+                    })
+                    .await
+                {
+                    break;
+                }
+                None
+            }
+            ClientMsg::UnsubscribeConversation {
+                window_id,
+                agent_id,
+            } => {
+                if !conversations
+                    .send(conversation::Command::Unsubscribe {
+                        window_id,
+                        agent_id,
+                    })
+                    .await
+                {
+                    break;
+                }
+                None
+            }
         };
         if let Some(reply) = reply
             && out_tx.send(reply).await.is_err()
@@ -456,6 +502,9 @@ async fn handle_client(
     if let Some(previous) = subscription.take() {
         previous.stop().await;
     }
+    // Every conversation this client held is unsubscribed before the connection is
+    // reported closed, as the PTY subscription above is unfocused.
+    conversations.stop().await;
     changes_task.abort();
     git_task.abort();
     drop(out_tx);

@@ -42,6 +42,15 @@ pub async fn start_daemon() -> TestDaemon {
 }
 
 pub async fn start_daemon_with_git(git_enabled: bool) -> TestDaemon {
+    start_daemon_configured(git_enabled, |_| {}).await
+}
+
+/// As [`start_daemon_with_git`], with a last say over the manager's configuration
+/// (`conversation.linger_secs`, for instance).
+pub async fn start_daemon_configured(
+    git_enabled: bool,
+    configure: impl FnOnce(&mut ManagerConfig),
+) -> TestDaemon {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("d.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
@@ -53,6 +62,7 @@ pub async fn start_daemon_with_git(git_enabled: bool) -> TestDaemon {
     let mut config = ManagerConfig::new(socket.clone(), "/bin/sh".into());
     config.claude_bin = stub.to_str().unwrap().into();
     config.worktrees_root = worktrees_root.clone();
+    configure(&mut config);
     let (manager, mut events) = WindowManager::new(config);
     let pump = manager.clone();
     tokio::spawn(async move {
