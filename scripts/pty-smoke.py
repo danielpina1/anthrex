@@ -1085,10 +1085,16 @@ CONVERSATION_TERMINAL_MARKER = "fake-agent conversation smoke terminal"
 def conversation_fixture():
     """The one committed Claude golden transcript, found by glob rather than by a
     guessed version number, so a re-recorded fixture is picked up without editing this
-    file. More than one is ambiguous, so it fails rather than picking one.
+    file. Only `claude-<version>.jsonl` is the golden one: a scenario fixture such as
+    `claude-2.1.278-background-agent.jsonl` carries a suffix after the version. More
+    than one golden fixture is ambiguous, so it fails rather than picking one.
     """
     fixtures = sorted(
-        glob.glob(os.path.join(REPO, "crates/daemon/tests/fixtures/transcripts/claude-*.jsonl"))
+        path
+        for path in glob.glob(
+            os.path.join(REPO, "crates/daemon/tests/fixtures/transcripts/claude-*.jsonl")
+        )
+        if re.fullmatch(r"claude-\d+(\.\d+)*\.jsonl", os.path.basename(path))
     )
     if len(fixtures) != 1:
         fail(f"expected exactly one Claude transcript fixture, found {fixtures!r}")
