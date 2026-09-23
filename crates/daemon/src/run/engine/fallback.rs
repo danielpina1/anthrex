@@ -1,8 +1,10 @@
 //! Decision 32's turn-end fallback: at a completed turn with no accepted `task_done`,
 //! `CountCommits`, then `DONE_NUDGE` or `NO_COMMIT_NUDGE`, then the fallback's own claim
 //! or a stall; a failed count is retried, and blocks the task at the third failure in a
-//! row (M8a.12 fix round 3, ruling T12-A2). Split out of `done.rs` for size. Pure
-//! (design decision 2).
+//! row (M8a.12 fix round 3, ruling T12-A2). The count and the fallback's claim belong
+//! to the turn they were issued for: a result that finds a later turn started is
+//! dropped, and that turn's end runs the fallback afresh (fix round 4, ruling T12-R4).
+//! Split out of `done.rs` for size. Pure (design decision 2).
 
 use proto::{BlockReason, DoneSignal, TaskState};
 
@@ -13,7 +15,7 @@ use super::tools::DoneArgs;
 use super::{Effect, OpId, OpKind, OpResult, emit_op, next_op, outbox};
 use crate::run::contract::{DONE_NUDGE, NO_COMMIT_NUDGE};
 use crate::run::messages::{DELIVERY_MAX_FAILURES, DELIVERY_RETRY_SECS};
-use crate::run::model::{FallbackState, Run};
+use crate::run::model::{FailedTurn, FallbackState, Run};
 
 /// Decision 32's turn-end fallback, at a completed turn with no accepted `task_done`
 /// (or at the last `SubagentStop` it waited for): count commits first; after
@@ -24,6 +26,15 @@ pub(super) fn fallback(run: &mut Run, i: usize, fx: &mut Vec<Effect>) {
     if task.state != TaskState::Working || task.claim.is_some() {
         return;
     }
+    // Ruling T12-R4: a retry still waiting for an earlier turn's count is void.
+    if let Some(r) = worker_round(task) {
+        let round = &mut run.tasks[i].rounds[r];
+        if round.count_retry_at.is_some() && round.count_turn != round.turns {
+            round.count_retry_at = None;
+            restart(&mut round.fallback);
+        }
+    }
+    let task = &run.tasks[i];
     // One count at a time: none while one is in flight or waiting to be retried.
     let Some(r) = worker_round(task).filter(|&r| {
         let round = &task.rounds[r];
@@ -39,9 +50,11 @@ pub(super) fn fallback(run: &mut Run, i: usize, fx: &mut Vec<Effect>) {
         }
         FallbackState::Counting => {}
         state => {
+            let round = &mut run.tasks[i].rounds[r];
             if state == FallbackState::None {
-                run.tasks[i].rounds[r].fallback = FallbackState::Counting;
+                round.fallback = FallbackState::Counting;
             }
+            round.count_turn = round.turns;
             count(run, i, r, fx);
         }
     }
@@ -79,7 +92,49 @@ pub(super) fn retry_count(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect
         run.tasks[i].rounds[r].fallback = FallbackState::None;
         return;
     }
+    // Ruling T12-R4: the retry is its turn's; a later turn has its own fallback.
+    if stale(run, i, r) {
+        return drop_stale(run, i, r, fx);
+    }
     count(run, i, r, fx);
+}
+
+/// Ruling T12-R4: round `r` has started a turn after the one its fallback's count was
+/// issued for.
+fn stale(run: &Run, i: usize, r: usize) -> bool {
+    let round = &run.tasks[i].rounds[r];
+    round.turns != round.count_turn
+}
+
+/// Ruling T12-R4: a dropped count leaves the fallback where it was before that count,
+/// so a nudge already read still counts: `Counting` (no nudge yet) starts over.
+fn restart(state: &mut FallbackState) {
+    if *state == FallbackState::Counting {
+        *state = FallbackState::None;
+    }
+}
+
+/// Ruling T12-R4: an earlier turn's count, retry or fallback claim is dropped. The
+/// later turn's end runs the fallback, unless that end has already come and gone
+/// (skipped while the count or claim was out): then it runs here. A message still to be
+/// delivered opens a turn whose end runs it instead.
+pub(super) fn drop_stale(run: &mut Run, i: usize, r: usize, fx: &mut Vec<Effect>) {
+    let task = &run.tasks[i];
+    let round = &task.rounds[r];
+    let id = task.id();
+    let queued = run
+        .outbox
+        .iter()
+        .any(|m| m.task_id == id && m.delivered_at.is_none());
+    let between_turns = !round.turn_open
+        && !round.retiring
+        && !round.fallback_waiting
+        && !round.interrupted
+        && matches!(round.failed_turn, FailedTurn::None);
+    restart(&mut run.tasks[i].rounds[r].fallback);
+    if between_turns && !queued {
+        fallback(run, i, fx);
+    }
 }
 
 /// Ruling T12-A2: a failed count is retried `DELIVERY_RETRY_SECS` later, as a failed
@@ -114,6 +169,9 @@ pub(super) fn counted(
         return;
     };
     run.tasks[i].rounds[r].count_op = None;
+    if stale(run, i, r) {
+        return drop_stale(run, i, r, fx);
+    }
     let task = &run.tasks[i];
     let fallback = task.rounds[r].fallback;
     // Review m-2: no nudge while the worker's own claim is being checked.

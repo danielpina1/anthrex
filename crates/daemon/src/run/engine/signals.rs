@@ -90,7 +90,14 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
     let worker = round.role == AgentRole::Worker;
     match signal {
         AgentSignal::Init { session_id } => round.session_id = Some(session_id),
-        AgentSignal::TurnStarted => round.turn_open = true,
+        AgentSignal::TurnStarted => {
+            // Ruling T12-R4 (N3-2): a turn Claude starts by itself (a background
+            // sub-agent finished) is a turn; a delivered one was counted already.
+            if !round.turn_open {
+                round.turns += 1;
+            }
+            round.turn_open = true;
+        }
         AgentSignal::ToolUse { .. } => {
             round.tool_calls += 1;
             // Ruling T12-m5: the task's total counts its worker rounds only.
@@ -210,8 +217,10 @@ fn turn_ended(
     // The interrupted turn ended: its queued `stall_nudge` goes next. This comes before
     // any early return, so a task blocked meanwhile is not left interrupted (ruling
     // T12-I4b).
-    let interrupted = matches!(round.stall, StallState::Interrupted { .. });
-    if interrupted {
+    // Ruling T12-R4 (N3-1): still interrupted after activity ended the grace.
+    let interrupted = std::mem::take(&mut round.interrupted)
+        || matches!(round.stall, StallState::Interrupted { .. });
+    if matches!(round.stall, StallState::Interrupted { .. }) {
         round.stall = StallState::Nudged;
     }
     if !worker || run.tasks[i].state != TaskState::Working {
@@ -329,11 +338,10 @@ fn exited(run: &mut Run, i: usize, r: usize, killed: bool, now: u64, fx: &mut Ve
     // before its session had an id (only Codex's can be: Claude's id is set at launch)
     // has nothing to resume: rung 2, with the nudge at the end of the fresh session's
     // prompt (ruling T12-later).
-    if !killed
-        && working
-        && round.turn_open
-        && matches!(round.stall, StallState::Interrupted { .. })
-    {
+    // Ruling T12-R4 (N3-1): still interrupted after activity ended the grace.
+    let interrupted = round.interrupted || matches!(round.stall, StallState::Interrupted { .. });
+    if !killed && working && round.turn_open && interrupted {
+        round.interrupted = false;
         if round.session_id.is_none() {
             end_round(round, now);
             let reason = "its turn was interrupted before its session had an id".to_string();
@@ -399,6 +407,7 @@ fn exited(run: &mut Run, i: usize, r: usize, killed: bool, now: u64, fx: &mut Ve
 
 pub(super) fn end_round(round: &mut AgentRound, now: u64) {
     round.ended = true;
+    round.interrupted = false;
     round.ended_at = Some(now);
     round.turn_open = false;
     round.pid = None;
@@ -456,9 +465,11 @@ pub(super) fn watch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             StallState::Watching if silent => {
                 let window_id = round.window_id.unwrap_or_default();
                 fx.push(Effect::Interrupt { window_id });
-                run.tasks[i].rounds[r].stall = StallState::Interrupted {
+                let round = &mut run.tasks[i].rounds[r];
+                round.stall = StallState::Interrupted {
                     deadline: now + INTERRUPT_GRACE_SECS,
                 };
+                round.interrupted = true;
                 let id = run.tasks[i].id().to_string();
                 outbox::queue(run, &id, stall_nudge(stall_after / 60), now);
                 history(run, i, now, "no progress; interrupting its turn");

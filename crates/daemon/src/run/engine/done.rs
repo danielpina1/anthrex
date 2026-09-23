@@ -10,7 +10,9 @@ use proto::{
 use super::dispatch::{block, history};
 use super::ladder::{self, live, worker_round};
 use super::tools::{DoneArgs, parse_blocked, parse_done};
-use super::{Effect, EngineState, OpId, OpKind, OpResult, ReplyId, emit_op, next_op, outbox};
+use super::{
+    Effect, EngineState, OpId, OpKind, OpResult, ReplyId, emit_op, fallback, next_op, outbox,
+};
 use crate::run::contract::{
     DONE_ACCEPTED, blocked_recorded, generated_files_message, protected_file_message,
 };
@@ -312,8 +314,14 @@ pub(super) fn checked(
         return;
     }
     // Ruling T12-later: the stall clock waited for the check; it runs again from here.
-    if let Some(r) = worker_round(&run.tasks[i]) {
-        run.tasks[i].rounds[r].last_event = now;
+    let Some(r) = worker_round(&run.tasks[i]) else {
+        return;
+    };
+    run.tasks[i].rounds[r].last_event = now;
+    // Ruling T12-R4: the fallback's claim is its turn's; once a later turn has started,
+    // that turn's end decides afresh.
+    if pending.reply.is_none() && run.tasks[i].rounds[r].turns != pending.turn {
+        return fallback::drop_stale(run, i, r, fx);
     }
     let (outside, generated, protected, head) = match &result {
         OpResult::DoneChecked {

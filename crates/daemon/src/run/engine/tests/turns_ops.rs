@@ -478,7 +478,9 @@ fn a_dead_sessions_late_delivery_failure_leaves_the_fresh_session_alone() {
 }
 
 /// T12-N: while the fallback's count is awaited, another turn end does not start a
-/// second one.
+/// second one. The awaited count, now an earlier turn's, is dropped and the fallback
+/// counts again for the later turn (ruling T12-R4); `NO_COMMIT_NUDGE` was read, so
+/// that count's 0 is the stall.
 #[test]
 fn one_count_at_a_time() {
     let (mut fx, window) = working_on(ROOMY);
@@ -491,7 +493,14 @@ fn one_count_at_a_time() {
     fx.tick();
     let effects = fx.turn_completed(window);
     assert!(ops_in(&effects, "CountCommits").is_empty(), "{effects:#?}");
-    fx.done(second, commits(0));
+    let effects = fx.done(second, commits(0));
+    assert_eq!(
+        fx.task("t1").stalls,
+        0,
+        "an earlier turn's count is dropped"
+    );
+    let (third, _) = ops_in(&effects, "CountCommits")[0].clone();
+    fx.done(third, commits(0));
     assert_eq!(fx.task("t1").rung, 2, "the second empty count is a stall");
 }
 

@@ -792,3 +792,21 @@ scope.
   is set, as `single_test` itself must contain `{test}`, with the error `must contain
   {test}`. This is a plan-validation change (M8a.5's territory), ruled out of scope for
   M8a.10 (ruling T10-M5).
+
+## From M8a.12's re-review 3 (2026-09-23), for M8a (ruling T12-R4, no code change)
+
+- **A task blocked by the third failed `CountCommits` keeps its live session.**
+  `fallback::count_failed` calls `block` without `kill_worker` (re-review 3, probe RE).
+  This matches the delivery-failure block (ruling T12-A2), but `check_denials` kills
+  before it blocks. A worker still running can keep editing a blocked task's worktree.
+  Decide in M8a.13/M8a.15, with the unblock and resume work, whether to kill it or to
+  keep the session for the resume.
+- **A failed resume drops an in-flight wrap-up.** `outbox::resumed`'s failure path now
+  calls `ladder::supersede`, which removes the task's delivered-but-unconfirmed outbox
+  messages. Before, a late `Delivered{ok:false}` queued them again into the fresh
+  session's `append`. A wrap-up sent just before a mid-turn exit and a failed resume is
+  therefore missing from the fresh prompt. Decide with M8a.13's resume rules whether
+  `supersede` should keep them for `append`.
+- **`signals::exited` ignores the exit's `pid`** (carried from re-review 2). An exit
+  from an earlier process of the same window, arriving late, is taken for the current
+  one. Match it against `AgentRound.pid` when M8a.13 revisits process exits.

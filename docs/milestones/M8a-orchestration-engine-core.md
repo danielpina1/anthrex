@@ -5178,3 +5178,103 @@ is now 470. `done::claim` became `pub(super)` for the fallback's own claim.
   unit tests.
 - No file passes 600 lines. `dispatch.rs` is 591 lines, `signals.rs` 473, `done.rs` 470
   and `tests/turns_retries.rs` 325.
+
+### M8a.12 fix round 4 (2026-09-23)
+
+The third re-review (`.superpowers/sdd/M8a-orchestration-engine-core/task-12-rereview-3.md`)
+approved A1, A2 and O-1, found O-2 partly done (N3-2) and one new Minor (N3-1), and
+listed OS-1 out of scope. Ruling T12-R4 brings OS-1 in: a false stall kill escalates a
+healthy worker. The probes became regression tests in the new
+`engine/tests/turns_stale.rs`, and each failed first.
+
+**OS-1: the fallback's count and claim belong to their turn (ruling T12-R4).**
+
+- New `AgentRound.count_turn` (`#[serde(default)]`): the round's `turns` when the
+  fallback sent its count. A retry keeps it. The fallback's own claim already records
+  `PendingClaim.turn`.
+- A result is stale once `turns` has moved past that number (a delivery, a resume or a
+  self-started turn has begun). `fallback::counted`, `fallback::retry_count` and
+  `done::checked` (for the fallback's claim, which has no reply) drop a stale result
+  through `fallback::drop_stale`:
+  - The fallback state goes back to where it was before the count: `Counting` becomes
+    `None`, but `Nudged{..}` stays. A nudge the worker has read still counts, so a
+    second empty count after `NO_COMMIT_NUDGE` is still a stall
+    (`one_count_at_a_time`, updated).
+  - **Liveness.** A turn still open runs the fallback at its end. If that end has
+    already come and gone (it was skipped while the count or claim was out), the
+    fallback runs at once. It does not when a message is queued, a failed turn waits
+    for its continue, sub-agents hold the fallback, or the turn was interrupted: each
+    of those opens, or already is, the turn whose end runs it.
+- `fallback()` voids a retry left from an earlier turn, and counts for the turn that
+  just ended.
+- Two earlier tests encoded the old behaviour and were updated:
+  - `one_count_at_a_time`: the late count is dropped and counted again. Its 0 is then
+    the stall.
+  - `a_turn_end_waits_for_the_count_retry`: the later turn end counts once, and the
+    retry time sends nothing. It is still one count, not two.
+- Tests:
+  - `a_count_that_lands_in_a_later_turn_is_dropped` (probe RD, in flight);
+  - `a_count_dropped_after_the_later_turn_ended_counts_again`;
+  - `a_count_dropped_while_a_message_waits_counts_at_that_turns_end`;
+  - `a_retried_count_is_not_sent_into_a_later_turn` (probe RD, retry);
+  - `a_fallback_claim_answered_in_a_later_turn_is_dropped`;
+  - `a_fallback_claim_dropped_after_the_later_turn_ended_counts_again`;
+  - `the_count_after_a_late_rejection_waits_for_the_rejection_turn` (probe OD).
+- **Consequence for O-2's known double message.** The count that the rejection's turn
+  end used to get back mid-turn is now dropped. The rejection's own turn end counts
+  afresh, so `DONE_NUDGE` no longer races the fallback's immediate claim.
+
+**N3-1: an interrupted turn stays interrupted (ruling T12-R4).**
+
+- New `AgentRound.interrupted` (`#[serde(default)]`), set by the watchdog's interrupt.
+  It is taken at `TurnEnded`, at the exit that ends an interrupted turn, and at
+  `end_round`. Activity inside the grace still turns `Interrupted` into `Nudged`, so
+  there is no kill (T12-O1), but the turn's end still sends only `stall_nudge`, never
+  the fallback.
+- The exit path uses the same flag, so a Codex interrupt that ends with an exit after
+  some activity is the turn's end, not a death resumed with `RESUME_AFTER_EXIT`.
+- Tests: `an_interrupted_turn_with_activity_gets_the_nudge_not_the_fallback` (probe
+  OB) and `a_codex_interrupt_exit_after_activity_is_the_turns_end`.
+
+**N3-2: a turn Claude starts by itself is a turn (ruling T12-R4).**
+
+- `TurnStarted` with no open turn increments `turns`. A delivered turn is already open,
+  so it is not counted twice.
+- Test: `a_verdict_during_a_self_started_turn_is_queued_for_its_end` (probe OC). It
+  also checks that a second `TurnStarted` counts nothing.
+
+**Out of scope, recorded in the follow-ups under M8a (no code change):** a task
+blocked by the third failed count keeps its live session; a failed resume's `supersede`
+drops an in-flight wrap-up; `exited` ignores `pid`.
+
+**TDD and mutation evidence.**
+
+- **The red run.** The nine probe tests were written first, and the run gave `0 passed;
+  9 failed`:
+  - RD in flight: `NO_COMMIT_NUDGE` queued mid-turn;
+  - the count-again variants: no `CountCommits`;
+  - RD retry: the retry's `CountCommits` went into the later turn;
+  - the two fallback-claim tests: the rejection was queued into the later turn, or no
+    count followed;
+  - OD: `DONE_NUDGE` queued mid-turn;
+  - OB: a `CountCommits` at the interrupted turn's end;
+  - the Codex variant: a death resumed with `RESUME_AFTER_EXIT`;
+  - OC: `turns` stayed at 1.
+- The tenth test, for the queued-message guard, was added after the first mutation
+  run. It was checked against HEAD's engine sources, where `NO_COMMIT_NUDGE` was queued
+  beside the waiting message.
+- **Mutation run: 12 mutants, all killed.** The first run left one alive, the
+  queued-message guard in `drop_stale` (M3b), and the tenth test now kills it. Each
+  mutant was applied and then undone by hand. The mutants covered:
+  - the stale check in `counted`, `checked` and `retry_count`;
+  - `drop_stale`'s re-run and its queued-message guard;
+  - `fallback()`'s retry void;
+  - recording `count_turn`;
+  - `restart` keeping `Nudged`;
+  - the `interrupted` flag in `turn_ended` and in `exited`;
+  - the `TurnStarted` increment.
+
+**Gates.** `cargo build --workspace --all-targets`, clippy with `-D warnings` and `cargo
+fmt --all --check` are clean. `cargo test -p anthrex-daemon` passes: 34 binaries, 1052 tests, of which 723 are unit tests. No file passes 600
+lines: `done.rs` is 478, `signals.rs` 484, `fallback.rs` 210 and
+`tests/turns_stale.rs` 292.

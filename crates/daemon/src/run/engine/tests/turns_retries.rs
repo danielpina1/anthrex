@@ -278,9 +278,9 @@ fn a_claim_takes_over_from_a_count_retry() {
     assert!(ops_in(&effects, "CountCommits").is_empty(), "{effects:#?}");
 }
 
-/// T12-A2: while a failed count waits for its retry, another turn end does not count
-/// too; the retry does, once. (After `NO_COMMIT_NUDGE`, whose count may be sent from
-/// any turn end.)
+/// T12-A2: a failed count is counted once more, not twice. A later turn's end voids
+/// the earlier turn's retry and counts for itself (ruling T12-R4); the retry time then
+/// sends nothing. (After `NO_COMMIT_NUDGE`, whose count may be sent from any turn end.)
 #[test]
 fn a_turn_end_waits_for_the_count_retry() {
     let (mut fx, w) = working_on(ROOMY);
@@ -294,9 +294,9 @@ fn a_turn_end_waits_for_the_count_retry() {
     queue(&mut fx, "[anthrex] go on");
     fx.tick();
     let effects = fx.turn_completed(w);
-    assert!(ops_in(&effects, "CountCommits").is_empty(), "{effects:#?}");
+    assert_eq!(ops_in(&effects, "CountCommits").len(), 1, "{effects:#?}");
     let effects = fx.send(fx.now + DELIVERY_RETRY_SECS, EventKind::Tick);
-    assert_eq!(ops_in(&effects, "CountCommits").len(), 1);
+    assert!(ops_in(&effects, "CountCommits").is_empty(), "{effects:#?}");
 }
 
 /// T12-A2: a restart waits for no count retry.

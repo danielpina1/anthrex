@@ -222,6 +222,15 @@ pub struct AgentRound {
     pub count_failures: u8,
     #[serde(default)]
     pub count_retry_at: Option<u64>,
+    /// The `turns` the fallback's count (and its retry) was issued for: its result is
+    /// dropped once a later turn has started (M8a.12 fix round 4, ruling T12-R4).
+    #[serde(default)]
+    pub count_turn: u32,
+    /// The open turn was interrupted by the stall watchdog: its end sends the queued
+    /// `stall_nudge` only, never the fallback, even after activity inside the grace
+    /// ended the grace (M8a.12 fix round 4, ruling T12-R4 on N3-1).
+    #[serde(default)]
+    pub interrupted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

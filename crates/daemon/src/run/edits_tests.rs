@@ -421,6 +421,8 @@ fn open_round() -> AgentRound {
         count_op: None,
         count_failures: 0,
         count_retry_at: None,
+        count_turn: 0,
+        interrupted: false,
     }
 }
 
