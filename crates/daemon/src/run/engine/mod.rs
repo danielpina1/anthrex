@@ -386,10 +386,10 @@ fn op_done(
         (OpKind::HandBack { .. }, Some(i)) => holds::handed_back(run, i, result, now, fx),
         (OpKind::AbortMerge { .. }, Some(i)) => holds::merge_aborted(run, i, result, now),
         (OpKind::RemoveWorktree { .. }, Some(i)) => dispatch::removed(run, i, result, now),
-        (OpKind::VerifyDone { .. }, Some(i)) => done::checked(run, i, result, now, fx),
-        (OpKind::CountCommits { .. }, Some(i)) => done::counted(run, i, result, now, fx),
+        (OpKind::VerifyDone { .. }, Some(i)) => done::checked(run, i, op, result, now, fx),
+        (OpKind::CountCommits { .. }, Some(i)) => done::counted(run, i, op, result, now, fx),
         (OpKind::DiffSoFar { .. }, Some(i)) => ladder::fresh_diff(run, i, result, now, fx),
-        (OpKind::ResumeSession { .. }, Some(i)) => outbox::resumed(run, i, result, now),
+        (OpKind::ResumeSession { .. }, Some(i)) => outbox::resumed(run, i, op, result, now),
         // The other kinds' results are handled by M8a.13 to M8a.15.
         _ => {}
     }

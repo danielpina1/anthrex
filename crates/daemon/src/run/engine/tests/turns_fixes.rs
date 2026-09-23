@@ -402,10 +402,10 @@ fn a_claim_follows_its_session_not_its_process() {
     assert_alive(&fx);
 }
 
-/// T12-I4: a claim rejected after its turn already ended runs the turn-end fallback,
-/// so the task is not left with nothing pending.
+/// T12-I4, as ruling T12-N2 revised it: a claim rejected after its turn already ended
+/// is the worker's next turn, so the task is not left with nothing pending.
 #[test]
-fn a_late_rejection_runs_the_fallback() {
+fn a_late_rejection_is_the_next_turn() {
     let (mut fx, window) = working_on(ROOMY);
     let effects = fx.tool(window, "task_done", args());
     let (verify, _) = ops_in(&effects, "VerifyDone")[0].clone();
@@ -420,6 +420,9 @@ fn a_late_rejection_runs_the_fallback() {
     }
     let effects = fx.done(verify, result);
     assert!(replies(&effects)[0].is_err());
-    assert_eq!(ops_in(&effects, "CountCommits").len(), 1, "{effects:#?}");
+    assert!(ops_in(&effects, "CountCommits").is_empty(), "{effects:#?}");
+    let turns = delivers(&effects);
+    assert_eq!(turns.len(), 1, "{effects:#?}");
+    assert!(turns[0].starts_with("[anthrex] task_done rejected: the tracked tree"));
     assert_alive(&fx);
 }

@@ -246,13 +246,15 @@ fn launch(
     if window_limit_reached(run, i, now) {
         return;
     }
-    // Ruling T12-I1: a new round ends any claim of an earlier one.
+    // Ruling T12-I1: a new round ends any claim of an earlier one, and (ruling T12-N)
+    // every op the earlier ones awaited.
     done::drop_claim(
         run,
         i,
         "this session was replaced; its task_done no longer applies",
         fx,
     );
+    ladder::supersede(run, i);
     let op = next_op(run);
     if let Some(start) = start {
         run.tasks[i].start_commit = Some(start);
@@ -345,6 +347,8 @@ fn new_round(
         fallback_waiting: false,
         carried: Vec::new(),
         failed_error: None,
+        resume_op: None,
+        count_op: None,
     }
 }
 

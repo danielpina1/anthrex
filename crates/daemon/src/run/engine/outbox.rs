@@ -11,7 +11,7 @@ use proto::{AgentRole, BlockReason, TaskState};
 
 use super::dispatch::{block, history};
 use super::signals::end_round;
-use super::{Effect, OpKind, OpResult, emit_op, next_op};
+use super::{Effect, OpId, OpKind, OpResult, emit_op, next_op};
 use crate::run::messages::{DELIVERY_MAX_FAILURES, DELIVERY_RETRY_SECS, join_turn};
 use crate::run::model::{FailedTurn, FreshSession, Outgoing, Run, StallState};
 use crate::run::role_launch::jitter_ms;
@@ -130,6 +130,7 @@ pub(super) fn deliver(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 jitter_ms: jitter_ms(&run.id, &task_id, session),
             };
             let op = next_op(run);
+            run.tasks[i].rounds[r].resume_op = Some(op);
             emit_op(run, op, Some(&task_id), kind, fx);
             continue;
         }
@@ -145,7 +146,8 @@ pub(super) fn deliver(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 /// `Event::Delivered`: a delivered batch leaves the outbox; a failed one is queued again
 /// with its turn closed and retried `DELIVERY_RETRY_SECS` later (decision 29; review
 /// minor 6), and the `DELIVERY_MAX_FAILURES`th failure in a row blocks the task as
-/// `blocked(environment)`.
+/// `blocked(environment)`. A superseded session's messages have left the outbox
+/// (ruling T12-N), so its delivery's result finds nothing and changes nothing.
 pub(super) fn delivered(
     run: &mut Run,
     message_ids: &[u64],
@@ -205,18 +207,20 @@ fn accumulate(fresh: &mut FreshSession, texts: Vec<String>) {
 
 /// A `ResumeSession`'s result (decisions 28, 29, 32). Resumed: the messages it carried
 /// are delivered. Failed: the task gets a fresh session at the same rung, with no
-/// failure counted, whose prompt ends with those messages.
-pub(super) fn resumed(run: &mut Run, i: usize, result: OpResult, now: u64) {
+/// failure counted, whose prompt ends with those messages. Only the round that awaits
+/// this resume takes its result (ruling T12-N).
+pub(super) fn resumed(run: &mut Run, i: usize, op: OpId, result: OpResult, now: u64) {
     if run.tasks[i].state.is_finished() {
         return;
     }
     let Some(r) = run.tasks[i]
         .rounds
         .iter()
-        .rposition(|r| r.role == AgentRole::Worker)
+        .rposition(|r| r.role == AgentRole::Worker && r.resume_op == Some(op))
     else {
         return;
     };
+    run.tasks[i].rounds[r].resume_op = None;
     let carried = std::mem::take(&mut run.tasks[i].rounds[r].carried);
     let texts: Vec<String> = run
         .outbox

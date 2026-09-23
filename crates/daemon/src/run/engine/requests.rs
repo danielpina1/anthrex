@@ -253,6 +253,7 @@ pub(super) fn restore(state: &mut EngineState, runs: Vec<Run>, now: u64) {
                 if round.fallback == crate::run::model::FallbackState::Counting {
                     round.fallback = crate::run::model::FallbackState::None;
                 }
+                round.count_op = None;
             }
         }
         if run.state == RunState::Running {

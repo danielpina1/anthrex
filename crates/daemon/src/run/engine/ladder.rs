@@ -29,7 +29,7 @@ pub(super) fn live(round: &AgentRound) -> bool {
 }
 
 /// Kills every live worker session of task `i` (decision 38, rungs 2 to 4), ending its
-/// claim (ruling T12-I1).
+/// claim (ruling T12-I1) and every op its sessions awaited (ruling T12-N).
 pub(super) fn kill_worker(run: &mut Run, i: usize, fx: &mut Vec<Effect>) {
     done::drop_claim(
         run,
@@ -37,6 +37,7 @@ pub(super) fn kill_worker(run: &mut Run, i: usize, fx: &mut Vec<Effect>) {
         "this session is being stopped; its task_done no longer applies",
         fx,
     );
+    supersede(run, i);
     for round in run.tasks[i]
         .rounds
         .iter_mut()
@@ -47,6 +48,24 @@ pub(super) fn kill_worker(run: &mut Run, i: usize, fx: &mut Vec<Effect>) {
             fx.push(Effect::KillWindow { window_id });
         }
     }
+}
+
+/// Ruling T12-N: task `i`'s worker sessions so far are superseded. The results of the
+/// ops they awaited (a resume, a commit count) are dropped when they come, and the
+/// messages in flight to them (a `Deliver`'s or a resume's) leave the outbox, so their
+/// `Delivered` finds nothing either.
+pub(super) fn supersede(run: &mut Run, i: usize) {
+    for round in run.tasks[i]
+        .rounds
+        .iter_mut()
+        .filter(|r| r.role == AgentRole::Worker)
+    {
+        round.resume_op = None;
+        round.count_op = None;
+    }
+    let id = run.tasks[i].id().to_string();
+    run.outbox
+        .retain(|m| m.task_id != id || m.delivered_at.is_none());
 }
 
 /// Undelivered messages to task `i`'s worker are dropped when its session is replaced

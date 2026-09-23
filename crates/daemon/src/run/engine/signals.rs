@@ -150,10 +150,8 @@ fn check_denials(run: &mut Run, i: usize, r: usize, now: u64, fx: &mut Vec<Effec
     if run.tasks[i].state != TaskState::Working || round.denials < run.limits.denials_before_block {
         return false;
     }
-    let last = round
-        .last_denial
-        .clone()
-        .unwrap_or_else(|| "a tool: reported in the turn's permission_denials".to_string());
+    // Every denial counted recorded itself as the latest (ruling T12-later).
+    let last = round.last_denial.clone().unwrap_or_default();
     let (tool, reason) = last.split_once(": ").unwrap_or((&last, ""));
     let text = denied_text(round.denials, tool, reason);
     kill_worker(run, i, fx);
@@ -320,12 +318,25 @@ fn exited(run: &mut Run, i: usize, r: usize, killed: bool, now: u64, fx: &mut Ve
     // Ruling T12-I2: an exit while an interrupt is pending is the interrupted turn's end
     // (a Codex interrupt is a `ProcessExited` with no `TurnEnded`, M8a.1), not a death:
     // the queued `stall_nudge` goes next, as a delivery (Codex spawns `exec resume`) or,
-    // for Claude, a resume of the ended round. The grace is over.
+    // for Claude, a resume of the ended round. The grace is over. A turn interrupted
+    // before its session had an id (only Codex's can be: Claude's id is set at launch)
+    // has nothing to resume: rung 2, with the nudge at the end of the fresh session's
+    // prompt (ruling T12-later).
     if !killed
         && working
         && round.turn_open
         && matches!(round.stall, StallState::Interrupted { .. })
     {
+        if round.session_id.is_none() {
+            end_round(round, now);
+            let reason = "its turn was interrupted before its session had an id".to_string();
+            ladder::rung2(run, i, reason, now, fx);
+            let nudge = stall_nudge(run.limits.stall_after_secs / 60);
+            if let Some(fresh) = run.tasks[i].fresh_session.as_mut() {
+                fresh.append = Some(nudge);
+            }
+            return;
+        }
         round.stall = StallState::Nudged;
         round.turn_open = false;
         if round.route.runtime != Runtime::Codex {
@@ -369,6 +380,7 @@ fn exited(run: &mut Run, i: usize, r: usize, killed: bool, now: u64, fx: &mut Ve
         jitter_ms: jitter_ms(&run.id, &id, session),
     };
     let op = next_op(run);
+    run.tasks[i].rounds[r].resume_op = Some(op);
     emit_op(run, op, Some(&id), kind, fx);
     history(
         run,
@@ -421,7 +433,8 @@ pub(super) fn watch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             continue;
         }
         let round = &run.tasks[i].rounds[r];
-        if !round.turn_open {
+        // Ruling T12-later: no stall while the worker's `task_done` is being checked.
+        if !round.turn_open || run.tasks[i].claim.is_some() {
             continue;
         }
         let stall_after = run.limits.stall_after_secs;

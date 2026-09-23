@@ -4930,3 +4930,147 @@ The minors' tests, and the denial test moved out of `turns.rs` for size, are in 
 - `cargo test -p anthrex-daemon` passes: 34 binaries, 683 unit tests.
 - No file passes 600 lines. `tests/turns.rs` is 558 lines, `turns_fixes.rs` 425 and
   `turns_minors.rs` 275.
+
+### M8a.12 fix round 2 (2026-09-23)
+
+The re-review (`.superpowers/sdd/M8a-orchestration-engine-core/task-12-rereview-1.md`)
+confirmed I-2, I-3 and every minor. It found N-1, N-2 and N-3 (Important) and N-4
+(Minor). Rulings T12-N, T12-N2, T12-N4 and T12-later apply. The probes became regression
+tests in the new `engine/tests/turns_ops.rs`, and each failed first.
+
+**N-1 and N-3: every op result is matched to the op the engine awaits (ruling T12-N).**
+
+- **What the engine awaits is recorded.** All the new fields are `#[serde(default)]`:
+  - `PendingClaim.op` is the claim's `VerifyDone`.
+  - `AgentRound.resume_op` is set by both `ResumeSession` sources: a delivery to an
+    ended round, and a mid-turn exit.
+  - `AgentRound.count_op` is the turn-end fallback's `CountCommits`.
+- **The handlers take the op id.** `op_done` passes it to `done::checked`,
+  `done::counted` and `outbox::resumed`.
+  - `checked` settles a claim only with its own op's result.
+  - `counted` counts only for the current worker round's awaited count.
+  - `resumed` takes only the round that awaits that resume. It no longer takes the
+    latest worker round.
+  - Anything else is dropped without a reply, since the claim it belonged to was
+    already answered by `drop_claim`.
+- **Supersession ends the waiting.** `ladder::supersede` runs in `kill_worker` (rungs 2
+  to 4, the denial and sandbox blocks) and at every new worker round
+  (`dispatch::launch`). It clears every worker round's `resume_op` and `count_op`, and
+  removes the task's in-flight messages from the outbox. Those are a `Deliver`'s and a
+  resume's.
+- **`Delivered` is matched through the outbox.** It has no op id; its message ids are
+  its correlation. A superseded session's messages have left the outbox, so its
+  `Delivered` finds no task and changes nothing.
+  - An `AgentRound.delivering` field was tried and removed: `delivered` already finds
+    its task through the outbox, so that field's guard was a surviving mutant.
+- **The fallback's guard is now the round's `count_op`**, not any `CountCommits` of the
+  task in flight. A replaced session's count no longer holds up the fresh session's
+  fallback.
+- **Restore clears `count_op`** along with `Counting`, so the next turn end counts
+  again.
+- **`DiffSoFar` is not session-scoped and was left as it is.** It belongs to the fresh
+  session still to start. `fresh_due` and its op-in-flight guard already drop a result
+  that is no longer due, and only one can be in flight per task. `CreateWindow` was
+  already matched by `launch_op`.
+- Tests:
+  - `a_stale_verify_result_leaves_the_fresh_sessions_claim_pending` (probe P1);
+  - `a_stale_rejection_is_not_the_fresh_sessions` (P1b);
+  - `a_stale_resume_failure_leaves_the_fresh_session_live` (P2: one live session, no
+    second fresh one, and the fresh window's tools are still answered);
+  - `a_stale_resumed_leaves_the_fresh_resumes_messages` (P2b);
+  - `a_stale_count_neither_blocks_nor_nudges_the_fresh_session`;
+  - `a_stale_delivery_failure_leaves_the_fresh_session_alone`;
+  - `results_between_the_kill_and_the_fresh_session_are_dropped`;
+  - `a_dead_sessions_late_delivery_failure_leaves_the_fresh_session_alone`;
+  - `one_count_at_a_time`, `a_failed_resume_after_a_mid_turn_exit_starts_a_fresh_session`
+    and `a_restore_awaits_no_count`.
+
+**N-2: a late verdict re-engages the worker (ruling T12-N2).**
+
+- `done::reengage` replaces fix round 1's `after_rejection`. For an explicit claim, a
+  rejection, a check that could not run, or a rung-1 bounce reaches the worker as its
+  next turn when the claiming turn is no longer open. The text is prefixed
+  `[anthrex] ` unless it already is.
+- `deliver` sends that turn: a `Deliver` to a live round, or a `ResumeSession` to a
+  Claude round whose process ended. Within the open turn, the tool reply alone
+  suffices.
+- **Deviation from fix round 1.** A rejection after the turn ended no longer runs the
+  turn-end fallback. The re-engaged turn ends normally, and its fallback runs then.
+  `turns_fixes::a_late_rejection_runs_the_fallback` became
+  `a_late_rejection_is_the_next_turn`.
+- Tests, one per reviewer case, each ending with `assert_alive`:
+  - `a_rejection_after_the_process_exited_resumes_with_it` (case a);
+  - `a_bounce_after_the_turn_is_the_next_turn` (case b, delivered exactly once);
+  - `a_bounce_after_the_process_exited_resumes_with_it` (case c);
+  - `a_failed_check_after_the_process_exited_resumes_with_it` (case d);
+  - `a_rejection_in_the_open_turn_is_only_the_reply` pins the open-turn case.
+
+**N-4: a rejected fallback claim sends only its rejection (ruling T12-N4).**
+
+- The fallback's claim has no tool call. Its rejection or bounce text is queued once,
+  and nothing else follows it: no second count and no `DONE_NUDGE`.
+- Test: `a_rejected_fallback_claim_sends_only_the_rejection` (probe P3). The turn is
+  exactly the rejection text.
+
+**T12-later.**
+
+- **The stall clock waits for a `task_done` check.** `watch` skips the stall check
+  while the task has a claim in flight. The verdict restarts the clock
+  (`last_event = now`) for the worker round. Test:
+  `the_stall_clock_waits_for_a_task_done_check`.
+- **A turn interrupted before its session has an id is rung 2.** Only a Codex turn can
+  be, since Claude's id is set at launch. Its exit ends the round and calls
+  `ladder::rung2`: the route escalates and no failure is counted. The fresh session's
+  `append` is `stall_nudge`, so the hand-over prompt ends with the nudge.
+  - The check is on the missing id, not on the runtime. A Claude round without an id
+    would otherwise be ended with nothing able to resume it.
+  - Test: `a_codex_interrupt_before_its_session_id_is_rung_two` (probe P4).
+- **The unreachable denial fallback text is gone.** Every counted denial records itself
+  in `last_denial`, so `check_denials` uses `unwrap_or_default`.
+- **Carry for M8a.15:** `run retry` must clear a pending `fresh_session` (and its
+  `append`), along with the rung it resets.
+
+**TDD and mutation evidence.**
+
+- **The red run.** The 14 probe tests were written first, and the run gave
+  `1 passed; 13 failed`. Each failed on its key assertion:
+  - P1 and P1b: the stale result replied to the fresh claim;
+  - P2: the fresh round ended and retired;
+  - P2b: `left: [] right: [2]`, the carried messages taken;
+  - the stale count: no `CountCommits` for the fresh session;
+  - the stale delivery: the fresh round's turn closed;
+  - cases a, c and d: no `ResumeSession`;
+  - case b: no delivery;
+  - P3: a second `CountCommits`;
+  - the stall pause: an `Interrupt` during the check;
+  - P4: a `Deliver` to the Codex window.
+- `a_rejection_in_the_open_turn_is_only_the_reply` passed at red. It pins behaviour
+  that was already right.
+- **The first mutation run: 29 mutants, 17 killed.** Of the 12 survivors, four went
+  with design changes. G4, G15 and G17 guarded the removed `delivering` field. H11 was
+  the runtime check, which became the id check. The run also showed that six guards had
+  no test. They were `supersede` in `kill_worker` and in `launch`,
+  `supersede` clearing `count_op`, the fallback's `count_op` guard, the mid-turn
+  exit's `resume_op`, and restore's `count_op`. Five tests were added for them, each
+  failing on its mutant:
+  - `results_between_the_kill_and_the_fresh_session_are_dropped`;
+  - `a_dead_sessions_late_delivery_failure_leaves_the_fresh_session_alone`;
+  - `one_count_at_a_time`;
+  - `a_failed_resume_after_a_mid_turn_exit_starts_a_fresh_session`;
+  - `a_restore_awaits_no_count`.
+- The N-4 and case b and c tests were tightened to exact texts. That kills a `told`
+  bypass and a doubled `[anthrex]` prefix.
+- **The second run: 26 mutants, 24 killed.** The two survivors are equivalent:
+  - `resumed` clearing `resume_op`: the pending op is already removed, so no second
+    result can come. It is kept so the field states what is awaited, for M8a.15's
+    re-issue.
+  - `supersede` clearing `carried` was removed as redundant: the outbox removal covers
+    those messages, and a superseded round's `carried` is never read.
+
+**Gates.**
+
+- `cargo build --workspace --all-targets`, clippy with `-D warnings` and `cargo fmt
+  --all --check` are clean.
+- `cargo test -p anthrex-daemon` passes: 34 binaries, 702 unit tests.
+- No file passes 600 lines. `dispatch.rs` is 589 lines, `done.rs` 551 and
+  `tests/turns_ops.rs` 529.

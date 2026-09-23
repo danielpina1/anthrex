@@ -417,6 +417,8 @@ fn open_round() -> AgentRound {
         fallback_waiting: false,
         carried: Vec::new(),
         failed_error: None,
+        resume_op: None,
+        count_op: None,
     }
 }
 

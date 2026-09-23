@@ -209,6 +209,13 @@ pub struct AgentRound {
     /// The failed turn's error, for its `rate_limit_continue` (decision 32; M8a.12).
     #[serde(default)]
     pub failed_error: Option<String>,
+    /// The `ResumeSession` this round awaits; any other resume's result is dropped
+    /// (M8a.12 fix round 2, ruling T12-N).
+    #[serde(default)]
+    pub resume_op: Option<OpId>,
+    /// The turn-end fallback's `CountCommits` this round awaits (ruling T12-N).
+    #[serde(default)]
+    pub count_op: Option<OpId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -263,6 +270,10 @@ pub struct PendingClaim {
     /// live worker is dropped (M8a.12 fix round 1, ruling T12-I1).
     #[serde(default)]
     pub window_id: Option<u32>,
+    /// The claim's `VerifyDone`: only that op's result settles it (M8a.12 fix round 2,
+    /// ruling T12-N).
+    #[serde(default)]
+    pub op: Option<OpId>,
 }
 
 /// A fresh worker session the ladder (rung 2) or a failed resume has decided on,
