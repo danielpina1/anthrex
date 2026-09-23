@@ -2658,3 +2658,42 @@ collapsing one nested `if let` in `roster::escalate`) and `cargo fmt --all --che
 (clean, after one `cargo fmt --all` pass) all passed. `python3 scripts/pty-smoke.py`
 passed (`ALL SMOKE STAGES PASSED`); this task touches no daemon or PTY behaviour, so it
 exercises no new code path.
+
+### M8a.4 fix round 1 (2026-09-23)
+
+Per the coordinator's rulings on `task-4-review.md`'s findings 1 and 2:
+
+- **I1 (fix).** Added `intersection_compares_path_components_not_string_prefixes` to
+  `globs_tests.rs`, covering finding 1's exact construction (`crates/auth/**` vs
+  `crates/authz/**`, and `crates/auth` vs `crates/authz/x.rs`). Shown red by mutating
+  `intersects` to join each literal prefix into a string and compare with
+  `str::starts_with`; the real component-vector comparison was then restored and every
+  `run::globs` test passed. No production code changed.
+- **I2 (no code change, pinned).** Added
+  `pick_reviewer_prefers_a_stronger_model_over_the_authors_own` to `roster_tests.rs`,
+  finding 2's exact construction (a Claude-only roster spanning fast/standard/frontier,
+  a `standard` author at `ReviewLevel::Medium`) asserting the frontier model, not the
+  author's own. Shown red by mutating `pick_reviewer`'s same-runtime call to pass
+  `None` instead of `Some(&author.model)` for `exclude_model` (which lands on the
+  author's own `claude-sonnet-5` instead); the real call was restored and the test
+  passed. Why this reading and not the softer one finding 2 raises: decision 35 gives
+  the reviewer route three ranked cases — the other runtime, then the same runtime
+  "preferring a model different from the author's", then the same runtime's
+  highest-strength entry as a last resort — and reading "preferring" as a hard
+  exclusion is what keeps those three cases distinct rather than letting the second
+  case silently absorb the third's job whenever the author is on the roster's top
+  model at the required strength.
+- **Backslash (fix).** `validate_glob` now rejects any glob containing `\`, with the
+  message `must not contain \`, per finding 4 (globset's escape semantics on the
+  matching side disagree with the intersection side's plain string comparison for a
+  backslash). Added `globs_with_a_backslash_are_invalid` to `globs_tests.rs`, shown red
+  against the pre-fix `validate_glob` (no backslash rule), then green after adding the
+  `glob.contains('\\')` check.
+- **Left as they are**, per the ruling: the `names_literally` guard (finding 3) and
+  `literal_prefix("")` (the nit).
+
+Verification run 2026-09-23 (fix round 1): `cargo test -p anthrex-daemon --lib run::`
+(16 passed, 0 failed — the 13 from the original task plus the three added here),
+`cargo clippy --workspace --all-targets -- -D warnings` (clean) and `cargo fmt --all
+--check` (clean) all passed. `git status --porcelain` was empty after each mutation was
+restored via `git show HEAD:<path> > <path>`, and at the end of the round.

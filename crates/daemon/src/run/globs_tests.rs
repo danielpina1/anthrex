@@ -20,6 +20,16 @@ fn intersection_is_prefix_containment() {
     assert!(!any_intersect(&[], &[]));
 }
 
+/// Regression for review finding 1: `intersects` compares literal-prefix path
+/// *components*, not their joined string. `crates/auth` is a string-prefix of
+/// `crates/authz`, but `auth` and `authz` are different single path components, so
+/// these must not be reported as intersecting.
+#[test]
+fn intersection_compares_path_components_not_string_prefixes() {
+    assert!(!intersects("crates/auth/**", "crates/authz/**"));
+    assert!(!intersects("crates/auth", "crates/authz/x.rs"));
+}
+
 #[test]
 fn modules_spanned_cases() {
     let modules = s(&["crates/*"]);
@@ -70,6 +80,18 @@ fn absolute_and_parent_globs_are_invalid() {
     assert!(validate_glob("crates/../secret").is_err());
     assert!(validate_glob("   ").is_err());
     assert!(validate_glob("crates/proto/**").is_ok());
+}
+
+/// Review finding 4: a backslash makes `globset` treat the next character as escaped,
+/// so intersection (which never looks at an actual path) and matching disagree about
+/// what the glob means. Reject it outright, with a clear message.
+#[test]
+fn globs_with_a_backslash_are_invalid() {
+    let err = validate_glob(r"crates\auth").expect_err("backslash must be rejected");
+    assert!(
+        err.contains('\\'),
+        "message should mention the backslash: {err}"
+    );
 }
 
 #[test]

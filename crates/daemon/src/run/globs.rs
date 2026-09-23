@@ -134,7 +134,11 @@ pub fn inside_area(glob: &str, area: &[String]) -> bool {
     })
 }
 
-/// Not blank, not absolute, no `..` component. *(Decision 11.)*
+/// Not blank, not absolute, no `..` component, no `\`. *(Decision 11; the backslash
+/// rule is review finding 4: `globset` treats `\` as an escape character during
+/// matching, but the intersection side never looks at an actual path, so a glob
+/// containing one would mean two different things depending which half of this module
+/// reads it.)*
 pub fn validate_glob(glob: &str) -> Result<(), String> {
     if glob.trim().is_empty() {
         return Err("must not be blank".to_string());
@@ -144,6 +148,9 @@ pub fn validate_glob(glob: &str) -> Result<(), String> {
     }
     if glob.split('/').any(|component| component == "..") {
         return Err("must not contain ..".to_string());
+    }
+    if glob.contains('\\') {
+        return Err("must not contain \\".to_string());
     }
     Ok(())
 }
