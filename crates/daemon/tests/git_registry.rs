@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use daemon::git::probe::PROBE_TIMEOUT;
 use daemon::git::schedule::DEBOUNCE;
-use daemon::git::{GitRegistry, ProbeFn};
+use daemon::git::{ArmFn, GitRegistry, ProbeFn};
 
 /// The `[git]` settings these tests run on: the defaults, with `enabled` set. Milestone
 /// 6 replaced `GitRegistry::new`'s bare `enabled: bool` with the whole table, so
@@ -366,6 +366,14 @@ async fn unregistering_during_a_probe_publishes_nothing_afterwards() {
 /// This test pins that contract directly against the registry, independent of the
 /// server: two `register` calls must be undone by two `unregister` calls, and the root
 /// must keep probing after only one of them.
+///
+/// `harness.total` counts probes, and this test reads it as a count of tasks, so the
+/// watcher must not add a probe of its own. With a real watcher, a root task asks for
+/// one more probe as soon as its watcher arms (`run_root`, since PR #12). inotify arms
+/// in well under a millisecond, so on Linux that probe could start before the read
+/// below and make one task look like two. Ubuntu CI run 35831045650 failed that way
+/// (`left: 2`). The watcher here fails to arm instead, which leaves the root on its
+/// poll alone. `git_registry_arming.rs` tests the arming path itself.
 #[tokio::test(start_paused = true)]
 async fn a_root_survives_until_every_registration_is_released() {
     let dir = tempdir().unwrap();
@@ -376,7 +384,10 @@ async fn a_root_survives_until_every_registration_is_released() {
         starts: _starts,
     } = scripted(vec![Some(state(0))]);
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let registry = GitRegistry::with_probe(git_settings(true), tx, probe);
+    let never_arms: ArmFn = Arc::new(|_root, _ignore, _events| {
+        Err(notify::Error::generic("this test runs on the poll alone"))
+    });
+    let registry = GitRegistry::with_seams(git_settings(true), tx, probe, never_arms);
 
     registry.register(root.clone());
     registry.register(root.clone());
@@ -405,6 +416,10 @@ async fn a_root_survives_until_every_registration_is_released() {
         registry.snapshot().is_empty(),
         "the second unregister must be the one that actually tears the root down"
     );
+    // Read the count only after a settling window, as `unregistering_stops_the_probes`
+    // does. A poll due at the very end of the window above may have started its probe
+    // without having counted it yet.
+    expect_no_publication(&mut rx, LONG).await;
     let after_last_unregister = harness.total.load(Ordering::SeqCst);
     expect_no_publication(&mut rx, LONG).await;
     assert_eq!(

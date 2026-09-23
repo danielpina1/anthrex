@@ -50,6 +50,10 @@ DATA_DIR = tempfile.mkdtemp(prefix="anthrex-smoke-", dir="/tmp")
 SOCKET = os.path.join(DATA_DIR, "daemon.sock")
 FAKE_AGENT_SCRIPT = os.path.join(DATA_DIR, "fake-agent.jsonl")
 ROWS, COLS = 40, 120
+# The new-agent form's top border: its rounded corner and padded title
+# (`crates/tui/src/ui/dialog.rs`, `render_new_agent`). The help overlay's "new agent"
+# line has no corner before it.
+NEW_AGENT_FORM_TITLE = "╭ new agent "
 # W1 and W2 (the worktree stages) create linked checkouts against this repository.
 # Fixed rather than a `tempfile.mkdtemp`, per the acceptance check that
 # `/tmp/anthrex-smoke-repo-*` is gone once the script finishes.
@@ -398,11 +402,27 @@ class PtyProc:
         fail(f"timed out waiting for {label or text!r}\n--- rendered screen ---\n{self.screen_text()}")
 
     def wait_for_focused_window(self, name, timeout=10.0):
-        """Wait until `name` is the main pane, not merely a sidebar row."""
-        self.wait_for(
-            f"{name} · shell",
-            timeout=timeout,
-            label=f"{name} focused main-pane title",
+        """Wait until `name` is the main pane, not merely a sidebar row, and the
+        new-agent form is closed, so that the next keys reach the window.
+
+        The title alone is not enough. A client with nothing focused focuses the
+        first window a `WindowsChanged` lists, and the daemon can send that
+        `WindowsChanged` before the `Created` reply that closes the form
+        (`crates/tui/src/app/windows.rs`, `crates/tui/src/app/daemon.rs`). In that
+        gap the title is on screen while the form, still submitting, swallows
+        every key. Ubuntu CI run 35792210390 typed `echo smoke-$((40+2))` into
+        that gap and the shell ran `cho smoke-42`.
+        """
+        title = f"{name} · shell"
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            screen = self.screen_text()
+            if title in screen and NEW_AGENT_FORM_TITLE not in screen:
+                return
+            self.read_available(timeout=0.2)
+        fail(
+            f"timed out waiting for {name} focused with the new-agent form closed\n"
+            f"--- rendered screen ---\n{self.screen_text()}"
         )
 
     def send(self, data: bytes):
