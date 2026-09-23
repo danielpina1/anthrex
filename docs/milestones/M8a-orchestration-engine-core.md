@@ -2940,7 +2940,8 @@ Coordinator rulings on `task-6-review.md`, findings F1–F9:
 - **F1 (fix, Critical).** An amend never lowers a task below an engine raise. `reresolve`
   resolves the **unamended** spec to find the plan's part. Anything the task holds
   beyond it belongs to the engine:
-  - A size larger than the planned one (rung 3) is a floor, and the amended spec is
+  - A size larger than the planned one (rung 3) is a floor (superseded by fix round 2,
+    N1: the floor is now the recorded `Task.raised_size`, not inferred), and the amended spec is
     resolved at `max(spec size, floor)`. So an amend of route, `test_mode` or
     `test_mode_reason` alone on a rung-3 L task still meets rule 7.2.4. An explicit
     smaller `size` does not lower the floor either: a rung-3 L task can only be split
@@ -3043,3 +3044,73 @@ mutations were run, and each one turned at least one test red:
 
 Each mutation was restored with `git show HEAD:<path> > <path>` from a WIP commit, which
 was folded into the fix commit afterwards.
+
+### M8a.6 fix round 2 (2026-09-23)
+
+Coordinator rulings on `task-6-rereview.md`:
+
+- **N1 / F1 (fix, Critical).** The rung-3 floor is no longer inferred by comparing
+  `Task.size` with what `spec.size` resolves to. That inference was lost after
+  `[size=L, size=S]` in one batch or across two, because the first amend makes the spec
+  agree with the raise. `model::Task` gains `raised_size: Option<Size>`
+  (`#[serde(default)]`, `None` from `resolve_task`). **M8a.12's rung-3 action must set
+  it** to the raised size. Every re-resolving amend resolves at
+  `max(amended spec.size, raised_size)`, and `spec.size` keeps what the amend asked for.
+  The route and note inference (planned versus held) is unchanged: an amend naming
+  `route` replaces it, and a later amend then sees the named route as planned.
+
+  Tests: `a_rung3_l_task_cannot_be_lowered_by_two_amends` covers:
+  - one batch;
+  - two batches, the first of which the L rule refuses, so nothing changes;
+  - a task whose spec already says L.
+
+  `a_rung3_m_task_cannot_be_lowered_by_two_amends` covers one batch and two applied
+  batches. The rung-3 fixtures now set `raised_size`.
+- **N2 (fix).** After the implicit recompute, `requeue_waiting` returns each `queued`
+  task to `pending` when:
+  - a declared dependency is not `merged`, or
+  - an implicit dependency is neither `merged` nor `cancelled` (decision 41's release).
+
+  This replaces `add_dep`'s own check. Tests:
+  - `a_split_child_returns_an_overlapping_queued_task_to_pending` is the reviewer's split
+    case, plus a queued task the edit leaves runnable, which stays queued.
+  - `add_dep_returns_a_queued_task_to_pending` is kept.
+- **N3 (pinning tests).** Each surviving mutant is now killed:
+  - `review_route` is re-picked for a kept escalated route. `an_escalated_route_survives_a_test_mode_amend`
+    now escalates to the Codex peer, as decision 39 does at effort high, so the reviewer
+    for the kept route (Claude) differs from the planned one (Codex).
+  - `new_tasks_on_a_cancelled_dependency_are_rejected`: `add_task` and split-child deps
+    are recorded as added.
+  - `a_blocked_task_with_a_start_commit_counts_as_started`: both directions of
+    `has_started`'s blocked clause.
+  - `two_started_tasks_never_wait_for_each_other`.
+- **N4 (recorded, for M8a.11 and M9).** Two known cases, both harmless today:
+  - **The implicit-dep reachability skip also follows declared edges through inactive
+    (cancelled) tasks.** For example, `t4 -> t3 (cancelled) -> t5` suppresses the
+    overlap wait between `t4` and `t5`. Today `t4` is then `blocked(dep_cancelled)` and
+    can never run, so this does no harm. If M9 adds `remove_dep`, that edit must
+    recompute implicit deps, which `apply_edits` already does after every batch.
+  - **A started `blocked` task may declare, through `add_dep`, a dependency on an
+    unstarted task it overlaps.** No implicit wait is then added in either direction,
+    because that would be a deadlock. The unstarted task may run while the blocked
+    task's worktree holds overlapping work: a merge-conflict risk, not a deadlock.
+    M8a.11's merge queue handles the conflict.
+  - M8a.11 must also decide whether a pre-warmed task that blocks in `setup` has
+    `start_commit` set (and so counts as started) or not.
+
+Red first: with the new tests added and only the `raised_size` field plumbed in, the
+run gave `31 passed; 3 failed`: the two two-amend tests and the queued split test. The
+N3 pinning tests passed against the existing code. Each was then shown to kill its
+mutant, restored with `git show HEAD:<path> > <path>` from a WIP commit that was folded
+away afterwards:
+- `review_route_resolved`;
+- `add_task_deps_not_recorded`;
+- `split_deps_not_recorded`;
+- `blocked_not_started`;
+- `blocked_always_started`;
+- `both_started_plan_order`.
+
+The fixes were checked the same way against their own mutants:
+- the floor inferred again;
+- no requeue;
+- the requeue's implicit clause ignored.

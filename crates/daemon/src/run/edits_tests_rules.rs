@@ -158,6 +158,7 @@ fn an_untouched_rung3_l_task_does_not_block_other_edits() {
     );
     run.tasks[0].size = Size::L;
     run.tasks[0].rung = 3;
+    run.tasks[0].raised_size = Some(Size::L);
     set_state(&mut run, "t3", TaskState::Working, None);
 
     let (_, consequences) = applied(&run, vec![answer("t3", "carry on")]);

@@ -239,6 +239,10 @@ pub struct Task {
     pub state: TaskState,
     pub block: Option<BlockInfo>,
     pub rung: u8,
+    /// The size rung 3 raised the task to (decision 38), set by the engine when it
+    /// raises. An amend never leaves the task below it (M8a.6 fix round 2).
+    #[serde(default)]
+    pub raised_size: Option<Size>,
     pub failures: u8,
     pub bounces: GateCounts,
     pub stalls: u8,

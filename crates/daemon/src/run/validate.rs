@@ -416,6 +416,7 @@ fn new_task(
         state: TaskState::Pending,
         block: None,
         rung: 0,
+        raised_size: None,
         failures: 0,
         bounces: Default::default(),
         stalls: 0,

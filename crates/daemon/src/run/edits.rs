@@ -82,6 +82,7 @@ pub fn apply_edits(
     for (task, deps) in edited.tasks.iter_mut().zip(implicit) {
         task.implicit_deps = deps;
     }
+    requeue_waiting(&mut edited);
     if errors.is_empty() {
         errors.extend(combined_cycles(&edited.tasks));
     }
@@ -89,6 +90,33 @@ pub fn apply_edits(
         Ok((edited, consequences))
     } else {
         Err(errors)
+    }
+}
+
+/// Decision 31: `queued` means runnable. After a batch, a queued task that waits for a
+/// declared dependency that is not merged, or an implicit one that is neither merged
+/// nor cancelled (decision 41), goes back to `pending` (`add_dep`, and implicit
+/// dependencies gained through a split or an added task, fix round 2, N2).
+fn requeue_waiting(run: &mut Run) {
+    let state_of = |tasks: &[Task], id: &str| tasks.iter().find(|t| t.id() == id).map(|t| t.state);
+    let waiting: Vec<usize> = run
+        .tasks
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.state == TaskState::Queued)
+        .filter(|(_, t)| {
+            t.spec
+                .deps
+                .iter()
+                .any(|d| state_of(&run.tasks, d) != Some(TaskState::Merged))
+                || t.implicit_deps
+                    .iter()
+                    .any(|d| state_of(&run.tasks, d).is_some_and(|s| !s.is_finished()))
+        })
+        .map(|(i, _)| i)
+        .collect();
+    for i in waiting {
+        run.tasks[i].state = TaskState::Pending;
     }
 }
 
@@ -446,11 +474,8 @@ impl Batch {
             &run.roster,
             run.limits.default_runtime,
         );
-        let floor = if old.size > planned.size {
-            old.size
-        } else {
-            Size::S
-        };
+        // The recorded rung-3 raise, never a guess from the spec (fix round 2, N1).
+        let floor = old.raised_size.unwrap_or(Size::S);
         let escalated = (old.route != planned.route).then(|| old.route.clone());
         let engine_notes: Vec<String> = old
             .notes
@@ -493,17 +518,9 @@ impl Batch {
                 "dependencies can be added only on pending, queued or blocked tasks",
             );
         }
-        let dep_merged = self
-            .run
-            .task(dep)
-            .is_some_and(|d| d.state == TaskState::Merged);
         let task = &mut self.run.tasks[i];
         if !task.spec.deps.iter().any(|d| d == dep) {
             task.spec.deps.push(dep.to_string());
-        }
-        // A queued task is runnable; one that now waits for unmerged work is not.
-        if task.state == TaskState::Queued && !dep_merged {
-            task.state = TaskState::Pending;
         }
         self.touched.insert(id.to_string());
         self.added_deps.insert((id.to_string(), dep.to_string()));
