@@ -3,10 +3,10 @@
 
 use super::*;
 
-/// The title's first cells after the corner and its rule.
+/// The title's first cells after the corner and its rule, unicode or ASCII.
 fn title_start(buf: &Buffer) -> String {
     row_text(buf, 0)
-        .trim_start_matches(['╭', '─', ' '])
+        .trim_start_matches(['╭', '─', '+', '-', ' '])
         .to_owned()
 }
 
@@ -152,7 +152,7 @@ fn ascii_mode_uses_no_box_drawing_glyphs() {
         "{out}"
     );
     assert!(
-        out.contains("! transcript unreadable — timeline only"),
+        out.contains("! transcript unreadable - timeline only"),
         "{out}"
     );
     assert!(out.contains("v Read  read lib.rs"), "{out}");
@@ -160,9 +160,9 @@ fn ascii_mode_uses_no_box_drawing_glyphs() {
     assert!(out.contains("> Write  wrote out.rs"), "{out}");
     assert!(out.contains("x 0.2s"), "{out}");
     let bash = out.lines().find(|l| l.contains("rm -rf target")).unwrap();
-    assert!(bash.trim_end_matches(['│', ' ']).ends_with(" -"), "{bash}");
+    assert!(bash.trim_end_matches(['|', ' ']).ends_with(" -"), "{bash}");
     assert!(out.contains("! needs approval for Bash"), "{out}");
-    assert!(out.contains("* spawned  Explore · Deeper"), "{out}");
+    assert!(out.contains("* spawned  Explore - Deeper"), "{out}");
     assert!(
         out.contains("... truncated (conversation.max_result_bytes)"),
         "{out}"
@@ -185,4 +185,63 @@ fn the_border_uses_the_focused_accent() {
     for (x, y) in [(0, 0), (0, 5), (59, 5), (30, 11), (59, 11)] {
         assert_eq!(Some(buf[(x, y)].fg), expected, "cell ({x}, {y})");
     }
+}
+
+/// `main_conversation` with ASCII agent text, and summaries carrying the daemon's own
+/// punctuation (`summary.rs`: `—`, `·` and `…`) — so that everything left non-ASCII on
+/// screen could only be the view's own drawing.
+fn ascii_agent_text() -> Conversation {
+    let mut conv = main_conversation();
+    let Block::ToolCall { summary, .. } = &mut conv.turns[1].blocks[1] else {
+        unreachable!()
+    };
+    *summary = "crates/parse/src/lib.rs — 1 hunk".into();
+    let Block::ToolCall { summary, .. } = &mut conv.turns[1].blocks[3] else {
+        unreachable!()
+    };
+    *summary = "run the tests · cargo test -p pa…".into();
+    conv
+}
+
+fn non_ascii(out: &str) -> Vec<char> {
+    out.chars().filter(|c| !c.is_ascii()).collect()
+}
+
+/// Review M4 (decision A5): in ASCII mode the view draws nothing but ASCII — its border,
+/// its separators and footers, and the daemon's summary punctuation included. The fixture
+/// has no Pending call: the spinner is the one exception, left to a follow-up.
+#[test]
+fn ascii_mode_draws_only_ascii() {
+    let mut app = app_showing(
+        ascii_settings(),
+        Runtime::Claude,
+        80,
+        30,
+        ascii_agent_text(),
+    );
+    let root = text_of(&draw(&app, 80, 30));
+    assert_eq!(non_ascii(&root), Vec::<char>::new(), "{root}");
+    assert!(root.starts_with('+'), "{root}");
+    assert!(root.contains("orchestrator - claude-opus-5"), "{root}");
+    assert!(root.contains("crates/parse/src/lib.rs - 1 hunk"), "{root}");
+    assert!(
+        root.contains("run the tests - cargo test -p pa..."),
+        "{root}"
+    );
+    assert!(root.contains("* spawned  Explore - Explore"), "{root}");
+
+    every_glyph(&mut app);
+    let sub = text_of(&draw(&app, 80, 30));
+    assert_eq!(non_ascii(&sub), Vec::<char>::new(), "{sub}");
+    assert!(
+        sub.contains("! transcript unreadable - timeline only"),
+        "{sub}"
+    );
+    assert!(
+        sub.contains("! sub-agent transcript not read - timeline only"),
+        "{sub}"
+    );
+    let bottom = sub.lines().last().unwrap();
+    assert!(bottom.starts_with('+') && bottom.ends_with('+'), "{bottom}");
+    assert!(bottom.trim_matches(['+', '-']).is_empty(), "{bottom}");
 }

@@ -14,6 +14,7 @@ use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType};
 use std::collections::HashMap;
@@ -26,6 +27,13 @@ const DETAIL_INDENT: u16 = 6;
 /// The view's own glyphs, unicode or ASCII (decision A5 switches both together with the
 /// badges, so a screen is never half one and half the other).
 struct Glyphs {
+    /// Review M4: `None` draws the rounded unicode border.
+    border: Option<border::Set<'static>>,
+    /// Between the window's name and its model, and a spawn's kind and label.
+    sep: &'static str,
+    /// Whether `punct` folds the unicode punctuation in the view's own text and the
+    /// daemon's summaries (`—`, `·`, `…`) to ASCII.
+    ascii: bool,
     folded: &'static str,
     unfolded: &'static str,
     spawn: &'static str,
@@ -38,6 +46,9 @@ struct Glyphs {
 }
 
 const UNICODE: Glyphs = Glyphs {
+    border: None,
+    sep: "·",
+    ascii: false,
     folded: "▸",
     unfolded: "▾",
     spawn: "⟐",
@@ -50,6 +61,18 @@ const UNICODE: Glyphs = Glyphs {
 };
 
 const ASCII: Glyphs = Glyphs {
+    border: Some(border::Set {
+        top_left: "+",
+        top_right: "+",
+        bottom_left: "+",
+        bottom_right: "+",
+        vertical_left: "|",
+        vertical_right: "|",
+        horizontal_top: "-",
+        horizontal_bottom: "-",
+    }),
+    sep: "-",
+    ascii: true,
     folded: ">",
     unfolded: "v",
     spawn: "*",
@@ -60,6 +83,18 @@ const ASCII: Glyphs = Glyphs {
     failed: "x",
     denied: "-",
 };
+
+impl Glyphs {
+    /// Review M4: in ASCII mode, the punctuation the view's own footers and the daemon's
+    /// summaries (`crates/daemon/src/conversation/summary.rs`) use, as ASCII. Only these
+    /// three: the agent's own prose and names are its text, not the view's drawing.
+    fn punct(&self, text: &str) -> String {
+        if !self.ascii {
+            return text.to_owned();
+        }
+        text.replace(['—', '·'], "-").replace('…', "...")
+    }
+}
 
 /// Everything a row needs besides the row itself.
 struct Ctx<'a> {
@@ -103,13 +138,16 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(place, theme::title(app.settings.accent)),
     ];
     if let Some(model) = window.and_then(|w| w.model.as_deref()) {
-        title.push(Span::raw(format!(" · {}", clean(model))));
+        title.push(Span::raw(format!(" {} {}", glyphs.sep, clean(model))));
     }
     title.push(Span::raw(" "));
     let mut block = Block::bordered()
-        .border_type(BorderType::Rounded)
         .border_style(theme::border_focused(app.settings.accent))
         .title(Line::from(title));
+    block = match glyphs.border {
+        Some(set) => block.border_set(set),
+        None => block.border_type(BorderType::Rounded),
+    };
     if let Some(rev) = view.rev() {
         block = block.title(Line::from(format!(" rev {rev} ")).right_aligned());
     }
@@ -239,7 +277,10 @@ fn row_spans(ctx: &Ctx, row: &Row, user_turn: bool) -> (u16, Spans, Spans) {
                 return (TEXT_INDENT as u16, vec![], vec![]);
             };
             let (kind, label) = (clean(kind), clean(label));
-            let left = vec![Span::raw(format!("{} spawned  {kind} · {label}", g.spawn))];
+            let left = vec![Span::raw(format!(
+                "{} spawned  {kind} {} {label}",
+                g.spawn, g.sep
+            ))];
             let mut right = vec![badge(ctx.badge)];
             if let Some(model) = model {
                 right.push(Span::raw(format!(" {}", clean(model))));
@@ -255,11 +296,13 @@ fn row_spans(ctx: &Ctx, row: &Row, user_turn: bool) -> (u16, Spans, Spans) {
             (TEXT_INDENT as u16, vec![span], vec![])
         }
         Row::Degraded { reason } => {
-            let span = Span::styled(format!("{} {}", g.warn, reason.message()), attention);
+            let text = g.punct(reason.message());
+            let span = Span::styled(format!("{} {text}", g.warn), attention);
             (ROW_INDENT, vec![span], vec![])
         }
         Row::SubagentFooter => {
-            let span = Span::styled(format!("{} {SUBAGENT_FOOTER}", g.warn), attention);
+            let text = g.punct(SUBAGENT_FOOTER);
+            let span = Span::styled(format!("{} {text}", g.warn), attention);
             (ROW_INDENT, vec![span], vec![])
         }
     }
@@ -302,7 +345,7 @@ fn tool_spans(ctx: &Ctx, turn_id: u64, block: usize) -> (u16, Spans, Spans) {
     let left = vec![
         Span::raw(format!("{fold} ")),
         Span::styled(clean(name), Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(format!("  {}", clean(summary))),
+        Span::raw(format!("  {}", g.punct(&clean(summary)))),
     ];
     let (glyph, color) = match state {
         ToolState::Pending => (
