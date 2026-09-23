@@ -2697,3 +2697,91 @@ Verification run 2026-09-23 (fix round 1): `cargo test -p anthrex-daemon --lib r
 `cargo clippy --workspace --all-targets -- -D warnings` (clean) and `cargo fmt --all
 --check` (clean) all passed. `git status --porcelain` was empty after each mutation was
 restored via `git show HEAD:<path> > <path>`, and at the end of the round.
+
+### M8a.5 plan parsing, resolution and validation (2026-09-23)
+
+Implemented decisions 7–12, 15's slug and 56's plan warning in `run/plan.rs`,
+`run/validate.rs`, `run/validate_graph.rs`, `run/env.rs` and the rest of `run/model.rs`.
+Deviations and readings the brief left open:
+
+- **`validate.rs` is split by rule family.** Task resolution (decisions 8–10, 35's level,
+  56's warning) stays in `validate.rs`; the cross-task rules (count, ids, graph, L,
+  runtime overlap, area) and `implicit_deps` are in `validate_graph.rs`, re-exported from
+  `validate.rs` so the Interfaces paths hold. `validate_graph.rs` is pure and belongs in
+  decision 2's purity list beside `validate.rs`. Tests: `plan_tests.rs` +
+  `plan_tests_parse.rs`, `validate_tests.rs` + `validate_tests_fields.rs`, shared
+  fixtures in `run/test_support.rs` (`#[cfg(test)]`).
+- **Not yet in the model:** `PendingOp` and `Run.pending_ops`, because `PendingOp.kind`
+  is the engine's `OpKind` (M8a.11). M8a.11 adds both.
+- **`ClaudeAuth`** is mirrored in `run/model.rs` with serde (`From<config::ClaudeAuth>`):
+  `RunLimits` is persisted, and the config crate has no serde dependency.
+- **Rule ids.** The brief gives rule numbers only inside some messages. `PlanError.rule`
+  is that number where the message cites one (`7.2.4`, `8.1`, `9`, `12.1`), `8` for the
+  missing `test_mode_reason`, and otherwise a family: `fields` (blank goal, title,
+  brief, acceptance item; missing acceptance or owns), `id` (syntax, `integration`,
+  duplicates), `globs` (`owns`, `profile.generated`, `profile.protected` via
+  `validate_glob`), `kind` (decision 6), `range` (plan limits,
+  `profile.check_timeout_secs`, task budgets, `max_tasks`), `profile` (`single_test`,
+  `test_passed`, env keys), `route` (decision 8).
+- **Messages this task chose** (no text in the brief): `must be between <lo> and <hi>`
+  (as config's); `budget.<axis>: must be at least 1`; `profile.single_test: must contain
+  {test}`; `profile.test_passed: is not a valid regular expression: <regex error>` (the
+  pattern is compiled with `{test}` replaced by an escaped stand-in, since `{test}` is a
+  placeholder, not a repetition); `profile.env: key <k> must match
+  [A-Za-z_][A-Za-z0-9_]*`; `id: must match ^[a-z0-9][a-z0-9-]{0,15}$`; `id: integration is
+  reserved for the run branch`; `id: <id> is used by an earlier task` (on each later
+  duplicate); `deps: <dep> is not a task`; `tasks: <n> tasks exceed max_tasks (<max>)`;
+  `area: <glob> must be <literal>/** or a literal path`; `route.model: <m> is not in the
+  roster for <runtime>`; `route.strength: <m> is <s> in the roster, not <given>`;
+  `route: the roster has no <runtime> model at <strength> strength`; `route.runtime:
+  must be claude or codex`; the 7.2.2 note `size raised from <a> to L: owns spans <n>
+  modules and interface_change is set (rule 7.2.2)`; the 7.2.3 note `size raised from
+  <a> to M: owns touch the hub globs (rule 7.2.3)`. When one glob spans several modules
+  by itself, the 7.2.1 note says `owns spans more than one module` (no count exists).
+- **A hub Codex task with the built-in roster is an error** (`route: the roster has no
+  codex model at frontier strength`): decision 8 fills the model from "the first roster
+  entry for the runtime at the strength", and the built-in Codex entry is `standard`.
+  The planner must name `strength = "standard"` (or a model) for such a task.
+  Worth revisiting when M9's planner routes hub work to Codex.
+- **`test_mode_reason`** is required when the mode is `check` or `none` *and* differs
+  from the kind's default, so a `docs` task left at its default `none` needs none; an
+  explicit `check` on docs, or `check`/`none` on code, does. A hub code task forced to
+  `tdd` (8.2) skips both the reason and the 8.1 check.
+- **One review raise, not two.** A task gets one level up when any of: no `check`, a
+  non-`tdd` task touching `source`, or rule 8.3 turned it into `check`. An 8.3 task
+  touching `source` meets two of these and is still raised once.
+- **Decision 11's literal-prefix intersection** makes `source = ["crates/*/src/**"]`
+  touch everything under `crates/` (its prefix is `crates`), so the fixtures for "owns
+  outside source" use `scripts/…`. Behaviour as specified; noted because the fixtures
+  first used `crates/b/build.rs` and one test passed for the wrong reason.
+- **Rule scoping in `validate_tasks`:** every unfinished task is checked for ids,
+  unknown deps, cycles and runtime overlap; the L rule, the cancelled-dependency rule
+  and the area rule apply to `touched` tasks only (decision 13's exemption, and a
+  cancel must not make every later edit fail on the dependents it blocked).
+  `max_tasks` counts every task that is not cancelled. The `profile` parameter is
+  unused (`_profile`): the profile-dependent rules run per task in `resolve_task`.
+- **Implicit dependencies** (decision 41 at plan time) skip a pair where the earlier
+  task already depends, transitively through declared deps, on the later one — plan
+  order would otherwise deadlock them — and a pair the later task already declares
+  (`implicit_dep_never_contradicts_a_declared_one`).
+- **`build_run`** leaves the run in `awaiting_approval`; `ctx.yes` sets `approved_by =
+  Some("--yes")` and M8a.11's `Start` moves the run on. `BuildContext.data_dir` is the
+  run's own directory (`<data_dir>/runs/<id>`), matching `Run::report_path`.
+- **Bounds checked mechanically.** Limits: unit 1, bounds 1..=8, 1..=5 and 10..=14400;
+  the unit divides every bound, and each edge is accepted and each value one past it
+  rejected, one field at a time, with the three limits pairwise distinct in every
+  fixture. Budgets: unit 1, bound "at least 1": 0 rejected, 1 accepted. `max_tasks`:
+  unit 1 task, bound 3 (not the default 50): 3 build, 4 rejected. Id length: 16
+  accepted, 17 rejected. Slug: after mapping only ASCII survives, so the 32-character
+  cut is a 32-byte cut; tested with a 60-character goal whose cut lands mid-word
+  (`refactor-the-scheduler-loop-to-i`), one whose 32nd character ends a word (32
+  kept), and one whose 32nd character is `-` (trimmed to 31).
+- **TDD.** All 50 new tests were shown red against `todo!()` stubs of the public
+  signatures (`17 passed; 50 failed` — the 17 passing were M8a.4's). Mutations then
+  showed `implicit_dep_never_contradicts_a_declared_one`,
+  `tdd_without_single_test_becomes_check_and_raises_review` (after its fixture moved
+  outside `crates/`), the literal-name skip of the protected warning, and the
+  default-mode reason exemption each fail when their line is removed.
+- **Decision 2's grep** over `plan.rs`, `validate.rs`, `validate_graph.rs`, `env.rs` and
+  `model.rs` matches only each file's doc comment naming the forbidden APIs.
+  `random_suffix` draws from `std::collections::hash_map::RandomState`, no clock.

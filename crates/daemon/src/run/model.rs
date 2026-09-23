@@ -1,11 +1,18 @@
 //! Pure engine model types. No `std::fs`, `std::process`, `std::thread`, `tokio` or
 //! `std::time::SystemTime` — design decision 2.
 //!
-//! This task (M8a.4) adds only [`ReviewLevel`], because `roster::pick_reviewer` needs it
-//! before the rest of the model (`Profile`, `RunLimits`, `Task`, `Run`, …) arrives in
-//! M8a.5 (refresh note C41: `ReviewLevel` was used in M8a.4 but would otherwise be
-//! created only in M8a.5).
+//! M8a.4 added [`ReviewLevel`] (refresh note C41); M8a.5 adds the rest of the model the
+//! Interfaces list for `run/model.rs`: [`Profile`], [`RunLimits`], [`Task`], [`Run`] and
+//! the per-round records a task carries. `PendingOp` and `Run.pending_ops` wait for
+//! M8a.11, because `PendingOp` holds the engine's `OpKind`, which does not exist yet.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
+
+use proto::{
+    AgentRole, BlockInfo, Budget, DoneSignal, Finding, GateCounts, ModelEntry, PlanTask, Route,
+    RunState, Runtime, Size, Spend, TaskState, TestMode, TokenUsage, Verdict,
+};
 use serde::{Deserialize, Serialize};
 
 /// How thoroughly a task is reviewed, decision 35: `S` tasks get `Small`, `M` tasks
@@ -17,4 +24,366 @@ pub enum ReviewLevel {
     Small,
     Medium,
     Frontier,
+}
+
+impl ReviewLevel {
+    /// One level up, capped at `Frontier`.
+    pub fn raised(self) -> ReviewLevel {
+        match self {
+            ReviewLevel::Small => ReviewLevel::Medium,
+            ReviewLevel::Medium | ReviewLevel::Frontier => ReviewLevel::Frontier,
+        }
+    }
+}
+
+/// An engine operation's id.
+pub type OpId = u64;
+
+/// The resolved project profile, decision 7: each key from the plan's `[profile]`, else
+/// `[orchestrator.profile]`, else empty; `protected` is the one key that merges
+/// (built-ins + config + plan, decision 56). A blank `check`, `single_test`,
+/// `test_passed` or `setup` resolves to `None`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Profile {
+    pub modules: Vec<String>,
+    pub hub: Vec<String>,
+    pub source: Vec<String>,
+    pub check: Option<String>,
+    pub check_timeout_secs: u64,
+    pub single_test: Option<String>,
+    pub test_passed: Option<String>,
+    pub setup: Option<String>,
+    pub generated: Vec<String>,
+    pub protected: Vec<String>,
+    pub env: BTreeMap<String, String>,
+}
+
+/// `[orchestrator.claude] auth`, mirrored here with serde because `config::ClaudeAuth`
+/// has no serde derive (the config crate does not depend on serde) and [`RunLimits`] is
+/// persisted with the run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClaudeAuth {
+    #[default]
+    Login,
+    ApiKey,
+}
+
+impl From<config::ClaudeAuth> for ClaudeAuth {
+    fn from(auth: config::ClaudeAuth) -> Self {
+        match auth {
+            config::ClaudeAuth::Login => ClaudeAuth::Login,
+            config::ClaudeAuth::ApiKey => ClaudeAuth::ApiKey,
+        }
+    }
+}
+
+/// The limits a run is frozen with at start: `[orchestrator]`, with the plan's
+/// `max_writers`, `max_readers` and `max_bounces` winning when set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunLimits {
+    pub max_writers: u8,
+    pub max_readers: u8,
+    pub max_bounces: u8,
+    pub max_tasks: u32,
+    pub max_windows: u32,
+    pub default_runtime: Runtime,
+    pub review_small: bool,
+    pub budget_s: Budget,
+    pub budget_m: Budget,
+    pub budget_l: Budget,
+    pub stall_after_secs: u64,
+    pub rate_limit_retry_secs: u64,
+    pub denials_before_block: u32,
+    pub git_timeout_secs: u64,
+    pub worker_permission_mode: String,
+    pub worker_allowed_tools: Vec<String>,
+    pub worker_codex_sandbox: String,
+    pub worker_sandbox: bool,
+    pub claude_auth: ClaudeAuth,
+}
+
+/// Decision 32's turn-end fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum FallbackState {
+    #[default]
+    None,
+    Counting,
+    Nudged {
+        had_commits: bool,
+    },
+}
+
+/// Decision 32's stall watchdog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum StallState {
+    #[default]
+    Watching,
+    Interrupted {
+        deadline: u64,
+    },
+    Nudged,
+}
+
+/// A turn that ended on an API error, waiting for its continue message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum FailedTurn {
+    #[default]
+    None,
+    WaitingContinue {
+        at: u64,
+        rate_limit: bool,
+    },
+    ContinueSent {
+        rate_limit: bool,
+    },
+}
+
+/// One agent session (worker or reviewer) on a task.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentRound {
+    pub role: AgentRole,
+    pub session: u32,
+    pub round: u32,
+    pub window_id: Option<u32>,
+    pub route: Route,
+    pub launch_op: OpId,
+    pub session_id: Option<String>,
+    pub pid: Option<u32>,
+    pub ended: bool,
+    pub started_at: u64,
+    pub ended_at: Option<u64>,
+    pub turn_open: bool,
+    pub turns: u32,
+    pub turn_had_task_done: bool,
+    pub last_event: u64,
+    pub tool_calls: u32,
+    pub rate_limited_until: Option<u64>,
+    pub in_retry_streak: bool,
+    pub open_subagents: BTreeSet<String>,
+    pub denials: u32,
+    pub usage: TokenUsage,
+    pub deaths: u8,
+    pub fallback: FallbackState,
+    pub stall: StallState,
+    pub failed_turn: FailedTurn,
+    pub review_nudged: bool,
+    pub wrap_up_sent: bool,
+    pub retiring: bool,
+    pub delivery_failures: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckRecord {
+    pub at: u64,
+    pub ok: bool,
+    pub code: Option<i32>,
+    pub timed_out: bool,
+    pub tail: String,
+    pub secs: u64,
+    pub on_candidate: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProofRecord {
+    pub at: u64,
+    pub test: String,
+    pub red: String,
+    pub red_failed: bool,
+    pub head_passed: bool,
+    pub matched: bool,
+    pub red_tail: String,
+    pub head_tail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewRecord {
+    pub round: u32,
+    pub route: Route,
+    pub base: String,
+    pub head: String,
+    pub verdict: Option<Verdict>,
+    pub summary: String,
+    pub findings: Vec<Finding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DoneClaim {
+    pub summary: String,
+    pub test: Option<String>,
+    pub red: Option<String>,
+    pub signal: DoneSignal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskEvent {
+    pub at: u64,
+    pub text: String,
+}
+
+/// A resolved task: the planner's spec plus everything decisions 8–10 and 35 derive
+/// from it, and the engine's running state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Task {
+    pub spec: PlanTask,
+    pub size: Size,
+    pub hub: bool,
+    pub test_mode: TestMode,
+    pub notes: Vec<String>,
+    /// `None`: not reviewed (`review.small = "off"` on a non-hub `S` task).
+    pub review_level: Option<ReviewLevel>,
+    pub route: Route,
+    pub review_route: Option<Route>,
+    pub budget: Budget,
+    pub implicit_deps: Vec<String>,
+    pub state: TaskState,
+    pub block: Option<BlockInfo>,
+    pub rung: u8,
+    pub failures: u8,
+    pub bounces: GateCounts,
+    pub stalls: u8,
+    pub budget_exceeded: u8,
+    pub conflicts: u8,
+    pub session: u32,
+    pub spent_total: Spend,
+    pub branch: String,
+    pub worktree: PathBuf,
+    pub prewarmed: bool,
+    pub start_commit: Option<String>,
+    pub head: Option<String>,
+    pub done: Option<DoneClaim>,
+    pub rounds: Vec<AgentRound>,
+    pub reviews: Vec<ReviewRecord>,
+    pub checks: Vec<CheckRecord>,
+    pub proofs: Vec<ProofRecord>,
+    pub handed_back: bool,
+    pub merge_commit: Option<String>,
+    pub merged_without_approval: Option<String>,
+    pub salvage_refs: Vec<String>,
+    pub failure_log: Vec<String>,
+    pub history: Vec<TaskEvent>,
+}
+
+impl Task {
+    pub fn id(&self) -> &str {
+        &self.spec.id
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Outgoing {
+    pub id: u64,
+    pub window_id: u32,
+    pub task_id: String,
+    pub text: String,
+    pub queued_at: u64,
+    pub delivered_at: Option<u64>,
+}
+
+/// At most 500 per run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogEntry {
+    pub at: u64,
+    pub text: String,
+}
+
+/// Decision 21: the base branch advanced while the run went on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BaseMoved {
+    pub from: String,
+    pub to: String,
+    pub commits: u32,
+    pub seen_at: u64,
+}
+
+/// One orchestration run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Run {
+    pub id: String,
+    pub goal: String,
+    pub root: PathBuf,
+    pub project: PathBuf,
+    pub git_common_dir: PathBuf,
+    pub wt_dir: PathBuf,
+    /// The run's own data directory, `<data_dir>/runs/<id>`.
+    pub data_dir: PathBuf,
+    pub base_branch: String,
+    pub base_sha: String,
+    pub run_head: String,
+    pub last_green_candidate: Option<String>,
+    #[serde(default)]
+    pub base_moved: Option<BaseMoved>,
+    pub state: RunState,
+    pub paused_from: Option<RunState>,
+    pub halted_reason: Option<String>,
+    pub approved_by: Option<String>,
+    pub profile: Profile,
+    pub limits: RunLimits,
+    pub roster: Vec<ModelEntry>,
+    pub tasks: Vec<Task>,
+    pub merge_queue: Vec<String>,
+    pub outbox: Vec<Outgoing>,
+    pub next_message: u64,
+    pub next_op: OpId,
+    pub windows_created: u32,
+    pub revision: u64,
+    pub unverified: bool,
+    pub final_check_failed: bool,
+    pub trusted_project: Vec<String>,
+    /// Tracked files at `base_sha` matching `profile.protected` (decision 56).
+    pub protected_files: Vec<String>,
+    pub rate_limits: BTreeMap<String, u32>,
+    pub outcome: Option<String>,
+    pub log: Vec<LogEntry>,
+    pub created_at: u64,
+}
+
+impl Run {
+    /// `anthrex/<id>/integration`.
+    pub fn run_branch(&self) -> String {
+        format!("anthrex/{}/integration", self.id)
+    }
+
+    /// `<wt_dir>/runs/<id>/integration`.
+    pub fn integration_path(&self) -> PathBuf {
+        self.task_path("integration")
+    }
+
+    /// `<wt_dir>/runs/<id>/<task>`.
+    pub fn task_path(&self, task: &str) -> PathBuf {
+        task_path(&self.wt_dir, &self.id, task)
+    }
+
+    pub fn review_path(&self, task: &str) -> PathBuf {
+        self.task_path(&format!("{task}.review"))
+    }
+
+    pub fn proof_path(&self, task: &str) -> PathBuf {
+        self.task_path(&format!("{task}.proof"))
+    }
+
+    /// `<data_dir>/REPORT.md`.
+    pub fn report_path(&self) -> PathBuf {
+        self.data_dir.join("REPORT.md")
+    }
+
+    /// The run id's 4 hex digits.
+    pub fn short(&self) -> &str {
+        let cut = self.id.len().saturating_sub(4);
+        self.id.get(cut..).unwrap_or(&self.id)
+    }
+
+    pub fn task(&self, id: &str) -> Option<&Task> {
+        self.tasks.iter().find(|t| t.spec.id == id)
+    }
+}
+
+/// `anthrex/<run>/<task>`.
+pub fn task_branch(run_id: &str, task: &str) -> String {
+    format!("anthrex/{run_id}/{task}")
+}
+
+/// `<wt_dir>/runs/<run>/<task>`.
+pub fn task_path(wt_dir: &std::path::Path, run_id: &str, task: &str) -> PathBuf {
+    wt_dir.join("runs").join(run_id).join(task)
 }
