@@ -9,7 +9,7 @@ use proto::{AgentRole, BlockReason, Runtime, TaskState, TokenUsage};
 use super::dispatch::{block, history};
 use super::ladder::{self, check_budget, kill_worker, live, worker_round};
 use super::{
-    AgentSignal, Effect, EngineState, OpKind, TurnOutcome, done, emit_op, next_op, outbox,
+    AgentSignal, Effect, EngineState, OpKind, TurnOutcome, emit_op, fallback, next_op, outbox,
 };
 use crate::headless::FailureKind;
 use crate::run::contract::{
@@ -73,6 +73,13 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
     }
     // Every stream event: the clock, and the end of a rate-limit streak (decision 32).
     round.last_event = now;
+    // Ruling T12-O1: worker activity inside the interrupt grace ends the grace; the
+    // next silence is a stall. `TurnEnded` makes the same change itself.
+    if !matches!(signal, AgentSignal::TurnEnded { .. })
+        && matches!(round.stall, StallState::Interrupted { .. })
+    {
+        round.stall = StallState::Nudged;
+    }
     let streak = round.in_retry_streak;
     if !matches!(signal, AgentSignal::ApiRetry { .. }) {
         round.in_retry_streak = false;
@@ -117,7 +124,7 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
             round.open_subagents.remove(&agent_id);
             if round.open_subagents.is_empty() && round.fallback_waiting && !round.turn_open {
                 round.fallback_waiting = false;
-                done::fallback(run, i, fx);
+                fallback::fallback(run, i, fx);
             }
         }
         AgentSignal::TurnEnded {
@@ -231,7 +238,7 @@ fn turn_ended(
                 return;
             }
             round.fallback_waiting = false;
-            done::fallback(run, i, fx);
+            fallback::fallback(run, i, fx);
         }
         TurnOutcome::Interrupted => {}
         TurnOutcome::Failed { error, kind } => failed_turn(run, i, r, error, kind, streak, now, fx),
@@ -352,7 +359,7 @@ fn exited(run: &mut Run, i: usize, r: usize, killed: bool, now: u64, fx: &mut Ve
         if between_turns && round.fallback_waiting {
             round.fallback_waiting = false;
             round.open_subagents.clear();
-            done::fallback(run, i, fx);
+            fallback::fallback(run, i, fx);
         }
         return;
     }
@@ -429,6 +436,7 @@ pub(super) fn watch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             let id = run.tasks[i].id().to_string();
             outbox::queue(run, &id, rate_limit_continue(&reason), now);
         }
+        fallback::retry_count(run, i, now, fx);
         if !live(&run.tasks[i].rounds[r]) || check_budget(run, i, now, fx) {
             continue;
         }

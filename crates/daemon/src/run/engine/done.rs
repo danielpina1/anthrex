@@ -1,7 +1,7 @@
 //! Decision 32's done gate: `task_done` and `task_blocked` from a worker (with the MCP
 //! section's engine-side acceptance), `VerifyDone`'s verdict with decisions 55 and 56's
-//! protected, generated and spill split, and the turn-end fallback (`CountCommits`,
-//! `DONE_NUDGE`, `NO_COMMIT_NUDGE`). Pure (design decision 2).
+//! protected, generated and spill split. The turn-end fallback, whose claim this
+//! module checks, is in `fallback.rs`. Pure (design decision 2).
 
 use proto::{
     AgentRole, BlockReason, DoneSignal, GateKind, RunState, TaskState, TestMode, ToolCall,
@@ -12,11 +12,10 @@ use super::ladder::{self, live, worker_round};
 use super::tools::{DoneArgs, parse_blocked, parse_done};
 use super::{Effect, EngineState, OpId, OpKind, OpResult, ReplyId, emit_op, next_op, outbox};
 use crate::run::contract::{
-    DONE_ACCEPTED, DONE_NUDGE, NO_COMMIT_NUDGE, blocked_recorded, generated_files_message,
-    protected_file_message,
+    DONE_ACCEPTED, blocked_recorded, generated_files_message, protected_file_message,
 };
 use crate::run::globs::names_literally;
-use crate::run::model::{DoneClaim, FallbackState, PendingClaim, Run};
+use crate::run::model::{DoneClaim, FallbackState, PendingClaim, Run, StallState};
 
 fn reply(fx: &mut Vec<Effect>, reply: ReplyId, result: Result<String, String>) {
     fx.push(Effect::Reply { reply, result });
@@ -106,6 +105,13 @@ fn worker_tool(run: &mut Run, id: ReplyId, call: &ToolCall, now: u64, fx: &mut V
         let text = "task_done is already being checked; wait for its reply".to_string();
         return reply(fx, id, Err(text));
     }
+    // Ruling T12-O1: a claim inside the interrupt grace ends the grace.
+    if let Some(r) = worker_round(&run.tasks[i]) {
+        let round = &mut run.tasks[i].rounds[r];
+        if matches!(round.stall, StallState::Interrupted { .. }) {
+            round.stall = StallState::Nudged;
+        }
+    }
     // A claim of an earlier session is replaced (ruling T12-I1).
     drop_claim(run, i, REPLACED, fx);
     claim(run, i, Some(id), args, DoneSignal::TaskDone, fx);
@@ -137,7 +143,7 @@ fn session_window(run: &Run, i: usize) -> Option<u32> {
 }
 
 /// Records the claim and sends `VerifyDone`; the reply follows its result.
-fn claim(
+pub(super) fn claim(
     run: &mut Run,
     i: usize,
     id: Option<ReplyId>,
@@ -161,10 +167,12 @@ fn claim(
     };
     let task_id = task.id().to_string();
     let window_id = session_window(run, i);
+    let turn = worker_round(task).map_or(0, |r| task.rounds[r].turns);
     let op = next_op(run);
     run.tasks[i].claim = Some(PendingClaim {
         window_id,
         op: Some(op),
+        turn,
         reply: id,
         claim: DoneClaim {
             summary: args.summary,
@@ -323,14 +331,14 @@ pub(super) fn checked(
         OpResult::Failed { message } => {
             let text = format!("task_done could not be checked: {message}; call task_done again");
             answer(fx, run, Err(text.clone()));
-            return reengage(run, i, told_by(&pending), text, now);
+            return reengage(run, i, &pending, text, now);
         }
         _ => return,
     };
     if let Some(text) = rejection(run, i, &pending, &result) {
         history(run, i, now, text.clone());
         answer(fx, run, Err(text.clone()));
-        return reengage(run, i, told_by(&pending), text, now);
+        return reengage(run, i, &pending, text, now);
     }
     let told = pending.reply.is_some();
     if !spill_exempt(run, i) {
@@ -342,7 +350,7 @@ pub(super) fn checked(
             .collect();
         if !caught.is_empty() {
             let text = protected_file_message(&caught);
-            return bounce(run, i, pending.reply, text, told, now, fx);
+            return bounce(run, i, &pending, text, told, now, fx);
         }
         // Decision 55: any non-generated path outside `owns` is rung 3.
         if !outside.is_empty() {
@@ -354,7 +362,7 @@ pub(super) fn checked(
         }
         if !generated.is_empty() {
             let text = generated_files_message(&generated);
-            return bounce(run, i, pending.reply, text, told, now, fx);
+            return bounce(run, i, &pending, text, told, now, fx);
         }
     }
     let id = pending.reply;
@@ -371,19 +379,19 @@ pub(super) fn checked(
 fn bounce(
     run: &mut Run,
     i: usize,
-    id: Option<ReplyId>,
+    pending: &PendingClaim,
     text: String,
     told: bool,
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
     let rung = ladder::gate_failure(run, i, GateKind::Done, text.clone(), told, now, fx);
-    let Some(id) = id else {
+    let Some(id) = pending.reply else {
         return;
     };
     let text = match rung {
         1 => {
-            reengage(run, i, true, text.clone(), now);
+            reengage(run, i, pending, text.clone(), now);
             text
         }
         2 => "task_done rejected again: this session is being replaced by a fresh one; stop now"
@@ -400,17 +408,18 @@ fn bounce(
     reply(fx, id, Err(text));
 }
 
-fn told_by(pending: &PendingClaim) -> bool {
-    pending.reply.is_some()
-}
-
 /// Ruling T12-N2: a claim answered after its turn ended (or its process exited) leaves
 /// the worker waiting for nothing: the reply text goes to it as its next turn, which
-/// resumes the session when its process has ended. Within the open turn the tool
-/// reply is enough. The fallback's claim (`told` false) had its text queued already.
-fn reengage(run: &mut Run, i: usize, told: bool, text: String, now: u64) {
+/// resumes the session when its process has ended. Within the claiming turn the tool
+/// reply is enough; a later turn open meanwhile gets the text at its end (ruling
+/// T12-O2). The fallback's claim (no reply) had its text queued already.
+fn reengage(run: &mut Run, i: usize, pending: &PendingClaim, text: String, now: u64) {
     let task = &run.tasks[i];
-    if !told || worker_round(task).is_none_or(|r| task.rounds[r].turn_open) {
+    let claiming_turn = |r: usize| {
+        let round = &task.rounds[r];
+        round.turn_open && round.turns == pending.turn
+    };
+    if pending.reply.is_none() || worker_round(task).is_none_or(claiming_turn) {
         return;
     }
     let text = if text.starts_with("[anthrex]") {
@@ -458,94 +467,4 @@ fn accept(run: &mut Run, i: usize, pending: PendingClaim, head: String, now: u64
         DoneSignal::TurnEndFallback => "the turn-end fallback",
     };
     history(run, i, now, format!("done ({how}); next: {}", next.label()));
-}
-
-/// Decision 32's turn-end fallback, at a completed turn with no accepted `task_done`
-/// (or at the last `SubagentStop` it waited for): count commits first; after
-/// `DONE_NUDGE`'s turn, proceed as if `task_done` had been called; after
-/// `NO_COMMIT_NUDGE`'s, count again.
-pub(super) fn fallback(run: &mut Run, i: usize, fx: &mut Vec<Effect>) {
-    let task = &run.tasks[i];
-    if task.state != TaskState::Working || task.claim.is_some() {
-        return;
-    }
-    let Some(r) = worker_round(task).filter(|&r| task.rounds[r].count_op.is_none()) else {
-        return;
-    };
-    match task.rounds[r].fallback {
-        FallbackState::Nudged { had_commits: true } => {
-            run.tasks[i].rounds[r].fallback = FallbackState::None;
-            let args = DoneArgs::default();
-            claim(run, i, None, args, DoneSignal::TurnEndFallback, fx);
-        }
-        FallbackState::Counting => {}
-        state => {
-            if state == FallbackState::None {
-                run.tasks[i].rounds[r].fallback = FallbackState::Counting;
-            }
-            let task = &run.tasks[i];
-            let kind = OpKind::CountCommits {
-                worktree: task.worktree.clone(),
-                start: task
-                    .start_commit
-                    .clone()
-                    .unwrap_or_else(|| run.run_head.clone()),
-                run_head: run.run_head.clone(),
-            };
-            let id = task.id().to_string();
-            let op = next_op(run);
-            run.tasks[i].rounds[r].count_op = Some(op);
-            emit_op(run, op, Some(&id), kind, fx);
-        }
-    }
-}
-
-/// `CountCommits`' result: the nudge that becomes the next turn, or, when the
-/// no-commit nudge's turn also ended with no commit, a stall. Only the count the
-/// current worker round awaits counts (ruling T12-N).
-pub(super) fn counted(
-    run: &mut Run,
-    i: usize,
-    op: OpId,
-    result: OpResult,
-    now: u64,
-    fx: &mut Vec<Effect>,
-) {
-    let task = &run.tasks[i];
-    let Some(r) = worker_round(task).filter(|&r| task.rounds[r].count_op == Some(op)) else {
-        return;
-    };
-    run.tasks[i].rounds[r].count_op = None;
-    let task = &run.tasks[i];
-    let fallback = task.rounds[r].fallback;
-    let count = match result {
-        OpResult::Commits { count, .. } => count,
-        _ => {
-            run.tasks[i].rounds[r].fallback = FallbackState::None;
-            return;
-        }
-    };
-    // Review m-2: no nudge while the worker's own claim is being checked.
-    if task.state != TaskState::Working || task.claim.is_some() {
-        run.tasks[i].rounds[r].fallback = FallbackState::None;
-        return;
-    }
-    let id = task.id().to_string();
-    let (text, next) = match (fallback, count) {
-        (FallbackState::Counting | FallbackState::Nudged { .. }, 1..) => {
-            (DONE_NUDGE, FallbackState::Nudged { had_commits: true })
-        }
-        (FallbackState::Counting, 0) => (
-            NO_COMMIT_NUDGE,
-            FallbackState::Nudged { had_commits: false },
-        ),
-        (FallbackState::Nudged { had_commits: false }, 0) => {
-            run.tasks[i].rounds[r].fallback = FallbackState::None;
-            let reason = "its turn ended twice with no commit and no task_done".to_string();
-            return ladder::stall(run, i, reason, now, fx);
-        }
-        _ => return,
-    };
-    run.tasks[i].rounds[r].fallback = next;
-    outbox::queue(run, &id, text.to_string(), now);
 }

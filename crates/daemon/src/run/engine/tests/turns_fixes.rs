@@ -44,6 +44,7 @@ pub(super) fn assert_alive(fx: &Fixture) {
         let timer = round.is_some_and(|r| {
             matches!(r.failed_turn, FailedTurn::WaitingContinue { .. })
                 || r.delivery_retry_at.is_some()
+                || r.count_retry_at.is_some()
         });
         let op = run
             .pending_ops

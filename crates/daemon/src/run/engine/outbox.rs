@@ -238,7 +238,9 @@ pub(super) fn resumed(run: &mut Run, i: usize, op: OpId, result: OpResult, now: 
         OpResult::Failed { message } => message,
         _ => return,
     };
-    // Ruling T12-I3: the round is over for good; nothing resumes it again.
+    // Ruling T12-I3: the round is over for good; nothing resumes it again. Ruling
+    // T12-A1: nor does anything it awaited, such as its fallback's count, count.
+    super::ladder::supersede(run, i);
     let round = &mut run.tasks[i].rounds[r];
     end_round(round, now);
     round.retiring = true;

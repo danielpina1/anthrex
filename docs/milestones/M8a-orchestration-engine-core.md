@@ -5074,3 +5074,107 @@ tests in the new `engine/tests/turns_ops.rs`, and each failed first.
 - `cargo test -p anthrex-daemon` passes: 34 binaries, 702 unit tests.
 - No file passes 600 lines. `dispatch.rs` is 589 lines, `done.rs` 551 and
   `tests/turns_ops.rs` 529.
+
+### M8a.12 fix round 3 (2026-09-23)
+
+The second re-review (`.superpowers/sdd/M8a-orchestration-engine-core/task-12-rereview-2.md`)
+accepted N-1 to N-4, the "later" items and the four round-2 deviations. It found A1 and
+A2 (Important) and O-1 and O-2 (Minor). Rulings T12-A1, T12-A2, T12-O1 and T12-O2
+apply. The probes became regression tests in the new `engine/tests/turns_retries.rs`,
+and each failed first.
+
+**A1: a failed resume supersedes the round (ruling T12-A1).**
+
+- On failure, `outbox::resumed` takes the carried messages and then calls
+  `ladder::supersede` before it ends the round. The round's `count_op` is cleared, so
+  its late `CountCommits` is dropped.
+  - Before this fix, a late `Commits{0}` ran `ladder::stall`: a failure, a stall and
+    rung 2 were counted, and `fresh_session` was overwritten, which dropped its
+    `append`.
+- Test: `a_count_after_a_failed_resume_is_dropped` (probe PA, with counts 0 and 2).
+
+**A2: a failed `CountCommits` is retried (ruling T12-A2).**
+
+- New `AgentRound` fields, both `#[serde(default)]`: `count_failures` and
+  `count_retry_at`.
+- A `Failed` count, for a working task with no claim, keeps the fallback state and
+  retries `DELIVERY_RETRY_SECS` later. The `DELIVERY_MAX_FAILURES`th (third) failure in
+  a row blocks the task as `environment`, with `could not count the task's commits:
+  <error>` (invented). A successful count resets the failures.
+- `signals::watch` sends the retry, through `fallback::retry_count`. It does so for a
+  live round and for one that ended and can be resumed, so the variant where the
+  process exited works too.
+  - When a claim was made meanwhile, the retry is not sent.
+- **The fallback sends no count while one waits to be retried.** A turn end in that
+  window adds nothing.
+- Restore clears `count_retry_at`. `turns_fixes::assert_alive` counts a count retry as
+  a timer.
+- Tests:
+  - `a_failed_count_is_retried`, live and after an exit: exactly one retry, then
+    `DONE_NUDGE` as a delivery or a resume;
+  - `the_third_failed_count_blocks_the_task`, live and after an exit;
+  - `a_successful_count_resets_the_failures`;
+  - `a_claim_takes_over_from_a_count_retry`;
+  - `a_turn_end_waits_for_the_count_retry`;
+  - `a_restore_drops_a_count_retry`.
+
+**O-1: activity inside the interrupt grace ends the grace (ruling T12-O1).**
+
+- Any stream event from the round, or a `task_done` from it (in `worker_tool`), turns
+  an `Interrupted` stall into `Nudged`.
+  - The grace kill is cancelled.
+  - The queued `stall_nudge` stays and is delivered at the turn's end.
+  - The next silence is a stall, as after any nudge.
+- `TurnEnded` is excluded. It makes the same change itself, and it must still see the
+  interrupt, so that a completed interrupted turn gets the nudge and not the fallback.
+- Tests:
+  - `a_claim_in_the_grace_cancels_the_kill` (probe PE);
+  - `activity_in_the_grace_cancels_the_kill`;
+  - `the_interrupted_turns_end_gets_the_nudge_not_the_fallback`.
+
+**O-2: a verdict during a later turn waits for that turn's end (ruling T12-O2).**
+
+- `PendingClaim.turn` (`#[serde(default)]`) records the claiming round's `turns` at
+  the claim.
+- `reengage` leaves the reply alone only when the claiming turn itself is still open.
+  If a later turn is open, the text is queued, and normal delivery sends it at that
+  turn's end.
+- Test: `a_verdict_during_a_later_turn_is_its_next_turn` (probe PD).
+- **A known consequence.** That later turn's end also runs the fallback, since no claim
+  is left. Its `CountCommits`, and the `DONE_NUDGE` that follows, come after the
+  rejection turn.
+
+**The file split.** `done.rs` grew to 608 lines. The turn-end fallback, its count
+handling and its retry moved to the new `engine/fallback.rs` (152 lines), and `done.rs`
+is now 470. `done::claim` became `pub(super)` for the fallback's own claim.
+
+**TDD and mutation evidence.**
+
+- **The red run.** The six probe tests were written first, and the run gave `0 passed;
+  6 failed`:
+  - PA: `left: (1, 1, 2)`, a failure, a stall and rung 2;
+  - PB: `assert_alive` failed, with nothing pending;
+  - the block test: no retry `CountCommits`;
+  - PE and the activity test: a `KillWindow`;
+  - PD: the rejection was not queued.
+- **The first mutation run: 17 mutants, 11 killed.** Six guards had no test, and each
+  now has one that fails on its mutant:
+  - the failure reset (K7);
+  - the claim takeover (K8);
+  - restore (K10);
+  - the timer clear (K11);
+  - the turn end during a retry (K12);
+  - `TurnEnded`'s exclusion (O1b).
+- **`supersede` clearing `count_retry_at` was removed.** It was an equivalent mutant
+  (K9): a superseded round is never the round `watch` looks at.
+- **The final run: 16 mutants, all killed.** They are K1 to K8, K10 to K12, O1, O1b,
+  O1c, O2 and O2b.
+
+**Gates.**
+
+- `cargo build --workspace --all-targets`, clippy with `-D warnings` and `cargo fmt
+  --all --check` are clean.
+- `cargo test -p anthrex-daemon` passes: 34 binaries, 1042 tests, of which 713 are
+  unit tests.
+- No file passes 600 lines. `dispatch.rs` is 591 lines, `signals.rs` 473, `done.rs` 470
+  and `tests/turns_retries.rs` 325.

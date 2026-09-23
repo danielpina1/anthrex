@@ -216,6 +216,12 @@ pub struct AgentRound {
     /// The turn-end fallback's `CountCommits` this round awaits (ruling T12-N).
     #[serde(default)]
     pub count_op: Option<OpId>,
+    /// Failed `CountCommits` in a row, and when the next one is sent (M8a.12 fix round
+    /// 3, ruling T12-A2).
+    #[serde(default)]
+    pub count_failures: u8,
+    #[serde(default)]
+    pub count_retry_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -274,6 +280,10 @@ pub struct PendingClaim {
     /// ruling T12-N).
     #[serde(default)]
     pub op: Option<OpId>,
+    /// The claiming round's `turns` when the claim was made: a verdict that finds a
+    /// later turn open waits for its end (M8a.12 fix round 3, ruling T12-O2).
+    #[serde(default)]
+    pub turn: u32,
 }
 
 /// A fresh worker session the ladder (rung 2) or a failed resume has decided on,
