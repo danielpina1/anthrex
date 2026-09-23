@@ -3835,6 +3835,25 @@ T9-I1, T9-I2 and T9-m1 to m6 apply. Each behaviour fix has a test that failed fi
   `tests/run_git_accept.rs` (9 tests), to keep both files under 600 lines.
   `run_git_finish.rs` now has 8 tests and `run_git_merge.rs` has 9.
 
+**Later change, from M8a.11 fix round 2 (ruling T11-N1(a)).**
+
+- **`hand_back` refuses a merge already in progress.** If `MERGE_HEAD` already exists in
+  the task worktree (`rev-parse -q --verify MERGE_HEAD`), `hand_back` returns `Err("a
+  merge is already in progress in <worktree>; finish it or run git merge --abort")` and
+  does not run `git merge`.
+- **Why.** Before this, git refused the second merge ("unmerged files"), and `unmerged`
+  then reported the earlier merge's files. The result was `Ok(old files)`: it looked like
+  a new conflict, and the newer run head was never merged. The engine now turns this
+  error into `blocked(environment)`.
+- **New write `abort_merge(git, worktree, timeout)`.** It runs `git merge --abort` with
+  decision 18's flags, and does nothing when there is no `MERGE_HEAD`. The engine uses it
+  to undo a conflicted hand-back while another dependency is unfinished.
+- **Tests** (in `run_git_merge.rs`, which now has 11):
+  - `hand_back_while_a_merge_is_in_progress_is_an_error`: probe q1's shape, with
+    `MERGE_HEAD` still on the first run head.
+  - `abort_merge_undoes_a_conflicted_hand_back`: `HEAD`, the file and a clean status are
+    back, and a second call is a no-op.
+
 ### M8a.10 shell execution: setup, check and the test proof (2026-09-23)
 
 Built `run/exec.rs` (`run_shell`, `summary`, `ShellOutcome`, `CHECK_TAIL_LINES`,
@@ -4335,4 +4354,92 @@ hand-back. The hold now lives in the new `engine/holds.rs`:
 --all --check`, and `cargo test -p anthrex-daemon` all pass: 34 test binaries, 0 failures,
 621 unit tests. `engine/dispatch.rs` passed 600 lines, so the hold code moved to
 `engine/holds.rs` (134 lines).
+
+### M8a.11 fix round 2 (2026-09-23)
+
+The re-review (`.superpowers/sdd/M8a-orchestration-engine-core/task-11-rereview-1.md`)
+confirmed I1–I3 and the minors. It found N1 (Important), and N2 and N3 (Minor). Rulings
+T11-N1..N3 apply. Every fix has a regression test, taken from the re-review's probes
+(q1, q7, q2b), that failed first.
+
+**N1: a conflicted hand-back, then another one (probe q1).**
+
+- **The problem.** A hand-back conflicted while a newly added dependency was unfinished.
+  The markers and `MERGE_HEAD` stayed in the worktree. The second hand-back then got
+  `Ok(the same files)` back from real git, so the newer run head was never merged. The
+  worker was also sent the conflict message twice.
+- **(a) Git layer.** `hand_back` now fails when a merge is already in progress. See the
+  M8a.9 notes, "Later change". The engine's existing `Failed` path blocks the task on its
+  environment.
+- **(b) Engine.**
+  - A conflict that arrives while the task is still held, with a dependency still
+    unfinished, is not handed to the worker. `handed_back` sends `OpKind::AbortMerge {
+    worktree }` (its result is the new `OpResult::MergeAborted`), keeps the hold, and
+    queues no conflict message.
+  - `AbortMerge` is a git write like the others: `git::abort_merge` under the repo's
+    `GitQueue`.
+  - `resume_held` sends no `HandBack` while a `HandBack` or an `AbortMerge` of the task is
+    in flight.
+  - Once every dependency is finished, the next hand-back brings the conflict again, and
+    that single result queues the one conflict message the worker sees.
+  - An abort that fails leaves the worktree mid-merge: `merge_aborted` blocks the task on
+    its environment, and no hand-back follows.
+- **Tests.**
+  - `a_conflict_while_a_dependency_is_unfinished_is_aborted`: one `AbortMerge` on t1's
+    worktree, the hold kept, no conflict message, no `HandBack` while the abort runs. After
+    `MergeAborted`, exactly one `HandBack`. Its conflict gives `working` and one turn,
+    `[answer A, conflict]`, with exactly one conflict message in the outbox.
+  - `a_failed_abort_blocks_the_task_on_its_environment`.
+  - `an_abort_result_for_a_cancelled_task_is_ignored`.
+  - The I2 test now also asserts that a clean result sends no `AbortMerge`.
+
+**N2: an amendment does not answer a question (probe q7).**
+
+- **The problem.** A held task with an unanswered question was amended. The amendment's
+  message started a hand-back, and the task came back `working` with its question never
+  answered.
+- **The fix.**
+  - New `Task.held_answered` (`#[serde(default)]`). `enforce_holds` sets it when it
+    re-blocks an answered, held task, and clears it along with the hold.
+  - The hand-back still runs, as the ruling says.
+  - A clean or conflicted result then clears the hold. An answered task resumes. An
+    unanswered one stays `blocked(question)` with its original question text; the
+    engine never rewrites that text for an unanswered task.
+  - Its queued messages, the amendment and any conflict message, wait in the outbox and
+    go out joined with the eventual answer.
+- **Test.** `an_amendment_to_an_unanswered_held_task_waits_for_the_answer`: back on
+  `which table?`, nothing delivered. The answer later gives `working` and one turn,
+  `[amendment, answer]`.
+- **Doc correction.** Fix round 1's note says an unanswered held task is not handed back
+  until its answer arrives. That is only true when no other message waits for it: an
+  amendment also triggers the hand-back.
+
+**N3: a conflict whose hold is gone (probe q2b).**
+
+- **The fix.** `handed_back` no longer ignores a result because the task is not held.
+  Only a finished task is ignored: a cancelled task gets no conflict message.
+  - A conflict is always processed: it is aborted per N1(b) if the task is still held
+    with an unfinished dependency, and otherwise queued as the conflict message. It goes
+    out when the task next takes messages, for example once a `dep_cancelled` block is
+    resolved.
+  - A `Failed` result still counts only for a held task, so it never replaces a
+    `dep_cancelled` block.
+- **Tests.**
+  - `a_conflict_is_kept_after_the_holding_dependency_is_cancelled`: one conflict message,
+    no abort, and `dep_cancelled` kept.
+  - `a_failed_hand_back_keeps_a_dep_cancelled_block`.
+  - `a_conflict_for_a_cancelled_task_is_dropped`.
+
+**TDD and mutation evidence.**
+
+- With the tests added and no fix, both git tests failed, as did the four engine tests
+  (q1, failed abort, q7, q2b), each at its first assertion.
+- 12 mutants were run; 11 are killed.
+  - M9 (a `Failed` result blocks an unheld task) and M10 (no finished-task guard in
+    `handed_back`) first survived. The two tests above were added, and both are now
+    killed.
+  - M7, which drops the `held_answered` reset on `dep_cancelled`, survives. It is
+    equivalent: `enforce_holds` skips a `dep_cancelled` task, so it is never held again
+    with the stale bit. The reset is kept as hygiene.
+- `engine/holds.rs` is 178 lines, and `engine/tests/holds.rs` is about 510.
 

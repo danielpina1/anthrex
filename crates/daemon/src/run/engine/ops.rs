@@ -113,6 +113,11 @@ pub enum OpKind {
         worktree: PathBuf,
         run_head: String,
     },
+    /// Ruling T11-N1(b): `git::abort_merge` in a held task's worktree, undoing a
+    /// hand-back that conflicted while another dependency was still unfinished.
+    AbortMerge {
+        worktree: PathBuf,
+    },
     RemoveWorktree {
         root: PathBuf,
         path: PathBuf,
@@ -219,6 +224,8 @@ pub enum OpResult {
     HandedBack {
         files: Vec<String>,
     },
+    /// `AbortMerge` succeeded (ruling T11-N1(b)).
+    MergeAborted,
     Removed {
         salvage_ref: Option<String>,
     },

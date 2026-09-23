@@ -7,7 +7,7 @@
 mod support;
 
 use daemon::run::git::{
-    ACCEPT_LIST_MAX, CandidateStep, RefCheck, cas_update, commit_tree, commits_since,
+    ACCEPT_LIST_MAX, CandidateStep, RefCheck, abort_merge, cas_update, commit_tree, commits_since,
     create_run_branch, guard_refs, hand_back, materialize, merge_tree, prepare_worktree, read_ref,
     reattach,
 };
@@ -332,6 +332,55 @@ fn hand_back_blocked_by_an_untracked_file_is_an_error() {
         std::fs::read_to_string(task.join("a.txt")).unwrap(),
         "the worker's own, untracked\n"
     );
+}
+
+/// Ruling T11-N1(a), probe q1: a hand-back into a worktree still mid-merge from an
+/// earlier conflicted hand-back is an error, not that earlier merge's files dressed up
+/// as a new conflict; nothing in the worktree changes.
+#[test]
+fn hand_back_while_a_merge_is_in_progress_is_an_error() {
+    let repo = repo();
+    commit_file(&repo.root, "shared.txt", "base\n", "shared");
+    let (_keep, task) = task_worktree(&repo, "hb4", "shared.txt", "task\n");
+    let first = commit_on(&repo.root, "anthrex/hb4/integration", "shared.txt", "run\n");
+    assert_eq!(
+        hand_back(real_git(), &task, &first, T).unwrap(),
+        vec!["shared.txt"]
+    );
+    let newer = commit_on(&repo.root, "anthrex/hb4/integration", "other.txt", "more\n");
+
+    let result = hand_back(real_git(), &task, &newer, T);
+    let err = result.expect_err("a merge is already in progress");
+    assert!(err.contains("already in progress"), "{err}");
+    assert_eq!(out(&task, &["rev-parse", "MERGE_HEAD"]), first);
+}
+
+/// Ruling T11-N1(b): `abort_merge` undoes a conflicted hand-back (markers, index and
+/// `MERGE_HEAD` all go back to the task's own commit) and is a no-op without one.
+#[test]
+fn abort_merge_undoes_a_conflicted_hand_back() {
+    let repo = repo();
+    commit_file(&repo.root, "shared.txt", "base\n", "shared");
+    let (_keep, task) = task_worktree(&repo, "hb5", "shared.txt", "task\n");
+    let task_head = head(&task);
+    let run_head = commit_on(&repo.root, "anthrex/hb5/integration", "shared.txt", "run\n");
+    hand_back(real_git(), &task, &run_head, T).unwrap();
+
+    abort_merge(real_git(), &task, T).unwrap();
+    assert_eq!(head(&task), task_head);
+    assert!(
+        !try_git(&task, &["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+            .status
+            .success()
+    );
+    assert_eq!(out(&task, &["status", "--porcelain"]), "");
+    assert_eq!(
+        std::fs::read_to_string(task.join("shared.txt")).unwrap(),
+        "task\n"
+    );
+
+    abort_merge(real_git(), &task, T).unwrap();
+    assert_eq!(head(&task), task_head);
 }
 
 #[test]

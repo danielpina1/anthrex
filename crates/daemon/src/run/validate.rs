@@ -429,6 +429,7 @@ fn new_task(
         prewarmed: false,
         worktree_live: false,
         awaiting_deps: false,
+        held_answered: false,
         start_commit: None,
         head: None,
         done: None,

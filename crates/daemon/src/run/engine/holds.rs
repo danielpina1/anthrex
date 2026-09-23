@@ -27,6 +27,7 @@ pub(super) fn enforce_holds(run: &mut Run, now: u64) {
             .is_some_and(|b| b.reason == BlockReason::DepCancelled)
         {
             run.tasks[i].awaiting_deps = false;
+            run.tasks[i].held_answered = false;
             continue;
         }
         let waiting = unfinished_deps(run, task);
@@ -46,6 +47,7 @@ pub(super) fn enforce_holds(run: &mut Run, now: u64) {
                 format!("answered; resumes once {} merged", waiting.join(", "))
             };
             let task = &mut run.tasks[i];
+            task.held_answered = true;
             task.state = TaskState::Blocked;
             task.block = Some(BlockInfo {
                 reason: BlockReason::Question,
@@ -55,10 +57,10 @@ pub(super) fn enforce_holds(run: &mut Run, now: u64) {
     }
 }
 
-/// M8a.6 ruling N5: a held task that has been answered (a message waits for it) gets
-/// the run head merged into its worktree first (decision 36's hand-back) once every
-/// dependency has finished, and resumes only when that comes back. One hand-back at a
-/// time.
+/// M8a.6 ruling N5: a held task that a message waits for (an answer, or an amendment)
+/// gets the run head merged into its worktree first (decision 36's hand-back) once
+/// every dependency has finished, and resumes only when that comes back. One hand-back
+/// at a time, and none while a conflicted one is being aborted (ruling T11-N1(b)).
 pub(super) fn resume_held(run: &mut Run, fx: &mut Vec<Effect>) {
     for i in 0..run.tasks.len() {
         let task = &run.tasks[i];
@@ -74,7 +76,9 @@ pub(super) fn resume_held(run: &mut Run, fx: &mut Vec<Effect>) {
                 .outbox
                 .iter()
                 .any(|m| m.task_id == task.spec.id && m.delivered_at.is_none())
-            || op_in_flight(run, task.id(), |k| matches!(k, OpKind::HandBack { .. }))
+            || op_in_flight(run, task.id(), |k| {
+                matches!(k, OpKind::HandBack { .. } | OpKind::AbortMerge { .. })
+            })
         {
             continue;
         }
@@ -88,45 +92,85 @@ pub(super) fn resume_held(run: &mut Run, fx: &mut Vec<Effect>) {
     }
 }
 
-/// The result of an N5 `HandBack` (ruling T11-I1..I3). A conflict queues the conflict
-/// message. A dependency gained while it ran keeps the hold, and another hand-back
-/// follows once it finishes. Otherwise the hold is cleared and the task resumes, its
-/// queued messages going out as one turn. A hand-back from the merge queue (decision
-/// 36) is M8a.14's.
-pub(super) fn handed_back(run: &mut Run, i: usize, result: OpResult, now: u64) {
+/// The result of an N5 `HandBack` (rulings T11-I1..I3 and T11-N1..N3). A conflict
+/// while a dependency is still unfinished is undone (`AbortMerge`) and dropped: the
+/// hand-back after the last dependency brings it again, so the worker hears of one
+/// conflict per hand-back. Any other conflict queues the conflict message, even when
+/// the task is no longer held (its dependency was cancelled meanwhile). A dependency
+/// gained while it ran keeps the hold, and another hand-back follows once it finishes.
+/// Otherwise the hold is cleared: an answered task resumes, its queued messages going
+/// out as one turn; an unanswered one is back on its question, its messages waiting
+/// for the answer. A hand-back from the merge queue (decision 36) is M8a.14's.
+pub(super) fn handed_back(
+    run: &mut Run,
+    i: usize,
+    result: OpResult,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
     let task = &run.tasks[i];
-    if task.state != TaskState::Blocked || !task.awaiting_deps {
+    if task.state.is_finished() {
         return;
     }
+    let held = task.state == TaskState::Blocked && task.awaiting_deps;
     match result {
         OpResult::HandedBack { files } => {
             let id = run.tasks[i].id().to_string();
+            let waiting = unfinished_deps(run, &run.tasks[i]);
+            if held && !waiting.is_empty() {
+                let note = if files.is_empty() {
+                    "run head merged; still waiting for a dependency"
+                } else {
+                    let worktree = run.tasks[i].worktree.clone();
+                    let op = next_op(run);
+                    emit_op(run, op, Some(&id), OpKind::AbortMerge { worktree }, fx);
+                    "run head conflicted; undoing the merge until every dependency finishes"
+                };
+                if run.tasks[i].held_answered {
+                    let text = format!("answered; resumes once {} merged", waiting.join(", "));
+                    run.tasks[i].block = Some(BlockInfo {
+                        reason: BlockReason::Question,
+                        text,
+                    });
+                }
+                history(run, i, now, note);
+                return;
+            }
             if !files.is_empty() {
                 outbox::queue(run, &id, conflict_message(&files), now);
             }
-            let waiting = unfinished_deps(run, &run.tasks[i]);
-            if !waiting.is_empty() {
-                let text = format!("answered; resumes once {} merged", waiting.join(", "));
-                run.tasks[i].block = Some(BlockInfo {
-                    reason: BlockReason::Question,
-                    text,
-                });
-                history(
-                    run,
-                    i,
-                    now,
-                    "run head merged; still waiting for a dependency",
-                );
+            if !held {
                 return;
             }
             let task = &mut run.tasks[i];
             task.awaiting_deps = false;
-            task.state = TaskState::Working;
-            task.block = None;
-            history(run, i, now, "dependencies merged; resuming");
+            if std::mem::take(&mut task.held_answered) {
+                task.state = TaskState::Working;
+                task.block = None;
+                history(run, i, now, "dependencies merged; resuming");
+            } else {
+                history(run, i, now, "dependencies merged; waiting for an answer");
+            }
         }
-        OpResult::Failed { message } => {
+        OpResult::Failed { message } if held => {
             let text = format!("could not merge the run head into its worktree: {message}");
+            block(run, i, BlockReason::Environment, text, now);
+        }
+        _ => {}
+    }
+}
+
+/// The result of ruling T11-N1(b)'s `AbortMerge`. Undone, the hold goes on and the
+/// next hand-back follows once every dependency finishes. A failed abort leaves the
+/// worktree mid-merge, so the task is blocked on its environment.
+pub(super) fn merge_aborted(run: &mut Run, i: usize, result: OpResult, now: u64) {
+    if run.tasks[i].state.is_finished() {
+        return;
+    }
+    match result {
+        OpResult::MergeAborted => history(run, i, now, "conflicted hand-back undone"),
+        OpResult::Failed { message } => {
+            let text = format!("could not undo a conflicted hand-back in its worktree: {message}");
             block(run, i, BlockReason::Environment, text, now);
         }
         _ => {}

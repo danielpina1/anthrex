@@ -4,8 +4,8 @@
 //! M8a.4 added [`ReviewLevel`] (refresh note C41); M8a.5 adds the rest of the model the
 //! Interfaces list for `run/model.rs`: [`Profile`], [`RunLimits`], [`Task`], [`Run`] and
 //! the per-round records a task carries. M8a.11 adds [`PendingOp`] and `Run.pending_ops`
-//! (they hold the engine's `OpKind`), `Task.worktree_live`, `Task.awaiting_deps` and
-//! `RunLimits.api_key_helper`.
+//! (they hold the engine's `OpKind`), `Task.worktree_live`, `Task.awaiting_deps`,
+//! `Task.held_answered` and `RunLimits.api_key_helper`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -284,6 +284,11 @@ pub struct Task {
     /// has finished (M8a.6 ruling N5); the task stays `blocked` meanwhile.
     #[serde(default)]
     pub awaiting_deps: bool,
+    /// The held task was answered: it resumes once handed back. Without an answer
+    /// (only an amendment waits, say) it goes back to its question instead (M8a.11 fix
+    /// round 2, ruling T11-N2).
+    #[serde(default)]
+    pub held_answered: bool,
     pub start_commit: Option<String>,
     pub head: Option<String>,
     pub done: Option<DoneClaim>,

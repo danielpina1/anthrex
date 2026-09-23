@@ -302,7 +302,7 @@ pub fn commits_since(
 /// Decision 36 step 6: `git merge --no-ff --no-edit <run_head>` in the task worktree.
 /// A clean merge is committed and gives an empty list. A conflict leaves its markers
 /// and `MERGE_HEAD` for the worker and gives the unmerged files. Any other failure
-/// (untracked files in the way, say) is an error.
+/// (untracked files in the way, say), or a merge already in progress, is an error.
 pub fn hand_back(
     git: &OsStr,
     worktree: &Path,
@@ -310,6 +310,14 @@ pub fn hand_back(
     timeout: Duration,
 ) -> Result<Vec<String>, String> {
     let g = Git::new(git, timeout);
+    // Ruling T11-N1(a): a leftover MERGE_HEAD would make git refuse the merge and
+    // `unmerged` report the old merge's files as if they were this one's conflict.
+    if merge_in_progress(g, worktree)? {
+        return Err(format!(
+            "a merge is already in progress in {}; finish it or run git merge --abort",
+            worktree.display()
+        ));
+    }
     let args = [
         os("merge"),
         os("-q"),
@@ -327,6 +335,22 @@ pub fn hand_back(
     } else {
         Ok(files)
     }
+}
+
+/// Ruling T11-N1(b): undoes a hand-back's conflicted merge in a task worktree
+/// (`git merge --abort`, decision 18's flags) so the next hand-back starts from the
+/// task's own commit. Without a `MERGE_HEAD` there is nothing to undo.
+pub fn abort_merge(git: &OsStr, worktree: &Path, timeout: Duration) -> Result<(), String> {
+    let g = Git::new(git, timeout);
+    if !merge_in_progress(g, worktree)? {
+        return Ok(());
+    }
+    g.write(worktree, &[os("merge"), os("--abort")]).map(|_| ())
+}
+
+fn merge_in_progress(g: Git<'_>, worktree: &Path) -> Result<bool, String> {
+    let args = [os("rev-parse"), os("-q"), os("--verify"), os("MERGE_HEAD")];
+    Ok(g.read(worktree, &args)?.success)
 }
 
 /// The unmerged paths in `dir`'s index, in git's order.

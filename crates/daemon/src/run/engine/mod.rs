@@ -369,7 +369,8 @@ fn op_done(
             dispatch::window_done(run, i, op, result, now, fx)
         }
         (OpKind::PrepareReview { .. }, Some(i)) => dispatch::review_ready(run, i, result, now, fx),
-        (OpKind::HandBack { .. }, Some(i)) => holds::handed_back(run, i, result, now),
+        (OpKind::HandBack { .. }, Some(i)) => holds::handed_back(run, i, result, now, fx),
+        (OpKind::AbortMerge { .. }, Some(i)) => holds::merge_aborted(run, i, result, now),
         (OpKind::RemoveWorktree { .. }, Some(i)) => dispatch::removed(run, i, result, now),
         // The other kinds' results are handled by M8a.12 to M8a.15.
         _ => {}

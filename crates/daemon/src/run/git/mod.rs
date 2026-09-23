@@ -23,7 +23,7 @@ mod worktrees;
 
 pub use done::{DoneChecked, verify_done};
 pub use merge::{
-    ACCEPT_LIST_MAX, AcceptOutcome, CandidateStep, RefCheck, cas_update, commit_tree,
+    ACCEPT_LIST_MAX, AcceptOutcome, CandidateStep, RefCheck, abort_merge, cas_update, commit_tree,
     commits_since, guard_refs, hand_back, materialize, merge_tree, read_ref, reattach,
 };
 pub use salvage::{

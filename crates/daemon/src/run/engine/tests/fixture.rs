@@ -294,6 +294,7 @@ pub fn op_name(kind: &OpKind) -> &'static str {
         OpKind::PrepareReview { .. } => "PrepareReview",
         OpKind::MergeCandidate { .. } => "MergeCandidate",
         OpKind::HandBack { .. } => "HandBack",
+        OpKind::AbortMerge { .. } => "AbortMerge",
         OpKind::RemoveWorktree { .. } => "RemoveWorktree",
         OpKind::VerifyRefs { .. } => "VerifyRefs",
         OpKind::Accept { .. } => "Accept",
