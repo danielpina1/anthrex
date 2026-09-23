@@ -19,7 +19,6 @@ use crate::run::messages::DELIVERY_RETRY_SECS;
 use crate::run::model::StallState;
 
 const ROOMY: &str = "[task.budget]\ntool_calls = 1000\nminutes = 1000";
-const FOUR_CALLS: &str = "[task.budget]\ntool_calls = 4\nminutes = 1000";
 
 fn args() -> serde_json::Value {
     json!({"summary": "did it", "test": "a::works", "red": "abcdef1"})
@@ -63,25 +62,21 @@ fn delivered_ok(fx: &mut Fixture, effects: &[Effect]) {
 }
 
 /// Probe PA (T12-A1): the count of a session whose resume failed comes back after the
-/// failure. It is dropped: no stall, and the pending fresh session is unchanged.
+/// failure. It is dropped: no stall, and the pending fresh session is unchanged. (The
+/// message that opens the exiting turn is queued after the count went out: since
+/// ruling T12-R5, a message queued before the turn end holds the count back.)
 #[test]
 fn a_count_after_a_failed_resume_is_dropped() {
     for count in [0, 2] {
-        let (mut fx, w) = working_on(FOUR_CALLS);
+        let (mut fx, w) = working_on(ROOMY);
         let effects = fx.turn_completed(w);
         let (c1, _) = ops_in(&effects, "CountCommits")[0].clone();
         let effects = fx.done(c1, commits(0));
         delivered_ok(&mut fx, &effects);
-        for _ in 0..4 {
-            fx.signal(
-                w,
-                AgentSignal::ToolUse {
-                    name: "Bash".into(),
-                },
-            );
-        }
         let effects = fx.turn_completed(w);
         let (c2, _) = ops_in(&effects, "CountCommits")[0].clone();
+        queue(&mut fx, "[anthrex] go on");
+        assert_eq!(delivers(&fx.tick()).len(), 1);
         let effects = exited(&mut fx, w);
         let (resume, _) = ops_in(&effects, "ResumeSession")[0].clone();
         fx.done(
@@ -282,7 +277,7 @@ fn a_claim_takes_over_from_a_count_retry() {
 /// the earlier turn's retry and counts for itself (ruling T12-R4); the retry time then
 /// sends nothing. (After `NO_COMMIT_NUDGE`, whose count may be sent from any turn end.)
 #[test]
-fn a_turn_end_waits_for_the_count_retry() {
+fn a_later_turn_end_voids_the_count_retry() {
     let (mut fx, w) = working_on(ROOMY);
     let effects = fx.turn_completed(w);
     let (count, _) = ops_in(&effects, "CountCommits")[0].clone();

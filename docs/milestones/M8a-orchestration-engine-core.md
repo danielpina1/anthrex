@@ -5278,3 +5278,60 @@ drops an in-flight wrap-up; `exited` ignores `pid`.
 fmt --all --check` are clean. `cargo test -p anthrex-daemon` passes: 34 binaries, 1052 tests, of which 723 are unit tests. No file passes 600
 lines: `done.rs` is 478, `signals.rs` 484, `fallback.rs` 210 and
 `tests/turns_stale.rs` 292.
+
+### M8a.12 fix round 5 (2026-09-23)
+
+Re-review 4 (`.superpowers/sdd/M8a-orchestration-engine-core/task-12-rereview-4.md`)
+approved round 4. It found R4-1, an older false stall kill that the turn-number guard
+does not see, and the fix follows ruling T12-R5.
+
+**R4-1: no count while a message waits for delivery (ruling T12-R5).**
+
+- The sequence:
+  1. `NO_COMMIT_NUDGE` is queued, its delivery fails and it waits for its retry.
+  2. Claude starts a turn by itself and ends it.
+  3. `fallback()` saw `Nudged{false}` and counted again, although the nudge was never
+     delivered.
+  4. A 0 was a stall, and it killed the session.
+- The fix: `fallback()` now returns while the task has an undelivered outbox message.
+  It uses the same `queued` test as `drop_stale`, factored into `fallback::queued`.
+  This covers every fallback state.
+- Liveness: the queued message is itself the pending item, through its delivery or
+  delivery retry. The turn it opens ends with the fallback.
+- Test: `no_count_while_the_nudge_waits_for_its_delivery_retry` (probe PA).
+  - The self-started turn's end sends no count, and nothing stalls.
+  - At the retry `NO_COMMIT_NUDGE` is delivered, and that turn's empty count is then
+    the stall.
+  - Red before the fix: a `CountCommits` came at the self-started turn's end
+    (`turns_stale.rs:148`).
+- Mutant: removing the guard fails three tests:
+  - `no_count_while_the_nudge_waits_for_its_delivery_retry`;
+  - `a_count_dropped_while_a_message_waits_counts_at_that_turns_end`;
+  - `the_count_after_a_late_rejection_waits_for_the_rejection_turn`.
+
+**Tests adjusted to the guard:**
+
+- `the_count_after_a_late_rejection_waits_for_the_rejection_turn`: the turn end that
+  sends the rejection now sends no count at all (in round 4 it sent one, which was
+  dropped as stale). The rejection's own turn end counts, and `DONE_NUDGE` follows.
+- `turns_retries::a_count_after_a_failed_resume_is_dropped`: the 4-call budget's
+  wrap-up used to be queued before the turn end, and it now holds that end's count
+  back.
+  - The test now queues its message after the count has gone out.
+  - It still ends with a mid-turn exit, a failed resume and the late count.
+  - The late count is now dropped both by `supersede` (T12-A1) and as stale (T12-R4).
+- `turns_retries::a_turn_end_waits_for_the_count_retry` is renamed to
+  `a_later_turn_end_voids_the_count_retry`.
+
+**Carry for M8a.15.** Restore (`requests.rs`) clears neither `AgentRound.interrupted`
+nor `StallState::Interrupted`, and both are persisted. That is harmless only as long as
+restored sessions are ended. M8a.15's restore must clear both, or end restored sessions
+through `signals::end_round`, which clears the flag.
+
+**Gates.**
+
+- `cargo build --workspace --all-targets`, clippy with `-D warnings` and `cargo fmt
+  --all --check` are clean.
+- `cargo test -p anthrex-daemon` passes: 34 binaries, 1053 tests, of which 724 are unit
+  tests.
+- `fallback.rs` is 218 lines and `tests/turns_stale.rs` 327.

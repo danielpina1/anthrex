@@ -45,6 +45,23 @@ fn undelivered(fx: &Fixture) -> Vec<String> {
         .collect()
 }
 
+/// The delivery in `effects` fails ("busy"): its messages wait for the retry.
+fn fail_delivery(fx: &mut Fixture, effects: &[Effect]) {
+    let ids = effects
+        .iter()
+        .find_map(|e| match e {
+            Effect::Deliver { message_ids, .. } => Some(message_ids.clone()),
+            _ => None,
+        })
+        .expect("a delivery");
+    fx.next(EventKind::Delivered {
+        run_id: RUN_ID.into(),
+        message_ids: ids,
+        ok: false,
+        error: Some("busy".into()),
+    });
+}
+
 fn count_of(effects: &[Effect]) -> OpId {
     let counts = ops_in(effects, "CountCommits");
     assert_eq!(counts.len(), 1, "one count: {effects:#?}");
@@ -103,19 +120,7 @@ fn a_count_dropped_while_a_message_waits_counts_at_that_turns_end() {
     fx.turn_completed(w);
     queue(&mut fx, "[anthrex] and this");
     let effects = fx.tick();
-    let ids = effects
-        .iter()
-        .find_map(|e| match e {
-            Effect::Deliver { message_ids, .. } => Some(message_ids.clone()),
-            _ => None,
-        })
-        .expect("a delivery");
-    fx.next(EventKind::Delivered {
-        run_id: RUN_ID.into(),
-        message_ids: ids,
-        ok: false,
-        error: Some("busy".into()),
-    });
+    fail_delivery(&mut fx, &effects);
     assert!(!fx.task("t1").rounds[0].turn_open);
     let effects = fx.done(count, commits(0));
     assert!(ops_in(&effects, "CountCommits").is_empty(), "{effects:#?}");
@@ -125,6 +130,34 @@ fn a_count_dropped_while_a_message_waits_counts_at_that_turns_end() {
     assert_eq!(delivers(&effects).len(), 1);
     let effects = fx.turn_completed(w);
     fresh_fallback_nudges(&mut fx, &effects);
+}
+
+/// R4-1 (probe PA; ruling T12-R5): `NO_COMMIT_NUDGE`'s delivery fails and waits for its
+/// retry while Claude starts and ends a turn by itself. That turn's end does not count
+/// again while the nudge is unread; the nudge goes out at the retry, and its turn's end
+/// counts.
+#[test]
+fn no_count_while_the_nudge_waits_for_its_delivery_retry() {
+    let (mut fx, w) = working_on(ROOMY);
+    let count = count_of(&fx.turn_completed(w));
+    let effects = fx.done(count, commits(0));
+    assert_eq!(delivers(&effects), vec![NO_COMMIT_NUDGE.to_string()]);
+    fail_delivery(&mut fx, &effects);
+    fx.signal(w, AgentSignal::TurnStarted);
+    let effects = fx.turn_completed(w);
+    assert!(ops_in(&effects, "CountCommits").is_empty(), "{effects:#?}");
+    assert_eq!(fx.task("t1").stalls, 0);
+    assert_eq!(undelivered(&fx), vec![NO_COMMIT_NUDGE.to_string()]);
+    assert_alive(&fx);
+    let effects = fx.send(fx.now + DELIVERY_RETRY_SECS, EventKind::Tick);
+    assert_eq!(delivers(&effects), vec![NO_COMMIT_NUDGE.to_string()]);
+    let count = count_of(&fx.turn_completed(w));
+    fx.done(count, commits(0));
+    assert_eq!(
+        fx.task("t1").stalls,
+        1,
+        "the read nudge's empty turn is the stall"
+    );
 }
 
 /// OS-1 (probe RD, retry): a failed count's retry is its turn's; once a later turn has
@@ -194,9 +227,10 @@ fn a_fallback_claim_dropped_after_the_later_turn_ended_counts_again() {
     assert_alive(&fx);
 }
 
-/// OS-1 (probe OD): a rejection queued into a later turn, then that turn's fallback
-/// count lands inside the rejection's turn: dropped, so the rejection's turn end counts
-/// again instead of claiming at once while `DONE_NUDGE` is only being delivered.
+/// OS-1 (probe OD): a rejection queued into a later turn. That turn's end sends the
+/// rejection and holds the count back while it is undelivered (ruling T12-R5; in round
+/// 4 the count went out and was dropped as stale), so the rejection's turn end counts,
+/// and `DONE_NUDGE` follows it rather than racing the fallback's own claim.
 #[test]
 fn the_count_after_a_late_rejection_waits_for_the_rejection_turn() {
     let (mut fx, w) = working_on(ROOMY);
@@ -208,13 +242,14 @@ fn the_count_after_a_late_rejection_waits_for_the_rejection_turn() {
     fx.done(verify, result);
     let effects = fx.turn_completed(w);
     assert_eq!(delivers(&effects).len(), 1, "the rejection");
-    let count = count_of(&effects);
-    fx.done(count, commits(2));
-    assert!(undelivered(&fx).is_empty(), "{:?}", undelivered(&fx));
+    assert!(ops_in(&effects, "CountCommits").is_empty(), "{effects:#?}");
+    assert_alive(&fx);
     let effects = fx.turn_completed(w);
     assert!(ops_in(&effects, "VerifyDone").is_empty(), "{effects:#?}");
     assert!(fx.task("t1").claim.is_none());
-    count_of(&effects);
+    let count = count_of(&effects);
+    let effects = fx.done(count, commits(2));
+    assert_eq!(delivers(&effects), vec![DONE_NUDGE.to_string()]);
     assert_alive(&fx);
 }
 

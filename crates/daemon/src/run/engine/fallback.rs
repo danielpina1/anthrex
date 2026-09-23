@@ -26,6 +26,11 @@ pub(super) fn fallback(run: &mut Run, i: usize, fx: &mut Vec<Effect>) {
     if task.state != TaskState::Working || task.claim.is_some() {
         return;
     }
+    // Ruling T12-R5: while a message waits for delivery (a nudge not yet read, or any
+    // other), nothing is counted; that message's turn end runs the fallback.
+    if queued(run, i) {
+        return;
+    }
     // Ruling T12-R4: a retry still waiting for an earlier turn's count is void.
     if let Some(r) = worker_round(task) {
         let round = &mut run.tasks[i].rounds[r];
@@ -119,22 +124,25 @@ fn restart(state: &mut FallbackState) {
 /// (skipped while the count or claim was out): then it runs here. A message still to be
 /// delivered opens a turn whose end runs it instead.
 pub(super) fn drop_stale(run: &mut Run, i: usize, r: usize, fx: &mut Vec<Effect>) {
-    let task = &run.tasks[i];
-    let round = &task.rounds[r];
-    let id = task.id();
-    let queued = run
-        .outbox
-        .iter()
-        .any(|m| m.task_id == id && m.delivered_at.is_none());
+    let round = &run.tasks[i].rounds[r];
     let between_turns = !round.turn_open
         && !round.retiring
         && !round.fallback_waiting
         && !round.interrupted
         && matches!(round.failed_turn, FailedTurn::None);
     restart(&mut run.tasks[i].rounds[r].fallback);
-    if between_turns && !queued {
+    if between_turns {
         fallback(run, i, fx);
     }
+}
+
+/// Task `i` has a message in the outbox not yet delivered: its delivery opens a turn
+/// (rulings T12-R4 and T12-R5).
+fn queued(run: &Run, i: usize) -> bool {
+    let id = run.tasks[i].id();
+    run.outbox
+        .iter()
+        .any(|m| m.task_id == id && m.delivered_at.is_none())
 }
 
 /// Ruling T12-A2: a failed count is retried `DELIVERY_RETRY_SECS` later, as a failed
