@@ -46,6 +46,19 @@ The same fix's own sweep found two production-side instances of the wider behavi
 bounds and so are recorded in
 `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md` instead.
 
+### Fixed, from the `server_restore_git.rs` flake (2026-09-22)
+
+| Test | Site | Bound (as found) | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| Every first-`Git` wait in `server_restore_git.rs` (four tests), plus its two post-change waits and its created-window control | `crates/daemon/tests/server_restore_git.rs` (`saw_git_within(.., secs(4))`, `secs(6)`, `secs(8)`, each also capped by `Client::recv()`'s own 5s panic) | `4s` / `6s` / `8s`, effectively `≤ 5s` | First `Git`: `PROBE_TIMEOUT` (5s), **plus the time to arm the root's watcher, which had no bound at all**, because `run_root` did not start the first probe until `watch::build` returned. After a change: `poll_secs` (30s) + 2 × `PROBE_TIMEOUT` once arming can be slow (see below). Created window: `DETECT_TIMEOUT` (5s) + `PROBE_TIMEOUT` | **Fixed**: the eighth instance, and the first where the missing term was not a constant at all. The flake was measured at about 1 run in 10, always on the **first run of a newly created executable**: notify's `watch()` (the FSEvents stream start) took 1.5–7.8s for every root in the process at once, while `git status` took ~25ms. The failure was the same in `/private/tmp` as under `~/Desktop`, so it is **not** the checkout-path effect recorded in the follow-ups. Fixed at the source: `run_root` now arms the watcher alongside the first probe and probes again once it is armed (`crates/daemon/tests/git_registry_arming.rs` gates an injected watcher to prove both). The test's waits are now derived from `PROBE_TIMEOUT`, `DETECT_TIMEOUT` and the configured `poll_secs`, and read frames directly instead of through `Client::recv()`. |
+
+The lesson for the next sweep: an **unbounded step in front of a budget** makes that
+budget meaningless, however carefully it was derived. `registration_probe_deadline` in
+`git_registry.rs` was correctly `PROBE_TIMEOUT + slack`. It still measured the wrong
+thing, because the probe it bounds could not start until an operation with no timeout
+had finished. When deriving a bound, list every step between the trigger and the thing
+awaited, not just the ones that have a named constant.
+
 A related but distinct case, from `an_exited_window_is_removed_without_waiting`
 (`daemon/tests/manager_worktree/removal/ordering.rs`): its old `< 1s` bound was not below
 the code's legal worst case (the removal has no timeout of its own to butt up against),
@@ -88,6 +101,15 @@ noted):
 | `an_exited_window_is_removed_without_waiting`'s real removal path, isolated (own test binary, no siblings, n=30) | 186.8 ms | 197.8 ms | 206.5 ms | 263.6 ms |
 | same, full `manager_worktree` binary running (21 tests, 14 threads, self-contention only, n=12) | 199.5 ms | 231.9 ms | 232.1 ms | 272.5 ms |
 | same, plus 16 self-limiting `yes` spinners (load average climbed 10→21.5 during the run, n=12) | 288.0 ms | 343.3 ms | 354.0 ms | 475.3 ms |
+
+**Arming a git watcher** (macOS, notify 8.2 FSEvents backend, measured 2026-09-22 inside
+`server_restore_git.rs`): usually 28–68 ms per root. On the **first run of a newly
+created executable** it sometimes takes **1.5–7.8 s**. The stall hits every root in the
+process at once and sits inside `Watcher::watch()`. It showed up in 1/20, 2/25 and 4/25
+of the fresh-copy batches measured, never in about 800 re-runs of an already-run binary,
+and the same in `/private/tmp` as under `~/Desktop`. A fresh build is exactly what
+`cargo test` runs first, so treat this step as unbounded and never let a budget wait
+behind it.
 
 A finding worth flagging for whoever next touches `crates/daemon/src/worktree/ops.rs`:
 `worktree::remove` (called from `remove_with_worktree` step 4) re-runs `dirty_reason` —

@@ -164,6 +164,13 @@ impl Scheduler {
         }
     }
 
+    /// Asks for one probe as soon as possible: at the next [`Self::plan`], or when the
+    /// outstanding probe returns if one is in flight. No debounce, and not counted
+    /// towards the breaker; it is not a watcher event.
+    pub fn request_probe(&mut self) {
+        self.pending = true;
+    }
+
     /// The outstanding probe has returned. The next [`Self::plan`] may start another.
     pub fn probe_finished(&mut self) {
         self.in_flight = false;

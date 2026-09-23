@@ -14,13 +14,24 @@
 //! Every test mirrors the real startup order of `lifecycle::run`: build the manager,
 //! `restore` the loaded state into it, *then* `serve`. `crates/daemon/tests/server_git.rs`
 //! is the created-window half of the same surface.
+//!
+//! Every wait below is a deadline derived from the budgets the code runs against (see
+//! `registration_deadline` and its siblings near the bottom), not a literal. The
+//! literals this file used to have (4 s for the first `Git` message, under
+//! `PROBE_TIMEOUT`'s 5 s) failed about one run in ten on a freshly built test binary:
+//! the first probe waited for the root's watcher to arm, and on macOS the first FSEvents
+//! stream a new executable starts was measured taking 1.5 to 7.8 s. The registry no
+//! longer makes the first probe wait (`crates/daemon/tests/git_registry_arming.rs`), and
+//! these deadlines now cover what the code is actually allowed to take.
 
 mod support;
 
+use daemon::git::probe::PROBE_TIMEOUT;
 use daemon::manager::{ManagerConfig, WindowManager};
+use daemon::project::DETECT_TIMEOUT;
 use daemon::server::serve;
 use daemon::state::{StateFile, WindowRecord, WorktreeRecord};
-use proto::{DaemonMsg, PROTO_VERSION, Runtime, Status};
+use proto::{DaemonMsg, PROTO_VERSION, Runtime, Status, read_frame};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -134,7 +145,7 @@ async fn a_restored_managed_worktree_window_is_watched_again() {
     );
 
     assert!(
-        saw_git_within(&mut client, &root, Duration::from_secs(4)).await,
+        saw_git_within(&mut client, &root, registration_deadline()).await,
         "no Git message for the restored window's root: it was never registered"
     );
 }
@@ -158,7 +169,7 @@ async fn control_a_created_window_in_this_harness_is_watched() {
         })
         .await;
     assert!(
-        saw_git_within(&mut client, &root, Duration::from_secs(8)).await,
+        saw_git_within(&mut client, &root, created_deadline()).await,
         "control failed: even a created window produced no Git message"
     );
 }
@@ -172,8 +183,9 @@ async fn control_a_created_window_in_this_harness_is_watched() {
 ///
 /// Asserted by changing the worktree after the restart, not by waiting for a message:
 /// the registration's own probe has already published by then, and `Publisher` never
-/// republishes an unchanged state. A live watcher is the only thing that produces a
-/// second publication.
+/// republishes an unchanged state. Only the root's own task can publish the change, by
+/// its watcher, by the probe it runs once that watcher is armed, or by its safety poll,
+/// and an unregistered root has no task at all.
 #[tokio::test]
 async fn a_restart_keeps_the_restored_root_watched() {
     let (_repo, root) = init_repo().await;
@@ -190,7 +202,7 @@ async fn a_restart_keeps_the_restored_root_watched() {
     .await;
     let (mut client, _) = Client::connect(&d, PROTO_VERSION).await;
     assert!(
-        saw_git_within(&mut client, &root, Duration::from_secs(4)).await,
+        saw_git_within(&mut client, &root, registration_deadline()).await,
         "the restored window's root must be watched from startup"
     );
 
@@ -203,7 +215,7 @@ async fn a_restart_keeps_the_restored_root_watched() {
 
     touch_tracked_file(&root).await;
     assert!(
-        saw_git_within(&mut client, &root, Duration::from_secs(6)).await,
+        saw_git_within(&mut client, &root, change_deadline()).await,
         "the watcher must survive the restart"
     );
 }
@@ -231,7 +243,7 @@ async fn two_restored_windows_on_one_root_each_hold_a_reference() {
     ]))
     .await;
     let (mut client, _) = Client::connect(&d, PROTO_VERSION).await;
-    assert!(saw_git_within(&mut client, &root, Duration::from_secs(4)).await);
+    assert!(saw_git_within(&mut client, &root, registration_deadline()).await);
 
     client
         .send(proto::ClientMsg::Remove {
@@ -246,7 +258,7 @@ async fn two_restored_windows_on_one_root_each_hold_a_reference() {
 
     touch_tracked_file(&root).await;
     assert!(
-        saw_git_within(&mut client, &root, Duration::from_secs(6)).await,
+        saw_git_within(&mut client, &root, change_deadline()).await,
         "the second window still records this root, so it must still be watched"
     );
 }
@@ -264,16 +276,52 @@ async fn touch_tracked_file(root: &Path) {
 }
 
 /// Whether a `Git` message for `root` arrives within `within`, draining everything else.
-async fn saw_git_within(client: &mut Client, root: &std::path::Path, within: Duration) -> bool {
+///
+/// Reads frames directly rather than through `Client::recv`, whose own 5 s bound would
+/// panic inside any deadline longer than that.
+async fn saw_git_within(client: &mut Client, root: &Path, within: Duration) -> bool {
     tokio::time::timeout(within, async {
         loop {
-            if matches!(client.recv().await, DaemonMsg::Git { root: r, .. } if r == root) {
+            let message = read_frame(&mut client.rd)
+                .await
+                .unwrap()
+                .expect("daemon closed");
+            if matches!(message, DaemonMsg::Git { root: r, .. } if r == root) {
                 return;
             }
         }
     })
     .await
     .is_ok()
+}
+
+/// Scheduling slack on top of the budgets below: `spawn_blocking` pool contention, event
+/// delivery and the rest of a real OS. The same margin `git_registry.rs` uses for its
+/// real-watcher tests.
+const WALL_CLOCK_SLACK: Duration = Duration::from_secs(10);
+
+/// A restored root is registered by `serve` before any client connects, and its first
+/// probe starts right away, so its first `Git` message is bounded by that probe alone.
+fn registration_deadline() -> Duration {
+    PROBE_TIMEOUT + WALL_CLOCK_SLACK
+}
+
+/// A created window is registered once `CreateWindow` has resolved its roots, which is
+/// a `git` run of its own bounded by [`DETECT_TIMEOUT`]. A shell window has no other
+/// timed step before the registration: this harness's launch gate is open from the
+/// start.
+fn created_deadline() -> Duration {
+    DETECT_TIMEOUT + PROBE_TIMEOUT + WALL_CLOCK_SLACK
+}
+
+/// A change to an already-published root. With the watcher armed it costs a debounce
+/// and a probe, and seldom more than a few hundred milliseconds. But arming the watcher
+/// has no bound of its own (see the module docs), and a change made before it arms is
+/// only picked up by the probe that follows arming or, failing that, by the safety poll.
+/// A probe may already be in flight at that moment, and the new one then waits for it.
+/// So the budget is the poll interval `serve` was given plus two probes.
+fn change_deadline() -> Duration {
+    Duration::from_secs(config::Git::default().poll_secs) + PROBE_TIMEOUT * 2 + WALL_CLOCK_SLACK
 }
 
 /// The case the state file could not represent at all until `WindowRecord.worktree`
@@ -299,7 +347,7 @@ async fn a_restored_plain_window_keeps_its_worktree_and_is_watched() {
         "a restored window inside a checkout must still record its worktree root"
     );
     assert!(
-        saw_git_within(&mut client, &root, Duration::from_secs(4)).await,
+        saw_git_within(&mut client, &root, registration_deadline()).await,
         "and that root must be watched"
     );
 }
