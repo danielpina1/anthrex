@@ -1,6 +1,6 @@
 use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use proto::{Runtime, Status};
+use proto::{DaemonMsg, Runtime, Status};
 
 // These stay under the old `crates/tui/src/app_tests/` directory (task M6.9's `git mv`
 // only moves `app.rs` and `app_tests.rs` itself); the path is relative to this file's own
