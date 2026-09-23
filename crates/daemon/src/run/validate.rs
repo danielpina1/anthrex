@@ -17,7 +17,9 @@ use super::model::{Profile, ReviewLevel, RunLimits, Task};
 use super::plan::PlanError;
 use super::roster;
 
-pub use super::validate_graph::{EditScope, combined_cycles, implicit_deps, validate_tasks};
+pub use super::validate_graph::{
+    EditScope, combined_cycles, implicit_deps, validate_tasks, validate_tasks_with,
+};
 
 const ID_PATTERN: &str = "^[a-z0-9][a-z0-9-]{0,15}$";
 const ID_MAX: usize = 16;

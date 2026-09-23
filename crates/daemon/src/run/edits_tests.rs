@@ -457,3 +457,6 @@ fn split_rewires_dependents_to_every_child() {
 
 #[path = "edits_tests_rules.rs"]
 mod rules;
+
+#[path = "edits_tests_state.rs"]
+mod state;

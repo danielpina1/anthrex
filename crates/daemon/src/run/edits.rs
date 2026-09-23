@@ -11,12 +11,16 @@
 
 use std::collections::BTreeSet;
 
-use proto::{AgentRole, BlockInfo, BlockReason, PlanEdit, PlanTask, TaskState};
+use proto::{AgentRole, BlockInfo, BlockReason, PlanEdit, PlanTask, Size, TaskState};
 
 use super::contract::{amend_message, answer_message};
 use super::model::{Run, Task, TaskEvent, task_branch, task_path};
 use super::plan::PlanError;
-use super::validate::{EditScope, protected_notes, resolve_task_lenient, validate_tasks};
+use super::roster::pick_reviewer;
+use super::validate::{
+    EditScope, combined_cycles, implicit_deps, protected_notes, resolve_task_lenient,
+    validate_tasks_with,
+};
 
 /// What the engine must do after a batch is applied; the model change itself is already
 /// in the returned run.
@@ -48,6 +52,7 @@ pub fn apply_edits(
     let mut batch = Batch {
         run: run.clone(),
         touched: BTreeSet::new(),
+        added_deps: BTreeSet::new(),
         errors: Vec::new(),
         consequences: Vec::new(),
         now,
@@ -56,19 +61,30 @@ pub fn apply_edits(
         batch.apply(edit);
     }
     let Batch {
-        run: edited,
+        run: mut edited,
         touched,
+        added_deps,
         mut errors,
         consequences,
         ..
     } = batch;
-    errors.extend(validate_tasks(
+    errors.extend(validate_tasks_with(
         &edited.tasks,
         &touched,
+        Some(&added_deps),
         scope,
         edited.limits.max_tasks,
         &edited.profile,
     ));
+    // Decision 41's implicit dependencies follow the edited graph; the combined check
+    // is the same backstop `build_run` runs (M8a.6 fix round 1, F2).
+    let implicit = implicit_deps(&edited.tasks);
+    for (task, deps) in edited.tasks.iter_mut().zip(implicit) {
+        task.implicit_deps = deps;
+    }
+    if errors.is_empty() {
+        errors.extend(combined_cycles(&edited.tasks));
+    }
     if errors.is_empty() {
         Ok((edited, consequences))
     } else {
@@ -129,6 +145,9 @@ fn state_label(task: &Task) -> String {
 struct Batch {
     run: Run,
     touched: BTreeSet<String>,
+    /// `(task, dep)` pairs this batch adds: the cancelled-dependency rule applies to
+    /// these only (F3).
+    added_deps: BTreeSet<(String, String)>,
     errors: Vec<PlanError>,
     consequences: Vec<EditConsequence>,
     now: u64,
@@ -195,8 +214,16 @@ impl Batch {
         task
     }
 
+    /// Records every declared dependency of a new task as added by this batch.
+    fn add_deps_of(&mut self, task: &Task) {
+        for dep in &task.spec.deps {
+            self.added_deps.insert((task.spec.id.clone(), dep.clone()));
+        }
+    }
+
     fn add_task(&mut self, spec: PlanTask) {
         let task = self.resolve(spec);
+        self.add_deps_of(&task);
         self.run.tasks.push(task);
         let last = self.run.tasks.len() - 1;
         self.log(last, "added by a plan edit".to_string());
@@ -231,12 +258,20 @@ impl Batch {
                 continue;
             }
             let text = format!("dependency {id} was cancelled");
+            let history = match (&dependent.block, dependent.state) {
+                (Some(old), TaskState::Blocked) => format!(
+                    "blocked: {text} (was {}: {})",
+                    state_label(dependent),
+                    old.text
+                ),
+                _ => format!("blocked: {text}"),
+            };
             dependent.state = TaskState::Blocked;
             dependent.block = Some(BlockInfo {
                 reason: BlockReason::DepCancelled,
-                text: text.clone(),
+                text,
             });
-            self.log(j, format!("blocked: {text}"));
+            self.log(j, history);
         }
     }
 
@@ -257,6 +292,9 @@ impl Batch {
             return;
         }
         let children: Vec<Task> = into.iter().map(|s| self.resolve(s.clone())).collect();
+        for child in &children {
+            self.add_deps_of(child);
+        }
         let child_ids: Vec<String> = children.iter().map(|c| c.spec.id.clone()).collect();
         for task in self.run.tasks.iter_mut() {
             if task.state.is_finished() || !task.spec.deps.iter().any(|d| d == id) {
@@ -288,11 +326,14 @@ impl Batch {
 
     /// `amend_task`: brief, acceptance and priority on any unfinished task; route, test
     /// mode, its reason and size only on a task that has not started (one refusal per
-    /// such field). When route, test mode, its reason or size changed, the task's
-    /// derived fields are re-resolved from the spec (decisions 8–10); otherwise only the
-    /// spec changes, so the engine's own changes (a rung-2 route, a rung-3 size) stay.
-    /// Either way the spec is validated as a plan task's is. A new brief or new criteria
-    /// reach a live worker as `amend_message`.
+    /// such field). An amend naming no field is refused. When route, test mode, its
+    /// reason or size changed, the task's derived fields are re-resolved from the spec
+    /// (decisions 8–10), but never below the engine's own changes (fix round 1, F1): a
+    /// size the engine raised (rung 3) is a floor, even for an explicit smaller `size`;
+    /// an escalated route (rung 2) stays unless the amend names `route`; the engine's
+    /// notes stay. Otherwise only the spec changes. Either way the spec is validated as a
+    /// plan task's is. A new brief or new criteria reach a live worker as
+    /// `amend_message`.
     fn amend_task(&mut self, edit: &PlanEdit) {
         let PlanEdit::AmendTask {
             task_id,
@@ -308,6 +349,22 @@ impl Batch {
             return;
         };
         let Some(i) = self.find(task_id) else { return };
+        let nothing = brief.is_none()
+            && acceptance.is_none()
+            && route.is_none()
+            && test_mode.is_none()
+            && test_mode_reason.is_none()
+            && priority.is_none()
+            && size.is_none();
+        if nothing {
+            self.errors.push(PlanError::new(
+                Some(task_id),
+                "amend_task",
+                "13",
+                "nothing to amend",
+            ));
+            return;
+        }
         let state = self.run.tasks[i].state;
         if state.is_finished() {
             return self.refuse(i, "only unfinished tasks can be amended");
@@ -360,19 +417,13 @@ impl Batch {
             changed.push("size");
         }
 
-        let resolved = self.resolve(spec);
-        let task = &mut self.run.tasks[i];
-        if reresolve {
-            task.size = resolved.size;
-            task.hub = resolved.hub;
-            task.test_mode = resolved.test_mode;
-            task.notes = resolved.notes;
-            task.review_level = resolved.review_level;
-            task.route = resolved.route;
-            task.review_route = resolved.review_route;
-            task.budget = resolved.budget;
+        if !reresolve {
+            let resolved = self.resolve(spec);
+            self.run.tasks[i].spec = resolved.spec;
+        } else {
+            self.reresolve(i, spec, route.is_some());
         }
-        task.spec = resolved.spec;
+        let task = &self.run.tasks[i];
         if (brief.is_some() || acceptance.is_some()) && has_live_worker(task) {
             self.consequences.push(EditConsequence::Deliver {
                 task_id: task.id().to_string(),
@@ -380,6 +431,58 @@ impl Batch {
             });
         }
         self.log(i, format!("amended: {}", changed.join(", ")));
+    }
+
+    /// Re-resolves task `i` from its amended `spec` without undoing the engine: what the
+    /// unamended spec resolves to is the plan's part, and anything the task holds beyond
+    /// it (a larger size, a different route, extra notes) is the engine's.
+    fn reresolve(&mut self, i: usize, spec: PlanTask, route_named: bool) {
+        let run = &self.run;
+        let old = &run.tasks[i];
+        let (planned, _) = resolve_task_lenient(
+            old.spec.clone(),
+            &run.profile,
+            &run.limits,
+            &run.roster,
+            run.limits.default_runtime,
+        );
+        let floor = if old.size > planned.size {
+            old.size
+        } else {
+            Size::S
+        };
+        let escalated = (old.route != planned.route).then(|| old.route.clone());
+        let engine_notes: Vec<String> = old
+            .notes
+            .iter()
+            .filter(|n| !planned.notes.contains(n))
+            .cloned()
+            .collect();
+
+        let mut sized = spec.clone();
+        sized.size = sized.size.max(floor);
+        let resolved = self.resolve(sized);
+        let route = match escalated {
+            Some(route) if !route_named => route,
+            _ => resolved.route,
+        };
+        let task = &mut self.run.tasks[i];
+        task.review_route = resolved
+            .review_level
+            .map(|level| pick_reviewer(&self.run.roster, &route, level));
+        task.spec = spec;
+        task.size = resolved.size;
+        task.hub = resolved.hub;
+        task.test_mode = resolved.test_mode;
+        task.review_level = resolved.review_level;
+        task.route = route;
+        task.budget = resolved.budget;
+        task.notes = resolved.notes;
+        for note in engine_notes {
+            if !task.notes.contains(&note) {
+                task.notes.push(note);
+            }
+        }
     }
 
     fn add_dep(&mut self, id: &str, dep: &str) {
@@ -403,6 +506,7 @@ impl Batch {
             task.state = TaskState::Pending;
         }
         self.touched.insert(id.to_string());
+        self.added_deps.insert((id.to_string(), dep.to_string()));
         self.log(i, format!("dependency on {dep} added"));
     }
 

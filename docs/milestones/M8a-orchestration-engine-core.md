@@ -2883,8 +2883,8 @@ Deviations and readings the brief left open:
   the refusals and resolution errors in edit order, then the cross-task errors.
 - **Amend.** It sets the spec fields. When `route`, `test_mode`, `test_mode_reason` or
   `size` changed, the derived fields (size, hub, test mode, notes, review level, route,
-  review route, budget) are re-resolved from the spec. That replaces any rung-2 route or
-  engine note. Otherwise only the spec changes, so a rung-3 L size stays and the L rule
+  review route, budget) are re-resolved from the spec, never below the engine's raises
+  (superseded in part by fix round 1, F1). Otherwise only the spec changes, so a rung-3 L size stays and the L rule
   fires once the task is touched (decision 13's exemption ends). `Deliver
   { amend_message }` goes out when `brief` or `acceptance` changed on a task with a live
   worker: its state is `working`, or it has an unended worker round. A priority change
@@ -2894,8 +2894,7 @@ Deviations and readings the brief left open:
   `blocked(question)` task whose session is still open). The task leaves `merge_queue`.
   Every unfinished task that **declares** it as a dependency becomes
   `blocked(dep_cancelled)` with the text `dependency <id> was cancelled` (this task's
-  wording). Implicit dependencies are left alone, because decision 41 recomputes them
-  each step and a cancelled implicit dependency releases its waiter. Removing the
+  wording). Implicit dependencies are recomputed after every batch (fix round 1, F2). Removing the
   worktree of a cancelled task that is not live (a pre-warmed or blocked task) is the
   engine's work (M8a.11/decision 14), keyed on `cancelled` plus an existing worktree.
 - **Split.** Dependents that are not finished have `task_id` replaced in place by the
@@ -2933,3 +2932,114 @@ Deviations and readings the brief left open:
   After each run the files were restored from a scratch copy.
 - **Decision 2's grep** over `edits.rs` and `contract.rs` matches only their doc
   comments.
+
+### M8a.6 fix round 1 (2026-09-23)
+
+Coordinator rulings on `task-6-review.md`, findings F1–F9:
+
+- **F1 (fix, Critical).** An amend never lowers a task below an engine raise. `reresolve`
+  resolves the **unamended** spec to find the plan's part. Anything the task holds
+  beyond it belongs to the engine:
+  - A size larger than the planned one (rung 3) is a floor, and the amended spec is
+    resolved at `max(spec size, floor)`. So an amend of route, `test_mode` or
+    `test_mode_reason` alone on a rung-3 L task still meets rule 7.2.4. An explicit
+    smaller `size` does not lower the floor either: a rung-3 L task can only be split
+    (consistent with `run retry`'s `task <id> is L; split it first`).
+  - A route different from the planned one (rung 2) is kept unless the amend names
+    `route`. When the route is kept, `review_route` is re-picked from it.
+  - Notes the planned resolution does not produce (the engine's) are kept after the
+    newly resolved ones.
+  - The stored `spec.size` stays what the amend says.
+
+  Tests: `amend_route_on_a_rung3_l_task_is_rejected` (route, test_mode, reason, and
+  size M), `a_rung3_raise_to_m_survives_a_test_mode_amend`,
+  `an_escalated_route_survives_a_test_mode_amend`.
+- **F2 (fix).** After every batch `apply_edits` recomputes `implicit_deps` for every
+  task, then runs `combined_cycles` when nothing else failed, the same backstop
+  `build_run` runs.
+  - **The reviewer's case is accepted, not rejected.** `t1` owns `crates/a/**`, `t2`
+    owns `crates/a/src/**`, and the batch is `add_dep t1 t2`. Recomputing with the
+    reachability skip (task 5's F1) drops `t2`'s implicit wait on `t1`, because `t1`
+    now declares `t2`. So `t1` waits for `t2`, and there is no cycle.
+  - **The backstop can never fire through `apply_edits`, for the same reason it cannot
+    in `build_run`.** An edit can therefore never leave a combined cycle behind.
+  - **`implicit_deps` is now started-aware, per decision 41.** A task that has not
+    started waits for an overlapping one that has, whatever their plan order. A task
+    has started when it is in `preparing` through `merge_queue`, or `blocked` with a
+    `start_commit`. Two unstarted tasks keep the plan-order rule; two started tasks wait
+    for nothing. At plan time nothing has started, so `build_run` is unchanged.
+  - **The recompute is required because split children are inserted mid-list.** With
+    the plan-order rule alone, a `working` task would be made to wait for a split child
+    placed before it.
+
+  Tests: `edits_recompute_implicit_deps`,
+  `an_added_task_waits_for_an_overlapping_earlier_task`,
+  `a_split_child_before_a_working_task_waits_for_it`. M8a.11's scheduler should reuse
+  `implicit_deps`.
+- **F3 (fix).** The cancelled-dependency rule applies only to dependencies the batch
+  adds, recorded as `(task, dep)` pairs:
+  - `add_dep`'s pair;
+  - every declared dep of an added task;
+  - every declared dep of a split-in task.
+
+  New entry point: `validate_tasks_with(tasks, touched, Some(&added_deps), …)`.
+  `validate_tasks` is `validate_tasks_with(…, None, …)`, which keeps the old behaviour
+  (every dep of every touched task) for `build_run` and task 5's tests. The L and area
+  rules still apply to every touched task.
+
+  Test: `a_dep_cancelled_task_stays_editable`. It covers a priority amend, `add_task t1b`
+  plus `add_dep t2 t1b`, and a new dependency on the cancelled task, which is still
+  refused.
+
+  The lack of `remove_dep` (so a `dep_cancelled` task never becomes runnable except by
+  splitting it) is in the followups file under milestone 9.
+- **F4 (tests).** Pinning tests, each shown to kill its surviving mutant:
+  - `cancel_is_live_in_every_live_state`: all six live states yield `CancelLive`;
+    `pending`, `queued` and `blocked` yield nothing; cancel clears `block`.
+  - `amend_delivers_only_to_an_open_worker_round`: a `blocked(question)` task with an
+    open worker round gets `Deliver`; a `review` task with an open reviewer round does
+    not.
+  - `dependencies_are_never_duplicated`: covers both `add_dep` and the split dedupe.
+  - `edits_write_task_history`: covers every history line.
+- **F5 (carry note, addressed to M8a.11).** Cancelling a task with no live session
+  emits **no consequence**. This covers a `blocked` task after rung 3 (decision 38 keeps
+  its worktree, with real commits), a pre-warmed `pending` or `queued` task (decision
+  14), and any cancelled task whose worktree exists. The engine must therefore look for
+  `state == cancelled` with an existing worktree after every applied edit. It must then
+  salvage the committed and uncommitted work (decision 20's
+  `refs/anthrex/salvage/<run>/<task>/<seq>`) and remove the worktree. Suggested M8a.11
+  test: `cancel_of_a_rung3_blocked_task_salvages_its_worktree`.
+- **F6 (fix).** `dep_cancelled` wins over an existing block: it is the permanent
+  condition, and a dependent of an unmerged task has never started. The dependent's
+  earlier block is kept in its history line:
+  `blocked: dependency <id> was cancelled (was blocked(<reason>): <text>)`. Test:
+  `a_cancel_records_the_dependents_earlier_block`.
+- **F7 (followup).** `EditScope::Area` restricts only `owns`. This is recorded in the
+  followups file under milestone 9.
+- **F8 (fix).** An `amend_task` with every field unset is refused with
+  `task <id>: amend_task: nothing to amend` (rule `13`). Test:
+  `an_empty_amend_is_refused`.
+- **F9 (no change).** Split children go in right after the cancelled original, as the
+  first M8a.6 notes say.
+
+Red first: with the new tests added to `edits_tests_state.rs` and nothing else changed,
+the run gave `19 passed; 9 failed`. The 9 were the F1 (3), F2 (3), F3, F6 and F8 tests.
+The F4 pinning tests passed against the existing code; after the fixes, 14 single-line
+mutations were run, and each one turned at least one test red:
+- `has_live_worker` ignoring rounds;
+- `has_live_worker` counting any role;
+- `is_live` reduced to `working | merge_queue`;
+- cancel keeping `block`;
+- no split dedupe;
+- no `add_dep` duplicate check;
+- no `added` history;
+- no `split from` history;
+- no size floor;
+- escalated route dropped;
+- engine notes dropped;
+- no implicit recompute;
+- `implicit_deps` not started-aware;
+- empty amend accepted.
+
+Each mutation was restored with `git show HEAD:<path> > <path>` from a WIP commit, which
+was folded into the fix commit afterwards.

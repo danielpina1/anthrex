@@ -703,3 +703,17 @@ scope.
   (`run_git_env.rs`, `run_exec_env.rs`, `headless_env.rs`). AGENTS.md was left unchanged;
   the user decides whether to reword the rule to "put the test alone in its own test
   binary".
+
+## From M8a.6's review (2026-09-23), for milestone 9
+
+- **The sub-planner's `EditScope::Area` limits only `owns`.** Under `Area { globs }`,
+  `apply_edits` still accepts `cancel_task` and `answer` on tasks outside the area, and
+  the run-level `pause`, `resume` and `finish` (task-6 review F7). Decision 12 speaks
+  only of `owns`, so this is within M8a's letter. M9's sub-planner scope must decide
+  which edit kinds, and which tasks, a sub-planner may use.
+- **No `remove_dep` / `replace_dep` edit.** A `blocked(dep_cancelled)` task stays
+  editable (fix round 1, F3), and it can gain a dependency on a replacement task. But its
+  dependency on the cancelled task cannot be removed, so it never becomes runnable. Today
+  the only repair is `split_task` of the blocked task (the children carry fresh deps, and
+  its dependents are rewired to them). M9's re-planning should add `remove_dep` or
+  `replace_dep`, or document split as the path.

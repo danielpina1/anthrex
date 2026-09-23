@@ -32,13 +32,29 @@ fn is_valid_area_glob(glob: &str) -> bool {
 
 /// The rules over the whole task list, decisions 9–13. Every task that is not merged or
 /// cancelled is checked; the L rule, the cancelled-dependency rule and the area rule
-/// apply only to `touched` tasks (decision 13's L exemption: a task raised to L by
+/// apply only to `touched` tasks (the cancelled-dependency rule can be narrowed further
+/// with [`validate_tasks_with`]) (decision 13's L exemption: a task raised to L by
 /// rung 3 must not block unrelated edits). `max_tasks` counts every task that is not
 /// cancelled. `_profile` is unused: the profile-dependent rules run per task, in
 /// `resolve_task`.
 pub fn validate_tasks(
     tasks: &[Task],
     touched: &BTreeSet<String>,
+    scope: &EditScope,
+    max_tasks: u32,
+    profile: &Profile,
+) -> Vec<PlanError> {
+    validate_tasks_with(tasks, touched, None, scope, max_tasks, profile)
+}
+
+/// [`validate_tasks`], with the cancelled-dependency rule limited to `added_deps`
+/// (`(task, dep)` pairs) when given. A plan edit passes the dependencies its batch adds,
+/// so a task already `blocked(dep_cancelled)` stays editable (M8a.6 fix round 1, F3);
+/// `None` checks every dependency of every touched task, as a new plan needs.
+pub fn validate_tasks_with(
+    tasks: &[Task],
+    touched: &BTreeSet<String>,
+    added_deps: Option<&BTreeSet<(String, String)>>,
     scope: &EditScope,
     max_tasks: u32,
     _profile: &Profile,
@@ -89,7 +105,13 @@ pub fn validate_tasks(
         for dep in &task.spec.deps {
             match by_id.get(dep.as_str()) {
                 None => errors.push(e("deps", "12.1", format!("{dep} is not a task"))),
-                Some(d) if is_touched && d.state == TaskState::Cancelled => {
+                Some(d)
+                    if d.state == TaskState::Cancelled
+                        && match added_deps {
+                            None => is_touched,
+                            Some(added) => added.contains(&(id.to_string(), dep.clone())),
+                        } =>
+                {
                     errors.push(e("deps", "12.1", format!("{dep} is cancelled")))
                 }
                 Some(_) => {}
@@ -291,12 +313,28 @@ impl<'a> Tarjan<'a> {
     }
 }
 
-/// Decision 41's implicit dependencies at plan time, when no task has started: for two
-/// unfinished tasks on the same runtime whose `owns` intersect, the later in plan order
-/// waits for the earlier — unless the later already declares it, or the earlier can
-/// already reach the later through declared deps **and the implicit deps given to
-/// earlier tasks so far** (M8a.5 review finding 1): that edge would close a cycle and
-/// deadlock both.
+/// A task that has started, for decision 41: any state from `preparing` to
+/// `merge_queue`, or `blocked` with a start commit (its worktree exists).
+fn has_started(task: &Task) -> bool {
+    matches!(
+        task.state,
+        TaskState::Preparing
+            | TaskState::Working
+            | TaskState::Proof
+            | TaskState::Check
+            | TaskState::Review
+            | TaskState::MergeQueue
+    ) || (task.state == TaskState::Blocked && task.start_commit.is_some())
+}
+
+/// Decision 41's implicit dependencies: for two unfinished tasks on the same runtime
+/// whose `owns` intersect, a task that has not started waits for one that has; when
+/// neither has started, the later in plan order waits for the earlier; when both have,
+/// neither waits. A wait is skipped when the waiter already declares the other task, or
+/// when the other task can already reach the waiter through declared deps **and the
+/// implicit deps given so far** (M8a.5 review finding 1): that edge would close a cycle
+/// and deadlock both. At plan time no task has started, so only the plan-order rule
+/// applies; plan edits (M8a.6) recompute these after every batch.
 pub fn implicit_deps(tasks: &[Task]) -> Vec<Vec<String>> {
     let index: BTreeMap<&str, usize> = tasks
         .iter()
@@ -329,23 +367,31 @@ pub fn implicit_deps(tasks: &[Task]) -> Vec<Vec<String>> {
         }
         false
     };
-    let mut out = Vec::with_capacity(tasks.len());
+    let mut out: Vec<Vec<String>> = vec![Vec::new(); tasks.len()];
     for (i, task) in tasks.iter().enumerate() {
-        let mut mine = Vec::new();
-        if is_active(task) {
-            for (j, earlier) in tasks[..i].iter().enumerate() {
-                if is_active(earlier)
-                    && earlier.route.runtime == task.route.runtime
-                    && any_intersect(&earlier.spec.owns, &task.spec.owns)
-                    && !task.spec.deps.iter().any(|d| d == earlier.id())
-                    && !reaches(&edges, j, i)
-                {
-                    edges[i].push(j);
-                    mine.push(earlier.id().to_string());
-                }
-            }
+        if !is_active(task) {
+            continue;
         }
-        out.push(mine);
+        for (j, earlier) in tasks[..i].iter().enumerate() {
+            if !is_active(earlier)
+                || earlier.route.runtime != task.route.runtime
+                || !any_intersect(&earlier.spec.owns, &task.spec.owns)
+            {
+                continue;
+            }
+            // (waiter, waited for)
+            let (w, on) = match (has_started(earlier), has_started(task)) {
+                (true, true) => continue,
+                (false, true) => (j, i),
+                _ => (i, j),
+            };
+            let on_id = tasks[on].id();
+            if tasks[w].spec.deps.iter().any(|d| d == on_id) || reaches(&edges, on, w) {
+                continue;
+            }
+            edges[w].push(on);
+            out[w].push(on_id.to_string());
+        }
     }
     out
 }
