@@ -11,10 +11,10 @@ use std::time::Duration;
 use super::{Git, diff, failure, os};
 
 /// What `git worktree list --porcelain -z` says about one worktree.
-struct Listed {
+pub(super) struct Listed {
     /// `refs/heads/<branch>`, or `None` when detached.
-    branch: Option<String>,
-    locked: bool,
+    pub(super) branch: Option<String>,
+    pub(super) locked: bool,
 }
 
 /// Decision 18's lock reason, `anthrex run <run>`, with `<run>` read from the branch
@@ -44,7 +44,7 @@ fn normalize(path: &Path) -> PathBuf {
 }
 
 /// The entry git has for `path`, if any.
-fn listed(g: Git<'_>, root: &Path, path: &Path) -> Result<Option<Listed>, String> {
+pub(super) fn listed(g: Git<'_>, root: &Path, path: &Path) -> Result<Option<Listed>, String> {
     let list = g.ok(
         root,
         &[os("worktree"), os("list"), os("--porcelain"), os("-z")],
@@ -78,7 +78,12 @@ fn listed(g: Git<'_>, root: &Path, path: &Path) -> Result<Option<Listed>, String
 
 /// Forgets a registered worktree whose directory is gone: unlock (a locked entry is
 /// never pruned), then prune.
-fn forget_missing(g: Git<'_>, root: &Path, path: &Path, entry: &Listed) -> Result<(), String> {
+pub(super) fn forget_missing(
+    g: Git<'_>,
+    root: &Path,
+    path: &Path,
+    entry: &Listed,
+) -> Result<(), String> {
     if entry.locked {
         g.write(root, &[os("worktree"), os("unlock"), path.as_os_str()])?;
     }
@@ -97,7 +102,12 @@ fn branch_head(g: Git<'_>, root: &Path, branch: &str) -> Result<Option<String>, 
 
 /// `git merge-base --is-ancestor`: exit 0 is yes, exit 1 (silent) is no, anything
 /// with an error message is an error.
-fn is_ancestor(g: Git<'_>, dir: &Path, ancestor: &str, of: &str) -> Result<bool, String> {
+pub(super) fn is_ancestor(
+    g: Git<'_>,
+    dir: &Path,
+    ancestor: &str,
+    of: &str,
+) -> Result<bool, String> {
     let args = [os("merge-base"), os("--is-ancestor"), os(ancestor), os(of)];
     let output = g.read(dir, &args)?;
     if output.success {

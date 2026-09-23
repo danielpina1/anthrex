@@ -3637,3 +3637,98 @@ Review `task-8-review.md` found 4 Important and 10 Minor issues; controller ruli
 - **File splits.**
   - `run/git/mod.rs` reached 628 lines, so the done check moved to `run/git/done.rs`.
   - `subprocess.rs` reached 615, so the head-and-tail capture moved to `subprocess/head_tail.rs`.
+
+### M8a.9 run git operations II: merge candidate, CAS, hand-back, salvage, finish (2026-09-23)
+
+Built `run/git/merge.rs` (`merge_tree`, `commit_tree`, `materialize`, `cas_update`,
+`reattach`, `read_ref`, `guard_refs`, `commits_since`, `hand_back`, and the types
+`CandidateStep`, `RefCheck`, `AcceptOutcome`, plus `ACCEPT_LIST_MAX` = 50) and
+`run/git/salvage.rs` (`salvage`, `remove_worktree`, `delete_branches`, `accept`).
+Deviations, resolutions and invented text:
+
+- **`merge-tree` passes `-z`, and is read with the head-keeping capture.**
+  - Without `-z`, git quotes a non-ASCII conflicted path (`"\303\274 x.txt"`), so the
+    file list handed to the worker would be wrong. With `-z` and `--no-messages` the
+    output is `<tree>\0<file>\0…`.
+  - `run_git`'s capped capture drops stdout on a non-zero exit, but a conflict is exit 1
+    with its answer on stdout. The first implementation failed the conflict case with
+    `git merge-tree … failed: ` and an empty stderr.
+  - `merge_tree` therefore reads through task 8's `run_git_head_tail`, via the new
+    `Git::read_head(dir, args, head_bytes)`, which keeps stdout on failure. It keeps
+    the first 64 MiB. Past that, the last, possibly cut, name is dropped.
+  - Exit 1 is not told apart from other failures by code, because `GitOutput` has no
+    code. A failure with a tree on stdout is a conflict, and a failure without one is
+    an error. A bad name prints only to stderr.
+- **`salvage`'s and `accept`'s status checks keep no output.** Both use `read_head(…,
+  0)` and test `total > 0`, so a worktree with a vast untracked tree is salvaged, not
+  failed over the 64 MiB cap. `salvage` passes `--untracked-files=normal` explicitly,
+  because a user's `status.showUntrackedFiles=no` would otherwise hide a lone new file
+  and the worktree would be removed unsalvaged. A test covers it.
+- **Salvage refs are never overwritten.**
+  - `update-ref <ref> <commit> ""` fails if the ref exists.
+  - A salvage whose ref already exists and holds the same tree returns `Some(ref)`:
+    this is the replay of an op interrupted after its `update-ref`.
+  - A salvage whose ref holds a different tree is refused with the invented `salvage ref
+    <ref> already holds other work`. The caller should have taken the next `<seq>`.
+  - `salvage` returns the ref name, not the commit, so it maps directly onto
+    `OpResult::Removed { salvage_ref }`.
+- **`remove_worktree` removes unconditionally.** It unlocks if locked, runs `worktree
+  remove --force` (one `--force` is enough once unlocked), then `worktree prune`.
+  Decision 20's "never deleted dirty without a salvage ref" is the op's ordering:
+  `salvage`, then `remove_worktree`. A worktree git no longer lists, or whose directory
+  is gone, is not an error, so the op can be replayed.
+- **`cas_update` takes the short branch name** and writes `refs/heads/<branch>`. git's
+  refusal wording varies by version, so on failure the ref is read back. `false` is
+  returned when it is not at `old`, including when it is missing. If it is at `old`,
+  the failure is an error.
+- **`reattach` is `git checkout -q --force <branch> --`.** The `--` keeps a branch name
+  from being read as a path. `materialize` is `checkout -q --detach --force <commit>`
+  then `clean -q -fd`, and ignored build caches stay.
+- **`guard_refs` invented text:** a deleted run branch halts with
+  `refs/heads/anthrex/<run>/integration was deleted`, mirroring the base's `was
+  deleted`. Decision 21 gives only the "moved from … to …" form. `<old7>`/`<new7>` are
+  the first seven characters of the full sha, not `rev-parse --short`, which may be
+  longer.
+- **`commits_since`** runs `git log --no-color --no-show-signature --abbrev=7
+  --format='%h %an: %s' --max-count=<limit> <from>..<to> --`, and gets the total from
+  `rev-list --count`. `--no-show-signature` keeps a user's `log.showSignature=true` from
+  running gpg and adding lines.
+- **`accept`.**
+  - The merge names `refs/heads/<run branch>`, so a tag of the same name cannot be
+    merged instead.
+  - Invented text: `check out <base> in <root> first (currently a detached HEAD)` when
+    `root` is detached.
+  - A failure with unmerged paths is aborted and returns `Conflict`. Any other failure
+    is aborted too if `MERGE_HEAD` exists, then returned as git's error: for example,
+    untracked files that would be overwritten.
+  - The `expected_base` check and the merge are two commands. A user who commits in
+    `root` between them gets that commit merged onto. This is not guarded: the window
+    is milliseconds, and it is the user's own checkout.
+  - `accept` passes no decision 18 flags, through the new `Git::user_write`.
+- **`delete_branches`** lists `refs/heads/<prefix>/` with `for-each-ref`, and deletes
+  each ref with `update-ref -d <ref> <listed sha>`, a CAS delete. A prefix that is
+  empty after trimming `/` is refused with the invented `refusing to delete branches
+  under an empty prefix`, because it would name every branch. Mutant M7, which drops
+  the trailing `/` from the pattern, is equivalent: `for-each-ref` already matches whole
+  path components, so `anthrex/db01` never matches `anthrex/db010/…`.
+- **Writes and the queue.** These functions are blocking, as task 8's are.
+  - The writes are `commit_tree`, `materialize`, `cas_update`, `reattach`, `hand_back`,
+    `salvage`, `remove_worktree`, `delete_branches` and `accept`. The op executor
+    (M8a.11/M8a.14) must run each through `GitQueue::write`.
+  - The reads, which may bypass the queue, are `merge_tree`, `read_ref`, `guard_refs`
+    and `commits_since`.
+- **`worktrees.rs`'s `listed`, `forget_missing` and `is_ancestor` became `pub(super)`**
+  for reuse; `LARGE_OUTPUT_BYTES` became `pub(crate)`.
+- **Test layout.** The brief says to add to `tests/run_git.rs`, splitting into
+  `run_git_merge.rs` past 600 lines. All of the new tests would take it well past 600,
+  so they went into two new files:
+  - `tests/run_git_merge.rs` (8 tests: merge-tree, commit-tree and CAS, materialize and
+    reattach, both hand-backs, `read_ref`, `guard_refs`, `commits_since`);
+  - `tests/run_git_finish.rs` (10 tests: three salvage, remove, five accept,
+    `delete_branches`).
+  - Extra tests beyond the brief: `salvage_of_a_conflicted_hand_back_keeps_the_markers`,
+    and the `showUntrackedFiles=no` case in `salvage_of_a_clean_worktree_writes_nothing`.
+  - `engine_paths_with_spaces_and_unicode_work` now also runs `merge_tree`,
+    `commit_tree`, `materialize`, `cas_update`, `reattach`, `salvage` and
+    `remove_worktree` under `/tmp/ax run ü …`. `merge_tree`'s own test has a
+    conflicted non-ASCII file.

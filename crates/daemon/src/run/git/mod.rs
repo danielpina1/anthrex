@@ -3,7 +3,9 @@
 //! task's changed paths (decisions 32, 55 and 56), and the commit count and diff a
 //! fresh session is handed (decision 30). The done check itself is in [`done`], the
 //! run, task and review worktrees in [`worktrees`], and the per-repository write queue
-//! in [`queue`].
+//! in [`queue`]. M8a.9 adds [`merge`] (the merge candidate, the compare-and-swap, the
+//! hand-back and the ref guard, decisions 21 and 36) and [`salvage`] (salvage, removal,
+//! branch deletion and accept, decision 20).
 //!
 //! Does I/O (design decision 2). Every function here is **blocking** — call it only from
 //! `spawn_blocking` — and none is `async` except [`GitQueue::write`]. Every function
@@ -14,10 +16,17 @@
 //! invocation. Every engine **write** also carries [`WRITE_FLAGS`] (decision 18).
 
 mod done;
+mod merge;
 mod queue;
+mod salvage;
 mod worktrees;
 
 pub use done::{DoneChecked, verify_done};
+pub use merge::{
+    ACCEPT_LIST_MAX, AcceptOutcome, CandidateStep, RefCheck, cas_update, commit_tree,
+    commits_since, guard_refs, hand_back, materialize, merge_tree, read_ref, reattach,
+};
+pub use salvage::{accept, delete_branches, remove_worktree, salvage};
 
 pub use queue::{GitQueue, LOCK_RETRY_DELAYS_MS};
 pub use worktrees::{create_run_branch, lock_worktree, prepare_review, prepare_worktree};
@@ -48,7 +57,7 @@ const MIN_GIT: (u32, u32) = (2, 38);
 /// The stdout cap for whole-tree listings, name lists and stats, which a real
 /// repository can push far past `run_git`'s default 256 KiB. A patch is never read
 /// under a cap: [`diff`] keeps only its head and tail (fix round 1, finding 1).
-const LARGE_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const LARGE_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
 
 /// Every diff, stat and name list ignores the user's diff configuration: no colour
 /// (`color.ui=always`), no external diff driver, no textconv filter (a
@@ -95,6 +104,28 @@ impl<'a> Git<'a> {
         .map_err(|err| err.to_string())
     }
 
+    /// A read whose stdout matters even when git exits non-zero (`merge-tree`'s
+    /// conflict is exit 1), which the capped capture discards; also a read of output
+    /// of any size of which only the start matters. The first `head_bytes` of stdout
+    /// are kept and the rest is read and dropped, so it never fails over a cap; the
+    /// returned [`HeadTail`] says how much there was.
+    pub(crate) fn read_head(
+        &self,
+        dir: &Path,
+        args: &[&OsStr],
+        head_bytes: usize,
+    ) -> Result<(GitOutput, HeadTail), String> {
+        run_git_head_tail(
+            self.program,
+            dir,
+            args,
+            Instant::now() + self.timeout,
+            head_bytes,
+            0,
+        )
+        .map_err(|err| err.to_string())
+    }
+
     fn raw(&self, dir: &Path, args: &[&OsStr], cap: usize) -> Result<GitOutput, String> {
         run_git_with_cap(self.program, dir, args, Instant::now() + self.timeout, cap)
             .map_err(|err| err.to_string())
@@ -116,6 +147,13 @@ impl<'a> Git<'a> {
         let mut full: Vec<&OsStr> = WRITE_FLAGS.iter().map(|flag| os(flag)).collect();
         full.extend_from_slice(args);
         self.raw(dir, &full, LARGE_OUTPUT_BYTES)
+    }
+
+    /// A write into the user's own checkout (`run accept`), which decision 18 exempts
+    /// from [`WRITE_FLAGS`]: their hooks and signing apply to their merge. The caller
+    /// interprets its failure.
+    pub(crate) fn user_write(&self, dir: &Path, args: &[&OsStr]) -> Result<GitOutput, String> {
+        self.raw(dir, args, LARGE_OUTPUT_BYTES)
     }
 
     /// A write that must succeed; its stdout.

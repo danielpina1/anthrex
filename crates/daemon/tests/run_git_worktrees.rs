@@ -4,7 +4,9 @@
 mod support;
 
 use daemon::run::git::{
-    create_run_branch, lock_worktree, preflight, prepare_review, prepare_worktree, verify_done,
+    CandidateStep, cas_update, commit_tree, create_run_branch, lock_worktree, materialize,
+    merge_tree, preflight, prepare_review, prepare_worktree, reattach, remove_worktree, salvage,
+    verify_done,
 };
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
 use support::TempRepo;
@@ -239,6 +241,51 @@ fn engine_paths_with_spaces_and_unicode_work() {
     .unwrap();
     assert_eq!(head_sha, h);
     assert!(patch.contains("fn ü() {}"), "{patch}");
+
+    // M8a.9: the merge candidate, materialized in the integration worktree and
+    // compare-and-swapped onto the run branch, on the same paths.
+    let integration = wt.join("runs/sp01/integration");
+    let CandidateStep::Tree(tree) =
+        merge_tree(real_git(), &repo.root, &pre.base_sha, &h, T).unwrap()
+    else {
+        panic!("a clean candidate");
+    };
+    let candidate = commit_tree(
+        real_git(),
+        &repo.root,
+        &tree,
+        &[&pre.base_sha, &h],
+        "anthrex: merge t1: ü",
+        T,
+    )
+    .unwrap();
+    materialize(real_git(), &integration, &candidate, T).unwrap();
+    assert!(integration.join("src/ü file.rs").exists());
+    assert!(
+        cas_update(
+            real_git(),
+            &repo.root,
+            "anthrex/sp01/integration",
+            &candidate,
+            &pre.base_sha,
+            T
+        )
+        .unwrap()
+    );
+    reattach(real_git(), &integration, "anthrex/sp01/integration", T).unwrap();
+    assert_eq!(head(&integration), candidate);
+
+    // Salvage of the untracked non-ASCII file, then removal of the locked worktree.
+    let reference = "refs/anthrex/salvage/sp01/t1/1";
+    let saved = salvage(real_git(), &task, reference, "anthrex salvage sp01/t1", T).unwrap();
+    assert_eq!(saved.as_deref(), Some(reference));
+    assert_eq!(
+        out(&repo.root, &["show", &format!("{reference}:lib/ü new.rs")]),
+        "untracked"
+    );
+    remove_worktree(real_git(), &repo.root, &task, T).unwrap();
+    assert!(!task.exists());
+    assert_eq!(worktree_block(&repo.root, &task), None);
 }
 
 fn locked(root: &std::path::Path, path: &std::path::Path) -> bool {
