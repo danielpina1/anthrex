@@ -9,7 +9,9 @@ use proto::{Block, ClientMsg, Conversation, DegradeReason, DropCause, TurnPatch}
 use std::collections::BTreeSet;
 
 mod rows;
-pub use rows::{Cursor, DetailKind, Row, TAB_WIDTH, TEXT_INDENT, TRUNCATED, clean};
+pub use rows::{
+    Cursor, DetailKind, Row, SUBAGENT_FOOTER, TAB_WIDTH, TEXT_INDENT, TRUNCATED, clean,
+};
 
 /// One step down the sub-agent trail, taken from the `SubagentSpawn` block descended into.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -236,10 +238,16 @@ impl ConversationView {
     pub fn rows(&self) -> Vec<Row> {
         match self.top() {
             Some(Level {
+                agent_id,
                 conversation: Some(conversation),
                 unfolded,
                 ..
-            }) => rows::rows(conversation, unfolded, self.wrap_width()),
+            }) => rows::rows(
+                conversation,
+                unfolded,
+                self.wrap_width(),
+                agent_id.is_some(),
+            ),
             _ => vec![],
         }
     }

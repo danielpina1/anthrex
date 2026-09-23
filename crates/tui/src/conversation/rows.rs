@@ -22,6 +22,7 @@ pub enum Cursor {
     Line(u64, usize, usize),
     Dropped,
     Degraded,
+    SubagentFooter,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +112,10 @@ fn skip_string(chars: &mut Chars) {
 /// The text of a `DetailKind::Truncated` row, after its glyph (decision A9).
 pub const TRUNCATED: &str = "truncated (conversation.max_result_bytes)";
 
+/// The text of a `Row::SubagentFooter`, after its glyph (review M2). Worded like
+/// decision A9's degradation footers ("... — timeline only").
+pub const SUBAGENT_FOOTER: &str = "sub-agent transcript not read — timeline only";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row {
     Dropped {
@@ -155,6 +160,10 @@ pub enum Row {
     Degraded {
         reason: DegradeReason,
     },
+    /// Review M2: the last row of every sub-agent level. Enrichment is root-only, so a
+    /// sub-agent's conversation never has prose, and spec §6 says degradation is visible,
+    /// never silent. Drawn after any `Degraded` row the daemon sent.
+    SubagentFooter,
 }
 
 impl Row {
@@ -180,6 +189,7 @@ impl Row {
             | Row::Spawn { turn_id, block, .. }
             | Row::Notice { turn_id, block } => Cursor::Block(*turn_id, *block),
             Row::Degraded { .. } => Cursor::Degraded,
+            Row::SubagentFooter => Cursor::SubagentFooter,
         }
     }
 }
@@ -203,16 +213,19 @@ impl Cursor {
             Cursor::Block(turn, block) => (1, *turn, block + 1, 0),
             Cursor::Line(turn, block, offset) => (1, *turn, block + 1, *offset),
             Cursor::Degraded => (2, 0, 0, 0),
+            Cursor::SubagentFooter => (3, 0, 0, 0),
         }
     }
 }
 
 /// Every row of `conversation`, top to bottom, with the blocks in `unfolded` expanded and
 /// prose wrapped to `wrap` display columns (0: not wrapped, before the first size report).
+/// `subagent` adds the sub-agent footer (review M2).
 pub(super) fn rows(
     conversation: &Conversation,
     unfolded: &BTreeSet<(u64, usize)>,
     wrap: usize,
+    subagent: bool,
 ) -> Vec<Row> {
     let mut rows = Vec::new();
     if conversation.dropped_turns > 0 {
@@ -233,6 +246,9 @@ pub(super) fn rows(
     }
     if let Some(reason) = conversation.degraded {
         rows.push(Row::Degraded { reason });
+    }
+    if subagent {
+        rows.push(Row::SubagentFooter);
     }
     rows
 }

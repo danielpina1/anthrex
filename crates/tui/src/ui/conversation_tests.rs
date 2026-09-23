@@ -375,6 +375,46 @@ fn the_breadcrumb_shows_where_you_are() {
     assert!(text_of(&buf).contains("reviewing the split"));
 }
 
+/// Review M2 (spec §6: degradation is visible, never silent): a sub-agent's transcript is
+/// never read, so every sub-agent level ends with a footer saying so. The root does not.
+#[test]
+fn a_sub_agent_level_says_its_prose_is_not_read() {
+    const FOOTER: &str = "⚠ sub-agent transcript not read — timeline only";
+    let mut app = app_showing(
+        UiSettings::default(),
+        Runtime::Claude,
+        80,
+        24,
+        main_conversation(),
+    );
+    let out = text_of(&draw(&app, 80, 24));
+    assert!(!out.contains("sub-agent transcript"), "{out}");
+
+    descend_twice(&mut app);
+    let buf = draw(&app, 80, 24);
+    let rows = all_rows(&buf);
+    let footer = rows
+        .iter()
+        .position(|r| r.contains(FOOTER))
+        .unwrap_or_else(|| panic!("no footer:\n{}", text_of(&buf)));
+    let prose = rows
+        .iter()
+        .position(|r| r.contains("reviewing the split"))
+        .unwrap();
+    assert!(footer > prose, "the footer is not last:\n{}", text_of(&buf));
+    assert_eq!(
+        app.conversation.rows().last(),
+        Some(&Row::SubagentFooter),
+        "the footer is a row of its own"
+    );
+
+    // Back on the root, the footer is gone.
+    press(&mut app, KeyCode::Esc);
+    press(&mut app, KeyCode::Esc);
+    assert!(app.conversation.trail().is_empty());
+    assert!(!text_of(&draw(&app, 80, 24)).contains("sub-agent transcript"));
+}
+
 #[test]
 fn the_selected_row_is_reversed() {
     let mut app = app_showing(

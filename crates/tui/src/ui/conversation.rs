@@ -6,7 +6,7 @@
 pub mod diff;
 
 use crate::app::App;
-use crate::conversation::{DetailKind, Row, TEXT_INDENT, clean};
+use crate::conversation::{DetailKind, Row, SUBAGENT_FOOTER, TEXT_INDENT, clean};
 use crate::theme;
 use crate::ui::badge::Badge;
 use proto::{Block as ConvBlock, DropCause, Role, Status, ToolState, Turn};
@@ -256,6 +256,10 @@ fn row_spans(ctx: &Ctx, row: &Row, user_turn: bool) -> (u16, Spans, Spans) {
         }
         Row::Degraded { reason } => {
             let span = Span::styled(format!("{} {}", g.warn, reason.message()), attention);
+            (ROW_INDENT, vec![span], vec![])
+        }
+        Row::SubagentFooter => {
+            let span = Span::styled(format!("{} {SUBAGENT_FOOTER}", g.warn), attention);
             (ROW_INDENT, vec![span], vec![])
         }
     }

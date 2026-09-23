@@ -77,6 +77,8 @@ fn closing_unsubscribes_every_key_on_the_trail() {
         sub_agent("agent-b", Some(("agent-c", "review the split"))),
     );
     press(&mut view, KeyCode::Char('G'));
+    // Review M2: a sub-agent level ends with its footer; the spawn is just above.
+    press(&mut view, KeyCode::Char('k'));
     assert_eq!(
         press(&mut view, KeyCode::Enter),
         vec![subscribe(Some("agent-c"))]
@@ -268,6 +270,8 @@ fn descending_into_an_agent_already_on_the_trail_does_nothing() {
         sub_agent("agent-b", Some(("agent-b", "myself again"))),
     );
     press(&mut view, KeyCode::Char('G'));
+    // Review M2: a sub-agent level ends with its footer; the spawn is just above.
+    press(&mut view, KeyCode::Char('k'));
     assert!(press(&mut view, KeyCode::Enter).is_empty());
     assert_eq!(view.trail().len(), 1);
 
@@ -278,6 +282,8 @@ fn descending_into_an_agent_already_on_the_trail_does_nothing() {
         sub_agent("agent-b", Some(("agent-c", "review the split"))),
     );
     press(&mut view, KeyCode::Char('G'));
+    // Review M2: a sub-agent level ends with its footer; the spawn is just above.
+    press(&mut view, KeyCode::Char('k'));
     assert_eq!(
         press(&mut view, KeyCode::Enter),
         vec![subscribe(Some("agent-c"))]
@@ -288,6 +294,8 @@ fn descending_into_an_agent_already_on_the_trail_does_nothing() {
         sub_agent("agent-c", Some(("agent-b", "back up the trail"))),
     );
     press(&mut view, KeyCode::Char('G'));
+    // Review M2: a sub-agent level ends with its footer; the spawn is just above.
+    press(&mut view, KeyCode::Char('k'));
     assert!(press(&mut view, KeyCode::Enter).is_empty());
     assert_eq!(view.trail().len(), 2);
     assert_eq!(view.key(), Some((WINDOW, Some("agent-c".into()))));
