@@ -1,6 +1,7 @@
 //! Screen layout and the top-level draw. Spec section 6.1.
 
 pub mod badge;
+pub mod conversation;
 pub mod dialog;
 pub mod modal;
 pub mod overview;
