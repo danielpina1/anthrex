@@ -32,6 +32,10 @@ pub struct BadgeSet {
     pub claude: Badge,
     pub codex: Badge,
     pub shell: Badge,
+    /// Whether these are the ASCII forms. The conversation view draws its own glyphs
+    /// (`▸ ▾ ⟐ ⚠ ⋯ › ✓ ✕ ⊘`) in ASCII too when this is set (task M6.5.13), so one
+    /// decision (A5) switches the whole view, never half of it.
+    pub ascii: bool,
 }
 
 fn to_badge(badge: &config::Badge, ascii: bool) -> Badge {
@@ -51,6 +55,7 @@ impl BadgeSet {
             claude: to_badge(&badges.claude, ascii),
             codex: to_badge(&badges.codex, ascii),
             shell: to_badge(&badges.shell, ascii),
+            ascii,
         }
     }
 

@@ -103,12 +103,39 @@ impl App {
                 }
                 vec![]
             }
-            // Landed ahead of the conversation view itself (task M6.5.1), the same way
-            // `ClientMsg::Restart` was landed before milestone 6 implemented it. Task
-            // M6.5.13 replaces this with the real handling.
-            DaemonMsg::ConversationSnapshot { .. }
-            | DaemonMsg::ConversationDelta { .. }
-            | DaemonMsg::ConversationGone { .. } => vec![],
+            DaemonMsg::ConversationSnapshot {
+                window_id,
+                agent_id,
+                conversation,
+            } => self
+                .conversation
+                .on_snapshot(window_id, agent_id, conversation),
+            DaemonMsg::ConversationDelta {
+                window_id,
+                agent_id,
+                from_rev,
+                to_rev,
+                turns,
+                session_id,
+                degraded,
+                dropped_turns,
+                dropped_by,
+            } => self.conversation.on_delta(
+                window_id,
+                agent_id,
+                from_rev,
+                to_rev,
+                turns,
+                session_id,
+                degraded,
+                dropped_turns,
+                dropped_by,
+            ),
+            DaemonMsg::ConversationGone {
+                window_id,
+                agent_id,
+                reason,
+            } => self.on_conversation_gone(window_id, agent_id, reason),
         }
     }
 }

@@ -76,6 +76,7 @@ pub async fn run(opts: TuiOptions) -> anyhow::Result<()> {
         opts.settings,
     );
     app.home_dir = dirs::home_dir();
+    app.utc_offset_secs = local_utc_offset_secs();
     // Decision 7: every config problem the CLI found, shown once at start.
     app.report_config_problems(opts.config_problems);
     if let Some(target) = &opts.focus {
@@ -181,6 +182,35 @@ fn draw<B: ratatui::backend::Backend>(
 
 #[cfg(test)]
 mod draw_tests;
+
+/// The local zone's offset from UTC now, in seconds, for the conversation view's turn
+/// times (task M6.5.13). Reading the zone is I/O (`/etc/localtime`, `TZ`), so it happens
+/// here, once, and `App` only holds the number. 0 (UTC) if the zone cannot be read.
+// `tm_gmtoff` is a C `long`: `i64` here, `i32` on a 32-bit target, so the cast stays.
+#[allow(clippy::unnecessary_cast)]
+fn local_utc_offset_secs() -> i64 {
+    // SAFETY: `time` with a null pointer only returns the time; `localtime_r` writes into
+    // the `tm` we own and returns null on failure, which is checked.
+    unsafe {
+        let now = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        if libc::localtime_r(&now, &mut tm).is_null() {
+            return 0;
+        }
+        tm.tm_gmtoff as i64
+    }
+}
+
+#[cfg(test)]
+mod clock_tests {
+    /// Every real zone is within UTC-12 and UTC+14, and on a whole quarter hour.
+    #[test]
+    fn the_local_offset_is_a_real_zone_offset() {
+        let offset = super::local_utc_offset_secs();
+        assert!((-12 * 3600..=14 * 3600).contains(&offset), "{offset}");
+        assert_eq!(offset % 900, 0, "{offset}");
+    }
+}
 
 /// Spawns one reconnect attempt on its own task, so a daemon that never answers can
 /// never freeze the event loop (decision 31).

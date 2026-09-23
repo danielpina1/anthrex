@@ -27,6 +27,29 @@ impl App {
         effects
     }
 
+    /// The daemon ended one of the view's subscriptions. A level on the view's trail is
+    /// popped (or, for the root, the view closes), the reason is toasted — including
+    /// `GONE_TOO_LARGE`, "conversation too large to send" — and the keymap leaves
+    /// conversation mode if the view closed. A `Gone` for a key the view does not hold
+    /// changes nothing and shows nothing.
+    pub(super) fn on_conversation_gone(
+        &mut self,
+        window_id: u32,
+        agent_id: Option<String>,
+        reason: String,
+    ) -> Vec<Effect> {
+        if !self.conversation.holds(window_id, &agent_id) {
+            return vec![];
+        }
+        let effects = self.conversation.on_gone(window_id, agent_id, reason);
+        if let Some(reason) = self.conversation.gone_reason() {
+            let reason = reason.to_owned();
+            self.toast(reason);
+        }
+        self.sync_conversation_mode();
+        effects
+    }
+
     /// `q`, a last `Esc`, or a `ConversationGone` for the root can each close the view;
     /// bare keys go back to the PTY the moment it is.
     pub(crate) fn sync_conversation_mode(&mut self) {

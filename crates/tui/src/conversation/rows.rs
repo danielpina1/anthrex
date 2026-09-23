@@ -1,7 +1,15 @@
 //! Rows derived from a conversation, and the cursor that selects one. Pure.
 
+use crate::ui::conversation::diff;
 use proto::{Block, Conversation, DegradeReason, DropCause, Role, ToolResult};
 use std::collections::BTreeSet;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
+
+/// Columns between the view's interior edge and a `Text` row's first character. Prose is
+/// wrapped to the interior width less this, and the renderer draws it at this indent, so
+/// the rows the cursor and search walk are exactly the lines on screen.
+pub const TEXT_INDENT: usize = 4;
 
 /// Decision A11: the selection, stored as what it points at rather than a row number.
 /// `Line(turn, block, n)` is the `n`th row *within* a block (`n >= 1`): a later line of a
@@ -22,7 +30,13 @@ pub enum DetailKind {
     Removed,
     Context,
     Plain,
+    /// The last detail row of a result that `max_result_bytes` (or the hook's own
+    /// summary cap) cut short (decision A9). The renderer adds the `⋯` glyph.
+    Truncated,
 }
+
+/// The text of a `DetailKind::Truncated` row, after its glyph (decision A9).
+pub const TRUNCATED: &str = "truncated (conversation.max_result_bytes)";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row {
@@ -51,6 +65,10 @@ pub enum Row {
         line: usize,
         text: String,
         kind: DetailKind,
+        /// A diff line's 1-based position on its own side of its hunk; `None` for
+        /// everything else. `Edit` carries no file line numbers, so this is the most
+        /// the client can know.
+        number: Option<usize>,
     },
     Spawn {
         turn_id: u64,
@@ -116,8 +134,13 @@ impl Cursor {
     }
 }
 
-/// Every row of `conversation`, top to bottom, with the blocks in `unfolded` expanded.
-pub(super) fn rows(conversation: &Conversation, unfolded: &BTreeSet<(u64, usize)>) -> Vec<Row> {
+/// Every row of `conversation`, top to bottom, with the blocks in `unfolded` expanded and
+/// prose wrapped to `wrap` display columns (0: not wrapped, before the first size report).
+pub(super) fn rows(
+    conversation: &Conversation,
+    unfolded: &BTreeSet<(u64, usize)>,
+    wrap: usize,
+) -> Vec<Row> {
     let mut rows = Vec::new();
     if conversation.dropped_turns > 0 {
         rows.push(Row::Dropped {
@@ -132,7 +155,7 @@ pub(super) fn rows(conversation: &Conversation, unfolded: &BTreeSet<(u64, usize)
             at_unix_secs: turn.at_unix_secs,
         });
         for (block, content) in turn.blocks.iter().enumerate() {
-            block_rows(&mut rows, turn.id, block, content, unfolded);
+            block_rows(&mut rows, turn.id, block, content, unfolded, wrap);
         }
     }
     if let Some(reason) = conversation.degraded {
@@ -147,34 +170,39 @@ fn block_rows(
     block: usize,
     content: &Block,
     unfolded: &BTreeSet<(u64, usize)>,
+    wrap: usize,
 ) {
     match content {
         Block::Text { text } => {
-            for (line, text) in lines(text).enumerate() {
+            let wrapped = lines(text).flat_map(|line| wrap_line(line, wrap));
+            for (line, text) in wrapped.enumerate() {
                 rows.push(Row::Text {
                     turn_id,
                     block,
                     line,
-                    text: text.to_owned(),
+                    text,
                 });
             }
         }
-        Block::ToolCall { input, result, .. } => {
+        Block::ToolCall {
+            name,
+            input,
+            result,
+            ..
+        } => {
             rows.push(Row::Tool { turn_id, block });
             if unfolded.contains(&(turn_id, block)) {
-                let detail = detail_lines(input.as_ref(), result.as_ref());
-                rows.extend(
-                    detail
-                        .into_iter()
-                        .enumerate()
-                        .map(|(line, text)| Row::ToolDetail {
-                            turn_id,
-                            block,
-                            line,
-                            text,
-                            kind: DetailKind::Plain,
-                        }),
-                );
+                let detail = detail_lines(name, input.as_ref(), result.as_ref());
+                rows.extend(detail.into_iter().enumerate().map(
+                    |(line, Detail { text, kind, number })| Row::ToolDetail {
+                        turn_id,
+                        block,
+                        line,
+                        text,
+                        kind,
+                        number,
+                    },
+                ));
             }
         }
         Block::SubagentSpawn { agent_id, .. } => rows.push(Row::Spawn {
@@ -192,18 +220,116 @@ fn lines(text: &str) -> impl Iterator<Item = &str> {
     text.lines().chain(empty.then_some(""))
 }
 
-/// An unfolded call's detail: the input as pretty JSON, then the result's summary and
-/// detail. Plain rows only; task M6.5.13 turns `Edit`/`Write`/`MultiEdit` into diffs.
-fn detail_lines(input: Option<&serde_json::Value>, result: Option<&ToolResult>) -> Vec<String> {
+/// `line` broken into rows of at most `width` display columns (0: unbroken). Breaks at
+/// spaces, dropping the space it breaks at; a word wider than `width` is broken between
+/// graphemes. Widths are display columns, never chars, so a 2-column character counts
+/// twice. Every row but a lone empty line is non-empty.
+fn wrap_line(line: &str, width: usize) -> Vec<String> {
+    if width == 0 || line.width() <= width {
+        return vec![line.to_owned()];
+    }
     let mut out = Vec::new();
-    if let Some(input) = input {
-        let pretty = serde_json::to_string_pretty(input).unwrap_or_else(|_| input.to_string());
-        out.extend(pretty.lines().map(str::to_owned));
+    let mut current = String::new();
+    let mut current_width = 0;
+    let mut started = false;
+    for word in line.split(' ') {
+        let word_width = word.width();
+        let needed = if started {
+            current_width + 1 + word_width
+        } else {
+            word_width
+        };
+        if needed <= width {
+            if started {
+                current.push(' ');
+            }
+            current.push_str(word);
+            current_width = needed;
+            started = true;
+            continue;
+        }
+        if started {
+            out.push(std::mem::take(&mut current));
+            current_width = 0;
+        }
+        // The word starts a row of its own, broken wherever it is wider than a row.
+        for grapheme in word.graphemes(true) {
+            let w = grapheme.width();
+            if current_width + w > width && current_width > 0 {
+                out.push(std::mem::take(&mut current));
+                current_width = 0;
+            }
+            current.push_str(grapheme);
+            current_width += w;
+        }
+        started = true;
+    }
+    if started {
+        out.push(current);
+    }
+    out
+}
+
+/// One detail row before it is placed.
+struct Detail {
+    text: String,
+    kind: DetailKind,
+    number: Option<usize>,
+}
+
+fn plain(text: impl Into<String>) -> Detail {
+    Detail {
+        text: text.into(),
+        kind: DetailKind::Plain,
+        number: None,
+    }
+}
+
+/// An unfolded call's detail. An `Edit`, `MultiEdit` or `Write` whose input
+/// `diff::from_tool_input` reads is shown as its diff — each hunk's old lines removed,
+/// then its new lines added; any other input as pretty JSON. The result's summary and
+/// detail follow either way, so a failed edit still says why, and a truncated result
+/// ends with decision A9's row.
+fn detail_lines(
+    name: &str,
+    input: Option<&serde_json::Value>,
+    result: Option<&ToolResult>,
+) -> Vec<Detail> {
+    let mut out = Vec::new();
+    match input.map(|input| (input, diff::from_tool_input(name, input))) {
+        Some((_, Some(diff))) => {
+            for hunk in &diff.hunks {
+                let side = |text: &str, kind| {
+                    text.lines()
+                        .enumerate()
+                        .map(move |(n, line)| Detail {
+                            text: line.to_owned(),
+                            kind,
+                            number: Some(n + 1),
+                        })
+                        .collect::<Vec<_>>()
+                };
+                out.extend(side(&hunk.old, DetailKind::Removed));
+                out.extend(side(&hunk.new, DetailKind::Added));
+            }
+        }
+        Some((input, None)) => {
+            let pretty = serde_json::to_string_pretty(input).unwrap_or_else(|_| input.to_string());
+            out.extend(pretty.lines().map(plain));
+        }
+        None => {}
     }
     if let Some(result) = result {
-        out.push(result.summary.clone());
+        out.push(plain(result.summary.clone()));
         if let Some(detail) = &result.detail {
-            out.extend(lines(detail).map(str::to_owned));
+            out.extend(lines(detail).map(plain));
+        }
+        if result.truncated {
+            out.push(Detail {
+                text: TRUNCATED.to_owned(),
+                kind: DetailKind::Truncated,
+                number: None,
+            });
         }
     }
     out

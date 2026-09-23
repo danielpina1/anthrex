@@ -554,3 +554,42 @@ fn unicode_names_preserve_graphemes_and_right_fields() {
         assert!(!out.contains('\u{fffd}'));
     }
 }
+
+/// Task M6.5.13: the open conversation view takes the main area in preference to both
+/// the overview and the terminal, and help lists its key.
+#[test]
+fn the_conversation_view_takes_the_main_area() {
+    let mut app = App::new(
+        vec![win(1, "orchestrator", Runtime::Claude, Status::Idle)],
+        "/tmp".into(),
+        UiSettings::default(),
+    );
+    let _ = app.set_terminal_size(80, 24);
+    app.overview = true;
+    let (out, _) = render(&app, 120, 30);
+    assert!(out.contains("tree overview"), "{out}");
+
+    app.on_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('b'),
+        crossterm::event::KeyModifiers::CONTROL,
+    ));
+    app.on_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('m'),
+        crossterm::event::KeyModifiers::NONE,
+    ));
+    let (out, _) = render(&app, 120, 30);
+    assert!(out.contains("waiting for the conversation"), "{out}");
+    assert!(!out.contains("tree overview"), "{out}");
+
+    app.overview = false;
+    let (out, _) = render(&app, 120, 30);
+    assert!(out.contains("waiting for the conversation"), "{out}");
+
+    app.modal = Some(Modal::Help);
+    let (out, _) = render(&app, 120, 40);
+    let line = out
+        .lines()
+        .find(|l| l.contains("C-b m"))
+        .unwrap_or_else(|| panic!("{out}"));
+    assert!(line.contains("conversation"), "{line}");
+}

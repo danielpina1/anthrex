@@ -53,7 +53,10 @@ fn edit_write_and_multiedit_produce_diffs() {
         })
     );
 
-    let write = from_tool_input("Write", &json!({"file_path": "notes.md", "content": "a\nb"}));
+    let write = from_tool_input(
+        "Write",
+        &json!({"file_path": "notes.md", "content": "a\nb"}),
+    );
     assert_eq!(
         write,
         Some(Diff {

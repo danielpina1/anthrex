@@ -81,7 +81,9 @@ pub fn draw(frame: &mut Frame, app: &App) -> Layout {
     if app.sidebar_visible {
         sidebar::render(frame, app, &l);
     }
-    if app.overview {
+    if app.conversation.is_open() {
+        conversation::render(frame, app, l.main);
+    } else if app.overview {
         overview::render(frame, app, l.main);
     } else {
         terminal::render(frame, app, l.main);

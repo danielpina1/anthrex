@@ -26,6 +26,7 @@ fn help_lines(prefix_label: &str) -> Vec<(String, String)> {
         (format!("{prefix_label} ,"), "rename agent".to_string()),
         (format!("{prefix_label} R"), "restart agent".to_string()),
         (format!("{prefix_label} r"), "reconnect".to_string()),
+        (format!("{prefix_label} m"), "conversation".to_string()),
         (
             format!("{prefix_label} t"),
             "tree mode (j/k, h/l, Enter, Space, /)".to_string(),

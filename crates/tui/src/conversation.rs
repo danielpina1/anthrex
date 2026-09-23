@@ -9,7 +9,7 @@ use proto::{Block, ClientMsg, Conversation, DegradeReason, DropCause, TurnPatch}
 use std::collections::BTreeSet;
 
 mod rows;
-pub use rows::{Cursor, DetailKind, Row};
+pub use rows::{Cursor, DetailKind, Row, TEXT_INDENT, TRUNCATED};
 
 /// One step down the sub-agent trail, taken from the `SubagentSpawn` block descended into.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +52,10 @@ pub struct ConversationView {
     trail: Vec<Crumb>,
     search: Option<Search>,
     gone_reason: Option<String>,
+    /// The view's interior width in columns, from `App::set_terminal_size` (the main
+    /// area's inner width, which is exactly the view's interior). Prose wraps to this
+    /// less `TEXT_INDENT`. 0 until the first size report. Kept across open and close.
+    interior_width: u16,
 }
 
 impl ConversationView {
@@ -68,6 +72,7 @@ impl ConversationView {
                 awaiting_snapshot: true,
                 ..Level::default()
             }],
+            interior_width: self.interior_width,
             ..ConversationView::default()
         };
         effects.push(self.subscribe(None));
@@ -92,6 +97,7 @@ impl ConversationView {
     fn reset(&mut self) {
         *self = ConversationView {
             gone_reason: self.gone_reason.take(),
+            interior_width: self.interior_width,
             ..ConversationView::default()
         };
     }
@@ -121,6 +127,12 @@ impl ConversationView {
             return None;
         }
         self.levels.iter().position(|l| &l.agent_id == agent_id)
+    }
+
+    /// Whether `(window_id, agent_id)` is a level on the open view's trail — the keys a
+    /// snapshot, delta or `Gone` can change.
+    pub fn holds(&self, window_id: u32, agent_id: &Option<String>) -> bool {
+        self.level_index(window_id, agent_id).is_some()
     }
 
     pub fn trail(&self) -> &[Crumb] {
@@ -165,14 +177,30 @@ impl ConversationView {
         self.conversation().map(|c| c.rev)
     }
 
-    /// Derived afresh from the conversation and the fold set; never stored.
+    /// Sets the interior width prose is wrapped against. `App::set_terminal_size` calls
+    /// this before every frame is drawn, so `rows()` — for the renderer, the cursor and
+    /// search alike — always wraps at the width on screen.
+    pub fn set_interior_width(&mut self, cols: u16) {
+        self.interior_width = cols;
+    }
+
+    /// The display width `Text` rows are wrapped to; 0 means unwrapped (no size yet).
+    pub fn wrap_width(&self) -> usize {
+        match self.interior_width as usize {
+            0 => 0,
+            cols => cols.saturating_sub(TEXT_INDENT).max(1),
+        }
+    }
+
+    /// Derived afresh from the conversation, the fold set and the wrap width; never
+    /// stored.
     pub fn rows(&self) -> Vec<Row> {
         match self.top() {
             Some(Level {
                 conversation: Some(conversation),
                 unfolded,
                 ..
-            }) => rows::rows(conversation, unfolded),
+            }) => rows::rows(conversation, unfolded, self.wrap_width()),
             _ => vec![],
         }
     }

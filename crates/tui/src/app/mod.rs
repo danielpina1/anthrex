@@ -133,6 +133,9 @@ pub struct App {
     pub modal: Option<Modal>,
     pub link: Link,
     pub spinner_frame: usize,
+    /// The local zone's offset from UTC, in seconds, for the conversation view's turn
+    /// times. `lib.rs` reads it once at start (reading the zone is I/O); 0 until then.
+    pub utc_offset_secs: i64,
     pub scroll_offset: usize,
     pub default_dir: PathBuf,
     /// Set by `tui::run` from `dirs::home_dir()`.
@@ -196,6 +199,7 @@ impl App {
             modal: None,
             link: Link::Connected,
             spinner_frame: 0,
+            utc_offset_secs: 0,
             scroll_offset: 0,
             default_dir,
             home_dir: None,
@@ -270,6 +274,9 @@ impl App {
 
     /// The renderer calls this with the main inner area after every draw.
     pub fn set_terminal_size(&mut self, cols: u16, rows: u16) -> Vec<Effect> {
+        // The conversation view draws in the same main area, so its interior is this
+        // size too; set before the early return so it is right from the first frame.
+        self.conversation.set_interior_width(cols);
         if cols == 0 || rows == 0 || (cols, rows) == self.term_size {
             return vec![];
         }
