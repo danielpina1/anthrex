@@ -532,13 +532,14 @@ it described a fallback that did not exist, and reading for plausibility believe
   and per poll, under the lock. Cheap fixes: return early from `apply_transcript` when a
   pass has no records and nothing is parked, and diff only the turns the change can touch
   (the open turn and anything after the first changed index).
-- **`crates/daemon/tests/server_restore_git.rs` is flaky (review F6).** Task M6.5.10's review
-  saw `a_restart_keeps_the_restored_root_watched` fail once in a full run and
-  `a_restored_plain_window_keeps_its_worktree_and_is_watched` once in another; 9/10 in
-  isolation. Milestone 6's code (`6590a90`, `4af1ccf`), untouched by task M6.5.10; the
-  coordinator is handling it separately. Task M6.5.10's fix round 1 also saw one
-  unattributed failure in a five-test daemon suite during a `cargo test -p anthrex-daemon`
-  run that two reruns did not reproduce.
+- **`crates/daemon/tests/server_restore_git.rs` was flaky (review F6); fixed.** Task
+  M6.5.10's review saw `a_restart_keeps_the_restored_root_watched` and
+  `a_restored_plain_window_keeps_its_worktree_and_is_watched` each fail once. PR #12 fixed
+  it (a root's first probe no longer waits for its watcher to arm), and it is merged into
+  this branch (`1a76965`); see "From the `server_restore_git.rs` flake fix" below. What
+  still flakes is `server_git.rs`'s first-`Git` timeout, recorded there. Task M6.5.10's
+  fix round 1 also saw one unattributed failure in a five-test daemon suite during a
+  `cargo test -p anthrex-daemon` run that two reruns did not reproduce.
 - **Two limits of the `/clear` fix (review F2).** A switch to a new session's file drops
   whatever the old file still had unread; a final drain pass of the old `Tail` before the
   switch would keep it. And a later shrink or replacement of the new session's file is a
@@ -597,8 +598,13 @@ scope.
   earlier entry put the stall down to "the real `git` subprocesses", inferred from
   wall-clock spread and never measured step by step. The step-level measurement this fix
   made found `git` at ~25 ms and `Watcher::watch()` at 1.5–7.8 s, and found the stall
-  just as easily in `/private/tmp`. The production fix removes that stall from
-  `server_git.rs`'s first-`Git` waits too. Its bounds are still literals, though: an 8 s
+  just as easily in `/private/tmp`. The production fix was expected to remove that stall
+  from `server_git.rs`'s first-`Git` waits too, but it did not remove every failure there:
+  milestone 6.5's final review (2026-09-23) saw
+  `server_git::two_windows_in_one_worktree_register_once` time out at `recv()`'s 5 s bound
+  (`crates/daemon/tests/support/mod.rs:118`) in one of three full runs, after this fix was
+  merged in. So `server_git`'s first-`Git` timeout still flakes. Its bounds are still
+  literals, too: an 8 s
   `wait_for_created_and_git`, `recv()`'s 5 s, and the 1–2.5 s `assert_no_git_message`
   windows. They should be derived the way `server_restore_git.rs`'s now are (`PROBE_TIMEOUT`,
   `DETECT_TIMEOUT`, the configured `poll_secs`), and `wait_for_created_and_git` should
@@ -617,10 +623,55 @@ scope.
 
 ## From milestone 6.5's rendering task (2026-09-23), task M6.5.13's review M2
 
-- **TUI-wide ASCII spinner and separator.** In ASCII mode (decision A5) the conversation
-  view swaps its own glyphs, but it still draws `theme::SPINNER`'s braille frames for a
-  Pending call and `·` in its title and spawn rows. The rest of the TUI draws both
-  unconditionally, so on a genuinely non-UTF-8 terminal they render as mojibake, and for a
-  Pending call the spinner is the only state glyph. Fix it once for the whole TUI: an ASCII
-  spinner (for example `| / - \`) and separator chosen from the same A5 decision, which
-  `UiSettings.badges.ascii` already carries. Milestone 6.5 or later.
+- **TUI-wide ASCII spinner.** In ASCII mode (decision A5) the conversation view draws only
+  ASCII — its border, separators and footers included, since the final review's M4 — except
+  `theme::SPINNER`'s braille frames for a Pending call. That spinner is the only non-ASCII
+  thing left in the view. The rest of the TUI draws the spinner (and its own borders and
+  `·` separators) unconditionally, so on a genuinely non-UTF-8 terminal they render as
+  mojibake, and for a Pending call the spinner is the only state glyph. Fix it once for the
+  whole TUI: an ASCII spinner (for example `| / - \`) chosen from the same A5 decision,
+  which `UiSettings.badges.ascii` already carries. Milestone 6.5 or later.
+
+## From milestone 6.5's final review (2026-09-23), left open by its fix pass
+
+- **A conversation revision means nothing across a daemon restart (review M1).** A restored
+  window's conversation starts again at rev 0 and turn id 1, and
+  `crates/daemon/src/manager/conversation.rs`'s `reply` sends a delta whenever its store
+  holds the `from_rev` it is asked for. So a `from_rev` learned from one daemon instance is
+  answered by the next with a delta against a different conversation; the review built
+  `[user "old prompt A", assistant [Bash "echo new"]]`, a conversation that never existed,
+  and decision A12's guard cannot catch it because the client's rev equals `from_rev`.
+  Latent today: the TUI always sends `from_rev: None`, including when it resubscribes after
+  a reconnect (the fix for review I1 chose `None` for exactly this reason). It becomes live
+  the moment any client resubscribes with a rev, which decision 8 intends for milestones 8
+  and 9. Fix before then: tag revisions with a daemon epoch (a start nonce on `Welcome`, or
+  on the conversation), or state in `proto` that `from_rev` is valid only on the daemon
+  instance that issued it.
+- **A turn's prose always leads it (review N1).** Enrichment joins all of a turn's transcript
+  prose into one leading `Text` block (brief task M6.5.8, rule 2), so a closing remark
+  renders above the tool calls it followed. As briefed, but spec §6's mock interleaves prose
+  and calls. Worth revisiting for milestone 8's run view.
+- **Missing prose after a `max_turns` drop is not flagged (review N5).** When the cap drops a
+  `User` turn before the reader has aligned its ordinal, that turn's reply gets no prose and
+  `degraded` stays `None`. The brief accepts this ("missing prose is the accepted cost"),
+  but it is timing-dependent: the review saw a reply's prose in one run and not in another.
+  A `Misaligned`-style reason for "prose lost to the cap" would make it visible.
+- **A sub-agent's `degraded` is the root file's reason (review M2's other half).**
+  `ConversationSet::set_degraded` copies the root transcript's reason to every key, so a
+  sub-agent level can show "transcript unreadable" about a file its own prose never came
+  from. Since the fix pass every sub-agent level also shows the client-side footer
+  "sub-agent transcript not read — timeline only", so nothing is silent; keeping a reason
+  per key would make the copied line accurate.
+- **`WindowManager::unsubscribe_conversation` ignores its `agent_id` (review N4).** The
+  viewer count, and the transcript reader it gates, are per window by design (decision 9),
+  so there is nothing per key for the parameter to act on. Honouring it would mean per-key
+  viewer counts that nothing reads; not cheap for no behaviour. Either drop the parameter
+  or give it a use when a per-key subscription needs one.
+- **Six test files are over the 600-line rule (review M5).** `crates/cli/tests/hook_command.rs`
+  (977), `crates/daemon/src/conversation/store_tests.rs` (924),
+  `crates/proto/src/conversation_tests.rs` (893), `crates/config/src/lib_tests.rs` (741),
+  `crates/fake-agent/tests/script.rs` (681) and
+  `crates/daemon/src/conversation/build_tests.rs` (617). The production file the review
+  named, `crates/config/src/lib.rs`, was split in the fix pass; these were left as they are.
+  Split each by the concern its tests cover, as `lib_tests.rs` could follow `lib.rs`'s new
+  `conversation.rs` and `git.rs`.
