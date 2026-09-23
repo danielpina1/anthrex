@@ -311,8 +311,12 @@ fn a_token_usage() -> TokenUsage {
 fn an_agent_round() -> AgentRoundInfo {
     AgentRoundInfo {
         role: AgentRole::Worker,
+        // `session`, `round`, `window_id`, `tool_calls`, `turns`, `open_subagents` and
+        // `denials` are all `u32`; each gets its own value so a swap between any two of
+        // them (for instance `session`/`open_subagents`) changes the round trip's
+        // result rather than surviving it.
         session: 1,
-        round: 2,
+        round: 6,
         window_id: Some(9),
         route: a_route(
             Runtime::Claude,
@@ -328,8 +332,8 @@ fn an_agent_round() -> AgentRoundInfo {
         turn_open: false,
         turns: 3,
         rate_limited: false,
-        open_subagents: 1,
-        denials: 2,
+        open_subagents: 4,
+        denials: 5,
         usage: a_token_usage(),
     }
 }
@@ -392,18 +396,23 @@ fn a_task_info() -> TaskInfo {
             reason: BlockReason::Question,
             text: "waiting on an answer about the token TTL".into(),
         }),
-        rung: 1,
-        failures: 2,
+        // `rung`, `failures`, `stalls`, `budget_exceeded` and `conflicts` are all `u8`;
+        // each gets its own value so a swap between any two of them survives neither
+        // this fixture nor the by-name assertions below.
+        rung: 3,
+        failures: 5,
         bounces: GateCounts {
+            // `done`, `proof`, `check`, `review` and `merge` are all `u8`, same
+            // reasoning as above.
             done: 1,
             proof: 0,
-            check: 1,
+            check: 4,
             review: 2,
-            merge: 0,
+            merge: 3,
         },
-        stalls: 1,
+        stalls: 2,
         budget_exceeded: 0,
-        conflicts: 1,
+        conflicts: 4,
         branch: "anthrex/run-a1b2/t1".into(),
         worktree: PathBuf::from("/tmp/wt/runs/run-a1b2/t1"),
         start_commit: Some("aaaa1111".into()),
@@ -617,5 +626,30 @@ fn every_run_request_and_reply_round_trips() {
     else {
         panic!("must decode back to RunReply::Snapshot");
     };
-    assert_eq!(back_snapshot.runs[0].tasks[0].id, "t1");
+    let back_task = &back_snapshot.runs[0].tasks[0];
+    assert_eq!(back_task.id, "t1");
+    // Every same-typed sibling field on `TaskInfo` and its nested structs is pinned by
+    // name here, not only compared through the earlier `assert_eq!(back, msg)`
+    // self-consistency check: that check alone cannot catch two same-typed fields being
+    // swapped (for instance `rung`/`failures`), because both sides of the comparison go
+    // through the same swap. Pinning each field independently, against the literal
+    // value the fixture set, is what makes a swap fail.
+    assert_eq!(back_task.rung, 3);
+    assert_eq!(back_task.failures, 5);
+    assert_eq!(back_task.stalls, 2);
+    assert_eq!(back_task.budget_exceeded, 0);
+    assert_eq!(back_task.conflicts, 4);
+    assert_eq!(back_task.bounces.done, 1);
+    assert_eq!(back_task.bounces.proof, 0);
+    assert_eq!(back_task.bounces.check, 4);
+    assert_eq!(back_task.bounces.review, 2);
+    assert_eq!(back_task.bounces.merge, 3);
+    let back_round = &back_task.rounds[0];
+    assert_eq!(back_round.session, 1);
+    assert_eq!(back_round.round, 6);
+    assert_eq!(back_round.window_id, Some(9));
+    assert_eq!(back_round.tool_calls, 7);
+    assert_eq!(back_round.turns, 3);
+    assert_eq!(back_round.open_subagents, 4);
+    assert_eq!(back_round.denials, 5);
 }
