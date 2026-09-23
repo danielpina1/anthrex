@@ -1154,6 +1154,7 @@ pub fn interrupt_request(request_id: u64) -> String;                    // claud
 pub struct ConversationInput { pub hooks: Vec<ParsedHook>, pub records: Vec<crate::transcript::Record> }
 pub fn map(runtime: Runtime, hooks_fire: bool, event: &SessionEvent, cursor: &mut StreamCursor) -> ConversationInput;
 pub fn sent_turn(runtime: Runtime, hooks_fire: bool, text: &str, cursor: &mut StreamCursor) -> ConversationInput; // the turn the daemon starts
+pub fn observe_hook(runtime: Runtime, hook: &ParsedHook, cursor: &mut StreamCursor) -> ConversationInput; // a real hook the manager applied (M8a.7 fix round 2)
 // headless/status.rs (pure)
 pub struct HeadlessStatus { pub status: Status, pub tool: Option<String>, pub turn_open: bool, pub rate_limited: bool,
                             pub before_retry: Status }   // the status a pending retry interrupted (M8a.7 fix round 1)
@@ -1893,6 +1894,8 @@ If a flag, key or event is missing, stop work on the item that uses it, as AGENT
   - `a_headless_window_starts_no_transcript_reader`: `subscribe_conversation` on a headless Claude window whose `SessionStart` hook named a `transcript_path` answers with a snapshot, `conversation_reader_running(id)` stays false, and the snapshot's `degraded` is `None`, not `NoTranscriptPath`.
   - `create_headless_waits_for_the_launch_gate`: with a manager built on `LaunchGate::closed()`, `create_headless` has not spawned (no args file written) 200 ms after the call while `list()` still answers; after `open()` it spawns and returns. The negative half is a sleep-then-assert on purpose: it checks an absence, and the positive half proves the same path does spawn.
   - `tick_leaves_a_headless_windows_status_alone`: a headless window left `Working` (turn open, no stream event) for more than `QUIET_AFTER` is still `Working` after `tick()`, while a PTY window in the same state becomes `Idle`.
+  - `a_headless_claude_prompt_hook_feeds_the_cursor` (M8a.7 fix round 2, ruling T7-N1): the window's `UserPromptSubmit` hooks arrive over the socket as for any window. Real hooks come from the stream fixture, plus an unprompted `<task-notification>` prompt between two engine turns, and a background turn run after the next turn was already sent. After the stream is applied, the snapshot has each prompt with its own reply and `degraded == None`.
+
 - In `headless_windows.rs`, over a real socket: `client_control_of_a_headless_window_is_refused`. `Subscribe`, `Input`, `Kill`, `Remove` and `Restart` each get decision 49's exact `DaemonMsg::Error` and leave the process running. `Resize` gets no reply (a `ListWindows` sent after it is answered first) and changes nothing. `ListWindows` lists the window.
 - In `crates/tui/src/app_tests/headless.rs`:
   - `focusing_a_headless_window_sends_no_subscribe`, and neither `retry_dropped_subscribe` nor `on_reconnected` sends one for it;
@@ -1901,7 +1904,12 @@ If a flag, key or event is missing, stop work on the item that uses it, as AGENT
   - `prefix_commands_still_work_on_a_headless_window`: `C-b m` opens the conversation;
   - the render test `the_headless_placeholder_names_the_conversation_key`, with the exact string of decision 49.
 
-**Change.** Implement decisions 26 (the session environment), 27 (the manager side), 49 and 52 (the driver side). `manager/headless.rs` holds `create_headless`, `apply_session_event`, `signals`, and the `headless_*` methods that M8a.18 fills in. Only `apply_session_event`'s status, conversation and feed updates run under the manager lock; spawning, writing and killing never do (AGENTS.md rule 2).
+**Change.** Implement decisions 26 (the session environment), 27 (the manager side), 49 and 52 (the driver side).
+- **Feed real prompt hooks to the cursor (ruling T7-N1).** For a headless window with `hooks_fire`, every real hook applied through `conversation_hook` is also passed, under the same lock and right after it, to `headless::conversation::observe_hook` with the window's `StreamCursor`. The returned records go to `ConversationSet::enrich` like `map`'s.
+  - A Claude turn is then numbered by its prompt's hook and classified by its text, not by when its `Init` arrives. So an unprompted turn (a background sub-agent's notification) keeps every later reply on its own turn, whatever order Claude runs it in.
+  - Keep one `StreamCursor` per window for its whole life, across a `--resume` process, so its counts keep matching the conversation's.
+
+`manager/headless.rs` holds `create_headless`, `apply_session_event`, `signals`, and the `headless_*` methods that M8a.18 fills in. Only `apply_session_event`'s status, conversation and feed updates run under the manager lock; spawning, writing and killing never do (AGENTS.md rule 2).
 
 **Acceptance.** Tests pass. `create.rs` and `restart.rs` are unchanged (`git diff --stat` shows neither). No `crate::lock` guard in `manager/headless.rs` is alive across `.await`, a spawn, a write or a kill.
 
@@ -1919,8 +1927,15 @@ If a flag, key or event is missing, stop work on the item that uses it, as AGENT
 - `interrupt_follows_cli_caps`: `InterruptMode::ControlRequest` writes `claude_stream::interrupt_request`, and `Sigint` signals the process. Codex always gets `SIGINT`.
 - `a_send_to_an_ended_session_is_an_error`: `session for window <id> has ended; resume it`.
 - `resume_failure_is_reported`: a program that exits 1 before printing `Init` makes `headless_resume` return an error whose text the driver maps to `ResumeFailed`.
+- `sent_turn_is_recorded_before_the_write` (M8a.7 fix round 2): the recording program prints its turn's first stream line only after it reads its input (Claude) or starts (Codex). The window's `StreamCursor` must have applied `conversation::sent_turn` for that message before the first line of the turn is applied.
+  - For Codex, this puts the snapshot's tool call and prose on the new turn, not on the previous one.
+  - Checked by a `headless_send` followed by a scripted turn whose prose must land on the new prompt's turn.
 
 **Change.** Implement decision 29's I/O and decision 28's resume.
+- **Apply `sent_turn` before writing or spawning** (M8a.7 fix round 2).
+  - For every send and every resume message, the manager applies `headless::conversation::sent_turn` to the window's cursor, and enriches with its output, before the message is written to a Claude process's stdin or a `codex exec` process is spawned.
+  - For Codex this is binding. `sent_turn` synthesises the prompt's `UserPromptSubmit` hook, and the turn's events would otherwise land on the previous turn.
+  - For Claude, ruling T7-N1's content rule (M8a.17's hook feed) makes the order irrelevant. A prompt observed before its `sent_turn` is still classified as the daemon's. The same order is used anyway, for one code path.
 - A Claude send is one `send_line` of `user_message(clamp(text))`.
 - A Codex send spawns `codex_args(spec, Resume { session_id }, text, …)` after `jitter_ms`.
 - A resume spawns the resume argv, then sends the message: on Claude's stdin, or as Codex's argument.
@@ -3366,3 +3381,71 @@ Critical). Each ruling, and what was done:
     rewrite.
     - They test existing code, so they passed at once.
     - Changing the back-off to step two bytes made two of them fail.
+
+### M8a.7 fix round 2 (2026-09-23)
+
+Re-review `.superpowers/sdd/M8a-orchestration-engine-core/task-7-rereview.md`: every
+item addressed, except that I1 was partial (cases D and E) and a new N1 remained.
+
+- **Ruling T7-N1: a Claude turn is the daemon's or Claude Code's own by its content,
+  not by timing.**
+  - **What is observable.** The stream does not echo the prompt the daemon sends. M8a.1's
+    recordings run without `--replay-user-messages`, and the only top-level user text in
+    `claude-2.1.278-stream.jsonl` is `[Request interrupted by user for tool use]`. The
+    `UserPromptSubmit` hook's prompt is observable, and it is applied at the right moment:
+    - Claude runs command hooks before it acts on a prompt.
+    - `anthrex hook` waits for the daemon's ack.
+    - `server.rs` acks a `HookEvent` only after `manager.handle_hook` returns.
+    - So a turn's prompt is applied before any of its prose is read.
+  - **The new function.** `headless::conversation::observe_hook(runtime, &hook, &mut cursor)`
+    takes each real hook the manager applied.
+    - A `UserPromptSubmit` is numbered by the count of prompts observed. That is exactly
+      the count of `User` turns M6.5 builds from the same hooks, so the two cannot
+      disagree.
+    - It is the daemon's (`human: true`) when it equals a text the daemon sent and no
+      earlier prompt matched. Equality is judged by M6.5's `conversation::align`,
+      Exact for a typed prompt. `align` is now `pub(crate)`.
+    - Otherwise it is Claude Code's own (`human: false`).
+    - It returns the `UserText` record, with the hook's own text.
+  - **Content mode.** It starts at the first observed prompt.
+    - `sent_turn` then only remembers the text for matching.
+    - Prose goes to the latest observed prompt's turn, which now includes an unprompted
+      turn's own prose. Nothing is dropped.
+    - After a `TurnEnded`, prose that arrives before any new prompt is dropped: it belongs
+      to a turn whose prompt hook was lost, and M6.5 has no turn for it.
+    - Sent texts left unmatched by a later match are discarded, since their hooks were
+      lost. A prompt observed before its `sent_turn` is claimed by that `sent_turn`.
+  - **Fallback.** The fix round 1 timing rule is kept for a cursor that is never fed a
+    prompt hook, the only case where no text is observable.
+  - **Binding for M8a.17.** The manager feeds every real hook of a headless window to
+    `observe_hook`, under the same lock, right after `conversation_hook`, and keeps one
+    cursor per window across resumes. This is written into M8a.17's Tests-first and
+    Change text, with the named test `a_headless_claude_prompt_hook_feeds_the_cursor`.
+  - **Tests.** All run through a real `ConversationSet` with real hook payloads
+    (`conversation_content_tests.rs`). Each asserts that every reply is on its own
+    prompt's turn and `degraded == None`:
+    - `the_three_turn_case_places_every_reply` (the bg reply now lands on its own turn);
+    - `a_background_turn_that_runs_before_a_delivered_turn_keeps_both_aligned`, the N1
+      race;
+    - `an_unprompted_turn_in_the_middle_of_a_sent_turn_keeps_both_aligned`, case D;
+    - `an_unprompted_turn_first_in_a_session_keeps_later_turns_aligned`, case E;
+    - `a_prompt_applied_before_its_sent_turn_is_still_aligned`, case F;
+    - `prose_of_a_turn_whose_prompt_hook_was_lost_is_dropped_not_misplaced`;
+    - `a_sent_prompt_is_human_and_an_unprompted_one_is_not`;
+    - `without_a_hook_feed_the_timing_rule_still_applies`, the fallback.
+  - **A finding about the test harness.** `ConversationSet::enrich` drops records for a
+    window that has no conversation yet, so every session in these tests starts with the
+    recorded `SessionStart` hook, as a real one does. Round 1's session test put the
+    prompt hook before `sent_turn` and so never saw this.
+- **The ordering carry is bound into M8a.18's task text.** It has a named test,
+  `sent_turn_is_recorded_before_the_write`, and a Change bullet. The order is binding for
+  Codex, where `sent_turn` synthesises the prompt hook. For Claude the content rule makes
+  the order irrelevant (case F), and M8a.18's text says so.
+- **The surviving `_` mutant.** `http_429` and `HTTP429` are now asserted to be `Other`.
+- **Mutation.** Six mutants of the new rule and the `_` exclusion were run:
+  - Five were killed.
+  - The sixth, the `hook_feed` guard on the timing counter, was equivalent: that counter
+    is not read in content mode. The guard was removed as dead.
+  - Two of the five (dropping stale sent texts, claiming a late `sent_turn`) first
+    survived and were then killed by assertions added to
+    `a_sent_prompt_is_human_and_an_unprompted_one_is_not`.

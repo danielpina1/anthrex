@@ -8,7 +8,9 @@
 
 use std::time::Instant;
 
-mod align;
+/// `pub(crate)` so a headless session's cursor judges a hook's prompt against a sent
+/// text the way enrichment does (M8a.7, ruling T7-N1).
+pub(crate) mod align;
 mod build;
 mod enrich;
 mod entry;

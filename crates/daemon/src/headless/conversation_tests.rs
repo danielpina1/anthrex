@@ -400,3 +400,6 @@ fn synthesised_tool_responses_are_bounded_like_the_hooks() {
 
 #[path = "conversation_session_tests.rs"]
 mod session;
+
+#[path = "conversation_content_tests.rs"]
+mod content;

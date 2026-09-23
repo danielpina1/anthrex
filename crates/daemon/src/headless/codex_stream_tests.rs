@@ -459,6 +459,8 @@ fn a_429_inside_an_id_or_a_count_is_not_a_rate_limit() {
         "you requested 142913 tokens, the maximum is 128000",
         "request 0f4291a2-4290-4429-a429-94290b4290ab failed",
         "error 4290",
+        "HTTP429",
+        "http_429",
     ] {
         assert_eq!(kind(other), FailureKind::Other, "{other}");
     }

@@ -2,11 +2,12 @@
 //! Interfaces mapping table). Pure.
 
 use super::SessionEvent;
+use crate::conversation::align::{Alignment, Prompt, alignment};
 use crate::hooks::{HookKind, ParsedHook};
 use crate::transcript::Record;
 use proto::{HookSource, Runtime};
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 /// What `map` carries from one event to the next of the same session.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -23,6 +24,20 @@ pub struct StreamCursor {
     /// Top-level tool names by id, for the synthesised `PostToolUse`.
     tool_names: HashMap<String, String>,
     session_id: Option<String>,
+    /// Content mode (ruling T7-N1): set by the first `UserPromptSubmit` the manager
+    /// passes to `observe_hook`. From then on the prompts the hooks report, not the
+    /// timing of `Init`, number the turns.
+    hook_feed: bool,
+    /// Prompts observed through `observe_hook`; the next one's ordinal. It counts the
+    /// same hooks M6.5 builds `User` turns from, so the two never disagree.
+    prompts_seen: u32,
+    /// Texts the daemon sent that no observed prompt has matched yet, oldest first.
+    pending_sent: VecDeque<String>,
+    /// An observed prompt no sent text matched, in case its `sent_turn` comes late.
+    last_unmatched: Option<String>,
+    /// A turn ended and no prompt has been observed since: prose now belongs to a turn
+    /// whose prompt hook was lost, which has no `User` turn to land on.
+    awaiting_prompt: bool,
 }
 
 /// Milestone 6.5's two inputs: hooks for `WindowManager::conversation_hook`, records
@@ -72,9 +87,18 @@ pub fn map(
             }
         }
         SessionEvent::AssistantText { text, parent: None } => {
-            if cursor.turn_open
-                && let Some(ordinal) = cursor.prompts_sent.checked_sub(1)
-            {
+            let ordinal = if hooks_fire && cursor.hook_feed {
+                cursor
+                    .prompts_seen
+                    .checked_sub(1)
+                    .filter(|_| !cursor.awaiting_prompt)
+            } else {
+                cursor
+                    .prompts_sent
+                    .checked_sub(1)
+                    .filter(|_| cursor.turn_open)
+            };
+            if let Some(ordinal) = ordinal {
                 input.records.push(Record::AssistantText {
                     session_id: cursor.session_id.clone(),
                     ordinal,
@@ -137,6 +161,7 @@ pub fn map(
         SessionEvent::TurnEnded { .. } => {
             cursor.turn_open = false;
             cursor.after_turn_end = true;
+            cursor.awaiting_prompt = true;
             cursor.tool_names.clear();
             input.hooks.push(cursor.hook(HookKind::Stop));
         }
@@ -151,12 +176,33 @@ pub fn map(
 /// The conversation inputs for a turn the daemon starts with `text`: its prompt, as the
 /// `k`-th (0-based) turn sent in this session (M6.5 ruling R1). `human: true` because a
 /// hook-built prompt is exactly `text`, so M6.5's exact-match alignment applies.
+///
+/// In content mode (`hooks_fire`, and the manager feeds hooks to `observe_hook`) the
+/// prompt's own hook numbers the turn, so this only remembers `text` for matching and
+/// returns nothing.
 pub fn sent_turn(
     _runtime: Runtime,
     hooks_fire: bool,
     text: &str,
     cursor: &mut StreamCursor,
 ) -> ConversationInput {
+    if hooks_fire {
+        let already = cursor
+            .last_unmatched
+            .as_deref()
+            .is_some_and(|seen| same_prompt(seen, text));
+        if already {
+            cursor.last_unmatched = None;
+        } else {
+            if cursor.pending_sent.len() >= PENDING_SENT_MAX {
+                cursor.pending_sent.pop_front();
+            }
+            cursor.pending_sent.push_back(text.to_owned());
+        }
+        if cursor.hook_feed {
+            return ConversationInput::default();
+        }
+    }
     let ordinal = cursor.prompts_sent;
     cursor.prompts_sent = cursor.prompts_sent.saturating_add(1);
     cursor.turn_open = true;
@@ -179,6 +225,78 @@ pub fn sent_turn(
         }],
     }
 }
+
+/// A real hook the manager has just applied to this headless window's conversation
+/// (through `WindowManager::conversation_hook`, under the same lock). Only a
+/// `UserPromptSubmit` matters: it starts a turn, and its prompt says whose turn it is
+/// (ruling T7-N1).
+///
+/// - The prompt is numbered by the count of prompts observed, which is the count of
+///   `User` turns M6.5 built from the same hooks, whoever sent them.
+/// - It is the daemon's turn (`human: true`) when it equals, as M6.5's alignment has
+///   it, a text the daemon sent and no earlier prompt matched. Otherwise Claude Code
+///   started it itself (a background sub-agent's notification), and it is `human: false`.
+///   Either way its prose lands on its own turn.
+///
+/// Claude runs command hooks before it acts on the prompt, and `anthrex hook` waits for
+/// the daemon's ack, so a turn's prompt is observed before any of its prose is read.
+pub fn observe_hook(
+    _runtime: Runtime,
+    hook: &ParsedHook,
+    cursor: &mut StreamCursor,
+) -> ConversationInput {
+    if hook.kind != HookKind::UserPromptSubmit {
+        return ConversationInput::default();
+    }
+    cursor.hook_feed = true;
+    let text = hook.prompt.clone().unwrap_or_default();
+    let matched = cursor
+        .pending_sent
+        .iter()
+        .position(|sent| same_prompt(&text, sent));
+    let human = match matched {
+        Some(at) => {
+            // Older texts never got a prompt of their own: their hooks were lost.
+            cursor.pending_sent.drain(..=at);
+            cursor.last_unmatched = None;
+            true
+        }
+        None => {
+            cursor.last_unmatched = Some(text.clone());
+            false
+        }
+    };
+    let ordinal = cursor.prompts_seen;
+    cursor.prompts_seen = cursor.prompts_seen.saturating_add(1);
+    cursor.awaiting_prompt = false;
+    if hook.session_id.is_some() {
+        cursor.session_id.clone_from(&hook.session_id);
+    }
+    ConversationInput {
+        hooks: Vec::new(),
+        records: vec![Record::UserText {
+            session_id: cursor.session_id.clone(),
+            ordinal,
+            text,
+            human,
+        }],
+    }
+}
+
+/// Whether an observed prompt is the text the daemon sent: M6.5's alignment for a typed
+/// prompt, equal up to surrounding whitespace.
+fn same_prompt(observed: &str, sent: &str) -> bool {
+    let sent = Prompt {
+        session_id: None,
+        text: sent,
+        human: true,
+    };
+    alignment(observed, &sent) == Alignment::Exact
+}
+
+/// The most sent texts a cursor holds unmatched. Deliveries are one at a time, so more
+/// than a few means their hooks are being lost, and the oldest is dropped.
+const PENDING_SENT_MAX: usize = 16;
 
 /// The most tool names a cursor remembers. A turn's names are dropped when it ends, so
 /// this only bounds a turn with calls whose results never arrive.
