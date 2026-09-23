@@ -3095,6 +3095,20 @@ Coordinator rulings on `task-6-rereview.md`:
     because that would be a deadlock. The unstarted task may run while the blocked
     task's worktree holds overlapping work: a merge-conflict risk, not a deadlock.
     M8a.11's merge queue handles the conflict.
+    **Controller ruling after the second re-review (N5, Important): binding on M8a.11.**
+    The re-review showed that "the merge queue handles it" is not enough on its own. An
+    `answer`, a `run retry` or an accepted rung-3 rewrite could send the started task
+    back to `working` while its new declared dependency is still running, and then two
+    writers would work on overlapping `owns` at the same time. M8a.11 must therefore
+    hold one invariant: **no task is dispatched, resumed or returned to `working` while
+    any of its dependencies, declared or implicit, is unfinished.**
+    - An `answer` to such a task is recorded and delivered only when its dependencies
+      have merged.
+    - When a started task resumes after a dependency merges, the run head is merged into
+      its worktree first, by decision 36's hand-back path.
+    - M8a.11 needs a reducer test for this: t1 is started and `blocked(question)`; t2 is
+      unstarted and overlaps t1; the batch `[add_dep t1 t2, answer t1]` must leave t1
+      waiting until t2 merges, then resume it with t2's changes in its worktree.
   - M8a.11 must also decide whether a pre-warmed task that blocks in `setup` has
     `start_commit` set (and so counts as started) or not.
 
