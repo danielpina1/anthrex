@@ -363,3 +363,28 @@ fn a_deferred_cancel_edit_says_so() {
     assert!(fx.task("t1").cancel_deferred);
     assert_alive(&fx);
 }
+
+/// Ruling T14-R3 (nit): a `cancel_task` edit clears a due hand-back, as `run cancel`
+/// does, so nothing restored later reads it.
+#[test]
+fn a_cancel_edit_clears_a_due_hand_back() {
+    let tasks = [doc_task("t1", ""), doc_task("t2", "")];
+    let (mut fx, windows) = start(&tasks);
+    let window = window_of(&windows, "t1");
+    told_queue_conflict(&mut fx, window);
+    ask(&mut fx, window);
+    add_dep(&mut fx, "t2");
+    answer(&mut fx);
+    to_queue(&mut fx, "t2", window_of(&windows, "t2"));
+    merge(&mut fx, "t2", &commit(2));
+    assert!(fx.task("t1").handback_due);
+    edit(
+        &mut fx,
+        vec![PlanEdit::CancelTask {
+            task_id: "t1".into(),
+        }],
+    );
+    assert_eq!(fx.task("t1").state, TaskState::Cancelled);
+    assert!(!fx.task("t1").handback_due);
+    assert_alive(&fx);
+}

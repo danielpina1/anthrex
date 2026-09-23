@@ -824,3 +824,12 @@ scope.
   process N finished its turn (for example an `exiting_pid` set when a delivery opens
   a Codex turn over a live pid), or the executor must guarantee that `ProcessStarted`
   for N+1 comes before N's exit. M8a.22's executor should settle which one.
+
+## From M8a.14's fix round 3 (2026-09-24), for M8a
+
+- **`verify_done`'s dirty count follows the submodule config.** Its `status
+  --porcelain` has no `--ignore-submodules=none` (`worktree/dirty.rs` passes it). Under
+  `diff.ignoreSubmodules=all` or a `.gitmodules` `ignore = all`, an uncommitted gitlink
+  change or a dirty submodule does not count toward `dirty_tracked`. Nothing
+  uncommitted is merged, so this is not a gate bypass. The claim is accepted with work
+  left behind, though, which M8a.9's salvage then has to catch.

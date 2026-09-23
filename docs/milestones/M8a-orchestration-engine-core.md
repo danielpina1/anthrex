@@ -3864,6 +3864,26 @@ T9-I1, T9-I2 and T9-m1 to m6 apply. Each behaviour fix has a test that failed fi
   into a single-parent commit, and the resolution's tree on swapped parents. A
   `rev-list <head> ^onto ^run_head` check was written first and dropped: the parent
   check implies it (its mutant survived).
+- **Later change, from M8a.14 fix round 3 (ruling T14-R3).**
+  - `DIFF_FLAGS` gains `--ignore-submodules=none`, so neither `diff.ignoreSubmodules`
+    nor a `.gitmodules` `ignore = all` hides a gitlink change from `verify_done`'s
+    owns, protected and spill split, from `resolution_only`, or from any other run diff
+    (stat, patch, salvage's `--quiet`, `unmerged`). Tests
+    `verify_done_sees_gitlinks_that_config_ignores` (`run_git_done.rs`: a gitlink moved
+    outside owns and one at a protected path under `.gitmodules` `ignore = all`, a new
+    one under `diff.ignoreSubmodules=all`) and
+    `resolution_only_sees_gitlinks_that_config_ignores` (`run_git_handback.rs`).
+  - The shared scrub (`subprocess::scrub_git_env`) sets `GIT_NO_REPLACE_OBJECTS=1`: no
+    engine git call reads `refs/replace` objects. The scrub is the one every git call
+    goes through, and the setup, check and proof shells (`run/exec.rs`) inherit it too.
+    Tests `resolution_only_ignores_replace_refs` (an evil merge behind a replace ref to
+    the pure one stays refused, while plain git reads the replacement's tree) and
+    `every_run_git_call_passes_no_optional_locks_and_no_git_env` (every recorded call
+    has the variable).
+  - `hand_back` reports `onto = HEAD^1` only when `HEAD^2` is the run head; otherwise
+    (the run head already in the task's history, "Already up to date", no merge commit
+    made) `onto = head = HEAD`. Test `hand_back_of_a_run_head_already_merged_reports_head`
+    (a plain claim, and a claim that is itself a merge).
 - **`hand_back` refuses a merge already in progress.** If `MERGE_HEAD` already exists in
   the task worktree (`rev-parse -q --verify MERGE_HEAD`), `hand_back` returns `Err("a
   merge is already in progress in <worktree>; finish it or run git merge --abort")` and
@@ -6120,3 +6140,37 @@ Fix round 1's 23 mutants were re-run: all still killed; R9, R10, R12, R14 still 
 `cargo test -p anthrex-daemon --no-fail-fast`: 35 binaries, 1147 passed, 0 failed. No
 file passes 600 lines: `merge.rs` 488, `done.rs` 492, `dispatch.rs` 554, `model.rs` 577,
 `tests/merge_fixes2.rs` 365.
+
+#### M8a.14 fix round 3
+
+Re-review 2 (`task-14-rereview-2.md`) approved N1–N4 and #4. It found R2-1 (Important),
+R2-2 (Minor) and a nit; ruling T14-R3 folds in two of its out-of-scope items. Every
+test was red first.
+
+- **R2-1: gitlinks.** `--ignore-submodules=none` joins the shared `DIFF_FLAGS` (M8a.9
+  notes). Before this, a merge that also moved a gitlink passed `resolution_only` under
+  `diff.ignoreSubmodules=all` or a `.gitmodules` `ignore = all`, and `verify_done` did
+  not see a gitlink outside `owns` or at a protected path. Red: `assertion failed:
+  !only(...)` and `left: []` against `right: ["vendor/lib"]`.
+- **Replace refs.** `GIT_NO_REPLACE_OBJECTS=1` in the shared env scrub (M8a.9 notes).
+  Red: the evil merge read as the pure one behind `refs/replace`.
+- **R2-2:** `onto = HEAD^1` only when `HEAD^2` is the run head (M8a.9 notes). Red: `onto`
+  was the claim's parent after an "Already up to date" hand-back.
+- **Nit:** a `cancel_task` edit clears `handback_due` (`edits.rs`), as `run cancel`
+  does. Test `a_cancel_edit_clears_a_due_hand_back`, ending with the liveness check.
+  Red: `assertion failed: !fx.task("t1").handback_due`.
+- **Executor contract (M8a.22).** `OpKind::VerifyDone`'s doc now says a
+  `resolution_only` error counts as `Some(false)`: the gates run, and the error never
+  fails the `DoneChecked`.
+
+**Mutations:** 6 new mutants, all killed:
+- dropping `--ignore-submodules=none`
+- dropping `GIT_NO_REPLACE_OBJECTS`
+- `onto = HEAD^1` always
+- `HEAD^1` for any merge commit (killed by the claim-is-a-merge case)
+- `onto = HEAD` always
+- the edit keeping `handback_due`
+
+**Scope note.** `verify_done`'s `status --porcelain` (the dirty count) still follows the
+submodule config. An uncommitted gitlink change is never merged, so it is left out here
+and recorded as a follow-up.

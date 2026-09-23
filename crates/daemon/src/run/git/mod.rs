@@ -70,8 +70,14 @@ pub(crate) const LARGE_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
 /// Every diff, stat and name list ignores the user's diff configuration: no colour
 /// (`color.ui=always`), no external diff driver, no textconv filter (a
 /// `.gitattributes`-selected command could run, or stall, inside the diff). Fix round
-/// 1, finding 6.
-pub(crate) const DIFF_FLAGS: [&str; 3] = ["--no-color", "--no-ext-diff", "--no-textconv"];
+/// 1, finding 6. Nor can `diff.ignoreSubmodules` or a `.gitmodules` `ignore = all` hide
+/// a gitlink change from the owns, protected and resolution checks (ruling T14-R3).
+pub(crate) const DIFF_FLAGS: [&str; 4] = [
+    "--no-color",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--ignore-submodules=none",
+];
 
 /// A patch's `a/` and `b/` prefixes, whatever `diff.noprefix` or
 /// `diff.mnemonicPrefix` say (`--default-prefix` needs git 2.41; runs need 2.38).

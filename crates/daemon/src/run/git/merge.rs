@@ -315,7 +315,8 @@ pub fn commits_since(
 /// `MERGE_HEAD` for the worker and gives the unmerged files. Any other failure
 /// (untracked files in the way, say), or a merge already in progress, is an error.
 /// The result names the tip the merge was made onto (ruling T14-C1), read after the
-/// merge (`HEAD^1` of a clean merge commit, `HEAD` of a conflicted one; review N4):
+/// merge (`HEAD^1` of a clean merge commit whose `HEAD^2` is the run head, else `HEAD`,
+/// as for a conflicted merge or one already up to date; review N4, ruling T14-R3):
 /// the engine re-queues a hand-back only when that tip is the claimed commit.
 pub fn hand_back(
     git: &OsStr,
@@ -348,8 +349,15 @@ pub fn hand_back(
     // that lands in between is reported as the tip the merge was made onto.
     if output.success {
         let head = tip(g)?;
-        let onto = read(g, worktree, "HEAD^1")?
-            .ok_or_else(|| format!("{} has no merge commit at HEAD", worktree.display()))?;
+        // Ruling T14-R3 (R2-2): a run head already in the task's history makes no merge
+        // commit ("Already up to date"); the tip merged onto is then `HEAD` itself.
+        let target = read(g, worktree, &format!("{run_head}^{{commit}}"))?;
+        let merged = read(g, worktree, "HEAD^2")?;
+        let onto = if merged.is_some() && merged == target {
+            read(g, worktree, "HEAD^1")?.unwrap_or_else(|| head.clone())
+        } else {
+            head.clone()
+        };
         return Ok(HandBack {
             onto,
             head,

@@ -199,8 +199,11 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
     let log = std::fs::read_to_string(scripts.path().join("git.log")).unwrap();
     let mut calls = 0;
     let mut writes = 0;
+    let mut no_replace = 0;
     for line in log.lines() {
         if let Some(env) = line.strip_prefix("env\t") {
+            // Ruling T14-R3: no call reads `refs/replace` objects.
+            no_replace += usize::from(env == "GIT_NO_REPLACE_OBJECTS=1");
             for key in SCRUBBED {
                 assert!(
                     !env.starts_with(&format!("{key}=")),
@@ -235,4 +238,5 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
     }
     assert!(calls >= 20, "only {calls} git calls were recorded:\n{log}");
     assert!(writes >= 5, "only {writes} writes were recorded:\n{log}");
+    assert_eq!(no_replace, calls, "replace objects allowed:\n{log}");
 }

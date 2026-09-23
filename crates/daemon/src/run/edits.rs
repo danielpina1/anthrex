@@ -292,6 +292,8 @@ impl Batch {
         let task = &mut self.run.tasks[i];
         task.state = TaskState::Cancelled;
         task.block = None;
+        // Ruling T14-R3: nothing is handed back to a cancelled task, as `run cancel` has it.
+        task.handback_due = false;
         self.log(i, "cancelled by a plan edit".to_string());
         self.run.merge_queue.retain(|q| *q != id);
         for j in 0..self.run.tasks.len() {

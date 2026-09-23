@@ -435,6 +435,9 @@ fn lossy_stderr(bytes: Vec<u8>) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
+/// AGENTS.md rule 11's five variables go, and (ruling T14-R3) git reads no
+/// `refs/replace` objects, so a replacement a worker writes into the shared repository
+/// cannot make one commit read as another to a gate, a merge or a check.
 pub(crate) fn scrub_git_env(command: &mut Command) -> &mut Command {
     command
         .env_remove("GIT_DIR")
@@ -442,6 +445,7 @@ pub(crate) fn scrub_git_env(command: &mut Command) -> &mut Command {
         .env_remove("GIT_COMMON_DIR")
         .env_remove("GIT_INDEX_FILE")
         .env_remove("GIT_PREFIX")
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
 }
 
 pub(crate) fn set_nonblocking(stream: &impl AsRawFd) -> io::Result<()> {

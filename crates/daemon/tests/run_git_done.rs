@@ -246,6 +246,50 @@ fn count_commits_and_diff_so_far() {
     assert!(!patch.contains("uncommitted"), "{patch}");
 }
 
+/// Stages a gitlink at `path` pointing at `sha`.
+fn gitlink(dir: &std::path::Path, sha: &str, path: &str) {
+    let info = format!("160000,{sha},{path}");
+    out(dir, &["update-index", "--add", "--cacheinfo", &info]);
+}
+
+/// Ruling T14-R3 (R2-1): a gitlink change is a changed path for the owns and protected
+/// checks, whatever `.gitmodules` (`ignore = all`) or the configuration
+/// (`diff.ignoreSubmodules=all`) says about submodules.
+#[test]
+fn verify_done_sees_gitlinks_that_config_ignores() {
+    let repo = repo();
+    let base = head(&repo.root);
+    write(
+        &repo.root,
+        ".gitmodules",
+        "[submodule \"vendor/lib\"]\n\tpath = vendor/lib\n\turl = ./a\n\tignore = all\n\
+         [submodule \".claude/skills\"]\n\tpath = .claude/skills\n\turl = ./b\n\tignore = all\n",
+    );
+    out(&repo.root, &["add", ".gitmodules"]);
+    gitlink(&repo.root, &base, "vendor/lib");
+    gitlink(&repo.root, &base, ".claude/skills");
+    out(&repo.root, &["commit", "-q", "-m", "submodules"]);
+    let newer = commit_file(&repo.root, "src/lib.rs", "pub fn a() {}\n", "src");
+    let (_keep, wt) = wt_dir();
+
+    // Both gitlinks moved, ignored by `.gitmodules`.
+    let t = task(&repo, &wt, "gitmodules");
+    gitlink(&t.path, &newer, "vendor/lib");
+    gitlink(&t.path, &newer, ".claude/skills");
+    out(&t.path, &["commit", "-q", "-m", "move the submodules"]);
+    let r = check(&t, &t.start, &["src/**"], &[], None);
+    assert_eq!(r.outside_owns, strings(&["vendor/lib"]), "{r:?}");
+    assert_eq!(r.protected_changed, strings(&[".claude/skills"]), "{r:?}");
+
+    // A new gitlink, with `diff.ignoreSubmodules=all` in the repository's config.
+    out(&repo.root, &["config", "diff.ignoreSubmodules", "all"]);
+    let t = task(&repo, &wt, "config");
+    gitlink(&t.path, &newer, "vendor/new");
+    out(&t.path, &["commit", "-q", "-m", "add a submodule"]);
+    let r = check(&t, &t.start, &["src/**"], &[], None);
+    assert_eq!(r.outside_owns, strings(&["vendor/new"]), "{r:?}");
+}
+
 #[test]
 fn verify_done_edge_cases() {
     let repo = repo();

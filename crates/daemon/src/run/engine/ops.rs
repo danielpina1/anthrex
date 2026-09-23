@@ -63,7 +63,9 @@ pub enum OpKind {
         /// Ruling T14-R2: set for a claim after the merge queue's conflicted hand-back.
         /// **Executor contract (M8a.22):** after `verify_done`, run
         /// `git::resolution_only(worktree, head, onto, run_head, files)` (a read) and
-        /// return it as `DoneChecked.resolution_only`.
+        /// return it as `DoneChecked.resolution_only`. An error from it (a timeout, a
+        /// `merge-tree` failure) counts as `Some(false)`, so the gates run; it never
+        /// fails the `DoneChecked` (ruling T14-R3).
         #[serde(default)]
         resolution: Option<ResolutionAt>,
     },

@@ -179,3 +179,140 @@ fn resolution_only_refuses_a_claim_that_carries_more() {
     assert!(only(&task, &resolved, &onto, &run_head));
     assert!(!only(&task, &swapped, &onto, &run_head));
 }
+
+/// Commits the merge in progress in `task` (a resolution already staged).
+fn commit_merge(task: &Path) -> String {
+    out(
+        task,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--no-edit",
+        ],
+    );
+    head(task)
+}
+
+/// Stages a gitlink at `path` pointing at `sha`.
+fn gitlink(dir: &Path, sha: &str, path: &str) {
+    let info = format!("160000,{sha},{path}");
+    out(dir, &["update-index", "--add", "--cacheinfo", &info]);
+}
+
+/// Ruling T14-R3 (R2-1): a gitlink the resolution adds or moves is not the resolution,
+/// whatever the configuration says about submodules.
+#[test]
+fn resolution_only_sees_gitlinks_that_config_ignores() {
+    // `diff.ignoreSubmodules=all` in the repository's config.
+    let repo = repo();
+    let (_keep, task, onto, run_head) = conflicted(&repo, "ro8");
+    write(&task, "shared.txt", "resolved\n");
+    out(&task, &["add", "shared.txt"]);
+    gitlink(&task, &onto, "sub");
+    let added = commit_merge(&task);
+    out(&repo.root, &["config", "diff.ignoreSubmodules", "all"]);
+    assert!(!only(&task, &added, &onto, &run_head));
+
+    // A submodule of the base marked `ignore = all` in `.gitmodules`.
+    let repo = super_repo();
+    let (_keep, task, onto, run_head) = conflicted(&repo, "ro9");
+    write(&task, "shared.txt", "resolved\n");
+    out(&task, &["add", "shared.txt"]);
+    gitlink(&task, &run_head, "sub");
+    let moved = commit_merge(&task);
+    assert!(!only(&task, &moved, &onto, &run_head));
+}
+
+/// A repository whose base has a submodule `sub` that `.gitmodules` ignores.
+fn super_repo() -> TempRepo {
+    let repo = repo();
+    let base = head(&repo.root);
+    write(
+        &repo.root,
+        ".gitmodules",
+        "[submodule \"sub\"]\n\tpath = sub\n\turl = ./sub\n\tignore = all\n",
+    );
+    out(&repo.root, &["add", ".gitmodules"]);
+    gitlink(&repo.root, &base, "sub");
+    out(&repo.root, &["commit", "-q", "-m", "a submodule"]);
+    repo
+}
+
+/// Ruling T14-R3: engine git reads no replacement objects. A merge that carries more
+/// than the resolution stays refused behind a `refs/replace` to the pure one.
+#[test]
+fn resolution_only_ignores_replace_refs() {
+    let repo = repo();
+    let (_keep, task, onto, run_head) = conflicted(&repo, "ro10");
+    let pure = resolve(&task, &[]);
+    write(&task, "evil.txt", "evil\n");
+    out(&task, &["add", "-A"]);
+    let tree = out(&task, &["write-tree"]);
+    let evil = out(
+        &task,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit-tree",
+            &tree,
+            "-p",
+            &onto,
+            "-p",
+            &run_head,
+            "-m",
+            "evil",
+        ],
+    );
+    assert!(!only(&task, &evil, &onto, &run_head));
+    out(&task, &["replace", &evil, &pure]);
+    assert_eq!(
+        out(&task, &["rev-parse", &format!("{evil}^{{tree}}")]),
+        out(&task, &["rev-parse", &format!("{pure}^{{tree}}")]),
+        "plain git reads the replacement"
+    );
+    assert!(!only(&task, &evil, &onto, &run_head));
+}
+
+/// Ruling T14-R3 (R2-2): a run head already in the task's history makes no merge
+/// commit ("Already up to date"), so the tip merged onto is `HEAD` itself.
+#[test]
+fn hand_back_of_a_run_head_already_merged_reports_head() {
+    let repo = repo();
+    commit_file(&repo.root, "a.txt", "a\n", "a");
+    let run_head = head(&repo.root);
+    let (_keep, task) = task_worktree(&repo, "hb8");
+    let claimed = commit_file(&task, "b.txt", "b\n", "task");
+    let back = hand_back(real_git(), &task, &run_head, T).unwrap();
+    assert!(back.files.is_empty(), "{back:?}");
+    assert_eq!(head(&task), claimed);
+    assert_eq!(back.onto, claimed);
+    assert_eq!(back.head, claimed);
+
+    // The claim is itself a merge (a resolution, say): its second parent is not the
+    // run head, so it is still no merge the hand-back made.
+    let side = commit_on(&repo.root, "side-hb8", "c.txt", "side\n");
+    out(
+        &task,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "merge",
+            "-q",
+            "--no-ff",
+            "--no-edit",
+            &side,
+        ],
+    );
+    let claimed = head(&task);
+    let back = hand_back(real_git(), &task, &run_head, T).unwrap();
+    assert_eq!(head(&task), claimed);
+    assert_eq!(back.onto, claimed);
+}
