@@ -359,6 +359,26 @@ pub fn check_failed_message(command: &str, c: &CheckRecord) -> String {
     )
 }
 
+/// Decision 36's rung-1 message for a merge candidate whose check failed (Interfaces,
+/// exact): how the check ended on the merged result, its command, and the last 40
+/// lines. M8a.14.
+pub fn candidate_red_message(command: &str, c: &CheckRecord) -> String {
+    format!(
+        "[anthrex] Your branch merged cleanly into the run branch, but the check failed on the merged result ({}): {command}\nLast 40 lines:\n{}\nFix it on your branch, commit, then call task_done again.",
+        ended_how(c.code, c.timed_out, c.secs),
+        summary(&c.tail)
+    )
+}
+
+/// Decision 20's refusal when accept's merge conflicts with an advanced base (exact):
+/// `commits` new commits on `base`. M8a.14.
+pub fn accept_conflict_message(run_id: &str, base: &str, commits: u32, files: &[String]) -> String {
+    format!(
+        "accept conflicts with {commits} commits on {base}: {}; resolve by merging anthrex/{run_id}/integration into {base} yourself, or discard the run",
+        files.join(", ")
+    )
+}
+
 /// Decision 33's rung-1 message for a failed test proof (Interfaces, exact): the first
 /// reason that applies, the command, and the last 40 lines of the offending run — the
 /// red run's when it did not fail (the head run was skipped then, M8a.10), else the

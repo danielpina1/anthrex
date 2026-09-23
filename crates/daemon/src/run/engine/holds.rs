@@ -143,7 +143,7 @@ pub(super) fn handed_back(
     }
     let held = task.state == TaskState::Blocked && task.awaiting_deps;
     match result {
-        OpResult::HandedBack { files } => {
+        OpResult::HandedBack { files, .. } => {
             let id = run.tasks[i].id().to_string();
             let waiting = unfinished_deps(run, &run.tasks[i]);
             if held && !waiting.is_empty() {

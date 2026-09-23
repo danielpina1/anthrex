@@ -5,11 +5,13 @@
 //! for new dependencies (M8a.6 ruling N5), and the clean-up of a cancelled task's
 //! worktree when no session is left (M8a.6's F5). Pure (design decision 2).
 
+use std::path::Path;
+
 use proto::{AgentRole, BlockInfo, BlockReason, RunState, Runtime, TaskState};
 
 use super::schedule::{deps_done, dispatch_order, hub_holds_slot, op_in_flight, writers_busy};
 use super::{Effect, OpKind, OpResult, emit_op, next_op};
-use super::{done, gates, holds, ladder, outbox, review, signals};
+use super::{complete, done, gates, holds, ladder, merge, outbox, review, signals};
 use crate::run::contract::{handover_prompt, is_stall_nudge, worker_prompt};
 use crate::run::env::profile_env;
 use crate::run::model::{AgentRound, FreshSession, OpId, Run, StallState, Task, TaskEvent};
@@ -31,7 +33,9 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 signals::watch(run, now, fx);
                 ladder::recover_sessionless(run, now);
                 ladder::start_fresh_sessions(run, fx);
+                complete::finish_pass(run, now, fx);
                 gates::start_gates(run, now, fx);
+                merge::start_merge(run, now, fx);
                 review::watch(run, now, fx);
                 dispatch_writers(run, now, fx);
                 review::dispatch_reviewers(run, fx);
@@ -42,6 +46,7 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     remove_cancelled_worktrees(run, now, fx);
     if run.state == RunState::Running {
         outbox::deliver(run, now, fx);
+        complete::complete_pass(run, now, fx);
     }
 }
 
@@ -480,12 +485,15 @@ pub(super) fn window_done(
 }
 
 /// The result of a `RemoveWorktree`.
-pub(super) fn removed(run: &mut Run, i: usize, result: OpResult, now: u64) {
+pub(super) fn removed(run: &mut Run, i: usize, path: &Path, result: OpResult, now: u64) {
     match result {
         OpResult::Removed { salvage_ref } => {
             let task = &mut run.tasks[i];
-            task.worktree_live = false;
-            task.prewarmed = false;
+            // M8a.14: a merged task's review and proof worktrees are removed too.
+            if path == task.worktree {
+                task.worktree_live = false;
+                task.prewarmed = false;
+            }
             if let Some(reference) = salvage_ref {
                 task.salvage_refs.push(reference.clone());
                 history(

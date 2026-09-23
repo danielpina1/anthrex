@@ -18,8 +18,12 @@
 //! budgets).
 //!
 //! M8a.13 adds `gates.rs` (the test proof, the check, the gate order and `run
-//! override`) and `review.rs` (the review gate and its reviewer sessions). Later tasks
-//! add `merge.rs` and `restore.rs`.
+//! override`) and `review.rs` (the review gate and its reviewer sessions).
+//!
+//! M8a.14 adds `merge.rs` (decision 36's merge queue and hand-back, decision 21's ref
+//! guard and `run resume --rebaseline`) and `complete.rs` (decision 37's completion,
+//! the `finish` edit, `run cancel`, and `run accept`/`discard` of a complete run).
+//! M8a.15 adds `restore.rs`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -29,12 +33,14 @@ use proto::{FinishAction, PlanEdit, TokenUsage, ToolCall};
 use super::model::{OpId, PendingOp, Run};
 use super::validate::EditScope;
 
+mod complete;
 mod dispatch;
 mod done;
 mod fallback;
 mod gates;
 mod holds;
 pub(crate) mod ladder;
+mod merge;
 mod ops;
 mod outbox;
 mod requests;
@@ -272,11 +278,25 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             task_id,
             reason,
         } => gates::override_task(&mut state, reply, &run_id, &task_id, &reason, now, &mut fx),
-        EventKind::Cancel { reply, .. } => requests::not_yet(&mut fx, reply, "run cancel"),
-        EventKind::Resume { reply, .. } => requests::not_yet(&mut fx, reply, "run resume"),
-        EventKind::Finish { reply, .. } => requests::not_yet(&mut fx, reply, "run finish"),
+        EventKind::Cancel { reply, run_id } => {
+            complete::cancel(&mut state, reply, &run_id, now, &mut fx)
+        }
+        EventKind::Resume {
+            reply,
+            run_id,
+            rebaseline,
+        } => merge::resume(&mut state, reply, &run_id, rebaseline, now, &mut fx),
+        EventKind::Finish {
+            reply,
+            run_id,
+            action,
+        } => complete::finish(&mut state, reply, &run_id, action, now, &mut fx),
         EventKind::Tool { reply, call } => done::tool(&mut state, reply, call, now, &mut fx),
-        EventKind::BaseAdvanced { .. } => {}
+        EventKind::BaseAdvanced {
+            run_id,
+            to,
+            commits,
+        } => merge::base_advanced(&mut state, &run_id, to, commits, now),
         EventKind::OpDone { run_id, op, result } => {
             op_done(&mut state, &run_id, op, result, now, &mut fx)
         }
@@ -392,8 +412,13 @@ fn op_done(
         (kind @ OpKind::Check { .. }, Some(i)) => {
             gates::check_done(run, i, op, &kind, result, now, fx)
         }
+        (OpKind::Check { .. }, None) => complete::final_checked(run, result, now, fx),
+        (OpKind::VerifyRefs { .. }, _) => complete::refs_verified(run, result, now, fx),
+        (OpKind::MergeCandidate { .. }, i) => merge::candidate_done(run, i, op, result, now, fx),
         (OpKind::CreateRunBranch { .. }, _) => requests::run_branch_done(run, result, now, fx),
-        (OpKind::Discard { .. }, _) => requests::discarded(run, result, now),
+        (kind @ (OpKind::Discard { .. } | OpKind::Accept { .. }), _) => {
+            complete::finished(run, &kind, result, now, fx)
+        }
         (OpKind::PrepareWorktree { from, .. }, Some(i)) => {
             dispatch::worktree_done(run, i, from, result, now, fx)
         }
@@ -403,14 +428,18 @@ fn op_done(
         (OpKind::PrepareReview { .. }, Some(i)) => {
             review::review_ready(run, i, op, result, now, fx)
         }
+        (OpKind::HandBack { .. }, Some(i)) if merge::awaits(run, i, op) => {
+            merge::handed_back(run, i, op, result, now, fx)
+        }
         (OpKind::HandBack { .. }, Some(i)) => holds::handed_back(run, i, result, now, fx),
         (OpKind::AbortMerge { .. }, Some(i)) => holds::merge_aborted(run, i, result, now),
-        (OpKind::RemoveWorktree { .. }, Some(i)) => dispatch::removed(run, i, result, now),
+        (OpKind::RemoveWorktree { path, .. }, Some(i)) => {
+            dispatch::removed(run, i, &path, result, now)
+        }
         (OpKind::VerifyDone { .. }, Some(i)) => done::checked(run, i, op, result, now, fx),
         (OpKind::CountCommits { .. }, Some(i)) => fallback::counted(run, i, op, result, now, fx),
         (OpKind::DiffSoFar { .. }, Some(i)) => ladder::fresh_diff(run, i, result, now, fx),
         (OpKind::ResumeSession { .. }, Some(i)) => outbox::resumed(run, i, op, result, now, fx),
-        // The other kinds' results are handled by M8a.14 and M8a.15.
         _ => {}
     }
 }

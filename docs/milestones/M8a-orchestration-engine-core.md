@@ -5712,3 +5712,188 @@ was about 20–24 (other sessions). With the worktree's default `target/`, `git_
 kept failing alone, taking 18 s. With a fresh `CARGO_TARGET_DIR` it passed in about
 1.5 s, for this commit's code and for `c2f5836` alike. `server_git` passed alone on
 its second try. The engine touches neither. `run::` unit tests: 332 of 332 pass.
+
+### M8a.14 engine IV: merge queue, hand-back, ref guard, completion (2026-09-23)
+
+Decisions 21 (engine side), 36 and 37 are in the reducer, with `run accept` and `run
+discard` of a complete run (decision 20, engine side), which the brief's accept-conflict
+test needs. Decision 2's grep over every new file matches nothing.
+
+**Module layout (beyond the brief's list, split by responsibility):**
+
+- `engine/merge.rs`: the queue (`start_merge`), `MergeCandidate`'s results, the merge
+  queue's hand-back, the halt, `BaseAdvanced`, and `run resume --rebaseline`.
+- `engine/complete.rs` (new): completion (`VerifyRefs`, the final check, `complete`),
+  the `finish` edit, `run cancel`, and `run accept`/`discard` with their results.
+  `requests::discarded` moved here as `finished`, shared by `run reject`.
+- Tests: `engine/tests/{merge,merge_complete,merge_holds}.rs`. The brief's single
+  `merge.rs` would have been over 1 100 lines.
+
+**Name corrections and additions** (each new field `#[serde(default)]`):
+
+- `Task.merge_op`: the `MergeCandidate`, or the merge queue's `HandBack`, the task
+  awaits (ruling T12-N's correlation). An N5 `HandBack` never sets it, so `op_done`
+  routes a `HandBack` result to `merge::handed_back` only when the task awaits that op,
+  else to `holds::handed_back` as before.
+- `Run.finish_edit` (the `finish` edit was applied) and `Run.finish_reply` (the
+  `run accept`/`discard` request waiting for its op; `restore` clears it).
+- `OpResult::HandedBack` gains `head: Option<String>`, the worktree's `HEAD` after the
+  hand-back. A clean hand-back commits a merge on the task branch, so re-queuing the
+  old `task.head` would conflict again and block the task; the clean head re-queues
+  instead. Every existing test literal gained `head: None`.
+- `OpResult::Finished` gains `kept_branches: Vec<String>` (carry T9): the names
+  `delete_branches` skipped. They are logged (`branches kept because a worktree has
+  them checked out: …`), so the report carries them.
+- `dispatch::removed` takes the removed path: only the task's own worktree clears
+  `worktree_live`, now that a merge also removes the review and proof worktrees.
+- New texts in `contract.rs`: `candidate_red_message` (exact, Interfaces) and
+  `accept_conflict_message` (exact, decision 20).
+- Executor contracts are on the op docs (`MergeCandidate`, `HandBack`,
+  `RemoveWorktree`, `VerifyRefs`, `Accept`, `Discard`): which steps are writes through
+  `GitQueue::write`, and that **the executor must never wrap `accept` in a timeout
+  shorter than `git::ACCEPT_MERGE_TIMEOUT`** (carry T9).
+
+**Readings and choices (invented where marked):**
+
+- **The queue.** Width 1 (any `MergeCandidate` pending), FIFO in `Run.merge_queue`.
+  The head stays in the queue while its candidate runs; each pass first drops ids
+  whose task is no longer in `merge_queue`. The candidate's `task_head` is `task.head`,
+  the claimed commit (carry T13-R2 N3); `message` is `anthrex: merge <task>: <title>`;
+  `check`, `timeout_secs` and `env` are the profile's, `env` with `{worktree}` the
+  integration path.
+- **`Merged`** sets `run_head` and `last_green_candidate` whatever became of the task
+  (the run ref did move); a task cancelled while its merge ran stays cancelled and the
+  merge is logged. For the awaited task: `merged`, `merge_commit`, the worker's live
+  rounds retiring with `RetireWindow` (a Codex round with no process ends at once),
+  its outbox mail dropped, `UnwatchWorktree` for the task worktree, then
+  `RemoveWorktree` for the task, review and proof worktrees with consecutive salvage
+  refs. `<seq>` starts after the highest recorded one (`merge::next_salvage_seq`), not
+  after the count: only dirty worktrees record their ref.
+- **Conflict.** The first gives `HandBack { worktree, run_head }`; the task stays in
+  `merge_queue` state, out of the queue, until the result. Conflicts in it: the
+  conflict message, `working`, `handed_back = true`, the worker round's stall clock
+  restarted (as at rung 1). Clean: `task.head` becomes the result's `head`, and the task
+  goes to the back of the queue. `Failed`: `blocked(environment)`, `could not merge the
+  run head into its worktree: <message>`. The second conflict:
+  `blocked(conflict)`, `its branch conflicts with the run branch again: <files>`
+  (invented); the session is left alive, as for a question, for retry, override or
+  cancel. Neither counts a failure.
+- **Red candidate**: a `CheckRecord` with `on_candidate: true`, then
+  `ladder::gate_failure(Merge, candidate_red_message)`.
+- **`Failed` candidate** (invented): `blocked(environment)`, `could not merge: <message>`.
+- **Halt.** `RefMoved` from a candidate or from `VerifyRefs` halts the run with the
+  reason, whichever task's op found it. The awaited task stays at the queue's head. A
+  `VerifyRefs` that fails also halts, with `could not verify the refs: <message>`
+  (invented), so completion is never decided on refs that were not read.
+- **Resume.** A halted run without `rebaseline` is refused: `run <id> is halted:
+  <reason>; check the refs, then resume with --rebaseline` (invented). With it:
+  `base_sha` and `run_head` take the driver's values, `base_moved` and
+  `halted_reason` are cleared, the run is `running`; the reply is `run <id> resumed
+  with --rebaseline: base <base> at <b7>, run head <h7>`. A paused run's resume stays
+  M8a.15's (`run resume is not available yet`).
+- **`BaseAdvanced`.** Ignored for a terminal run, for `to == base_sha`, and for the
+  `to` already recorded (so no revision bump); otherwise `base_moved` is set (from
+  `base_sha`) and logged. The snapshot's attention line already existed (M8a.11).
+- **Completion.** Each pass of a running run: every task `merged` or `cancelled`, the
+  queue empty, **no op pending, and no cancelled task with a session still ending**
+  (else the `KillWindow`'s exit and the F5 removal would come after `VerifyRefs`).
+  `RefsOk` in a running run: the final `Check` (task-less, `scratch: None`, in the
+  integration worktree) when `run_head` is neither `last_green_candidate` nor
+  `base_sha` and the profile has a check; else `complete`. The final check's result, or
+  its failure to run, sets `final_check_failed`; the run completes either way.
+  `complete` logs `complete: <m> merged, <c> cancelled` and emits `WriteReport`. A
+  result that arrives while the run is not running is dropped, and the next running
+  pass verifies again.
+- **The `finish` edit.** It sets `finish_edit` and logs. Each running pass: every
+  unfinished task with no `start_commit` is cancelled (`has not reached working`, read
+  as never started, so a blocked-in-setup task counts); once no task is `preparing`,
+  `working`, in a gate or in the merge queue, every `blocked` one is cancelled.
+- **Cancel.** `run cancel` of a running, halted or paused run (a paused one becomes
+  `running`, so it can complete; a halted one completes after `resume --rebaseline`,
+  since completion runs the ref guard). Every unfinished task is cancelled through the
+  shared `cancel_task`: `ladder::kill_worker` (claim answered, ops superseded),
+  `review::stop_reviewers`, messages dropped, out of the queue. The F5 clean-up then
+  salvages and removes each worktree after its session exits. Reply (invented): `run
+  <id> cancelled; it completes once its sessions have ended`. Other states are refused
+  with `run <id> is <state>`.
+- **Accept and discard.** Only a `complete` run (`run <id> is <state>; <accept|discard>
+  applies only to a complete run`, invented; cancel first). The op lists every task's
+  own, review and proof worktree, then the integration worktree, each with its next
+  salvage ref; the executor skips one that no longer exists (as `run reject`'s list
+  already needed). `expected_base` is `base_moved.to` when the base advanced, else
+  `base_sha`; the driver sends `BaseAdvanced` before `Finish` when its read finds a
+  newer head (documented on `OpKind::Accept`). The reply waits for the result:
+  `Finished` makes the run `accepted` or `discarded`, sends `RemoveWindow` for every run
+  window and `WriteReport`, and replies `run <id> <accepted|discarded>: <outcome>`;
+  `AcceptConflict` replies `Err` with decision 20's text, logs it and leaves the run
+  `complete`; `Failed` logs and replies `Err`.
+
+**Carries.**
+
+- **T13-R2 N3 (merge `task.head`): done.** `a_worker_commit_after_task_done_is_not_merged`:
+  a self-started worker turn while the task waits in the queue sends no count, and the
+  candidate names the claimed head. The engine never learns a later tip.
+- **T9 (skipped branches, `ACCEPT_MERGE_TIMEOUT`): done**, above.
+- **Every git write through `GitQueue::write`**: stated on each op the executor runs.
+- **T11-RR, the part in reach**: `a_conflict_blocked_task_that_gains_a_dependency_keeps_its_block`.
+  A `blocked(conflict)` task that gains a dependency is held (`awaiting_deps`), but
+  `resume_held` hands back only a `blocked(question)` task, so it keeps its own block
+  when the dependency merges. **Carry for M8a.15:** a retry of such a held task must
+  hand back first and must not turn it into `blocked(question)`.
+- **T11-RR2**: override already refuses a `dep_cancelled` or held task (M8a.13); retry
+  is M8a.15's. No path in M8a.14 lifts `dep_cancelled`.
+- **T6-N5 on the hand-back path.** A task in `merge_queue` (candidate or hand-back in
+  flight) cannot gain a dependency (`add_dep` needs pending, queued or blocked), and a
+  clean hand-back re-queues without passing through `working`.
+  `a_handed_back_task_held_by_a_new_dependency_is_handed_back_again_first` covers a
+  handed-back task that blocks on a question and gains a dependency: the dependency's
+  merge brings the N5 hand-back (not the queue's), and its next `task_done` still goes
+  straight to the queue.
+- **Liveness.** `assert_gates_alive` accepts a `merge_queue` task with an op in flight
+  (candidate or hand-back) or queued; the new `assert_run_alive` requires a running run
+  whose tasks are all finished to have an op pending or a cancelled task's session
+  still ending, a running run with a queue to have a `MergeCandidate` in flight, and a
+  halted run to have a reason. Every new test ends with `assert_alive`.
+- **Carry for M8a.15.** Restore must re-issue a dropped `MergeCandidate` or `HandBack`
+  (clear `Task.merge_op` for an op dropped as `NotStarted`, as for `gate_op`), and a
+  dropped `VerifyRefs` or final `Check` is re-issued by the next running pass on its
+  own (no op pending). `finish_reply` is already cleared.
+
+**TDD evidence.**
+
+- The brief's 12 tests, plus `a_conflict_blocked_task_that_gains_a_dependency_keeps_its_block`
+  and `a_worker_commit_after_task_done_is_not_merged`, were written against stubs
+  (routing wired, bodies empty, empty message texts): `330 passed; 17 failed` in
+  `run::`. Sample lines: `one pending MergeCandidate for Some("t1"): []` (11 tests),
+  `left: Queued` (the finish edit), cancel's `Err("run cancel is not available yet")` reply, and two existing
+  tests, `gates_fixes::worker_mail_is_held_in_the_merge_queue` and
+  `gates_exits::a_codex_reviewer_between_processes_ends_at_once_when_stopped`, failing
+  at the extended liveness check (`a merge queue ["t1"] with no merge in flight`), which
+  pass once the queue runs.
+- Written after the first green run, each shown to pin by a mutant below:
+  `salvage_numbers_follow_the_highest_recorded_ref`,
+  `a_handed_back_task_held_by_a_new_dependency_is_handed_back_again_first`,
+  `a_merged_task_leaves_no_mail_behind` (for surviving mutant M23), the paused case of
+  `cancel_kills_salvages_and_completes`, and the path check in
+  `merged_updates_run_head_cleans_up_and_retires_the_worker`.
+
+**Mutations**, each applied and restored by a script from a WIP commit (since
+folded): 25 run, 25 killed (M23 after its test was added). Killed: width 1 ignored
+(M1), the branch merged instead of `task.head` (M2), the first conflict blocking (M3),
+`RefMoved` not halting (M4), the same `to` re-recorded (M5), completion before a
+killed session's exit (M6), no final check (M7), `finish` cancelling blocked tasks
+while others are live (M8) or cancelling started ones (M25), no `RetireWindow` (M9),
+the `merge_op` correlation (M10) and the `HandBack` routing (M17), which the N5 tests
+catch, the clean hand-back's old head (M11), salvage numbers by count (M12), completion
+with ops pending (M13), accept onto `base_sha` (M14), a paused cancel (M15),
+`worktree_live` cleared by any removal (M16), a red candidate that is not a failure
+(M18), a halted resume without `--rebaseline` (M19), `base_moved` kept by a rebaseline
+(M20), no `handed_back` flag (M21), a moved ref at completion that completes (M22),
+the merged task's mail kept (M23), no `UnwatchWorktree` (M24).
+
+**Gates.** `cargo build --workspace --all-targets`, clippy with `-D warnings` and
+`cargo fmt --all --check` are clean. `cargo test -p anthrex-daemon --no-fail-fast`:
+34 binaries, 1125 passed, 0 failed (after M8a.13's `cargo clean -p anthrex-daemon`,
+`git_registry` and `server_git` passed in the full run). No file passes 600 lines:
+`merge.rs` 377, `complete.rs` 354, `dispatch.rs` 519, `contract.rs` 551, `model.rs`
+538, `tests/merge.rs` 510, `tests/merge_complete.rs` 482, `tests/merge_holds.rs` 162.

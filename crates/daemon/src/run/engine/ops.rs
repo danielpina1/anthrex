@@ -117,6 +117,19 @@ pub enum OpKind {
         base_ref: String,
         path: PathBuf,
     },
+    /// Decision 36, one attempt of the merge queue (M8a.14): the ref guard (decision
+    /// 21), `merge_tree(expected_run_head, task_head)`, then on a clean tree
+    /// `commit_tree` with `message`, `materialize` in `integration` and `check` there
+    /// (none: straight on), then the ref guard again, `cas_update(run_branch,
+    /// candidate, expected_run_head)` and `reattach`; a red check `reattach`es only.
+    /// `task_head` is the claimed commit that passed the gates (`Task.head`), never the
+    /// task branch's tip (ruling T13-R2, N3). **Executor contract (M8a.22):**
+    /// `commit_tree`, `materialize`, `cas_update` and `reattach` are writes, each through
+    /// `GitQueue::write` keyed by the run's `project`; `merge_tree` and `guard_refs` may
+    /// bypass it. A guard that finds the base advanced sends `Event::BaseAdvanced`
+    /// before carrying on; one that halts returns `RefMoved`. A CAS that finds the run
+    /// ref moved is `RefMoved` too. Results: `Merged { commit }`, `Conflict { files }`,
+    /// `CandidateRed`, `RefMoved`, `Failed`.
     MergeCandidate {
         root: PathBuf,
         integration: PathBuf,
@@ -130,20 +143,25 @@ pub enum OpKind {
         timeout_secs: u64,
         env: Vec<(String, String)>,
     },
-    HandBack {
-        worktree: PathBuf,
-        run_head: String,
-    },
+    /// Decision 36 step 6 (the merge queue's, M8a.14) and M8a.6 ruling N5's (M8a.11):
+    /// `git::hand_back(worktree, run_head)`, a write through `GitQueue::write`. The
+    /// result is `HandedBack { files, head }`, `head` being the worktree's `HEAD` after
+    /// the merge (read with `rev-parse`), which a clean hand-back re-queues.
+    HandBack { worktree: PathBuf, run_head: String },
     /// Ruling T11-N1(b): `git::abort_merge` in a held task's worktree, undoing a
     /// hand-back that conflicted while another dependency was still unfinished.
-    AbortMerge {
-        worktree: PathBuf,
-    },
+    AbortMerge { worktree: PathBuf },
+    /// Decision 20: `salvage(path, salvage_ref, …)` then `remove_worktree`, both writes
+    /// through `GitQueue::write`. The result is `Removed { salvage_ref }` (`Some` only
+    /// when the worktree was dirty).
     RemoveWorktree {
         root: PathBuf,
         path: PathBuf,
         salvage_ref: String,
     },
+    /// Decision 37's ref guard before `complete` (M8a.14): `guard_refs`, a read.
+    /// `RefCheck::Ok` is `RefsOk`; `BaseAdvanced` sends `Event::BaseAdvanced`, then
+    /// `RefsOk`; `Halt { reason }` is `RefMoved { reason }`.
     VerifyRefs {
         root: PathBuf,
         base_branch: String,
@@ -151,6 +169,16 @@ pub enum OpKind {
         run_branch: String,
         expected_run_head: String,
     },
+    /// Decision 20's accept (M8a.14 emits it for `run accept` on a complete run):
+    /// `git::accept`, then `salvage` and `remove_worktree` for every one of
+    /// `worktrees`, then `delete_branches(branch_prefix)`; every step is a write through
+    /// `GitQueue::write`. **The executor must never wrap `accept` in a timeout shorter
+    /// than `git::ACCEPT_MERGE_TIMEOUT` (10 minutes)**: the user's hooks and signing run
+    /// inside its merge, and it aborts that merge itself when its own deadline passes.
+    /// `expected_base` is the base head the user confirmed (`Run.base_moved`'s `to` when
+    /// the base advanced; the driver sends `Event::BaseAdvanced` before `Finish` when
+    /// its read finds a newer one). Results: `Finished { outcome, kept_branches }`,
+    /// `AcceptConflict { files }` (the merge aborted, the base untouched), `Failed`.
     Accept {
         root: PathBuf,
         base_branch: String,
@@ -160,6 +188,9 @@ pub enum OpKind {
         worktrees: Vec<(PathBuf, String)>,
         branch_prefix: String,
     },
+    /// Decision 20's discard: `salvage` and `remove_worktree` for every one of
+    /// `worktrees`, `worktree prune`, then `delete_branches(branch_prefix)`; writes
+    /// through `GitQueue::write`. The result is `Finished { outcome, kept_branches }`.
     Discard {
         root: PathBuf,
         worktrees: Vec<(PathBuf, String)>,
@@ -251,8 +282,12 @@ pub enum OpResult {
     AcceptConflict {
         files: Vec<String>,
     },
+    /// `head` (M8a.14): the task worktree's `HEAD` after the hand-back, `Some` when it
+    /// could be read; a clean hand-back re-queues this commit (decision 36).
     HandedBack {
         files: Vec<String>,
+        #[serde(default)]
+        head: Option<String>,
     },
     /// `AbortMerge` succeeded (ruling T11-N1(b)).
     MergeAborted,
@@ -260,8 +295,13 @@ pub enum OpResult {
         salvage_ref: Option<String>,
     },
     RefsOk,
+    /// `kept_branches` (M8a.14, carry T9): the branches `delete_branches` skipped
+    /// because a worktree has them checked out; the run's log (and so its report)
+    /// names them.
     Finished {
         outcome: String,
+        #[serde(default)]
+        kept_branches: Vec<String>,
     },
     Failed {
         message: String,

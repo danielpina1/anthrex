@@ -1,7 +1,8 @@
 //! Client requests: start and the plan gate (decision 14), approve, reject (decision 20's
 //! discard), plan edits (decision 13, engine side, first part), and restore (decision 45,
-//! first part). Pure (design decision 2). M8a.14 and M8a.15 add retry, override,
-//! cancel, resume, finish and the rest of restore.
+//! first part). Pure (design decision 2). M8a.14's `complete.rs` and `merge.rs`
+//! answer cancel, finish and a halted run's resume; M8a.15 adds retry, the rest of
+//! resume and of restore.
 
 use proto::{PlanEdit, RunState};
 
@@ -161,19 +162,6 @@ pub(super) fn reject(
     reply(fx, id, Ok(format!("run {run_id} rejected; discarding it")));
 }
 
-/// The result of a `Discard`.
-pub(super) fn discarded(run: &mut Run, result: OpResult, now: u64) {
-    match result {
-        OpResult::Finished { outcome } => {
-            run.state = RunState::Discarded;
-            log(run, now, format!("discarded: {outcome}"));
-            run.outcome = Some(outcome);
-        }
-        OpResult::Failed { message } => log(run, now, format!("discard failed: {message}")),
-        _ => {}
-    }
-}
-
 /// Decision 13, engine side (first part): the batch goes through `apply_edits`; a live
 /// session of a cancelled task is killed (its worktree is removed once no session is
 /// left, `dispatch::remove_cancelled_worktrees`); a message is queued, and held while the
@@ -211,7 +199,12 @@ pub(super) fn edit(
             EditConsequence::CancelLive { task_id } => kill_sessions(run, &task_id, fx),
             // A held task keeps its message until it resumes (`dispatch::enforce_holds`).
             EditConsequence::Deliver { task_id, text } => outbox::queue(run, &task_id, text, now),
-            EditConsequence::Pause | EditConsequence::Resume | EditConsequence::Finish => {}
+            // Decision 37: the scheduler's `complete::finish_pass` does the rest.
+            EditConsequence::Finish => {
+                run.finish_edit = true;
+                log(run, now, "the finish edit: no new task starts");
+            }
+            EditConsequence::Pause | EditConsequence::Resume => {}
         }
     }
     let n = edits.len();
@@ -247,6 +240,8 @@ pub(super) fn restore(state: &mut EngineState, runs: Vec<Run>, now: u64) {
     for mut run in runs {
         // Ruling T12-I1: no session outlives a restart, so no claim or count does
         // either; the reply ids belonged to the old daemon.
+        // M8a.14: an accept's or discard's reply belonged to the old daemon too.
+        run.finish_reply = None;
         for task in run.tasks.iter_mut() {
             task.claim = None;
             for round in task.rounds.iter_mut() {

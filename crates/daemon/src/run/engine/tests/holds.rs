@@ -123,7 +123,13 @@ fn an_answer_after_the_new_dependency_merged_hands_back_first() {
     assert_eq!(hand_backs.len(), 1, "{effects:#?}");
     assert!(delivers(&effects).is_empty(), "{effects:#?}");
     assert_held(&fx);
-    let effects = fx.done(hand_backs[0].0, OpResult::HandedBack { files: vec![] });
+    let effects = fx.done(
+        hand_backs[0].0,
+        OpResult::HandedBack {
+            files: vec![],
+            head: None,
+        },
+    );
     assert_eq!(fx.task("t1").state, TaskState::Working);
     assert!(!fx.task("t1").awaiting_deps);
     assert_eq!(delivers(&effects), vec![answer_message("users")]);
@@ -144,7 +150,13 @@ fn a_dependency_added_while_the_hand_back_runs_keeps_the_hold() {
         ],
     );
     assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
-    let effects = fx.done(first, OpResult::HandedBack { files: vec![] });
+    let effects = fx.done(
+        first,
+        OpResult::HandedBack {
+            files: vec![],
+            head: None,
+        },
+    );
     assert_held(&fx);
     assert!(delivers(&effects).is_empty(), "{effects:#?}");
     assert!(ops_in(&effects, "HandBack").is_empty(), "t3 is unfinished");
@@ -156,7 +168,13 @@ fn a_dependency_added_while_the_hand_back_runs_keeps_the_hold() {
     let effects = fx.merge("t3", &"c3".repeat(20));
     let hand_backs = ops_in(&effects, "HandBack");
     assert_eq!(hand_backs.len(), 1, "a second hand-back once t3 merged");
-    let effects = fx.done(hand_backs[0].0, OpResult::HandedBack { files: vec![] });
+    let effects = fx.done(
+        hand_backs[0].0,
+        OpResult::HandedBack {
+            files: vec![],
+            head: None,
+        },
+    );
     assert_eq!(fx.task("t1").state, TaskState::Working);
     assert_eq!(delivers(&effects), vec![answer_message("A")]);
 }
@@ -183,6 +201,7 @@ fn an_answer_while_the_hand_back_runs_waits_for_it() {
         hand_back,
         OpResult::HandedBack {
             files: files.clone(),
+            head: None,
         },
     );
     let t1 = fx.task("t1");

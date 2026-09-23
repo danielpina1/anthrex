@@ -65,7 +65,13 @@ fn a_held_task_is_not_resumed_after_an_exit_or_by_a_delivery() {
         "hand-back first"
     );
     let (op, _) = ops_in(&effects, "HandBack")[0].clone();
-    let effects = fx.done(op, OpResult::HandedBack { files: vec![] });
+    let effects = fx.done(
+        op,
+        OpResult::HandedBack {
+            files: vec![],
+            head: None,
+        },
+    );
     assert_eq!(fx.task("t1").state, TaskState::Working);
     let resumes = ops_in(&effects, "ResumeSession");
     assert_eq!(resumes.len(), 1, "{effects:#?}");
@@ -97,7 +103,13 @@ fn a_held_task_gets_no_fresh_session_until_its_hand_back() {
     fx.launch_all();
     let effects = fx.merge("t2", &"c2".repeat(20));
     let (op, _) = ops_in(&effects, "HandBack")[0].clone();
-    let effects = fx.done(op, OpResult::HandedBack { files: vec![] });
+    let effects = fx.done(
+        op,
+        OpResult::HandedBack {
+            files: vec![],
+            head: None,
+        },
+    );
     let diffs = ops_in(&effects, "DiffSoFar");
     assert_eq!(diffs.len(), 1, "{effects:#?}");
     let effects = fx.done(
@@ -118,7 +130,7 @@ fn a_conflict_being_delivered_is_not_undone_when_the_task_is_held_again() {
     let mut fx = super::holds::blocked_t1();
     let op = hand_back_in_flight(&mut fx);
     let files = vec!["crates/a/x.rs".to_string()];
-    let effects = fx.done(op, OpResult::HandedBack { files });
+    let effects = fx.done(op, OpResult::HandedBack { files, head: None });
     assert_eq!(fx.task("t1").state, TaskState::Working);
     assert_eq!(delivers(&effects).len(), 1, "answer and conflict in flight");
     // M8a.12 makes this reachable: the worker blocks the task while the delivery is in
@@ -177,7 +189,13 @@ fn a_held_codex_task_that_lost_its_session_before_an_id_gets_a_fresh_one() {
     fx.launch_all();
     let effects = fx.merge("t2", &"c2".repeat(20));
     let (op, _) = ops_in(&effects, "HandBack")[0].clone();
-    let effects = fx.done(op, OpResult::HandedBack { files: vec![] });
+    let effects = fx.done(
+        op,
+        OpResult::HandedBack {
+            files: vec![],
+            head: None,
+        },
+    );
     assert_eq!(fx.task("t1").state, TaskState::Working);
     let diffs = ops_in(&effects, "DiffSoFar");
     assert_eq!(diffs.len(), 1, "a fresh session: {effects:#?}");

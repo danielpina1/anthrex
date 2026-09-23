@@ -239,6 +239,7 @@ fn reject_discards() {
         discards[0].0,
         OpResult::Finished {
             outcome: "discarded".into(),
+            kept_branches: vec![],
         },
     );
     assert_eq!(fx.run().state, RunState::Discarded);

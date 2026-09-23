@@ -59,6 +59,47 @@ pub(super) fn assert_alive(fx: &Fixture) {
         );
     }
     assert_gates_alive(fx);
+    assert_run_alive(fx);
+}
+
+/// M8a.14's extension to the run's own states: a running run whose tasks are all
+/// merged or cancelled has an op in flight (its clean-up, `VerifyRefs` or the final
+/// check) or a killed session still to exit; a running run with a merge queue has a
+/// `MergeCandidate` in flight; a halted run says why.
+pub(super) fn assert_run_alive(fx: &Fixture) {
+    let run = fx.run();
+    match run.state {
+        proto::RunState::Running => {
+            let done = run
+                .tasks
+                .iter()
+                .all(|t| matches!(t.state, TaskState::Merged | TaskState::Cancelled));
+            // A killed session's exit brings its task's clean-up, then completion.
+            let ending = run
+                .tasks
+                .iter()
+                .any(|t| t.state == TaskState::Cancelled && t.rounds.iter().any(|r| !r.ended));
+            assert!(
+                !done || !run.pending_ops.is_empty() || ending,
+                "every task is finished and nothing is pending: {:#?}",
+                run.tasks
+                    .iter()
+                    .map(|t| (t.id(), t.state))
+                    .collect::<Vec<_>>()
+            );
+            let merging = run
+                .pending_ops
+                .values()
+                .any(|p| matches!(p.kind, OpKind::MergeCandidate { .. }));
+            assert!(
+                run.merge_queue.is_empty() || merging,
+                "a merge queue {:?} with no merge in flight",
+                run.merge_queue
+            );
+        }
+        proto::RunState::Halted => assert!(run.halted_reason.is_some(), "halted with no reason"),
+        _ => {}
+    }
 }
 
 /// M8a.13's extension to the gate states: a task in `proof` or `check` has its gate op
@@ -81,7 +122,9 @@ pub(super) fn assert_gates_alive(fx: &Fixture) {
             .any(|p| p.task_id.as_deref() == Some(t.id()));
         let alive = match t.state {
             TaskState::Proof | TaskState::Check => op,
-            TaskState::MergeQueue => run.merge_queue.iter().any(|q| q == t.id()),
+            // M8a.14: queued (the run-level check wants a merge in flight while the run
+            // runs), or its candidate or hand-back in flight.
+            TaskState::MergeQueue => op || run.merge_queue.iter().any(|q| q == t.id()),
             _ => {
                 let reviewer = t
                     .rounds

@@ -176,7 +176,13 @@ fn add_dep_then_answer_waits_for_the_dependency_then_hands_back() {
     assert_eq!(run_head, &head);
     assert!(!effects.iter().any(|e| matches!(e, Effect::Deliver { .. })));
     assert_eq!(fx.task("t1").state, TaskState::Blocked);
-    let effects = fx.done(hand_backs[0].0, OpResult::HandedBack { files: vec![] });
+    let effects = fx.done(
+        hand_backs[0].0,
+        OpResult::HandedBack {
+            files: vec![],
+            head: None,
+        },
+    );
     assert_eq!(fx.task("t1").state, TaskState::Working);
     assert!(!fx.task("t1").awaiting_deps);
     let delivered: Vec<(u32, String)> = effects

@@ -368,6 +368,11 @@ pub struct Task {
     /// second blocks the task, and a verdict resets it.
     #[serde(default)]
     pub review_misses: u8,
+    /// M8a.14: the `MergeCandidate`, or the merge queue's `HandBack` (decision 36), the
+    /// task awaits; any other result of those kinds for it is dropped (ruling T12-N's
+    /// correlation). An N5 `HandBack` (`holds.rs`) never sets it.
+    #[serde(default)]
+    pub merge_op: Option<OpId>,
     pub start_commit: Option<String>,
     pub head: Option<String>,
     pub done: Option<DoneClaim>,
@@ -472,6 +477,14 @@ pub struct Run {
     pub outcome: Option<String>,
     pub log: Vec<LogEntry>,
     pub created_at: u64,
+    /// M8a.14: the `finish` edit was applied (decision 37): nothing new starts, and the
+    /// run completes once its live tasks have merged or blocked.
+    #[serde(default)]
+    pub finish_edit: bool,
+    /// M8a.14: the `run accept` or `run discard` request whose `Accept` or `Discard` op
+    /// is in flight; it is answered with the op's result. A restore clears it.
+    #[serde(default)]
+    pub finish_reply: Option<u64>,
 }
 
 impl Run {

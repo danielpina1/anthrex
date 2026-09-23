@@ -440,6 +440,7 @@ fn new_task(
         held_answered: false,
         gate_op: None,
         review_misses: 0,
+        merge_op: None,
         start_commit: None,
         head: None,
         done: None,
