@@ -545,23 +545,36 @@ it described a fallback that did not exist, and reading for plausibility believe
   restart, whose `reset` is window-wide, so it drops the old session's enrichment too;
   scoping `enrich::reset` to turns at or after `session_base` would keep it.
 - **A session opened at its end after a prompt degrades to `Misaligned` for the whole
-  session (fix rounds 2 and 3, N1/N2, re-review 2 I1).** Any switch whose source is not
-  `startup` or `clear` (`resume`, `fork`, `compact` onto another session, unknown, or
-  absent) is opened at its end when the reader first reaches it. If a prompt arrived
-  between the `SessionStart` and that open, the prompt's own line may lie on either side
-  of the measured end. The session is then `Misaligned` from its first ordinal: every
-  later turn of that session gets no prose, not only the turns before the open. This
-  happens when no viewer was subscribed at the resume, or when a scripted prompt beats
-  the first poll. It lasts until the next session switch. Aligning by the records'
-  timestamps against the hooks' `at_unix_secs` would recover all of it.
-- **Which `SessionStart` sources real runtimes send is unverified (re-review 2, M1).** The
-  rule reads from the start only for `startup` and `clear`. A runtime that omits
-  `source` on a fresh session would have that session opened at its end: correct, but
-  `Misaligned` if the viewer opens late. Codex's embedded schema lists `startup`,
-  `resume`, `clear`, `compact` and `fork`. Check the values real Claude and Codex send, and
-  whether a Codex fork's rollout copies the parent's history, in M6.5.14's manual step.
-  fake-agent sends no `source` unless a script gives one; the fixtures now send
-  `startup`.
+  session (fix rounds 2 and 3, N1/N2, re-review 2 I1, re-review 3 m2).** Any switch whose
+  source is not `startup` or `clear` (`resume`, `fork`, `compact` onto another session,
+  unknown, or absent) is opened at its end when the reader first reaches it. If a prompt
+  arrived between the `SessionStart` and that open, the prompt's own line may lie on
+  either side of the measured end. The session is then `Misaligned` from its first
+  ordinal: every later turn of that session gets no prose, not only the turns before the
+  open. For Claude this happens when no viewer was subscribed at the resume, or when a
+  scripted prompt beats the first poll. For Codex it is the normal case for every resume
+  or fork, not an edge case: the 0.155.0 binary defers `SessionStart` to the first turn
+  (`run_pending_session_start_hooks` in `core/src/hook_runtime.rs`), so `UserPromptSubmit`
+  follows within milliseconds and the reader's first step is almost always after the
+  prompt has already moved the count. Whether Codex's `SessionStart` can land *after* its
+  own `UserPromptSubmit` — which would misattribute the old file's reply instead of only
+  degrading (re-review 3, m1; guarded in fix round 4) — is still unverified; check both
+  the deferral and the hook order in M6.5.14's manual step. It lasts until the next
+  session switch. Aligning by the records' timestamps against the hooks' `at_unix_secs`
+  would recover all of it.
+- **Which `SessionStart` sources real runtimes send is unverified (re-review 2, M1;
+  re-review 3, n1).** The rule reads from the start only for `startup` and `clear`. A
+  runtime that omits `source` on a fresh session has that session opened at its end
+  instead of from the start, and that end-open is `Misaligned`: not only when the viewer
+  opens late, but even when a viewer subscribes before the session starts, because the
+  file does not exist yet at the reader's first step, so no measure is taken before the
+  prompt moves the count. This path is unreachable with real runtimes (Claude's
+  `SessionStart` schema requires `source`; Codex's `CodexHook` schema does too, with the
+  enum `startup | resume | clear | compact | fork`), so only the wording was wrong, not
+  the behaviour. Codex's embedded schema lists `startup`, `resume`, `clear`, `compact` and
+  `fork`. Check the values real Claude and Codex send, and whether a Codex fork's rollout
+  copies the parent's history, in M6.5.14's manual step. fake-agent sends no `source`
+  unless a script gives one; the fixtures now send `startup`.
 - **`crates/cli/tests/persistence.rs`'s `session_id_learned_from_a_hook_is_saved` races the
   save debounce.** Seen once in three full workspace runs during task M6.5.10's fix round 1
   (`left: None, right: Some("fake-session-1")`; 8/8 in isolation). The loop asserts on the
