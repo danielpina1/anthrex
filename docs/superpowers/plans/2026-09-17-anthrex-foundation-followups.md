@@ -714,3 +714,13 @@ scope.
   The test now uses a watcher that fails to arm, so only the poll probes. The other
   exact-count reads in that file come after a 120 s virtual settling window, so the extra
   probe cannot reach them.
+- **`WindowEvent::Exited` is not ordered after a window's final output.** `Window::spawn`
+  sends `Exited` from the `pty-wait` thread and feeds the screen from the `pty-read` thread,
+  with nothing ordering the two (`crates/daemon/src/window.rs`). A child's last bytes can
+  still be unread when its exit is reported; they reach the screen shortly afterwards.
+  Ubuntu CI run 35832528546 failed `missing_binary_shows_error_in_window_and_exits_127` with
+  `screen: ""` because it read the screen right after `Exited`; a 200 ms sleep in the reader
+  reproduces that every time on macOS. The test now waits for the text with a deadline. The
+  daemon keeps the window and its screen after exit, so no output is lost. Anything that
+  should see the final screen at the moment of exit (an exit summary, a status rule that
+  reads the last lines) would need the waiter to wait, bounded, for the reader to drain.
