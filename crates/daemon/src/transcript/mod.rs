@@ -19,11 +19,16 @@ pub struct Version(pub u32);
 /// reorder or re-state a turn.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Record {
-    /// The text of the transcript's `ordinal`-th real user prompt (0-based).
+    /// The text of the transcript's `ordinal`-th user prompt (0-based): one a person
+    /// typed, or one the runtime injected that its hooks also report as a prompt (a
+    /// Claude sub-agent's hand-back or task notification).
     UserText {
         session_id: Option<String>,
         ordinal: u32,
         text: String,
+        /// Whether a person typed it. Alignment demands an exact match for a typed
+        /// prompt; an injected one may wrap its hook prompt in harness text.
+        human: bool,
     },
     /// One piece of assistant prose that follows the `ordinal`-th prompt. Several may
     /// share an ordinal: a runtime can write one line per content block.

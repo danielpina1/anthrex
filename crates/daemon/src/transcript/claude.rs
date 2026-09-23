@@ -5,8 +5,10 @@
 //! is one envelope with a top-level `type` and a camelCase `sessionId`. Only three shapes
 //! carry conversation:
 //!
-//! - `type:"user"` whose `message.content` is a string and whose `origin.kind` is
-//!   `"human"`: a real prompt.
+//! - `type:"user"` with a string `origin.kind`: a prompt. `"human"` is one a person
+//!   typed. Claude 2.1.278 also injects prompts of its own that fire `UserPromptSubmit`
+//!   (a background sub-agent's `"peer"` hand-back and its `"task-notification"`; see
+//!   `claude-2.1.278-background-agent.jsonl`), so every kind opens a turn.
 //! - `type:"assistant"`: one line per content block, `text` or `tool_use`.
 //! - `type:"user"` whose `message.content` is a list of `tool_result` blocks: tool
 //!   output. Several results may share one line.
@@ -95,14 +97,17 @@ fn user(
     session_id: Option<String>,
     cursor: &mut Cursor,
 ) -> Vec<Record> {
-    if is_human(map) {
-        // Claude's own meta and compact-summary lines never open a turn (review F3).
-        if flag(map, "isMeta") || flag(map, "isCompactSummary") {
+    if let Some(kind) = origin_kind(map) {
+        let human = kind == "human";
+        // A compact summary never opens a turn. `isMeta` marks something Claude wrote
+        // under the human origin (review F3); an injected origin carries it too (the
+        // peer hand-back does) and still fired `UserPromptSubmit`, so it opens a turn.
+        if flag(map, "isCompactSummary") || (human && flag(map, "isMeta")) {
             return Vec::new();
         }
-        // A human-origin line opens a turn whatever its content's shape, so a prompt
-        // with no readable text can cost its own `UserText` but never shift a later
-        // ordinal (review F2).
+        // A prompt line opens a turn whatever its content's shape, so a prompt with no
+        // readable text can cost its own `UserText` but never shift a later ordinal
+        // (review F2).
         let ordinal = cursor.next_prompt();
         let text = match content {
             Value::String(text) => Some(text.clone()),
@@ -114,6 +119,7 @@ fn user(
                 session_id,
                 ordinal,
                 text,
+                human,
             })
             .into_iter()
             .collect();
@@ -139,14 +145,11 @@ fn joined_text(blocks: &[Value]) -> Option<String> {
 }
 
 /// The capture marks a typed prompt three ways (`origin.kind`, `promptSource`,
-/// `turnOrigin`); `origin.kind` is the one that names its source outright. A string
-/// user message without it is something Claude wrote itself, not a turn the user
-/// opened.
-fn is_human(map: &Map<String, Value>) -> bool {
-    map.get("origin")
-        .and_then(|o| o.get("kind"))
-        .and_then(Value::as_str)
-        == Some("human")
+/// `turnOrigin`); `origin.kind` is the one that names its source outright, and the
+/// injected prompts carry it too. A user message without it is something Claude wrote
+/// itself (a tool result, say), not a turn.
+fn origin_kind(map: &Map<String, Value>) -> Option<&str> {
+    map.get("origin")?.get("kind")?.as_str()
 }
 
 fn tool_result(block: &Value) -> Option<Record> {

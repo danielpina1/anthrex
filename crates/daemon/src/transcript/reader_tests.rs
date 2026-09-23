@@ -27,6 +27,7 @@ fn user_text(ordinal: u32, text: &str) -> Record {
         session_id: Some(SESSION.into()),
         ordinal,
         text: text.into(),
+        human: true,
     }
 }
 

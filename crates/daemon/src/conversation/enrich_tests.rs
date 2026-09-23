@@ -68,6 +68,7 @@ pub(super) fn user(ordinal: u32, text: &str) -> Record {
         session_id: None,
         ordinal,
         text: text.to_owned(),
+        human: true,
     }
 }
 

@@ -108,6 +108,7 @@ fn a_prompt_from_another_session_is_a_mismatch() {
                 session_id: Some("sess-b".into()),
                 ordinal: 0,
                 text: "same words".into(),
+                human: true,
             },
             Record::AssistantText {
                 session_id: Some("sess-b".into()),
@@ -127,6 +128,7 @@ fn a_prompt_from_another_session_is_a_mismatch() {
                 session_id: Some("sess-a".into()),
                 ordinal: 0,
                 text: "same words".into(),
+                human: true,
             },
             Record::AssistantText {
                 session_id: Some("sess-a".into()),

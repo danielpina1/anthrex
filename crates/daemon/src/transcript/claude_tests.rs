@@ -17,6 +17,7 @@ fn user_text(ordinal: u32, text: &str) -> Record {
         session_id: Some(SESSION.into()),
         ordinal,
         text: text.into(),
+        human: true,
     }
 }
 
@@ -382,5 +383,109 @@ fn a_tool_use_without_input_keeps_its_id() {
             detail: None,
             ok: None,
         }]
+    );
+}
+
+const BACKGROUND_FIXTURE: &str =
+    include_str!("../../tests/fixtures/transcripts/claude-2.1.278-background-agent.jsonl");
+const BACKGROUND_SESSION: &str = "00000000-0000-4000-8000-000000000004";
+
+/// The `message.content` string of the fixture's user line whose `origin.kind` is `kind`.
+fn background_content(kind: &str) -> String {
+    BACKGROUND_FIXTURE
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|v| v["type"] == "user" && v["origin"]["kind"] == kind)
+        .and_then(|v| v["message"]["content"].as_str().map(str::to_owned))
+        .unwrap_or_else(|| panic!("the fixture has a {kind} user line"))
+}
+
+/// Claude 2.1.278 runs a sub-agent in the background and, when it finishes, injects a
+/// peer hand-back (`isMeta: true`) and a task notification. Each fires
+/// `UserPromptSubmit`, so each is a prompt the hooks built a `User` turn for, and each
+/// must open the next ordinal: otherwise its reply lands on the human turn before it.
+#[test]
+fn every_origin_kind_opens_the_next_ordinal() {
+    let prompts_and_prose: Vec<Record> = parse_all(RUNTIME, BACKGROUND_FIXTURE)
+        .into_iter()
+        .filter(|r| !matches!(r, Record::ToolDetail { .. }))
+        .collect();
+    let user = |ordinal, text: String, human| Record::UserText {
+        session_id: Some(BACKGROUND_SESSION.into()),
+        ordinal,
+        text,
+        human,
+    };
+    let said = |ordinal, text: &str| Record::AssistantText {
+        session_id: Some(BACKGROUND_SESSION.into()),
+        ordinal,
+        text: text.into(),
+    };
+    assert_eq!(
+        prompts_and_prose,
+        vec![
+            user(
+                0,
+                "use one Explore sub-agent to count the files under crates/ and wait for \
+                 its answer before replying"
+                    .into(),
+                true,
+            ),
+            said(
+                0,
+                "Explore agent launched to count files under `crates/`. Holding my answer \
+                 until it reports back.",
+            ),
+            user(1, background_content("peer"), false),
+            said(
+                1,
+                "**2 files** under `crates/`:\n\n1. `crates/a/lib.rs`\n2. `crates/b/lib.rs`\
+                 \n\nBoth are 0 bytes. No hidden files, no symlinks, nothing deeper — \
+                 consistent with the earlier sweep.",
+            ),
+            user(2, background_content("task-notification"), false),
+            said(
+                2,
+                "That's the completion event for the count agent — its answer (2 files) is \
+                 already reported above. Nothing new to add.",
+            ),
+        ]
+    );
+}
+
+/// `isMeta` suppresses only a human-origin line (review F3's case, pinned by
+/// `meta_and_compact_summary_lines_are_never_prompts`): the peer hand-back carries it
+/// and is still a prompt. `isCompactSummary` never opens a turn, whatever its origin.
+#[test]
+fn is_meta_suppresses_only_a_human_origin_and_a_compact_summary_never_opens() {
+    let line = |kind: &str, flag: &str, text: &str| {
+        let mut v = json!({"type":"user","sessionId":SESSION,"origin":{"kind":kind},
+            "message":{"role":"user","content":text}});
+        v[flag] = json!(true);
+        v.to_string()
+    };
+    let lines = [
+        prompt_line("one"),
+        line("human", "isMeta", "caveat"),
+        line("peer", "isCompactSummary", "summary"),
+        line("peer", "isMeta", "hand-back"),
+        reply_line("r-peer"),
+        line("some-future-kind", "unused", "future"),
+    ];
+    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let injected = |ordinal, text: &str| Record::UserText {
+        session_id: Some(SESSION.into()),
+        ordinal,
+        text: text.into(),
+        human: false,
+    };
+    assert_eq!(
+        parse_lines(RUNTIME, &lines),
+        vec![
+            user_text(0, "one"),
+            injected(1, "hand-back"),
+            assistant_text(1, "r-peer"),
+            injected(2, "future"),
+        ]
     );
 }

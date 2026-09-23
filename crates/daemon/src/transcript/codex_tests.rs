@@ -23,6 +23,7 @@ fn user_text(ordinal: u32, text: &str) -> Record {
         session_id: Some(SESSION.into()),
         ordinal,
         text: text.into(),
+        human: true,
     }
 }
 
@@ -256,7 +257,8 @@ fn records_before_the_session_meta_have_no_session() {
         vec![Record::UserText {
             session_id: None,
             ordinal: 0,
-            text: "early".into()
+            text: "early".into(),
+            human: true,
         }]
     );
 }

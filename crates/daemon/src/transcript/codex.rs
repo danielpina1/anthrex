@@ -105,6 +105,7 @@ fn message(payload: &Value, cursor: &mut Cursor) -> Vec<Record> {
                 session_id: cursor.session_id.clone(),
                 ordinal,
                 text: texts.join("\n"),
+                human: true,
             }]
         }
         Some("assistant") => {

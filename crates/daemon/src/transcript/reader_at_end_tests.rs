@@ -32,6 +32,7 @@ fn user_text(ordinal: u32, text: &str) -> Record {
         session_id: Some(SESSION.into()),
         ordinal,
         text: text.into(),
+        human: true,
     }
 }
 
@@ -176,6 +177,7 @@ fn a_codex_session_id_from_the_skipped_head_is_kept() {
                 session_id: Some(_),
                 ordinal: 0,
                 text,
+                human: true,
             },
         ] => assert_eq!(text, "resumed"),
         other => panic!("expected the resumed prompt with its session id, got {other:?}"),

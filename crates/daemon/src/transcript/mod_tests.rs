@@ -101,6 +101,7 @@ pub(super) fn assert_carries_no_turn_boundary(record: &Record) {
             session_id: _,
             ordinal: _,
             text: _,
+            human: _,
         } => {}
         Record::AssistantText {
             session_id: _,

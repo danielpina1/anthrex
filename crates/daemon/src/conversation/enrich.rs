@@ -31,6 +31,7 @@
 //!   that turn exists, so alignment stays sound: if its hook was really lost, the next
 //!   prompt's hook fills the slot, the texts differ, and the result is `Misaligned`.
 
+use super::align::{Alignment, Prompt, alignment};
 use super::{Caps, Draft, build};
 use crate::transcript::Record;
 use proto::{Block, Role};
@@ -209,6 +210,7 @@ fn positional_record(draft: &mut Draft, record: Record) -> bool {
             session_id,
             ordinal,
             text,
+            human,
         } => {
             if !in_aligned_range(draft, *ordinal) {
                 return false;
@@ -218,7 +220,12 @@ fn positional_record(draft: &mut Draft, record: Record) -> bool {
                 Slot::NotYet => park_positional(draft, record),
                 Slot::At(index) => {
                     let (session_id, ordinal, text) = (session_id.clone(), *ordinal, text.clone());
-                    user_text(draft, session_id.as_deref(), ordinal, &text, index)
+                    let prompt = Prompt {
+                        session_id: session_id.as_deref(),
+                        text: &text,
+                        human: *human,
+                    };
+                    user_text(draft, prompt, ordinal, index)
                 }
             }
         }
@@ -307,29 +314,28 @@ fn hook_prompt(draft: &Draft, index: usize) -> Option<&str> {
 }
 
 /// Checks ordinal `ordinal`'s prompt against the hook-built `User` turn at `index` and,
-/// when they line up, replaces the hook's text with the transcript's.
-fn user_text(
-    draft: &mut Draft,
-    session_id: Option<&str>,
-    ordinal: u32,
-    text: &str,
-    index: usize,
-) -> bool {
-    // `build.rs` stores `hook.prompt` verbatim, and nothing upstream truncates it, so
-    // the two must be equal up to surrounding whitespace. A prefix is not accepted: with
-    // no truncation to allow for, "yes" against "yes please" is a different prompt. A
-    // record from another session is a different prompt too, whatever its words.
-    let same_session = match (session_id, draft.session_id.as_deref()) {
+/// when they are equal, replaces the hook's text with the transcript's. A contained
+/// match keeps the hook's text, which is the prompt without the harness text around it.
+fn user_text(draft: &mut Draft, prompt: Prompt<'_>, ordinal: u32, index: usize) -> bool {
+    // A record from another session is a different prompt, whatever its words.
+    let same_session = match (prompt.session_id, draft.session_id.as_deref()) {
         (Some(record), Some(hook)) => record == hook,
         _ => true,
     };
-    let aligned = same_session && hook_prompt(draft, index).map(str::trim) == Some(text.trim());
-    if !aligned {
+    let aligned = match hook_prompt(draft, index) {
+        Some(hook) if same_session => alignment(hook, &prompt),
+        _ => Alignment::Misaligned,
+    };
+    if aligned == Alignment::Misaligned {
         draft.enrichment.misaligned_at = Some(ordinal);
         draft.enrichment.checked = None;
         return true;
     }
     draft.enrichment.checked = Some(ordinal);
+    if aligned == Alignment::Contained {
+        return false;
+    }
+    let text = prompt.text;
 
     let turn = &mut draft.turns[index];
     let Some(Block::Text { text: current }) = turn
@@ -594,3 +600,7 @@ mod input_cap_tests;
 #[cfg(test)]
 #[path = "session_switch_tests.rs"]
 mod session_switch_tests;
+
+#[cfg(test)]
+#[path = "enrich_background_agent_tests.rs"]
+mod background_agent_tests;

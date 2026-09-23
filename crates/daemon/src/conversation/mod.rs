@@ -8,6 +8,7 @@
 
 use std::time::Instant;
 
+mod align;
 mod build;
 mod enrich;
 mod entry;
