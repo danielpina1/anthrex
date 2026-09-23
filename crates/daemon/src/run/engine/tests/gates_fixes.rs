@@ -35,7 +35,7 @@ fn to_window(effects: &[Effect]) -> Vec<(u32, String)> {
         .collect()
 }
 
-fn ack(fx: &mut Fixture) {
+pub(super) fn ack(fx: &mut Fixture) {
     let ids: Vec<u64> = fx
         .run()
         .outbox

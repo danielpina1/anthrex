@@ -66,6 +66,11 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
             round.pid = Some(pid);
             return;
         }
+        // Ruling T13-R2: the exit of another process than the round's (a late exit of
+        // a previous Codex process, arriving after the next one started) is dropped.
+        AgentSignal::ProcessExited { pid, .. } if round.pid.is_some_and(|p| p != pid) => {
+            return;
+        }
         AgentSignal::ProcessExited {
             killed_by_engine, ..
         } => return exited(run, i, r, killed_by_engine, now, fx),
@@ -326,10 +331,11 @@ fn exited(run: &mut Run, i: usize, r: usize, killed: bool, now: u64, fx: &mut Ve
     let working = run.tasks[i].state == TaskState::Working;
     let round = &mut run.tasks[i].rounds[r];
     let worker = round.role == AgentRole::Worker;
-    // Codex runs one process per turn: its exit between turns is the normal end of one.
-    // (A retiring round ignores `TurnEnded`, so its turn stays open until this exit,
-    // which then ends it: ruling T13-I2.)
-    if !killed && !round.turn_open && round.route.runtime == Runtime::Codex {
+    // Codex runs one process per turn: its exit between turns is the normal end of one,
+    // and the round has no process until the next starts. A retiring round's exit ends
+    // it (rulings T13-I2, T13-R2).
+    if !killed && !round.turn_open && round.route.runtime == Runtime::Codex && !round.retiring {
+        round.pid = None;
         return;
     }
     round.pid = None;

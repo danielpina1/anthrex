@@ -8,6 +8,7 @@ mod done;
 mod done_tools;
 mod fixture;
 mod gates;
+mod gates_exits;
 mod gates_fixes;
 mod gates_review;
 mod gates_rounds;

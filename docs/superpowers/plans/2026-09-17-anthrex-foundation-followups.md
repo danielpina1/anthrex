@@ -807,9 +807,6 @@ scope.
   session's `append`. A wrap-up sent just before a mid-turn exit and a failed resume is
   therefore missing from the fresh prompt. Decide with M8a.13's resume rules whether
   `supersede` should keep them for `append`.
-- **`signals::exited` ignores the exit's `pid`** (carried from re-review 2). An exit
-  from an earlier process of the same window, arriving late, is taken for the current
-  one. Match it against `AgentRound.pid` when M8a.13 revisits process exits.
 
 ## From M8a.13 (2026-09-23), for M8a
 
@@ -819,4 +816,11 @@ scope.
   only be queued to a `blocked(question)` or `working` task, and a `working` task
   reaching rung 2 with an undelivered answer is possible (a stall). Consider appending
   undelivered answers to the fresh session's `append`, as a failed resume does.
-
+- **A Codex exit that arrives before the next process's `ProcessStarted`** (M8a.13 fix
+  round 2). `signals::exited` now drops an exit whose pid is not the round's. But a
+  delivery opens the next turn at once. If process N's exit comes after that delivery
+  and before N+1's `ProcessStarted`, the round's pid is still N, so the exit is taken
+  for a mid-turn death of the new turn. Closing this needs the round to remember that
+  process N finished its turn (for example an `exiting_pid` set when a delivery opens
+  a Codex turn over a live pid), or the executor must guarantee that `ProcessStarted`
+  for N+1 comes before N's exit. M8a.22's executor should settle which one.

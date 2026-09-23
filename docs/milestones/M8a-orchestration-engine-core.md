@@ -5654,3 +5654,61 @@ load-sensitive test above) and `tests/server_git.rs`'s
 binaries pass when re-run alone (10/10, 6/6), and the engine touches neither. Unit
 tests: 328 of `run::` pass. No file passes 600 lines: `review.rs` 513,
 `tests/gates_review.rs` 585, `tests/gates_fixes.rs` 471.
+
+#### M8a.13 fix round 2
+
+Re-review 1 approved I1–I3, the minors and the check-in-scratch deviation. It found
+three minor issues (ruling T13-R2).
+
+- **N1: a Codex reviewer given up after `turn.completed` but before its process
+  exits.** Codex reports the turn's end before the process exits, so a closed turn
+  does not mean there is no process. That is what fix round 1 assumed. `give_up` now
+  ends a Codex round at once only when it has no pid. Otherwise it sends `KillWindow`,
+  and the round keeps its reader slot until the exit. The `!round.retiring` guard in
+  `signals::exited` is back: a natural exit of a retiring Codex round, arriving
+  between turns, ends it. A Codex exit between turns now clears the round's pid,
+  since the round has no process until the next one starts. Claude reviewers keep
+  `KillWindow`: their process is long-lived, and a missing pid only means its start
+  was not seen yet. Tests: `a_codex_reviewer_given_up_before_its_exit_holds_its_slot`
+  (probe r1 inverted) and
+  `a_codex_reviewer_between_processes_ends_at_once_when_stopped`. This replaces fix
+  round 1's "a Codex reviewer between turns ends at once" and "the guard was removed".
+- **Exits are matched by pid.** A `ProcessExited` whose pid is not the round's
+  (`AgentRound.pid` set and different) is dropped before `exited`. A late exit of an
+  earlier Codex process therefore no longer counts as a death of the current one,
+  for a worker or a reviewer. With no pid recorded, the exit is taken as before.
+  Tests: `a_workers_exit_from_another_process_is_dropped` and
+  `a_reviewers_exit_from_another_process_is_dropped`. The follow-up entry is removed.
+  One ordering is still open: an exit that arrives before the next process's
+  `ProcessStarted` but after the delivery that opened its turn (new follow-up, for
+  M8a.22).
+- **N2.** `NO_TEST_PASSED_NOTE` moved above `resolve_task`'s doc comment.
+- **N3: carry for M8a.14.** The merge takes `task.head`, the claimed commit that
+  passed the gates, as `MergeCandidate`'s `task_head`. It never takes the tip of
+  `anthrex/<run>/<task>`: a worker commit after the claim (a self-started turn, ruling
+  T12-R4) would otherwise be merged without having passed the gates. When the tip
+  differs from `task.head`, M8a.14 merges `task.head` and leaves the later commits to
+  the worker's next claim, or bounces the task. It must not merge the tip.
+- **Cost carry for M8a.22** (from the re-review): a check-mode or none-mode task now
+  gets a scratch worktree and a cold first build for its check. Later checks are warm,
+  because `clean -fd` keeps ignored build output.
+
+**Red first.** The four new tests (`engine/tests/gates_exits.rs`) all failed against
+`c2f5836`. `a_codex_reviewer_given_up_before_its_exit_holds_its_slot` had no
+`KillWindow`. The two pid tests had `(deaths, ended, pid) = (1, true, None)` where
+`(0, false, Some(..))` was expected, and the worker test had a `ResumeSession`. The
+between-processes test had pid `Some(41)` where `None` was expected.
+
+**Mutations.** 6 of 6 killed: `give_up` ignoring the pid, `give_up` for any runtime,
+the retiring guard, the pid clear, the pid match, and dropping exits with no pid
+recorded.
+
+**Gates (fix round 2).** Build, clippy with `-D warnings` and `cargo fmt --all
+--check` are clean. `cargo test -p anthrex-daemon --no-fail-fast`: 34 binaries, 1105
+passed, 2 failed, the same two as in fix round 1:
+`git_registry::a_commit_in_a_linked_worktree_triggers_a_probe` and
+`server_git::two_windows_in_one_worktree_register_once`. The machine's load average
+was about 20–24 (other sessions). With the worktree's default `target/`, `git_registry`
+kept failing alone, taking 18 s. With a fresh `CARGO_TARGET_DIR` it passed in about
+1.5 s, for this commit's code and for `c2f5836` alike. `server_git` passed alone on
+its second try. The engine touches neither. `run::` unit tests: 332 of 332 pass.

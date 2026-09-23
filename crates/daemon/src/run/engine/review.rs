@@ -167,15 +167,18 @@ pub(super) fn stop_reviewers(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Eff
 }
 
 /// The engine gives up a reviewer round: its process is killed, and the round holds
-/// its reader slot until that exit (ruling T13-I2). A Codex reviewer between turns has
-/// no process (one per turn), so its round ends at once.
+/// its reader slot until that exit (ruling T13-I2). A Codex reviewer whose last
+/// process has exited (one per turn) has nothing to kill, so its round ends at once.
 fn give_up(round: &mut AgentRound, now: u64, fx: &mut Vec<Effect>) {
     round.retiring = true;
     round.resume_op = None;
     if round.ended {
         return;
     }
-    if round.route.runtime == Runtime::Codex && !round.turn_open {
+    // Ruling T13-R2 (N1): Codex emits `turn.completed` before its process exits, so a
+    // closed turn is not enough: only a round whose last process has exited (no pid)
+    // has nothing to wait for.
+    if round.route.runtime == Runtime::Codex && !round.turn_open && round.pid.is_none() {
         return end_round(round, now);
     }
     if let Some(window_id) = round.window_id {

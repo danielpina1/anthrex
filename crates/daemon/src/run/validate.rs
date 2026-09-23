@@ -61,14 +61,14 @@ fn is_valid_id(id: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
 }
 
-/// Resolves one planned task: size rules (decision 9), route (decision 8), budget
-/// (decision 40), test mode (decision 10) and review (decision 35). `branch` and
-/// `worktree` are left empty for the caller, which knows the run id.
 /// Ruling T13-minors (m1): the note on a tdd task whose profile has no `test_passed`.
 /// The proof then asks for the test's name on a line of the head run's output
 /// (M8a.13), which a runner that does not echo test names never shows.
 pub const NO_TEST_PASSED_NOTE: &str = "the profile has no test_passed: the test proof will require the test's name in the single-test command's output (rule 8.1)";
 
+/// Resolves one planned task: size rules (decision 9), route (decision 8), budget
+/// (decision 40), test mode (decision 10) and review (decision 35). `branch` and
+/// `worktree` are left empty for the caller, which knows the run id.
 pub fn resolve_task(
     spec: PlanTask,
     profile: &Profile,
