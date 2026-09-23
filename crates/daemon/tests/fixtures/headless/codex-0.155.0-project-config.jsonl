@@ -1,0 +1,15 @@
+{"type":"thread.started","thread_id":"00000000-0000-4000-8000-000000000159"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Skill descriptions were shortened to fit the skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest."}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"I’ll run `ls`.\n"}}
+{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"/bin/zsh -lc ls","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"/bin/zsh -lc ls","aggregated_output":"README.md\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"ok"}}
+{"type":"turn.completed","usage":{"input_tokens":41019,"cached_input_tokens":33280,"cache_write_input_tokens":0,"output_tokens":45,"reasoning_output_tokens":0}}
+{"type":"thread.started","thread_id":"00000000-0000-4000-8000-000000000159"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’ll run `git status --short`.\n"}}
+{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc 'git status --short'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc 'git status --short'","aggregated_output":"git: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"ok"}}
+{"type":"turn.completed","usage":{"input_tokens":82323,"cached_input_tokens":73984,"cache_write_input_tokens":0,"output_tokens":96,"reasoning_output_tokens":0}}

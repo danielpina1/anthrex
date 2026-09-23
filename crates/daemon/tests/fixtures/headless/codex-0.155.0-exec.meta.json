@@ -1,0 +1,13 @@
+{
+  "runtime": "codex",
+  "cli_version": "0.155.0",
+  "captured": "2026-09-23",
+  "redactions": [
+    "home",
+    "scratch-dirs",
+    "ids"
+  ],
+  "note": "Two separate codex exec runs, concatenated. First: a worker's first turn in a linked worktree with decision 25's flags and the git common dir as a writable root; the commit succeeds. Second: the same flags with -m no-such-model; the run prints an error line and turn.failed (the message is the API's JSON error as a string) and exits 1. Both runs add -c sandbox_workspace_write.exclude_slash_tmp=true and exclude_tmpdir_env_var=true, because the scratch repository lives under /tmp, which workspace-write otherwise makes writable, and the writable-root proof would prove nothing. item.completed with item.type error is a notice, not a failure. Captured with a scrubbed environment (env -i with only HOME, PATH, USER, LOGNAME, SHELL, TERM, LANG), because the capture ran inside a Claude Code session whose CLAUDE_CODE_*/CLAUDECODE variables change how a child claude behaves (transcript saving off, messaging the parent). No ANTHROPIC_API_KEY: the subscription login was used.",
+  "command": "cd /tmp/fixture/wt7/task-b && codex exec --json -c 'mcp_servers.anthrex.command=\"/tmp/fixture/bin/mcp_stub.py\"' -c 'mcp_servers.anthrex.args=[]' -c mcp_servers.anthrex.tool_timeout_sec=120 -c 'mcp_servers.anthrex.default_tools_approval_mode=\"auto\"' -c 'developer_instructions=\"You are an anthrex test worker. Keep every reply to one short line.\"' -c 'model_reasoning_effort=\"low\"' -c 'approval_policy=\"never\"' -s workspace-write -c 'sandbox_workspace_write.writable_roots=[\"/tmp/fixture/s7/.git\"]' -c sandbox_workspace_write.exclude_slash_tmp=true -c sandbox_workspace_write.exclude_tmpdir_env_var=true -- 'Create a.txt containing the line one, then run: git add a.txt && git commit -m \"add a\"  Reply done.' ; cd /tmp/fixture/wt7/task-ro-b && codex exec --json -c 'mcp_servers.anthrex.command=\"/tmp/fixture/bin/mcp_stub.py\"' -c 'mcp_servers.anthrex.args=[]' -c mcp_servers.anthrex.tool_timeout_sec=120 -c 'mcp_servers.anthrex.default_tools_approval_mode=\"auto\"' -c 'developer_instructions=\"You are an anthrex test worker. Keep every reply to one short line.\"' -c 'model_reasoning_effort=\"low\"' -c 'approval_policy=\"never\"' -s workspace-write -c 'sandbox_workspace_write.writable_roots=[\"/tmp/fixture/s7/.git\"]' -c sandbox_workspace_write.exclude_slash_tmp=true -c sandbox_workspace_write.exclude_tmpdir_env_var=true -m no-such-model -- 'Reply ok.'",
+  "observed": true
+}

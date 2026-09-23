@@ -2336,3 +2336,197 @@ Refreshed 2026-09-23, before any M8a code, against `main` at `6f22681` (PR #13, 
 - Ruling Q11: AGENTS.md is not changed; the brief keeps the landed practice (each env-mutating test alone in its own test binary), why: the landed tests show a lock cannot stop a `set_var` racing a spawn on another libtest thread (`crates/daemon/tests/worktree_env.rs:1–20`, `git_env.rs:1–16`). The disagreement with AGENTS.md's "must hold a shared lock" is recorded for the user in `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`.
 - Ruling Q12: config `[orchestrator.profile] protected` holds additions only (M8a.3's `profile_protected_is_read_as_additions`), why: the built-ins (decision 56) cannot be removed by configuration, and the config crate cannot see `BUILTIN_PROTECTED`; `resolve_profile` (M8a.5) merges them.
 - Ruling Q13: nine fixtures, including `claude-<version>-documented.jsonl` with `"observed": false` in its meta (M8a.1 Files, decision 51), why: one meta file cannot mark some lines of a recording observed and others not, and a documented-only shape must never pass for a capture.
+
+### M8a.1 external tools (2026-09-23)
+
+Verified on macOS (Darwin 25.2, arm64) against `claude` 2.1.278, `codex-cli` 0.155.0 and `git` 2.50.1 (Apple Git-155). Every `claude` and `codex` run used a scrubbed environment (`env -i` with only `HOME`, `PATH`, `USER`, `LOGNAME`, `SHELL`, `TERM`, `LANG`), because the capture ran inside a Claude Code session whose `CLAUDE_CODE_*` and `CLAUDECODE` variables change how a child `claude` behaves (transcript saving off, messaging the parent); decision 26 scrubs the same names for the same reason. No `ANTHROPIC_API_KEY` was set. All work ran in scratch repositories under `/tmp/anthrex-m8a1/`, with `haiku` and `--effort low` for Claude and Codex's configured default model. Fixtures are in `crates/daemon/tests/fixtures/headless/`; each `.meta.json` has the exact command (paths redacted) and a note. Linux was not available: every Linux-specific point below is **not verified**.
+
+**Design decisions that did not hold, or changed**
+
+- **`codex exec resume` does not accept `-s`** (item 6): `codex exec resume -s read-only --json <id> -- hi` → `error: unexpected argument '-s' found` (exit 2). `-c` and `-m` are accepted. Decision 25's own fallback applies: the sandbox goes through `-c sandbox_mode="<mode>"` on resume, and item 7's resume turn proves it confines (a `touch ../escape-resume.txt` was refused, the commit succeeded). `-s` placed before the subcommand (`codex exec -s read-only resume …`) also parses, but was not used.
+- **Codex loads a repository's own config, and nothing on the command line excludes it** (item 7a). Decision 53's third branch applies: `run start` refuses a run with a Codex task in a repository whose base tree tracks `.codex/config.toml` or `.codex/hooks.json`, unless `--trust-project`. Evidence and the side effect are under item 7a.
+- **Plan mode blocks the reviewer's allowed `submit_review` call in `-p`** (decision 24's conditional, checked although it is not a numbered item). With `--permission-mode plan --permission-prompts none --allowedTools mcp__anthrex__task_done,Read,Glob,Grep,Bash(git diff:*),Bash(git log:*),Bash(git show:*)`, `git log` ran but the allowed MCP call was denied (`system/permission_denied`, `decision_reason: "no approval surface in this session; permission request denied automatically"`). Decision 24's fallback, `--permission-mode dontAsk --disallowedTools Edit,Write,NotebookEdit` with the same `--allowedTools`, works: `git log` ran, the MCP call ran, `touch reviewer.txt` was denied (`permission_denied` with `decision_reason_type: "mode"`). **Reviewers use the `dontAsk` fallback.**
+- **The failed-turn category is not on the `result` line** (item 3 and item 5). A failed API turn is an `assistant` line with `"model":"<synthetic>"`, `"error":"<category>"`, `"is_api_error_message":true` and the error text as its only text block, followed by a `result` with `subtype: "success"`, `is_error: true`, `terminal_reason: "api_error"`, `api_error_status`. The Interfaces row "`Failed { kind }` by the error category" cannot be read from the `result` alone: `claude_stream::parse_line` must turn the assistant line's `error` into an event (or the turn's category must be carried to `TurnEnded` by the caller). M8a.7 decides which; the mapping table row changes either way.
+- **Decision 54's block needs `failIfUnavailable: true`** (item 4b). Without it, "when the sandbox can't start, Claude Code shows a warning and runs commands unsandboxed" (settings reference, `sandbox.enabled`); the binary's text is `⚠ Sandbox disabled: <reason>`. With it, Claude exits at startup with `Error: sandbox required but unavailable: <reason>` / `  sandbox.failIfUnavailable is set — refusing to start without a working sandbox.` (exit 1, before `system/init`). So `SandboxKeys` needs a fourth key, `fail_if_unavailable: "failIfUnavailable"`, and `worker_settings_json_enables_the_sandbox` should expect it; otherwise decision 54's "the session fails with the text M8a.1 records" never happens. Not applied here: M8a.7 owns `SandboxKeys`.
+- **A sandbox refusal is not a counted denial** (item 4b): it arrives only as a failed `Bash` `tool_result` (`is_error: true`, `Exit code 1\ntouch: ../escape.txt: Operation not permitted`), with no `permission_denied` line and an empty `permission_denials`. Per decision 54 it is not counted; stall and budget rules cover a worker that keeps trying.
+- **A Codex command that exits non-zero does not appear in `exec --json` at all** (item 7). Codex 0.155 runs commands through a code-mode `exec` tool; the rollout file shows the failing `touch ../escape.txt` and `git commit` calls with exit codes 1 and 128, but `--json` emitted `command_execution` items only for the commands that exited 0. A sandbox refusal under `-s workspace-write` or `-s read-only` is therefore visible only in the agent's final message, never as a structured denial or a failed item. Decision 40's Codex tool-call counts are low by the number of failed commands; decision 32's denial count sees none.
+
+All other decisions checked here hold:
+
+- `claude -p` answers on the subscription login without `ANTHROPIC_API_KEY` (item 5): it held.
+- stream-json input is accepted, and the process stays alive between turns and exits on EOF (item 2): it held.
+- The interrupt control request works (item 2): it held.
+- Hooks fire under `-p` (item 2): they held.
+- `--setting-sources user --strict-mcp-config` excludes project settings and `.mcp.json` (item 4a): it held.
+- The sandbox works under `-p` on macOS (item 4b): it held.
+- `codex exec resume` accepts `-c` and `-m` (item 6): it held.
+- `rmcp =3.4.0` (item 8): it held.
+- `git merge-tree --write-tree` (item 9): it held.
+
+**`CLI_CAPS`**
+
+| Field | Value | Set by |
+|-------|-------|--------|
+| `claude_verbose` | `true` | item 1: without `--verbose`, `claude -p --output-format stream-json …` prints `Error: When using --print, --output-format=stream-json requires --verbose` (exit 1) |
+| `claude_permission_prompts` | `true` | item 1: `--permission-prompts <target>`, choices `host` (default) and `none` |
+| `claude_effort_flag` | `true` | item 1: `--effort <level>` (`low, medium, high, xhigh, max`); `--effort low` was accepted on every item 2–4b launch |
+| `claude_non_bare_flag` | `None` | item 1: `--help` offers only `--bare`; `strings` on the binary finds no `no-bare`/`non-bare` |
+| `claude_interrupt` | `InterruptMode::ControlRequest` | item 2 |
+| `claude_hooks_fire_in_print` | `true` | item 2 |
+| `codex_resume_takes_sandbox` | `false` | item 6 (resume uses `-c sandbox_mode=…`, proven in item 7) |
+| `claude_user_settings_only` | `Some(&["--setting-sources", "user", "--strict-mcp-config"])` | item 4a |
+| `claude_sandbox_keys` | `SandboxKeys { enabled: "enabled", allow_unsandboxed: "allowUnsandboxedCommands", write_allow: "filesystem.allowWrite" }` under `"sandbox"`; `write_allow` is a nested path (`{"sandbox":{"filesystem":{"allowWrite":[…]}}}`); plus `failIfUnavailable` (above) | item 4b |
+| `codex_loads_project_config` | `true` | item 7a |
+| `codex_project_config_paths` | `&[".codex/config.toml", ".codex/hooks.json"]` | item 7a |
+| `codex_user_config_only` | `None` | item 7a |
+
+**Item 1, Claude flags** (`claude --version` → `2.1.278 (Claude Code)`). `-p/--print`, `--input-format stream-json`, `--output-format stream-json` (needs `--verbose`), `--permission-prompts host|none`, `--session-id <uuid>`, `-r/--resume [value]`, `--settings <file-or-json>`, `--mcp-config <configs...>` (variadic), `--allowedTools, --allowed-tools <tools...>` ("Comma or space-separated", so one comma-separated value is accepted, and it is variadic), `--append-system-prompt`, `--permission-mode` with choices `acceptEdits, auto, bypassPermissions, manual, dontAsk, plan`, `--effort`, `--bare`, `--setting-sources <sources>`, `--strict-mcp-config`, `--disallowedTools`. The help says `--bare` "Sets CLAUDE_CODE_SIMPLE=1" and that its auth "is strictly ANTHROPIC_API_KEY or apiKeyHelper via --settings". The headless docs repeat that `--bare` "will become the default for `-p` in a future release"; no opt-out exists yet.
+
+**Item 2, the recorded session** (`claude-2.1.278-stream.jsonl`, `-input.jsonl`, `-hooks.jsonl`). One process with decision 24's worker flags, including the sandbox block, `--allowedTools Bash,Read`, `--permission-mode acceptEdits`. Three turns:
+- **Envelope.** Accepted, one line each: `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"<T>"}]},"parent_tool_use_id":null,"session_id":"<id>"}`. `claude_stream::user_message` writes exactly that.
+- **Lifetime.** The process stays alive after every `result`, checked 2 s after each, and exits within 0.6 s of stdin EOF. The exit code was 0 when the last turn succeeded and 1 when it had been interrupted.
+- **`system/init` is emitted again at the start of every turn.** It is not only the first line. `Init` handling must be idempotent, and `headless::status::next` must not treat a later `Init` as `Starting`.
+- **Turn 1, Agent call.** The Agent call's sub-agent lines carry `parent_tool_use_id`. `system/task_started`, `task_updated` and `task_notification` frame it.
+  - The first attempt got a *backgrounded* Agent (not committed). The turn ended early with its own `result`, and when the sub-agent finished, Claude Code started a **second, unprompted turn**: `UserPromptSubmit` and `Stop` hooks fired, a new `init` was emitted, and a second `result` arrived with no user message sent.
+  - The engine must accept a `TurnEnded` it did not open (M8a.12's turn-end fallback and `turn_open` logic).
+  - The committed recording asked for a foreground call (`run_in_background false`).
+- **Turn 2, `Write`.** As the brief worded it (`x.txt` in the working directory), it is **allowed** under `acceptEdits` even though `Write` is not in `--allowedTools`: a probe created the file. The recording asks for a path outside the working directory instead. That was denied:
+  - The stream has `{"type":"system","subtype":"permission_denied","tool_name":"Write","tool_use_id":…,"decision_reason_type":"asyncAgent","decision_reason":"no approval surface in this session; permission request denied automatically","message":"Permission for this tool use was denied. …"}`.
+  - The `result` has `"permission_denials":[{"tool_name":"Write","tool_use_id":…,"tool_input":{…}}]`.
+  - Under `dontAsk`, `permission_denied` has no `decision_reason`, only `message`. `PermissionDenied.reason` should take `decision_reason`, else `message`.
+- **Turn 3, interrupt.** `sleep 60` was blocked before any hook by Claude Code's own guard (`<tool_use_error>Blocked: standalone sleep 60. …`), so the recording runs `python3 -c "import time; time.sleep(60)"`.
+  - The interrupt, `{"type":"control_request","request_id":"1","request":{"subtype":"interrupt"}}`, was sent 8 s in. The CLI replied `{"type":"control_response","response":{"subtype":"success","request_id":"1","response":{"still_queued":[]}}}`.
+  - Then came `system/task_notification` `status: "stopped"`, the tool result `The user doesn't want to proceed with this tool use. …`, and a user text `[Request interrupted by user for tool use]`.
+  - The `result` has `subtype: "error_during_execution"`, `is_error: true`, `terminal_reason: "aborted_tools"`, `errors: ["[ede_diagnostic] …"]`.
+  - **Interrupted marker:** `subtype == "error_during_execution"` and `terminal_reason` ∈ {`aborted_tools`, `aborted_streaming`}. The documented `terminal_reason` values include both.
+  - `system/init.capabilities` advertises `interrupt_receipt_v1` and `interrupt_cancel_queued_v1`. SIGINT was not needed.
+  - The same control request sent after a turn had ended was also answered `success` with `still_queued: []`, so a late interrupt is harmless.
+- **Usage.**
+  - `result.usage` is **per turn**. Turns 1 to 3: input 26/18/10, output 477/284/215, `cache_read_input_tokens` 66953/50323/25616.
+  - `total_cost_usd` and `modelUsage` are cumulative for the session (0.0306 → 0.0381 → 0.0422).
+  - `usage` fields: `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cache_creation{ephemeral_1h_input_tokens, ephemeral_5m_input_tokens}`, `server_tool_use{web_search_requests, web_fetch_requests}`, `output_tokens_details`, `service_tier`, `inference_geo`, `iterations`, `speed`.
+  - The docs say the same: "per-turn in streaming-input sessions".
+- **Hooks.** All of the following fired in `-p`:
+  - Turn 1: `SessionStart`, `UserPromptSubmit`, `PreToolUse`/`PostToolUse` for Bash, `PreToolUse`/`PostToolUse` for Agent, `SubagentStart`/`SubagentStop` (with `agent_id`, `agent_type`), and `Stop`.
+  - Turn 2: `PermissionRequest` for the denied Write.
+  - The interrupted turn fired `UserPromptSubmit` and `PreToolUse`, but no `PostToolUse` and no `Stop`.
+  - `SessionEnd` fired on EOF.
+- **Line types the Interfaces table has no row for** (the stream meta's `unmodelled` list): `system/hook_started` and `system/hook_response` (the user's own `SessionStart` hooks, which run under `--setting-sources user` by design), `system/thinking_tokens`, `system/task_started`, `system/task_updated`, `system/task_notification`, `system/background_tasks_changed`, `system/vcs_state_changed`, `rate_limit_event` and `control_response`. Assistant `thinking` blocks arrive with empty text and a signature.
+- **MCP tools are deferred.** The model loads `mcp__anthrex__*` through `ToolSearch` before calling one, which worked without `ToolSearch` in `--allowedTools`.
+
+**Item 3, documented shapes** (`claude-2.1.278-documented.jsonl`, `"observed": false`):
+- `system/api_retry` fields, from the headless doc: `attempt`, `max_retries`, `retry_delay_ms`, `error_status`, optional `no_response`, `error`, `uuid`, `session_id`.
+- `error` ∈ `authentication_failed, oauth_org_not_allowed, account_on_hold, billing_error, rate_limit, overloaded, invalid_request, model_not_found, server_error, max_output_tokens, cloud_credential_error, unknown`. The file has three.
+- `compact_boundary` has `compact_metadata {trigger, pre_tokens}`.
+- Failed turns follow the observed `authentication_failed` shape (item 5): `rate_limit` ("You've hit your session limit · resets 3:45pm", 429) and `billing_error` ("Credit balance is too low", 400). Those two texts come from the error reference.
+
+**Item 4, resume.** `--resume <id>` with every flag re-passed accepted a fourth message:
+- `system/init.session_id` is the same id, and the model answered from the earlier turns.
+- **Failed-resume marker.** With a random UUID, the process exits 1 before any `init`.
+  - stderr has `No conversation found with session ID: <id>`.
+  - stdout has one `result` with `subtype: "error_during_execution"`, `is_error: true`, `num_turns: 0` and `errors: ["No conversation found with session ID: <id>"]`.
+
+**Item 4a, project settings** (`claude-2.1.278-project-settings.jsonl`). The scratch repository tracks two files:
+- `.claude/settings.json`, with a `PreToolUse` hook that touches a marker file.
+- `.mcp.json`, with a server that writes another marker when it starts.
+
+With `--setting-sources user --strict-mcp-config`, the result was:
+- neither marker appeared;
+- `system/init.mcp_servers` was `[{"name":"anthrex","status":"connected","source":"dynamic"}]`;
+- anthrex's `--settings` hooks fired.
+
+The same session without the two flags wrote **both** markers and listed `{"name":"projectserver","source":"project"}` in `mcp_servers`, so the regression test would catch a lost flag. That run is not committed, because its `init` lists the user's own MCP servers.
+
+`--strict-mcp-config` also drops the user's own MCP servers, and only `anthrex` loads.
+
+**Item 4b, sandbox** (`claude-2.1.278-sandbox.jsonl`). The keys come from the settings reference for 2.1.278 and appear in the binary:
+- `sandbox.enabled`, default false;
+- `sandbox.allowUnsandboxedCommands`, default true;
+- `sandbox.filesystem.allowWrite`, an array of paths added to the writable set;
+- `sandbox.failIfUnavailable`, default false;
+- `sandbox.autoAllowBashIfSandboxed`, default true, which is why sandboxed `Bash` runs without a prompt even outside `--allowedTools`.
+
+In a linked worktree (`git worktree add`) with `{"enabled":true,"allowUnsandboxedCommands":false,"filesystem":{"allowWrite":["<git common dir>"]}}`:
+1. **`touch ../escape.txt`** (one directory above the worktree) was refused, as a failed `Bash` result only.
+2. **`git add` plus `git commit`** inside the worktree succeeded. `system/vcs_state_changed {"kind":"commit"}` followed.
+
+The same commit **also succeeds without `allowWrite`**. The settings reference says: "When the session's working directory is a linked git worktree …, the repository's common `.git` directory stays readable and writable to sandboxed commands". Keeping `allowWrite` is harmless and guards against a change.
+
+The sandbox-cannot-start text could not be triggered on macOS:
+- `enabledPlatforms: ["linux"]` in `--settings` was ignored.
+- Stripping `/usr/bin` from `PATH` broke keychain login instead (`Not logged in`).
+
+The texts above come from the binary and the docs. The SDK docs add that a session which cannot start its sandbox reports a `result` with `subtype: "error_during_execution"` and the reason in `errors`. Linux (bubblewrap): **not verified**.
+
+**Item 5, authentication.**
+- With `ANTHROPIC_API_KEY` unset, `claude -p --model haiku "reply with the single word hi"` printed `hi` (exit 0).
+- The same with `--bare` printed `Not logged in · Please run /login` (exit 1). In stream-json that is:
+  - the assistant `error: "authentication_failed"` pair of item 3;
+  - `system/init.apiKeySource: "none"`.
+- No API key was available, so whether `--settings` hooks and `--mcp-config` apply under `--bare` is **not verified**. Per decision 50, `auth = "api_key"` stays refused at config load.
+
+**Item 6, Codex flags** (`codex-cli 0.155.0`).
+- `codex exec` has `--json`, `-s/--sandbox read-only|workspace-write|danger-full-access`, `-m/--model`, `-c/--config`, `--ignore-user-config` (user config only), `--ignore-rules`, `--dangerously-bypass-hook-trust` and `--skip-git-repo-check`.
+- `codex exec resume [SESSION_ID] [PROMPT]` has `-c`, `-m` and `--json`. It has no `-s` (above).
+- **No-such-session text:** `Error: thread/resume: thread/resume failed: no rollout found for thread id <id> (code -32600)`.
+- `strings` on the native binary (`/opt/homebrew/Caskroom/codex/0.155.0/bin/codex`) finds each of these: `default_tools_approval_mode` (28), `tool_timeout_sec` (6), `developer_instructions` (61), `model_reasoning_effort` (29), `approval_policy` (44), `sandbox_workspace_write` (21), `writable_roots` (28), `sandbox_mode` (41).
+- The recorded runs passed every decision-25 `-c` key without a config error.
+
+**Item 7, Codex session** (`codex-0.155.0-exec.jsonl`, `-resume.jsonl`).
+- **`/tmp` is always writable under `workspace-write`.** The sandbox makes `/tmp` and `$TMPDIR` writable by default. In the first attempt, under `/tmp`, both the commit *without* the writable root and `touch ../escape.txt` succeeded, which proved nothing. The recorded runs add `-c sandbox_workspace_write.exclude_slash_tmp=true -c sandbox_workspace_write.exclude_tmpdir_env_var=true`.
+- **With those keys, the writable root is needed.**
+  - Without `writable_roots`, the commit failed: the agent reported "index.lock permission denied" and the rollout shows `git commit` exit 128, but nothing structured is in the stream (above).
+  - With `writable_roots=["<git common dir>"]`, it succeeded (`[task-b 9d0ec2a] add a`).
+- **Resume.** `exec resume <thread_id>` with the `-c` flags and `-c sandbox_mode="workspace-write"` appended a line and committed. `thread.started` repeats the same `thread_id`.
+- **`turn.completed.usage`** has `input_tokens`, `cached_input_tokens`, `cache_write_input_tokens`, `output_tokens` and `reasoning_output_tokens`. That is two more fields than the Interfaces row.
+- **`-m no-such-model`:**
+  - `item.completed` of `item.type: "error"` (`Model metadata for \`no-such-model\` not found. …`), then `turn.started`;
+  - `{"type":"error","message":"<json>"}`;
+  - `{"type":"turn.failed","error":{"message":"{\"type\":\"error\",\"status\":400,\"error\":{\"type\":\"invalid_request_error\",\"message\":\"The 'no-such-model' model is not supported when using Codex with a ChatGPT account.\"}}"}}`;
+  - exit 1.
+  - The message is the API error as a JSON string. `FailureKind` can read its `status`, and `turn.failed` → `Other` for this one.
+- **`item.type: "error"` items are notices, not failures.** The same type also carries "Skill descriptions were shortened …".
+- **Rate-limit pattern.** Unobserved; from the binary's strings: `Usage limit reached. You've reached your usage limit.`, `exceeded retry limit, last status: <status>`, "rate limit", "429", "too many requests". Classify `RateLimit` when the message (or its JSON `status`) matches `429`, `rate limit`, `usage limit` or `too many requests`, case-insensitively.
+- **SIGINT to a running `exec`.** Sent 14 s into a 60 s command, the process exited 1 about 1.4 s later.
+  - No `turn.completed` or `turn.failed` was printed: the stream ends after `item.started`.
+  - stderr had `ERROR codex_core::tools::router: error=write_stdin failed: Unknown process id <n>`.
+  - No child was left behind.
+  - A Codex interrupt is therefore a `ProcessExited` with no `TurnEnded`.
+- **`-s read-only` write refusal.** `echo x > r.txt` was refused (`operation not permitted`). There was no structured denial and not even a failed item; only the agent's text reports it.
+
+**Item 7a, Codex project config** (`codex-0.155.0-project-config.jsonl`). The scratch repository commits:
+- `.codex/config.toml`, with `developer_instructions = "Always end every reply with the exact word PROJECT-CONFIG-LOADED"` and `[mcp_servers.projmcp]`, whose command writes a marker;
+- `.codex/hooks.json`, with `SessionStart`, `PreToolUse` and `UserPromptSubmit` hooks that touch markers.
+
+Findings:
+- **Auto-trust.** The first `codex exec` in the repository **wrote `[projects."<repo root>"] trust_level = "trusted"` into the user's `~/.codex/config.toml` by itself**. It did the same for item 7's repository.
+- **Project config loads.**
+  - With decision 25's flags, the project MCP server started (marker written) on the first turn, and again on `exec resume`.
+  - Without anthrex's `-c developer_instructions`, the reply was `ok PROJECT-CONFIG-LOADED`: the project's `developer_instructions` loaded.
+  - `-c` overrides win over project values for the keys anthrex sets. Anything else in the project config, such as MCP servers, loads.
+- **Project hooks did not fire.** Codex requires persisted hook trust; `--dangerously-bypass-hook-trust` would skip that.
+- **Only a user-config trust entry excludes it.** With the user config's entry for the repository set to `trust_level = "untrusted"`, the project MCP server did **not** start. Trust is what gates project config.
+- **No command-line exclusion.** `-c 'projects."<root>".trust_level="untrusted"'` on the command line did **not** stop it. `codex exec --help` has no project-config switch (`--ignore-user-config` ignores the *user* file).
+- **The user's config was restored.** It was not copied before item 7, because the change was made by Codex, not by this task. The original was reconstructed by removing exactly the two blocks Codex added (`/private/tmp/anthrex-m8a1/s7` and `/s7a`), confirmed by `diff` to be the only differences. The file was restored and checked with `cmp`. The item 7a `untrusted` edit was made and undone inside that window.
+
+**Item 8, rmcp.** In a throwaway crate, `cargo add rmcp@=3.4.0 --no-default-features --features server,transport-io` built and served a hand-written `ServerHandler` over stdio. It answered `initialize`, `tools/list` and `tools/call` correctly. The names that resolve in 3.4.0 are:
+- `rmcp::{ServerHandler, ServiceExt, ErrorData}`;
+- `rmcp::model::{Tool, JsonObject, ListToolsResult, CallToolRequestParams, CallToolResult, CallToolResponse, ContentBlock, PaginatedRequestParams, ServerCapabilities, ServerConfig}`;
+- `rmcp::service::{RequestContext, RoleServer}`;
+- `rmcp::transport::stdio()`.
+
+Names that differ from what one might expect:
+- `ServerHandler::get_info` returns `ServerConfig` (an alias of `InitializeResult`).
+- `call_tool` returns `Result<CallToolResponse, ErrorData>`, built with `CallToolResult::success(…).into()`.
+- Content is `ContentBlock::text(…)`.
+- `Tool::new(name, description, Arc<JsonObject>)`.
+- Serving is `handler.serve((reader, writer)).await?.waiting().await`.
+
+**Item 9, git.** `git version 2.50.1 (Apple Git-155)` (≥ 2.38). `git merge-tree --write-tree --name-only --no-messages A B`:
+- **A clean pair** printed one line, the tree (`b4f775c9a1855fa148f96b044be3ef80f4dd44be`), and exited 0.
+- **A conflicting pair** printed the tree on line 1 and `f.txt` on line 2, and exited 1. A file changed on only one side (`g.txt`) is not listed.
+
+**Side effects on the user's machine**
+- Codex's `trust_level` entries were restored as above.
+- `~/.claude.json` was updated by `claude` itself (per-project state for the scratch directories), which the task allows.
+- Both CLIs left their usual transcripts: Claude under `~/.claude/projects/-private-tmp-anthrex-m8a1-*`, Codex under `~/.codex/sessions/2026/09/23/`. They were left in place rather than deleted.
