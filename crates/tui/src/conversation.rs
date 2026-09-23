@@ -116,23 +116,19 @@ impl ConversationView {
 
     /// `None` while the link is down: `relink` sends every level's subscribe instead.
     fn subscribe(&self, agent_id: Option<String>) -> Option<Effect> {
-        (!self.unlinked).then(|| {
-            Effect::Send(ClientMsg::SubscribeConversation {
-                window_id: self.window_id,
-                agent_id,
-                from_rev: None,
-            })
-        })
+        (!self.unlinked).then_some(Effect::Send(ClientMsg::SubscribeConversation {
+            window_id: self.window_id,
+            agent_id,
+            from_rev: None,
+        }))
     }
 
     /// `None` while the link is down: the daemon dropped the subscription with it.
     fn unsubscribe(&self, agent_id: Option<String>) -> Option<Effect> {
-        (!self.unlinked).then(|| {
-            Effect::Send(ClientMsg::UnsubscribeConversation {
-                window_id: self.window_id,
-                agent_id,
-            })
-        })
+        (!self.unlinked).then_some(Effect::Send(ClientMsg::UnsubscribeConversation {
+            window_id: self.window_id,
+            agent_id,
+        }))
     }
 
     /// The link to the daemon dropped, and every subscription with it (review I1). The
