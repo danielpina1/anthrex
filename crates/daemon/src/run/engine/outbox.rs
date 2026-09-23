@@ -2,14 +2,14 @@
 //! delivered as one new turn only when the round's turn is closed, no interrupt is
 //! pending and no rate-limit continue is being waited out. Pure (design decision 2).
 //!
-//! M8a.11 builds the queue and the gate for a live session. M8a.12 adds the rest of
-//! decision 29: a failed delivery's retry and block, and `ResumeSession` for a round
-//! whose session has ended.
+//! M8a.11 builds the queue, the gate for a live session and the retry delay after a
+//! failed delivery. M8a.12 adds the rest of decision 29: the block after
+//! `DELIVERY_MAX_FAILURES`, and `ResumeSession` for a round whose session has ended.
 
 use proto::{AgentRole, TaskState};
 
 use super::Effect;
-use crate::run::messages::join_turn;
+use crate::run::messages::{DELIVERY_RETRY_SECS, join_turn};
 use crate::run::model::{Outgoing, Run, StallState};
 
 /// Queues `text` for task `task_id`'s current worker. The window is the worker round's
@@ -63,10 +63,17 @@ pub(super) fn deliver(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         let round = &run.tasks[i].rounds[r];
         let rate_limited = round.rate_limited_until.is_some_and(|t| t > now);
         let interrupted = matches!(round.stall, StallState::Interrupted { .. });
+        let retry_later = round.delivery_retry_at.is_some_and(|t| t > now);
         let Some(window_id) = round.window_id else {
             continue;
         };
-        if round.turn_open || round.ended || round.retiring || rate_limited || interrupted {
+        if round.turn_open
+            || round.ended
+            || round.retiring
+            || rate_limited
+            || interrupted
+            || retry_later
+        {
             continue;
         }
         let batch: Vec<&Outgoing> = run
@@ -93,19 +100,19 @@ pub(super) fn deliver(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     }
 }
 
-/// `Event::Delivered`: a delivered batch leaves the outbox; a failed one is queued
-/// again with its turn closed (M8a.12 adds the retry delay and the block).
-pub(super) fn delivered(run: &mut Run, message_ids: &[u64], ok: bool) {
-    if ok {
-        run.outbox.retain(|m| !message_ids.contains(&m.id));
-        return;
-    }
+/// `Event::Delivered`: a delivered batch leaves the outbox; a failed one is queued again
+/// with its turn closed and retried `DELIVERY_RETRY_SECS` later (decision 29; review
+/// minor 6). M8a.12 adds the block after `DELIVERY_MAX_FAILURES`.
+pub(super) fn delivered(run: &mut Run, message_ids: &[u64], ok: bool, now: u64) {
     let mut tasks = Vec::new();
     for message in run.outbox.iter_mut() {
         if message_ids.contains(&message.id) {
             message.delivered_at = None;
             tasks.push(message.task_id.clone());
         }
+    }
+    if ok {
+        run.outbox.retain(|m| !message_ids.contains(&m.id));
     }
     for task in run.tasks.iter_mut().filter(|t| tasks.contains(&t.spec.id)) {
         if let Some(round) = task
@@ -114,7 +121,14 @@ pub(super) fn delivered(run: &mut Run, message_ids: &[u64], ok: bool) {
             .rev()
             .find(|r| r.role == AgentRole::Worker)
         {
-            round.turn_open = false;
+            if ok {
+                round.delivery_failures = 0;
+                round.delivery_retry_at = None;
+            } else {
+                round.turn_open = false;
+                round.delivery_failures = round.delivery_failures.saturating_add(1);
+                round.delivery_retry_at = Some(now + DELIVERY_RETRY_SECS);
+            }
         }
     }
 }

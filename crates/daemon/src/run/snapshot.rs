@@ -9,7 +9,7 @@ use proto::{
 use super::contract::sha7;
 use super::engine::EngineState;
 use super::engine::schedule::{critical_path, readers_busy, waves, writers_busy};
-use super::exec::summary;
+use super::messages::summary;
 use super::model::{AgentRound, Run, Task};
 
 /// History entries a task shows, newest first.

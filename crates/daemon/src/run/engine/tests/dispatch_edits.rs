@@ -262,3 +262,60 @@ fn cancel_of_a_working_task_kills_then_removes_after_the_exit() {
     );
     assert_eq!(ops_in(&effects, "RemoveWorktree").len(), 1, "{effects:#?}");
 }
+
+/// Review minor 2: a pre-warmed task that gains a dependency no longer holds one of the
+/// `max_writers` pre-warm places.
+#[test]
+fn a_prewarmed_task_that_gains_a_dependency_releases_its_prewarm_place() {
+    let plan = plan_with(
+        &profile_with("max_writers = 1"),
+        &[task_toml("t1", "S", "[\"crates/a/**\"]", "")],
+    );
+    let mut fx = Fixture::new(&plan);
+    fx.ready(false);
+    fx.complete_prepares();
+    assert!(fx.task("t1").prewarmed);
+    let effects = edit(
+        &mut fx,
+        vec![
+            PlanEdit::AddTask {
+                task: plan_task("t0", "[\"crates/z/**\"]"),
+            },
+            PlanEdit::AddDep {
+                task_id: "t1".into(),
+                dep: "t0".into(),
+            },
+        ],
+    );
+    assert_eq!(fx.task("t1").state, TaskState::Pending);
+    assert_eq!(tasks_of(&effects, "PrepareWorktree"), vec!["t0"]);
+}
+
+/// Review minor 3: the clean-up of a cancelled task waits for its op in flight, and
+/// never removes twice.
+#[test]
+fn a_cancel_waits_for_the_worktree_op_in_flight() {
+    let mut fx = Fixture::new(&plan_with(PROFILE, &[task("t1", "S", "a", "")]));
+    fx.ready(false);
+    assert_eq!(tasks_of(&fx.log, "PrepareWorktree"), vec!["t1"]);
+    let effects = edit(
+        &mut fx,
+        vec![PlanEdit::CancelTask {
+            task_id: "t1".into(),
+        }],
+    );
+    assert!(
+        ops_in(&effects, "RemoveWorktree").is_empty(),
+        "{effects:#?}"
+    );
+    let effects = fx.complete_prepares();
+    assert_eq!(ops_in(&effects, "RemoveWorktree").len(), 1, "{effects:#?}");
+    // Nor is a second removal issued while the first runs.
+    for _ in 0..2 {
+        let effects = fx.tick();
+        assert!(
+            ops_in(&effects, "RemoveWorktree").is_empty(),
+            "{effects:#?}"
+        );
+    }
+}

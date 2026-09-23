@@ -419,3 +419,89 @@ fn session_uuids_are_valid_and_distinct() {
     assert_eq!(seen.len(), 1000);
     assert_ne!(session_uuid(RUN_ID, 1), session_uuid("other-run-0000", 1));
 }
+
+/// Review minor 4: reject is not repeated, and a rejected run cannot be approved.
+#[test]
+fn a_run_being_discarded_refuses_reject_and_approve() {
+    let mut fx = Fixture::new(&plan_with(PROFILE, &[task("t1", "S", "a", "")]));
+    fx.ready(false);
+    let reply = fx.reply();
+    fx.next(EventKind::Reject {
+        reply,
+        run_id: RUN_ID.into(),
+    });
+    let reply = fx.reply();
+    let effects = fx.next(EventKind::Reject {
+        reply,
+        run_id: RUN_ID.into(),
+    });
+    assert_eq!(
+        replies(&effects),
+        vec![Err(format!("run {RUN_ID} is being discarded"))]
+    );
+    assert_eq!(fx.ops("Discard").len(), 1);
+    let effects = fx.approve();
+    assert_eq!(
+        replies(&effects),
+        vec![Err(format!("run {RUN_ID} is being discarded"))]
+    );
+    assert_eq!(fx.run().state, RunState::AwaitingApproval);
+    assert!(fx.ops("CreateWindow").is_empty());
+}
+
+/// Review minor 5: a restore that changes a run bumps its revision (decision 47).
+#[test]
+fn a_restore_that_changes_a_run_bumps_its_revision() {
+    let mut fx = Fixture::new(&plan_with(PROFILE, &[task("t1", "S", "a", "")]));
+    fx.ready(true);
+    let run = fx.run().clone();
+    let revision = run.revision;
+    let mut fresh = Fixture::new(&fx.plan);
+    fresh.next(EventKind::Restore {
+        runs: vec![run],
+        replay: vec![],
+    });
+    assert_eq!(fresh.run().state, RunState::Paused);
+    assert_eq!(fresh.run().revision, revision + 1);
+    // Unchanged by the restore: unchanged revision.
+    let waiting = build(
+        &plan_with(PROFILE, &[task("t1", "S", "a", "")]),
+        &config::Orchestrator::default(),
+        false,
+    );
+    let mut fresh = Fixture::new("");
+    fresh.next(EventKind::Restore {
+        runs: vec![waiting],
+        replay: vec![],
+    });
+    assert_eq!(fresh.run().revision, 1);
+}
+
+/// Review minor 3: a dispatch whose worktree came back from a run head that has moved
+/// since is prepared again from the new head, not launched stale.
+#[test]
+fn a_dispatch_overtaken_by_a_merge_is_prepared_again() {
+    let plan = plan_with(
+        &profile_with("max_writers = 2"),
+        &[
+            task("t1", "S", "a", "priority = 1"),
+            task("t2", "S", "b", ""),
+        ],
+    );
+    let mut fx = Fixture::new(&plan);
+    fx.ready(true);
+    let prepares = fx.ops("PrepareWorktree");
+    assert_eq!(tasks_of(&fx.log, "PrepareWorktree"), vec!["t1", "t2"]);
+    fx.done(prepares[0].0, OpResult::Worktree { head: BASE.into() });
+    fx.complete_windows();
+    let head = "c1".repeat(20);
+    fx.merge("t1", &head);
+    let effects = fx.done(prepares[1].0, OpResult::Worktree { head: BASE.into() });
+    assert!(ops_in(&effects, "CreateWindow").is_empty(), "{effects:#?}");
+    let again = ops_in(&effects, "PrepareWorktree");
+    assert_eq!(again.len(), 1, "{effects:#?}");
+    let OpKind::PrepareWorktree { from, .. } = &again[0].1 else {
+        unreachable!()
+    };
+    assert_eq!(from, &head);
+}

@@ -9,7 +9,7 @@
 
 use proto::{Finding, Severity, Size, TestMode};
 
-use super::exec::summary;
+use super::messages::summary;
 use super::model::{ReviewLevel, Run, Task};
 
 /// The worker's system prompt (decision 30, exact). It never varies, so the cached

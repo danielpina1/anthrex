@@ -188,6 +188,10 @@ pub struct AgentRound {
     pub wrap_up_sent: bool,
     pub retiring: bool,
     pub delivery_failures: u8,
+    /// A failed delivery is retried no earlier than this (decision 29's
+    /// `DELIVERY_RETRY_SECS`; M8a.11 fix round 1).
+    #[serde(default)]
+    pub delivery_retry_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -11,6 +11,17 @@ pub const DELIVERY_RETRY_SECS: u64 = 5;
 /// Consecutive failed deliveries that block the task as `blocked(environment)`.
 pub const DELIVERY_MAX_FAILURES: u8 = 3;
 
+/// Lines of a check's tail a bounce message carries (decision 34).
+pub const CHECK_SUMMARY_LINES: usize = 40;
+
+/// The last [`CHECK_SUMMARY_LINES`] lines of `tail`, what a bounce carries (decision 34;
+/// the decider's summary is M8b).
+pub fn summary(tail: &str) -> String {
+    let lines: Vec<&str> = tail.split('\n').collect();
+    let start = lines.len().saturating_sub(CHECK_SUMMARY_LINES);
+    lines[start..].join("\n")
+}
+
 /// The line [`clamp`] puts where it cut the middle out of a message.
 pub const MESSAGE_CUT_MARKER: &str = "\n[anthrex: the middle of this message was cut to fit]\n";
 

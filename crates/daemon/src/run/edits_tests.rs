@@ -411,6 +411,7 @@ fn open_round() -> AgentRound {
         wrap_up_sent: false,
         retiring: false,
         delivery_failures: 0,
+        delivery_retry_at: None,
     }
 }
 

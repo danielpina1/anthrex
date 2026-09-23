@@ -3,10 +3,9 @@
 //! first part). Pure (design decision 2). M8a.14 and M8a.15 add retry, override,
 //! cancel, resume, finish and the rest of restore.
 
-use proto::{BlockInfo, BlockReason, PlanEdit, RunState, TaskState};
+use proto::{PlanEdit, RunState};
 
-use super::dispatch::{history, salvage_ref};
-use super::schedule::unfinished_deps;
+use super::dispatch::{finishing_as, salvage_ref};
 use super::{Effect, EngineState, OpKind, OpResult, ReplyId, emit_op, next_op, outbox};
 use crate::run::edits::{EditConsequence, apply_edits};
 use crate::run::env::profile_env;
@@ -104,6 +103,9 @@ pub(super) fn approve(
     let Some(run) = state.runs.get_mut(run_id) else {
         return reply(fx, id, Err(unknown(run_id)));
     };
+    if let Some(how) = finishing_as(run) {
+        return reply(fx, id, Err(format!("run {run_id} is being {how}")));
+    }
     if run.state != RunState::AwaitingApproval {
         return reply(
             fx,
@@ -130,6 +132,9 @@ pub(super) fn reject(
     let Some(run) = state.runs.get_mut(run_id) else {
         return reply(fx, id, Err(unknown(run_id)));
     };
+    if let Some(how) = finishing_as(run) {
+        return reply(fx, id, Err(format!("run {run_id} is being {how}")));
+    }
     if run.state != RunState::AwaitingApproval {
         let label = run.state.label();
         let text =
@@ -171,8 +176,8 @@ pub(super) fn discarded(run: &mut Run, result: OpResult, now: u64) {
 
 /// Decision 13, engine side (first part): the batch goes through `apply_edits`; a live
 /// session of a cancelled task is killed (its worktree is removed once no session is
-/// left, `dispatch::remove_cancelled_worktrees`); a message is queued, or held while the
-/// task has an unfinished dependency (M8a.6 ruling N5). `pause`, `resume` and `finish`
+/// left, `dispatch::remove_cancelled_worktrees`); a message is queued, and held while the
+/// task carries the N5 hold (`dispatch::enforce_holds`). `pause`, `resume` and `finish`
 /// are M8a.15's.
 pub(super) fn edit(
     state: &mut EngineState,
@@ -204,7 +209,8 @@ pub(super) fn edit(
     for consequence in consequences {
         match consequence {
             EditConsequence::CancelLive { task_id } => kill_sessions(run, &task_id, fx),
-            EditConsequence::Deliver { task_id, text } => hold_or_queue(run, &task_id, text, now),
+            // A held task keeps its message until it resumes (`dispatch::enforce_holds`).
+            EditConsequence::Deliver { task_id, text } => outbox::queue(run, &task_id, text, now),
             EditConsequence::Pause | EditConsequence::Resume | EditConsequence::Finish => {}
         }
     }
@@ -233,39 +239,6 @@ fn kill_sessions(run: &mut Run, task_id: &str, fx: &mut Vec<Effect>) {
     }
 }
 
-/// M8a.6 ruling N5: a message for a task with an unfinished dependency (an answer to a
-/// started task that gained one through `add_dep`) is held, and the task stays
-/// `blocked(question)` until the dependencies merge and the run head is handed back.
-fn hold_or_queue(run: &mut Run, task_id: &str, text: String, now: u64) {
-    let Some(i) = run.tasks.iter().position(|t| t.spec.id == task_id) else {
-        return;
-    };
-    // Only a started task that gained a dependency through `add_dep` while blocked can
-    // have one here: a working task never waits (decision 41), and `add_dep` is refused
-    // on it (decision 13).
-    let waiting = unfinished_deps(run, &run.tasks[i]);
-    if !waiting.is_empty() {
-        let task = &mut run.tasks[i];
-        task.state = TaskState::Blocked;
-        task.awaiting_deps = true;
-        task.block = Some(BlockInfo {
-            reason: BlockReason::Question,
-            text: format!(
-                "answered; resumes once {} {} merged",
-                waiting.join(", "),
-                if waiting.len() == 1 { "has" } else { "have" }
-            ),
-        });
-        history(
-            run,
-            i,
-            now,
-            format!("held until {} finish", waiting.join(", ")),
-        );
-    }
-    outbox::queue(run, task_id, text, now);
-}
-
 /// Decision 45, first part: restored runs keep their state except `running`, which
 /// becomes `paused` (so `awaiting_approval` survives a restart unchanged, decision 14);
 /// journaled results are replayed. M8a.15 adds the rest (sessions marked ended,
@@ -276,6 +249,9 @@ pub(super) fn restore(state: &mut EngineState, runs: Vec<Run>, now: u64) {
             run.state = RunState::Paused;
             run.paused_from = Some(RunState::Running);
             log(&mut run, now, "restored after a daemon restart; paused");
+            // Decision 47: a changed run bumps its revision (review minor 5); `step`
+            // leaves a run new to the state at the revision it arrived with.
+            run.revision += 1;
         }
         state.runs.insert(run.id.clone(), run);
     }

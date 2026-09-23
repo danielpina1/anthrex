@@ -22,6 +22,7 @@ use super::model::{OpId, PendingOp, Run};
 use super::validate::EditScope;
 
 mod dispatch;
+mod holds;
 mod ops;
 mod outbox;
 mod requests;
@@ -266,7 +267,7 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             ..
         } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
-                outbox::delivered(run, &message_ids, ok);
+                outbox::delivered(run, &message_ids, ok, now);
             }
         }
         EventKind::Restore { runs, replay } => {
@@ -288,8 +289,10 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
 }
 
 /// Decision 47: a run that changed gets its revision bumped, and the global one with it;
-/// a new run keeps the revision it was built with. `Persist` goes first and `Publish`
-/// last.
+/// a run new to the state keeps the revision it arrived with. A change to a round's
+/// counters alone (`last_event`, `tool_calls`, `usage`) is persisted lazily and published
+/// as a counter update (decisions 43, 47); any other change is urgent and structural.
+/// `Persist` goes first and `Publish` last.
 fn finish(
     state: &mut EngineState,
     before: &BTreeMap<String, Run>,
@@ -297,25 +300,43 @@ fn finish(
     fx: Vec<Effect>,
 ) -> (EngineState, Vec<Effect>) {
     let mut persist = Vec::new();
+    let mut structural = false;
     for (id, run) in state.runs.iter_mut() {
-        match before.get(id) {
+        let urgent = match before.get(id) {
             Some(old) if old == run => continue,
-            Some(_) => run.revision += 1,
-            None => {}
-        }
+            Some(old) => {
+                run.revision += 1;
+                without_counters(old) != without_counters(run)
+            }
+            None => true,
+        };
+        structural |= urgent;
         state.revision += 1;
         persist.push(Effect::Persist {
             run_id: id.clone(),
-            urgent: true,
+            urgent,
         });
     }
     let changed = state.revision != before_revision;
     let mut out = persist;
     out.extend(fx);
     if changed {
-        out.push(Effect::Publish { structural: true });
+        out.push(Effect::Publish { structural });
     }
     (std::mem::take(state), out)
+}
+
+/// `run` with every round's counters zeroed and its revision fixed, to tell a
+/// counter-only change from a structural one.
+fn without_counters(run: &Run) -> Run {
+    let mut run = run.clone();
+    run.revision = 0;
+    for round in run.tasks.iter_mut().flat_map(|t| t.rounds.iter_mut()) {
+        round.last_event = 0;
+        round.tool_calls = 0;
+        round.usage = Default::default();
+    }
+    run
 }
 
 /// Routes an op's result by the kind of the op it answers. A result for an op the run
@@ -348,7 +369,7 @@ fn op_done(
             dispatch::window_done(run, i, op, result, now, fx)
         }
         (OpKind::PrepareReview { .. }, Some(i)) => dispatch::review_ready(run, i, result, now, fx),
-        (OpKind::HandBack { .. }, Some(i)) => dispatch::handed_back(run, i, result, now),
+        (OpKind::HandBack { .. }, Some(i)) => holds::handed_back(run, i, result, now),
         (OpKind::RemoveWorktree { .. }, Some(i)) => dispatch::removed(run, i, result, now),
         // The other kinds' results are handled by M8a.12 to M8a.15.
         _ => {}

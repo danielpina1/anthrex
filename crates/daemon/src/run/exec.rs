@@ -35,8 +35,9 @@ use crate::subprocess::{scrub_git_env, set_nonblocking, wait_readable};
 
 /// Lines of output a [`ShellOutcome`] keeps (decision 34).
 pub const CHECK_TAIL_LINES: usize = 200;
-/// Lines of the tail a bounce message carries (decision 34).
-pub const CHECK_SUMMARY_LINES: usize = 40;
+/// `CHECK_SUMMARY_LINES` and `summary` live in the pure `messages.rs` (review minor 7:
+/// the prompts and the snapshot use them); re-exported here, where M8a.10 put them.
+pub use super::messages::{CHECK_SUMMARY_LINES, summary};
 /// Characters each kept line is cut to (decision 34).
 pub const LINE_MAX_CHARS: usize = 300;
 /// How long output is still read once the command's shell has exited, or once its group
@@ -84,14 +85,6 @@ pub fn run_shell(
     timeout: Duration,
 ) -> ShellOutcome {
     run_matching(dir, command, env, timeout, None).0
-}
-
-/// The last [`CHECK_SUMMARY_LINES`] lines of `tail`, what a bounce carries (decision 34;
-/// the decider's summary is M8b).
-pub fn summary(tail: &str) -> String {
-    let lines: Vec<&str> = tail.split('\n').collect();
-    let start = lines.len().saturating_sub(CHECK_SUMMARY_LINES);
-    lines[start..].join("\n")
 }
 
 /// Removes decision 26's agent variables and AGENTS.md rule 11's git variables from

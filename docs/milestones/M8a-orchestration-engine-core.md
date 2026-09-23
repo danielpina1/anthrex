@@ -4132,26 +4132,15 @@ file matches only doc comments.
   `refs/anthrex/salvage/<run>/<task>/<seq>`. `Removed` records the ref. This covers a
   pre-warmed task, a rung-3 blocked task and a killed live one (after its
   `ProcessExited { killed_by_engine: true }`).
-- **Carry T6-N5 (binding invariant).**
-  - When an edit's message is for a task that has an unfinished dependency (declared, or
-    implicit and neither merged nor cancelled), the task is held: `blocked(question)` with
-    `answered; resumes once <deps> has merged`, and `awaiting_deps`. The message stays in
-    the outbox.
-  - A blocked task never takes a delivery.
-  - Once its dependencies finish, `HandBack { worktree, run_head }` is sent.
-  - `HandedBack { files }` returns the task to `working`, adds `conflict_message(files)` when
-    `files` is not empty, and the held messages go out as one turn.
-  - A failed hand-back is `blocked(environment)`.
-  - A `HandedBack` for a task that is not `awaiting_deps` is M8a.14's merge-queue hand-back
-    and is ignored here.
-  - Named test: `add_dep_then_answer_waits_for_the_dependency_then_hands_back`.
-  - **Carry for M8a.15:** `retry` and a resumed `answer` must keep the same invariant.
+- **Carry T6-N5 (binding invariant).** Superseded by fix round 1 (ruling
+  T11-I1..I3), below: the hold is task state set when the dependency is added, not when
+  the answer arrives. Named test: `add_dep_then_answer_waits_for_the_dependency_then_hands_back`.
 - **Signals (minimal).**
   - `Init` sets `session_id`. `TurnStarted` and `TurnEnded` open and close the turn.
     `ToolUse` counts. `ProcessStarted` sets the pid.
   - `ProcessExited { killed_by_engine: true }` ends the round.
   - Everything else only stamps `last_event`. M8a.12 owns decision 32.
-- **Outbox.**
+- **Outbox.** (The retry delay is fix round 1's.)
   - A delivery goes to the task's current worker round. `Outgoing.window_id` is the window
     at queue time.
   - A round that has ended gets no `Deliver`. M8a.12 adds `ResumeSession` for it, plus the
@@ -4168,8 +4157,8 @@ file matches only doc comments.
     the head and the tail.
   - `clamp_diff` is generalised to `clamp_with(text, max, marker)`. `messages::clamp` uses
     the invented marker `[anthrex: the middle of this message was cut to fit]`.
-  - `exec::summary`, a pure function in an I/O module, is reused by the prompt and the
-    snapshot.
+  - `summary` and `CHECK_SUMMARY_LINES` moved to the pure `messages.rs` in fix round 1,
+    and `exec.rs` re-exports them.
 - **Carry T8 (run-id redraw).** `plan::run_id_taken(id, refs)` is a pure predicate:
   `refs/heads/anthrex/<id>`, or anything under `…/<id>/`, takes an id.
   **Carry for M8a.22:** call it with `git for-each-ref refs/heads/anthrex/` output, beside
@@ -4233,3 +4222,117 @@ file matches only doc comments.
     scratch worktree under `/private/tmp`.
   - So they depend on the checkout's location or load (load average 20–30), not on this
     change, which touches neither the registry nor the server.
+
+### M8a.11 fix round 1 (2026-09-23)
+
+Review `.superpowers/sdd/M8a-orchestration-engine-core/task-11-review.md` found 3 Important
+and 8 Minor issues. Rulings T11-I1..I3 and T11-minors apply. Each fix has a test that failed
+first.
+
+**I1–I3: the N5 hold is task state (ruling T11-I1..I3).** The review found three sequences
+in which a started task went back to `working` with an unfinished dependency, or before its
+hand-back. The hold now lives in the new `engine/holds.rs`:
+
+- **The hold.** `enforce_holds` runs first in every scheduler pass. A started task
+  (`start_commit` set, not finished) that has an unfinished dependency gets
+  `awaiting_deps = true` as soon as it gains one, whether or not an answer exists.
+- **While held.**
+  - The task is never `working`. When `answer` un-blocks it, the engine sets it back to
+    `blocked(question)` with `answered; resumes once <deps> merged`, or, once the
+    dependencies are done, `answered; resumes once the run head is merged into its
+    worktree`.
+  - Its messages wait in the outbox, because a blocked task takes no delivery.
+- **The hand-back.** `resume_held` sends exactly one `HandBack` when all of these hold:
+  - every dependency is finished;
+  - the task is `blocked(question)`;
+  - a message is waiting for it (it was answered);
+  - no `HandBack` of its is in flight.
+
+  An unanswered held task is not handed back until its answer arrives. So the answer's own
+  step carries the hand-back, and the delivery follows it.
+- **The result** (`handed_back`):
+  - Conflicted files queue `conflict_message(files)`.
+  - If a dependency is still unfinished (one added while the merge ran), the hold is kept
+    and another hand-back follows when it finishes.
+  - Otherwise the hold is cleared, the task returns to `working` with no block, and its
+    queued messages (answers, then the conflict message) go out as one turn joined per
+    decision 29.
+  - A failed hand-back is `blocked(environment)`, which `resume_held` does not retry.
+- **Minor 8.** A `dep_cancelled` block replaces the hold: `awaiting_deps` is cleared. The
+  held message stays queued, since `dep_cancelled` is permanent until M9's `remove_dep`.
+- **Tests** (`engine/tests/holds.rs`, the review's probes r1, r2, r3 and r6):
+  - `an_answer_after_the_new_dependency_merged_hands_back_first`;
+  - `a_dependency_added_while_the_hand_back_runs_keeps_the_hold`;
+  - `an_answer_while_the_hand_back_runs_waits_for_it`, which also asserts no second
+    hand-back over three ticks and the joined `A`, `B` and conflict turn;
+  - `a_cancelled_dependency_replaces_the_hold`.
+- `requests.rs`'s `hold_or_queue` is gone: an edit's message is simply queued.
+
+**Minors (ruling T11-minors):**
+
+1. **Hub starvation.** No change. It stays recorded for M9.5; see the M8a.11 notes.
+2. **Pre-warm places.** Only a pending pre-warm, or a pre-warmed task that is still a
+   `queued` root, holds a pre-warm place. Test:
+   `a_prewarmed_task_that_gains_a_dependency_releases_its_prewarm_place`.
+3. **Unpinned guards.**
+   - `a_cancel_waits_for_the_worktree_op_in_flight`: no removal while the pre-warm runs,
+     and no second `RemoveWorktree` while the first runs.
+   - `a_dispatch_overtaken_by_a_merge_is_prepared_again`: the `from == run_head` re-check.
+   - The in-flight `HandBack` guard is covered by the I3 test.
+4. **Reject and approve while discarding.** While a `Discard` (or `Accept`) is in flight,
+   `reject` and `approve` reply `run <id> is being discarded` (or `accepted`), and no
+   second `Discard` is sent. Test: `a_run_being_discarded_refuses_reject_and_approve`.
+5. **Restore bumps the revision.** A restore that pauses a running run bumps its revision.
+   Test: `a_restore_that_changes_a_run_bumps_its_revision`, which also checks that an
+   unchanged `awaiting_approval` run keeps revision 1.
+6. **Counter-only changes and the delivery retry.**
+   - A step whose only change to a run is a round's `last_event`, `tool_calls` or `usage`
+     gives `Persist { urgent: false }` and `Publish { structural: false }`. Any other change
+     is urgent and structural. `without_counters` compares the run with those fields
+     zeroed. Test: `counter_only_changes_are_neither_urgent_nor_structural`.
+   - A failed delivery is retried no earlier than `DELIVERY_RETRY_SECS` later, through
+     `AgentRound.delivery_retry_at`, a new `#[serde(default)]` field. `delivery_failures`
+     counts, and a success resets both. Test: `a_failed_delivery_waits_before_it_is_retried`.
+     The block after `DELIVERY_MAX_FAILURES` stays M8a.12's.
+7. **`summary` moved.** `summary` and `CHECK_SUMMARY_LINES` moved from `exec.rs` to the
+   pure `messages.rs`, and `exec.rs` re-exports them. The existing `exec` tests still cover
+   them.
+8. **The hold and `dep_cancelled`.** See I1–I3 above.
+
+**TDD and mutation evidence.**
+
+- With the tests added and no fix: `166 passed; 9 failed`.
+  - The two guard tests (`a_cancel_waits_…` and `a_dispatch_overtaken_…`) passed, since
+    they pin correct code.
+  - Sample failures:
+    - `left: [Ok("run engine-test-3f9a rejected; discarding it")] right: [Err("run
+      engine-test-3f9a is being discarded")]`;
+    - pre-warm `left: [] right: ["t0"]`;
+    - restore revision `left: 2 right: 3`;
+    - `urgent: true` where `false` was wanted;
+    - the I2 test `left: Working right: Blocked`.
+- 15 mutants were run against the new code; 13 were killed.
+  - `G7`, the removal's in-flight guard, first survived: the test's worktree did not exist
+    yet. The test was extended with the no-second-removal ticks, and the mutant is now
+    killed.
+  - `G3`, which drops the dependency re-check in `handed_back`, survives. It is
+    equivalent: `enforce_holds` takes the hold back in the same step, before any delivery.
+    The re-check is kept, as the ruling requires, as the first layer.
+- After the fixes: `175 passed; 0 failed` in `run::`.
+
+**The three integration tests that failed in this worktree** (`git_registry` ×2,
+`server_git` ×1, M8a.11's gates):
+
+- They failed only with this worktree's own `target/` (25 GB).
+- They passed from the same Desktop worktree with a fresh `CARGO_TARGET_DIR` inside it, and
+  from `/private/tmp`. So neither the Desktop path nor TCC is the cause.
+- After `cargo clean -p anthrex-daemon`, which removed 268 792 files and 67.4 GiB, mostly
+  incremental caches, they pass in the normal `target/`.
+- The cause is stale build state for the daemon package in this worktree's `target/`. The
+  exact mechanism was not pinned down. The tests themselves are fine and were not changed.
+
+**Gates.** `cargo build --workspace --all-targets`, clippy with `-D warnings`, `cargo fmt
+--all --check`, and `cargo test -p anthrex-daemon` all pass: 34 test binaries, 0 failures,
+621 unit tests. `engine/dispatch.rs` passed 600 lines, so the hold code moved to
+`engine/holds.rs` (134 lines).
+

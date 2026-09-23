@@ -7,13 +7,13 @@
 
 use proto::{AgentRole, BlockInfo, BlockReason, RunState, Runtime, TaskState};
 
-use super::outbox;
 use super::schedule::{
     deps_done, dispatch_order, hub_holds_slot, needs_reviewer, op_in_flight, readers_busy,
     writers_busy,
 };
 use super::{Effect, OpKind, OpResult, emit_op, next_op};
-use crate::run::contract::{conflict_message, reviewer_prompt, worker_prompt};
+use super::{holds, outbox};
+use crate::run::contract::{reviewer_prompt, worker_prompt};
 use crate::run::env::profile_env;
 use crate::run::model::{AgentRound, OpId, Run, TaskEvent};
 use crate::run::role_launch::{jitter_ms, reviewer_spec, session_uuid, worker_spec};
@@ -25,12 +25,13 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     if run.state.is_terminal() || finishing(run) {
         return;
     }
+    holds::enforce_holds(run, now);
     requeue(run);
     if integration_ready(run) {
         match run.state {
             RunState::AwaitingApproval => prewarm(run, now, fx),
             RunState::Running => {
-                resume_held(run, fx);
+                holds::resume_held(run, fx);
                 dispatch_writers(run, now, fx);
                 dispatch_reviewers(run, fx);
             }
@@ -43,11 +44,18 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     }
 }
 
-/// A `Discard` or `Accept` is in flight: nothing more starts.
+/// A `Discard` or `Accept` in flight, named as a reply says it (`discarded`,
+/// `accepted`): nothing more starts, and the gate's requests are refused.
+pub(super) fn finishing_as(run: &Run) -> Option<&'static str> {
+    run.pending_ops.values().find_map(|p| match p.kind {
+        OpKind::Discard { .. } => Some("discarded"),
+        OpKind::Accept { .. } => Some("accepted"),
+        _ => None,
+    })
+}
+
 fn finishing(run: &Run) -> bool {
-    run.pending_ops
-        .values()
-        .any(|p| matches!(p.kind, OpKind::Discard { .. } | OpKind::Accept { .. }))
+    finishing_as(run).is_some()
 }
 
 /// The integration worktree exists (its `CreateRunBranch` has come back).
@@ -117,10 +125,15 @@ fn prepare(run: &mut Run, i: usize, from: String, fx: &mut Vec<Effect>) {
 /// `max_writers` tasks with neither declared nor implicit dependencies, in dispatch
 /// order, from `base_sha`. No session starts.
 fn prewarm(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+    // A pre-warm place is held by a pending pre-warm, or by a pre-warmed task that is
+    // still a root; one that has gained a dependency releases it (review minor 2).
     let mut held = (0..run.tasks.len())
         .filter(|&i| {
             let t = &run.tasks[i];
-            !t.state.is_finished() && (t.prewarmed || prepare_in_flight(run, i))
+            let root = t.state == TaskState::Queued
+                && t.spec.deps.is_empty()
+                && t.implicit_deps.is_empty();
+            !t.state.is_finished() && ((t.prewarmed && root) || prepare_in_flight(run, i))
         })
         .count();
     for i in dispatch_order(run) {
@@ -268,6 +281,7 @@ fn new_round(
         wrap_up_sent: false,
         retiring: false,
         delivery_failures: 0,
+        delivery_retry_at: None,
     }
 }
 
@@ -297,34 +311,6 @@ fn dispatch_reviewers(run: &mut Run, fx: &mut Vec<Effect>) {
             path: run.review_path(task.id()),
         };
         let id = task.id().to_string();
-        emit_op(run, op, Some(&id), kind, fx);
-    }
-}
-
-/// M8a.6 ruling N5: a started task holding a message until its dependencies finished
-/// gets the run head merged into its worktree first (decision 36's hand-back), and
-/// resumes only when that comes back.
-fn resume_held(run: &mut Run, fx: &mut Vec<Effect>) {
-    for i in 0..run.tasks.len() {
-        let task = &run.tasks[i];
-        let question = task
-            .block
-            .as_ref()
-            .is_some_and(|b| b.reason == BlockReason::Question);
-        if task.state != TaskState::Blocked
-            || !task.awaiting_deps
-            || !question
-            || !deps_done(run, task)
-            || op_in_flight(run, task.id(), |k| matches!(k, OpKind::HandBack { .. }))
-        {
-            continue;
-        }
-        let (id, worktree) = (task.id().to_string(), task.worktree.clone());
-        let op = next_op(run);
-        let kind = OpKind::HandBack {
-            worktree,
-            run_head: run.run_head.clone(),
-        };
         emit_op(run, op, Some(&id), kind, fx);
     }
 }
@@ -502,33 +488,6 @@ pub(super) fn review_ready(
         jitter_ms: jitter,
     };
     emit_op(run, op, Some(&id), kind, fx);
-}
-
-/// The result of an N5 `HandBack`: the task resumes, with any conflict to resolve.
-/// A hand-back from the merge queue (decision 36) is M8a.14's.
-pub(super) fn handed_back(run: &mut Run, i: usize, result: OpResult, now: u64) {
-    let task = &run.tasks[i];
-    if task.state != TaskState::Blocked || !task.awaiting_deps {
-        return;
-    }
-    match result {
-        OpResult::HandedBack { files } => {
-            let task = &mut run.tasks[i];
-            task.awaiting_deps = false;
-            task.state = TaskState::Working;
-            task.block = None;
-            history(run, i, now, "dependencies merged; resuming");
-            if !files.is_empty() {
-                let id = run.tasks[i].id().to_string();
-                outbox::queue(run, &id, conflict_message(&files), now);
-            }
-        }
-        OpResult::Failed { message } => {
-            let text = format!("could not merge the run head into its worktree: {message}");
-            block(run, i, BlockReason::Environment, text, now);
-        }
-        _ => {}
-    }
 }
 
 /// The result of a `RemoveWorktree`.

@@ -257,3 +257,41 @@ fn revision_bumps_on_every_change_and_only_then() {
     let effects = fx.signal(4242, AgentSignal::Activity);
     assert!(effects.is_empty(), "{effects:#?}");
 }
+
+/// Review minor 6: a counter-only change is persisted lazily and published as a
+/// counter update; a structural one is urgent.
+#[test]
+fn counter_only_changes_are_neither_urgent_nor_structural() {
+    let mut fx = Fixture::new(&plan_with(PROFILE, &[task("t1", "S", "a", "")]));
+    fx.ready(true);
+    let window = fx.launch_all()[0].1;
+    for signal in [
+        AgentSignal::ToolUse {
+            name: "Bash".into(),
+        },
+        AgentSignal::Activity,
+    ] {
+        let effects = fx.signal(window, signal);
+        assert_eq!(
+            effects,
+            vec![
+                Effect::Persist {
+                    run_id: RUN_ID.into(),
+                    urgent: false
+                },
+                Effect::Publish { structural: false },
+            ]
+        );
+    }
+    let effects = fx.signal(
+        window,
+        AgentSignal::Init {
+            session_id: "s-1".into(),
+        },
+    );
+    assert!(effects.contains(&Effect::Persist {
+        run_id: RUN_ID.into(),
+        urgent: true
+    }));
+    assert!(effects.contains(&Effect::Publish { structural: true }));
+}
