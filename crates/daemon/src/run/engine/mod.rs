@@ -10,8 +10,12 @@
 //! (decision 29's gate, first part), and the revision counter (decision 47). Files:
 //! `requests.rs` (client requests), `schedule.rs` (runnability, ordering and slots,
 //! pure functions of a run), `dispatch.rs` (what the scheduler starts, and the results
-//! of the ops it emits), `outbox.rs` (the message queue and its delivery gate). Later
-//! tasks add `done.rs`, `gates.rs`, `merge.rs`, `ladder.rs` and `restore.rs`.
+//! of the ops it emits), `outbox.rs` (the message queue and its delivery gate).
+//!
+//! M8a.12 adds `done.rs` (the done gate, `task_blocked` and the turn-end fallback),
+//! `tools.rs` (the worker tools' arguments), `signals.rs` (decision 32's session rules
+//! and the stall watchdog) and `ladder.rs` (decision 38's ladder and decision 40's
+//! budgets). Later tasks add `gates.rs`, `merge.rs` and `restore.rs`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -22,14 +26,19 @@ use super::model::{OpId, PendingOp, Run};
 use super::validate::EditScope;
 
 mod dispatch;
+mod done;
 mod holds;
+pub(crate) mod ladder;
 mod ops;
 mod outbox;
 mod requests;
 pub(crate) mod schedule;
+mod signals;
+mod tools;
 
 pub use crate::headless::TurnOutcome;
 pub use ops::{OpKind, OpResult};
+pub use signals::INTERRUPT_GRACE_SECS;
 
 /// Identifies a client request waiting for its [`Effect::Reply`].
 pub type ReplyId = u64;
@@ -252,22 +261,22 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
         EventKind::Cancel { reply, .. } => requests::not_yet(&mut fx, reply, "run cancel"),
         EventKind::Resume { reply, .. } => requests::not_yet(&mut fx, reply, "run resume"),
         EventKind::Finish { reply, .. } => requests::not_yet(&mut fx, reply, "run finish"),
-        EventKind::Tool { reply, call } => {
-            requests::not_yet(&mut fx, reply, &format!("the {} tool", call.tool))
-        }
+        EventKind::Tool { reply, call } => done::tool(&mut state, reply, call, now, &mut fx),
         EventKind::BaseAdvanced { .. } => {}
         EventKind::OpDone { run_id, op, result } => {
             op_done(&mut state, &run_id, op, result, now, &mut fx)
         }
-        EventKind::Signal { window_id, signal } => on_signal(&mut state, window_id, signal, now),
+        EventKind::Signal { window_id, signal } => {
+            signals::on_signal(&mut state, window_id, signal, now, &mut fx)
+        }
         EventKind::Delivered {
             run_id,
             message_ids,
             ok,
-            ..
+            error,
         } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
-                outbox::delivered(run, &message_ids, ok, now);
+                outbox::delivered(run, &message_ids, ok, error, now);
             }
         }
         EventKind::Restore { runs, replay } => {
@@ -326,11 +335,14 @@ fn finish(
     (std::mem::take(state), out)
 }
 
-/// `run` with every round's counters zeroed and its revision fixed, to tell a
-/// counter-only change from a structural one.
+/// `run` with every round's and task's counters zeroed and its revision fixed, to tell
+/// a counter-only change from a structural one.
 fn without_counters(run: &Run) -> Run {
     let mut run = run.clone();
     run.revision = 0;
+    for task in run.tasks.iter_mut() {
+        task.spent_total = Default::default();
+    }
     for round in run.tasks.iter_mut().flat_map(|t| t.rounds.iter_mut()) {
         round.last_event = 0;
         round.tool_calls = 0;
@@ -372,40 +384,11 @@ fn op_done(
         (OpKind::HandBack { .. }, Some(i)) => holds::handed_back(run, i, result, now, fx),
         (OpKind::AbortMerge { .. }, Some(i)) => holds::merge_aborted(run, i, result, now),
         (OpKind::RemoveWorktree { .. }, Some(i)) => dispatch::removed(run, i, result, now),
-        // The other kinds' results are handled by M8a.12 to M8a.15.
-        _ => {}
-    }
-}
-
-/// A window's session signal, applied to its round (decision 27). M8a.11 keeps the turn
-/// state delivery needs and the counters; M8a.12 adds the rest of decision 32.
-fn on_signal(state: &mut EngineState, window_id: u32, signal: AgentSignal, now: u64) {
-    let round = state
-        .runs
-        .values_mut()
-        .flat_map(|run| run.tasks.iter_mut())
-        .flat_map(|task| task.rounds.iter_mut())
-        .filter(|r| r.window_id == Some(window_id))
-        .last();
-    let Some(round) = round else {
-        return;
-    };
-    round.last_event = now;
-    match signal {
-        AgentSignal::Init { session_id } => round.session_id = Some(session_id),
-        AgentSignal::TurnStarted => round.turn_open = true,
-        AgentSignal::ToolUse { .. } => round.tool_calls += 1,
-        AgentSignal::TurnEnded { .. } => round.turn_open = false,
-        AgentSignal::ProcessStarted { pid } => round.pid = Some(pid),
-        AgentSignal::ProcessExited {
-            killed_by_engine: true,
-            ..
-        } => {
-            round.ended = true;
-            round.ended_at = Some(now);
-            round.turn_open = false;
-            round.pid = None;
-        }
+        (OpKind::VerifyDone { .. }, Some(i)) => done::checked(run, i, result, now, fx),
+        (OpKind::CountCommits { .. }, Some(i)) => done::counted(run, i, result, now, fx),
+        (OpKind::DiffSoFar { .. }, Some(i)) => ladder::fresh_diff(run, i, result, now, fx),
+        (OpKind::ResumeSession { .. }, Some(i)) => outbox::resumed(run, i, result, now),
+        // The other kinds' results are handled by M8a.13 to M8a.15.
         _ => {}
     }
 }

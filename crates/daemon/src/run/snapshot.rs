@@ -8,6 +8,7 @@ use proto::{
 
 use super::contract::sha7;
 use super::engine::EngineState;
+use super::engine::ladder::{round_spend, total_spend};
 use super::engine::schedule::{critical_path, readers_busy, waves, writers_busy};
 use super::messages::summary;
 use super::model::{AgentRound, Run, Task};
@@ -132,19 +133,12 @@ fn round_info(r: &AgentRound, now: u64) -> AgentRoundInfo {
 /// The current worker session's spend: its tool calls, seconds since it started, and
 /// billable tokens (decision 40).
 fn session_spend(task: &Task, now: u64) -> Spend {
-    let Some(r) = task
-        .rounds
+    task.rounds
         .iter()
         .rev()
         .find(|r| r.role == AgentRole::Worker)
-    else {
-        return Spend::default();
-    };
-    Spend {
-        tool_calls: r.tool_calls,
-        secs: r.ended_at.unwrap_or(now).saturating_sub(r.started_at),
-        tokens: r.usage.billable(),
-    }
+        .map(|r| round_spend(r, now))
+        .unwrap_or_default()
 }
 
 /// `<hh:mm>` in UTC.
@@ -172,7 +166,7 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64) -> TaskInfo 
         review_route: t.review_route.clone(),
         budget: t.budget,
         spent_session: session_spend(t, now),
-        spent_total: t.spent_total,
+        spent_total: total_spend(t, now),
         state: t.state,
         block: t.block.clone(),
         rung: t.rung,

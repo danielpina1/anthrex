@@ -742,6 +742,13 @@ scope.
   `try again at <date>` time. Mark the Codex runtime unavailable until then: no dispatch
   or delivery to Codex sessions, and route new work to the peer runtime where the roster
   allows it. Do not retry.
+  - **M8a.12 (2026-09-23) passed this on to M9.5, whole.** Decision 32 fixes the wait
+    after a failed rate-limit turn at `rate_limit_retry_secs`, and no M8a.12 decision
+    covers a per-runtime availability clock, routing around a runtime, or a parsed
+    reset time. The reset time also has no time zone (`Sep 25th, 2026 11:33 AM`), so
+    turning it into the reducer's unix seconds needs a rule nobody has set. M8a.12
+    counts the failure as a rate-limit event (`Run.rate_limits["codex"]`) and waits as
+    decision 32 says.
 - **An interrupted turn stays `Running` in the conversation** (M8a.7 review M3, for M8a.18
   and M8c). An interrupted Codex turn ends with `ProcessExited` and no `turn.*` line.
   Claude fires no `Stop` hook for an interrupted turn, and with `hooks_fire` the

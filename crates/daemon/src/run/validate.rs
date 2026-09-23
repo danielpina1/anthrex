@@ -433,6 +433,8 @@ fn new_task(
         start_commit: None,
         head: None,
         done: None,
+        claim: None,
+        fresh_session: None,
         rounds: Vec::new(),
         reviews: Vec::new(),
         checks: Vec::new(),

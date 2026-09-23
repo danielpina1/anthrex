@@ -12,10 +12,10 @@ use super::schedule::{
     writers_busy,
 };
 use super::{Effect, OpKind, OpResult, emit_op, next_op};
-use super::{holds, outbox};
-use crate::run::contract::{reviewer_prompt, worker_prompt};
+use super::{holds, ladder, outbox, signals};
+use crate::run::contract::{handover_prompt, reviewer_prompt, worker_prompt};
 use crate::run::env::profile_env;
-use crate::run::model::{AgentRound, OpId, Run, TaskEvent};
+use crate::run::model::{AgentRound, FreshSession, OpId, Run, Task, TaskEvent};
 use crate::run::role_launch::{jitter_ms, reviewer_spec, session_uuid, worker_spec};
 use crate::run::roster::pick_reviewer;
 
@@ -32,6 +32,8 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             RunState::AwaitingApproval => prewarm(run, now, fx),
             RunState::Running => {
                 holds::resume_held(run, fx);
+                signals::watch(run, now, fx);
+                ladder::start_fresh_sessions(run, fx);
                 dispatch_writers(run, now, fx);
                 dispatch_reviewers(run, fx);
             }
@@ -191,18 +193,53 @@ fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 
 /// A new worker session for task `i`, starting at `start` (decisions 24–26, 30).
 fn launch_worker(run: &mut Run, i: usize, start: String, now: u64, fx: &mut Vec<Effect>) {
+    launch(run, i, Some(start), worker_prompt, now, fx);
+}
+
+/// A fresh worker session for a started task (rung 2, or a resume that failed): its
+/// first turn is decision 30's hand-over prompt, ending with the messages a failed
+/// resume carried (decision 29).
+pub(super) fn launch_fresh(
+    run: &mut Run,
+    i: usize,
+    fresh: &FreshSession,
+    stat: &str,
+    patch: &str,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
+    let prompt = |run: &Run, task: &Task| {
+        let mut text = handover_prompt(run, task, &fresh.reason, stat, patch);
+        if let Some(append) = &fresh.append {
+            text.push_str("\n\n");
+            text.push_str(append);
+        }
+        text
+    };
+    launch(run, i, None, prompt, now, fx);
+}
+
+/// Session `n + 1` of task `i`, its first turn built once the session number is known;
+/// `start` is set on the first (a task blocked by the window limit has not started).
+fn launch(
+    run: &mut Run,
+    i: usize,
+    start: Option<String>,
+    first_turn: impl FnOnce(&Run, &Task) -> String,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
     if window_limit_reached(run, i, now) {
         return;
     }
     let op = next_op(run);
-    {
-        let task = &mut run.tasks[i];
-        task.start_commit = Some(start);
-        task.session += 1;
+    if let Some(start) = start {
+        run.tasks[i].start_commit = Some(start);
     }
+    run.tasks[i].session += 1;
     let task = &run.tasks[i];
     let spec = worker_spec(run, task);
-    let first_turn = worker_prompt(run, task);
+    let first_turn = first_turn(run, task);
     let name = format!("{}/{}.w{}", run.short(), task.id(), task.session);
     let uuid = (task.route.runtime == Runtime::Claude).then(|| session_uuid(&run.id, op));
     let jitter = jitter_ms(&run.id, task.id(), task.session);
@@ -282,6 +319,11 @@ fn new_round(
         retiring: false,
         delivery_failures: 0,
         delivery_retry_at: None,
+        turn_denials: 0,
+        last_denial: None,
+        fallback_waiting: false,
+        carried: Vec::new(),
+        failed_error: None,
     }
 }
 

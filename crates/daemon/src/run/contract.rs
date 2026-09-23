@@ -5,9 +5,11 @@
 //! M8a.6 created this file with the two texts plan edits need, `answer_message` and
 //! `amend_message`; M8a.8 added the diff clamp. M8a.11 adds the two role contracts, the
 //! worker, hand-over and reviewer prompts (decision 30) and `conflict_message`; the
-//! other message texts arrive with the tasks that send them (M8a.12 to M8a.14).
+//! other message texts arrive with the tasks that send them: M8a.12 adds the done gate's,
+//! the nudges, the stall, budget, rate-limit and denial texts, and decisions 54–56's.
+//! M8a.13 and M8a.14 add the rest.
 
-use proto::{Finding, Severity, Size, TestMode};
+use proto::{Budget, Finding, Severity, Size, Spend, TestMode};
 
 use super::messages::summary;
 use super::model::{ReviewLevel, Run, Task};
@@ -245,6 +247,82 @@ pub fn amend_message(task: &Task) -> String {
     lines.extend(task.spec.acceptance.iter().map(|item| format!("- {item}")));
     lines.push("Continue with the amended task.".to_string());
     lines.join("\n")
+}
+
+/// Decision 32: the reply to an accepted `task_done` (exact).
+pub const DONE_ACCEPTED: &str = "Done recorded. The engine is running the gates now; stop and wait. If anything fails you will get an [anthrex] message.";
+
+/// Decision 32: the reply to `task_blocked`, `Blocked recorded (<kind>). Stop and wait
+/// for an answer.`
+pub fn blocked_recorded(kind: &str) -> String {
+    format!("Blocked recorded ({kind}). Stop and wait for an answer.")
+}
+
+/// Decision 32's turn-end fallback, with commits (exact).
+pub const DONE_NUDGE: &str = "[anthrex] Your turn ended with commits on your branch and no task_done. If the task is complete, call task_done now (for a tdd task, with test and red). If you are stuck, call task_blocked.";
+
+/// Decision 32's turn-end fallback, without a commit (exact).
+pub const NO_COMMIT_NUDGE: &str = "[anthrex] Your turn ended and your branch has no commit yet. Continue the task and commit, or call task_blocked with the reason.";
+
+/// Decision 32: a session whose process died mid-turn, resumed (exact).
+pub const RESUME_AFTER_EXIT: &str = "[anthrex] Your session's process stopped in the middle of a turn and has been resumed. Check the state of your worktree, continue, commit, and call task_done when complete.";
+
+/// Decision 32's stall nudge, after the interrupted turn.
+pub fn stall_nudge(minutes: u64) -> String {
+    format!(
+        "[anthrex] Your last turn was interrupted after {minutes} minutes without any progress. Continue the task, or call task_blocked if you cannot."
+    )
+}
+
+/// Decision 40's soft budget message: the session's spend against the task's budget.
+pub fn budget_wrap_up(spent: Spend, budget: Budget) -> String {
+    format!(
+        "[anthrex] This task has used its budget ({}/{} tool calls, {}/{} minutes). Wrap up now: commit what works and call task_done, or call task_blocked with kind mis_sized.",
+        spent.tool_calls,
+        budget.tool_calls,
+        spent.secs / 60,
+        budget.minutes
+    )
+}
+
+/// Decision 32: the continue after a failed turn's wait.
+pub fn rate_limit_continue(reason: &str) -> String {
+    format!(
+        "[anthrex] Your last turn stopped on an API error ({reason}). Continue the task where you left off."
+    )
+}
+
+/// Decision 32: the block text after `denials_before_block` denials.
+pub fn denied_text(n: u32, tool: &str, reason: &str) -> String {
+    format!("the agent was denied {n} times; last: {tool}: {reason}")
+}
+
+/// Decision 55's rung-1 message (exact).
+pub fn generated_files_message(files: &[String]) -> String {
+    let files = files.join(", ");
+    format!(
+        "[anthrex] task_done rejected: you changed generated files outside this task's owns: {files}. Revert them (git checkout <start> -- {files}, then commit), or this task must own them. Then call task_done again."
+    )
+}
+
+/// Decision 56's rung-1 message (exact): one line per file.
+pub fn protected_file_message(files: &[String]) -> String {
+    let mut lines = vec!["[anthrex] task_done rejected:".to_string()];
+    lines.extend(files.iter().map(|path| {
+        format!(
+            "{path} configures or instructs future agents; this task may change it only if its owns names it exactly"
+        )
+    }));
+    lines
+        .push("Revert it and call task_done again, or ask for the plan to be amended.".to_string());
+    lines.join("\n")
+}
+
+/// Decision 54: the block text when Claude Code's sandbox cannot start (exact).
+pub fn sandbox_unavailable_text(error: &str) -> String {
+    format!(
+        "Claude Code's sandbox is unavailable here: {error}; set [orchestrator] worker_sandbox = false to run workers unsandboxed"
+    )
 }
 
 /// Decision 35 and ruling Q4: the reviewer's diff, and decision 30's hand-over diff, are

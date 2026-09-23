@@ -192,6 +192,22 @@ pub struct AgentRound {
     /// `DELIVERY_RETRY_SECS`; M8a.11 fix round 1).
     #[serde(default)]
     pub delivery_retry_at: Option<u64>,
+    /// `PermissionDenied` events seen in the open turn, so its `TurnEnded`'s
+    /// `permission_denials` count adds only the rest (decision 27; M8a.12).
+    #[serde(default)]
+    pub turn_denials: u32,
+    /// The latest denial, `<tool>: <reason>`, for `denied_text` (decision 32; M8a.12).
+    #[serde(default)]
+    pub last_denial: Option<String>,
+    /// A completed turn's fallback waits for open sub-agents (decision 32; M8a.12).
+    #[serde(default)]
+    pub fallback_waiting: bool,
+    /// The outbox messages an in-flight `ResumeSession` carries (decision 29; M8a.12).
+    #[serde(default)]
+    pub carried: Vec<u64>,
+    /// The failed turn's error, for its `rate_limit_continue` (decision 32; M8a.12).
+    #[serde(default)]
+    pub failed_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,6 +250,23 @@ pub struct DoneClaim {
     pub test: Option<String>,
     pub red: Option<String>,
     pub signal: DoneSignal,
+}
+
+/// A `task_done` claim (or the turn-end fallback's) whose `VerifyDone` is in flight;
+/// `reply` is the tool call's, `None` for the fallback (decision 32; M8a.12).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingClaim {
+    pub reply: Option<u64>,
+    pub claim: DoneClaim,
+}
+
+/// A fresh worker session the ladder (rung 2) or a failed resume has decided on,
+/// started once the old session is gone and `DiffSoFar` has come back (decisions 28,
+/// 30, 38; M8a.12). `append` ends the prompt: the messages a failed resume carried.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FreshSession {
+    pub reason: String,
+    pub append: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -292,6 +325,12 @@ pub struct Task {
     pub start_commit: Option<String>,
     pub head: Option<String>,
     pub done: Option<DoneClaim>,
+    /// The claim being verified (decision 32; M8a.12).
+    #[serde(default)]
+    pub claim: Option<PendingClaim>,
+    /// A fresh session waiting to start (M8a.12).
+    #[serde(default)]
+    pub fresh_session: Option<FreshSession>,
     pub rounds: Vec<AgentRound>,
     pub reviews: Vec<ReviewRecord>,
     pub checks: Vec<CheckRecord>,

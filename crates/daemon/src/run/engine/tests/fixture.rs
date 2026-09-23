@@ -17,6 +17,8 @@ pub use crate::run::test_support::{plan_with, task_toml};
 /// `b0` × 20: the base commit.
 pub const BASE: &str = "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0";
 pub const RUN_ID: &str = "engine-test-3f9a";
+/// A task head after its work (M8a.12).
+pub const HEAD: &str = "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1";
 pub const H4: &str = "3f9a";
 /// Distinct from every path the preflight has (`/tmp/x`, `/tmp/p`, `/tmp/p/.git`).
 pub const WT: &str = "/tmp/wt";
@@ -244,6 +246,76 @@ impl Fixture {
     pub fn launch_all(&mut self) -> Vec<(String, u32)> {
         self.complete_prepares();
         self.complete_windows()
+    }
+
+    /// A worker's MCP tool call from `window` for `t1` (M8a.12).
+    pub fn tool(
+        &mut self,
+        window: u32,
+        tool: &str,
+        args: serde_json::Value,
+    ) -> Vec<crate::run::engine::Effect> {
+        self.tool_as(proto::AgentRole::Worker, window, "t1", tool, args)
+    }
+
+    pub fn tool_as(
+        &mut self,
+        role: proto::AgentRole,
+        window: u32,
+        task: &str,
+        tool: &str,
+        args: serde_json::Value,
+    ) -> Vec<crate::run::engine::Effect> {
+        let reply = self.reply();
+        self.next(EventKind::Tool {
+            reply,
+            call: proto::ToolCall {
+                run_id: RUN_ID.into(),
+                task_id: Some(task.into()),
+                role,
+                window_id: window,
+                tool: tool.into(),
+                args,
+            },
+        })
+    }
+
+    /// A `TurnEnded` with `outcome`, no usage and no denials.
+    pub fn turn_ended(
+        &mut self,
+        window: u32,
+        outcome: crate::run::engine::TurnOutcome,
+    ) -> Vec<crate::run::engine::Effect> {
+        self.signal(
+            window,
+            AgentSignal::TurnEnded {
+                outcome,
+                usage: None,
+                denials: 0,
+            },
+        )
+    }
+
+    /// A completed turn.
+    pub fn turn_completed(&mut self, window: u32) -> Vec<crate::run::engine::Effect> {
+        self.turn_ended(window, crate::run::engine::TurnOutcome::Completed)
+    }
+
+    /// `DoneChecked` for task `id` with nothing wrong: two commits on its branch, a clean
+    /// tree, the red commit valid.
+    pub fn clean_check(&self, id: &str) -> OpResult {
+        OpResult::DoneChecked {
+            commits: 2,
+            dirty_tracked: 0,
+            merge_in_progress: false,
+            untracked_in_owns: Vec::new(),
+            outside_owns: Vec::new(),
+            generated_outside_owns: Vec::new(),
+            protected_changed: Vec::new(),
+            red_ok: Some(true),
+            head: HEAD.into(),
+            head_branch: Some(self.task(id).branch.clone()),
+        }
     }
 
     /// Stands in for M8a.14's merge queue: the task is merged at `commit`, which becomes

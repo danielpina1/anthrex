@@ -4503,3 +4503,286 @@ conflict tests moved to a new `engine/tests/holds_conflicts.rs` (357 lines), and
   - Both guards are kept as defence for M8a.12, when workers' own signals can block a
     task mid-delivery.
 
+
+### M8a.12 engine II: the done gate, turns, stalls, denials and budgets (2026-09-23)
+
+Decisions 27 (engine side), 29 (the gate), 32, 38 (stall, budget and rung-4 parts), 40,
+54 (the unavailable-sandbox block), 55 and 56 are in the reducer. Decision 2's grep over
+every new file matches only doc comments.
+
+**Module layout (beyond the brief's list, split by responsibility):**
+
+- `engine/done.rs`: `Event::Tool` (the MCP section's engine-side acceptance),
+  `task_done` and `task_blocked`, `VerifyDone`'s verdict, and the turn-end fallback.
+- `engine/tools.rs` (new): the worker tools' argument checks, which kept `done.rs` under
+  600 lines.
+- `engine/signals.rs` (new): `on_signal`, moved out of `mod.rs`, with every decision-32
+  session rule, plus `watch`, the watchdog each scheduler pass runs.
+- `engine/ladder.rs`: gate failures, stalls, hard breaches, rungs 1 to 4, budgets, and
+  rung 2's fresh session (`start_fresh_sessions`, `fresh_diff`). It is `pub(crate)` so
+  `snapshot.rs` shares `round_spend` and `total_spend`.
+- `engine/outbox.rs` gains resume-on-delivery, the `DELIVERY_MAX_FAILURES` block, the
+  failed turn's wait, and `ResumeSession`'s result.
+- `engine/dispatch.rs`'s `launch_worker` is split so `launch_fresh` shares it. The
+  session number is known before the first turn is built, so the hand-over prompt says
+  `session <n>` correctly.
+- Tests: `engine/tests/{done,done_tools,turns,turns_holds,budgets}.rs`. The brief's
+  `done.rs` would have been 655 lines, and `turns.rs` plus the budgets well over 600.
+
+**Model additions** (each `#[serde(default)]`):
+
+- `AgentRound.turn_denials`, `last_denial`, `fallback_waiting`, `carried` and
+  `failed_error`.
+- `Task.claim: Option<PendingClaim { reply, claim: DoneClaim }>`, the claim whose
+  `VerifyDone` is in flight.
+- `Task.fresh_session: Option<FreshSession { reason, append }>`, a fresh session decided
+  on and not yet started.
+
+**Name corrections and interface readings:**
+
+- `AgentSignal::TurnEnded.denials` stays a count (`u32`), as the Interfaces have it.
+  The driver passes `permission_denials.len()`. Only the part not already seen as
+  `PermissionDenied` events in that turn is added (`turn_denials`).
+  - `denied_text`'s `last: <tool>: <reason>` comes from the latest `PermissionDenied`
+    event.
+  - A denial reported only in `permission_denials` has no reason in the stream. If one
+    such denial reaches the threshold with no event before it, the text reads `a tool:
+    reported in the turn's permission_denials` (invented). Claude sends both forms
+    (M8a.1), so this is a fallback only.
+- `INTERRUPT_GRACE` is the driver's `Duration`. The reducer uses
+  `engine::INTERRUPT_GRACE_SECS = 30`, in the unix seconds it works in.
+- **The unavailable sandbox before `Init`.** `AgentSignal` has no stderr, so the engine
+  cannot classify a stderr line itself.
+  - **Carry for M8a.22 (driver contract):** when the session's stderr holds the text
+    M8a.1 records before any `Init`, send `TurnEnded { Failed { error, kind:
+    SandboxUnavailable } }`, then the `ProcessExited`.
+  - The engine then blocks the task on its environment with decision 54's text. The
+    exit that follows is not resumed, because the task is no longer `working`. The test
+    drives exactly that sequence with no `Init`.
+- `Event::Delivered.error` is now read. It becomes the block text on the third failure.
+- `generated_files_message` keeps the Interfaces' exact text, including the literal
+  `<start>` in `git checkout <start> -- <files>`: the signature carries only the files.
+  The worker prompt names the start commit.
+
+**Readings and choices (invented where marked):**
+
+- **The done gate.**
+  - Rejection order: HEAD off the task's branch (carry T8, M8a.8's proposed text), no
+    commit, dirty tracked files, a merge in progress, untracked files inside `owns`, the
+    tdd rule, then a bad `red`.
+  - The tdd rule applies only to an explicit `task_done`. A fallback claim goes on to its
+    proof, which fails, as decision 32 says.
+  - The engine re-filters `protected_changed` with `globs::names_literally` against
+    `owns`. The git layer already does this, so it is defence in depth, and
+    `a_protected_file_named_exactly_passes` feeds `AGENTS.md` in to pin it.
+  - Exempt means overridden: `merged_without_approval.is_some()`, which is also sent as
+    `VerifyDone.spill_exempt`.
+  - A spill (rung 3), a protected-file bounce or a generated-file bounce each reply `Err`
+    with its text. A rung-2 or rung-3 bounce of the `done` gate replies the same way.
+  - The first gate is chosen in this order:
+    - a handed-back task goes to `merge_queue` (decision 36), and `handed_back` is
+      cleared;
+    - tdd goes to `proof`;
+    - a check in the profile sends any other test mode to `check`;
+    - a reviewed task goes to `review`;
+    - anything else goes to `merge_queue`, pushed onto `Run.merge_queue`.
+
+    No gate op is sent: `proof`, `check` and the merge queue run in M8a.13 and M8a.14.
+  - Invented replies:
+    - `task_blocked is accepted only while the task is working (it is <state>)`, the
+      `task_done` text with the tool's name;
+    - `task_done is already being checked; wait for its reply`, when a second claim
+      arrives while one is in flight;
+    - `task_done could not be checked: <error>; call task_done again`, when
+      `VerifyDone` fails;
+    - the argument problems (`summary: required`, `must be 1 to 4000 characters`,
+      `red: must be 7 to 40 lowercase hex digits`, `<key>: unknown field`,
+      `arguments: must be an object`, `kind: must be one of …`);
+    - `submit_review is not available yet` (M8a.13's);
+    - an unknown tool gets the MCP section's `tool <tool> is not available to the
+      <role> role`.
+  - The fallback's claim has no reply, so its rejection is queued as `[anthrex] <text>`,
+    and the fallback starts over at the next turn end (invented). Its bounce text is
+    queued as the rung-1 message (decision 55).
+- **`task_blocked`.** `question` and `environment` keep the session alive for an answer.
+  `mis_sized` is rung 3 with `the worker reported the task mis-sized: <reason>`
+  (invented).
+- **The turn-end fallback.**
+  - It runs only when all of these hold:
+    - the task is `working`;
+    - no `task_done` was accepted in that turn;
+    - no claim is in flight;
+    - the turn was not interrupted by the watchdog;
+    - no `CountCommits` or `VerifyDone` is in flight.
+  - A claim still in flight at the turn end skips the fallback for that turn.
+  - `NO_COMMIT_NUDGE`'s turn is counted again. A commit then gives `DONE_NUDGE`, and
+    none is a stall.
+- **The ladder.**
+  - Rung texts are invented:
+    - rung 3 of a gate: `the <gate> gate failed <b> times (<f> failures in all); last:
+      <first line>`;
+    - rung 3 of stalls: `stalled <n> times …`;
+    - rung 3 of budgets: `exceeded its budget twice; last: <what>`;
+    - rung 4: `the task's total spend reached the next size's budget (<calls>/<limit>
+      tool calls, <m>/<limit> minutes)`.
+  - Rung 2, 3 and 4 each drop the task's undelivered messages: the killed session never
+    reads them, and rung 2's hand-over prompt carries the failure record. Every gate
+    failure's text joins `failure_log`.
+  - Rung 2 kills the session, escalates the route, and records `fresh_session`. Once
+    every worker round of the task has ended, the engine sends `DiffSoFar`, and its
+    result launches the session with `handover_prompt`. That requires a `working` task
+    with no hold (M8a.6 ruling N5). A `DiffSoFar` failure is named in the prompt's stat
+    line.
+  - Rung 4's ceiling is `budget_m` for a non-hub S task and `budget_l` otherwise,
+    compared with the task's total: tool calls and tokens counted on the task, seconds
+    summed over its worker rounds. It is checked before the session budget.
+  - `Task.spent_total.secs` is not stored. The snapshot's `spent_total` is
+    `ladder::total_spend`.
+- **Budgets.**
+  - Hard: `2 × spend >= 3 × budget`. The decision says 1.5 × the budget "is a breach",
+    so reaching it counts. With a 5-minute budget, 7:29 is not a breach and 7:30 is; the
+    test pins both.
+  - Soft: `spend >= budget` on any axis. `budget_wrap_up` is sent once per session.
+  - The minutes axis is checked at every scheduler pass of a running run.
+- **Stalls.**
+  - The clock starts at `max(last_event, rate_limited_until)`.
+  - A delivery or resume sets `last_event` to its time, so a turn delivered long after
+    the last event is not stalled at once (invented; `last_event` stays counter-only).
+  - `stall_nudge(stall_after_secs / 60)` is queued with the interrupt. `StallState::Nudged`
+    lasts for the rest of the session, so any later silence is the second stall.
+- **Rate limits and failed turns.**
+  - Any `ApiRetry` sets `rate_limited_until`. Only `error == "rate_limit"` starts or
+    continues a streak.
+  - A failed `RateLimit` turn sets `rate_limited_until` to its continue time. An `Other`
+    failure does not, so the snapshot does not show it as rate-limited, but the outbox
+    holds every message until its continue is sent (`FailedTurn::WaitingContinue`).
+  - "In a row" means the turn after an `Other` failure's continue. A completed turn
+    resets it.
+  - `Authentication` and `Billing` block the task and leave the session alive.
+    `SandboxUnavailable` blocks it and kills the session.
+- **Process exits.**
+  - A Codex exit between turns changes nothing.
+  - A Claude worker's exit between turns, or any worker exit while the task is not
+    `working` (a held task included), marks the round ended. The next delivery resumes
+    it with `ResumeSession` carrying the joined messages (`AgentRound.carried`).
+  - `Resumed` removes the carried messages from the outbox. `ResumeFailed` (or `Failed`)
+    ends the round and gives a fresh session at the same rung, with no failure counted,
+    whose prompt ends with those messages.
+  - A mid-turn exit with no session id to resume gets the same fresh session.
+  - A reviewer's unexpected exit only clears its pid, as in M8a.11: decision 35's resume
+    rule is M8a.13's.
+
+**Carries.**
+
+- **T8 (`task_done` off the task's branch): done.** M8a.8's proposed text is used,
+  tested for a branch and for a detached HEAD, and pinned by mutant M1.
+- **T7-C2 (the usage-limit reset time): passed on to M9.5, whole.** Decision 32 fixes the
+  wait at `rate_limit_retry_secs`. No M8a.12 decision gives a per-runtime availability
+  clock or a routing rule, and the reset time in the fixture has no time zone. The
+  follow-ups file's entry says so.
+- **The two guards in `holds.rs::abort_untold_conflict`.**
+  - **R5 (the `delivered_at.is_none()` filter) is reachable now.** A worker's
+    `task_blocked` can block a task whose conflict message is still being delivered, and
+    a blocked task can gain a dependency. `add_dep` on a `working` task is refused, which
+    is why it was unreachable before. Test:
+    `a_conflict_being_delivered_is_not_undone_when_the_task_is_held_again`, pinned by
+    mutant M18.
+  - **R4 (no `HandBack` or `AbortMerge` in flight) stays unreachable.** Such an op runs
+    only while the task is held, and nothing M8a.12 adds clears `awaiting_deps`. Every
+    new block applies only to a `working` task.
+- **"Not available yet" stubs.** `task_done` and `task_blocked` are replaced.
+  `submit_review` stays M8a.13's. Retry, override, cancel, resume and finish stay M8a.14
+  and M8a.15's.
+- **The N5 hold on every new path.**
+  - A process exit never resumes a task that is not `working`.
+  - A resume carrying a delivery goes through the outbox, which skips a blocked task.
+  - A fresh session requires `working` and no hold.
+  - Tests: `a_held_task_is_not_resumed_after_an_exit_or_by_a_delivery`, a real sequence,
+    and `a_held_task_gets_no_fresh_session_until_its_hand_back`. The second sets
+    `fresh_session` by hand: rung 2 needs a `working` task and a dependency needs a
+    blocked one, so no sequence reaches both today. It pins the guard, as mutant M13
+    shows.
+
+**Carries for later tasks.**
+
+- **M8a.13.**
+  - The engine moves a task into `proof`, `check` and `review` but sends no gate op.
+    The gates must start from those states.
+  - `ladder::gate_failure(run, i, GateKind, text, told, now, fx)` is ready for the
+    proof, check, review and merge failures. It returns the task to `working` at rung
+    1, where the fallback and watchdog apply again.
+  - A reviewer's exits and stalls are M8a.13's.
+- **M8a.15.**
+  - Restore must clear a `Task.claim` whose `VerifyDone` was dropped as `NotStarted`,
+    and a `CountCommits` fallback (`FallbackState::Counting`). Otherwise the task
+    refuses every later `task_done` as "already being checked".
+  - Retry can reuse `fresh_session` and `start_fresh_sessions`.
+- **M8a.22.** The driver contract above, and `Event::Delivered.error`.
+
+**TDD evidence.**
+
+- 35 tests were written first: the brief's 31, three N5/R5 tests in `turns_holds.rs`,
+  and `counter_changes_from_tool_calls_stay_lazy`. The run gave `42 passed; 33 failed`,
+  every failure for the missing behaviour.
+  - Two new tests passed at red, because both pin behaviour M8a.11 already had and that
+    the new code must keep:
+    - `a_session_the_engine_killed_is_not_treated_as_an_exit` (mutant M27, treating the
+      engine's kill as a death, kills it);
+    - `counter_changes_from_tool_calls_stay_lazy` (mutant M26, leaving `spent_total` out
+      of `without_counters`, kills it).
+  - Some of the failure lines:
+    - `left: Err("the task_done tool is not available yet") right: Err("unknown run
+      nope")`;
+    - `no reply yet: [Reply { … }]`;
+    - usage `left: TokenUsage { input: 0, … } right: TokenUsage { input: 112, … }`;
+    - rung 4 `left: Working right: Blocked`;
+    - `effects.contains(&Effect::Interrupt { … })`;
+    - rate limits `left: None right: Some(1)`.
+- Four test defects were found and fixed, and each fix is in the test:
+  - `add_dep` on a `working` task is refused, so the N5 and R5 tests now block t1 with
+    `task_blocked` first. The rewritten tests were not re-run red, but mutants M13, M14,
+    M18 and M20 show they pin the guards.
+  - The review case owned `crates/a/**`, which touches `source`, and rule 8.1 refused
+    `test_mode = "none"`. It now owns `docs/**`.
+  - The stall and rate-limit tests ran into S's 15-minute budget, which breaches at
+    22.5 minutes. They now use a 1000-minute budget.
+  - The rung-2 effort assertion assumed `high`. It now asserts one step up.
+- **Mutations**, each restored from a WIP commit (since folded): 27 run, 27 killed
+  (M26 and M27 are above).
+  - M24 (the delivery gate ignoring a pending continue) first survived: nothing was
+    queued during the wait. `failed_turns` now queues a message during an `Other`
+    failure's wait and expects it joined with the continue, and M24 is killed.
+  - The killed mutants are:
+    - M1, the branch check;
+    - M2, the literal re-filter;
+    - M3, the protected check before the spill split;
+    - M4, the override exemption;
+    - M5, a floored 1.5 ×;
+    - M6, cache reads made billable;
+    - M7, the wrap-up sent more than once;
+    - M8, rung 4 off;
+    - M9, denials not de-duplicated;
+    - M10, a streak's failure counted twice;
+    - M11, the stall clock ignoring rate limits;
+    - M12, three deaths instead of two;
+    - M13, a fresh session under the hold;
+    - M14, no resume on delivery;
+    - M15, no delivery block;
+    - M16, a Codex exit that ends the round;
+    - M17, no sub-agent deferral;
+    - M18, R5;
+    - M19, the tdd rule applied to the fallback;
+    - M20, a held task resumed after an exit;
+    - M21, delivery to a blocked task;
+    - M22, the interrupt grace;
+    - M23, `Other` failures that never block;
+    - M24, the continue wait;
+    - M25, a rung-1 text queued as well as replied.
+
+**Gates.**
+
+- `cargo build --workspace --all-targets`, clippy with `-D warnings` and `cargo fmt
+  --all --check` are clean.
+- `cargo test -p anthrex-daemon` passes: 34 binaries, 665 unit tests.
+- One run under a load average of 28 failed once in `tests/window.rs`, which does not
+  touch the engine. It passed alone, and on two full re-runs.
