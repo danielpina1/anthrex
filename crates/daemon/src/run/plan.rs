@@ -175,6 +175,7 @@ pub fn run_limits(
         worker_codex_sandbox: config.worker_codex_sandbox.clone(),
         worker_sandbox: config.worker_sandbox,
         claude_auth: config.claude.auth.into(),
+        api_key_helper: config.claude.api_key_helper.clone(),
     }
 }
 
@@ -336,6 +337,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         merge_queue: Vec::new(),
         outbox: Vec::new(),
         next_message: 1,
+        pending_ops: Default::default(),
         next_op: 1,
         windows_created: 0,
         // Decision 47: revisions start at 1. Decision 34: no check, unverified.
@@ -369,6 +371,15 @@ pub fn slug(goal: &str, suffix: u16) -> String {
     let head = out.trim_end_matches('-');
     let head = if head.is_empty() { "run" } else { head };
     format!("{head}-{suffix:04x}")
+}
+
+/// Decision 15's redraw test, the refs half (M8a.8's carry): whether a branch in `refs`
+/// (full names, as `git for-each-ref refs/heads/anthrex/` lists them) takes `id`. The
+/// driver also counts `<data_dir>/runs/<id>`.
+pub fn run_id_taken(id: &str, refs: &[String]) -> bool {
+    let branch = format!("refs/heads/anthrex/{id}");
+    let under = format!("{branch}/");
+    refs.iter().any(|r| *r == branch || r.starts_with(&under))
 }
 
 /// A random 16-bit suffix, drawn from the standard library's per-process random hash

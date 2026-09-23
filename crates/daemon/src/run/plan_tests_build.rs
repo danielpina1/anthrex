@@ -129,3 +129,34 @@ fn dot_components_in_owns_are_rejected() {
         ]
     );
 }
+
+/// M8a.8's carry (minor 9, RR3): a run id is taken by `refs/heads/anthrex/<id>` itself
+/// (git could not create `anthrex/<id>/integration` beside it) and by any branch under
+/// `anthrex/<id>/`; a longer id sharing the prefix is not.
+#[test]
+fn a_run_id_is_taken_by_its_own_branch_or_anything_under_it() {
+    let refs = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+    let id = "add-reset-3f9a";
+    assert!(!run_id_taken(id, &[]));
+    assert!(run_id_taken(
+        id,
+        &refs(&["refs/heads/anthrex/add-reset-3f9a"])
+    ));
+    assert!(run_id_taken(
+        id,
+        &refs(&["refs/heads/anthrex/add-reset-3f9a/integration"])
+    ));
+    assert!(run_id_taken(
+        id,
+        &refs(&["refs/heads/anthrex/add-reset-3f9a/x/y"])
+    ));
+    assert!(!run_id_taken(
+        id,
+        &refs(&[
+            "refs/heads/anthrex/add-reset-3f9ab",
+            "refs/heads/anthrex/add-reset-3f9a-2/t1",
+            "refs/heads/add-reset-3f9a",
+            "refs/anthrex/salvage/add-reset-3f9a/t1/1",
+        ])
+    ));
+}

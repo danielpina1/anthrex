@@ -21,7 +21,7 @@ use std::path::PathBuf;
 /// Everything needed to launch (and re-launch) one headless session. Persisted in the
 /// window's opaque `WindowRecord.run` (decision 28), so a restored window can be resumed
 /// with every flag re-passed.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HeadlessSpec {
     pub runtime: Runtime,
     /// Empty: the runtime's configured default (Codex only, decision 23).

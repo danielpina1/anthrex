@@ -3,8 +3,9 @@
 //!
 //! M8a.4 added [`ReviewLevel`] (refresh note C41); M8a.5 adds the rest of the model the
 //! Interfaces list for `run/model.rs`: [`Profile`], [`RunLimits`], [`Task`], [`Run`] and
-//! the per-round records a task carries. `PendingOp` and `Run.pending_ops` wait for
-//! M8a.11, because `PendingOp` holds the engine's `OpKind`, which does not exist yet.
+//! the per-round records a task carries. M8a.11 adds [`PendingOp`] and `Run.pending_ops`
+//! (they hold the engine's `OpKind`), `Task.worktree_live`, `Task.awaiting_deps` and
+//! `RunLimits.api_key_helper`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -14,6 +15,8 @@ use proto::{
     RunState, Runtime, Size, Spend, TaskState, TestMode, TokenUsage, Verdict,
 };
 use serde::{Deserialize, Serialize};
+
+use super::engine::OpKind;
 
 /// How thoroughly a task is reviewed, decision 35: `S` tasks get `Small`, `M` tasks
 /// `Medium`, hub tasks `Frontier`, each possibly raised by the level rule (no `check` in
@@ -78,6 +81,15 @@ impl From<config::ClaudeAuth> for ClaudeAuth {
     }
 }
 
+impl From<ClaudeAuth> for config::ClaudeAuth {
+    fn from(auth: ClaudeAuth) -> Self {
+        match auth {
+            ClaudeAuth::Login => config::ClaudeAuth::Login,
+            ClaudeAuth::ApiKey => config::ClaudeAuth::ApiKey,
+        }
+    }
+}
+
 /// The limits a run is frozen with at start: `[orchestrator]`, with the plan's
 /// `max_writers`, `max_readers` and `max_bounces` winning when set.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,6 +113,11 @@ pub struct RunLimits {
     pub worker_codex_sandbox: String,
     pub worker_sandbox: bool,
     pub claude_auth: ClaudeAuth,
+    /// `[orchestrator.claude] api_key_helper`, passed to Claude sessions under
+    /// `auth = "api_key"` (decision 50). Added by M8a.11: a session spec is built from
+    /// the run alone.
+    #[serde(default)]
+    pub api_key_helper: Option<String>,
 }
 
 /// Decision 32's turn-end fallback.
@@ -252,7 +269,17 @@ pub struct Task {
     pub spent_total: Spend,
     pub branch: String,
     pub worktree: PathBuf,
+    /// The worktree was created while the plan gate was open (decision 14), from
+    /// `base_sha`, and its `setup` succeeded.
     pub prewarmed: bool,
+    /// The task's worktree exists: set when a `PrepareWorktree` succeeds or its setup
+    /// fails, cleared when it is removed (M8a.11; the cancel clean-up of M8a.6's F5).
+    #[serde(default)]
+    pub worktree_live: bool,
+    /// An answer or other message is held for this started task until every dependency
+    /// has finished (M8a.6 ruling N5); the task stays `blocked` meanwhile.
+    #[serde(default)]
+    pub awaiting_deps: bool,
     pub start_commit: Option<String>,
     pub head: Option<String>,
     pub done: Option<DoneClaim>,
@@ -272,6 +299,15 @@ impl Task {
     pub fn id(&self) -> &str {
         &self.spec.id
     }
+}
+
+/// An engine operation that has been emitted and whose result has not come back
+/// (decision 43).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingOp {
+    pub op: OpId,
+    pub task_id: Option<String>,
+    pub kind: OpKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -328,6 +364,8 @@ pub struct Run {
     pub merge_queue: Vec<String>,
     pub outbox: Vec<Outgoing>,
     pub next_message: u64,
+    #[serde(default)]
+    pub pending_ops: BTreeMap<OpId, PendingOp>,
     pub next_op: OpId,
     pub windows_created: u32,
     pub revision: u64,

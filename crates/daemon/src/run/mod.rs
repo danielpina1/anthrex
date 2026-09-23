@@ -16,18 +16,26 @@
 //! M8a.8 adds `git/` (preflight, worktrees, the done check and the per-repository
 //! write queue; blocking I/O) and `contract.rs`'s `REVIEW_DIFF_MAX` diff clamp.
 //! M8a.10 adds `exec.rs` (the engine's bounded, scrubbed shells: `setup` and `check`)
-//! and `proof.rs` (the fail-to-pass test proof), both blocking I/O.
+//! and `proof.rs` (the fail-to-pass test proof), both blocking I/O. M8a.11 adds the
+//! pure reducer `engine/` (start, the plan gate, the scheduler and dispatch),
+//! `role_launch.rs` (session specs and ids), `messages.rs` (decision 29's clamp and
+//! join), `snapshot.rs` (decision 47's snapshot), and the contracts and prompts in
+//! `contract.rs`.
 
 pub mod contract;
 pub mod edits;
+pub mod engine;
 pub mod env;
 pub mod exec;
 pub mod git;
 pub mod globs;
+pub mod messages;
 pub mod model;
 pub mod plan;
 pub mod proof;
+pub mod role_launch;
 pub mod roster;
+pub mod snapshot;
 pub mod validate;
 mod validate_graph;
 

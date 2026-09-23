@@ -427,6 +427,8 @@ fn new_task(
         branch: String::new(),
         worktree: Default::default(),
         prewarmed: false,
+        worktree_live: false,
+        awaiting_deps: false,
         start_commit: None,
         head: None,
         done: None,

@@ -4000,3 +4000,236 @@ marker, Queue, matching). Each behaviour fix has a test that failed first.
   "a\r\nb\r\r\nc\r"`, and `matched: false` on `^PASS t_reset$`.
 - **M4:** documented (setup output must be gitignored).
 - **M5:** recorded in the follow-ups file under "From M8a.10's review".
+
+### M8a.11 engine I: start, plan gate, scheduler and dispatch (2026-09-23)
+
+Built the pure reducer `run/engine/` and its neighbours. Decision 2's grep over every new
+file matches only doc comments.
+
+**Module layout (two files beyond the brief's list, split by responsibility):**
+
+- `engine/mod.rs`: `EngineState`, `Event`, `EventKind`, `AgentSignal`, `Effect`, `step`,
+  and the routing of `OpDone` and `Signal`.
+- `engine/ops.rs` (new): `OpKind` and `OpResult`, re-exported from `engine`. `mod.rs`
+  was 637 lines with them.
+- `engine/requests.rs`: start, approve, reject, edit (first part) and restore (first part).
+- `engine/schedule.rs` (new): runnability, `critical_len`, dispatch order, slots, the
+  critical path and waves. These are pure functions of a run, shared by
+  `dispatch.rs` and `snapshot.rs`.
+- `engine/dispatch.rs`: the scheduler's actions, the op results it handles, the pre-warm,
+  the N5 resume and the F5 clean-up.
+- `engine/outbox.rs`: queue and delivery gate.
+- `run/snapshot.rs`, `run/role_launch.rs` and `run/messages.rs`.
+- `contract.rs` is extended, with its new tests in `contract_tests.rs`.
+- Tests: `engine/tests/{fixture,dispatch,dispatch_edits,dispatch_slots}.rs`. The brief's
+  single `dispatch.rs` would have been 655 lines.
+
+**Name corrections against the brief and Interfaces:**
+
+- `run/contract.rs` already existed (M8a.6, plus M8a.8's clamp), so it is extended, not
+  created.
+- `toml_string` is M3's `crate::launch::codex::toml_string`.
+- `OpKind::CountCommits` and `OpKind::DiffSoFar` gain `run_head` (M8a.8 minor 10).
+- `OpResult::DoneChecked` gains `head_branch: Option<String>` (M8a.8 minor 11).
+- `EventKind::Start.run` is `Box<Run>`, and `OpKind::CreateWindow.spec` is
+  `Box<HeadlessSpec>`, because of clippy's `large_enum_variant`. `Effect` allows that
+  lint instead: boxing every `OpKind` (about 256 bytes) would buy nothing in a short-lived
+  effect list.
+- `HeadlessSpec` gains `Eq`, so `Run`, which now holds `PendingOp { kind: OpKind }`, keeps
+  its `Eq`.
+- `run::model` gains `From<ClaudeAuth> for config::ClaudeAuth`. The spec carries the config
+  type, and `RunLimits` carries the serde mirror.
+- The fixture has no `fx.status(window, Status)`, because no event carries a window
+  status: the engine's input is `Signal`.
+- The fixture's base is `b0` × 20, as the brief says. `run/test_support.rs` uses `b` × 40.
+
+**Model additions** (each `#[serde(default)]`):
+
+- `Run.pending_ops` and `PendingOp`, which M8a.5 deferred to here.
+- `Task.worktree_live`: the worktree exists. It is set when a `PrepareWorktree` succeeds or
+  its setup fails, and cleared by `Removed`.
+- `Task.awaiting_deps`: the N5 hold.
+- `RunLimits.api_key_helper`, filled from `[orchestrator.claude]`. A session spec is built
+  from the run alone, and decision 50 passes the helper.
+
+**Readings and choices:**
+
+- **Revision (decision 47).** Each step compares every run with its state before the event.
+  A changed run gets `revision += 1`, the global revision rises by one per changed run, and
+  `Persist` is placed first and `Publish` last. A new run keeps the revision 1 that
+  `build_run` gave it; the global revision still rises. For now every `Persist` is
+  `urgent: true` and every `Publish` is `structural: true`. M8a.12 separates counter-only
+  changes (decisions 43 and 47).
+- **Pre-warm (decision 14).**
+  - Only a task in `queued` with no declared and no implicit dependency is pre-warmed, and
+    at most `max_writers` pre-warms are held at once (a pending one counts).
+  - A pre-warmed task stays `queued`, holds no writer slot, and has not started.
+  - `prewarmed` means "created from `base_sha` and setup succeeded".
+- **Dispatch (decisions 19 and 41).**
+  - The task goes to `preparing`, which takes the writer slot.
+  - If the task is pre-warmed and `run_head == base_sha`, `CreateWindow` is sent directly.
+  - Otherwise `PrepareWorktree { from: run_head, setup: Some(..) }` is sent first.
+  - A pre-warm still in flight at dispatch continues the dispatch when it returns.
+  - `start_commit` is set when `CreateWindow` is sent. The state becomes `working` when
+    `Window` comes back.
+- **Carry T8-I4 (setup after a re-point) and RR1.**
+  - The re-pointing `PrepareWorktree` carries `setup: Some`.
+  - **Executor contract for M8a.22:** run setup (M8a.10's
+    `exec::run_shell(worktree, setup, &profile_env(..), check_timeout)`) after every
+    `PrepareWorktree` whose `setup` is `Some`. A failure is `SetupFailed { output: tail }`.
+  - The engine sends a `PrepareWorktree` from the run head only for a task with no
+    `start_commit` (never started). **Carry for M8a.15:** a resume or retry of a started
+    task must pass `from = start_commit` (a reuse), never the run head.
+- **N4 (M8a.6).** A task blocked in setup, pre-warm or dispatch, has no `start_commit`. It
+  does not count as started, because no agent has written in its worktree. It is
+  `blocked(environment)` with `setup failed:\n<output>` (invented).
+- **Rounds.**
+  - A round is created when `CreateWindow` is sent, with `turn_open: true`, `turns: 1` and
+    `round == session`.
+  - A Claude round's `session_id` is the uuid.
+  - Worker names are `<h4>/<task>.w<session>`, and reviewer names `<h4>/<task>.r<round>`.
+- **Window limit (decision 16).** It is checked at every `CreateWindow`, worker or reviewer,
+  against `windows_created`.
+- **Hub alone.**
+  - A hub task that holds a writer slot also blocks reviewer dispatch ("blocks every
+    dispatch", read literally).
+  - A hub task waiting for slots to empty does not stop later non-hub tasks from taking
+    them, so it can wait long behind a stream of small tasks. The decision gives no
+    priority rule; noted for M9.5.
+- **Reader slots.**
+  - A reader slot is held from `PrepareReview` until the reviewer round ends.
+  - `PrepareReview` then `CreateWindow` with `reviewer_spec` and `reviewer_prompt` is
+    implemented because the slot test needs a real reviewer. `ReviewRecord`s, verdicts and
+    nudges are M8a.13's.
+  - A task still in `review` whose round ended gets a new round (decision 35). M8a.13
+    decides when a task leaves `review`.
+  - `PrepareReview.base_ref` is the task's `start_commit`.
+- **Reviewer permissions.** M8a.13's test text says `claude_permission_mode == Some("plan")`.
+  M8a.1 and M8a.7 moved reviewers to `dontAsk` with `Edit,Write,NotebookEdit` disallowed,
+  and `reviewer_spec` does that. **M8a.13's test must follow M8a.7.**
+- **Invented values.**
+  - `critical_len` weights L as 3, like M. An L task never runs; the decision gives S and M
+    only.
+  - The critical path is the first unfinished task in dispatch order, then repeatedly its
+    unfinished dependent with the longest chain.
+  - `wave` counts merged dependencies and skips cancelled ones.
+- **Reject.**
+  - It is accepted only in `awaiting_approval`. Otherwise the reply is `run <id> is <state>;
+    reject applies only while its plan awaits approval`.
+  - `Discard` lists every task path, then the integration path, each with its next salvage
+    ref (`…/integration/1` for the integration worktree).
+  - The reply is immediate, and the run is `discarded` on `Finished`.
+  - While a `Discard` or `Accept` is pending, the scheduler starts nothing.
+  - A `CreateRunBranch` that fails, or whose setup fails, makes the run `failed`, with the
+    reason as `outcome`.
+- **Edits (first part).**
+  - `CancelLive` sends `KillWindow` for every live round and marks it `retiring`.
+  - `Deliver` queues the message, or holds it under N5.
+  - `pause`, `resume` and `finish` do nothing yet (M8a.15).
+  - The reply is `applied <n> edit(s)`. A refused batch replies with every error line.
+- **Carry T6-F5.** After every step, a `cancelled` task with `worktree_live`, no unended
+  round and no op in flight gets `UnwatchWorktree` then `RemoveWorktree` with
+  `refs/anthrex/salvage/<run>/<task>/<seq>`. `Removed` records the ref. This covers a
+  pre-warmed task, a rung-3 blocked task and a killed live one (after its
+  `ProcessExited { killed_by_engine: true }`).
+- **Carry T6-N5 (binding invariant).**
+  - When an edit's message is for a task that has an unfinished dependency (declared, or
+    implicit and neither merged nor cancelled), the task is held: `blocked(question)` with
+    `answered; resumes once <deps> has merged`, and `awaiting_deps`. The message stays in
+    the outbox.
+  - A blocked task never takes a delivery.
+  - Once its dependencies finish, `HandBack { worktree, run_head }` is sent.
+  - `HandedBack { files }` returns the task to `working`, adds `conflict_message(files)` when
+    `files` is not empty, and the held messages go out as one turn.
+  - A failed hand-back is `blocked(environment)`.
+  - A `HandedBack` for a task that is not `awaiting_deps` is M8a.14's merge-queue hand-back
+    and is ignored here.
+  - Named test: `add_dep_then_answer_waits_for_the_dependency_then_hands_back`.
+  - **Carry for M8a.15:** `retry` and a resumed `answer` must keep the same invariant.
+- **Signals (minimal).**
+  - `Init` sets `session_id`. `TurnStarted` and `TurnEnded` open and close the turn.
+    `ToolUse` counts. `ProcessStarted` sets the pid.
+  - `ProcessExited { killed_by_engine: true }` ends the round.
+  - Everything else only stamps `last_event`. M8a.12 owns decision 32.
+- **Outbox.**
+  - A delivery goes to the task's current worker round. `Outgoing.window_id` is the window
+    at queue time.
+  - A round that has ended gets no `Deliver`. M8a.12 adds `ResumeSession` for it, plus the
+    failure retry and block. For now `Delivered { ok: false }` only re-queues the messages
+    and closes the turn.
+- **Requests not built yet.** Retry, override, cancel, resume, finish and tools reply
+  `Err("<what> is not available yet")`. `BaseAdvanced` is ignored.
+- **Contracts and prompts.**
+  - `worker_prompt` follows the Interfaces text exactly.
+  - `handover_prompt`'s layout after the worker prompt is invented: `This is session <n> of
+    this task.`, `Why a new session: <reason>`, the stat, `Diff so far:` clamped to
+    `REVIEW_DIFF_MAX`, and `Earlier failures:`.
+  - `reviewer_prompt`'s `[diff clamped: <n> bytes omitted…]` counts the bytes left out of
+    the head and the tail.
+  - `clamp_diff` is generalised to `clamp_with(text, max, marker)`. `messages::clamp` uses
+    the invented marker `[anthrex: the middle of this message was cut to fit]`.
+  - `exec::summary`, a pure function in an I/O module, is reused by the prompt and the
+    snapshot.
+- **Carry T8 (run-id redraw).** `plan::run_id_taken(id, refs)` is a pure predicate:
+  `refs/heads/anthrex/<id>`, or anything under `…/<id>/`, takes an id.
+  **Carry for M8a.22:** call it with `git for-each-ref refs/heads/anthrex/` output, beside
+  the `<data_dir>/runs/<id>` check.
+- **Passed on to M8a.12: the carry T8 (a `task_done` made off the task's branch).**
+  `task_done` is M8a.12's. `OpResult::DoneChecked` carries `head_branch` for it, and the
+  proposed text stands.
+- **Carries T9 and T10 (`GitQueue`).** The reducer only sends ops. `Effect::Op` carries
+  `run_id`, from which the driver finds the run's `project`, the queue key.
+- **Concern for M8a.22 (ordering).** A `Discard` sent while a pre-warm `PrepareWorktree` is
+  still running must execute after it. Both are writes on one repository's `GitQueue`, so
+  the driver must queue them in emission order.
+
+**TDD evidence.**
+
+- 24 tests were written against `todo!()` stubs and empty contracts, and all 24 failed:
+  `138 passed; 24 failed`, every failure a stub panic or the empty contract's assertion.
+  They are:
+  - the brief's 20 named tests;
+  - the N5 test and the suggested F5 test
+    (`cancel_of_a_rung3_blocked_task_salvages_its_worktree`);
+  - 2 of this task's own, `a_setup_failure_blocks_the_task_as_environment_without_starting_it`
+    and `reviewer_spec_is_read_only`.
+- `a_run_id_is_taken_by_its_own_branch_or_anything_under_it` failed on its stub, then
+  passed.
+- `cancel_of_a_working_task_kills_then_removes_after_the_exit` was written after the code.
+  It is shown to pin by mutation M11 below.
+- One fixture defect was found and fixed: the stand-in for an approving review now moves
+  the task to `merge_queue`. Before, the re-review decision 35 requires correctly
+  re-dispatched `t1`.
+- **Mutations**, each restored from a WIP commit (since folded): 19 run, 17 killed.
+  - Killed:
+    - the N5 dependency check, the hold and the hand-back;
+    - the direct launch of a stale pre-warm;
+    - `setup: None`;
+    - both hub rules;
+    - unlimited readers;
+    - priority ascending, and no critical length;
+    - a bump for an unchanged run;
+    - the window limit off by one;
+    - removal while a session is live;
+    - an unlimited pre-warm;
+    - waves that skip merged dependencies;
+    - a Codex uuid;
+    - the uuid version nibble.
+  - Equivalent in reachable states, so they survive:
+    - The pre-warm's implicit-dependency guard. A task with an unfinished implicit
+      dependency is already `pending`.
+    - Treating a cancelled implicit dependency as unfinished. `apply_edits` recomputes
+      implicit dependencies without cancelled tasks, so one is never left listed.
+
+**Gates.**
+
+- `cargo build --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D
+  warnings` and `cargo fmt --all --check` are clean.
+- `cargo test -p anthrex-daemon`: every binary passes except `git_registry`
+  (`a_real_write_triggers_a_probe`, `a_commit_in_a_linked_worktree_triggers_a_probe`) and
+  `server_git` (`two_windows_in_one_worktree_register_once`).
+  - Those three time out even run alone, in this worktree.
+  - The same binaries pass, at both the base `57b19c6` and this task's code, from a
+    scratch worktree under `/private/tmp`.
+  - So they depend on the checkout's location or load (load average 20–30), not on this
+    change, which touches neither the registry nor the server.
