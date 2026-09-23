@@ -97,6 +97,27 @@ fn a_badge_span_is_always_badge_width_columns() {
         UnicodeWidthStr::width(span(&ascii.claude).content.as_ref()),
         BADGE_WIDTH as usize
     );
+
+    // A 2-column glyph (review finding 2): every default badge text has display width 1,
+    // so `UnicodeWidthStr::width` and `text.chars().count()` agree on all of them and a
+    // `span` that used `chars().count()` for the pad would still pass the assertions
+    // above. "漢" is a CJK ideograph, display width 2 (confirmed directly, not assumed,
+    // since `chars().count()` would also say 1 for it) — `config::read_badge` accepts a
+    // glyph of 1 or 2 columns, so this is a value the config crate itself allows.
+    assert_eq!(UnicodeWidthStr::width("\u{6f22}"), 2);
+    assert_eq!("\u{6f22}".chars().count(), 1);
+    let wide = Badge {
+        text: "\u{6f22}".to_string(),
+        color: unicode.claude.color,
+    };
+    let rendered = span(&wide);
+    assert_eq!(
+        UnicodeWidthStr::width(rendered.content.as_ref()),
+        BADGE_WIDTH as usize
+    );
+    // One column of padding, not two: a `chars().count()`-based pad (treating "漢" as
+    // width 1) would produce two trailing spaces here instead of one.
+    assert_eq!(rendered.content.as_ref(), "\u{6f22} ");
 }
 
 #[test]
