@@ -1131,7 +1131,8 @@ pub struct CliCaps { pub claude_verbose: bool, pub claude_permission_prompts: bo
                      pub codex_loads_project_config: bool,                              // decision 53, M8a.1 item 7a
                      pub codex_project_config_paths: &'static [&'static str],
                      pub codex_user_config_only: Option<&'static [&'static str]> }                            // decision 54's JSON keys, as M8a.1 finds them
-pub struct SandboxKeys { pub enabled: &'static str, pub allow_unsandboxed: &'static str, pub write_allow: &'static str }
+pub struct SandboxKeys { pub enabled: &'static str, pub allow_unsandboxed: &'static str, pub write_allow: &'static str,
+                         pub fail_if_unavailable: &'static str }   // M8a.1 item 4b; set by M8a.7
 pub fn claude_settings(exe: &Path, window_id: u32, sandbox: Option<&ClaudeSandbox>, caps: &CliCaps) -> serde_json::Value; // launch::claude::settings plus the sandbox block
 pub enum InterruptMode { ControlRequest, Sigint }
 pub const CLI_CAPS: CliCaps;                           // every field set from M8a.1's findings
@@ -1141,7 +1142,9 @@ pub fn claude_args(spec: &HeadlessSpec, session: &SessionArg, exe: &Path, window
 pub fn codex_args(spec: &HeadlessSpec, session: &SessionArg, message: &str, exe: &Path, window_id: u32,
                   socket: &Path, caps: &CliCaps) -> Vec<String>;
 // headless/claude_stream.rs, headless/codex_stream.rs (pure)
-pub fn parse_line(line: &str) -> Vec<SessionEvent>;  // one per runtime module
+pub fn parse_line(line: &str) -> Vec<SessionEvent>;  // codex_stream (stateless)
+#[derive(Default)] pub struct ClaudeStream { /* the failed turn's pending category */ }
+impl ClaudeStream { pub fn parse_line(&mut self, line: &str) -> Vec<SessionEvent>; }   // claude_stream (M8a.7: stateful)
 pub fn user_message(text: &str, session_id: Option<&str>) -> String;   // claude_stream only: the stdin envelope, one line
 pub fn interrupt_request(request_id: u64) -> String;                    // claude_stream only
 // headless/conversation.rs (pure)
@@ -1181,7 +1184,7 @@ pub const SCRUB_NAMES: &[&str] = &["CLAUDECODE"];
 | Claude | `{"type":"system","subtype":"api_retry","attempt":…,"retry_delay_ms":…,"error":…}` | `ApiRetry` |
 | Claude | `{"type":"system","subtype":"permission_denied",…}` | `PermissionDenied { tool, reason }` |
 | Claude | `{"type":"system","subtype":"compact_boundary",…}` | `Compacted` |
-| Claude | `{"type":"result","subtype":…,"is_error":…,"usage":{…},"permission_denials":[…]}` | `TurnEnded`: `Completed` when `subtype == "success"` and not `is_error`; `Interrupted` when M8a.1's interrupted marker is present; else `Failed { kind }` by the error category (`rate_limit`, `authentication_failed`, `billing_error`, else `Other`) |
+| Claude | `{"type":"result","subtype":…,"is_error":…,"usage":{…},"permission_denials":[…]}` | `TurnEnded`: `Completed` when `subtype == "success"` and not `is_error`; `Interrupted` when M8a.1's interrupted marker is present; else `Failed { kind }` by the error category (`rate_limit`, `authentication_failed`, `billing_error`, else `Other`), which M8a.1 found on the synthetic `assistant` line before the `result` (its `"error"` key), so `ClaudeStream` carries it to the `result`; `SandboxUnavailable` when the text holds `sandbox required but unavailable` |
 | Codex | `{"type":"thread.started","thread_id":…}` | `Init` |
 | Codex | `{"type":"turn.started"}` | `TurnStarted` |
 | Codex | `item.completed` with `item.type == "agent_message"` | `AssistantText` |
@@ -3128,3 +3131,135 @@ The fixes were checked the same way against their own mutants:
 - the floor inferred again;
 - no requeue;
 - the requeue's implicit clause ignored.
+
+### M8a.7 headless streams: parsers, status and the conversation mapping (2026-09-23)
+
+Built `crates/daemon/src/headless/` (`mod.rs`, `argv.rs`, `claude_stream.rs`,
+`codex_stream.rs`, `status.rs`, `conversation.rs`, each with its tests beside it, plus a
+test-only `test_support.rs` holding the nine fixtures through `include_str!`). Moved
+`TOOL_RESULT_SUMMARY_MAX`, `bound_tool_response` and `bound_tool_response_value` into
+`proto::conversation` unchanged, with their private helpers; `truncate_to_char_boundary`
+became `pub` so the parsers cut tool results with the same function. `hook.rs` calls them
+from there and keeps its static assertion. `hook.rs` had no unit tests of its own; the
+bounding's tests are `crates/cli/tests/hook_command.rs`, which drive the binary and all
+still pass (20). `proptest = "1"` (1.11.0) is a workspace dependency and a daemon
+dev-dependency. Every file in `headless/` passes decision 2's grep (no match at all).
+
+**Where M8a.1's findings override the brief** (M8a.1 wins; each is tested):
+
+- **A failed turn's category** is on the synthetic `assistant` line before the `result`
+  (M8a.1's open question, "M8a.7 decides which"). Decided: the Claude parser is stateful.
+  `claude_stream::ClaudeStream::parse_line(&mut self, line)` records an `assistant`
+  line's `"error"` category and gives it to the next `result`; a `result` takes and
+  clears it, so it never leaks into the next turn (`a_category_does_not_leak_into_the_next_turn`).
+  `SessionEvent` is unchanged. `codex_stream::parse_line` stays a free function. The
+  Interfaces `parse_line` line and the Claude `result` row now say so. M8a.17's driver
+  keeps one `ClaudeStream` per Claude session.
+- **The failed turn's text** is the `result` string, else the `errors` joined by `; `,
+  else the subtype. A failed resume (`No conversation found with session ID: <id>`, item
+  4) is `Failed { Other }` with that text. `sandbox required but unavailable` in the text
+  gives `SandboxUnavailable` (item 4b).
+- **Interrupted** is `subtype == "error_during_execution"` with `terminal_reason`
+  `aborted_tools` or `aborted_streaming` (item 2).
+- **`system/init` repeats every turn.** It yields `Init` and `TurnStarted`.
+  `status::next` treats any `Init` as a turn opening (`Working`), never as `Starting`.
+  `conversation::map` synthesises `SessionStart` only when the session id changes, so a
+  Codex session does not get one per process either.
+- **Unsolicited turns** (a background sub-agent finishing) are ordinary turns. Status
+  opens and closes them. In the conversation, `StreamCursor` tracks whether the daemon's
+  own latest turn is open. Top-level prose after its `TurnEnded` gets no
+  `AssistantText` record, because it would otherwise be appended to the previous reply
+  (`prose_of_a_turn_the_daemon_did_not_send_is_not_put_on_the_last_one`). This is the
+  headless form of `450680e`'s fix on `main`.
+- **Usage is per turn** (item 2), so `claude_usage_is_per_turn` asserts the pass-through
+  values 26/477/66953/7175, 18/284/50323/526 and 10/215/25616/183.
+- **`PermissionDenied.reason`** is `decision_reason`, else `message` (item 2, `dontAsk`).
+- **The stream meta's `unmodelled` types** are recognised and yield `Other { kind }`
+  (`system/<subtype>`, `rate_limit_event`, `control_response`), not `Unknown`. The test
+  allows `Unknown` only for those types; `Other` keeps them out of the window's
+  last-10-lines diagnostic ring, which is for lines nothing recognised.
+- **Reviewers use `dontAsk`** (plan mode blocks the reviewer's MCP call in `-p`).
+  `HeadlessSpec` gains `claude_disallowed_tools: Vec<String>`, emitted as
+  `--disallowedTools <list>` right after `--allowedTools`. The brief placed it after
+  `--permission-mode`, where it would be the last flag of a reviewer with no model and
+  no effort flag; there every variadic flag is followed by a flag
+  (`claude_variadic_flags_are_followed_by_a_flag`, over 48 argv). M8a.11's role
+  launch fills the field with `Edit,Write,NotebookEdit` for a Claude reviewer.
+- **The sandbox block needs `failIfUnavailable`** (item 4b). `SandboxKeys` gains
+  `fail_if_unavailable: "failIfUnavailable"`, and the block is `{"enabled": true,
+  "allowUnsandboxedCommands": false, "failIfUnavailable": true, "filesystem":
+  {"allowWrite": [<git common dir>]}}`. `write_allow` is a dotted path into nested
+  objects.
+- **A sandbox refusal is not a denial** (item 4b): the sandbox fixture parses to a failed
+  `ToolResult` and no `PermissionDenied`.
+- **`codex exec resume` rejects `-s`** (item 6): `codex_resume_takes_sandbox: false`, and a
+  resume passes `-c sandbox_mode="<mode>"` where the first turn passes `-s <mode>`.
+- **Codex's default writable `/tmp` is kept.** M8a.1 excluded `/tmp` only so its
+  recording proved something. The argv adds no `exclude_slash_tmp` or
+  `exclude_tmpdir_env_var`, and a test asserts that.
+- **Codex project config** (item 7a): `codex_loads_project_config: true`,
+  `codex_project_config_paths: [".codex/config.toml", ".codex/hooks.json"]`,
+  `codex_user_config_only: None`. `codex_args` inserts the flags right after `--json`
+  when the caps name some; today it inserts none. The refusal itself is M8a.22's.
+- **A Codex command that exits non-zero is not in `--json`**, and an interrupted Codex
+  turn ends with no `turn.*` line (item 7). The parser cannot see either; the driver's
+  `ProcessExited` covers the interrupt.
+- **Codex `turn.completed.usage`**: `input_tokens` includes `cached_input_tokens` (Codex's
+  own `non_cached_input` is the difference). So `TokenUsage.input = input_tokens -
+  cached_input_tokens` and `cache_read = cached_input_tokens`; otherwise decision 40's
+  `billable` would bill every cache read. `cache_write = cache_write_input_tokens`, and
+  `reasoning_output_tokens` is part of `output_tokens`. The fixture turn is 12754 uncached
+  plus 28416 cached input and 73 output.
+- **Codex `turn.failed`** carries the API's JSON error as a string. The failure text is
+  its inner `error.message` when it parses, else the raw message. `RateLimit` follows item
+  7's rule: JSON `status == 429`, or the text contains `429`, `rate limit`, `usage limit`
+  or `too many requests`, ignoring case. `item.type == "error"` items are notices
+  (`Other { kind: "item/error" }`). A top-level `error` line is `Other { kind: "error" }`,
+  and its first 300 characters are logged at `warn`.
+- **`CLI_CAPS`** is M8a.1's table verbatim, plus `fail_if_unavailable`.
+
+**Other choices the brief left open**
+
+- `user_message(text, None)` omits `session_id`. Only the `Some` form is recorded; the
+  engine always knows the id, because it passes `--session-id` or `--resume`.
+- `interrupt_request` writes the recorded key order, with the id as a string.
+  `user_message` also matches the recorded line byte for byte, not only as a JSON value.
+- `Init.mcp_ok` is `None` when `mcp_servers` has no `anthrex` entry (a session launched
+  without MCP), and `Some(status == "connected")` otherwise.
+- Tool-result text is cut to `TOOL_RESULT_SUMMARY_MAX` (4096 bytes) for Codex too, as for
+  Claude.
+- The Codex item shapes M8a.1 could not trigger follow the Interfaces table and are
+  tested from constructed lines: `mcp_tool_call` (result text parts joined; `error` or
+  `status: "failed"` is a failed result), `file_change` (on completion only), and
+  `web_search` (a `WebSearch` use and result on completion, so it is counted once whether
+  or not a start line exists). `reasoning`, `todo_list` and unknown item types are
+  `Other { kind: "item/<type>" }`.
+- `status::next`: `Interrupted` ends a turn in `Idle`. A failed turn's `Attention` holds
+  until the next `Init` or `TurnStarted`. `tool` is cleared when the turn ends. A
+  sub-agent's `ToolUse` never sets it.
+- `api_key_helper` goes into `--settings` only under `auth = "api_key"`, with `--bare`
+  last. Under `login` a configured helper is not passed, since it could override the
+  subscription login.
+- `conversation::map` ignores its `runtime` argument: the table is the same for both, and
+  `hooks_fire` carries the difference. `StreamCursor` drops its tool names at every
+  `TurnEnded`, and holds at most 1024.
+- **Codex item ids restart in every process** (`item_0`, `item_1`, … in each turn of the
+  exec and resume fixtures), so one Codex session repeats ids across turns. M6.5's
+  matching still works: `PostToolUse` matches within the open turn, and `ToolDetail` goes
+  to the last call with the id. But no later task should key tool counts by id across
+  turns; decision 27 already counts every `ToolUse`.
+- M6.5 renders the table's `{"output": text}` object as its compact JSON in the tool
+  call's one-line summary, as it does for Claude's own `{"stdout": …}`. This is recorded
+  as a follow-up for M8c.
+
+**TDD evidence.** Each module was first written as `todo!()` stubs of its public
+signatures, then its tests. Every named test failed on the stub's panic: 10 Claude
+parser, 4 Codex parser, 2 status, 5 conversation and 12 argv tests. Each then passed
+once implemented. Two tests could not fail that way:
+- `garbage_never_panics` and its two `proptest` cases were written after the parsers.
+  Mutating `codex_stream` to `unwrap()` a missing `thread_id` and `usage` made the
+  explicit test and the JSON-shaped property fail (minimal input `turn.completed`); the
+  file was restored from a scratch copy.
+- `toml_string_round_trips_through_the_toml_crate` tests M3's existing `toml_string`, so
+  its 20-string half passes on `main`'s code. It failed first only through its tail,
+  which parses `codex_args`' TOML values.

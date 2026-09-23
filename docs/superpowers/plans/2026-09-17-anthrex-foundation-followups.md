@@ -717,3 +717,15 @@ scope.
   the only repair is `split_task` of the blocked task (the children carry fresh deps, and
   its dependents are rewired to them). M9's re-planning should add `remove_dep` or
   `replace_dep`, or document split as the path.
+
+## From M8a.7 (2026-09-23), for M8c's conversation view
+
+- **A synthesised Codex tool call's one-line summary reads as JSON.** Decision 27's table
+  makes a headless Codex call's `PostToolUse` carry `tool_response: {"output": text}`
+  (or `{"error": text}`). M6.5's `build::post_tool_use` renders any object response as
+  its compact JSON, so the summary line shows `{"output":"[task-b 9d0ec2a] add a\n…`
+  (asserted in `a_codex_session_builds_a_real_conversation`). A real Claude hook's
+  `{"stdout": …}` object already renders the same way on `main`, so this is not new to
+  M8a. The full text is the enriched `detail`, which is right. M8c, which puts headless
+  conversations in front of the user, should decide whether the summary should read an
+  object's single text field (`output`, `error`, `stdout`) instead.
