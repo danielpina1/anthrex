@@ -319,3 +319,146 @@ fn implicit_dep_never_contradicts_a_declared_one() {
         vec!["t1".to_string(), "t3".to_string()]
     );
 }
+
+/// Review finding 1: the deadlock skip must see implicit edges already added, not only
+/// declared ones. t2 waits for t1 (implicit), t1 waits for t3 (declared); giving t3 an
+/// implicit dependency on t2 would close the cycle.
+#[test]
+fn implicit_deps_never_close_a_cycle_through_other_implicit_deps() {
+    let run = run_ok(&plan_with(
+        PROFILE,
+        &[
+            task_toml("t1", "S", r#"["crates/a/**"]"#, "deps = [\"t3\"]"),
+            task_toml("t2", "S", r#"["crates/a/src/**"]"#, ""),
+            task_toml("t3", "S", r#"["crates/a/src/y.rs"]"#, ""),
+        ],
+    ));
+    assert_eq!(task(&run, "t1").implicit_deps, Vec::<String>::new());
+    assert_eq!(task(&run, "t2").implicit_deps, vec!["t1".to_string()]);
+    assert_eq!(task(&run, "t3").implicit_deps, Vec::<String>::new());
+    assert_eq!(combined_cycles(&run.tasks), vec![]);
+}
+
+#[test]
+fn the_combined_graph_check_reports_an_implicit_cycle() {
+    let (mut tasks, _) = built(&[one("t1", "deps = [\"t2\"]"), one("t2", "")]);
+    tasks[1].implicit_deps = vec!["t1".to_string()];
+    assert_eq!(
+        combined_cycles(&tasks),
+        vec![err(None, "deps", "12.1", "cycle t1 -> t2 -> t1")]
+    );
+}
+
+// ---- Edit-time scoping (review finding 11); M8a.6 relies on each of these. ----
+
+fn set(ids: &[&str]) -> BTreeSet<String> {
+    ids.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn cross_runtime_overlap_ignores_finished_earlier_tasks() {
+    let (mut tasks, profile) = built(&[
+        task_toml("t1", "S", r#"["crates/a/src/**"]"#, ""),
+        task_toml("t2", "S", r#"["crates/b/src/lib.rs"]"#, ""),
+    ]);
+    tasks[0].state = TaskState::Merged;
+    tasks[1].route.runtime = proto::Runtime::Codex;
+    tasks[1].spec.owns = vec!["crates/a/src/lib.rs".to_string()];
+    assert_eq!(
+        validate_tasks(&tasks, &set(&["t2"]), &EditScope::Run, 50, &profile),
+        vec![]
+    );
+}
+
+#[test]
+fn implicit_deps_ignore_finished_tasks() {
+    let (mut tasks, _) = built(&[
+        task_toml("t1", "S", r#"["crates/a/src/**"]"#, ""),
+        task_toml("t2", "S", r#"["crates/a/**"]"#, ""),
+        task_toml("t3", "S", r#"["crates/a/src/lib.rs"]"#, ""),
+    ]);
+    tasks[0].state = TaskState::Cancelled;
+    assert_eq!(
+        implicit_deps(&tasks),
+        vec![vec![], vec![], vec!["t2".to_string()]]
+    );
+}
+
+#[test]
+fn implicit_deps_skip_a_declared_dependency() {
+    let run = run_ok(&plan_with(
+        PROFILE,
+        &[
+            task_toml("t1", "S", r#"["crates/a/src/**"]"#, ""),
+            task_toml("t2", "S", r#"["crates/a/src/lib.rs"]"#, "deps = [\"t1\"]"),
+        ],
+    ));
+    assert_eq!(task(&run, "t2").implicit_deps, Vec::<String>::new());
+}
+
+#[test]
+fn a_cancelled_dependency_of_an_untouched_task_is_allowed() {
+    let (mut tasks, profile) = built(&[one("t1", ""), one("t2", ""), one("t3", "deps = [\"t2\"]")]);
+    tasks[1].state = TaskState::Cancelled;
+    assert_eq!(
+        validate_tasks(&tasks, &set(&["t1"]), &EditScope::Run, 50, &profile),
+        vec![]
+    );
+}
+
+/// Unit 1 task, bound 2: three tasks with one cancelled count as two.
+#[test]
+fn max_tasks_does_not_count_cancelled_tasks() {
+    let (mut tasks, profile) = built(&[one("t1", ""), one("t2", ""), one("t3", "")]);
+    tasks[1].state = TaskState::Cancelled;
+    assert_eq!(
+        validate_tasks(&tasks, &set(&[]), &EditScope::Run, 2, &profile),
+        vec![]
+    );
+    tasks[1].state = TaskState::Merged;
+    assert_eq!(
+        validate_tasks(&tasks, &set(&[]), &EditScope::Run, 2, &profile),
+        vec![err(None, "tasks", "range", "3 tasks exceed max_tasks (2)")]
+    );
+}
+
+#[test]
+fn the_area_rule_applies_only_to_touched_tasks() {
+    let (tasks, profile) = built(&[
+        task_toml("t3", "S", r#"["crates/daemon/src/x.rs"]"#, ""),
+        task_toml("t4", "S", r#"["crates/tui/**"]"#, ""),
+    ]);
+    let area = EditScope::Area {
+        globs: vec!["crates/daemon/**".to_string()],
+    };
+    assert_eq!(
+        validate_tasks(&tasks, &set(&["t3"]), &area, 50, &profile),
+        vec![]
+    );
+}
+
+#[test]
+fn a_duplicate_of_a_finished_task_is_still_a_duplicate() {
+    let (mut tasks, profile) = built(&[one("t1", ""), one("t2", "")]);
+    tasks[0].state = TaskState::Cancelled;
+    tasks[1].spec.id = "t1".to_string();
+    assert_eq!(
+        validate_tasks(&tasks, &set(&["t1"]), &EditScope::Run, 50, &profile),
+        vec![err(Some("t1"), "id", "id", "t1 is used by an earlier task")]
+    );
+}
+
+#[test]
+fn a_dependency_resolves_to_the_first_task_with_that_id() {
+    // The first t2 is pending, a later duplicate t2 is cancelled: t3's dependency is
+    // the first one, so the only error is the duplicate itself.
+    let (mut tasks, profile) = built(&[one("t2", ""), one("t9", ""), one("t3", "deps = [\"t2\"]")]);
+    tasks[1].spec.id = "t2".to_string();
+    tasks[1].state = TaskState::Cancelled;
+    tasks.swap(1, 2);
+    // Order now: t2 (pending), t3 (deps t2), t2 (cancelled).
+    assert_eq!(
+        validate_tasks(&tasks, &set(&["t3"]), &EditScope::Run, 50, &profile),
+        vec![]
+    );
+}

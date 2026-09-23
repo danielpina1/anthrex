@@ -22,6 +22,27 @@ fn two_modules_raise_s_to_m() {
     assert_eq!(t1.spec.size, Size::S);
     assert_eq!(t1.size, Size::M);
     assert!(!t1.hub);
+    // Everything derived from the size follows the raised size, not the planned one.
+    assert_eq!(t1.route.effort, proto::Effort::Medium);
+    assert_eq!(t1.budget, config::Orchestrator::default().budget_m);
+    assert_eq!(t1.review_level, Some(ReviewLevel::Medium));
+}
+
+#[test]
+fn a_glob_with_an_empty_literal_prefix_spans_every_module() {
+    // No hub, so rule 7.2.3 cannot hide the missing 7.2.1 raise.
+    let profile = PROFILE.replace("hub = [\"crates/proto/**\"]\n", "");
+    let run = run_ok(&plan_with(
+        &profile,
+        &[task_toml("t1", "S", r#"["**/*.rs"]"#, "")],
+    ));
+    let t1 = task(&run, "t1");
+    assert_eq!(t1.size, Size::M);
+    assert!(!t1.hub);
+    assert_eq!(
+        t1.notes,
+        vec!["size raised from S to M: owns spans more than one module (rule 7.2.1)".to_string()]
+    );
 }
 
 #[test]
@@ -159,7 +180,12 @@ fn code_defaults_to_tdd_and_docs_to_none() {
         PROFILE,
         &[
             task_toml("code", "S", r#"["crates/a/src/lib.rs"]"#, ""),
-            task_toml("docs", "S", r#"["docs/guide.md"]"#, "kind = \"docs\""),
+            task_toml(
+                "docs",
+                "S",
+                r#"["docs/guide.md"]"#,
+                "kind = \"docs\"\ntest_mode_reason = \"prose only\"",
+            ),
         ],
     ));
     assert_eq!(task(&run, "code").test_mode, TestMode::Tdd);
@@ -200,6 +226,13 @@ fn non_tdd_needs_a_reason() {
         )
     };
     assert_eq!(errors_of(&text), vec![reason("a"), reason("b")]);
+
+    // Decision 10: a docs task left at its default `none` needs a reason too.
+    let docs = plan_with(
+        PROFILE,
+        &[task_toml("d", "S", r#"["docs/d.md"]"#, "kind = \"docs\"")],
+    );
+    assert_eq!(errors_of(&docs), vec![reason("d")]);
 }
 
 #[test]
@@ -239,12 +272,21 @@ fn none_on_source_is_rejected() {
 fn hub_code_is_forced_to_tdd() {
     let run = run_ok(&plan_with(
         PROFILE,
-        &[task_toml(
-            "t1",
-            "M",
-            r#"["crates/proto/src/run.rs"]"#,
-            "test_mode = \"check\"\ntest_mode_reason = \"protocol only\"",
-        )],
+        &[
+            task_toml(
+                "t1",
+                "M",
+                r#"["crates/proto/src/run.rs"]"#,
+                "test_mode = \"check\"\ntest_mode_reason = \"protocol only\"",
+            ),
+            // Rule 8.2 forces code tasks only: a hub docs task keeps `none`.
+            task_toml(
+                "d1",
+                "M",
+                r#"["crates/proto/README.md"]"#,
+                "kind = \"docs\"\ntest_mode_reason = \"prose only\"",
+            ),
+        ],
     ));
     let t1 = task(&run, "t1");
     assert_eq!(t1.test_mode, TestMode::Tdd);
@@ -252,6 +294,10 @@ fn hub_code_is_forced_to_tdd() {
         t1.notes,
         vec!["test mode forced to tdd: hub task (rule 8.2)".to_string()]
     );
+    let d1 = task(&run, "d1");
+    assert!(d1.hub);
+    assert_eq!(d1.test_mode, TestMode::None);
+    assert_eq!(d1.notes, Vec::<String>::new());
 }
 
 #[test]
@@ -270,6 +316,20 @@ fn tdd_without_single_test_becomes_check_and_raises_review() {
         t1.notes,
         vec!["test mode check: the profile has no single_test (rule 8.3)".to_string()]
     );
+}
+
+/// Rule 8.3 on a source path meets two raise conditions (8.3, and non-tdd on source);
+/// the review still goes up one level only (decision 35: "raised one level ... when").
+#[test]
+fn rule_8_3_on_source_raises_review_once() {
+    let profile = PROFILE.replace("single_test = \"cargo test -- --exact {test}\"\n", "");
+    let run = run_ok(&plan_with(
+        &profile,
+        &[task_toml("t1", "S", r#"["crates/a/src/lib.rs"]"#, "")],
+    ));
+    let t1 = task(&run, "t1");
+    assert_eq!(t1.test_mode, TestMode::Check);
+    assert_eq!(t1.review_level, Some(ReviewLevel::Medium));
 }
 
 // ---- Review level, decision 35 ----

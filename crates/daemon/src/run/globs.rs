@@ -86,8 +86,9 @@ fn glob_module(glob: &str, modules: &[String]) -> GlobModule {
             }
         } else {
             let pattern_literal = literal_prefix(pattern);
-            let is_component_prefix = !prefix.is_empty()
-                && prefix.len() <= pattern_literal.len()
+            // An empty prefix (`**`, `**/*.rs`) is a component-prefix of every
+            // pattern, so it spans every module (M8a.5 review finding 3).
+            let is_component_prefix = prefix.len() <= pattern_literal.len()
                 && prefix
                     .iter()
                     .zip(pattern_literal.iter())
@@ -134,7 +135,8 @@ pub fn inside_area(glob: &str, area: &[String]) -> bool {
     })
 }
 
-/// Not blank, not absolute, no `..` component, no `\`. *(Decision 11; the backslash
+/// Not blank, not absolute, no `..` or `.` component, no empty component (`//`), no
+/// `\`, and it compiles as a glob. *(Decision 11; the backslash
 /// rule is review finding 4: `globset` treats `\` as an escape character during
 /// matching, but the intersection side never looks at an actual path, so a glob
 /// containing one would mean two different things depending which half of this module
@@ -151,6 +153,23 @@ pub fn validate_glob(glob: &str) -> Result<(), String> {
     }
     if glob.contains('\\') {
         return Err("must not contain \\".to_string());
+    }
+    // M8a.5 review finding 5: intersection compares components literally, so `./x`
+    // and `x` (or `a//b` and `a/b`) would never meet. Rejected, not normalised. A
+    // trailing `/` is allowed (decision 11 ignores it).
+    let body = glob.strip_suffix('/').unwrap_or(glob);
+    if body.split('/').any(|component| component == ".") {
+        return Err("must not contain .".to_string());
+    }
+    if body.split('/').any(str::is_empty) {
+        return Err("must not contain //".to_string());
+    }
+    // M8a.5 review finding 4: a glob `globset` cannot compile would pass here and fail
+    // only at the first done gate.
+    for pattern in match_patterns(glob) {
+        if let Err(err) = GlobBuilder::new(&pattern).literal_separator(true).build() {
+            return Err(format!("is not a valid glob: {}", err.kind()));
+        }
     }
     Ok(())
 }

@@ -140,11 +140,22 @@ pub fn validate_tasks(
     errors
 }
 
+/// Cycles in declared **plus implicit** dependencies (`Task.implicit_deps`), the graph
+/// the scheduler actually waits on. `implicit_deps` never closes a cycle; this is the
+/// backstop `build_run` runs after filling them (M8a.5 review finding 1).
+pub fn combined_cycles(tasks: &[Task]) -> Vec<PlanError> {
+    cycles_over(tasks, true)
+}
+
 /// Every dependency cycle among unfinished tasks, each reported once, starting from its
 /// member that comes first in plan order (`deps: cycle t1 -> t2 -> t1`). Uses Tarjan's
 /// strongly connected components; a component of two or more tasks, or one task that
 /// depends on itself, is a cycle.
 fn cycles(tasks: &[Task]) -> Vec<PlanError> {
+    cycles_over(tasks, false)
+}
+
+fn cycles_over(tasks: &[Task], with_implicit: bool) -> Vec<PlanError> {
     let active: Vec<&Task> = tasks.iter().filter(|t| is_active(t)).collect();
     let index: BTreeMap<&str, usize> = active
         .iter()
@@ -155,9 +166,11 @@ fn cycles(tasks: &[Task]) -> Vec<PlanError> {
     let edges: Vec<Vec<usize>> = active
         .iter()
         .map(|t| {
+            let implicit: &[String] = if with_implicit { &t.implicit_deps } else { &[] };
             t.spec
                 .deps
                 .iter()
+                .chain(implicit)
                 .filter_map(|d| index.get(d.as_str()).copied())
                 .collect()
         })
@@ -280,44 +293,59 @@ impl<'a> Tarjan<'a> {
 
 /// Decision 41's implicit dependencies at plan time, when no task has started: for two
 /// unfinished tasks on the same runtime whose `owns` intersect, the later in plan order
-/// waits for the earlier — unless the earlier already depends (declared, transitively)
-/// on the later, which would deadlock them, or the later already declares it.
+/// waits for the earlier — unless the later already declares it, or the earlier can
+/// already reach the later through declared deps **and the implicit deps given to
+/// earlier tasks so far** (M8a.5 review finding 1): that edge would close a cycle and
+/// deadlock both.
 pub fn implicit_deps(tasks: &[Task]) -> Vec<Vec<String>> {
-    let by_id: BTreeMap<&str, &Task> = tasks.iter().rev().map(|t| (t.id(), t)).collect();
-    let depends_on = |from: &str, to: &str| -> bool {
+    let index: BTreeMap<&str, usize> = tasks
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(i, t)| (t.id(), i))
+        .collect();
+    // Outgoing edges (a task -> what it waits for), declared first, implicit added as
+    // they are decided.
+    let mut edges: Vec<Vec<usize>> = tasks
+        .iter()
+        .map(|t| {
+            t.spec
+                .deps
+                .iter()
+                .filter_map(|d| index.get(d.as_str()).copied())
+                .collect()
+        })
+        .collect();
+    let reaches = |edges: &[Vec<usize>], from: usize, to: usize| -> bool {
         let mut stack = vec![from];
         let mut seen = BTreeSet::new();
-        while let Some(id) = stack.pop() {
-            if !seen.insert(id) {
-                continue;
+        while let Some(n) = stack.pop() {
+            if n == to {
+                return true;
             }
-            if let Some(t) = by_id.get(id) {
-                for d in &t.spec.deps {
-                    if d == to {
-                        return true;
-                    }
-                    stack.push(d.as_str());
-                }
+            if seen.insert(n) {
+                stack.extend(edges[n].iter().copied());
             }
         }
         false
     };
-    tasks
-        .iter()
-        .enumerate()
-        .map(|(i, task)| {
-            if !is_active(task) {
-                return Vec::new();
+    let mut out = Vec::with_capacity(tasks.len());
+    for (i, task) in tasks.iter().enumerate() {
+        let mut mine = Vec::new();
+        if is_active(task) {
+            for (j, earlier) in tasks[..i].iter().enumerate() {
+                if is_active(earlier)
+                    && earlier.route.runtime == task.route.runtime
+                    && any_intersect(&earlier.spec.owns, &task.spec.owns)
+                    && !task.spec.deps.iter().any(|d| d == earlier.id())
+                    && !reaches(&edges, j, i)
+                {
+                    edges[i].push(j);
+                    mine.push(earlier.id().to_string());
+                }
             }
-            tasks[..i]
-                .iter()
-                .filter(|e| is_active(e))
-                .filter(|e| e.route.runtime == task.route.runtime)
-                .filter(|e| any_intersect(&e.spec.owns, &task.spec.owns))
-                .filter(|e| !task.spec.deps.iter().any(|d| d == e.id()))
-                .filter(|e| !depends_on(e.id(), task.id()))
-                .map(|e| e.id().to_string())
-                .collect()
-        })
-        .collect()
+        }
+        out.push(mine);
+    }
+    out
 }

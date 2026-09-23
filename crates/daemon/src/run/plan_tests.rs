@@ -570,3 +570,6 @@ fn all_errors_are_collected() {
 
 #[path = "plan_tests_parse.rs"]
 mod parse;
+
+#[path = "plan_tests_build.rs"]
+mod build;

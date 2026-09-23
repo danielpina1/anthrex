@@ -13,7 +13,9 @@ use proto::{EditFile, Plan, PlanEdit, ProfileSpec, RunState};
 
 use super::globs::validate_glob;
 use super::model::{Profile, Run, RunLimits, task_branch, task_path};
-use super::validate::{EditScope, implicit_deps, resolve_task_lenient, validate_tasks};
+use super::validate::{
+    EditScope, combined_cycles, implicit_deps, resolve_task_lenient, validate_tasks,
+};
 
 /// Decision 56's built-in protected paths. Configuration and the plan add to them;
 /// neither can remove one.
@@ -297,7 +299,13 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
     for (task, deps) in tasks.iter_mut().zip(implicit) {
         task.implicit_deps = deps;
     }
+    // Backstop: `implicit_deps` never closes a cycle, and this proves it per plan.
+    let cycles = combined_cycles(&tasks);
+    if !cycles.is_empty() {
+        return Err(cycles);
+    }
 
+    let unverified = profile.check.is_none();
     Ok(Run {
         id: ctx.id,
         goal: plan.goal,
@@ -324,8 +332,9 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         next_message: 1,
         next_op: 1,
         windows_created: 0,
-        revision: 0,
-        unverified: false,
+        // Decision 47: revisions start at 1. Decision 34: no check, unverified.
+        revision: 1,
+        unverified,
         final_check_failed: false,
         trusted_project: Vec::new(),
         protected_files: pre.protected_files,

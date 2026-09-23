@@ -17,7 +17,7 @@ use super::model::{Profile, ReviewLevel, RunLimits, Task};
 use super::plan::PlanError;
 use super::roster;
 
-pub use super::validate_graph::{EditScope, implicit_deps, validate_tasks};
+pub use super::validate_graph::{EditScope, combined_cycles, implicit_deps, validate_tasks};
 
 const ID_PATTERN: &str = "^[a-z0-9][a-z0-9-]{0,15}$";
 const ID_MAX: usize = 16;
@@ -152,7 +152,7 @@ pub(super) fn resolve_task_lenient(
             .test_mode_reason
             .as_deref()
             .is_none_or(|r| r.trim().is_empty());
-        if declared != TestMode::Tdd && declared != kind_default && reason_blank {
+        if declared != TestMode::Tdd && reason_blank {
             errors.push(e(
                 "test_mode_reason",
                 "8",

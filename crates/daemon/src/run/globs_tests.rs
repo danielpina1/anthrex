@@ -125,3 +125,50 @@ fn builtin_protected_matches_nested_instruction_files() {
     let matcher = OwnsMatcher::new(&s(&[".mcp.json"])).unwrap();
     assert!(!matcher.matches("x/.mcp.json"));
 }
+
+/// M8a.5 review finding 3: an empty literal prefix is a component-prefix of every
+/// module pattern, so decision 9 says it spans more than one module.
+#[test]
+fn an_empty_literal_prefix_spans_every_module() {
+    let modules = s(&["crates/*"]);
+    assert_eq!(
+        modules_spanned(&s(&["**/*.rs"]), &modules),
+        ModuleSpan::Many
+    );
+    assert_eq!(modules_spanned(&s(&["**"]), &modules), ModuleSpan::Many);
+    // With no modules configured there is nothing to span.
+    assert_eq!(
+        modules_spanned(&s(&["**/*.rs"]), &[]),
+        ModuleSpan::One(".".to_string())
+    );
+}
+
+/// M8a.5 review finding 4: a glob `globset` cannot compile is invalid at submit time.
+#[test]
+fn globs_that_do_not_compile_are_invalid() {
+    assert_eq!(
+        validate_glob("crates/a/src/[x.rs"),
+        Err("is not a valid glob: unclosed character class; missing ']'".to_string())
+    );
+    assert_eq!(validate_glob("crates/a/src/[xy].rs"), Ok(()));
+}
+
+/// M8a.5 review finding 5: `./`, `//` and `.` components are rejected, not normalised,
+/// because intersection compares components literally.
+#[test]
+fn dot_and_empty_components_are_invalid() {
+    assert_eq!(
+        validate_glob("./crates/a"),
+        Err("must not contain .".to_string())
+    );
+    assert_eq!(
+        validate_glob("crates/./a"),
+        Err("must not contain .".to_string())
+    );
+    assert_eq!(
+        validate_glob("crates//a"),
+        Err("must not contain //".to_string())
+    );
+    assert_eq!(validate_glob("crates/a/"), Ok(()));
+    assert_eq!(validate_glob("crates/.github/**"), Ok(()));
+}

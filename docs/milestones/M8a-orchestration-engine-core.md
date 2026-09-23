@@ -2743,10 +2743,10 @@ Deviations and readings the brief left open:
   entry for the runtime at the strength", and the built-in Codex entry is `standard`.
   The planner must name `strength = "standard"` (or a model) for such a task.
   Worth revisiting when M9's planner routes hub work to Codex.
-- **`test_mode_reason`** is required when the mode is `check` or `none` *and* differs
-  from the kind's default, so a `docs` task left at its default `none` needs none; an
-  explicit `check` on docs, or `check`/`none` on code, does. A hub code task forced to
-  `tdd` (8.2) skips both the reason and the 8.1 check.
+- **`test_mode_reason`** is required for every task whose mode is not `tdd`, a docs task
+  left at its default `none` included (decision 10; fix round 1 removed an exemption the
+  first version had). A hub code task forced to `tdd` (8.2) skips both the reason and the
+  8.1 check.
 - **One review raise, not two.** A task gets one level up when any of: no `check`, a
   non-`tdd` task touching `source`, or rule 8.3 turned it into `check`. An 8.3 task
   touching `source` meets two of these and is still raised once.
@@ -2761,9 +2761,9 @@ Deviations and readings the brief left open:
   `max_tasks` counts every task that is not cancelled. The `profile` parameter is
   unused (`_profile`): the profile-dependent rules run per task in `resolve_task`.
 - **Implicit dependencies** (decision 41 at plan time) skip a pair where the earlier
-  task already depends, transitively through declared deps, on the later one — plan
-  order would otherwise deadlock them — and a pair the later task already declares
-  (`implicit_dep_never_contradicts_a_declared_one`).
+  task can already reach the later one through declared deps and the implicit deps
+  given to earlier tasks so far — plan order would otherwise deadlock them — and a pair
+  the later task already declares. See fix round 1, F1.
 - **`build_run`** leaves the run in `awaiting_approval`; `ctx.yes` sets `approved_by =
   Some("--yes")` and M8a.11's `Start` moves the run on. `BuildContext.data_dir` is the
   run's own directory (`<data_dir>/runs/<id>`), matching `Run::report_path`.
@@ -2785,3 +2785,58 @@ Deviations and readings the brief left open:
 - **Decision 2's grep** over `plan.rs`, `validate.rs`, `validate_graph.rs`, `env.rs` and
   `model.rs` matches only each file's doc comment naming the forbidden APIs.
   `random_suffix` draws from `std::collections::hash_map::RandomState`, no clock.
+
+### M8a.5 fix round 1 (2026-09-23)
+
+Coordinator rulings on `task-5-review.md` findings 1–12 (13 needs no change):
+
+- **F1 (fix).** `implicit_deps` checks reachability over declared deps plus the implicit
+  deps it has already given to earlier tasks, so no implicit edge closes a cycle. The
+  reviewer's case (t1 `crates/a/**` deps t3, t2 `crates/a/src/**`, t3
+  `crates/a/src/y.rs`) now gives t2 `["t1"]` and t3 `[]`, and the order is t3, t1, t2.
+  As a backstop, `build_run` runs `combined_cycles` (declared plus implicit, same
+  `deps: cycle …` message, rule `12.1`) after filling implicit deps. Tests:
+  `implicit_deps_never_close_a_cycle_through_other_implicit_deps` (through
+  `build_run`) and `the_combined_graph_check_reports_an_implicit_cycle`. The backstop
+  call in `build_run` is unreachable while `implicit_deps` is correct, so no test can
+  make it fire; the function itself is tested.
+- **F2 (fix).** The docs exemption is gone. Every task whose mode is not `tdd` needs
+  `test_mode_reason` (decision 10). The docs fixtures carry reasons, and
+  `non_tdd_needs_a_reason` has a docs-default case.
+- **F3 (fix, `globs.rs`).** A glob with an empty literal prefix (`**`, `**/*.rs`) spans
+  every configured module, because the empty sequence is a component-prefix of every
+  pattern. So rule 7.2.1 raises it (`owns spans more than one module`). With no
+  `modules` configured it is still `.`. Tests: `an_empty_literal_prefix_spans_every_module`
+  (globs) and `a_glob_with_an_empty_literal_prefix_spans_every_module` (validation,
+  with no hub).
+- **F4 (fix).** `validate_glob` compiles each glob as `OwnsMatcher` would, and a failure
+  is `<glob> is not a valid glob: <globset error kind>`, for example `crates/a/src/[x.rs
+  is not a valid glob: unclosed character class; missing ']'`, with rule `globs` and
+  field `owns`, `profile.generated` or `profile.protected`. Tests:
+  `globs_that_do_not_compile_are_invalid` and `globs_that_do_not_compile_are_rejected`.
+- **F5 (fix).** `validate_glob` rejects a `.` component, which covers a leading `./`
+  (`must not contain .`), and an empty component (`must not contain //`). A trailing `/`
+  is still allowed, because decision 11 ignores it. Nothing is normalised. Tests:
+  `dot_and_empty_components_are_invalid` and `dot_components_in_owns_are_rejected`.
+- **F6–F11 (pinning tests).** Each is shown to kill the reviewer's surviving mutation:
+  - `two_modules_raise_s_to_m` now asserts effort, budget and review follow the raised
+    size.
+  - `unset_plan_limits_come_from_config` uses config writers 5, readers 6, bounces 4.
+  - `yes_records_the_approval`.
+  - A hub docs task in `hub_code_is_forced_to_tdd` stays `none` with no 8.2 note.
+  - `rule_8_3_on_source_raises_review_once`.
+  - Eight `validate_tasks` scoping tests: cross-runtime and implicit deps ignore
+    finished tasks, a cancelled dependency of an untouched task is allowed, `max_tasks`
+    skips cancelled tasks, the area rule applies to touched tasks only, a duplicate of a
+    finished task is still a duplicate, a dependency resolves to the first task with its
+    id, and a declared dependency is not repeated as implicit.
+- **F12 (fix).** `build_run` sets `revision = 1` (decision 47) and `unverified =
+  profile.check.is_none()` (decision 34). Test:
+  `a_new_run_starts_at_revision_one_and_is_unverified_without_check`.
+
+Red first: the 10 tests for F1–F5, F2 and F12 failed before their fixes (`78 passed; 10
+failed`). The pinning tests passed against the existing code and were each shown red
+by one mutation per surviving mutant, 17 mutations in all. After each mutation run,
+the working files were restored by copying them back from a scratch snapshot of the
+working tree. `git show HEAD:<path>` could not be used, because HEAD does not contain
+the uncommitted fixes being tested.
