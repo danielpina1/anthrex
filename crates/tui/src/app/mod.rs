@@ -126,6 +126,11 @@ pub struct App {
     /// The conversation view (task M6.5.12); `app/conversation.rs` keeps the keymap's
     /// conversation mode in step with it.
     pub conversation: crate::conversation::ConversationView,
+    /// Review M3: the window whose removal just closed the view (its root's
+    /// `ConversationGone` arrived before the window list). The next focus change opens
+    /// the view again on the window that took over, as it would have followed had the
+    /// list come first.
+    conversation_follow: Option<u32>,
     /// The client's resolved view of `config.toml` (task M6.9); loaded once by the
     /// CLI's `attach` and never touched again — reloading it while running is out of
     /// scope (milestone 6's "Out of scope" list).
@@ -196,6 +201,7 @@ impl App {
             graph_mouse: crate::mouse::MouseState::default(),
             keymap: Keymap::new(settings.prefix),
             conversation: Default::default(),
+            conversation_follow: None,
             modal: None,
             link: Link::Connected,
             spinner_frame: 0,
@@ -307,7 +313,7 @@ impl App {
             Some(id) => self.focus(id),
             None => {
                 self.focused = None;
-                vec![]
+                self.follow_no_focus()
             }
         }
     }
@@ -335,11 +341,13 @@ impl App {
         let (cols, rows) = self.term_size;
         self.parser = vt100::Parser::new(rows.max(1), cols.max(1), self.settings.scrollback_lines);
         self.subscribed = Some(id);
-        vec![Effect::Send(ClientMsg::Subscribe {
+        let mut effects = vec![Effect::Send(ClientMsg::Subscribe {
             window_id: id,
             cols,
             rows,
-        })]
+        })];
+        effects.extend(self.follow_focus(id));
+        effects
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Effect> {

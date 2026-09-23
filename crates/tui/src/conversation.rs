@@ -68,6 +68,11 @@ impl ConversationView {
         self.open
     }
 
+    /// The window an open view shows; `None` while closed.
+    pub fn window_id(&self) -> Option<u32> {
+        self.open.then_some(self.window_id)
+    }
+
     pub fn open(&mut self, window_id: u32) -> Vec<Effect> {
         let mut effects = self.close();
         *self = ConversationView {
