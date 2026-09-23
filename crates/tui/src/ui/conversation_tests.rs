@@ -47,6 +47,8 @@ fn window(runtime: Runtime) -> WindowInfo {
         model: Some("claude-opus-5".into()),
         subagents: vec![],
         exit: None,
+        kind: proto::WindowKind::Pty,
+        run: None,
     }
 }
 

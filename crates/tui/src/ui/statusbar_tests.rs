@@ -198,6 +198,8 @@ fn window(id: u32, worktree: Option<PathBuf>) -> WindowInfo {
         model: None,
         subagents: vec![],
         exit: None,
+        kind: proto::WindowKind::Pty,
+        run: None,
     }
 }
 

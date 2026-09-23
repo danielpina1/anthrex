@@ -32,6 +32,8 @@ fn window(id: u32, project: &str, name: &str, status: Status) -> WindowInfo {
         model: None,
         subagents: vec![],
         exit: None,
+        kind: proto::WindowKind::Pty,
+        run: None,
     }
 }
 

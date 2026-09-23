@@ -1,4 +1,5 @@
 use crate::conversation::{Conversation, DegradeReason, DropCause, TurnPatch};
+use crate::run_wire::{RunReply, RunRequest};
 use crate::types::{ClientKind, GitState, WindowInfo, WindowSpec};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -10,6 +11,9 @@ pub enum HookSource {
     Claude,
     CodexNotify,
     CodexHook,
+    /// A headless run engine session's own streamed events (M8a.17), as opposed to a
+    /// hook fired by a `claude`/`codex` process the daemon spawned interactively.
+    Stream,
 }
 
 /// Client → daemon.
@@ -73,6 +77,7 @@ pub enum ClientMsg {
         window_id: u32,
         agent_id: Option<String>,
     },
+    Run(RunRequest),
     Shutdown,
 }
 
@@ -158,6 +163,7 @@ pub enum DaemonMsg {
         agent_id: Option<String>,
         reason: String,
     },
+    Run(RunReply),
 }
 
 impl DaemonMsg {
@@ -246,7 +252,7 @@ mod tests {
             "cwd": "/tmp/repo/sub", "project": "/tmp/repo", "worktree": null, "branch": null,
             "status": "starting", "tool": null, "since_secs": 0,
             "last_output_secs": 0, "session_id": null, "model": null,
-            "subagents": [], "exit": null
+            "subagents": [], "exit": null, "kind": "pty", "run": null
         }]}});
         let message: DaemonMsg = serde_json::from_value(value.clone()).unwrap();
         let packed = rmp_serde::to_vec_named(&message).unwrap();
@@ -295,6 +301,17 @@ mod tests {
     }
 
     #[test]
+    fn hook_source_stream_round_trips() {
+        let packed = rmp_serde::to_vec_named(&HookSource::Stream).unwrap();
+        let back: HookSource = rmp_serde::from_slice(&packed).unwrap();
+        assert_eq!(back, HookSource::Stream);
+        assert_eq!(
+            serde_json::to_string(&HookSource::Stream).unwrap(),
+            "\"stream\""
+        );
+    }
+
+    #[test]
     fn every_message_round_trips() {
         let spec = WindowSpec {
             name: Some("shell".into()),
@@ -331,6 +348,8 @@ mod tests {
                 needs_permission: true,
             }],
             exit: None,
+            kind: crate::types::WindowKind::Pty,
+            run: None,
         };
         let client_messages = vec![
             ClientMsg::Hello {
@@ -383,6 +402,7 @@ mod tests {
                 window_id: 1,
                 agent_id: Some("agent-2".into()),
             },
+            ClientMsg::Run(crate::run_wire::RunRequest::List),
             ClientMsg::Shutdown,
         ];
         for message in client_messages {
@@ -467,6 +487,10 @@ mod tests {
                 agent_id: Some("agent-2".into()),
                 reason: crate::conversation::GONE_WINDOW_REMOVED.into(),
             },
+            DaemonMsg::Run(crate::run_wire::RunReply::Refused {
+                request: "run".into(),
+                message: "runs are not available yet".into(),
+            }),
         ];
         for message in daemon_messages {
             let back: DaemonMsg =

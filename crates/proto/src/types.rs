@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use crate::run::RunRef;
+
 /// Which program a window runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -108,6 +110,16 @@ pub enum SubagentState {
     Failed,
 }
 
+/// Which program a window runs under the hood: an interactive PTY, or a headless agent
+/// session run by the orchestration engine (from M8a.17).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowKind {
+    #[default]
+    Pty,
+    Headless,
+}
+
 /// The display projection of a window, sent to clients.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WindowInfo {
@@ -126,6 +138,10 @@ pub struct WindowInfo {
     pub model: Option<String>,
     pub subagents: Vec<SubagentInfo>,
     pub exit: Option<ExitInfo>,
+    #[serde(default)]
+    pub kind: WindowKind,
+    #[serde(default)]
+    pub run: Option<RunRef>,
 }
 
 /// Where a window's `HEAD` points.
@@ -187,6 +203,7 @@ pub enum ClientKind {
     Tui,
     Cli,
     Hook,
+    Mcp,
 }
 
 #[cfg(test)]
@@ -236,6 +253,8 @@ mod tests {
                 needs_permission: true,
             }],
             exit: None,
+            kind: WindowKind::Pty,
+            run: None,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"project\":\"/tmp/repo\""));
@@ -263,6 +282,8 @@ mod tests {
             model: None,
             subagents: vec![],
             exit: None,
+            kind: WindowKind::Pty,
+            run: None,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"worktree\":\"/tmp/repo\""));
@@ -379,6 +400,35 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&SubagentState::Failed).unwrap(),
             "\"failed\""
+        );
+    }
+
+    fn base_window_json() -> serde_json::Value {
+        serde_json::json!({
+            "id": 7, "name": "api", "runtime": "claude",
+            "cwd": "/tmp/repo", "project": "/tmp/repo", "worktree": null, "branch": null,
+            "status": "working", "tool": null, "since_secs": 12,
+            "last_output_secs": 1, "session_id": null, "model": null,
+            "subagents": [], "exit": null
+        })
+    }
+
+    #[test]
+    fn window_info_run_defaults_to_none() {
+        let info: WindowInfo = serde_json::from_value(base_window_json()).unwrap();
+        assert_eq!(info.run, None);
+    }
+
+    #[test]
+    fn window_info_kind_defaults_to_pty() {
+        let info: WindowInfo = serde_json::from_value(base_window_json()).unwrap();
+        assert_eq!(info.kind, WindowKind::Pty);
+
+        let json = serde_json::to_string(&WindowKind::Headless).unwrap();
+        assert_eq!(json, "\"headless\"");
+        assert_eq!(
+            serde_json::from_str::<WindowKind>(&json).unwrap(),
+            WindowKind::Headless
         );
     }
 }

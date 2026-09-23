@@ -491,6 +491,19 @@ async fn handle_client(
                 }
                 None
             }
+            // M8a.22 wires the run engine in; until then every run request is refused
+            // the same way, and a tool call gets the shape its caller expects
+            // (`ToolResult`) rather than the generic `Refused`.
+            ClientMsg::Run(request) => Some(DaemonMsg::Run(match request {
+                proto::RunRequest::Tool(_) => proto::RunReply::ToolResult {
+                    ok: false,
+                    text: "runs are not available yet".into(),
+                },
+                _ => proto::RunReply::Refused {
+                    request: "run".into(),
+                    message: "runs are not available yet".into(),
+                },
+            })),
         };
         if let Some(reply) = reply
             && out_tx.send(reply).await.is_err()

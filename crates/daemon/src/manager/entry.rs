@@ -140,6 +140,10 @@ impl Entry {
             model: self.spec.model.clone(),
             subagents: self.state.subagents.infos(now),
             exit: self.exit.clone(),
+            // M8a.17 gives a headless run session its own `WindowKind::Headless` and
+            // `RunRef`; every window this milestone creates is a plain interactive PTY.
+            kind: proto::WindowKind::Pty,
+            run: None,
         }
     }
 

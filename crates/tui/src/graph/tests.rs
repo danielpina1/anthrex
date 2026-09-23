@@ -47,6 +47,8 @@ impl Tree {
                 model: None,
                 subagents: vec![],
                 exit: None,
+                kind: proto::WindowKind::Pty,
+                run: None,
             });
             subagents.push(SubagentInfo {
                 id: index.to_string(),

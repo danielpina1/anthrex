@@ -26,6 +26,8 @@ fn window(
         model: None,
         subagents: vec![],
         exit: None,
+        kind: proto::WindowKind::Pty,
+        run: None,
     }
 }
 

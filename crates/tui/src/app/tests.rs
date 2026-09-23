@@ -55,6 +55,8 @@ fn win(id: u32, name: &str, status: Status) -> WindowInfo {
         model: None,
         subagents: vec![],
         exit: None,
+        kind: proto::WindowKind::Pty,
+        run: None,
     }
 }
 
