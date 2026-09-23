@@ -87,11 +87,13 @@ async fn missing_binary_shows_error_in_window_and_exits_127() {
             signal: None
         }
     );
-    assert!(
-        w.screen_text().contains("not found"),
-        "screen: {:?}",
-        w.screen_text()
-    );
+    // `Exited` comes from the pty-wait thread and the screen from the pty-read thread,
+    // with no ordering between them: the shell's error can still be in the PTY buffer
+    // when the exit is reported. Ubuntu CI run 35832528546 saw `screen: ""` here.
+    wait_until("the not-found message", || {
+        w.screen_text().contains("not found")
+    })
+    .await;
 }
 
 #[tokio::test]
