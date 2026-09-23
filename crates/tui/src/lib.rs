@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod connection;
+pub mod conversation;
 pub mod dialog;
 pub mod graph;
 pub mod inspector;

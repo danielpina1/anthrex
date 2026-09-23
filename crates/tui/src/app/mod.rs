@@ -123,6 +123,9 @@ pub struct App {
     pub(crate) graph_area: ratatui::layout::Rect,
     pub(crate) graph_mouse: crate::mouse::MouseState,
     pub keymap: Keymap,
+    /// The conversation view (task M6.5.12); `app/conversation.rs` keeps the keymap's
+    /// conversation mode in step with it.
+    pub conversation: crate::conversation::ConversationView,
     /// The client's resolved view of `config.toml` (task M6.9); loaded once by the
     /// CLI's `attach` and never touched again — reloading it while running is out of
     /// scope (milestone 6's "Out of scope" list).
@@ -189,6 +192,7 @@ impl App {
             graph_area: ratatui::layout::Rect::default(),
             graph_mouse: crate::mouse::MouseState::default(),
             keymap: Keymap::new(settings.prefix),
+            conversation: Default::default(),
             modal: None,
             link: Link::Connected,
             spinner_frame: 0,
@@ -455,6 +459,7 @@ impl App {
             }
             KeyAction::Run(cmd) => self.run(cmd),
             KeyAction::Tree(key) => self.on_tree_key(key),
+            KeyAction::Conversation(key) => self.on_conversation_key(key),
             KeyAction::AwaitPrefix | KeyAction::Cancel | KeyAction::Nothing => vec![],
         }
     }
@@ -502,6 +507,7 @@ impl App {
             Command::RestartWindow => self.restart_focused(),
             // `C-b r`: `link::reconnect_command` (decisions 23 and 32).
             Command::Reconnect => self.reconnect_command(),
+            Command::ToggleConversation => self.toggle_conversation(),
             cmd @ (Command::ToggleTree
             | Command::ToggleOverview
             | Command::NarrowSidebar
@@ -582,6 +588,7 @@ impl App {
     }
 }
 
+mod conversation;
 mod lifecycle;
 mod link;
 mod modal_keys;
