@@ -98,11 +98,43 @@ fn worker_tool(run: &mut Run, id: ReplyId, call: &ToolCall, now: u64, fx: &mut V
         Ok(args) => args,
         Err(e) => return reply(fx, id, Err(format!("invalid arguments: {e}"))),
     };
-    if run.tasks[i].claim.is_some() {
+    let window = Some(call.window_id);
+    if run.tasks[i]
+        .claim
+        .as_ref()
+        .is_some_and(|c| c.window_id == window)
+    {
         let text = "task_done is already being checked; wait for its reply".to_string();
         return reply(fx, id, Err(text));
     }
+    // A claim of an earlier session is replaced (ruling T12-I1).
+    drop_claim(run, i, REPLACED, fx);
     claim(run, i, Some(id), args, DoneSignal::TaskDone, fx);
+}
+
+/// The reply to a claim whose session was replaced or stopped (ruling T12-I1).
+const REPLACED: &str = "this session is being replaced; its task_done no longer applies";
+
+/// Ruling T12-I1: ends task `i`'s claim, if any, answering its tool call with `text`.
+/// Its `VerifyDone` result, when it comes, finds no claim and is dropped.
+pub(super) fn drop_claim(run: &mut Run, i: usize, text: &str, fx: &mut Vec<Effect>) {
+    if let Some(PendingClaim {
+        reply: Some(id), ..
+    }) = run.tasks[i].claim.take()
+    {
+        reply(fx, id, Err(text.to_string()));
+    }
+}
+
+/// The window of task `i`'s current worker session: its latest worker round, unless
+/// the engine killed it or its resume failed (`retiring`). A round that ended between
+/// turns is still that session, since the next delivery resumes it (ruling T12-I1).
+fn session_window(run: &Run, i: usize) -> Option<u32> {
+    let task = &run.tasks[i];
+    worker_round(task)
+        .map(|r| &task.rounds[r])
+        .filter(|r| !r.retiring && (!r.ended || r.session_id.is_some()))
+        .and_then(|r| r.window_id)
 }
 
 /// Records the claim and sends `VerifyDone`; the reply follows its result.
@@ -129,7 +161,9 @@ fn claim(
         red: args.red.clone(),
     };
     let task_id = task.id().to_string();
+    let window_id = session_window(run, i);
     run.tasks[i].claim = Some(PendingClaim {
+        window_id,
         reply: id,
         claim: DoneClaim {
             summary: args.summary,
@@ -251,6 +285,13 @@ pub(super) fn checked(run: &mut Run, i: usize, result: OpResult, now: u64, fx: &
         }
         return;
     }
+    // Ruling T12-I1: a claim is its session's; a session killed or replaced lost it.
+    if pending.window_id.is_none() || pending.window_id != session_window(run, i) {
+        if let Some(id) = pending.reply {
+            reply(fx, id, Err(REPLACED.to_string()));
+        }
+        return;
+    }
     let (outside, generated, protected, head) = match &result {
         OpResult::DoneChecked {
             outside_owns,
@@ -266,13 +307,15 @@ pub(super) fn checked(run: &mut Run, i: usize, result: OpResult, now: u64, fx: &
         ),
         OpResult::Failed { message } => {
             let text = format!("task_done could not be checked: {message}; call task_done again");
-            return answer(fx, run, Err(text));
+            answer(fx, run, Err(text));
+            return after_rejection(run, i, fx);
         }
         _ => return,
     };
     if let Some(text) = rejection(run, i, &pending, &result) {
         history(run, i, now, text.clone());
-        return answer(fx, run, Err(text));
+        answer(fx, run, Err(text));
+        return after_rejection(run, i, fx);
     }
     let told = pending.reply.is_some();
     if !spill_exempt(run, i) {
@@ -284,10 +327,7 @@ pub(super) fn checked(run: &mut Run, i: usize, result: OpResult, now: u64, fx: &
             .collect();
         if !caught.is_empty() {
             let text = protected_file_message(&caught);
-            if let Some(id) = pending.reply {
-                reply(fx, id, Err(text.clone()));
-            }
-            return ladder::gate_failure(run, i, GateKind::Done, text, told, now, fx);
+            return bounce(run, i, pending.reply, text, told, now, fx);
         }
         // Decision 55: any non-generated path outside `owns` is rung 3.
         if !outside.is_empty() {
@@ -299,16 +339,56 @@ pub(super) fn checked(run: &mut Run, i: usize, result: OpResult, now: u64, fx: &
         }
         if !generated.is_empty() {
             let text = generated_files_message(&generated);
-            if let Some(id) = pending.reply {
-                reply(fx, id, Err(text.clone()));
-            }
-            return ladder::gate_failure(run, i, GateKind::Done, text, told, now, fx);
+            return bounce(run, i, pending.reply, text, told, now, fx);
         }
     }
     let id = pending.reply;
     accept(run, i, pending, head, now);
     if let Some(id) = id {
         reply(fx, id, Ok(DONE_ACCEPTED.to_string()));
+    }
+}
+
+/// A gate failure of `done` (decisions 55, 56). At rung 1 the reply is the message
+/// itself; at rung 2 or 3 the session is being replaced or stopped, and the reply says
+/// so instead of asking for another try (review m-7).
+#[allow(clippy::too_many_arguments)]
+fn bounce(
+    run: &mut Run,
+    i: usize,
+    id: Option<ReplyId>,
+    text: String,
+    told: bool,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
+    let rung = ladder::gate_failure(run, i, GateKind::Done, text.clone(), told, now, fx);
+    let Some(id) = id else {
+        return;
+    };
+    let text = match rung {
+        1 => text,
+        2 => "task_done rejected again: this session is being replaced by a fresh one; stop now"
+            .to_string(),
+        _ => {
+            let cause = run.tasks[i]
+                .block
+                .as_ref()
+                .map(|b| b.text.clone())
+                .unwrap_or_default();
+            format!("task_done rejected: the task is blocked (mis_sized): {cause}; stop now")
+        }
+    };
+    reply(fx, id, Err(text));
+}
+
+/// A rejected claim leaves the task working. If the claiming turn has already ended,
+/// the turn-end fallback runs now, so the task is never left with nothing pending
+/// (ruling T12-I4).
+fn after_rejection(run: &mut Run, i: usize, fx: &mut Vec<Effect>) {
+    let task = &run.tasks[i];
+    if worker_round(task).is_some_and(|r| live(&task.rounds[r]) && !task.rounds[r].turn_open) {
+        fallback(run, i, fx);
     }
 }
 
@@ -358,9 +438,7 @@ pub(super) fn fallback(run: &mut Run, i: usize, fx: &mut Vec<Effect>) {
     let task = &run.tasks[i];
     if task.state != TaskState::Working
         || task.claim.is_some()
-        || op_in_flight(run, task.id(), |k| {
-            matches!(k, OpKind::CountCommits { .. } | OpKind::VerifyDone { .. })
-        })
+        || op_in_flight(run, task.id(), |k| matches!(k, OpKind::CountCommits { .. }))
     {
         return;
     }
@@ -409,7 +487,8 @@ pub(super) fn counted(run: &mut Run, i: usize, result: OpResult, now: u64, fx: &
             return;
         }
     };
-    if task.state != TaskState::Working {
+    // Review m-2: no nudge while the worker's own claim is being checked.
+    if task.state != TaskState::Working || task.claim.is_some() {
         run.tasks[i].rounds[r].fallback = FallbackState::None;
         return;
     }

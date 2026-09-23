@@ -126,7 +126,7 @@ fn add_dep_then_answer_waits_for_the_dependency_then_hands_back() {
         AgentSignal::TurnEnded {
             outcome: TurnOutcome::Completed,
             usage: None,
-            denials: 0,
+            denials: vec![],
         },
     );
     // t1 is started and blocked on a question (M8a.12's task_blocked).

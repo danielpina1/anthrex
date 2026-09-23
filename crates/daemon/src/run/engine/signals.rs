@@ -13,7 +13,8 @@ use super::{
 };
 use crate::headless::FailureKind;
 use crate::run::contract::{
-    RESUME_AFTER_EXIT, denied_text, rate_limit_continue, sandbox_unavailable_text, stall_nudge,
+    DENIAL_LISTED_REASON, RESUME_AFTER_EXIT, denied_text, rate_limit_continue,
+    sandbox_unavailable_text, stall_nudge,
 };
 use crate::run::model::{AgentRound, FailedTurn, FreshSession, Run, StallState};
 use crate::run::role_launch::jitter_ms;
@@ -85,9 +86,10 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
         AgentSignal::TurnStarted => round.turn_open = true,
         AgentSignal::ToolUse { .. } => {
             round.tool_calls += 1;
-            let task = &mut run.tasks[i];
-            task.spent_total.tool_calls = task.spent_total.tool_calls.saturating_add(1);
+            // Ruling T12-m5: the task's total counts its worker rounds only.
             if worker {
+                let task = &mut run.tasks[i];
+                task.spent_total.tool_calls = task.spent_total.tool_calls.saturating_add(1);
                 check_budget(run, i, now, fx);
             }
         }
@@ -102,7 +104,7 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
         }
         AgentSignal::PermissionDenied { tool, reason } => {
             round.denials += 1;
-            round.turn_denials += 1;
+            round.turn_denied.push(tool.clone());
             round.last_denial = Some(format!("{tool}: {reason}"));
             if worker {
                 check_denials(run, i, r, now, fx);
@@ -166,24 +168,48 @@ fn turn_ended(
     r: usize,
     outcome: TurnOutcome,
     usage: Option<TokenUsage>,
-    denials: u32,
+    denials: Vec<String>,
     streak: bool,
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
     let round = &mut run.tasks[i].rounds[r];
+    let worker = round.role == AgentRole::Worker;
     round.turn_open = false;
     if let Some(usage) = usage {
         add_usage(&mut round.usage, usage);
-        let task = &mut run.tasks[i];
-        task.spent_total.tokens = task.spent_total.tokens.saturating_add(usage.billable());
+        // Ruling T12-m5: the task's total counts its worker rounds only.
+        if worker {
+            let task = &mut run.tasks[i];
+            task.spent_total.tokens = task.spent_total.tokens.saturating_add(usage.billable());
+        }
     }
     let round = &mut run.tasks[i].rounds[r];
-    // Decision 27: only the denials the turn's events did not already report.
-    let new = denials.saturating_sub(std::mem::take(&mut round.turn_denials));
-    round.denials += new;
+    // Decision 27: only the denials the turn's events did not already report, matched
+    // by tool (review m-4). The last one listed only here names its tool.
+    let mut seen = std::mem::take(&mut round.turn_denied);
+    let mut new = Vec::new();
+    for tool in denials {
+        match seen.iter().position(|t| *t == tool) {
+            Some(k) => {
+                seen.remove(k);
+            }
+            None => new.push(tool),
+        }
+    }
+    round.denials += new.len() as u32;
+    if let Some(tool) = new.last() {
+        round.last_denial = Some(format!("{tool}: {DENIAL_LISTED_REASON}"));
+    }
     let had_done = std::mem::take(&mut round.turn_had_task_done);
-    if round.role != AgentRole::Worker || run.tasks[i].state != TaskState::Working {
+    // The interrupted turn ended: its queued `stall_nudge` goes next. This comes before
+    // any early return, so a task blocked meanwhile is not left interrupted (ruling
+    // T12-I4b).
+    let interrupted = matches!(round.stall, StallState::Interrupted { .. });
+    if interrupted {
+        round.stall = StallState::Nudged;
+    }
+    if !worker || run.tasks[i].state != TaskState::Working {
         return;
     }
     if check_denials(run, i, r, now, fx) || check_budget(run, i, now, fx) {
@@ -191,11 +217,6 @@ fn turn_ended(
     }
     let claimed = run.tasks[i].claim.is_some();
     let round = &mut run.tasks[i].rounds[r];
-    let interrupted = matches!(round.stall, StallState::Interrupted { .. });
-    if interrupted {
-        // The interrupted turn ended: its queued `stall_nudge` goes next.
-        round.stall = StallState::Nudged;
-    }
     match outcome {
         TurnOutcome::Completed => {
             if matches!(round.failed_turn, FailedTurn::ContinueSent { .. }) {
@@ -296,8 +317,32 @@ fn exited(run: &mut Run, i: usize, r: usize, killed: bool, now: u64, fx: &mut Ve
     if !killed && !worker {
         return;
     }
+    // Ruling T12-I2: an exit while an interrupt is pending is the interrupted turn's end
+    // (a Codex interrupt is a `ProcessExited` with no `TurnEnded`, M8a.1), not a death:
+    // the queued `stall_nudge` goes next, as a delivery (Codex spawns `exec resume`) or,
+    // for Claude, a resume of the ended round. The grace is over.
+    if !killed
+        && working
+        && round.turn_open
+        && matches!(round.stall, StallState::Interrupted { .. })
+    {
+        round.stall = StallState::Nudged;
+        round.turn_open = false;
+        if round.route.runtime != Runtime::Codex {
+            end_round(round, now);
+        }
+        return;
+    }
     if killed || !working || !round.turn_open {
+        let between_turns = !killed && working && !round.turn_open;
         end_round(round, now);
+        // Ruling T12-I4a: a fallback waiting for sub-agents runs now; they died with
+        // the process.
+        if between_turns && round.fallback_waiting {
+            round.fallback_waiting = false;
+            round.open_subagents.clear();
+            done::fallback(run, i, fx);
+        }
         return;
     }
     round.deaths = round.deaths.saturating_add(1);
@@ -352,10 +397,17 @@ pub(super) fn watch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         if task.state != TaskState::Working {
             continue;
         }
-        let Some(r) = worker_round(task).filter(|&r| live(&task.rounds[r])) else {
+        let Some(r) = worker_round(task) else {
             continue;
         };
-        if let FailedTurn::WaitingContinue { at, rate_limit } = task.rounds[r].failed_turn
+        // Ruling T12-I4a: a round that ended between turns keeps its failed turn's
+        // timer; the continue then goes out as a resume.
+        let round = &task.rounds[r];
+        let resumable = round.ended && !round.retiring && round.session_id.is_some();
+        if !live(round) && !resumable {
+            continue;
+        }
+        if let FailedTurn::WaitingContinue { at, rate_limit } = round.failed_turn
             && now >= at
         {
             let round = &mut run.tasks[i].rounds[r];
@@ -365,7 +417,7 @@ pub(super) fn watch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             let id = run.tasks[i].id().to_string();
             outbox::queue(run, &id, rate_limit_continue(&reason), now);
         }
-        if check_budget(run, i, now, fx) {
+        if !live(&run.tasks[i].rounds[r]) || check_budget(run, i, now, fx) {
             continue;
         }
         let round = &run.tasks[i].rounds[r];

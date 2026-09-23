@@ -267,10 +267,17 @@ pub const NO_COMMIT_NUDGE: &str = "[anthrex] Your turn ended and your branch has
 /// Decision 32: a session whose process died mid-turn, resumed (exact).
 pub const RESUME_AFTER_EXIT: &str = "[anthrex] Your session's process stopped in the middle of a turn and has been resumed. Check the state of your worktree, continue, commit, and call task_done when complete.";
 
+const STALL_NUDGE_HEAD: &str = "[anthrex] Your last turn was interrupted after ";
+
+/// Whether `text` is a [`stall_nudge`] (M8a.12 fix round 1: a block drops a stale one).
+pub fn is_stall_nudge(text: &str) -> bool {
+    text.starts_with(STALL_NUDGE_HEAD)
+}
+
 /// Decision 32's stall nudge, after the interrupted turn.
 pub fn stall_nudge(minutes: u64) -> String {
     format!(
-        "[anthrex] Your last turn was interrupted after {minutes} minutes without any progress. Continue the task, or call task_blocked if you cannot."
+        "{STALL_NUDGE_HEAD}{minutes} minutes without any progress. Continue the task, or call task_blocked if you cannot."
     )
 }
 
@@ -296,6 +303,10 @@ pub fn rate_limit_continue(reason: &str) -> String {
 pub fn denied_text(n: u32, tool: &str, reason: &str) -> String {
     format!("the agent was denied {n} times; last: {tool}: {reason}")
 }
+
+/// `denied_text`'s reason for a denial that only the turn's result lists: its
+/// `permission_denials` entry names the tool, not the reason (M8a.12 fix round 1).
+pub const DENIAL_LISTED_REASON: &str = "listed in the turn's permission_denials";
 
 /// Decision 55's rung-1 message (exact).
 pub fn generated_files_message(files: &[String]) -> String {

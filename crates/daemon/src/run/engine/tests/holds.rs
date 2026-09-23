@@ -74,7 +74,7 @@ pub(super) fn blocked_t1() -> Fixture {
         AgentSignal::TurnEnded {
             outcome: TurnOutcome::Completed,
             usage: None,
-            denials: 0,
+            denials: vec![],
         },
     );
     let task = fx.task_mut("t1");

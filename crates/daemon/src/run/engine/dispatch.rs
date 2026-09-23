@@ -12,10 +12,10 @@ use super::schedule::{
     writers_busy,
 };
 use super::{Effect, OpKind, OpResult, emit_op, next_op};
-use super::{holds, ladder, outbox, signals};
-use crate::run::contract::{handover_prompt, reviewer_prompt, worker_prompt};
+use super::{done, holds, ladder, outbox, signals};
+use crate::run::contract::{handover_prompt, is_stall_nudge, reviewer_prompt, worker_prompt};
 use crate::run::env::profile_env;
-use crate::run::model::{AgentRound, FreshSession, OpId, Run, Task, TaskEvent};
+use crate::run::model::{AgentRound, FreshSession, OpId, Run, StallState, Task, TaskEvent};
 use crate::run::role_launch::{jitter_ms, reviewer_spec, session_uuid, worker_spec};
 use crate::run::roster::pick_reviewer;
 
@@ -99,6 +99,20 @@ pub(super) fn block(run: &mut Run, i: usize, reason: BlockReason, text: String, 
     let task = &mut run.tasks[i];
     task.state = TaskState::Blocked;
     task.block = Some(BlockInfo { reason, text });
+    // Ruling T12-I4b: a pending interrupt no longer applies to a blocked task; its
+    // stale nudge is dropped, so whatever unblocks the task is delivered.
+    let mut cleared = false;
+    for round in task.rounds.iter_mut() {
+        if matches!(round.stall, StallState::Interrupted { .. }) {
+            round.stall = StallState::Watching;
+            cleared = true;
+        }
+    }
+    if cleared {
+        let id = task.spec.id.clone();
+        run.outbox
+            .retain(|m| m.task_id != id || m.delivered_at.is_some() || !is_stall_nudge(&m.text));
+    }
 }
 
 fn prepare_in_flight(run: &Run, i: usize) -> bool {
@@ -232,6 +246,13 @@ fn launch(
     if window_limit_reached(run, i, now) {
         return;
     }
+    // Ruling T12-I1: a new round ends any claim of an earlier one.
+    done::drop_claim(
+        run,
+        i,
+        "this session was replaced; its task_done no longer applies",
+        fx,
+    );
     let op = next_op(run);
     if let Some(start) = start {
         run.tasks[i].start_commit = Some(start);
@@ -319,7 +340,7 @@ fn new_round(
         retiring: false,
         delivery_failures: 0,
         delivery_retry_at: None,
-        turn_denials: 0,
+        turn_denied: Vec::new(),
         last_denial: None,
         fallback_waiting: false,
         carried: Vec::new(),

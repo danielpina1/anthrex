@@ -149,10 +149,12 @@ pub enum AgentSignal {
     ToolUse {
         name: String,
     },
+    /// `denials`: the tool names of the result's `permission_denials` (M8a.12 fix round
+    /// 1, review m-4: the Interfaces' `u32` became the names, which `denied_text` needs).
     TurnEnded {
         outcome: TurnOutcome,
         usage: Option<TokenUsage>,
-        denials: u32,
+        denials: Vec<String>,
     },
     ApiRetry {
         error: String,

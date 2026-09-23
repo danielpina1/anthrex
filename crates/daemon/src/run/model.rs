@@ -192,10 +192,11 @@ pub struct AgentRound {
     /// `DELIVERY_RETRY_SECS`; M8a.11 fix round 1).
     #[serde(default)]
     pub delivery_retry_at: Option<u64>,
-    /// `PermissionDenied` events seen in the open turn, so its `TurnEnded`'s
-    /// `permission_denials` count adds only the rest (decision 27; M8a.12).
+    /// The tools of the `PermissionDenied` events seen in the open turn, so its
+    /// `TurnEnded`'s `permission_denials` adds only the rest (decision 27; M8a.12 fix
+    /// round 1, review m-4).
     #[serde(default)]
-    pub turn_denials: u32,
+    pub turn_denied: Vec<String>,
     /// The latest denial, `<tool>: <reason>`, for `denied_text` (decision 32; M8a.12).
     #[serde(default)]
     pub last_denial: Option<String>,
@@ -258,6 +259,10 @@ pub struct DoneClaim {
 pub struct PendingClaim {
     pub reply: Option<u64>,
     pub claim: DoneClaim,
+    /// The claiming round's window: a result for a round that is no longer the task's
+    /// live worker is dropped (M8a.12 fix round 1, ruling T12-I1).
+    #[serde(default)]
+    pub window_id: Option<u32>,
 }
 
 /// A fresh worker session the ladder (rung 2) or a failed resume has decided on,

@@ -4541,6 +4541,7 @@ every new file matches only doc comments.
 **Name corrections and interface readings:**
 
 - `AgentSignal::TurnEnded.denials` stays a count (`u32`), as the Interfaces have it.
+  *(Superseded by fix round 1, review m-4: it is now the tool names.)*
   The driver passes `permission_denials.len()`. Only the part not already seen as
   `PermissionDenied` events in that turn is added (`turn_denials`).
   - `denied_text`'s `last: <tool>: <reason>` comes from the latest `PermissionDenied`
@@ -4786,3 +4787,146 @@ every new file matches only doc comments.
 - `cargo test -p anthrex-daemon` passes: 34 binaries, 665 unit tests.
 - One run under a load average of 28 failed once in `tests/window.rs`, which does not
   touch the engine. It passed alone, and on two full re-runs.
+
+### M8a.12 fix round 1 (2026-09-23)
+
+The review (`.superpowers/sdd/M8a-orchestration-engine-core/task-12-review.md`) found
+4 Important and 7 Minor issues. Rulings T12-I1..I4, T12-minors and T12-m5 apply. Each
+probe became a regression test in `engine/tests/turns_fixes.rs`, and each failed first.
+The minors' tests, and the denial test moved out of `turns.rs` for size, are in the new
+`engine/tests/turns_minors.rs`.
+
+**I1: a claim belongs to its session (ruling T12-I1).**
+
+- `PendingClaim.window_id` (`#[serde(default)]`) is the claiming session's window.
+- **A result for another session is dropped.** `checked` drops a result, replying `Err`
+  (`this session is being replaced; its task_done no longer applies`), when the claim's
+  window is not the task's current session. The current session is the latest worker
+  round, unless it is `retiring` (killed, or its resume failed). A Claude round that
+  merely ended between turns is still the same session, and its claim stands.
+- **Every session change clears the claim.** `done::drop_claim` answers the waiting
+  tool call at once and clears the claim. It runs in these places:
+  - `kill_worker` (rungs 3 and 4, the denial and sandbox blocks);
+  - `rung2`, whose text says the session is being replaced by a fresh one;
+  - every new round (`dispatch::launch`);
+  - `worker_tool`, when a claim of an earlier session is still recorded.
+- **Restore clears every claim and every `FallbackState::Counting`.** This settles the
+  first pass's concern 1, which no longer needs to go to M8a.15.
+- **The fallback guard changed.** It now waits only for `CountCommits` and a recorded
+  claim. A `VerifyDone` left over from a replaced session no longer blocks it.
+- Tests: `a_claim_from_a_replaced_session_is_dropped` (probe C, both orderings),
+  `restore_clears_a_claim_and_a_count_in_flight` and
+  `a_claim_follows_its_session_not_its_process`.
+
+**I2: an exit during an interrupt ends the interrupted turn (ruling T12-I2).**
+
+- A non-engine exit of a working task's worker, while its turn is open and its stall is
+  `Interrupted`, ends the interrupted turn. The stall becomes `Nudged` and no death is
+  counted, so the grace kill never comes.
+- For Codex, whose interrupt is exactly such an exit (M8a.1), the round stays live, and
+  `stall_nudge` is delivered: the driver runs it as `exec resume`.
+- For Claude, the round ends, and the delivery resumes it carrying `stall_nudge`, not
+  `RESUME_AFTER_EXIT`.
+- Tests: `a_codex_interrupt_exit_ends_the_turn_and_gets_the_nudge` (probe A) and
+  `a_claude_exit_on_the_interrupt_resumes_with_the_nudge`.
+
+**I3: a failed resume is final (ruling T12-I3).**
+
+- `resumed`'s failure sets `retiring`, so no delivery resumes the round again.
+- While a fresh session is pending, `deliver` moves every undelivered message of the
+  task into `FreshSession.append`, in order, after anything already there. The carried
+  messages of a failed resume go the same way (`accumulate`), so nothing is overwritten.
+- `fresh_diff` clears `fresh_session` only once the launch has happened. A launch the
+  window limit refuses keeps it, and the messages it carries, for a retry.
+- Tests: `a_failed_resume_is_final_and_messages_accumulate_for_the_fresh_session`
+  (probe D: the prompt ends `DONE_NUDGE`, a blank line, `[anthrex] X`) and
+  `a_refused_fresh_launch_keeps_its_messages`. The second was written after the code;
+  mutant F15 pins it.
+
+**I4: nothing is left waiting forever (ruling T12-I4).**
+
+- **(a) A round that ended between turns keeps its failed turn's timer.** `watch`
+  handles the timer for such a resumable round too, and the continue then goes out as a
+  `ResumeSession`.
+  - A Claude exit between turns while the fallback waits for sub-agents clears the
+    sub-agents, which died with the process, and runs the fallback.
+  - Tests: `an_exit_during_a_failed_turns_wait_keeps_its_continue` (probe B) and
+    `an_exit_while_the_fallback_waits_for_subagents_runs_it`.
+- **(b) Blocking a task clears its interrupt.** `dispatch::block` resets any
+  `Interrupted` stall to `Watching` and drops the undelivered `stall_nudge`
+  (`contract::is_stall_nudge`), so whatever unblocks the task is delivered.
+  - `turn_ended` also applies `Interrupted → Nudged` before its early returns.
+  - Test: `a_block_during_an_interrupt_clears_it_so_the_answer_delivers` (probe E).
+- **A rejection after the turn ended runs the fallback** (`after_rejection`), because
+  otherwise a working task would be left with nothing pending. This was found by the
+  liveness check. Test: `a_late_rejection_runs_the_fallback`.
+- **The liveness check.** `turns_fixes::assert_alive` runs after every probe sequence.
+  For each working task it requires at least one of:
+  - a live worker round with an open turn;
+  - a message that can be delivered (the round is live and not interrupted, or
+    resumable, or a fresh session is pending), or one in flight;
+  - a failed turn's timer or a delivery retry;
+  - an op in flight;
+  - a kill in progress.
+
+**Minors (ruling T12-minors).**
+
+- **m-1.**
+  - `rejections_come_before_the_spill_split`: a dirty or off-branch claim that also
+    has spill and protected paths is a rejection, not rung 3 (reviewer mutant Mr).
+  - `a_retiring_window_cannot_claim` (reviewer mutant Mo).
+- **m-2.** `counted` resets the fallback and queues nothing while a claim is in flight.
+  Test: `no_done_nudge_while_a_claim_is_in_flight` (probe F).
+- **m-3.** `a_completed_turn_resets_the_two_other_failures_rule` (reviewer mutant Mi).
+- **m-4. `AgentSignal::TurnEnded.denials` is now `Vec<String>`**, the result's
+  `permission_denials[].tool_name`, as `headless::SessionEvent::TurnEnded` already
+  carries it. This is a deviation from the Interfaces' `u32`.
+  - `AgentRound.turn_denials` became `turn_denied: Vec<String>`, the tools seen as
+    events in the turn.
+  - The new denials are the listed tools left after removing each seen one once.
+  - The last new one becomes `last_denial`, with the fixed reason
+    `contract::DENIAL_LISTED_REASON` (`listed in the turn's permission_denials`),
+    because the result carries no reason.
+  - **Carry for M8a.22:** pass the names through.
+  - Test: `denials_block_at_the_threshold`, now in `turns_minors.rs`, including probe G
+    and an ordering case.
+- **m-5 (ruling T12-m5).** `Task.spent_total`, and so rung 4, counts worker rounds only:
+  the tool calls and tokens of reviewer rounds stay on those rounds. Test:
+  `reviewer_spend_is_not_the_tasks`.
+- **m-6.** The hard-limit comparisons use `saturating_mul`. Test:
+  `a_huge_token_budget_does_not_overflow`, which overflowed in debug before.
+- **m-7.** `gate_failure` returns the rung. A `done` bounce's reply is the message at
+  rung 1, and at rung 2 `task_done rejected again: this session is being replaced by a
+  fresh one; stop now` (invented). At rung 3 it is `task_done rejected: the task is
+  blocked (mis_sized): <cause>; stop now` (invented). Test:
+  `a_rung_2_bounce_reply_says_the_session_is_replaced`.
+
+**TDD and mutation evidence.**
+
+- **The red run.** The fix-round tests were written first. Only the `denials` type and
+  the `DENIAL_LISTED_REASON` constant were changed beforehand, so the tests would
+  compile. The run gave `77 passed; 13 failed`. Sample failures:
+  - probe A: a `ResumeSession(RESUME_AFTER_EXIT)` was emitted;
+  - probe B: `left: [] right: [rate_limit_continue]`;
+  - probe C: `rung 2 clears the claim`;
+  - probe D: `never again: [..ResumeSession..]`;
+  - probe E: `left: [] right: [answer]`;
+  - m-6: `attempt to multiply with overflow`;
+  - m-5: `left: 1 right: 0`.
+- **Three passed at red: m-1's two tests and m-3's.** They pin correct code, and the
+  reviewer's surviving mutants Mr, Mo and Mi each now fail one of them.
+- **Tests added after the first green run.** `a_claim_follows_its_session_not_its_process`,
+  `a_late_rejection_runs_the_fallback` and `a_refused_fresh_launch_keeps_its_messages`
+  were added once mutants F1, F5 and F16 survived, and they kill them.
+- **The ordering case.** `denials_block_at_the_threshold` gained its ordering case once
+  mutant F12, counting instead of matching tools, survived.
+- **19 mutants were run; all are killed.** F1 to F16, Mi, Mo and Mr, including every
+  new guard.
+
+**Gates.**
+
+- `cargo build --workspace --all-targets`, clippy with `-D warnings` and `cargo fmt
+  --all --check` are clean.
+- `cargo test -p anthrex-daemon` passes: 34 binaries, 683 unit tests.
+- No file passes 600 lines. `tests/turns.rs` is 558 lines, `turns_fixes.rs` 425 and
+  `turns_minors.rs` 275.

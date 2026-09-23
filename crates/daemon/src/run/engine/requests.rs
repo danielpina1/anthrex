@@ -245,6 +245,16 @@ fn kill_sessions(run: &mut Run, task_id: &str, fx: &mut Vec<Effect>) {
 /// deadlines, re-issued ops).
 pub(super) fn restore(state: &mut EngineState, runs: Vec<Run>, now: u64) {
     for mut run in runs {
+        // Ruling T12-I1: no session outlives a restart, so no claim or count does
+        // either; the reply ids belonged to the old daemon.
+        for task in run.tasks.iter_mut() {
+            task.claim = None;
+            for round in task.rounds.iter_mut() {
+                if round.fallback == crate::run::model::FallbackState::Counting {
+                    round.fallback = crate::run::model::FallbackState::None;
+                }
+            }
+        }
         if run.state == RunState::Running {
             run.state = RunState::Paused;
             run.paused_from = Some(RunState::Running);

@@ -7,7 +7,7 @@ use super::fixture::*;
 use super::holds::{delivers, joined};
 use crate::headless::FailureKind;
 use crate::run::contract::{
-    DONE_NUDGE, NO_COMMIT_NUDGE, RESUME_AFTER_EXIT, denied_text, rate_limit_continue, stall_nudge,
+    DONE_NUDGE, NO_COMMIT_NUDGE, RESUME_AFTER_EXIT, rate_limit_continue, stall_nudge,
 };
 use crate::run::engine::{AgentSignal, Effect, EventKind, OpKind, OpResult, TurnOutcome};
 use crate::run::messages::DELIVERY_RETRY_SECS;
@@ -437,42 +437,6 @@ fn a_failed_rate_limit_turn_is_a_rate_limit_event() {
     );
     fx.turn_ended(window, limited);
     assert_eq!(fx.run().rate_limits.get("claude"), Some(&2));
-}
-
-#[test]
-fn denials_block_at_the_threshold() {
-    let deny = AgentSignal::PermissionDenied {
-        tool: "Write".into(),
-        reason: "not allowed".into(),
-    };
-    let ended = |denials| AgentSignal::TurnEnded {
-        outcome: TurnOutcome::Completed,
-        usage: None,
-        denials,
-    };
-    // Two seen as events, and the result lists them plus one more.
-    let (mut fx, window) = working();
-    fx.signal(window, deny.clone());
-    fx.signal(window, deny.clone());
-    assert_eq!(fx.task("t1").state, TaskState::Working);
-    let effects = fx.signal(window, ended(3));
-    assert_eq!(
-        block_of(&fx),
-        (
-            BlockReason::Environment,
-            denied_text(3, "Write", "not allowed")
-        )
-    );
-    assert!(effects.contains(&Effect::KillWindow { window_id: window }));
-    assert!(ops_in(&effects, "CountCommits").is_empty());
-
-    // A denial seen as an event is not counted again from `permission_denials`.
-    let (mut fx, window) = working();
-    fx.signal(window, deny.clone());
-    fx.signal(window, deny);
-    fx.signal(window, ended(2));
-    assert_eq!(fx.task("t1").rounds[0].denials, 2);
-    assert_eq!(fx.task("t1").state, TaskState::Working);
 }
 
 #[test]

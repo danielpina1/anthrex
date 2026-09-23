@@ -7,7 +7,7 @@ use proto::{AgentRole, BlockReason, Budget, GateKind, Size, Spend, TaskState};
 
 use super::dispatch::{block, history, launch_fresh};
 use super::schedule::op_in_flight;
-use super::{Effect, OpKind, OpResult, emit_op, next_op, outbox};
+use super::{Effect, OpKind, OpResult, done, emit_op, next_op, outbox};
 use crate::run::contract::budget_wrap_up;
 use crate::run::model::{AgentRound, FreshSession, Run, Task};
 use crate::run::roster::escalate;
@@ -28,8 +28,15 @@ pub(super) fn live(round: &AgentRound) -> bool {
     round.window_id.is_some() && !round.ended && !round.retiring
 }
 
-/// Kills every live worker session of task `i` (decision 38, rungs 2 to 4).
+/// Kills every live worker session of task `i` (decision 38, rungs 2 to 4), ending its
+/// claim (ruling T12-I1).
 pub(super) fn kill_worker(run: &mut Run, i: usize, fx: &mut Vec<Effect>) {
+    done::drop_claim(
+        run,
+        i,
+        "this session is being stopped; its task_done no longer applies",
+        fx,
+    );
     for round in run.tasks[i]
         .rounds
         .iter_mut()
@@ -70,7 +77,7 @@ fn gate_label(gate: GateKind) -> &'static str {
 /// A gate failure (decision 38): `bounces[gate] += 1; failures += 1`; rung 3 past
 /// `max_bounces` or at three failures, rung 2 at two, else rung 1 — `text` to the same
 /// session as its next turn, unless `told` (the tool reply already carried it, decision
-/// 55). The text joins the failure record either way.
+/// 55). The text joins the failure record either way. Returns the rung taken.
 pub(super) fn gate_failure(
     run: &mut Run,
     i: usize,
@@ -79,7 +86,7 @@ pub(super) fn gate_failure(
     told: bool,
     now: u64,
     fx: &mut Vec<Effect>,
-) {
+) -> u8 {
     let task = &mut run.tasks[i];
     let bounces = match gate {
         GateKind::Done => &mut task.bounces.done,
@@ -100,9 +107,11 @@ pub(super) fn gate_failure(
             first_line(&text)
         );
         rung3(run, i, cause, now, fx);
+        3
     } else if failures == 2 {
         let reason = format!("the {label} gate failed again: {}", first_line(&text));
         rung2(run, i, reason, now, fx);
+        2
     } else {
         let task = &mut run.tasks[i];
         task.rung = 1;
@@ -112,6 +121,7 @@ pub(super) fn gate_failure(
             let id = run.tasks[i].id().to_string();
             outbox::queue(run, &id, text, now);
         }
+        1
     }
 }
 
@@ -163,6 +173,12 @@ fn breach(run: &mut Run, i: usize, what: String, now: u64, fx: &mut Vec<Effect>)
 /// Rung 2: the session killed; a fresh one on `roster::escalate(route)` starts in the
 /// same worktree once the old one has exited ([`start_fresh_sessions`]).
 pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut Vec<Effect>) {
+    done::drop_claim(
+        run,
+        i,
+        "this session is being replaced by a fresh one; its task_done no longer applies",
+        fx,
+    );
     kill_worker(run, i, fx);
     drop_queued(run, i);
     let route = escalate(&run.roster, &run.tasks[i].route);
@@ -242,13 +258,15 @@ fn reached(spend: Spend, budget: Budget) -> bool {
 /// compared in integers (`2 × spend >= 3 × budget`, so 7 of 5 tool calls is not and 8
 /// is; 450 seconds of 5 minutes is); what was breached.
 fn breached(spend: Spend, budget: Budget) -> Option<String> {
-    if u64::from(spend.tool_calls) * 2 >= u64::from(budget.tool_calls) * 3 {
+    if u64::from(spend.tool_calls).saturating_mul(2)
+        >= u64::from(budget.tool_calls).saturating_mul(3)
+    {
         return Some(format!(
             "{} tool calls against a budget of {}",
             spend.tool_calls, budget.tool_calls
         ));
     }
-    if spend.secs * 2 >= u64::from(budget.minutes) * 60 * 3 {
+    if spend.secs.saturating_mul(2) >= u64::from(budget.minutes).saturating_mul(180) {
         return Some(format!(
             "{} minutes against a budget of {}",
             spend.secs / 60,
@@ -256,10 +274,9 @@ fn breached(spend: Spend, budget: Budget) -> Option<String> {
         ));
     }
     match budget.tokens {
-        Some(tokens) if spend.tokens * 2 >= tokens * 3 => Some(format!(
-            "{} tokens against a budget of {tokens}",
-            spend.tokens
-        )),
+        Some(tokens) if spend.tokens.saturating_mul(2) >= tokens.saturating_mul(3) => Some(
+            format!("{} tokens against a budget of {tokens}", spend.tokens),
+        ),
         _ => None,
     }
 }
@@ -371,8 +388,14 @@ pub(super) fn fresh_diff(
         ),
         _ => return,
     };
-    let Some(fresh) = run.tasks[i].fresh_session.take() else {
+    let Some(fresh) = run.tasks[i].fresh_session.clone() else {
         return;
     };
+    let rounds = run.tasks[i].rounds.len();
     launch_fresh(run, i, &fresh, &stat, &patch, now, fx);
+    // Kept when the launch was refused (the window limit blocks the task), so the
+    // messages it carries are not lost.
+    if run.tasks[i].rounds.len() > rounds {
+        run.tasks[i].fresh_session = None;
+    }
 }

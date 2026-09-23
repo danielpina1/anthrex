@@ -33,7 +33,7 @@ fn ended_with(fx: &mut Fixture, window: u32, usage: TokenUsage) -> Vec<Effect> {
         AgentSignal::TurnEnded {
             outcome: TurnOutcome::Completed,
             usage: Some(usage),
-            denials: 0,
+            denials: vec![],
         },
     )
 }

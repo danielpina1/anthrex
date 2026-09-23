@@ -291,7 +291,7 @@ impl Fixture {
             AgentSignal::TurnEnded {
                 outcome,
                 usage: None,
-                denials: 0,
+                denials: vec![],
             },
         )
     }

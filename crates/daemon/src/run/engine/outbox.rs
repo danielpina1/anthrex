@@ -57,6 +57,21 @@ pub(super) fn deliver(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         ) {
             continue;
         }
+        // Ruling T12-I3: a fresh session still to start takes the messages in its prompt.
+        if run.tasks[i].fresh_session.is_some() {
+            let texts: Vec<String> = run
+                .outbox
+                .iter()
+                .filter(|m| m.task_id == task_id && m.delivered_at.is_none())
+                .map(|m| m.text.clone())
+                .collect();
+            run.outbox
+                .retain(|m| m.task_id != task_id || m.delivered_at.is_some());
+            if let Some(fresh) = run.tasks[i].fresh_session.as_mut() {
+                accumulate(fresh, texts);
+            }
+            continue;
+        }
         let Some(r) = run.tasks[i]
             .rounds
             .iter()
@@ -177,6 +192,17 @@ pub(super) fn delivered(
     }
 }
 
+/// Ruling T12-I3: messages for a fresh session still to start join the end of its
+/// prompt, in order, after any already there.
+fn accumulate(fresh: &mut FreshSession, texts: Vec<String>) {
+    if texts.is_empty() {
+        return;
+    }
+    let mut all: Vec<String> = fresh.append.take().into_iter().collect();
+    all.extend(texts);
+    fresh.append = Some(all.join("\n\n"));
+}
+
 /// A `ResumeSession`'s result (decisions 28, 29, 32). Resumed: the messages it carried
 /// are delivered. Failed: the task gets a fresh session at the same rung, with no
 /// failure counted, whose prompt ends with those messages.
@@ -208,11 +234,14 @@ pub(super) fn resumed(run: &mut Run, i: usize, result: OpResult, now: u64) {
         OpResult::Failed { message } => message,
         _ => return,
     };
-    end_round(&mut run.tasks[i].rounds[r], now);
-    let append = (!texts.is_empty()).then(|| texts.join("\n\n"));
-    run.tasks[i].fresh_session = Some(FreshSession {
+    // Ruling T12-I3: the round is over for good; nothing resumes it again.
+    let round = &mut run.tasks[i].rounds[r];
+    end_round(round, now);
+    round.retiring = true;
+    let fresh = run.tasks[i].fresh_session.get_or_insert(FreshSession {
         reason: format!("the session could not be resumed: {error}"),
-        append,
+        append: None,
     });
+    accumulate(fresh, texts);
     history(run, i, now, format!("resume failed: {error}"));
 }
