@@ -2,58 +2,6 @@
 
 use super::*;
 
-fn needle_conversation() -> Conversation {
-    conversation(
-        None,
-        5,
-        vec![turn(
-            21,
-            Role::Assistant,
-            3_000,
-            vec![
-                text("the needle is in the lexer"),
-                tool(
-                    "Grep",
-                    "needle across crates",
-                    json!({"pattern": "hay"}),
-                    None,
-                ),
-                tool(
-                    "Read",
-                    "src/main.rs",
-                    json!({"file_path": "needle.rs"}),
-                    None,
-                ),
-                tool(
-                    "Bash",
-                    "cargo test",
-                    json!({"command": "cargo test"}),
-                    Some("found a needle in output"),
-                ),
-                Block::Notice {
-                    kind: NoticeKind::Error,
-                    text: "needle notice".into(),
-                },
-            ],
-        )],
-    )
-}
-
-fn search_for(view: &mut ConversationView, query: &str) {
-    assert!(press(view, KeyCode::Char('/')).is_empty());
-    assert_eq!(
-        view.search(),
-        Some(&Search {
-            query: String::new(),
-            typing: true,
-            hits: vec![],
-            hit: 0
-        })
-    );
-    type_str(view, query);
-    assert!(press(view, KeyCode::Enter).is_empty());
-}
-
 #[test]
 fn search_matches_prose_and_summaries_only() {
     let mut view = open_with(needle_conversation());

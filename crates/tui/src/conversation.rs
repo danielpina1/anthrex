@@ -179,6 +179,10 @@ impl ConversationView {
 
     /// The row the cursor names; if that row is gone, the nearest row after where it
     /// was; if nothing follows, the last row. No cursor follows the newest row.
+    ///
+    /// One exception: a `Line` whose block still has rows stays on that block — its last
+    /// remaining line, or its `Tool` row once folded. Moving on to the next block would
+    /// put the selection on a different call, or on a spawn `Enter` would descend into.
     pub fn selected_row(&self, rows: &[Row]) -> Option<usize> {
         if rows.is_empty() {
             return None;
@@ -188,6 +192,18 @@ impl ConversationView {
             return Some(last);
         };
         let target = cursor.order();
+        if let Cursor::Line(turn, block, _) = cursor {
+            let same_block = |row: &Row| match row.cursor() {
+                Cursor::Block(t, b) | Cursor::Line(t, b, _) => (t, b) == (*turn, *block),
+                _ => false,
+            };
+            if let Some(at) = rows
+                .iter()
+                .rposition(|row| same_block(row) && row.cursor().order() <= target)
+            {
+                return Some(at);
+            }
+        }
         Some(
             rows.iter()
                 .position(|row| row.cursor().order() >= target)
@@ -198,7 +214,13 @@ impl ConversationView {
     /// Keys while the view is open and no modal is (the table in task M6.5.12's brief).
     /// Returns only `SubscribeConversation` / `UnsubscribeConversation` (spec decision 11).
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Effect> {
-        if !self.open {
+        // Ruling N4: a key with Ctrl or Alt held is never one of the view's keys — not
+        // `q`, not `j`, not a character of the query. Shift is how capitals arrive.
+        if !self.open
+            || key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
             return vec![];
         }
         if self.search.as_ref().is_some_and(|s| s.typing) {
@@ -279,6 +301,15 @@ impl ConversationView {
         let Some((agent_id, label)) = spawn else {
             return vec![];
         };
+        // A key already on the trail (malformed data: an agent that spawns itself or an
+        // ancestor) would put two levels on one daemon subscription; refuse it.
+        if self
+            .levels
+            .iter()
+            .any(|level| level.agent_id.as_deref() == Some(agent_id.as_str()))
+        {
+            return vec![];
+        }
         self.trail.push(Crumb {
             agent_id: agent_id.clone(),
             label,
@@ -329,13 +360,7 @@ impl ConversationView {
             KeyCode::Backspace => {
                 search.query.pop();
             }
-            KeyCode::Char(c)
-                if !key
-                    .modifiers
-                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-            {
-                search.query.push(c);
-            }
+            KeyCode::Char(c) => search.query.push(c),
             _ => return,
         }
         self.refresh_search(self.levels.len() - 1);

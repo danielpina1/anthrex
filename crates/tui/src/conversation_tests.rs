@@ -344,6 +344,14 @@ fn the_cursor_moves_forward_when_its_turn_is_dropped() {
         1,
         Some(DropCause::Turns),
     );
+    // Decision A4: the delta's own drop count and cause reach the first row.
+    assert_eq!(
+        view.rows()[0],
+        Row::Dropped {
+            count: 1,
+            cause: DropCause::Turns
+        }
+    );
     assert_eq!(
         selected(&view).1,
         Row::TurnHeader {
@@ -354,15 +362,22 @@ fn the_cursor_moves_forward_when_its_turn_is_dropped() {
     );
 }
 
+/// A sub-agent's conversation. Each agent gets its own turn id and rev, so a mix-up
+/// between two trail levels cannot pass by coincidence.
 fn sub_agent(agent_id: &str, spawns: Option<(&str, &str)>) -> Conversation {
+    let (turn_id, rev) = match agent_id {
+        "agent-b" => (31, 2),
+        "agent-c" => (41, 3),
+        _ => (51, 4),
+    };
     let mut blocks = vec![text(&format!("{agent_id} looking around"))];
     if let Some((child, label)) = spawns {
         blocks.push(spawn(child, label));
     }
     conversation(
         Some(agent_id),
-        2,
-        vec![turn(31, Role::Assistant, 2_000, blocks)],
+        rev,
+        vec![turn(turn_id, Role::Assistant, 2_000 + turn_id, blocks)],
     )
 }
 
@@ -449,11 +464,66 @@ fn a_dropped_row_and_a_degraded_row_bracket_the_list() {
     assert_eq!(rows.len(), 9);
 }
 
+fn needle_conversation() -> Conversation {
+    conversation(
+        None,
+        5,
+        vec![turn(
+            21,
+            Role::Assistant,
+            3_000,
+            vec![
+                text("the needle is in the lexer"),
+                tool(
+                    "Grep",
+                    "needle across crates",
+                    json!({"pattern": "hay"}),
+                    None,
+                ),
+                tool(
+                    "Read",
+                    "src/main.rs",
+                    json!({"file_path": "needle.rs"}),
+                    None,
+                ),
+                tool(
+                    "Bash",
+                    "cargo test",
+                    json!({"command": "cargo test"}),
+                    Some("found a needle in output"),
+                ),
+                Block::Notice {
+                    kind: NoticeKind::Error,
+                    text: "needle notice".into(),
+                },
+            ],
+        )],
+    )
+}
+
+fn search_for(view: &mut ConversationView, query: &str) {
+    assert!(press(view, KeyCode::Char('/')).is_empty());
+    assert_eq!(
+        view.search(),
+        Some(&Search {
+            query: String::new(),
+            typing: true,
+            hits: vec![],
+            hit: 0
+        })
+    );
+    type_str(view, query);
+    assert!(press(view, KeyCode::Enter).is_empty());
+}
+
 #[path = "conversation_tests/trail.rs"]
 mod trail;
 
 #[path = "conversation_tests/search.rs"]
 mod search;
+
+#[path = "conversation_tests/deltas.rs"]
+mod deltas;
 
 #[test]
 fn a_delta_before_the_first_snapshot_is_dropped_quietly() {

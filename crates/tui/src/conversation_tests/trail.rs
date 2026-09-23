@@ -213,3 +213,115 @@ fn j_and_k_walk_rows_and_clamp() {
     assert!(press(&mut view, KeyCode::Enter).is_empty());
     assert_eq!(view.rows().len(), 7);
 }
+
+#[test]
+fn descending_leaves_the_parents_search_behind() {
+    let mut view = open_with(main_conversation());
+    search_for(&mut view, "call sites");
+    assert!(view.search().is_some());
+    press(&mut view, KeyCode::Char('G'));
+    assert_eq!(
+        press(&mut view, KeyCode::Enter),
+        vec![subscribe(Some("agent-b"))]
+    );
+    assert_eq!(view.search(), None);
+    // So the first Esc in the child pops, rather than clearing a search.
+    assert_eq!(
+        press(&mut view, KeyCode::Esc),
+        vec![unsubscribe(Some("agent-b"))]
+    );
+}
+
+#[test]
+fn a_delta_before_the_childs_snapshot_does_not_subscribe_again() {
+    let mut view = open_with(main_conversation());
+    press(&mut view, KeyCode::Char('G'));
+    press(&mut view, KeyCode::Enter);
+    let early = view.on_delta(
+        WINDOW,
+        Some("agent-b".into()),
+        1,
+        2,
+        vec![],
+        None,
+        None,
+        0,
+        None,
+    );
+    assert!(
+        early.is_empty(),
+        "a second subscribe raced the first: {early:?}"
+    );
+    view.on_snapshot(WINDOW, Some("agent-b".into()), sub_agent("agent-b", None));
+    assert_eq!(view.rev(), Some(2));
+}
+
+#[test]
+fn descending_into_an_agent_already_on_the_trail_does_nothing() {
+    let mut view = open_with(main_conversation());
+    press(&mut view, KeyCode::Char('G'));
+    press(&mut view, KeyCode::Enter);
+    // Malformed data: agent-b's conversation spawns agent-b, the current key.
+    view.on_snapshot(
+        WINDOW,
+        Some("agent-b".into()),
+        sub_agent("agent-b", Some(("agent-b", "myself again"))),
+    );
+    press(&mut view, KeyCode::Char('G'));
+    assert!(press(&mut view, KeyCode::Enter).is_empty());
+    assert_eq!(view.trail().len(), 1);
+
+    // And an agent further up: agent-c spawns agent-b.
+    view.on_snapshot(
+        WINDOW,
+        Some("agent-b".into()),
+        sub_agent("agent-b", Some(("agent-c", "review the split"))),
+    );
+    press(&mut view, KeyCode::Char('G'));
+    assert_eq!(
+        press(&mut view, KeyCode::Enter),
+        vec![subscribe(Some("agent-c"))]
+    );
+    view.on_snapshot(
+        WINDOW,
+        Some("agent-c".into()),
+        sub_agent("agent-c", Some(("agent-b", "back up the trail"))),
+    );
+    press(&mut view, KeyCode::Char('G'));
+    assert!(press(&mut view, KeyCode::Enter).is_empty());
+    assert_eq!(view.trail().len(), 2);
+    assert_eq!(view.key(), Some((WINDOW, Some("agent-c".into()))));
+}
+
+#[test]
+fn keys_with_ctrl_or_alt_do_nothing() {
+    let mut view = open_with(main_conversation());
+    press(&mut view, KeyCode::Char('g'));
+    let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+    let alt = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT);
+
+    assert!(view.on_key(ctrl('q')).is_empty());
+    assert!(view.is_open());
+    assert!(view.on_key(alt('j')).is_empty());
+    assert!(
+        view.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::ALT))
+            .is_empty()
+    );
+    assert_eq!(
+        selected(&view).0,
+        0,
+        "Alt-j and Alt-Down must not move the cursor"
+    );
+    assert!(view.on_key(ctrl('/')).is_empty());
+    assert_eq!(view.search(), None);
+
+    // Shift is how capitals arrive, so it still counts.
+    view.on_key(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT));
+    assert_eq!(selected(&view).0, 6);
+
+    press(&mut view, KeyCode::Char('/'));
+    view.on_key(ctrl('x'));
+    view.on_key(alt('y'));
+    view.on_key(KeyEvent::new(KeyCode::Char('I'), KeyModifiers::SHIFT));
+    assert_eq!(view.search().unwrap().query, "I");
+}
