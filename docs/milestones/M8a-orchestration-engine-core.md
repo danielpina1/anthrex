@@ -2840,3 +2840,96 @@ by one mutation per surviving mutant, 17 mutations in all. After each mutation r
 the working files were restored by copying them back from a scratch snapshot of the
 working tree. `git show HEAD:<path>` could not be used, because HEAD does not contain
 the uncommitted fixes being tested.
+
+### M8a.6 plan edits (2026-09-23)
+
+Implemented decision 13 in `run/edits.rs` (`apply_edits`, `EditConsequence`), pure.
+Deviations and readings the brief left open:
+
+- **`run/contract.rs` is created here, not in M8a.11**, with only `answer_message` and
+  `amend_message` (exact Interfaces texts), because
+  `amend_brief_on_a_working_task_yields_a_deliver_consequence` compares against
+  `amend_message`. M8a.11 adds the contracts, prompts and other messages to it.
+- **Tests are split** into `edits_tests.rs` (fixtures; add, amend, cancel, split) and
+  `edits_tests_rules.rs` (deps, answer, atomicity, L, area, pause/resume/finish), the
+  second a `#[path]` child module of the first, as `validate_tests_fields.rs` is.
+- **Same validation path as a plan.** Every added, split-in or amended task goes through
+  `resolve_task_lenient` with the run's profile, limits and roster, then gets its branch,
+  worktree and decision 56 notes as `build_run` gives them. The whole list then goes
+  through `validate_tasks` with the batch's `touched` set and the caller's `EditScope`.
+  `touched` is the added tasks, the split-in tasks, every amended task and every
+  `add_dep` target. `answer`, `cancel_task`, and dependents rewired by a split are not
+  touched.
+- **Refusal errors.** A per-state refusal is a `PlanError` with rule `13`, `task` set,
+  an **empty `field`**, and the whole sentence as `message`. `PlanError`'s `Display` now
+  prints the message alone when `field` is empty, so the brief's
+  `task t1 is working; route can be amended only on pending, queued or blocked tasks`
+  is the displayed line. Blocked states are named `blocked(<reason>)`. The other
+  refusal texts are this task's:
+  - `task <id> is <state>; <field> can be amended only on pending, queued or blocked
+    tasks`, one error per field. The restricted fields are `route`, `test_mode`,
+    `test_mode_reason` and `size`. The reason goes with the mode, because decision 13
+    lists "test mode and reason" as one amendable item.
+  - `task <id> is <state>; only unfinished tasks can be amended`, once per edit.
+  - `task <id> is <state>; only unfinished tasks can be cancelled`.
+  - `task <id> is <state>; only pending, queued or blocked tasks can be split`.
+  - `task <id> is <state>; dependencies can be added only on pending, queued or blocked
+    tasks`.
+  - `task <id> is <state>; only blocked(question) or working tasks can be answered`.
+  - An unknown id gives `task <id>: task_id: no such task`, and a split with an empty
+    `into` gives `task <id>: into: at least one task is required`.
+
+  All edits are applied first, in order; validation runs after, so the error list is
+  the refusals and resolution errors in edit order, then the cross-task errors.
+- **Amend.** It sets the spec fields. When `route`, `test_mode`, `test_mode_reason` or
+  `size` changed, the derived fields (size, hub, test mode, notes, review level, route,
+  review route, budget) are re-resolved from the spec. That replaces any rung-2 route or
+  engine note. Otherwise only the spec changes, so a rung-3 L size stays and the L rule
+  fires once the task is touched (decision 13's exemption ends). `Deliver
+  { amend_message }` goes out when `brief` or `acceptance` changed on a task with a live
+  worker: its state is `working`, or it has an unended worker round. A priority change
+  alone delivers nothing.
+- **Cancel.** `CancelLive` is emitted for a task in `preparing`, `working`, `proof`,
+  `check`, `review` or `merge_queue`, or with any unended round (for example a
+  `blocked(question)` task whose session is still open). The task leaves `merge_queue`.
+  Every unfinished task that **declares** it as a dependency becomes
+  `blocked(dep_cancelled)` with the text `dependency <id> was cancelled` (this task's
+  wording). Implicit dependencies are left alone, because decision 41 recomputes them
+  each step and a cancelled implicit dependency releases its waiter. Removing the
+  worktree of a cancelled task that is not live (a pre-warmed or blocked task) is the
+  engine's work (M8a.11/decision 14), keyed on `cancelled` plus an existing worktree.
+- **Split.** Dependents that are not finished have `task_id` replaced in place by the
+  children, in order, without duplicates. Then the original is cancelled, which by now
+  blocks nobody. The children go in right after the original, so the cancelled task
+  stays in the list. Children do not inherit the original's deps; the planner gives
+  them.
+- **`add_dep`** on a `queued` task whose new dependency is not `merged` puts the task
+  back to `pending`, because it is no longer runnable. Test:
+  `add_dep_returns_a_queued_task_to_pending` (added beyond the brief's list).
+- **`answer`** returns `blocked(question)` to `working` (block cleared) and emits
+  `Deliver { answer_message(text) }`. Whether the session is still open or has to be
+  resumed is decided by the engine (decision 29, M8a.12).
+- **`pause`, `resume`, `finish`** only yield their consequences, in batch order, and
+  leave the model unchanged. The run-state checks (for example pausing a run that is not
+  running) belong to the engine (decisions 37 and 45).
+- **History.** Each change adds a `TaskEvent` stamped with `now`: `added by a plan
+  edit`, `cancelled by a plan edit`, `blocked: dependency <id> was cancelled`,
+  `split into …`, `split from <id>`, `amended: <fields>`, `dependency on <dep> added`,
+  `answered`. `revision` is not bumped here; decision 47's bump is the engine's.
+- **TDD.** All 15 tests were written against `todo!()` stubs of `apply_edits`,
+  `answer_message` and `amend_message`, and all 15 failed (`0 passed; 15 failed`, each
+  panicking with "not yet implemented"). Mutations then showed that the behaviour each
+  test pins really is pinned:
+  - no rewire on split: `split_rewires…` fails;
+  - `Display` without the empty-field case: 7 tests fail;
+  - always re-resolving on amend: the rung-3 test fails;
+  - `is_live` ignoring rounds: `cancel_of_a_working…` fails;
+  - no queued→pending: `add_dep_returns…` fails;
+  - `merge_queue` kept: `cancel_of_a_working…` fails;
+  - answer not returning to `working`: `answer_only…` fails;
+  - `add_dep` not touching: `dep_on_a_cancelled…` fails;
+  - every task treated as touched: 4 tests fail, the rung-3 exemption test among them.
+
+  After each run the files were restored from a scratch copy.
+- **Decision 2's grep** over `edits.rs` and `contract.rs` matches only their doc
+  comments.

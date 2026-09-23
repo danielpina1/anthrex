@@ -11,8 +11,11 @@
 //! profile and limit resolution, `build_run`, the run-id slug), `validate.rs` (task
 //! resolution, decisions 8–10) with `validate_graph.rs` (the cross-task rules,
 //! decisions 11–13), `env.rs`
-//! (the profile environment) and the rest of `model.rs`.
+//! (the profile environment) and the rest of `model.rs`. M8a.6 adds `edits.rs` (plan
+//! edits, decision 13) and starts `contract.rs` with the two message texts edits need.
 
+pub mod contract;
+pub mod edits;
 pub mod env;
 pub mod globs;
 pub mod model;

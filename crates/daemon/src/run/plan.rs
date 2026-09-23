@@ -39,7 +39,9 @@ const SLUG_MAX: usize = 32;
 
 /// One validation problem. `rule` is a short stable id: a spec rule number where the
 /// message cites one (`7.2.4`, `8.1`, `9`, `12.1`), else the family (`fields`, `id`,
-/// `globs`, `kind`, `range`, `profile`, `route`, `8`).
+/// `globs`, `kind`, `range`, `profile`, `route`, `8`). A plan edit's per-state refusal
+/// (decision 13) has rule `13` and an empty `field`; its `message` is a whole sentence
+/// naming the task and its state, and is displayed alone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanError {
     pub task: Option<String>,
@@ -61,6 +63,10 @@ impl PlanError {
 
 impl fmt::Display for PlanError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.field.is_empty() {
+            // A whole sentence that already names its task (decision 13's refusals).
+            return f.write_str(&self.message);
+        }
         match &self.task {
             Some(id) => write!(f, "task {id}: {}: {}", self.field, self.message),
             None => write!(f, "{}: {}", self.field, self.message),
