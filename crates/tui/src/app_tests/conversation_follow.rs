@@ -127,3 +127,26 @@ fn a_view_closed_while_disconnected_sends_nothing() {
         vec![unsubscribe(2, None)]
     );
 }
+
+/// Review N3 (spec decision 11): the prefix pressed twice sends a literal prefix byte to
+/// the PTY — but not while the view is open, which reaches no PTY at all.
+#[test]
+fn the_prefix_twice_inside_the_view_reaches_no_pty() {
+    let mut app = app_with(project_windows());
+    toggle(&mut app);
+    prefix(&mut app);
+    assert!(press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL).is_empty());
+    assert!(app.conversation.is_open());
+    assert!(!app.keymap.pending());
+
+    // Closed, the same two keys send the prefix byte, as before.
+    toggle(&mut app);
+    prefix(&mut app);
+    assert_eq!(
+        press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL),
+        vec![Effect::Send(ClientMsg::Input {
+            window_id: 2,
+            bytes: vec![0x02],
+        })]
+    );
+}

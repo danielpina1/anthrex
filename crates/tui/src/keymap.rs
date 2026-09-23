@@ -103,6 +103,11 @@ impl Keymap {
             }
             self.pending = false;
             if self.is_prefix(&key) {
+                // Decision 11 (review N3): the conversation view is read-only, so the
+                // literal prefix byte reaches no PTY while it is open.
+                if self.conversation_mode {
+                    return KeyAction::Nothing;
+                }
                 return encode_key(KeyEvent::new(self.prefix.0, self.prefix.1), app_cursor)
                     .map(KeyAction::Send)
                     .unwrap_or(KeyAction::Nothing);

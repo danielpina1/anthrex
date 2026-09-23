@@ -444,3 +444,52 @@ fn the_conversation_key_does_not_collide() {
         }
     }
 }
+
+/// Decision 11 (review N3): in conversation mode no key — bare, or after the prefix,
+/// the prefix itself included — ever becomes bytes for a PTY.
+#[test]
+fn conversation_mode_never_sends_bytes() {
+    let mut codes: Vec<KeyCode> = (' '..='~').map(KeyCode::Char).collect();
+    codes.extend([
+        KeyCode::Enter,
+        KeyCode::Tab,
+        KeyCode::BackTab,
+        KeyCode::Backspace,
+        KeyCode::Esc,
+        KeyCode::Up,
+        KeyCode::Down,
+        KeyCode::Left,
+        KeyCode::Right,
+        KeyCode::Home,
+        KeyCode::End,
+        KeyCode::PageUp,
+        KeyCode::PageDown,
+        KeyCode::Delete,
+        KeyCode::Insert,
+        KeyCode::F(1),
+        KeyCode::F(5),
+    ]);
+    let mods = [
+        KeyModifiers::NONE,
+        KeyModifiers::SHIFT,
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    ];
+    for code in codes {
+        for m in mods {
+            for after_prefix in [false, true] {
+                let mut km = Keymap::new(Keymap::default_prefix());
+                km.set_conversation_mode(true);
+                if after_prefix {
+                    km.handle(key(KeyCode::Char('b'), KeyModifiers::CONTROL), false);
+                }
+                let action = km.handle(key(code, m), false);
+                assert!(
+                    !matches!(action, KeyAction::Send(_)),
+                    "{code:?} {m:?} (after prefix: {after_prefix}) sent {action:?}"
+                );
+            }
+        }
+    }
+}
