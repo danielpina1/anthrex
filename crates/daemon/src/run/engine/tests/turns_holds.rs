@@ -149,3 +149,60 @@ fn a_conflict_being_delivered_is_not_undone_when_the_task_is_held_again() {
         .count();
     assert_eq!(told, 1, "the message in flight is kept");
 }
+
+/// Carry T12-P2: a held Codex task whose process exits mid-turn before it has a session
+/// id ends its round with nothing to resume. Once the hold ends, the queued answer must
+/// still reach a worker: a fresh session at the same rung and route, with no failure
+/// counted, whose hand-over prompt ends with the answer.
+#[test]
+fn a_held_codex_task_that_lost_its_session_before_an_id_gets_a_fresh_one() {
+    let codex = "[task.route]\nruntime = \"codex\"\nmodel = \"\"";
+    let plan = plan_with(
+        PROFILE,
+        &[
+            task_toml("t1", "S", "[\"crates/a/**\"]", codex),
+            task_toml("t2", "S", "[\"crates/a/src/**\"]", codex),
+        ],
+    );
+    let mut fx = Fixture::new(&plan);
+    fx.ready(true);
+    let window = fx.launch_all()[0].1;
+    assert_eq!(fx.task("t1").rounds[0].session_id, None);
+    let route = fx.task("t1").route.clone();
+    held_while_live(&mut fx, window);
+    // No `Init` yet: the exit leaves nothing to resume.
+    exited(&mut fx, window);
+    assert!(fx.task("t1").rounds[0].ended);
+    edit(&mut fx, vec![answer("A")]);
+    fx.launch_all();
+    let effects = fx.merge("t2", &"c2".repeat(20));
+    let (op, _) = ops_in(&effects, "HandBack")[0].clone();
+    let effects = fx.done(op, OpResult::HandedBack { files: vec![] });
+    assert_eq!(fx.task("t1").state, TaskState::Working);
+    let diffs = ops_in(&effects, "DiffSoFar");
+    assert_eq!(diffs.len(), 1, "a fresh session: {effects:#?}");
+    super::turns_fixes::assert_alive(&fx);
+    let effects = fx.done(
+        diffs[0].0,
+        OpResult::Diff {
+            stat: String::new(),
+            patch: String::new(),
+        },
+    );
+    let launches = ops_in(&effects, "CreateWindow");
+    assert_eq!(launches.len(), 1, "{effects:#?}");
+    let OpKind::CreateWindow { first_turn, .. } = &launches[0].1 else {
+        unreachable!()
+    };
+    assert!(
+        first_turn.ends_with(&format!("\n\n{}", answer_message("A"))),
+        "{first_turn}"
+    );
+    let t1 = fx.task("t1");
+    assert_eq!((t1.session, t1.failures, t1.rung, t1.stalls), (2, 0, 0, 0));
+    assert_eq!(t1.route, route, "no escalation");
+    assert!(
+        fx.run().outbox.is_empty(),
+        "the answer went into the prompt"
+    );
+}

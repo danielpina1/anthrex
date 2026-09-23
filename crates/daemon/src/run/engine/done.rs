@@ -11,7 +11,7 @@ use super::dispatch::{block, history};
 use super::ladder::{self, live, worker_round};
 use super::tools::{DoneArgs, parse_blocked, parse_done};
 use super::{
-    Effect, EngineState, OpId, OpKind, OpResult, ReplyId, emit_op, fallback, next_op, outbox,
+    Effect, EngineState, OpId, OpKind, OpResult, ReplyId, emit_op, fallback, gates, next_op, outbox,
 };
 use crate::run::contract::{
     DONE_ACCEPTED, blocked_recorded, generated_files_message, protected_file_message,
@@ -48,8 +48,7 @@ pub(super) fn tool(
     }
     match call.tool.as_str() {
         "task_done" | "task_blocked" => worker_tool(run, id, &call, now, fx),
-        // Decision 35's verdict is M8a.13's.
-        "submit_review" => reply(fx, id, Err("submit_review is not available yet".into())),
+        "submit_review" => super::review::submit(run, id, &call, now, fx),
         other => {
             let role = serde_json::to_value(call.role)
                 .ok()
@@ -443,7 +442,6 @@ fn reengage(run: &mut Run, i: usize, pending: &PendingClaim, text: String, now: 
 /// (tdd), `check` (a check in the profile), `review`, or the merge queue; a handed-back
 /// task goes straight back to the merge queue (decision 36).
 fn accept(run: &mut Run, i: usize, pending: PendingClaim, head: String, now: u64) {
-    let has_check = run.profile.check.is_some();
     let task = &mut run.tasks[i];
     let signal = pending.claim.signal;
     task.done = Some(pending.claim);
@@ -456,20 +454,10 @@ fn accept(run: &mut Run, i: usize, pending: PendingClaim, head: String, now: u64
     }
     let next = if std::mem::take(&mut task.handed_back) {
         TaskState::MergeQueue
-    } else if task.test_mode == TestMode::Tdd {
-        TaskState::Proof
-    } else if has_check {
-        TaskState::Check
-    } else if task.review_level.is_some() {
-        TaskState::Review
     } else {
-        TaskState::MergeQueue
+        gates::next_gate(run, i, None)
     };
-    task.state = next;
-    let id = task.id().to_string();
-    if next == TaskState::MergeQueue && !run.merge_queue.contains(&id) {
-        run.merge_queue.push(id);
-    }
+    gates::enter(run, i, next);
     let how = match signal {
         DoneSignal::TaskDone => "task_done",
         DoneSignal::TurnEndFallback => "the turn-end fallback",

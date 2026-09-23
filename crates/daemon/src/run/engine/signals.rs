@@ -10,6 +10,7 @@ use super::dispatch::{block, history};
 use super::ladder::{self, check_budget, kill_worker, live, worker_round};
 use super::{
     AgentSignal, Effect, EngineState, OpKind, TurnOutcome, emit_op, fallback, next_op, outbox,
+    review,
 };
 use crate::headless::FailureKind;
 use crate::run::contract::{
@@ -223,7 +224,10 @@ fn turn_ended(
     if matches!(round.stall, StallState::Interrupted { .. }) {
         round.stall = StallState::Nudged;
     }
-    if !worker || run.tasks[i].state != TaskState::Working {
+    if !worker {
+        return review::turn_ended(run, i, r, now, fx);
+    }
+    if run.tasks[i].state != TaskState::Working {
         return;
     }
     if check_denials(run, i, r, now, fx) || check_budget(run, i, now, fx) {
@@ -327,9 +331,9 @@ fn exited(run: &mut Run, i: usize, r: usize, killed: bool, now: u64, fx: &mut Ve
         return;
     }
     round.pid = None;
-    // A reviewer's unexpected exit is M8a.13's (decision 35's resume rule).
-    if !killed && !worker {
-        return;
+    // Decision 35's resume rule for reviewers (M8a.13).
+    if !worker {
+        return review::exited(run, i, r, killed, now, fx);
     }
     // Ruling T12-I2: an exit while an interrupt is pending is the interrupted turn's end
     // (a Codex interrupt is a `ProcessExited` with no `TurnEnded`, M8a.1), not a death:

@@ -5335,3 +5335,219 @@ through `signals::end_round`, which clears the flag.
 - `cargo test -p anthrex-daemon` passes: 34 binaries, 1053 tests, of which 724 are unit
   tests.
 - `fallback.rs` is 218 lines and `tests/turns_stale.rs` 327.
+
+### M8a.13 engine III: proof, check and review (2026-09-23)
+
+Decisions 33, 34 (engine side), 35 and 38 (gate failures) are in the reducer. Decision
+2's grep over every new file matches only doc comments.
+
+**Module layout (beyond the brief's list, split by responsibility):**
+
+- `engine/gates.rs`: the gate order (`next_gate`, `enter`), the proof and the check
+  (their ops and results), and `run override` (below).
+- `engine/review.rs` (new): reviewer dispatch and `PrepareReview`'s result (moved out
+  of `dispatch.rs`, which was at 593 lines), `submit_review`, the reviewer's turn ends,
+  exits, resume results and silence, and the verdict-less round.
+- `engine/tools.rs` gains `parse_review`. `contract.rs` gains the gate messages.
+- `ladder.rs` needed no new rung: `gate_failure` (M8a.12) already takes every gate. It
+  gains the rung-1 clock restart and the T12-P2 recovery (below).
+- Tests: `engine/tests/{gates,gates_review,gates_rounds}.rs`. The brief's single
+  `gates.rs` would have been over 1 100 lines.
+
+**Name corrections and additions** (each new field `#[serde(default)]`):
+
+- **Reviewer permission mode (carry, M8a.7).** The brief's
+  `claude_permission_mode == Some("plan")` is wrong: M8a.1 found that plan mode blocks
+  the reviewer's allowed MCP call in `-p`, and M8a.7 moved reviewers to `dontAsk` with
+  `Edit,Write,NotebookEdit` disallowed. `review_round_uses_a_fresh_session_and_worktree`
+  asserts `Some("dontAsk")` and the disallowed tools.
+- `ProofRecord.head`: `proof_failed_message` names `<head7>`, which the Interfaces'
+  record did not carry.
+- `Task.gate_op`: the `Proof`, `Check` or `PrepareReview` op the task awaits.
+  `Task.review_misses`: verdict-less rounds in a row.
+- New texts: `REVIEW_NUDGE`, `REVIEW_RECORDED` and `APPROVE_WITH_BLOCKING` (the brief's
+  exact texts), `REVIEWER_STOPPED_TWICE` (exact), and `REVIEWER_RESUME_AFTER_EXIT`
+  (invented: `[anthrex] Your session's process stopped in the middle of a turn and has
+  been resumed. Finish your review and call submit_review, exactly once.`).
+
+**Readings and choices (invented where marked):**
+
+- **Gate order.** Proof (tdd), check (a profile check), review (a review level), then
+  the merge queue; a handed-back task still goes straight to the merge queue. Proof
+  and check ops are sent by the scheduler pass (`gates::start_gates`) for a task in
+  that state that awaits nothing.
+- **Correlation (carry, ruling T12-N).** Each gate result is taken only when its op id
+  is the task's `gate_op` and the task is still in that gate. A task in no gate awaits
+  nothing (`start_gates` clears `gate_op`), so a late result of an earlier visit is
+  dropped even when the task has come back. A new `PrepareReview` waits for a stale
+  one in flight (`holds_reader` already counted it), so one review worktree is
+  prepared at a time. Reviewer windows are matched by `launch_op` (M8a.11), resumes by
+  `resume_op`, and a reviewer window that arrives for a task no longer in `review`, or
+  for a round already given up, is killed.
+- **The proof (decision 33).** `command` is `proof_command(single_test, test)`,
+  `passed` is `proof_pattern(test_passed, test)`, `path` the `<task>.proof` worktree,
+  `env` the profile's with `{worktree}` that path, `setup` the profile's.
+  - **No `test_passed` in the profile** (invented): the pattern is `{test}`, so the head
+    run's output must show the test's escaped name on some line.
+  - Passing needs all three: red failed, head passed, output matched. The first reason
+    that fails is the message's; the red run's tail is quoted when the red run did not
+    fail (carry from M8a.10: `head_tail` is empty then), else the head run's.
+  - A claim with no `test` or `red` (only the turn-end fallback's can be: an explicit
+    `task_done` without them is rejected at the done gate) fails the proof at once,
+    with no op. Nothing ran, so the message leaves out its `Command:` and `Last 40
+    lines:` lines (deviation from the table's layout): `[anthrex] The test proof
+    failed: this is a tdd task and no test or red commit was named; call task_done with
+    test and red` then `Fix it, commit, then call task_done again.` A `ProofRecord`
+    with an empty test and red records it.
+  - `SetupFailed` blocks the task on its environment with `setup failed in the proof
+    worktree:\n<output>`; `Failed` with `could not run the test proof: <message>`
+    (invented). Neither counts a failure.
+  - **Executor contract (carry, T10-RR), stated on `OpKind::Proof`:** `run_proof` on
+    `spawn_blocking` with the hook `|step| handle.block_on(queue.write(&project, step))`.
+    `Handle::block_on` inside `spawn_blocking` needs the multi-thread runtime, which the
+    daemon has (`#[tokio::main]` in `crates/cli/src/main.rs`, multi-thread by default);
+    on a current-thread runtime it would deadlock.
+- **The check (decision 34).** `Op Check { dir: worktree, command: check, timeout:
+  check_timeout_secs, env }`; the result becomes a `CheckRecord` (`on_candidate:
+  false`). `check_failed_message`'s parenthesis is `exit <code>`, `timed out after <m>
+  minutes` (`secs / 60`), or, for a run with no code that did not time out, `no exit
+  code` (invented). A `Failed` result blocks on the environment (`could not run the
+  check: <message>`, invented). No check in the profile skips the gate; the run is
+  `unverified` from `build_run` (M8a.5).
+- **Rung 1 restarts the stall clock** of the worker's round (invented): a turn left
+  open while the gates ran would otherwise be interrupted at once. Test
+  `a_rung_1_bounce_does_not_stall_a_turn_left_open`.
+- **Review (decision 35).**
+  - The reviewer is picked by `pick_reviewer` against the author's **current** route at
+    every round, and stored in `review_route`. After rung 2 moved the author to the
+    peer runtime, the build-time `review_route` would have put the reviewer on the
+    author's runtime. Test `a_review_after_rung_2_is_picked_against_the_new_author`.
+  - The round's `ReviewRecord` is created with the reviewer (base, head, route, no
+    verdict), and `submit_review` fills it.
+  - `submit_review`'s acceptance order: a reviewer round of the task with this window,
+    then `a review for round <n> was already submitted`, then the live current reviewer
+    (`this window is not the reviewer of task <id>`), then the task's state, then the
+    arguments (`invalid arguments: findings[<i>]: …`, or `findings[<i>].<field>: …`,
+    invented), then `approve` with a blocking finding.
+  - A recorded verdict retires the reviewer (`RetireWindow`) and resets
+    `review_misses`. Any critical or important finding is a gate failure of `review`
+    with `review_changes_message` (only those findings); otherwise the task goes to the
+    merge queue with the minor findings kept in the record. Every gate counts toward
+    the same ladder (`failures_of_different_gates_share_the_ladder`).
+  - **Verdict-less rounds.** A reviewer turn that ends without a verdict gets
+    `REVIEW_NUDGE`; the next one ends the round: the reviewer is killed and a new round
+    starts at the same level, no failure counted. The second such round in a row blocks
+    the task as `environment` with `REVIEWER_STOPPED_TWICE`. A failed reviewer turn
+    counts as a turn without a verdict (follow-up recorded: reviewers get no
+    rate-limit wait).
+  - **Exits.** A Claude reviewer whose process ends between turns is marked ended and
+    resumed by the delivery of its nudge. A mid-turn death is resumed once with
+    `REVIEWER_RESUME_AFTER_EXIT`; the second in the round, a death before a session
+    id, or a failed resume ends the round without a verdict.
+  - **Silence** (invented): a reviewer turn with no stream event for
+    `stall_after_secs` ends the round without a verdict. Decision 32's interrupt and
+    `stall_nudge` are the worker's; a reviewer already has its nudge.
+  - **The reviewer's mail.** The nudge goes through the run's outbox (decision 29's
+    gate, retries and block apply) addressed to `<task>.review`. Task ids cannot contain
+    `.`, so no worker-side rule that matches messages by task id sees it. The mail is
+    delivered only while the task is in `review` and is dropped when the round ends.
+    A bug found by `a_claude_reviewer_that_exits_between_turns_is_resumed_with_its_nudge`
+    (written after the code, red first): the resume op was recorded with the mailbox as
+    its task, so its result was dropped. It now carries the task's id.
+  - **Read-only (carry).** Codex reviewers: `read-only`, no writable roots; Claude
+    reviewers: `dontAsk`, the write tools disallowed, no sandbox block; no
+    `WatchWorktree` for a review worktree. The prompt never names the author's runtime
+    or model (`the_reviewer_prompt_never_names_the_author`, over the whole built-in
+    roster, the empty Codex model skipped).
+- **Override (decision 35), the part this brief tests.** `run override` accepts a task
+  in `review`, or `blocked` with an accepted claim's head, in a running or paused run:
+  it stops a live reviewer, clears the block, sets `merged_without_approval` and sends
+  the task to the merge queue. Reply (invented): `task <id> goes to the merge queue
+  without review: <reason>`. A held task or a `dep_cancelled` one is refused (`task <id>
+  waits for its dependencies; override it once they are merged`, invented), keeping N5.
+  **Carry for M8a.15:** a blocked task whose commits no accepted claim recorded (a
+  `head` of `None`) is refused here; M8a.15's
+  `override_only_from_review_or_blocked_with_commits` must decide how to learn its
+  commits (for example a `CountCommits`).
+
+**Carries.**
+
+- **T12-P2 (fixed).** `ladder::recover_sessionless`, on every scheduler pass: a
+  `working`, unheld task whose latest worker round ended with no session id, not
+  retiring, and with no fresh session pending, gets a fresh session at the same rung and
+  route, no failure counted (`its session ended before it had an id to resume`). The
+  outbox then moves the waiting messages into its prompt (ruling T12-I3). It covers the
+  held Codex task of the carry and the same loss in a gate (a rung-1 message to a Codex
+  session that died before `thread.started` while the task was in `proof`). Test
+  `turns_holds::a_held_codex_task_that_lost_its_session_before_an_id_gets_a_fresh_one`:
+  red before the fix at its `DiffSoFar` assertion (`a fresh session: [...]`, none sent).
+- **T6-N5 on the new paths.** A task in `proof`, `check` or `review` cannot gain a
+  dependency (`add_dep` needs `pending`, `queued` or `blocked`), and a held task is
+  `blocked`, so it is never in a gate. A gate failure's rung 2 goes through
+  `start_fresh_sessions`, whose `fresh_due` refuses a held task (pinned by M8a.12's
+  `a_held_task_gets_no_fresh_session_until_its_hand_back`), and `recover_sessionless`
+  skips a held task. Override refuses a held task. Review round 2 needs `review`, which
+  a held task is never in.
+- **A reviewer bounce's fresh session drops the old session's in-flight messages
+  (M8a.12): confirmed for decisions 35 and 38.** Rung 2's hand-over prompt carries
+  every bounce text (the failure record, decision 30) and the amended brief and
+  criteria, which is all decision 38 names. An `answer` or wrap-up still queued is lost;
+  recorded in the follow-ups under "From M8a.13".
+- **Liveness.** `turns_fixes::assert_alive` now also checks the gate states
+  (`assert_gates_alive`): a task in `proof` or `check` has an op in flight; one in
+  `review` has an op in flight, a live reviewer turn, reviewer mail deliverable or in
+  flight, or waits for a reader slot; one in `merge_queue` is queued (M8a.14 runs it).
+  Every new test ends with it.
+- **Carry for M8a.15.** Restore must clear `Task.gate_op` for an op dropped as
+  `NotStarted`, or `start_gates` never re-issues it (decision 45's "tasks in proof,
+  check or merge_queue re-issue their op").
+- **Carry for M8a.22.** The proof executor (above); a `PrepareReview` may run while the
+  given-up reviewer is still being killed (follow-up recorded).
+
+**One earlier test changed.** `turns::turn_end_fallback_nudges_once_then_proceeds`
+expected a fallback-claimed tdd task to stay in `proof`; the proof now fails at once, so
+it asserts rung 1 with one proof record.
+
+**TDD evidence.**
+
+- The brief's 20 tests (as 24 functions, with `a_timed_out_check_says_so`,
+  `a_gate_result_no_longer_awaited_is_dropped`,
+  `a_gate_that_cannot_run_blocks_on_the_environment` and
+  `a_rung_1_bounce_does_not_stall_a_turn_left_open`) were written against stubs (empty
+  message texts, `submit_review is not available yet`, no gate op): `0 passed; 24
+  failed`. Sample lines: `one Proof: [...]` (no gate op sent), `a_timed_out_check_says_so`
+  against the empty stub, and the fallback test's `left: Proof right: Working`. The
+  review tests failed first at the missing `Check` op upstream; the mutation run below
+  shows each pins its own rule.
+- The T12-P2 test failed first as above.
+- `gates_rounds.rs`'s nine tests were written after the first green run, for guards
+  the first mutation run found unpinned; the resume one found the mailbox bug above.
+- **Mutations**, each applied and restored by a script from a WIP commit (since
+  folded): 31 distinct mutants, 27 killed.
+  - Killed: the proof's three flags (G3, G4 after its test case became
+    red-passed-head-passed), the red tail (C1), the gate order's check and review
+    (G5, G6), the fallback's failure (G7), the check's result (G8, G9), override's state
+    rule, reviewer stop and mark (G10–G12), the rung-1 clock (L1, after the test also
+    checked the bounce's own step), `recover_sessionless` and its no-escalation (L2,
+    L3), `review_ready`'s op check (R1), the reviewer route (R2), already-submitted
+    (R3), a given-up round's submit (R4), minor-only approval (R5), approve with a
+    blocking finding (R6), the misses reset (R7), the nudge (R8), the block at two
+    (R9), two deaths (R10), the silence watch (R11), the stale reviewer window (R12)
+    and the verdict's mail drop (R14).
+  - Equivalent in reachable states (kept as defence): G1 and G2, `gates::awaited`'s op
+    check and `start_gates`' clear, for proof and check (a task leaves `proof` or
+    `check` only through its own result or a cancel, so it never comes back with an op
+    in flight; M8a.15's retry may make them reachable); R13, the mail's `review` guard
+    (every path out of `review` drops the mail); R15, `review_ready`'s state check
+    (`start_gates` clears `gate_op` outside a gate, so R1's check already drops it).
+
+**Gates.**
+
+- `cargo build --workspace --all-targets`, clippy with `-D warnings` and `cargo fmt
+  --all --check` are clean.
+- `cargo test -p anthrex-daemon --no-fail-fast` passes: 34 binaries, 1087 tests, of
+  which 758 are unit tests. One earlier run failed once in `tests/git_registry.rs`
+  (`a_commit_in_a_linked_worktree_triggers_a_probe`, the load-sensitive test M8a.11
+  noted), which the engine does not touch; the full re-run passed.
+- No file passes 600 lines: `review.rs` 423, `gates.rs` 354, `dispatch.rs` 511,
+  `contract.rs` 531, `tests/gates.rs` 547, `tests/gates_review.rs` 582.

@@ -12,7 +12,7 @@
 use proto::{Budget, Finding, Severity, Size, Spend, TestMode};
 
 use super::messages::summary;
-use super::model::{ReviewLevel, Run, Task};
+use super::model::{CheckRecord, ProofRecord, ReviewLevel, ReviewRecord, Run, Task};
 
 /// The worker's system prompt (decision 30, exact). It never varies, so the cached
 /// prefix is stable (spec §14.2).
@@ -335,6 +335,102 @@ pub fn sandbox_unavailable_text(error: &str) -> String {
         "Claude Code's sandbox is unavailable here: {error}; set [orchestrator] worker_sandbox = false to run workers unsandboxed"
     )
 }
+
+/// The closing line of every gate's rung-1 message (Interfaces).
+const FIX_IT: &str = "Fix it, commit, then call task_done again.";
+
+/// How a shell run ended, for a message: `exit <code>`, `timed out after <m> minutes`,
+/// or (invented, a run that never started) `no exit code`.
+fn ended_how(code: Option<i32>, timed_out: bool, secs: u64) -> String {
+    match (timed_out, code) {
+        (true, _) => format!("timed out after {} minutes", secs / 60),
+        (false, Some(code)) => format!("exit {code}"),
+        (false, None) => "no exit code".to_string(),
+    }
+}
+
+/// Decision 34's rung-1 message for a failed check (Interfaces, exact): the command,
+/// how it ended, and the last `CHECK_SUMMARY_LINES` lines of its output.
+pub fn check_failed_message(command: &str, c: &CheckRecord) -> String {
+    format!(
+        "[anthrex] The check failed ({}): {command}\nLast 40 lines:\n{}\n{FIX_IT}",
+        ended_how(c.code, c.timed_out, c.secs),
+        summary(&c.tail)
+    )
+}
+
+/// Decision 33's rung-1 message for a failed test proof (Interfaces, exact): the first
+/// reason that applies, the command, and the last 40 lines of the offending run — the
+/// red run's when it did not fail (the head run was skipped then, M8a.10), else the
+/// head run's. A record with no test or no red is a claim that named neither (the
+/// turn-end fallback's): nothing ran, so the command and tail lines are left out.
+pub fn proof_failed_message(command: &str, p: &ProofRecord, passed: &str) -> String {
+    let (reason, tail) = if p.test.is_empty() || p.red.is_empty() {
+        let reason = "this is a tdd task and no test or red commit was named; call task_done with test and red";
+        return format!("[anthrex] The test proof failed: {reason}\n{FIX_IT}");
+    } else if !p.red_failed {
+        (
+            format!(
+                "at the red commit {} the test passed, so it does not fail without your change",
+                sha7(&p.red)
+            ),
+            &p.red_tail,
+        )
+    } else if !p.head_passed {
+        (
+            format!("at your head {} the test failed", sha7(&p.head)),
+            &p.head_tail,
+        )
+    } else {
+        (
+            format!(
+                "the output did not show that {} ran and passed (expected a line matching {passed})",
+                p.test
+            ),
+            &p.head_tail,
+        )
+    };
+    format!(
+        "[anthrex] The test proof failed: {reason}\nCommand: {command}\nLast 40 lines:\n{}\n{FIX_IT}",
+        summary(tail)
+    )
+}
+
+/// Decision 35's rung-1 message: only the critical and important findings, one line
+/// each (Interfaces, exact).
+pub fn review_changes_message(review: &ReviewRecord) -> String {
+    let mut lines = vec![format!(
+        "[anthrex] Review round {} asked for changes. Fix every finding below, commit, then call task_done again.",
+        review.round
+    )];
+    lines.extend(
+        review
+            .findings
+            .iter()
+            .filter(|f| f.severity != Severity::Minor)
+            .map(finding_line),
+    );
+    lines.join("\n")
+}
+
+/// Decision 35: the one extra turn a reviewer gets when its turn ends without a verdict
+/// (exact).
+pub const REVIEW_NUDGE: &str =
+    "[anthrex] Your turn ended without a verdict. Call submit_review now, exactly once.";
+
+/// The reply to an accepted `submit_review` (MCP section, exact).
+pub const REVIEW_RECORDED: &str = "Review recorded. You are done; end your turn now.";
+
+/// Decision 35's refusal of `approve` with a critical or important finding (exact).
+pub const APPROVE_WITH_BLOCKING: &str =
+    "an approve verdict cannot carry critical or important findings; use changes";
+
+/// Decision 35's block text after two verdict-less review rounds in a row (exact).
+pub const REVIEWER_STOPPED_TWICE: &str = "the reviewer stopped twice without a verdict";
+
+/// Decision 35 (invented text): a reviewer whose process died mid-turn is resumed with
+/// this, the reviewer's form of `RESUME_AFTER_EXIT`.
+pub const REVIEWER_RESUME_AFTER_EXIT: &str = "[anthrex] Your session's process stopped in the middle of a turn and has been resumed. Finish your review and call submit_review, exactly once.";
 
 /// Decision 35 and ruling Q4: the reviewer's diff, and decision 30's hand-over diff, are
 /// clamped to this many bytes.

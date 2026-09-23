@@ -7,17 +7,13 @@
 
 use proto::{AgentRole, BlockInfo, BlockReason, RunState, Runtime, TaskState};
 
-use super::schedule::{
-    deps_done, dispatch_order, hub_holds_slot, needs_reviewer, op_in_flight, readers_busy,
-    writers_busy,
-};
+use super::schedule::{deps_done, dispatch_order, hub_holds_slot, op_in_flight, writers_busy};
 use super::{Effect, OpKind, OpResult, emit_op, next_op};
-use super::{done, holds, ladder, outbox, signals};
-use crate::run::contract::{handover_prompt, is_stall_nudge, reviewer_prompt, worker_prompt};
+use super::{done, gates, holds, ladder, outbox, review, signals};
+use crate::run::contract::{handover_prompt, is_stall_nudge, worker_prompt};
 use crate::run::env::profile_env;
 use crate::run::model::{AgentRound, FreshSession, OpId, Run, StallState, Task, TaskEvent};
-use crate::run::role_launch::{jitter_ms, reviewer_spec, session_uuid, worker_spec};
-use crate::run::roster::pick_reviewer;
+use crate::run::role_launch::{jitter_ms, session_uuid, worker_spec};
 
 /// The scheduler, run after every event: runnability, then whatever the run's state
 /// allows to start, then clean-up and delivery.
@@ -33,9 +29,12 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             RunState::Running => {
                 holds::resume_held(run, fx);
                 signals::watch(run, now, fx);
+                ladder::recover_sessionless(run, now);
                 ladder::start_fresh_sessions(run, fx);
+                gates::start_gates(run, now, fx);
+                review::watch(run, now, fx);
                 dispatch_writers(run, now, fx);
-                dispatch_reviewers(run, fx);
+                review::dispatch_reviewers(run, fx);
             }
             _ => {}
         }
@@ -292,7 +291,7 @@ fn launch(
 
 /// Decision 16: every run window counts toward `max_windows`; a task that would pass it
 /// is `blocked(environment)`.
-fn window_limit_reached(run: &mut Run, i: usize, now: u64) -> bool {
+pub(super) fn window_limit_reached(run: &mut Run, i: usize, now: u64) -> bool {
     if run.windows_created < run.limits.max_windows {
         return false;
     }
@@ -303,7 +302,7 @@ fn window_limit_reached(run: &mut Run, i: usize, now: u64) -> bool {
 
 /// A round whose first turn is open from its launch (decision 27: the reducer marks the
 /// turn open when it delivers one).
-fn new_round(
+pub(super) fn new_round(
     role: AgentRole,
     session: u32,
     route: proto::Route,
@@ -353,36 +352,6 @@ fn new_round(
         count_retry_at: None,
         count_turn: 0,
         interrupted: false,
-    }
-}
-
-/// Reader dispatch: a `PrepareReview` for each task in `review` without a reviewer,
-/// while reader slots are free. A hub task holding a writer slot blocks every dispatch,
-/// reviews included (decision 41, read literally).
-fn dispatch_reviewers(run: &mut Run, fx: &mut Vec<Effect>) {
-    if hub_holds_slot(run) {
-        return;
-    }
-    for i in dispatch_order(run) {
-        if readers_busy(run) >= usize::from(run.limits.max_readers) {
-            break;
-        }
-        if !needs_reviewer(run, &run.tasks[i]) {
-            continue;
-        }
-        let op = next_op(run);
-        let task = &run.tasks[i];
-        let kind = OpKind::PrepareReview {
-            root: run.root.clone(),
-            head_ref: task.branch.clone(),
-            base_ref: task
-                .start_commit
-                .clone()
-                .unwrap_or_else(|| run.run_head.clone()),
-            path: run.review_path(task.id()),
-        };
-        let id = task.id().to_string();
-        emit_op(run, op, Some(&id), kind, fx);
     }
 }
 
@@ -480,11 +449,16 @@ pub(super) fn window_done(
         return;
     };
     let state = run.tasks[i].state;
+    // M8a.13: a reviewer whose task left `review` (overridden) or whose round was given
+    // up before its window came is not wanted.
+    let round = &run.tasks[i].rounds[r];
+    let stale_reviewer =
+        round.role == AgentRole::Reviewer && (state != TaskState::Review || round.retiring);
     match result {
         OpResult::Window { window_id } => {
             let round = &mut run.tasks[i].rounds[r];
             round.window_id = Some(window_id);
-            if state.is_finished() {
+            if state.is_finished() || stale_reviewer {
                 round.retiring = true;
                 fx.push(Effect::KillWindow { window_id });
             } else if state == TaskState::Preparing && round.role == AgentRole::Worker {
@@ -496,69 +470,13 @@ pub(super) fn window_done(
             round.ended = true;
             round.turn_open = false;
             round.ended_at = Some(now);
-            if !state.is_finished() {
+            if !state.is_finished() && !stale_reviewer {
                 let text = format!("could not start the session: {message}");
                 block(run, i, BlockReason::Environment, text, now);
             }
         }
         _ => {}
     }
-}
-
-/// The result of a `PrepareReview`: a fresh reviewer session (decision 35).
-pub(super) fn review_ready(
-    run: &mut Run,
-    i: usize,
-    result: OpResult,
-    now: u64,
-    fx: &mut Vec<Effect>,
-) {
-    if run.tasks[i].state != TaskState::Review {
-        return;
-    }
-    let (base, head, patch) = match result {
-        OpResult::Review { base, head, patch } => (base, head, patch),
-        OpResult::Failed { message } => {
-            let text = format!("could not prepare the review worktree: {message}");
-            return block(run, i, BlockReason::Environment, text, now);
-        }
-        _ => return,
-    };
-    if window_limit_reached(run, i, now) {
-        return;
-    }
-    let op = next_op(run);
-    let task = &run.tasks[i];
-    let level = task
-        .review_level
-        .unwrap_or(crate::run::model::ReviewLevel::Medium);
-    let route = task
-        .review_route
-        .clone()
-        .unwrap_or_else(|| pick_reviewer(&run.roster, &task.route, level));
-    let spec = reviewer_spec(run, task, &route);
-    let round_no = spec.run_ref.as_ref().map_or(1, |r| r.session);
-    let first_turn = reviewer_prompt(run, task, round_no, &base, &head, &patch);
-    let name = format!("{}/{}.r{round_no}", run.short(), task.id());
-    let uuid = (route.runtime == Runtime::Claude).then(|| session_uuid(&run.id, op));
-    let jitter = jitter_ms(&run.id, &format!("{}.r", task.id()), round_no);
-    let mut round = new_round(AgentRole::Reviewer, round_no, route, op, uuid.clone(), now);
-    round.round = round_no;
-    let id = task.id().to_string();
-    let worktree = run.review_path(&id);
-    run.tasks[i].rounds.push(round);
-    run.windows_created += 1;
-    history(run, i, now, format!("review round {round_no} starting"));
-    let kind = OpKind::CreateWindow {
-        name,
-        spec: Box::new(spec),
-        session_uuid: uuid,
-        first_turn,
-        project: run.project.clone(),
-        worktree,
-        jitter_ms: jitter,
-    };
-    emit_op(run, op, Some(&id), kind, fx);
 }
 
 /// The result of a `RemoveWorktree`.

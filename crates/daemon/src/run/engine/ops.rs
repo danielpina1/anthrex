@@ -73,6 +73,18 @@ pub enum OpKind {
         start: String,
         run_head: String,
     },
+    /// Decision 33's fail-to-pass proof (M8a.13), `run::proof::ProofOp`'s fields: the
+    /// engine fills `command` with `proof::proof_command(single_test, test)` and `passed`
+    /// with `proof::proof_pattern(test_passed, test)` (`{test}` alone when the profile
+    /// has no `test_passed`), `path` is the task's `<task>.proof` worktree and `env` the
+    /// profile's with `{worktree}` that path. **Executor contract (M8a.22):** run
+    /// `run_proof` on `spawn_blocking` with the `git_write` hook
+    /// `|step| handle.block_on(queue.write(&project, step))`, where `handle` is the
+    /// daemon's `tokio::runtime::Handle`. `Handle::block_on` inside `spawn_blocking`
+    /// needs the multi-thread runtime (the daemon's): on a current-thread runtime it
+    /// would deadlock, because the queue's future could never be polled. Map
+    /// `Ok(ProofRuns)` to `OpResult::Proof`, `ProofError::SetupFailed` to
+    /// `OpResult::SetupFailed` and `ProofError::Failed` to `OpResult::Failed`.
     Proof {
         root: PathBuf,
         path: PathBuf,

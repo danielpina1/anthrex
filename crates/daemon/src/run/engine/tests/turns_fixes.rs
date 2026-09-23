@@ -58,6 +58,60 @@ pub(super) fn assert_alive(fx: &Fixture) {
             t
         );
     }
+    assert_gates_alive(fx);
+}
+
+/// M8a.13's extension to the gate states: a task in `proof` or `check` has its gate op
+/// in flight; one in `review` has its `PrepareReview` or reviewer launch in flight, a
+/// live watched reviewer turn, a reviewer message deliverable or in flight, a resume in
+/// flight, or waits for a reader slot; one in the merge queue is queued (M8a.14 runs
+/// it).
+pub(super) fn assert_gates_alive(fx: &Fixture) {
+    let run = fx.run();
+    let gated = [
+        TaskState::Proof,
+        TaskState::Check,
+        TaskState::Review,
+        TaskState::MergeQueue,
+    ];
+    for t in run.tasks.iter().filter(|t| gated.contains(&t.state)) {
+        let op = run
+            .pending_ops
+            .values()
+            .any(|p| p.task_id.as_deref() == Some(t.id()));
+        let alive = match t.state {
+            TaskState::Proof | TaskState::Check => op,
+            TaskState::MergeQueue => run.merge_queue.iter().any(|q| q == t.id()),
+            _ => {
+                let reviewer = t
+                    .rounds
+                    .iter()
+                    .rev()
+                    .find(|r| r.role == AgentRole::Reviewer);
+                let live = |r: &&crate::run::model::AgentRound| {
+                    r.window_id.is_some() && !r.ended && !r.retiring
+                };
+                let watched = reviewer.is_some_and(|r| live(&r) && r.turn_open);
+                let resumable = reviewer.is_some_and(|r| {
+                    live(&r) || (r.ended && !r.retiring && r.session_id.is_some())
+                });
+                let address = format!("{}.review", t.id());
+                let mail = run
+                    .outbox
+                    .iter()
+                    .any(|m| m.task_id == address && (m.delivered_at.is_some() || resumable));
+                let slot_wait = reviewer.is_none_or(|r| r.retiring || r.ended)
+                    && super::super::schedule::readers_busy(run)
+                        >= usize::from(run.limits.max_readers);
+                op || watched || mail || slot_wait
+            }
+        };
+        assert!(
+            alive,
+            "{} is in {:?} with nothing pending: {:#?}",
+            t.spec.id, t.state, t
+        );
+    }
 }
 
 fn resume_messages(effects: &[Effect]) -> Vec<String> {

@@ -135,6 +135,11 @@ pub(super) fn gate_failure(
         let task = &mut run.tasks[i];
         task.rung = 1;
         task.state = TaskState::Working;
+        // M8a.13: the time the gates took is not the worker's silence; a turn still
+        // open is watched from here.
+        if let Some(r) = worker_round(task) {
+            task.rounds[r].last_event = now;
+        }
         history(run, i, now, format!("the {label} gate bounced it (rung 1)"));
         if !told {
             let id = run.tasks[i].id().to_string();
@@ -373,6 +378,35 @@ pub(super) fn start_fresh_sessions(run: &mut Run, fx: &mut Vec<Effect>) {
         };
         let op = next_op(run);
         emit_op(run, op, Some(&id), kind, fx);
+    }
+}
+
+/// Carry T12-P2 (M8a.13): a working task whose worker session ended with no session id
+/// (a Codex process that exited before its first `thread.started`, while the task was
+/// not working: held, blocked or in a gate) has nothing a delivery could resume. It
+/// gets a fresh session at the same rung and route, with no failure counted, whose
+/// hand-over prompt carries the messages waiting for it (ruling T12-I3's `append`).
+/// A held task never does (M8a.6 ruling N5): it is not `working`.
+pub(super) fn recover_sessionless(run: &mut Run, now: u64) {
+    for i in 0..run.tasks.len() {
+        let task = &run.tasks[i];
+        let lost = worker_round(task).is_some_and(|r| {
+            let round = &task.rounds[r];
+            round.ended && !round.retiring && round.session_id.is_none()
+        });
+        if task.state != TaskState::Working
+            || task.awaiting_deps
+            || task.fresh_session.is_some()
+            || !lost
+        {
+            continue;
+        }
+        let reason = "its session ended before it had an id to resume".to_string();
+        history(run, i, now, format!("a fresh session: {reason}"));
+        run.tasks[i].fresh_session = Some(FreshSession {
+            reason,
+            append: None,
+        });
     }
 }
 

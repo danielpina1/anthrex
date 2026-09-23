@@ -15,7 +15,11 @@
 //! M8a.12 adds `done.rs` (the done gate, `task_blocked` and the turn-end fallback),
 //! `tools.rs` (the worker tools' arguments), `signals.rs` (decision 32's session rules
 //! and the stall watchdog) and `ladder.rs` (decision 38's ladder and decision 40's
-//! budgets). Later tasks add `gates.rs`, `merge.rs` and `restore.rs`.
+//! budgets).
+//!
+//! M8a.13 adds `gates.rs` (the test proof, the check, the gate order and `run
+//! override`) and `review.rs` (the review gate and its reviewer sessions). Later tasks
+//! add `merge.rs` and `restore.rs`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -28,11 +32,13 @@ use super::validate::EditScope;
 mod dispatch;
 mod done;
 mod fallback;
+mod gates;
 mod holds;
 pub(crate) mod ladder;
 mod ops;
 mod outbox;
 mod requests;
+mod review;
 pub(crate) mod schedule;
 mod signals;
 mod tools;
@@ -260,7 +266,12 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             scope,
         } => requests::edit(&mut state, reply, &run_id, &edits, &scope, now, &mut fx),
         EventKind::Retry { reply, .. } => requests::not_yet(&mut fx, reply, "run retry"),
-        EventKind::Override { reply, .. } => requests::not_yet(&mut fx, reply, "run override"),
+        EventKind::Override {
+            reply,
+            run_id,
+            task_id,
+            reason,
+        } => gates::override_task(&mut state, reply, &run_id, &task_id, &reason, now, &mut fx),
         EventKind::Cancel { reply, .. } => requests::not_yet(&mut fx, reply, "run cancel"),
         EventKind::Resume { reply, .. } => requests::not_yet(&mut fx, reply, "run resume"),
         EventKind::Finish { reply, .. } => requests::not_yet(&mut fx, reply, "run finish"),
@@ -375,6 +386,12 @@ fn op_done(
         .as_deref()
         .and_then(|id| run.tasks.iter().position(|t| t.id() == id));
     match (pending.kind, task) {
+        (kind @ OpKind::Proof { .. }, Some(i)) => {
+            gates::proof_done(run, i, op, &kind, result, now, fx)
+        }
+        (kind @ OpKind::Check { .. }, Some(i)) => {
+            gates::check_done(run, i, op, &kind, result, now, fx)
+        }
         (OpKind::CreateRunBranch { .. }, _) => requests::run_branch_done(run, result, now, fx),
         (OpKind::Discard { .. }, _) => requests::discarded(run, result, now),
         (OpKind::PrepareWorktree { from, .. }, Some(i)) => {
@@ -383,15 +400,17 @@ fn op_done(
         (OpKind::CreateWindow { .. }, Some(i)) => {
             dispatch::window_done(run, i, op, result, now, fx)
         }
-        (OpKind::PrepareReview { .. }, Some(i)) => dispatch::review_ready(run, i, result, now, fx),
+        (OpKind::PrepareReview { .. }, Some(i)) => {
+            review::review_ready(run, i, op, result, now, fx)
+        }
         (OpKind::HandBack { .. }, Some(i)) => holds::handed_back(run, i, result, now, fx),
         (OpKind::AbortMerge { .. }, Some(i)) => holds::merge_aborted(run, i, result, now),
         (OpKind::RemoveWorktree { .. }, Some(i)) => dispatch::removed(run, i, result, now),
         (OpKind::VerifyDone { .. }, Some(i)) => done::checked(run, i, op, result, now, fx),
         (OpKind::CountCommits { .. }, Some(i)) => fallback::counted(run, i, op, result, now, fx),
         (OpKind::DiffSoFar { .. }, Some(i)) => ladder::fresh_diff(run, i, result, now, fx),
-        (OpKind::ResumeSession { .. }, Some(i)) => outbox::resumed(run, i, op, result, now),
-        // The other kinds' results are handled by M8a.13 to M8a.15.
+        (OpKind::ResumeSession { .. }, Some(i)) => outbox::resumed(run, i, op, result, now, fx),
+        // The other kinds' results are handled by M8a.14 and M8a.15.
         _ => {}
     }
 }

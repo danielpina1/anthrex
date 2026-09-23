@@ -1,8 +1,9 @@
-//! The worker tools' arguments, checked against the MCP section's schemas (Interfaces,
-//! "MCP tools"). The MCP server checks them too (M8a.19); the engine does not trust a
+//! The worker tools' and the reviewer's arguments, checked against the MCP section's
+//! schemas (Interfaces, "MCP tools"). The MCP server checks them too (M8a.19); the engine does not trust a
 //! caller to have. Problems read `<field>: <problem>`, and the caller prefixes
 //! `invalid arguments: `. Pure (design decision 2).
 
+use proto::{Finding, Severity, Verdict};
 use serde_json::{Map, Value};
 
 /// `task_done { summary, test?, red? }`.
@@ -70,4 +71,66 @@ pub(super) fn parse_blocked(args: &Value) -> Result<(&'static str, String), Stri
     };
     let reason = text(map, "reason", 4000, true)?.unwrap_or_default();
     Ok((kind, reason))
+}
+
+/// `submit_review { verdict, summary, findings }` (decision 35): the verdict, the
+/// summary and the findings, each checked against the MCP schema. A critical or
+/// important finding must carry `file` and `line`, or `input`.
+pub(super) fn parse_review(args: &Value) -> Result<(Verdict, String, Vec<Finding>), String> {
+    let map = object(args, &["verdict", "summary", "findings"])?;
+    let verdict = match map.get("verdict") {
+        None => return Err("verdict: required".into()),
+        Some(Value::String(s)) if s == "approve" => Verdict::Approve,
+        Some(Value::String(s)) if s == "changes" => Verdict::Changes,
+        Some(_) => return Err("verdict: must be one of approve, changes".into()),
+    };
+    let summary = text(map, "summary", 4000, true)?.unwrap_or_default();
+    let items = match map.get("findings") {
+        None => return Err("findings: required".into()),
+        Some(Value::Array(items)) if items.len() <= 50 => items,
+        Some(Value::Array(_)) => return Err("findings: at most 50".into()),
+        Some(_) => return Err("findings: must be an array".into()),
+    };
+    let findings = items
+        .iter()
+        .enumerate()
+        .map(|(i, item)| parse_finding(item).map_err(|e| format!("findings[{i}]{e}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((verdict, summary, findings))
+}
+
+/// One finding; a problem reads `.<field>: <problem>`, or `: <problem>` for the whole.
+fn parse_finding(item: &Value) -> Result<Finding, String> {
+    let fields = ["severity", "file", "line", "input", "text"];
+    let map = object(item, &fields).map_err(|e| format!(".{e}"))?;
+    let severity = match map.get("severity") {
+        None => return Err(".severity: required".into()),
+        Some(Value::String(s)) if s == "critical" => Severity::Critical,
+        Some(Value::String(s)) if s == "important" => Severity::Important,
+        Some(Value::String(s)) if s == "minor" => Severity::Minor,
+        Some(_) => return Err(".severity: must be one of critical, important, minor".into()),
+    };
+    let file = text(map, "file", 500, false).map_err(|e| format!(".{e}"))?;
+    let line = match map.get("line") {
+        None => None,
+        Some(v) => match v.as_u64() {
+            Some(n) if n >= 1 && n <= u64::from(u32::MAX) => Some(n as u32),
+            _ => return Err(".line: must be an integer of at least 1".into()),
+        },
+    };
+    let input = text(map, "input", 2000, false).map_err(|e| format!(".{e}"))?;
+    let text = text(map, "text", 2000, true)
+        .map_err(|e| format!(".{e}"))?
+        .unwrap_or_default();
+    let located = (file.is_some() && line.is_some()) || input.is_some();
+    if severity != Severity::Minor && !located {
+        return Err(": a critical or important finding needs file and line, or input".into());
+    }
+    Ok(Finding {
+        severity,
+        file,
+        line,
+        input,
+        text,
+    })
 }

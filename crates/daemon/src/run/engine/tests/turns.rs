@@ -178,9 +178,11 @@ fn turn_end_fallback_nudges_once_then_proceeds() {
         "nobody waits for a reply"
     );
     let t1 = fx.task("t1");
+    // A tdd task goes on to its proof, which fails at once: no test or red was named
+    // (M8a.13; `gates::turn_end_fallback_on_a_tdd_task_fails_the_proof_…` pins the text).
     assert_eq!(
-        t1.state,
-        TaskState::Proof,
+        (t1.state, t1.bounces.proof, t1.proofs.len()),
+        (TaskState::Working, 1, 1),
         "a tdd task goes on to its proof"
     );
     assert_eq!(

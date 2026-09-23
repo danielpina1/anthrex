@@ -430,6 +430,8 @@ fn new_task(
         worktree_live: false,
         awaiting_deps: false,
         held_answered: false,
+        gate_op: None,
+        review_misses: 0,
         start_commit: None,
         head: None,
         done: None,

@@ -810,3 +810,22 @@ scope.
 - **`signals::exited` ignores the exit's `pid`** (carried from re-review 2). An exit
   from an earlier process of the same window, arriving late, is taken for the current
   one. Match it against `AgentRound.pid` when M8a.13 revisits process exits.
+
+## From M8a.13 (2026-09-23), for M8a
+
+- **A reviewer's failed turn is a verdict-less turn.** Decision 32's failed-turn rules
+  (the rate-limit wait and its continue) are the worker's; M8a.13 counts a reviewer
+  turn that ends failed like one that ends without `submit_review` (nudge, then a new
+  round, then `blocked(environment)`). A reviewer that hits a rate limit twice in a
+  row can so block its task. Give reviewers the worker's rate-limit wait.
+- **Messages queued to a worker are dropped by rung 2** (M8a.12's `drop_queued` and
+  `supersede`). The hand-over prompt carries every bounce text and the amended brief,
+  but not an `answer` or an unread `budget_wrap_up` still in the outbox. An answer can
+  only be queued to a `blocked(question)` or `working` task, and a `working` task
+  reaching rung 2 with an undelivered answer is possible (a stall). Consider appending
+  undelivered answers to the fresh session's `append`, as a failed resume does.
+- **A new review round may start while the given-up reviewer is still exiting.** Its
+  `PrepareReview` removes the previous round's worktree (`--force`) under a process
+  being killed. The reviewer is read-only, so nothing is lost, but M8a.22's executor
+  may prefer to wait for the old reviewer's exit.
+

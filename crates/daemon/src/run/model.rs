@@ -249,6 +249,9 @@ pub struct ProofRecord {
     pub at: u64,
     pub test: String,
     pub red: String,
+    /// The task head the proof ran at (M8a.13: `proof_failed_message` names it).
+    #[serde(default)]
+    pub head: String,
     pub red_failed: bool,
     pub head_passed: bool,
     pub matched: bool,
@@ -357,6 +360,14 @@ pub struct Task {
     /// round 2, ruling T11-N2).
     #[serde(default)]
     pub held_answered: bool,
+    /// M8a.13: the `Proof`, `Check` or `PrepareReview` op whose result the task awaits;
+    /// any other result of those kinds is dropped (ruling T12-N's correlation).
+    #[serde(default)]
+    pub gate_op: Option<OpId>,
+    /// M8a.13: review rounds in a row that ended without a verdict (decision 35); the
+    /// second blocks the task, and a verdict resets it.
+    #[serde(default)]
+    pub review_misses: u8,
     pub start_commit: Option<String>,
     pub head: Option<String>,
     pub done: Option<DoneClaim>,
