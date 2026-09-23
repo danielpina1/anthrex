@@ -3565,3 +3565,75 @@ Built `run/git/mod.rs` (preflight, `project_settings`, `protected_files`, `verif
   `verify_done_reports_each_condition` makes about 150 git calls and takes about 15 s.
   `lock_errors_are_retried_then_surface` takes about 6.2 s by construction (the sum of
   `LOCK_RETRY_DELAYS_MS`). Neither asserts a wall-clock bound.
+
+### M8a.8 fix round 1 (2026-09-23)
+
+Review `task-8-review.md` found 4 Important and 10 Minor issues; controller rulings T8-I1 to I4 and T8-minors. All are fixed, test first.
+
+- **I1: a diff of any size is clamped, never failed (ruling T8-I1).**
+  - `subprocess::run_captured_head_tail` (new, in `subprocess/head_tail.rs`) keeps the first and last N bytes of stdout, drains the rest, and reports the total. There is no over-cap outcome.
+  - `worktree::run_git_head_tail` wraps it.
+  - `run::git::diff` reads the first and last `REVIEW_DIFF_MAX` bytes. That is enough, because `clamp_diff` never reads more than half its budget from the head, or more than its whole budget from the tail. When the middle was dropped, each end is decoded on its own, and a character cut at the inner edge falls in the part the clamp throws away.
+  - `run_captured` and the new function now share one body, `capture`, with a stdout sink. It waits with `poll(2)` instead of a fixed 10 ms sleep. Measured: the fixed sleep read a 70 MB diff at about 5 MB/s (13 s per diff). With `poll`, a pipe is read as fast as git writes, and the whole test takes 2.8 s. `run` is untouched.
+  - Test `a_diff_larger_than_any_capture_cap_is_clamped_not_failed`: a 70 MB file of 700 000 lines is generated at test time, and both `prepare_review` and `diff_so_far` return a clamped patch. Before the fix: `Err("git diff … failed: git produced more output than expected")`.
+- **I2: the clamp's character boundaries (ruling T8-I2).**
+  - Unit tests in `run/contract.rs` shift the input by 0 to 3 bytes over bodies of 3-byte, 4-byte and mixed characters, with several limits. Each asserts the output is at most the limit and at most 3 bytes short, the marker appears once, the head is a prefix of the input and the tail a suffix.
+  - The integration test `clamped_review_diffs_cut_on_character_boundaries_at_every_offset` shifts the file name by 0 to 5 bytes over `世𝄞世` lines. It checks the whole contract against `git diff` itself, requires that no replacement character appears, and asserts that at least one offset really cut inside a character.
+  - Mutants M3 (head cut not floored) and M4 (tail cut floored) are each killed by both tests. Both tests pass on the unmutated code, which was already correct.
+- **I3: `GitQueue::write` is cancellation-safe (ruling T8-I3).**
+  - The repository's lock is taken with `lock_owned`, and the guard and the whole retry loop move into a `tokio::spawn`ed task that the caller awaits. A caller that stops waiting, through a timeout, a `select!` or shutdown, no longer releases the repository while its git process runs. The write finishes unobserved.
+  - A caller that gives up while still waiting for the lock cancels nothing but its own place. Its write never starts.
+  - Test `a_dropped_write_keeps_the_repository_until_it_finishes` uses a rendezvous: the second write records whether the first had finished when it started, then releases it. Before the fix it failed with "the second write ran while the dropped first one still held the repository".
+- **I4: re-pointing a pre-warmed worktree (ruling T8-I4, a clarification of decision 19).**
+  - A branch with no commit of its own (the unchanged condition) is re-pointed with `git checkout --force -B <branch> <from>`, then `git reset --hard <from>`, both with the write flags. Setup's edits to tracked files are dropped, and untracked build output is kept.
+  - Deviation: the ruling's literal `checkout -B` fails before the reset can run. When the setup edit is to a file the run head also changed, git refuses with `Your local changes … would be overwritten by checkout`. `--force` is what lets the reset be reached. With `--force`, the reset is a no-op kept to match the ruling.
+  - Tests:
+    - `re_pointing_over_a_setup_edit_the_run_head_also_changed`. Before the fix, the checkout error above.
+    - `re_pointing_drops_a_setup_edit_the_run_head_did_not_change`. Before the fix, `status` showed `M setup.cfg`: the leak.
+- **Carry for M8a.11: re-run setup after a re-point.** After a re-point, the caller must run the profile's `setup` again, because the pre-warmed setup ran against the old tree. It recognises a re-point as `prepare_worktree` returning a `HEAD` different from the pre-warmed branch's start (`base_sha`).
+- **Minor 5: protected matching is case-insensitive (ruling T8-minors).**
+  - `run::globs::ProtectedMatcher` (new) builds decision 56's patterns with `globset`'s `case_insensitive(true)`, under the same rules as `OwnsMatcher` otherwise. `verify_done` and `protected_files` now take `&ProtectedMatcher`: an interface change, a distinct type so a caller cannot pass a case-sensitive matcher.
+  - `names_literally` stays exact. `owns` naming `AGENTS.md` does not allow a new `agents.md`, which errs toward a bounce.
+  - Tests: `agents.md` and `.Claude/settings.json` land in `protected_changed`; `lib/agents.md` and `notes/Claude.MD` are listed by `protected_files`.
+- **Minor 6: no user diff config reaches an agent.**
+  - Every diff, stat and name list passes `--no-color --no-ext-diff --no-textconv`, and every patch also passes `--src-prefix=a/ --dst-prefix=b/`. `--default-prefix` needs git 2.41, and runs need only 2.38.
+  - There is no `git log` call in `run/git` yet. M8a.9's `commits_since` should pass `--no-color` too.
+  - Test `diffs_ignore_the_users_colour_prefix_and_textconv_config` sets `color.ui=always`, `diff.noprefix=true` and a `.gitattributes`-selected textconv. Before the fix, the textconv ran and the header lost its prefix.
+- **Minor 7: a working-tree rename counts once.** `parse_status` checks both status bytes for `R`/`C`, so ` R new\0old` skips its source path. Test: in `verify_done_edge_cases`, a `mv` plus `add -N` gives `dirty_tracked == 1`. Mutant M2 is killed.
+- **Minor 8: the mutation survivors are tested.**
+  - M1: the hand-back case now asserts `commits == 2`.
+  - M5 and M6: a worktree deleted with `rm -rf` while locked is re-added.
+  - M7 and M8: a reused unlocked worktree is locked again, and `lock_worktree` twice succeeds. These are in `a_task_worktree_deleted_by_hand_or_unlocked_is_restored_and_relocked`.
+  - M10: renames into and out of `owns` are in `verify_done_edge_cases`.
+  - Each mutant was applied, the tests were seen to fail, and the file was restored with `git show HEAD:<path>`. All seven are killed.
+  - M17 (canonicalizing `git_common_dir`) is **equivalent**, recorded rather than tested. `git rev-parse --path-format=absolute --git-common-dir` already returns a resolved path, even when `.git` is a symlink to another directory: checked by hand on git 2.50.1.
+- **Minor 9: a user branch shaped like the run.**
+  - Before `worktree add -b`, each parent of the new branch name is checked. A user branch `anthrex/<run>` now gives the invented `branch anthrex/col1 exists, so git cannot create anthrex/col1/integration; rename or delete anthrex/col1`, not git's ref-lock error.
+  - **Carry for M8a.11 and M8a.22:** decision 15's run-id redraw should also count `refs/heads/anthrex/<id>` as taken.
+- **Minor 10: counts and hand-over after a hand-back (interface change).**
+  - `count_commits` and `diff_so_far` gain a `run_head` parameter, after `start`:
+    - `count_commits` counts `HEAD ^start ^run_head`, as `verify_done` does.
+    - `diff_so_far` diffs `<run_head>...HEAD`: the start commit until a hand-back, then the merged run head.
+  - **Carry for M8a.11:** `OpKind::CountCommits` and `OpKind::DiffSoFar` need `run_head`.
+  - Test: `count_and_diff_so_far_leave_out_a_merged_run_head`. Before the fix, `(4, h)` where `(2, h)` was wanted.
+- **Minor 11: `HEAD` off the task branch.**
+  - `DoneChecked` gains `head_branch: Option<String>`, the short name of the branch `HEAD` is on, or `None` when detached. It is read in the same call as `HEAD`: `rev-parse HEAD --symbolic-full-name HEAD`. `verify_done` stays at six calls.
+  - **Carry for M8a.11:** reject a claim whose `head_branch` is not the task's branch. Proposed text, invented: `task_done rejected: HEAD is not on <branch>; commit your work on <branch> and call task_done again`.
+- **Minor 12: lock contention matches git's own message.**
+  - Retry needs `.lock': File exists`, or `Unable to create '<file>.lock'` with the `.lock` inside the quoted file name. It no longer fires on `Unable to create` and `.lock` anywhere in the error, which a path echoed in the failure could supply.
+  - Test `only_gits_own_lock_message_is_retried`. Before the fix, 6 calls where 1 was wanted.
+- **Minor 13: bare repositories.**
+  - Preflight in a bare repository says `anthrex runs need a working tree; <dir> is a bare repository` (invented). It is detected with `rev-parse --is-bare-repository`, only after M5's detection gave git's own negative answer.
+  - A linked worktree of a bare repository still gets `project == root`. That is M5's `detect_roots` behaviour, unchanged, and `git_common_dir` is correct there.
+- **Minor 14: the queue's key.** `GitQueue` is documented as keyed by the path as spelled, which is `Preflight.project` (canonical), and as never pruned (a handful of repositories). No blocking `canonicalize` runs on a tokio worker.
+- **Implementer concern 3, carried for M8a.22.** The driver must call `protected_files` with the resolved profile's `ProtectedMatcher` before the plan warnings (decision 17). `preflight` leaves the list empty.
+- **Test layout.**
+  - `tests/run_git.rs` now holds preflight, settings and protected files (6 tests).
+  - New `tests/run_git_worktrees.rs` has 9 tests: the run and task worktrees, the re-point cases, the parent-branch message, hooks and signing, and paths with spaces and Unicode.
+  - New `tests/run_git_review.rs` has 4 tests.
+  - `tests/run_git_done.rs` has 4 tests.
+  - `tests/run_git_env.rs` has 1 test.
+  - `tests/subprocess.rs` gains `head_tail_keeps_both_ends_of_a_large_output`. It was written after `run_captured_head_tail` (the I1 integration test was the failing one); it passed on first run, after one fixture fix: macOS `seq` prints `2e+06`, so it uses `awk`.
+- **File splits.**
+  - `run/git/mod.rs` reached 628 lines, so the done check moved to `run/git/done.rs`.
+  - `subprocess.rs` reached 615, so the head-and-tail capture moved to `subprocess/head_tail.rs`.

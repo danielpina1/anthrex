@@ -2,7 +2,7 @@
 //! than git, so these tests exercise the runner's own hardening (stdout/stderr capture,
 //! the byte caps, the deadline, the spawn-error distinction) and not git's behaviour.
 
-use daemon::subprocess::{Outcome, run, run_captured};
+use daemon::subprocess::{HeadTail, Outcome, run, run_captured, run_captured_head_tail};
 use std::fs;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
@@ -142,4 +142,48 @@ fn run_is_unchanged() {
         run(&mut command, 64 * 1024, Duration::from_secs(5)),
         Outcome::Failed
     ));
+}
+
+/// `run_captured_head_tail` keeps the first and last bytes of an output of any size,
+/// drains the rest, and never reports it as over a cap.
+#[test]
+fn head_tail_keeps_both_ends_of_a_large_output() {
+    let scripts = tempdir().unwrap();
+    // 2 000 000 numbered lines, about 15 MB: far past any head or tail kept here.
+    let script = write_script(
+        scripts.path(),
+        "counts",
+        "#!/bin/sh\nawk 'BEGIN{for(i=1;i<=2000000;i++)print i}'\nprintf 'err\\n' 1>&2\n",
+    );
+    let (outcome, kept, stderr, spawn_error) = run_captured_head_tail(
+        &mut Command::new(&script),
+        8,
+        12,
+        1024,
+        Duration::from_secs(60),
+    );
+    assert!(matches!(outcome, Outcome::Complete(_)), "{outcome:?}");
+    assert_eq!(spawn_error, None);
+    assert_eq!(stderr, "err\n");
+    assert_eq!(kept.head, b"1\n2\n3\n4\n");
+    assert_eq!(kept.tail, b"999\n2000000\n");
+    assert!(kept.dropped());
+    let expected_total: u64 = (1..=2_000_000u64)
+        .map(|n| n.to_string().len() as u64 + 1)
+        .sum();
+    assert_eq!(kept.total, expected_total);
+
+    // A short output is all in the head, nothing dropped.
+    let short = write_script(scripts.path(), "short", "#!/bin/sh\nprintf 'abcdef'\n");
+    let (_, kept, _, _) =
+        run_captured_head_tail(&mut Command::new(&short), 4, 4, 64, Duration::from_secs(5));
+    assert_eq!(
+        kept,
+        HeadTail {
+            head: b"abcd".to_vec(),
+            tail: b"ef".to_vec(),
+            total: 6
+        }
+    );
+    assert!(!kept.dropped());
 }

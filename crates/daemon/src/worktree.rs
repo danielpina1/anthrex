@@ -37,7 +37,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use crate::subprocess::{self, Outcome};
+use crate::subprocess::{self, HeadTail, Outcome};
 
 /// Design decision 3: the deadline shared by every git command one worktree operation
 /// (one create, one removal) runs.
@@ -248,6 +248,43 @@ pub fn run_git_with_cap(
     deadline: Instant,
     max_output_bytes: usize,
 ) -> Result<GitOutput, WorktreeError> {
+    run_git_capturing(git, dir, args, deadline, Capture::Capped(max_output_bytes))
+        .map(|(output, _)| output)
+}
+
+/// As [`run_git`], for output that may be arbitrarily large: the first `head_bytes`
+/// and the last `tail_bytes` of stdout are kept and the rest is read and dropped
+/// ([`subprocess::run_captured_head_tail`]), so the command never fails for its size.
+/// The returned [`GitOutput`]'s `stdout` is empty; the output is the [`HeadTail`].
+pub fn run_git_head_tail(
+    git: &OsStr,
+    dir: &Path,
+    args: &[&OsStr],
+    deadline: Instant,
+    head_bytes: usize,
+    tail_bytes: usize,
+) -> Result<(GitOutput, HeadTail), WorktreeError> {
+    run_git_capturing(
+        git,
+        dir,
+        args,
+        deadline,
+        Capture::HeadTail(head_bytes, tail_bytes),
+    )
+}
+
+enum Capture {
+    Capped(usize),
+    HeadTail(usize, usize),
+}
+
+fn run_git_capturing(
+    git: &OsStr,
+    dir: &Path,
+    args: &[&OsStr],
+    deadline: Instant,
+    capture: Capture,
+) -> Result<(GitOutput, HeadTail), WorktreeError> {
     let now = Instant::now();
     let joined_args = args
         .iter()
@@ -271,10 +308,22 @@ pub fn run_git_with_cap(
         .env("LC_ALL", "C")
         .env("GIT_TERMINAL_PROMPT", "0");
 
-    let captured =
-        subprocess::run_captured(&mut command, max_output_bytes, MAX_STDERR_BYTES, timeout);
+    let (outcome, kept, stderr, spawn_error) = match capture {
+        Capture::Capped(max) => {
+            let captured = subprocess::run_captured(&mut command, max, MAX_STDERR_BYTES, timeout);
+            (
+                captured.outcome,
+                HeadTail::default(),
+                captured.stderr,
+                captured.spawn_error,
+            )
+        }
+        Capture::HeadTail(head, tail) => {
+            subprocess::run_captured_head_tail(&mut command, head, tail, MAX_STDERR_BYTES, timeout)
+        }
+    };
 
-    if let Some(kind) = captured.spawn_error {
+    if let Some(kind) = spawn_error {
         return if kind == io::ErrorKind::NotFound {
             Err(WorktreeError::GitMissing)
         } else {
@@ -285,17 +334,23 @@ pub fn run_git_with_cap(
         };
     }
 
-    match captured.outcome {
-        Outcome::Complete(stdout) => Ok(GitOutput {
-            stdout: String::from_utf8_lossy(&stdout).into_owned(),
-            stderr: captured.stderr,
-            success: true,
-        }),
-        Outcome::Failed => Ok(GitOutput {
-            stdout: String::new(),
-            stderr: captured.stderr,
-            success: false,
-        }),
+    match outcome {
+        Outcome::Complete(stdout) => Ok((
+            GitOutput {
+                stdout: String::from_utf8_lossy(&stdout).into_owned(),
+                stderr,
+                success: true,
+            },
+            kept,
+        )),
+        Outcome::Failed => Ok((
+            GitOutput {
+                stdout: String::new(),
+                stderr,
+                success: false,
+            },
+            kept,
+        )),
         Outcome::TimedOut(_) => Err(WorktreeError::TimedOut {
             args: joined_args,
             secs: timeout.as_secs(),

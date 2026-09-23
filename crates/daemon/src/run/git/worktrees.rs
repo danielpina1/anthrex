@@ -140,6 +140,7 @@ fn ensure_worktree(
     ];
     match (branch_head(g, root, branch)?, entry) {
         (None, _) => {
+            refuse_a_parent_branch(g, root, branch)?;
             let mut args = add.to_vec();
             args.extend([os("-b"), os(branch), path.as_os_str(), os(from)]);
             g.write(root, &args)?;
@@ -168,14 +169,46 @@ fn ensure_worktree(
         && head != from
         && is_ancestor(g, path, &head, from)?
     {
+        // Decision 19 as clarified by ruling T8-I4: the branch has no commit of its
+        // own, so the worktree holds only what the engine's setup made. Its edits to
+        // tracked files are dropped (`--force`, then `reset --hard`: a lockfile setup
+        // rewrote must neither block the checkout nor leak into the task's start
+        // state); untracked build output is kept. The caller re-runs setup after a
+        // re-point, which it sees as a returned `HEAD` different from the branch's
+        // earlier start.
         g.write(
             path,
-            &[os("checkout"), os("-q"), os("-B"), os(branch), os(from)],
+            &[
+                os("checkout"),
+                os("-q"),
+                os("--force"),
+                os("-B"),
+                os(branch),
+                os(from),
+            ],
         )?;
+        g.write(path, &[os("reset"), os("-q"), os("--hard"), os(from)])?;
     }
     Ok(g.ok(path, &[os("rev-parse"), os("HEAD")])?
         .trim()
         .to_string())
+}
+
+/// Git cannot create `a/b/c` while a branch `a/b` or `a` exists (a directory/file ref
+/// conflict). Say so plainly rather than in git's words (fix round 1, finding 9). A
+/// user branch named `anthrex/<run>` is the case that matters; decision 15's run-id
+/// redraw should also treat it as taken (a carry for M8a.11 and M8a.22).
+fn refuse_a_parent_branch(g: Git<'_>, root: &Path, branch: &str) -> Result<(), String> {
+    let mut parent = branch;
+    while let Some((up, _)) = parent.rsplit_once('/') {
+        if branch_head(g, root, up)?.is_some() {
+            return Err(format!(
+                "branch {up} exists, so git cannot create {branch}; rename or delete {up}"
+            ));
+        }
+        parent = up;
+    }
+    Ok(())
 }
 
 /// Decision 16: the run branch `anthrex/<run>/integration` at `base_sha`, checked out

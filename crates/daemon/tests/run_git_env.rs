@@ -11,7 +11,7 @@ use daemon::run::git::{
     count_commits, create_run_branch, diff_so_far, lock_worktree, preflight, prepare_review,
     prepare_worktree, project_settings, protected_files, verify_done,
 };
-use daemon::run::globs::OwnsMatcher;
+use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
 use daemon::run::plan::BUILTIN_PROTECTED;
 use std::ffi::OsString;
 use support::recording_git;
@@ -56,7 +56,7 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
     let scripts = tempfile::tempdir().unwrap();
     let git = recording_git(scripts.path());
     let git = git.as_os_str();
-    let protected = OwnsMatcher::new(
+    let protected = ProtectedMatcher::new(
         &BUILTIN_PROTECTED
             .iter()
             .map(|s| s.to_string())
@@ -151,9 +151,12 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
         ),
         (
             "count_commits",
-            count_commits(git, &task, &base, T).map(drop),
+            count_commits(git, &task, &base, &base, T).map(drop),
         ),
-        ("diff_so_far", diff_so_far(git, &task, &base, T).map(drop)),
+        (
+            "diff_so_far",
+            diff_so_far(git, &task, &base, &base, T).map(drop),
+        ),
         (
             "prepare_review",
             prepare_review(

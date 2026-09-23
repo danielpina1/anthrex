@@ -198,10 +198,14 @@ pub struct OwnsMatcher {
 
 impl OwnsMatcher {
     pub fn new(owns: &[String]) -> Result<Self, String> {
+        Self::build(owns, false)
+    }
+
+    fn build(owns: &[String], case_insensitive: bool) -> Result<Self, String> {
         let mut builder = GlobSetBuilder::new();
         for entry in owns {
             for pattern in match_patterns(entry) {
-                let glob = build_glob(&pattern)?;
+                let glob = build_glob(&pattern, case_insensitive)?;
                 builder.add(glob);
             }
         }
@@ -213,6 +217,28 @@ impl OwnsMatcher {
 
     pub fn matches(&self, path: &str) -> bool {
         self.set.is_match(path)
+    }
+}
+
+/// Decision 56's protected-path matcher: [`OwnsMatcher`]'s rules, but ignoring ASCII
+/// case (M8a.8 fix round 1, finding 5). On a case-insensitive file system (macOS by
+/// default) `agents.md` and `.Claude/settings.json` are the files Codex and Claude Code
+/// open as `AGENTS.md` and `.claude/settings.json`, so a new file spelled that way must
+/// not escape the rule. Erring this way only ever bounces more. A distinct type, so a
+/// caller cannot hand the done check a case-sensitive `owns` matcher by mistake.
+pub struct ProtectedMatcher {
+    inner: OwnsMatcher,
+}
+
+impl ProtectedMatcher {
+    pub fn new(protected: &[String]) -> Result<Self, String> {
+        Ok(ProtectedMatcher {
+            inner: OwnsMatcher::build(protected, true)?,
+        })
+    }
+
+    pub fn matches(&self, path: &str) -> bool {
+        self.inner.matches(path)
     }
 }
 
@@ -228,9 +254,10 @@ fn match_patterns(entry: &str) -> Vec<String> {
     }
 }
 
-fn build_glob(pattern: &str) -> Result<Glob, String> {
+fn build_glob(pattern: &str, case_insensitive: bool) -> Result<Glob, String> {
     GlobBuilder::new(pattern)
         .literal_separator(true)
+        .case_insensitive(case_insensitive)
         .build()
         .map_err(|err| format!("invalid glob {pattern:?}: {err}"))
 }

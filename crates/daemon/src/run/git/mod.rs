@@ -1,8 +1,9 @@
 //! Run git operations (M8a.8): start preflight (decision 17), the project-settings scan
 //! (decision 53), the protected-file listing (decision 56), the done check that splits a
 //! task's changed paths (decisions 32, 55 and 56), and the commit count and diff a
-//! fresh session is handed (decision 30). The run, task and review worktrees are in
-//! [`worktrees`]; the per-repository write queue is in [`queue`].
+//! fresh session is handed (decision 30). The done check itself is in [`done`], the
+//! run, task and review worktrees in [`worktrees`], and the per-repository write queue
+//! in [`queue`].
 //!
 //! Does I/O (design decision 2). Every function here is **blocking** — call it only from
 //! `spawn_blocking` — and none is `async` except [`GitQueue::write`]. Every function
@@ -12,8 +13,11 @@
 //! construction: `-C <dir> --no-optional-locks` and a scrubbed environment on every
 //! invocation. Every engine **write** also carries [`WRITE_FLAGS`] (decision 18).
 
+mod done;
 mod queue;
 mod worktrees;
+
+pub use done::{DoneChecked, verify_done};
 
 pub use queue::{GitQueue, LOCK_RETRY_DELAYS_MS};
 pub use worktrees::{create_run_branch, lock_worktree, prepare_review, prepare_worktree};
@@ -23,10 +27,11 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::contract::{REVIEW_DIFF_MAX, clamp_diff};
-use super::globs::{OwnsMatcher, names_literally};
+use super::globs::ProtectedMatcher;
 use super::plan::Preflight;
 use crate::project;
-use crate::worktree::{GitOutput, run_git_with_cap};
+use crate::subprocess::HeadTail;
+use crate::worktree::{GitOutput, run_git_head_tail, run_git_with_cap};
 
 /// Decision 18: every engine write passes these ahead of its subcommand, so a user's
 /// hooks or a signing pinentry can never hang a run.
@@ -40,39 +45,24 @@ pub const WRITE_FLAGS: [&str; 4] = [
 /// Decision 17: `merge-tree --write-tree` needs git 2.38.
 const MIN_GIT: (u32, u32) = (2, 38);
 
-/// The stdout cap for whole-tree listings and diffs, which a real repository can push
-/// far past `run_git`'s default 256 KiB; a diff is clamped to [`REVIEW_DIFF_MAX`]
-/// only after it has been read whole.
+/// The stdout cap for whole-tree listings, name lists and stats, which a real
+/// repository can push far past `run_git`'s default 256 KiB. A patch is never read
+/// under a cap: [`diff`] keeps only its head and tail (fix round 1, finding 1).
 const LARGE_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
+
+/// Every diff, stat and name list ignores the user's diff configuration: no colour
+/// (`color.ui=always`), no external diff driver, no textconv filter (a
+/// `.gitattributes`-selected command could run, or stall, inside the diff). Fix round
+/// 1, finding 6.
+pub(crate) const DIFF_FLAGS: [&str; 3] = ["--no-color", "--no-ext-diff", "--no-textconv"];
+
+/// A patch's `a/` and `b/` prefixes, whatever `diff.noprefix` or
+/// `diff.mnemonicPrefix` say (`--default-prefix` needs git 2.41; runs need 2.38).
+const PATCH_PREFIXES: [&str; 2] = ["--src-prefix=a/", "--dst-prefix=b/"];
 
 /// The files Claude Code reads as project settings (decision 53).
 const CLAUDE_SETTINGS: [&str; 2] = [".claude/settings.json", ".claude/settings.local.json"];
 const CLAUDE_MCP: &str = ".mcp.json";
-
-/// What `verify_done` found (decision 32's done gate, split per decisions 55 and 56).
-/// The engine's `OpResult::DoneChecked` (M8a.11) carries exactly these fields.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct DoneChecked {
-    /// The task's own commits: reachable from `HEAD` but from neither the start
-    /// commit nor the current run head.
-    pub commits: u32,
-    /// Tracked files with uncommitted changes, staged or not.
-    pub dirty_tracked: u32,
-    /// `MERGE_HEAD` exists.
-    pub merge_in_progress: bool,
-    /// Untracked (not ignored) files that `owns` matches.
-    pub untracked_in_owns: Vec<String>,
-    /// Changed paths outside `owns`, neither protected nor generated.
-    pub outside_owns: Vec<String>,
-    /// Changed paths outside `owns` that `generated` matches.
-    pub generated_outside_owns: Vec<String>,
-    /// Changed paths that `protected` matches and `owns` does not name literally.
-    pub protected_changed: Vec<String>,
-    /// `None` without a `red`; else whether it is one of the task's own commits after
-    /// its start commit.
-    pub red_ok: Option<bool>,
-    pub head: String,
-}
 
 /// One git program with one per-command timeout: the deadline is taken afresh for
 /// every command (decision 18, "a deadline of `now + git_timeout`").
@@ -89,6 +79,20 @@ pub(crate) fn os(s: &str) -> &OsStr {
 impl<'a> Git<'a> {
     pub(crate) fn new(program: &'a OsStr, timeout: Duration) -> Self {
         Git { program, timeout }
+    }
+
+    /// A read of output that may be arbitrarily large: its first and last
+    /// `REVIEW_DIFF_MAX` bytes (fix round 1, finding 1).
+    fn head_tail(&self, dir: &Path, args: &[&OsStr]) -> Result<(GitOutput, HeadTail), String> {
+        run_git_head_tail(
+            self.program,
+            dir,
+            args,
+            Instant::now() + self.timeout,
+            REVIEW_DIFF_MAX,
+            REVIEW_DIFF_MAX,
+        )
+        .map_err(|err| err.to_string())
     }
 
     fn raw(&self, dir: &Path, args: &[&OsStr], cap: usize) -> Result<GitOutput, String> {
@@ -146,6 +150,12 @@ pub(crate) fn failure(args: &[&OsStr], output: &GitOutput) -> String {
 pub fn preflight(git: &OsStr, dir: &Path, timeout: Duration) -> Result<Preflight, String> {
     let roots = project::detect_roots_with(git, dir, timeout);
     let Some(root) = roots.worktree else {
+        if !roots.detection_failed && is_bare(Git::new(git, timeout), dir) {
+            return Err(format!(
+                "anthrex runs need a working tree; {} is a bare repository",
+                dir.display()
+            ));
+        }
         return Err(if roots.detection_failed {
             format!(
                 "could not tell whether {} is a git repository: git did not answer; try again",
@@ -236,6 +246,13 @@ pub fn preflight(git: &OsStr, dir: &Path, timeout: Duration) -> Result<Preflight
     })
 }
 
+/// Whether `dir` is inside a bare repository (fix round 1, finding 13); any failure
+/// counts as no, leaving the plain "not a git repository" answer.
+fn is_bare(g: Git<'_>, dir: &Path) -> bool {
+    g.read(dir, &[os("rev-parse"), os("--is-bare-repository")])
+        .is_ok_and(|output| output.success && output.stdout.trim() == "true")
+}
+
 /// `git version 2.50.1 (Apple Git-155)` → at least [`MIN_GIT`], else decision 17's
 /// message naming the version token (or the whole line when there is none).
 fn check_version(output: &str) -> Result<(), String> {
@@ -274,7 +291,7 @@ fn tracked_at(g: Git<'_>, root: &Path, sha: &str, paths: &[&str]) -> Result<Vec<
     Ok(nul_fields(&listing).map(str::to_string).collect())
 }
 
-fn nul_fields(text: &str) -> impl Iterator<Item = &str> {
+pub(crate) fn nul_fields(text: &str) -> impl Iterator<Item = &str> {
     text.split('\0').filter(|field| !field.is_empty())
 }
 
@@ -343,7 +360,7 @@ pub fn protected_files(
     git: &OsStr,
     root: &Path,
     base_sha: &str,
-    protected: &OwnsMatcher,
+    protected: &ProtectedMatcher,
     timeout: Duration,
 ) -> Result<Vec<String>, String> {
     let g = Git::new(git, timeout);
@@ -353,146 +370,30 @@ pub fn protected_files(
         .collect())
 }
 
-/// Decision 32's done check in `worktree`, at most six git calls: `HEAD`, the task's
-/// own commits (`HEAD ^start ^run_head`), `status`, `MERGE_HEAD`, the spill diff
-/// (`git diff --name-only <run_head>...HEAD`), and — only with a `red` — `red`
-/// resolved. The changed paths are split per decision 56 (protected, unless `owns`
-/// names them literally) and then decision 55 (the rest outside `owns`: generated or
-/// not). Exemptions (an overridden task) are the engine's, not this function's.
-#[allow(clippy::too_many_arguments)]
-pub fn verify_done(
+/// The task's own commits (`git rev-list --count HEAD ^<start> ^<run_head>`, as
+/// [`verify_done`] counts them) and `HEAD`: the turn-end fallback's question (decision
+/// 32). With `run_head` excluded, a run head merged in by a hand-back is not counted
+/// as the task's work (fix round 1, finding 10).
+pub fn count_commits(
     git: &OsStr,
     worktree: &Path,
     start: &str,
     run_head: &str,
-    owns: &[String],
-    generated: &OwnsMatcher,
-    protected: &OwnsMatcher,
-    red: Option<&str>,
     timeout: Duration,
-) -> Result<DoneChecked, String> {
-    let owns_matcher = OwnsMatcher::new(owns)?;
+) -> Result<(u32, String), String> {
     let g = Git::new(git, timeout);
-    let head = g
-        .ok(worktree, &[os("rev-parse"), os("HEAD")])?
-        .trim()
-        .to_string();
-
     let not_start = format!("^{start}");
     let not_run_head = format!("^{run_head}");
-    let own = g.ok(
+    let count = g.ok(
         worktree,
         &[
             os("rev-list"),
+            os("--count"),
             os("HEAD"),
             os(&not_start),
             os(&not_run_head),
         ],
     )?;
-    let own: Vec<&str> = own.lines().filter(|line| !line.is_empty()).collect();
-
-    let status = g.ok(
-        worktree,
-        &[
-            os("status"),
-            os("--porcelain"),
-            os("-z"),
-            os("--untracked-files=all"),
-        ],
-    )?;
-    let (dirty_tracked, untracked) = parse_status(&status);
-    let untracked_in_owns = untracked
-        .into_iter()
-        .filter(|path| owns_matcher.matches(path))
-        .collect();
-
-    let merge_head = g.read(
-        worktree,
-        &[os("rev-parse"), os("-q"), os("--verify"), os("MERGE_HEAD")],
-    )?;
-
-    let spill_range = format!("{run_head}...HEAD");
-    let changed = g.ok(
-        worktree,
-        &[
-            os("diff"),
-            os("--name-only"),
-            os("-z"),
-            os("--no-renames"),
-            os(&spill_range),
-        ],
-    )?;
-    let mut result = DoneChecked {
-        commits: own.len() as u32,
-        dirty_tracked,
-        merge_in_progress: merge_head.success,
-        untracked_in_owns,
-        head,
-        ..DoneChecked::default()
-    };
-    for path in nul_fields(&changed) {
-        if protected.matches(path) {
-            if !names_literally(owns, path) {
-                result.protected_changed.push(path.to_string());
-            }
-            continue;
-        }
-        if owns_matcher.matches(path) {
-            continue;
-        }
-        if generated.matches(path) {
-            result.generated_outside_owns.push(path.to_string());
-        } else {
-            result.outside_owns.push(path.to_string());
-        }
-    }
-
-    if let Some(red) = red {
-        let spec = format!("{red}^{{commit}}");
-        let resolved = g.read(
-            worktree,
-            &[os("rev-parse"), os("-q"), os("--verify"), os(&spec)],
-        )?;
-        let sha = resolved.stdout.trim();
-        result.red_ok = Some(resolved.success && own.contains(&sha));
-    }
-    Ok(result)
-}
-
-/// `git status --porcelain -z`: the number of tracked entries with changes, and the
-/// untracked paths. A rename or copy entry is followed by its source path, skipped.
-fn parse_status(status: &str) -> (u32, Vec<String>) {
-    let mut dirty = 0;
-    let mut untracked = Vec::new();
-    let mut fields = nul_fields(status);
-    while let Some(entry) = fields.next() {
-        let (code, path) = entry.split_at(entry.len().min(3));
-        if code.starts_with("??") {
-            untracked.push(path.to_string());
-            continue;
-        }
-        if code.starts_with("!!") {
-            continue;
-        }
-        dirty += 1;
-        if code.starts_with(['R', 'C']) {
-            fields.next();
-        }
-    }
-    (dirty, untracked)
-}
-
-/// The commits on `HEAD` since `start` (`git rev-list --count <start>..HEAD`), and
-/// `HEAD`: the turn-end fallback's question (decision 32).
-pub fn count_commits(
-    git: &OsStr,
-    worktree: &Path,
-    start: &str,
-    timeout: Duration,
-) -> Result<(u32, String), String> {
-    let g = Git::new(git, timeout);
-    let range = format!("{start}..HEAD");
-    let count = g.ok(worktree, &[os("rev-list"), os("--count"), os(&range)])?;
     let count = count
         .trim()
         .parse::<u32>()
@@ -501,27 +402,59 @@ pub fn count_commits(
     Ok((count, head.trim().to_string()))
 }
 
-/// Decision 30's hand-over material: `git diff --stat <start>..HEAD` and the diff
-/// itself, clamped to [`REVIEW_DIFF_MAX`]. Uncommitted work is not in either.
+/// Decision 30's hand-over material: the stat and the diff of the task's net change,
+/// clamped to [`REVIEW_DIFF_MAX`]. Uncommitted work is not in either. The range is
+/// `<start>..HEAD` until a hand-back merges a newer run head in, then
+/// `<run_head>..HEAD`: `<run_head>...HEAD` gives exactly that, since the merge base of
+/// the run head and `HEAD` is the start commit or the merged run head (fix round 1,
+/// finding 10).
 pub fn diff_so_far(
     git: &OsStr,
     worktree: &Path,
     start: &str,
+    run_head: &str,
     timeout: Duration,
 ) -> Result<(String, String), String> {
     let g = Git::new(git, timeout);
-    let range = format!("{start}..HEAD");
-    let stat = g.ok(worktree, &[os("diff"), os("--stat"), os(&range)])?;
+    // A run head that has moved on without a hand-back has `start` as its merge base
+    // with `HEAD`; one that was merged in is its own. So `run_head...HEAD` never needs
+    // `start`, which is kept for the op's record and to match `count_commits`.
+    let _ = start;
+    let range = format!("{run_head}...HEAD");
+    let mut stat_args = vec![os("diff")];
+    stat_args.extend(DIFF_FLAGS.map(os));
+    stat_args.extend([os("--stat"), os(&range)]);
+    let stat = g.ok(worktree, &stat_args)?;
     let patch = diff(g, worktree, &range)?;
     Ok((stat, patch))
 }
 
-/// `git diff <range>`, clamped to [`REVIEW_DIFF_MAX`]. Never an external diff driver
-/// or colour, whatever the user's config says.
+/// `git diff <range>` with [`DIFF_FLAGS`] and [`PATCH_PREFIXES`], clamped to
+/// [`REVIEW_DIFF_MAX`]. The output is streamed: only its first and last
+/// `REVIEW_DIFF_MAX` bytes are kept, so a diff of any size is clamped, never failed
+/// and never held in memory (fix round 1, finding 1). Keeping that much of each end is
+/// enough, because [`clamp_diff`] reads at most half its budget of a longer text's
+/// head and at most its budget of the tail.
 pub(crate) fn diff(g: Git<'_>, dir: &Path, range: &str) -> Result<String, String> {
-    let patch = g.ok(
-        dir,
-        &[os("diff"), os("--no-ext-diff"), os("--no-color"), os(range)],
-    )?;
-    Ok(clamp_diff(&patch, REVIEW_DIFF_MAX))
+    let mut args = vec![os("diff")];
+    args.extend(DIFF_FLAGS.map(os));
+    args.extend(PATCH_PREFIXES.map(os));
+    args.push(os(range));
+    let (output, kept) = g.head_tail(dir, &args)?;
+    if !output.success {
+        return Err(failure(&args, &output));
+    }
+    let text = if kept.dropped() {
+        // Each end on its own: a character cut where the middle was dropped becomes a
+        // replacement character only at the inner edge of a part, which `clamp_diff`
+        // discards because the combined text is twice its limit.
+        let mut text = String::from_utf8_lossy(&kept.head).into_owned();
+        text.push_str(&String::from_utf8_lossy(&kept.tail));
+        text
+    } else {
+        let mut bytes = kept.head;
+        bytes.extend_from_slice(&kept.tail);
+        String::from_utf8_lossy(&bytes).into_owned()
+    };
+    Ok(clamp_diff(&text, REVIEW_DIFF_MAX))
 }

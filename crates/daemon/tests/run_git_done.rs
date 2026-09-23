@@ -5,7 +5,7 @@
 mod support;
 
 use daemon::run::git::{DoneChecked, count_commits, diff_so_far, prepare_worktree, verify_done};
-use daemon::run::globs::OwnsMatcher;
+use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
 use daemon::run::plan::BUILTIN_PROTECTED;
 use std::path::PathBuf;
 use support::TempRepo;
@@ -43,7 +43,7 @@ fn check(
     red: Option<&str>,
 ) -> DoneChecked {
     let generated = OwnsMatcher::new(&strings(generated)).unwrap();
-    let protected = OwnsMatcher::new(&strings(BUILTIN_PROTECTED)).unwrap();
+    let protected = ProtectedMatcher::new(&strings(BUILTIN_PROTECTED)).unwrap();
     verify_done(
         real_git(),
         &t.path,
@@ -71,6 +71,7 @@ fn verify_done_reports_each_condition() {
         r,
         DoneChecked {
             head: t.start.clone(),
+            head_branch: Some("anthrex/vd01/none".to_string()),
             ..DoneChecked::default()
         }
     );
@@ -168,7 +169,8 @@ fn verify_done_reports_each_condition() {
     out(&t.path, &["merge", "-q", "--no-edit", &run_head]);
     let r = check(&t, &run_head, &["src/**"], &[], None);
     assert!(r.outside_owns.is_empty(), "{r:?}");
-    assert!(r.commits >= 1, "{r:?}");
+    // The task's own commit and the merge; not the run head's commit.
+    assert_eq!(r.commits, 2, "{r:?}");
 
     // red: the start commit, a commit on another branch, a valid one.
     let t = task(&repo, &wt, "red");
@@ -215,7 +217,7 @@ fn count_commits_and_diff_so_far() {
     let (_keep, wt) = wt_dir();
     let t = task(&repo, &wt, "count");
     assert_eq!(
-        count_commits(real_git(), &t.path, &t.start, T).unwrap(),
+        count_commits(real_git(), &t.path, &t.start, &t.start, T).unwrap(),
         (0, t.start.clone())
     );
     commit_file(&t.path, "src/one.rs", "one\n", "one");
@@ -224,10 +226,10 @@ fn count_commits_and_diff_so_far() {
     write(&t.path, "src/lib.rs", "uncommitted\n");
 
     assert_eq!(
-        count_commits(real_git(), &t.path, &t.start, T).unwrap(),
+        count_commits(real_git(), &t.path, &t.start, &t.start, T).unwrap(),
         (2, h.clone())
     );
-    let (stat, patch) = diff_so_far(real_git(), &t.path, &t.start, T).unwrap();
+    let (stat, patch) = diff_so_far(real_git(), &t.path, &t.start, &t.start, T).unwrap();
     let range = format!("{}..{h}", t.start);
     assert_eq!(
         stat,
@@ -242,4 +244,77 @@ fn count_commits_and_diff_so_far() {
         String::from_utf8(try_git(&t.path, &["diff", &range]).stdout).unwrap()
     );
     assert!(!patch.contains("uncommitted"), "{patch}");
+}
+
+#[test]
+fn verify_done_edge_cases() {
+    let repo = repo();
+    commit_file(&repo.root, "src/lib.rs", "pub fn a() {}\n", "src");
+    commit_file(&repo.root, "docs/guide.md", "guide\n", "docs");
+    let (_keep, wt) = wt_dir();
+
+    // Protected matching ignores case: on a case-insensitive file system these are the
+    // files Claude Code and Codex read.
+    let t = task(&repo, &wt, "case");
+    commit_file(&t.path, "agents.md", "lower\n", "lower agents");
+    commit_file(&t.path, ".Claude/settings.json", "{}", "mixed claude");
+    let r = check(&t, &t.start, &["**"], &[], None);
+    assert_eq!(
+        r.protected_changed,
+        strings(&[".Claude/settings.json", "agents.md"])
+    );
+
+    // A rename from outside owns into owns reports the source (`--no-renames`); a
+    // rename out of owns reports the destination.
+    let t = task(&repo, &wt, "rename-in");
+    out(&t.path, &["mv", "docs/guide.md", "src/guide.md"]);
+    out(&t.path, &["commit", "-q", "-m", "move in"]);
+    let r = check(&t, &t.start, &["src/**"], &[], None);
+    assert_eq!(r.outside_owns, strings(&["docs/guide.md"]));
+    let t = task(&repo, &wt, "rename-out");
+    out(&t.path, &["mv", "src/lib.rs", "docs/lib.rs"]);
+    out(&t.path, &["commit", "-q", "-m", "move out"]);
+    let r = check(&t, &t.start, &["src/**"], &[], None);
+    assert_eq!(r.outside_owns, strings(&["docs/lib.rs"]));
+
+    // A rename in the working tree is one dirty file, not two.
+    let t = task(&repo, &wt, "wt-rename");
+    std::fs::rename(t.path.join("src/lib.rs"), t.path.join("src/moved.rs")).unwrap();
+    out(&t.path, &["add", "-N", "src/moved.rs"]);
+    let r = check(&t, &t.start, &["src/**"], &[], None);
+    assert_eq!(r.dirty_tracked, 1, "{r:?}");
+
+    // The branch HEAD is on: another branch, then detached.
+    let t = task(&repo, &wt, "switched");
+    out(&t.path, &["switch", "-q", "-c", "scratch-vd"]);
+    commit_file(&t.path, "src/s.rs", "s\n", "on scratch");
+    let r = check(&t, &t.start, &["src/**"], &[], None);
+    assert_eq!(r.head_branch.as_deref(), Some("scratch-vd"));
+    out(&t.path, &["switch", "-q", "--detach"]);
+    let r = check(&t, &t.start, &["src/**"], &[], None);
+    assert_eq!(r.head_branch, None);
+}
+
+#[test]
+fn count_and_diff_so_far_leave_out_a_merged_run_head() {
+    let repo = repo();
+    let (_keep, wt) = wt_dir();
+    let t = task(&repo, &wt, "handed-back");
+    commit_file(&t.path, "src/mine.rs", "mine\n", "mine");
+    commit_file(&repo.root, "other/o1.txt", "o1\n", "o1");
+    let run_head = commit_file(&repo.root, "other/o2.txt", "o2\n", "o2");
+    out(&t.path, &["merge", "-q", "--no-edit", &run_head]);
+    let h = head(&t.path);
+
+    assert_eq!(
+        count_commits(real_git(), &t.path, &t.start, &run_head, T).unwrap(),
+        (2, h)
+    );
+    let (stat, patch) = diff_so_far(real_git(), &t.path, &t.start, &run_head, T).unwrap();
+    assert!(stat.contains("src/mine.rs"), "{stat}");
+    assert!(
+        !stat.contains("o1.txt") && !stat.contains("o2.txt"),
+        "{stat}"
+    );
+    assert!(patch.contains("+mine") && !patch.contains("+o1"), "{patch}");
 }

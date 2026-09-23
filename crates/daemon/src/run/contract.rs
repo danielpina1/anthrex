@@ -68,3 +68,49 @@ fn ceil_boundary(text: &str, mut index: usize) -> usize {
     }
     index
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every cut position modulo a character: `k` ASCII bytes shift a body of 3-byte
+    /// (`世`) or 4-byte (`𝄞`) characters, so over `k` in 0..=3 each cut lands on every
+    /// offset inside a character.
+    #[test]
+    fn clamp_diff_cuts_on_character_boundaries_at_every_offset() {
+        for body in ["世", "𝄞", "a世𝄞"] {
+            for k in 0..=3 {
+                let text = format!("{}{}", "a".repeat(k), body.repeat(20_000));
+                for max in [REVIEW_DIFF_MAX, 1000, 1001, 1002, 1003] {
+                    let out = clamp_diff(&text, max);
+                    assert!(out.len() <= max, "{body} k={k} max={max}: {}", out.len());
+                    assert!(
+                        out.len() >= max - 3,
+                        "{body} k={k} max={max}: {}",
+                        out.len()
+                    );
+                    assert_eq!(out.matches(DIFF_CUT_MARKER).count(), 1);
+                    let (head, tail) = out.split_once(DIFF_CUT_MARKER).unwrap();
+                    assert!(text.starts_with(head), "{body} k={k} max={max}");
+                    assert!(text.ends_with(tail), "{body} k={k} max={max}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn clamp_diff_leaves_text_within_the_limit_alone() {
+        let text = "世".repeat(10);
+        assert_eq!(clamp_diff(&text, 30), text);
+        assert_eq!(clamp_diff(&text, 31), text);
+        let cut = clamp_diff(&text, 29);
+        assert!(cut.len() <= 29, "{cut:?}");
+    }
+
+    #[test]
+    fn clamp_diff_below_the_marker_keeps_a_head_only() {
+        let text = "世".repeat(100);
+        let out = clamp_diff(&text, 10);
+        assert_eq!(out, "世世世");
+    }
+}
