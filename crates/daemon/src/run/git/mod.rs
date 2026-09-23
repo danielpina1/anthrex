@@ -33,7 +33,8 @@ pub use salvage::{
 
 pub use queue::{GitQueue, LOCK_RETRY_DELAYS_MS};
 pub use worktrees::{
-    create_run_branch, lock_worktree, prepare_review, prepare_scratch, prepare_worktree,
+    absolute_git_dir, create_run_branch, lock_worktree, prepare_review, prepare_scratch,
+    prepare_worktree,
 };
 
 use std::ffi::OsStr;

@@ -3883,6 +3883,13 @@ and invented text:
 - **A command that could not start** (bad `dir`, no `/bin/sh`) gives `ok: false, code:
   None, timed_out: false` with the invented tail `could not run /bin/sh in <dir>:
   <error>`.
+- **Matching is per line and unanchored** (ruling T10-M3). A `test_passed` using `(?s)`
+  or spanning lines can never match. `PASS {test}` also matches `PASS t_reset_other`
+  for the test `t_reset`, so profile authors should prefer delimited patterns (`test
+  {test} \.\.\. ok`, or `^PASS {test}$`). One trailing `\r` is dropped from each line
+  before it is matched and stored, so a `$`-anchored pattern works on a CRLF runner's
+  output. Tests: `one_trailing_carriage_return_is_dropped`,
+  `proof_matches_an_anchored_pattern_on_crlf_output`.
 - **`test_passed` is matched per line, as each line is read, against up to 64 KiB of
   that line, not against the 200-line tail.** A test runner prints its result line and
   then more, like `cargo test`'s summary, and a line longer than 300 characters would
@@ -3904,13 +3911,18 @@ and invented text:
 - **The proof worktree** (`prepare_scratch`) is `git worktree add --detach <path> <red>`
   with decision 18's write flags. It is reused whenever git lists it and its directory
   exists, and re-added (after prune) when the directory is gone. It is never locked and
-  never watched (decision 22). `setup` runs only when it was created now, with the
-  proof's env and `timeout_secs`, before the first checkout.
-- **A failed `setup` removes the new proof worktree** (`remove_worktree`, no salvage),
-  so the next proof creates it again and re-runs `setup`. Without the removal, the next
-  proof would reuse a worktree whose setup never finished. There is nothing to salvage:
-  the worktree holds a committed sha plus setup's own output. Test:
-  `a_failing_setup_is_reported_and_runs_again_next_time`.
+  never watched (decision 22). `setup` runs, at `red`, with the proof's env and
+  `timeout_secs`, whenever the worktree's own git directory has no `anthrex-setup-ok`
+  marker; the marker is written once setup succeeds (fix round 1, ruling T10-M1b,
+  superseding the first version's removal of the worktree after a failed setup).
+- **A failed `setup` writes no marker**, so the next proof runs `setup` again in the
+  same worktree. That also covers a daemon that died mid-setup. Tests:
+  `a_failing_setup_is_reported_and_runs_again_next_time`,
+  `a_missing_setup_marker_runs_setup_again`.
+- **Profile authors: setup output must be gitignored to survive** (ruling T10-M4).
+  Each proof run starts with `checkout --detach --force` and `clean -fd`, which removes
+  every untracked file that is not ignored, setup's included. That is decision 33's
+  order.
 - **The head run is skipped when the red run did not fail.** The proof has already
   failed, and the head run could cost a whole `check_timeout_secs`. `head_passed` and
   `matched` are then `false` and `head_tail` is empty. `proof_failed_message` (M8a.13)
@@ -3919,9 +3931,18 @@ and invented text:
   test fails). Invented text: a timed-out run's tail gains a last line `[anthrex: timed
   out after <secs> s]`, for `red_tail`, `head_tail` and a setup's `output`, so the
   quoted tail says why. Test: `a_red_run_that_times_out_is_no_evidence_of_failure`.
-- **Queue.** `prepare_scratch`, `materialize` and a setup-failure `remove_worktree` are
-  git writes. The op executor (M8a.11/M8a.13) runs `run_proof` through
-  `GitQueue::write`, like M8a.9's writes.
+- **Queue (corrected in fix round 1, ruling T10-I2).** `run_proof` must **not** run
+  inside one `GitQueue::write`: it interleaves git writes with up to three shell runs of
+  `check_timeout_secs` each, so it would hold the repository's write lock for the
+  whole proof, and a lock-contention retry would re-run the tests. `run_proof` takes a
+  `git_write: &dyn Fn(GitStep) -> Result<(), String>` hook, and only its git steps go
+  through it: the worktree (`prepare_scratch`), the checkout before setup, and the red
+  and head checkouts (`materialize`). Each `GitStep` is an owned `Box<dyn Fn() ->
+  Result<(), String> + Send + Sync + 'static>` and idempotent, so it can be moved into
+  `GitQueue::write` and retried. The shell runs, the `rev-parse --absolute-git-dir` read
+  and the marker write happen outside the hook. **Carry for M8a.13:** run `run_proof`
+  on `spawn_blocking` with the hook `|step| handle.block_on(queue.write(&root,
+  step))`. Tests pass `proof::direct`.
 - **Carry for M8a.11 (setup after a re-point):** the setup that M8a.8's carry asks to
   re-run is `exec::run_shell(worktree, setup, &profile_env(profile, worktree),
   check_timeout)`. A failure there is `OpResult::SetupFailed { output: tail }`.
@@ -3939,3 +3960,43 @@ and invented text:
   environment test. That test also checks that an unrelated `ANTHREX_*` variable is
   kept, and it filters `env` through `grep` so that a long environment cannot push a
   line out of the 200-line tail. Unit tests: 5 in `exec.rs`, 2 in `proof.rs`.
+
+### M8a.10 fix round 1 (2026-09-23)
+
+Review `task-10-review.md` found 2 Important and 6 Minor issues. Rulings T10-I1, T10-I2
+and T10-M1 to M5 apply. The notes above are corrected in place (proof worktree, setup
+marker, Queue, matching). Each behaviour fix has a test that failed first.
+
+- **I1: the timeout holds under an output flood.** `drain` took reads until
+  `WouldBlock`, so writers that refilled the pipe kept it past the deadline. It now
+  checks its caller's limit before every read and returns after at most 16 reads of
+  64 KiB, so the loop re-checks the leader and the deadline. After the group kill,
+  `OUTPUT_GRACE` is a hard cap on reading.
+  - Test `check_timeout_holds_under_an_output_flood` runs 8 × `yes ''` with a 1 s
+    timeout, bounded by `timeout + OUTPUT_GRACE + SLACK` (2 s). Before the fix: `a 1 s
+    timeout under a flood returned after 13.908067166s`.
+  - Test `output_grace_is_a_hard_cap_for_a_writer_that_left_the_group` runs a `setsid`
+    `yes`, bounded by `2 × OUTPUT_GRACE + SLACK`. Before the fix: `an escaped flooder
+    held the command for 22.302259292s`.
+- **I2: the proof's git steps go through a caller-supplied hook**, not the whole proof
+  through the queue. See the corrected Queue bullet. Test
+  `proof_runs_only_its_git_steps_through_the_write_hook`: a hook that flags "inside"
+  on disk while a step runs. Setup and the test script check the flag, and the hook
+  counts 4 steps in the first round (worktree, checkout for setup, red, head) and 3 in
+  the second. Before the fix: `left: 0` (the hook was never called).
+- **M1:** `waitid` failing with anything but `EINTR`, `ECHILD` included, is now
+  `Leader::Gone`. The loop stops waiting and skips both `killpg` and the reap, because
+  the pid may already be reused. Unit test `a_pid_that_is_not_our_child_is_gone` (pid
+  1). The mutant that maps the error to `Exited` fails it.
+- **M1b:** the `anthrex-setup-ok` marker (`proof::SETUP_MARKER`), in the directory that
+  `rev-parse --absolute-git-dir` gives in the proof worktree. Test
+  `a_missing_setup_marker_runs_setup_again`. Before the fix: `no anthrex-setup-ok in
+  …/.git/worktrees/t1.proof`. `run::git::absolute_git_dir` is new.
+  `remove_worktree` is no longer called by the proof.
+- **M2:** the tail test gains 😀×400, which must come out as exactly 300 characters
+  and 1200 bytes. It passes on the unchanged code. Mutant `TAIL_LINE_BYTES =
+  LINE_MAX_CHARS * 3` now fails it with `left: 225 right: 300`.
+- **M3:** one trailing `\r` is trimmed (see above). Before the fix: `left:
+  "a\r\nb\r\r\nc\r"`, and `matched: false` on `^PASS t_reset$`.
+- **M4:** documented (setup output must be gitignored).
+- **M5:** recorded in the follow-ups file under "From M8a.10's review".

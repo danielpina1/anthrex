@@ -368,3 +368,11 @@ pub fn prepare_scratch(
     )?;
     Ok(true)
 }
+
+/// `git rev-parse --absolute-git-dir` in `dir`: a linked worktree's own git directory
+/// (`<common>/worktrees/<name>`), where per-worktree engine markers live. A read.
+pub fn absolute_git_dir(git: &OsStr, dir: &Path, timeout: Duration) -> Result<PathBuf, String> {
+    let g = Git::new(git, timeout);
+    let out = g.ok(dir, &[os("rev-parse"), os("--absolute-git-dir")])?;
+    Ok(PathBuf::from(out.trim_end_matches(['\n', '\r'])))
+}

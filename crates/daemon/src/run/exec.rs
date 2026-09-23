@@ -52,6 +52,8 @@ const TAIL_LINE_BYTES: usize = LINE_MAX_CHARS * 4;
 /// Bytes of one line a `test_passed` pattern is matched against: a test runner's result
 /// line is short, but the pattern must not be defeated by the tail's 300-character cut.
 const MATCH_LINE_BYTES: usize = 64 * 1024;
+/// Chunks of up to 64 KiB [`drain`] reads before it returns to the caller's checks.
+const READS_PER_DRAIN: usize = 16;
 /// The longest wait between checks on the shell, when its output pipe is quiet.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -169,13 +171,25 @@ pub(super) fn run_matching(
     };
     let deadline = started + timeout;
     let mut exited_at: Option<Instant> = None;
+    // `true` once `waitid` says the leader is not this process's child any more
+    // (`ECHILD`: something else reaped it). Its pid, and so the group id, may then
+    // already belong to another process, so neither the kill nor the reap may run.
+    let mut gone = false;
     let mut timed_out = false;
     loop {
+        let until = exited_at.map_or(deadline, |at| at + OUTPUT_GRACE);
         if !eof {
-            eof = drain(&mut reader, &mut sink);
+            eof = drain(&mut reader, &mut sink, until);
         }
-        if exited_at.is_none() && leader_exited(pid) {
-            exited_at = Some(Instant::now());
+        if exited_at.is_none() {
+            match leader_state(pid) {
+                Leader::Running => {}
+                Leader::Exited => exited_at = Some(Instant::now()),
+                Leader::Gone => {
+                    gone = true;
+                    exited_at = Some(Instant::now());
+                }
+            }
         }
         let now = Instant::now();
         let until = match exited_at {
@@ -195,19 +209,27 @@ pub(super) fn run_matching(
         );
     }
 
-    // The leader is alive or an unreaped zombie, so its pid is still this group's id.
-    kill_group(pid);
-    let code = match child.wait() {
-        Ok(status) => status.code(),
-        Err(error) => {
-            tracing::debug!(?error, pid, "could not reap an engine command");
-            None
+    let code = if gone {
+        tracing::debug!(pid, "an engine command's shell was reaped elsewhere");
+        None
+    } else {
+        // The leader is alive or an unreaped zombie, so its pid is still this group's
+        // id.
+        kill_group(pid);
+        match child.wait() {
+            Ok(status) => status.code(),
+            Err(error) => {
+                tracing::debug!(?error, pid, "could not reap an engine command");
+                None
+            }
         }
     };
-    let killed_at = Instant::now();
+    // A hard cap: a writer outside the group (`setsid`) that keeps the pipe full cannot
+    // hold the command past it.
+    let stop_reading = Instant::now() + OUTPUT_GRACE;
     while !eof {
-        eof = drain(&mut reader, &mut sink);
-        let left = (killed_at + OUTPUT_GRACE).saturating_duration_since(Instant::now());
+        eof = drain(&mut reader, &mut sink, stop_reading);
+        let left = stop_reading.saturating_duration_since(Instant::now());
         if eof || left.is_zero() {
             break;
         }
@@ -226,11 +248,16 @@ pub(super) fn run_matching(
     (outcome, matched)
 }
 
-/// Reads everything available into `sink`; `true` at EOF or on a read error (after
-/// which nothing more can be read).
-fn drain(reader: &mut io::PipeReader, sink: &mut LineTail<'_>) -> bool {
+/// Reads what is available into `sink`, but at most [`READS_PER_DRAIN`] chunks and
+/// never past `until`, so writers that refill the pipe as fast as it is read cannot
+/// keep the caller from its deadline (fix round 1, I1). `true` at EOF or on a read
+/// error (after which nothing more can be read).
+fn drain(reader: &mut io::PipeReader, sink: &mut LineTail<'_>, until: Instant) -> bool {
     let mut buffer = [0u8; 65536];
-    loop {
+    for _ in 0..READS_PER_DRAIN {
+        if Instant::now() >= until {
+            return false;
+        }
         match reader.read(&mut buffer) {
             Ok(0) => return true,
             Ok(count) => sink.push(&buffer[..count]),
@@ -242,11 +269,23 @@ fn drain(reader: &mut io::PipeReader, sink: &mut LineTail<'_>) -> bool {
             }
         }
     }
+    false
+}
+
+/// The group leader's state as `waitid` sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Leader {
+    Running,
+    /// Exited, and still an unreaped zombie of this process.
+    Exited,
+    /// Not this process's child (`ECHILD`, or any other `waitid` error): stop waiting,
+    /// and neither signal nor reap it.
+    Gone,
 }
 
 /// Whether the group leader has exited, without reaping it (`WNOWAIT`), so that
 /// [`kill_group`] afterwards still addresses this command's group and no other.
-fn leader_exited(pid: libc::pid_t) -> bool {
+fn leader_state(pid: libc::pid_t) -> Leader {
     // SAFETY: an all-zero `siginfo_t` is a valid value for waitid to overwrite.
     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
     // SAFETY: `info` is a live, writable `siginfo_t`; `pid` is this process's own
@@ -262,13 +301,16 @@ fn leader_exited(pid: libc::pid_t) -> bool {
     if result == -1 {
         let error = io::Error::last_os_error();
         if error.kind() == io::ErrorKind::Interrupted {
-            return false;
+            return Leader::Running;
         }
-        // No such child: nothing to wait for, so stop waiting for it.
         tracing::debug!(?error, pid, "waitid on an engine command failed");
-        return true;
+        return Leader::Gone;
     }
-    siginfo_pid(&info) != 0
+    if siginfo_pid(&info) != 0 {
+        Leader::Exited
+    } else {
+        Leader::Running
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -342,6 +384,11 @@ impl<'a> LineTail<'a> {
     }
 
     fn end_line(&mut self) {
+        // One trailing `\r` goes (a CRLF runner's line end), before matching and storing,
+        // so a `$`-anchored `test_passed` matches (fix round 1, M3).
+        if self.current.last() == Some(&b'\r') {
+            self.current.pop();
+        }
         let text = String::from_utf8_lossy(&self.current);
         if let Some(pattern) = self.pattern
             && !self.matched
@@ -402,6 +449,12 @@ mod tests {
         sink.push(&line);
         assert!(sink.matched);
         assert_eq!(sink.finish().len(), LINE_MAX_CHARS);
+    }
+
+    #[test]
+    fn a_pid_that_is_not_our_child_is_gone() {
+        // pid 1 is never this process's child: `waitid` gives `ECHILD`.
+        assert_eq!(leader_state(1), Leader::Gone);
     }
 
     #[test]

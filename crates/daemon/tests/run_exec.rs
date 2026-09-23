@@ -8,7 +8,9 @@ use daemon::manager::KILL_GRACE;
 use daemon::run::exec::{
     CHECK_SUMMARY_LINES, CHECK_TAIL_LINES, OUTPUT_GRACE, ShellOutcome, run_shell, summary,
 };
-use daemon::run::proof::{ProofError, ProofOp, ProofRuns, proof_command, proof_pattern, run_proof};
+use daemon::run::proof::{
+    ProofError, ProofOp, ProofRuns, SETUP_MARKER, direct, proof_command, proof_pattern, run_proof,
+};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use support::TempRepo;
@@ -158,9 +160,10 @@ fn check_tail_survives_invalid_utf8_and_huge_lines() {
     std::fs::write(&ascii, &long).unwrap();
     std::fs::write(&wide, format!("{}\n", "世".repeat(1000))).unwrap();
     std::fs::write(&bad, [b'x', 0xff, 0xfe, b'y', b'\n']).unwrap();
+    std::fs::write(dir.path().join("emoji"), format!("{}\n", "😀".repeat(400))).unwrap();
     let outcome = run_shell(
         dir.path(),
-        "cat ascii; cat wide; cat bad; echo end",
+        "cat ascii; cat wide; cat bad; cat emoji; echo end",
         &[],
         LONG,
     );
@@ -168,7 +171,7 @@ fn check_tail_survives_invalid_utf8_and_huge_lines() {
     let lines: Vec<&str> = outcome.tail.split('\n').collect();
     assert_eq!(
         lines.len(),
-        4,
+        5,
         "{:?}",
         &outcome.tail[..outcome.tail.len().min(200)]
     );
@@ -178,7 +181,80 @@ fn check_tail_survives_invalid_utf8_and_huge_lines() {
     assert_eq!(lines[1].len(), 900);
     assert_eq!(lines[1], "世".repeat(300));
     assert_eq!(lines[2], "x\u{fffd}\u{fffd}y");
-    assert_eq!(lines[3], "end");
+    assert_eq!(lines[3].chars().count(), 300);
+    assert_eq!(lines[3].len(), 1200);
+    assert_eq!(lines[4], "end");
+}
+
+/// Spawning, killing and reaping on a loaded machine, on top of a bound the code
+/// itself derives from `OUTPUT_GRACE`: the flood tests' only allowance beyond the
+/// legal worst case (docs/timing-budgets.md rule 1).
+const SLACK: Duration = Duration::from_secs(2);
+
+#[test]
+fn check_timeout_holds_under_an_output_flood() {
+    let dir = tempfile::tempdir().unwrap();
+    let timeout = Duration::from_secs(1);
+    let started = Instant::now();
+    let outcome = run_shell(
+        dir.path(),
+        "for i in 1 2 3 4 5 6 7 8; do yes '' & done; wait",
+        &[],
+        timeout,
+    );
+    let elapsed = started.elapsed();
+    assert!(outcome.timed_out, "{:?}", (outcome.ok, outcome.code));
+    // Legal worst case: the timeout, then at most `OUTPUT_GRACE` of reading after the
+    // kill.
+    assert!(
+        elapsed < timeout + OUTPUT_GRACE + SLACK,
+        "a 1 s timeout under a flood returned after {elapsed:?}"
+    );
+}
+
+#[test]
+fn output_grace_is_a_hard_cap_for_a_writer_that_left_the_group() {
+    let dir = tempfile::tempdir().unwrap();
+    let pidfile = dir.path().join("pid");
+    let started = Instant::now();
+    let outcome = run_shell(
+        dir.path(),
+        &format!(
+            "perl -MPOSIX -e 'POSIX::setsid(); open(my $f, \">\", $ARGV[0]); print $f $$; \
+             close $f; exec \"yes\", \"\"' '{}' & echo done",
+            pidfile.display()
+        ),
+        &[],
+        LONG,
+    );
+    let elapsed = started.elapsed();
+    let deadline = Instant::now() + LONG;
+    while !pidfile.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if let Ok(pid) = std::fs::read_to_string(&pidfile)
+        && let Ok(pid) = pid.trim().parse::<i32>()
+    {
+        // SAFETY: this test started that process; SIGKILL to it alone.
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+    }
+    assert!(
+        outcome.ok,
+        "{:?}",
+        (outcome.ok, outcome.code, outcome.timed_out)
+    );
+    // Legal worst case: `OUTPUT_GRACE` after the shell exits, the group kill (which
+    // cannot reach the escaped writer), then `OUTPUT_GRACE` more of reading.
+    assert!(
+        elapsed < OUTPUT_GRACE + OUTPUT_GRACE + SLACK,
+        "an escaped flooder held the command for {elapsed:?}"
+    );
+}
+
+#[test]
+fn one_trailing_carriage_return_is_dropped() {
+    let outcome = shell("printf 'a\\r\\nb\\r\\r\\nc\\r'");
+    assert_eq!(outcome.tail, "a\nb\r\nc");
 }
 
 // ---- the test proof ----
@@ -216,7 +292,7 @@ fn op(p: &ProofRepo, name: &str, red: &str, head: &str, test: &str) -> ProofOp {
 }
 
 fn prove(op: &ProofOp) -> ProofRuns {
-    run_proof(real_git(), op, T).unwrap_or_else(|err| panic!("run_proof failed: {err:?}"))
+    run_proof(real_git(), op, T, &direct).unwrap_or_else(|err| panic!("run_proof failed: {err:?}"))
 }
 
 #[test]
@@ -348,7 +424,7 @@ fn a_failing_setup_is_reported_and_runs_again_next_time() {
     let green = commit_file(&p.repo.root, "impl.txt", "fn reset() {}\n", "green");
     let mut proof = op(&p, "t1", &red, &green, "t_reset");
     proof.setup = Some("echo setup broke; exit 4".into());
-    match run_proof(real_git(), &proof, T) {
+    match run_proof(real_git(), &proof, T, &direct) {
         Err(ProofError::SetupFailed { output }) => assert_eq!(output, "setup broke"),
         other => panic!("expected SetupFailed, got {other:?}"),
     }
@@ -380,4 +456,106 @@ fn a_red_run_that_times_out_is_no_evidence_of_failure() {
         "{runs:?}"
     );
     assert!(!runs.head_passed && !runs.matched, "{runs:?}");
+}
+
+#[test]
+fn proof_matches_an_anchored_pattern_on_crlf_output() {
+    let p = proof_repo();
+    let red = commit_file(&p.repo.root, "tests/t_reset.sh", "exit 1\n", "red");
+    let green = commit_file(
+        &p.repo.root,
+        "tests/t_reset.sh",
+        "printf 'PASS t_reset\\r\\n'\n",
+        "crlf",
+    );
+    let mut proof = op(&p, "t1", &red, &green, "t_reset");
+    proof.passed = proof_pattern("^PASS {test}$", "t_reset");
+    let runs = prove(&proof);
+    assert!(runs.red_failed && runs.head_passed, "{runs:?}");
+    assert!(runs.matched, "{runs:?}");
+    assert_eq!(runs.head_tail, "PASS t_reset");
+}
+
+#[test]
+fn a_missing_setup_marker_runs_setup_again() {
+    let p = proof_repo();
+    let red = commit_file(&p.repo.root, "tests/t_reset.sh", RESET_TEST, "red");
+    let green = commit_file(&p.repo.root, "impl.txt", "fn reset() {}\n", "green");
+    let log_dir = tempfile::tempdir().unwrap();
+    let log = log_dir.path().join("setup.log");
+    let mut proof = op(&p, "t1", &red, &green, "t_reset");
+    proof.setup = Some(format!("echo ran >> '{}'", log.display()));
+    let count = || {
+        std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .lines()
+            .count()
+    };
+
+    prove(&proof);
+    assert_eq!(count(), 1);
+    let git_dir = PathBuf::from(support::run_git::out(
+        &proof.path,
+        &["rev-parse", "--absolute-git-dir"],
+    ));
+    let marker = git_dir.join(SETUP_MARKER);
+    assert!(
+        marker.exists(),
+        "no {} in {}",
+        SETUP_MARKER,
+        git_dir.display()
+    );
+    // A daemon that died mid-setup, or a removal that failed, leaves no marker.
+    std::fs::remove_file(&marker).unwrap();
+    let runs = prove(&proof);
+    assert!(
+        runs.red_failed && runs.head_passed && runs.matched,
+        "{runs:?}"
+    );
+    assert_eq!(
+        count(),
+        2,
+        "a worktree without the setup marker was treated as set up"
+    );
+    assert!(marker.exists());
+}
+
+#[test]
+fn proof_runs_only_its_git_steps_through_the_write_hook() {
+    let p = proof_repo();
+    let inside = "[ -e \"$HOOK_FLAG\" ] && echo INSIDE_HOOK\n";
+    let red = commit_file(
+        &p.repo.root,
+        "tests/t_reset.sh",
+        &format!("{inside}{RESET_TEST}"),
+        "red",
+    );
+    let green = commit_file(&p.repo.root, "impl.txt", "fn reset() {}\n", "green");
+    let flag_dir = tempfile::tempdir().unwrap();
+    let flag = flag_dir.path().join("in-hook");
+    let mut proof = op(&p, "t1", &red, &green, "t_reset");
+    proof.env = vec![("HOOK_FLAG".into(), flag.display().to_string())];
+    proof.setup = Some("[ -e \"$HOOK_FLAG\" ] && exit 9\ntrue".to_string());
+    let calls = std::cell::Cell::new(0);
+    let hook = |step: daemon::run::proof::GitStep| {
+        calls.set(calls.get() + 1);
+        std::fs::write(&flag, "").unwrap();
+        let result = step();
+        std::fs::remove_file(&flag).unwrap();
+        result
+    };
+    for round in 0..2 {
+        calls.set(0);
+        let runs = run_proof(real_git(), &proof, T, &hook).unwrap();
+        assert!(
+            runs.red_failed && runs.head_passed && runs.matched,
+            "{runs:?}"
+        );
+        assert!(!runs.red_tail.contains("INSIDE_HOOK"), "{runs:?}");
+        assert!(!runs.head_tail.contains("INSIDE_HOOK"), "{runs:?}");
+        // The worktree (added, or reused), the checkout to red that setup runs at (the
+        // first round only: the marker is written then), then the red and the head
+        // checkouts.
+        assert_eq!(calls.get(), [4, 3][round], "round {round}");
+    }
 }

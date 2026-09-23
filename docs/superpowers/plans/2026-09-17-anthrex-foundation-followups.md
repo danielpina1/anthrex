@@ -775,3 +775,13 @@ scope.
   - A fuller fix: salvage the nested repository into its own ref, or copy the directory
     aside.
   - Decision 20 prescribes exactly `add -A`, so this needs a ruling before code.
+
+## From M8a.10's review (2026-09-23), for M8a (plan validation)
+
+- **`test_passed` need not contain `{test}`.** `run/plan.rs` (the `profile.test_passed`
+  check near line 229) only compiles the pattern. A profile with `test_passed = "test
+  result: ok"` makes the proof's "the output shows the named test" half vacuous: any
+  passing run matches. Proposed: require `{test}` in `test_passed` when `single_test`
+  is set, as `single_test` itself must contain `{test}`, with the error `must contain
+  {test}`. This is a plan-validation change (M8a.5's territory), ruled out of scope for
+  M8a.10 (ruling T10-M5).

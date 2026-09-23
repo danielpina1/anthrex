@@ -1,23 +1,29 @@
 //! The fail-to-pass test proof (decision 33, spec §8.1). Blocking I/O: call only from
-//! `spawn_blocking` or a dedicated thread (AGENTS.md rule 2). The proof's git writes
-//! (`worktree add`, the checkouts, the clean) are the op executor's to queue through
-//! `run::git::GitQueue`, like M8a.9's writes.
+//! `spawn_blocking` or a dedicated thread (AGENTS.md rule 2).
+//!
+//! The proof interleaves git writes with shell runs that may each take
+//! `check_timeout_secs`, so it must not be one `GitQueue::write`: that would hold the
+//! repository's write lock for the whole proof, and a lock-contention retry would re-run
+//! the tests (fix round 1, ruling T10-I2). Instead the caller passes a `git_write` hook,
+//! and only the git steps ([`GitStep`]: the worktree, the checkouts) run through it. The executor maps the hook to its `GitQueue` (for example
+//! `|step| handle.block_on(queue.write(&root, step))` inside `spawn_blocking`); a
+//! caller with no queue passes [`direct`].
 //!
 //! In the task's scratch proof worktree (`<wt>/runs/<run>/<task>.proof`, created on
-//! first use, with `setup` run once in it), the single-test command runs at the `red`
-//! commit, where it must fail, then at the task's head, where it must exit 0 and print
-//! a line matching `test_passed`. [`proof_command`] and [`proof_pattern`] build
+//! first use, with `setup` run in it until it once succeeds), the single-test command
+//! runs at the `red` commit, where it must fail, then at the task's head, where it
+//! must exit 0 and print a line matching `test_passed`. [`proof_command`] and [`proof_pattern`] build
 //! `OpKind::Proof`'s `command` and `passed` from the profile and the worker's test
 //! name; they are pure, for the engine to call.
 
-use std::ffi::OsStr;
-use std::path::PathBuf;
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use regex::Regex;
 
 use super::exec::{ShellOutcome, run_matching, run_shell};
-use super::git::{materialize, prepare_scratch, remove_worktree};
+use super::git::{absolute_git_dir, materialize, prepare_scratch};
 use crate::launch::shell_quote;
 
 /// `OpKind::Proof`'s fields (the interface block's `ProofOp`).
@@ -59,8 +65,8 @@ pub struct ProofRuns {
 /// Why no proof could be made at all. Neither is a verdict on the worker's test.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProofError {
-    /// `setup` failed in a new proof worktree (`OpResult::SetupFailed`); `output` is its
-    /// tail. The worktree was removed again, so the next proof re-runs `setup`.
+    /// `setup` failed in the proof worktree (`OpResult::SetupFailed`); `output` is its
+    /// tail. No [`SETUP_MARKER`] was written, so the next proof re-runs `setup`.
     SetupFailed { output: String },
     /// A git step failed, or `passed` is not a regular expression.
     Failed(String),
@@ -77,13 +83,30 @@ pub fn proof_pattern(test_passed: &str, test: &str) -> String {
     test_passed.replace("{test}", &regex::escape(test))
 }
 
-/// Decision 33's proof. Each git step is bounded by `git_timeout`; `setup` and each run
-/// by `op.timeout_secs`. The `head` run is skipped when the `red` run did not fail,
-/// since the proof has already failed.
+/// The file, in the proof worktree's own git directory, that says `setup` has
+/// succeeded in it (ruling T10-M1b). A worktree without it gets `setup` again, whether
+/// its setup failed, the daemon died during it, or it was never run.
+pub const SETUP_MARKER: &str = "anthrex-setup-ok";
+
+/// One git step of the proof, owning everything it needs, so the caller's hook can
+/// move it into `GitQueue::write` (which retries it on lock contention: each step is
+/// idempotent).
+pub type GitStep = Box<dyn Fn() -> Result<(), String> + Send + Sync + 'static>;
+
+/// The `git_write` hook for a caller with no queue: runs the step at once.
+pub fn direct(step: GitStep) -> Result<(), String> {
+    step()
+}
+
+/// Decision 33's proof. Each git step is bounded by `git_timeout` and runs through
+/// `git_write`; `setup` and each test run are bounded by `op.timeout_secs` and run
+/// outside it. The `head` run is skipped when the `red` run did not fail, since the
+/// proof has already failed.
 pub fn run_proof(
     git: &OsStr,
     op: &ProofOp,
     git_timeout: Duration,
+    git_write: &dyn Fn(GitStep) -> Result<(), String>,
 ) -> Result<ProofRuns, ProofError> {
     let pattern = Regex::new(&op.passed).map_err(|error| {
         ProofError::Failed(format!(
@@ -91,23 +114,33 @@ pub fn run_proof(
         ))
     })?;
     let timeout = Duration::from_secs(op.timeout_secs);
-    let created = prepare_scratch(git, &op.root, &op.path, &op.red, git_timeout)
-        .map_err(ProofError::Failed)?;
-    if created && let Some(setup) = &op.setup {
-        let outcome = run_shell(&op.path, setup, &op.env, timeout);
-        if !outcome.ok {
-            // A scratch checkout of committed work plus setup's own output: nothing to
-            // salvage (decision 20 is about agents' work).
-            if let Err(error) = remove_worktree(git, &op.root, &op.path, git_timeout) {
-                tracing::warn!(%error, path = %op.path.display(), "could not remove a proof worktree whose setup failed");
+    let (program, root, path) = (git.to_os_string(), op.root.clone(), op.path.clone());
+    let red = op.red.clone();
+    git_write(Box::new(move || {
+        prepare_scratch(&program, &root, &path, &red, git_timeout).map(|_created| ())
+    }))
+    .map_err(ProofError::Failed)?;
+
+    let marker = absolute_git_dir(git, &op.path, git_timeout)
+        .map_err(ProofError::Failed)?
+        .join(SETUP_MARKER);
+    if !marker.exists() {
+        if let Some(setup) = &op.setup {
+            // A reused worktree may be at any commit; setup runs at red, as in a new one.
+            git_write(checkout(git, &op.path, &op.red, git_timeout)).map_err(ProofError::Failed)?;
+            let outcome = run_shell(&op.path, setup, &op.env, timeout);
+            if !outcome.ok {
+                return Err(ProofError::SetupFailed {
+                    output: with_timeout_note(outcome),
+                });
             }
-            return Err(ProofError::SetupFailed {
-                output: with_timeout_note(outcome),
-            });
         }
+        std::fs::write(&marker, "").map_err(|error| {
+            ProofError::Failed(format!("could not write {}: {error}", marker.display()))
+        })?;
     }
 
-    materialize(git, &op.path, &op.red, git_timeout).map_err(ProofError::Failed)?;
+    git_write(checkout(git, &op.path, &op.red, git_timeout)).map_err(ProofError::Failed)?;
     let (red, _) = run_matching(&op.path, &op.command, &op.env, timeout, None);
     let mut runs = ProofRuns {
         red_failed: !red.ok && !red.timed_out,
@@ -118,12 +151,20 @@ pub fn run_proof(
         return Ok(runs);
     }
 
-    materialize(git, &op.path, &op.head, git_timeout).map_err(ProofError::Failed)?;
+    git_write(checkout(git, &op.path, &op.head, git_timeout)).map_err(ProofError::Failed)?;
     let (head, matched) = run_matching(&op.path, &op.command, &op.env, timeout, Some(&pattern));
     runs.head_passed = head.ok;
     runs.matched = matched;
     runs.head_tail = with_timeout_note(head);
     Ok(runs)
+}
+
+/// `materialize` as an owned [`GitStep`]: `checkout --detach --force <commit>`, then
+/// `clean -fd`.
+fn checkout(git: &OsStr, path: &Path, commit: &str, timeout: Duration) -> GitStep {
+    let (program, path, commit): (OsString, PathBuf, String) =
+        (git.to_os_string(), path.to_path_buf(), commit.to_string());
+    Box::new(move || materialize(&program, &path, &commit, timeout))
 }
 
 /// The run's tail, with a last line saying it timed out when it did, so a proof failure
