@@ -335,3 +335,36 @@ pub fn prepare_review(
     let patch = diff(g, root, &format!("{base}..{head}"))?;
     Ok((base, head, patch))
 }
+
+/// Decision 33's proof worktree: a scratch worktree at `path`, detached at `at`,
+/// **reused** when git already lists it with its directory (the caller then checks out
+/// what it needs), re-added when its directory is gone. `true` when it was created now,
+/// which is when the caller runs the profile's `setup` in it ("created on first use
+/// with `setup`"). Never locked and never watched (decision 22): nothing of an agent's
+/// lives in it.
+pub fn prepare_scratch(
+    git: &OsStr,
+    root: &Path,
+    path: &Path,
+    at: &str,
+    timeout: Duration,
+) -> Result<bool, String> {
+    let g = Git::new(git, timeout);
+    if let Some(found) = listed(g, root, path)? {
+        if path.exists() {
+            return Ok(false);
+        }
+        forget_missing(g, root, path, &found)?;
+    }
+    g.write(
+        root,
+        &[
+            os("worktree"),
+            os("add"),
+            os("--detach"),
+            path.as_os_str(),
+            os(at),
+        ],
+    )?;
+    Ok(true)
+}

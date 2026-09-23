@@ -3834,3 +3834,108 @@ T9-I1, T9-I2 and T9-m1 to m6 apply. Each behaviour fix has a test that failed fi
 - **Test layout.** The accept tests moved from `run_git_finish.rs` to a new
   `tests/run_git_accept.rs` (9 tests), to keep both files under 600 lines.
   `run_git_finish.rs` now has 8 tests and `run_git_merge.rs` has 9.
+
+### M8a.10 shell execution: setup, check and the test proof (2026-09-23)
+
+Built `run/exec.rs` (`run_shell`, `summary`, `ShellOutcome`, `CHECK_TAIL_LINES`,
+`CHECK_SUMMARY_LINES`, plus `LINE_MAX_CHARS` = 300 and `OUTPUT_GRACE` = 1 s) and
+`run/proof.rs` (`ProofOp`, `run_proof`, `proof_command`, `proof_pattern`), and one git
+helper, `run::git::prepare_scratch`, in `run/git/worktrees.rs`. Deviations, resolutions
+and invented text:
+
+- **A separate process loop, not `subprocess::capture` (the reuse the brief expected).**
+  `exec.rs` borrows `capture`'s `poll(2)` wait (`wait_readable`), `set_nonblocking` and
+  `scrub_git_env` (now `pub(crate)`), but runs its own loop, because `capture` cannot
+  give it three things without changing what its git callers get:
+  - the exit **code**: a non-zero exit is `Outcome::Failed` there;
+  - a **group kill whenever the command finishes**: `capture` kills the group only while
+    the leader is still unreaped, so a shell that exits while a background process holds
+    the pipe runs to the timeout and leaves that process alive;
+  - **one merged pipe** read line by line into a bounded tail, not two byte buffers.
+- **stdout and stderr share one pipe** (`std::io::pipe`, stable since Rust 1.87). The
+  `2>&1` of decision 34 is kept, but the shell's own complaints (command not found, a
+  syntax error in `check`) are written before that redirection applies. With one pipe
+  they land in the tail in order. Test: `check_merges_stderr` asserts exit 127 and the
+  command's name in the tail.
+- **The whole group is killed when the command ends, not only on timeout** (invented,
+  within decision 26's "they belong to no window"). A check that starts a server in the
+  background would otherwise leak it for every retry. The leader is watched with
+  `waitid(WEXITED | WNOHANG | WNOWAIT)` and reaped only after `killpg`. While it is an
+  unreaped zombie, its pid, which is the group id, cannot be reused, so the kill can
+  reach no other process. Test: `a_check_that_exits_leaves_no_background_process_behind`
+  (the mutant that kills only a live leader leaves the `sleep` running).
+- **`OUTPUT_GRACE` (1 s, invented).** Once the shell has exited, or its group has been
+  killed, output is read for at most this long more, then the pipe is abandoned. So a
+  process that escaped the group with `setsid` and still holds the pipe cannot hold the
+  engine command. A timed-out command returns within `timeout + OUTPUT_GRACE`, and any
+  command within `timeout + 2 × OUTPUT_GRACE`, plus the kill and the reap. The brief's
+  3 s bound in `check_timeout_kills_the_process_group` is `1 s + OUTPUT_GRACE + 1 s` of
+  slack, and the test asserts `timeout + OUTPUT_GRACE < bound`
+  (docs/timing-budgets.md rule 1).
+- **Kill on timeout is an immediate `SIGKILL` to the group**, as decision 34 says, with
+  no `SIGTERM` step. The brief's `KILL_GRACE + 1 s` is only the test's bound for the
+  background pid to disappear.
+- **The tail.** Lines split on `\n`, and a last unterminated line counts. Each line is
+  decoded lossily and cut to exactly 300 characters. At most `300 × 4` bytes of a line
+  are held while it is read (enough for 300 characters of any width), so a 1 MB line
+  costs nothing. The tail is joined by `\n` with no trailing newline. `summary` is the
+  last 40 `\n`-separated lines of it.
+- **A command that could not start** (bad `dir`, no `/bin/sh`) gives `ok: false, code:
+  None, timed_out: false` with the invented tail `could not run /bin/sh in <dir>:
+  <error>`.
+- **`test_passed` is matched per line, as each line is read, against up to 64 KiB of
+  that line, not against the 200-line tail.** A test runner prints its result line and
+  then more, like `cargo test`'s summary, and a line longer than 300 characters would
+  be cut before the name. `exec::run_matching` (`pub(super)`) is `run_shell` with a
+  pattern. Unit test: `a_match_beyond_the_cut_counts`.
+- **`ProofOp` is the interface block's, and its `command` and `passed` arrive already
+  substituted,** as `OpKind::Proof`'s comments say. The substitution is two pure
+  functions in `proof.rs`, `proof_command` (`{test}` becomes `launch::shell_quote(test)`)
+  and `proof_pattern` (`{test}` becomes `regex::escape(test)`), for M8a.13's engine to
+  call when it emits `Op Proof`. The tests use them too, so
+  `proof_quotes_a_hostile_test_name` covers the real substitution.
+- **`run_proof` returns `Result<ProofRuns, ProofError>`, not `OpResult`,** which does
+  not exist until M8a.11 (the precedent is M8a.8's `DoneChecked`). `ProofRuns` has
+  exactly `OpResult::Proof`'s fields. `ProofError::SetupFailed { output }` maps to
+  `OpResult::SetupFailed`. `ProofError::Failed(message)` is a git step that failed, or
+  a `passed` that is not a regex (plan validation compiles it with a stand-in name,
+  so this is unlikely but possible for an odd name). It maps to
+  the engine's generic failure.
+- **The proof worktree** (`prepare_scratch`) is `git worktree add --detach <path> <red>`
+  with decision 18's write flags. It is reused whenever git lists it and its directory
+  exists, and re-added (after prune) when the directory is gone. It is never locked and
+  never watched (decision 22). `setup` runs only when it was created now, with the
+  proof's env and `timeout_secs`, before the first checkout.
+- **A failed `setup` removes the new proof worktree** (`remove_worktree`, no salvage),
+  so the next proof creates it again and re-runs `setup`. Without the removal, the next
+  proof would reuse a worktree whose setup never finished. There is nothing to salvage:
+  the worktree holds a committed sha plus setup's own output. Test:
+  `a_failing_setup_is_reported_and_runs_again_next_time`.
+- **The head run is skipped when the red run did not fail.** The proof has already
+  failed, and the head run could cost a whole `check_timeout_secs`. `head_passed` and
+  `matched` are then `false` and `head_tail` is empty. `proof_failed_message` (M8a.13)
+  must quote `red_tail` in that case.
+- **A red run that times out is not `red_failed`** (a timeout is no evidence that the
+  test fails). Invented text: a timed-out run's tail gains a last line `[anthrex: timed
+  out after <secs> s]`, for `red_tail`, `head_tail` and a setup's `output`, so the
+  quoted tail says why. Test: `a_red_run_that_times_out_is_no_evidence_of_failure`.
+- **Queue.** `prepare_scratch`, `materialize` and a setup-failure `remove_worktree` are
+  git writes. The op executor (M8a.11/M8a.13) runs `run_proof` through
+  `GitQueue::write`, like M8a.9's writes.
+- **Carry for M8a.11 (setup after a re-point):** the setup that M8a.8's carry asks to
+  re-run is `exec::run_shell(worktree, setup, &profile_env(profile, worktree),
+  check_timeout)`. A failure there is `OpResult::SetupFailed { output: tail }`.
+- **Grep acceptance.** `grep -n "thread::sleep" crates/daemon/src/run` prints one line,
+  `run/git/queue.rs:116`. It is inside that file's `#[cfg(test)]` module (M8a.8's
+  `writes_to_one_repo_are_serialized`, which simulates a slow git write), not production
+  code, and it was left alone as outside this brief. `exec.rs` has no `thread::sleep`.
+  Its waits are `poll(2)` through `subprocess::wait_readable`, which sleeps only when
+  no pipe is open.
+- **Test layout.** `tests/run_exec.rs` has 14 tests: the brief's 10, plus
+  `a_check_that_exits_leaves_no_background_process_behind`,
+  `a_failing_setup_is_reported_and_runs_again_next_time`,
+  `a_red_run_that_times_out_is_no_evidence_of_failure`, and the second worktree in
+  `proof_runs_setup_once_per_new_worktree`. `tests/run_exec_env.rs` has the one
+  environment test. That test also checks that an unrelated `ANTHREX_*` variable is
+  kept, and it filters `env` through `grep` so that a long environment cannot push a
+  line out of the 200-line tail. Unit tests: 5 in `exec.rs`, 2 in `proof.rs`.

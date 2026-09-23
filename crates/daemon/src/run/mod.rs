@@ -15,14 +15,18 @@
 //! edits, decision 13) and starts `contract.rs` with the two message texts edits need.
 //! M8a.8 adds `git/` (preflight, worktrees, the done check and the per-repository
 //! write queue; blocking I/O) and `contract.rs`'s `REVIEW_DIFF_MAX` diff clamp.
+//! M8a.10 adds `exec.rs` (the engine's bounded, scrubbed shells: `setup` and `check`)
+//! and `proof.rs` (the fail-to-pass test proof), both blocking I/O.
 
 pub mod contract;
 pub mod edits;
 pub mod env;
+pub mod exec;
 pub mod git;
 pub mod globs;
 pub mod model;
 pub mod plan;
+pub mod proof;
 pub mod roster;
 pub mod validate;
 mod validate_graph;

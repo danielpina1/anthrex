@@ -384,7 +384,7 @@ fn capture(
 /// when none is open. Waking as soon as a pipe has data, rather than after a fixed
 /// sleep, is what lets [`capture`] read a large output at pipe speed: a sleep after
 /// every pipe-full caps it at a few MB/s.
-fn wait_readable(fds: &[std::os::fd::RawFd], wait: Duration) {
+pub(crate) fn wait_readable(fds: &[std::os::fd::RawFd], wait: Duration) {
     if fds.is_empty() {
         std::thread::sleep(wait);
         return;
@@ -435,7 +435,7 @@ fn lossy_stderr(bytes: Vec<u8>) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-fn scrub_git_env(command: &mut Command) -> &mut Command {
+pub(crate) fn scrub_git_env(command: &mut Command) -> &mut Command {
     command
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
@@ -444,7 +444,7 @@ fn scrub_git_env(command: &mut Command) -> &mut Command {
         .env_remove("GIT_PREFIX")
 }
 
-fn set_nonblocking(stream: &impl AsRawFd) -> io::Result<()> {
+pub(crate) fn set_nonblocking(stream: &impl AsRawFd) -> io::Result<()> {
     let fd = stream.as_raw_fd();
     // SAFETY: the caller owns this live pipe descriptor for as long as this call runs.
     // fcntl changes only its status flags and neither transfers nor closes the
