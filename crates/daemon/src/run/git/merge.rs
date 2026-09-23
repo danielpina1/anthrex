@@ -43,6 +43,17 @@ pub enum AcceptOutcome {
     Conflict { files: Vec<String> },
 }
 
+/// What [`hand_back`] did (ruling T14-C1): `onto` is the task branch's tip it merged
+/// the run head onto (the worktree's `HEAD` before the merge), `head` the worktree's
+/// `HEAD` after it (the merge commit when clean, `onto` when conflicted), and `files`
+/// the unmerged paths (empty when clean).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HandBack {
+    pub onto: String,
+    pub head: String,
+    pub files: Vec<String>,
+}
+
 /// The first seven characters of a sha, as decision 21's messages spell `<old7>`.
 pub(crate) fn short(sha: &str) -> &str {
     sha.get(..7).unwrap_or(sha)
@@ -300,15 +311,17 @@ pub fn commits_since(
 }
 
 /// Decision 36 step 6: `git merge --no-ff --no-edit <run_head>` in the task worktree.
-/// A clean merge is committed and gives an empty list. A conflict leaves its markers
-/// and `MERGE_HEAD` for the worker and gives the unmerged files. Any other failure
+/// A clean merge is committed and gives no files. A conflict leaves its markers and
+/// `MERGE_HEAD` for the worker and gives the unmerged files. Any other failure
 /// (untracked files in the way, say), or a merge already in progress, is an error.
+/// The result names the tip the merge was made onto (ruling T14-C1): the engine
+/// re-queues a hand-back only when that tip is the claimed commit.
 pub fn hand_back(
     git: &OsStr,
     worktree: &Path,
     run_head: &str,
     timeout: Duration,
-) -> Result<Vec<String>, String> {
+) -> Result<HandBack, String> {
     let g = Git::new(git, timeout);
     // Ruling T11-N1(a): a leftover MERGE_HEAD would make git refuse the merge and
     // `unmerged` report the old merge's files as if they were this one's conflict.
@@ -325,15 +338,29 @@ pub fn hand_back(
         os("--no-edit"),
         os(run_head),
     ];
+    let tip = |g| {
+        read(g, worktree, "HEAD")?
+            .ok_or_else(|| format!("{} has no HEAD commit", worktree.display()))
+    };
+    let onto = tip(g)?;
     let output = g.write_raw(worktree, &args)?;
     if output.success {
-        return Ok(Vec::new());
+        let head = tip(g)?;
+        return Ok(HandBack {
+            onto,
+            head,
+            files: Vec::new(),
+        });
     }
     let files = unmerged(g, worktree)?;
     if files.is_empty() {
         Err(failure(&args, &output))
     } else {
-        Ok(files)
+        Ok(HandBack {
+            head: onto.clone(),
+            onto,
+            files,
+        })
     }
 }
 

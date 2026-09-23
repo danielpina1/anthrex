@@ -4,10 +4,10 @@
 //! and `run discard` on a complete run (decision 20), answered with their op's result.
 //! Pure (design decision 2).
 
-use proto::{FinishAction, RunState, TaskState};
+use proto::{BlockInfo, BlockReason, FinishAction, RunState, TaskState};
 
 use super::dispatch::{finishing_as, history, salvage_ref};
-use super::merge::{halt, next_salvage_seq};
+use super::merge::{candidate_in_flight, halt, next_salvage_seq};
 use super::requests::log;
 use super::{Effect, EngineState, OpKind, OpResult, ReplyId, emit_op, ladder, next_op, review};
 use crate::run::contract::accept_conflict_message;
@@ -28,11 +28,25 @@ fn live(state: TaskState) -> bool {
     )
 }
 
-/// Task `i` is cancelled as the run ends: its sessions are killed (a worker's claim
-/// answered, a reviewer given up), its messages dropped, and it leaves the merge queue.
-/// Its worktree is salvaged and removed once no session is left
-/// (`dispatch::remove_cancelled_worktrees`).
-fn cancel_task(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut Vec<Effect>) {
+/// Task `i` is cancelled as the run ends, or, while its `MergeCandidate` runs, marked to
+/// be once that merge does not land (ruling T14-I1). Returns whether it was deferred.
+fn cancel_task(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut Vec<Effect>) -> bool {
+    if candidate_in_flight(run, i) {
+        if !std::mem::replace(&mut run.tasks[i].cancel_deferred, true) {
+            history(run, i, now, "cancel deferred: its merge is in flight");
+        }
+        return true;
+    }
+    cancel_now(run, i, why, now, fx);
+    false
+}
+
+/// Task `i` is cancelled: its sessions are killed (a worker's claim answered, a
+/// reviewer given up), its messages dropped, and it leaves the merge queue; every
+/// unfinished task that declared it becomes `blocked(dep_cancelled)`, as decision 13's
+/// `cancel_task` edit does. Its worktree is salvaged and removed once no session is
+/// left (`dispatch::remove_cancelled_worktrees`).
+pub(super) fn cancel_now(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut Vec<Effect>) {
     ladder::kill_worker(run, i, fx);
     review::stop_reviewers(run, i, now, fx);
     let task = &mut run.tasks[i];
@@ -42,10 +56,30 @@ fn cancel_task(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut Vec<Effect
     task.held_answered = false;
     task.fresh_session = None;
     task.merge_op = None;
+    task.cancel_deferred = false;
+    task.handback_due = false;
+    task.resolving = false;
+    task.ready_from = None;
     let id = task.id().to_string();
     run.outbox.retain(|m| m.task_id != id);
     run.merge_queue.retain(|q| *q != id);
     history(run, i, now, format!("cancelled: {why}"));
+    for j in 0..run.tasks.len() {
+        let dependent = &run.tasks[j];
+        if dependent.state.is_finished() || !dependent.spec.deps.contains(&id) {
+            continue;
+        }
+        let text = format!("dependency {id} was cancelled");
+        history(run, j, now, format!("blocked: {text}"));
+        let dependent = &mut run.tasks[j];
+        dependent.state = TaskState::Blocked;
+        dependent.awaiting_deps = false;
+        dependent.held_answered = false;
+        dependent.block = Some(BlockInfo {
+            reason: BlockReason::DepCancelled,
+            text,
+        });
+    }
 }
 
 /// The `finish` edit (decision 37), every scheduler pass of a running run: every task
@@ -100,9 +134,14 @@ pub(super) fn complete_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 
 /// `VerifyRefs`' result: the refs as recorded lead to the final check when the run head
 /// is neither the last green candidate nor the base (only after a rebaseline), else to
-/// `complete`. A moved run ref or a rewritten base halts (decision 21); refs that could
-/// not be read halt too (invented), so completion is never decided on unread refs.
+/// `complete`. A moved run ref or a rewritten base halts (decision 21). Refs that could
+/// not be read are read again by the next pass; a second failure in a row halts, with
+/// a reason a plain `run resume` retries (review m1, invented), so completion is never
+/// decided on refs that were not read.
 pub(super) fn refs_verified(run: &mut Run, result: OpResult, now: u64, fx: &mut Vec<Effect>) {
+    if !matches!(result, OpResult::Failed { .. }) {
+        run.verify_failures = 0;
+    }
     match result {
         OpResult::RefsOk if run.state == RunState::Running => {
             let green = run.last_green_candidate.as_deref() == Some(run.run_head.as_str());
@@ -125,7 +164,18 @@ pub(super) fn refs_verified(run: &mut Run, result: OpResult, now: u64, fx: &mut 
         }
         OpResult::RefMoved { reason } => halt(run, reason, now),
         OpResult::Failed { message } => {
-            halt(run, format!("could not verify the refs: {message}"), now)
+            run.verify_failures = run.verify_failures.saturating_add(1);
+            if run.verify_failures < 2 {
+                log(
+                    run,
+                    now,
+                    format!("could not verify the refs: {message}; reading them again"),
+                );
+                return;
+            }
+            run.verify_failures = 0;
+            halt(run, format!("could not verify the refs: {message}"), now);
+            run.halt_retryable = true;
         }
         _ => {}
     }
@@ -196,13 +246,20 @@ pub(super) fn cancel(
         }
         other => return answer(fx, Err(format!("run {run_id} is {}", other.label()))),
     }
+    let mut merging = Vec::new();
     for i in 0..run.tasks.len() {
-        if !run.tasks[i].state.is_finished() {
-            cancel_task(run, i, "run cancel", now, fx);
+        if !run.tasks[i].state.is_finished() && cancel_task(run, i, "run cancel", now, fx) {
+            merging.push(run.tasks[i].id().to_string());
         }
     }
+    run.cancelled = true;
     log(run, now, "cancelled by the user");
-    let text = format!("run {run_id} cancelled; it completes once its sessions have ended");
+    let mut text = format!("run {run_id} cancelled; it completes once its sessions have ended");
+    for id in merging {
+        text.push_str(&format!(
+            "; {id}'s merge is in flight: it is cancelled only if that merge does not land"
+        ));
+    }
     answer(fx, Ok(text));
 }
 
@@ -250,7 +307,14 @@ pub(super) fn finish(
     if let Some(how) = finishing_as(run) {
         return answer(fx, Err(format!("run {run_id} is being {how}")));
     }
-    if run.state != RunState::Complete {
+    // Review m2: a cancelled run that is halted has nothing left to verify for a
+    // discard, so it needs no rebaseline first.
+    let discardable = action == FinishAction::Discard
+        && run.state == RunState::Halted
+        && run.cancelled
+        && run.tasks.iter().all(|t| t.state.is_finished())
+        && run.pending_ops.is_empty();
+    if run.state != RunState::Complete && !discardable {
         let label = run.state.label();
         let text = format!("run {run_id} is {label}; {verb} applies only to a complete run");
         return answer(fx, Err(text));

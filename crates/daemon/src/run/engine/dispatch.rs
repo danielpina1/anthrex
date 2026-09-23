@@ -29,7 +29,7 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         match run.state {
             RunState::AwaitingApproval => prewarm(run, now, fx),
             RunState::Running => {
-                holds::resume_held(run, fx);
+                holds::resume_held(run, now, fx);
                 signals::watch(run, now, fx);
                 ladder::recover_sessionless(run, now);
                 ladder::start_fresh_sessions(run, fx);
@@ -37,6 +37,7 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 gates::start_gates(run, now, fx);
                 merge::start_merge(run, now, fx);
                 review::watch(run, now, fx);
+                launch_ready(run, now, fx);
                 dispatch_writers(run, now, fx);
                 review::dispatch_reviewers(run, fx);
             }
@@ -209,6 +210,25 @@ fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     }
 }
 
+/// Ruling T14-I2: a task whose worktree was prepared while the run was not running is
+/// launched now, from that commit when it is still the run head, else re-pointed.
+fn launch_ready(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+    for i in 0..run.tasks.len() {
+        if run.tasks[i].state != TaskState::Preparing || prepare_in_flight(run, i) {
+            continue;
+        }
+        let Some(from) = run.tasks[i].ready_from.take() else {
+            continue;
+        };
+        if from == run.run_head {
+            launch_worker(run, i, from, now, fx);
+        } else {
+            let head = run.run_head.clone();
+            prepare(run, i, head, fx);
+        }
+    }
+}
+
 /// A new worker session for task `i`, starting at `start` (decisions 24–26, 30).
 fn launch_worker(run: &mut Run, i: usize, start: String, now: u64, fx: &mut Vec<Effect>) {
     launch(run, i, Some(start), worker_prompt, now, fx);
@@ -372,7 +392,8 @@ fn remove_cancelled_worktrees(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         {
             continue;
         }
-        let salvage_ref = salvage_ref(run, task.id(), task.salvage_refs.len() + 1);
+        // Review m4: one numbering rule for every salvage (decision 20's `<seq>`).
+        let salvage_ref = salvage_ref(run, task.id(), merge::next_salvage_seq(task));
         let (id, path) = (task.id().to_string(), task.worktree.clone());
         fx.push(Effect::UnwatchWorktree { root: path.clone() });
         let op = next_op(run);
@@ -412,6 +433,19 @@ pub(super) fn worktree_done(
     }
     let state = run.tasks[i].state;
     match result {
+        // Ruling T14-I2: while the run is not running (halted), the worktree is
+        // recorded as ready and the first running pass carries on the dispatch.
+        OpResult::Worktree { .. }
+            if state == TaskState::Preparing && run.state != RunState::Running =>
+        {
+            run.tasks[i].ready_from = Some(from);
+            history(
+                run,
+                i,
+                now,
+                "worktree ready; the worker starts once the run runs",
+            );
+        }
         OpResult::Worktree { .. } if state == TaskState::Preparing => {
             if from == run.run_head {
                 launch_worker(run, i, from, now, fx);

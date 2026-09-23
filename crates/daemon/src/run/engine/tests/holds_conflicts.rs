@@ -60,6 +60,7 @@ fn a_conflict_while_a_dependency_is_unfinished_is_aborted() {
         OpResult::HandedBack {
             files: files.clone(),
             head: None,
+            onto: None,
         },
     );
     let aborts = ops_in(&effects, "AbortMerge");
@@ -89,6 +90,7 @@ fn a_conflict_while_a_dependency_is_unfinished_is_aborted() {
         OpResult::HandedBack {
             files: files.clone(),
             head: None,
+            onto: None,
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Working);
@@ -107,7 +109,14 @@ fn a_failed_abort_blocks_the_task_on_its_environment() {
     let first = hand_back_in_flight(&mut fx);
     add_t3_as_dep(&mut fx);
     let files = vec!["crates/a/x.rs".to_string()];
-    let effects = fx.done(first, OpResult::HandedBack { files, head: None });
+    let effects = fx.done(
+        first,
+        OpResult::HandedBack {
+            files,
+            head: None,
+            onto: None,
+        },
+    );
     let abort = ops_in(&effects, "AbortMerge")[0].0;
     fx.done(
         abort,
@@ -153,6 +162,7 @@ fn an_amendment_to_an_unanswered_held_task_waits_for_the_answer() {
         OpResult::HandedBack {
             files: vec![],
             head: None,
+            onto: None,
         },
     );
     let t1 = fx.task("t1");
@@ -194,6 +204,7 @@ fn a_conflict_is_kept_after_the_holding_dependency_is_cancelled() {
         OpResult::HandedBack {
             files: files.clone(),
             head: None,
+            onto: None,
         },
     );
     assert!(ops_in(&effects, "AbortMerge").is_empty(), "{effects:#?}");
@@ -242,6 +253,7 @@ fn a_conflict_for_a_cancelled_task_is_dropped() {
         OpResult::HandedBack {
             files: files.clone(),
             head: None,
+            onto: None,
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Cancelled);
@@ -256,7 +268,14 @@ fn an_abort_result_for_a_cancelled_task_is_ignored() {
     let first = hand_back_in_flight(&mut fx);
     add_t3_as_dep(&mut fx);
     let files = vec!["crates/a/x.rs".to_string()];
-    let effects = fx.done(first, OpResult::HandedBack { files, head: None });
+    let effects = fx.done(
+        first,
+        OpResult::HandedBack {
+            files,
+            head: None,
+            onto: None,
+        },
+    );
     let abort = ops_in(&effects, "AbortMerge")[0].0;
     edit(
         &mut fx,
@@ -283,7 +302,14 @@ fn a_failed_abort_keeps_a_dep_cancelled_block() {
     let first = hand_back_in_flight(&mut fx);
     add_t3_as_dep(&mut fx);
     let files = vec!["crates/a/x.rs".to_string()];
-    let effects = fx.done(first, OpResult::HandedBack { files, head: None });
+    let effects = fx.done(
+        first,
+        OpResult::HandedBack {
+            files,
+            head: None,
+            onto: None,
+        },
+    );
     let abort = ops_in(&effects, "AbortMerge")[0].0;
     edit(
         &mut fx,
@@ -322,6 +348,7 @@ fn an_untold_conflict_is_aborted_when_the_task_is_held_again() {
         OpResult::HandedBack {
             files: files.clone(),
             head: None,
+            onto: None,
         },
     );
     assert_eq!(conflict_messages(&fx, &files), 1);
@@ -360,6 +387,7 @@ fn an_untold_conflict_is_aborted_when_the_task_is_held_again() {
         OpResult::HandedBack {
             files: files.clone(),
             head: None,
+            onto: None,
         },
     );
     assert_eq!(conflict_messages(&fx, &files), 1);

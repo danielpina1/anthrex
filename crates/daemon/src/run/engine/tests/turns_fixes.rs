@@ -154,7 +154,11 @@ pub(super) fn assert_gates_alive(fx: &Fixture) {
                     && (super::super::schedule::readers_busy(run)
                         >= usize::from(run.limits.max_readers)
                         || super::super::schedule::hub_holds_slot(run));
-                op || watched || mail || timer || killing || slot_wait
+                // Ruling T14-I2: a halted or paused run starts no reviewer; the task
+                // waits for the user's resume.
+                let stopped =
+                    matches!(run.state, proto::RunState::Halted | proto::RunState::Paused);
+                op || watched || mail || timer || killing || slot_wait || stopped
             }
         };
         assert!(

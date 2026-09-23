@@ -335,6 +335,7 @@ fn first_conflict_hands_back_then_requeues_after_task_done() {
         vec![OpKind::HandBack {
             worktree: task_path("t1"),
             run_head: BASE.into(),
+            task_head: Some(head_of("t1")),
         }]
     );
     let t1 = fx.task("t1");
@@ -349,6 +350,7 @@ fn first_conflict_hands_back_then_requeues_after_task_done() {
         OpResult::HandedBack {
             files: files.clone(),
             head: None,
+            onto: Some(head_of("t1")),
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Working);
@@ -385,6 +387,7 @@ fn a_clean_hand_back_requeues_without_the_worker() {
         OpResult::HandedBack {
             files: vec![],
             head: Some(merged_head.clone()),
+            onto: Some(head_of("t1")),
         },
     );
     assert!(delivers(&effects).is_empty(), "{effects:#?}");
@@ -416,6 +419,7 @@ fn second_conflict_blocks_the_task_as_conflict() {
         OpResult::HandedBack {
             files: vec![],
             head: Some(head_of("t1m")),
+            onto: Some(head_of("t1")),
         },
     );
     let (op, _) = candidate(&fx, "t1");

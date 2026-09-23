@@ -352,6 +352,9 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         created_at: ctx.now,
         finish_edit: false,
         finish_reply: None,
+        cancelled: false,
+        verify_failures: 0,
+        halt_retryable: false,
     })
 }
 

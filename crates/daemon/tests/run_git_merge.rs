@@ -7,9 +7,9 @@
 mod support;
 
 use daemon::run::git::{
-    ACCEPT_LIST_MAX, CandidateStep, RefCheck, abort_merge, cas_update, commit_tree, commits_since,
-    create_run_branch, guard_refs, hand_back, materialize, merge_tree, prepare_worktree, read_ref,
-    reattach,
+    ACCEPT_LIST_MAX, CandidateStep, HandBack, RefCheck, abort_merge, cas_update, commit_tree,
+    commits_since, create_run_branch, guard_refs, hand_back, materialize, merge_tree,
+    prepare_worktree, read_ref, reattach,
 };
 use std::path::{Path, PathBuf};
 use support::TempRepo;
@@ -287,8 +287,16 @@ fn hand_back_leaves_markers_and_merge_head() {
     let (_keep, task) = task_worktree(&repo, "hb1", "shared.txt", "task\n");
     let run_head = commit_on(&repo.root, "anthrex/hb1/integration", "shared.txt", "run\n");
 
-    let files = hand_back(real_git(), &task, &run_head, T).unwrap();
-    assert_eq!(files, vec!["shared.txt".to_string()]);
+    let task_head = head(&task);
+    let back = hand_back(real_git(), &task, &run_head, T).unwrap();
+    assert_eq!(
+        back,
+        HandBack {
+            onto: task_head.clone(),
+            head: task_head,
+            files: vec!["shared.txt".to_string()],
+        }
+    );
     assert_eq!(out(&task, &["rev-parse", "MERGE_HEAD"]), run_head);
     let text = std::fs::read_to_string(task.join("shared.txt")).unwrap();
     assert!(text.contains("<<<<<<<"), "{text}");
@@ -302,8 +310,10 @@ fn hand_back_that_is_clean_commits_the_merge() {
     let task_head = head(&task);
     let run_head = commit_on(&repo.root, "anthrex/hb2/integration", "a.txt", "run\n");
 
-    let files = hand_back(real_git(), &task, &run_head, T).unwrap();
-    assert!(files.is_empty(), "{files:?}");
+    let back = hand_back(real_git(), &task, &run_head, T).unwrap();
+    assert!(back.files.is_empty(), "{back:?}");
+    assert_eq!(back.onto, task_head);
+    assert_eq!(back.head, head(&task));
     assert_eq!(parents(&task, "HEAD"), vec![task_head, run_head]);
     assert!(
         !try_git(&task, &["rev-parse", "-q", "--verify", "MERGE_HEAD"])
@@ -344,7 +354,7 @@ fn hand_back_while_a_merge_is_in_progress_is_an_error() {
     let (_keep, task) = task_worktree(&repo, "hb4", "shared.txt", "task\n");
     let first = commit_on(&repo.root, "anthrex/hb4/integration", "shared.txt", "run\n");
     assert_eq!(
-        hand_back(real_git(), &task, &first, T).unwrap(),
+        hand_back(real_git(), &task, &first, T).unwrap().files,
         vec!["shared.txt"]
     );
     let newer = commit_on(&repo.root, "anthrex/hb4/integration", "other.txt", "more\n");
@@ -566,4 +576,23 @@ fn commits_since_caps_and_counts() {
         commits_since(real_git(), &repo.root, &to, &to, ACCEPT_LIST_MAX, T).unwrap(),
         (Vec::new(), 0)
     );
+}
+
+/// Ruling T14-C1: the hand-back reports the branch tip it merged onto. A commit the
+/// worker made after its claim is that tip, so the engine can tell the merge was not
+/// made onto the claimed head.
+#[test]
+fn hand_back_reports_the_tip_it_merged_onto() {
+    let repo = repo();
+    let (_keep, task) = task_worktree(&repo, "hb6", "b.txt", "task\n");
+    let claimed = head(&task);
+    let later = commit_file(&task, "c.txt", "after the claim\n", "post-claim work");
+    let run_head = commit_on(&repo.root, "anthrex/hb6/integration", "a.txt", "run\n");
+
+    let back = hand_back(real_git(), &task, &run_head, T).unwrap();
+    assert!(back.files.is_empty(), "{back:?}");
+    assert_eq!(back.onto, later);
+    assert_ne!(back.onto, claimed);
+    assert_eq!(back.head, head(&task));
+    assert_eq!(parents(&task, &back.head), vec![later, run_head]);
 }

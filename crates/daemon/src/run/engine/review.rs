@@ -6,7 +6,9 @@
 //! (decision 16), so every worker-side rule that matches messages by task id leaves
 //! them alone. Pure (design decision 2).
 
-use proto::{AgentRole, BlockReason, GateKind, Runtime, Severity, TaskState, ToolCall, Verdict};
+use proto::{
+    AgentRole, BlockReason, GateKind, RunState, Runtime, Severity, TaskState, ToolCall, Verdict,
+};
 
 use super::dispatch::{block, history, new_round, window_limit_reached};
 use super::schedule::{hub_holds_slot, needs_reviewer, readers_busy};
@@ -101,6 +103,13 @@ pub(super) fn review_ready(
         }
         _ => return,
     };
+    // Ruling T14-I2: no session starts while the run is not running. The worktree is
+    // ready; the running pass prepares the review again (cheap, and its diff is not
+    // kept in the run) and starts the reviewer then.
+    if run.state != RunState::Running {
+        let text = "review worktree prepared; the reviewer starts once the run runs";
+        return history(run, i, now, text);
+    }
     if window_limit_reached(run, i, now) {
         return;
     }

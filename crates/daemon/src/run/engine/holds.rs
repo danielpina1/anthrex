@@ -75,6 +75,8 @@ fn abort_untold_conflict(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>
         return;
     }
     run.outbox.retain(|m| !untold(m));
+    // Nothing is left to resolve once the merge is undone.
+    run.tasks[i].resolving = false;
     let worktree = run.tasks[i].worktree.clone();
     let op = next_op(run);
     emit_op(run, op, Some(&id), OpKind::AbortMerge { worktree }, fx);
@@ -90,7 +92,7 @@ fn abort_untold_conflict(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>
 /// gets the run head merged into its worktree first (decision 36's hand-back) once
 /// every dependency has finished, and resumes only when that comes back. One hand-back
 /// at a time, and none while a conflicted one is being aborted (ruling T11-N1(b)).
-pub(super) fn resume_held(run: &mut Run, fx: &mut Vec<Effect>) {
+pub(super) fn resume_held(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     for i in 0..run.tasks.len() {
         let task = &run.tasks[i];
         let question = task
@@ -111,13 +113,42 @@ pub(super) fn resume_held(run: &mut Run, fx: &mut Vec<Effect>) {
         {
             continue;
         }
+        if task.resolving {
+            relax(run, i, now);
+            continue;
+        }
         let (id, worktree) = (task.id().to_string(), task.worktree.clone());
+        let task_head = task.head.clone();
         let op = next_op(run);
         let kind = OpKind::HandBack {
             worktree,
             run_head: run.run_head.clone(),
+            task_head,
         };
         emit_op(run, op, Some(&id), kind, fx);
+    }
+}
+
+/// Ruling T14-I3: a held task whose worker was resolving a conflict the merge queue
+/// told it of has a merge in progress in its worktree, so no hand-back can run there.
+/// Once its dependencies finish, the hold is lifted without one (N5 relaxed for the
+/// worker's own conflict turn): an answered task takes its messages now, and the run
+/// head is handed back at its next accepted `task_done`, before any gate.
+fn relax(run: &mut Run, i: usize, now: u64) {
+    let task = &mut run.tasks[i];
+    task.awaiting_deps = false;
+    task.handback_due = true;
+    if std::mem::take(&mut task.held_answered) {
+        task.state = TaskState::Working;
+        task.block = None;
+        history(
+            run,
+            i,
+            now,
+            "dependencies merged; resuming its conflict, the run head follows its task_done",
+        );
+    } else {
+        history(run, i, now, "dependencies merged; waiting for an answer");
     }
 }
 

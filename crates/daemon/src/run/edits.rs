@@ -270,6 +270,20 @@ impl Batch {
     /// `blocked(dep_cancelled)`.
     fn cancel_at(&mut self, i: usize) {
         let id = self.run.tasks[i].id().to_string();
+        // Ruling T14-I1: a task whose merge candidate is in flight is cancelled only if
+        // that merge does not land (`engine::merge::candidate_done`).
+        let task = &self.run.tasks[i];
+        let merging = task.merge_op.is_some_and(|op| {
+            self.run
+                .pending_ops
+                .get(&op)
+                .is_some_and(|p| matches!(p.kind, super::engine::OpKind::MergeCandidate { .. }))
+        });
+        if merging {
+            self.run.tasks[i].cancel_deferred = true;
+            self.log(i, "cancel deferred: its merge is in flight".to_string());
+            return;
+        }
         if is_live(&self.run.tasks[i]) {
             self.consequences.push(EditConsequence::CancelLive {
                 task_id: id.clone(),

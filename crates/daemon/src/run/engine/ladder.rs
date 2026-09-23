@@ -455,7 +455,9 @@ pub(super) fn fresh_diff(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
-    if !fresh_due(&run.tasks[i]) {
+    // Ruling T14-I2: no session starts while the run is not running; the running pass
+    // asks for the diff again (`start_fresh_sessions`).
+    if !fresh_due(&run.tasks[i]) || run.state != proto::RunState::Running {
         return;
     }
     let (stat, patch) = match result {

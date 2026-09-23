@@ -145,9 +145,19 @@ pub enum OpKind {
     },
     /// Decision 36 step 6 (the merge queue's, M8a.14) and M8a.6 ruling N5's (M8a.11):
     /// `git::hand_back(worktree, run_head)`, a write through `GitQueue::write`. The
-    /// result is `HandedBack { files, head }`, `head` being the worktree's `HEAD` after
-    /// the merge (read with `rev-parse`), which a clean hand-back re-queues.
-    HandBack { worktree: PathBuf, run_head: String },
+    /// result is `HandedBack { files, head, onto }` from `git::HandBack`: `onto` the tip
+    /// the merge was made onto, `head` the worktree's `HEAD` after it. A clean or
+    /// resolved hand-back goes straight back to the merge queue only when `onto` is
+    /// `task_head` (ruling T14-C1).
+    HandBack {
+        worktree: PathBuf,
+        run_head: String,
+        /// The claimed commit (`Task.head`) the engine expects the merge to be made
+        /// onto (ruling T14-C1). The executor reports the tip it actually merged onto
+        /// in `HandedBack.onto`.
+        #[serde(default)]
+        task_head: Option<String>,
+    },
     /// Ruling T11-N1(b): `git::abort_merge` in a held task's worktree, undoing a
     /// hand-back that conflicted while another dependency was still unfinished.
     AbortMerge { worktree: PathBuf },
@@ -179,6 +189,10 @@ pub enum OpKind {
     /// the base advanced; the driver sends `Event::BaseAdvanced` before `Finish` when
     /// its read finds a newer one). Results: `Finished { outcome, kept_branches }`,
     /// `AcceptConflict { files }` (the merge aborted, the base untouched), `Failed`.
+    /// `Failed` means the base branch is untouched (review m5): once `git::accept` has
+    /// merged, the run is accepted whatever follows, so a failure in the salvage,
+    /// removal or branch deletion after it is still `Finished`, with an `outcome` that
+    /// names it (`accepted; clean-up failed: <error>`) and the branches kept.
     Accept {
         root: PathBuf,
         base_branch: String,
@@ -288,6 +302,10 @@ pub enum OpResult {
         files: Vec<String>,
         #[serde(default)]
         head: Option<String>,
+        /// Ruling T14-C1: the tip the run head was merged onto (`git::HandBack.onto`).
+        /// Only a merge onto the claimed commit re-queues without the gates.
+        #[serde(default)]
+        onto: Option<String>,
     },
     /// `AbortMerge` succeeded (ruling T11-N1(b)).
     MergeAborted,

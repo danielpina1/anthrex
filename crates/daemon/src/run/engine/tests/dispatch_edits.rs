@@ -169,7 +169,10 @@ fn add_dep_then_answer_waits_for_the_dependency_then_hands_back() {
     let effects = fx.merge("t2", &head);
     let hand_backs = ops_in(&effects, "HandBack");
     assert_eq!(hand_backs.len(), 1, "{effects:#?}");
-    let OpKind::HandBack { worktree, run_head } = &hand_backs[0].1 else {
+    let OpKind::HandBack {
+        worktree, run_head, ..
+    } = &hand_backs[0].1
+    else {
         unreachable!()
     };
     assert_eq!(worktree, &task_path("t1"));
@@ -181,6 +184,7 @@ fn add_dep_then_answer_waits_for_the_dependency_then_hands_back() {
         OpResult::HandedBack {
             files: vec![],
             head: None,
+            onto: None,
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Working);

@@ -373,6 +373,29 @@ pub struct Task {
     /// correlation). An N5 `HandBack` (`holds.rs`) never sets it.
     #[serde(default)]
     pub merge_op: Option<OpId>,
+    /// M8a.14 fix round 1 (ruling T14-I1): a cancel arrived while the task's
+    /// `MergeCandidate` ran. It applies when that merge does not land; a merge that
+    /// lands makes the task `merged` and the cancel too late.
+    #[serde(default)]
+    pub cancel_deferred: bool,
+    /// Ruling T14-I2: the worktree a dispatch prepared from this commit came back while
+    /// the run was not running; the worker is launched (or the worktree re-pointed) by
+    /// the first running pass.
+    #[serde(default)]
+    pub ready_from: Option<String>,
+    /// Ruling T14-I3: the worker was told of a conflict the merge queue handed back,
+    /// and resolves it in its worktree (a merge in progress) until its next accepted
+    /// `task_done`.
+    #[serde(default)]
+    pub resolving: bool,
+    /// Ruling T14-I3: its dependencies finished while it was resolving that conflict;
+    /// the run head is handed back at its next accepted `task_done`, before any gate.
+    #[serde(default)]
+    pub handback_due: bool,
+    /// Ruling T14-I3: the hand-back in flight is that due one: a clean result goes
+    /// through the gates, not straight to the merge queue.
+    #[serde(default)]
+    pub gates_after_handback: bool,
     pub start_commit: Option<String>,
     pub head: Option<String>,
     pub done: Option<DoneClaim>,
@@ -485,6 +508,18 @@ pub struct Run {
     /// is in flight; it is answered with the op's result. A restore clears it.
     #[serde(default)]
     pub finish_reply: Option<u64>,
+    /// M8a.14 fix round 1: `run cancel` was applied; a cancelled run that is halted can
+    /// be discarded without a rebaseline (review m2).
+    #[serde(default)]
+    pub cancelled: bool,
+    /// Review m1: `VerifyRefs` failures in a row; the second halts the run with a
+    /// retryable reason.
+    #[serde(default)]
+    pub verify_failures: u8,
+    /// Review m1: the halt came from refs that could not be read, so `run resume`
+    /// needs no `--rebaseline`.
+    #[serde(default)]
+    pub halt_retryable: bool,
 }
 
 impl Run {

@@ -70,6 +70,7 @@ fn a_held_task_is_not_resumed_after_an_exit_or_by_a_delivery() {
         OpResult::HandedBack {
             files: vec![],
             head: None,
+            onto: None,
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Working);
@@ -108,6 +109,7 @@ fn a_held_task_gets_no_fresh_session_until_its_hand_back() {
         OpResult::HandedBack {
             files: vec![],
             head: None,
+            onto: None,
         },
     );
     let diffs = ops_in(&effects, "DiffSoFar");
@@ -130,7 +132,14 @@ fn a_conflict_being_delivered_is_not_undone_when_the_task_is_held_again() {
     let mut fx = super::holds::blocked_t1();
     let op = hand_back_in_flight(&mut fx);
     let files = vec!["crates/a/x.rs".to_string()];
-    let effects = fx.done(op, OpResult::HandedBack { files, head: None });
+    let effects = fx.done(
+        op,
+        OpResult::HandedBack {
+            files,
+            head: None,
+            onto: None,
+        },
+    );
     assert_eq!(fx.task("t1").state, TaskState::Working);
     assert_eq!(delivers(&effects).len(), 1, "answer and conflict in flight");
     // M8a.12 makes this reachable: the worker blocks the task while the delivery is in
@@ -194,6 +203,7 @@ fn a_held_codex_task_that_lost_its_session_before_an_id_gets_a_fresh_one() {
         OpResult::HandedBack {
             files: vec![],
             head: None,
+            onto: None,
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Working);

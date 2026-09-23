@@ -370,6 +370,11 @@ pub fn candidate_red_message(command: &str, c: &CheckRecord) -> String {
     )
 }
 
+/// Ruling T14-C1 (invented text): the run head was merged into the worktree onto a
+/// tip past the claimed commit, so the worker's later commits have not passed the
+/// gates; its next `task_done` goes through all of them.
+pub const UNCLAIMED_COMMITS: &str = "[anthrex] The run branch was merged into your worktree, but your branch has commits after your last task_done, and they have not passed the gates. Check the result, commit, then call task_done again.";
+
 /// Decision 20's refusal when accept's merge conflicts with an advanced base (exact):
 /// `commits` new commits on `base`. M8a.14.
 pub fn accept_conflict_message(run_id: &str, base: &str, commits: u32, files: &[String]) -> String {

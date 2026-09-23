@@ -16,6 +16,7 @@ mod holds;
 mod holds_conflicts;
 mod merge;
 mod merge_complete;
+mod merge_fixes;
 mod merge_holds;
 mod turns;
 mod turns_fixes;

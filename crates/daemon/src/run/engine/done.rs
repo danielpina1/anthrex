@@ -373,7 +373,7 @@ pub(super) fn checked(
         }
     }
     let id = pending.reply;
-    accept(run, i, pending, head, now);
+    accept(run, i, pending, head, now, fx);
     if let Some(id) = id {
         reply(fx, id, Ok(DONE_ACCEPTED.to_string()));
     }
@@ -441,8 +441,17 @@ fn reengage(run: &mut Run, i: usize, pending: &PendingClaim, text: String, now: 
 /// Decision 32: the claim is recorded and the task moves to its first gate — `proof`
 /// (tdd), `check` (a check in the profile), `review`, or the merge queue; a handed-back
 /// task goes straight back to the merge queue (decision 36).
-fn accept(run: &mut Run, i: usize, pending: PendingClaim, head: String, now: u64) {
+fn accept(
+    run: &mut Run,
+    i: usize,
+    pending: PendingClaim,
+    head: String,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
     let task = &mut run.tasks[i];
+    // Ruling T14-I3: an accepted claim ends the conflict it resolved.
+    task.resolving = false;
     let signal = pending.claim.signal;
     task.done = Some(pending.claim);
     task.head = Some(head);
@@ -452,6 +461,15 @@ fn accept(run: &mut Run, i: usize, pending: PendingClaim, head: String, now: u64
         round.fallback = FallbackState::None;
         round.fallback_waiting = false;
     }
+    if task.handback_due {
+        let how = match signal {
+            DoneSignal::TaskDone => "task_done",
+            DoneSignal::TurnEndFallback => "the turn-end fallback",
+        };
+        history(run, i, now, format!("done ({how}); the run head first"));
+        return super::merge::hand_back_due(run, i, now, fx);
+    }
+    let task = &mut run.tasks[i];
     let next = if std::mem::take(&mut task.handed_back) {
         TaskState::MergeQueue
     } else {

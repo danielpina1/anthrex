@@ -14,9 +14,9 @@ use super::dispatch::{block, history, salvage_ref};
 use super::requests::log;
 use super::signals::end_round;
 use super::{
-    Effect, EngineState, OpId, OpKind, OpResult, ReplyId, emit_op, gates, ladder, next_op,
+    Effect, EngineState, OpId, OpKind, OpResult, ReplyId, complete, emit_op, gates, ladder, next_op,
 };
-use crate::run::contract::{candidate_red_message, conflict_message, sha7};
+use crate::run::contract::{UNCLAIMED_COMMITS, candidate_red_message, conflict_message, sha7};
 use crate::run::env::profile_env;
 use crate::run::model::{BaseMoved, CheckRecord, Run, Task};
 
@@ -101,6 +101,10 @@ pub(super) fn candidate_done(
     if let OpResult::RefMoved { reason } = &result {
         if let Some(i) = i.filter(|&i| awaits(run, i, op)) {
             run.tasks[i].merge_op = None;
+            // Ruling T14-I1: the merge did not land, so a deferred cancel applies.
+            if std::mem::take(&mut run.tasks[i].cancel_deferred) {
+                complete::cancel_now(run, i, "its cancel, after its merge did not land", now, fx);
+            }
         }
         return halt(run, reason.clone(), now);
     }
@@ -120,6 +124,19 @@ pub(super) fn candidate_done(
         return;
     }
     run.merge_queue.retain(|q| *q != id);
+    // Ruling T14-I1: a cancel that arrived during the merge applies only if the merge
+    // did not land; one that landed makes the task merged and the cancel too late.
+    if std::mem::take(&mut run.tasks[i].cancel_deferred) {
+        if let OpResult::Merged { commit } = result {
+            log(
+                run,
+                now,
+                format!("the cancel of {id} arrived too late: it merged"),
+            );
+            return merged(run, i, commit, now, fx);
+        }
+        return complete::cancel_now(run, i, "its cancel, after its merge did not land", now, fx);
+    }
     match result {
         OpResult::Merged { commit } => merged(run, i, commit, now, fx),
         OpResult::Conflict { files } => conflict(run, i, files, now, fx),
@@ -228,6 +245,7 @@ fn conflict(run: &mut Run, i: usize, files: Vec<String>, now: u64, fx: &mut Vec<
     let kind = OpKind::HandBack {
         worktree: task.worktree.clone(),
         run_head: run.run_head.clone(),
+        task_head: task.head.clone(),
     };
     let op = next_op(run);
     run.tasks[i].merge_op = Some(op);
@@ -239,11 +257,14 @@ fn conflict(run: &mut Run, i: usize, files: Vec<String>, now: u64, fx: &mut Vec<
     history(run, i, now, text);
 }
 
-/// The merge queue's `HandBack` result (decision 36). Conflict markers go to the worker
-/// with `conflict_message`: the task is `working` again, and its next accepted
-/// `task_done` goes straight back to the merge queue. A clean hand-back needs no worker:
-/// the merged head re-queues at once. The task cannot be held meanwhile (it is not
-/// `blocked`, so it gains no dependency: M8a.6 ruling N5 holds).
+/// The merge queue's `HandBack` result (decision 36, ruling T14-C1). Only a merge made
+/// onto the claimed commit (`onto == task.head`) skips the gates: clean, the merged
+/// head re-queues at once; conflicted, the worker resolves it and its next accepted
+/// `task_done` goes straight back to the queue. A merge made onto a later tip (the
+/// worker committed after its claim) sends the task back to work, and its next claim
+/// passes every gate. The due hand-back of ruling T14-I3 (`gates_after_handback`)
+/// sends a clean head through the gates too. The task cannot be held meanwhile (it is
+/// not `blocked`, so it gains no dependency: M8a.6 ruling N5 holds).
 pub(super) fn handed_back(
     run: &mut Run,
     i: usize,
@@ -256,45 +277,96 @@ pub(super) fn handed_back(
         return;
     }
     run.tasks[i].merge_op = None;
+    let gates_after = std::mem::take(&mut run.tasks[i].gates_after_handback);
     if run.tasks[i].state != TaskState::MergeQueue {
         return;
     }
-    match result {
-        OpResult::HandedBack { files, head } if files.is_empty() => {
-            if let Some(head) = head {
-                run.tasks[i].head = Some(head);
-            }
-            gates::enter(run, i, TaskState::MergeQueue);
-            history(
-                run,
-                i,
-                now,
-                "the run head merged cleanly; back in the merge queue",
-            );
-        }
-        OpResult::HandedBack { files, .. } => {
-            let id = run.tasks[i].id().to_string();
-            let task = &mut run.tasks[i];
-            task.handed_back = true;
-            task.state = TaskState::Working;
-            // As at rung 1: the time the merge took is not the worker's silence.
-            if let Some(r) = ladder::worker_round(task) {
-                task.rounds[r].last_event = now;
-            }
-            super::outbox::queue(run, &id, conflict_message(&files), now);
-            history(run, i, now, "handed back with conflicts to resolve");
-        }
+    let (files, head, onto) = match result {
+        OpResult::HandedBack { files, head, onto } => (files, head, onto),
         OpResult::Failed { message } => {
             let text = format!("could not merge the run head into its worktree: {message}");
-            block(run, i, BlockReason::Environment, text, now);
+            return block(run, i, BlockReason::Environment, text, now);
         }
-        _ => {}
+        _ => return,
+    };
+    let claimed = onto.is_some() && onto == run.tasks[i].head;
+    let id = run.tasks[i].id().to_string();
+    if files.is_empty() && claimed {
+        if let Some(head) = head {
+            run.tasks[i].head = Some(head);
+        }
+        if gates_after {
+            let next = gates::next_gate(run, i, None);
+            gates::enter(run, i, next);
+            let text = format!("the run head merged cleanly; next: {}", next.label());
+            return history(run, i, now, text);
+        }
+        gates::enter(run, i, TaskState::MergeQueue);
+        return history(
+            run,
+            i,
+            now,
+            "the run head merged cleanly; back in the merge queue",
+        );
     }
+    let task = &mut run.tasks[i];
+    task.state = TaskState::Working;
+    task.handed_back = claimed && !gates_after;
+    // As at rung 1: the time the merge took is not the worker's silence.
+    if let Some(r) = ladder::worker_round(task) {
+        task.rounds[r].last_event = now;
+    }
+    if files.is_empty() {
+        super::outbox::queue(run, &id, UNCLAIMED_COMMITS.to_string(), now);
+        let text = "the run head merged onto commits after its claim; back to work";
+        return history(run, i, now, text);
+    }
+    run.tasks[i].resolving = true;
+    super::outbox::queue(run, &id, conflict_message(&files), now);
+    history(run, i, now, "handed back with conflicts to resolve");
+}
+
+/// Ruling T14-I3: the task's dependencies finished while its worker resolved a told
+/// conflict, so the run head is handed back now that its claim was accepted, before
+/// any gate. The task waits in `merge_queue` (out of the queue) for the result.
+pub(super) fn hand_back_due(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
+    let task = &mut run.tasks[i];
+    task.handback_due = false;
+    task.handed_back = false;
+    task.gates_after_handback = true;
+    task.state = TaskState::MergeQueue;
+    task.gate_op = None;
+    let id = task.id().to_string();
+    let kind = OpKind::HandBack {
+        worktree: task.worktree.clone(),
+        run_head: run.run_head.clone(),
+        task_head: task.head.clone(),
+    };
+    let op = next_op(run);
+    run.tasks[i].merge_op = Some(op);
+    emit_op(run, op, Some(&id), kind, fx);
+    history(
+        run,
+        i,
+        now,
+        "handing back the run head its dependencies left",
+    );
+}
+
+/// Ruling T14-I1: whether task `i`'s `MergeCandidate` is in flight, so a cancel waits
+/// for its result.
+pub(crate) fn candidate_in_flight(run: &Run, i: usize) -> bool {
+    run.tasks[i].merge_op.is_some_and(|op| {
+        run.pending_ops
+            .get(&op)
+            .is_some_and(|p| matches!(p.kind, OpKind::MergeCandidate { .. }))
+    })
 }
 
 /// Decision 21: the run is `halted` with `reason`; nothing dispatches or merges, and
 /// the windows keep running.
 pub(super) fn halt(run: &mut Run, reason: String, now: u64) {
+    run.halt_retryable = false;
     log(run, now, format!("halted: {reason}"));
     run.state = RunState::Halted;
     run.halted_reason = Some(reason);
@@ -355,6 +427,14 @@ pub(super) fn resume(
         RunState::Paused => return answer(Err("run resume is not available yet".into())),
         other => return answer(Err(format!("run {run_id} is {}", other.label()))),
     }
+    // Review m1: a halt on refs that could not be read is retried as it is.
+    if rebaseline.is_none() && run.halt_retryable {
+        run.halt_retryable = false;
+        run.halted_reason = None;
+        run.state = RunState::Running;
+        log(run, now, "resumed; reading the refs again");
+        return answer(Ok(format!("run {run_id} resumed")));
+    }
     let Some((base, head)) = rebaseline else {
         let reason = run.halted_reason.clone().unwrap_or_default();
         return answer(Err(format!(
@@ -371,6 +451,7 @@ pub(super) fn resume(
     run.run_head = head;
     run.base_moved = None;
     run.halted_reason = None;
+    run.halt_retryable = false;
     run.state = RunState::Running;
     log(run, now, text.clone());
     answer(Ok(format!("run {run_id} {text}")));
