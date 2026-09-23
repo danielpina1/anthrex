@@ -72,6 +72,15 @@ impl App {
         if !follows && !elsewhere {
             return vec![];
         }
+        // Final re-review m1: the window list can beat the daemon's `ConversationGone`
+        // for a removed window, so say why the view moved whichever arrives first.
+        let shown_removed = self
+            .conversation
+            .window_id()
+            .is_some_and(|shown| !self.windows.iter().any(|w| w.id == shown));
+        if shown_removed {
+            self.toast(GONE_WINDOW_REMOVED);
+        }
         let effects = self.conversation.open(id);
         self.sync_conversation_mode();
         effects

@@ -261,6 +261,8 @@ fn a_removed_window_moves_the_view_to_the_neighbour_list_first() {
             subscribe(8, None),
         ]
     );
+    // Final re-review m1: the switch still says why, whichever message came first.
+    assert_eq!(app.toast_text(), Some("window removed"));
     assert!(
         app.on_daemon(DaemonMsg::ConversationGone {
             window_id: 7,
