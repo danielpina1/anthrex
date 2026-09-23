@@ -155,6 +155,8 @@ impl App {
             attempts: 1,
             reason: reason.into(),
         };
+        // Review I1: the daemon dropped the view's subscriptions with the connection.
+        self.conversation.link_lost();
         self.toast("connection to the daemon lost");
         vec![]
     }
@@ -208,6 +210,10 @@ impl App {
                 rows,
             }));
         }
+        // Review I1: an open conversation view subscribes every level of its trail
+        // again. After `replace_windows`, so a view that followed focus to another window
+        // (review M3) subscribes that window, once.
+        effects.extend(self.conversation.relink());
         effects
     }
 

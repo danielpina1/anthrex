@@ -35,6 +35,9 @@ mod reconnect;
 #[path = "../app_tests/conversation.rs"]
 mod conversation;
 
+#[path = "../app_tests/conversation_follow.rs"]
+mod conversation_follow;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

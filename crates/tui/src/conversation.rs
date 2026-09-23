@@ -56,6 +56,11 @@ pub struct ConversationView {
     /// area's inner width, which is exactly the view's interior). Prose wraps to this
     /// less `TEXT_INDENT`. 0 until the first size report. Kept across open and close.
     interior_width: u16,
+    /// Set while the link to the daemon is down (review I1). A conversation subscription
+    /// belongs to the connection, so none of this view's is held any more: nothing is
+    /// sent while this is set, and `relink` subscribes every level again. Kept across
+    /// open and close, like `interior_width`.
+    unlinked: bool,
 }
 
 impl ConversationView {
@@ -73,9 +78,10 @@ impl ConversationView {
                 ..Level::default()
             }],
             interior_width: self.interior_width,
+            unlinked: self.unlinked,
             ..ConversationView::default()
         };
-        effects.push(self.subscribe(None));
+        effects.extend(self.subscribe(None));
         effects
     }
 
@@ -87,7 +93,7 @@ impl ConversationView {
             .levels
             .iter()
             .rev()
-            .map(|level| self.unsubscribe(level.agent_id.clone()))
+            .filter_map(|level| self.unsubscribe(level.agent_id.clone()))
             .collect();
         self.reset();
         effects
@@ -98,23 +104,55 @@ impl ConversationView {
         *self = ConversationView {
             gone_reason: self.gone_reason.take(),
             interior_width: self.interior_width,
+            unlinked: self.unlinked,
             ..ConversationView::default()
         };
     }
 
-    fn subscribe(&self, agent_id: Option<String>) -> Effect {
-        Effect::Send(ClientMsg::SubscribeConversation {
-            window_id: self.window_id,
-            agent_id,
-            from_rev: None,
+    /// `None` while the link is down: `relink` sends every level's subscribe instead.
+    fn subscribe(&self, agent_id: Option<String>) -> Option<Effect> {
+        (!self.unlinked).then(|| {
+            Effect::Send(ClientMsg::SubscribeConversation {
+                window_id: self.window_id,
+                agent_id,
+                from_rev: None,
+            })
         })
     }
 
-    fn unsubscribe(&self, agent_id: Option<String>) -> Effect {
-        Effect::Send(ClientMsg::UnsubscribeConversation {
-            window_id: self.window_id,
-            agent_id,
+    /// `None` while the link is down: the daemon dropped the subscription with it.
+    fn unsubscribe(&self, agent_id: Option<String>) -> Option<Effect> {
+        (!self.unlinked).then(|| {
+            Effect::Send(ClientMsg::UnsubscribeConversation {
+                window_id: self.window_id,
+                agent_id,
+            })
         })
+    }
+
+    /// The link to the daemon dropped, and every subscription with it (review I1). The
+    /// view stays open, on what it last showed, until `relink`.
+    pub fn link_lost(&mut self) {
+        self.unlinked = true;
+    }
+
+    /// The link is back (review I1): subscribes every level of an open view again, root
+    /// first, in trail order, each with `from_rev: None` — a rev from before a daemon
+    /// restart means nothing to the new one (the final review's M1). Every level waits
+    /// for its fresh snapshot, so deltas already in flight are dropped quietly instead of
+    /// each asking for a second one.
+    pub fn relink(&mut self) -> Vec<Effect> {
+        self.unlinked = false;
+        if !self.open {
+            return vec![];
+        }
+        for level in &mut self.levels {
+            level.awaiting_snapshot = true;
+        }
+        self.levels
+            .iter()
+            .filter_map(|level| self.subscribe(level.agent_id.clone()))
+            .collect()
     }
 
     fn top(&self) -> Option<&Level> {
@@ -370,7 +408,7 @@ impl ConversationView {
         });
         self.search = None;
         self.gone_reason = None;
-        vec![self.subscribe(Some(agent_id))]
+        self.subscribe(Some(agent_id)).into_iter().collect()
     }
 
     /// `Esc`: leave search, else pop a crumb, else close.
@@ -388,7 +426,7 @@ impl ConversationView {
         self.trail.pop();
         let level = self.levels.pop().expect("a crumb has a level");
         self.search = None;
-        vec![self.unsubscribe(level.agent_id)]
+        self.unsubscribe(level.agent_id).into_iter().collect()
     }
 
     fn on_search_key(&mut self, key: KeyEvent) {
@@ -468,7 +506,7 @@ impl ConversationView {
         }
         let Some(conversation) = level.conversation.as_mut().filter(|c| c.rev == from_rev) else {
             level.awaiting_snapshot = true;
-            return vec![self.subscribe(agent_id)];
+            return self.subscribe(agent_id).into_iter().collect();
         };
         for patch in turns {
             match patch {
@@ -529,7 +567,7 @@ impl ConversationView {
         let effects = self.levels[index + 1..]
             .iter()
             .rev()
-            .map(|level| self.unsubscribe(level.agent_id.clone()))
+            .filter_map(|level| self.unsubscribe(level.agent_id.clone()))
             .collect();
         self.gone_reason = Some(reason);
         if index == 0 {

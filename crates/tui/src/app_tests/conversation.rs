@@ -2,7 +2,7 @@
 
 use super::*;
 
-fn toggle(app: &mut App) -> Vec<Effect> {
+pub(super) fn toggle(app: &mut App) -> Vec<Effect> {
     prefix(app);
     press(app, KeyCode::Char('m'), KeyModifiers::NONE)
 }
@@ -69,7 +69,7 @@ fn bare_keys_go_to_the_view_and_q_leaves_conversation_mode() {
     );
 }
 
-fn empty_conversation(
+pub(super) fn empty_conversation(
     window_id: u32,
     agent_id: Option<&str>,
     rev: u64,
@@ -102,7 +102,7 @@ fn empty_conversation(
     }
 }
 
-fn snapshot(window_id: u32, agent_id: Option<&str>, rev: u64, text: &str) -> DaemonMsg {
+pub(super) fn snapshot(window_id: u32, agent_id: Option<&str>, rev: u64, text: &str) -> DaemonMsg {
     DaemonMsg::ConversationSnapshot {
         window_id,
         agent_id: agent_id.map(str::to_owned),
