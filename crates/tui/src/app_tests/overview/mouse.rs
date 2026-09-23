@@ -377,3 +377,20 @@ fn the_mouse_never_reaches_what_the_conversation_view_covers() {
     assert_eq!(app.scroll_offset, 0);
     assert_eq!(app.focused, Some(1));
 }
+
+/// Re-review finding: a drag that began on the graph before the view opened must not
+/// pan the hidden graph once it is open. The press is made with the view closed, so
+/// `drag_from` is still set when the drag arrives and only `on_drag`'s own guard stops
+/// it. At 120×30 the example graph is larger than its canvas, so an unguarded drag
+/// really does pan (to `Pan { x: 8, y: 5 }`); at 200×50 it fits and the pan clamps to 0.
+#[test]
+fn a_drag_begun_before_the_view_opened_does_not_pan_the_hidden_graph() {
+    let (mut app, layout) = opened();
+    let (x, y) = box_middle(&app, layout.main, &NodeKey::Window(4));
+    assert!(app.on_click(x, y, &layout).is_empty());
+    app.toggle_conversation();
+    assert!(app.conversation.is_open());
+    let pan = app.graph_pan;
+    assert!(app.on_drag(x - 8, y - 5, &layout).is_empty());
+    assert_eq!(app.graph_pan, pan, "the drag panned the hidden graph");
+}
