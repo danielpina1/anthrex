@@ -1,0 +1,11 @@
+{
+  "runtime": "codex",
+  "cli_version": "0.156.1",
+  "captured": "2026-09-23",
+  "redactions": [
+    "scratch-dirs"
+  ],
+  "note": "Three Codex item shapes M8a.1 could not trigger, observed: an mcp_tool_call that fails (default_tools_approval_mode \"auto\" with approval_policy \"never\": error.message 'MCP tool call requires approval, but approval policy is never', result null, status failed); a file_change with an absolute path and kind, started then completed; and a web_search whose item carries the key \"id\" twice (item_3, then exec-<uuid>), started with an empty query, completed with action and results. turn.completed.usage has cache_write_input_tokens and reasoning_output_tokens. Captured by the M8a controller against codex-cli 0.156.1 with an isolated CODEX_HOME, so none of the capturing user's config, trust entries or MCP servers loaded. The MCP server named probe is a small stdio JSON-RPC echo server with one tool, echo_probe, which answers 'probe says: <text>'. The exact prompt text was not recorded.",
+  "command": "codex exec --json -s workspace-write -c approval_policy=\"never\" -c mcp_servers.probe.command=\"/tmp/anthrex-fixture/bin/mcp.py\" -c mcp_servers.probe.default_tools_approval_mode=\"auto\" -- <prompt> (a prompt asking for an echo_probe call, a file created with apply_patch and a web search)",
+  "observed": true
+}

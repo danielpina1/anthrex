@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"01a0cdc4-cbe6-70f3-8079-3ac5f8b87a14"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_0","type":"mcp_tool_call","server":"probe","tool":"echo_probe","arguments":{"text":"hi"},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_0","type":"mcp_tool_call","server":"probe","tool":"echo_probe","arguments":{"text":"hi"},"result":null,"error":{"message":"MCP tool call requires approval, but approval policy is never"},"status":"failed"}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"MCP tool call requires approval, but approval policy is never"}}
+{"type":"turn.completed","usage":{"input_tokens":48872,"cached_input_tokens":40320,"cache_write_input_tokens":0,"output_tokens":111,"reasoning_output_tokens":0}}

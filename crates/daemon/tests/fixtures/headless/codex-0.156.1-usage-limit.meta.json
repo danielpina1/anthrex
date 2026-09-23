@@ -1,0 +1,11 @@
+{
+  "runtime": "codex",
+  "cli_version": "0.156.1",
+  "captured": "2026-09-23",
+  "redactions": [
+    "scratch-dirs"
+  ],
+  "note": "A turn refused because the account's usage limit was reached: a top-level error line, then turn.failed with the same text, which names when the limit resets ('try again at <date>'). Captured by the M8a controller against codex-cli 0.156.1 with an isolated CODEX_HOME, so none of the capturing user's config, trust entries or MCP servers loaded. The MCP server named probe is a small stdio JSON-RPC echo server with one tool, echo_probe, which answers 'probe says: <text>'. The exact prompt text was not recorded.",
+  "command": "codex exec --json -c approval_policy=\"never\" -- <prompt>",
+  "observed": true
+}
