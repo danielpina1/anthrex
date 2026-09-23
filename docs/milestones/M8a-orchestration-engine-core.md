@@ -4441,5 +4441,65 @@ T11-N1..N3 apply. Every fix has a regression test, taken from the re-review's pr
   - M7, which drops the `held_answered` reset on `dep_cancelled`, survives. It is
     equivalent: `enforce_holds` skips a `dep_cancelled` task, so it is never held again
     with the stale bit. The reset is kept as hygiene.
-- `engine/holds.rs` is 178 lines, and `engine/tests/holds.rs` is about 510.
+- `engine/holds.rs` is 178 lines, and `engine/tests/holds.rs` is about 510 (split in
+  fix round 3).
+
+### M8a.11 fix round 3 (2026-09-23)
+
+Re-review 2 (`.superpowers/sdd/M8a-orchestration-engine-core/task-11-rereview-2.md`)
+approved N1–N3 and found two minors, M1 and M2. Both are fixed. Each has a regression
+test, from the re-review's probes p4 and p6, that failed first.
+
+**M1: a failed abort replaced `dep_cancelled` (probe p4).**
+
+- **The problem.** An `AbortMerge` was in flight when the holding dependency was
+  cancelled, and then the abort failed. `merge_aborted` overwrote the `dep_cancelled`
+  block with `environment`. On the next pass, `enforce_holds` held the task on the
+  cancelled dependency, which can never finish.
+- **The fix.** A failed abort keeps a `dep_cancelled` block, as a failed `HandBack` does.
+  The failure is appended to the block text and recorded in the history, so the leftover
+  `MERGE_HEAD` stays visible.
+- **Test.** `a_failed_abort_keeps_a_dep_cancelled_block`: the block is still
+  `dep_cancelled`, its text names the failure, and the task is not held after a tick.
+
+**M2: an untold conflict in an unanswered task's worktree (probe p6).**
+
+- **The problem.** An unanswered held task was amended, and its hand-back conflicted once
+  every dependency was done. Per N2, the task went back to its question, with the
+  markers and `MERGE_HEAD` left in the worktree and the conflict message undelivered. A
+  new dependency then held it again. The next hand-back hit `hand_back`'s N1(a) error,
+  and the task ended up `blocked(environment)`.
+- **The fix.**
+  - When `enforce_holds` newly holds a task, it checks for an undelivered conflict
+    message for that task (`contract::is_conflict_message`, which matches the message's
+    fixed first line). If there is one, the worker was never told of that merge.
+  - The engine then emits `AbortMerge` for it and drops the message, the same treatment
+    N1(b) gives a conflict during a hold. The next hand-back brings the conflict again,
+    once.
+  - `enforce_holds` now takes `fx`.
+  - A conflict the worker was told of stays on N1(a)'s error, as the re-review requires.
+    Its message is either gone from the outbox (delivery acknowledged) or has
+    `delivered_at` set (delivery in flight), so it is never taken for an untold one.
+- **Test.** `an_untold_conflict_is_aborted_when_the_task_is_held_again`:
+  - one `AbortMerge` and no conflict message once the task is held again;
+  - after `MergeAborted` and t3's merge, one `HandBack`;
+  - its conflict queues exactly one message, and the task is back on `which table?` with
+    the amendment still waiting.
+
+**Test layout.** `engine/tests/holds.rs` would have reached 602 lines. Rounds 2 and 3's
+conflict tests moved to a new `engine/tests/holds_conflicts.rs` (357 lines), and
+`holds.rs` is now 260 lines. Its helpers are `pub(super)`.
+
+**Mutation evidence.**
+
+- 6 mutants were run; 4 are killed: the `abort_untold_conflict` call, the message drop,
+  the `dep_cancelled` guard, and the conflict-only filter.
+- Two survive, and both are unreachable in the current code:
+  - **R4**, the "no `HandBack` or `AbortMerge` in flight" guard. A task cannot become
+    newly held while one of its own hand-back ops is in flight, because it stays held for
+    the whole op.
+  - **R5**, the `delivered_at.is_none()` filter. A delivery in flight means the task was
+    taking messages, not blocked, so no edit could hold it again.
+  - Both guards are kept as defence for M8a.12, when workers' own signals can block a
+    task mid-delivery.
 

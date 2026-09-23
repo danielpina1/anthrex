@@ -212,11 +212,17 @@ pub fn finding_line(finding: &Finding) -> String {
     }
 }
 
+const CONFLICT_HEAD: &str = "[anthrex] Your branch conflicts with the run branch. The run branch has been merged into your worktree with conflict markers left in:";
+
+/// Whether `text` is a [`conflict_message`] (M8a.11 fix round 3: the engine drops an
+/// undelivered one when it undoes that merge).
+pub fn is_conflict_message(text: &str) -> bool {
+    text.starts_with(CONFLICT_HEAD)
+}
+
 /// Decision 36's hand-back message (Interfaces, exact).
 pub fn conflict_message(files: &[String]) -> String {
-    let mut lines = vec![
-        "[anthrex] Your branch conflicts with the run branch. The run branch has been merged into your worktree with conflict markers left in:".to_string(),
-    ];
+    let mut lines = vec![CONFLICT_HEAD.to_string()];
     lines.extend(files.iter().map(|f| format!("- {f}")));
     lines.push("Resolve every conflict, commit the merge, then call task_done again.".to_string());
     lines.join("\n")

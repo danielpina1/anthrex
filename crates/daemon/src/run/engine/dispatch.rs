@@ -25,7 +25,7 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     if run.state.is_terminal() || finishing(run) {
         return;
     }
-    holds::enforce_holds(run, now);
+    holds::enforce_holds(run, now, fx);
     requeue(run);
     if integration_ready(run) {
         match run.state {

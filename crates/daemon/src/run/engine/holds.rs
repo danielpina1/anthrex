@@ -7,7 +7,7 @@ use proto::{BlockInfo, BlockReason, TaskState};
 use super::dispatch::{block, history};
 use super::schedule::{deps_done, op_in_flight, unfinished_deps};
 use super::{Effect, OpKind, OpResult, emit_op, next_op, outbox};
-use crate::run::contract::conflict_message;
+use crate::run::contract::{conflict_message, is_conflict_message};
 use crate::run::model::Run;
 
 /// M8a.6 ruling N5 as task state (ruling T11-I1..I3): a started task that has an
@@ -15,7 +15,7 @@ use crate::run::model::Run;
 /// one. While held it is never `working`: an answer that un-blocked it is taken back,
 /// and its messages wait in the outbox. Only `handed_back` clears the hold; a
 /// `dep_cancelled` block replaces it (review minor 8).
-pub(super) fn enforce_holds(run: &mut Run, now: u64) {
+pub(super) fn enforce_holds(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     for i in 0..run.tasks.len() {
         let task = &run.tasks[i];
         if task.state.is_finished() || task.start_commit.is_none() {
@@ -39,6 +39,7 @@ pub(super) fn enforce_holds(run: &mut Run, now: u64) {
                 now,
                 format!("held until {} finish", waiting.join(", ")),
             );
+            abort_untold_conflict(run, i, now, fx);
         }
         if run.tasks[i].awaiting_deps && run.tasks[i].state == TaskState::Working {
             let text = if waiting.is_empty() {
@@ -55,6 +56,34 @@ pub(super) fn enforce_holds(run: &mut Run, now: u64) {
             });
         }
     }
+}
+
+/// Re-review 2 M2: a task held again whose last hand-back conflicted but whose worker
+/// was never told (the conflict message is still undelivered, as for an unanswered
+/// task) gets that merge undone and the message dropped, as ruling T11-N1(b) does for
+/// a conflict during a hold. The next hand-back brings the conflict again.
+fn abort_untold_conflict(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
+    let id = run.tasks[i].id().to_string();
+    let untold = |m: &crate::run::model::Outgoing| {
+        m.task_id == id && m.delivered_at.is_none() && is_conflict_message(&m.text)
+    };
+    if !run.outbox.iter().any(untold)
+        || op_in_flight(run, &id, |k| {
+            matches!(k, OpKind::HandBack { .. } | OpKind::AbortMerge { .. })
+        })
+    {
+        return;
+    }
+    run.outbox.retain(|m| !untold(m));
+    let worktree = run.tasks[i].worktree.clone();
+    let op = next_op(run);
+    emit_op(run, op, Some(&id), OpKind::AbortMerge { worktree }, fx);
+    history(
+        run,
+        i,
+        now,
+        "untold conflict undone until every dependency finishes",
+    );
 }
 
 /// M8a.6 ruling N5: a held task that a message waits for (an answer, or an amendment)
@@ -162,7 +191,8 @@ pub(super) fn handed_back(
 
 /// The result of ruling T11-N1(b)'s `AbortMerge`. Undone, the hold goes on and the
 /// next hand-back follows once every dependency finishes. A failed abort leaves the
-/// worktree mid-merge, so the task is blocked on its environment.
+/// worktree mid-merge, so the task is blocked on its environment, unless it is already
+/// `dep_cancelled` (re-review 2 M1).
 pub(super) fn merge_aborted(run: &mut Run, i: usize, result: OpResult, now: u64) {
     if run.tasks[i].state.is_finished() {
         return;
@@ -171,7 +201,17 @@ pub(super) fn merge_aborted(run: &mut Run, i: usize, result: OpResult, now: u64)
         OpResult::MergeAborted => history(run, i, now, "conflicted hand-back undone"),
         OpResult::Failed { message } => {
             let text = format!("could not undo a conflicted hand-back in its worktree: {message}");
-            block(run, i, BlockReason::Environment, text, now);
+            // Re-review 2 M1: a `dep_cancelled` block stays (it is permanent, and an
+            // environment block would let the next pass hold the task on the cancelled
+            // dependency); its text records the leftover merge.
+            let task = &mut run.tasks[i];
+            match task.block.as_mut() {
+                Some(b) if b.reason == BlockReason::DepCancelled => {
+                    b.text = format!("{}; {text}", b.text);
+                    history(run, i, now, text);
+                }
+                _ => block(run, i, BlockReason::Environment, text, now),
+            }
         }
         _ => {}
     }
