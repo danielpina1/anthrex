@@ -705,3 +705,12 @@ scope.
   visible while it happens, so a user is unlikely to type into it. The remaining question
   is whether focus should wait for `Created` while a create is submitting. Belongs with the
   next TUI milestone that touches the form.
+- **`git_registry.rs`'s `a_root_survives_until_every_registration_is_released` was flaky;
+  fixed.** PR #12 changed `run_root` so that a root asks for one more probe when its watcher
+  arms. The test read its probe count as a task count right after the first publication. On
+  Linux, inotify arms fast enough that the extra probe could land before that read
+  (`left: 2`, ubuntu CI run 35831045650, the first recorded occurrence). A forced ordering,
+  with the watcher armed before the registration probe returns, failed 50 times out of 50.
+  The test now uses a watcher that fails to arm, so only the poll probes. The other
+  exact-count reads in that file come after a 120 s virtual settling window, so the extra
+  probe cannot reach them.
