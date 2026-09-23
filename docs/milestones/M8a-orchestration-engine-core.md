@@ -1931,6 +1931,10 @@ If a flag, key or event is missing, stop work on the item that uses it, as AGENT
   - For Codex, this puts the snapshot's tool call and prose on the new turn, not on the previous one.
   - Checked by a `headless_send` followed by a scripted turn whose prose must land on the new prompt's turn.
 
+- `a_background_turns_result_does_not_end_the_delivered_turn` (M8a.7 re-review 2, carried): in the order where a background sub-agent's notification turn runs just as the daemon delivers its next message, the background turn's `result` must not mark the delivered turn ended, count toward its tool calls or budget, or trigger the next delivery. Attribute each `TurnEnded` to the turn the cursor classified (by prompt text, `conversation::observe_hook`), not simply to "the open delivered turn".
+- `sent_turn_records_the_clamped_text` (M8a.7 m3/m4): `sent_turn` receives exactly the text written to the process after any clamping, so a clamped prompt is still recognised as the daemon's.
+- `a_fed_window_starts_its_cursor_in_content_mode` and `a_late_prompt_hook_drops_only_its_own_turn` (M8a.7 m1/m2): for a Claude window whose hooks are fed, the cursor is content-based from its first `sent_turn` (no timing path), and prose is dropped only while `turns_ended >= prompts_seen`, so a prompt hook that arrives before the previous `result` never drops the previous turn's reply.
+
 **Change.** Implement decision 29's I/O and decision 28's resume.
 - **Apply `sent_turn` before writing or spawning** (M8a.7 fix round 2).
   - For every send and every resume message, the manager applies `headless::conversation::sent_turn` to the window's cursor, and enriches with its output, before the message is written to a Claude process's stdin or a `codex exec` process is spawned.
