@@ -46,9 +46,10 @@ fn the_badge_is_drawn_and_is_not_only_colour() {
         title_start(&buf)
     );
 
-    // A Codex window: its own badge, in the title and on the spawn row.
-    let mut codex = main_conversation();
-    codex.runtime = Runtime::Codex;
+    // A Codex window: its own badge, in the title and on the spawn row — even though
+    // this conversation says `Claude`, because the badge is the window's (review N4).
+    let codex = main_conversation();
+    assert_eq!(codex.runtime, Runtime::Claude);
     let app = app_showing(UiSettings::default(), Runtime::Codex, 80, 24, codex);
     let buf = draw(&app, 80, 24);
     assert!(title_start(&buf).starts_with('◇'), "{}", title_start(&buf));
@@ -166,4 +167,22 @@ fn ascii_mode_uses_no_box_drawing_glyphs() {
         out.contains("... truncated (conversation.max_result_bytes)"),
         "{out}"
     );
+}
+
+/// Review N2: the view's border is `theme::border_focused(accent)`, with the configured
+/// accent, not the dimmed unfocused border.
+#[test]
+fn the_border_uses_the_focused_accent() {
+    let accent = Color::Rgb(0x12, 0x34, 0x56);
+    let settings = UiSettings {
+        accent,
+        ..UiSettings::default()
+    };
+    let app = app_showing(settings, Runtime::Claude, 60, 12, main_conversation());
+    let buf = draw(&app, 60, 12);
+    let expected = theme::border_focused(accent).fg;
+    assert_eq!(expected, Some(accent));
+    for (x, y) in [(0, 0), (0, 5), (59, 5), (30, 11), (59, 11)] {
+        assert_eq!(Some(buf[(x, y)].fg), expected, "cell ({x}, {y})");
+    }
 }

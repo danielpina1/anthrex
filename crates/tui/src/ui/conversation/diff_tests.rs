@@ -83,4 +83,9 @@ fn anything_else_is_none() {
     assert_eq!(from_tool_input("Edit", &json!("not an object")), None);
     assert_eq!(from_tool_input("Write", &json!([1, 2, 3])), None);
     assert_eq!(from_tool_input("MultiEdit", &json!(null)), None);
+    // Review N1: a MultiEdit with nothing in it is not a diff.
+    assert_eq!(
+        from_tool_input("MultiEdit", &json!({"file_path": "x.rs", "edits": []})),
+        None
+    );
 }

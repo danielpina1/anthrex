@@ -493,6 +493,9 @@ fn the_turn_header_shows_the_role_and_local_time() {
     assert!(you.trim_end_matches(['│', ' ']).ends_with("04:42"), "{you}");
 }
 
+#[path = "conversation_tests/clean.rs"]
+mod clean;
+
 #[path = "conversation_tests/glyphs.rs"]
 mod glyphs;
 

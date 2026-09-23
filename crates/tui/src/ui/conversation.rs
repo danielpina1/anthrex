@@ -1,11 +1,12 @@
 //! The conversation view's rendering (task M6.5.13, spec §6's mock). Takes `&App` and
 //! does no I/O: every row comes from `ConversationView::rows()`, which already wraps
-//! prose to the width drawn here, so the cursor and search walk what is on screen.
+//! prose to the width drawn here, so the cursor and search walk what is on screen. Every
+//! string that comes from the agent passes through `conversation::clean` first.
 
 pub mod diff;
 
 use crate::app::App;
-use crate::conversation::{DetailKind, Row, TEXT_INDENT};
+use crate::conversation::{DetailKind, Row, TEXT_INDENT, clean};
 use crate::theme;
 use crate::ui::badge::Badge;
 use proto::{Block as ConvBlock, DropCause, Role, Status, ToolState, Turn};
@@ -93,7 +94,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .unwrap_or_else(|| format!("window {window_id}"));
     for crumb in view.trail() {
         place.push_str(glyphs.crumb);
-        place.push_str(&crumb.label);
+        place.push_str(&clean(&crumb.label));
     }
     let mut title = vec![
         Span::raw(" "),
@@ -102,7 +103,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(place, theme::title(app.settings.accent)),
     ];
     if let Some(model) = window.and_then(|w| w.model.as_deref()) {
-        title.push(Span::raw(format!(" · {model}")));
+        title.push(Span::raw(format!(" · {}", clean(model))));
     }
     title.push(Span::raw(" "));
     let mut block = Block::bordered()
@@ -237,16 +238,17 @@ fn row_spans(ctx: &Ctx, row: &Row, user_turn: bool) -> (u16, Spans, Spans) {
             else {
                 return (TEXT_INDENT as u16, vec![], vec![]);
             };
+            let (kind, label) = (clean(kind), clean(label));
             let left = vec![Span::raw(format!("{} spawned  {kind} · {label}", g.spawn))];
             let mut right = vec![badge(ctx.badge)];
             if let Some(model) = model {
-                right.push(Span::raw(format!(" {model}")));
+                right.push(Span::raw(format!(" {}", clean(model))));
             }
             (TEXT_INDENT as u16, left, right)
         }
         Row::Notice { turn_id, block } => {
             let text = match block_at(ctx, *turn_id, *block) {
-                Some(ConvBlock::Notice { text, .. }) => text.clone(),
+                Some(ConvBlock::Notice { text, .. }) => clean(text),
                 _ => String::new(),
             };
             let span = Span::styled(format!("{} {text}", g.warn), attention);
@@ -295,8 +297,8 @@ fn tool_spans(ctx: &Ctx, turn_id: u64, block: usize) -> (u16, Spans, Spans) {
     };
     let left = vec![
         Span::raw(format!("{fold} ")),
-        Span::styled(name.clone(), Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(format!("  {summary}")),
+        Span::styled(clean(name), Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw(format!("  {}", clean(summary))),
     ];
     let (glyph, color) = match state {
         ToolState::Pending => (

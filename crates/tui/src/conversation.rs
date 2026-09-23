@@ -9,7 +9,7 @@ use proto::{Block, ClientMsg, Conversation, DegradeReason, DropCause, TurnPatch}
 use std::collections::BTreeSet;
 
 mod rows;
-pub use rows::{Cursor, DetailKind, Row, TEXT_INDENT, TRUNCATED};
+pub use rows::{Cursor, DetailKind, Row, TAB_WIDTH, TEXT_INDENT, TRUNCATED, clean};
 
 /// One step down the sub-agent trail, taken from the `SubagentSpawn` block descended into.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -276,6 +276,27 @@ impl ConversationView {
             _ => {}
         }
         vec![]
+    }
+
+    /// Review I1 (spec decision 11): a paste while the view is open. While a search is
+    /// being typed it joins the query — newlines and other control characters dropped —
+    /// and the hits are recomputed as a keystroke would; otherwise it is dropped. Never
+    /// returns an effect, so nothing reaches a PTY.
+    pub fn on_paste(&mut self, text: &str) {
+        let Some(search) = self.search.as_mut().filter(|s| s.typing) else {
+            return;
+        };
+        search
+            .query
+            .extend(text.chars().filter(|c| !c.is_control()));
+        self.refresh_search(self.levels.len() - 1);
+    }
+
+    /// Review M3: the mouse wheel over the view moves its cursor three rows a notch.
+    pub fn on_wheel(&mut self, up: bool) {
+        if self.open {
+            self.move_by(if up { -3 } else { 3 });
+        }
     }
 
     fn move_by(&mut self, delta: isize) {

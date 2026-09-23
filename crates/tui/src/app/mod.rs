@@ -425,6 +425,12 @@ impl App {
             }
             return vec![];
         }
+        // Decision 11: the conversation view is read-only, so a paste while it is open
+        // goes to its search query or nowhere — never to the PTY underneath.
+        if self.conversation.is_open() {
+            self.conversation.on_paste(&text);
+            return vec![];
+        }
         if self.tree_input.is_some() {
             return self.on_tree_paste(text);
         }

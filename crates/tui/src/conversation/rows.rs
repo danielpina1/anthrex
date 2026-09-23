@@ -35,6 +35,79 @@ pub enum DetailKind {
     Truncated,
 }
 
+/// How many spaces a tab in the agent's text becomes (review M4). Fixed rather than
+/// column-aligned: rows are re-wrapped, so a tab stop would not survive anyway.
+pub const TAB_WIDTH: usize = 4;
+
+/// One line of the agent's text made safe and measurable to draw (review M4): tabs
+/// become `TAB_WIDTH` spaces, an ANSI escape — CSI (`ESC [` or C1 `\u{9b}`) through its
+/// final byte, or a string sequence (`ESC ]`, `ESC P`, `ESC X`, `ESC ^`, `ESC _`, C1
+/// `\u{9d}`/`\u{90}`) through BEL or ST — is removed whole, and every other control
+/// character (newlines included) is dropped.
+pub fn clean(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\t' => out.push_str(&" ".repeat(TAB_WIDTH)),
+            '\x1b' => match chars.peek() {
+                Some('[') => {
+                    chars.next();
+                    skip_csi(&mut chars);
+                }
+                Some(']' | 'P' | 'X' | '^' | '_') => {
+                    chars.next();
+                    skip_string(&mut chars);
+                }
+                Some(_) => {
+                    chars.next();
+                }
+                None => {}
+            },
+            '\u{9b}' => skip_csi(&mut chars),
+            '\u{9d}' | '\u{90}' | '\u{98}' | '\u{9e}' | '\u{9f}' => skip_string(&mut chars),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+type Chars<'a> = std::iter::Peekable<std::str::Chars<'a>>;
+
+/// A CSI's parameter and intermediate bytes, then its final byte. Stops, without
+/// consuming it, at anything that cannot be part of the sequence.
+fn skip_csi(chars: &mut Chars) {
+    while let Some(&c) = chars.peek() {
+        match c {
+            '\x20'..='\x3f' => {
+                chars.next();
+            }
+            '\x40'..='\x7e' => {
+                chars.next();
+                return;
+            }
+            _ => return,
+        }
+    }
+}
+
+/// A string sequence's body, through BEL, `ESC \\` or C1 ST.
+fn skip_string(chars: &mut Chars) {
+    while let Some(c) = chars.next() {
+        match c {
+            '\x07' | '\u{9c}' => return,
+            '\x1b' => {
+                if chars.peek() == Some(&'\\') {
+                    chars.next();
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
+}
+
 /// The text of a `DetailKind::Truncated` row, after its glyph (decision A9).
 pub const TRUNCATED: &str = "truncated (conversation.max_result_bytes)";
 
@@ -174,7 +247,7 @@ fn block_rows(
 ) {
     match content {
         Block::Text { text } => {
-            let wrapped = lines(text).flat_map(|line| wrap_line(line, wrap));
+            let wrapped = lines(text).flat_map(|line| wrap_line(&clean(line), wrap));
             for (line, text) in wrapped.enumerate() {
                 rows.push(Row::Text {
                     turn_id,
@@ -303,7 +376,7 @@ fn detail_lines(
                     text.lines()
                         .enumerate()
                         .map(move |(n, line)| Detail {
-                            text: line.to_owned(),
+                            text: clean(line),
                             kind,
                             number: Some(n + 1),
                         })
@@ -315,14 +388,14 @@ fn detail_lines(
         }
         Some((input, None)) => {
             let pretty = serde_json::to_string_pretty(input).unwrap_or_else(|_| input.to_string());
-            out.extend(pretty.lines().map(plain));
+            out.extend(pretty.lines().map(|line| plain(clean(line))));
         }
         None => {}
     }
     if let Some(result) = result {
-        out.push(plain(result.summary.clone()));
+        out.extend(lines(&result.summary).map(|line| plain(clean(line))));
         if let Some(detail) = &result.detail {
-            out.extend(lines(detail).map(plain));
+            out.extend(lines(detail).map(|line| plain(clean(line))));
         }
         if result.truncated {
             out.push(Detail {
@@ -350,7 +423,9 @@ pub(super) fn search_hits(conversation: &Conversation, query: &str) -> Vec<Curso
                 Block::ToolCall { summary, .. } => summary,
                 _ => continue,
             };
-            if haystack.to_lowercase().contains(&needle) {
+            // Matched as drawn: cleaned, a line at a time.
+            let drawn = lines(haystack).map(clean).collect::<Vec<_>>().join("\n");
+            if drawn.to_lowercase().contains(&needle) {
                 hits.push(Cursor::Block(turn.id, block));
             }
         }

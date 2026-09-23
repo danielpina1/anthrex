@@ -34,6 +34,10 @@ pub fn from_tool_input(name: &str, input: &Value) -> Option<Diff> {
         }],
         _ => return None,
     };
+    // A MultiEdit with no edits changes nothing, so it is not shown as a diff.
+    if hunks.is_empty() {
+        return None;
+    }
     Some(Diff { path, hunks })
 }
 

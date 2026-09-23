@@ -64,6 +64,14 @@ impl App {
                 .scroll(if up { -3 } else { 3 }, self.rows().len());
             return vec![];
         }
+        // Review M3: the conversation view covers the main area; the wheel moves its
+        // cursor and reaches nothing underneath.
+        if self.conversation.is_open() {
+            if layout.main.contains((column, row).into()) {
+                self.conversation.on_wheel(up);
+            }
+            return vec![];
+        }
         if self.overview {
             self.scroll_graph(up, column, row, layout.main);
             return vec![];
@@ -117,6 +125,12 @@ impl App {
         // sidebar would leave the last canvas press as a drag anchor, and
         // dragging over the sidebar would pan the graph behind it.
         self.graph_mouse.drag_from = None;
+        // Review M3: a press on the conversation view reaches nothing underneath it —
+        // not the graph, not a double click's focus change.
+        if self.conversation.is_open() && layout.main.contains((column, row).into()) {
+            self.graph_mouse.last_press = None;
+            return vec![];
+        }
         if self.overview
             && let Some(effects) = self.click_graph(column, row, layout.main)
         {
@@ -184,7 +198,7 @@ impl App {
     /// (decision 16). The canvas follows the cursor, so the cell the drag
     /// started on stays under it.
     pub fn on_drag(&mut self, column: u16, row: u16, layout: &ui::Layout) -> Vec<Effect> {
-        if self.modal.is_some() || !self.overview {
+        if self.modal.is_some() || !self.overview || self.conversation.is_open() {
             return vec![];
         }
         let Some((from_x, from_y)) = self.graph_mouse.drag_from else {

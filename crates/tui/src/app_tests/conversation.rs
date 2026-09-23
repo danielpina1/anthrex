@@ -240,3 +240,89 @@ fn a_conversation_too_large_to_send_is_toasted() {
     assert!(!app.conversation.is_open());
     assert!(!app.keymap.conversation_mode());
 }
+
+/// Review M1: a `Gone` for a key the view does not hold shows nothing, even after an
+/// earlier `Gone` left its reason behind in `gone_reason`.
+#[test]
+fn a_foreign_gone_does_not_show_the_last_reason_again() {
+    let mut app = app_with(project_windows());
+    toggle(&mut app);
+    app.on_daemon(snapshot(2, None, 41, "root"));
+    press(&mut app, KeyCode::Char('G'), KeyModifiers::NONE);
+    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    app.on_daemon(DaemonMsg::ConversationGone {
+        window_id: 2,
+        agent_id: Some("agent-of-41".into()),
+        reason: proto::conversation::GONE_SUBAGENT_UNKNOWN.into(),
+    });
+    assert_eq!(app.toast_text(), Some("no such sub-agent in this window"));
+    app.toast("an unrelated toast");
+
+    for (window_id, agent_id) in [(3, None), (2, Some("agent-of-41")), (2, Some("agent-x"))] {
+        assert!(
+            app.on_daemon(DaemonMsg::ConversationGone {
+                window_id,
+                agent_id: agent_id.map(str::to_owned),
+                reason: proto::conversation::GONE_WINDOW_UNKNOWN.into(),
+            })
+            .is_empty()
+        );
+        assert_eq!(app.toast_text(), Some("an unrelated toast"));
+    }
+    assert!(app.conversation.is_open());
+}
+
+fn read_only(effects: &[Effect]) -> bool {
+    effects.iter().all(|e| {
+        matches!(
+            e,
+            Effect::Send(ClientMsg::SubscribeConversation { .. })
+                | Effect::Send(ClientMsg::UnsubscribeConversation { .. })
+        )
+    })
+}
+
+/// Review I1 (spec decision 11): while the view is open a paste never reaches a PTY.
+/// While a search is being typed it goes into the query, cleaned of newlines and control
+/// characters, and the hits are recomputed as typing would; otherwise it is dropped.
+#[test]
+fn a_paste_into_the_open_view_never_reaches_the_pty() {
+    let mut app = app_with(project_windows());
+    toggle(&mut app);
+    app.on_daemon(snapshot(2, None, 41, "window two's prose"));
+
+    // No search open: dropped.
+    let effects = app.on_paste("rm -rf /\n".into());
+    assert!(effects.is_empty(), "{effects:?}");
+    assert!(app.conversation.search().is_none());
+
+    press(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
+    press(&mut app, KeyCode::Char('t'), KeyModifiers::NONE);
+    let effects = app.on_paste("wo's\n\x07 p\r\nr\tose\x1b".into());
+    assert!(read_only(&effects), "{effects:?}");
+    assert!(effects.is_empty(), "{effects:?}");
+    let search = app.conversation.search().expect("a search");
+    assert_eq!(search.query, "two's prose");
+    assert!(search.typing);
+    assert_eq!(
+        search.hits,
+        vec![crate::conversation::Cursor::Block(410, 0)],
+        "hits were not recomputed"
+    );
+
+    // Enter ends typing; a later paste is dropped and the query is unchanged.
+    press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    let effects = app.on_paste("more".into());
+    assert!(effects.is_empty(), "{effects:?}");
+    assert_eq!(app.conversation.search().unwrap().query, "two's prose");
+
+    // Closed again, a paste reaches the focused window as before.
+    press(&mut app, KeyCode::Char('q'), KeyModifiers::NONE);
+    assert_eq!(
+        app.on_paste("ok".into()),
+        vec![Effect::Send(ClientMsg::Input {
+            window_id: 2,
+            bytes: b"ok".to_vec(),
+        })]
+    );
+}
