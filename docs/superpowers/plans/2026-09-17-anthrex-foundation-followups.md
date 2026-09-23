@@ -614,3 +614,13 @@ scope.
   which were run alongside a loop of `server_restore_git` on the same host. Not
   investigated. It is a timeout test, so check its bound against the timeout it injects
   before assuming load.
+
+## From milestone 6.5's rendering task (2026-09-23), task M6.5.13's review M2
+
+- **TUI-wide ASCII spinner and separator.** In ASCII mode (decision A5) the conversation
+  view swaps its own glyphs, but it still draws `theme::SPINNER`'s braille frames for a
+  Pending call and `·` in its title and spawn rows. The rest of the TUI draws both
+  unconditionally, so on a genuinely non-UTF-8 terminal they render as mojibake, and for a
+  Pending call the spinner is the only state glyph. Fix it once for the whole TUI: an ASCII
+  spinner (for example `| / - \`) and separator chosen from the same A5 decision, which
+  `UiSettings.badges.ascii` already carries. Milestone 6.5 or later.
