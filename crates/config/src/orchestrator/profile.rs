@@ -1,0 +1,153 @@
+//! `[orchestrator.profile]` and `[orchestrator.profile.env]` (decision 56, and the
+//! Interfaces block's `pub profile: proto::ProfileSpec`). Split out of
+//! `orchestrator.rs` to keep that file under the 600-line rule.
+//!
+//! `protected` holds the user's additions only: the built-ins the daemon's
+//! `run::plan::BUILTIN_PROTECTED` names are added by `resolve_profile` (M8a.5), which
+//! this crate cannot see (`crates/config/Cargo.toml` depends on `proto`, `toml` and
+//! `unicode-width` only).
+
+use super::Orchestrator;
+use crate::{Problem, not_a_table_problem, unknown_key_problem};
+
+const KNOWN_PROFILE_KEYS: &[&str] = &[
+    "modules",
+    "hub",
+    "source",
+    "check",
+    "check_timeout_secs",
+    "single_test",
+    "test_passed",
+    "setup",
+    "generated",
+    "protected",
+    "env",
+];
+
+pub(super) fn read_profile(table: &toml::Table, o: &mut Orchestrator, problems: &mut Vec<Problem>) {
+    let Some(value) = table.get("profile") else {
+        return;
+    };
+    let Some(profile) = value.as_table() else {
+        problems.push(not_a_table_problem("orchestrator.profile"));
+        return;
+    };
+
+    read_profile_string(profile, "check", &mut o.profile.check, problems);
+    read_profile_string(profile, "single_test", &mut o.profile.single_test, problems);
+    read_profile_string(profile, "test_passed", &mut o.profile.test_passed, problems);
+    read_profile_string(profile, "setup", &mut o.profile.setup, problems);
+    read_profile_string_list(profile, "modules", &mut o.profile.modules, problems);
+    read_profile_string_list(profile, "hub", &mut o.profile.hub, problems);
+    read_profile_string_list(profile, "source", &mut o.profile.source, problems);
+    read_profile_string_list(profile, "generated", &mut o.profile.generated, problems);
+    read_profile_string_list(profile, "protected", &mut o.profile.protected, problems);
+
+    if let Some(v) = profile.get("check_timeout_secs") {
+        match v
+            .as_integer()
+            .and_then(|n| u64::try_from(n).ok())
+            .filter(|n| *n >= 1)
+        {
+            Some(n) => o.profile.check_timeout_secs = Some(n),
+            None => problems.push(Problem {
+                key: "orchestrator.profile.check_timeout_secs".to_string(),
+                message: "must be at least 1".to_string(),
+                default: match o.profile.check_timeout_secs {
+                    Some(n) => n.to_string(),
+                    None => "unset".to_string(),
+                },
+            }),
+        }
+    }
+
+    read_profile_env(profile, o, problems);
+}
+
+fn read_profile_string(
+    table: &toml::Table,
+    key: &str,
+    field: &mut Option<String>,
+    problems: &mut Vec<Problem>,
+) {
+    let Some(value) = table.get(key) else {
+        return;
+    };
+    match value.as_str() {
+        Some(s) => *field = Some(s.to_string()),
+        None => problems.push(Problem {
+            key: format!("orchestrator.profile.{key}"),
+            message: "expected a string".to_string(),
+            default: "unset".to_string(),
+        }),
+    }
+}
+
+fn read_profile_string_list(
+    table: &toml::Table,
+    key: &str,
+    field: &mut Option<Vec<String>>,
+    problems: &mut Vec<Problem>,
+) {
+    let Some(value) = table.get(key) else {
+        return;
+    };
+    let Some(array) = value.as_array() else {
+        problems.push(Problem {
+            key: format!("orchestrator.profile.{key}"),
+            message: "expected an array of strings".to_string(),
+            default: "unset".to_string(),
+        });
+        return;
+    };
+    let mut out = Vec::new();
+    for item in array {
+        match item.as_str() {
+            Some(s) => out.push(s.to_string()),
+            None => {
+                problems.push(Problem {
+                    key: format!("orchestrator.profile.{key}"),
+                    message: "expected an array of strings".to_string(),
+                    default: "unset".to_string(),
+                });
+                return;
+            }
+        }
+    }
+    *field = Some(out);
+}
+
+fn read_profile_env(table: &toml::Table, o: &mut Orchestrator, problems: &mut Vec<Problem>) {
+    let Some(value) = table.get("env") else {
+        return;
+    };
+    let Some(env) = value.as_table() else {
+        problems.push(not_a_table_problem("orchestrator.profile.env"));
+        return;
+    };
+    let mut map = std::collections::BTreeMap::new();
+    for (k, v) in env {
+        match v.as_str() {
+            Some(s) => {
+                map.insert(k.clone(), s.to_string());
+            }
+            None => problems.push(Problem {
+                key: format!("orchestrator.profile.env.{k}"),
+                message: "expected a string".to_string(),
+                default: "unset".to_string(),
+            }),
+        }
+    }
+    o.profile.env = Some(map);
+}
+
+pub(super) fn report_unknown_profile(value: &toml::Value, problems: &mut Vec<Problem>) {
+    let Some(table) = value.as_table() else {
+        return;
+    };
+    for key in table.keys() {
+        if !KNOWN_PROFILE_KEYS.contains(&key.as_str()) {
+            problems.push(unknown_key_problem(&format!("orchestrator.profile.{key}")));
+        }
+    }
+}

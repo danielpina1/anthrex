@@ -8,6 +8,7 @@ use std::str::FromStr;
 
 mod conversation;
 mod git;
+mod orchestrator;
 
 pub use conversation::{
     Badge, Badges, CONVERSATION_LINGER_SECS_RANGE, CONVERSATION_MAX_BYTES_HEADROOM,
@@ -19,6 +20,7 @@ pub use git::{
     GIT_DEBOUNCE_MS_RANGE, GIT_IGNORE_MAX_CHARS, GIT_IGNORE_MAX_ENTRIES, GIT_POLL_SECS_RANGE, Git,
 };
 use git::{KNOWN_GIT_KEYS, read_git};
+pub use orchestrator::{ClaudeAuth, ClaudeHeadless, Orchestrator, default_roster};
 
 /// The parsed, validated configuration. Always usable: any invalid or
 /// unknown key in the source file is reported as a [`Problem`] and the
@@ -35,6 +37,7 @@ pub struct Config {
     pub runtimes: Runtimes,
     pub git: Git,
     pub conversation: Conversation,
+    pub orchestrator: Orchestrator,
 }
 
 /// `Ctrl` plus this lowercase letter. Never `h`, `i`, `j` or `m`: terminals
@@ -130,13 +133,13 @@ impl Default for Config {
             },
             git: Git::default(),
             conversation: Conversation::default(),
+            orchestrator: Orchestrator::default(),
         }
     }
 }
 
 /// Known top-level and nested key names, used to detect and report unknown
-/// keys (decision 5). `orchestrator` is deliberately absent: milestone 8
-/// parses it, so it is skipped everywhere, silently.
+/// keys (decision 5).
 const KNOWN_BELL_KEYS: &[&str] = &["attention", "done"];
 const KNOWN_UI_KEYS: &[&str] = &["sidebar_width", "tree_keep_finished_secs"];
 const KNOWN_PANES_KEYS: &[&str] = &["max"];
@@ -176,6 +179,7 @@ pub fn parse(text: &str) -> (Config, Vec<Problem>) {
     read_runtimes(&table, &mut config, &mut problems);
     read_git(&table, &mut config, &mut problems);
     read_conversation(&table, &mut config, &mut problems);
+    config.orchestrator = orchestrator::read(&table, &mut problems);
 
     report_unknown_keys(&table, &mut problems);
 
@@ -547,14 +551,14 @@ fn read_u64_in_range(
 fn report_unknown_keys(table: &toml::Table, problems: &mut Vec<Problem>) {
     for (key, value) in table {
         match key.as_str() {
-            "prefix" | "accent" | "default_runtime" | "scrollback_lines" | "sidebar_width"
-            | "orchestrator" => {}
+            "prefix" | "accent" | "default_runtime" | "scrollback_lines" | "sidebar_width" => {}
             "bell" => report_unknown_nested(value, "bell", KNOWN_BELL_KEYS, problems),
             "ui" => report_unknown_nested(value, "ui", KNOWN_UI_KEYS, problems),
             "panes" => report_unknown_nested(value, "panes", KNOWN_PANES_KEYS, problems),
             "git" => report_unknown_nested(value, "git", KNOWN_GIT_KEYS, problems),
             "runtimes" => report_unknown_runtimes(value, problems),
             "conversation" => report_unknown_conversation(value, problems),
+            "orchestrator" => orchestrator::report_unknown(value, problems),
             other => problems.push(unknown_key_problem(other)),
         }
     }

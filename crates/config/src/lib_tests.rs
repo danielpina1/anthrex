@@ -178,7 +178,7 @@ command = "/opt/homebrew/bin/codex"
 bypass_hook_trust = true
 
 [orchestrator]
-max_parallel = 3
+max_writers = 4
 "##;
     let (config, problems) = parse(text);
     assert!(problems.is_empty(), "unexpected problems: {problems:?}");
@@ -195,6 +195,7 @@ max_parallel = 3
     assert_eq!(config.runtimes.claude.command, format!("{home}/bin/claude"));
     assert_eq!(config.runtimes.codex.command, "/opt/homebrew/bin/codex");
     assert!(config.runtimes.codex_bypass_hook_trust);
+    assert_eq!(config.orchestrator.max_writers, 4);
 }
 
 #[test]

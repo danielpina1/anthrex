@@ -2559,3 +2559,52 @@ Names that differ from what one might expect:
 - Codex's `trust_level` entries were restored as above.
 - `~/.claude.json` was updated by `claude` itself (per-project state for the scratch directories), which the task allows.
 - Both CLIs left their usual transcripts: Claude under `~/.claude/projects/-private-tmp-anthrex-m8a1-*`, Codex under `~/.codex/sessions/2026/09/23/`. They were left in place rather than deleted.
+
+### M8a.3 the `[orchestrator]` config and the roster (2026-09-23)
+
+Implemented as specified, with these choices made where the brief and the Interfaces
+block left a detail open:
+
+- **`orchestrator::read`'s signature takes the whole top-level table**, exactly as the
+  Interfaces block gives it (`pub(crate) fn read(table: &toml::Table, problems: &mut
+  Vec<Problem>) -> Orchestrator`), unlike `read_git`/`read_conversation`'s
+  `(&toml::Table, &mut Config, &mut Vec<Problem>)` shape. This is required, not a
+  choice: `review.small` is a dotted key under `[orchestrator]` (decision 35, Ruling
+  Q2), and the `toml` crate folds `[orchestrator]\nreview.small = "off"` and
+  `[orchestrator.review]\nsmall = "off"` into the identical nested table once parsed,
+  so `read_review` only needs `orchestrator`'s own sub-table either way -- confirmed by
+  `review_small_is_read_as_on_or_off`, which asserts both forms give the same result.
+- **`crates/config/src/orchestrator.rs` (588 lines after the split below) is further
+  split into `orchestrator/roster.rs`** (`[[orchestrator.models]]` parsing and
+  `default_roster()`, decision 23) **and `orchestrator/profile.rs`**
+  (`[orchestrator.profile]` and `[orchestrator.profile.env]`, decision 56), both
+  declared as submodules of `orchestrator` (`crates/config/src/orchestrator/*.rs`)
+  rather than as siblings declared from `lib.rs`, so `lib.rs`'s budget (at most 8
+  lines) is untouched by the split. `orchestrator_tests.rs` (556 lines) is likewise
+  split, with the roster tests in `orchestrator_tests_roster.rs`, declared as a
+  submodule from the bottom of `orchestrator_tests.rs`.
+- **`orchestrator.models[i].note`'s length limit (decision 23's `note` field) is not
+  given a number anywhere in the brief** -- only task-3's test list requires "an
+  81-character note" to be invalid. `MODEL_NOTE_MAX = 80` (`orchestrator/roster.rs`) is
+  this task's own choice, not derived from a decision or spec section; a later
+  milestone should confirm or replace it if the spec settles on a different bound.
+- **Problem messages beyond the two the brief gives verbatim** (`orchestrator.max_writers:
+  must be between 1 and 8 (using 3)`, and `orchestrator.review.small: must be "on" or
+  "off" (using "on")`, both asserted exactly as quoted) are this task's own wording,
+  following the style of the existing `git.rs`/`conversation.rs` messages; no other
+  message text is pinned by the brief or the milestone doc.
+- **`lib.rs` grew by 4 lines** (600 to 604), within the "at most 8" budget: `mod
+  orchestrator;`, one `pub use` (`ClaudeAuth, ClaudeHeadless, Orchestrator,
+  default_roster`), the `pub orchestrator: Orchestrator` field, its default, the
+  `orchestrator::read` call, and the `report_unknown_keys` arm added five lines, offset
+  by three lines removed with the old silent-skip arm and its explanatory comment.
+- **`crates/config/src/lib_tests.rs`'s `every_key_is_read`** now sets `[orchestrator]
+  max_writers = 4` (Ruling Q9) and asserts `config.orchestrator.max_writers == 4`; no
+  other line in that test, or any other test in `lib_tests.rs`, changed.
+
+Verification run 2026-09-23: `cargo build --workspace --all-targets`, `cargo test
+--workspace` (all crates, 0 failures), `cargo clippy --workspace --all-targets -- -D
+warnings` (clean) and `cargo fmt --all --check` (clean, after one `cargo fmt --all`
+pass) all passed. `python3 scripts/pty-smoke.py` was also run to satisfy the standing
+five-gate rule; this task touches no daemon or PTY behaviour, so it exercises no new
+code path.
