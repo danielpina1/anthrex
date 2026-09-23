@@ -67,7 +67,17 @@ fn session_start(draft: &mut Draft, hook: &ParsedHook) -> bool {
         && hook.transcript_path.is_some()
         && draft.transcript_path != hook.transcript_path;
     if at_end || cleared {
-        draft.session_base = super::enrich::user_count(draft);
+        // Claude awaits this hook before it takes a prompt, so `SessionStart` always
+        // precedes its own `UserPromptSubmit`; Codex's order is unverified (re-review 3,
+        // m1). If a prompt has already arrived -- the last turn is still the open
+        // `Assistant` turn `user_prompt_submit` pushed -- `user_count` already counts
+        // that prompt's own turn, so basing the session on it as-is would make the
+        // open's measured count equal the base and hide the ambiguity. Base it one short
+        // instead: the later measure at the file's end then always disagrees, and
+        // `open_session_at_end` degrades to `Misaligned` rather than guess which side of
+        // the prompt's own line the file's end fell on.
+        let reversed = at_end && draft.open_turn_index().is_some();
+        draft.session_base = super::enrich::user_count(draft).saturating_sub(u32::from(reversed));
         draft.new_session = true;
         changed |= super::enrich::begin_session(draft);
     }

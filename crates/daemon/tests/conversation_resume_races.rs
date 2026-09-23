@@ -239,6 +239,31 @@ async fn a_prompt_after_the_open_gets_its_own_reply() {
     );
 }
 
+/// Re-review 3, m1: `SessionStart` arrives after its own `UserPromptSubmit` (an order
+/// Claude cannot produce — Claude's binary awaits the hook before it takes a prompt —
+/// but Codex's order is unverified; see m1 in task-10-rereview3.md). The old code set
+/// `session_base` from a count that already included the prompt's own turn, so the open
+/// was never ambiguous, and the file's old reply landed on the resumed turn with
+/// `degraded=None`.
+#[tokio::test]
+async fn a_session_start_arriving_after_its_own_prompt_never_gets_the_old_reply() {
+    let d = start_daemon().await;
+    let id = claude_window(&d, "reversed").await;
+    by_hand(&d, id).await;
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.jsonl");
+    append(&a, &exchange("continue", "OLD reply"));
+    prompt(&d, id, "continue"); // the prompt's hook lands first (reversed order)
+    resume(&d, id, &a); // SessionStart follows
+    pass(&d, id);
+    append(&a, &exchange("continue", "resumed reply R1"));
+    stop(&d, id);
+    pass(&d, id);
+    next_turn(&d, id, &a);
+    assert_never_misattributed(&d, id, &["resumed reply R1", "second reply R2"]);
+    assert_eq!(replies(&d, id).1, Some(DegradeReason::Misaligned));
+}
+
 /// Re-review 2, M2: a pass on the resumed file panics and takes its `Tail` with it. The
 /// rebuilt tail must still skip what the file held, not re-read it from the start at
 /// the open-time base.
