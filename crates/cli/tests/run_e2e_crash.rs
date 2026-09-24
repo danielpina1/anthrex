@@ -29,6 +29,13 @@ const KINDS: [&str; 8] = [
     "RemoveWorktree",
 ];
 
+/// Every op's `done` line is held this long before it is written (the debug build's
+/// `ANTHREX_TEST_DELAY_DONE_MS`), far over a `run.json` save and an intent append
+/// (a few fsyncs, milliseconds): an engine that acts on an op's result before its
+/// line is written (decision 43's order broken) then crashes at the next intent with
+/// the line missing. It only slows a correct daemon.
+const DELAY_DONE_MS: &str = "300";
+
 /// The journal's lines: op id → (intent kind, whether a `done` line follows).
 fn journal(dir: &Path) -> BTreeMap<u64, (String, bool)> {
     let text = std::fs::read_to_string(dir.join("journal.jsonl")).unwrap_or_default();
@@ -135,7 +142,14 @@ fn hash_blob(repo: &Path, content: &str) -> String {
 }
 
 fn crash_after(kind: &str) {
-    let mut h = RunHarness::with_env("", &[("ANTHREX_TEST_ABORT_AFTER_INTENT", kind)], true);
+    let mut h = RunHarness::with_env(
+        "",
+        &[
+            ("ANTHREX_TEST_ABORT_AFTER_INTENT", kind),
+            ("ANTHREX_TEST_DELAY_DONE_MS", DELAY_DONE_MS),
+        ],
+        true,
+    );
     green_scripts(&h.repo);
     let base = h.git(&["rev-parse", "HEAD"]);
     let _ = h.request_unanswered(RunRequest::Start {

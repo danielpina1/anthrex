@@ -161,6 +161,8 @@ pub struct RunService {
     loop_gate: Arc<tokio::sync::Mutex<()>>,
     loop_abort: Mutex<Option<tokio::task::AbortHandle>>,
     abort_after: Option<(String, u32)>,
+    /// `ANTHREX_TEST_DELAY_DONE_MS` (M8a.25, debug builds only; `effects::delay_done`).
+    delay_done: Option<std::time::Duration>,
     writes: effects::RunWrites,
     /// Replayed accepts whose clean-up waits for the event loop (ruling T22-N3).
     held_accepts: Mutex<Vec<restore::AcceptCleanUp>>,
@@ -242,6 +244,7 @@ impl RunService {
             loop_gate: Arc::new(tokio::sync::Mutex::new(())),
             loop_abort: Mutex::new(None),
             abort_after: abort_after(),
+            delay_done: effects::delay_done(),
             writes: effects::RunWrites::default(),
             held_accepts: Mutex::new(Vec::new()),
         })

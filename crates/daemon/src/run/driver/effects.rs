@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use proto::RunsSnapshot;
 
@@ -15,6 +15,23 @@ use crate::run::journal::{self, JournalLine};
 use crate::run::model::{OpId, Run};
 use crate::run::report;
 use crate::run::snapshot::snapshot;
+
+/// Decision 43's crash test (M8a.25, debug builds only):
+/// `ANTHREX_TEST_DELAY_DONE_MS=<ms>` holds every op's `done` line but a
+/// `CreateWindow`'s that long before it is written. An engine that acted on a result
+/// before its line is on disk then reaches the next intent, and decision 48's crash,
+/// with that line missing, which `e2e_crash_after_each_intent_kind_reconciles` sees;
+/// without the hold, the line nearly always wins that race.
+pub(super) fn delay_done() -> Option<Duration> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    let ms = std::env::var("ANTHREX_TEST_DELAY_DONE_MS")
+        .ok()?
+        .parse()
+        .ok()?;
+    Some(Duration::from_millis(ms))
+}
 
 /// One effect, with what it needs from the state of the step that emitted it.
 pub(super) enum Ready {
@@ -253,6 +270,11 @@ impl RunService {
             order.clone().try_read_owned().ok()
         };
         let name = kind.name();
+        // Not a `CreateWindow`'s: its session's first signals and tool calls reach the
+        // engine only once the round has its window (a follow-up, M8a.25).
+        let hold = self
+            .delay_done
+            .filter(|_| !matches!(kind, OpKind::CreateWindow { .. }));
         let line = JournalLine::Intent {
             op,
             kind: kind.clone(),
@@ -275,7 +297,7 @@ impl RunService {
                 op,
                 result: result.clone(),
             };
-            service.append(&ctx, line).await;
+            service.append_done(&ctx, line, hold).await;
             service.send(EventKind::OpDone {
                 run_id: ctx.run_id,
                 op,
@@ -302,6 +324,14 @@ impl RunService {
             tracing::warn!(kind = name, n, "ANTHREX_TEST_ABORT_AFTER_INTENT: aborting");
             std::process::abort();
         }
+    }
+
+    /// An op's `done` line, after decision 43's test hold (`delay_done`), if any.
+    async fn append_done(&self, ctx: &OpCtx, line: JournalLine, hold: Option<Duration>) {
+        if let Some(hold) = hold {
+            tokio::time::sleep(hold).await;
+        }
+        self.append(ctx, line).await;
     }
 
     /// Appends one journal line, fsynced, on a blocking thread.
