@@ -45,12 +45,15 @@ forged tilde fence\n\
 
 /// Counts of `Start` events per kind pulldown-cmark emits for `text`, with GFM tables
 /// enabled (the report's own `## Tasks` table needs it to parse as a table at all).
+/// `html` counts both block and inline HTML nodes (NB3: a raw HTML block absorbing a
+/// note's own continuation lines).
 #[derive(Debug, Default, PartialEq, Eq)]
 struct NodeCounts {
     headings: usize,
     lists: usize,
     tables: usize,
     fences: usize,
+    html: usize,
 }
 
 fn node_counts(text: &str) -> NodeCounts {
@@ -62,6 +65,7 @@ fn node_counts(text: &str) -> NodeCounts {
             Event::Start(Tag::List(_)) => counts.lists += 1,
             Event::Start(Tag::Table(_)) => counts.tables += 1,
             Event::Start(Tag::CodeBlock(_)) => counts.fences += 1,
+            Event::Html(_) | Event::InlineHtml(_) => counts.html += 1,
             _ => {}
         }
     }
@@ -345,4 +349,162 @@ fn round_usage_line_survives_alongside_escaping() {
     t.rounds.push(round(AgentRole::Worker, 1, 2, 3, 0));
     let out = render(&run, 2_000);
     assert!(out.contains("2 turns, 3 tool calls"));
+}
+
+// --- Fix round 3 (ruling T16-R3, re-review 2): NB1-NB3 and a punctuation fuzz -----
+
+#[test]
+fn review_summary_first_line_does_not_setext_promote_the_round_header_nb1() {
+    let mut run = base_run();
+    let baseline = node_counts(&render(&run, 2_000));
+    let t = run.tasks.iter_mut().find(|t| t.id() == "t1").unwrap();
+    t.reviews.push(ReviewRecord {
+        round: 1,
+        route: t.route.clone(),
+        base: "a".repeat(40),
+        head: "b".repeat(40),
+        verdict: Some(Verdict::Changes),
+        summary: "===\nrest of summary".to_string(),
+        findings: vec![],
+    });
+    let out = render(&run, 2_000);
+    assert_eq!(
+        node_counts(&out).headings,
+        baseline.headings,
+        "the review round's own header line was setext-promoted into a heading:\n{out}"
+    );
+    assert!(out.contains("\\===\nrest of summary") || out.contains("\\===\n    rest of summary"));
+}
+
+#[test]
+fn a_leading_tab_does_not_bypass_the_escape_nb2() {
+    let mut run = base_run();
+    let baseline = node_counts(&render(&run, 2_000));
+    let t = run.tasks.iter_mut().find(|t| t.id() == "t1").unwrap();
+    t.notes
+        .push("first\n\t# tab-indented heading attempt".to_string());
+    let out = render(&run, 2_000);
+    assert_eq!(
+        node_counts(&out).headings,
+        baseline.headings,
+        "a leading tab bypassed escape_block_start's column counting:\n{out}"
+    );
+}
+
+#[test]
+fn a_leading_angle_bracket_does_not_open_an_html_block_nb3() {
+    let mut run = base_run();
+    let baseline = node_counts(&render(&run, 2_000));
+    let t = run.tasks.iter_mut().find(|t| t.id() == "t1").unwrap();
+    t.notes
+        .push("note first line\n<div>\nswallowed?\n</div>\nafter".to_string());
+    let out = render(&run, 2_000);
+    let counts = node_counts(&out);
+    assert_eq!(
+        baseline.html, 0,
+        "the baseline must have no HTML nodes to compare against"
+    );
+    assert_eq!(
+        counts.html, 0,
+        "a leading `<` opened a real HTML block:\n{out}"
+    );
+}
+
+/// Every ASCII punctuation character, with no leading whitespace, a leading space, or
+/// a leading tab — the reviewer's own checklist ("with and without leading spaces and
+/// tabs") — planted as a continuation line (or, for the review summary, the first
+/// line, since that is NB1's exact shape) in every field T16-R3 names. One render per
+/// `(char, whitespace)` pair; each must forge no heading, table, fence or HTML node
+/// beyond baseline, and exactly the 4 list items (notes, finding, history, log) the
+/// fixture itself adds.
+#[test]
+fn every_ascii_punctuation_character_at_line_start_forges_nothing() {
+    let baseline = node_counts(&render(&base_run(), 2_000));
+    let punctuation: Vec<char> = (0x21u8..=0x7e)
+        .map(char::from)
+        .filter(char::is_ascii_punctuation)
+        .collect();
+    assert_eq!(punctuation.len(), 32, "the full ASCII punctuation set");
+
+    for &c in &punctuation {
+        for ws in ["", " ", "\t"] {
+            let hostile = format!("{ws}{c} forged");
+            let mut run = base_run();
+            run.goal = format!("Evil goal\n{hostile}");
+            let t = run.tasks.iter_mut().find(|t| t.id() == "t1").unwrap();
+            t.notes.push(format!("note\n{hostile}"));
+            t.proofs.push(ProofRecord {
+                at: 1_600,
+                test: format!("test\n{hostile}"),
+                red: "a".repeat(40),
+                head: "b".repeat(40),
+                red_failed: true,
+                head_passed: true,
+                matched: true,
+                red_tail: String::new(),
+                head_tail: String::new(),
+            });
+            t.checks.push(CheckRecord {
+                at: 1_700,
+                ok: false,
+                code: Some(1),
+                timed_out: false,
+                tail: format!("tail\n{hostile}\n```\nend"),
+                secs: 5,
+                on_candidate: false,
+            });
+            t.reviews.push(ReviewRecord {
+                round: 1,
+                route: t.route.clone(),
+                base: "a".repeat(40),
+                head: "b".repeat(40),
+                verdict: Some(Verdict::Changes),
+                // The first line, on purpose: NB1's exact shape.
+                summary: format!("{hostile}\nrest"),
+                findings: vec![Finding {
+                    severity: Severity::Important,
+                    file: Some(hostile.clone()),
+                    line: Some(1),
+                    input: None,
+                    text: format!("finding\n{hostile}"),
+                }],
+            });
+            t.history.push(TaskEvent {
+                at: 1_800,
+                text: format!("hist\n{hostile}"),
+            });
+            run.log.push(LogEntry {
+                at: 1_900,
+                text: format!("log\n{hostile}"),
+            });
+
+            let out = render(&run, 2_000);
+            let counts = node_counts(&out);
+            assert_eq!(
+                counts.headings, baseline.headings,
+                "{c:?} (ws {ws:?}) forged a heading:\n{out}"
+            );
+            assert_eq!(
+                counts.tables, baseline.tables,
+                "{c:?} (ws {ws:?}) forged a table:\n{out}"
+            );
+            assert_eq!(
+                counts.html, 0,
+                "{c:?} (ws {ws:?}) opened an HTML block:\n{out}"
+            );
+            // The check's own tail must still be exactly one fenced block: raw tool
+            // output is never escaped, only fenced, and the fence must not be broken
+            // by punctuation inside it either.
+            assert_eq!(
+                counts.fences,
+                baseline.fences + 1,
+                "{c:?} (ws {ws:?}) broke the check's fence:\n{out}"
+            );
+            assert_eq!(
+                counts.lists,
+                baseline.lists + 4,
+                "{c:?} (ws {ws:?}): expected exactly 4 new list items (notes, finding, history, log):\n{out}"
+            );
+        }
+    }
 }

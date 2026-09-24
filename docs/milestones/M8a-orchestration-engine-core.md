@@ -6929,3 +6929,90 @@ original M8a.16 notes and fix round 1 (green alone or with `--test-threads=1`;
 nothing in this round touches `run/git/`). File sizes: `report.rs` 214,
 `report_task.rs` 215, `report_escape.rs` 203, `report_tests.rs` 335,
 `report_tests_escaping.rs` 348 lines.
+
+### M8a.16 fix round 3 (2026-09-24)
+
+Re-review 2 (`task-16-rereview-2.md`) confirmed I1 fixed for every marker T16-R2
+named, and N1/N2/N3 fixed, but — asked to hunt for constructions beyond the named
+list — found three more: NB1, a review round summary's bare `===`/`---` first line
+setext-promoting the trusted `Review round N (...):` line above it (`summary` was
+run through `continuation_indent`, which only touches *continuation* lines — the
+first line, with no static prefix in front of it the way `Goal: `/`merged without
+approval: ` have, was never escaped at all); NB2, a leading tab bypassing
+`escape_block_start`'s column-counting loop (it only advanced past literal space
+characters, so a tab looked like "the 3-space budget is used up" at position 0 and
+the loop exited before ever checking the character against the marker set); NB3, `<`
+simply absent from the marker set, letting a note/finding/history/log line open a
+real HTML block.
+
+**Ruling T16-R3: stop listing constructs one at a time.** `escape_block_start`'s
+approach — name a marker, add a character to the set — is exactly what produced NB1-3:
+every fix so far handled the constructs re-review found, not the general case. The
+ruling replaces it with `normalize_line`, one rule instead of a list: CommonMark lets
+*any* ASCII punctuation character be backslash-escaped, and every block-start marker
+CommonMark defines (heading, blockquote, bullet list, thematic break, fence, setext
+underline, HTML block, table row) is itself punctuation-led — the ordered-list marker
+is the only digit-led exception, kept as its own small rule since a digit cannot be
+escaped, only its delimiter can (`1\.` is inert; `\1.` is not a recognised escape at
+all).
+
+`normalize_line(line)`: expand tabs to spaces (closes NB2 — indentation is now
+counted, then discarded, not miscounted), strip all leading whitespace (a normalized
+line's indentation always comes from its caller afterwards, so nothing of the
+original survives to be re-counted wrong), then backslash-escape the first remaining
+character if `char::is_ascii_punctuation()` (closes NB3 for free — `<` is
+punctuation, so it needs no special case, unlike round 2's hand-maintained
+`"#>-+*=~\`|"` set) or, for an ordered marker (1-9 digits then `.`/`)`), its
+delimiter. A line empty after trimming stays empty, per the ruling.
+
+`list_item_text` now calls `normalize_line` instead of the retired
+`escape_block_start` (unchanged shape otherwise: first line included, continuation
+lines indented 2). `continuation_indent` is retired too, in favour of
+`plain_text_line`, which is the same "normalize every line, first included, indent
+continuation 4 spaces" idea applied to a *plain* line rather than a list item's — this
+is what closes NB1, since it's what `Run.goal`'s and `merged without approval`'s
+first lines already got for free from their static prefixes, and what a review
+summary's bare first line never got at all. `Goal: `/`merged without approval: `
+still work exactly as before (their first line was already safe; normalizing it is a
+harmless no-op, since it never starts with punctuation there — the prefix does).
+
+**Tests.** `report_escape.rs`: `normalize_line`'s own unit test now enumerates every
+NB1-3 marker (`<`, tab, mixed space+tab) alongside T16-R2's original set, plus a
+"stays empty" case for a whitespace-only line; `plain_text_line` gets a dedicated
+NB1 case (`plain_text_line("===\nrest")` → escaped, not just its continuation).
+`report_tests_escaping.rs` adds direct `render()`-level reproductions of NB1
+(a `ReviewRecord.summary` starting with `===`), NB2 (a note whose continuation starts
+with a tab), and NB3 (a note opening `<div>…</div>`, with the parser's `Html`/
+`InlineHtml` event count as the check, not a string search), then the ruling's
+requested fuzz: `every_ascii_punctuation_character_at_line_start_forges_nothing`
+iterates the full 32-character ASCII punctuation set × 3 leading-whitespace variants
+(none, one space, one tab) = 96 renders, each planting the same hostile line as a
+continuation of `Run.goal`, a note, a finding's `text` *and* `file`, a review
+summary's own *first* line (NB1's exact shape), history, `Run.log`, `ProofRecord.test`
+and inside a check's tail (asserted to stay fenced — the tail itself is never
+normalized, only fenced, per the ruling). Every one of the four new/updated tests was
+run against round-2 code first and failed for the stated reason — the fuzz test in
+particular failed on its very first punctuation/whitespace combination it tried
+(`#`/no leading whitespace), well before iterating the rest, confirming it is not a
+vacuous check.
+
+**Mutation-checked** by hand (mutate, run `cargo test -p anthrex-daemon --lib
+run::report`, confirm failure, restore, confirm `git status` clean): removing tab
+expansion (reverting to "only spaces count") → caught by 4 tests, including the fuzz
+test and both NB2 reproductions. Excluding `<` specifically from the punctuation
+check → caught by 3 tests, including the direct NB3 test (the fuzz test's generic
+per-character sweep did not happen to catch this one on its own, since its assertion
+set does not special-case `<`'s `Html` count the way the dedicated NB3 test does — a
+useful reminder that a broad fuzz and a few sharp, hazard-specific assertions are
+complementary, not substitutes for each other). Removing the ordered-marker branch
+→ caught by 4 tests, including `normalize_line`'s own unit test and both list-item
+hostile-input tests carried from round 2.
+
+**Gates.** `cargo build --workspace --all-targets`, `cargo clippy --workspace
+--all-targets -- -D warnings` and `cargo fmt --all --check` clean. `cargo test -p
+anthrex-daemon --lib` is 926/926 green. `cargo test -p anthrex-daemon` (full)
+reproduces only the same pre-existing, unrelated `git_registry` flake noted in every
+prior round (green alone or with `--test-threads=1`). File sizes: `report.rs` 214,
+`report_task.rs` 215, `report_escape.rs` 243, `report_tests.rs` 335,
+`report_tests_escaping.rs` 510 lines — `report_tests_escaping.rs` is now the largest
+file this task touches but still comfortably under AGENTS.md's ~600-line guidance.

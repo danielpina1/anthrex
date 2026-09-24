@@ -15,7 +15,7 @@ use proto::{DoneSignal, RunState, Verdict};
 
 use super::contract::{mode_label, sha7, size_label};
 use super::model::Run;
-use super::report_escape::{continuation_indent, escape_cell, list_item_text};
+use super::report_escape::{escape_cell, list_item_text, plain_text_line};
 use super::report_task::render_task;
 
 /// The whole document.
@@ -35,7 +35,7 @@ pub fn render(run: &Run, now: u64) -> String {
 
 fn header(run: &Run, out: &mut String) {
     out.push_str(&format!("# anthrex run {}\n\n", run.id));
-    out.push_str(&format!("Goal: {}\n\n", continuation_indent(&run.goal)));
+    out.push_str(&format!("Goal: {}\n\n", plain_text_line(&run.goal)));
     out.push_str(&format!("State: {}\n", state_line(run)));
     out.push_str(&format!("Approved by: {}\n", approved_by_line(run)));
     out.push_str(&format!(

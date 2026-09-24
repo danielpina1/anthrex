@@ -8,7 +8,7 @@ use super::engine::{epoch_spend, ladder};
 use super::model::Task;
 use super::report::{format_utc, verdict_label};
 use super::report_escape::{
-    continuation_indent, escape_cell, escape_heading, fence_for, list_item_text,
+    escape_cell, escape_heading, fence_for, list_item_text, plain_text_line,
 };
 
 pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
@@ -85,7 +85,7 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
             sha7(&r.head)
         ));
         if !r.summary.is_empty() {
-            out.push_str(&format!("{}\n", continuation_indent(&r.summary)));
+            out.push_str(&format!("{}\n", plain_text_line(&r.summary)));
         }
         findings_by_severity(r.findings.iter(), out);
         // Closes the findings list, the same way the notes list is closed above.
@@ -97,7 +97,7 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
     if let Some(reason) = &task.merged_without_approval {
         out.push_str(&format!(
             "merged without approval: {}\n",
-            continuation_indent(reason)
+            plain_text_line(reason)
         ));
     }
     if !task.history.is_empty() {
