@@ -37,9 +37,10 @@ pub struct DoneChecked {
     pub head_branch: Option<String>,
 }
 
-/// Decision 32's done check in `worktree`, at most six git calls: `HEAD`, the task's
-/// own commits (`HEAD ^start ^run_head`), `status`, `MERGE_HEAD`, the spill diff
-/// (`git diff --name-only <run_head>...HEAD`), and — only with a `red` — `red`
+/// Decision 32's done check in `worktree`, at most six git calls: `HEAD`, resolved
+/// once to `<head>` and judged throughout (final fix batch F1, A-I4), the task's own
+/// commits (`<head> ^start ^run_head`), `status`, `MERGE_HEAD`, the spill diff
+/// (`git diff --name-only <run_head>...<head>`), and — only with a `red` — `red`
 /// resolved. The changed paths are split per decision 56 (protected, unless `owns`
 /// names them literally) and then decision 55 (the rest outside `owns`: generated or
 /// not). Exemptions (an overridden task) are the engine's, not this function's.
@@ -76,14 +77,11 @@ pub fn verify_done(
 
     let not_start = format!("^{start}");
     let not_run_head = format!("^{run_head}");
+    // Final fix batch F1, finding A-I4: every later check judges `head`, the commit
+    // the engine gates and merges, never a `HEAD` the worker has moved on since.
     let own = g.ok(
         worktree,
-        &[
-            os("rev-list"),
-            os("HEAD"),
-            os(&not_start),
-            os(&not_run_head),
-        ],
+        &[os("rev-list"), os(&head), os(&not_start), os(&not_run_head)],
     )?;
     let own: Vec<&str> = own.lines().filter(|line| !line.is_empty()).collect();
 
@@ -107,7 +105,7 @@ pub fn verify_done(
         &[os("rev-parse"), os("-q"), os("--verify"), os("MERGE_HEAD")],
     )?;
 
-    let spill_range = format!("{run_head}...HEAD");
+    let spill_range = format!("{run_head}...{head}");
     let mut spill_args = vec![os("diff")];
     spill_args.extend(DIFF_FLAGS.map(os));
     spill_args.extend([
