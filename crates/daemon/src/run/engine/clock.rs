@@ -26,6 +26,14 @@ pub struct BudgetEpoch {
     pub tokens: u64,
 }
 
+/// The engine second at which at least `secs` real seconds have passed since `now`
+/// (M8a.24). The engine's `now` is the unix time truncated to a whole second, so
+/// `now + secs` can come as little as `secs - 1` real seconds later; one second more
+/// makes a wait that decision 32 promises (`rate_limit_retry_secs`) a lower bound.
+pub(super) fn not_before(now: u64, secs: u64) -> u64 {
+    now + secs + 1
+}
+
 /// A task's clock: since when it is stopped, if it is, and when it last restarted.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskClock {

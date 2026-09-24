@@ -72,8 +72,8 @@ fn a_rate_limited_reviewer_waits_and_continues() {
         assert_eq!(fx.run().rate_limits.get(label.as_str().unwrap()), Some(&n));
         assert_alive(&fx);
         let failed_at = fx.now;
-        assert!(delivers(&fx.send(failed_at + 299, EventKind::Tick)).is_empty());
-        let effects = fx.send(failed_at + 300, EventKind::Tick);
+        assert!(delivers(&fx.send(failed_at + 300, EventKind::Tick)).is_empty());
+        let effects = fx.send(failed_at + 301, EventKind::Tick);
         assert_eq!(
             to_window(&effects),
             vec![(rwindow, rate_limit_continue("rate limit reached"))]
@@ -118,7 +118,7 @@ fn two_other_reviewer_failures_in_a_row_block() {
     let (mut fx, _, rwindow) = reviewed(PROFILE, "");
     fx.turn_ended(rwindow, failed(FailureKind::Other, "overloaded"));
     assert_eq!(fx.task("t1").state, TaskState::Review);
-    let effects = fx.send(fx.now + 300, EventKind::Tick);
+    let effects = fx.send(fx.now + 301, EventKind::Tick);
     assert_eq!(
         to_window(&effects),
         vec![(rwindow, rate_limit_continue("overloaded"))]
@@ -401,7 +401,7 @@ fn a_reviewers_rate_limit_streak_counts_once() {
     );
     assert_eq!(fx.run().rate_limits.get(label), Some(&1));
     let round = fx.task("t1").rounds.last().unwrap().clone();
-    assert_eq!(round.rate_limited_until, Some(fx.now + 300));
+    assert_eq!(round.rate_limited_until, Some(fx.now + 301));
     assert_alive(&fx);
 }
 
@@ -411,7 +411,7 @@ fn a_reviewers_rate_limit_streak_counts_once() {
 fn a_completed_reviewer_turn_resets_the_other_failure_count() {
     let (mut fx, _, rwindow) = reviewed(PROFILE, "");
     fx.turn_ended(rwindow, failed(FailureKind::Other, "overloaded"));
-    fx.send(fx.now + 300, EventKind::Tick);
+    fx.send(fx.now + 301, EventKind::Tick);
     ack(&mut fx);
     let effects = fx.turn_completed(rwindow);
     assert_eq!(

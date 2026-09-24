@@ -364,20 +364,21 @@ fn rate_limit_retry_suspends_the_stall_clock() {
 
 #[test]
 fn failed_turns() {
-    // A rate limit: rate_limit_continue after exactly rate_limit_retry_secs.
+    // A rate limit: rate_limit_continue once rate_limit_retry_secs have surely passed:
+    // one engine second more than the wait, since `now` is truncated (M8a.24).
     let (mut fx, window) = working();
     fx.turn_ended(window, failed(FailureKind::RateLimit, "rate_limit"));
     let at = fx.now;
     let t1 = fx.task("t1");
     assert_eq!((t1.failures, t1.state), (0, TaskState::Working));
-    assert_eq!(t1.rounds[0].rate_limited_until, Some(at + 300));
+    assert_eq!(t1.rounds[0].rate_limited_until, Some(at + 301));
     assert!(snapshot(&fx.state, at + 1).runs[0].tasks[0].rounds[0].rate_limited);
     assert!(fx.ops("CountCommits").is_empty(), "not a completed turn");
-    let effects = fx.send(at + 299, EventKind::Tick);
-    assert!(delivers(&effects).is_empty());
     let effects = fx.send(at + 300, EventKind::Tick);
+    assert!(delivers(&effects).is_empty());
+    let effects = fx.send(at + 301, EventKind::Tick);
     assert_eq!(delivers(&effects), vec![rate_limit_continue("rate_limit")]);
-    assert!(!snapshot(&fx.state, at + 300).runs[0].tasks[0].rounds[0].rate_limited);
+    assert!(!snapshot(&fx.state, at + 301).runs[0].tasks[0].rounds[0].rate_limited);
 
     for (kind, error) in [
         (FailureKind::Authentication, "authentication_failed: log in"),
@@ -395,9 +396,9 @@ fn failed_turns() {
     assert_eq!(fx.task("t1").rounds[0].rate_limited_until, None);
     // A message queued meanwhile waits out the same continue (decision 29).
     queue(&mut fx, "[anthrex] X");
-    let effects = fx.send(at + 299, EventKind::Tick);
-    assert!(delivers(&effects).is_empty(), "{effects:#?}");
     let effects = fx.send(at + 300, EventKind::Tick);
+    assert!(delivers(&effects).is_empty(), "{effects:#?}");
+    let effects = fx.send(at + 301, EventKind::Tick);
     let both = joined(&["[anthrex] X".into(), rate_limit_continue("overloaded")]);
     assert_eq!(delivers(&effects), vec![both]);
     assert_eq!(fx.task("t1").state, TaskState::Working);

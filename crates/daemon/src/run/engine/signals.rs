@@ -6,6 +6,7 @@
 
 use proto::{AgentRole, BlockReason, Runtime, TaskState, TokenUsage};
 
+use super::clock::not_before;
 use super::dispatch::{block, history};
 use super::ladder::{self, check_budget, kill_worker, live, worker_round};
 use super::{
@@ -322,10 +323,10 @@ fn failed_turn(
             }
             let round = &mut run.tasks[i].rounds[r];
             round.failed_turn = FailedTurn::WaitingContinue {
-                at: now + wait,
+                at: not_before(now, wait),
                 rate_limit: true,
             };
-            round.rate_limited_until = Some(now + wait);
+            round.rate_limited_until = Some(not_before(now, wait));
             round.failed_error = Some(error);
         }
         FailureKind::Other => {
@@ -337,7 +338,7 @@ fn failed_turn(
                 return block(run, i, BlockReason::Environment, error, now);
             }
             round.failed_turn = FailedTurn::WaitingContinue {
-                at: now + wait,
+                at: not_before(now, wait),
                 rate_limit: false,
             };
             round.failed_error = Some(error);

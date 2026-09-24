@@ -95,10 +95,10 @@ fn an_exit_during_a_failed_turns_wait_keeps_its_continue() {
     let at = fx.now;
     exited(&mut fx, window);
     assert_alive(&fx);
-    let effects = fx.send(at + 299, EventKind::Tick);
+    let effects = fx.send(at + 300, EventKind::Tick);
     assert!(resume_messages(&effects).is_empty());
     assert_alive(&fx);
-    let effects = fx.send(at + 300, EventKind::Tick);
+    let effects = fx.send(at + 301, EventKind::Tick);
     assert_eq!(
         resume_messages(&effects),
         vec![rate_limit_continue("rate_limit")]

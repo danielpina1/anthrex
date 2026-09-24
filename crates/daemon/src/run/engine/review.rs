@@ -10,6 +10,7 @@ use proto::{
     AgentRole, BlockReason, GateKind, RunState, Runtime, Severity, TaskState, ToolCall, Verdict,
 };
 
+use super::clock::not_before;
 use super::dispatch::{block, history, new_round, window_limit_reached};
 use super::schedule::{hub_holds_slot, needs_reviewer, readers_busy};
 use super::signals::{count_rate_limit, end_round};
@@ -380,11 +381,11 @@ fn failed_turn(
         }
     };
     round.failed_turn = FailedTurn::WaitingContinue {
-        at: now + wait,
+        at: not_before(now, wait),
         rate_limit,
     };
     if rate_limit {
-        round.rate_limited_until = Some(now + wait);
+        round.rate_limited_until = Some(not_before(now, wait));
     }
     round.failed_error = Some(error);
     // One event, unless a retry streak ran straight into this failure (decision 32).

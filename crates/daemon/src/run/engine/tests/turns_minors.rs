@@ -99,13 +99,13 @@ fn a_completed_turn_resets_the_two_other_failures_rule() {
     };
     fx.turn_ended(window, other("overloaded"));
     let at = fx.now;
-    fx.send(at + 300, EventKind::Tick);
+    fx.send(at + 301, EventKind::Tick);
     fx.turn_completed(window);
     fx.signal(window, AgentSignal::TurnStarted);
     fx.turn_ended(window, other("overloaded later"));
     assert_eq!(fx.task("t1").state, TaskState::Working, "not in a row");
     let at = fx.now;
-    let effects = fx.send(at + 300, EventKind::Tick);
+    let effects = fx.send(at + 301, EventKind::Tick);
     let continued = delivers(&effects)
         .iter()
         .any(|t| t.contains(&rate_limit_continue("overloaded later")));
