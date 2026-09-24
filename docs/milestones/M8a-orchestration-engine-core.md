@@ -8555,3 +8555,72 @@ Review `task-25-review.md`: one Important finding, six Minors.
   element by element, `--session-id <id>` replaced by `--resume <id>`.
 - `run_harness.rs` is 604 lines (the `unset_env` helper; `RUN_WAIT`'s comment was
   shortened to make room).
+
+### Final fix batch F1: git and sandbox safety (2026-09-24)
+
+Findings from the final whole-branch review (`final-review-{A,B,C,D}-*.md`), each fixed
+test-first against real temporary repositories, a real `sandbox-exec` profile, or the
+fake-agent harness.
+
+- **C-C1 / D-5, planted config and hooks (deviation from decisions 18, 25 and 54).**
+  - Every daemon git call passes `-c core.fsmonitor=false` (`worktree::NO_FSMONITOR`,
+    the probe, root detection). Every engine git call passes `-c
+    core.hooksPath=/dev/null`: reads (`run::git::NO_HOOKS`), writes (`WRITE_FLAGS`, as
+    before), and **`run accept`'s merge and its abort in the user's checkout**. Decision
+    18 said accept passes neither flag so the user's hooks run there; the user's hooks
+    no longer run inside accept, because a worker could plant one in the shared hooks
+    directory. Their signing still applies. Test: `run_git_planted.rs`.
+  - A worker's writable git roots are no longer the whole common dir (decisions 25
+    and 54 said "the git common directory"). They are now `objects/`,
+    `refs/heads/anthrex/<run>/`, `logs/refs/heads/anthrex/<run>/`, and the worktree's own
+    `worktrees/<name>/` (`role_launch::worker_git_roots`, completed at launch by
+    `run::git::worker_git_dirs`, which reads `<name>` from git, requires it to point
+    back at the worktree, and creates missing directories). `config`, `hooks/`,
+    `info/`, `packed-refs`, the base branch and other runs' branches are read-only to a
+    worker. Proven on macOS under a real seatbelt profile (`run_git_sandbox.rs`: a
+    commit works, config/hook/base/other-run writes fail; the old grant lets all
+    through). A commit's auto-maintenance then prints a harmless `packed-refs.lock`
+    error. Not verified on Linux, and a reftable repository cannot commit (followups).
+  - Residual (followups): a worker can still point its own worktree's `.git` file or
+    `commondir` at a repository it made, whose `filter.*` config would apply to the
+    engine's later git calls in that worktree.
+- **D-2.** `guard_refs` halts with `refs/heads/<base> contains unaccepted run work (<n>
+  commit[s])` when any of the base's new commits is reachable from the run's branches or
+  salvage refs (`run::git::run_work_on_base`), instead of reporting an advance. Accept's
+  listing refuses the same, except the run head merged whole by the user (decision 20's
+  own advice after a conflict). With the narrowed sandbox a worker can no longer write
+  the base ref; the guard stays as defence in depth against unsandboxed check and proof
+  code and leftover processes. A worker that merged the user's new base commits into
+  its task branch makes the guard halt falsely; `resume --rebaseline` continues.
+  Tests: `run_git_base_guard.rs`, `e2e_a_worker_that_moves_the_base_halts_the_run`
+  (red: the run completed; green: halted).
+- **D-1.** Accept decides "nothing merged" first: a base already containing the run
+  head (the user's hand merge) is `Merged` and untouched. It undoes only a merge with
+  the run head as second parent **and accept's own message**, on a base that moved
+  during the merge. Tests: `run_git_accept_safety.rs`, the e2e hand-merge test.
+- **D-3.** After a merge that failed or timed out, a base head whose parents are
+  exactly `(expected_base, run_head)` is `Merged`. The capture's wait for EOF is
+  unchanged (followups).
+- **D-6.** `OpKind::Accept` carries `expected_run_head` (`Run.run_head`); accept
+  refuses a run branch that moved from it with decision 21's `moved from <old7> to
+  <new7>` and merges that sha. The accept deadline test's slow `commit-msg` hook became
+  a slow signing program, since hooks no longer run there.
+- **D-4.** At accept, a base found back at `base_sha` is sent as `BaseAdvanced { to:
+  base_sha }`; the reducer clears `base_moved` and logs `base <b> is back at <sha7>`,
+  so accept expects `base_sha`.
+- **D-7.** Once the compare-and-swap landed, a reattach failure is logged and the
+  result is `Merged` (red: the task was `blocked(environment)` with the run head
+  behind; green: merged).
+- **B-I1.** Reconcile's Accept row uses the op's `expected_run_head`, so a crash
+  after the clean-up deleted the run branch replays `Finished`; `delete_branches`
+  deletes `…/integration` last.
+- **A-I4.** `verify_done` uses the sha it resolved first for the own-commit list and
+  the spill diff.
+- **A-I3.** A protected entry `<dir>/**` also matches `<dir>`, so a `.claude` or
+  `.codex` symlink (or file) is a protected change unless `owns` names it exactly. The
+  five built-in entries are unchanged; `AGENTS.override.md` and `CLAUDE.local.md` go to
+  the followups for the user.
+- **Minors.** D-13: preflight refuses a base branch under `anthrex/`. D-12:
+  `remove_worktree` no longer prunes after a removal (decision 20's discard text lists a
+  `git worktree prune`; only `forget_missing` still prunes). D-10 was not done
+  (followups).

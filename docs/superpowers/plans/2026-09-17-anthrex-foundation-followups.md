@@ -957,6 +957,48 @@ scope.
   task. So the queued `RESUME_WORKER` for an idle working round is covered by the
   engine unit tests of `restore.rs` only.
 
+## From M8a's final fix batch F1 (2026-09-24), for the user and for M8a/M8b
+
+- **For the user to decide: `AGENTS.override.md` and `CLAUDE.local.md` are not
+  protected.** Codex reads `AGENTS.override.md` and Claude Code reads `CLAUDE.local.md`
+  as instructions, like the five built-in protected paths. The user's rule names five
+  paths verbatim (`.claude/**`, `.mcp.json`, `.codex/**`, `CLAUDE.md`, `AGENTS.md`), so
+  F1 did not add them (final review A-M7, ruling). Adding them is a one-line change to
+  `run::plan::BUILTIN_PROTECTED` plus the brief's decision 56.
+- **A worker can still redirect its own worktree's git pointers.** The `.git` file in
+  a task worktree is inside the worktree (writable by design), and the worktree's own
+  administrative directory `<common>/worktrees/<name>` is writable (a commit needs its
+  index, `HEAD` reflog and `ORIG_HEAD`); it holds `commondir` and `gitdir`. A worker can
+  point its `.git` (or `commondir`) at a repository it made inside its worktree, whose
+  config then applies to the engine's own git calls in that worktree (`verify_done`,
+  `salvage`, `hand_back`). `core.fsmonitor` and hooks are neutralised by F1's
+  `-c core.fsmonitor=false -c core.hooksPath=/dev/null`, but a `filter.<x>.clean` or
+  `smudge` selected by a committed `.gitattributes` would still run unsandboxed in
+  salvage's `add -A` or a `status`. The same holds for `config.worktree` when the user's
+  repository has `extensions.worktreeConfig` enabled. Launch already refuses a worktree
+  whose git dir does not point back at itself (`run::git::worker_git_dirs`); the engine's
+  other calls do not check. Fix: before each engine git call in a task worktree, check
+  `git rev-parse --git-common-dir` and `--absolute-git-dir` against the run's, or run
+  those calls with an explicit `--git-dir`/`--work-tree` and `commondir` verified.
+- **Narrowed worker git roots are proven on macOS only.** `run_git_sandbox.rs` proves
+  the narrowed set under a real `sandbox-exec` profile. On Linux, Claude Code's
+  sandbox (bubblewrap) and Codex's (Landlock) were not run; the driver creates every
+  granted directory before launch so none is missing. A repository using the reftable
+  ref backend (`extensions.refStorage = reftable`) keeps refs under `reftable/`, which
+  is not granted, so a worker there cannot commit (blocked, not unsafe).
+- **D-10 (not done in F1): a stale review worktree is replaced without salvage.**
+  `run::git::prepare_review` removes an earlier round's worktree with `worktree remove
+  --force`; a Claude reviewer with `Bash` could leave untracked files there. Salvage (or
+  refuse) first, as `cleanup::remove_worktree` does.
+- **D-12's remaining prune.** `forget_missing` (a registered engine worktree whose
+  directory is gone) still runs a repository-wide `git worktree prune`, which also
+  forgets the user's own missing worktrees. Git has no per-path prune; removing the
+  one administrative directory by hand would be the narrow fix.
+- **D-3's second half.** A merge whose hook or grandchild holds its output past the
+  deadline is now recognised as merged, but `subprocess::capture` still waits for EOF on
+  both pipes after git exits. Ending the capture a short grace after the process exits
+  would bound it.
+
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
 - **The main pane can switch to a new window while the new-agent form is still open and
