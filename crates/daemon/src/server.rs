@@ -1,29 +1,26 @@
 //! Accepts client connections and speaks the protocol from spec section 4.
 
 mod conversation;
+mod git_wiring;
 mod headless_guard;
 mod requests;
+
+pub use git_wiring::GitWiring;
 
 use crate::git::GitRegistry;
 use crate::manager::WindowManager;
 use crate::window::Attachment;
 use bytes::Bytes;
 use proto::messages::request;
-use proto::{ClientMsg, DaemonMsg, GitState, PROTO_VERSION, read_frame, write_frame};
-use std::path::PathBuf;
+use proto::{ClientMsg, DaemonMsg, PROTO_VERSION, read_frame, write_frame};
 use std::sync::Arc;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-/// Runs until `shutdown` is cancelled. Each connection gets its own task.
-///
-/// Owns the [`GitRegistry`] for the whole daemon: one registry, watching and probing
-/// whatever roots the connected clients' windows reference, and one broadcast channel
-/// that turns its publications into [`DaemonMsg::Git`] for every attached client. The
-/// manager itself holds no git state and takes no git-related lock (AGENTS.md hard rule
-/// 2).
+/// Runs until `shutdown` is cancelled. Each connection gets its own task. The daemon's
+/// one [`GitRegistry`] and its publications come from [`GitWiring`].
 ///
 /// Where registration and unregistration happen is not one rule but two, and the
 /// difference matters. A plain create and a plain `Remove { remove_worktree: false }`
@@ -44,11 +41,17 @@ pub async fn serve(
     git: config::Git,
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
-    let (git_publish_tx, git_publish_rx) = mpsc::unbounded_channel();
-    let git_registry = Arc::new(GitRegistry::new(git, git_publish_tx));
+    let GitWiring {
+        registry: git_registry,
+        publish_rx,
+    } = GitWiring::new(git);
     let (git_tx, _) = broadcast::channel::<DaemonMsg>(256);
-    tokio::spawn(pump_git(git_publish_rx, git_tx.clone(), shutdown.clone()));
-    register_restored_roots(&manager, &git_registry);
+    tokio::spawn(git_wiring::pump_git(
+        publish_rx,
+        git_tx.clone(),
+        shutdown.clone(),
+    ));
+    git_wiring::register_restored_roots(&manager, &git_registry);
 
     loop {
         tokio::select! {
@@ -75,67 +78,6 @@ pub async fn serve(
                         tracing::warn!(error = %e, "client connection ended with error");
                     }
                 });
-            }
-        }
-    }
-}
-
-/// Registers the worktree root of every window already in the table, before the first
-/// client can connect.
-///
-/// At this point in `lifecycle::run` those are exactly the windows `WindowManager::restore`
-/// loaded from `state.json`. Their checkouts are still on disk and still changing, so
-/// git-surface spec 3.3's rule — "a root is registered when at least one window records
-/// it" — applies to them no differently than to a created window; without this the
-/// bottom bar is blank for every restored window, and stays blank, because `Restart`
-/// does not register either (and must not: see below).
-///
-/// **Once per window, not once per distinct root.** Registration is reference counted
-/// (`GitRegistry::register`), and every other site in this file pairs exactly one
-/// `register` with one `unregister` per *window* — `requests::create` and
-/// `requests::remove_window`. Deduplicating roots here would register one reference for
-/// two restored windows on the same checkout, and the first `Remove` would then tear the
-/// watcher down while the second window is still looking at it. Two restored windows on
-/// one root have to behave exactly like two created ones, which means counting like
-/// them.
-///
-/// **A restart registers nothing new**, for the same reason: a restarted window keeps
-/// the record's root, which this call already holds a reference for. Adding a
-/// `register` to the restart path would leak a reference per restart and leave the
-/// watcher running after the window was removed.
-///
-/// Off the manager lock (AGENTS.md hard rule 10): `list()` returns owned `WindowInfo`s
-/// and has released the lock before the first `register` runs.
-fn register_restored_roots(manager: &WindowManager, git_registry: &GitRegistry) {
-    for window in manager.list() {
-        if let Some(root) = window.worktree {
-            git_registry.register(root);
-        }
-    }
-}
-
-/// Turns every publication the registry makes into a `DaemonMsg::Git` broadcast.
-///
-/// A `broadcast::Sender::send` never blocks and never waits for a receiver, so nothing
-/// here can be wedged by a slow or gone client — a lagging or dropped receiver only
-/// affects that one client's own forwarding task in `handle_client`.
-async fn pump_git(
-    mut publish_rx: mpsc::UnboundedReceiver<(PathBuf, Option<GitState>)>,
-    git_tx: broadcast::Sender<DaemonMsg>,
-    shutdown: CancellationToken,
-) {
-    loop {
-        tokio::select! {
-            _ = shutdown.cancelled() => return,
-            received = publish_rx.recv() => match received {
-                Some((root, state)) => {
-                    // The registry already dedups (an unchanged poll never republishes),
-                    // so every line here is a real change — this is what the milestone's
-                    // manual check ("a `cargo build` must not storm the log") reads.
-                    tracing::debug!(?root, ?state, "git state published");
-                    let _ = git_tx.send(DaemonMsg::Git { root, state });
-                }
-                None => return,
             }
         }
     }
