@@ -5,6 +5,7 @@ mod conversation;
 mod create;
 mod entry;
 mod headless;
+mod headless_end;
 mod headless_turns;
 mod remove;
 mod restart;
@@ -194,6 +195,11 @@ impl WindowManager {
 
     pub fn watch(&self) -> watch::Receiver<Vec<WindowInfo>> {
         self.changed.subscribe()
+    }
+
+    /// What the manager was built with (the run engine reads its binaries and caps).
+    pub fn config(&self) -> &ManagerConfig {
+        &self.config
     }
 
     pub fn list(&self) -> Vec<WindowInfo> {

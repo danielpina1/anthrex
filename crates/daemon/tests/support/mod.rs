@@ -9,7 +9,8 @@ pub mod headless;
 pub mod run_git;
 
 use daemon::manager::{ManagerConfig, WindowManager};
-use daemon::server::serve;
+use daemon::run::driver::RunService;
+use daemon::server::{GitWiring, serve};
 use proto::{ClientKind, ClientMsg, DaemonMsg, Runtime, WindowSpec, read_frame, write_frame};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -74,13 +75,17 @@ pub async fn start_daemon_configured(
         }
     });
     let shutdown = CancellationToken::new();
+    let git = GitWiring::new(config::Git {
+        enabled: git_enabled,
+        ..config::Git::default()
+    });
+    let runs = RunService::for_manager(&manager, dir.path().join("data"), git.registry.clone());
+    runs.spawn(shutdown.clone());
     tokio::spawn(serve(
         listener,
         manager.clone(),
-        config::Git {
-            enabled: git_enabled,
-            ..config::Git::default()
-        },
+        git,
+        runs,
         shutdown.clone(),
     ));
     TestDaemon {

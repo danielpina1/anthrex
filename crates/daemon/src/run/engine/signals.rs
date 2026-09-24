@@ -71,6 +71,21 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
         AgentSignal::ProcessExited { pid, .. } if round.pid.is_some_and(|p| p != pid) => {
             return;
         }
+        // Ruling T13-P1: a Codex send waits for the previous process's exit, which can
+        // reach the engine after the next turn was delivered (and opened) but before
+        // the next process starts. The exit of the process a turn closed in is that
+        // turn's normal end, never a death.
+        AgentSignal::ProcessExited {
+            pid,
+            killed_by_engine: false,
+            ..
+        } if round.route.runtime == Runtime::Codex
+            && !round.retiring
+            && round.closed_pid == Some(pid) =>
+        {
+            round.pid = None;
+            return;
+        }
         AgentSignal::ProcessExited {
             killed_by_engine, ..
         } => return exited(run, i, r, killed_by_engine, now, fx),
@@ -145,6 +160,15 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
             usage,
             denials,
         } => turn_ended(run, i, r, outcome, usage, denials, streak, now, fx),
+        AgentSignal::Spend { usage } => {
+            add_usage(&mut round.usage, usage);
+            // Ruling T12-m5: the task's total counts its worker rounds only.
+            if worker {
+                let task = &mut run.tasks[i];
+                task.spent_total.tokens = task.spent_total.tokens.saturating_add(usage.billable());
+                check_budget(run, i, now, fx);
+            }
+        }
         AgentSignal::Activity
         | AgentSignal::ProcessStarted { .. }
         | AgentSignal::ProcessExited { .. } => {}
@@ -194,6 +218,7 @@ fn turn_ended(
     let round = &mut run.tasks[i].rounds[r];
     let worker = round.role == AgentRole::Worker;
     round.turn_open = false;
+    round.closed_pid = round.pid;
     if let Some(usage) = usage {
         add_usage(&mut round.usage, usage);
         // Ruling T12-m5: the task's total counts its worker rounds only.

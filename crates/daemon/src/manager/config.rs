@@ -79,6 +79,10 @@ pub struct ManagerConfig {
     /// `::config::Conversation`, never bare: `proto::Conversation` and
     /// `crate::conversation` share the name.
     pub conversation: ::config::Conversation,
+    /// What the installed CLIs accept (`headless::argv::CLI_CAPS`), with decision 53's
+    /// test overrides in debug builds (`from_env`); every session's argv is built from it
+    /// and the run engine's project-settings check reads it (M8a.22).
+    pub cli_caps: crate::headless::argv::CliCaps,
 }
 
 impl ManagerConfig {
@@ -101,6 +105,7 @@ impl ManagerConfig {
             headless_install_pause: Duration::ZERO,
             launch_gate: launch::LaunchGate::open_already(),
             conversation: ::config::Conversation::default(),
+            cli_caps: crate::headless::argv::CLI_CAPS,
         }
     }
 
@@ -136,6 +141,7 @@ impl ManagerConfig {
             headless_install_pause: Duration::ZERO,
             launch_gate: launch::LaunchGate::open_already(),
             conversation: ::config::Conversation::default(),
+            cli_caps: crate::headless::argv::CLI_CAPS,
         }
     }
 
@@ -153,6 +159,12 @@ impl ManagerConfig {
             runtimes,
         );
         config.codex_hook_source = launch::codex::default_hook_source();
+        if cfg!(debug_assertions) {
+            config.cli_caps =
+                crate::headless::argv::caps_with_test_overrides(config.cli_caps, |key| {
+                    std::env::var(key).ok()
+                });
+        }
         Ok(config)
     }
 }

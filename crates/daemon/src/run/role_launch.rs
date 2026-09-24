@@ -157,6 +157,16 @@ pub fn session_uuid(run_id: &str, op: OpId) -> String {
     )
 }
 
+/// [`session_uuid`] for `run`'s op `op`, with the run's random `session_nonce` mixed
+/// into the run id (M8a.21's carry): two daemons that drew the same run id never share a
+/// session. A nonce of 0 (a run from before M8a.22) gives `session_uuid(run.id, op)`.
+pub fn session_uuid_of(run: &Run, op: OpId) -> String {
+    if run.session_nonce == 0 {
+        return session_uuid(&run.id, op);
+    }
+    session_uuid(&format!("{}#{:016x}", run.id, run.session_nonce), op)
+}
+
 /// Decision 18's launch jitter: `100 + fnv1a(run, task, session) % 400` milliseconds.
 pub fn jitter_ms(run_id: &str, task_id: &str, session: u32) -> u64 {
     100 + fnv1a(&[

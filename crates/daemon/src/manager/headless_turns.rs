@@ -133,8 +133,16 @@ impl WindowManager {
     ) -> Vec<String> {
         let (exe, socket) = (&self.config.exe, &self.config.socket_path);
         match spec.runtime {
-            Runtime::Claude => claude_args(spec, session, exe, id, socket, &CLI_CAPS),
-            _ => codex_args(spec, session, message, exe, id, socket, &CLI_CAPS),
+            Runtime::Claude => claude_args(spec, session, exe, id, socket, &self.config.cli_caps),
+            _ => codex_args(
+                spec,
+                session,
+                message,
+                exe,
+                id,
+                socket,
+                &self.config.cli_caps,
+            ),
         }
     }
 
@@ -252,6 +260,7 @@ impl WindowManager {
         }
         let runtime = window.spec.runtime;
         window.handle = HeadlessHandle::ended();
+        window.ending = false;
         window.cursor.process_replaced();
         let started = wait_start.then(|| {
             let (tx, rx) = oneshot::channel();
@@ -507,7 +516,7 @@ impl WindowManager {
     /// installed, and is killed at once if it was already started (ruling T18-I1).
     pub fn headless_kill(&self, id: u32) -> anyhow::Result<()> {
         self.record_cancel(id, Cancel::Killed)?;
-        let (handle, _) = self.headless_handle(id)?;
+        let handle = self.mark_ending(id)?;
         handle.kill(self.config.kill_grace);
         Ok(())
     }

@@ -26,6 +26,7 @@
 //! windows and leftover session processes); both blocking I/O.
 
 pub mod contract;
+pub mod driver;
 pub mod edits;
 pub mod engine;
 pub mod env;

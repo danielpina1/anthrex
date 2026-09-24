@@ -1,5 +1,6 @@
 use daemon::manager::{ManagerConfig, WindowManager};
-use daemon::server::serve;
+use daemon::run::driver::RunService;
+use daemon::server::{GitWiring, serve};
 use proto::{ClientMsg, DaemonMsg, Runtime, WindowSpec};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -20,12 +21,11 @@ async fn start_daemon_at(socket: &PathBuf) -> CancellationToken {
         }
     });
     let token = CancellationToken::new();
-    tokio::spawn(serve(
-        listener,
-        manager,
-        config::Git::default(),
-        token.clone(),
-    ));
+    let git = GitWiring::new(config::Git::default());
+    let data = socket.parent().unwrap().join("data");
+    let runs = RunService::for_manager(&manager, data, git.registry.clone());
+    runs.spawn(token.clone());
+    tokio::spawn(serve(listener, manager, git, runs, token.clone()));
     token
 }
 

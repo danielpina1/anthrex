@@ -72,6 +72,36 @@ pub const CLI_CAPS: CliCaps = CliCaps {
     codex_user_config_only: None,
 };
 
+/// The placeholder flag `ANTHREX_TEST_CODEX_PROJECT_CONFIG=exclude` puts in
+/// `codex_user_config_only` (decision 53); `fake-agent` accepts and records it.
+pub const TEST_EXCLUDE_PROJECT_CONFIG: &str = "--anthrex-test-exclude-project-config";
+
+/// Decision 53's test overrides, applied by `ManagerConfig::from_env` in debug builds
+/// only: `ANTHREX_TEST_NO_SETTING_SOURCES=1` acts as if `claude_user_settings_only`
+/// were `None`; `ANTHREX_TEST_CODEX_PROJECT_CONFIG=load` as if Codex loaded project
+/// config with no exclusion, `=exclude` as if [`TEST_EXCLUDE_PROJECT_CONFIG`] excluded
+/// it. `var` reads the environment, so this stays pure.
+pub fn caps_with_test_overrides(
+    mut caps: CliCaps,
+    var: impl Fn(&str) -> Option<String>,
+) -> CliCaps {
+    if var("ANTHREX_TEST_NO_SETTING_SOURCES").as_deref() == Some("1") {
+        caps.claude_user_settings_only = None;
+    }
+    match var("ANTHREX_TEST_CODEX_PROJECT_CONFIG").as_deref() {
+        Some("load") => {
+            caps.codex_loads_project_config = true;
+            caps.codex_user_config_only = None;
+        }
+        Some("exclude") => {
+            caps.codex_loads_project_config = true;
+            caps.codex_user_config_only = Some(&[TEST_EXCLUDE_PROJECT_CONFIG]);
+        }
+        _ => {}
+    }
+    caps
+}
+
 /// M3's hook settings (`launch::claude::settings`, unchanged) plus, for a worker,
 /// decision 54's sandbox block: enabled, unsandboxed commands disallowed, refusing to
 /// start without a working sandbox (M8a.1 item 4b), and the git common dir writable.

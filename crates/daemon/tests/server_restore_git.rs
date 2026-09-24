@@ -29,7 +29,8 @@ mod support;
 use daemon::git::probe::PROBE_TIMEOUT;
 use daemon::manager::{ManagerConfig, WindowManager};
 use daemon::project::DETECT_TIMEOUT;
-use daemon::server::serve;
+use daemon::run::driver::RunService;
+use daemon::server::{GitWiring, serve};
 use daemon::state::{StateFile, WindowRecord, WorktreeRecord};
 use proto::{DaemonMsg, PROTO_VERSION, Runtime, Status, read_frame};
 use std::ffi::OsStr;
@@ -94,10 +95,14 @@ async fn start_daemon_restoring(state: StateFile) -> TestDaemon {
     });
     manager.restore(state);
     let shutdown = CancellationToken::new();
+    let git = GitWiring::new(config::Git::default());
+    let runs = RunService::for_manager(&manager, dir.path().join("data"), git.registry.clone());
+    runs.spawn(shutdown.clone());
     tokio::spawn(serve(
         listener,
         manager.clone(),
-        config::Git::default(),
+        git,
+        runs,
         shutdown.clone(),
     ));
     TestDaemon {

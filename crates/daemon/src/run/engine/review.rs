@@ -23,7 +23,7 @@ use crate::run::contract::{
     REVIEWER_STOPPED_TWICE, rate_limit_continue, review_changes_message, reviewer_prompt,
 };
 use crate::run::model::{AgentRound, FailedTurn, ReviewLevel, ReviewRecord, Run};
-use crate::run::role_launch::{jitter_ms, reviewer_spec, session_uuid};
+use crate::run::role_launch::{jitter_ms, reviewer_spec, session_uuid_of};
 use crate::run::roster::pick_reviewer;
 
 /// The outbox address of task `task`'s reviewer.
@@ -123,7 +123,7 @@ pub(super) fn review_ready(
     let round_no = spec.run_ref.as_ref().map_or(1, |r| r.session);
     let first_turn = reviewer_prompt(run, task, round_no, &base, &head, &patch);
     let name = format!("{}/{}.r{round_no}", run.short(), task.id());
-    let uuid = (route.runtime == Runtime::Claude).then(|| session_uuid(&run.id, op));
+    let uuid = (route.runtime == Runtime::Claude).then(|| session_uuid_of(run, op));
     let jitter = jitter_ms(&run.id, &format!("{}.r", task.id()), round_no);
     let mut round = new_round(
         AgentRole::Reviewer,

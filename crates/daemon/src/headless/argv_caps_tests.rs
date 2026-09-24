@@ -271,3 +271,40 @@ fn toml_string_round_trips_through_the_toml_crate() {
         assert!(parsed.is_ok(), "{value}");
     }
 }
+
+/// Decision 53's test overrides: `ANTHREX_TEST_NO_SETTING_SOURCES=1` acts as if the
+/// CLI could not exclude project settings; `ANTHREX_TEST_CODEX_PROJECT_CONFIG=load` as
+/// if Codex loads project config with no way out, `=exclude` as if the placeholder flag
+/// excluded it. Anything else leaves the caps alone.
+#[test]
+fn test_overrides_follow_decision_53() {
+    let var = |pairs: &'static [(&'static str, &'static str)]| {
+        move |key: &str| {
+            pairs
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.to_string())
+        }
+    };
+    assert_eq!(caps_with_test_overrides(CLI_CAPS, var(&[])), CLI_CAPS);
+    let none = caps_with_test_overrides(CLI_CAPS, var(&[("ANTHREX_TEST_NO_SETTING_SOURCES", "1")]));
+    assert_eq!(none.claude_user_settings_only, None);
+    let load = caps_with_test_overrides(
+        CLI_CAPS,
+        var(&[("ANTHREX_TEST_CODEX_PROJECT_CONFIG", "load")]),
+    );
+    assert!(load.codex_loads_project_config);
+    assert_eq!(load.codex_user_config_only, None);
+    let exclude = caps_with_test_overrides(
+        CLI_CAPS,
+        var(&[("ANTHREX_TEST_CODEX_PROJECT_CONFIG", "exclude")]),
+    );
+    assert!(exclude.codex_loads_project_config);
+    assert_eq!(
+        exclude.codex_user_config_only,
+        Some(&[TEST_EXCLUDE_PROJECT_CONFIG][..])
+    );
+    let other =
+        caps_with_test_overrides(CLI_CAPS, var(&[("ANTHREX_TEST_NO_SETTING_SOURCES", "0")]));
+    assert_eq!(other, CLI_CAPS);
+}

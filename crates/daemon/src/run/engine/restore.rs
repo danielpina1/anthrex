@@ -38,7 +38,7 @@ use super::{
 };
 use crate::run::contract::{RESUME_REVIEWER, RESUME_WORKER, sha7};
 use crate::run::model::{FallbackState, PendingOp, Run, StallState};
-use crate::run::role_launch::session_uuid;
+use crate::run::role_launch::session_uuid_of;
 
 /// `Event::Restore` (decisions 44, 45).
 pub(super) fn restore(
@@ -353,13 +353,13 @@ pub(super) fn relaunch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             }
             let op = next_op(run);
             let mut kind = *kind;
+            let fresh = session_uuid_of(run, op);
             let round = &mut run.tasks[i].rounds[r];
             if let OpKind::CreateWindow {
                 session_uuid: uuid, ..
             } = &mut kind
                 && uuid.is_some()
             {
-                let fresh = session_uuid(&run.id, op);
                 *uuid = Some(fresh.clone());
                 round.session_id = Some(fresh);
             }

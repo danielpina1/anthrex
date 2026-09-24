@@ -69,6 +69,7 @@ fn round(role: AgentRole, session: u32, turns: u32, tool_calls: u32, denials: u3
         count_turn: 0,
         interrupted: false,
         relaunch: None,
+        closed_pid: None,
     }
 }
 

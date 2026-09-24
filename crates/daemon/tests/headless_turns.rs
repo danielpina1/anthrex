@@ -4,7 +4,8 @@
 //!
 //! Split by seam (AGENTS.md rule 8): `headless_turns/cursor.rs` holds the conversation
 //! cursor's delivery-order tests carried from M8a.7's reviews, `headless_turns/control.rs`
-//! the kills, interrupts and refusals of fix round 1.
+//! the kills, interrupts and refusals of fix round 1, `headless_turns/ending.rs` the
+//! windows the engine retires or kills (M8a.22).
 
 mod support;
 
@@ -12,6 +13,8 @@ mod support;
 mod control;
 #[path = "headless_turns/cursor.rs"]
 mod cursor;
+#[path = "headless_turns/ending.rs"]
+mod ending;
 
 use daemon::headless::argv::{CLI_CAPS, claude_args, codex_args};
 use daemon::headless::claude_stream::{interrupt_request, user_message};

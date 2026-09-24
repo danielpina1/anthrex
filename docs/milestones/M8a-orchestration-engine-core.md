@@ -7897,3 +7897,166 @@ first.
   - Re-run accept's clean-up after a replayed `Finished`.
   - Put a random per-run nonce in session uuids.
   - The last two, and the Codex first-turn marker, are also in the followups file.
+
+### M8a.22 `RunService`, the server and lifecycle (2026-09-24)
+
+- **Commits.** The pure move `refactor(daemon): move GitWiring and pump_git into
+  server/git_wiring.rs` (no behaviour change; `server.rs` 627 → 569 lines), then one
+  `feat(daemon)` commit with everything else.
+- **Files (deviation: split for rule 8).** The brief names `run/driver.rs`,
+  `run/driver/ops.rs` and `run/driver/observe.rs`. The driver came to about 2 600 lines
+  with its unit tests, so it is split by seam: `driver.rs` (types, the event loop, the tick, stop, the
+  forwarder), `driver/effects.rs` (executing effects, persists, the journal, reports,
+  compaction), `driver/ops.rs` (the op executors), `driver/merge.rs` (the merge
+  candidate), `driver/cleanup.rs` (salvage and removal, accept, discard),
+  `driver/requests.rs` (client requests; start, finish and resume read git first),
+  `driver/restore.rs` (decision 44 on start), `driver/observe.rs` (the translation). The
+  e2e tests are `crates/cli/tests/run_e2e_basic.rs` (11) and `run_e2e_settings.rs`
+  (decision 53's 4, split off so neither file passes 600 lines), with the shared plan
+  and script builders in `tests/support/run_plans.rs`. The manager's retirement is in
+  the new `manager/headless_end.rs` (`headless.rs` and `headless_turns.rs` were near the
+  limit).
+- **Interface changes.**
+  - `RunContext` gains `cli_caps: CliCaps` (the manager's, so decision 53's check reads
+    the caps sessions are launched with, test overrides included) and a constructor
+    `RunContext::new(data_dir, &ManagerConfig, orchestrator, git_roots)`.
+    `RunService::for_manager(&manager, data_dir, git_roots)` builds one with the default
+    `[orchestrator]` for a test daemon (the four `serve` callers in tests use it).
+  - `RunService::stop` is `async` (it waits for the loop's last `run.json` writes);
+    `restore` takes `self: &Arc<Self>`. New: `pushes()` (a broadcast of every published
+    snapshot, so a subscriber sees every structural change, which a `watch` would
+    coalesce) and `current()`.
+  - `ManagerConfig.cli_caps` (default `CLI_CAPS`); `from_env` applies decision 53's
+    debug-build overrides through the new pure
+    `headless::argv::caps_with_test_overrides` (`ANTHREX_TEST_NO_SETTING_SOURCES=1`,
+    `ANTHREX_TEST_CODEX_PROJECT_CONFIG=load|exclude`, the placeholder flag
+    `TEST_EXCLUDE_PROJECT_CONFIG`). Every session's argv is built from it.
+  - `WindowManager::{config, headless_retire, headless_pid}`.
+  - Reducer: `AgentSignal::Spend { usage }`, `AgentRound.closed_pid`,
+    `Run.session_nonce` (both `#[serde(default)]`), `role_launch::session_uuid_of`.
+- **Event loop.** One task steps the reducer for every event (requests, op results,
+  signals, the 1 s `Tick`) and executes that step's effects before the next event.
+  Under the engine lock it only steps and clones what the effects need (an urgent
+  `Persist`'s run, an op's project and timeouts, a structural `Publish`'s snapshot).
+  Counter-only persists are flushed on the tick at most every 5 s; counter-only
+  publishes on the next tick; reports at most every 500 ms per run. Journal compaction
+  runs on the tick, between steps, so never between a `run.json` write and its intent
+  lines.
+- **Ops.** The intent is appended (fsynced) before the op task is spawned, and the
+  task appends `done` before sending `OpDone`. Appends and compactions share one mutex,
+  held only inside `spawn_blocking`. Every op of a run takes a shared per-run lock at
+  emission; `Accept` and `Discard` take it exclusively, so they run after every op of
+  their run emitted before them (M8a.8's pre-warm concern). After `stop`, an op's result
+  is neither journaled nor sent: reconcile checks reality for it on the next start,
+  rather than replaying a failure the shutdown caused.
+- **Kills.** `KillWindow` records the pid the window last started (`headless_pid`); the
+  loop marks that pid's exit `killed_by_engine`. A window with no live process whose
+  round still has no exit coming (a Codex window between turns, a send waiting out its
+  jitter) gets a synthetic `ProcessExited { killed_by_engine: true }` at once.
+- **Retirement (decision 52).** `RetireWindow` → `headless_retire` (stdin closed; a
+  window with no live process is `Exited` at once), a kill at `INTERRUPT_GRACE` if the
+  process still runs, and the window's removal at `RETIRE_AFTER`. The manager's new
+  `ending` flag makes a Codex exit after its turn end the window too, once the engine
+  has retired or killed it (a Codex process between turns otherwise keeps `Idle`);
+  `record_turn` clears it.
+- **Translation.** One to one for `Init`, `TurnStarted`, `ToolUse`, `TurnEnded`,
+  `ApiRetry`, `PermissionDenied`, `ProcessStarted`, `ProcessExited` (pid from
+  `WindowSignal.pid`) and the sub-agent hooks. `Unprompted(TurnEnded)` is `Spend`, any
+  other `Unprompted` activity. Text, tool results, compaction and `Other` are
+  `Activity`, at most one per window per second. `StderrLine`, `Unknown` and
+  `Diagnostic` are not activity (the M8a.17 carry's open question): Claude prints hook
+  progress constantly, and a session that only writes to stderr is not progressing.
+- **Start.** Parse, preflight, the protected files by the resolved profile's
+  `ProtectedMatcher` (before `build_run`'s warnings), the id (5 draws against
+  `refs/heads/anthrex/` via `run_id_taken`, `<data_dir>/runs/<id>` and the engine's
+  runs), `build_run` (errors joined by `\n`), the nonce, decision 50's `api_key` check,
+  then decision 53. The protected warning reaches `TaskInfo.notes`; printing it on
+  stderr is `anthrex run start`'s (M8a.23).
+- **Decision 53 counts worker routes only** ("a run with at least one Claude task"),
+  as the brief's tests require (a Codex-only plan starts in a repository with Claude
+  hooks, a Claude-only plan is not refused for Codex config). A task's reviewer runs on
+  the other runtime, so under `CLI_CAPS` as recorded (Codex loads project config and
+  cannot be told not to) a Claude task's Codex reviewer would load a tracked
+  `.codex/config.toml` unasked. Recorded as a follow-up; the fix is to count review
+  routes too and change the two test expectations.
+- **Finish.** `Discard` needs `confirm == <id>`, else `ConfirmNeeded` with
+  `discard run <id>: remove its worktrees and delete its branches?` (invented). Accept
+  reads `refs/heads/<base>`: equal needs `<id>`; advanced needs `<id>@<to>` and sends
+  `BaseAdvanced` before `Finish`, else `ConfirmNeeded` with `base_moved` from
+  `commits_since`; rewritten is refused with decision 20's text. The accept prompt is
+  M8a.23's (`merge anthrex/<id>/integration into <base> in <root>?`).
+- **Restore.** `load_all`, `reconcile` per run on `spawn_blocking` (its notes go to the
+  run's log as `restore: <note>`), `Event::Restore` stepped before any other event and
+  its effects executed, then every journal compacted, the integration and live task
+  worktrees of unfinished runs watched, restored headless windows of unknown or
+  finished runs removed, and a replayed `Accept` `Finished` gets its clean-up re-run.
+  The report of such a run still lists the branches reconcile's `Finished` named as
+  kept, though the clean-up then deletes them.
+- **Server.** `serve(listener, manager, git: GitWiring, runs, shutdown)`;
+  `server/run_api.rs` answers each request on its own task; `Subscribe` sends the
+  current snapshot, then every push with a higher revision, until `Unsubscribe` or the
+  connection ends. `register_restored_roots` skips headless windows: the engine owns
+  their roots (decision 22). `handle_client` drops its `RunApi` (which holds an
+  `out_tx` clone) before awaiting the writer; without that a daemon's shutdown left
+  every client connected (`reconnect_tests::drives_a_real_reconnect_twice` and
+  `tui/tests/connection.rs` caught it). `server.rs` is 570 lines.
+- **Lock check (acceptance).** Every `crate::lock(` in `run/driver*.rs` is a block or a
+  single statement whose guard is dropped before the next `.await`, `spawn_blocking`,
+  git call or manager call; the list is in the task report. The journal mutex is held
+  only inside `spawn_blocking` closures, around the journal file I/O.
+- **Carries.**
+  - T13-P1 (the pid whose turn closed): **done**, `AgentRound.closed_pid`; test
+    `the_exit_of_the_process_whose_turn_closed_is_normal`. A `Delivered` can still
+    reach the engine before the next Codex process's `ProcessStarted`; the field makes
+    that order harmless.
+  - `Unprompted` to activity, never a turn end: **done**, as `Spend`/`Activity`.
+  - Sandbox-unavailable `TurnEnded` before `ProcessExited`: **already done** in
+    `headless/session/pipes.rs` (M8a.17); forwarded in order.
+  - `resolution_only` in `DoneChecked` (an error counts as `Some(false)`): **done**.
+  - Restore's replay from the journal, `Restore` first, notes in the log: **done**.
+  - Setup after `PrepareWorktree` (and `CreateRunBranch`): **done**; `Discard` after a
+    pre-warm: **done** (the per-run op lock).
+  - `run_id_taken` with `for-each-ref refs/heads/anthrex/`: **done**.
+  - Accept never under a shorter timeout; kept branches passed through: **done**.
+  - `server.rs` at most 605 lines: **done** (570).
+  - Restored headless windows of finished runs removed; the registry for headless
+    windows: **done** (the engine watches run worktrees; the server skips headless
+    windows).
+  - A `ResumeFailed` for a round the engine already stopped is ignored: **already
+    true** in the reducer; pinned by `a_resume_failure_for_a_killed_round_is_ignored`.
+  - `AbortMerge`, `Proof` (`Handle::block_on` inside `spawn_blocking`), the scratch
+    `Check`: **done**.
+  - `protected_files` with the resolved profile's matcher before the warnings: **done**.
+  - A kill during a Codex send's jitter leaves the window `Exited` (T18-N3): **done**;
+    tests in `tests/headless_turns/ending.rs`.
+  - Send errors, a NUL byte included, are `Delivered { ok: false, error }`: **done**.
+  - Run-tool replies worded for an agent: the driver adds no text of its own to a tool
+    answer; the engine's `Ok`/`Err` text is passed as `ToolResult`. It never refuses a
+    tool call with a labelled `Error`.
+  - Never compact between `run.json` and the intent lines: **done** (compaction on the
+    tick). Accept clean-up after a replayed `Finished`: **done**. Per-run session
+    nonce: **done** (`Run.session_nonce`, test
+    `the_session_nonce_reaches_the_session_uuid`; a nonce of 0, a run from before, keeps
+    its old uuids).
+  - **Re-carried: the Codex first-turn marker.** Adding one changes Codex's argv and
+    reconcile's session check, which this task's tests do not cover; still in the
+    followups file.
+  - **Re-carried: T8-RR2** (the `<run_head>...HEAD` range after `resume --rebaseline`).
+    The driver passes the op's `start` and `run_head` through and computes no range, so
+    the question stays with `git::diff_so_far` (final review).
+  - **Re-carried to M8a.23: the report's `codex project config:` line** (decision 53's
+    three texts). The report renders from `Run` alone and the run does not record the
+    caps it started under; the CLI brief or the final review should decide whether
+    `Run` records them.
+  - Counter-only persists at most every 5 s, compaction past 1 MiB: **done**.
+  - Codex stdin closed at spawn: unchanged.
+- **Tests.** Red first: all 15 e2e tests failed on the stub's `runs are not available
+  yet`; `the_exit_of_the_process_whose_turn_closed_is_normal` (the round died),
+  `an_unprompted_turns_usage_is_spend_not_a_turn_end` (usage 0),
+  `the_session_nonce_reaches_the_session_uuid` (equal uuids),
+  `a_kill_during_a_codex_send_jitter_leaves_the_window_exited` and
+  `a_retired_codex_window_between_turns_is_exited` (`Idle`, not `Exited`) failed before
+  their changes. Pinning tests, green from the start:
+  `a_resume_failure_for_a_killed_round_is_ignored`,
+  `a_retired_claude_window_exits_on_eof`. Unit tests: `observe.rs` (4),
+  `test_overrides_follow_decision_53`, `the_salvage_message_names_the_task`.

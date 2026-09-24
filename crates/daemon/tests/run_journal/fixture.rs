@@ -134,6 +134,7 @@ pub fn round(
         count_turn: 0,
         interrupted: false,
         relaunch: None,
+        closed_pid: None,
     }
 }
 

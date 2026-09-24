@@ -238,6 +238,9 @@ pub struct AgentRound {
     /// id, by the first running pass (decision 44's "the engine re-issues").
     #[serde(default)]
     pub relaunch: Option<Box<OpKind>>,
+    /// The process a turn last ended in (ruling T13-P1): its later exit is normal.
+    #[serde(default)]
+    pub closed_pid: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -529,22 +532,21 @@ pub struct Run {
     /// is in flight; it is answered with the op's result. A restore clears it.
     #[serde(default)]
     pub finish_reply: Option<u64>,
-    /// M8a.14 fix round 1: `run cancel` was applied; a cancelled run that is halted can
-    /// be discarded without a rebaseline (review m2).
+    /// M8a.14 fix round 1: `run cancel` applied; halted, it discards with no rebaseline.
     #[serde(default)]
     pub cancelled: bool,
-    /// Review m1: `VerifyRefs` failures in a row; the second halts the run with a
-    /// retryable reason.
+    /// Review m1: `VerifyRefs` failures in a row; the second halts (retryable).
     #[serde(default)]
     pub verify_failures: u8,
-    /// Review m1: the halt came from refs that could not be read, so `run resume`
-    /// needs no `--rebaseline`.
+    /// Review m1: halted over unreadable refs, so `run resume` needs no `--rebaseline`.
     #[serde(default)]
     pub halt_retryable: bool,
-    /// M8a.15: the time of the daemon restart that ended this run's sessions; the next
-    /// resume resumes them (decision 45).
+    /// M8a.15: when a daemon restart ended the sessions; the next resume resumes them.
     #[serde(default)]
     pub restored: Option<u64>,
+    /// M8a.22: drawn at start, mixed into session uuids (`role_launch::session_uuid_of`).
+    #[serde(default)]
+    pub session_nonce: u64,
 }
 
 impl Run {

@@ -829,6 +829,7 @@ scope.
   process N finished its turn (for example an `exiting_pid` set when a delivery opens
   a Codex turn over a live pid), or the executor must guarantee that `ProcessStarted`
   for N+1 comes before N's exit. M8a.22's executor should settle which one.
+  **Done in M8a.22:** `AgentRound.closed_pid`, the first option.
 
 ## From M8a.14's fix round 3 (2026-09-24), for M8a
 
@@ -870,7 +871,26 @@ scope.
 - **A replayed accept `Finished` did not run its clean-up.** Reconcile now reports it
   honestly (`accepted as <sha7>; clean-up did not run before the restart`, with every
   run branch in `kept_branches`), but the salvage, worktree removal and branch deletion
-  are not re-run. M8a.22 should re-run them after the restore.
+  are not re-run. M8a.22 should re-run them after the restore. **Done in M8a.22**
+  (`driver/restore.rs`); the report still names the branches as kept.
 - **Session uuids need a per-run random nonce.** `session_uuid(run_id, op)` is
   deterministic, so two runs with the same id share uuids (Claude's session store, and
   any id-based check). Mix a random nonce stored in `run.json` into it (M8a.22).
+  **Done in M8a.22:** `Run.session_nonce`, `role_launch::session_uuid_of`.
+
+## From M8a.22 (2026-09-24), for M8a
+
+- **Decision 53 counts worker routes only.** `run start`'s project-settings check asks
+  whether any task's worker runs Claude (or Codex), as the M8a.22 tests expect. A
+  task's reviewer runs on the other runtime, so with `CLI_CAPS` as recorded (Codex
+  loads project config and cannot be told not to) a Claude task's Codex reviewer loads
+  a tracked `.codex/config.toml` unasked. Count review routes too (`Task.review_route`,
+  and the escalations that change it), and change `e2e_project_settings_are_refused_
+  without_trust_project`'s and `e2e_codex_project_config_follows_cli_caps`'s
+  expectations.
+- **The report's `codex project config:` line** (decision 53's three texts) is not
+  written: `report::render` sees only the `Run`, which does not record the caps it
+  started under.
+- **The Codex first-turn marker** (above) is still open.
+- **T8-RR2** (the `<run_head>...HEAD` range after `resume --rebaseline`) is still
+  open: the driver passes `DiffSoFar`'s fields through unchanged.

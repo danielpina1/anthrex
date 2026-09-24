@@ -15,7 +15,7 @@ use super::{clock, complete, done, gates, holds, ladder, merge, outbox, restore,
 use crate::run::contract::{handover_prompt, is_stall_nudge, worker_prompt};
 use crate::run::env::profile_env;
 use crate::run::model::{AgentRound, FreshSession, OpId, Run, StallState, Task, TaskEvent};
-use crate::run::role_launch::{jitter_ms, session_uuid, worker_spec};
+use crate::run::role_launch::{jitter_ms, session_uuid_of, worker_spec};
 
 /// The scheduler, run after every event: runnability, then whatever the run's state
 /// allows to start, then clean-up and delivery.
@@ -294,7 +294,7 @@ fn launch(
     let spec = worker_spec(run, task);
     let first_turn = first_turn(run, task);
     let name = format!("{}/{}.w{}", run.short(), task.id(), task.session);
-    let uuid = (task.route.runtime == Runtime::Claude).then(|| session_uuid(&run.id, op));
+    let uuid = (task.route.runtime == Runtime::Claude).then(|| session_uuid_of(run, op));
     let jitter = jitter_ms(&run.id, task.id(), task.session);
     let round = new_round(
         AgentRole::Worker,
@@ -385,6 +385,7 @@ pub(super) fn new_round(
         count_turn: 0,
         interrupted: false,
         relaunch: None,
+        closed_pid: None,
     }
 }
 

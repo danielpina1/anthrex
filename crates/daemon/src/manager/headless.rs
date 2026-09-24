@@ -97,6 +97,9 @@ pub(super) struct HeadlessWindow {
     /// installed is recorded (ruling T18-I1). The send or resume stops at its next step
     /// and never installs a new process.
     pub(super) cancel: Option<watch::Sender<Option<Cancel>>>,
+    /// The engine retired or killed the session (`headless_end.rs`): its process's exit
+    /// ends the window, even a Codex exit after its turn ended.
+    pub(super) ending: bool,
 }
 
 /// A kill or interrupt that reached a window between its old process and its new one.
@@ -125,6 +128,7 @@ impl HeadlessWindow {
             start_waiter: None,
             start_failure: None,
             cancel: None,
+            ending: false,
         }
     }
 
@@ -404,6 +408,7 @@ impl WindowManager {
             // `Attention`. An exit before any turn ended in it is a death (T17-I1).
             if runtime == Runtime::Codex
                 && matches!(event, SessionEvent::ProcessExited { .. })
+                && !window.ending
                 && window.turn_ended_in_process
                 && !window.status.turn_open
             {

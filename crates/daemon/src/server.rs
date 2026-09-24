@@ -4,11 +4,13 @@ mod conversation;
 mod git_wiring;
 mod headless_guard;
 mod requests;
+mod run_api;
 
 pub use git_wiring::GitWiring;
 
 use crate::git::GitRegistry;
 use crate::manager::WindowManager;
+use crate::run::driver::RunService;
 use crate::window::Attachment;
 use bytes::Bytes;
 use proto::messages::request;
@@ -20,7 +22,9 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 /// Runs until `shutdown` is cancelled. Each connection gets its own task. The daemon's
-/// one [`GitRegistry`] and its publications come from [`GitWiring`].
+/// one [`GitRegistry`] and its publications come from [`GitWiring`], built by
+/// `lifecycle::run` and shared with the run engine (decision 22); `runs` answers every
+/// run request (`server/run_api.rs`).
 ///
 /// Where registration and unregistration happen is not one rule but two, and the
 /// difference matters. A plain create and a plain `Remove { remove_worktree: false }`
@@ -38,13 +42,14 @@ use tokio_util::sync::CancellationToken;
 pub async fn serve(
     listener: UnixListener,
     manager: Arc<WindowManager>,
-    git: config::Git,
+    git: GitWiring,
+    runs: Arc<RunService>,
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
     let GitWiring {
         registry: git_registry,
         publish_rx,
-    } = GitWiring::new(git);
+    } = git;
     let (git_tx, _) = broadcast::channel::<DaemonMsg>(256);
     tokio::spawn(git_wiring::pump_git(
         publish_rx,
@@ -72,9 +77,9 @@ pub async fn serve(
                 let manager = manager.clone();
                 let git_registry = git_registry.clone();
                 let git_tx = git_tx.clone();
-                let shutdown = shutdown.clone();
+                let (runs, shutdown) = (runs.clone(), shutdown.clone());
                 tokio::spawn(async move {
-                    if let Err(e) = handle_client(stream, manager, git_registry, git_tx, shutdown).await {
+                    if let Err(e) = handle_client(stream, manager, git_registry, git_tx, runs, shutdown).await {
                         tracing::warn!(error = %e, "client connection ended with error");
                     }
                 });
@@ -129,6 +134,7 @@ async fn handle_client(
     manager: Arc<WindowManager>,
     git_registry: Arc<GitRegistry>,
     git_tx: broadcast::Sender<DaemonMsg>,
+    runs: Arc<RunService>,
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
     let (mut rd, mut wr) = stream.into_split();
@@ -239,6 +245,7 @@ async fn handle_client(
     // task, so this loop never waits on one.
     let conversations =
         conversation::ConversationTask::spawn(manager.clone(), out_tx.clone(), shutdown.clone());
+    let mut run_api = run_api::RunApi::new(runs, out_tx.clone());
 
     let mut subscription: Option<Subscription> = None;
     let mut connection_error = None;
@@ -442,19 +449,10 @@ async fn handle_client(
                 }
                 None
             }
-            // M8a.22 wires the run engine in; until then every run request is refused
-            // the same way, and a tool call gets the shape its caller expects
-            // (`ToolResult`) rather than the generic `Refused`.
-            ClientMsg::Run(request) => Some(DaemonMsg::Run(match request {
-                proto::RunRequest::Tool(_) => proto::RunReply::ToolResult {
-                    ok: false,
-                    text: "runs are not available yet".into(),
-                },
-                _ => proto::RunReply::Refused {
-                    request: "run".into(),
-                    message: "runs are not available yet".into(),
-                },
-            })),
+            ClientMsg::Run(request) => {
+                run_api.handle(request);
+                None
+            }
         };
         if let Some(reply) = reply
             && out_tx.send(reply).await.is_err()
@@ -471,6 +469,9 @@ async fn handle_client(
     conversations.stop().await;
     changes_task.abort();
     git_task.abort();
+    // `run_api` holds an `out_tx` clone (and ends its subscription): gone before the
+    // writer is awaited, or the writer never sees its channel close.
+    drop(run_api);
     drop(out_tx);
     let _ = writer.await;
     tracing::debug!("client disconnected");

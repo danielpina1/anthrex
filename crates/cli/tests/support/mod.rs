@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+pub mod run_harness;
+pub mod run_plans;
+
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Output, Stdio};

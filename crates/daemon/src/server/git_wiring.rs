@@ -59,7 +59,12 @@ impl GitWiring {
 /// Off the manager lock (AGENTS.md hard rule 10): `list()` returns owned `WindowInfo`s
 /// and has released the lock before the first `register` runs.
 pub(super) fn register_restored_roots(manager: &WindowManager, git_registry: &GitRegistry) {
+    // A headless window's root is the run engine's to watch (decision 22): it
+    // registers each run worktree once, whatever windows it has.
     for window in manager.list() {
+        if window.kind == proto::WindowKind::Headless {
+            continue;
+        }
         if let Some(root) = window.worktree {
             git_registry.register(root);
         }

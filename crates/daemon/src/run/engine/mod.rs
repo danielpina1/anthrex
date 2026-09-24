@@ -204,6 +204,11 @@ pub enum AgentSignal {
     SubagentStop {
         agent_id: String,
     },
+    /// The usage of a turn Claude Code started by itself while a delivered turn waits
+    /// (`WindowSignalKind::Unprompted`, ruling T7-N1): spend, never a turn end.
+    Spend {
+        usage: TokenUsage,
+    },
     /// Any other event: text, a tool result, compaction, an unknown line.
     Activity,
     ProcessExited {
