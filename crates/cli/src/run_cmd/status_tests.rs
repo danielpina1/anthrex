@@ -286,6 +286,7 @@ fn base_moved_prompt_lists_the_commits() {
     assert!(text.ends_with("  … and 70 more\n"), "{text}");
 
     // Under the cap: no "more" line.
+    // Under the cap: no "more" line; one commit is singular (ruling T23-minors, M7).
     let info = BaseMovedInfo {
         commits: vec!["abc1234 Bo: one".into()],
         total: 1,
@@ -293,7 +294,7 @@ fn base_moved_prompt_lists_the_commits() {
     };
     assert_eq!(
         base_moved_listing("main", &info),
-        "main moved since the run started (1111111..2222222, 1 commits):\n  abc1234 Bo: one\n"
+        "main moved since the run started (1111111..2222222, 1 commit):\n  abc1234 Bo: one\n"
     );
 }
 
@@ -313,4 +314,30 @@ fn bounces_column_text() {
         ..GateCounts::default()
     };
     assert_eq!(bounces_text(&counts), "proof 4");
+}
+
+/// Ruling T23-minors, M4: a cell as wide as its column or wider still ends in a space,
+/// so it never runs into the next one.
+#[test]
+fn long_cells_keep_a_space() {
+    let mut run = example();
+    run.tasks[3].bounces = GateCounts {
+        done: 1,
+        check: 2,
+        review: 3,
+        ..GateCounts::default()
+    };
+    run.tasks[3].route.model = "claude-sonnet-5-with-a-very-long-name".into();
+    run.tasks[3].id = "t-long".into();
+    let text = run_block(&run);
+    let row = text.lines().find(|l| l.contains("t-long")).unwrap();
+    assert_eq!(
+        row,
+        "  t-long S    none   blocked        3    done 1, check 2, review 3 claude claude-sonnet-5-with-a-very-long-name low 7"
+    );
+    // Cells that fit keep the spec's columns exactly.
+    assert_eq!(
+        run_block(&example()),
+        EXAMPLE.replacen("2/4 merged", "1/4 merged", 1)
+    );
 }

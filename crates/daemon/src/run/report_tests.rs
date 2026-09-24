@@ -318,7 +318,7 @@ fn containment_reports_the_codex_project_config_branch() {
         ),
         (
             CodexProjectConfig::Loaded,
-            "codex project config: loaded by this CLI\n",
+            "codex project config: loaded (this Codex CLI cannot exclude it)\n",
         ),
     ] {
         run.codex_project_config = Some(branch);

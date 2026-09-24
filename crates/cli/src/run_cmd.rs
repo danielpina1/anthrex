@@ -1,15 +1,17 @@
 //! `anthrex run …` (M8a.23): the one-shot commands that drive the daemon's run API
 //! (`RunRequest`/`RunReply`, decisions 20 and 53, the brief's CLI section). Every request
-//! waits [`RUN_REQUEST_TIMEOUT`]; every `Refused` prints the daemon's message and exits 1.
+//! waits [`RUN_REQUEST_TIMEOUT`] ([`FINISH_REQUEST_TIMEOUT`] for accept and discard); every `Refused` prints the daemon's message and exits 1.
 
+mod finish;
 mod status;
+
+use finish::{accept, confirm_id};
 
 use crate::client::CliClient;
 use clap::{Args, Subcommand};
 use proto::{
     ClientMsg, DaemonMsg, EditFile, FinishAction, RunInfo, RunReply, RunRequest, RunsSnapshot,
 };
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -18,8 +20,21 @@ use std::time::Duration;
 /// daemon is still answering.
 pub const RUN_REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 
-/// The text a wrong typed or `--confirm` id gets.
-const CONFIRM_MISMATCH: &str = "confirmation does not match the run id";
+/// `run accept` and `run discard`'s reply bound (ruling T23-I1): the daemon's merge runs
+/// under `ACCEPT_MERGE_TIMEOUT` and is never shortened (the user's hooks and signing run
+/// inside it); 60 s more covers the request's own git reads and the clean-up's first
+/// calls. A CLI that gave up sooner would report a failure for an accept the daemon then
+/// completes.
+pub const FINISH_REQUEST_TIMEOUT: Duration =
+    daemon::run::git::ACCEPT_MERGE_TIMEOUT.saturating_add(Duration::from_secs(60));
+
+/// The reply bound for `request`.
+fn request_timeout(request: &RunRequest) -> Duration {
+    match request {
+        RunRequest::Finish { .. } => FINISH_REQUEST_TIMEOUT,
+        _ => RUN_REQUEST_TIMEOUT,
+    }
+}
 
 #[derive(Args, Debug)]
 pub struct RunArgs {
@@ -264,57 +279,6 @@ async fn start(
     Ok(())
 }
 
-/// `run accept` (decision 20): ask before merging unless `--yes`; a moved base is listed
-/// and needs its own yes, or `--base` naming the listed head. A yes to it resends
-/// `confirm = "<id>@<to>"`.
-async fn accept(
-    runs: &mut Runs,
-    info: &RunInfo,
-    yes: bool,
-    base: Option<&str>,
-) -> anyhow::Result<()> {
-    let run_id = &info.run_id;
-    let mut asked = yes;
-    let mut confirm = None;
-    loop {
-        let reply = runs
-            .finish(run_id, FinishAction::Accept, confirm.take())
-            .await?;
-        let RunReply::ConfirmNeeded {
-            prompt, base_moved, ..
-        } = reply
-        else {
-            return print_outcome(reply);
-        };
-        if !asked {
-            if !ask_yes(&format!("{prompt} [y/N] ")).await? {
-                anyhow::bail!("not merged");
-            }
-            asked = true;
-        }
-        confirm = Some(match base_moved {
-            None => run_id.clone(),
-            Some(moved) => {
-                eprint!("{}", status::base_moved_listing(&info.base_branch, &moved));
-                match base {
-                    Some(sha) if sha == moved.to => {}
-                    Some(sha) => anyhow::bail!(
-                        "--base {sha} is not the listed head {}; not merged",
-                        moved.to
-                    ),
-                    None => {
-                        let question = status::base_moved_question(&info.base_branch, &moved);
-                        if !ask_yes(&question).await? {
-                            anyhow::bail!("not merged");
-                        }
-                    }
-                }
-                format!("{run_id}@{}", moved.to)
-            }
-        });
-    }
-}
-
 /// `Done` prints its message; `Refused` and anything else is the command's error.
 fn print_outcome(reply: RunReply) -> anyhow::Result<()> {
     match reply {
@@ -327,38 +291,6 @@ fn print_outcome(reply: RunReply) -> anyhow::Result<()> {
         RunReply::Refused { message, .. } => anyhow::bail!(message),
         other => anyhow::bail!("unexpected reply: {other:?}"),
     }
-}
-
-/// `--confirm`, or the run id typed after `prompt`; anything else is refused.
-async fn confirm_id(run_id: &str, given: Option<String>, prompt: &str) -> anyhow::Result<()> {
-    let typed = match given {
-        Some(given) => given,
-        None => read_answer(&format!("{prompt}\ntype the run id to confirm: ")).await?,
-    };
-    if typed.trim() != run_id {
-        anyhow::bail!(CONFIRM_MISMATCH);
-    }
-    Ok(())
-}
-
-async fn ask_yes(question: &str) -> anyhow::Result<bool> {
-    let answer = read_answer(question).await?;
-    Ok(matches!(
-        answer.trim().to_ascii_lowercase().as_str(),
-        "y" | "yes"
-    ))
-}
-
-/// Prints `prompt` on stderr and reads one line of stdin (empty at end of input).
-async fn read_answer(prompt: &str) -> anyhow::Result<String> {
-    eprint!("{prompt}");
-    let _ = std::io::stderr().flush();
-    let line = tokio::task::spawn_blocking(|| {
-        let mut line = String::new();
-        std::io::stdin().read_line(&mut line).map(|_| line)
-    })
-    .await??;
-    Ok(line)
 }
 
 /// `run` names a run by its id, or by a prefix or suffix of it matching exactly one run.
@@ -385,7 +317,7 @@ pub fn resolve_run(runs: &[RunInfo], run: &str) -> Result<String, String> {
 }
 
 /// One connection to the daemon for one command.
-struct Runs {
+pub(crate) struct Runs {
     client: CliClient,
 }
 
@@ -397,9 +329,10 @@ impl Runs {
     }
 
     async fn request(&mut self, request: RunRequest) -> anyhow::Result<RunReply> {
+        let timeout = request_timeout(&request);
         match self
             .client
-            .request_with_timeout(ClientMsg::Run(request), RUN_REQUEST_TIMEOUT)
+            .request_with_timeout(ClientMsg::Run(request), timeout)
             .await?
         {
             DaemonMsg::Run(reply) => Ok(reply),
@@ -414,7 +347,7 @@ impl Runs {
         print_outcome(reply)
     }
 
-    async fn finish(
+    pub(crate) async fn finish(
         &mut self,
         run_id: &str,
         action: FinishAction,
@@ -448,8 +381,51 @@ impl Runs {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_run, status};
-    use proto::RunInfo;
+    use super::finish::base_matches;
+    use super::{RUN_REQUEST_TIMEOUT, request_timeout, resolve_run, status};
+    use daemon::run::git::ACCEPT_MERGE_TIMEOUT;
+    use proto::{FinishAction, RunInfo, RunRequest};
+    use std::time::Duration;
+
+    /// Ruling T23-I1: accept and discard outwait the daemon's own merge bound, whatever
+    /// it becomes; every other request keeps `RUN_REQUEST_TIMEOUT`.
+    #[test]
+    fn finish_requests_outwait_the_accept_merge() {
+        for action in [FinishAction::Accept, FinishAction::Discard] {
+            let finish = RunRequest::Finish {
+                run_id: "r".into(),
+                action,
+                confirm: None,
+            };
+            assert!(
+                request_timeout(&finish) >= ACCEPT_MERGE_TIMEOUT + Duration::from_secs(60),
+                "{action:?}: {:?}",
+                request_timeout(&finish)
+            );
+        }
+        assert_eq!(request_timeout(&RunRequest::List), RUN_REQUEST_TIMEOUT);
+        let approve = RunRequest::Approve { run_id: "r".into() };
+        assert_eq!(request_timeout(&approve), RUN_REQUEST_TIMEOUT);
+    }
+
+    /// Ruling T23-I2: `--base` takes the listed head or any hex prefix of it of at least
+    /// seven characters.
+    #[test]
+    fn base_accepts_the_listed_head_or_a_prefix_of_it() {
+        let to = "0a04f693cbc5ae9b25fd8a2f3c5ad94ae2252ecb";
+        for given in [to, "0a04f69", "0a04f693cbc5", "0A04F69"] {
+            assert!(base_matches(given, to), "{given}");
+        }
+        for given in [
+            "0a04f6",
+            "",
+            "0a04f6x",
+            "1a04f69",
+            "0a04f693cbc5ae9b25fd8a2f3c5ad94ae2252ecb0",
+        ] {
+            assert!(!base_matches(given, to), "{given}");
+        }
+    }
 
     fn runs(ids: &[&str]) -> Vec<RunInfo> {
         ids.iter()

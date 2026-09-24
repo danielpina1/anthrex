@@ -72,9 +72,27 @@ fn row(
     route: &str,
     windows: &str,
 ) -> String {
-    let line =
-        format!("  {id:<5}{size:<5}{mode:<7}{state:<15}{rung:<5}{bounces:<15}{route:<31}{windows}");
+    let line = format!(
+        "  {}{}{}{}{}{}{}{windows}",
+        cell(id, 5),
+        cell(size, 5),
+        cell(mode, 7),
+        cell(state, 15),
+        cell(rung, 5),
+        cell(bounces, 15),
+        cell(route, 31)
+    );
     format!("{}\n", line.trim_end())
+}
+
+/// `text` padded to `width` characters; a cell as wide as its column or wider ends in
+/// one space instead, so it never runs into the next column (ruling T23-minors, M4).
+fn cell(text: &str, width: usize) -> String {
+    if text.chars().count() < width {
+        format!("{text:<width$}")
+    } else {
+        format!("{text} ")
+    }
 }
 
 fn task_row(task: &TaskInfo) -> String {
@@ -167,10 +185,11 @@ pub fn short(sha: &str) -> &str {
 /// heading, at most [`LISTED_COMMITS`] commits indented two spaces, then how many more.
 pub fn base_moved_listing(base: &str, info: &BaseMovedInfo) -> String {
     let mut out = format!(
-        "{base} moved since the run started ({}..{}, {} commits):\n",
+        "{base} moved since the run started ({}..{}, {} commit{}):\n",
         short(&info.from),
         short(&info.to),
-        info.total
+        info.total,
+        if info.total == 1 { "" } else { "s" }
     );
     let listed = info.commits.len().min(LISTED_COMMITS);
     for commit in &info.commits[..listed] {

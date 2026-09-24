@@ -59,6 +59,10 @@ fn refused_with(out: &Out, message: &str) {
     assert_eq!(out.stderr.lines().last(), Some(message), "{}", out.stderr);
 }
 
+/// Printed before the first prompt when stdin is not a terminal, which it never is here
+/// (ruling T23-minors, M5).
+const HINT: &str = "stdin is not a terminal; pass --yes or --confirm\n";
+
 /// A worker that commits and then waits for a message that never comes: the run stays
 /// `running`.
 fn waiting_worker(h: &RunHarness) {
@@ -131,7 +135,10 @@ fn start_approve_status_accept() {
 
     // By a suffix of the id.
     let suffix = &id[id.len() - 4..];
-    ok(&run(&h, &["approve", suffix], ""));
+    let out = run(&h, &["approve", suffix], "");
+    ok(&out);
+    // A `Done` message is the command's output (ruling T23-minors, M1).
+    assert_eq!(out.stdout, format!("run {id} approved\n"));
 
     let out = run(&h, &["status", &id, "--json"], "");
     ok(&out);
@@ -160,8 +167,8 @@ fn start_approve_status_accept() {
         "merge anthrex/{id}/integration into main in {}? [y/N] ",
         done.root.display()
     );
-    assert!(out.stderr.starts_with(&question), "{}", out.stderr);
-    refused_with(&out, &format!("{question}not merged"));
+    assert_eq!(out.code, 1);
+    assert_eq!(out.stderr, format!("{HINT}{question}\nnot merged\n"));
     assert_eq!(h.run(&id).unwrap().state, RunState::Complete);
 
     ok(&run(&h, &["accept", &id, "--yes"], ""));
@@ -189,18 +196,23 @@ fn start_prints_the_protected_warning() {
 fn reject_needs_the_id() {
     let h = RunHarness::new("");
     let (id, _) = start(&h, &plan("", &[task("t1", &["a.txt"], "")]), &[]);
+    let (other, _) = start(&h, &plan("", &[task("t1", &["a.txt"], "")]), &[]);
+
+    // `status <run>` shows that run only (ruling T23-minors, M1).
+    let out = run(&h, &["status", &other, "--json"], "");
+    ok(&out);
+    let snapshot: RunsSnapshot = serde_json::from_str(&out.stdout).unwrap();
+    let ids: Vec<&str> = snapshot.runs.iter().map(|r| r.run_id.as_str()).collect();
+    assert_eq!(ids, [other.as_str()]);
 
     let out = run(&h, &["reject", &id], "not-the-id\n");
-    assert!(
-        out.stderr
-            .starts_with(&format!("reject run {id}: remove its worktrees and delete its branches?\ntype the run id to confirm: ")),
-        "{}",
-        out.stderr
+    assert_eq!(
+        out.stderr,
+        format!(
+            "{HINT}reject run {id}: remove its worktrees and delete its branches?\ntype the run id to confirm: \nconfirmation does not match the run id\n"
+        )
     );
-    refused_with(
-        &out,
-        "type the run id to confirm: confirmation does not match the run id",
-    );
+    assert_eq!(out.code, 1);
     refused_with(
         &run(&h, &["reject", &id, "--confirm", "other"], ""),
         "confirmation does not match the run id",
@@ -209,6 +221,11 @@ fn reject_needs_the_id() {
 
     ok(&run(&h, &["reject", &id], &format!("{id}\n")));
     h.wait_run(&id, |r| r.state == RunState::Discarded, RUN_WAIT);
+
+    // The scripted form (ruling T23-I3): a suffix, and the full id to --confirm.
+    let suffix = &other[other.len() - 4..];
+    ok(&run(&h, &["reject", suffix, "--confirm", &other], ""));
+    h.wait_run(&other, |r| r.state == RunState::Discarded, RUN_WAIT);
     assert!(no_run_branches(&h.repo));
 }
 
@@ -223,12 +240,11 @@ fn discard_keeps_salvage_refs() {
     std::fs::write(integration.join("left.txt"), "left behind\n").unwrap();
 
     let out = run(&h, &["discard", &id], "nope\n");
-    assert!(
-        out.stderr.starts_with(&format!(
-            "discard run {id}: remove its worktrees and delete its branches?\ntype the run id to confirm: "
-        )),
-        "{}",
-        out.stderr
+    assert_eq!(
+        out.stderr,
+        format!(
+            "{HINT}discard run {id}: remove its worktrees and delete its branches?\ntype the run id to confirm: \nconfirmation does not match the run id\n"
+        )
     );
     assert_eq!(out.code, 1);
     refused_with(
@@ -237,7 +253,9 @@ fn discard_keeps_salvage_refs() {
     );
     assert_eq!(h.run(&id).unwrap().state, RunState::Complete);
 
-    ok(&run(&h, &["discard", &id], &format!("{id}\n")));
+    // The scripted form (ruling T23-I3).
+    let suffix = &id[id.len() - 4..];
+    ok(&run(&h, &["discard", suffix, "--confirm", &id], ""));
     let run_info = h.run(&id).unwrap();
     assert_eq!(run_info.state, RunState::Discarded);
     assert!(no_run_branches(&h.repo));
@@ -348,15 +366,17 @@ fn accept_of_a_running_run_is_refused() {
     waiting_worker(&h);
     let (id, _) = start(&h, &plan("", &[task("t1", &["a.txt"], "")]), &["--yes"]);
     h.wait_run(&id, |r| r.state == RunState::Running, RUN_WAIT);
-    refused_with(
-        &run(&h, &["accept", &id, "--yes"], ""),
-        &format!("run {id} is running; accept applies only to a complete run"),
-    );
+    let refusal = format!("run {id} is running; accept applies only to a complete run");
+    refused_with(&run(&h, &["accept", &id, "--yes"], ""), &refusal);
+    // No question for a run that cannot be accepted (ruling T23-minors, M2).
+    let out = run(&h, &["accept", &id], "y\n");
+    assert_eq!((out.code, out.stderr), (1, format!("{refusal}\n")));
     assert_eq!(h.run(&id).unwrap().state, RunState::Running);
 }
 
-/// Decision 20 through the CLI: a moved base is listed; `--yes` does not answer it,
-/// `--base` naming another head is refused, and a typed yes to both questions merges.
+/// Decision 20 through the CLI: a moved base is listed before any question; `--yes` does
+/// not answer it, `--base` naming another head is refused, and a typed yes to both
+/// questions merges.
 #[test]
 fn accept_onto_a_moved_base_lists_it_and_needs_its_own_yes() {
     let h = RunHarness::new("");
@@ -369,7 +389,7 @@ fn accept_onto_a_moved_base_lists_it_and_needs_its_own_yes() {
     h.git(&["commit", "-qm", "base moves on"]);
     let to = h.git(&["rev-parse", "HEAD"]);
     let listing = format!(
-        "main moved since the run started ({}..{}, 1 commits):\n  {} Test User: base moves on\n",
+        "main moved since the run started ({}..{}, 1 commit):\n  {} Test User: base moves on\n",
         &from[..7],
         &to[..7],
         &to[..7]
@@ -380,23 +400,28 @@ fn accept_onto_a_moved_base_lists_it_and_needs_its_own_yes() {
     );
 
     let out = run(&h, &["accept", &id, "--yes"], "");
-    assert!(
-        out.stderr.starts_with(&format!("{listing}{question}")),
-        "{}",
-        out.stderr
+    assert_eq!(out.code, 1);
+    assert_eq!(
+        out.stderr,
+        format!("{listing}{HINT}{question}\nnot merged\n")
     );
-    refused_with(&out, &format!("{question}not merged"));
     let out = run(&h, &["accept", &id, "--yes", "--base", &from], "");
-    refused_with(
-        &out,
-        &format!("--base {from} is not the listed head {to}; not merged"),
+    assert_eq!(out.code, 1);
+    assert_eq!(
+        out.stderr,
+        format!("{listing}--base {from} is not the listed head {to}; not merged\n")
     );
     assert_eq!(h.git(&["rev-parse", "main"]), to);
     assert_eq!(h.run(&id).unwrap().state, RunState::Complete);
 
     let out = run(&h, &["accept", &id], "y\ny\n");
     ok(&out);
-    assert!(out.stderr.contains(&listing), "{}", out.stderr);
+    assert!(
+        out.stderr
+            .starts_with(&format!("{listing}{HINT}merge anthrex/")),
+        "{}",
+        out.stderr
+    );
     assert_eq!(h.run(&id).unwrap().state, RunState::Accepted);
     assert!(
         h.git(&["log", "-1", "--format=%P", "main"])
@@ -404,7 +429,8 @@ fn accept_onto_a_moved_base_lists_it_and_needs_its_own_yes() {
     );
 }
 
-/// `--base <listed head>` answers the moved-base question for a script.
+/// `--base <listed head>` answers the moved-base question for a script, in the seven
+/// characters the listing shows (ruling T23-I2).
 #[test]
 fn accept_with_the_listed_base_merges() {
     let h = RunHarness::new("");
@@ -415,7 +441,11 @@ fn accept_with_the_listed_base_merges() {
     h.git(&["add", "other.txt"]);
     h.git(&["commit", "-qm", "base moves on"]);
     let to = h.git(&["rev-parse", "HEAD"]);
-    ok(&run(&h, &["accept", &id, "--yes", "--base", &to], ""));
+    ok(&run(&h, &["accept", &id, "--yes", "--base", &to[..7]], ""));
+    assert!(
+        h.git(&["log", "-1", "--format=%P", "main"])
+            .starts_with(&to)
+    );
     assert_eq!(h.run(&id).unwrap().state, RunState::Accepted);
     assert_eq!(h.git(&["show", "main:a.txt"]), "a");
 }

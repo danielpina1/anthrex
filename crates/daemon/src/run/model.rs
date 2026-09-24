@@ -524,12 +524,10 @@ pub struct Run {
     pub outcome: Option<String>,
     pub log: Vec<LogEntry>,
     pub created_at: u64,
-    /// M8a.14: the `finish` edit was applied (decision 37): nothing new starts, and the
-    /// run completes once its live tasks have merged or blocked.
+    /// M8a.14: decision 37's `finish` edit: nothing new starts; done once live tasks end.
     #[serde(default)]
     pub finish_edit: bool,
-    /// M8a.14: the `run accept` or `run discard` request whose `Accept` or `Discard` op
-    /// is in flight; it is answered with the op's result. A restore clears it.
+    /// M8a.14: the accept or discard request its in-flight op answers; a restore clears it.
     #[serde(default)]
     pub finish_reply: Option<u64>,
     /// M8a.14 fix round 1: `run cancel` applied; halted, it discards with no rebaseline.
@@ -547,8 +545,7 @@ pub struct Run {
     /// M8a.22: drawn at start, mixed into session uuids (`role_launch::session_uuid_of`).
     #[serde(default)]
     pub session_nonce: u64,
-    /// M8a.23 (ruling T23-C1): decision 53's Codex branch at start; `None` before.
-    #[serde(default)]
+    #[serde(default)] // M8a.23, ruling T23-C1: decision 53's Codex branch at start.
     pub codex_project_config: Option<crate::headless::argv::CodexProjectConfig>,
 }
 

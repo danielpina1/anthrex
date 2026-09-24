@@ -181,7 +181,7 @@ fn e2e_codex_project_config_follows_cli_caps() {
     until("the report's trusted and codex lines", RUN_WAIT, || {
         let text = report(&run);
         (text.contains("project settings trusted by --trust-project: .codex/config.toml")
-            && text.contains("codex project config: loaded by this CLI\n"))
+            && text.contains("codex project config: loaded (this Codex CLI cannot exclude it)\n"))
         .then_some(())
     });
     let claude = plan("", &[task("t9", &["z.txt"], "")]);

@@ -8261,3 +8261,42 @@ Re-review `task-22-rereview-1.md`; rulings T22-I1b, T22-N2, T22-N3 and T22-N4.
   `accept_with_the_listed_base_merges`; `e2e_codex_project_config_follows_cli_caps`
   checks the report's line in each branch. `edit_from_a_file` cancels `t2` of a plan
   awaiting approval, where tasks are `queued`, not `pending`.
+
+#### M8a.23 fix round 1 (2026-09-24)
+
+Review `task-23-review.md`; rulings T23-I1, T23-I2, T23-I3 and T23-minors.
+
+- **I1.** `run accept` and `run discard` wait `FINISH_REQUEST_TIMEOUT` =
+  `daemon::run::git::ACCEPT_MERGE_TIMEOUT` + 60 s (660 s), built from the daemon's
+  constant; every other run request keeps `RUN_REQUEST_TIMEOUT` (180 s). Test
+  `finish_requests_outwait_the_accept_merge`; row in `docs/timing-budgets.md`.
+- **I2.** `--base` takes the listed head or any hex prefix of it of at least 7
+  characters (case-insensitive); the resend carries the full sha. Unit test
+  `base_accepts_the_listed_head_or_a_prefix_of_it`; `accept_with_the_listed_base_merges`
+  passes the 7-character form.
+- **I3.** `reject <suffix> --confirm <id>` and `discard <suffix> --confirm <id>` succeed
+  in `reject_needs_the_id` and `discard_keeps_salvage_refs` (the typed-id success is
+  kept for reject, whose test now starts two runs). Mutant "every `--confirm` fails"
+  is killed by both.
+- **Minors.**
+  - M1: `start_approve_status_accept` checks `run approve`'s stdout
+    (`run <id> approved`); `reject_needs_the_id` runs `status <id> --json` with two runs
+    and gets one. Both mutants (Done on stderr, no filter) are killed.
+  - M2: `run accept` of a run that is not `complete` is refused before any question,
+    in the daemon's wording (`run <id> is <state>; accept applies only to a complete
+    run`), read from the snapshot the command resolved the run with.
+  - M3: a moved base is listed before any question; a `--base` that names another head
+    is refused right after the listing.
+  - M4: a status cell as wide as its column or wider ends in one space
+    (`long_cells_keep_a_space`); cells that fit keep the spec's columns exactly.
+  - M5: when stdin is not a terminal, `stdin is not a terminal; pass --yes or --confirm`
+    is printed once, before the first prompt; after end of input, or any answer read
+    from a non-terminal, a newline ends the prompt's line, so the error is on its own
+    line.
+  - M6: the third branch's report line is now `codex project config: loaded (this Codex
+    CLI cannot exclude it)` (still invented; supersedes `loaded by this CLI` above).
+  - M7: the accept loop lists a moving base at most 5 times, then exits 1 with
+    `<base> kept moving; not merged; run accept again`; the heading says `1 commit` in
+    the singular; `model.rs` is back to 600 lines (three doc comments shortened).
+- **Files.** The accept flow and the prompts moved to `crates/cli/src/run_cmd/finish.rs`
+  (147 lines); `run_cmd.rs` is 465.

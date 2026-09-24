@@ -129,7 +129,7 @@ fn containment(run: &Run, out: &mut String) {
     let codex = run.codex_project_config.map(|branch| match branch {
         CodexProjectConfig::NotLoaded => "not loaded by this CLI",
         CodexProjectConfig::Excluded => "excluded",
-        CodexProjectConfig::Loaded => "loaded by this CLI",
+        CodexProjectConfig::Loaded => "loaded (this Codex CLI cannot exclude it)",
     });
     if let Some(codex) = codex {
         out.push_str(&format!("codex project config: {codex}\n"));
