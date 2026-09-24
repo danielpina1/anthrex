@@ -1,5 +1,10 @@
+mod headless;
+mod mcp;
+mod roles;
 mod runtime;
 mod script;
+mod stream_claude;
+mod stream_codex;
 
 use std::env;
 use std::fs::{self, File, OpenOptions};
@@ -31,7 +36,10 @@ fn main() {
 
 fn run() -> Result<i32> {
     let args: Vec<String> = env::args().skip(1).collect();
-    write_args(&args)?;
+    if let Some(invocation) = headless::detect(&args) {
+        return headless::run(&args, invocation);
+    }
+    roles::record_args(&roles::fallback().name, &args)?;
     if args.iter().any(|arg| arg == "--version") {
         println!("codex-cli 0.155.0");
         return Ok(0);
@@ -73,14 +81,6 @@ fn run() -> Result<i32> {
     }
     io::copy(&mut input, &mut io::sink()).context("read stdin to EOF")?;
     Ok(0)
-}
-
-fn write_args(args: &[String]) -> Result<()> {
-    let Some(path) = env::var_os("FAKE_AGENT_ARGS_FILE") else {
-        return Ok(());
-    };
-    let encoded = serde_json::to_vec(args).context("encode argv")?;
-    fs::write(&path, encoded).with_context(|| format!("write argv to {}", path.to_string_lossy()))
 }
 
 fn wait_for_eof() -> Result<()> {
@@ -131,20 +131,20 @@ fn run_step(
             content,
             message,
         } => git_commit(&file, &content, &message)?,
-        Step::Transcript(entry) => write_transcript(&entry)?,
         Step::Exit(code) => return Ok(Some(code)),
-        Step::McpCall { tool, args } => {
-            let _ = (tool, args);
-            writeln!(output, "fake-agent: mcp_call arrives in milestone 8")
-                .context("write unsupported mcp_call message")?;
-            output.flush().context("flush mcp_call message")?;
+        Step::Transcript(entry) => write_transcript(&entry)?,
+        // The headless steps (M8a.20) have no meaning on a terminal.
+        other => {
+            writeln!(output, "fake-agent: {other:?} needs a headless mode")
+                .context("write unsupported step message")?;
+            output.flush().context("flush unsupported step message")?;
             return Ok(Some(3));
         }
     }
     Ok(None)
 }
 
-fn write_transcript(entry: &Value) -> Result<()> {
+pub(crate) fn write_transcript(entry: &Value) -> Result<()> {
     let Some(path) = env::var_os("FAKE_AGENT_TRANSCRIPT") else {
         return Ok(());
     };
@@ -170,7 +170,7 @@ fn payload_object(payload: &mut Value) -> Result<&mut Map<String, Value>> {
     payload.as_object_mut().context("payload must be an object")
 }
 
-fn fill_hook_payload(payload: &mut Value, event: &str) -> Result<()> {
+pub(crate) fn fill_hook_payload(payload: &mut Value, event: &str) -> Result<()> {
     let object = payload_object(payload)?;
     object
         .entry("hook_event_name")
@@ -193,7 +193,7 @@ fn fill_hook_payload(payload: &mut Value, event: &str) -> Result<()> {
     Ok(())
 }
 
-fn fill_notify_payload(payload: &mut Value) -> Result<()> {
+pub(crate) fn fill_notify_payload(payload: &mut Value) -> Result<()> {
     let object = payload_object(payload)?;
     object
         .entry("type")
@@ -204,7 +204,7 @@ fn fill_notify_payload(payload: &mut Value) -> Result<()> {
     Ok(())
 }
 
-fn run_hook(command: &str, payload: &Value) -> Result<()> {
+pub(crate) fn run_hook(command: &str, payload: &Value) -> Result<()> {
     let deadline = Instant::now() + STEP_TIMEOUT;
     let bytes = serde_json::to_vec(payload).context("encode hook payload")?;
     let mut child_command = Command::new("/bin/sh");
@@ -226,7 +226,7 @@ fn run_hook(command: &str, payload: &Value) -> Result<()> {
     )
 }
 
-fn run_notify(command: &[String], payload: &Value) -> Result<()> {
+pub(crate) fn run_notify(command: &[String], payload: &Value) -> Result<()> {
     let (program, args) = command.split_first().context("notify argv is empty")?;
     let deadline = Instant::now() + STEP_TIMEOUT;
     let mut child_command = Command::new(program);
@@ -295,7 +295,7 @@ fn wait_for_child(
     Ok(())
 }
 
-fn isolate_process_group(command: &mut Command) {
+pub(crate) fn isolate_process_group(command: &mut Command) {
     // SAFETY: setpgid is async-signal-safe and the closure captures no Rust state.
     unsafe {
         command.pre_exec(|| {
@@ -307,14 +307,14 @@ fn isolate_process_group(command: &mut Command) {
     }
 }
 
-fn kill_process_group(process_group: libc::pid_t) {
+pub(crate) fn kill_process_group(process_group: libc::pid_t) {
     // SAFETY: the negative PID targets only the fresh process group created above.
     unsafe {
         libc::kill(-process_group, libc::SIGKILL);
     }
 }
 
-fn git_commit(file: &str, content: &str, message: &str) -> Result<()> {
+pub(crate) fn git_commit(file: &str, content: &str, message: &str) -> Result<()> {
     fs::write(file, content).with_context(|| format!("write {file}"))?;
     let add = Command::new("git")
         .args(["add", "--", file])

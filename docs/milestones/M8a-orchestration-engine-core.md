@@ -7567,3 +7567,103 @@ reverting it fails its test.
 - **M3: the next CLI subcommand goes in its own file.** `main.rs` is at 590 lines, so
   the next subcommand (for example `run` in M8a.23) goes in its own `*_cmd.rs`, like
   `mcp_cmd.rs` and `tree_cmd.rs`.
+
+### M8a.20 `fake-agent` headless modes (2026-09-24)
+
+- **Package name.** The crate is `anthrex-fake-agent`, so the task's tests run as
+  `cargo test -p anthrex-fake-agent`.
+- **Files beyond the brief's list, for the 600-line rule.**
+  - `src/headless_steps.rs` is a child module of `headless.rs` holding the steps that
+    run inside a turn (`run_step`, `mcp_call`, `sh`). `headless.rs` would otherwise have
+    been 697 lines.
+  - The two shape tests are in `tests/headless_shapes.rs`, not `headless_modes.rs`.
+    Both files share `tests/headless_support/`: `mod.rs` holds the owned processes,
+    the argv builders, the git repository and the stub daemon, and `shape.rs` holds
+    decision 51's check. `headless_modes.rs` would otherwise have been 730 lines.
+- **Turn rules the brief left open.**
+  - A `read_message` at the script position takes the message that opens a turn,
+    including the first one. So a script that starts with
+    `{"read_message":{"expect":"…"}}` checks the first prompt.
+  - `end_turn` ends the turn. In Claude mode, if the next step is not `read_message`,
+    an unprompted turn (`system/init` with no message) starts at once, as M8a.1
+    recorded Claude Code doing. In Codex mode the process exits 0, and the rest of the
+    script runs on the next `exec resume` message. `end_turn` followed by
+    `read_message` behaves the same on both runtimes.
+  - After `fail_turn` or an interrupt, a Claude session waits for the next message
+    before it goes on. A Codex process exits 1 after `turn.failed`, as the real CLI did
+    (M8a.1 item 7).
+  - An interrupt is answered with the recorded `control_response`. During a turn, a
+    `result` with `subtype: "error_during_execution"` and `terminal_reason:
+    "aborted_streaming"` follows. Between turns nothing else follows, since M8a.1 found
+    a late interrupt harmless. `hang`, `wait_ms`, `api_retry`'s delays and `sh` (whose
+    process group is killed) can be interrupted. `mcp_call` cannot.
+  - A Claude `read_message` that times out exits 4. EOF while waiting exits 0.
+- **Script state.**
+  - The position is saved as the index of the next step *before* a step runs. So a
+    process killed in `hang`, or ended by `exit`, resumes after that step. A
+    `read_message` that ends a turn saves its own index instead, so the next process's
+    message is checked by it.
+  - `capture` values and `FAKE_AGENT_RESULT` persist in `<file>.vars` next to `.pos`,
+    so a template or `sh` step still sees them in the next Codex process. The brief
+    names only `.pos`.
+  - A resume finds its claim by session id whatever the argv's role. A resume with no
+    claim claims afresh, or falls back to `FAKE_AGENT_SCRIPT` from step 0.
+- **Output details.**
+  - `print` is an assistant text (Claude) or an `agent_message` item (Codex).
+  - `title` and `bell` write nothing in a headless mode.
+  - `read_line` is an error there (exit 1).
+  - The new steps in the terminal mode print `fake-agent: <step> needs a headless mode`
+    and exit 3. This covers `mcp_call`, because a terminal argv carries no MCP server.
+  - `sh` on Claude is a `Bash` `tool_use` / `tool_result` pair. A non-zero exit gives
+    `is_error: true` with the text `Exit code <n>\n<output>`. On Codex, a non-zero exit
+    emits no item at all (M8a.1 item 7).
+  - A failed Codex `mcp_call` is `status: "failed"` with `error: {message}` and
+    `result: null`, as in the `-mcp-approval-auto` recording. A successful one has
+    `result: {content, structured_content: null}`, as in `-approve`.
+  - Codex `fail_turn` with an error other than `rate_limit` uses the error string as
+    the message.
+  - `deny` and `api_retry` write nothing on Codex.
+  - A `hook` step's payload carries the session's id as `session_id` in a headless
+    mode.
+  - The default turn usage is 10 input and 5 output tokens.
+  - Claude's `mcp_servers` is `[]` without `--mcp-config`.
+- **Input.** A bad Claude stdin line exits 5 from the reader thread at once, with
+  `fake-agent: bad input line` on stderr. An envelope's `session_id` is optional and is
+  not compared with the session's. `FAKE_AGENT_STDIN_FILE` naming a file appends every
+  line. `FAKE_AGENT_ARGS_FILE` naming a file is still overwritten per process, as in
+  milestone 3. In the terminal mode, a directory there gets
+  `<FAKE_AGENT_SCRIPT's stem, or fake-agent>.args`.
+- **Decision 51's check, made precise.**
+  - An event's type is `type`, plus `/subtype` or `/<item.type>`.
+  - `input`, `arguments` and `tool_input` are opaque: only their presence is checked.
+  - Every element of an array the fake writes must be contained in some element of
+    the fixture's array.
+  - Observed recordings are tried first, then the documented file. Only the documented
+    file has the failed turn's synthetic `assistant` line (`error`,
+    `is_api_error_message`), a type the observed files also have.
+  - The stdin fixture and the hook payloads are not stream events and are skipped.
+  - Mutants proved it: an invented `system/init` key and an invented
+    `result.is_error` inside a Codex `mcp_tool_call` both failed the shape tests.
+- **The daemon's parsers read the fake's output.** As a one-off check (not
+  committed), a Claude session (text, `sh`, `deny`, `api_retry`, `fail_turn`, an
+  interrupt) and a Codex turn went through `ClaudeStream::parse_line` and
+  `codex_stream::parse_line`. No line was `Unknown`, and the events were as expected.
+  That covers `Failed { RateLimit }` from the synthetic line, and `Interrupted`.
+- **`anthrex` for `mcp_call_talks_to_a_real_mcp_server`.** The `anthrex` next to
+  `fake-agent` is used when present, which `cargo test --workspace` guarantees.
+  Otherwise it is built once behind a `OnceLock` into `<target>/fake-agent-anthrex`, a
+  separate target directory, so the outer `cargo` cannot hold its lock. That build took
+  about 30 s here.
+- **Carry T17-C1.** Codex mode reads stdin to EOF before anything else it writes. Test:
+  `codex_mode_reads_stdin_to_eof_before_it_starts`.
+  - The test first waits for the argv log, which is written before stdin is read, and
+    only then checks that there is no output for 500 ms.
+  - Without that gate, the first run of a freshly built binary took about 600 ms to
+    start. The check then passed with the read removed, which proved nothing.
+  - With the gate, the same mutant fails.
+- **Bounds.**
+  - `MCP_CALL_TIMEOUT` is 120 s, Codex's own `tool_timeout_sec`, above `anthrex mcp`'s
+    100 s reply timeout.
+  - `sh` and `capture` are bounded at 120 s, and the `git rev-parse` at 5 s.
+  - The tests wait 20 s for a process without an MCP call. For one with an MCP call
+    they wait 150 s, which is `MCP_CALL_TIMEOUT` plus slack.
