@@ -8300,3 +8300,66 @@ Review `task-23-review.md`; rulings T23-I1, T23-I2, T23-I3 and T23-minors.
     the singular; `model.rs` is back to 600 lines (three doc comments shortened).
 - **Files.** The accept flow and the prompts moved to `crates/cli/src/run_cmd/finish.rs`
   (147 lines); `run_cmd.rs` is 465.
+
+### M8a.24 end-to-end scenarios I: gates and review (2026-09-24)
+
+- **Files.** `crates/cli/tests/run_e2e_gates.rs` (the proof, check, rate-limit and
+  fallback scenarios, and the two plan refusals; 293 lines) and `run_e2e_review.rs`
+  (review, dispute, override, minor findings; 262 lines). Shared script builders
+  (`read`, `capture`, `done_tdd`, `finding`, `changes`, `run_json`, `report_with`,
+  `user_texts`) were added to `tests/support/run_plans.rs`.
+- **Bug 1 (daemon): a failed turn's continue came up to a second early.** The engine's
+  `now` is the unix time truncated to a whole second, so `now + rate_limit_retry_secs`
+  could fire `rate_limit_retry_secs - 1` real seconds after the failed turn. The e2e
+  test measured 6.666 s for a 7 s wait. Fix: `engine::clock::not_before(now, secs)` =
+  `now + secs + 1`, used for the worker's and the reviewer's continue and for their
+  `rate_limited_until`. Six engine unit tests that pinned `now + 300` now pin
+  `now + 301`. The other engine timers keep whole-second deadlines; that is recorded in
+  the follow-ups file.
+- **Bug 2 (daemon): a rate-limit streak that ran into its failed turn was counted
+  twice.** Claude writes a synthetic `assistant` line (`is_api_error_message`) just
+  before a failed turn's `result`. It was parsed as `AssistantText`, which the driver
+  sends to the engine as `Activity`. That ended the retry streak, so decision 32's
+  exception ("the streak ran straight into the failure") could never apply to a real
+  Claude session, and `rate_limits["claude"]` was 2. Fix: that line is now
+  `SessionEvent::ApiErrorText` (new variant). The conversation shows it exactly as it
+  showed the assistant text. `observe::translate` maps it to nothing, like a
+  diagnostic. Tests: `a_failed_api_turns_synthetic_message_is_api_error_text`, and the
+  observe test's no-activity list.
+- **Scaffolding fix (fake-agent): `api_retry` paused after its last event.** M8a.20's
+  brief says the events are "`delay_ms` apart", but the step also paused `delay_ms`
+  after the last one. The scenario's silence was then 8 s plus 9 s, not 9 s, and a
+  correct engine interrupted at 13 s. The step now pauses only between its events.
+  Test: `api_retry_pauses_between_its_events_and_not_after_the_last`.
+- **Measuring "the continue came ≥ 7 s after the failed turn."** The fake agent takes
+  a `perl` timestamp in an `sh` step before its retry event, and another on reading
+  the continue. The failed turn is the first stamp plus the script's 9 s `wait_ms`. No
+  output may come between the retry and the failure, or it would end the streak. So
+  the failure's own time cannot be stamped, and the gap is measured this way. The
+  stamps' own cost only adds to the gap. `docs/timing-budgets.md` has the rows.
+- **"Two check records"** is read from `run.json` (`tasks[0].checks`, not on a
+  candidate), since `TaskInfo` shows only the last check.
+- **Override: the candidate check.** A green merge candidate leaves no `CheckRecord`
+  (only a red one does, M8a.14). So the test's check appends its working directory to
+  a log, and the test asserts the last entry is the integration worktree. Recorded in
+  the follow-ups file.
+- **The answer** is sent with `anthrex run edit <id> --file` (a one-edit TOML file),
+  and the override with `anthrex run override <id> t1 --reason trusted`.
+- **Red first.** Nine of the eleven tests passed on their first run: the engine already
+  behaved as specified, and the helpers were written together with the tests. The
+  override test failed first on an assertion of this task's own, beyond the brief
+  (`last_check` on the candidate), which the candidate-check note above replaces. The
+  first-run-green tests, and the override test, were then each shown to be live with
+  an engine mutant that the test kills:
+  - a red run that always fails (tdd red);
+  - output that always matches (tdd did not run);
+  - a check that always passes (check);
+  - the stall clock not suspended (rate limit, its no-interrupt assertion);
+  - `DONE_NUDGE` replaced (fallback);
+  - rule 9's text changed (overlap), and rule 7.2.4's (the L task);
+  - `escalate` kept on the same runtime (two rejections);
+  - a question blocking as environment (dispute);
+  - the override reason dropped (override);
+  - minor findings left out of the report (minor).
+
+  The rate-limit test was red three times, once for each fix above.

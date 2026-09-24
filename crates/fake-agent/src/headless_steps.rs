@@ -76,8 +76,13 @@ impl Runner {
                 times,
             } => {
                 if self.kind == Kind::Claude {
+                    // `delay_ms` apart (M8a.20): the step ends at its last event, so the
+                    // silence after it is the script's next step's (M8a.24).
                     for attempt in 1..=times {
                         self.events.api_retry(&error, attempt, delay_ms)?;
+                        if attempt == times {
+                            break;
+                        }
                         if let Some(id) = self.pause(Duration::from_millis(delay_ms)) {
                             return Ok(Outcome::Interrupted(id));
                         }

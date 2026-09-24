@@ -112,3 +112,65 @@ pub fn until<T>(what: &str, wait: Duration, mut f: impl FnMut() -> Option<T>) ->
         std::thread::sleep(Duration::from_millis(100));
     }
 }
+
+/// `read_message` checking that the message contains `expect`.
+pub fn read(expect: &str) -> Value {
+    json!({"read_message": {"expect": expect}})
+}
+
+pub fn capture(name: &str, cmd: &str) -> Value {
+    json!({"capture": {"name": name, "sh": cmd}})
+}
+
+/// `task_done` for a tdd task: the test and the red commit (`{{red}}` for a capture).
+pub fn done_tdd(test: &str, red: &str) -> Value {
+    json!({"mcp_call": {"tool": "task_done", "args": {"summary": "done", "test": test, "red": red}}})
+}
+
+/// One review finding at `file:line`.
+pub fn finding(severity: &str, file: &str, line: u32, text: &str) -> Value {
+    json!({"severity": severity, "file": file, "line": line, "text": text})
+}
+
+/// `submit_review` with `verdict` `changes` and `findings`.
+pub fn changes(findings: &[Value]) -> Value {
+    json!({"mcp_call": {"tool": "submit_review", "args": {"verdict": "changes", "summary": "needs work", "findings": findings}}})
+}
+
+/// The run's `run.json`, next to its report.
+pub fn run_json(run: &RunInfo) -> Value {
+    let path = run.report_path.with_file_name("run.json");
+    serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap()
+}
+
+/// Waits until the run's report contains `needle` (the report is written at most every
+/// 500 ms), and returns it.
+pub fn report_with(run: &RunInfo, needle: &str) -> String {
+    let wait = Duration::from_secs(10);
+    let deadline = Instant::now() + wait;
+    loop {
+        let text = report(run);
+        if text.contains(needle) {
+            return text;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the report has no {needle:?} within {wait:?}:\n{text}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// The text of every stream-json user message in `<io>/<name>.stdin`'s lines.
+pub fn user_texts(lines: &[String]) -> Vec<String> {
+    lines
+        .iter()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|v| v["type"] == "user")
+        .filter_map(|v| {
+            v["message"]["content"][0]["text"]
+                .as_str()
+                .map(str::to_string)
+        })
+        .collect()
+}

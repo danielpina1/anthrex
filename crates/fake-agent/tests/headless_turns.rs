@@ -283,3 +283,42 @@ fn mcp_call_sends_initialized_between_initialize_and_the_call() {
         json!({"name": "task_done", "arguments": {"summary": "x"}})
     );
 }
+
+/// M8a.24: `api_retry`'s events are `delay_ms` apart, and the step ends at its last
+/// event. A script's silence after its last retry is then its own next step's (M8a.24's
+/// rate-limit scenario counts on it). A pause after the last event would hold this
+/// turn for 60 s, past `RUN`.
+#[test]
+fn api_retry_pauses_between_its_events_and_not_after_the_last() {
+    let dir = tempdir();
+    let script = write_steps(
+        &dir.path().join("s.jsonl"),
+        &[
+            json!({"api_retry": {"error": "rate_limit", "delay_ms": 400, "times": 2}}),
+            json!({"api_retry": {"error": "rate_limit", "delay_ms": 60000, "times": 1}}),
+        ],
+    );
+    let mut agent = Agent::spawn(
+        &claude_argv(Session::New(CLAUDE_ID), None),
+        dir.path(),
+        &[("FAKE_AGENT_SCRIPT", &script)],
+    );
+    let sent = std::time::Instant::now();
+    agent.send(&user_message("go", CLAUDE_ID));
+    let result = agent.until(RUN, is_result);
+    assert_eq!(result["subtype"], "success", "{result}");
+    // The first step's two events are one delay apart.
+    assert!(
+        sent.elapsed() >= std::time::Duration::from_millis(400),
+        "{:?}",
+        sent.elapsed()
+    );
+    let retries = agent
+        .of_type("system")
+        .into_iter()
+        .filter(|v| v["subtype"] == "api_retry")
+        .count();
+    assert_eq!(retries, 3);
+    agent.close_stdin();
+    assert!(agent.wait(RUN).success());
+}

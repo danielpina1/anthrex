@@ -890,3 +890,20 @@ scope.
 - **The Codex first-turn marker** (above) is still open.
 - **T8-RR2** (the `<run_head>...HEAD` range after `resume --rebaseline`) is still
   open: the driver passes `DiffSoFar`'s fields through unchanged.
+
+## From M8a.24 (2026-09-24), for M8a
+
+- **A green merge candidate leaves no check record.** `OpResult::Merged` carries no
+  check result, so only a red candidate becomes a `CheckRecord` with `on_candidate:
+  true` (M8a.14). The report and `TaskInfo.last_check` never show the candidate check
+  a merged task passed, and `run override`'s "it still passes the candidate check"
+  (decision 35) is visible only as the merge itself.
+  `e2e_override_merges_without_approval_and_is_reported` proves the candidate check ran
+  with a check that logs its working directory. Decide whether `Merged` should carry
+  the check's record.
+- **Engine deadlines are whole truncated seconds.** M8a.24 made the failed turn's
+  continue wait at least `rate_limit_retry_secs` (`engine::clock::not_before`). The
+  other engine timers keep `now + secs`, so each can fire up to a second early in real
+  time: the stall clock (`stall_after_secs`), `INTERRUPT_GRACE`, the delivery retry
+  and `ApiRetry`'s `rate_limited_until`. None of them is a promised lower bound that a
+  test measures today.
