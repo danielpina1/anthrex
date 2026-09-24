@@ -921,3 +921,22 @@ scope.
   for the socket, and its `Drop` stops that child whatever the start came to (through
   `anthrex daemon stop` once the socket is up, else by killing the unreaped child).
   Test: `a_slow_starting_daemon_does_not_outlive_its_harness`.
+
+## From M8a.25 (2026-09-24), for M8a
+
+- **A session's signals and tool calls before its `CreateWindow` result are lost.** The
+  engine finds a round by its `window_id`, which it learns from the `Window` result;
+  the session's process starts inside that op, so everything it does before the op's
+  `done` line is written and its `OpDone` stepped is dropped (`signals::on_signal`
+  finds no round) or refused (`task_done` gets `this window is not the current worker
+  of task <id>`). The first `ProcessStarted` was always lost this way; M8a.25 carries
+  that pid in the `Window` result. The rest (an early `TurnEnded`, a quick first
+  `task_done`, a Codex first turn that ends within milliseconds) needs an agent that
+  acts within the few milliseconds of an fsync, so no real CLI is known to hit it; a
+  300 ms hold on the `done` line (`ANTHREX_TEST_DELAY_DONE_MS` on a `CreateWindow`)
+  reproduced it with `fake-agent`: the worker's turn stayed open with no claim.
+  Options: buffer a window's signals until its round has it, and accept a worker tool
+  call whose `RunRef` names the round whose launch is in flight.
+- **`fake-agent`'s `git_commit` step does not create a missing directory** (`a/flag`
+  fails, and the process exits mid-turn). The M8a.25 tests commit into a new directory
+  with `sh` instead.

@@ -8433,3 +8433,80 @@ Review `task-24-review.md`; rulings T24-I1, T24-I2, T24-clock and T24-minors.
     `RunningCommand::try_finish`, which returns `None` on timeout instead of panicking,
     so the kill fallback always runs. Test: `a_dropped_daemon_process_is_killed`
     (red first: the unwound `sleep 3737` child was still running).
+
+### M8a.25 end-to-end scenarios II: ladder, merge, safety, sessions, crashes, and the smoke stage (2026-09-24)
+
+- **Files.** As the brief lists: `run_e2e_merge.rs` (the ladder's stall and mis-sized
+  tests with the merge queue's, 464 lines), `run_e2e_safety.rs` (246),
+  `run_e2e_crash.rs` (248), `run_e2e_sessions.rs` (442), `scripts/pty_smoke_run.py`,
+  and 3 lines in `scripts/pty-smoke.py`. Engine unit tests for the fixes:
+  `engine/tests/merge_override.rs` and `engine/tests/launch_pid.rs`.
+- **Bug 1 (daemon): an overridden task handed back had no session to take the
+  message.** `run override` of a task blocked at rung 3 (its worker killed) sends it to
+  the merge queue; when its candidate conflicted, the hand-back queued the conflict
+  message, but the outbox never resumes a round the engine stopped (`retiring`) and no
+  fresh session was coming, so the task sat in `working` forever. Decision 36 step 6
+  says decision 29 resumes the ended session. Fix: `ladder::reopen_stopped` clears
+  `retiring` on a working task's current worker round once its process has ended and no
+  fresh session is coming, called at the hand-back and at the kill's exit, whichever
+  comes last. Red: `e2e_conflict_is_handed_back_and_resolved` and
+  `e2e_second_conflict_blocks_the_task` (the outbox held the message, no `--resume`
+  process ran); unit tests `a_hand_back_resumes_the_session_rung_3_stopped` and
+  `a_hand_back_before_the_kills_exit_resumes_the_session_once_it_ends`.
+- **Bug 2 (daemon): a session's first process pid was never recorded.** The process
+  starts inside `CreateWindow`, so its `ProcessStarted` reached the engine before any
+  round had the window, and was dropped. A Claude round (one process) never had a pid,
+  so decision 28's reconcile, which examines only a round's recorded pid (T21-I1), could
+  never find a Claude session after a crash. Fix: `OpResult::Window` carries `pid`
+  (`#[serde(default)]`, from `WindowManager::headless_pid`), recorded when the round has
+  none. Red: `e2e_headless_windows_refuse_client_control_while_the_engine_delivers`
+  timed out waiting for the worker's pid in `run.json`; unit test
+  `a_created_window_records_its_first_process`. The wider race (every signal and tool
+  call before the `Window` result is lost) is in the followups file.
+- **Decision 43's ordering mutants (the M8a.22 carry).** The crash test checks, at the
+  moment of each crash, that every intent in the journal is pending in `run.json` or has
+  its `done` line, and that the crashed op is pending. In a `git archive` copy:
+  - every `Persist` deferred (`Some(run) if urgent && false`): **killed** at the first
+    kind (`CreateRunBranch: the crashed op is not pending in run.json`);
+  - `OpDone` sent before the `done` line: **survived** the first version of the test
+    (8 kinds green: the line wins the race by milliseconds). Strengthened with a
+    debug-only hook, `ANTHREX_TEST_DELAY_DONE_MS` (deviation: a test hook in the driver,
+    like decision 48's), which holds each `done` line (but a `CreateWindow`'s) before
+    it is written; the test runs with 300 ms. Then **killed** at `PrepareWorktree`
+    (`op 1 (CreateRunBranch) has no done line, yet run.json no longer holds it
+    pending`). Both copies and their targets were deleted.
+  - The hold exempts `CreateWindow` because holding that op's result exposes the race
+    above (the fake worker's `task_done` was refused and its turn end dropped).
+- **Deviations from the brief's scripts, each for a reason the engine gives.**
+  - `e2e_daemon_restart_…`: the workers `hang` after their commit instead of ending the
+    turn with `read_message`. A worker turn that ends with commits and no `task_done`
+    gets decision 32's `DONE_NUDGE` at once (`fallback.rs`), which a `read_message`
+    expecting `The daemon restarted` would take and fail on (a spec-fixture defect). The
+    turns are therefore open at the restart, which also exercises risk 12's shutdown
+    storm; the resume then continues the script at the `read_message`.
+  - `e2e_second_conflict_…`: `t3`'s worker waits (a scripted gate) until the test sees
+    `t1`'s first conflict, so `t3`'s merge lands between the two candidates. Without it
+    `t3` could merge before `t1`'s first candidate and the second would be clean.
+  - `e2e_red_candidate_…`: `t2`'s worker waits until `t1` has merged, the order the
+    brief asserts. Both files are committed with `sh`: `fake-agent`'s `git_commit`
+    does not create `a/` (followups file).
+  - `e2e_stall_…`: the task is `tdd` with the profile's `single_test`, so session 2's
+    `task_done` can name session 1's red commit.
+  - "The round's `deaths`" is read from `run.json`; the snapshot does not carry it.
+  - The restart test's "no process whose argv holds either session id is alive" reads
+    only the pids the run recorded for the worker rounds (before and after the
+    restart), with `ps -ww -o args= -p <pid>`; nothing is signalled or scanned.
+  - Stage 11c's `run accept` waits `ACCEPT_CMD_TIMEOUT` (900 s), not `RUN_CMD_TIMEOUT`:
+    accept's legal worst case is 668.25 s (`FINISH_REQUEST_TIMEOUT`). Rows in
+    `docs/timing-budgets.md`.
+- **Red first.** Failed first: both conflict tests (bug 1), the refusal test (bug 2),
+  the restart test (its wait predicate panicked before the rounds existed, then needed
+  bug 2's pid), the red candidate (scaffolding: `git_commit` into a missing directory).
+  Passed on their first run: stall, mis-sized, salvage, moved ref, base advanced, base
+  rewritten, crash (all 8 kinds), one death, two deaths, denials. Each was then shown
+  live by an engine mutant it kills: escalation kept on the same runtime (stall), rung
+  3 keeping the size (mis-sized), no salvage of a dirty worktree (cancel), the run ref
+  not guarded (moved ref), ancestry not checked (rewritten), the base move not recorded
+  (advanced), `RESUME_AFTER_EXIT` reworded (one death), three deaths to stall (two
+  deaths), the denial text reworded (denials); the crash test by the two ordering
+  mutants.

@@ -41,6 +41,7 @@ from pty_tree_smoke import (
     run_project_tree_stage,
     run_tree_connectors_stage,
 )
+from pty_smoke_run import run_engine_stage
 
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1687,6 +1688,8 @@ def main():
         fail(f"stage-11b detach did not exit cleanly with status 0 (raw status {status6b})")
     proc6b.close()
     print("ok: the client could still detach cleanly after giving up and reconnecting")
+
+    run_engine_stage(run_cmd, fail)
 
     print("== stage 12: stop the daemon, verify status ==")
     stop_result = run_cmd(["daemon", "stop"], timeout=DAEMON_STOP_CMD_TIMEOUT)
