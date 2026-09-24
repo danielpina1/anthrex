@@ -49,7 +49,13 @@ pub fn worker_git_dirs(
     worktree: &Path,
     roots: &[PathBuf],
 ) -> Result<Vec<PathBuf>, String> {
-    let admin = pinned::find_git_dir(git_common_dir, worktree)?;
+    // The git directory the daemon pinned when it made the worktree, else the one the
+    // repository names (uniquely) for it (fix round 2, R2).
+    let admin = match pinned::pinned(worktree) {
+        Some(pin) if pin.broken.is_none() => pin.git_dir,
+        Some(pin) => return Err(pin.broken.unwrap_or_default()),
+        None => pinned::find_git_dir(git_common_dir, worktree)?,
+    };
     let mut dirs = Vec::with_capacity(roots.len() + 2 * WORKTREE_GIT_FILES.len() + 4);
     for root in roots {
         if !root.starts_with(git_common_dir) {

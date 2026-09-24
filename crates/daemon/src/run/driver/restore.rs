@@ -250,14 +250,15 @@ fn hold_unreconciled(run: &mut Run, now: u64) {
     run.halt_retryable = true;
 }
 
-/// Every engine worktree `run` can have: its integration worktree and each task's
-/// task, review and proof worktrees.
-fn run_worktree_paths(run: &Run) -> Vec<std::path::PathBuf> {
-    let mut paths = vec![run.integration_path()];
+/// Every engine worktree `run` can have, each with the branch its `HEAD` may name: its
+/// integration worktree (the run branch) and each task's task (its branch), review and
+/// proof (detached) worktrees.
+fn run_worktree_paths(run: &Run) -> Vec<(std::path::PathBuf, Option<String>)> {
+    let mut paths = vec![(run.integration_path(), Some(run.run_branch()))];
     for task in &run.tasks {
-        paths.push(task.worktree.clone());
-        paths.push(run.review_path(task.id()));
-        paths.push(run.proof_path(task.id()));
+        paths.push((task.worktree.clone(), Some(task.branch.clone())));
+        paths.push((run.review_path(task.id()), None));
+        paths.push((run.proof_path(task.id()), None));
     }
     paths
 }

@@ -328,12 +328,30 @@ fn verify_done_edge_cases() {
     let r = check(&t, &t.start, &["src/**"], &[], None);
     assert_eq!(r.dirty_tracked, 1, "{r:?}");
 
-    // The branch HEAD is on: another branch, then detached.
+    // The branch HEAD is on: another branch, then detached. Since final fix batch F1's
+    // fix round 2 (R1), a `HEAD` naming any branch but the task's own refuses the check
+    // itself, naming the branch; detached is still reported.
     let t = task(&repo, &wt, "switched");
     out(&t.path, &["switch", "-q", "-c", "scratch-vd"]);
     commit_file(&t.path, "src/s.rs", "s\n", "on scratch");
-    let r = check(&t, &t.start, &["src/**"], &[], None);
-    assert_eq!(r.head_branch.as_deref(), Some("scratch-vd"));
+    let generated = OwnsMatcher::new(&[]).unwrap();
+    let protected = ProtectedMatcher::new(&strings(BUILTIN_PROTECTED)).unwrap();
+    let err = verify_done(
+        real_git(),
+        &t.path,
+        &t.start,
+        &t.start,
+        &strings(&["src/**"]),
+        &generated,
+        &protected,
+        None,
+        T,
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("its HEAD names refs/heads/scratch-vd, not refs/heads/anthrex/vd01/switched"),
+        "{err}"
+    );
     out(&t.path, &["switch", "-q", "--detach"]);
     let r = check(&t, &t.start, &["src/**"], &[], None);
     assert_eq!(r.head_branch, None);

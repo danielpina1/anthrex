@@ -180,7 +180,7 @@ fn ensure_worktree(
             }
         }
     }
-    pin_in(g, root, path)?;
+    pin_in(g, root, path, Some(branch))?;
     if repoint
         && let Some(head) = branch_head(g, root, branch)?
         && head != from
@@ -341,7 +341,7 @@ pub fn prepare_review(
             os(&head),
         ],
     )?;
-    pin_in(g, root, path)?;
+    pin_in(g, root, path, None)?;
     let patch = diff(g, root, &format!("{base}..{head}"))?;
     Ok((base, head, patch))
 }
@@ -362,7 +362,7 @@ pub fn prepare_scratch(
     let g = Git::new(git, timeout);
     if let Some(found) = listed(g, root, path)? {
         if path.exists() {
-            pin_in(g, root, path)?;
+            pin_in(g, root, path, None)?;
             return Ok(false);
         }
         forget_missing(g, root, path, &found)?;
@@ -377,7 +377,7 @@ pub fn prepare_scratch(
             os(at),
         ],
     )?;
-    pin_in(g, root, path)?;
+    pin_in(g, root, path, None)?;
     Ok(true)
 }
 
@@ -406,20 +406,26 @@ pub(crate) fn common_dir(g: Git<'_>, root: &Path) -> Result<PathBuf, String> {
 
 /// M8a final fix batch F1, fix round 1 (N2): pins the engine worktree `path` to its git
 /// directory as the repository lists it, so no later call in it reads its `.git` file.
-fn pin_in(g: Git<'_>, root: &Path, path: &Path) -> Result<(), String> {
+/// Its `HEAD` may name only `branch` (none: always detached), or be detached (fix round
+/// 2, R1).
+fn pin_in(g: Git<'_>, root: &Path, path: &Path, branch: Option<&str>) -> Result<(), String> {
     let common = common_dir(g, root)?;
-    match pinned::pin(&common, path).broken {
+    let head = branch.map(|branch| format!("refs/heads/{branch}"));
+    match pinned::pin(&common, path, head.as_deref()).broken {
         Some(reason) => Err(reason),
         None => Ok(()),
     }
 }
 
-/// Pins each existing worktree of `paths` in the repository whose common directory is
-/// `common` (a daemon restart, before any call in them). One whose git directory cannot
-/// be found is pinned as broken, so every call in it is refused. Blocking.
-pub fn pin_worktrees(common: &Path, paths: &[PathBuf]) {
-    for path in paths.iter().filter(|path| path.exists()) {
-        pinned::pin(common, path);
+/// Pins each existing worktree of `worktrees` (its path, and the branch its `HEAD` may
+/// name, `None` for an always-detached one) in the repository whose common directory is
+/// `common`: a daemon restart, before any call in them. The git directory is found from
+/// the repository's side and must be unique; one that cannot be found is pinned as
+/// broken, so every call in it is refused. Blocking.
+pub fn pin_worktrees(common: &Path, worktrees: &[(PathBuf, Option<String>)]) {
+    for (path, branch) in worktrees.iter().filter(|(path, _)| path.exists()) {
+        let head = branch.as_ref().map(|branch| format!("refs/heads/{branch}"));
+        pinned::pin(common, path, head.as_deref());
     }
 }
 

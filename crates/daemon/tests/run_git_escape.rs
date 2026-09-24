@@ -240,7 +240,13 @@ fn a_restart_pins_existing_worktrees_before_any_call() {
     let common = w.repo.root.join(".git");
     let stray = w.task.with_file_name("not-a-worktree");
     std::fs::create_dir_all(&stray).unwrap();
-    pin_worktrees(&common, &[restarted.clone(), stray.clone()]);
+    pin_worktrees(
+        &common,
+        &[
+            (restarted.clone(), Some("anthrex/es05/t2".to_string())),
+            (stray.clone(), None),
+        ],
+    );
 
     let _ = salvage(
         real_git(),
