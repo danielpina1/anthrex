@@ -222,27 +222,35 @@ pub(super) fn remove_worktree(
     Ok(Reconciled::Replay(OpResult::Removed { salvage_ref }))
 }
 
-/// `Accept`: a base that already contains the run head was accepted. A `MERGE_HEAD` in
-/// `root` equal to the run head is a crash inside a conflicted accept: that merge is
-/// aborted, and the accept is not started.
+/// `Accept`: a base that already contains the run head was accepted. The run head is
+/// the one the op was to merge (`expected_run_head`, `Run.run_head`), not the run
+/// branch's: accept's clean-up deletes that branch, so a crash during the clean-up
+/// leaves no branch to read (final fix batch F1, findings B-I1 and D-6). A
+/// `MERGE_HEAD` in `root` equal to the run head is a crash inside a conflicted accept:
+/// that merge is aborted, and the accept is not started.
 pub(super) fn accept(
     g: Git<'_>,
     root: &Path,
     base_branch: &str,
     run_branch: &str,
+    expected_run_head: &str,
     branch_prefix: &str,
     notes: &mut Vec<String>,
 ) -> Result<Reconciled, String> {
-    let run_ref = format!("refs/heads/{run_branch}");
     let base_ref = format!("refs/heads/{base_branch}");
-    let (Some(run_head), Some(base_head)) = (read(g, root, &run_ref)?, read(g, root, &base_ref)?)
-    else {
+    let run_head = if expected_run_head.is_empty() {
+        // A journal written before the op carried its run head.
+        read(g, root, &format!("refs/heads/{run_branch}"))?
+    } else {
+        Some(expected_run_head.to_string())
+    };
+    let (Some(run_head), Some(base_head)) = (run_head, read(g, root, &base_ref)?) else {
         return Ok(Reconciled::NotStarted);
     };
     if is_ancestor(g, root, &run_head, &base_head)? {
         // Fix round 1, m2: the salvage, removal and branch deletion that follow accept's
-        // merge did not run, so every branch is still there; `OpKind::Accept`'s
-        // contract says so in the outcome and `kept_branches`.
+        // merge did not run (or not all of it), so branches may still be there;
+        // `OpKind::Accept`'s contract says so in the outcome and `kept_branches`.
         return Ok(Reconciled::Replay(OpResult::Finished {
             outcome: format!(
                 "accepted as {}; clean-up did not run before the restart",
@@ -253,7 +261,8 @@ pub(super) fn accept(
     }
     if read(g, root, "MERGE_HEAD")?.as_deref() == Some(run_head.as_str()) {
         // Fix round 1, m5: the user's checkout, as `git::accept` treats it: the scrubbed
-        // environment and `--no-optional-locks`, without decision 18's engine flags.
+        // environment, `--no-optional-locks` and no hooks, without decision 18's
+        // signing override.
         let args = [os("merge"), os("--abort")];
         let output = g.user_write(root, &args)?;
         if !output.success {

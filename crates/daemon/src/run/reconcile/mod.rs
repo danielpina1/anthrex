@@ -182,9 +182,18 @@ fn check(
             root,
             base_branch,
             run_branch,
+            expected_run_head,
             branch_prefix,
             ..
-        } => git::accept(g, root, base_branch, run_branch, branch_prefix, notes),
+        } => git::accept(
+            g,
+            root,
+            base_branch,
+            run_branch,
+            expected_run_head,
+            branch_prefix,
+            notes,
+        ),
         // Decision 44: a resumed session's process was killed above; the rest read, or
         // are idempotent, and are simply issued again.
         OpKind::ResumeSession { .. }

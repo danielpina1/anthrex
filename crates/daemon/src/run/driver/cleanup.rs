@@ -88,6 +88,7 @@ pub(super) async fn accept(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind)
         base_branch,
         expected_base,
         run_branch,
+        expected_run_head,
         message,
         worktrees,
         branch_prefix,
@@ -104,6 +105,7 @@ pub(super) async fn accept(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind)
                 &base_branch,
                 &expected_base,
                 &run_branch,
+                &expected_run_head,
                 &message,
                 t,
             )

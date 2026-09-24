@@ -443,6 +443,10 @@ pub fn accept_op(w: &World) -> OpKind {
         base_branch: "main".into(),
         expected_base: w.run.base_sha.clone(),
         run_branch: w.run.run_branch(),
+        expected_run_head: out(
+            w.root(),
+            &["rev-parse", &format!("refs/heads/{}", w.run.run_branch())],
+        ),
         message: "accept the run".into(),
         worktrees: Vec::new(),
         branch_prefix: format!("anthrex/{}/", w.run.id),
@@ -482,6 +486,51 @@ fn reconcile_accept_already_merged() {
                     format!("anthrex/{}/integration", w.run.id),
                     format!("anthrex/{}/t1", w.run.id),
                 ],
+            })
+        )]
+    );
+}
+
+/// Final fix batch F1, finding B-I1: the daemon died during accept's clean-up, after
+/// the run branch itself was deleted. The run head the op carried still shows the base
+/// has it: the accept is `Finished`, not "request it again" forever.
+#[test]
+fn reconcile_accept_whose_clean_up_deleted_the_run_branch_is_finished() {
+    let mut w = World::new();
+    commit_file(
+        &w.run.integration_path(),
+        "src/a.txt",
+        "a\n",
+        "the run's work",
+    );
+    let kind = accept_op(&w);
+    let run_ref = format!("refs/heads/{}", w.run.run_branch());
+    out(w.root(), &["merge", "-q", "--no-ff", "--no-edit", &run_ref]);
+    let base_head = head(w.root());
+    let integration = w.run.integration_path();
+    out(
+        w.root(),
+        &[
+            "worktree",
+            "remove",
+            "-f",
+            "-f",
+            integration.to_str().unwrap(),
+        ],
+    );
+    out(w.root(), &["update-ref", "-d", &run_ref]);
+    pend(&mut w.run, 9, None, kind);
+
+    assert_eq!(
+        w.reconcile(),
+        vec![(
+            9,
+            Reconciled::Replay(OpResult::Finished {
+                outcome: format!(
+                    "accepted as {}; clean-up did not run before the restart",
+                    &base_head[..7]
+                ),
+                kept_branches: Vec::new(),
             })
         )]
     );

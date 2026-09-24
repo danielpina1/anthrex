@@ -89,3 +89,101 @@ fn e2e_a_base_that_advanced_and_came_back_is_accepted() {
     let parents = h.git(&["log", "-1", "--format=%P", "main"]);
     assert_eq!(parents, format!("{base} {}", run.run_head));
 }
+
+#[test]
+fn e2e_accept_after_the_user_merged_the_run_by_hand_keeps_their_merge() {
+    let h = RunHarness::new("");
+    std::fs::write(h.repo.join("line.txt"), "base\n").unwrap();
+    h.git(&["add", "line.txt"]);
+    h.git(&["commit", "-qm", "add line.txt"]);
+    h.script(
+        "worker-t1-1",
+        &[
+            commit("line.txt", "from the run\n"),
+            done("changed the line"),
+        ],
+    );
+    h.script("reviewer-t1-1", &[approve()]);
+    let id = h.start(&plan("", &[task("t1", &["line.txt"], "")]), true);
+    let run = h.wait_run(&id, complete, RUN_WAIT);
+    std::fs::write(h.repo.join("line.txt"), "from main\n").unwrap();
+    h.git(&["commit", "-qam", "main changes the line"]);
+    let head = h.git(&["rev-parse", "main"]);
+    let reply = accept(&h, &id, Some(format!("{id}@{head}")));
+    let RunReply::Refused { message, .. } = reply else {
+        panic!("{reply:?}");
+    };
+    assert!(message.contains("yourself"), "{message}");
+
+    // Decision 20's advice: the user merges the run branch into main themselves.
+    let run_branch = format!("anthrex/{id}/integration");
+    // It conflicts, as accept said; the user resolves it.
+    let _ = std::process::Command::new("git")
+        .args(["merge", "-q", "--no-ff", "--no-edit", &run_branch])
+        .current_dir(&h.repo)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    std::fs::write(h.repo.join("line.txt"), "resolved\n").unwrap();
+    h.git(&["add", "line.txt"]);
+    h.git(&["commit", "-qm", "my resolution"]);
+    let merged = h.git(&["rev-parse", "main"]);
+    assert_eq!(
+        h.git(&["log", "-1", "--format=%P", "main"]),
+        format!("{head} {}", run.run_head)
+    );
+
+    let listed = match accept(&h, &id, None) {
+        RunReply::ConfirmNeeded {
+            base_moved: Some(moved),
+            ..
+        } => moved,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(listed.to, merged);
+    match accept(&h, &id, Some(format!("{id}@{merged}"))) {
+        RunReply::Done { .. } => {}
+        other => panic!("accept: {other:?}"),
+    }
+    h.wait_run(&id, |r| r.state == RunState::Accepted, RUN_WAIT);
+    assert_eq!(
+        h.git(&["rev-parse", "main"]),
+        merged,
+        "their merge was rewound"
+    );
+    assert_eq!(h.git(&["show", "main:line.txt"]), "resolved");
+}
+
+#[test]
+fn e2e_accept_refuses_a_run_branch_moved_after_complete() {
+    let h = RunHarness::new("");
+    green_scripts(&h.repo);
+    let base = h.git(&["rev-parse", "main"]);
+    let id = h.start(&plan("", &[task("t1", &["a.txt"], "")]), true);
+    let run = h.wait_run(&id, complete, RUN_WAIT);
+    // A quick fix committed in the integration worktree after the run was verified.
+    let integration = integration(t(&run, "t1"));
+    std::fs::write(integration.join("late.txt"), "late\n").unwrap();
+    h.git(&["-C", integration.to_str().unwrap(), "add", "late.txt"]);
+    h.git(&[
+        "-C",
+        integration.to_str().unwrap(),
+        "commit",
+        "-qm",
+        "unverified",
+    ]);
+
+    let reply = accept(&h, &id, Some(id.clone()));
+    let RunReply::Refused { message, .. } = reply else {
+        panic!("{reply:?}");
+    };
+    assert!(
+        message.starts_with(&format!(
+            "refs/heads/anthrex/{id}/integration moved from {}",
+            &run.run_head[..7]
+        )),
+        "{message}"
+    );
+    assert_eq!(h.git(&["rev-parse", "main"]), base, "nothing was merged");
+    assert_eq!(h.run(&id).unwrap().state, RunState::Complete);
+}

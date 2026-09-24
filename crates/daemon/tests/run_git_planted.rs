@@ -125,6 +125,7 @@ fn accept_never_runs_a_planted_hook_in_the_users_checkout() {
         "main",
         &base,
         "anthrex/hk01/integration",
+        &run_head,
         "anthrex: accept run hk01: x",
         T,
     )

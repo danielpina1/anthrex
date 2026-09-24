@@ -335,6 +335,7 @@ pub(super) fn finish(
                 .as_ref()
                 .map_or_else(|| run.base_sha.clone(), |m| m.to.clone()),
             run_branch: run.run_branch(),
+            expected_run_head: run.run_head.clone(),
             message: format!("anthrex: accept run {run_id}: {}", run.goal),
             worktrees,
             branch_prefix,

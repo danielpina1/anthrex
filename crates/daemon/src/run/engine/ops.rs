@@ -206,6 +206,10 @@ pub enum OpKind {
         base_branch: String,
         expected_base: String,
         run_branch: String,
+        /// `Run.run_head`: the head the report, review and checks describe. Accept
+        /// merges this commit, and refuses when the run branch has moved from it (final
+        /// fix batch F1, finding D-6).
+        expected_run_head: String,
         message: String,
         worktrees: Vec<(PathBuf, String)>,
         branch_prefix: String,

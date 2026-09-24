@@ -12,8 +12,8 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::time::Duration;
 
-use super::merge::{AcceptOutcome, read, unmerged};
-use super::worktrees::{forget_missing, listed};
+use super::merge::{AcceptOutcome, read, short, unmerged};
+use super::worktrees::{forget_missing, is_ancestor, listed};
 use super::{DIFF_FLAGS, Git, failure, os};
 
 /// Decision 20's salvage. A worktree with nothing to save (`git status --porcelain`,
@@ -182,8 +182,13 @@ pub fn delete_branches(
             os(&pattern),
         ],
     )?;
+    // The run branch goes last (final fix batch F1, B-I1): until it is gone, a crash
+    // part way leaves the run's own record of what accept merged readable.
+    let run_branch = format!("refs/heads/{prefix}/integration");
+    let mut lines: Vec<&str> = listing.lines().collect();
+    lines.sort_by_key(|line| line.ends_with(&format!(" {run_branch}")));
     let mut skipped = Vec::new();
-    for line in listing.lines() {
+    for line in lines {
         let Some((sha, refname)) = line.split_once(' ') else {
             continue;
         };
@@ -229,27 +234,37 @@ pub const ACCEPT_MERGE_TIMEOUT: Duration = Duration::from_secs(600);
 ///   T9-I1), so accept never merges over one or aborts one;
 /// - `base_branch` is checked out there and its tracked tree is clean;
 /// - `refs/heads/<base_branch>` is still at `expected_base` (the recorded `base_sha`,
-///   or the advanced head the user confirmed).
+///   or the advanced head the user confirmed);
+/// - `refs/heads/<run_branch>` is still at `expected_run_head`, the run head the engine
+///   verified (final fix batch F1, finding D-6), refused otherwise with decision 21's
+///   `refs/heads/<run_branch> moved from <old7> to <new7>`.
 ///
-/// Then `git merge --no-ff --no-edit -m <message> refs/heads/<run branch>`, with
-/// [`ACCEPT_MERGE_TIMEOUT`]. Whatever way that merge fails — a conflict (possible only
-/// against an advanced base), a hook's refusal, or its deadline — a `MERGE_HEAD` it
-/// left is aborted with a fresh deadline, so the base branch and `root` are as they
-/// were; a conflict gives [`AcceptOutcome::Conflict`]. A merge whose first parent turns
-/// out not to be `expected_base` (a commit landed between the check and the merge) is
-/// undone with `git reset --keep HEAD^1`, keeping that commit, and refused as a base
-/// that moved again (ruling T9-m1).
+/// Then `git merge --no-ff --no-edit -m <message> <expected_run_head>` (the verified
+/// commit itself, not whatever the branch holds by then), with [`ACCEPT_MERGE_TIMEOUT`].
+/// A merge commit with parents exactly `(expected_base, expected_run_head)` on the base
+/// is [`AcceptOutcome::Merged`], however git exited, even killed at its deadline (D-3).
+/// Otherwise, whatever way that merge fails — a conflict (possible only against an
+/// advanced base), a refusal, or its deadline — a `MERGE_HEAD` it left is aborted with a
+/// fresh deadline, so the base branch and `root` are as they were; a conflict gives
+/// [`AcceptOutcome::Conflict`]. A base already containing the run head (the user merged
+/// it by hand, as decision 20's conflict text advises) is merged, and left exactly as it
+/// is (D-1). A merge accept itself made whose first parent is not `expected_base` (a
+/// commit landed between the check and the merge) is undone with `git reset --keep
+/// HEAD^1`, keeping that commit, and refused as a base that moved again (ruling T9-m1);
+/// no other commit is ever undone.
 ///
 /// Not decision 18's [`super::WRITE_FLAGS`]: this is the user's checkout, and their
 /// signing applies to their merge. Their hooks do not run ([`super::NO_HOOKS`], final
 /// fix batch F1: a sandboxed worker could once plant one in the repository's hooks
 /// directory).
+#[allow(clippy::too_many_arguments)]
 pub fn accept(
     git: &OsStr,
     root: &Path,
     base_branch: &str,
     expected_base: &str,
     run_branch: &str,
+    expected_run_head: &str,
     message: &str,
     timeout: Duration,
 ) -> Result<AcceptOutcome, String> {
@@ -259,6 +274,7 @@ pub fn accept(
         base_branch,
         expected_base,
         run_branch,
+        expected_run_head,
         message,
         ACCEPT_MERGE_TIMEOUT,
         timeout,
@@ -274,6 +290,7 @@ pub fn accept_with_merge_timeout(
     base_branch: &str,
     expected_base: &str,
     run_branch: &str,
+    expected_run_head: &str,
     message: &str,
     merge_timeout: Duration,
     timeout: Duration,
@@ -315,9 +332,18 @@ pub fn accept_with_merge_timeout(
         return Err(MOVED_AGAIN.to_string());
     }
     let run_ref = format!("refs/heads/{run_branch}");
-    let Some(run_head) = read(g, root, &run_ref)? else {
-        return Err(format!("{run_ref} does not exist"));
-    };
+    match read(g, root, &run_ref)? {
+        Some(head) if head == expected_run_head => {}
+        Some(head) => {
+            return Err(format!(
+                "{run_ref} moved from {} to {}",
+                short(expected_run_head),
+                short(&head)
+            ));
+        }
+        None => return Err(format!("{run_ref} does not exist")),
+    }
+    let run_head = expected_run_head;
 
     let args = [
         os("merge"),
@@ -326,21 +352,29 @@ pub fn accept_with_merge_timeout(
         os("--no-edit"),
         os("-m"),
         os(message),
-        os(&run_ref),
+        os(run_head),
     ];
     // From here on, a `MERGE_HEAD` in `root` is this merge's: one of the user's would
     // have refused above.
     let output = match Git::new(git, merge_timeout).user_write(root, &args) {
         Ok(output) => output,
         Err(err) => {
-            // Killed at its deadline (or never started): git may already have written
-            // the merged index, the tree and `MERGE_HEAD` before the hook it was in.
+            // D-3: killed at its deadline after the merge commit was made (post-merge
+            // work, or a process holding its output open): that is a merge.
+            if let Some(commit) = landed(g, root, &base_ref, expected_base, run_head)? {
+                return Ok(AcceptOutcome::Merged { commit });
+            }
+            // Killed before that (or never started): git may already have written the
+            // merged index, the tree and `MERGE_HEAD`.
             abort_own_merge(g, root, &err)?;
             return Err(err);
         }
     };
     if output.success {
-        return check_first_parent(g, root, expected_base, &run_head);
+        return check_first_parent(g, root, expected_base, run_head, message);
+    }
+    if let Some(commit) = landed(g, root, &base_ref, expected_base, run_head)? {
+        return Ok(AcceptOutcome::Merged { commit });
     }
     let files = unmerged(g, root)?;
     abort_own_merge(g, root, &failure(&args, &output))?;
@@ -349,6 +383,39 @@ pub fn accept_with_merge_timeout(
     } else {
         Ok(AcceptOutcome::Conflict { files })
     }
+}
+
+/// D-3: the base branch's head, when it is exactly accept's merge: a commit whose
+/// parents are `(expected_base, run_head)`.
+fn landed(
+    g: Git<'_>,
+    root: &Path,
+    base_ref: &str,
+    expected_base: &str,
+    run_head: &str,
+) -> Result<Option<String>, String> {
+    let Some(head) = read(g, root, base_ref)? else {
+        return Ok(None);
+    };
+    let (_, parents) = parents_of(g, root, &head)?;
+    Ok((parents == [expected_base, run_head]).then_some(head))
+}
+
+/// `commit` and its parents.
+fn parents_of(g: Git<'_>, root: &Path, commit: &str) -> Result<(String, Vec<String>), String> {
+    let line = g.ok(
+        root,
+        &[
+            os("rev-list"),
+            os("--parents"),
+            os("-n"),
+            os("1"),
+            os(commit),
+        ],
+    )?;
+    let mut shas = line.split_whitespace().map(str::to_string);
+    let head = shas.next().unwrap_or_default();
+    Ok((head, shas.collect()))
 }
 
 const MOVED_AGAIN: &str = "the base branch moved again; run accept again";
@@ -395,34 +462,36 @@ fn mid_merge(root: &Path, cause: &str, abort_error: &str) -> String {
     )
 }
 
-/// Ruling T9-m1: the merge commit accept just made must sit on `expected_base`. A
-/// commit that landed on the base between the check and the merge makes it the first
-/// parent instead; that merge is undone (`reset --keep HEAD^1`, which keeps the
-/// user's commit and refuses to lose local changes) and refused.
+/// Ruling T9-m1, and final fix batch F1's D-1: what a successful `git merge` did.
+/// - `HEAD` still at `expected_base`: git merged nothing, because the base already
+///   contains the run head (the user merged it by hand). That is the accepted state, and
+///   nothing is undone.
+/// - A merge of `(expected_base, run_head)`: accept's own merge.
+/// - A merge of `(other, run_head)` carrying accept's own `message`: a commit landed on
+///   the base between the check and the merge, so accept's merge sits on it. That merge
+///   is undone (`reset --keep HEAD^1`, which keeps the user's commit and refuses to lose
+///   local changes) and refused.
+/// - Anything else is left alone and refused: it is not a commit accept made.
 fn check_first_parent(
     g: Git<'_>,
     root: &Path,
     expected_base: &str,
     run_head: &str,
+    message: &str,
 ) -> Result<AcceptOutcome, String> {
-    let line = g.ok(
-        root,
-        &[
-            os("rev-list"),
-            os("--parents"),
-            os("-n"),
-            os("1"),
-            os("HEAD"),
-        ],
-    )?;
-    let mut shas = line.split_whitespace();
-    let head = shas.next().unwrap_or_default().to_string();
-    let parents: Vec<&str> = shas.collect();
+    let (head, parents) = parents_of(g, root, "HEAD")?;
+    if head == expected_base {
+        return if is_ancestor(g, root, run_head, &head)? {
+            Ok(AcceptOutcome::Merged { commit: head })
+        } else {
+            Err(MOVED_AGAIN.to_string())
+        };
+    }
     match parents.as_slice() {
-        [first, second] if *second == run_head => {
-            if *first == expected_base {
-                return Ok(AcceptOutcome::Merged { commit: head });
-            }
+        [first, second] if second == run_head && first == expected_base => {
+            Ok(AcceptOutcome::Merged { commit: head })
+        }
+        [_, second] if second == run_head && own_message(g, root, &head, message)? => {
             let reset = [os("reset"), os("-q"), os("--keep"), os("HEAD^1")];
             let output = g.user_write(root, &reset)?;
             if !output.success {
@@ -431,14 +500,17 @@ fn check_first_parent(
                      ({}); {} is on the merge commit {}",
                     failure(&reset, &output),
                     root.display(),
-                    super::merge::short(&head)
+                    short(&head)
                 ));
             }
             Err(MOVED_AGAIN.to_string())
         }
-        // Not a merge accept made: git found nothing to merge. Only a base still at
-        // `expected_base` is the accepted state.
-        _ if head == expected_base => Ok(AcceptOutcome::Merged { commit: head }),
         _ => Err(MOVED_AGAIN.to_string()),
     }
+}
+
+/// Whether `commit`'s message is exactly `message`, accept's own.
+fn own_message(g: Git<'_>, root: &Path, commit: &str, message: &str) -> Result<bool, String> {
+    let text = g.ok(root, &[os("log"), os("-1"), os("--format=%B"), os(commit)])?;
+    Ok(text.trim_end() == message.trim_end())
 }

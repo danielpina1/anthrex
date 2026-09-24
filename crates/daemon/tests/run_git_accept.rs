@@ -31,13 +31,17 @@ fn parents(dir: &Path, commit: &str) -> Vec<String> {
         .collect()
 }
 
+/// Accept with the run head the branch holds now (as the engine verified it).
 fn accept_run(repo: &TempRepo, run: &str, expected_base: &str) -> Result<AcceptOutcome, String> {
+    let branch = format!("anthrex/{run}/integration");
+    let run_head = out(&repo.root, &["rev-parse", &format!("refs/heads/{branch}")]);
     accept(
         real_git(),
         &repo.root,
         "main",
         expected_base,
-        &format!("anthrex/{run}/integration"),
+        &branch,
+        &run_head,
         &format!("anthrex: accept run {run}: do the thing"),
         T,
     )
@@ -232,7 +236,7 @@ fn accept_merge_that_outlives_its_deadline_is_aborted() {
     use std::os::unix::fs::PermissionsExt;
     assert_eq!(ACCEPT_MERGE_TIMEOUT, Duration::from_secs(600));
     let repo = repo();
-    let (base, _run_head) = run_branch(&repo, "to01", "a.txt", "run\n");
+    let (base, run_head) = run_branch(&repo, "to01", "a.txt", "run\n");
     write(&repo.root, "notes.txt", "untracked, mine\n");
     let status_before = out(&repo.root, &["status", "--porcelain"]);
 
@@ -260,6 +264,7 @@ fn accept_merge_that_outlives_its_deadline_is_aborted() {
         "main",
         &base,
         "anthrex/to01/integration",
+        &run_head,
         "anthrex: accept run to01: slow signing",
         Duration::from_secs(2),
         T,
@@ -284,7 +289,7 @@ fn accept_merge_that_outlives_its_deadline_is_aborted() {
 #[test]
 fn accept_undoes_its_merge_when_the_base_moved_under_it() {
     let repo = repo();
-    let (base, _run_head) = run_branch(&repo, "mv01", "a.txt", "run\n");
+    let (base, run_head) = run_branch(&repo, "mv01", "a.txt", "run\n");
     // A commit lands on `main` in `root` after accept checked `expected_base` and just
     // before its merge runs.
     let tools = tempfile::tempdir().unwrap();
@@ -305,6 +310,7 @@ done"#,
         "main",
         &base,
         "anthrex/mv01/integration",
+        &run_head,
         "anthrex: accept run mv01: x",
         T,
     );
