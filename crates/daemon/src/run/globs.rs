@@ -231,9 +231,20 @@ pub struct ProtectedMatcher {
 }
 
 impl ProtectedMatcher {
+    /// Final fix batch F1, finding A-I3: an entry `<dir>/**` also matches `<dir>`
+    /// itself, so `.claude/**` catches a `.claude` that is a symlink (or a file), whose
+    /// target would otherwise become the project's agent configuration unseen.
     pub fn new(protected: &[String]) -> Result<Self, String> {
+        let mut entries = protected.to_vec();
+        for entry in protected {
+            if let Some(dir) = entry.strip_suffix("/**")
+                && !dir.is_empty()
+            {
+                entries.push(dir.to_string());
+            }
+        }
         Ok(ProtectedMatcher {
-            inner: OwnsMatcher::build(protected, true)?,
+            inner: OwnsMatcher::build(&entries, true)?,
         })
     }
 

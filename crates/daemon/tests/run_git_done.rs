@@ -362,3 +362,72 @@ fn count_and_diff_so_far_leave_out_a_merged_run_head() {
     );
     assert!(patch.contains("+mine") && !patch.contains("+o1"), "{patch}");
 }
+
+/// Final fix batch F1, finding A-I4: the worker (or a background sub-agent) commits
+/// again while the done check runs. Every check judges the commit it resolved first,
+/// the one the engine gates and merges, not the later `HEAD`.
+#[test]
+fn verify_done_judges_the_head_it_resolved_first() {
+    let repo = repo();
+    commit_file(&repo.root, "AGENTS.md", "rules\n", "instructions");
+    let (_keep, wt) = wt_dir();
+    let t = task(&repo, &wt, "late");
+    let claimed = commit_file(&t.path, "AGENTS.md", "rules, changed\n", "sneak");
+    // After `verify_done`'s first call, a commit that reverts the protected change.
+    let tools = tempfile::tempdir().unwrap();
+    let once = tools.path().join("once");
+    let git = support::run_git::wrapper_git(
+        tools.path(),
+        &format!(
+            r#"case " $* " in *" rev-list "*)
+  if [ ! -e '{once}' ]; then
+    : > '{once}'
+    printf 'rules\n' > '{wt}/AGENTS.md'
+    "$REAL" -C '{wt}' -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -qam revert || exit 99
+  fi;;
+esac"#,
+            once = once.display(),
+            wt = t.path.display()
+        ),
+    );
+    let generated = OwnsMatcher::new(&[]).unwrap();
+    let protected = ProtectedMatcher::new(&strings(BUILTIN_PROTECTED)).unwrap();
+    let r = verify_done(
+        git.as_os_str(),
+        &t.path,
+        &t.start,
+        &t.start,
+        &strings(&["src/**"]),
+        &generated,
+        &protected,
+        None,
+        T,
+    )
+    .unwrap();
+    assert!(once.exists(), "the late commit happened during the check");
+    assert_ne!(head(&t.path), claimed);
+    assert_eq!(r.head, claimed);
+    assert_eq!(r.commits, 1, "{r:?}");
+    assert_eq!(r.protected_changed, strings(&["AGENTS.md"]), "{r:?}");
+}
+
+/// Final fix batch F1, finding A-I3: `.claude/**` and `.codex/**` must catch `.claude`
+/// and `.codex` themselves. A committed symlink `.claude -> docs/agent` makes
+/// `docs/agent/settings.json` the project's Claude settings.
+#[test]
+fn verify_done_catches_a_protected_directory_replaced_by_a_symlink() {
+    let repo = repo();
+    let (_keep, wt) = wt_dir();
+    for (i, dir) in [".claude", ".codex", ".CLAUDE"].into_iter().enumerate() {
+        let t = task(&repo, &wt, &format!("sym{i}"));
+        write(&t.path, "docs/agent/settings.json", "{\"hooks\": {}}\n");
+        std::os::unix::fs::symlink("docs/agent", t.path.join(dir)).unwrap();
+        out(&t.path, &["add", "-A"]);
+        out(&t.path, &["commit", "-q", "-m", "link"]);
+        let r = check(&t, &t.start, &["**"], &[], None);
+        assert_eq!(r.protected_changed, strings(&[dir]), "{dir}: {r:?}");
+        // Named exactly, it is allowed, as decision 56 allows any protected path.
+        let r = check(&t, &t.start, &[dir, "docs/**"], &[], None);
+        assert!(r.protected_changed.is_empty(), "{dir}: {r:?}");
+    }
+}
