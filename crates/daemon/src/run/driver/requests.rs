@@ -22,6 +22,7 @@ use crate::run::model::{ClaudeAuth, Run};
 use crate::run::plan::{
     BuildContext, parse_plan, random_suffix, resolve_profile, run_id_taken, slug,
 };
+use crate::run::roster::{escalate, pick_reviewer};
 use crate::run::validate::EditScope;
 use crate::worktree::repo_worktrees_dir;
 
@@ -54,10 +55,25 @@ fn random_nonce() -> u64 {
     hasher.finish().max(1)
 }
 
-/// Whether any task (its worker) runs on `runtime`: decision 53's "a run with at least
-/// one Claude (Codex) task", and decision 50's.
-fn has_task_on(run: &Run, runtime: Runtime) -> bool {
-    run.tasks.iter().any(|t| t.route.runtime == runtime)
+/// Whether any session the run can launch runs on `runtime` (ruling T22-I1: decisions
+/// 50 and 53 cover every runtime the run launches). For each task: its worker's route,
+/// its reviewer's (`review_route`, on the peer runtime), and the rung-2 route decision
+/// 39's escalation may move the worker to, with that route's reviewer. A later rung
+/// re-resolves the same roster, so it can reach no runtime outside these.
+fn launches(run: &Run, runtime: Runtime) -> bool {
+    run.tasks.iter().any(|t| {
+        let escalated = escalate(&run.roster, &t.route);
+        let escalated_review = t
+            .review_level
+            .map(|level| pick_reviewer(&run.roster, &escalated, level).runtime);
+        [
+            Some(t.route.runtime),
+            t.review_route.as_ref().map(|r| r.runtime),
+            Some(escalated.runtime),
+            escalated_review,
+        ]
+        .contains(&Some(runtime))
+    })
 }
 
 /// Every branch under `refs/heads/anthrex/` (decision 15's redraw test).
@@ -243,7 +259,7 @@ impl RunService {
         })?;
         run.session_nonce = random_nonce();
 
-        let claude = has_task_on(&run, Runtime::Claude);
+        let claude = launches(&run, Runtime::Claude);
         if claude
             && run.limits.claude_auth == ClaudeAuth::ApiKey
             && std::env::var_os("ANTHROPIC_API_KEY").is_none()
@@ -271,8 +287,9 @@ impl RunService {
 
     /// Decision 53: the project settings each runtime's sessions would load unasked, by
     /// the caps the sessions are launched with. Claude's only when it cannot exclude
-    /// them and the run has a Claude task; Codex's only when it loads project config
-    /// with no exclusion and the run has a Codex task.
+    /// them and the run launches a Claude session (worker or reviewer, ruling T22-I1);
+    /// Codex's only when it loads project config with no exclusion and the run launches
+    /// a Codex session.
     async fn project_settings(
         &self,
         git: &OsString,
@@ -282,8 +299,8 @@ impl RunService {
         timeout: Duration,
     ) -> Result<Vec<(&'static str, Vec<String>)>, String> {
         let caps = self.ctx.cli_caps;
-        let claude = has_task_on(run, Runtime::Claude) && caps.claude_user_settings_only.is_none();
-        let codex = has_task_on(run, Runtime::Codex)
+        let claude = launches(run, Runtime::Claude) && caps.claude_user_settings_only.is_none();
+        let codex = launches(run, Runtime::Codex)
             && caps.codex_loads_project_config
             && caps.codex_user_config_only.is_none();
         let mut found = Vec::new();

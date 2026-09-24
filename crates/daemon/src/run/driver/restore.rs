@@ -10,14 +10,16 @@ use std::time::Duration;
 use super::{OpCtx, RunService, cleanup, effects, unix_now};
 use crate::run::engine::{Event, EventKind, OpKind, OpResult, step};
 use crate::run::journal;
-use crate::run::model::{LogEntry, Run};
+use crate::run::model::{LogEntry, OpId, Run};
 use crate::run::reconcile;
+use proto::RunState;
 
 /// The engine's cap on a run's log (Interfaces, `LogEntry`).
 const LOG_MAX: usize = 500;
 
 /// What a replayed `Accept` still owes: its clean-up (M8a.21's concern).
 struct AcceptCleanUp {
+    op: OpId,
     ctx: OpCtx,
     root: std::path::PathBuf,
     worktrees: Vec<(std::path::PathBuf, String)>,
@@ -44,7 +46,6 @@ impl RunService {
         let now = unix_now();
         let mut runs = Vec::new();
         let mut replay = Vec::new();
-        let mut cleanups = Vec::new();
         for (mut run, lines) in loaded {
             let (git, windows) = (self.ctx.git.clone(), windows.clone());
             let timeout = Duration::from_secs(run.limits.git_timeout_secs);
@@ -54,11 +55,13 @@ impl RunService {
             })
             .await;
             let Ok(reconciled) = checked else {
-                tracing::error!(run = %run.id, "reconcile panicked; restoring without it");
+                // Ruling T22-minors, m7: said in the run's own log, and held.
+                tracing::error!(run = %run.id, "reconcile panicked; the run is held");
+                hold_unreconciled(&mut run, now);
                 runs.push(run);
                 continue;
             };
-            let answers = reconciled.replay(&run.id);
+            let mut answers = reconciled.replay(&run.id);
             for note in reconciled.notes {
                 run.log.push(LogEntry {
                     at: now,
@@ -67,7 +70,9 @@ impl RunService {
             }
             let excess = run.log.len().saturating_sub(LOG_MAX);
             run.log.drain(..excess);
-            cleanups.extend(replayed_accept(&run, &answers));
+            if let Some(cleanup) = replayed_accept(&run, &answers) {
+                self.finish_replayed_accept(cleanup, &mut answers).await;
+            }
             replay.extend(answers);
             runs.push(run);
         }
@@ -90,19 +95,39 @@ impl RunService {
         self.compact_after_restore().await;
         self.watch_live_worktrees();
         self.remove_stale_windows();
-        for cleanup in cleanups {
-            let service = self.clone();
-            tokio::spawn(async move {
-                let (outcome, kept) = cleanup::clean_up(
-                    &service,
-                    &cleanup.ctx,
-                    cleanup.root,
-                    &cleanup.worktrees,
-                    cleanup.branch_prefix,
-                )
-                .await;
-                tracing::info!(run = %cleanup.ctx.run_id, %outcome, ?kept, "accept clean-up after restore");
-            });
+    }
+
+    /// Ruling T22-minors, m5: an accept whose merge landed before the restart gets its
+    /// clean-up now, before `Restore` is stepped, and its replayed `Finished` says what
+    /// that clean-up did and which branches it really kept, so the run's log and report
+    /// are honest (carry 7, ruling T21-m2).
+    async fn finish_replayed_accept(
+        self: &Arc<Self>,
+        cleanup: AcceptCleanUp,
+        answers: &mut [(String, OpId, OpResult)],
+    ) {
+        let (outcome, kept) = cleanup::clean_up(
+            self,
+            &cleanup.ctx,
+            cleanup.root,
+            &cleanup.worktrees,
+            cleanup.branch_prefix,
+        )
+        .await;
+        tracing::info!(run = %cleanup.ctx.run_id, %outcome, ?kept, "accept clean-up after restore");
+        for (_, op, result) in answers.iter_mut() {
+            if *op != cleanup.op {
+                continue;
+            }
+            if let OpResult::Finished {
+                outcome: before, ..
+            } = result
+            {
+                *result = OpResult::Finished {
+                    outcome: format!("{before}; clean-up after the restart: {outcome}"),
+                    kept_branches: kept.clone(),
+                };
+            }
         }
     }
 
@@ -181,6 +206,30 @@ impl RunService {
     }
 }
 
+/// Ruling T22-minors, m7: a run whose ops reconcile could not answer (it panicked) is
+/// not restored as if nothing were pending. Its log says so, and an unfinished run is
+/// halted, retryably: its pending ops are dropped by the restore, and `run resume`
+/// re-issues whatever its tasks need.
+fn hold_unreconciled(run: &mut Run, now: u64) {
+    let text = "restore: reconcile failed; the run's unfinished ops were not checked";
+    run.log.push(LogEntry {
+        at: now,
+        text: text.to_string(),
+    });
+    let excess = run.log.len().saturating_sub(LOG_MAX);
+    run.log.drain(..excess);
+    if run.state.is_terminal() {
+        return;
+    }
+    run.state = RunState::Halted;
+    run.paused_from = None;
+    run.halted_reason = Some(
+        "the daemon could not reconcile this run's unfinished ops at restart; run resume retries them"
+            .to_string(),
+    );
+    run.halt_retryable = true;
+}
+
 /// A pending `Accept` whose `Finished` the journal replays: the old daemon merged, and
 /// may have died before its clean-up.
 fn replayed_accept(run: &Run, answers: &[(String, u64, OpResult)]) -> Option<AcceptCleanUp> {
@@ -198,6 +247,7 @@ fn replayed_accept(run: &Run, answers: &[(String, u64, OpResult)]) -> Option<Acc
             return None;
         };
         Some(AcceptCleanUp {
+            op: *op,
             ctx: OpCtx {
                 run_id: run.id.clone(),
                 project: run.project.clone(),
@@ -210,4 +260,52 @@ fn replayed_accept(run: &Run, answers: &[(String, u64, OpResult)]) -> Option<Acc
             branch_prefix: branch_prefix.clone(),
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(state: RunState) -> Run {
+        use crate::run::test_support::{PROFILE, plan_with, run_ok, task_toml};
+        let mut run = run_ok(&plan_with(
+            PROFILE,
+            &[task_toml("t1", "S", "[\"crates/a/**\"]", "")],
+        ));
+        run.state = state;
+        run
+    }
+
+    #[test]
+    fn an_unreconciled_run_is_held_and_says_so() {
+        let mut running = run(RunState::Running);
+        hold_unreconciled(&mut running, 7);
+        assert_eq!(running.state, RunState::Halted);
+        assert!(running.halt_retryable);
+        assert!(
+            running
+                .halted_reason
+                .as_deref()
+                .unwrap()
+                .contains("run resume")
+        );
+        let last = running.log.last().unwrap();
+        assert_eq!(last.at, 7);
+        assert!(
+            last.text.starts_with("restore: reconcile failed"),
+            "{last:?}"
+        );
+
+        let mut accepted = run(RunState::Accepted);
+        hold_unreconciled(&mut accepted, 7);
+        assert_eq!(accepted.state, RunState::Accepted);
+        assert!(
+            accepted
+                .log
+                .last()
+                .unwrap()
+                .text
+                .starts_with("restore: reconcile failed")
+        );
+    }
 }

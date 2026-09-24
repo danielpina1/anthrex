@@ -8060,3 +8060,87 @@ first.
   `a_resume_failure_for_a_killed_round_is_ignored`,
   `a_retired_claude_window_exits_on_eof`. Unit tests: `observe.rs` (4),
   `test_overrides_follow_decision_53`, `the_salvage_message_names_the_task`.
+
+#### M8a.22 fix round 1 (2026-09-24)
+
+Review `task-22-review.md`; rulings T22-C1, T22-I1 and T22-minors.
+
+- **I1: decisions 53 and 50 cover every runtime a run launches.** `run start` now asks
+  whether a run launches a Claude (or Codex) session at all (`driver/requests.rs`,
+  `launches`), not only whether a worker runs it. Per task it counts:
+  - the worker's route;
+  - the reviewer's route (`review_route`, which `roster::pick_reviewer` puts on the peer
+    runtime);
+  - the rung-2 route that decision 39's `escalate` can move the worker to, and that
+    route's reviewer.
+
+  A later rung re-resolves against the same roster and reaches no other runtime. So a
+  Codex-worker plan in a repository with Claude hooks is refused without
+  `--trust-project`. Under the recorded `CLI_CAPS`, a Claude-worker plan in a repository
+  that tracks `.codex/config.toml` is refused too (its reviewer is Codex).
+  - `e2e_project_settings_are_refused_without_trust_project` and
+    `e2e_codex_project_config_follows_cli_caps` now expect those refusals.
+  - New tests: `e2e_a_codex_workers_claude_reviewer_needs_trust_project` and
+    `e2e_api_key_auth_covers_a_claude_reviewer`.
+  - The harness removes `ANTHROPIC_API_KEY` from the daemon's environment.
+  - This supersedes the round's "decision 53 counts worker routes only" note, and its
+    follow-up is closed.
+- **Decision 20 is pinned.** `e2e_accept_onto_a_moved_base_needs_the_listed_head`
+  (`run_e2e_finish.rs`) tries five confirmations on a moved base: none, the plain id, a
+  wrong sha, the short sha, and another word. Each gets `ConfirmNeeded` with the listed
+  commit, and the base is untouched. `<id>@<to>` then merges.
+- **m1.** A run request's task holds a weak sender for the connection
+  (`server/run_api.rs`). The request still runs to its end, but it no longer holds a
+  closed connection's writer open. Test: `a_disconnected_client_is_not_held_open_by_its_run_request`
+  (`crates/daemon/tests/server_runs.rs`).
+- **m2 (deviation, recorded).** `Deliver` runs one task per effect, not one task per
+  window as the brief says. Ordering argument:
+  - The reducer never has two deliveries in flight to one window. `outbox::deliver`
+    requires a closed turn, and a `Deliver` opens it (`turn_open`) in the same step.
+  - The next `Deliver` to that window can come only after that turn's `TurnEnded`,
+    which comes from the process the first delivery started. So the first send has
+    returned by then.
+  - The manager also refuses a second send in flight (`busy`, "a turn is already
+    running").
+
+  So a per-window queue would never hold more than one item.
+- **m3.** A merge candidate puts the integration worktree back on the run branch on
+  every way out once the candidate is materialized, errors included
+  (`driver/merge.rs`). Test: `e2e_a_failed_merge_candidate_reattaches_the_integration_worktree`.
+  In that test, the check (run in the integration worktree) leaves the base ref
+  pointing at a missing object. The second guard then errors, the task is blocked with
+  `could not merge`, and the worktree is on `anthrex/<id>/integration`.
+- **m4.** `docs/timing-budgets.md` has rows for `RUN_WAIT` (with the `k` rule),
+  `REQUEST_WAIT`, and the new `FINISH_WAIT`.
+  - `FINISH_WAIT` is `600 s + RUN_WAIT`. `Finish` had used the 60 s `REQUEST_WAIT`,
+    which is below an accept's legal worst case.
+  - The table also covers the two new unit and integration bounds of this round.
+- **m5.** A replayed accept's clean-up runs during the restore, before `Restore` is
+  stepped. Its outcome and the branches it really kept replace reconcile's placeholder
+  in the replayed `Finished`: `accepted as <sha7>; clean-up did not run before the
+  restart; clean-up after the restart: <outcome>`. So the run's log and report say what
+  happened. This supersedes the round's "the report still lists the branches as kept".
+  Test: `e2e_a_replayed_accept_reports_its_clean_up`. It crashes the daemon after the
+  `Accept` intent (decision 48), makes the merge by hand, then restarts.
+- **m6.** The per-window records are pruned:
+  - `observe`'s activity map keeps only windows active in the last second.
+  - `Book.killed` loses a window's entry with the exit it marks, or when the window is
+    removed. The retire removal also clears it.
+  - Tests: `the_killed_record_goes_with_its_exit_or_its_window`, and the extended
+    activity test.
+- **m7.** When reconcile panics, the run's log says so
+  (`restore: reconcile failed; the run's unfinished ops were not checked`), and an
+  unfinished run is halted retryably, so `run resume` re-issues its work. Unit test:
+  `an_unreconciled_run_is_held_and_says_so`. Reconcile cannot be made to panic from a
+  test, so the helper is tested directly.
+- **m8.** When `stop()` gets no acknowledgement within `stop_wait_ms` (30 s), it aborts
+  the event loop and waits for the loop's gate (held by the loop for its whole life)
+  before its own `stop_now`. Test: `a_stop_that_times_out_waits_for_the_loop_to_go`.
+  - What remains: a blocking write the loop had already handed to a thread cannot be
+    cancelled.
+- **Carry to M8a.25: decision 43's ordering mutants.** M8a.25's crash tests must kill
+  two mutants that survive every committed test today:
+  - `OpDone` sent before the `done` line is appended;
+  - every `Persist` made lazy.
+
+  A graceful stop saves every run, so only a crash can show either.

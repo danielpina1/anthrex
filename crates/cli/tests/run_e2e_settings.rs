@@ -36,8 +36,50 @@ fn e2e_project_settings_are_refused_without_trust_project() {
     assert_eq!(message, settings_refusal("Claude", ".mcp.json"));
     assert!(no_run_branches(&other));
 
+    // Ruling T22-I1: a Codex worker's reviewer runs Claude, so a Codex-only plan is
+    // refused too.
     let codex = plan("", &[task("t1", &["a.txt"], CODEX)]);
-    h.start_in(&h.repo, &codex, false, false);
+    let message = refused(h.start_reply(&h.repo, &codex, true, false));
+    assert_eq!(message, settings_refusal("Claude", ".claude/settings.json"));
+    assert!(no_run_branches(&h.repo));
+}
+
+/// Ruling T22-I1: decision 53 covers every runtime a run launches. A Codex worker's
+/// reviewer is a headless Claude session, so a repository whose base commit tracks a
+/// hooked `.claude/settings.json` needs `--trust-project` even for a Codex-only plan;
+/// with it, the run starts and records the file.
+#[test]
+fn e2e_a_codex_workers_claude_reviewer_needs_trust_project() {
+    let h = RunHarness::with_repo(
+        "",
+        &[("ANTHREX_TEST_NO_SETTING_SOURCES", "1")],
+        true,
+        &[(".claude/settings.json", HOOKED_SETTINGS)],
+    );
+    let codex = plan("", &[task("t1", &["a.txt"], CODEX)]);
+    let message = refused(h.start_reply(&h.repo, &codex, true, false));
+    assert_eq!(message, settings_refusal("Claude", ".claude/settings.json"));
+    assert!(no_run_branches(&h.repo));
+    let id = h.start_in(&h.repo, &codex, false, true);
+    let run = h.run(&id).unwrap();
+    assert_eq!(
+        run.trusted_project,
+        vec![".claude/settings.json".to_string()]
+    );
+}
+
+/// Ruling T22-I1 for decision 50: `auth = "api_key"` with no key and no helper refuses
+/// a plan whose only Claude session is a Codex worker's reviewer.
+#[test]
+fn e2e_api_key_auth_covers_a_claude_reviewer() {
+    let h = RunHarness::new("\n[orchestrator.claude]\nauth = \"api_key\"");
+    let codex = plan("", &[task("t1", &["a.txt"], CODEX)]);
+    let message = refused(h.start_reply(&h.repo, &codex, true, false));
+    assert_eq!(
+        message,
+        "[orchestrator.claude] auth = \"api_key\" needs ANTHROPIC_API_KEY in the daemon's environment or orchestrator.claude.api_key_helper"
+    );
+    assert!(no_run_branches(&h.repo));
 }
 
 #[test]
@@ -113,7 +155,8 @@ fn codex_excludes(h: &RunHarness, flags: &[&str]) {
 #[test]
 fn e2e_codex_project_config_follows_cli_caps() {
     // `load`: refused, naming the file; accepted with --trust-project and reported; a
-    // Claude-only plan is not refused for it.
+    // Claude-only plan is refused for it too, since its reviewer runs Codex (ruling
+    // T22-I1).
     let h = RunHarness::with_repo(
         "",
         &[("ANTHREX_TEST_CODEX_PROJECT_CONFIG", "load")],
@@ -134,7 +177,9 @@ fn e2e_codex_project_config_follows_cli_caps() {
     assert!(
         report(&run).contains("project settings trusted by --trust-project: .codex/config.toml")
     );
-    h.start(&plan("", &[task("t9", &["z.txt"], "")]), false);
+    let claude = plan("", &[task("t9", &["z.txt"], "")]);
+    let message = refused(h.start_reply(&h.repo, &claude, false, false));
+    assert_eq!(message, settings_refusal("Codex", ".codex/config.toml"));
     drop(h);
 
     // `exclude`: the placeholder flag on both turns' argv.

@@ -1,6 +1,6 @@
 //! A connection's run requests (M8a.22). Each request is answered on its own task
-//! through a clone of the connection's outgoing channel, so a slow git read never stalls
-//! the connection's loop. `Subscribe` forwards every snapshot the service publishes
+//! through a weak handle on the connection's outgoing channel, so a slow git read never
+//! stalls the connection's loop, and never holds a closed connection open. `Subscribe` forwards every snapshot the service publishes
 //! (decision 47) until `Unsubscribe` or the connection ends.
 
 use crate::run::driver::RunService;
@@ -36,10 +36,14 @@ impl RunApi {
             }
             RunRequest::Unsubscribe => self.unsubscribe(),
             request => {
-                let (runs, out_tx) = (self.runs.clone(), self.out_tx.clone());
+                // A weak sender (ruling T22-minors, m1): the request carries on after
+                // the client leaves, but never keeps its connection's writer alive.
+                let (runs, out_tx) = (self.runs.clone(), self.out_tx.downgrade());
                 tokio::spawn(async move {
                     let reply = runs.request(request).await;
-                    let _ = out_tx.send(DaemonMsg::Run(reply)).await;
+                    if let Some(out_tx) = out_tx.upgrade() {
+                        let _ = out_tx.send(DaemonMsg::Run(reply)).await;
+                    }
                 });
             }
         }

@@ -99,6 +99,9 @@ fn activity(
     match last_activity.get(&window_id) {
         Some(at) if now.saturating_duration_since(*at) < ACTIVITY_EVERY => None,
         _ => {
+            // Ruling T22-minors, m6: only the windows active in the last second are
+            // remembered, so a removed window's entry does not outlive it.
+            last_activity.retain(|_, at| now.saturating_duration_since(*at) < ACTIVITY_EVERY);
             last_activity.insert(window_id, now);
             Some(AgentSignal::Activity)
         }
@@ -294,6 +297,9 @@ mod tests {
             translate(&text(3), &mut last, t0 + ACTIVITY_EVERY),
             Some(AgentSignal::Activity)
         );
+        // Ruling T22-minors, m6: a window quiet for a second is forgotten, so the map
+        // never outgrows the windows active in the last second.
+        assert_eq!(last.len(), 1, "{last:?}");
         for event in [
             SessionEvent::StderrLine { line: "x".into() },
             SessionEvent::Unknown { line: "x".into() },

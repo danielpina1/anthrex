@@ -25,10 +25,27 @@ use super::{ANTHREX, RunningCommand, fake_agent_bin, runtime};
 /// together 260 s, rounded up. A scenario of `k` task paths waits `k * RUN_WAIT`.
 pub const RUN_WAIT: Duration = Duration::from_secs(300);
 
-/// How long one raw request may take: `run start`'s legal worst case is its preflight's
-/// git calls at the harness's 5 s `git_timeout_secs` (six calls, 30 s) plus the id
-/// draw's and the settings scan's (three more, 15 s); 60 s covers it.
+/// How long one raw request may take, `run accept` and `run discard` aside: `run
+/// start`'s legal worst case is its preflight's git calls at the harness's 5 s
+/// `git_timeout_secs` (six calls, 30 s) plus the id draw's and the settings scan's
+/// (three more, 15 s), 45 s; every other request is one engine step. Recorded in
+/// `docs/timing-budgets.md`.
 const REQUEST_WAIT: Duration = Duration::from_secs(60);
+
+/// How long `Finish` may take: its own reads (three git calls, 15 s), then the op.
+/// Accept's merge runs under `ACCEPT_MERGE_TIMEOUT` (600 s, never shortened); its other
+/// git calls for a one-task run (at most 8 checks, salvage and removal of 4 worktrees
+/// at most 10 calls each, at most 4 for the branches: 52 calls at 5 s, 260 s) fit in
+/// `RUN_WAIT`. The harness's tests accept one-task runs only.
+const FINISH_WAIT: Duration = Duration::from_secs(600 + RUN_WAIT.as_secs());
+
+/// The bound for `request`'s reply.
+fn request_wait(request: &RunRequest) -> Duration {
+    match request {
+        RunRequest::Finish { .. } => FINISH_WAIT,
+        _ => REQUEST_WAIT,
+    }
+}
 
 pub struct RunHarness {
     pub dir: tempfile::TempDir,
@@ -144,7 +161,12 @@ impl RunHarness {
 
     fn command(&self, args: &[&str]) -> Command {
         let mut command = Command::new(ANTHREX);
-        command.args(args).env_remove("ANTHREX_GIT");
+        // Decision 50's check reads the daemon's own `ANTHROPIC_API_KEY`: never the
+        // developer's.
+        command
+            .args(args)
+            .env_remove("ANTHREX_GIT")
+            .env_remove("ANTHROPIC_API_KEY");
         for (key, value) in &self.env {
             command.env(key, value);
         }
@@ -217,13 +239,14 @@ impl RunHarness {
     /// One raw run request on a fresh connection, and its reply.
     pub fn request(&self, request: RunRequest) -> RunReply {
         let socket = self.socket();
+        let wait = request_wait(&request);
         let rt = runtime();
         rt.block_on(async move {
             let mut stream = connect(&socket).await;
             proto::write_frame(&mut stream, &ClientMsg::Run(request))
                 .await
                 .unwrap();
-            tokio::time::timeout(REQUEST_WAIT, async {
+            tokio::time::timeout(wait, async {
                 loop {
                     match proto::read_frame::<_, DaemonMsg>(&mut stream).await {
                         Ok(Some(DaemonMsg::Run(reply))) => return reply,
@@ -236,6 +259,42 @@ impl RunHarness {
             .await
             .expect("run request timed out")
         })
+    }
+
+    /// Sends one raw run request whose daemon may die before answering (decision 48's
+    /// crash injection); the reply, if one came.
+    pub fn request_unanswered(&self, request: RunRequest) -> Option<RunReply> {
+        let socket = self.socket();
+        let wait = request_wait(&request);
+        runtime().block_on(async move {
+            let mut stream = connect(&socket).await;
+            proto::write_frame(&mut stream, &ClientMsg::Run(request))
+                .await
+                .ok()?;
+            tokio::time::timeout(wait, async {
+                loop {
+                    match proto::read_frame::<_, DaemonMsg>(&mut stream).await {
+                        Ok(Some(DaemonMsg::Run(reply))) => return Some(reply),
+                        Ok(Some(_)) => {}
+                        _ => return None,
+                    }
+                }
+            })
+            .await
+            .expect("the daemon neither answered nor died")
+        })
+    }
+
+    /// After the daemon died without its shutdown (decision 48's abort): waits until
+    /// its socket refuses connections, then removes the socket file, so the next
+    /// [`Self::restart_daemon`] starts a fresh one.
+    pub fn forget_dead_daemon(&self) {
+        let deadline = Instant::now() + REQUEST_WAIT;
+        while std::os::unix::net::UnixStream::connect(self.socket()).is_ok() {
+            assert!(Instant::now() < deadline, "the daemon did not die");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = std::fs::remove_file(self.socket());
     }
 
     /// `Start` in the harness repository; the run id.

@@ -11,7 +11,7 @@ use proto::{
     RunState, Runtime, Status, TaskState, TokenUsage, WindowKind,
 };
 use serde_json::{Value, json};
-use support::run_harness::{RUN_WAIT, RunHarness};
+use support::run_harness::{RUN_WAIT, RunHarness, git_in};
 use support::run_plans::*;
 
 #[test]
@@ -387,4 +387,27 @@ fn e2e_generated_file_bounces_then_merges() {
     let t1 = t(&run, "t1");
     assert_eq!(t1.state, TaskState::Merged);
     assert_eq!((t1.bounces.done, t1.rung), (1, 1));
+}
+
+/// Ruling T22-minors, m3: a merge candidate whose second ref guard errors (here the
+/// check, run in the integration worktree, leaves the base ref pointing at a missing
+/// object) blocks the task, and the integration worktree is back on the run branch,
+/// not left detached at the candidate.
+#[test]
+fn e2e_a_failed_merge_candidate_reattaches_the_integration_worktree() {
+    let h = RunHarness::new("");
+    green_scripts(&h.repo);
+    let base = h.git(&["symbolic-ref", "--short", "HEAD"]);
+    let check = format!(
+        "case \"$PWD\" in */integration) printf '%s\\n' 1111111111111111111111111111111111111111 > \"$(git rev-parse --git-common-dir)/refs/heads/{base}\";; esac"
+    );
+    let plan = plan("", &[task("t1", &["a.txt"], "")])
+        .replace("check = \"true\"", &format!("check = {check:?}"));
+    let id = h.start(&plan, true);
+    let run = h.wait_run(&id, |r| t(r, "t1").state == TaskState::Blocked, RUN_WAIT);
+    let block = t(&run, "t1").block.clone().expect("a block");
+    assert!(block.text.contains("could not merge"), "{block:?}");
+    let integration = integration(t(&run, "t1"));
+    let head = git_in(&integration, &["symbolic-ref", "-q", "HEAD"]);
+    assert_eq!(head, format!("refs/heads/anthrex/{id}/integration"));
 }

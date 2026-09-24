@@ -84,42 +84,53 @@ pub(super) async fn candidate(
             git::commit_tree(g, &r, &tree, &[rh.as_str(), th.as_str()], &message, t)
         })
         .await?;
-    if let Some(check) = check {
-        let (at, c) = (integration.clone(), commit.clone());
-        service
-            .write(ctx, move |g, t| git::materialize(g, &at, &c, t))
-            .await?;
-        let at = integration.clone();
-        let timeout = Duration::from_secs(timeout_secs);
-        let outcome = blocking(move || Ok(run_shell(&at, &check, &env, timeout))).await?;
-        if !outcome.ok {
+    // Ruling T22-minors, m3: once the candidate is materialized, every way out puts the
+    // integration worktree back on the run branch, an error included.
+    let mut materialized = false;
+    let landed = async {
+        if let Some(check) = check {
+            let (at, c) = (integration.clone(), commit.clone());
+            materialized = true;
+            service
+                .write(ctx, move |g, t| git::materialize(g, &at, &c, t))
+                .await?;
+            let at = integration.clone();
+            let timeout = Duration::from_secs(timeout_secs);
+            let outcome = blocking(move || Ok(run_shell(&at, &check, &env, timeout))).await?;
+            if !outcome.ok {
+                reattach().await?;
+                return Ok(OpResult::CandidateRed {
+                    code: outcome.code,
+                    timed_out: outcome.timed_out,
+                    tail: outcome.tail,
+                    secs: outcome.secs,
+                });
+            }
+        }
+        if let Some(Err(reason)) = guard(advanced).await? {
             reattach().await?;
-            return Ok(OpResult::CandidateRed {
-                code: outcome.code,
-                timed_out: outcome.timed_out,
-                tail: outcome.tail,
-                secs: outcome.secs,
+            return Ok(OpResult::RefMoved { reason });
+        }
+        let (r, b, c, old) = (
+            root.clone(),
+            run_branch.clone(),
+            commit.clone(),
+            expected_run_head.clone(),
+        );
+        let swapped = service
+            .write(ctx, move |g, t| git::cas_update(g, &r, &b, &c, &old, t))
+            .await?;
+        reattach().await?;
+        if !swapped {
+            return Ok(OpResult::RefMoved {
+                reason: format!("refs/heads/{run_branch} moved during the merge"),
             });
         }
+        Ok(OpResult::Merged { commit })
     }
-    if let Some(Err(reason)) = guard(advanced).await? {
-        reattach().await?;
-        return Ok(OpResult::RefMoved { reason });
+    .await;
+    if landed.is_err() && materialized {
+        let _ = reattach().await;
     }
-    let (r, b, c, old) = (
-        root.clone(),
-        run_branch.clone(),
-        commit.clone(),
-        expected_run_head.clone(),
-    );
-    let swapped = service
-        .write(ctx, move |g, t| git::cas_update(g, &r, &b, &c, &old, t))
-        .await?;
-    reattach().await?;
-    if !swapped {
-        return Ok(OpResult::RefMoved {
-            reason: format!("refs/heads/{run_branch} moved during the merge"),
-        });
-    }
-    Ok(OpResult::Merged { commit })
+    landed
 }

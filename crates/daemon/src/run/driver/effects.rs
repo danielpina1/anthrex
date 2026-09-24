@@ -152,7 +152,7 @@ impl RunService {
                 );
             }
             Effect::RemoveWindow { window_id } => {
-                crate::lock(&self.book).retiring.remove(&window_id);
+                self.forget_window(window_id);
                 if let Err(error) = self.manager.remove(window_id) {
                     tracing::debug!(window_id, %error, "remove a run window");
                 }

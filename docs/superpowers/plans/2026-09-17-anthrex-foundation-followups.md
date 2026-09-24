@@ -880,14 +880,8 @@ scope.
 
 ## From M8a.22 (2026-09-24), for M8a
 
-- **Decision 53 counts worker routes only.** `run start`'s project-settings check asks
-  whether any task's worker runs Claude (or Codex), as the M8a.22 tests expect. A
-  task's reviewer runs on the other runtime, so with `CLI_CAPS` as recorded (Codex
-  loads project config and cannot be told not to) a Claude task's Codex reviewer loads
-  a tracked `.codex/config.toml` unasked. Count review routes too (`Task.review_route`,
-  and the escalations that change it), and change `e2e_project_settings_are_refused_
-  without_trust_project`'s and `e2e_codex_project_config_follows_cli_caps`'s
-  expectations.
+- **Decision 53 counts worker routes only.** **Closed in M8a.22's fix round 1**
+  (ruling T22-I1): decisions 50 and 53 count every runtime a run launches.
 - **The report's `codex project config:` line** (decision 53's three texts) is not
   written: `report::render` sees only the `Run`, which does not record the caps it
   started under.

@@ -71,6 +71,19 @@ assertion — a 60x separation between "took the early return" and "waited out t
 immune to how fast git happens to run that day. See that file's doc comment for the full
 reasoning.
 
+### Recorded, from the run engine's end-to-end tests (M8a.22, 2026-09-24)
+
+Every bound below is derived from the harness's own configuration
+(`git_timeout_secs = 5`, `check_timeout_secs = 10`), not from observed cost.
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| Every `wait_run` in `crates/cli/tests/run_e2e_*.rs` | `RUN_WAIT` in `crates/cli/tests/support/run_harness.rs` | `300s` per task path | One task path (one session's work through every gate to its merge): at most 40 sequential engine git calls at `git_timeout_secs` (200s; `VerifyDone` takes the smaller of it and `DONE_CHECK_GIT_TIMEOUT`), at most 4 sequential check or proof runs at `check_timeout_secs` (40s), at most 20s of scripted `wait_ms` on the critical path: 260s. | **Recorded.** **The `k` rule:** a test waits `k * RUN_WAIT`, where `k` is the number of task paths its scenario runs one after another. A fresh session of the same task, or the part of a run after a daemon restart, is a path of its own. `k` is 1 unless the test names it (the milestone brief lists the M8a.24 tests with `k` of 2 or 3). `RUN_WAIT` has no timer term, so a test that waits out an engine timer on its critical path adds it by name: each `stall_after_secs`, each `rate_limit_retry_secs`, each failed interrupt's `INTERRUPT_GRACE`, and `RETIRE_AFTER` where it waits for a window to go (`e2e_green_s_task_runs_to_merged` waits `RETIRE_AFTER + 5s` for the reviewer window). |
+| Every raw run request but `Finish` | `REQUEST_WAIT` in `run_harness.rs` | `60s` | `run start`: its preflight's six git calls plus the id draw's and the settings scan's three, at 5s each: 45s. Every other request is one engine step, whose inline effects are single fsynced file writes. | **Recorded.** |
+| `Finish` (accept, discard) | `FINISH_WAIT` in `run_harness.rs` | `600s + RUN_WAIT` | The request's own reads (three git calls, 15s), then accept's merge under `ACCEPT_MERGE_TIMEOUT` (600s, which the driver never shortens), then its other git calls for a one-task run (at most 52 at 5s, 260s). | **Recorded.** Valid for one-task runs only, which is all the harness's tests accept. A test that accepts a larger run must derive its own. |
+| `a_disconnected_client_is_not_held_open_by_its_run_request` | `crates/daemon/tests/server_runs.rs` (`CLOSE_WITHIN`) | `5s` | The connection's teardown, which has no timeout of its own. The request's stand-in `git` sleeps `GIT_SLEEP_SECS` (20s). | **Recorded.** A separation test in the shape of `an_exited_window_is_removed_without_waiting`: 5s against a 20s sleep, a 4x margin between "closed at once" and "held by the request". |
+| `a_stop_that_times_out_waits_for_the_loop_to_go` | `crates/daemon/src/run/driver.rs` (tests) | `stop_wait_ms = 200`; `1s` for the aborted loop; `10s` each for the first save and for `stop()` | The loop is held forever by the test's journal lock, so the 200ms acknowledgement wait always expires. Abort, then one save of one small run. | **Recorded.** The 1s bound applies after `stop()` has already awaited the loop's gate, so the task is finished or finishing. Before the fix it was stuck forever. |
+
 ## Measured primitive costs
 
 Two independent measurement passes, both worth keeping because they were taken under
