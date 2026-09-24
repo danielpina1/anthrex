@@ -106,4 +106,8 @@ pub mod request {
     pub const CANCEL: &str = "run cancel";
     pub const RESUME: &str = "run resume";
     pub const FINISH: &str = "run finish";
+    /// A `DaemonMsg::Error` that refuses a `RunRequest::Tool` outright carries this
+    /// label; `anthrex mcp` ends its wait on it and skips every other `Error`. (The
+    /// engine's normal answer, refusals included, is `RunReply::ToolResult`.)
+    pub const TOOL: &str = "run tool";
 }

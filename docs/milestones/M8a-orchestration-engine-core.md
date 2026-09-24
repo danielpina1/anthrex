@@ -7534,3 +7534,36 @@ reverting it fails its test.
   - `git_registry::a_commit_in_a_linked_worktree_triggers_a_probe`;
   - `server_git::two_windows_in_one_worktree_register_once`, which failed 2 of 3 runs
     alone, as recorded for this worktree's `target/`.
+
+### M8a.19 fix round 1 (2026-09-24)
+
+- **I1: a refused handshake becomes a fixed text.** Any `DaemonMsg::Error` answering
+  `Hello` now comes back to the agent as `the anthrex daemon speaks a different protocol
+  version; the user must restart it` (`mcp::forward::VERSION_MISMATCH`).
+  - Why: the daemon only refuses a `Hello` over a version mismatch, and its text
+    (`server.rs`) says to run `anthrex daemon stop`. An agent with a shell might run it.
+  - The daemon's full text goes to stderr only, as
+    `anthrex mcp: the daemon refused the handshake: <text>`.
+  - This replaces the first round's "reported with the cannot-reach prefix" for a
+    handshake `Error`.
+  - Timeouts, EOF and a non-`Welcome` reply keep the `cannot reach …` prefix. The
+    non-`Welcome` detail is now just `unexpected handshake reply`, no longer a `Debug`
+    dump of the message.
+- **M1: only a labelled `Error` ends the wait.** After the handshake, only a
+  `DaemonMsg::Error` whose `request` is `proto::run_wire::request::TOOL` (`"run tool"`,
+  new) ends the wait for a reply. Any other `Error` is skipped, like a broadcast.
+  - The daemon has no such label today: it answers every `RunRequest::Tool` with
+    `RunReply::ToolResult`, refusals included (`server.rs`, until M8a.22).
+  - So the constant is added for M8a.22 to use if it ever refuses a tool call with an
+    `Error`. It is a label constant, not a wire change, so `PROTO_VERSION` stays 7.
+  - A labelled `Error`'s message is passed to the agent as it is. It is the engine's
+    own answer to this call and has the same standing as `ToolResult.text`, so M8a.22
+    must word it for an agent.
+- **M2: the stub counts raw connections.** The stub daemon now counts every raw
+  `accept()`, before anything is read. The never-reaches-the-daemon test and the
+  listing test assert that count is 0.
+  - The stub and the JSON-RPC client moved to `crates/mcp/tests/support/mod.rs`, shared
+    by `stdio.rs` and the new `daemon_errors.rs`.
+- **M3: the next CLI subcommand goes in its own file.** `main.rs` is at 590 lines, so
+  the next subcommand (for example `run` in M8a.23) goes in its own `*_cmd.rs`, like
+  `mcp_cmd.rs` and `tree_cmd.rs`.
