@@ -13,7 +13,9 @@
 //! steered onto another branch (fix round 2, R1). The git directory is found once,
 //! uniquely, comparing `<worktree>/.git` without following it (R2). And it verifies the
 //! worktree's own branch ref, which a worker may also write: it must hold a commit, never
-//! a symbolic ref or a symbolic link to another branch (fix round 4, S1).
+//! a symbolic ref or a symbolic link to another branch (fix round 4, S1), and that no
+//! pseudo-ref the worker may write (`ORIG_HEAD`, `MERGE_HEAD`, …) is symbolic (fix
+//! round 5, N1).
 //!
 //! The registry is process-wide and tiny: a map behind [`crate::lock`], read and
 //! written without I/O under the lock.
@@ -155,7 +157,9 @@ pub fn find_git_dir(common_dir: &Path, worktree: &Path) -> Result<PathBuf, Strin
 
 /// Refuses a call in `worktree` when its git directory no longer belongs to it: its
 /// `commondir` names another repository, its `gitdir` points elsewhere, or it has a
-/// `config.worktree` (per-worktree config the engine never writes).
+/// `config.worktree` (per-worktree config the engine never writes); when its `HEAD`
+/// names another branch; when a pseudo-ref (`ORIG_HEAD`, `MERGE_HEAD`, …) is symbolic
+/// (fix round 5); or when its own branch is not a plain ref.
 pub fn check(worktree: &Path, pin: &Pin) -> Result<(), String> {
     if let Some(reason) = &pin.broken {
         return Err(format!("refusing git in {}: {reason}", worktree.display()));
@@ -186,12 +190,59 @@ pub fn check(worktree: &Path, pin: &Pin) -> Result<(), String> {
         return refused("it has a config.worktree".to_string());
     }
     check_head(pin).or_else(refused)?;
+    check_pseudo_refs(pin).or_else(refused)?;
     check_own_ref(pin).map_err(|what| {
         format!(
             "refusing git in {}: {what}; the task's branch was tampered with",
             worktree.display()
         )
     })
+}
+
+/// The pseudo-refs of a worktree's git directory a worker may write (its sandbox grant,
+/// `run::git::sandbox::WORKTREE_GIT_FILES`), each of which git reads as a ref.
+pub const PSEUDO_REFS: [&str; 7] = [
+    "ORIG_HEAD",
+    "MERGE_HEAD",
+    "AUTO_MERGE",
+    "REBASE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
+    "FETCH_HEAD",
+];
+
+/// Final fix batch F1, fix round 5 (re-review 3, N1): no pseudo-ref of the git
+/// directory is a symbolic ref or a symbolic link. Git itself never writes one there,
+/// so one is a worker's plant, aimed at making a git command that reads or writes it
+/// read or write another ref (`ORIG_HEAD` naming the base once made the hand-back's
+/// merge move the base). No engine command writes a pseudo-ref any more; this refusal
+/// keeps the engine's reads from following one too. A missing file is fine.
+fn check_pseudo_refs(pin: &Pin) -> Result<(), String> {
+    use std::io::Read as _;
+    for name in PSEUDO_REFS {
+        let file = pin.git_dir.join(name);
+        let meta = match std::fs::symlink_metadata(&file) {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(format!("its {name} cannot be read ({err})")),
+        };
+        if meta.file_type().is_symlink() {
+            return Err(format!("its {name} is a symbolic link"));
+        }
+        if !meta.is_file() {
+            return Err(format!("its {name} is not a plain file"));
+        }
+        let mut start = Vec::new();
+        std::fs::File::open(&file)
+            .and_then(|f| f.take(256).read_to_end(&mut start))
+            .map_err(|err| format!("its {name} cannot be read ({err})"))?;
+        let start = String::from_utf8_lossy(&start);
+        if let Some(named) = start.trim_start().strip_prefix("ref:") {
+            let named = named.lines().next().unwrap_or_default().trim();
+            return Err(format!("its {name} is a symbolic ref to {named}"));
+        }
+    }
+    Ok(())
 }
 
 /// Fix round 4, S1: the worktree's own branch ref, which a worker may write (a commit
