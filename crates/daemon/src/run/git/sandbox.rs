@@ -1,61 +1,56 @@
 //! What a worker's sandbox may write in the repository's git common directory (decisions
-//! 25 and 54, narrowed by final fix batch F1, findings C-C1 and D-5). Blocking; call
-//! only from `spawn_blocking`, behind the run's `GitQueue::write` (it may create
-//! directories inside the common dir).
+//! 25 and 54, narrowed by final fix batch F1, findings C-C1 and D-5, and by its fix round
+//! 1, findings N2 and N3). Blocking; call only from `spawn_blocking`, behind the run's
+//! `GitQueue::write` (it may create directories inside the common dir).
 
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
-use super::worktrees::absolute_git_dir;
+use crate::worktree::pinned;
 
-/// The writable roots of a worker session in `worktree`: `roots` (the parts of the
-/// common dir [`crate::run::role_launch::worker_git_roots`] names) plus the worktree's
-/// own administrative directory, `<common>/worktrees/<name>`, which holds its `HEAD`,
-/// index and reflog. Only git knows `<name>` (it adds a number when a name is taken),
-/// so it is read here: `git rev-parse --absolute-git-dir` in the worktree, accepted
-/// only when it is exactly one level below `<common>/worktrees` and its `gitdir` file
-/// points back at this worktree's `.git` (a worktree's `.git` file is inside the
-/// worktree, so a worker could point it anywhere, another worktree's included).
+/// The files of a linked worktree's git directory that a commit, an amend, a reset, a
+/// merge's conclusion, a revert, a cherry-pick or a rebase write, each with its `.lock`
+/// (found by running each under a real seatbelt profile). Not `commondir`, `gitdir`,
+/// `config.worktree` or `locked`: those decide which repository and which config the
+/// daemon's own git calls in the worktree use.
+pub const WORKTREE_GIT_FILES: [&str; 13] = [
+    "HEAD",
+    "index",
+    "ORIG_HEAD",
+    "COMMIT_EDITMSG",
+    "MERGE_HEAD",
+    "MERGE_MSG",
+    "MERGE_MODE",
+    "MERGE_RR",
+    "AUTO_MERGE",
+    "REBASE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
+    "FETCH_HEAD",
+];
+
+/// The directories of a linked worktree's git directory a worker may write whole.
+pub const WORKTREE_GIT_DIRS: [&str; 4] = ["logs", "rebase-merge", "rebase-apply", "sequencer"];
+
+/// The writable paths of a worker session in `worktree`: `roots` (the parts of the
+/// common dir [`crate::run::role_launch::worker_git_roots`] names: the object store and
+/// the task's own branch, its lock and its reflog) plus, in the worktree's own git
+/// directory `<common>/worktrees/<name>`, exactly [`WORKTREE_GIT_FILES`] (and their
+/// `.lock`s) and [`WORKTREE_GIT_DIRS`].
 ///
-/// Every root is created when missing: a `git pack-refs` can remove the run's empty
-/// branch directories, and a sandbox cannot grant (or, on Linux, even name) a path
-/// that does not exist, so without them a worker could not commit.
+/// The git directory is found from the repository's side ([`pinned::find_git_dir`]:
+/// the `<common>/worktrees/*/gitdir` file naming `<worktree>/.git`), never from the
+/// worktree's `.git` file, which the worker can rewrite.
+///
+/// The parent directory of every root is created when missing: a `git pack-refs` can
+/// remove the run's empty branch directories, and git cannot create a lock file in a
+/// directory that does not exist.
 pub fn worker_git_dirs(
-    git: &OsStr,
     git_common_dir: &Path,
     worktree: &Path,
     roots: &[PathBuf],
-    timeout: Duration,
 ) -> Result<Vec<PathBuf>, String> {
-    let common = git_common_dir
-        .canonicalize()
-        .map_err(|err| format!("cannot resolve {}: {err}", git_common_dir.display()))?;
-    let admin = absolute_git_dir(git, worktree, timeout)?;
-    let admin = admin
-        .canonicalize()
-        .map_err(|err| format!("cannot resolve {}: {err}", admin.display()))?;
-    if admin.parent() != Some(common.join("worktrees").as_path()) {
-        return Err(format!(
-            "{} is not a linked worktree of {}: its git directory is {}",
-            worktree.display(),
-            common.display(),
-            admin.display()
-        ));
-    }
-    let back = std::fs::read_to_string(admin.join("gitdir")).unwrap_or_default();
-    let back = Path::new(back.trim_end_matches(['\n', '\r']));
-    let own = worktree.join(".git");
-    if back.canonicalize().ok() != own.canonicalize().ok() || back.as_os_str().is_empty() {
-        return Err(format!(
-            "{} is not a linked worktree of {}: {} belongs to {}",
-            worktree.display(),
-            common.display(),
-            admin.display(),
-            back.display()
-        ));
-    }
-    let mut dirs = Vec::with_capacity(roots.len() + 1);
+    let admin = pinned::find_git_dir(git_common_dir, worktree)?;
+    let mut dirs = Vec::with_capacity(roots.len() + 2 * WORKTREE_GIT_FILES.len() + 4);
     for root in roots {
         if !root.starts_with(git_common_dir) {
             return Err(format!(
@@ -64,10 +59,16 @@ pub fn worker_git_dirs(
                 git_common_dir.display()
             ));
         }
-        std::fs::create_dir_all(root)
-            .map_err(|err| format!("cannot create {}: {err}", root.display()))?;
+        if let Some(parent) = root.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("cannot create {}: {err}", parent.display()))?;
+        }
         dirs.push(root.clone());
     }
-    dirs.push(admin);
+    for file in WORKTREE_GIT_FILES {
+        dirs.push(admin.join(file));
+        dirs.push(admin.join(format!("{file}.lock")));
+    }
+    dirs.extend(WORKTREE_GIT_DIRS.iter().map(|dir| admin.join(dir)));
     Ok(dirs)
 }

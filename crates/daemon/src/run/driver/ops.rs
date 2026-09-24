@@ -90,9 +90,10 @@ impl RunService {
     }
 }
 
-/// A sandboxed worker's writable git roots, completed at launch (final fix batch F1):
-/// the parts of the common dir `role_launch` named, created when missing, plus the
-/// worktree's own administrative directory, which only git can name. A session with no
+/// A sandboxed worker's writable git roots, completed at launch (final fix batch F1 and
+/// its fix round 1): the parts of the common dir `role_launch` named (their directories
+/// created when missing), plus the commit's files in the worktree's own git directory,
+/// found from the repository's side. A session with no
 /// sandbox roots (a reviewer, or `worker_sandbox = false`) is left as it is.
 async fn sandbox_git_dirs(
     service: &Arc<RunService>,
@@ -121,9 +122,7 @@ async fn sandbox_git_dirs(
         .ok_or_else(|| format!("unknown run {}", ctx.run_id))?;
     let cwd = spec.cwd.clone();
     let dirs = service
-        .write(ctx, move |g, t| {
-            git::worker_git_dirs(g, &common, &cwd, &roots, t)
-        })
+        .write(ctx, move |_, _| git::worker_git_dirs(&common, &cwd, &roots))
         .await?;
     if let Some(sandbox) = spec.claude_sandbox.as_mut() {
         sandbox.writable_roots = dirs.clone();

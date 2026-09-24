@@ -35,18 +35,21 @@ pub const REVIEWER_DISALLOWED_TOOLS: [&str; 3] = ["Edit", "Write", "NotebookEdit
 pub const REVIEWER_CODEX_SANDBOX: &str = "read-only";
 
 /// The parts of the repository's git common directory a worker's sandbox may write
-/// (decisions 25 and 54, narrowed by final fix batch F1, findings C-C1 and D-5): the
-/// object store and the run's own branches and their reflogs. Not `config`, `hooks/`,
-/// `info/`, `packed-refs` or any other branch, the base branch included. The driver
-/// adds the worktree's own administrative directory (`worktrees/<name>`, whose name
-/// only git knows) at launch, and creates these directories if a `pack-refs` removed
-/// them ([`crate::run::git::worker_git_dirs`]).
-pub fn worker_git_roots(git_common_dir: &Path, run_id: &str) -> Vec<PathBuf> {
-    let branches = Path::new("refs/heads/anthrex").join(run_id);
+/// (decisions 25 and 54, narrowed by final fix batch F1, findings C-C1 and D-5, and its
+/// fix round 1, N3): the object store, and the task's own branch
+/// `refs/heads/anthrex/<run>/<task>`, its `.lock` and its reflog. Not `config`,
+/// `hooks/`, `info/`, `packed-refs` or any other branch, the base branch, the run branch
+/// and sibling tasks' branches included. The driver adds the files of the worktree's own
+/// git directory a commit needs ([`crate::run::git::worker_git_dirs`]) at launch.
+pub fn worker_git_roots(git_common_dir: &Path, run_id: &str, task_id: &str) -> Vec<PathBuf> {
+    let branch = Path::new("refs/heads/anthrex").join(run_id).join(task_id);
+    let mut lock = branch.clone().into_os_string();
+    lock.push(".lock");
     vec![
         git_common_dir.join("objects"),
-        git_common_dir.join(&branches),
-        git_common_dir.join("logs").join(&branches),
+        git_common_dir.join(&branch),
+        git_common_dir.join(lock),
+        git_common_dir.join("logs").join(&branch),
     ]
 }
 
@@ -72,13 +75,13 @@ pub fn worker_spec(run: &Run, task: &Task) -> HeadlessSpec {
         claude_permission_mode: claude.then(|| limits.worker_permission_mode.clone()),
         claude_disallowed_tools: Vec::new(),
         claude_sandbox: (claude && limits.worker_sandbox).then(|| ClaudeSandbox {
-            writable_roots: worker_git_roots(&run.git_common_dir, &run.id),
+            writable_roots: worker_git_roots(&run.git_common_dir, &run.id, task.id()),
         }),
         codex_sandbox: limits.worker_codex_sandbox.clone(),
         codex_writable_roots: if claude {
             Vec::new()
         } else {
-            worker_git_roots(&run.git_common_dir, &run.id)
+            worker_git_roots(&run.git_common_dir, &run.id, task.id())
         },
         env: profile_env(&run.profile, &task.worktree),
         claude_auth: limits.claude_auth.into(),
@@ -249,13 +252,14 @@ mod tests {
         let sandbox = worker.claude_sandbox.expect("workers run sandboxed");
         // Final fix batch F1: never the whole common dir, whose config and hooks the
         // daemon and the user's checkout would run.
-        let run_dir = format!("refs/heads/anthrex/{}", run.id);
+        let branch = format!("refs/heads/anthrex/{}/t1", run.id);
         assert_eq!(
             sandbox.writable_roots,
             vec![
                 PathBuf::from("/tmp/p/.git/objects"),
-                PathBuf::from("/tmp/p/.git").join(&run_dir),
-                PathBuf::from("/tmp/p/.git/logs").join(&run_dir),
+                PathBuf::from("/tmp/p/.git").join(&branch),
+                PathBuf::from("/tmp/p/.git").join(format!("{branch}.lock")),
+                PathBuf::from("/tmp/p/.git/logs").join(&branch),
             ]
         );
         assert_eq!(

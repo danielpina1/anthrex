@@ -192,13 +192,14 @@ fn approve_starts_dispatch_and_yes_skips_the_gate() {
     assert_eq!(uuid, &None);
     let common = PathBuf::from("/tmp/p/.git");
     // Final fix batch F1: the run's own parts of the common dir, never all of it.
-    let run_dir = format!("refs/heads/anthrex/{}", fx.run().id);
+    let branch = format!("refs/heads/anthrex/{}/t1", fx.run().id);
     assert_eq!(
         spec.codex_writable_roots,
         vec![
             common.join("objects"),
-            common.join(&run_dir),
-            common.join("logs").join(&run_dir),
+            common.join(&branch),
+            common.join(format!("{branch}.lock")),
+            common.join("logs").join(&branch),
         ]
     );
     assert!(!spec.codex_writable_roots.contains(&common));

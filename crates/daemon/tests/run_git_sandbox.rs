@@ -2,8 +2,10 @@
 //! write in the repository's git common directory, proven under a real macOS seatbelt
 //! profile (`/usr/bin/sandbox-exec`) that allows writes only to the worktree and the
 //! roots the engine grants, as Claude Code's and Codex's sandboxes do. A commit in the
-//! linked task worktree works; writing the shared config, a hook, the base branch or
-//! another run's branch does not. The same harness with the whole common dir writable
+//! linked task worktree works; writing the shared config, a hook, the base branch,
+//! another run's branch, a sibling task's branch, the run branch, or the files of its own
+//! git dir that choose its repository and config (`commondir`, `gitdir`,
+//! `config.worktree`; fix round 1, N2 and N3) does not. The same harness with the whole common dir writable
 //! (the grant before this fix) lets every one of those through, which shows the profile
 //! is live. Skipped where `sandbox-exec` does not exist.
 
@@ -41,6 +43,7 @@ fn sandboxed(profile: &str, dir: &Path, script: &str) -> bool {
 }
 
 struct Setup {
+    run: String,
     repo: support::TempRepo,
     _wt: tempfile::TempDir,
     common: PathBuf,
@@ -64,6 +67,13 @@ fn setup(run: &str) -> Setup {
     .unwrap();
     // Another run's branch, which this run's worker must not move either.
     out(&repo.root, &["branch", "anthrex/other/integration", &base]);
+    // A sibling task's branch and the run branch, which the worker must not move.
+    out(&repo.root, &["branch", &format!("anthrex/{run}/t2"), &base]);
+    out(
+        &repo.root,
+        &["branch", &format!("anthrex/{run}/integration"), &base],
+    );
+
     // A `pack-refs` removes the loose refs and their now empty directories: the
     // engine must still grant (and so create) the run's branch directories.
     out(&repo.root, &["pack-refs", "--all"]);
@@ -74,6 +84,7 @@ fn setup(run: &str) -> Setup {
     .canonicalize()
     .unwrap();
     Setup {
+        run: run.to_string(),
         repo,
         _wt: wt,
         common,
@@ -82,27 +93,48 @@ fn setup(run: &str) -> Setup {
     }
 }
 
-/// What a worker tries: a commit on its own branch, then four writes it must not make.
-fn attempts(s: &Setup, profile: &str) -> [bool; 5] {
+/// What a worker tries: a commit (and a revert, which writes `MERGE_MSG` and more) on
+/// its own branch, then writes it must not make.
+fn attempts(s: &Setup, profile: &str) -> [bool; 10] {
     let hook = s.common.join("hooks/post-merge");
+    let admin = PathBuf::from(out(&s.task, &["rev-parse", "--absolute-git-dir"]));
+    let run = s.run.as_str();
+    let write = |path: PathBuf| {
+        sandboxed(
+            profile,
+            &s.task,
+            &format!("printf 'x\\n' > '{}'", path.display()),
+        )
+    };
     [
         sandboxed(
             profile,
             &s.task,
-            "printf 'work\\n' > a.txt && git add a.txt && git commit -q -m work",
+            "printf 'work\\n' > a.txt && git add a.txt && git commit -q -m work \
+             && printf 'more\\n' > b.txt && git add b.txt && git commit -q -m more \
+             && git revert --no-edit HEAD",
         ),
         sandboxed(profile, &s.task, "git config core.fsmonitor 'touch /tmp/x'"),
-        sandboxed(
-            profile,
-            &s.task,
-            &format!("printf '#!/bin/sh\\n' > '{}'", hook.display()),
-        ),
+        write(hook),
         sandboxed(profile, &s.task, "git update-ref refs/heads/main HEAD"),
         sandboxed(
             profile,
             &s.task,
             "git update-ref refs/heads/anthrex/other/integration HEAD",
         ),
+        sandboxed(
+            profile,
+            &s.task,
+            &format!("git update-ref refs/heads/anthrex/{run}/t2 HEAD"),
+        ),
+        sandboxed(
+            profile,
+            &s.task,
+            &format!("git update-ref refs/heads/anthrex/{run}/integration HEAD"),
+        ),
+        write(admin.join("commondir")),
+        write(admin.join("gitdir")),
+        write(admin.join("config.worktree")),
     ]
 }
 
@@ -113,27 +145,36 @@ fn a_sandboxed_worker_commits_but_cannot_write_config_hooks_or_other_branches() 
         return;
     }
     let s = setup("sb01");
-    let roots = worker_git_roots(&s.common, "sb01");
-    let granted = worker_git_dirs(real_git(), &s.common, &s.task, &roots, T).unwrap();
-    assert!(
-        granted.iter().all(|dir| dir.is_dir()),
-        "every granted root exists: {granted:?}"
-    );
+    let roots = worker_git_roots(&s.common, "sb01", "t1");
+    let granted = worker_git_dirs(&s.common, &s.task, &roots).unwrap();
     assert!(!granted.contains(&s.common), "{granted:?}");
     let mut writable = vec![s.task.clone()];
     writable.extend(granted);
 
-    let [commit, config, hook, base, other] = attempts(&s, &profile(&writable));
-    assert!(commit, "the worker could not commit in its worktree");
+    let [commit, rest @ ..] = attempts(&s, &profile(&writable));
+    assert!(
+        commit,
+        "the worker could not commit and revert in its worktree"
+    );
     assert_ne!(
         head(&s.task),
         s.base,
         "the commit landed on the task branch"
     );
-    assert!(!config, "the worker wrote the shared git config");
-    assert!(!hook, "the worker wrote a hook");
-    assert!(!base, "the worker moved the base branch");
-    assert!(!other, "the worker moved another run's branch");
+    let names = [
+        "the shared git config",
+        "a hook",
+        "the base branch",
+        "another run's branch",
+        "a sibling task's branch",
+        "the run branch",
+        "its git dir's commondir",
+        "its git dir's gitdir",
+        "a config.worktree",
+    ];
+    for (wrote, what) in rest.iter().zip(names) {
+        assert!(!wrote, "the worker wrote {what}");
+    }
     assert_eq!(out(&s.repo.root, &["rev-parse", "main"]), s.base);
     assert!(
         !try_git(&s.repo.root, &["config", "--get", "core.fsmonitor"])
@@ -150,25 +191,16 @@ fn the_whole_common_dir_writable_lets_every_write_through() {
     }
     let s = setup("sb02");
     let writable = vec![s.task.clone(), s.common.clone()];
-    assert_eq!(attempts(&s, &profile(&writable)), [true; 5]);
+    assert_eq!(attempts(&s, &profile(&writable)), [true; 10]);
 }
 
+/// The grant is found from the repository's side: a `.git` file the worker pointed at
+/// another worktree's git dir changes nothing.
 #[test]
-fn a_worktree_whose_git_file_points_elsewhere_is_refused() {
+fn the_grant_never_follows_the_worktrees_git_file() {
     let s = setup("sb03");
-    let elsewhere = tempfile::tempdir().unwrap();
-    out(elsewhere.path(), &["init", "-q", "."]);
-    std::fs::write(
-        s.task.join(".git"),
-        format!("gitdir: {}\n", elsewhere.path().join(".git").display()),
-    )
-    .unwrap();
-    let roots = worker_git_roots(&s.common, "sb03");
-    let err = worker_git_dirs(real_git(), &s.common, &s.task, &roots, T).unwrap_err();
-    assert!(err.contains("is not a linked worktree of"), "{err}");
-
-    // Nor may it borrow another worktree's administrative directory (the user's own
-    // linked checkout, say), whose `HEAD` and index the grant would make writable.
+    let roots = worker_git_roots(&s.common, "sb03", "t1");
+    let own = PathBuf::from(out(&s.task, &["rev-parse", "--absolute-git-dir"]));
     let other = s.task.with_file_name("users-own");
     out(
         &s.repo.root,
@@ -176,6 +208,15 @@ fn a_worktree_whose_git_file_points_elsewhere_is_refused() {
     );
     let other_admin = out(&other, &["rev-parse", "--absolute-git-dir"]);
     std::fs::write(s.task.join(".git"), format!("gitdir: {other_admin}\n")).unwrap();
-    let err = worker_git_dirs(real_git(), &s.common, &s.task, &roots, T).unwrap_err();
-    assert!(err.contains("belongs to"), "{err}");
+    let granted = worker_git_dirs(&s.common, &s.task, &roots).unwrap();
+    assert!(granted.contains(&own.join("index")), "{granted:?}");
+    assert!(
+        !granted.iter().any(|p| p.starts_with(&other_admin)),
+        "{granted:?}"
+    );
+
+    // A directory no worktree of the repository names is refused.
+    let stray = tempfile::tempdir().unwrap();
+    let err = worker_git_dirs(&s.common, stray.path(), &roots).unwrap_err();
+    assert!(err.contains("is not a linked worktree of"), "{err}");
 }
