@@ -8674,3 +8674,42 @@ test-first (`run_git_escape.rs`, red on the F1 code for all four cases).
   longer lists a prune.
 - **N7.** Recorded in the followups: M4's worktree calls get `fsmonitor=false` but not
   `NO_HOOKS`.
+
+### Final fix batch F1, fix round 2 (2026-09-24)
+
+The re-review of fix round 1 (`final-fix-F1-rereview-1.md`) found two more pointers a
+worker can write that steered the engine's unsandboxed git calls. Both are fixed
+test-first in `run_git_pointers.rs`, which failed on the fix-round-1 code: hand-back
+committed onto `main`, and the grant named the integration's git dir.
+
+- **R1, a worktree `HEAD` naming another branch.** A worker may write its worktree's
+  `HEAD`, because a rebase needs it. Pointing that file at the base made the engine's
+  hand-back merge commit onto the base.
+  - Every pinned git call now checks the git dir's `HEAD` file before it runs. That
+    covers every engine read and write in a task, integration, review or proof
+    worktree, and the probe. The file must be `ref: <the worktree's own branch>` or a
+    detached commit, and a plain file.
+  - The own branch is the task's branch, or the run branch for the integration. Review
+    and proof worktrees must be detached.
+  - Anything else refuses the call, naming the ref ("tampered"). The engine does not
+    repair `HEAD`.
+  - **Behaviour change:** a `task_done` claimed from another branch now fails the done
+    check itself. The worker is told "task_done could not be checked: … its HEAD names
+    refs/heads/<x> …" and is re-engaged. Before, the check ran and rejected the claim
+    as off-branch. Detached `HEAD` is unchanged.
+  - A window remains between the check and git reading `HEAD` while a worker is live
+    (followups).
+- **R2, a `.git` symlinked to another worktree's.** `find_git_dir` followed the symlink,
+  so two admin dirs matched.
+  - The git dir is now pinned once, at creation, and a later pin of the same worktree
+    keeps it, updating only the expected branch.
+  - The comparison with `<admin>/gitdir` is lexical: the worktree dir is canonicalised,
+    and `.git` is appended without being resolved.
+  - More than one match is refused.
+  - Restart rebuilds the pins, with each worktree's branch, by the same rule, and the
+    worker grant takes the pinned git dir.
+- **R3.** `run_git_sandbox.rs` now runs, under the profile, a worker's commit, amend,
+  revert, `reset --hard`, rebase, `rebase -i --exec` and a conflicted merge concluded
+  with `merge --continue`. **A worker cannot `git stash`:** `refs/stash` in the common
+  dir is not granted. This was already true under F1.
+- **R4.** Recorded in the followups (`objects/` is granted whole).
