@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/proto", "crates/config", "crates/daemon", "crates/tui", "crates/cli", "crates/fake-agent"]
+members = ["crates/proto", "crates/config", "crates/daemon", "crates/tui", "crates/cli", "crates/fake-agent", "crates/mcp"]
 
 [workspace.package]
 version = "0.1.0"
@@ -13,6 +13,7 @@ proto = { path = "crates/proto", package = "anthrex-proto" }
 config = { path = "crates/config", package = "anthrex-config" }
 daemon = { path = "crates/daemon", package = "anthrex-daemon" }
 tui = { path = "crates/tui", package = "anthrex-tui" }
+mcp = { path = "crates/mcp", package = "anthrex-mcp" }
 anyhow = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
@@ -44,6 +45,8 @@ globset = "0.4"
 regex = "1"
 proptest = "1"
 pulldown-cmark = "0.13"
+# Decision 5: pinned exactly; never loosen. `rmcp` stays out of the daemon and the TUI.
+rmcp = { version = "=3.4.0", default-features = false, features = ["server", "transport-io"] }
 
 [profile.release]
 lto = "thin"

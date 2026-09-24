@@ -7499,3 +7499,38 @@ reverting it fails its test.
   resume error, and decision 28 must not start a fresh session for a round that is gone.
 - **Files.** `manager/headless_turns.rs` is 534 lines and `manager/headless.rs` 516,
   both under the limit.
+
+### M8a.19 the MCP server (2026-09-24)
+
+- **Package name.** The CLI package is `anthrex`, not `anthrex-cli`. The task's
+  `cargo test -p anthrex-cli` therefore runs as `cargo test -p anthrex`.
+- **`--role orchestrator` parses.** The CLI line lists `<worker|reviewer>`. But
+  `daemon::headless::argv::mcp_args` can emit `orchestrator`, so `anthrex mcp` accepts
+  it and serves no tools (`tools_for(Orchestrator)` is empty). Test:
+  `mcp_cmd::tests::mcp_parses_the_daemons_headless_argv_and_is_hidden`. It feeds the
+  launcher's own argv, for all three roles, into the CLI parser.
+- **The CLI arguments live in `crates/cli/src/mcp_cmd.rs`.** They were not added inline
+  to `main.rs`, which would then have been 683 lines. `main.rs` is now 590.
+- **A `DaemonMsg::Error` ends the wait for a reply.** The brief says to skip anything
+  other than `RunReply::ToolResult`. But an `Error` is the daemon refusing this
+  connection's request (for example a daemon without the run engine), and skipping it
+  would hold the agent for the whole 100 s `TOOL_REPLY_TIMEOUT`. It becomes
+  `isError: true` with the daemon's message. A handshake `Error` (for example a
+  protocol mismatch) is reported as
+  `cannot reach the anthrex daemon at <socket>: <message>`.
+- **Error texts the brief does not fix.** These all come back as `isError: true`:
+  - connect timeout: `cannot reach the anthrex daemon at <socket>: connect timed out after 2 s`;
+  - handshake timeout: `…: no handshake within 5 s`;
+  - reply timeout: `the anthrex daemon did not answer <tool> within 100 s`;
+  - closed before the reply: `the anthrex daemon closed the connection before answering <tool>`.
+- **Protocol version.** `get_info` advertises `2025-06-18` as the fallback. rmcp's
+  default negotiation echoes any known version the client asks for, so a client asking
+  for `2025-06-18` gets `2025-06-18`. The supported list is rmcp's default.
+- **Arguments are not validated in the server.** The schemas tell the model the limits.
+  The engine re-validates and answers `invalid arguments: …` (M8a.22). A missing
+  `arguments` is forwarded as `{}`.
+- **Flakes seen in the workspace run.** Both are already recorded in the follow-ups
+  file, and neither crate depends on `anthrex-mcp`:
+  - `git_registry::a_commit_in_a_linked_worktree_triggers_a_probe`;
+  - `server_git::two_windows_in_one_worktree_register_once`, which failed 2 of 3 runs
+    alone, as recorded for this worktree's `target/`.

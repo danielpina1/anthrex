@@ -15,6 +15,7 @@ proto.workspace = true
 config.workspace = true
 daemon.workspace = true
 tui.workspace = true
+mcp.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 tokio.workspace = true

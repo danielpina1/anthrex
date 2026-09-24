@@ -1,5 +1,6 @@
 mod client;
 mod hook;
+mod mcp_cmd;
 mod tree_cmd;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -82,6 +83,10 @@ enum Command {
     Rename { target: String, name: String },
     /// Restart a window, resuming its session when known
     Restart { target: String },
+    /// Serve the anthrex MCP tools on stdin/stdout for one headless run agent
+    /// (decision 4). Started by the daemon, never by hand; stdout is JSON-RPC only.
+    #[command(hide = true)]
+    Mcp(mcp_cmd::McpArgs),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -160,6 +165,9 @@ async fn run_cli() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let socket: PathBuf = proto::paths::socket_path();
     match cli.command {
+        // Pitfall 17: nothing but JSON-RPC may reach stdout from here on, so this arm
+        // prints nothing and installs no tracing subscriber.
+        Some(Command::Mcp(args)) => mcp::serve_stdio(args.into_options(socket)).await,
         None => attach(socket, resolve_dir(cli.dir)?, None).await,
         Some(Command::Attach { target }) => attach(socket, resolve_dir(cli.dir)?, target).await,
         Some(Command::Daemon { action }) => daemon_command(action, socket).await,
