@@ -72,6 +72,28 @@ pub const CLI_CAPS: CliCaps = CliCaps {
     codex_user_config_only: None,
 };
 
+/// Which of decision 53's three Codex branches a run started under (ruling T23-C1):
+/// Codex does not load project config, loads it but is told not to, or loads it and
+/// cannot be told not to (tracked files then need `--trust-project`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexProjectConfig {
+    NotLoaded,
+    Excluded,
+    Loaded,
+}
+
+impl CliCaps {
+    /// The decision-53 Codex branch these caps name.
+    pub fn codex_project_config(&self) -> CodexProjectConfig {
+        match (self.codex_loads_project_config, self.codex_user_config_only) {
+            (false, _) => CodexProjectConfig::NotLoaded,
+            (true, Some(_)) => CodexProjectConfig::Excluded,
+            (true, None) => CodexProjectConfig::Loaded,
+        }
+    }
+}
+
 /// The placeholder flag `ANTHREX_TEST_CODEX_PROJECT_CONFIG=exclude` puts in
 /// `codex_user_config_only` (decision 53); `fake-agent` accepts and records it.
 pub const TEST_EXCLUDE_PROJECT_CONFIG: &str = "--anthrex-test-exclude-project-config";

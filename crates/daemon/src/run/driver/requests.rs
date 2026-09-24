@@ -237,6 +237,7 @@ impl RunService {
                 .join("\n")
         })?;
         run.session_nonce = random_nonce();
+        run.codex_project_config = Some(self.ctx.cli_caps.codex_project_config());
 
         let runtimes = reachable_runtimes(&run);
         let checks = self.check_runtimes(&run, &runtimes, timeout).await?;

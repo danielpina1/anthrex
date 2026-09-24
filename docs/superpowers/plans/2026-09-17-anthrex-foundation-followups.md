@@ -886,7 +886,7 @@ scope.
   a run can reach (`run::reach`), at `run start` and on every plan edit.
 - **The report's `codex project config:` line** (decision 53's three texts) is not
   written: `report::render` sees only the `Run`, which does not record the caps it
-  started under.
+  started under. **Done in M8a.23** (ruling T23-C1): `Run.codex_project_config`.
 - **The Codex first-turn marker** (above) is still open.
 - **T8-RR2** (the `<run_head>...HEAD` range after `resume --rebaseline`) is still
   open: the driver passes `DiffSoFar`'s fields through unchanged.

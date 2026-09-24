@@ -307,4 +307,16 @@ fn test_overrides_follow_decision_53() {
     let other =
         caps_with_test_overrides(CLI_CAPS, var(&[("ANTHREX_TEST_NO_SETTING_SOURCES", "0")]));
     assert_eq!(other, CLI_CAPS);
+
+    // Ruling T23-C1: which of decision 53's three Codex branches the caps name.
+    assert_eq!(load.codex_project_config(), CodexProjectConfig::Loaded);
+    assert_eq!(exclude.codex_project_config(), CodexProjectConfig::Excluded);
+    let not_loaded = CliCaps {
+        codex_loads_project_config: false,
+        ..CLI_CAPS
+    };
+    assert_eq!(
+        not_loaded.codex_project_config(),
+        CodexProjectConfig::NotLoaded
+    );
 }

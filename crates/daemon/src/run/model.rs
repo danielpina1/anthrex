@@ -547,6 +547,9 @@ pub struct Run {
     /// M8a.22: drawn at start, mixed into session uuids (`role_launch::session_uuid_of`).
     #[serde(default)]
     pub session_nonce: u64,
+    /// M8a.23 (ruling T23-C1): decision 53's Codex branch at start; `None` before.
+    #[serde(default)]
+    pub codex_project_config: Option<crate::headless::argv::CodexProjectConfig>,
 }
 
 impl Run {

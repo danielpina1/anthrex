@@ -122,7 +122,8 @@ fn codex_refuses(h: &RunHarness) {
 
 /// The branch where Codex is told not to load project config by `flags`: the plan
 /// starts, and both the `exec` and the `exec resume` argv carry them.
-fn codex_excludes(h: &RunHarness, flags: &[&str]) {
+/// `line`: the report's decision-53 Codex line (ruling T23-C1).
+fn codex_excludes(h: &RunHarness, flags: &[&str], line: &str) {
     h.script(
         "worker-t1-1",
         &[
@@ -133,7 +134,10 @@ fn codex_excludes(h: &RunHarness, flags: &[&str]) {
     );
     h.script("reviewer-t1-1", &[approve()]);
     let id = h.start(&plan("", &[task("t1", &["a.txt"], CODEX)]), true);
-    h.wait_run(&id, complete, RUN_WAIT);
+    let run = h.wait_run(&id, complete, RUN_WAIT);
+    until("the report's codex line", RUN_WAIT, || {
+        report(&run).contains(line).then_some(())
+    });
     let argvs: Vec<Vec<String>> = h
         .io_lines("worker-t1-1", "args")
         .iter()
@@ -174,9 +178,12 @@ fn e2e_codex_project_config_follows_cli_caps() {
     );
     let run = h.wait_run(&id, complete, RUN_WAIT);
     assert_eq!(run.trusted_project, vec![".codex/config.toml".to_string()]);
-    assert!(
-        report(&run).contains("project settings trusted by --trust-project: .codex/config.toml")
-    );
+    until("the report's trusted and codex lines", RUN_WAIT, || {
+        let text = report(&run);
+        (text.contains("project settings trusted by --trust-project: .codex/config.toml")
+            && text.contains("codex project config: loaded by this CLI\n"))
+        .then_some(())
+    });
     let claude = plan("", &[task("t9", &["z.txt"], "")]);
     let message = refused(h.start_reply(&h.repo, &claude, false, false));
     assert_eq!(message, settings_refusal("Codex", ".codex/config.toml"));
@@ -189,7 +196,7 @@ fn e2e_codex_project_config_follows_cli_caps() {
         true,
         CODEX_CONFIG,
     );
-    codex_excludes(&h, &[EXCLUDE_FLAG]);
+    codex_excludes(&h, &[EXCLUDE_FLAG], "codex project config: excluded\n");
     drop(h);
 
     // Unset: whichever branch the real CLI_CAPS names.
@@ -197,8 +204,8 @@ fn e2e_codex_project_config_follows_cli_caps() {
     let h = RunHarness::with_repo("", &[], true, CODEX_CONFIG);
     match (caps.codex_loads_project_config, caps.codex_user_config_only) {
         (true, None) => codex_refuses(&h),
-        (true, Some(flags)) => codex_excludes(&h, flags),
-        (false, _) => codex_excludes(&h, &[]),
+        (true, Some(flags)) => codex_excludes(&h, flags, "codex project config: excluded\n"),
+        (false, _) => codex_excludes(&h, &[], "codex project config: not loaded by this CLI\n"),
     }
 }
 

@@ -8206,3 +8206,58 @@ Re-review `task-22-rereview-1.md`; rulings T22-I1b, T22-N2, T22-N3 and T22-N4.
   - `e2e_a_replayed_accept_reports_its_clean_up` holds the first `worktree remove` for
     3 s and checks that the restarted daemon answers while the run is still `complete`.
 - **N4.** That test's `until` reads a fresh snapshot on every poll.
+
+### M8a.23 The `anthrex run` commands (2026-09-24)
+
+- **Files.** As the brief lists, plus `crates/cli/src/run_cmd/status_tests.rs` (the
+  status tests, split off so `status.rs` stays short). `main.rs` gains 4 lines (the
+  `mod`, the `Run` variant and its dispatch); `crates/cli/Cargo.toml` gains `toml` for
+  `run edit --file`. The harness gains `RunHarness::anthrex_input` (stdin for the
+  prompts, bounded by `FINISH_WAIT`).
+- **The status example's `2/4 merged` (deviation, recorded).** The Interfaces example's
+  header says `2/4 merged` while its table shows one merged task (t1). The header's count
+  is the table's (`TaskState::Merged`), so `status_text_matches_the_layout` renders the
+  example exactly with `1/4` in the header, and checks that a second merged task makes
+  it `2/4`.
+- **Choices the CLI section leaves open.**
+  - `<run>` is the full id, or a prefix or suffix matching exactly one run (an exact id
+    wins); otherwise `no run matches '<run>'` or `'<run>' matches more than one run: …`.
+  - A halted run's `halted: <reason>` line comes right after its header line.
+  - The run-start warning is each task note carrying `(rule 6.protected)`, as
+    `warning: <task>: <note>`, before the approve or watch hint. Other notes (raises) are
+    not printed; the plan table does not show notes.
+  - Prompts go to stderr and answers are read from stdin; end of input is "no".
+  - `run accept` asks decision 20's first question (`merge anthrex/<id>/integration into
+    <base> in <root>? [y/N]`, the daemon's `ConfirmNeeded` prompt) unless `--yes`, then,
+    for a moved base, lists it and asks its own question unless `--base` equals the
+    listed head. A different `--base` exits 1 with `--base <sha> is not the listed head
+    <to>; not merged`; a "no" exits 1 with `not merged`. A base that moves again between
+    the answer and the resend is listed and asked again.
+  - The listing's `… and <n> more` line is indented two spaces like the commits, and
+    counts `total − listed` (the client caps at 50 as well).
+  - `run reject` asks `reject run <id>: remove its worktrees and delete its branches?`
+    (invented; the daemon asks nothing for a reject). `run discard` prints the daemon's
+    own `ConfirmNeeded` prompt. Both then read `type the run id to confirm: `.
+  - `Done` messages print on stdout; every `Refused`, a wrong confirmation, a bad
+    `--file` and an unknown run print on stderr and exit 1 (`std::process::exit(1)`, so
+    no `Error:` prefix).
+- **Ruling T23-C1: the report's `codex project config:` line.**
+  `headless::argv::CodexProjectConfig { NotLoaded, Excluded, Loaded }` and
+  `CliCaps::codex_project_config()`; `run start` records it on
+  `Run.codex_project_config: Option<…>` (`#[serde(default)]`, so an older `run.json`
+  loads with `None` and its report has no line). `REPORT.md` says `codex project
+  config: not loaded by this CLI` or `codex project config: excluded`, decision 53's
+  two texts. **Deviation:** decision 53 words no line for its third branch (Codex loads
+  project config and cannot be told not to; the trust line covers the files), so the
+  report says `codex project config: loaded by this CLI` (invented). It is the branch
+  the real `CLI_CAPS` names. `model.rs` is 603 lines.
+- **Tests.** Unit: `resolve_run_by_id_suffix_and_prefix`, `status_text_matches_the_layout`,
+  `paused_and_halted_lines`, `base_moved_prompt_lists_the_commits`,
+  `bounces_column_text`; `containment_reports_the_codex_project_config_branch` (report,
+  old `run.json` included); `test_overrides_follow_decision_53` extended. E2E
+  (`run_cli.rs`): the brief's seven, plus `help_lists_the_run_commands_and_hides_mcp`,
+  `start_prints_the_protected_warning` (the M8a.22 carry),
+  `accept_onto_a_moved_base_lists_it_and_needs_its_own_yes` and
+  `accept_with_the_listed_base_merges`; `e2e_codex_project_config_follows_cli_caps`
+  checks the report's line in each branch. `edit_from_a_file` cancels `t2` of a plan
+  awaiting approval, where tasks are `queued`, not `pending`.

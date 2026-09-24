@@ -301,6 +301,41 @@ fn containment_is_reported_trusted() {
     assert!(out.contains("project settings trusted by --trust-project: .claude/settings.json"));
 }
 
+/// Ruling T23-C1: decision 53's Codex line, from the branch recorded at start; a run
+/// from before the field records none and gets no line.
+#[test]
+fn containment_reports_the_codex_project_config_branch() {
+    use crate::headless::argv::CodexProjectConfig;
+    let mut run = base_run();
+    for (branch, line) in [
+        (
+            CodexProjectConfig::NotLoaded,
+            "codex project config: not loaded by this CLI\n",
+        ),
+        (
+            CodexProjectConfig::Excluded,
+            "codex project config: excluded\n",
+        ),
+        (
+            CodexProjectConfig::Loaded,
+            "codex project config: loaded by this CLI\n",
+        ),
+    ] {
+        run.codex_project_config = Some(branch);
+        let out = render(&run, 2_000);
+        assert!(out.contains(line), "{branch:?}: {out}");
+        assert_eq!(out.matches("codex project config:").count(), 1, "{out}");
+    }
+    run.codex_project_config = None;
+    assert!(!render(&run, 2_000).contains("codex project config"));
+
+    // An older `run.json`, without the field, still loads.
+    let mut json = serde_json::to_value(base_run()).unwrap();
+    json.as_object_mut().unwrap().remove("codex_project_config");
+    let old: Run = serde_json::from_value(json).unwrap();
+    assert_eq!(old.codex_project_config, None);
+}
+
 #[test]
 fn containment_is_reported_sandbox_off() {
     let mut run = base_run();

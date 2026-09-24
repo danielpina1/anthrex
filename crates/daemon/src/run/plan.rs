@@ -357,6 +357,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         halt_retryable: false,
         restored: None,
         session_nonce: 0,
+        codex_project_config: None,
     })
 }
 

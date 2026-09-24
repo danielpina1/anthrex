@@ -17,6 +17,7 @@ use super::contract::{mode_label, sha7, size_label};
 use super::model::Run;
 use super::report_escape::{escape_cell, list_item_text, plain_text_line};
 use super::report_task::render_task;
+use crate::headless::argv::CodexProjectConfig;
 
 /// The whole document.
 pub fn render(run: &Run, now: u64) -> String {
@@ -123,6 +124,15 @@ fn containment(run: &Run, out: &mut String) {
             "project settings trusted by --trust-project: {}\n",
             run.trusted_project.join(", ")
         ));
+    }
+    // Ruling T23-C1: decision 53's Codex line (the third text is this brief's own).
+    let codex = run.codex_project_config.map(|branch| match branch {
+        CodexProjectConfig::NotLoaded => "not loaded by this CLI",
+        CodexProjectConfig::Excluded => "excluded",
+        CodexProjectConfig::Loaded => "loaded by this CLI",
+    });
+    if let Some(codex) = codex {
+        out.push_str(&format!("codex project config: {codex}\n"));
     }
     if !run.limits.worker_sandbox {
         out.push_str("worker sandbox: off ([orchestrator] worker_sandbox = false)\n");

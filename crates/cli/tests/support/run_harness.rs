@@ -1,6 +1,6 @@
 //! The end-to-end harness of milestone 8a (brief, "Shared test helpers"): one scratch
 //! repository, one isolated daemon with `fake-agent` as both runtimes, and raw socket
-//! clients for the run requests (the `anthrex run` commands arrive in M8a.23).
+//! clients for the run requests; `anthrex run` itself is driven through [`RunHarness::anthrex`].
 //!
 //! Every daemon has its own `ANTHREX_SOCKET` and `ANTHREX_DATA_DIR` under `/tmp` and is
 //! stopped when the harness is dropped (AGENTS.md hard rule 1).
@@ -176,6 +176,15 @@ impl RunHarness {
     /// `anthrex <args>` against this harness's daemon.
     pub fn anthrex(&self, args: &[&str]) -> Output {
         RunningCommand::start(&mut self.command(args)).finish(REQUEST_WAIT)
+    }
+
+    /// `anthrex <args>` with `input` on its stdin (M8a.23's prompts), waiting at most
+    /// [`FINISH_WAIT`]: `run accept` and `run discard` wait on their op, not on one
+    /// engine step.
+    pub fn anthrex_input(&self, args: &[&str], input: &str) -> Output {
+        let mut running = RunningCommand::start(&mut self.command(args));
+        running.input(input.as_bytes().to_vec());
+        running.finish(FINISH_WAIT)
     }
 
     fn start_daemon(&self) {
