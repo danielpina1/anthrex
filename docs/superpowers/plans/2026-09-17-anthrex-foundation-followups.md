@@ -858,3 +858,19 @@ scope.
   reaps its child only between its own `sleep 0.05` loops. Checking the process state
   (`ps -o stat=` not `Z`) instead of `kill(pid, 0)` would test what the test means.
 
+
+## From M8a.21's review (2026-09-24), for M8a
+
+- **Codex's first turn needs an anthrex marker in its argv so reconcile can find it.**
+  Decision 28's leftover check signals a recorded pid only when its argv holds the
+  session id, and `codex exec`'s first turn has no thread id yet, so an orphaned first
+  turn survives a daemon restart. Put an anthrex-owned marker on Codex's argv (for
+  example the op's `session_uuid` as a `-c` config value) so `run/reconcile/sessions.rs`
+  can verify a recorded pid (ruling on M8a.21 concern 5).
+- **A replayed accept `Finished` did not run its clean-up.** Reconcile now reports it
+  honestly (`accepted as <sha7>; clean-up did not run before the restart`, with every
+  run branch in `kept_branches`), but the salvage, worktree removal and branch deletion
+  are not re-run. M8a.22 should re-run them after the restore.
+- **Session uuids need a per-run random nonce.** `session_uuid(run_id, op)` is
+  deterministic, so two runs with the same id share uuids (Claude's session store, and
+  any id-based check). Mix a random nonce stored in `run.json` into it (M8a.22).

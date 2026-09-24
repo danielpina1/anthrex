@@ -4,7 +4,8 @@
 //!
 //! Split by seam (AGENTS.md rule 8): this file holds the journal's own tests,
 //! `run_journal/fixture.rs` the runs and records they share, `run_journal/git.rs` the
-//! per-kind reconcile rows that read git, and `run_journal/sessions.rs` the windows and
+//! per-kind reconcile rows that read git, `run_journal/git_guards.rs` fix round 1's
+//! guards on them, and `run_journal/sessions.rs` the windows and
 //! session processes.
 
 mod support;
@@ -13,6 +14,8 @@ mod support;
 mod fixture;
 #[path = "run_journal/git.rs"]
 mod git;
+#[path = "run_journal/git_guards.rs"]
+mod git_guards;
 #[path = "run_journal/sessions.rs"]
 mod sessions;
 
@@ -215,4 +218,79 @@ fn compact_keeps_only_pending_intents() {
     // Nothing pending: an empty journal.
     compact(&dir, &Default::default()).unwrap();
     assert_eq!(std::fs::read(dir.join(JOURNAL_FILE)).unwrap(), b"");
+}
+
+/// Fix round 1, m3: a line compaction cannot read is reported, not silently dropped.
+#[test]
+fn compact_reports_the_lines_it_cannot_read() {
+    let data = tempfile::tempdir().unwrap();
+    let mut run = plain_run(data.path());
+    let dir = run.data_dir.clone();
+    append(&dir, &intent(2)).unwrap();
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(dir.join(JOURNAL_FILE))
+        .unwrap();
+    file.write_all(b"{ not a journal line\n").unwrap();
+    drop(file);
+    let JournalLine::Intent { kind, .. } = intent(2) else {
+        unreachable!()
+    };
+    pend(&mut run, 2, Some("t1"), kind);
+
+    let problems = compact(&dir, &run.pending_ops).unwrap();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(problems[0].contains("line 2"), "{problems:?}");
+    assert!(problems[0].contains("does not parse"), "{problems:?}");
+}
+
+/// Fix round 1, I2 (the review's probe P1): the first append after a crash that tore
+/// the last line must not be glued onto the fragment.
+#[test]
+fn an_append_after_a_torn_line_survives_the_next_load() {
+    let data = tempfile::tempdir().unwrap();
+    let run = plain_run(data.path());
+    save_run(&run).unwrap();
+    let dir = run.data_dir.clone();
+    append(&dir, &intent(1)).unwrap();
+    let torn = serde_json::to_string(&intent(2)).unwrap();
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(dir.join(JOURNAL_FILE))
+        .unwrap();
+    file.write_all(&torn.as_bytes()[..torn.len() / 2]).unwrap();
+    drop(file);
+    let (_, problems) = load_all(data.path());
+    assert_eq!(problems.len(), 1, "{problems:?}");
+
+    // The restarted daemon journals op 3.
+    let done = JournalLine::Done {
+        op: 3,
+        result: daemon::run::engine::OpResult::RefsOk,
+    };
+    append(&dir, &intent(3)).unwrap();
+    append(&dir, &done).unwrap();
+
+    let (runs, problems) = load_all(data.path());
+    assert!(problems.is_empty(), "the torn tail is gone: {problems:?}");
+    assert_eq!(runs[0].1, vec![intent(1), intent(3), done]);
+    let text = std::fs::read_to_string(dir.join(JOURNAL_FILE)).unwrap();
+    assert_eq!(text.lines().count(), 3, "{text}");
+}
+
+/// Fix round 1, m4 (mutant M1): a compaction that died before its rename leaves
+/// `journal.jsonl.tmp`; loading removes it and keeps the journal.
+#[test]
+fn load_all_removes_a_leftover_journal_temp_file() {
+    let data = tempfile::tempdir().unwrap();
+    let run = plain_run(data.path());
+    save_run(&run).unwrap();
+    let dir = run.data_dir.clone();
+    append(&dir, &intent(1)).unwrap();
+    std::fs::write(dir.join("journal.jsonl.tmp"), b"{\"op\":9,").unwrap();
+
+    let (runs, problems) = load_all(data.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(runs[0].1, vec![intent(1)]);
+    assert!(!dir.join("journal.jsonl.tmp").exists());
 }

@@ -8,7 +8,8 @@
 //! every rename or file creation by `sync_all` on its directory:
 //! - [`save_run`]: `run.json.tmp` written and `sync_all`ed, renamed over `run.json`,
 //!   the run's directory `sync_all`ed (and `runs/` when the run's directory is new).
-//! - [`append`]: one line in one `write_all`, then `sync_all`; the directory is
+//! - [`append`]: a torn tail left by a crash is first cut back to the last `\n` and
+//!   `sync_all`ed; then one line in one `write_all`, then `sync_all`; the directory is
 //!   `sync_all`ed when the journal file was created by this append.
 //! - [`compact`]: `journal.jsonl.tmp` written and `sync_all`ed, renamed, the directory
 //!   `sync_all`ed.
@@ -23,7 +24,8 @@
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -90,7 +92,12 @@ pub fn append(dir: &Path, line: &JournalLine) -> io::Result<()> {
     let created = !path.exists();
     let mut bytes = serde_json::to_vec(line).map_err(io::Error::other)?;
     bytes.push(b'\n');
-    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .append(true)
+        .open(&path)?;
+    heal_torn_tail(&mut file)?;
     // One `write_all` of the whole line: a crash tears at most this line, which
     // `load_all` recognises by its missing `\n`.
     file.write_all(&bytes)?;
@@ -99,6 +106,31 @@ pub fn append(dir: &Path, line: &JournalLine) -> io::Result<()> {
         sync_dir(dir)?;
     }
     Ok(())
+}
+
+/// Fix round 1 (I2): a journal whose last byte is not `\n` ends in a line a crash (or a
+/// failed write) tore. Appending after it would glue the new line onto the fragment and
+/// lose both, so the fragment is cut back to the last `\n` first, and the cut
+/// `sync_all`ed. `load_all` has already reported the torn line as a problem.
+fn heal_torn_tail(file: &mut File) -> io::Result<()> {
+    let len = file.metadata()?.len();
+    if len == 0 {
+        return Ok(());
+    }
+    let mut last = [0u8; 1];
+    file.read_exact_at(&mut last, len - 1)?;
+    if last[0] == b'\n' {
+        return Ok(());
+    }
+    let mut bytes = Vec::with_capacity(len as usize);
+    file.seek(SeekFrom::Start(0))?;
+    file.read_to_end(&mut bytes)?;
+    let keep = bytes
+        .iter()
+        .rposition(|b| *b == b'\n')
+        .map_or(0, |at| at as u64 + 1);
+    file.set_len(keep)?;
+    file.sync_all()
 }
 
 /// Whether `<dir>/journal.jsonl` has passed [`COMPACT_AFTER_BYTES`].
@@ -111,9 +143,11 @@ pub fn needs_compact(dir: &Path) -> bool {
 /// any `done` line the journal already has for it. Keeping that `done` is M8a.21's
 /// addition to decision 43's "only pending ops' intents": a result written between the
 /// op's return and the `Persist` that retires it is replayed rather than re-checked.
-/// Temp file, `sync_all`, rename, directory `sync_all`.
-pub fn compact(dir: &Path, pending: &BTreeMap<OpId, PendingOp>) -> io::Result<()> {
-    let (existing, _problems) = read_journal(&dir.join(JOURNAL_FILE))?;
+/// Temp file, `sync_all`, rename, directory `sync_all`. Returns the problems the old
+/// journal had (a torn or unparseable line), whose lines the rewrite drops; the driver
+/// logs them (fix round 1, m3).
+pub fn compact(dir: &Path, pending: &BTreeMap<OpId, PendingOp>) -> io::Result<Vec<String>> {
+    let (existing, problems) = read_journal(&dir.join(JOURNAL_FILE))?;
     let mut bytes = Vec::new();
     for (op, p) in pending {
         let intent = JournalLine::Intent {
@@ -132,7 +166,8 @@ pub fn compact(dir: &Path, pending: &BTreeMap<OpId, PendingOp>) -> io::Result<()
     let tmp = dir.join(JOURNAL_TMP);
     write_synced(&tmp, &bytes)?;
     fs::rename(&tmp, dir.join(JOURNAL_FILE))?;
-    sync_dir(dir)
+    sync_dir(dir)?;
+    Ok(problems)
 }
 
 /// Every run under `<data_dir>/runs/`, in directory-name order, with its journal, and

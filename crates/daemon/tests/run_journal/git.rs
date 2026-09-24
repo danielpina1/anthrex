@@ -16,15 +16,15 @@ use std::path::{Path, PathBuf};
 
 /// A repository, its engine worktree directory, a data directory and a fresh run on it
 /// with its integration worktree in place.
-struct World {
-    repo: crate::support::TempRepo,
+pub struct World {
+    pub repo: crate::support::TempRepo,
     _wt: tempfile::TempDir,
     _data: tempfile::TempDir,
-    run: Run,
+    pub run: Run,
 }
 
 impl World {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let repo = repo();
         let (wt, wt_path) = wt_dir();
         let data = tempfile::tempdir().unwrap();
@@ -47,13 +47,13 @@ impl World {
         }
     }
 
-    fn root(&self) -> &Path {
+    pub fn root(&self) -> &Path {
         &self.repo.root
     }
 
     /// Task `task`'s worktree on its branch, from the base, with one commit writing
     /// `file`; returns (path, head).
-    fn task_with_commit(&self, task: &str, file: &str, content: &str) -> (PathBuf, String) {
+    pub fn task_with_commit(&self, task: &str, file: &str, content: &str) -> (PathBuf, String) {
         let path = self.run.task_path(task);
         let branch = format!("anthrex/{}/{task}", self.run.id);
         prepare_worktree(
@@ -70,12 +70,12 @@ impl World {
     }
 
     /// Reconciles every pending op against its journaled intent only.
-    fn reconcile(&self) -> Vec<(u64, Reconciled)> {
+    pub fn reconcile(&self) -> Vec<(u64, Reconciled)> {
         let journal = intents(&self.run);
         reconcile(real_git(), &self.run, &journal, &[], T).ops
     }
 
-    fn merge_candidate(&self, task_head: &str) -> OpKind {
+    pub fn merge_candidate(&self, task_head: &str) -> OpKind {
         OpKind::MergeCandidate {
             root: self.root().to_path_buf(),
             integration: self.run.integration_path(),
@@ -93,7 +93,7 @@ impl World {
 
     /// The candidate commit `merge_tree` + `commit_tree` make for `task_head`, and the
     /// integration worktree detached at it (a check about to run there).
-    fn materialized_candidate(&self, task_head: &str) -> String {
+    pub fn materialized_candidate(&self, task_head: &str) -> String {
         let CandidateStep::Tree(tree) =
             merge_tree(real_git(), self.root(), &self.run.run_head, task_head, T).unwrap()
         else {
@@ -106,7 +106,7 @@ impl World {
         candidate
     }
 
-    fn integration_branch(&self) -> Option<String> {
+    pub fn integration_branch(&self) -> Option<String> {
         let output = try_git(
             &self.run.integration_path(),
             &["symbolic-ref", "-q", "HEAD"],
@@ -118,7 +118,7 @@ impl World {
     }
 }
 
-fn prepare(run: &Run, task: &str, branch: &str, setup: Option<&str>) -> OpKind {
+pub fn prepare(run: &Run, task: &str, branch: &str, setup: Option<&str>) -> OpKind {
     OpKind::PrepareWorktree {
         root: run.root.clone(),
         branch: branch.into(),
@@ -437,7 +437,7 @@ fn reconcile_remove_worktree_gone_with_salvage_ref() {
     assert!(t3.is_dir());
 }
 
-fn accept_op(w: &World) -> OpKind {
+pub fn accept_op(w: &World) -> OpKind {
     OpKind::Accept {
         root: w.root().to_path_buf(),
         base_branch: "main".into(),
@@ -462,16 +462,26 @@ fn reconcile_accept_already_merged() {
     let run_ref = format!("refs/heads/{}", w.run.run_branch());
     out(w.root(), &["merge", "-q", "--no-ff", "--no-edit", &run_ref]);
     let base_head = head(w.root());
+    // Its clean-up never ran: the task's worktree and branch are still there.
+    w.task_with_commit("t1", "src/a.txt", "a\n");
     let kind = accept_op(&w);
     pend(&mut w.run, 9, None, kind);
 
+    // Fix round 1, m2: `OpKind::Accept`'s contract for a clean-up that did not complete:
+    // `Finished`, the branches kept, and an outcome that says so.
     assert_eq!(
         w.reconcile(),
         vec![(
             9,
             Reconciled::Replay(OpResult::Finished {
-                outcome: format!("accepted as {}", &base_head[..7]),
-                kept_branches: Vec::new(),
+                outcome: format!(
+                    "accepted as {}; clean-up did not run before the restart",
+                    &base_head[..7]
+                ),
+                kept_branches: vec![
+                    format!("anthrex/{}/integration", w.run.id),
+                    format!("anthrex/{}/t1", w.run.id),
+                ],
             })
         )]
     );

@@ -7841,3 +7841,59 @@ T20-I2, T20-I3 and T20-minors.
     test daemon and another one) would share the uuid of the same op, and one's
     reconcile could kill the other's session. Run ids carry a random suffix, so this
     needs a collision.
+
+### M8a.21 fix round 1 (2026-09-24)
+
+The review (`task-21-review.md`) found 3 Important and 5 Minor findings. The rulings
+T21-I1, T21-I2, T21-I3 and T21-minors are binding. Every change has a test that failed
+first.
+
+- **I1 / T21-I1: the leftover-session kill is decision 28's again.** The `ps -A` scan
+  is gone. Only the recorded `pid` of a round that has not ended is examined, with the
+  round's `session_id` (else its launching `CreateWindow`'s `session_uuid`). It is
+  signalled only when it is alive (not a zombie), runs as the daemon's uid, has parent
+  `ORPHAN_PARENT` (1: the old daemon is dead), and its argv, read element by element
+  (`KERN_PROCARGS2` on macOS, `/proc/<pid>/cmdline` on Linux, none elsewhere), holds the
+  id as a whole element or as `--session-id=<id>` / `--resume=<id>`. `killpg` is used
+  only when pgid == pid (and not the daemon's group), else `kill`. After
+  `SESSION_KILL_GRACE` a pid that still passes every check gets `SIGKILL`.
+  - The orphan parent is injectable for tests only: `reconcile_with_orphan_parent`.
+    `reconcile` passes `ORPHAN_PARENT`. On macOS the tests' orphans are adopted by
+    launchd (pid 1), which the kill test asserts, so they run the production path.
+  - Tests use only processes the test spawned: an orphaned `sleep` (made by
+    `bash -c 'set -m; (exec -a <id> sleep 120) & echo $!'`) with a recorded pid is
+    killed; the same with no recorded pid, a recorded orphan whose argv holds the id
+    only inside `/x/<id>.jsonl`, and a recorded non-orphan (the test's own child) are all
+    left alone. Each test's clean-up kills only its own process, after checking its
+    argv. Unit tests cover `argv_carries` and the `KERN_PROCARGS2` parser.
+  - Not found, by design: a session whose pid was never recorded, and Codex's first
+    turn (no id in argv; followups file).
+- **I2 / T21-I2: a torn tail is cut before the next append.** `append` checks the
+  journal's last byte; if it is not `\n`, the file is cut back to the last `\n` and
+  `sync_all`ed before the line is written. Test:
+  `an_append_after_a_torn_line_survives_the_next_load` (the review's P1).
+- **I3 / T21-I3.** `reconcile_accept_leaves_the_users_own_merge_alone` (kills M4) and
+  `reconcile_hand_back_ignores_a_merge_of_something_else` (kills M5), in the new
+  `tests/run_journal/git_guards.rs`.
+- **m1: path guard.** Reconcile removes an unregistered directory only when it is
+  strictly under `<wt_dir>/runs/<run>` with no `.` or `..` component; anything else is
+  `NotStarted` with a note (`left <path> alone: it is outside the run's worktrees`).
+  Test: `reconcile_never_removes_a_directory_outside_the_runs_worktrees`.
+- **m2: a replayed accept reports its clean-up honestly**, per `OpKind::Accept`'s
+  contract: `Finished { outcome: "accepted as <sha7>; clean-up did not run before the
+  restart", kept_branches }`, where `kept_branches` lists every branch under
+  `refs/heads/<branch_prefix>`. This supersedes the empty `kept_branches` above.
+- **m3: `compact` returns the old journal's problems** (`io::Result<Vec<String>>`), for
+  the driver to log. Test: `compact_reports_the_lines_it_cannot_read`.
+- **m4.** `load_all_removes_a_leftover_journal_temp_file` (M1),
+  `reconcile_prepare_worktree_whose_directory_is_gone_is_not_started` (M2),
+  `reconcile_merge_candidate_with_swapped_parents_is_ref_moved` (M3).
+- **m5: the accept abort in the user's checkout** now uses `Git::user_write`: the
+  scrubbed environment and `--no-optional-locks`, without decision 18's engine flags,
+  as `git::accept` treats that checkout. This supersedes "with decision 18's flags"
+  above. Test: `the_accept_abort_in_the_users_checkout_has_no_engine_write_flags`.
+- **Carries to M8a.22.**
+  - Never compact between the `run.json` write and the intent lines.
+  - Re-run accept's clean-up after a replayed `Finished`.
+  - Put a random per-run nonce in session uuids.
+  - The last two, and the Codex first-turn marker, are also in the followups file.

@@ -6,9 +6,9 @@
 //! - neither (the daemon died between the `Persist` and the intent line) →
 //!   `NotStarted`.
 //!
-//! Before any of that, decision 28's leftover session processes are killed
-//! ([`sessions::kill_leftovers`]), so nothing is still writing into a worktree while it
-//! is read.
+//! Before any of that, decision 28's leftover session processes are killed (only the
+//! recorded pids of live rounds, orphaned, same uid, the session id in their argv;
+//! `sessions.rs`), so nothing is still writing into a worktree while it is read.
 //!
 //! Does I/O (design decision 2), all of it **blocking**: `lifecycle::run` runs it before
 //! the socket is bound, and the driver (M8a.22) calls it on `spawn_blocking`, never under
@@ -36,7 +36,7 @@ use super::engine::{OpKind, OpResult};
 use super::journal::JournalLine;
 use super::model::{OpId, PendingOp, Run};
 
-pub use sessions::SESSION_KILL_GRACE;
+pub use sessions::{ORPHAN_PARENT, SESSION_KILL_GRACE};
 
 /// What one pending op turned out to be.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,7 +77,21 @@ pub fn reconcile(
     windows: &[WindowInfo],
     timeout: Duration,
 ) -> Reconciliation {
-    let mut notes = sessions::kill_leftovers(&sessions::session_ids(run), timeout);
+    reconcile_with_orphan_parent(git, run, journal, windows, timeout, ORPHAN_PARENT)
+}
+
+/// [`reconcile`], with the parent pid an orphaned session has: [`ORPHAN_PARENT`] (1)
+/// in the daemon; a test on a platform that reparents orphans to a subreaper passes
+/// the one it observes.
+pub fn reconcile_with_orphan_parent(
+    git: &OsStr,
+    run: &Run,
+    journal: &[JournalLine],
+    windows: &[WindowInfo],
+    timeout: Duration,
+    orphan_parent: u32,
+) -> Reconciliation {
+    let mut notes = sessions::kill_leftovers(run, orphan_parent, timeout);
     let mut intents: BTreeSet<OpId> = BTreeSet::new();
     let mut dones: BTreeMap<OpId, &OpResult> = BTreeMap::new();
     for line in journal {
@@ -129,7 +143,10 @@ fn check(
             path,
             setup,
             ..
-        } => git::worktree(g, root, branch, path, setup.is_some(), notes),
+        } => {
+            let own = run.wt_dir.join("runs").join(&run.id);
+            git::worktree(g, root, branch, path, setup.is_some(), &own, notes)
+        }
         OpKind::CreateWindow { spec, .. } => Ok(sessions::restored_window(
             run,
             pending,
@@ -165,8 +182,9 @@ fn check(
             root,
             base_branch,
             run_branch,
+            branch_prefix,
             ..
-        } => git::accept(g, root, base_branch, run_branch, notes),
+        } => git::accept(g, root, base_branch, run_branch, branch_prefix, notes),
         // Decision 44: a resumed session's process was killed above; the rest read, or
         // are idempotent, and are simply issued again.
         OpKind::ResumeSession { .. }
