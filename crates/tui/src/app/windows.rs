@@ -12,6 +12,19 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 impl App {
+    /// Decision 49: a headless run session's window has no terminal. No `Subscribe`,
+    /// `Input` or mouse report is ever sent for it; its pane points at `C-b m`.
+    pub(crate) fn is_headless(&self, id: u32) -> bool {
+        self.windows
+            .iter()
+            .any(|w| w.id == id && w.kind == proto::WindowKind::Headless)
+    }
+
+    /// The focused window, when it is an ordinary PTY window that input may reach.
+    pub(crate) fn focused_pty(&self) -> Option<u32> {
+        self.focused.filter(|&id| !self.is_headless(id))
+    }
+
     /// `C-b j`/`C-b k`: focus the next or previous window in tree (agent) order,
     /// wrapping around. Moved here from `app/mod.rs` (task M6.10's file-size finding
     /// B) — it is about picking a window from the current list, the same concern

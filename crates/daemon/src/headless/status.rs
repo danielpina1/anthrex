@@ -35,7 +35,8 @@ impl Default for HeadlessStatus {
 /// - `Attention` while a rate-limit retry is pending, or after a failed turn (cleared by
 ///   the next turn). A retry ends at the next event that is not bookkeeping (`Other`,
 ///   `Unknown`, `StderrLine`, `Diagnostic`, which Claude emits constantly and which say
-///   nothing about the retry), and gives back the status it interrupted.
+///   nothing about the retry, and the driver's `ProcessStarted`), and gives back the
+///   status it interrupted.
 /// - `Idle` between turns, after a completed or interrupted one.
 /// - `Exited` once the process has ended.
 ///
@@ -49,6 +50,7 @@ pub fn next(current: &HeadlessStatus, event: &SessionEvent) -> HeadlessStatus {
             | SessionEvent::Unknown { .. }
             | SessionEvent::StderrLine { .. }
             | SessionEvent::Diagnostic { .. }
+            | SessionEvent::ProcessStarted { .. }
     ) {
         return state;
     }

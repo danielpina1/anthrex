@@ -11,11 +11,14 @@
 //! values takes, never for as long as serializing or writing them would.
 
 use super::entry::{Entry, Inner, Process};
+use super::headless::HeadlessWindow;
 use super::{DAEMON_RESTARTED, WindowManager, sanitize_name};
 use crate::agent_state::AgentState;
+use crate::headless::HeadlessSpec;
 use crate::state::{self, StateFile, WindowRecord, WorktreeRecord};
 use crate::worktree::ManagedWorktree;
-use proto::{ExitInfo, Status, WindowSpec};
+use proto::{ExitInfo, Status, WindowKind, WindowSpec};
+use serde::Deserialize;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 use tokio::sync::broadcast;
 use unicode_segmentation::UnicodeSegmentation;
@@ -100,6 +103,7 @@ impl WindowManager {
                 created_at,
                 status: _saved_status,
                 run,
+                kind,
             } = record;
 
             if inner.entries.contains_key(&id) {
@@ -204,7 +208,16 @@ impl WindowManager {
             // that might do better. Never persisting a value that was derived rather than
             // detected is what keeps that door open; a display value, where one is
             // wanted, is derived at the point of display instead (`Entry::info`).
-            let (output, _unused) = broadcast::channel(1);
+            let process = match headless_spec(id, kind, run.as_ref()) {
+                // Decision 28: the session's process died with the daemon; the window
+                // comes back ended, and `run resume` restarts its session.
+                Some(spec) => Process::Headless(Box::new(HeadlessWindow::restored(spec))),
+                None => Process::Dormant {
+                    output: broadcast::channel(1).0,
+                    cols: RESTORED_SIZE.0,
+                    rows: RESTORED_SIZE.1,
+                },
+            };
 
             let entry = Entry {
                 id,
@@ -231,11 +244,7 @@ impl WindowManager {
                     reason: DAEMON_RESTARTED.to_string(),
                 }),
                 child_alive: false,
-                process: Process::Dormant {
-                    output,
-                    cols: RESTORED_SIZE.0,
-                    rows: RESTORED_SIZE.1,
-                },
+                process,
                 // Whole-branch-review Major 2: carried verbatim, not discarded — see
                 // `Entry.run`'s own doc comment.
                 run,
@@ -304,6 +313,11 @@ impl WindowManager {
                     .as_secs(),
                 status: entry.status,
                 run: entry.run.clone(),
+                kind: if entry.is_headless() {
+                    WindowKind::Headless
+                } else {
+                    WindowKind::Pty
+                },
             })
             .collect();
         StateFile {
@@ -311,6 +325,32 @@ impl WindowManager {
             next_id: inner.next_id,
             windows,
             runs: inner.runs.clone(),
+        }
+    }
+}
+
+/// A headless record's spec, from its opaque `run` (decision 28). A value that does not
+/// parse loads as an exited PTY record, with a warning.
+fn headless_spec(
+    id: u32,
+    kind: WindowKind,
+    run: Option<&serde_json::Value>,
+) -> Option<HeadlessSpec> {
+    if kind != WindowKind::Headless {
+        return None;
+    }
+    let parsed = run
+        .ok_or_else(|| "it has no run value".to_string())
+        .and_then(|run| HeadlessSpec::deserialize(run).map_err(|error| error.to_string()));
+    match parsed {
+        Ok(spec) => Some(spec),
+        Err(error) => {
+            tracing::warn!(
+                id,
+                %error,
+                "restore: a headless window's run does not parse; restored as an exited PTY window"
+            );
+            None
         }
     }
 }
@@ -411,6 +451,7 @@ mod tests {
                 created_at: 1,
                 status: Status::Exited,
                 run: None,
+                kind: Default::default(),
             }],
             runs: Vec::new(),
         });
@@ -441,6 +482,7 @@ mod tests {
             created_at: 1,
             status: Status::Exited,
             run: None,
+            kind: Default::default(),
         }
     }
 

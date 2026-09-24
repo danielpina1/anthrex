@@ -93,7 +93,7 @@ impl App {
     /// `focused` again.
     pub(super) fn retry_dropped_subscribe(&mut self) -> Option<Effect> {
         if self.connected()
-            && let Some(id) = self.focused
+            && let Some(id) = self.focused_pty()
             && self.subscribed != Some(id)
         {
             let (cols, rows) = self.term_size;
@@ -199,7 +199,7 @@ impl App {
                     if Some(*window_id) == self.focused
             )
         });
-        if !already_resubscribed && let Some(id) = self.focused {
+        if !already_resubscribed && let Some(id) = self.focused_pty() {
             let (cols, rows) = self.term_size;
             self.parser =
                 vt100::Parser::new(rows.max(1), cols.max(1), self.settings.scrollback_lines);

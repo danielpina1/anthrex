@@ -53,6 +53,7 @@ fn seed_one_window(m: &WindowManager, id: u32, name: &str) {
             created_at: 1,
             status: Status::Exited,
             run: None,
+            kind: Default::default(),
         }],
         runs: Vec::new(),
     });

@@ -1,0 +1,91 @@
+//! M8a.17, decision 26 for headless sessions: every session process loses the inherited
+//! `CLAUDE_CODE_*` variables and `CLAUDECODE`, has `ANTHREX_WINDOW_ID` and
+//! `ANTHREX_SOCKET` set to its own window and socket, and gets the profile's `env`.
+//!
+//! Alone in its own test binary, because it sets variables in this process's
+//! environment, and in edition 2024 that races any process spawn on another libtest
+//! thread (`run_exec_env.rs` and `worktree_env.rs` are the precedent). Keep this file to
+//! this one test.
+
+mod support;
+
+use daemon::run::env::profile_env;
+use daemon::run::model::Profile;
+use proto::Runtime;
+use std::collections::BTreeMap;
+use support::headless::*;
+
+#[test]
+fn the_environment_is_scrubbed() {
+    // SAFETY: this binary has exactly one test, and the runtime below is built after
+    // this, so no other thread reads or spawns while the environment changes.
+    unsafe {
+        std::env::set_var("CLAUDE_CODE_CHILD_SESSION", "1");
+        std::env::set_var("CLAUDECODE", "1");
+        std::env::set_var("ANTHREX_WINDOW_ID", "9");
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path().canonicalize().unwrap();
+        let out = worktree.join("env.txt");
+        let claude = script(
+            &worktree,
+            "claude",
+            &format!(
+                "env > '{out}.tmp' && mv '{out}.tmp' '{out}'; exec sleep 30",
+                out = out.display()
+            ),
+        );
+        let m = manager(&claude, &claude, |_| {});
+        // The profile's env as the engine builds a session's (`worker_spec`).
+        let profile = Profile {
+            modules: Vec::new(),
+            hub: Vec::new(),
+            source: Vec::new(),
+            check: None,
+            check_timeout_secs: 60,
+            single_test: None,
+            test_passed: None,
+            setup: None,
+            generated: Vec::new(),
+            protected: Vec::new(),
+            env: BTreeMap::from([(
+                "CARGO_TARGET_DIR".to_string(),
+                "{worktree}/target".to_string(),
+            )]),
+        };
+        let mut spec = spec(Runtime::Claude, &worktree);
+        spec.env = profile_env(&profile, &worktree);
+        let info = create(&m, "env", spec, "hi").await;
+        assert_ne!(
+            info.id, 9,
+            "the test's inherited id must not be the window's"
+        );
+        wait_until("the env dump", || out.exists()).await;
+        let env = std::fs::read_to_string(&out).unwrap();
+        let lines: Vec<&str> = env.lines().collect();
+        assert!(
+            !lines
+                .iter()
+                .any(|l| l.starts_with("CLAUDE_CODE_") || l.starts_with("CLAUDECODE=")),
+            "{env}"
+        );
+        assert!(
+            lines.contains(&format!("ANTHREX_WINDOW_ID={}", info.id).as_str()),
+            "{env}"
+        );
+        assert!(
+            lines.contains(&"ANTHREX_SOCKET=/tmp/anthrex-m8a17-unused.sock"),
+            "{env}"
+        );
+        assert!(
+            lines.contains(&format!("CARGO_TARGET_DIR={}/target", worktree.display()).as_str()),
+            "{env}"
+        );
+        m.remove(info.id).unwrap();
+    });
+}

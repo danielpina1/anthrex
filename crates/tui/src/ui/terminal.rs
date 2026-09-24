@@ -23,6 +23,15 @@ pub fn shorten_home(path: &Path) -> String {
     shorten_home_with(path, dirs::home_dir().as_deref())
 }
 
+/// Decision 49's pane text for a headless run session's window.
+pub fn headless_placeholder(w: &proto::WindowInfo, prefix: &str) -> String {
+    format!(
+        "  headless session · {} · {} · {prefix} m shows its conversation",
+        w.runtime.label(),
+        w.status.label()
+    )
+}
+
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let title = match app.focused_window() {
         // Decision 37: the branch comes from `branch_text` alone, never a direct read
@@ -69,6 +78,19 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                     "  No agents. Press {} c to create one, or run `anthrex new`.",
                     app.settings.prefix_label
                 ),
+                theme::muted(),
+            ),
+        ];
+        frame.render_widget(Paragraph::new(hint), inner);
+        return;
+    }
+
+    if let Some(w) = app.focused_window().filter(|w| app.is_headless(w.id)) {
+        // Decision 49: no terminal to draw, and no keys reach it; the prefix still works.
+        let hint = vec![
+            Line::raw(""),
+            Line::styled(
+                headless_placeholder(w, &app.settings.prefix_label),
                 theme::muted(),
             ),
         ];

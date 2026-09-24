@@ -154,6 +154,7 @@ fn the_two_worktree_fields_are_independent_on_the_wire() {
         created_at: 1_790_073_102,
         status: Status::Idle,
         run: None,
+        kind: Default::default(),
     };
 
     let json = serde_json::to_string(&record).unwrap();
@@ -162,7 +163,7 @@ fn the_two_worktree_fields_are_independent_on_the_wire() {
 \"managed\":{\"repo_root\":\"/the/managed/repo/root\",\"path\":\"/the/managed/checkout/path\",\
 \"branch\":\"the-managed-branch\"},\"model\":\"a-model\",\
 \"initial_prompt\":\"an initial prompt\",\"session_id\":\"a-session-id\",\
-\"created_at\":1790073102,\"status\":\"idle\",\"run\":null}";
+\"created_at\":1790073102,\"status\":\"idle\",\"run\":null,\"kind\":\"pty\"}";
     assert_eq!(json, expected);
 
     let back: WindowRecord = serde_json::from_str(&json).unwrap();

@@ -73,6 +73,7 @@ fn record(id: u32, name: &str, cwd: &Path, managed: Option<WorktreeRecord>) -> W
         created_at: 0,
         status: Status::Exited,
         run: None,
+        kind: Default::default(),
     }
 }
 
@@ -333,6 +334,7 @@ async fn a_restored_plain_window_keeps_its_worktree_and_is_watched() {
     let (_repo, root) = init_repo().await;
     let d = start_daemon_restoring(state_with(vec![WindowRecord {
         worktree: Some(root.clone()),
+        kind: Default::default(),
         ..record(4, "plain", &root, None)
     }]))
     .await;

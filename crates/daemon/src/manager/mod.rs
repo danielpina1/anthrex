@@ -4,12 +4,17 @@ mod config;
 mod conversation;
 mod create;
 mod entry;
+mod headless;
 mod remove;
 mod restart;
 mod restore;
 
 pub use config::ManagerConfig;
 pub use conversation::{CONVERSATION_GONE, ReaderStep, conversation_delta_message};
+pub use headless::{
+    DIAGNOSTIC_LINES, SIGNAL_CHANNEL_CAPACITY, WindowSignal, WindowSignalKind, control_refusal,
+    subscribe_refusal,
+};
 pub use remove::{GitRoots, RemoveError};
 
 use crate::hooks;
@@ -153,6 +158,8 @@ pub struct WindowManager {
     /// `conversation_changes`.
     conversations: broadcast::Sender<(u32, Option<String>, u64)>,
     events: mpsc::UnboundedSender<(u32, WindowEvent)>,
+    /// The engine's feed (decision 27, `manager::headless`).
+    signals: broadcast::Sender<WindowSignal>,
     config: ManagerConfig,
 }
 
@@ -162,6 +169,7 @@ impl WindowManager {
         let (events, events_rx) = mpsc::unbounded_channel();
         let (changed, _) = watch::channel(Vec::new());
         let (conversations, _) = broadcast::channel(conversation::CONVERSATION_CHANGES_CAPACITY);
+        let (signals, _) = broadcast::channel(headless::SIGNAL_CHANNEL_CAPACITY);
         let manager = Arc::new(Self {
             inner: Mutex::new(Inner {
                 next_id: 1,
@@ -176,6 +184,7 @@ impl WindowManager {
             changed,
             conversations,
             events,
+            signals,
             config,
         });
         (manager, events_rx)
@@ -232,9 +241,16 @@ impl WindowManager {
             }
             return Ok(());
         };
+        let now = Instant::now();
+        if entry.is_headless() {
+            // Decision 27: a headless window's status is its stream's alone.
+            if self.headless_hook(id, entry, &hook, now) {
+                self.publish(&inner);
+            }
+            return Ok(());
+        }
         // SessionStart must see the flags from before this event is accepted.
         let ctx = entry.state.context(entry.viewers > 0);
-        let now = Instant::now();
         let outcome = entry.state.on_hook(entry.spec.runtime, &hook, now);
         // After the tracker has seen the hook, so a `SubagentStart`'s spawn origin is
         // already there to route it by.
@@ -312,7 +328,9 @@ impl WindowManager {
         let mut changed = false;
         for entry in inner.entries.values_mut() {
             changed |= entry.state.subagents.prune(now);
+            // Decision 27: a headless window's status comes from its stream alone.
             if entry.status == Status::Working
+                && !entry.is_headless()
                 && now.saturating_duration_since(entry.last_output) >= QUIET_AFTER
             {
                 changed |= entry.apply(StatusEvent::Quiet);
@@ -355,7 +373,7 @@ impl WindowManager {
     }
 
     pub fn attach(&self, id: u32) -> anyhow::Result<Attachment> {
-        self.with_entry(id, |e| e.attach())
+        self.with_entry(id, |e| e.attach())?
     }
 
     pub fn child_pid(&self, id: u32) -> anyhow::Result<Option<u32>> {

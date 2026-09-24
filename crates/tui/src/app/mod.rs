@@ -335,6 +335,9 @@ impl App {
         if self.focused == Some(id) && self.subscribed == Some(id) {
             return vec![];
         }
+        if self.is_headless(id) {
+            return self.focus_headless(id);
+        }
         self.focused = Some(id);
         self.reveal_tree_anchor();
         self.scroll_offset = 0;
@@ -350,6 +353,25 @@ impl App {
         effects
     }
 
+    /// Decision 49: focusing a headless window subscribes to nothing, and ends the
+    /// previous window's stream to this client. Its pane is drawn from the list alone.
+    fn focus_headless(&mut self, id: u32) -> Vec<Effect> {
+        if self.focused == Some(id) {
+            return vec![];
+        }
+        self.focused = Some(id);
+        self.reveal_tree_anchor();
+        self.scroll_offset = 0;
+        let (cols, rows) = self.term_size;
+        self.parser = vt100::Parser::new(rows.max(1), cols.max(1), self.settings.scrollback_lines);
+        let mut effects = Vec::new();
+        if self.subscribed.take().is_some() {
+            effects.push(Effect::Send(ClientMsg::Unsubscribe));
+        }
+        effects.extend(self.follow_focus(id));
+        effects
+    }
+
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         if self.modal.is_some() {
             return self.on_modal_key(key);
@@ -358,7 +380,7 @@ impl App {
         match self.keymap.handle(key, app_cursor) {
             KeyAction::Send(bytes) => {
                 self.scroll_to_live();
-                match self.focused {
+                match self.focused_pty() {
                     Some(id) => vec![Effect::Send(ClientMsg::Input {
                         window_id: id,
                         bytes,
@@ -442,7 +464,7 @@ impl App {
         if self.tree_input.is_some() {
             return self.on_tree_paste(text);
         }
-        let Some(id) = self.focused else {
+        let Some(id) = self.focused_pty() else {
             return vec![];
         };
         self.scroll_to_live();
@@ -490,7 +512,7 @@ impl App {
             .is_some_and(|at| at.elapsed() >= RESIZE_DEBOUNCE)
         {
             self.pending_resize = None;
-            if let Some(id) = self.focused {
+            if let Some(id) = self.focused_pty() {
                 let (cols, rows) = self.term_size;
                 return vec![Effect::Send(ClientMsg::Resize {
                     window_id: id,

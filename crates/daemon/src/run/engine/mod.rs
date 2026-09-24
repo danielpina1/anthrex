@@ -159,6 +159,21 @@ pub enum EventKind {
 }
 
 /// The driver's translation of a window's session events (decision 27).
+///
+/// **Ordering contract** (ruling T13-P1), which `signals::apply` relies on and the
+/// session driver guarantees (`headless::session`'s module doc, carried on the manager's
+/// feed as `WindowSignal.pid`):
+///
+/// - every signal of a process carries, or is sent for, that process's pid;
+/// - `ProcessStarted { pid }` for a new process is delivered before any other signal of
+///   that process;
+/// - a process's `ProcessExited` is delivered after its last stream signal, including a
+///   `TurnEnded { Failed { SandboxUnavailable } }` the driver synthesises from stderr
+///   before `Init` (M8a.12's carry).
+///
+/// Signals of two different processes of one window (a Codex turn's process and the
+/// next, a killed Claude process and its `--resume`) may interleave; the pid tells them
+/// apart. M8a.22's driver forwards the feed in the order it receives it.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AgentSignal {
     Init {

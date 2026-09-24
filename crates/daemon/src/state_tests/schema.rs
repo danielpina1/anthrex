@@ -547,6 +547,7 @@ fn record_json_shape() {
         created_at: 1_789_123_456,
         status: Status::Working,
         run: None,
+        kind: Default::default(),
     };
 
     let json = serde_json::to_string(&record).unwrap();
@@ -554,7 +555,7 @@ fn record_json_shape() {
 \"project\":\"/Users/me/repos/shop\",\"worktree\":null,\"managed\":null,\"model\":\"opus\",\
 \"initial_prompt\":\"fix the failing tests\",\
 \"session_id\":\"5f0c2d1e-8a8b-4c1e-9d55-2b7e9f1a0c11\",\"created_at\":1789123456,\
-\"status\":\"working\",\"run\":null}";
+\"status\":\"working\",\"run\":null,\"kind\":\"pty\"}";
     assert_eq!(json, expected);
 }
 

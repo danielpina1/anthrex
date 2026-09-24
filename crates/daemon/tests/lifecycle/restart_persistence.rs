@@ -145,6 +145,7 @@ fn restart_test_record(
         created_at: 1_700_000_000,
         status: Status::Exited,
         run: None,
+        kind: Default::default(),
     }
 }
 

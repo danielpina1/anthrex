@@ -12,6 +12,7 @@ pub mod argv;
 pub mod claude_stream;
 pub mod codex_stream;
 pub mod conversation;
+pub mod session;
 pub mod status;
 
 use proto::{AgentRole, Effort, RunRef, Runtime, TokenUsage};
@@ -138,6 +139,11 @@ pub enum SessionEvent {
     },
     StderrLine {
         line: String,
+    },
+    /// From the driver, before any other event of the process `pid` (M8a.17, the
+    /// ordering the engine relies on: see `run::engine::AgentSignal`).
+    ProcessStarted {
+        pid: u32,
     },
     ProcessExited {
         code: Option<i32>,

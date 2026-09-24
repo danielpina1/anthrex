@@ -7059,3 +7059,200 @@ finding above. Both mutations were restored from a backup.
 
 **Gates.** build, clippy `-D warnings` and fmt `--check` are clean. `cargo test -p
 anthrex-daemon` is green in full: 928 lib tests and every integration binary.
+
+### M8a.17 headless sessions: the process driver and headless windows (2026-09-24)
+
+Built `headless/session.rs` (the driver), `manager/headless.rs` (headless windows),
+`server/headless_guard.rs` (decision 49's refusals), and the TUI side (`App::is_headless`,
+`focused_pty`, `focus_headless`, `ui::terminal::headless_placeholder`). Tests:
+`tests/headless_sessions.rs` (9), `tests/headless_env.rs` (1, alone),
+`tests/headless_windows.rs` plus `headless_windows/{hooks,socket}.rs` (11, split by
+seam for rule 8), `tui/src/app_tests/headless.rs` (6), and `tests/support/headless.rs`
+(shared spec, `/bin/sh` stand-ins, manager). No protocol change: `WindowKind`, `RunRef`
+and the version bump to 7 landed in M8a.2 with their round-trip tests.
+
+**Name corrections and interface changes (each needed by a test or the acceptance):**
+
+- **`HeadlessHandle::spawn(runtime, program, args, cwd, env, on_event)`**: `runtime`
+  is added first (it chooses the parser, one `ClaudeStream` per process), and
+  `on_event` is `Fn(u32, SessionEvent)`: the pid of the process each event came from.
+- **`SessionEvent::ProcessStarted { pid }`** is a new driver event, always a process's
+  first. `status::next` treats it as bookkeeping (no status change, no end of a retry);
+  `conversation::map` ignores it.
+- **`WindowSignal { window_id, pid: Option<u32>, kind }`**: `pid` is new (`None` for a
+  hook), and `apply_session_event(id, pid, event)` takes it.
+- **`Entry.headless` is not a field.** A field on `Entry` would have to be added to
+  `create.rs`'s struct literal, which the acceptance forbids. The spec, the stream
+  status, the window's one `StreamCursor` and its diagnostic ring live in
+  `Process::Headless(Box<HeadlessWindow>)`, and `Entry::headless()` reads the spec.
+- **`Entry::attach` returns `anyhow::Result`**, refusing a headless window with decision
+  49's subscribe text; only `WindowManager::attach` calls it.
+- **The server guard is one call before dispatch**, `headless_guard::refuse(&manager,
+  &msg)`, not one per match arm: `if let` match guards are not stable Rust. It covers
+  `Subscribe`, `Input`, `Kill`, both `Remove` forms and `Restart`; `Resize` reaches the
+  manager, which accepts and ignores it for a headless window.
+- **`std::process::Command`, not `tokio::process`** (decision 26 named tokio's). The
+  driver is threads end to end, `spawn` is called on `spawn_blocking`, and the waiter
+  reaps with `waitpid` itself, which a tokio `Child` would race.
+- New public items: `session::{STDERR_LINE_MAX, OUTPUT_GRACE (re-exported from
+  run::exec)}`, `HeadlessHandle::{spawned_pid, is_ended}`,
+  `manager::{DIAGNOSTIC_LINES, SIGNAL_CHANNEL_CAPACITY, subscribe_refusal,
+  control_refusal}`, `WindowManager::{headless_spec, headless_run}`.
+
+**The driver (`headless/session.rs`).**
+
+- Five threads per process: the stdin writer (a `sync_channel(WRITER_QUEUE_MAX)`, so
+  `send_line` is a `try_send` and fails when full or closed; a line with `\n` is
+  refused), a stdout and a stderr reader, a waiter, and one dispatcher that owns the
+  parser and calls `on_event`. Everything a process says reaches the caller from that
+  one thread, in one order.
+- **The ordering contract (ruling T13-P1, driver side)** is in the module doc and on
+  `run::engine::AgentSignal`, where the engine consumes it: every event carries its
+  process's pid; `ProcessStarted` comes first; `ProcessExited` comes last, after every
+  stdout and stderr line, or after `OUTPUT_GRACE` (1 s, `run::exec`'s rule) when an
+  escaped process still holds a pipe (later lines are dropped). Tested by
+  `spawn_reads_events_in_order_and_reports_exit` and, through the manager's feed,
+  `every_session_event_reaches_the_feed_with_its_pid_in_order`.
+- **The reducer side of T13-P1** (record the pid whose turn closed, so a Codex exit after
+  its turn completed is never a death) is **not** done here: carried to M8a.22.
+- **The waiter** blocks in `waitid(WEXITED | WNOWAIT)`, then, holding the process's
+  `reaped` lock, sends `SIGKILL` to what is left of the group while the leader is still
+  an unreaped zombie, reaps it, and marks it reaped. Every signal takes the same lock
+  and is skipped once reaped, so no signal can reach a reused pid or group. `ECHILD`
+  skips both the kill and the reap, as in `run::exec`.
+- **`kill(grace)`** closes stdin, sends `SIGTERM` to the group, and returns; a thread
+  waits on a condvar for the reap and sends `SIGKILL` to the group at `grace`.
+  `kill_sends_sigterm_to_the_whole_group_first` was added because the waiter's cleanup
+  kill made the brief's `kill_terminates_the_process_group` pass even with the
+  `SIGTERM` sent to the leader alone (a surviving mutant).
+- **`interrupt(Sigint)` signals the leader only**, not the group: the group also holds
+  the session's `anthrex mcp` server, which must outlive a turn.
+- **Lines.** stdout lines keep at most `STDOUT_LINE_MAX` bytes; a longer one is read to
+  its end and reported as `Unknown` with its first 300 characters. stderr lines are cut
+  to `STDERR_LINE_MAX` (4096 bytes, invented). Blank lines are skipped and one trailing
+  `\r` is dropped. `Diagnostic` is logged at `warn` by the dispatcher.
+- **The environment (decision 26).** Removed: every inherited `CLAUDE_CODE_*`,
+  `CLAUDECODE`, `ANTHREX_WINDOW_ID`, `ANTHREX_SOCKET`, and AGENTS.md rule 11's five git
+  variables (invented for sessions: an inherited `GIT_DIR` would point an agent's own
+  git at another repository). Then the profile's env, then the window's own
+  `ANTHREX_WINDOW_ID` and `ANTHREX_SOCKET` last, so a profile cannot redirect a
+  session's hooks to another window. `the_environment_is_scrubbed` goes through
+  `create_headless`, so the window id it checks is the real one.
+- **M8a.12's carry (the sandbox before `Init`) is done here, in the driver.** A stderr
+  line containing `sandbox required but unavailable` before any `Init` becomes
+  `TurnEnded { Failed { error: <the trimmed stderr line>, kind: SandboxUnavailable },
+  usage: None, denials: [] }`, delivered after every line and before `ProcessExited`.
+  The same text after `Init` is only a `StderrLine`. Tests:
+  `a_sandbox_failure_before_init_is_a_failed_turn_before_the_exit`,
+  `a_sandbox_text_after_init_is_only_a_stderr_line`.
+
+**Headless windows (`manager/headless.rs`).**
+
+- **`create_headless`** validates the name, waits for the launch gate outside the lock,
+  then under the lock (no I/O) spends an id, lists the window as `Starting` with an
+  ended handle, and records the first turn in its cursor (`sent_turn`, before anything
+  is written: M8a.7's binding). It then builds the argv and env, spawns on
+  `spawn_blocking`, writes Claude's first user message through the writer queue, and
+  installs the handle under the lock. `child_alive` is read from the handle (the waiter
+  marks the reap before the exit event is delivered, so the order of the two cannot
+  leave it wrong). A spawn that fails unlists the window; a shutdown in between kills
+  the new process after the lock is dropped. No lock guard is alive across an
+  `.await`, the spawn, the write or a kill.
+- **The window is listed before the spawn** so that no event of the new process can
+  arrive for a window that does not exist yet. The events' closure holds a `Weak` of the
+  manager.
+- **`apply_session_event`** (under the lock) keeps the diagnostic ring
+  (`DIAGNOSTIC_LINES` = 10: `Unknown`, `StderrLine`, `Diagnostic`), applies
+  `status::next`, copies status and tool to the entry, sets the session id from `Init`,
+  maps the event to conversation inputs (hooks through `conversation_hook`, records
+  through `enrich`, then notify), and sends the feed signal. It publishes the list only
+  when a listed field changed.
+- **Status follows the window's current process only** (invented): an event whose pid
+  is not the installed handle's still reaches the feed and the conversation, but moves
+  neither status nor `child_alive`. This is what M8a.18's kill-then-`--resume` needs.
+- **A Codex process that exits after its turn ended keeps the window `Idle` or
+  `Attention`**, not `Exited` (invented; `status::next` alone would say `Exited`). Codex
+  runs one process per turn, so that exit is not the session's end. `exit` is set only
+  when the status becomes `Exited`. Test: `session_events_drive_status_and_the_conversation`.
+- **Real hooks** (`handle_hook`'s headless branch, `headless_hook`): `AgentState::on_hook`
+  still runs (sub-agent rows, the session id) but its status event is dropped; the hook
+  goes to `conversation_hook`; for Claude it then goes to `observe_hook` with the
+  window's cursor and the records are enriched (ruling T7-N1); `SubagentStart` and
+  `SubagentStop` go on the feed as `WindowSignalKind::Hook` with `pid: None`.
+- **`tick`** skips headless windows; **`subscribe_conversation`** starts no reader and
+  sets no `NoTranscriptPath` for them.
+- **Persistence.** `Entry.run` holds the spec's JSON from creation, and
+  `state_snapshot` writes `kind: headless` beside it. `WindowRecord.kind` is appended
+  after `run` (`#[serde(default)]`, so no state version bump; `record_json_shape` and
+  `the_two_worktree_fields_are_independent_on_the_wire` now end with `"kind":"pty"`).
+  `restore` rebuilds a headless record as `Process::Headless` with an ended handle and
+  status `Exited`; a `run` that does not parse as a `HeadlessSpec` loads as an exited
+  PTY window with a `warn`, its `run` carried verbatim.
+- **What M8a.18 fills in.** `headless_send` has its Claude path now, because
+  `a_headless_claude_prompt_hook_feeds_the_cursor` needs a second engine turn:
+  `sent_turn` under the lock, then `send_line(user_message(text, session_id))` after
+  it. It does not clamp the text yet, and a Codex send is refused with `a Codex turn is
+  a new exec resume process (M8a.18)`. `headless_resume` returns an error naming
+  M8a.18. `headless_interrupt` (Claude by `CLI_CAPS.claude_interrupt`, Codex by
+  `SIGINT`, request ids from a daemon-wide counter) and `headless_kill`
+  (`config.kill_grace`) are complete but thin.
+
+**The TUI.** `App::focus` on a headless window sets focus, resets the pane, and sends
+`Unsubscribe` when a PTY subscription was active (so the old window stops streaming to
+this client), never `Subscribe`. `retry_dropped_subscribe`, `on_reconnected` and the
+debounced `Resize` read `focused_pty()`, as do both key paths, the paste path and the
+mouse wheel's report. The pane draws `  headless session · <runtime> · <status> ·
+<prefix> m shows its conversation` (the prefix from settings, so `C-b` by default).
+
+**Carries.**
+
+- **M8a.22 (T13-P1, reducer side):** record the pid whose turn closed; a later exit of
+  that pid is normal, never a death.
+- **M8a.22 (translation):** `WindowSignal` to `AgentSignal`: `ProcessStarted` and
+  `ProcessExited` take their pid from `WindowSignal.pid`; `TurnEnded.denials` passes
+  through as the tool names; `Hook { SubagentStart | SubagentStop }` map one to one.
+  Decide whether `StderrLine` and `Unknown` count as `Activity` (they reset the stall
+  clock; Claude writes hook-progress lines constantly).
+- **M8a.22 (git registry):** `create_headless` sets `Entry.worktree` but no registry is
+  reachable from the manager, so nothing registers a headless window's root, while
+  `server::register_restored_roots` registers a restored one's, and an engine-side
+  `remove` would not unregister it. The driver should own both halves.
+- **M8a.18:** clamp the text in `headless_send`; Codex send and resume; the interrupt
+  tests. `headless/session.rs` (583 lines) and `manager/headless.rs` (558) are near
+  rule 8's limit and will need splitting when they grow. `server.rs` went from 618 to
+  627 lines (the guard call and its module).
+
+**TDD evidence.**
+
+- `headless_sessions.rs` was written against a `todo!()` stub of `session.rs`: all 8
+  failed with `not yet implemented` (`session.rs:27`). The ninth,
+  `kill_sends_sigterm_to_the_whole_group_first`, was added after a mutant survived, and
+  failed against that mutant (`the group's SIGTERM reached <pid>`).
+- The manager and socket tests were written before `manager/headless.rs` existed and
+  failed to compile. Once built, `client_control_of_a_headless_window_is_refused`
+  failed before the guard existed, with `left: Error { request: "input", message:
+  "window 1 is a headless session; only the engine drives it" }` (the manager's own
+  refusal, not decision 49's text). Every other behaviour was then reverted one at a
+  time, and a named test failed each time:
+  - the `handle_hook` branch removed: `left: Working right: Idle`
+    (`real_hooks…`), plus `left: Some(Misaligned)` (`…feeds_the_cursor`);
+  - `observe_hook` not called: `left: Some(Misaligned) right: None`;
+  - the `SubagentStart` feed send removed: `real_hooks…` times out waiting for it;
+  - the `tick` skip removed: `left: Idle right: Working`;
+  - the transcript skip removed: `a_headless_window_starts_no_transcript_reader`;
+  - the Codex exit rule removed: `left: Exited right: Idle`;
+  - the restore branch removed: `left: Pty right: Headless`;
+  - the launch-gate wait removed: `create_headless_waits_for_the_launch_gate`;
+  - the env scrub or the window id removed: `the_environment_is_scrubbed`;
+  - the sandbox synthesis removed: the event list lacks the `TurnEnded`.
+- TUI: 5 of the 6 tests failed before the change (for example `[Send(Subscribe {
+  window_id: 2, … })]` and `Char('x'): [Send(Input { window_id: 2, bytes: [120] })]`).
+  `prefix_commands_still_work_on_a_headless_window` passed before and after. It guards
+  behaviour that already existed, which the change must keep.
+
+**Timing.** Every wait is a deadline loop or a feed wait of 10 s (a hang guard, far
+above milliseconds of real cost). The brief's `kill(1 s)` then "gone within 2 s" leaves
+1 s over the grace; the `SIGTERM` test waits 2 s for a `SIGTERM` that is delivered at
+once. There are two sleep-then-asserts, both on purpose: the launch-gate absence (200 ms,
+as the brief says) and `QUIET_AFTER + 300 ms` before `tick`, as in `manager.rs`'s
+existing quiet test.

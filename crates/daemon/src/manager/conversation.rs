@@ -132,12 +132,15 @@ impl WindowManager {
         }
         entry.conversation_viewers = entry.conversation_viewers.saturating_add(1);
         entry.transcript.idle_since = None;
-        if entry.conversations.transcript_path().is_none() {
+        // Decision 27: a headless window's stream carries everything its transcript
+        // would, so it starts no reader and is never "timeline only" for lack of one.
+        let headless = entry.is_headless();
+        if !headless && entry.conversations.transcript_path().is_none() {
             // A shell, or an agent that has not reported its transcript yet: known
             // without reading anything, so the first answer already says so.
             self.degrade(window_id, entry, Some(DegradeReason::NoTranscriptPath));
         }
-        let parser = parser_for(entry.spec.runtime);
+        let parser = parser_for(entry.spec.runtime).filter(|_| !headless);
         let spawn = parser.filter(|_| !entry.transcript.reader_running);
         if spawn.is_some() {
             entry.transcript.reader_running = true;

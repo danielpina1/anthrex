@@ -356,5 +356,6 @@ fn window_record(id: u32, name: &str, cwd: PathBuf, session_id: Option<&str>) ->
         created_at: 1_700_000_000,
         status: Status::Working, // deliberately not Exited: restore must override this.
         run: None,
+        kind: Default::default(),
     }
 }

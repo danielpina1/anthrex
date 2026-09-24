@@ -5,6 +5,7 @@
 //! guideline once `tests/server_git.rs` needed the same harness.
 #![allow(dead_code)]
 
+pub mod headless;
 pub mod run_git;
 
 use daemon::manager::{ManagerConfig, WindowManager};

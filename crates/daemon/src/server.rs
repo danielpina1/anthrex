@@ -1,6 +1,7 @@
 //! Accepts client connections and speaks the protocol from spec section 4.
 
 mod conversation;
+mod headless_guard;
 mod requests;
 
 use crate::git::GitRegistry;
@@ -317,6 +318,14 @@ async fn handle_client(
             },
         };
 
+        // Decision 49: `Subscribe`, `Input`, `Kill`, `Remove` and `Restart` never reach a
+        // headless window.
+        if let Some(refused) = headless_guard::refuse(&manager, &msg) {
+            if out_tx.send(refused).await.is_err() {
+                break;
+            }
+            continue;
+        }
         let reply = match msg {
             ClientMsg::Hello { .. } => Some(error("hello", "already greeted")),
             ClientMsg::ListWindows => Some(DaemonMsg::WindowsChanged {
