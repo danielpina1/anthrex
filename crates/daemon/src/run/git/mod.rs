@@ -22,6 +22,7 @@
 mod done;
 mod handback;
 mod merge;
+mod merge_state;
 mod queue;
 mod resolution;
 mod salvage;
@@ -29,19 +30,23 @@ mod sandbox;
 mod worktrees;
 
 pub use done::{DoneChecked, verify_done};
-pub use handback::{HandBack, abort_merge, hand_back};
+pub use handback::{HandBack, hand_back};
 pub use merge::{
     ACCEPT_LIST_MAX, AcceptOutcome, CandidateStep, RefCheck, cas_update, commit_tree,
     commits_since, guard_refs, materialize, merge_tree, read_ref, reattach, run_work_on_base,
 };
+pub use merge_state::abort_merge;
 pub use salvage::{
     ACCEPT_MERGE_TIMEOUT, accept, accept_with_merge_timeout, delete_branches, remove_worktree,
     salvage,
 };
 
 /// Reads reconcile (M8a.21) shares with the ops it checks.
-pub(crate) use handback::{Leftover, leftover, quit_merge, undo_clean_merge, unmerged};
+pub(crate) use handback::{finish_clean, interrupted_conflict};
 pub(crate) use merge::{read, reattach_in, short};
+pub(crate) use merge_state::{
+    Leftover, clear as clear_merge_state, leftover, undo_clean_merge, unmerged,
+};
 pub(crate) use worktrees::{forget_missing, is_ancestor, listed as listed_worktree_in};
 
 pub use queue::{GitQueue, LOCK_RETRY_DELAYS_MS};
@@ -61,7 +66,7 @@ use super::globs::ProtectedMatcher;
 use super::plan::Preflight;
 use crate::project;
 use crate::subprocess::HeadTail;
-use crate::worktree::{GitOutput, run_git_head_tail, run_git_with_cap};
+use crate::worktree::{GitOutput, run_git_head_tail, run_git_with_cap, run_git_with_input};
 
 /// Every engine git call that is not a [`WRITE_FLAGS`] write passes this ahead of its
 /// subcommand: reads, and `run accept`'s merge and its abort in the user's checkout. A
@@ -193,6 +198,27 @@ impl<'a> Git<'a> {
         let mut full: Vec<&OsStr> = WRITE_FLAGS.iter().map(|flag| os(flag)).collect();
         full.extend_from_slice(args);
         self.raw(dir, &full, LARGE_OUTPUT_BYTES)
+    }
+
+    /// A write (decision 18's flags first) fed `input` on stdin, that must succeed; its
+    /// stdout. For `update-index --index-info` (final fix batch F1, fix round 5).
+    pub(crate) fn write_input(
+        &self,
+        dir: &Path,
+        args: &[&OsStr],
+        input: &[u8],
+    ) -> Result<String, String> {
+        let mut full: Vec<&OsStr> = WRITE_FLAGS.iter().map(|flag| os(flag)).collect();
+        full.extend_from_slice(args);
+        let output = run_git_with_input(
+            self.program,
+            dir,
+            &full,
+            Instant::now() + self.timeout,
+            input,
+        )
+        .map_err(|err| err.to_string())?;
+        succeeded(args, output)
     }
 
     /// A write into the user's own checkout (`run accept`), which decision 18 exempts

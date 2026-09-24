@@ -212,14 +212,15 @@ fi"#,
 }
 
 /// Fix round 3: `HEAD` flips to the base while the hand-back's merge runs. The base
-/// must not move; the hand-back fails.
+/// must not move; the hand-back fails. Fix round 5: the merge is `merge-tree` now (it
+/// was `git merge --no-ff`); the flip lands there.
 #[test]
 fn a_head_flipped_during_the_hand_back_moves_no_base() {
     let w = world("hp03");
     commit_file(&w.task, "t.txt", "task\n", "task work");
     let run_head = commit_file(&w.integration, "r.txt", "run\n", "run work");
     let tools = tempfile::tempdir().unwrap();
-    let git = racing_git(tools.path(), &git_dir(&w.task), &["--no-ff"]);
+    let git = racing_git(tools.path(), &git_dir(&w.task), &["--no-ff", "merge-tree"]);
 
     let result = hand_back(git.as_os_str(), &w.task, &run_head, T);
     assert!(tools.path().join("flipped").exists(), "the race never ran");

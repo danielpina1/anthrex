@@ -36,7 +36,10 @@ fn task_worktree(repo: &TempRepo, run: &str) -> (tempfile::TempDir, PathBuf) {
 }
 
 /// Review N4: a commit that lands in the worktree between the hand-back's read of
-/// `HEAD` and its merge is the tip the merge was made onto, and `onto` says so.
+/// `HEAD` and its merge is the tip the merge was made onto, and `onto` says so. Fix
+/// round 5: the hand-back reads the branch once, after its `HEAD` check, and merges
+/// onto and compares-and-swaps from that value; the sneak commit lands at that check
+/// (it once landed at `git merge --no-ff`, which the hand-back no longer runs).
 #[test]
 fn hand_back_reports_the_tip_it_actually_merged_onto() {
     let repo = repo();
@@ -47,7 +50,7 @@ fn hand_back_reports_the_tip_it_actually_merged_onto() {
     let git = wrapper_git(
         tools.path(),
         r#"for a in "$@"; do
-  if [ "$a" = "--no-ff" ]; then
+  if [ "$a" = "symbolic-ref" ]; then
     "$REAL" -C "$2" -c user.name=t -c user.email=t@t -c commit.gpgsign=false \
       -c core.hooksPath=/dev/null commit -q --allow-empty -m sneak || exit 99
     break

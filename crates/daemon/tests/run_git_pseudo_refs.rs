@@ -16,7 +16,7 @@ use daemon::run::git::{create_run_branch, hand_back, prepare_worktree};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use support::TempRepo;
-use support::run_git::{T, commit_file, head, out, real_git, repo, try_git, wt_dir};
+use support::run_git::{T, commit_file, head, out, real_git, repo, try_git, wrapper_git, wt_dir};
 
 struct World {
     repo: TempRepo,
@@ -162,6 +162,117 @@ fn a_symbolic_merge_head_or_auto_merge_is_refused() {
     }
 }
 
+/// A git that, the first time it runs the hand-back's merge (`--no-ff`, before this
+/// round) or a `read-tree -m -u` (the last git command of a clean hand-back, and the
+/// one just before a conflicted hand-back writes its merge state), does what a
+/// worker's still-running process could do after every engine check: with `refs`, it
+/// points `ORIG_HEAD` and `AUTO_MERGE` at the base; always, it makes `MERGE_HEAD` a
+/// symbolic link to the base's ref file and `MERGE_MSG` and `MERGE_MODE` links to
+/// `victim`. Then it runs the engine's command.
+fn planting_git(tools: &Path, w: &World, victim: &Path, refs: bool) -> PathBuf {
+    let marker = tools.join("planted");
+    let symrefs = if refs {
+        format!(
+            "printf 'ref: refs/heads/main\\n' > '{admin}/ORIG_HEAD'
+    printf 'ref: refs/heads/main\\n' > '{admin}/AUTO_MERGE'",
+            admin = w.admin().display()
+        )
+    } else {
+        ":".to_string()
+    };
+    wrapper_git(
+        tools,
+        &format!(
+            r#"if [ ! -e '{marker}' ]; then
+  case " $* " in
+    *" --no-ff "*|*" read-tree -m -u "*)
+    : > '{marker}'
+    {symrefs}
+    ln -sf '{main}' '{admin}/MERGE_HEAD'
+    ln -sf '{victim}' '{admin}/MERGE_MSG'
+    ln -sf '{victim}' '{admin}/MERGE_MODE'
+    ;;
+  esac
+fi"#,
+            marker = marker.display(),
+            admin = w.admin().display(),
+            main = w.main_file().display(),
+            victim = victim.display(),
+        ),
+    )
+}
+
+/// The class, not the route: pseudo-refs planted after every check, while the
+/// hand-back's last git command before its own writes runs, steer nothing. The clean
+/// hand-back writes no pseudo-ref at all; the conflicted one replaces the planted links
+/// with its own plain `MERGE_HEAD`, `MERGE_MSG` and `MERGE_MODE`, never writing through
+/// them. (A conflicted hand-back also meeting a planted `ORIG_HEAD` is refused at its
+/// next git call, by the pseudo-ref check; that is `a_symbolic_orig_head_…`'s case.)
+#[test]
+fn pseudo_refs_planted_after_the_checks_steer_nothing() {
+    for (run, conflict) in [("pr21", false), ("pr22", true)] {
+        let w = world(run);
+        let run_head = if conflict {
+            conflict_case(&w)
+        } else {
+            clean_case(&w)
+        };
+        let refs = w.other_refs();
+        let tools = tempfile::tempdir().unwrap();
+        let victim = tools.path().join("victim");
+        std::fs::write(&victim, "victim\n").unwrap();
+        let git = planting_git(tools.path(), &w, &victim, !conflict);
+
+        let result = hand_back(git.as_os_str(), &w.task, &run_head, T);
+        assert!(tools.path().join("planted").exists(), "the plant never ran");
+        assert_eq!(w.main(), w.base, "the base moved: {result:?}");
+        assert_eq!(w.other_refs(), refs, "a ref moved: {result:?}");
+        assert_eq!(
+            std::fs::read_to_string(&victim).unwrap(),
+            "victim\n",
+            "an engine write went through a link"
+        );
+        let back = result.unwrap();
+        let admin = w.admin();
+        if conflict {
+            assert_eq!(back.files, vec!["f.txt".to_string()]);
+            for name in ["MERGE_HEAD", "MERGE_MSG", "MERGE_MODE"] {
+                let meta = std::fs::symlink_metadata(admin.join(name)).unwrap();
+                assert!(meta.is_file(), "{name} is still a link");
+            }
+            assert_eq!(
+                std::fs::read_to_string(admin.join("MERGE_HEAD")).unwrap(),
+                format!("{run_head}\n")
+            );
+            assert_eq!(out(&w.task, &["ls-files", "-u"]).lines().count(), 3);
+            // What `git merge --no-ff` of a commit writes.
+            assert_eq!(
+                std::fs::read_to_string(admin.join("MERGE_MSG")).unwrap(),
+                format!(
+                    "Merge commit '{run_head}' into anthrex/{}/t1\n\n# Conflicts:\n#\tf.txt\n",
+                    w.run
+                )
+            );
+            assert_eq!(
+                std::fs::read_to_string(admin.join("MERGE_MODE")).unwrap(),
+                "no-ff"
+            );
+        } else {
+            assert!(back.files.is_empty());
+            assert_eq!(out(&w.task, &["rev-parse", "HEAD^2"]), run_head);
+            // Never written: still what was planted.
+            assert_eq!(
+                std::fs::read_to_string(admin.join("ORIG_HEAD")).unwrap(),
+                SYMREF_MAIN
+            );
+            for name in ["MERGE_HEAD", "MERGE_MSG", "MERGE_MODE"] {
+                let meta = std::fs::symlink_metadata(admin.join(name)).unwrap();
+                assert!(meta.file_type().is_symlink(), "{name} was written");
+            }
+        }
+    }
+}
+
 /// Every file of `admin` but `index` (which these commands write, by rename), with
 /// its content or, for a link, its target.
 fn snapshot(admin: &Path) -> Vec<(String, String)> {
@@ -274,4 +385,76 @@ fn the_hand_backs_plumbing_writes_no_other_ref_or_pseudo_ref() {
     assert_eq!(w.other_refs(), refs, "a ref moved");
     assert_eq!(w.main(), w.base);
     assert_eq!(out(&w.repo.root, &["rev-parse", &w.own()]), commit);
+}
+
+/// A task side and a run side of one conflict shape, applied in a world's task
+/// worktree and integration worktree; the run head.
+fn shape(w: &World, shape: &str) -> String {
+    let (task, run) = (&w.task, &w.integration);
+    let commit = |dir: &Path, message: &str| {
+        out(dir, &["commit", "-q", "-m", message]);
+    };
+    match shape {
+        "content" => {
+            commit_file(task, "f.txt", "task\n", "task");
+            commit_file(run, "f.txt", "run\n", "run")
+        }
+        "modify/delete" => {
+            out(task, &["rm", "-q", "f.txt"]);
+            commit(task, "task deletes");
+            commit_file(run, "f.txt", "run\n", "run")
+        }
+        "add/add" => {
+            commit_file(task, "g.txt", "task\n", "task");
+            commit_file(run, "g.txt", "run\n", "run")
+        }
+        "rename/rename" => {
+            out(task, &["mv", "f.txt", "h.txt"]);
+            commit(task, "task renames");
+            out(run, &["mv", "f.txt", "k.txt"]);
+            commit(run, "run renames");
+            head(run)
+        }
+        other => panic!("no shape {other}"),
+    }
+}
+
+/// The conflict the worker sees matches `git merge --no-ff`'s: the same unmerged
+/// stages (mode, object, stage, path) and the same `git status`, for each conflict
+/// shape. Two identical worlds: the engine hands back in one, plain `git merge` runs in
+/// the other.
+#[test]
+fn the_conflict_the_worker_sees_matches_git_merge() {
+    for (index, name) in ["content", "modify/delete", "add/add", "rename/rename"]
+        .iter()
+        .enumerate()
+    {
+        let ours = world(&format!("pr4{index}"));
+        let theirs = world(&format!("pr5{index}"));
+        let run_head = shape(&ours, name);
+        let merged = shape(&theirs, name);
+        let merge = try_git(
+            &theirs.task,
+            &["merge", "-q", "--no-ff", "--no-commit", &merged],
+        );
+        assert!(
+            !merge.status.success(),
+            "{name}: git merge did not conflict"
+        );
+
+        let back = hand_back(real_git(), &ours.task, &run_head, T).unwrap();
+        assert!(!back.files.is_empty(), "{name}: no conflict handed back");
+        let unmerged = |w: &World| out(&w.task, &["ls-files", "-u"]);
+        assert_eq!(unmerged(&ours), unmerged(&theirs), "{name}: stages differ");
+        let status = |w: &World| out(&w.task, &["status", "--porcelain"]);
+        assert_eq!(status(&ours), status(&theirs), "{name}: status differs");
+        assert_eq!(
+            back.files,
+            out(&theirs.task, &["diff", "--name-only", "--diff-filter=U"])
+                .lines()
+                .map(str::to_string)
+                .collect::<Vec<_>>(),
+            "{name}: files differ"
+        );
+    }
 }
