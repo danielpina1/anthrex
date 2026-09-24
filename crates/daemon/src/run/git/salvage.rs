@@ -118,10 +118,10 @@ fn matches_existing(g: Git<'_>, worktree: &Path, reference: &str) -> Result<bool
     }
 }
 
-/// Decision 20's removal: `git worktree unlock`, `git worktree remove --force`, `git
-/// worktree prune`. It removes whatever is there, dirty or not, so the caller salvages
-/// first. A worktree git no longer lists, or whose directory is already gone, is not
-/// an error: the removal is already done, or is finished by the prune.
+/// Decision 20's removal: `git worktree unlock`, `git worktree remove --force`. It
+/// removes whatever is there, dirty or not, so the caller salvages first. A worktree
+/// git no longer lists, or whose directory is already gone, is not an error: the
+/// removal is already done, or is finished by a prune.
 pub fn remove_worktree(
     git: &OsStr,
     root: &Path,
@@ -147,7 +147,9 @@ pub fn remove_worktree(
             )?;
         }
     }
-    g.write(root, &[os("worktree"), os("prune")])?;
+    // No unconditional `git worktree prune` (final fix batch F1, D-12): `worktree
+    // remove` already deregisters, and a prune would also forget the user's own
+    // worktrees whose directories are merely missing.
     Ok(())
 }
 

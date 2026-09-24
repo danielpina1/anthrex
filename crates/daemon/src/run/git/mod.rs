@@ -250,6 +250,14 @@ pub fn preflight(git: &OsStr, dir: &Path, timeout: Duration) -> Result<Preflight
 
     let head_ref = g.read(&root, &[os("symbolic-ref"), os("-q"), os("HEAD")])?;
     let base_branch = match head_ref.stdout.trim().strip_prefix("refs/heads/") {
+        // Final fix batch F1, D-13: `anthrex/` is reserved for runs; a run based on
+        // another run's branch would merge into it and lose its base to its discard.
+        Some(branch) if head_ref.success && branch.starts_with("anthrex/") => {
+            return Err(format!(
+                "{} is on {branch}, a branch reserved for runs; check out your own branch first",
+                root.display()
+            ));
+        }
         Some(branch) if head_ref.success && !branch.is_empty() => branch.to_string(),
         _ => {
             return Err(format!(

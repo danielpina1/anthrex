@@ -268,3 +268,22 @@ fn protected_files_lists_tracked_matches_only() {
         ]
     );
 }
+
+/// Final fix batch F1, finding D-13: a run started from inside another run's worktree
+/// would take that run's branch as its base, merge into it at accept, and have its base
+/// deleted by the other run's discard. `anthrex/` is reserved.
+#[test]
+fn preflight_refuses_a_base_branch_under_anthrex() {
+    let repo = repo();
+    out(
+        &repo.root,
+        &["checkout", "-q", "-b", "anthrex/r1/integration"],
+    );
+    assert_eq!(
+        preflight(real_git(), &repo.root, T).unwrap_err(),
+        format!(
+            "{} is on anthrex/r1/integration, a branch reserved for runs; check out your own branch first",
+            repo.root.display()
+        )
+    );
+}

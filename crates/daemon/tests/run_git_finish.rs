@@ -344,3 +344,26 @@ fn delete_branches_skips_a_checked_out_branch_and_never_follows_a_symref() {
     assert_eq!(head(&repo.root), mine);
     assert_eq!(out(&repo.root, &["status", "--porcelain"]), "");
 }
+
+/// Final fix batch F1, finding D-12: removing an engine worktree never prunes the
+/// user's own registered worktree whose directory is merely missing (an unmounted
+/// volume, say).
+#[test]
+fn remove_worktree_leaves_the_users_missing_worktree_registered() {
+    let repo = repo();
+    let (_keep, engine) = task_worktree(&repo, "pr01", "t1");
+    let theirs = tempfile::tempdir().unwrap();
+    let users = theirs.path().canonicalize().unwrap().join("mine");
+    out(
+        &repo.root,
+        &["worktree", "add", "-q", "--detach", users.to_str().unwrap()],
+    );
+    std::fs::rename(&users, users.with_file_name("elsewhere")).unwrap();
+
+    remove_worktree(real_git(), &repo.root, &engine, T).unwrap();
+    assert!(worktree_block(&repo.root, &engine).is_none());
+    assert!(
+        worktree_block(&repo.root, &users).is_some(),
+        "the user's worktree was pruned"
+    );
+}
