@@ -1,8 +1,9 @@
 //! The headless session driver (decisions 26, 27 and 52): one agent process with piped
 //! stdin, stdout and stderr and no terminal, in its own process group.
 //!
-//! The only file under `headless/` that does I/O. Everything here runs on dedicated
-//! threads, never on a tokio worker and never under the manager lock (AGENTS.md rule 2):
+//! With its `pipes` submodule (the threads), the only code under `headless/` that does
+//! I/O. Everything here runs on dedicated threads, never on a tokio worker and never
+//! under the manager lock (AGENTS.md rule 2):
 //!
 //! - a **writer** thread owns stdin and drains a bounded queue ([`WRITER_QUEUE_MAX`]
 //!   lines), so [`HeadlessHandle::send_line`] only enqueues and never blocks on a full
@@ -20,19 +21,21 @@
 //! stdout and stderr delivered, or after [`OUTPUT_GRACE`] when a process that escaped
 //! the group still holds a pipe open (lines after that are dropped).
 
+mod pipes;
+
 use super::argv::InterruptMode;
-use super::claude_stream::{self, ClaudeStream};
-use super::{FailureKind, SessionEvent, TurnOutcome, UNKNOWN_LINE_CHARS, codex_stream};
+use super::claude_stream;
+use super::{SessionEvent, UNKNOWN_LINE_CHARS};
 use crate::subprocess::scrub_git_env;
 use anyhow::Context;
+use pipes::{dispatch, read_stderr, read_stdout, wait_leader, write_lines};
 use proto::Runtime;
 use std::ffi::OsStr;
-use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::process::{CommandExt, ExitStatusExt};
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TrySendError};
+use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -84,19 +87,18 @@ struct Process {
     exited: Condvar,
     /// `None` once stdin is closed.
     stdin: Mutex<Option<SyncSender<String>>>,
+    /// `true` once the dispatcher has delivered `ProcessExited`, the process's last
+    /// event: nothing it said can reach the caller after that.
+    finished: Mutex<bool>,
+    /// Notified when `finished` is set.
+    finished_cv: Condvar,
 }
 
-/// What the readers and the waiter tell the dispatcher.
-enum Msg {
-    Line(String),
-    Cut(String),
-    Stderr(String),
-    StdoutDone,
-    StderrDone,
-    Exited {
-        code: Option<i32>,
-        signal: Option<i32>,
-    },
+impl Process {
+    fn finish(&self) {
+        *crate::lock(&self.finished) = true;
+        self.finished_cv.notify_all();
+    }
 }
 
 impl HeadlessHandle {
@@ -160,12 +162,18 @@ impl HeadlessHandle {
             reaped: Mutex::new(false),
             exited: Condvar::new(),
             stdin: Mutex::new(queue),
+            finished: Mutex::new(false),
+            finished_cv: Condvar::new(),
         });
         let (tx, rx) = mpsc::channel();
         let name = |role: &str| format!("headless-{role}-{pid}");
+        let dispatched = process.clone();
         let started = std::thread::Builder::new()
             .name(name("dispatch"))
-            .spawn(move || dispatch(pid, runtime, rx, on_event))
+            .spawn(move || {
+                dispatch(pid, runtime, rx, on_event);
+                dispatched.finish();
+            })
             .and_then(|_| {
                 std::thread::Builder::new()
                     .name(name("stdin"))
@@ -191,9 +199,11 @@ impl HeadlessHandle {
             });
         if let Err(error) = started {
             let handle = Self {
-                process: Some(process),
+                process: Some(process.clone()),
             };
             handle.signal(libc::SIGKILL, true);
+            // The dispatcher may never have started; nothing more will be delivered.
+            process.finish();
             return Err(error).context("could not start a session thread");
         }
         Ok(Self {
@@ -299,6 +309,32 @@ impl HeadlessHandle {
         self.process.as_ref().map(|p| p.pid)
     }
 
+    /// Waits until the process's last event (`ProcessExited`) has been delivered, at
+    /// most `timeout`; `true` when it has, or when there is no process. After it, no event
+    /// of this process can reach the caller: a replacement process may start on the same
+    /// session (decision 52).
+    ///
+    /// Blocking: call it from `spawn_blocking` or a thread, never from a tokio worker.
+    pub fn wait_finished(&self, timeout: Duration) -> bool {
+        let Some(process) = &self.process else {
+            return true;
+        };
+        let deadline = Instant::now() + timeout;
+        let mut finished = crate::lock(&process.finished);
+        while !*finished {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return false;
+            }
+            finished = process
+                .finished_cv
+                .wait_timeout(finished, left)
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0;
+        }
+        true
+    }
+
     /// No process, or its leader has been reaped.
     pub fn is_ended(&self) -> bool {
         self.pid().is_none()
@@ -360,224 +396,4 @@ fn signal_locked(pid: u32, signal: i32, group: bool) {
             tracing::debug!(?error, pid, signal, group, "could not signal a session");
         }
     }
-}
-
-fn write_lines(mut stdin: std::process::ChildStdin, lines: Receiver<String>) {
-    for line in lines {
-        let written = stdin
-            .write_all(line.as_bytes())
-            .and_then(|()| stdin.write_all(b"\n"))
-            .and_then(|()| stdin.flush());
-        if let Err(error) = written {
-            tracing::debug!(?error, "a session's stdin closed");
-            return;
-        }
-    }
-    // The queue's sender is gone (`close_stdin`): dropping `stdin` sends EOF.
-}
-
-/// Reads `\n`-separated lines, keeping at most `max` bytes of each (the rest is read
-/// and dropped); calls `line(bytes, cut)` for each non-empty one, a last unterminated
-/// line included. One trailing `\r` is dropped.
-fn read_lines(reader: impl Read, max: usize, mut line: impl FnMut(&[u8], bool) -> bool) {
-    let mut reader = BufReader::with_capacity(64 * 1024, reader);
-    let mut current = Vec::new();
-    let mut cut = false;
-    loop {
-        let (consumed, end) = match reader.fill_buf() {
-            Ok([]) => break,
-            Ok(buffer) => match buffer.iter().position(|&b| b == b'\n') {
-                Some(at) => {
-                    keep(&mut current, &mut cut, &buffer[..at], max);
-                    (at + 1, true)
-                }
-                None => {
-                    keep(&mut current, &mut cut, buffer, max);
-                    (buffer.len(), false)
-                }
-            },
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(error) => {
-                tracing::debug!(?error, "a session pipe failed");
-                break;
-            }
-        };
-        reader.consume(consumed);
-        if end && !emit(&mut current, &mut cut, &mut line) {
-            return;
-        }
-    }
-    emit(&mut current, &mut cut, &mut line);
-}
-
-fn keep(current: &mut Vec<u8>, cut: &mut bool, bytes: &[u8], max: usize) {
-    let room = max.saturating_sub(current.len());
-    if bytes.len() > room {
-        *cut = true;
-    }
-    current.extend_from_slice(&bytes[..bytes.len().min(room)]);
-}
-
-fn emit(current: &mut Vec<u8>, cut: &mut bool, line: &mut impl FnMut(&[u8], bool) -> bool) -> bool {
-    if current.last() == Some(&b'\r') && !*cut {
-        current.pop();
-    }
-    let go_on = current.iter().all(u8::is_ascii_whitespace) || line(current, *cut);
-    current.clear();
-    *cut = false;
-    go_on
-}
-
-fn read_stdout(stdout: std::process::ChildStdout, tx: Sender<Msg>) {
-    read_lines(stdout, STDOUT_LINE_MAX, |bytes, cut| {
-        let msg = if cut {
-            Msg::Cut(
-                String::from_utf8_lossy(&bytes[..bytes.len().min(CUT_KEEP_BYTES)]).into_owned(),
-            )
-        } else {
-            Msg::Line(String::from_utf8_lossy(bytes).into_owned())
-        };
-        tx.send(msg).is_ok()
-    });
-    let _ = tx.send(Msg::StdoutDone);
-}
-
-fn read_stderr(stderr: std::process::ChildStderr, tx: Sender<Msg>) {
-    read_lines(stderr, STDERR_LINE_MAX, |bytes, _cut| {
-        tx.send(Msg::Stderr(String::from_utf8_lossy(bytes).into_owned()))
-            .is_ok()
-    });
-    let _ = tx.send(Msg::StderrDone);
-}
-
-/// Waits for the leader to exit without reaping it, kills what is left of its group
-/// while the group id is still this session's, then reaps it and reports the exit.
-fn wait_leader(process: &Process, tx: Sender<Msg>) {
-    let pid = process.pid as libc::pid_t;
-    let observed = loop {
-        // SAFETY: an all-zero `siginfo_t` is a valid value for waitid to overwrite.
-        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-        // SAFETY: `pid` is this process's unreaped child; `WNOWAIT` leaves it waitable.
-        let result = unsafe {
-            libc::waitid(
-                libc::P_PID,
-                pid as libc::id_t,
-                &mut info,
-                libc::WEXITED | libc::WNOWAIT,
-            )
-        };
-        if result == 0 {
-            break true;
-        }
-        let error = std::io::Error::last_os_error();
-        if error.kind() != std::io::ErrorKind::Interrupted {
-            // Not our child any more (`ECHILD`): something else reaped it, so its pid
-            // may already be another process's. Neither signal nor reap it.
-            tracing::debug!(?error, pid, "waitid on a session failed");
-            break false;
-        }
-    };
-    let mut reaped = crate::lock(&process.reaped);
-    let (code, signal) = if observed {
-        signal_locked(process.pid, libc::SIGKILL, true);
-        let mut status = 0;
-        // SAFETY: reaping the exited child observed above.
-        let result = loop {
-            let result = unsafe { libc::waitpid(pid, &mut status, 0) };
-            if result != -1
-                || std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted
-            {
-                break result;
-            }
-        };
-        if result == pid {
-            let status = std::process::ExitStatus::from_raw(status);
-            (status.code(), status.signal())
-        } else {
-            (None, None)
-        }
-    } else {
-        (None, None)
-    };
-    *reaped = true;
-    process.exited.notify_all();
-    drop(reaped);
-    let _ = tx.send(Msg::Exited { code, signal });
-}
-
-/// Delivers a process's events in order: `ProcessStarted`, every stdout and stderr line
-/// until the exit (and for at most [`OUTPUT_GRACE`] after it), then the sandbox failure
-/// when there was one, then `ProcessExited`.
-fn dispatch(pid: u32, runtime: Runtime, rx: Receiver<Msg>, on_event: impl Fn(u32, SessionEvent)) {
-    on_event(pid, SessionEvent::ProcessStarted { pid });
-    let mut claude = ClaudeStream::default();
-    let mut saw_init = false;
-    let mut sandbox: Option<String> = None;
-    let mut open_pipes = 2;
-    let mut exit: Option<(Option<i32>, Option<i32>)> = None;
-    let mut grace_until: Option<Instant> = None;
-    loop {
-        let msg = match grace_until {
-            None => rx.recv().ok(),
-            Some(until) => {
-                if open_pipes == 0 {
-                    break;
-                }
-                match rx.recv_timeout(until.saturating_duration_since(Instant::now())) {
-                    Ok(msg) => Some(msg),
-                    Err(RecvTimeoutError::Timeout) => {
-                        tracing::debug!(pid, "a session's pipes outlived it; abandoned");
-                        break;
-                    }
-                    Err(RecvTimeoutError::Disconnected) => None,
-                }
-            }
-        };
-        let Some(msg) = msg else { break };
-        match msg {
-            Msg::Line(line) => {
-                let events = match runtime {
-                    Runtime::Claude => claude.parse_line(&line),
-                    _ => codex_stream::parse_line(&line),
-                };
-                for event in events {
-                    saw_init |= matches!(event, SessionEvent::Init { .. });
-                    if let SessionEvent::Diagnostic { text } = &event {
-                        tracing::warn!(pid, text = %text, "a headless session reported an error");
-                    }
-                    on_event(pid, event);
-                }
-            }
-            Msg::Cut(prefix) => on_event(pid, super::unknown(&prefix)),
-            Msg::Stderr(line) => {
-                if !saw_init && sandbox.is_none() && line.contains(SANDBOX_UNAVAILABLE) {
-                    sandbox = Some(line.trim().to_string());
-                }
-                on_event(pid, SessionEvent::StderrLine { line });
-            }
-            Msg::StdoutDone | Msg::StderrDone => open_pipes -= 1,
-            Msg::Exited { code, signal } => {
-                exit = Some((code, signal));
-                grace_until = Some(Instant::now() + OUTPUT_GRACE);
-            }
-        }
-        if exit.is_some() && open_pipes == 0 {
-            break;
-        }
-    }
-    if let Some(error) = sandbox.filter(|_| !saw_init) {
-        on_event(
-            pid,
-            SessionEvent::TurnEnded {
-                outcome: TurnOutcome::Failed {
-                    error,
-                    kind: FailureKind::SandboxUnavailable,
-                },
-                usage: None,
-                denials: Vec::new(),
-            },
-        );
-    }
-    let (code, signal) = exit.unwrap_or((None, None));
-    on_event(pid, SessionEvent::ProcessExited { code, signal });
 }

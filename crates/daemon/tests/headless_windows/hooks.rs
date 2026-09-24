@@ -210,7 +210,15 @@ async fn a_headless_claude_prompt_hook_feeds_the_cursor() {
     d.manager.headless_send(id, "second").await.unwrap();
     hook(prompt(BG2)).await;
     open_gate(dir.path(), "c");
-    turn_ended(&mut feed).await;
+    // M8a.18: this background turn runs while "second" waits, so its `result` reaches
+    // the feed as `Unprompted`, not as the delivered turn's end.
+    next_signal(&mut feed, "the background turn's end", |s| {
+        matches!(
+            s.kind,
+            WindowSignalKind::Unprompted(SessionEvent::TurnEnded { .. })
+        )
+    })
+    .await;
     hook(stop()).await;
 
     hook(prompt("second")).await;

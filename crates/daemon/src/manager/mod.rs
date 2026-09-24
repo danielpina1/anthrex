@@ -5,6 +5,7 @@ mod conversation;
 mod create;
 mod entry;
 mod headless;
+mod headless_turns;
 mod remove;
 mod restart;
 mod restore;
@@ -15,6 +16,7 @@ pub use headless::{
     DIAGNOSTIC_LINES, SIGNAL_CHANNEL_CAPACITY, WindowSignal, WindowSignalKind, control_refusal,
     subscribe_refusal,
 };
+pub use headless_turns::RESUME_START_TIMEOUT;
 pub use remove::{GitRoots, RemoveError};
 
 use crate::hooks;

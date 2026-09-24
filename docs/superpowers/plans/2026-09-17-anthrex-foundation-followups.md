@@ -847,3 +847,14 @@ scope.
   resume. `assert_alive` resumes a paused run before checking, and nothing does that
   for a halted one. The review branch already exempts a stopped run; `proof` and
   `check` should too, or the oracle should resume a halted run with a rebaseline.
+
+## From M8a.18 (2026-09-24), for M8a
+
+- **`headless_sessions`'s `kill_sends_sigterm_to_the_whole_group_first` is flaky under
+  load.** It failed 1 run in 40 at the base commit `bc19dca` (and about 1 in 16 on the
+  M8a.18 branch) at load average 20 to 27, on `the group's SIGTERM reached <pid>`: the
+  background `sleep` is still a zombie of the trapping leader 2 s after the `SIGTERM`.
+  `alive()` is `kill(pid, 0)`, which succeeds for an unreaped zombie, and the leader
+  reaps its child only between its own `sleep 0.05` loops. Checking the process state
+  (`ps -o stat=` not `Z`) instead of `kill(pid, 0)` would test what the test means.
+

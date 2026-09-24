@@ -7323,3 +7323,124 @@ failed first. Each fix was then mutation-checked: reverting it fails its test.
     never unregistered.
 - **Carry for M8a.18:** the stale-pid rule (`current`) is now pinned by a direct test.
   M8a.18 must also test it end to end through kill-then-`--resume`.
+
+### M8a.18 turn delivery, interrupt and resume (2026-09-24)
+
+Built `manager/headless_turns.rs` (split out of `manager/headless.rs`: session process
+start, `headless_send`, `headless_resume`, `headless_interrupt`, `headless_kill`),
+`headless/session/pipes.rs` (split out of `headless/session.rs`: the writer, reader,
+waiter and dispatcher threads), the content-mode changes to `headless/conversation.rs`,
+and `crates/daemon/tests/headless_turns.rs` with `headless_turns/cursor.rs`.
+
+**Delivery (decision 29).**
+
+- Every send and resume clamps its text with `run::messages::clamp` first, and the
+  clamped text is what `sent_turn` records, what goes on Claude's stdin and what is
+  Codex's last argument (M8a.7 m3).
+- `sent_turn` is applied, and its output enriched, under the lock before the write
+  (Claude) or the spawn (Codex), on every path: send, resume and `create_headless`.
+- **Claude send:** one `send_line(user_message(clamp(text), session_id))`. An ended
+  process is `session for window <id> has ended; resume it`.
+- **Codex send:** refused with `a turn is already running for window <id>` while the
+  turn's process is alive and no turn has ended in it (or another send or resume is in
+  flight: `HeadlessWindow.busy`). A window whose status is `Exited` (a process that died
+  before its turn ended, T17-I1, or a restored window) is `…has ended; resume it`.
+  Otherwise the manager waits until the previous turn's process has delivered its last
+  event (it has already ended its turn and is only exiting), sleeps the launch jitter,
+  records the turn, and spawns `codex_args(spec, Resume { session_id }, text, …)`
+  through the same `spawn_process` as the first turn, so stdin is closed at once
+  (T17-C1).
+- **Jitter (invented source).** `Effect::Deliver` carries no `jitter_ms`, so a Codex
+  send computes decision 18's `jitter_ms(run_id, task_id, run_ref.session)` from the
+  spec's `RunRef` (0 without one). `headless_resume` takes the `ResumeSession` op's
+  jitter as a `Duration` argument (its signature gained it).
+
+**Resume (decisions 28 and 52).**
+
+- A live process of the window is killed (`kill(kill_grace)`), and the resume waits,
+  on `spawn_blocking`, until its dispatcher has delivered `ProcessExited`
+  (`HeadlessHandle::wait_finished`, new). Only then is the next process spawned. So no
+  event of the replaced process can arrive after the new one starts, and one session
+  never runs in two processes. The wait is bounded by `kill_grace + OUTPUT_GRACE + 1 s`;
+  past it the process is killed again and waited for once more; then the resume fails
+  with `the previous process of window <id> did not stop; its session cannot run twice`.
+- The window's handle is cleared before the spawn, so the new process's events are the
+  window's from its `ProcessStarted` on (the stale-pid rule `current` still applies to
+  anything else).
+- Claude: `claude_args(spec, Resume { id }, …)`, the same builder as the first launch,
+  so every flag is re-passed (the user-settings-only flags of decision 53, `--settings`
+  with its sandbox block, `--mcp-config`, tools, mode, model, effort, auth). Then the
+  message on stdin. Codex: `codex_args(…, Resume { id }, message, …)`.
+- `headless_resume` returns once the process prints `Init`. An exit before `Init` is an
+  error `could not resume session <id>: the process exited with code <n> before it
+  started: <text>`, `<text>` being the failed `result`'s text or else the first stderr
+  line (M8a.1's `No conversation found with session ID: <id>`). The driver (M8a.22)
+  reports any error from it as `ResumeFailed`.
+- **`RESUME_START_TIMEOUT` = 120 s (invented).** A process that prints nothing for that
+  long is killed and the resume fails, so a hung start cannot hold its task forever.
+
+**Interrupt.** Unchanged from M8a.17 (Claude by `CLI_CAPS.claude_interrupt`, Codex by
+`SIGINT`), now tested through the manager.
+
+**The cursor (M8a.7 re-review 2's minors).**
+
+- **m1:** a headless Claude window's cursor starts as `StreamCursor::fed()`, in content
+  mode, so its first `sent_turn` records no timing-based prompt. Test:
+  `a_fed_window_starts_its_cursor_in_content_mode` (its lost-first-hook half).
+- **m2:** `awaiting_prompt` is replaced by `open_prompts`, the observed prompts whose
+  turns have not ended (with each one's `human` flag). Prose is dropped only when none
+  is open, so a prompt hook applied before the previous `result` keeps both replies.
+  This is the count rule the review proposed, kept as a queue so a lost hook cannot
+  skew it for the rest of the session. Test: `a_late_prompt_hook_drops_only_its_own_turn`.
+- **The background `result` (re-review 2, out of scope there, carried).** A `TurnEnded`
+  closes the first open prompt that is the daemon's, with every older open prompt (an
+  unprompted prompt taken into that turn mid-turn, case D). With no open daemon prompt,
+  it closes the oldest open one, and when that is an unprompted turn and a sent text is
+  still waiting for its prompt, `StreamCursor::ended_unprompted()` is true. The manager
+  then leaves the window's status alone (the delivered turn is still open) and
+  publishes the event as the new `WindowSignalKind::Unprompted(event)`, not
+  `Session(event)`. M8a.22's translation maps it to activity, never to the delivered
+  turn's `TurnEnded`; its usage is still spend. Test:
+  `a_background_turns_result_does_not_end_the_delivered_turn`.
+  - **Known limit.** When the next sent prompt's hook is applied before a background
+    turn's `result` (the N1 race and m2's reordering at once), that `result` closes the
+    delivered prompt instead. Both reorderings need scheduling under load.
+  - `a_headless_claude_prompt_hook_feeds_the_cursor` (M8a.17) now expects its third
+    turn's end as `Unprompted`: that is its N1 background turn.
+- **m4:** the M8a.18 task text says a prompt observed before its `sent_turn` "is still
+  classified as the daemon's". The code records it as `human: false` and places it
+  correctly, which is what matters (the review's point); the brief text is left as is.
+
+**Files (rule 8).** `session.rs` 583 → 399 lines plus `session/pipes.rs` 253;
+`manager/headless.rs` 574 → 490 plus `manager/headless_turns.rs` 406.
+
+**Acceptance.** `rg -n "write_input" crates/daemon/src/run crates/daemon/src/headless`
+prints three lines, all the Codex usage field `cache_write_input_tokens` in
+`codex_stream.rs` and its tests (M8a.7's, unchanged). `rg -nw write_input` over the same
+paths prints nothing: no PTY write reaches the engine or the headless layer. No lock
+guard in `manager/headless.rs` or `manager/headless_turns.rs` is alive across a spawn,
+a write, a kill or an `.await`; `TurnClaim` takes the lock only in its `Drop`.
+
+**TDD evidence.** The tests were written first, against stubs of the new API (the
+`Unprompted` variant and the `jitter` argument, neither doing anything):
+
+- 11 of 14 failed: the three resume tests and the stale-pid test with `resuming a
+  headless session is not implemented yet (M8a.18)`; `resume_failure_is_reported` on its
+  text assertion; the Codex send tests with `left: "a Codex turn is a new exec resume
+  process (M8a.18)"`; `sent_turn_records_the_clamped_text` on the unclamped stdin line;
+  `a_background_turns_result…` on `Session(TurnEnded)` where `Unprompted` was wanted;
+  `a_late_prompt_hook…` with `left: [("first", "reply one"), ("second", "")]`.
+- `a_fed_window…`'s first half (a background turn first) passed on the old code, so a
+  lost-first-hook half was added; it failed with `left: [("second", "")]`.
+- `claude_send_writes_one_envelope_line` and `interrupt_follows_cli_caps` passed before
+  the change: M8a.17 had built the Claude send and the interrupt. They pin them.
+- Mutations: recording a Codex turn after its spawn (with a 300 ms pause to force the
+  race) fails `sent_turn_is_recorded_before_the_write` (`left: …("second", "")`).
+  Resuming without waiting for the killed process first survived the stale-pid test;
+  the test's first process now takes 0.3 s to die, and the mutant fails it.
+
+**For M8a.22.** Because a Codex send waits for the previous process's exit, that exit
+always reaches the feed before the next process's `ProcessStarted`, and after the
+engine emitted the `Deliver`. This is the order the M8a.13 fix-round-2 follow-up names:
+the reducer side of T13-P1 (remember the pid whose turn closed; its later exit is
+normal) must cover it.

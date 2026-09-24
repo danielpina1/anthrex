@@ -35,9 +35,37 @@ pub struct StreamCursor {
     pending_sent: VecDeque<String>,
     /// An observed prompt no sent text matched, in case its `sent_turn` comes late.
     last_unmatched: Option<String>,
-    /// A turn ended and no prompt has been observed since: prose now belongs to a turn
-    /// whose prompt hook was lost, which has no `User` turn to land on.
-    awaiting_prompt: bool,
+    /// The observed prompts whose turns have not ended yet, oldest first: `true` for the
+    /// daemon's. Empty: prose now belongs to a turn whose prompt hook was lost, which has
+    /// no `User` turn to land on. Counting open prompts rather than flagging the last
+    /// `TurnEnded` keeps a prompt hook applied before the previous turn's `result` from
+    /// dropping its own turn's prose (M8a.7 re-review 2, m2).
+    open_prompts: VecDeque<bool>,
+    /// The latest `TurnEnded` ended a turn Claude Code started by itself while a turn
+    /// the daemon sent was still waiting to run ([`StreamCursor::ended_unprompted`]).
+    ended_unprompted: bool,
+}
+
+impl StreamCursor {
+    /// A cursor in content mode from the start, for a window whose real prompt hooks the
+    /// manager feeds to [`observe_hook`] (a headless Claude window). Its first
+    /// `sent_turn` then records no timing-based prompt, so a first prompt hook that is
+    /// lost, or that belongs to a background turn, cannot misalign the rest of the
+    /// session (M8a.7 re-review 2, m1).
+    pub fn fed() -> Self {
+        StreamCursor {
+            hook_feed: true,
+            ..Self::default()
+        }
+    }
+
+    /// Whether the `TurnEnded` just mapped ended a turn Claude Code started by itself (a
+    /// background sub-agent's notification) while a turn the daemon sent was still
+    /// waiting for its prompt: that `result` is not the delivered turn's end. Judged by
+    /// content in a fed cursor only; always false otherwise.
+    pub fn ended_unprompted(&self) -> bool {
+        self.ended_unprompted
+    }
 }
 
 /// Milestone 6.5's two inputs: hooks for `WindowManager::conversation_hook`, records
@@ -91,7 +119,7 @@ pub fn map(
                 cursor
                     .prompts_seen
                     .checked_sub(1)
-                    .filter(|_| !cursor.awaiting_prompt)
+                    .filter(|_| !cursor.open_prompts.is_empty())
             } else {
                 cursor
                     .prompts_sent
@@ -161,7 +189,7 @@ pub fn map(
         SessionEvent::TurnEnded { .. } => {
             cursor.turn_open = false;
             cursor.after_turn_end = true;
-            cursor.awaiting_prompt = true;
+            cursor.ended_unprompted = hooks_fire && cursor.hook_feed && cursor.end_turn();
             cursor.tool_names.clear();
             input.hooks.push(cursor.hook(HookKind::Stop));
         }
@@ -268,7 +296,10 @@ pub fn observe_hook(
     };
     let ordinal = cursor.prompts_seen;
     cursor.prompts_seen = cursor.prompts_seen.saturating_add(1);
-    cursor.awaiting_prompt = false;
+    if cursor.open_prompts.len() >= PENDING_SENT_MAX {
+        cursor.open_prompts.pop_front();
+    }
+    cursor.open_prompts.push_back(human);
     if hook.session_id.is_some() {
         cursor.session_id.clone_from(&hook.session_id);
     }
@@ -303,6 +334,26 @@ const PENDING_SENT_MAX: usize = 16;
 const TOOL_NAMES_MAX: usize = 1024;
 
 impl StreamCursor {
+    /// Closes the oldest open turn a `TurnEnded` can belong to, and returns whether it
+    /// was a turn Claude Code started by itself while a sent turn waits.
+    ///
+    /// - When an open prompt is the daemon's, the `result` ends it, with every older
+    ///   open prompt: an unprompted prompt observed before it was taken into the same
+    ///   turn (a notification mid-turn, case D).
+    /// - Otherwise the oldest open prompt is an unprompted turn's. Its `result` is
+    ///   unprompted when a text the daemon sent is still waiting for its prompt (the N1
+    ///   order); with nothing waiting, it is an ordinary turn end.
+    /// - With no open prompt (its hook was lost) it is an ordinary turn end.
+    fn end_turn(&mut self) -> bool {
+        match self.open_prompts.iter().position(|&human| human) {
+            Some(at) => {
+                self.open_prompts.drain(..=at);
+                false
+            }
+            None => self.open_prompts.pop_front().is_some() && !self.pending_sent.is_empty(),
+        }
+    }
+
     /// The tool id the conversation uses: Codex's namespaced by the latest sent turn.
     fn tool_id(&self, runtime: Runtime, id: &str) -> String {
         match runtime {

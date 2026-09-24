@@ -5,8 +5,9 @@
 //!
 //! It sits outside `run/` because M9's scouts, sub-planners and deciders reuse it.
 //!
-//! Every file here except `session.rs` (M8a.17) is pure (decision 2): no filesystem,
-//! process, thread, async runtime or wall-clock access, which decision 2's grep checks.
+//! Every file here except `session.rs` and its `session/pipes.rs` (M8a.17) is pure
+//! (decision 2): no filesystem, process, thread, async runtime or wall-clock access,
+//! which decision 2's grep checks.
 
 pub mod argv;
 pub mod claude_stream;

@@ -15,26 +15,26 @@
 //!
 //! Only [`WindowManager::apply_session_event`]'s status, conversation and feed updates run
 //! under the manager lock. Spawning, writing and killing happen after the guard is dropped
-//! (AGENTS.md rule 2): every method here clones the window's [`HeadlessHandle`] out from
-//! under the lock and acts on the clone.
+//! (AGENTS.md rule 2): every method clones the window's [`HeadlessHandle`] out from under
+//! the lock and acts on the clone. Starting a session's processes, and its turns,
+//! interrupts and resumes (M8a.18), are in `headless_turns.rs`.
 
 use super::entry::{Entry, Process};
 use super::{WindowManager, validate_name};
 use crate::agent_state::AgentState;
-use crate::headless::argv::{CLI_CAPS, InterruptMode, claude_args, codex_args};
+use crate::headless::argv::CLI_CAPS;
 use crate::headless::claude_stream::user_message;
 use crate::headless::conversation::{self, ConversationInput, StreamCursor};
 use crate::headless::session::HeadlessHandle;
 use crate::headless::status::{self, HeadlessStatus};
-use crate::headless::{HeadlessSpec, SessionArg, SessionEvent};
+use crate::headless::{HeadlessSpec, SessionArg, SessionEvent, TurnOutcome};
 use crate::hooks::{HookKind, ParsedHook};
 use proto::{ExitInfo, RunRef, Runtime, Status, WindowInfo, WindowSpec};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, oneshot};
 
 /// Capacity of the engine's feed. A receiver that lags logs a warning and continues
 /// (decision 27); counts may then be low, which budgets tolerate.
@@ -63,6 +63,13 @@ pub enum WindowSignalKind {
         kind: HookKind,
         agent_id: Option<String>,
     },
+    /// A session event that belongs to a turn Claude Code started by itself (a background
+    /// sub-agent's notification) while a turn the engine delivered still waits to run:
+    /// today only that turn's `TurnEnded`, as `headless::conversation` classified it by
+    /// its prompt's text (ruling T7-N1). It is not the delivered turn's end: it must not
+    /// close that turn, count toward its tool calls, or trigger the next delivery. Its
+    /// usage is still the session's spend.
+    Unprompted(SessionEvent),
 }
 
 /// What a headless window runs and remembers, in place of a PTY.
@@ -77,17 +84,72 @@ pub(super) struct HeadlessWindow {
     /// A turn ended in the current process (ruling T17-I1): only then is a Codex
     /// process's exit the normal end of its turn rather than the session's death.
     pub(super) turn_ended_in_process: bool,
+    /// A send or resume is starting a process for this window (M8a.18): a second one is
+    /// refused until it is done.
+    pub(super) busy: bool,
+    /// A resume waiting for its process's `Init` (`Ok`), or for its exit before one
+    /// (`Err` with the reason): decision 28's failed-resume marker.
+    pub(super) start_waiter: Option<oneshot::Sender<Result<(), String>>>,
+    /// What the resuming process said went wrong before its `Init`: a failed `result`'s
+    /// text, else its first stderr line.
+    pub(super) start_failure: Option<String>,
 }
 
 impl HeadlessWindow {
     pub(super) fn new(spec: HeadlessSpec) -> Self {
         HeadlessWindow {
             handle: HeadlessHandle::ended(),
-            spec,
             status: HeadlessStatus::default(),
-            cursor: StreamCursor::default(),
+            // A Claude window's real prompt hooks are fed to its cursor (ruling T7-N1),
+            // so it is content-based from its first turn (M8a.7 re-review 2, m1).
+            cursor: if hooks_fire(spec.runtime) {
+                StreamCursor::fed()
+            } else {
+                StreamCursor::default()
+            },
+            spec,
             diagnostics: VecDeque::new(),
             turn_ended_in_process: false,
+            busy: false,
+            start_waiter: None,
+            start_failure: None,
+        }
+    }
+
+    /// Decision 28's failed-resume marker, for a resume waiting on this process: its
+    /// `Init` means it started; an exit before one means the resume failed, with the
+    /// failed `result`'s text or else its first stderr line as the reason.
+    fn observe_start(&mut self, event: &SessionEvent) {
+        if self.start_waiter.is_none() {
+            return;
+        }
+        match event {
+            SessionEvent::Init { .. } => {
+                self.start_failure = None;
+                if let Some(waiter) = self.start_waiter.take() {
+                    let _ = waiter.send(Ok(()));
+                }
+            }
+            SessionEvent::TurnEnded {
+                outcome: TurnOutcome::Failed { error, .. },
+                ..
+            } => self.start_failure = Some(error.clone()),
+            SessionEvent::StderrLine { line } if self.start_failure.is_none() => {
+                self.start_failure = Some(line.trim().to_string());
+            }
+            SessionEvent::ProcessExited { code, signal } => {
+                let mut reason = format!(
+                    "the process {} before it started",
+                    exit_reason(*code, *signal)
+                );
+                if let Some(failure) = self.start_failure.take() {
+                    reason = format!("{reason}: {failure}");
+                }
+                if let Some(waiter) = self.start_waiter.take() {
+                    let _ = waiter.send(Err(reason));
+                }
+            }
+            _ => {}
         }
     }
 
@@ -101,25 +163,11 @@ impl HeadlessWindow {
 
 /// Whether the runtime's own hooks build the conversation's turns (Claude, M8a.1), or
 /// `headless::conversation` synthesises them from the stream (Codex).
-fn hooks_fire(runtime: Runtime) -> bool {
+pub(super) fn hooks_fire(runtime: Runtime) -> bool {
     runtime == Runtime::Claude && CLI_CAPS.claude_hooks_fire_in_print
 }
 
-/// Decision 26: the session's own window id and socket, exactly as `launch::plan` sets
-/// them for a PTY window (`anthrex hook` reads both), after the profile's env so the
-/// profile cannot point a session's hooks at another window.
-fn session_env(
-    window_id: u32,
-    socket: &std::path::Path,
-    profile: &[(String, String)],
-) -> Vec<(String, String)> {
-    let mut env = profile.to_vec();
-    env.push(("ANTHREX_WINDOW_ID".into(), window_id.to_string()));
-    env.push(("ANTHREX_SOCKET".into(), socket.display().to_string()));
-    env
-}
-
-fn exit_reason(code: Option<i32>, signal: Option<i32>) -> String {
+pub(super) fn exit_reason(code: Option<i32>, signal: Option<i32>) -> String {
     match (signal, code) {
         (Some(signal), _) => format!("killed by signal {signal}"),
         (None, Some(code)) => format!("exited with code {code}"),
@@ -140,9 +188,6 @@ pub fn control_refusal(id: u32, run: Option<&RunRef>) -> String {
         "window {id} is a headless session of run {run}; only the engine drives it. Use anthrex run cancel to stop it"
     )
 }
-
-/// Claude's control requests are numbered per daemon; the id only has to be unique.
-static INTERRUPT_REQUESTS: AtomicU64 = AtomicU64::new(1);
 
 impl WindowManager {
     /// The engine's feed of every headless window's session events and sub-agent hooks.
@@ -197,94 +242,22 @@ impl WindowManager {
 
         let id = self.admit_headless(name, &spec, &first_turn, project, worktree)?;
 
-        let config = self.config.clone();
-        let (program, args) = match runtime {
-            Runtime::Claude => (
-                config.claude_bin.clone(),
-                claude_args(
-                    &spec,
-                    &session,
-                    &config.exe,
-                    id,
-                    &config.socket_path,
-                    &CLI_CAPS,
-                ),
-            ),
-            _ => (
-                config.codex_bin.clone(),
-                codex_args(
-                    &spec,
-                    &session,
-                    &first_turn,
-                    &config.exe,
-                    id,
-                    &config.socket_path,
-                    &CLI_CAPS,
-                ),
-            ),
-        };
-        let env = session_env(id, &config.socket_path, &spec.env);
-        let cwd = spec.cwd.clone();
-        let weak = Arc::downgrade(self);
-        let spawned = tokio::task::spawn_blocking(move || {
-            HeadlessHandle::spawn(
-                runtime,
-                program.as_ref(),
-                &args,
-                &cwd,
-                &env,
-                move |pid, event| {
-                    if let Some(manager) = weak.upgrade() {
-                        manager.apply_session_event(id, pid, &event);
-                    }
-                },
-            )
-        })
-        .await
-        .map_err(|error| anyhow::anyhow!("headless session start failed: {error}"))
-        .and_then(|spawned| spawned);
-        let handle = match spawned {
+        let args = self.session_args(&spec, &session, &first_turn, id);
+        let line = (runtime == Runtime::Claude).then(|| {
+            let session_id = match &session {
+                SessionArg::New { uuid } => uuid.as_deref(),
+                SessionArg::Resume { session_id } => Some(session_id.as_str()),
+            };
+            user_message(&first_turn, session_id)
+        });
+        let handle = match self.spawn_process(id, &spec, args, line).await {
             Ok(handle) => handle,
             Err(error) => {
                 self.forget(id);
                 return Err(error);
             }
         };
-        if runtime == Runtime::Claude {
-            let session_id = match &session {
-                SessionArg::New { uuid } => uuid.clone(),
-                SessionArg::Resume { session_id } => Some(session_id.clone()),
-            };
-            if let Err(error) = handle.send_line(user_message(&first_turn, session_id.as_deref())) {
-                handle.kill(config.kill_grace);
-                self.forget(id);
-                return Err(error.context("could not write the first turn"));
-            }
-        }
-
-        let mut inner = crate::lock(&self.inner);
-        let installed = !inner.shutting_down
-            && match inner.entries.get_mut(&id) {
-                Some(entry) => match &mut entry.process {
-                    Process::Headless(window) => {
-                        window.handle = handle.clone();
-                        // The exit may already have been applied (the reap comes before
-                        // it), so this reads the handle rather than assuming it lives.
-                        entry.child_alive = handle.pid().is_some();
-                        true
-                    }
-                    _ => false,
-                },
-                None => false,
-            };
-        if !installed {
-            drop(inner);
-            handle.kill(config.kill_grace);
-            anyhow::bail!("daemon is shutting down");
-        }
-        let info = inner.entries[&id].info(Instant::now());
-        self.publish(&inner);
-        drop(inner);
+        let info = self.install(id, &handle)?;
         tracing::info!(id, name = %info.name, runtime = %runtime, "headless window created");
         Ok(info)
     }
@@ -389,8 +362,16 @@ impl WindowManager {
             window.diagnostics.push_back(line.clone());
         }
         let current = window.handle.spawned_pid().is_none_or(|p| p == pid);
-        let mut changed = false;
+        let input = conversation::map(runtime, hooks_fire(runtime), event, &mut window.cursor);
+        // A background turn's `result` while a delivered turn waits (ruling T7-N1): the
+        // delivered turn is still open, so the window's status stays as it is.
+        let unprompted =
+            matches!(event, SessionEvent::TurnEnded { .. }) && window.cursor.ended_unprompted();
         if current {
+            window.observe_start(event);
+        }
+        let mut changed = false;
+        if current && !unprompted {
             let mut next = status::next(&window.status, event);
             // Codex runs one process per turn: an exit after a turn ended in that
             // process is not the session's end, so the window keeps the turn's `Idle` or
@@ -418,7 +399,6 @@ impl WindowManager {
                 changed = true;
             }
         }
-        let input = conversation::map(runtime, hooks_fire(runtime), event, &mut window.cursor);
         match event {
             SessionEvent::Init { session_id, .. }
                 if current && entry.state.session_id.as_ref() != Some(session_id) =>
@@ -441,10 +421,15 @@ impl WindowManager {
         }
         entry.last_output = now;
         self.apply_input(id, entry, input, now);
+        let kind = if unprompted {
+            WindowSignalKind::Unprompted(event.clone())
+        } else {
+            WindowSignalKind::Session(event.clone())
+        };
         let _ = self.signals.send(WindowSignal {
             window_id: id,
             pid: Some(pid),
-            kind: WindowSignalKind::Session(event.clone()),
+            kind,
         });
         if changed {
             self.publish(&inner);
@@ -487,7 +472,13 @@ impl WindowManager {
 
     /// Milestone 6.5's two inputs, in order: hooks through `conversation_hook`, records
     /// through `enrich`, then the notification.
-    fn apply_input(&self, id: u32, entry: &mut Entry, input: ConversationInput, now: Instant) {
+    pub(super) fn apply_input(
+        &self,
+        id: u32,
+        entry: &mut Entry,
+        input: ConversationInput,
+        now: Instant,
+    ) {
         for hook in &input.hooks {
             self.conversation_hook(id, entry, hook, now);
         }
@@ -495,80 +486,5 @@ impl WindowManager {
             let changed = entry.conversations.enrich(&input.records, self.caps());
             self.notify_conversations(id, &entry.conversations, &changed);
         }
-    }
-
-    /// The window's handle and runtime, cloned out from under the lock.
-    fn headless_handle(&self, id: u32) -> anyhow::Result<(HeadlessHandle, Runtime)> {
-        let inner = crate::lock(&self.inner);
-        let entry = inner
-            .entries
-            .get(&id)
-            .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
-        match &entry.process {
-            Process::Headless(window) => Ok((window.handle.clone(), window.spec.runtime)),
-            _ => anyhow::bail!("window {id} is not a headless session"),
-        }
-    }
-
-    /// One new turn with `text` (decision 29). Claude's is one stream-json line on the
-    /// running process's stdin, recorded in the cursor first. Codex's `exec resume` is
-    /// M8a.18's.
-    pub async fn headless_send(&self, id: u32, text: &str) -> anyhow::Result<()> {
-        let (handle, line) = {
-            let mut inner = crate::lock(&self.inner);
-            let entry = inner
-                .entries
-                .get_mut(&id)
-                .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
-            let session_id = entry.state.session_id.clone();
-            let Process::Headless(window) = &mut entry.process else {
-                anyhow::bail!("window {id} is not a headless session");
-            };
-            let runtime = window.spec.runtime;
-            anyhow::ensure!(
-                runtime == Runtime::Claude,
-                "a Codex turn is a new exec resume process (M8a.18)"
-            );
-            anyhow::ensure!(
-                !window.handle.is_ended(),
-                "session for window {id} has ended; resume it"
-            );
-            let handle = window.handle.clone();
-            let input =
-                conversation::sent_turn(runtime, hooks_fire(runtime), text, &mut window.cursor);
-            self.apply_input(id, entry, input, Instant::now());
-            (handle, user_message(text, session_id.as_deref()))
-        };
-        handle.send_line(line)
-    }
-
-    /// Interrupts the running turn: Claude by `CLI_CAPS.claude_interrupt`, Codex by
-    /// `SIGINT`.
-    pub fn headless_interrupt(&self, id: u32) -> anyhow::Result<()> {
-        let (handle, runtime) = self.headless_handle(id)?;
-        let mode = match runtime {
-            Runtime::Claude => CLI_CAPS.claude_interrupt,
-            _ => InterruptMode::Sigint,
-        };
-        handle.interrupt(mode, INTERRUPT_REQUESTS.fetch_add(1, Ordering::Relaxed))
-    }
-
-    /// Resumes an ended session with a message (decision 28): M8a.18's.
-    pub async fn headless_resume(
-        self: &Arc<Self>,
-        id: u32,
-        session_id: &str,
-        message: &str,
-    ) -> anyhow::Result<()> {
-        let _ = (session_id, message);
-        self.headless_handle(id)?;
-        anyhow::bail!("resuming a headless session is not implemented yet (M8a.18)")
-    }
-
-    /// `SIGTERM` to the session's group, `SIGKILL` after the kill grace (decision 52).
-    pub fn headless_kill(&self, id: u32) -> anyhow::Result<()> {
-        let (handle, _) = self.headless_handle(id)?;
-        handle.kill(self.config.kill_grace);
-        Ok(())
     }
 }
