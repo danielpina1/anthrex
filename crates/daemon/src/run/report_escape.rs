@@ -7,6 +7,8 @@
 //! and check tails are arbitrary `check`-command output. Pure, same terms as
 //! `report.rs`.
 
+use std::borrow::Cow;
+
 /// A table cell: a literal `|` would add a spurious column, and a literal newline
 /// would split the row across lines and desynchronise every row after it. Both are
 /// flattened; a cell is always exactly one line.
@@ -24,6 +26,21 @@ pub(super) fn escape_heading(s: &str) -> String {
         format!("\\#{rest}")
     } else {
         collapsed
+    }
+}
+
+/// Fix round 4 (ruling T16-R4, re-review 3, NB4): CommonMark ends a line at `\n`,
+/// `\r\n` *or a bare `\r`*, but `str::lines()` splits only on the first two, so text
+/// after a bare `\r` reached the parser as a new column-0 line that `normalize_line`
+/// never saw and no caller indented. Every untrusted multi-line field passes through
+/// here first — `plain_text_line`, `list_item_text` and `fenced` call it before any
+/// line handling — so our notion of a line matches the parser's. (Single-line fields,
+/// `escape_cell`/`escape_heading`, already flatten both `\r` and `\n`.)
+fn normalize_line_endings(s: &str) -> Cow<'_, str> {
+    if s.contains('\r') {
+        Cow::Owned(s.replace("\r\n", "\n").replace('\r', "\n"))
+    } else {
+        Cow::Borrowed(s)
     }
 }
 
@@ -84,6 +101,7 @@ fn normalize_line(line: &str) -> String {
 /// review summary has no such prefix, so normalizing its first line is what fixes
 /// NB1 (round 2's `continuation_indent` only touched *continuation* lines).
 pub(super) fn plain_text_line(s: &str) -> String {
+    let s = normalize_line_endings(s);
     let mut lines = s.lines();
     let mut out = normalize_line(lines.next().unwrap_or(""));
     for line in lines {
@@ -99,6 +117,7 @@ pub(super) fn plain_text_line(s: &str) -> String {
 /// after the first is indented to the item's content column (2, matching `"- "`'s
 /// width) so it stays part of the same item.
 pub(super) fn list_item_text(prefix: &str, text: &str) -> String {
+    let text = normalize_line_endings(text);
     let mut lines = text.lines();
     let first = format!("{prefix}{}", lines.next().unwrap_or(""));
     let mut out = normalize_line(&first);
@@ -109,11 +128,27 @@ pub(super) fn list_item_text(prefix: &str, text: &str) -> String {
     out
 }
 
+/// A check's raw tail as a fenced code block: line endings normalized first (so the
+/// block's lines are the parser's lines), then wrapped in `fence_for`'s fence, with a
+/// trailing newline before the closing fence when the tail lacks one. The tail itself
+/// is never escaped — inside a fence nothing but a long-enough fence line is special.
+pub(super) fn fenced(tail: &str) -> String {
+    let tail = normalize_line_endings(tail);
+    let fence = fence_for(&tail);
+    let mut out = format!("{fence}\n{tail}");
+    if !tail.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&fence);
+    out.push('\n');
+    out
+}
+
 /// A fence one backtick longer than the longest run of backticks in `content`, never
 /// shorter than 3: a check's tail is raw tool output and may itself contain a fenced
 /// block (a test that prints Markdown, another tool's own fenced output), which a
 /// fixed 3-backtick fence would let close the report's fence early.
-pub(super) fn fence_for(content: &str) -> String {
+fn fence_for(content: &str) -> String {
     let mut longest = 0usize;
     let mut run = 0usize;
     for ch in content.chars() {
@@ -231,6 +266,14 @@ mod tests {
             list_item_text("", "first\n\t# tab heading\n<div>"),
             "first\n  \\# tab heading\n  \\<div>"
         );
+    }
+
+    #[test]
+    fn every_line_ending_splits_lines_the_way_commonmark_does_nb4() {
+        assert_eq!(normalize_line_endings("a\rb\r\nc\nd"), "a\nb\nc\nd");
+        assert_eq!(list_item_text("", "a\r# h"), "a\n  \\# h");
+        assert_eq!(plain_text_line("a\r# h"), "a\n    \\# h");
+        assert_eq!(fenced("a\r```"), "````\na\n```\n````\n");
     }
 
     #[test]

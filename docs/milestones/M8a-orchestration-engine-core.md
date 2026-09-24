@@ -7016,3 +7016,46 @@ prior round (green alone or with `--test-threads=1`). File sizes: `report.rs` 21
 `report_task.rs` 215, `report_escape.rs` 243, `report_tests.rs` 335,
 `report_tests_escaping.rs` 510 lines — `report_tests_escaping.rs` is now the largest
 file this task touches but still comfortably under AGENTS.md's ~600-line guidance.
+
+### M8a.16 fix round 4 (2026-09-24)
+
+Re-review 3 (`task-16-rereview-3.md`) confirmed NB1-NB3 fixed and found NB4: a bare
+`\r` (no `\n`) is a line ending to CommonMark but not to `str::lines()`, so text after
+it reached the parser as a column-0 line that `normalize_line` never saw and no
+caller indented (`"note\r# forged"` forged a real `<h1>`). **Ruling T16-R4:** a new
+`normalize_line_endings` in `report_escape.rs` rewrites `\r\n` and a lone `\r` to `\n`
+before any line handling. Every untrusted multi-line field passes through it:
+`plain_text_line` and `list_item_text` call it first, and the check tail now goes
+through a new `fenced(tail)` helper (which replaces the inline fence code in
+`report_task.rs`) that calls it before `fence_for`. The single-line fields
+(`escape_cell`, `escape_heading`) already flattened `\r`. The check-tail path was not
+exploitable at render level, because `fence_for` counts backtick runs across the whole
+tail whatever its line endings are. It is normalized anyway, so every field uses one
+definition of a line. **Accepted risk:** mid-line inline HTML and autolinks (for
+example `<span>` or `<http://…>` inside a line, or `<div>` in a field flattened onto
+one line such as `ProofRecord.test` or `Finding.file`) still parse as inline nodes.
+Only line-start (block) constructs are neutralised, and that is enough for this
+milestone's terminal-facing report.
+
+**Tests.** The NB4 regression, `a_bare_carriage_return_forges_nothing_in_any_field_nb4`,
+was written first and failed against `965eedf` with `Run.goal forged Markdown
+structure (bare \r)` (`report_tests_fields.rs:151`, 5 headings against a 4-heading
+baseline). It plants every block-start hazard separated only by bare `\r`, then by
+`\r\n`, then by a mix of `\r` and `\n`, into each of the nine untrusted fields one at a
+time. The punctuation fuzz moved with it into the new `report_tests_fields.rs`
+(`report_tests_escaping.rs` goes from 510 to 421 lines). It now asserts per field:
+one render per field × character × leading whitespace × shape (first line, and a
+continuation after `\n`, `\r\n` and `\r`), so a failure names the field, the character,
+the whitespace and the shape. `NodeCounts` now counts block `html` and `inline_html`
+separately. Block HTML is asserted for every field. Inline HTML is exempt only for the
+two one-line fields, per the accepted risk above. A new unit test covers
+`normalize_line_endings`, `list_item_text`, `plain_text_line` and `fenced` with a bare
+`\r`.
+
+**Mutation-checked** by hand. Making `normalize_line_endings` a no-op was caught by 3
+tests (the NB4 regression, the fuzz and the unit test). Dropping the normalization
+from `fenced` alone was caught by the unit test only, which fits the render-level
+finding above. Both mutations were restored from a backup.
+
+**Gates.** build, clippy `-D warnings` and fmt `--check` are clean. `cargo test -p
+anthrex-daemon` is green in full: 928 lib tests and every integration binary.

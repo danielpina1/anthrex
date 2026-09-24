@@ -7,9 +7,7 @@ use super::contract::{mode_label, sha7, size_label};
 use super::engine::{epoch_spend, ladder};
 use super::model::Task;
 use super::report::{format_utc, verdict_label};
-use super::report_escape::{
-    escape_cell, escape_heading, fence_for, list_item_text, plain_text_line,
-};
+use super::report_escape::{escape_cell, escape_heading, fenced, list_item_text, plain_text_line};
 
 pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
     out.push_str(&format!(
@@ -65,15 +63,7 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
             format_utc(c.at),
             if c.on_candidate { ", on candidate" } else { "" }
         ));
-        let fence = fence_for(&c.tail);
-        out.push_str(&fence);
-        out.push('\n');
-        out.push_str(&c.tail);
-        if !c.tail.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push_str(&fence);
-        out.push('\n');
+        out.push_str(&fenced(&c.tail));
     }
     for r in &task.reviews {
         out.push_str(&format!(
