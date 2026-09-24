@@ -880,8 +880,10 @@ scope.
 
 ## From M8a.22 (2026-09-24), for M8a
 
-- **Decision 53 counts worker routes only.** **Closed in M8a.22's fix round 1**
-  (ruling T22-I1): decisions 50 and 53 count every runtime a run launches.
+- **Decision 53 counts worker routes only.** Fix round 1 (ruling T22-I1) widened the
+  check to reviewers and one escalation, and called that complete; it was not. **Closed
+  in M8a.22's fix round 2** (ruling T22-I1b): decisions 50 and 53 check every runtime
+  a run can reach (`run::reach`), at `run start` and on every plan edit.
 - **The report's `codex project config:` line** (decision 53's three texts) is not
   written: `report::render` sees only the `Run`, which does not record the caps it
   started under.

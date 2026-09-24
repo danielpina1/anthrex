@@ -8074,7 +8074,9 @@ Review `task-22-review.md`; rulings T22-C1, T22-I1 and T22-minors.
   - the rung-2 route that decision 39's `escalate` can move the worker to, and that
     route's reviewer.
 
-  A later rung re-resolves against the same roster and reaches no other runtime. So a
+  *(Corrected in fix round 2: this set was not complete. `run retry` escalates an
+  already escalated route again, rung 3 gives an unreviewed task a reviewer, and a
+  plan edit can add a task on either runtime; see "M8a.22 fix round 2".)* So a
   Codex-worker plan in a repository with Claude hooks is refused without
   `--trust-project`. Under the recorded `CLI_CAPS`, a Claude-worker plan in a repository
   that tracks `.codex/config.toml` is refused too (its reviewer is Codex).
@@ -8144,3 +8146,63 @@ Review `task-22-review.md`; rulings T22-C1, T22-I1 and T22-minors.
   - every `Persist` made lazy.
 
   A graceful stop saves every run, so only a crash can show either.
+
+#### M8a.22 fix round 2 (2026-09-24)
+
+Re-review `task-22-rereview-1.md`; rulings T22-I1b, T22-N2, T22-N3 and T22-N4.
+
+- **I1b: decisions 50 and 53 check every runtime a run can reach.** One pure function,
+  `run::reach::reachable_runtimes`, gives the set. Per task:
+  - the worker's route, and every route `escalate` reaches from it, applied again and
+    again to a fixpoint (rung 2 and each `run retry` escalate once more);
+  - for each of those routes, its reviewer (`pick_reviewer`) at every review level
+    the task can have: its own, and the level rung 3's re-resolution gives it at each
+    larger size, so an unreviewed `S` task counts the reviewer it gets once raised;
+  - the task's current reviewer route.
+
+  The roster's fallbacks (the peer runtime, else the same one) are those of
+  `escalate` and `pick_reviewer` themselves.
+  - `run start` checks the set.
+  - `run edit` checks each runtime the run cannot reach yet
+    (`driver/requests.rs`, `edit`), and passes each failing check's text to the
+    engine. The engine (`engine/requests.rs`, `edit`) refuses an edit whose edited run
+    reaches such a runtime, with that text, and applies nothing. Project settings
+    already trusted at `run start` pass.
+  - Unit tests (`reach_tests.rs`):
+    - probe A;
+    - repeated escalation alone;
+    - the escalated route alone (mutant M-esc is killed here and by the
+      repeated-escalation test);
+    - rung 3's reviewer alone;
+    - one-runtime rosters;
+    - a peer entry no rung reaches.
+  - Probe B is an engine test (`control_retry.rs`): a retried task lands on Codex, and
+    Codex was in the set at the start.
+  - The engine refusal is tested in `dispatch_edits.rs`.
+  - E2E tests:
+    - `e2e_a_claude_bound_plan_starts_and_an_edit_onto_codex_is_refused`;
+    - `e2e_a_codex_bound_plan_starts_beside_claude_settings`.
+
+    These are the brief's Claude-only and Codex-only cases. They hold only on rosters
+    that keep the run on one runtime: with the built-in roster, every reviewed task
+    reaches both runtimes.
+- **N2 and the m8 residual.**
+  - `stop()` returns early only once every run's last `run.json` has been written (a
+    new `saved` flag, set after `stop_now`'s saves). So a loop aborted inside its own
+    `stop_now` no longer leaves runs unsaved.
+  - Every `run.json` write goes through `effects::RunWrites`. Writes are serialised per
+    run, and each is numbered when requested, so a write a stuck or aborted loop left
+    on a blocking thread can neither share `RUN_TMP` nor rename an older state over a
+    newer one.
+  - Tests: `an_older_run_json_write_never_lands_over_a_newer_one` and
+    `a_stop_whose_loop_is_stuck_saving_still_saves_every_run`.
+- **N3.** A replayed accept's clean-up no longer runs inside `restore()`, before the
+  socket is bound.
+  - Its op is held pending through `Restore` (the event's new `held` list).
+  - `spawn` starts its clean-up on a task of its own. The task holds the run's ops
+    exclusively and journals, then steps, the `Finished` with the clean-up's outcome.
+  - A crash during the clean-up leaves the intent pending, so the next restart replays
+    it again.
+  - `e2e_a_replayed_accept_reports_its_clean_up` holds the first `worktree remove` for
+    3 s and checks that the restarted daemon answers while the run is still `complete`.
+- **N4.** That test's `until` reads a fresh snapshot on every poll.

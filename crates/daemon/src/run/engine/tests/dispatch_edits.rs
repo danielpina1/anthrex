@@ -329,3 +329,61 @@ fn a_cancel_waits_for_the_worktree_op_in_flight() {
         );
     }
 }
+
+/// Ruling T22-I1b: a run whose roster keeps it on Claude through every rung. An edit
+/// that would make it reach Codex, for which the driver found a decision-53 refusal, is
+/// refused with that text and changes nothing; an edit that stays on Claude is applied.
+#[test]
+fn an_edit_that_reaches_an_unchecked_runtime_is_refused() {
+    use proto::{ModelEntry, Runtime, Strength};
+    let entry = |runtime, model: &str, strength| ModelEntry {
+        runtime,
+        model: model.to_string(),
+        strength,
+        note: String::new(),
+    };
+    let config = config::Orchestrator {
+        models: vec![
+            entry(Runtime::Claude, "claude-sonnet-5", Strength::Standard),
+            entry(Runtime::Claude, "claude-opus-5", Strength::Frontier),
+            entry(Runtime::Codex, "gpt-5-codex-mini", Strength::Fast),
+        ],
+        review_small: false,
+        ..config::Orchestrator::default()
+    };
+    let route = "[task.route]\nruntime = \"claude\"\nmodel = \"claude-sonnet-5\"";
+    let plan = plan_with(PROFILE, &[task_toml("t1", "S", "[\"docs/a.md\"]", route)]);
+    let mut fx = Fixture::with_config(&plan, config);
+    fx.ready(false);
+    assert_eq!(
+        crate::run::reach::reachable_runtimes(fx.run()),
+        vec![Runtime::Claude]
+    );
+    let refusal = "Codex's project settings".to_string();
+    let mut on_codex = plan_task("t9", "[\"docs/b.md\"]");
+    on_codex.route.runtime = Some(Runtime::Codex);
+    on_codex.route.model = Some("gpt-5-codex-mini".into());
+    let reply = fx.reply();
+    let effects = fx.next(crate::run::engine::EventKind::Edit {
+        reply,
+        run_id: RUN_ID.into(),
+        edits: vec![PlanEdit::AddTask { task: on_codex }],
+        scope: crate::run::validate::EditScope::Run,
+        refusals: vec![(Runtime::Codex, refusal.clone())],
+    });
+    assert_eq!(replies(&effects), vec![Err(refusal.clone())]);
+    assert_eq!(fx.run().tasks.len(), 1, "a refused edit changes nothing");
+
+    let reply = fx.reply();
+    let effects = fx.next(crate::run::engine::EventKind::Edit {
+        reply,
+        run_id: RUN_ID.into(),
+        edits: vec![PlanEdit::AddTask {
+            task: plan_task("t2", "[\"docs/c.md\"]"),
+        }],
+        scope: crate::run::validate::EditScope::Run,
+        refusals: vec![(Runtime::Codex, refusal)],
+    });
+    assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
+    assert_eq!(fx.run().tasks.len(), 2);
+}

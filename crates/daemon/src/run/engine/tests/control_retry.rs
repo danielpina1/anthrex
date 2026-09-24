@@ -394,3 +394,37 @@ fn an_override_count_is_not_confused_with_a_fallback_count() {
     );
     assert_alive(&fx);
 }
+
+/// Ruling T22-I1b, probe B: an unreviewed S task at its rung-2 route (Claude, `high`),
+/// blocked and retried, is escalated again, onto Codex. The runtime it lands on was in
+/// the reachable set decisions 50 and 53 were checked against at the start.
+#[test]
+fn probe_b_a_retried_task_stays_inside_the_reachable_set() {
+    let route = "test_mode = \"tdd\"\ntest_to_write = \"a::works\"\n[task.route]\nruntime = \"claude\"\nmodel = \"claude-sonnet-5\"\neffort = \"medium\"";
+    let config = config::Orchestrator {
+        review_small: false,
+        ..config::Orchestrator::default()
+    };
+    let mut fx = Fixture::with_config(&plan_with(PROFILE, &[task("t1", "S", "a", route)]), config);
+    fx.ready(true);
+    let window = fx.launch_all()[0].1;
+    assert_eq!(
+        fx.task("t1").review_level,
+        None,
+        "the probe's task is not reviewed"
+    );
+    let reachable = crate::run::reach::reachable_runtimes(fx.run());
+    let rung2 = escalate(&fx.run().roster, &fx.task("t1").route);
+    assert_eq!(rung2.runtime, proto::Runtime::Claude);
+    fx.task_mut("t1").route = rung2;
+    blocked(&mut fx, window, "environment", "stuck");
+    killed_exit(&mut fx, window);
+    let effects = retry(&mut fx, "t1");
+    assert!(one_reply(&effects).is_ok(), "{effects:#?}");
+    let runtime = fx.task("t1").route.runtime;
+    assert_eq!(runtime, proto::Runtime::Codex);
+    assert!(
+        reachable.contains(&runtime),
+        "retry moved t1 to {runtime:?}, outside the checked set {reachable:?}"
+    );
+}

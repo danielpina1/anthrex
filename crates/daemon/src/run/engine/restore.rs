@@ -4,8 +4,9 @@
 //!
 //! **Restore.** A `running` run becomes `paused` (`paused_from = running`); every other
 //! state is kept. Every session is ended: its process died with the old daemon. The
-//! ops the journal replays keep their ids and their results are applied; every other
-//! pending op is dropped (reconcile's `NotStarted`), so a late result of it is ignored
+//! ops the journal replays keep their ids and their results are applied; a held op
+//! stays pending for the driver to answer later (ruling T22-N3); every other pending
+//! op is dropped (reconcile's `NotStarted`), so a late result of it is ignored
 //! (ruling T12-N's correlation), and whatever waited for it is cleared or re-issued:
 //! idempotent git work (the integration worktree, a task worktree, an abort, a
 //! removal) at once, a session's launch on the first running pass, and everything else
@@ -40,11 +41,16 @@ use crate::run::contract::{RESUME_REVIEWER, RESUME_WORKER, sha7};
 use crate::run::model::{FallbackState, PendingOp, Run, StallState};
 use crate::run::role_launch::session_uuid_of;
 
+/// The journal's answers: `(run id, op, result)`.
+type Replay = Vec<(String, OpId, OpResult)>;
+/// Ops kept pending for the driver to answer later: `(run id, op)`.
+type Held = Vec<(String, OpId)>;
+
 /// `Event::Restore` (decisions 44, 45).
 pub(super) fn restore(
     state: &mut EngineState,
     runs: Vec<Run>,
-    replay: Vec<(String, OpId, OpResult)>,
+    (replay, held): (Replay, Held),
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
@@ -53,8 +59,10 @@ pub(super) fn restore(
         let original = run.clone();
         let kept: BTreeSet<OpId> = replay
             .iter()
-            .filter(|(id, _, _)| *id == run.id)
-            .map(|(_, op, _)| *op)
+            .map(|(id, op, _)| (id, *op))
+            .chain(held.iter().map(|(id, op)| (id, *op)))
+            .filter(|(id, _)| **id == run.id)
+            .map(|(_, op)| op)
             .collect();
         prepare(&mut run, &kept, now, fx);
         restored.push((run.id.clone(), original));

@@ -585,6 +585,7 @@ fn a_restore_awaits_no_count() {
     let run = fx.run().clone();
     let mut restored = Fixture::new(&fx.plan);
     restored.next(EventKind::Restore {
+        held: Vec::new(),
         runs: vec![run],
         replay: vec![],
     });

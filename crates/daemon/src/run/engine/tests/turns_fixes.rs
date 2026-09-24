@@ -194,6 +194,7 @@ fn restore_clears_a_claim_and_a_count_in_flight() {
     fx.task_mut("t1").rounds[0].fallback = FallbackState::Counting;
     let run = fx.run().clone();
     fx.next(EventKind::Restore {
+        held: Vec::new(),
         runs: vec![run],
         replay: Vec::new(),
     });

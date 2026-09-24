@@ -240,3 +240,75 @@ fn e2e_claude_sessions_load_only_user_settings() {
         }
     }
 }
+
+/// A roster that keeps a Claude plan on Claude through every rung (ruling T22-I1b): no
+/// Codex entry at a Claude route's strength, and the only one too weak for any reviewer
+/// an unreviewed `S` task can get once raised.
+const CLAUDE_BOUND: &str = "builtin_models = false\n\n[orchestrator.review]\nsmall = \"off\"\n\n[[orchestrator.models]]\nruntime = \"claude\"\nmodel = \"claude-sonnet-5\"\nstrength = \"standard\"\n\n[[orchestrator.models]]\nruntime = \"claude\"\nmodel = \"claude-opus-5\"\nstrength = \"frontier\"\n\n[[orchestrator.models]]\nruntime = \"codex\"\nmodel = \"gpt-5-codex-mini\"\nstrength = \"fast\"\n";
+
+/// A roster with Codex entries only, so a Codex plan never reaches Claude.
+const CODEX_ONLY: &str = "builtin_models = false\n\n[[orchestrator.models]]\nruntime = \"codex\"\nmodel = \"gpt-5-codex\"\nstrength = \"standard\"\n";
+
+/// The brief's case, where the run really stays on Claude: a Claude plan is not refused
+/// for `.codex/config.toml`. An edit that adds a Codex task would reach Codex, whose
+/// project config was never checked, and is refused with decision 53's text.
+#[test]
+fn e2e_a_claude_bound_plan_starts_and_an_edit_onto_codex_is_refused() {
+    let h = RunHarness::with_repo(
+        CLAUDE_BOUND,
+        &[("ANTHREX_TEST_CODEX_PROJECT_CONFIG", "load")],
+        true,
+        CODEX_CONFIG,
+    );
+    let claude = plan(
+        "",
+        &[task(
+            "t1",
+            &["a.txt"],
+            "route = { runtime = \"claude\", model = \"claude-sonnet-5\" }",
+        )],
+    );
+    let id = h.start_in(&h.repo, &claude, false, false);
+    assert!(h.run(&id).unwrap().trusted_project.is_empty());
+
+    let on_codex: proto::PlanTask = serde_json::from_value(json!({
+        "id": "t2", "title": "Task t2", "size": "S", "test_mode": "check",
+        "test_mode_reason": "smoke", "owns": ["b.txt"], "brief": "Do t2",
+        "acceptance": ["t2 is done"],
+        "route": {"runtime": "codex", "model": "gpt-5-codex-mini"},
+    }))
+    .unwrap();
+    let reply = h.request(proto::RunRequest::Edit {
+        run_id: id.clone(),
+        edits: vec![proto::PlanEdit::AddTask { task: on_codex }],
+    });
+    match reply {
+        proto::RunReply::Refused { message, .. } => {
+            assert_eq!(message, settings_refusal("Codex", ".codex/config.toml"));
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert_eq!(h.run(&id).unwrap().tasks.len(), 1);
+}
+
+/// The brief's other case: a Codex plan on a Codex-only roster starts in a repository
+/// tracking a hooked `.claude/settings.json`, since no session of it runs Claude.
+#[test]
+fn e2e_a_codex_bound_plan_starts_beside_claude_settings() {
+    let h = RunHarness::with_repo(
+        CODEX_ONLY,
+        &[("ANTHREX_TEST_NO_SETTING_SOURCES", "1")],
+        true,
+        &[(".claude/settings.json", HOOKED_SETTINGS)],
+    );
+    let codex = plan(
+        "",
+        &[task(
+            "t1",
+            &["a.txt"],
+            "route = { runtime = \"codex\", model = \"gpt-5-codex\" }",
+        )],
+    );
+    let id = h.start_in(&h.repo, &codex, false, false);
+    assert!(h.run(&id).unwrap().trusted_project.is_empty());
+}

@@ -34,6 +34,7 @@ pub(super) fn restart(fx: &mut Fixture, replay: Vec<(OpId, OpResult)>) -> Vec<Ef
         .map(|(op, result)| (RUN_ID.to_string(), op, result))
         .collect();
     fx.next(EventKind::Restore {
+        held: Vec::new(),
         runs: vec![run],
         replay,
     })
@@ -83,6 +84,7 @@ fn restore_pauses_running_runs_only() {
         crate::run::engine::Event {
             now: 5_000,
             kind: EventKind::Restore {
+                held: Vec::new(),
                 runs,
                 replay: Vec::new(),
             },

@@ -38,6 +38,7 @@ pub mod messages;
 pub mod model;
 pub mod plan;
 pub mod proof;
+pub mod reach;
 pub mod reconcile;
 pub mod report;
 mod report_escape;

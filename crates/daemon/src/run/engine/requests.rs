@@ -4,7 +4,7 @@
 //! `complete.rs` and `merge.rs` answer cancel, finish and a halted run's resume;
 //! `restore.rs` (M8a.15) answers restore and a paused run's resume.
 
-use proto::{BlockReason, PlanEdit, RunState, Size, TaskState};
+use proto::{BlockReason, PlanEdit, RunState, Runtime, Size, TaskState};
 
 use super::dispatch::{finishing_as, history, salvage_ref};
 use super::schedule::deps_done;
@@ -16,6 +16,7 @@ use super::{
 use crate::run::edits::{EditConsequence, apply_edits};
 use crate::run::env::profile_env;
 use crate::run::model::{FreshSession, LogEntry, Run};
+use crate::run::reach::reachable_runtimes;
 use crate::run::roster::escalate;
 use crate::run::validate::EditScope;
 
@@ -179,8 +180,7 @@ pub(super) fn edit(
     state: &mut EngineState,
     id: ReplyId,
     run_id: &str,
-    edits: &[PlanEdit],
-    scope: &EditScope,
+    (edits, scope, refusals): (&[PlanEdit], &EditScope, &[(Runtime, String)]),
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
@@ -204,6 +204,17 @@ pub(super) fn edit(
             return reply(fx, id, Err(lines.join("\n")));
         }
     };
+    // Ruling T22-I1b: decisions 50 and 53 hold for every runtime the edited run can
+    // reach; one it could not reach before, whose checks failed, refuses the edit.
+    let before = reachable_runtimes(run);
+    let widened = reachable_runtimes(&edited)
+        .into_iter()
+        .filter(|runtime| !before.contains(runtime));
+    for runtime in widened {
+        if let Some((_, text)) = refusals.iter().find(|(r, _)| *r == runtime) {
+            return reply(fx, id, Err(text.clone()));
+        }
+    }
     // Ruling T14-R2 (#4): the reply says which cancels wait on an in-flight merge.
     let deferred: Vec<String> = edited
         .tasks

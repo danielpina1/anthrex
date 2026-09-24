@@ -98,6 +98,10 @@ pub enum EventKind {
         run_id: String,
         edits: Vec<PlanEdit>,
         scope: EditScope,
+        /// Ruling T22-I1b: decision 50's or 53's refusal for each runtime the run could
+        /// not reach when the request came in and whose checks fail; an edit that makes
+        /// one of them reachable is refused with its text.
+        refusals: Vec<(proto::Runtime, String)>,
     },
     Retry {
         reply: ReplyId,
@@ -153,6 +157,10 @@ pub enum EventKind {
     Restore {
         runs: Vec<Run>,
         replay: Vec<(String, OpId, OpResult)>,
+        /// Ops kept pending with no answer yet: the driver answers them later with an
+        /// ordinary `OpDone` (ruling T22-N3: a replayed accept's clean-up, run once the
+        /// socket is bound).
+        held: Vec<(String, OpId)>,
     },
     Stop,
     Tick,
@@ -296,7 +304,15 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             run_id,
             edits,
             scope,
-        } => requests::edit(&mut state, reply, &run_id, &edits, &scope, now, &mut fx),
+            refusals,
+        } => requests::edit(
+            &mut state,
+            reply,
+            &run_id,
+            (&edits, &scope, &refusals),
+            now,
+            &mut fx,
+        ),
         EventKind::Retry {
             reply,
             run_id,
@@ -343,8 +359,8 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
                 outbox::delivered(run, &message_ids, ok, error, now);
             }
         }
-        EventKind::Restore { runs, replay } => {
-            restore::restore(&mut state, runs, replay, now, &mut fx)
+        EventKind::Restore { runs, replay, held } => {
+            restore::restore(&mut state, runs, (replay, held), now, &mut fx)
         }
         EventKind::Stop => {
             state.stopped = true;

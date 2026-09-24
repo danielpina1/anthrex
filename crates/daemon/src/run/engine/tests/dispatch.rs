@@ -36,6 +36,7 @@ pub(super) fn edit(fx: &mut Fixture, edits: Vec<PlanEdit>) -> Vec<Effect> {
         run_id: RUN_ID.into(),
         edits,
         scope: EditScope::Run,
+        refusals: Vec::new(),
     })
 }
 
@@ -266,6 +267,7 @@ fn awaiting_approval_survives_restore() {
     assert_eq!(run.state, RunState::AwaitingApproval);
     let mut fx = Fixture::new("");
     fx.next(EventKind::Restore {
+        held: Vec::new(),
         runs: vec![run],
         replay: vec![],
     });
@@ -459,6 +461,7 @@ fn a_restore_that_changes_a_run_bumps_its_revision() {
     let revision = run.revision;
     let mut fresh = Fixture::new(&fx.plan);
     fresh.next(EventKind::Restore {
+        held: Vec::new(),
         runs: vec![run],
         replay: vec![],
     });
@@ -472,6 +475,7 @@ fn a_restore_that_changes_a_run_bumps_its_revision() {
     );
     let mut fresh = Fixture::new("");
     fresh.next(EventKind::Restore {
+        held: Vec::new(),
         runs: vec![waiting],
         replay: vec![],
     });

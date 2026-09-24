@@ -103,3 +103,103 @@ async fn a_stop_that_times_out_waits_for_the_loop_to_go() {
         "stop() wrote run.json while its loop was still running"
     );
 }
+
+fn saved_goal(dir: &Path) -> String {
+    let text = std::fs::read_to_string(dir.join(crate::run::journal::RUN_FILE)).unwrap();
+    let run: crate::run::model::Run = serde_json::from_str(&text).unwrap();
+    run.goal
+}
+
+/// Ruling T22-N2 (the m8 residual): a `run.json` write asked for earlier, run after a
+/// later one (a stuck loop's blocking write finishing late), does not rename the older
+/// state over the newer.
+#[tokio::test]
+async fn an_older_run_json_write_never_lands_over_a_newer_one() {
+    use crate::run::test_support::{PROFILE, plan_with, run_ok, task_toml};
+    let s = service();
+    let data = tempfile::tempdir().unwrap();
+    let mut run = run_ok(&plan_with(
+        PROFILE,
+        &[task_toml("t1", "S", "[\"crates/a/**\"]", "")],
+    ));
+    run.data_dir = data.path().to_path_buf();
+    let (mut older, mut newer) = (run.clone(), run);
+    older.goal = "older".into();
+    newer.goal = "newer".into();
+    let write_older = s.writes.writer(older);
+    let write_newer = s.writes.writer(newer);
+    write_newer().unwrap();
+    write_older().unwrap();
+    assert_eq!(saved_goal(data.path()), "newer");
+}
+
+/// Ruling T22-N2: the loop's own `stop_now` is stuck saving run `a` when `stop()` gives
+/// up waiting. The fallback still writes every run's last `run.json`, `b`'s included,
+/// rather than taking the loop's `stopped` for saves it never finished.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_whose_loop_is_stuck_saving_still_saves_every_run() {
+    use crate::run::test_support::{PROFILE, plan_with, run_ok, task_toml};
+    let s = service();
+    s.stop_wait_ms.store(200, Ordering::SeqCst);
+    let data = tempfile::tempdir().unwrap();
+    let base = run_ok(&plan_with(
+        PROFILE,
+        &[task_toml("t1", "S", "[\"crates/a/**\"]", "")],
+    ));
+    let handle = s.spawn(CancellationToken::new());
+    for id in ["a", "b"] {
+        let mut run = base.clone();
+        run.id = id.to_string();
+        run.data_dir = data.path().join(id);
+        s.send(EventKind::Start {
+            reply: 0,
+            run: Box::new(run),
+        });
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !["a", "b"].iter().all(|id| {
+        data.path()
+            .join(id)
+            .join(crate::run::journal::RUN_FILE)
+            .exists()
+    }) {
+        assert!(Instant::now() < deadline, "the runs were never saved");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    for run in crate::lock(&s.state).runs.values_mut() {
+        run.goal = "at stop".into();
+    }
+    // `a`'s writes wait on a lock the test holds, on a thread of its own.
+    let (locked_tx, locked) = std::sync::mpsc::channel();
+    let (release, release_rx) = std::sync::mpsc::channel::<()>();
+    let slot = s.writes.slot("a");
+    let holder = std::thread::spawn(move || {
+        let _held = crate::lock(&slot);
+        locked_tx.send(()).unwrap();
+        let _ = release_rx.recv();
+    });
+    locked.recv().unwrap();
+    let stopper = {
+        let s = s.clone();
+        tokio::spawn(async move { s.stop().await })
+    };
+    // The fallback has begun once it has taken the loop's abort handle.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while crate::lock(&s.loop_abort).is_some() {
+        assert!(Instant::now() < deadline, "stop() never fell back");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    release.send(()).unwrap();
+    holder.join().unwrap();
+    tokio::time::timeout(Duration::from_secs(10), stopper)
+        .await
+        .expect("stop returns")
+        .unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(1), handle).await;
+    assert_eq!(saved_goal(&data.path().join("a")), "at stop");
+    assert_eq!(
+        saved_goal(&data.path().join("b")),
+        "at stop",
+        "stop() returned with b's last run.json never written"
+    );
+}

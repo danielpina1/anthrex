@@ -1,7 +1,8 @@
 //! Decision 44 on start (M8a.22): load every run, reconcile each unfinished op against
 //! the journal and reality, step `Event::Restore` before any other event, then compact
 //! the journals, watch the runs' live worktrees again, remove the restored windows no
-//! live run has, and finish an accept whose merge the old daemon completed.
+//! live run has. An accept whose merge the old daemon completed is held pending, and
+//! finished by its clean-up once the event loop runs (ruling T22-N3).
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -18,8 +19,10 @@ use proto::RunState;
 const LOG_MAX: usize = 500;
 
 /// What a replayed `Accept` still owes: its clean-up (M8a.21's concern).
-struct AcceptCleanUp {
+pub(super) struct AcceptCleanUp {
     op: OpId,
+    /// The replayed `Finished`'s outcome: what the old daemon's merge did.
+    merged: String,
     ctx: OpCtx,
     root: std::path::PathBuf,
     worktrees: Vec<(std::path::PathBuf, String)>,
@@ -46,6 +49,7 @@ impl RunService {
         let now = unix_now();
         let mut runs = Vec::new();
         let mut replay = Vec::new();
+        let mut held = Vec::new();
         for (mut run, lines) in loaded {
             let (git, windows) = (self.ctx.git.clone(), windows.clone());
             let timeout = Duration::from_secs(run.limits.git_timeout_secs);
@@ -70,8 +74,12 @@ impl RunService {
             }
             let excess = run.log.len().saturating_sub(LOG_MAX);
             run.log.drain(..excess);
+            // Ruling T22-N3: a replayed accept's clean-up waits for the socket; its op
+            // is held pending until the clean-up answers it (`finish_held_accepts`).
             if let Some(cleanup) = replayed_accept(&run, &answers) {
-                self.finish_replayed_accept(cleanup, &mut answers).await;
+                answers.retain(|(_, op, _)| *op != cleanup.op);
+                held.push((run.id.clone(), cleanup.op));
+                crate::lock(&self.held_accepts).push(cleanup);
             }
             replay.extend(answers);
             runs.push(run);
@@ -85,7 +93,7 @@ impl RunService {
                 std::mem::take(&mut *state),
                 Event {
                     now,
-                    kind: EventKind::Restore { runs, replay },
+                    kind: EventKind::Restore { runs, replay, held },
                 },
             );
             *state = next;
@@ -97,37 +105,45 @@ impl RunService {
         self.remove_stale_windows();
     }
 
-    /// Ruling T22-minors, m5: an accept whose merge landed before the restart gets its
-    /// clean-up now, before `Restore` is stepped, and its replayed `Finished` says what
-    /// that clean-up did and which branches it really kept, so the run's log and report
-    /// are honest (carry 7, ruling T21-m2).
-    async fn finish_replayed_accept(
-        self: &Arc<Self>,
-        cleanup: AcceptCleanUp,
-        answers: &mut [(String, OpId, OpResult)],
-    ) {
-        let (outcome, kept) = cleanup::clean_up(
-            self,
-            &cleanup.ctx,
-            cleanup.root,
-            &cleanup.worktrees,
-            cleanup.branch_prefix,
-        )
-        .await;
-        tracing::info!(run = %cleanup.ctx.run_id, %outcome, ?kept, "accept clean-up after restore");
-        for (_, op, result) in answers.iter_mut() {
-            if *op != cleanup.op {
-                continue;
-            }
-            if let OpResult::Finished {
-                outcome: before, ..
-            } = result
-            {
-                *result = OpResult::Finished {
-                    outcome: format!("{before}; clean-up after the restart: {outcome}"),
-                    kept_branches: kept.clone(),
+    /// Ruling T22-N3, with m5's report: each accept whose merge landed before the
+    /// restart gets its clean-up on a task of its own, started with the event loop, so
+    /// after the socket is bound. It holds its run's ops exclusively, as the accept did;
+    /// its `Finished` says what the clean-up did and which branches it really kept, and
+    /// is journaled, then stepped, as any op's result is (decision 43).
+    pub(super) fn finish_held_accepts(self: &Arc<Self>) {
+        let held = std::mem::take(&mut *crate::lock(&self.held_accepts));
+        for cleanup in held {
+            let service = self.clone();
+            tokio::spawn(async move {
+                let order = service.op_lock(&cleanup.ctx.run_id);
+                let _order = order.write_owned().await;
+                let (outcome, kept_branches) = cleanup::clean_up(
+                    &service,
+                    &cleanup.ctx,
+                    cleanup.root,
+                    &cleanup.worktrees,
+                    cleanup.branch_prefix,
+                )
+                .await;
+                tracing::info!(run = %cleanup.ctx.run_id, %outcome, ?kept_branches, "accept clean-up after restore");
+                if service.stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                let result = OpResult::Finished {
+                    outcome: format!("{}; clean-up after the restart: {outcome}", cleanup.merged),
+                    kept_branches,
                 };
-            }
+                let line = journal::JournalLine::Done {
+                    op: cleanup.op,
+                    result: result.clone(),
+                };
+                service.append(&cleanup.ctx, line).await;
+                service.send(EventKind::OpDone {
+                    run_id: cleanup.ctx.run_id,
+                    op: cleanup.op,
+                    result,
+                });
+            });
         }
     }
 
@@ -234,7 +250,7 @@ fn hold_unreconciled(run: &mut Run, now: u64) {
 /// may have died before its clean-up.
 fn replayed_accept(run: &Run, answers: &[(String, u64, OpResult)]) -> Option<AcceptCleanUp> {
     answers.iter().find_map(|(_, op, result)| {
-        let OpResult::Finished { .. } = result else {
+        let OpResult::Finished { outcome, .. } = result else {
             return None;
         };
         let OpKind::Accept {
@@ -248,6 +264,7 @@ fn replayed_accept(run: &Run, answers: &[(String, u64, OpResult)]) -> Option<Acc
         };
         Some(AcceptCleanUp {
             op: *op,
+            merged: outcome.clone(),
             ctx: OpCtx {
                 run_id: run.id.clone(),
                 project: run.project.clone(),

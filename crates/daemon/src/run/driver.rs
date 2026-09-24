@@ -152,6 +152,8 @@ pub struct RunService {
     /// they run after every op of their run emitted before them (M8a.8's concern).
     op_order: Mutex<HashMap<String, Arc<RwLock<()>>>>,
     stopped: AtomicBool,
+    /// Set once `stop_now` has written every run's last `run.json` (ruling T22-N2).
+    saved: AtomicBool,
     /// How long `stop` waits for the loop to acknowledge (30 s; a test shortens it).
     stop_wait_ms: AtomicU64,
     /// Held by the event loop for its whole life, so `stop`'s fallback can wait until
@@ -159,6 +161,9 @@ pub struct RunService {
     loop_gate: Arc<tokio::sync::Mutex<()>>,
     loop_abort: Mutex<Option<tokio::task::AbortHandle>>,
     abort_after: Option<(String, u32)>,
+    writes: effects::RunWrites,
+    /// Replayed accepts whose clean-up waits for the event loop (ruling T22-N3).
+    held_accepts: Mutex<Vec<restore::AcceptCleanUp>>,
 }
 
 /// Unix seconds, the reducer's clock.
@@ -232,10 +237,13 @@ impl RunService {
             journal: Arc::new(Mutex::new(())),
             op_order: Mutex::new(HashMap::new()),
             stopped: AtomicBool::new(false),
+            saved: AtomicBool::new(false),
             stop_wait_ms: AtomicU64::new(30_000),
             loop_gate: Arc::new(tokio::sync::Mutex::new(())),
             loop_abort: Mutex::new(None),
             abort_after: abort_after(),
+            writes: effects::RunWrites::default(),
+            held_accepts: Mutex::new(Vec::new()),
         })
     }
 
@@ -275,13 +283,14 @@ impl RunService {
             }
         });
         *crate::lock(&self.loop_abort) = Some(handle.abort_handle());
+        self.finish_held_accepts();
         handle
     }
 
     /// Decision 46: after `stop` the service ignores every event, and the last
     /// `run.json` of each run is the one written here.
     pub async fn stop(&self) {
-        if self.stopped.load(Ordering::SeqCst) {
+        if self.saved.load(Ordering::SeqCst) {
             return;
         }
         let (ack, done) = oneshot::channel();
@@ -304,7 +313,9 @@ impl RunService {
             abort.abort();
         }
         drop(self.loop_gate.lock().await);
-        if self.stopped.load(Ordering::SeqCst) {
+        // Ruling T22-N2: only saves that finished count. A loop stopped inside
+        // `stop_now` has set `stopped`, but its saves may not all have run.
+        if self.saved.load(Ordering::SeqCst) {
             return;
         }
         self.stop_now().await;
@@ -325,8 +336,9 @@ impl RunService {
         };
         self.stopped.store(true, Ordering::SeqCst);
         for run in runs {
-            effects::save(run).await;
+            effects::save(&self.writes, run).await;
         }
+        self.saved.store(true, Ordering::SeqCst);
         let waiting: Vec<_> = crate::lock(&self.replies).drain().collect();
         for (_, reply) in waiting {
             let _ = reply.send(Err("the daemon is shutting down".to_string()));
@@ -469,7 +481,7 @@ impl RunService {
         };
         for run_id in dirty {
             if let Some(run) = self.run_clone(&run_id) {
-                effects::save(run).await;
+                effects::save(&self.writes, run).await;
             }
         }
         self.write_due_reports(now).await;

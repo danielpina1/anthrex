@@ -22,7 +22,7 @@ use crate::run::model::{ClaudeAuth, Run};
 use crate::run::plan::{
     BuildContext, parse_plan, random_suffix, resolve_profile, run_id_taken, slug,
 };
-use crate::run::roster::{escalate, pick_reviewer};
+use crate::run::reach::reachable_runtimes;
 use crate::run::validate::EditScope;
 use crate::worktree::repo_worktrees_dir;
 
@@ -55,25 +55,12 @@ fn random_nonce() -> u64 {
     hasher.finish().max(1)
 }
 
-/// Whether any session the run can launch runs on `runtime` (ruling T22-I1: decisions
-/// 50 and 53 cover every runtime the run launches). For each task: its worker's route,
-/// its reviewer's (`review_route`, on the peer runtime), and the rung-2 route decision
-/// 39's escalation may move the worker to, with that route's reviewer. A later rung
-/// re-resolves the same roster, so it can reach no runtime outside these.
-fn launches(run: &Run, runtime: Runtime) -> bool {
-    run.tasks.iter().any(|t| {
-        let escalated = escalate(&run.roster, &t.route);
-        let escalated_review = t
-            .review_level
-            .map(|level| pick_reviewer(&run.roster, &escalated, level).runtime);
-        [
-            Some(t.route.runtime),
-            t.review_route.as_ref().map(|r| r.runtime),
-            Some(escalated.runtime),
-            escalated_review,
-        ]
-        .contains(&Some(runtime))
-    })
+/// What [`RunService::check_runtimes`] found: decision 50's refusal, and each runtime's
+/// project settings (decision 53) with the name its refusal gives it.
+#[derive(Default)]
+struct RuntimeChecks {
+    api_key: Vec<(Runtime, String)>,
+    settings: Vec<(Runtime, &'static str, Vec<String>)>,
 }
 
 /// Every branch under `refs/heads/anthrex/` (decision 15's redraw test).
@@ -117,16 +104,9 @@ impl RunService {
                 request::REJECT,
                 self.ask(|reply| EventKind::Reject { reply, run_id }).await,
             ),
-            RunRequest::Edit { run_id, edits } => answer(
-                request::EDIT,
-                self.ask(|reply| EventKind::Edit {
-                    reply,
-                    run_id,
-                    edits,
-                    scope: EditScope::Run,
-                })
-                .await,
-            ),
+            RunRequest::Edit { run_id, edits } => {
+                answer(request::EDIT, self.edit(run_id, edits).await)
+            }
             RunRequest::Retry { run_id, task_id } => answer(
                 request::RETRY,
                 self.ask(|reply| EventKind::Retry {
@@ -249,7 +229,6 @@ impl RunService {
             now: unix_now(),
             yes,
         };
-        let (root, base) = (pre.root.clone(), pre.base_sha.clone());
         let mut run = crate::run::plan::build_run(plan, pre, ctx).map_err(|errors| {
             errors
                 .iter()
@@ -259,66 +238,105 @@ impl RunService {
         })?;
         run.session_nonce = random_nonce();
 
-        let claude = launches(&run, Runtime::Claude);
-        if claude
-            && run.limits.claude_auth == ClaudeAuth::ApiKey
-            && std::env::var_os("ANTHROPIC_API_KEY").is_none()
-            && run.limits.api_key_helper.is_none()
-        {
-            return Err(API_KEY_NEEDED.to_string());
+        let runtimes = reachable_runtimes(&run);
+        let checks = self.check_runtimes(&run, &runtimes, timeout).await?;
+        if let Some((_, text)) = checks.api_key.first() {
+            return Err(text.clone());
         }
-        let found = self
-            .project_settings(&git, root, base, &run, timeout)
-            .await?;
-        let mut refusals = Vec::new();
-        for (who, paths) in &found {
-            if !paths.is_empty() && !trust_project {
-                refusals.push(settings_refusal(who, paths));
+        if !trust_project {
+            let refusals: Vec<String> = checks
+                .settings
+                .iter()
+                .filter(|(_, _, paths)| !paths.is_empty())
+                .map(|(_, who, paths)| settings_refusal(who, paths))
+                .collect();
+            if !refusals.is_empty() {
+                return Err(refusals.join("\n"));
             }
         }
-        if !refusals.is_empty() {
-            return Err(refusals.join("\n"));
-        }
-        run.trusted_project = found.into_iter().flat_map(|(_, paths)| paths).collect();
+        run.trusted_project = checks
+            .settings
+            .into_iter()
+            .flat_map(|(_, _, paths)| paths)
+            .collect();
         run.trusted_project.sort();
         run.trusted_project.dedup();
         Ok(run)
     }
 
-    /// Decision 53: the project settings each runtime's sessions would load unasked, by
-    /// the caps the sessions are launched with. Claude's only when it cannot exclude
-    /// them and the run launches a Claude session (worker or reviewer, ruling T22-I1);
-    /// Codex's only when it loads project config with no exclusion and the run launches
-    /// a Codex session.
-    async fn project_settings(
+    /// `run edit` (ruling T22-I1b): decisions 50 and 53 for each runtime the run cannot
+    /// reach yet, so the engine refuses an edit that would reach one whose checks fail
+    /// with that check's text. Project settings already trusted at `run start` pass.
+    async fn edit(&self, run_id: String, edits: Vec<proto::PlanEdit>) -> Result<String, String> {
+        let run = crate::lock(&self.state).runs.get(&run_id).cloned();
+        let mut refusals = Vec::new();
+        if let Some(run) = run {
+            let reachable = reachable_runtimes(&run);
+            let unreached: Vec<Runtime> = [Runtime::Claude, Runtime::Codex]
+                .into_iter()
+                .filter(|r| !reachable.contains(r))
+                .collect();
+            let timeout = Duration::from_secs(self.ctx.orchestrator.git_timeout_secs);
+            let checks = self.check_runtimes(&run, &unreached, timeout).await?;
+            refusals = checks.api_key;
+            for (runtime, who, paths) in checks.settings {
+                let trusted = paths.iter().all(|p| run.trusted_project.contains(p));
+                if !trusted && !refusals.iter().any(|(r, _)| *r == runtime) {
+                    refusals.push((runtime, settings_refusal(who, &paths)));
+                }
+            }
+        }
+        self.ask(|reply| EventKind::Edit {
+            reply,
+            run_id,
+            edits,
+            scope: EditScope::Run,
+            refusals,
+        })
+        .await
+    }
+
+    /// Decisions 50 and 53 for `runtimes`: decision 50's refusal when Claude is among
+    /// them and has no key, and the project settings each runtime's sessions would load
+    /// unasked, by the caps the sessions are launched with. Claude's only when it cannot
+    /// exclude them; Codex's only when it loads project config with no exclusion.
+    async fn check_runtimes(
         &self,
-        git: &OsString,
-        root: PathBuf,
-        base: String,
         run: &Run,
+        runtimes: &[Runtime],
         timeout: Duration,
-    ) -> Result<Vec<(&'static str, Vec<String>)>, String> {
+    ) -> Result<RuntimeChecks, String> {
+        let mut checks = RuntimeChecks::default();
+        let claude = runtimes.contains(&Runtime::Claude);
+        if claude
+            && run.limits.claude_auth == ClaudeAuth::ApiKey
+            && std::env::var_os("ANTHROPIC_API_KEY").is_none()
+            && run.limits.api_key_helper.is_none()
+        {
+            checks
+                .api_key
+                .push((Runtime::Claude, API_KEY_NEEDED.to_string()));
+        }
         let caps = self.ctx.cli_caps;
-        let claude = launches(run, Runtime::Claude) && caps.claude_user_settings_only.is_none();
-        let codex = launches(run, Runtime::Codex)
+        let codex = runtimes.contains(&Runtime::Codex)
             && caps.codex_loads_project_config
             && caps.codex_user_config_only.is_none();
-        let mut found = Vec::new();
-        if claude {
-            let (g, r, b) = (git.clone(), root.clone(), base.clone());
+        let (root, base) = (run.root.clone(), run.base_sha.clone());
+        if claude && caps.claude_user_settings_only.is_none() {
+            let (g, r, b) = (self.ctx.git.clone(), root.clone(), base.clone());
             let paths =
                 blocking(move || git::project_settings(&g, &r, &b, true, None, timeout)).await?;
-            found.push(("Claude", paths));
+            checks.settings.push((Runtime::Claude, "Claude", paths));
         }
         if codex {
-            let (g, paths) = (git.clone(), caps.codex_project_config_paths);
+            let (g, paths) = (self.ctx.git.clone(), caps.codex_project_config_paths);
             let paths = blocking(move || {
                 git::project_settings(&g, &root, &base, false, Some(paths), timeout)
             })
             .await?;
-            found.push(("Codex", paths));
+            checks.settings.push((Runtime::Codex, "Codex", paths));
         }
-        Ok(found)
+        Ok(checks)
     }
 
     /// Decision 15: the slug and a random suffix, redrawn while the id's branches, its

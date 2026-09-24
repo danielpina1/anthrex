@@ -301,6 +301,7 @@ fn a_restore_drops_a_count_retry() {
     let run = fx.run().clone();
     let mut restored = Fixture::new(&fx.plan);
     restored.next(EventKind::Restore {
+        held: Vec::new(),
         runs: vec![run],
         replay: vec![],
     });

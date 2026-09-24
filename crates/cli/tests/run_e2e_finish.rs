@@ -93,15 +93,53 @@ fn e2e_a_replayed_accept_reports_its_clean_up() {
         &message,
         &format!("anthrex/{id}/integration"),
     ]);
-    h.restart_daemon(&[("ANTHREX_TEST_ABORT_AFTER_INTENT", "")]);
+    // Ruling T22-N3: the clean-up runs once the socket is bound. The first worktree
+    // removal it makes is held for CLEAN_UP_HELD, so a daemon that cleaned up before
+    // binding would answer with the run already accepted.
+    let path = slow_worktree_removal(&h);
+    h.restart_daemon(&[("ANTHREX_TEST_ABORT_AFTER_INTENT", ""), ("PATH", &path)]);
+    assert_eq!(
+        h.run(&id).unwrap().state,
+        RunState::Complete,
+        "the daemon answered only after the clean-up"
+    );
 
-    let run = h.wait_run(&id, |r| r.state == RunState::Accepted, RUN_WAIT);
+    h.wait_run(&id, |r| r.state == RunState::Accepted, RUN_WAIT);
     until("the clean-up to reach the report", RUN_WAIT, || {
-        report(&run)
+        report(&h.run(&id)?)
             .contains("clean-up after the restart: merged into the base branch")
             .then_some(())
     });
     let text = report(&h.run(&id).unwrap());
     assert!(!text.contains("branches kept because"), "{text}");
     assert!(no_run_branches(&h.repo));
+}
+
+/// How long the stand-in `git` holds the first `worktree remove`: under the harness's
+/// `git_timeout_secs = 5`, and far over the one snapshot request made meanwhile.
+const CLEAN_UP_HELD: &str = "3";
+
+/// A `PATH` whose `git` holds the first `worktree remove` for [`CLEAN_UP_HELD`]
+/// seconds, then runs the real `git`.
+fn slow_worktree_removal(h: &RunHarness) -> String {
+    let real = std::process::Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    let real = String::from_utf8(real.stdout).unwrap().trim().to_string();
+    let bin = h.dir.path().join("slow-git");
+    std::fs::create_dir_all(&bin).unwrap();
+    let mark = h.dir.path().join("slow-git.held");
+    let script = format!(
+        "#!/bin/sh\ncase \"$*\" in\n  *\"worktree remove\"*)\n    if [ ! -e '{mark}' ]; then : > '{mark}'; sleep {CLEAN_UP_HELD}; fi ;;\nesac\nexec '{real}' \"$@\"\n",
+        mark = mark.display()
+    );
+    let git = bin.join("git");
+    std::fs::write(&git, script).unwrap();
+    std::fs::set_permissions(&git, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    )
 }

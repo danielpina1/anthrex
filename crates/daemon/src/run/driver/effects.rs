@@ -1,8 +1,10 @@
 //! Executing one step's effects (decision 43's order), and the work the tick owes:
 //! persists, reports and journal compaction. See `driver.rs` for the lock rules.
 
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::collections::HashMap;
+use std::io;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use proto::RunsSnapshot;
@@ -70,11 +72,50 @@ pub(super) fn prepare(state: &EngineState, fx: Vec<Effect>, now: u64) -> Vec<Rea
     out
 }
 
-/// `journal::save_run` on a blocking thread; a failure is logged (the next persist of
-/// the run writes it whole again).
-pub(super) async fn save(run: Run) {
+/// Ruling T22-N2 (the m8 residual): every `run.json` write goes through here, one run
+/// at a time and the newest last. A write draws its number when it is asked for; under
+/// its run's own lock, one older than a write already made is dropped. So a write a
+/// stuck or aborted loop left on a blocking thread can neither share `RUN_TMP` with a
+/// later one nor rename an older state over it.
+#[derive(Default)]
+pub(super) struct RunWrites {
+    next: AtomicU64,
+    runs: Mutex<HashMap<String, Arc<Mutex<u64>>>>,
+}
+
+impl RunWrites {
+    /// The write of `run` as it is now, numbered now, to run on a blocking thread.
+    pub(super) fn writer(&self, run: Run) -> impl FnOnce() -> io::Result<()> + Send + 'static {
+        let seq = self.next.fetch_add(1, Ordering::SeqCst) + 1;
+        let slot = crate::lock(&self.runs)
+            .entry(run.id.clone())
+            .or_default()
+            .clone();
+        move || {
+            let mut last = crate::lock(&slot);
+            if seq < *last {
+                return Ok(());
+            }
+            *last = seq;
+            journal::save_run(&run)
+        }
+    }
+
+    /// The lock `run_id`'s writes take (a test holds it to stall them).
+    #[cfg(test)]
+    pub(super) fn slot(&self, run_id: &str) -> Arc<Mutex<u64>> {
+        crate::lock(&self.runs)
+            .entry(run_id.to_string())
+            .or_default()
+            .clone()
+    }
+}
+
+/// A [`RunWrites::writer`] on a blocking thread; a failure is logged (the next persist
+/// of the run writes it again).
+pub(super) async fn save(writes: &RunWrites, run: Run) {
     let id = run.id.clone();
-    match tokio::task::spawn_blocking(move || journal::save_run(&run)).await {
+    match tokio::task::spawn_blocking(writes.writer(run)).await {
         Ok(Ok(())) => {}
         Ok(Err(error)) => tracing::error!(run = %id, %error, "could not save run.json"),
         Err(error) => tracing::error!(run = %id, %error, "saving run.json panicked"),
@@ -88,7 +129,7 @@ impl RunService {
             match item {
                 Ready::Save(run) => {
                     crate::lock(&self.book).dirty.remove(&run.id);
-                    save(*run).await;
+                    save(&self.writes, *run).await;
                 }
                 Ready::Dirty(run_id) => {
                     crate::lock(&self.book).dirty.insert(run_id);
@@ -264,7 +305,7 @@ impl RunService {
     }
 
     /// Appends one journal line, fsynced, on a blocking thread.
-    async fn append(&self, ctx: &OpCtx, line: JournalLine) {
+    pub(super) async fn append(&self, ctx: &OpCtx, line: JournalLine) {
         let lock = self.journal.clone();
         let dir = ctx.data_dir.clone();
         let appended = tokio::task::spawn_blocking(move || {
