@@ -151,11 +151,15 @@ impl HeadlessHandle {
         drop(child);
 
         let (queue, lines) = mpsc::sync_channel::<String>(WRITER_QUEUE_MAX);
+        // Ruling T17-C1: `codex exec` (0.156.1) reads a piped stdin to EOF before it
+        // starts its turn, so a Codex process's stdin is closed at once (the writer sees
+        // no sender and drops the pipe). Claude keeps it open for stream-json input.
+        let queue = (runtime == Runtime::Claude).then_some(queue);
         let process = Arc::new(Process {
             pid,
             reaped: Mutex::new(false),
             exited: Condvar::new(),
-            stdin: Mutex::new(Some(queue)),
+            stdin: Mutex::new(queue),
         });
         let (tx, rx) = mpsc::channel();
         let name = |role: &str| format!("headless-{role}-{pid}");
@@ -198,14 +202,16 @@ impl HeadlessHandle {
     }
 
     /// Queues one line (a newline is added) for the session's stdin. Never blocks: it
-    /// fails once [`WRITER_QUEUE_MAX`] lines are waiting, when stdin is closed, or when
-    /// the process has ended.
+    /// fails once [`WRITER_QUEUE_MAX`] lines are waiting, when stdin is closed (always,
+    /// for Codex), or when the process has ended.
     pub fn send_line(&self, line: String) -> anyhow::Result<()> {
         anyhow::ensure!(
             !line.contains('\n'),
             "a stdin line must not contain a newline"
         );
         let process = self.process.as_ref().context("the session has ended")?;
+        // The writer thread may not have noticed the exit yet; the reap is the truth.
+        anyhow::ensure!(!*crate::lock(&process.reaped), "the session has ended");
         let stdin = crate::lock(&process.stdin);
         let queue = stdin.as_ref().context("the session's stdin is closed")?;
         match queue.try_send(line) {

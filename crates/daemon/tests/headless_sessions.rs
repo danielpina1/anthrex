@@ -79,6 +79,16 @@ fn sh(script: &str, runtime: Runtime, events: &Events) -> HeadlessHandle {
     .expect("spawn /bin/sh")
 }
 
+/// Sends `SIGKILL` to a test's process group when dropped, even by a failed assertion.
+struct KillGroupOnDrop(u32);
+
+impl Drop for KillGroupOnDrop {
+    fn drop(&mut self) {
+        // SAFETY: a plain signal to the test's own child's group.
+        unsafe { libc::killpg(self.0 as libc::pid_t, libc::SIGKILL) };
+    }
+}
+
 fn alive(pid: u32) -> bool {
     // SAFETY: signal 0 only checks that the pid exists.
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
@@ -215,6 +225,9 @@ fn kill_sends_sigterm_to_the_whole_group_first() {
         })
         .unwrap();
     let leader = handle.spawned_pid().unwrap();
+    // The leader traps TERM and loops forever: a failing assertion below must not leave
+    // it running under PID 1.
+    let _cleanup = KillGroupOnDrop(leader);
     handle.kill(Duration::from_secs(60));
     events.wait_unknown("term");
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -350,4 +363,41 @@ fn an_ended_handle_refuses_everything() {
     assert!(handle.interrupt(InterruptMode::Sigint, 1).is_err());
     handle.kill(Duration::from_secs(1));
     handle.close_stdin();
+}
+
+/// A leader that exits normally takes its group with it: whatever it left running in the
+/// background (an `anthrex mcp` server, a hook) is killed before the exit is reported.
+#[test]
+fn a_leader_that_exits_takes_its_background_children_with_it() {
+    let events = Events::default();
+    let handle = sh("sleep 30 & echo $!; exit 0", Runtime::Claude, &events);
+    let _cleanup = KillGroupOnDrop(handle.spawned_pid().unwrap());
+    events.wait_exit();
+    let background: u32 = events
+        .all()
+        .iter()
+        .find_map(|(_, e)| match e {
+            SessionEvent::Unknown { line } => line.parse().ok(),
+            _ => None,
+        })
+        .expect("the child printed its background pid");
+    // Killed before the exit was reported; only its reaping by init may lag.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while alive(background) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        !alive(background),
+        "the background {background} outlived its leader"
+    );
+}
+
+/// Once the process is reaped, a send fails at once, even while the writer thread has
+/// not yet noticed (review M2: the first send after the exit used to return `Ok`).
+#[test]
+fn send_line_fails_once_the_process_has_exited() {
+    let events = Events::default();
+    let handle = sh("exit 0", Runtime::Claude, &events);
+    events.wait_exit();
+    assert!(handle.send_line("late".into()).is_err());
 }

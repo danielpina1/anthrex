@@ -7170,8 +7170,10 @@ and the version bump to 7 landed in M8a.2 with their round-trip tests.
 - **Status follows the window's current process only** (invented): an event whose pid
   is not the installed handle's still reaches the feed and the conversation, but moves
   neither status nor `child_alive`. This is what M8a.18's kill-then-`--resume` needs.
-- **A Codex process that exits after its turn ended keeps the window `Idle` or
-  `Attention`**, not `Exited` (invented; `status::next` alone would say `Exited`). Codex
+- **A Codex process that exits after a turn ended in it keeps the window `Idle` or
+  `Attention`**, not `Exited` (invented; `status::next` alone would say `Exited`;
+  narrowed by fix round 1, ruling T17-I1: an exit before any turn ended in that
+  process is `Exited` with its exit info). Codex
   runs one process per turn, so that exit is not the session's end. `exit` is set only
   when the status becomes `Exited`. Test: `session_events_drive_status_and_the_conversation`.
 - **Real hooks** (`handle_hook`'s headless branch, `headless_hook`): `AgentState::on_hook`
@@ -7256,3 +7258,68 @@ above milliseconds of real cost). The brief's `kill(1 s)` then "gone within 2 s"
 once. There are two sleep-then-asserts, both on purpose: the launch-gate absence (200 ms,
 as the brief says) and `QUIET_AFTER + 300 ms` before `tick`, as in `manager.rs`'s
 existing quiet test.
+
+### M8a.17 fix round 1 (2026-09-24)
+
+Review `task-17-review.md`: 1 Critical, 1 Important and minor findings. The rulings are
+T17-C1, T17-I1 and T17-minors in `progress.md`. Each behaviour fix has a test that
+failed first. Each fix was then mutation-checked: reverting it fails its test.
+
+- **C1: decision 26 is wrong for Codex. Codex's stdin must not stay piped open.**
+  - Evidence (the reviewer ran the real binary, codex-cli 0.156.1, with an isolated
+    `CODEX_HOME`):
+    - `codex exec --json … "say hi"` with a piped stdin left open printed nothing for
+      8 s.
+    - Once the pipe closed, it printed `Reading additional input from stdin...`, then
+      `thread.started` and `turn.started`.
+    - With `</dev/null` it starts at once.
+    - Its `--help` says a piped stdin is appended to the prompt as a `<stdin>` block,
+      so it reads to EOF first.
+  - As built, every Codex worker and reviewer would have hung until the stall timer.
+  - **Correction to decision 26's "stdin, stdout and stderr all piped":** the driver
+    (`HeadlessHandle::spawn`) closes a Codex process's stdin at once. No sender is
+    kept, so the writer thread drops the pipe and Codex sees EOF. `send_line` on a
+    Codex handle always fails with `stdin is closed`. Claude keeps its stdin open for
+    stream-json input.
+  - The rule lives in the driver, so M8a.18's `exec resume` path gets it through the
+    same `spawn`. M8a.18 must not reopen stdin for Codex.
+  - Test: `a_codex_session_that_reads_stdin_to_eof_still_runs_its_turn`. Its stand-in
+    runs `cat >/dev/null` before printing anything. Before the fix it timed out waiting
+    for the exit.
+  - **Carry for M8a.20:** fake-agent's Codex headless mode reads stdin to EOF before it
+    prints anything, as the real CLI does, so an end-to-end run shows the same hang if
+    stdin is ever left open.
+- **I1: a Codex exit is a death unless a turn ended in that process.**
+  - `HeadlessWindow.turn_ended_in_process` is reset by `ProcessStarted` and set by
+    `TurnEnded`, both for the current process only.
+  - A process that dies before its turn (a bad flag, an auth error) now ends the window
+    as `Exited`, with `exit` set (`exited with code 2`).
+  - Test: `a_codex_process_that_dies_before_its_turn_ends_the_window`, the reviewer's
+    probe (one stderr line, then `exit 2`). Before the fix: `left: Starting right:
+    Exited`.
+- **Minors.**
+  - Tests now kill the two surviving mutants:
+    - `an_event_of_another_process_does_not_move_the_window`: with `current = true`,
+      `left: Exited right: Starting`.
+    - `a_leader_that_exits_takes_its_background_children_with_it`: without the waiter's
+      post-exit group `SIGKILL`, the background `sleep` outlives its leader.
+  - `send_line` checks the reap before it queues, so a send after the exit fails at
+    once. Test: `send_line_fails_once_the_process_has_exited`. It returned `Ok` before
+    the fix.
+  - `kill_sends_sigterm_to_the_whole_group_first` and the new background test hold a
+    `KillGroupOnDrop` guard, so a failing assertion no longer leaves the TERM-trapping
+    leader looping.
+  - The two leaked shells (pids 52097 and 52276, parent PID 1, started 05:55) were
+    that test's leader. They were left when a mutation run removed the grace `SIGKILL`
+    during the first round. `ps` showed the test's exact command line, and they were
+    killed.
+- **Carries for M8a.22:**
+  - Bring `server.rs` back to 618 lines or fewer. The milestone's file-size table
+    requires net growth of zero, and M8a.22's `GitWiring` extraction is the offset.
+  - Remove the restored headless windows of finished runs. A client's `Remove` is
+    refused for them, so only the engine can remove them.
+  - Register and unregister each headless window's worktree root with the git
+    registry. Today a live one gets no git state, and a restored one is registered and
+    never unregistered.
+- **Carry for M8a.18:** the stale-pid rule (`current`) is now pinned by a direct test.
+  M8a.18 must also test it end to end through kill-then-`--resume`.

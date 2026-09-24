@@ -289,3 +289,70 @@ async fn tick_leaves_a_headless_windows_status_alone() {
     m.remove(info.id).unwrap();
     m.remove(shell.id).unwrap();
 }
+
+/// Ruling T17-C1: `codex exec` reads a piped stdin to EOF before it starts its turn
+/// (codex-cli 0.156.1), so the driver must close a Codex session's stdin at once. The
+/// stand-in does the same: it prints nothing until its stdin ends.
+#[tokio::test]
+async fn a_codex_session_that_reads_stdin_to_eof_still_runs_its_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    let exec = fixture("codex-0.155.0-exec.jsonl");
+    let codex = script(
+        dir.path(),
+        "codex",
+        &format!("cat >/dev/null\nsed -n 1,8p '{}'", exec.display()),
+    );
+    let m = manager(&codex, &codex, |_| {});
+    let mut feed = m.signals();
+    let info = create(&m, "c3", spec(Runtime::Codex, dir.path()), "go").await;
+    next_signal(&mut feed, "the turn's exit", is_exit).await;
+    assert_eq!(find(&m, info.id).status, Status::Idle);
+    assert_eq!(find(&m, info.id).session_id.as_deref(), Some(CODEX_SESSION));
+}
+
+/// Ruling T17-I1: a Codex process that dies before any turn ended in it (a bad flag, an
+/// auth error) ends the window, with its exit, rather than leaving it `Starting`.
+#[tokio::test]
+async fn a_codex_process_that_dies_before_its_turn_ends_the_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let codex = script(
+        dir.path(),
+        "codex",
+        "echo 'error: unexpected argument' >&2; exit 2",
+    );
+    let m = manager(&codex, &codex, |_| {});
+    let mut feed = m.signals();
+    let info = create(&m, "c4", spec(Runtime::Codex, dir.path()), "go").await;
+    next_signal(&mut feed, "the exit", is_exit).await;
+    let window = find(&m, info.id);
+    assert_eq!(window.status, Status::Exited);
+    let exit = window.exit.expect("the exit is recorded");
+    assert_eq!(exit.code, Some(2));
+    assert_eq!(exit.reason, "exited with code 2");
+}
+
+/// An event of a process the window has already replaced moves neither its status nor
+/// its liveness (M8a.18's kill-then-resume relies on it); it still reaches the feed.
+#[tokio::test]
+async fn an_event_of_another_process_does_not_move_the_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let claude = script(dir.path(), "claude", "exec sleep 30");
+    let m = manager(&claude, &claude, |_| {});
+    let mut feed = m.signals();
+    let info = create(&m, "w", spec(Runtime::Claude, dir.path()), "hi").await;
+    wait_until("the process", || m.child_pid(info.id).unwrap().is_some()).await;
+    let pid = m.child_pid(info.id).unwrap().unwrap();
+    let stale = pid.wrapping_add(100_000);
+    let exited = SessionEvent::ProcessExited {
+        code: Some(0),
+        signal: None,
+    };
+    m.apply_session_event(info.id, stale, &exited);
+    let signal = next_signal(&mut feed, "the stale exit", |s| s.pid == Some(stale)).await;
+    assert!(is_exit(&signal));
+    let window = find(&m, info.id);
+    assert_eq!(window.status, Status::Starting);
+    assert_eq!(window.exit, None);
+    assert_eq!(m.child_pid(info.id).unwrap(), Some(pid));
+    m.remove(info.id).unwrap();
+}

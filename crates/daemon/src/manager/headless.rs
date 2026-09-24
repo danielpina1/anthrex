@@ -74,6 +74,9 @@ pub(super) struct HeadlessWindow {
     /// keep matching the conversation's (ruling T7-N1).
     pub(super) cursor: StreamCursor,
     pub(super) diagnostics: VecDeque<String>,
+    /// A turn ended in the current process (ruling T17-I1): only then is a Codex
+    /// process's exit the normal end of its turn rather than the session's death.
+    pub(super) turn_ended_in_process: bool,
 }
 
 impl HeadlessWindow {
@@ -84,6 +87,7 @@ impl HeadlessWindow {
             status: HeadlessStatus::default(),
             cursor: StreamCursor::default(),
             diagnostics: VecDeque::new(),
+            turn_ended_in_process: false,
         }
     }
 
@@ -388,13 +392,20 @@ impl WindowManager {
         let mut changed = false;
         if current {
             let mut next = status::next(&window.status, event);
-            // Codex runs one process per turn: an exit after its turn ended is not the
-            // session's end, so the window keeps the turn's `Idle` or `Attention`.
+            // Codex runs one process per turn: an exit after a turn ended in that
+            // process is not the session's end, so the window keeps the turn's `Idle` or
+            // `Attention`. An exit before any turn ended in it is a death (T17-I1).
             if runtime == Runtime::Codex
                 && matches!(event, SessionEvent::ProcessExited { .. })
+                && window.turn_ended_in_process
                 && !window.status.turn_open
             {
                 next.status = window.status.status;
+            }
+            match event {
+                SessionEvent::ProcessStarted { .. } => window.turn_ended_in_process = false,
+                SessionEvent::TurnEnded { .. } => window.turn_ended_in_process = true,
+                _ => {}
             }
             window.status = next;
             if entry.status != window.status.status {
