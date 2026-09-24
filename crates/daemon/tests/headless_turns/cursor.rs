@@ -5,7 +5,8 @@
 
 use super::support::headless::*;
 use super::{
-    CLAUDE_UUID, Cleanup, argvs, claude_recorder, codex_recorder, is_exit, is_turn_end, stdin_lines,
+    CLAUDE_UUID, Cleanup, argvs, claude_recorder, codex_recorder, is_exit, is_turn_end,
+    record_argv, stdin_lines,
 };
 use daemon::headless::SessionEvent;
 use daemon::headless::claude_stream::user_message;
@@ -361,4 +362,83 @@ async fn a_late_prompt_hook_drops_only_its_own_turn() {
             ("fourth", "reply four"),
         ])
     );
+}
+
+/// A Claude whose first launch prints `first[i]` once the file `s<i>` exists, and whose
+/// `--resume` launch prints `resumed[i]` once `r<i>` exists. Both record their argv.
+fn two_phase(dir: &Path, first: &[Vec<String>], resumed: &[Vec<String>]) -> std::path::PathBuf {
+    let mut body = record_argv(dir);
+    body += "P=s\ncase \" $* \" in *\" --resume \"*) P=r;; esac\n(cat >/dev/null) &\n";
+    for (phase, steps) in [("s", first), ("r", resumed)] {
+        body += &format!("if [ $P = {phase} ]; then\n");
+        for (i, lines) in steps.iter().enumerate() {
+            let file = dir.join(format!("{phase}{i}.jsonl"));
+            std::fs::write(&file, lines.join("\n") + "\n").unwrap();
+            body += &format!(
+                "{}\ncat '{}'\n",
+                gate(dir, &format!("{phase}{i}")),
+                file.display()
+            );
+        }
+        body += "fi\n";
+    }
+    body += "exec sleep 30";
+    script(dir, "claude", &body)
+}
+
+/// Ruling T18-I2 (the reviewer's probe): a resume that kills a process mid-turn leaves
+/// that turn's prompt open forever unless a new process clears the open prompts. With
+/// it left open, a later background `result` in the N1 order was taken for the
+/// delivered turn's end.
+#[tokio::test]
+async fn a_resume_after_a_killed_turn_keeps_background_results_unprompted() {
+    let dir = tempfile::tempdir().unwrap();
+    let claude = two_phase(
+        dir.path(),
+        &[vec![init(), prose("working")]],
+        &[
+            vec![init(), prose("resumed reply"), result()],
+            vec![init(), prose("bg reply"), result()],
+            vec![init(), prose("reply three"), result()],
+        ],
+    );
+    let m = manager(&claude, &claude, |_| {});
+    let _cleanup = Cleanup(m.clone());
+    let mut feed = m.signals();
+    let info = create(&m, "w", spec(Runtime::Claude, dir.path()), "first").await;
+    let id = info.id;
+    session_start(&m, id);
+    prompt(&m, id, "first");
+    open_gate(dir.path(), "s0");
+    wait_until("the first turn to run", || {
+        find(&m, id).status == Status::Working
+    })
+    .await;
+
+    // A stalled turn: the engine resumes the live session, which kills it first.
+    let resuming = m.clone();
+    let resume = tokio::spawn(async move {
+        resuming
+            .headless_resume(id, CLAUDE_UUID, "go on", std::time::Duration::ZERO)
+            .await
+    });
+    wait_until("the resumed process", || argvs(dir.path()).len() == 2).await;
+    prompt(&m, id, "go on");
+    open_gate(dir.path(), "r0");
+    resume.await.unwrap().unwrap();
+    next_signal(&mut feed, "the resumed turn's end", is_turn_end).await;
+
+    m.headless_send(id, "third").await.unwrap();
+    prompt(&m, id, BG);
+    open_gate(dir.path(), "r1");
+    let bg = next_signal(&mut feed, "the background turn's end", any_turn_end).await;
+    assert!(
+        matches!(bg.kind, WindowSignalKind::Unprompted(_)),
+        "a stale open prompt took the background result for the delivered turn's end: {bg:?}"
+    );
+    assert_eq!(find(&m, id).status, Status::Working);
+    prompt(&m, id, "third");
+    open_gate(dir.path(), "r2");
+    let end = next_signal(&mut feed, "the delivered turn's end", any_turn_end).await;
+    assert!(is_turn_end(&end), "{end:?}");
 }

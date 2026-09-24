@@ -10,7 +10,7 @@
 
 use super::WindowManager;
 use super::entry::Process;
-use super::headless::hooks_fire;
+use super::headless::{Cancel, hooks_fire};
 use crate::headless::argv::{CLI_CAPS, InterruptMode, claude_args, codex_args};
 use crate::headless::claude_stream::user_message;
 use crate::headless::conversation;
@@ -18,12 +18,12 @@ use crate::headless::session::{HeadlessHandle, OUTPUT_GRACE};
 use crate::headless::{HeadlessSpec, SessionArg};
 use crate::run::messages::clamp;
 use crate::run::role_launch::jitter_ms;
-use proto::{Runtime, Status, WindowInfo};
+use proto::{RunRef, Runtime, Status, WindowInfo};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 
 /// How long a resumed process has to print its `Init` (invented). Past it the resume is
 /// reported failed and the process killed, so a session that hangs before it starts
@@ -47,9 +47,10 @@ fn session_env(
     env
 }
 
-/// Decision 18's launch jitter for a new `codex exec resume` process of the session.
-fn launch_jitter(spec: &HeadlessSpec) -> Duration {
-    let ms = spec.run_ref.as_ref().map_or(0, |run| {
+/// Decision 18's launch jitter for a new `codex exec resume` process of the session
+/// (an invented extension: every Codex turn is a launch). 0 for a session of no run.
+fn launch_jitter(run: Option<&RunRef>) -> Duration {
+    let ms = run.map_or(0, |run| {
         jitter_ms(
             &run.run_id,
             run.task_id.as_deref().unwrap_or(""),
@@ -67,11 +68,42 @@ fn ended(id: u32) -> anyhow::Error {
     anyhow::anyhow!("session for window {id} has ended; resume it")
 }
 
+fn cancelled(id: u32, cancel: Cancel) -> anyhow::Error {
+    let what = match cancel {
+        Cancel::Killed => "killed",
+        Cancel::Interrupted => "interrupted",
+    };
+    anyhow::anyhow!("window {id} was {what} before its turn started")
+}
+
+/// Refuses a message with a NUL byte (ruling T18-minors): no argv can carry one, so a
+/// Codex spawn would fail after the turn was recorded. Checked before anything is.
+fn check_text(id: u32, text: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !text.contains('\0'),
+        "a message for window {id} contains a NUL byte"
+    );
+    Ok(())
+}
+
 /// A send or resume in progress on one window. Dropping it, however the operation
 /// ended, frees the window for the next one and forgets an unanswered resume waiter.
 struct TurnClaim<'a> {
     manager: &'a WindowManager,
     id: u32,
+    /// Set when a kill or interrupt reaches the window before the new process is
+    /// installed (ruling T18-I1).
+    cancel: watch::Receiver<Option<Cancel>>,
+}
+
+impl TurnClaim<'_> {
+    /// Waits `jitter`, or less when a kill or interrupt arrives first.
+    async fn sleep(&mut self, jitter: Duration) {
+        tokio::select! {
+            () = tokio::time::sleep(jitter) => {}
+            _ = self.cancel.wait_for(Option::is_some) => {}
+        }
+    }
 }
 
 impl Drop for TurnClaim<'_> {
@@ -83,6 +115,7 @@ impl Drop for TurnClaim<'_> {
             window.busy = false;
             window.start_waiter = None;
             window.start_failure = None;
+            window.cancel = None;
         }
     }
 }
@@ -123,8 +156,9 @@ impl WindowManager {
         let env = session_env(id, &self.config.socket_path, &spec.env);
         let cwd = spec.cwd.clone();
         let weak = Arc::downgrade(self);
+        let pause = self.config.headless_install_pause;
         let handle = tokio::task::spawn_blocking(move || {
-            HeadlessHandle::spawn(
+            let spawned = HeadlessHandle::spawn(
                 runtime,
                 program.as_ref(),
                 &args,
@@ -135,7 +169,11 @@ impl WindowManager {
                         manager.apply_session_event(id, pid, &event);
                     }
                 },
-            )
+            );
+            if !pause.is_zero() {
+                std::thread::sleep(pause);
+            }
+            spawned
         })
         .await
         .map_err(|error| anyhow::anyhow!("headless session start failed: {error}"))??;
@@ -154,9 +192,14 @@ impl WindowManager {
     pub(super) fn install(&self, id: u32, handle: &HeadlessHandle) -> anyhow::Result<WindowInfo> {
         let mut inner = crate::lock(&self.inner);
         let shutting_down = inner.shutting_down;
+        let mut cancel = None;
         let installed = !shutting_down
             && match inner.entries.get_mut(&id) {
                 Some(entry) => match &mut entry.process {
+                    Process::Headless(window) if window.cancelled().is_some() => {
+                        cancel = window.cancelled();
+                        false
+                    }
                     Process::Headless(window) => {
                         window.handle = handle.clone();
                         // The exit may already have been applied (the reap comes before
@@ -173,6 +216,9 @@ impl WindowManager {
             handle.kill(self.config.kill_grace);
             if shutting_down {
                 anyhow::bail!("daemon is shutting down");
+            }
+            if let Some(cancel) = cancel {
+                return Err(cancelled(id, cancel));
             }
             anyhow::bail!("window {id} was removed while its session started");
         }
@@ -201,8 +247,12 @@ impl WindowManager {
         let Process::Headless(window) = &mut entry.process else {
             anyhow::bail!("window {id} is not a headless session");
         };
+        if let Some(cancel) = window.cancelled() {
+            return Err(cancelled(id, cancel));
+        }
         let runtime = window.spec.runtime;
         window.handle = HeadlessHandle::ended();
+        window.cursor.process_replaced();
         let started = wait_start.then(|| {
             let (tx, rx) = oneshot::channel();
             window.start_waiter = Some(tx);
@@ -253,7 +303,8 @@ impl WindowManager {
     ///   error, not a queue: the engine never delivers into an open turn.
     pub async fn headless_send(self: &Arc<Self>, id: u32, text: &str) -> anyhow::Result<()> {
         let text = clamp(text);
-        let (runtime, handle, spec, session_id) = {
+        check_text(id, &text)?;
+        let (runtime, handle, spec, session_id, cancel) = {
             let mut inner = crate::lock(&self.inner);
             let entry = inner
                 .entries
@@ -290,19 +341,28 @@ impl WindowManager {
             }
             let session_id = session_id
                 .ok_or_else(|| anyhow::anyhow!("session for window {id} has no session id yet"))?;
-            window.busy = true;
+            let cancel = window.claim();
             (
                 runtime,
                 window.handle.clone(),
                 window.spec.clone(),
                 session_id,
+                cancel,
             )
         };
-        let _claim = TurnClaim { manager: self, id };
+        let mut claim = TurnClaim {
+            manager: self,
+            id,
+            cancel,
+        };
         debug_assert_eq!(runtime, Runtime::Codex);
         // The previous turn has ended; its process only has to finish exiting.
         self.retire(id, &handle, false).await?;
-        tokio::time::sleep(launch_jitter(&spec)).await;
+        let jitter = self
+            .config
+            .codex_turn_jitter
+            .unwrap_or_else(|| launch_jitter(spec.run_ref.as_ref()));
+        claim.sleep(jitter).await;
         self.record_turn(id, &text, false)?;
         let session = SessionArg::Resume { session_id };
         let args = self.session_args(&spec, &session, &text, id);
@@ -329,7 +389,8 @@ impl WindowManager {
         jitter: Duration,
     ) -> anyhow::Result<()> {
         let text = clamp(message);
-        let (old, spec) = {
+        check_text(id, &text)?;
+        let (old, spec, cancel) = {
             let mut inner = crate::lock(&self.inner);
             let entry = inner
                 .entries
@@ -341,12 +402,16 @@ impl WindowManager {
             if window.busy {
                 return Err(running(id));
             }
-            window.busy = true;
-            (window.handle.clone(), window.spec.clone())
+            let cancel = window.claim();
+            (window.handle.clone(), window.spec.clone(), cancel)
         };
-        let _claim = TurnClaim { manager: self, id };
+        let mut claim = TurnClaim {
+            manager: self,
+            id,
+            cancel,
+        };
         self.retire(id, &old, true).await?;
-        tokio::time::sleep(jitter).await;
+        claim.sleep(jitter).await;
         let started = self
             .record_turn(id, &text, true)?
             .expect("a resume waits for its start");
@@ -357,20 +422,53 @@ impl WindowManager {
         let line = (spec.runtime == Runtime::Claude).then(|| user_message(&text, Some(session_id)));
         let handle = self.spawn_process(id, &spec, args, line).await?;
         self.install(id, &handle)?;
-        match tokio::time::timeout(RESUME_START_TIMEOUT, started).await {
+        let timeout = self.config.resume_start_timeout;
+        match tokio::time::timeout(timeout, started).await {
             Ok(Ok(Ok(()))) => Ok(()),
             Ok(Ok(Err(reason))) => {
+                // A kill during the wait for `Init` ended the process: that is the kill,
+                // not a failed resume.
+                if let Some(cancel) = *claim.cancel.borrow() {
+                    return Err(cancelled(id, cancel));
+                }
                 anyhow::bail!("could not resume session {session_id}: {reason}")
             }
             Ok(Err(_)) => anyhow::bail!("window {id} was removed while its session resumed"),
             Err(_) => {
                 handle.kill(self.config.kill_grace);
                 anyhow::bail!(
-                    "could not resume session {session_id}: it did not start within {}s",
-                    RESUME_START_TIMEOUT.as_secs()
+                    "could not resume session {session_id}: it did not start within {timeout:?}"
                 )
             }
         }
+    }
+
+    /// Records `cancel` for a window a send or resume is working on. A kill is recorded
+    /// whenever one is in flight; an interrupt only while no process is installed (once
+    /// one is, it is signalled as usual). Returns whether it was recorded.
+    fn record_cancel(&self, id: u32, cancel: Cancel) -> anyhow::Result<bool> {
+        let inner = crate::lock(&self.inner);
+        let entry = inner
+            .entries
+            .get(&id)
+            .ok_or_else(|| anyhow::anyhow!("no window with id {id}"))?;
+        let Process::Headless(window) = &entry.process else {
+            anyhow::bail!("window {id} is not a headless session");
+        };
+        let Some(sender) = &window.cancel else {
+            return Ok(false);
+        };
+        if cancel == Cancel::Interrupted && !window.handle.is_ended() {
+            return Ok(false);
+        }
+        sender.send_if_modified(|current| {
+            let first = current.is_none();
+            if first {
+                *current = Some(cancel);
+            }
+            first
+        });
+        Ok(true)
     }
 
     /// The window's handle and runtime, cloned out from under the lock.
@@ -388,7 +486,14 @@ impl WindowManager {
 
     /// Interrupts the running turn: Claude by `CLI_CAPS.claude_interrupt` (a control
     /// request on stdin, or `SIGINT`), Codex always by `SIGINT` to the turn's process.
+    ///
+    /// Between a send's or resume's old process and its new one there is nothing to
+    /// signal: the interrupt is recorded instead, and that turn never starts (ruling
+    /// T18-I1).
     pub fn headless_interrupt(&self, id: u32) -> anyhow::Result<()> {
+        if self.record_cancel(id, Cancel::Interrupted)? {
+            return Ok(());
+        }
         let (handle, runtime) = self.headless_handle(id)?;
         let mode = match runtime {
             Runtime::Claude => CLI_CAPS.claude_interrupt,
@@ -398,9 +503,32 @@ impl WindowManager {
     }
 
     /// `SIGTERM` to the session's group, `SIGKILL` after the kill grace (decision 52).
+    /// A kill during a send or resume is also recorded, so the new process is never
+    /// installed, and is killed at once if it was already started (ruling T18-I1).
     pub fn headless_kill(&self, id: u32) -> anyhow::Result<()> {
+        self.record_cancel(id, Cancel::Killed)?;
         let (handle, _) = self.headless_handle(id)?;
         handle.kill(self.config.kill_grace);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proto::AgentRole;
+
+    #[test]
+    fn a_codex_turns_jitter_is_decision_18s() {
+        let run = RunRef {
+            run_id: "run-1".into(),
+            task_id: Some("t2".into()),
+            role: AgentRole::Worker,
+            session: 3,
+        };
+        let jitter = launch_jitter(Some(&run));
+        assert_eq!(jitter, Duration::from_millis(jitter_ms("run-1", "t2", 3)));
+        assert!((100..500).contains(&jitter.as_millis()), "{jitter:?}");
+        assert_eq!(launch_jitter(None), Duration::ZERO);
     }
 }

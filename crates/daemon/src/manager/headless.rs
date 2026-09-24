@@ -34,7 +34,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::{broadcast, oneshot, watch};
 
 /// Capacity of the engine's feed. A receiver that lags logs a warning and continues
 /// (decision 27); counts may then be low, which budgets tolerate.
@@ -93,6 +93,17 @@ pub(super) struct HeadlessWindow {
     /// What the resuming process said went wrong before its `Init`: a failed `result`'s
     /// text, else its first stderr line.
     pub(super) start_failure: Option<String>,
+    /// While `busy`: where a kill or interrupt that arrives before the new process is
+    /// installed is recorded (ruling T18-I1). The send or resume stops at its next step
+    /// and never installs a new process.
+    pub(super) cancel: Option<watch::Sender<Option<Cancel>>>,
+}
+
+/// A kill or interrupt that reached a window between its old process and its new one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Cancel {
+    Killed,
+    Interrupted,
 }
 
 impl HeadlessWindow {
@@ -113,7 +124,22 @@ impl HeadlessWindow {
             busy: false,
             start_waiter: None,
             start_failure: None,
+            cancel: None,
         }
+    }
+
+    /// Marks the window busy with a send or resume, and returns where a kill or
+    /// interrupt meanwhile will be recorded.
+    pub(super) fn claim(&mut self) -> watch::Receiver<Option<Cancel>> {
+        self.busy = true;
+        let (sender, receiver) = watch::channel(None);
+        self.cancel = Some(sender);
+        receiver
+    }
+
+    /// The kill or interrupt recorded during the current send or resume, if any.
+    pub(super) fn cancelled(&self) -> Option<Cancel> {
+        self.cancel.as_ref().and_then(|sender| *sender.borrow())
     }
 
     /// Decision 28's failed-resume marker, for a resume waiting on this process: its

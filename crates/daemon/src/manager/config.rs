@@ -54,6 +54,18 @@ pub struct ManagerConfig {
     /// and unconfigurable — instead of racing two constants that merely happened not to
     /// coincide.
     pub restart_wait_deadline: Duration,
+    /// How long a resumed headless session has to print its `Init` before the resume
+    /// fails and its process is killed (M8a.18). Production: `RESUME_START_TIMEOUT`;
+    /// injected so a test can reach the timeout path.
+    pub resume_start_timeout: Duration,
+    /// Replaces decision 18's launch jitter before a headless Codex turn's process
+    /// (M8a.18) when set. `None` in production (`new`, `from_vars`); a test injects a
+    /// long value to prove the wait happens without racing a short one.
+    pub codex_turn_jitter: Option<Duration>,
+    /// A pause after a headless session process is spawned and before it is installed
+    /// as the window's process. Zero in production; a test widens it to land a kill in
+    /// that gap (ruling T18-I1).
+    pub headless_install_pause: Duration,
     /// The gate both launch paths — [`super::WindowManager::create`]'s phase B and
     /// [`super::WindowManager::restart`]'s phase C — wait on before they spawn anything.
     ///
@@ -84,6 +96,9 @@ impl ManagerConfig {
             cleanup_timeout: worktree::CLEANUP_TIMEOUT,
             kill_grace: crate::process::KILL_GRACE,
             restart_wait_deadline: crate::process::KILL_GRACE + Duration::from_secs(2),
+            resume_start_timeout: super::headless_turns::RESUME_START_TIMEOUT,
+            codex_turn_jitter: None,
+            headless_install_pause: Duration::ZERO,
             launch_gate: launch::LaunchGate::open_already(),
             conversation: ::config::Conversation::default(),
         }
@@ -116,6 +131,9 @@ impl ManagerConfig {
             cleanup_timeout: worktree::CLEANUP_TIMEOUT,
             kill_grace: crate::process::KILL_GRACE,
             restart_wait_deadline: crate::process::KILL_GRACE + Duration::from_secs(2),
+            resume_start_timeout: super::headless_turns::RESUME_START_TIMEOUT,
+            codex_turn_jitter: None,
+            headless_install_pause: Duration::ZERO,
             launch_gate: launch::LaunchGate::open_already(),
             conversation: ::config::Conversation::default(),
         }

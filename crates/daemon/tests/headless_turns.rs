@@ -3,10 +3,13 @@
 //! stand-ins for the CLIs (never the real binaries).
 //!
 //! Split by seam (AGENTS.md rule 8): `headless_turns/cursor.rs` holds the conversation
-//! cursor's delivery-order tests carried from M8a.7's reviews.
+//! cursor's delivery-order tests carried from M8a.7's reviews, `headless_turns/control.rs`
+//! the kills, interrupts and refusals of fix round 1.
 
 mod support;
 
+#[path = "headless_turns/control.rs"]
+mod control;
 #[path = "headless_turns/cursor.rs"]
 mod cursor;
 
@@ -43,7 +46,7 @@ impl Drop for Cleanup {
 /// Shell text that appends this invocation's argv to `args.log` (each argument
 /// NUL-terminated, the record ended by `\x1e`), and notes in `overlap.log` when the
 /// previous invocation of the same program is still alive (decision 52).
-fn record_argv(dir: &Path) -> String {
+pub fn record_argv(dir: &Path) -> String {
     format!(
         r#"D='{d}'
 for a in "$@"; do printf '%s\0' "$a"; done >> "$D/args.log"; printf '\036' >> "$D/args.log"
@@ -184,7 +187,7 @@ fn without(args: &[String], flag: &str) -> Vec<String> {
     out
 }
 
-fn gone(pid: u32) -> bool {
+pub fn gone(pid: u32) -> bool {
     // SAFETY: a signal-0 probe of a pid.
     let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
     result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)

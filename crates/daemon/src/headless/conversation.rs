@@ -59,6 +59,13 @@ impl StreamCursor {
         }
     }
 
+    /// A new process of the session is about to start (a send or resume, M8a.18): the
+    /// turns still open in the previous one can never end, so their prompts are closed
+    /// (ruling T18-I2). Texts the daemon sent and no prompt has matched are kept.
+    pub fn process_replaced(&mut self) {
+        self.open_prompts.clear();
+    }
+
     /// Whether the `TurnEnded` just mapped ended a turn Claude Code started by itself (a
     /// background sub-agent's notification) while a turn the daemon sent was still
     /// waiting for its prompt: that `result` is not the delivered turn's end. Judged by

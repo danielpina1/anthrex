@@ -1945,7 +1945,7 @@ If a flag, key or event is missing, stop work on the item that uses it, as AGENT
 - A resume spawns the resume argv, then sends the message: on Claude's stdin, or as Codex's argument.
 - Nothing is written from under a lock, and nothing blocks a tokio worker.
 
-**Acceptance.** Tests pass. `rg -n "write_input" crates/daemon/src/run crates/daemon/src/headless` prints nothing.
+**Acceptance.** Tests pass. `rg -nw "write_input" crates/daemon/src/run crates/daemon/src/headless` prints nothing (`-w`: M8a.18 fix round 1).
 
 **Commit.** `feat(daemon): deliver engine messages to headless sessions as turns, and interrupt and resume them`
 ### M8a.19 The MCP server
@@ -7444,3 +7444,58 @@ always reaches the feed before the next process's `ProcessStarted`, and after th
 engine emitted the `Deliver`. This is the order the M8a.13 fix-round-2 follow-up names:
 the reducer side of T13-P1 (remember the pid whose turn closed; its later exit is
 normal) must cover it.
+
+### M8a.18 fix round 1 (2026-09-24)
+
+Review `task-18-review.md`: 2 Important, minors. Rulings T18-I1, T18-I2 and T18-minors
+in `progress.md`. Every fix has a test that failed first, and each was mutation-checked:
+reverting it fails its test.
+
+- **I1: a kill or interrupt between the old process and the new one is no longer lost.**
+  - While a send or resume holds the window (`busy`), `HeadlessWindow.cancel` holds a
+    `watch` sender. `headless_kill` records `Cancel::Killed` there (and still signals
+    whatever handle is installed). `headless_interrupt` records `Cancel::Interrupted`
+    when no process is installed; once one is, it signals it as before.
+  - The jitter wait ends early on a recorded cancel. `record_turn` refuses to record the
+    turn, and `install` refuses to install the new process and kills it at once. The
+    send or resume returns `window <id> was killed before its turn started` (or
+    `interrupted`).
+  - A kill while a resume waits for `Init` is returned the same way, not as
+    `could not resume session …`, so the driver does not take it for a failed resume.
+  - `ManagerConfig.headless_install_pause` (new, zero in production) holds a spawned
+    process before its install, so a test can put a kill in that gap.
+  - Tests: `a_kill_during_a_resume_gap_stops_the_resume` (the reviewer's probe),
+    `a_kill_before_the_install_kills_the_new_process`,
+    `an_interrupt_during_a_codex_send_gap_stops_the_turn` and
+    `a_kill_during_the_init_wait_is_reported_as_the_kill`. Before the fix, the probe
+    test's resume ran its full jitter and started the process, the interrupt returned
+    `the session has ended`, and the Init-wait kill came back as a failed resume.
+- **I2: a new process clears the cursor's open prompts.** `record_turn` (every Codex
+  turn and every resume) calls `StreamCursor::process_replaced`. The turns still open in
+  the replaced process can never end. Unmatched sent texts are kept. Test:
+  `a_resume_after_a_killed_turn_keeps_background_results_unprompted` (the reviewer's
+  probe). Before the fix, the background `result` came through as `Session(TurnEnded)`.
+- **Minors.**
+  - A message with a NUL byte is refused before its turn is recorded, with `a message
+    for window <id> contains a NUL byte`. For send, the driver (M8a.22) treats any error
+    as `Delivered { ok: false }`. Test:
+    `a_message_with_a_nul_byte_is_refused_before_it_is_recorded`. A spawn that fails
+    for any other reason after `record_turn` still leaves its `User` turn in the
+    conversation (the cost of recording before the spawn).
+  - The three surviving mutants are now killed:
+    - The Codex busy check: `two_codex_sends_at_once_start_one_turn`.
+    - The kill on a resume timeout: `a_resume_that_never_starts_is_killed_at_the_timeout`.
+      The timeout is now `ManagerConfig.resume_start_timeout`: `RESUME_START_TIMEOUT`
+      (120 s) in production, 500 ms in the test.
+    - The Codex turn jitter: `a_codex_send_waits_out_the_launch_jitter`. The jitter is
+      injected as `ManagerConfig.codex_turn_jitter` (`None` in production) at 1.5 s. The
+      check is a lower bound on the send's own duration, never a race. The formula has
+      a unit test (`a_codex_turns_jitter_is_decision_18s`).
+  - **The acceptance grep should read `rg -nw write_input`.** The brief's `rg -n`
+    matches the Codex usage field `cache_write_input_tokens`.
+- **Carry for M8a.22:** a `ResumeFailed` for a round the engine has already killed,
+  retired or cancelled is ignored. A kill during the `Init` wait now returns
+  `…was killed…`. But a kill racing the process's own failure can still produce a
+  resume error, and decision 28 must not start a fresh session for a round that is gone.
+- **Files.** `manager/headless_turns.rs` is 534 lines and `manager/headless.rs` 516,
+  both under the limit.
