@@ -29,6 +29,7 @@ mod merge_complete;
 mod merge_fixes;
 mod merge_fixes2;
 mod merge_holds;
+mod merge_override;
 mod turns;
 mod turns_fixes;
 mod turns_holds;

@@ -318,6 +318,7 @@ pub(super) fn handed_back(
     }
     let task = &mut run.tasks[i];
     task.state = TaskState::Working;
+    ladder::reopen_stopped(task);
     task.handed_back = claimed && !gates_after;
     // Ruling T14-R2: the claim that resolves this conflict is checked against it.
     task.resolution = task.handed_back.then(|| ResolutionAt {

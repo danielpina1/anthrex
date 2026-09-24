@@ -400,6 +400,11 @@ fn exited(run: &mut Run, i: usize, r: usize, killed: bool, now: u64, fx: &mut Ve
     if killed || !working || !round.turn_open {
         let between_turns = !killed && working && !round.turn_open;
         end_round(round, now);
+        // M8a.25: a hand-back that came before this kill's exit resumes it now.
+        if killed && worker {
+            ladder::reopen_stopped(&mut run.tasks[i]);
+        }
+        let round = &mut run.tasks[i].rounds[r];
         // Ruling T12-I4a: a fallback waiting for sub-agents runs now; they died with
         // the process.
         if between_turns && round.fallback_waiting {

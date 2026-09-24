@@ -51,6 +51,24 @@ pub(super) fn kill_worker(run: &mut Run, i: usize, fx: &mut Vec<Effect>) {
     }
 }
 
+/// Decision 36 step 6 (M8a.25): a working task whose current worker session the engine
+/// stopped — rung 3 or a block, before an override sent the task to the merge queue and
+/// its candidate was handed back — takes its messages as a resume of that session once
+/// its process has ended ("decision 29 resumes an ended session to carry it"). A task
+/// with a fresh session coming (rung 2, a retry) is left to it.
+pub(super) fn reopen_stopped(task: &mut Task) {
+    if task.state != TaskState::Working || task.fresh_session.is_some() {
+        return;
+    }
+    let Some(r) = worker_round(task) else {
+        return;
+    };
+    let round = &mut task.rounds[r];
+    if round.ended && round.retiring && round.session_id.is_some() {
+        round.retiring = false;
+    }
+}
+
 /// Ruling T12-N: task `i`'s worker sessions so far are superseded. The results of the
 /// ops they awaited (a resume, a commit count) are dropped when they come, and the
 /// messages in flight to them (a `Deliver`'s or a resume's) leave the outbox, so their
