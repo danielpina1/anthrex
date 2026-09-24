@@ -16,21 +16,48 @@ use crate::run::model::{OpId, Run};
 use crate::run::report;
 use crate::run::snapshot::snapshot;
 
-/// Decision 43's crash test (M8a.25, debug builds only):
-/// `ANTHREX_TEST_DELAY_DONE_MS=<ms>` holds every op's `done` line but a
-/// `CreateWindow`'s that long before it is written. An engine that acted on a result
-/// before its line is on disk then reaches the next intent, and decision 48's crash,
-/// with that line missing, which `e2e_crash_after_each_intent_kind_reconciles` sees;
-/// without the hold, the line nearly always wins that race.
-pub(super) fn delay_done() -> Option<Duration> {
-    if !cfg!(debug_assertions) {
-        return None;
+/// The debug builds' holds on op `done` lines (M8a.25), each off unless its variable
+/// names a number of milliseconds:
+/// - `ANTHREX_TEST_DELAY_DONE_MS` holds every op's line but a `CreateWindow`'s. An
+///   engine that acted on a result before its line is on disk then reaches the next
+///   intent, and decision 48's crash, with that line missing, which
+///   `e2e_crash_after_each_intent_kind_reconciles` sees; without the hold, the line
+///   nearly always wins that race.
+/// - `ANTHREX_TEST_DELAY_WINDOW_MS` holds a `CreateWindow`'s line, so a session's first
+///   events reach the engine before its round has the window (the race in the
+///   followups file), as `e2e_a_session_that_exits_before_its_window_is_known_still_escalates`
+///   needs.
+///
+/// Each hold that is armed is logged once, so a test can check it is in force.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct DoneHolds {
+    ops: Option<Duration>,
+    window: Option<Duration>,
+}
+
+impl DoneHolds {
+    pub(super) fn from_env() -> Self {
+        if !cfg!(debug_assertions) {
+            return Self::default();
+        }
+        let read = |name: &str| {
+            let ms: u64 = std::env::var(name).ok()?.parse().ok()?;
+            tracing::warn!(ms, "{name}: holding op done lines");
+            Some(Duration::from_millis(ms))
+        };
+        Self {
+            ops: read("ANTHREX_TEST_DELAY_DONE_MS"),
+            window: read("ANTHREX_TEST_DELAY_WINDOW_MS"),
+        }
     }
-    let ms = std::env::var("ANTHREX_TEST_DELAY_DONE_MS")
-        .ok()?
-        .parse()
-        .ok()?;
-    Some(Duration::from_millis(ms))
+
+    /// The hold on the `done` line of an op of `kind`.
+    fn of(self, kind: &OpKind) -> Option<Duration> {
+        match kind {
+            OpKind::CreateWindow { .. } => self.window,
+            _ => self.ops,
+        }
+    }
 }
 
 /// One effect, with what it needs from the state of the step that emitted it.
@@ -226,11 +253,17 @@ impl RunService {
     }
 
     /// `KillWindow`: the group is killed and its process recorded (its exit is then
-    /// `killed_by_engine`). A window with no process whose exit the engine still awaits
-    /// gets that exit now, so the round ends (a Codex window between turns, a window
-    /// whose send was waiting out its jitter: ruling T18-N3).
+    /// `killed_by_engine`). A window with no live process gets its exit now, so the
+    /// round ends (a Codex window between turns, a window whose send was waiting out its
+    /// jitter: ruling T18-N3).
+    ///
+    /// M8a.25 fix round 1 (review finding 1): even when the round's recorded pid is the
+    /// window's last process. That process's own exit may have reached the engine
+    /// before its round had the window, and been dropped, so waiting for it could wait
+    /// for ever. If it is still on its way, it comes second, to a round already ended,
+    /// which ignores it.
     fn kill_effect(&self, window_id: u32) {
-        let spawned = self.kill_window(window_id);
+        self.kill_window(window_id);
         if self.manager.child_pid(window_id).ok().flatten().is_some() {
             return;
         }
@@ -244,10 +277,6 @@ impl RunService {
                 .rfind(|round| round.window_id == Some(window_id))
                 .and_then(|round| round.pid)
         };
-        if round_pid.is_some() && round_pid == spawned {
-            // That process's own exit is on its way, and is marked as the engine's.
-            return;
-        }
         self.send(EventKind::Signal {
             window_id,
             signal: AgentSignal::ProcessExited {
@@ -270,11 +299,7 @@ impl RunService {
             order.clone().try_read_owned().ok()
         };
         let name = kind.name();
-        // Not a `CreateWindow`'s: its session's first signals and tool calls reach the
-        // engine only once the round has its window (a follow-up, M8a.25).
-        let hold = self
-            .delay_done
-            .filter(|_| !matches!(kind, OpKind::CreateWindow { .. }));
+        let hold = self.done_holds.of(&kind);
         let line = JournalLine::Intent {
             op,
             kind: kind.clone(),
@@ -326,7 +351,7 @@ impl RunService {
         }
     }
 
-    /// An op's `done` line, after decision 43's test hold (`delay_done`), if any.
+    /// An op's `done` line, after its test hold (`DoneHolds`), if any.
     async fn append_done(&self, ctx: &OpCtx, line: JournalLine, hold: Option<Duration>) {
         if let Some(hold) = hold {
             tokio::time::sleep(hold).await;

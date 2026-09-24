@@ -295,6 +295,67 @@ fn e2e_a_second_death_in_a_round_is_a_stall() {
     );
 }
 
+/// How long the daemon holds a `CreateWindow`'s `done` line (the debug builds'
+/// `ANTHREX_TEST_DELAY_WINDOW_MS`): far over `fake-agent`'s start and exit (tens of
+/// milliseconds), so the session's exit reaches the engine before its round has the
+/// window, and is dropped (the race in the followups file, From M8a.25).
+const WINDOW_HOLD_MS: &str = "2000";
+/// Session 2's and the reviewer's own wait before they work, so their tool calls come
+/// after their windows are known (the hold applies to every `CreateWindow`): twice the
+/// hold.
+const AFTER_HOLD_MS: u64 = 4000;
+/// Over `AFTER_HOLD_MS`, so session 2's wait is not itself a stall.
+const STALL_AFTER_SECS: u64 = 10;
+/// `engine::signals::INTERRUPT_GRACE_SECS`: the interrupt of a session with no process
+/// never ends its turn, so the grace runs out.
+const INTERRUPT_GRACE_SECS: u64 = 30;
+
+/// M8a.25 fix round 1 (review finding 1): a worker whose process exits before its
+/// `CreateWindow` result is stepped has its exit dropped, and its round recorded that
+/// dead process's pid. The stall's kill then waited for an exit that had already come,
+/// the round never ended and rung 2's fresh session never started.
+#[test]
+fn e2e_a_session_that_exits_before_its_window_is_known_still_escalates() {
+    let h = RunHarness::with_env(
+        &format!("stall_after_secs = {STALL_AFTER_SECS}"),
+        &[("ANTHREX_TEST_DELAY_WINDOW_MS", WINDOW_HOLD_MS)],
+        true,
+    );
+    h.script("worker-t1-1", &[exit(1)]);
+    h.script(
+        "worker-t1-2",
+        &[
+            json!({"wait_ms": AFTER_HOLD_MS}),
+            commit("a.txt", "a\n"),
+            done("added a"),
+        ],
+    );
+    h.script(
+        "reviewer-t1-1",
+        &[json!({"wait_ms": AFTER_HOLD_MS}), approve()],
+    );
+    let id = h.start(&plan("", &[task("t1", &["a.txt"], "")]), true);
+    // Session 1's path, then session 2's (k = 2), and the stall and the interrupt's
+    // grace waited out on the way.
+    let wait = 2 * RUN_WAIT + Duration::from_secs(STALL_AFTER_SECS + INTERRUPT_GRACE_SECS);
+    let run = h.wait_run(&id, complete, wait);
+    let log = std::fs::read_to_string(h.data().join("daemon.log")).unwrap_or_default();
+    assert!(
+        log.contains("ANTHREX_TEST_DELAY_WINDOW_MS: holding op done lines"),
+        "the window hold was not armed:\n{log}"
+    );
+    let t1 = t(&run, "t1");
+    assert_eq!(t1.state, TaskState::Merged);
+    assert_eq!(t1.stalls, 1);
+    assert!(
+        t1.rounds
+            .iter()
+            .any(|r| r.role == AgentRole::Worker && r.session == 2),
+        "{:#?}",
+        t1.rounds
+    );
+}
+
 fn blocked_question(reason: &str) -> Value {
     json!({"mcp_call": {"tool": "task_blocked", "args": {"kind": "question", "reason": reason}}})
 }
