@@ -41,7 +41,7 @@ pub fn sha7(sha: &str) -> &str {
     sha.get(..7).unwrap_or(sha)
 }
 
-fn mode_label(mode: TestMode) -> &'static str {
+pub(crate) fn mode_label(mode: TestMode) -> &'static str {
     match mode {
         TestMode::Tdd => "tdd",
         TestMode::Check => "check",
@@ -49,7 +49,7 @@ fn mode_label(mode: TestMode) -> &'static str {
     }
 }
 
-fn size_label(size: Size) -> &'static str {
+pub(crate) fn size_label(size: Size) -> &'static str {
     match size {
         Size::S => "S",
         Size::M => "M",

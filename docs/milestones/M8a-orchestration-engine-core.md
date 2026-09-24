@@ -6655,3 +6655,84 @@ budget branch still fires during a claim, as `check_budget` does in `signals::wa
     resume, so the test resumes with a rebaseline, checks that the `Proof` op starts,
     then runs the liveness assertion.
 - **Mutation.** Removing the new condition fails both tests.
+
+### M8a.16 the run report (2026-09-24)
+
+**Layout.** `run/report.rs` holds `render`, `format_utc` (Howard Hinnant's
+days-from-civil arithmetic, no new dependency), the header block, the tasks table and
+the `## Log` section; `run/report_task.rs` (AGENTS.md's file-size rule) holds one
+task's `## <id>: <title>` section, its budget-and-spend block (including per-round
+usage and denials) and its findings-by-severity grouping. Both are pure: no `std::fs`,
+`std::process`, `std::thread`, `tokio` or `std::time::SystemTime`; `render(run, now)`
+takes the clock as a parameter, never reads it.
+
+**Most of the brief's "reported" facts were already `Run.log` text.** Before writing a
+single report-specific line, a grep of the engine confirmed that a kept branch
+(`OpResult::Finished.kept_branches`, `complete.rs`), an aborted accept's files
+(`accept_conflict_message`, also `complete.rs`), a halt (`merge.rs::halt`) and a
+`--rebaseline` resume (`merge.rs::resume`) each already call `log(run, now, ..)` with
+exactly the text the brief wants shown. `## Log` renders every `Run.log` entry as
+`- <utc> <text>`, so `minor_findings_are_listed_even_when_approved`'s sibling tests
+(`halted_and_rebaselined_runs_say_so`'s rebaseline half,
+`base_moved_and_accept_conflict_are_reported`'s aborted-accept half) needed no
+report-side special case — only a fixture that pushes the same `LogEntry` the engine
+would have logged. The one line the brief pins to an *exact* wording the engine does
+not already log is the base-moved header line (`base <base> moved during the run:
+<from7>..<to7>, <n> commits, listed at accept`); `merge.rs::base_advanced` logs a
+different sentence for the attention line, so `report.rs::header` builds this one
+itself from `Run.base_moved`.
+
+**Visibility bumps, not new logic.** `report_task.rs` needed two pieces of spend
+arithmetic the engine already has: `engine::ladder::total_spend` (already
+`pub(crate)`, no change) and `engine::clock::epoch_spend` (was `pub(super)`, visible
+only inside `engine/`). Rather than duplicate the ladder's or the clock's math in a
+"pure" file that is supposed to have none of its own, `epoch_spend` was raised to
+`pub(crate)` and re-exported from `engine/mod.rs` as `pub(crate) use
+clock::epoch_spend;` (`BudgetEpoch`/`TaskClock` were already re-exported the same way,
+just `pub`). `contract::mode_label` and `contract::size_label` were similarly raised
+from private to `pub(crate)` so the table and the per-task header reuse the one
+existing size/mode vocabulary instead of a second copy of the match arms.
+
+**Corrections against the brief's field names.**
+- The brief's `report_has_every_section` lists "the history" once, after "merged
+  without approval"; it also asks for "budget and spend" and "each round's turns, tool
+  calls, billable tokens and denials" (from `usage_and_denials_are_reported`) as if
+  they were adjacent concerns. The model has no `AgentRoundInfo`-shaped view inside
+  `report.rs`'s reach — only `Task.rounds: Vec<AgentRound>` — so the per-round usage
+  and denial line lives inside `budget_and_spend`, one bullet per round, rather than a
+  separate subsection; nothing in the brief names a heading for it.
+- "the task's total spend and its since-retry spend should both be clear if they
+  differ" (this task's carry note) is `Task.spent_total` (via `ladder::total_spend`,
+  which fills in `secs` from the live rounds) versus `clock::epoch_spend`, keyed off
+  `Task.epoch: Option<BudgetEpoch>` (M8a.15's rung-4 "spend since the last retry", not
+  named `since_retry` anywhere in the model). The report only prints the second line
+  when `task.epoch.is_some()` **and** the two spends actually differ, so a task that
+  has never been retried, or one whose retry landed at its very first round, gets one
+  line, not two identical ones.
+- `GateCounts` (`done`/`proof`/`check`/`review`/`merge`) has no existing rendering
+  anywhere in the codebase to match (the TUI does not consume it yet). The `Tasks`
+  table's `bounces` column is the sum of all five; the brief does not ask for the
+  breakdown, and summing keeps the table narrow. (No per-task breakdown was added
+  either, since nothing in the brief's ordered list asks for one.)
+- `Severity` and `Verdict`'s serde renames (`lowercase`) were not reused via
+  `serde_json::to_value` (the trick `run/snapshot.rs::attention` uses for
+  `BlockReason`); `report_task.rs` writes its own small label matches instead, to keep
+  `report_task.rs` free of a `serde_json` dependency for what is, in the end, three
+  two-armed and one three-armed match statement.
+
+**Tests.** 13 unit tests in `report_tests.rs`, built on `test_support::run_ok` and the
+Interfaces example plan (`EXAMPLE_PLAN`), mutating the one resulting task by hand for
+proofs, checks, reviews, rounds, salvage refs and history. Verified red-then-green by
+hand: `render` was temporarily stubbed to return an empty string, which failed 10 of
+the 13 tests for the expected reason (a missing substring, not a panic or a compile
+error) — `format_utc_vectors`, `containment_is_silent_on_sandbox_when_on` and
+`task_lookup_helper_finds_t1` correctly kept passing, since none of the three exercises
+`render`'s body. The stub was then reverted and the suite re-run green.
+
+**Gates.** `cargo build --workspace --all-targets`, `cargo clippy --workspace
+--all-targets -- -D warnings` and `cargo fmt --all --check` are clean. `cargo test -p
+anthrex-daemon` is green except for a pre-existing, unrelated flake,
+`git_registry::a_commit_in_a_linked_worktree_triggers_a_probe` (a filesystem-watcher
+timing test): it fails intermittently under the full parallel suite and passes every
+time run alone or with `--test-threads=1`. Nothing in this task touches git
+registration, probing, or anything under `run/git/`.

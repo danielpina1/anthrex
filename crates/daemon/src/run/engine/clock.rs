@@ -184,7 +184,7 @@ fn restart(task: &mut Task, since: u64, now: u64) {
 }
 
 /// The spend rung 4 weighs (decision 38): the task's since its last retry.
-pub(super) fn epoch_spend(task: &Task, now: u64) -> Spend {
+pub(crate) fn epoch_spend(task: &Task, now: u64) -> Spend {
     let epoch = task.epoch.unwrap_or_default();
     let secs = task
         .rounds
