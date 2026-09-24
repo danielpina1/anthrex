@@ -15,8 +15,8 @@ use crate::run::git::{
 
 /// `CreateRunBranch`, `PrepareWorktree`: the path listed on its branch is the op's
 /// result when it has no `setup` (a setup re-runs; it is idempotent). A directory git
-/// does not list is what a `worktree add` that died part way leaves: it is removed and
-/// `git worktree prune` runs, but only under `own` (the run's `<wt_dir>/runs/<run>`;
+/// does not list is what a `worktree add` that died part way leaves: it is removed, but
+/// only under `own` (the run's `<wt_dir>/runs/<run>`;
 /// fix round 1, m1): any other path a corrupted `run.json` names is left alone.
 pub(super) fn worktree(
     g: Git<'_>,
@@ -58,7 +58,9 @@ pub(super) fn worktree(
                     path.display()
                 ));
             }
-            g.write(root, &[os("worktree"), os("prune")])?;
+            // No `git worktree prune` (final fix batch F1, fix round 1, N6): git does
+            // not list this path, so there is nothing of it to forget, and a prune
+            // would also forget the user's own worktrees whose directories are missing.
             Ok(Reconciled::NotStarted)
         }
     }

@@ -217,3 +217,49 @@ fn the_accept_abort_in_the_users_checkout_has_no_engine_write_flags() {
         "scrubbed environment: {log}"
     );
 }
+
+/// Final fix batch F1, fix round 1 (review N6, D-12's third site): reconciling a
+/// `PrepareWorktree` that never registered its worktree forgets none of the user's own
+/// worktrees whose directories are merely missing.
+#[test]
+fn reconcile_prepare_worktree_never_prunes_the_users_worktrees() {
+    let mut w = World::new();
+    let theirs = tempfile::tempdir().unwrap();
+    let users = theirs.path().canonicalize().unwrap().join("mine");
+    out(
+        w.root(),
+        &["worktree", "add", "-q", "--detach", users.to_str().unwrap()],
+    );
+    std::fs::rename(&users, users.with_file_name("elsewhere")).unwrap();
+    let branch = format!("anthrex/{}/t1", w.run.id);
+    let kind = prepare(&w.run, "t1", &branch, None);
+    pend(&mut w.run, 1, Some("t1"), kind);
+
+    assert_eq!(w.reconcile(), vec![(1, Reconciled::NotStarted)]);
+    let list = out(w.root(), &["worktree", "list", "--porcelain"]);
+    assert!(
+        list.contains(&format!("worktree {}", users.display())),
+        "the user's worktree was pruned: {list}"
+    );
+}
+
+/// Final fix batch F1, fix round 1 (review N4): an `Accept` intent journaled before the
+/// op carried its run head still loads, and reconcile then reads the run branch.
+#[test]
+fn an_accept_intent_without_its_run_head_still_loads() {
+    let w = World::new();
+    let mut value = serde_json::to_value(accept_op(&w)).unwrap();
+    value["Accept"]
+        .as_object_mut()
+        .unwrap()
+        .remove("expected_run_head")
+        .unwrap();
+    let kind: OpKind = serde_json::from_value(value).unwrap();
+    let OpKind::Accept {
+        expected_run_head, ..
+    } = kind
+    else {
+        unreachable!()
+    };
+    assert_eq!(expected_run_head, "");
+}

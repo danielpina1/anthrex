@@ -208,14 +208,17 @@ pub enum OpKind {
         run_branch: String,
         /// `Run.run_head`: the head the report, review and checks describe. Accept
         /// merges this commit, and refuses when the run branch has moved from it (final
-        /// fix batch F1, finding D-6).
+        /// fix batch F1, finding D-6). Empty in an intent journaled before it existed;
+        /// reconcile then reads the run branch.
+        #[serde(default)]
         expected_run_head: String,
         message: String,
         worktrees: Vec<(PathBuf, String)>,
         branch_prefix: String,
     },
     /// Decision 20's discard: `salvage` and `remove_worktree` for every one of
-    /// `worktrees`, `worktree prune`, then `delete_branches(branch_prefix)`; writes
+    /// `worktrees` (no repository-wide `worktree prune`: final fix batch F1, D-12), then
+    /// `delete_branches(branch_prefix)`; writes
     /// through `GitQueue::write`. The result is `Finished { outcome, kept_branches }`.
     Discard {
         root: PathBuf,
