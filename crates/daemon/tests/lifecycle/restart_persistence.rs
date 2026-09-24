@@ -161,6 +161,12 @@ fn restart_test_record(
 /// subscribed to. That is enough to check the resume argv (design decisions 15-16)
 /// without needing either real agent installed.
 ///
+/// `argv.sh` also answers `--version` and exits, the way `scripts/pty-smoke.py`'s own
+/// resume fixture already does. `lifecycle::run` probes `runtimes.codex.command
+/// --version` at startup and holds every launch, this test's restarts included, until
+/// that probe finishes. Without the answer, the probe ran `exec sleep 60` and spent its
+/// whole `CODEX_PROBE_TIMEOUT`, which raced `recv()`'s own 5 s bound.
+///
 /// The `READY` line printed right after the argv is deliberate (fix wave 5 re-review,
 /// Minor 3): it pins that the argv assertion below checks the argv *line itself*, not
 /// "nothing else is on screen after it" — a fixture that never printed anything past the
@@ -175,7 +181,7 @@ async fn restart_resumes_claude_and_codex_sessions() {
     let script = dir.path().join("argv.sh");
     std::fs::write(
         &script,
-        "#!/bin/sh\nprintf 'ARGV:'\nfor a in \"$@\"; do printf ' [%s]' \"$a\"; done\nprintf '\\n'\nprintf 'READY\\n'\nexec sleep 60\n",
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli 0.155.0\\n'; exit 0; fi\nprintf 'ARGV:'\nfor a in \"$@\"; do printf ' [%s]' \"$a\"; done\nprintf '\\n'\nprintf 'READY\\n'\nexec sleep 60\n",
     )
     .unwrap();
     #[cfg(unix)]
@@ -250,6 +256,7 @@ async fn restart_resumes_claude_and_codex_sessions() {
             .await;
 
         c.send(ClientMsg::Restart { window_id }).await;
+        let restart_sent = std::time::Instant::now();
 
         // Collect every Snapshot/Output for this window into a screen mirror until the
         // restart's own Ack arrives *and* the argv line has actually shown up on
@@ -278,7 +285,24 @@ async fn restart_resumes_claude_and_codex_sessions() {
                 } if w == window_id => {
                     mirror.process(&bytes);
                 }
-                DaemonMsg::Ack { request } if request == "restart" => acked = true,
+                DaemonMsg::Ack { request } if request == "restart" => {
+                    // `restart` waits on the launch gate, and the gate stays closed until
+                    // the startup `--version` probe of `runtimes.codex.command` finishes
+                    // or spends its whole `CODEX_PROBE_TIMEOUT` budget. A fixture that
+                    // does not answer `--version` holds this restart for that whole
+                    // budget, and every `recv()` above is bounded by the same five
+                    // seconds: the two raced, and macOS CI run 35822907546 lost. Half
+                    // the budget is far above a restart's real cost (a spawn of tens of
+                    // milliseconds, `docs/timing-budgets.md`) and far below a probe
+                    // that ran out its clock.
+                    let waited = restart_sent.elapsed();
+                    assert!(
+                        waited < daemon::lifecycle::CODEX_PROBE_TIMEOUT / 2,
+                        "window {window_id}'s restart took {waited:?}: it waited behind \
+                         the startup Codex probe, so the fixture did not answer --version"
+                    );
+                    acked = true;
+                }
                 DaemonMsg::Error { request, message } if request == "restart" => {
                     panic!("restart of window {window_id} failed: {message}")
                 }

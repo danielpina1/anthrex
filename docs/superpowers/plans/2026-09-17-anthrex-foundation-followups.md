@@ -956,3 +956,38 @@ scope.
   `task_done` runs decision 32's fallback at once, whose nudge turn then claims the
   task. So the queued `RESUME_WORKER` for an idle working round is covered by the
   engine unit tests of `restore.rs` only.
+
+## From the main-branch CI failures (2026-09-23), deliberately deferred
+
+- **The main pane can switch to a new window while the new-agent form is still open and
+  swallowing keys.** A client with nothing focused focuses the first window a
+  `WindowsChanged` lists (`crates/tui/src/app/windows.rs`, the `ensure_focus` fallback).
+  The daemon can send that `WindowsChanged` before the `Created` reply that closes the form
+  (`crates/daemon/src/server/requests.rs`, `create`). Until `Created` arrives, the new
+  window's title shows behind a form that is still `submitting`, and `NewAgentForm::on_key`
+  drops every key but `Esc` and `Ctrl-C`. Ubuntu CI run 35792210390 lost the leading `e` of
+  `echo smoke-$((40+2))` this way. `scripts/pty-smoke.py` now waits for the form to close
+  as well as for the title. Delaying the `Created` reply by 1 s reproduces the failure every
+  time; with the new wait the smoke passes. The client still behaves this way: the form is
+  visible while it happens, so a user is unlikely to type into it. The remaining question
+  is whether focus should wait for `Created` while a create is submitting. Belongs with the
+  next TUI milestone that touches the form.
+- **`git_registry.rs`'s `a_root_survives_until_every_registration_is_released` was flaky;
+  fixed.** PR #12 changed `run_root` so that a root asks for one more probe when its watcher
+  arms. The test read its probe count as a task count right after the first publication. On
+  Linux, inotify arms fast enough that the extra probe could land before that read
+  (`left: 2`, ubuntu CI run 35831045650, the first recorded occurrence). A forced ordering,
+  with the watcher armed before the registration probe returns, failed 50 times out of 50.
+  The test now uses a watcher that fails to arm, so only the poll probes. The other
+  exact-count reads in that file come after a 120 s virtual settling window, so the extra
+  probe cannot reach them.
+- **`WindowEvent::Exited` is not ordered after a window's final output.** `Window::spawn`
+  sends `Exited` from the `pty-wait` thread and feeds the screen from the `pty-read` thread,
+  with nothing ordering the two (`crates/daemon/src/window.rs`). A child's last bytes can
+  still be unread when its exit is reported; they reach the screen shortly afterwards.
+  Ubuntu CI run 35832528546 failed `missing_binary_shows_error_in_window_and_exits_127` with
+  `screen: ""` because it read the screen right after `Exited`; a 200 ms sleep in the reader
+  reproduces that every time on macOS. The test now waits for the text with a deadline. The
+  daemon keeps the window and its screen after exit, so no output is lost. Anything that
+  should see the final screen at the moment of exit (an exit summary, a status rule that
+  reads the last lines) would need the waiter to wait, bounded, for the reader to drain.

@@ -112,6 +112,16 @@ Every bound below is derived from the harness's own configuration
 | Stage 11c's `run start`, `run approve` and `run status` | `scripts/pty_smoke_run.py` (`RUN_CMD_TIMEOUT`) | `240s` | `ensure_daemon` (`SPAWN_HANDOFF_GRACE` 0.25s + `ENSURE_DAEMON_SOCKET_WAIT` 3s) + `HANDSHAKE_TIMEOUT` (5s) + `RUN_REQUEST_TIMEOUT` (180s) = 188.25s, above `run_cmd`'s default of 28s: the language-boundary shape of the `run_cmd` rows above, a seventh time. | **Recorded.** |
 | Stage 11c's `run accept` | `scripts/pty_smoke_run.py` (`ACCEPT_CMD_TIMEOUT`) | `900s` | 3.25s + 5s + `FINISH_REQUEST_TIMEOUT` (660s) = 668.25s, above `RUN_CMD_TIMEOUT`. The brief said `RUN_CMD_TIMEOUT` for every run command; for accept that is below its legal worst case (deviation, recorded in the brief's notes). | **Recorded.** |
 
+### Fixed, from the main-branch CI failures (2026-09-23)
+
+| Test | Site | Bound (as found) | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `restart_resumes_claude_and_codex_sessions` | `crates/daemon/tests/lifecycle/restart_persistence.rs` (every `Client::recv()` after the first `Restart`, 5 s each) | `secs(5)` | `CODEX_PROBE_TIMEOUT` (5 s). The fixture `argv.sh` is also `runtimes.codex.command`, so `lifecycle::run` probed it with `--version`. It never exited, and the launch gate held the first restart for 4.90 s, measured. The test passed only because the probe's clock started a few milliseconds before `recv()`'s did. | **Fixed**: the fixture answers `--version` and exits, so nothing waits behind the probe (test time 5.14 s → 0.42 s). The test now asserts each restart is acked within `CODEX_PROBE_TIMEOUT / 2`. macOS CI run 35822907546 failed on it. |
+
+The same rule applies to any fixture a test puts in `runtimes.codex.command` or
+`ANTHREX_CODEX_BIN`: it has to answer `--version` promptly. `fake-agent` and
+`pty-smoke.py`'s resume script already do.
+
 ## Measured primitive costs
 
 Two independent measurement passes, both worth keeping because they were taken under
