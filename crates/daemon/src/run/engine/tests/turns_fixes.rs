@@ -3,7 +3,7 @@
 //! task always has an open, watched turn, a deliverable message, a timer, a kill or an
 //! op in flight — never nothing.
 
-use proto::{AgentRole, PlanEdit, TaskState};
+use proto::{PlanEdit, TaskState};
 use serde_json::json;
 
 use super::dispatch::{edit, replies};
@@ -15,7 +15,7 @@ use crate::run::contract::{
     DONE_ACCEPTED, DONE_NUDGE, RESUME_AFTER_EXIT, answer_message, rate_limit_continue, stall_nudge,
 };
 use crate::run::engine::{AgentSignal, Effect, EventKind, OpKind, OpResult, TurnOutcome};
-use crate::run::model::{FailedTurn, FallbackState, StallState};
+use crate::run::model::{FallbackState, StallState};
 
 const ROOMY: &str = "[task.budget]\ntool_calls = 1000\nminutes = 1000";
 const CODEX_ROOMY: &str = "[task.route]\nruntime = \"codex\"\nmodel = \"\"\n[task.budget]\ntool_calls = 1000\nminutes = 1000";
@@ -24,155 +24,7 @@ fn args() -> serde_json::Value {
     json!({"summary": "did it", "test": "a::works", "red": "abcdef1"})
 }
 
-/// Ruling T12-I4's invariant, for every working task of the fixture run.
-pub(super) fn assert_alive(fx: &Fixture) {
-    let run = fx.run();
-    for t in run.tasks.iter().filter(|t| t.state == TaskState::Working) {
-        let round = t.rounds.iter().rev().find(|r| r.role == AgentRole::Worker);
-        let live =
-            |r: &&crate::run::model::AgentRound| r.window_id.is_some() && !r.ended && !r.retiring;
-        let open = round.is_some_and(|r| live(&r) && r.turn_open);
-        let deliverable = t.fresh_session.is_some()
-            || round.is_some_and(|r| {
-                (live(&r) && !matches!(r.stall, StallState::Interrupted { .. }))
-                    || (r.ended && !r.retiring && r.session_id.is_some())
-            });
-        let queued = run
-            .outbox
-            .iter()
-            .any(|m| m.task_id == t.spec.id && (m.delivered_at.is_some() || deliverable));
-        let timer = round.is_some_and(|r| {
-            matches!(r.failed_turn, FailedTurn::WaitingContinue { .. })
-                || r.delivery_retry_at.is_some()
-                || r.count_retry_at.is_some()
-        });
-        let op = run
-            .pending_ops
-            .values()
-            .any(|p| p.task_id.as_deref() == Some(t.id()));
-        let killing = t.rounds.iter().any(|r| r.retiring && !r.ended);
-        assert!(
-            open || queued || timer || op || killing,
-            "{} is working with nothing pending: {:#?}",
-            t.spec.id,
-            t
-        );
-    }
-    assert_gates_alive(fx);
-    assert_run_alive(fx);
-}
-
-/// M8a.14's extension to the run's own states: a running run whose tasks are all
-/// merged or cancelled has an op in flight (its clean-up, `VerifyRefs` or the final
-/// check) or a killed session still to exit; a running run with a merge queue has a
-/// `MergeCandidate` in flight; a halted run says why.
-pub(super) fn assert_run_alive(fx: &Fixture) {
-    let run = fx.run();
-    match run.state {
-        proto::RunState::Running => {
-            let done = run
-                .tasks
-                .iter()
-                .all(|t| matches!(t.state, TaskState::Merged | TaskState::Cancelled));
-            // A killed session's exit brings its task's clean-up, then completion.
-            let ending = run
-                .tasks
-                .iter()
-                .any(|t| t.state == TaskState::Cancelled && t.rounds.iter().any(|r| !r.ended));
-            assert!(
-                !done || !run.pending_ops.is_empty() || ending,
-                "every task is finished and nothing is pending: {:#?}",
-                run.tasks
-                    .iter()
-                    .map(|t| (t.id(), t.state))
-                    .collect::<Vec<_>>()
-            );
-            let merging = run
-                .pending_ops
-                .values()
-                .any(|p| matches!(p.kind, OpKind::MergeCandidate { .. }));
-            assert!(
-                run.merge_queue.is_empty() || merging,
-                "a merge queue {:?} with no merge in flight",
-                run.merge_queue
-            );
-        }
-        proto::RunState::Halted => assert!(run.halted_reason.is_some(), "halted with no reason"),
-        _ => {}
-    }
-}
-
-/// M8a.13's extension to the gate states: a task in `proof` or `check` has its gate op
-/// in flight; one in `review` has its `PrepareReview` or reviewer launch in flight, a
-/// live watched reviewer turn, a reviewer message deliverable or in flight, a resume in
-/// flight, or waits for a reader slot; one in the merge queue is queued (M8a.14 runs
-/// it).
-pub(super) fn assert_gates_alive(fx: &Fixture) {
-    let run = fx.run();
-    let gated = [
-        TaskState::Proof,
-        TaskState::Check,
-        TaskState::Review,
-        TaskState::MergeQueue,
-    ];
-    for t in run.tasks.iter().filter(|t| gated.contains(&t.state)) {
-        let op = run
-            .pending_ops
-            .values()
-            .any(|p| p.task_id.as_deref() == Some(t.id()));
-        let alive = match t.state {
-            TaskState::Proof | TaskState::Check => op,
-            // M8a.14: queued (the run-level check wants a merge in flight while the run
-            // runs), or its candidate or hand-back in flight.
-            // Ruling T14-R2 (N3): a due hand-back waits for a halted or paused run.
-            TaskState::MergeQueue => {
-                op || run.merge_queue.iter().any(|q| q == t.id())
-                    || (t.handback_due
-                        && matches!(run.state, proto::RunState::Halted | proto::RunState::Paused))
-            }
-            _ => {
-                let reviewer = t
-                    .rounds
-                    .iter()
-                    .rev()
-                    .find(|r| r.role == AgentRole::Reviewer);
-                let live = |r: &&crate::run::model::AgentRound| {
-                    r.window_id.is_some() && !r.ended && !r.retiring
-                };
-                let watched = reviewer.is_some_and(|r| live(&r) && r.turn_open);
-                let resumable = reviewer.is_some_and(|r| {
-                    live(&r) || (r.ended && !r.retiring && r.session_id.is_some())
-                });
-                let address = format!("{}.review", t.id());
-                let mail = run
-                    .outbox
-                    .iter()
-                    .any(|m| m.task_id == address && (m.delivered_at.is_some() || resumable));
-                // Ruling T13-I1: a failed turn's wait; T13-I2: a given-up reviewer's
-                // exit; m6: every dispatch waits while a hub holds a writer slot.
-                let timer = reviewer.is_some_and(|r| {
-                    matches!(r.failed_turn, FailedTurn::WaitingContinue { .. })
-                        || r.delivery_retry_at.is_some()
-                });
-                let killing = reviewer.is_some_and(|r| r.retiring && !r.ended);
-                let slot_wait = reviewer.is_none_or(|r| r.retiring || r.ended)
-                    && (super::super::schedule::readers_busy(run)
-                        >= usize::from(run.limits.max_readers)
-                        || super::super::schedule::hub_holds_slot(run));
-                // Ruling T14-I2: a halted or paused run starts no reviewer; the task
-                // waits for the user's resume.
-                let stopped =
-                    matches!(run.state, proto::RunState::Halted | proto::RunState::Paused);
-                op || watched || mail || timer || killing || slot_wait || stopped
-            }
-        };
-        assert!(
-            alive,
-            "{} is in {:?} with nothing pending: {:#?}",
-            t.spec.id, t.state, t
-        );
-    }
-}
+pub(super) use super::liveness::{assert_alive, assert_gates_alive};
 
 fn resume_messages(effects: &[Effect]) -> Vec<String> {
     ops_in(effects, "ResumeSession")

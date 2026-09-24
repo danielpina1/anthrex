@@ -229,6 +229,16 @@ pub struct ResolutionAt {
     pub files: Vec<String>,
 }
 
+/// `run override` of a blocked task whose commits no accepted claim recorded (M8a.15,
+/// decision 35): the `CountCommits` that learns them, the request waiting for its
+/// answer, and the user's reason.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OverrideCount {
+    pub op: super::OpId,
+    pub reply: u64,
+    pub reason: String,
+}
+
 /// Where a scratch-worktree check runs (ruling T13-I3): the repository, the claimed
 /// commit to materialize, and the profile's `setup` for a new scratch worktree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

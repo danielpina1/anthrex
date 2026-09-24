@@ -38,16 +38,34 @@ pub fn op_in_flight(run: &Run, task: &str, pred: impl Fn(&OpKind) -> bool) -> bo
 /// A task in `review` holds a reader slot from its `PrepareReview` until its reviewer
 /// round ends (decision 41: "held by a live reviewer"). A reviewer given up or retired
 /// holds it until its process has exited (ruling T13-I2), so the next round never
-/// starts beside it.
+/// starts beside it. A reviewer the restart ended still holds it while it owes its
+/// verdict and can be resumed (M8a.15, decision 45): it is resumed, not replaced.
 pub fn holds_reader(run: &Run, task: &Task) -> bool {
     task.state == TaskState::Review
         && (task
             .rounds
             .iter()
             .any(|r| r.role == AgentRole::Reviewer && !r.ended)
+            || resumable_reviewer(task)
             || op_in_flight(run, task.id(), |k| {
                 matches!(k, OpKind::PrepareReview { .. })
             }))
+}
+
+/// The task's last reviewer round, ended but resumable, with no verdict yet.
+fn resumable_reviewer(task: &Task) -> bool {
+    task.rounds
+        .iter()
+        .rfind(|r| r.role == AgentRole::Reviewer)
+        .is_some_and(|r| {
+            r.ended
+                && !r.retiring
+                && r.session_id.is_some()
+                && !task
+                    .reviews
+                    .iter()
+                    .any(|rv| rv.round == r.round && rv.verdict.is_some())
+        })
 }
 
 pub fn readers_busy(run: &Run) -> usize {

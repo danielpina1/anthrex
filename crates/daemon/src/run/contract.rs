@@ -267,6 +267,13 @@ pub const NO_COMMIT_NUDGE: &str = "[anthrex] Your turn ended and your branch has
 /// Decision 32: a session whose process died mid-turn, resumed (exact).
 pub const RESUME_AFTER_EXIT: &str = "[anthrex] Your session's process stopped in the middle of a turn and has been resumed. Check the state of your worktree, continue, commit, and call task_done when complete.";
 
+/// Decision 28: a worker's session resumed after a daemon restart (exact).
+pub const RESUME_WORKER: &str = "[anthrex] The daemon restarted. Re-read your task above, continue, commit, and call task_done when complete.";
+
+/// Decision 28: a reviewer's session resumed after a daemon restart (exact).
+pub const RESUME_REVIEWER: &str =
+    "[anthrex] The daemon restarted. Finish your review and call submit_review.";
+
 const STALL_NUDGE_HEAD: &str = "[anthrex] Your last turn was interrupted after ";
 
 /// Whether `text` is a [`stall_nudge`] (M8a.12 fix round 1: a block drops a stale one).

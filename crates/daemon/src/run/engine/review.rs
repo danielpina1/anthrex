@@ -301,7 +301,7 @@ pub(super) fn submit(run: &mut Run, id: ReplyId, call: &ToolCall, now: u64, fx: 
 
 /// Whether round `r` of task `i` is its reviewer still owing a verdict: the current
 /// reviewer round of a task under review, not given up, with no verdict recorded.
-fn owes_verdict(run: &Run, i: usize, r: usize) -> bool {
+pub(super) fn owes_verdict(run: &Run, i: usize, r: usize) -> bool {
     let task = &run.tasks[i];
     let round = &task.rounds[r];
     task.state == TaskState::Review

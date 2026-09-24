@@ -439,7 +439,8 @@ pub(super) fn base_advanced(
 /// `run resume` of a halted run (decision 21): refused with the reason unless it
 /// rebaselines, which records the refs the driver read — `base_sha` becomes the base
 /// head, `run_head` the run branch's — clears `base_moved`, and returns the run to
-/// `running`. Resuming a paused run is M8a.15's.
+/// `running`. A paused run's resume is `restore::resume`, which calls this for any
+/// other state.
 pub(super) fn resume(
     state: &mut EngineState,
     reply: ReplyId,
@@ -454,7 +455,6 @@ pub(super) fn resume(
     };
     match run.state {
         RunState::Halted => {}
-        RunState::Paused => return answer(Err("run resume is not available yet".into())),
         other => return answer(Err(format!("run {run_id} is {}", other.label()))),
     }
     // Review m1: a halt on refs that could not be read is retried as it is.

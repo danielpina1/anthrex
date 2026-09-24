@@ -1,16 +1,22 @@
 //! Client requests: start and the plan gate (decision 14), approve, reject (decision 20's
-//! discard), plan edits (decision 13, engine side, first part), and restore (decision 45,
-//! first part). Pure (design decision 2). M8a.14's `complete.rs` and `merge.rs`
-//! answer cancel, finish and a halted run's resume; M8a.15 adds retry, the rest of
-//! resume and of restore.
+//! discard), plan edits (decision 13, engine side, with decision 45's `pause` and
+//! `resume` edits), and `run retry` (decision 42). Pure (design decision 2). M8a.14's
+//! `complete.rs` and `merge.rs` answer cancel, finish and a halted run's resume;
+//! `restore.rs` (M8a.15) answers restore and a paused run's resume.
 
-use proto::{PlanEdit, RunState};
+use proto::{BlockReason, PlanEdit, RunState, Size, TaskState};
 
-use super::dispatch::{finishing_as, salvage_ref};
-use super::{Effect, EngineState, OpKind, OpResult, ReplyId, emit_op, next_op, outbox};
+use super::dispatch::{finishing_as, history, salvage_ref};
+use super::schedule::deps_done;
+use super::signals::end_round;
+use super::{
+    Effect, EngineState, OpKind, OpResult, ReplyId, emit_op, ladder, next_op, outbox, restore,
+    review,
+};
 use crate::run::edits::{EditConsequence, apply_edits};
 use crate::run::env::profile_env;
-use crate::run::model::{LogEntry, Run};
+use crate::run::model::{FreshSession, LogEntry, Run};
+use crate::run::roster::escalate;
 use crate::run::validate::EditScope;
 
 /// At most this many log entries per run (Interfaces, `LogEntry`).
@@ -162,11 +168,13 @@ pub(super) fn reject(
     reply(fx, id, Ok(format!("run {run_id} rejected; discarding it")));
 }
 
-/// Decision 13, engine side (first part): the batch goes through `apply_edits`; a live
-/// session of a cancelled task is killed (its worktree is removed once no session is
-/// left, `dispatch::remove_cancelled_worktrees`); a message is queued, and held while the
-/// task carries the N5 hold (`dispatch::enforce_holds`). `pause`, `resume` and `finish`
-/// are M8a.15's.
+/// Decision 13, engine side: the batch goes through `apply_edits`; a live session of a
+/// cancelled task is killed (its worktree is removed once no session is left,
+/// `dispatch::remove_cancelled_worktrees`); a message is queued, and held while the task
+/// carries the N5 hold (`dispatch::enforce_holds`). `pause` pauses a running run with
+/// its sessions alive and `resume` resumes a paused one (decision 45); a batch whose
+/// `pause` or `resume` does not fit the run's state is refused whole. `finish` is
+/// decision 37's (`complete::finish_pass`).
 pub(super) fn edit(
     state: &mut EngineState,
     id: ReplyId,
@@ -185,6 +193,9 @@ pub(super) fn edit(
             id,
             Err(format!("run {run_id} is {}", run.state.label())),
         );
+    }
+    if let Err(text) = pause_or_resume_fits(run, edits) {
+        return reply(fx, id, Err(text));
     }
     let (edited, consequences) = match apply_edits(run, edits, scope, now) {
         Ok(ok) => ok,
@@ -216,7 +227,15 @@ pub(super) fn edit(
                 run.finish_edit = true;
                 log(run, now, "the finish edit: no new task starts");
             }
-            EditConsequence::Pause | EditConsequence::Resume => {}
+            // Decision 45: dispatch, gates and deliveries stop; a turn already open runs
+            // to its end, and every session stays alive.
+            EditConsequence::Pause => {
+                run.state = RunState::Paused;
+                run.paused_from = Some(RunState::Running);
+                run.paused_at = Some(now);
+                log(run, now, "paused by a plan edit");
+            }
+            EditConsequence::Resume => restore::unpause(run, now, fx),
         }
     }
     let n = edits.len();
@@ -244,39 +263,130 @@ fn kill_sessions(run: &mut Run, task_id: &str, fx: &mut Vec<Effect>) {
     }
 }
 
-/// Decision 45, first part: restored runs keep their state except `running`, which
-/// becomes `paused` (so `awaiting_approval` survives a restart unchanged, decision 14);
-/// journaled results are replayed. M8a.15 adds the rest (sessions marked ended,
-/// deadlines, re-issued ops).
-pub(super) fn restore(state: &mut EngineState, runs: Vec<Run>, now: u64) {
-    for mut run in runs {
-        // Ruling T12-I1: no session outlives a restart, so no claim or count does
-        // either; the reply ids belonged to the old daemon.
-        // M8a.14: an accept's or discard's reply belonged to the old daemon too.
-        run.finish_reply = None;
-        for task in run.tasks.iter_mut() {
-            task.claim = None;
-            for round in task.rounds.iter_mut() {
-                if round.fallback == crate::run::model::FallbackState::Counting {
-                    round.fallback = crate::run::model::FallbackState::None;
-                }
-                round.count_op = None;
-                round.count_retry_at = None;
-            }
+/// Decision 45: a `pause` edit applies only to a running run and a `resume` edit only to
+/// a paused one, taken in batch order.
+fn pause_or_resume_fits(run: &Run, edits: &[PlanEdit]) -> Result<(), String> {
+    let mut state = run.state;
+    for edit in edits {
+        let (from, to, verb) = match edit {
+            PlanEdit::Pause => (
+                RunState::Running,
+                RunState::Paused,
+                "only a running run can be paused",
+            ),
+            PlanEdit::Resume => (
+                RunState::Paused,
+                RunState::Running,
+                "only a paused run can be resumed",
+            ),
+            _ => continue,
+        };
+        if state != from {
+            return Err(format!("run {} is {}; {verb}", run.id, state.label()));
         }
-        if run.state == RunState::Running {
-            run.state = RunState::Paused;
-            run.paused_from = Some(RunState::Running);
-            log(&mut run, now, "restored after a daemon restart; paused");
-            // Decision 47: a changed run bumps its revision (review minor 5); `step`
-            // leaves a run new to the state at the revision it arrived with.
-            run.revision += 1;
-        }
-        state.runs.insert(run.id.clone(), run);
+        state = to;
     }
+    Ok(())
 }
 
-/// A request a later task implements (M8a.12 to M8a.15).
-pub(super) fn not_yet(fx: &mut Vec<Effect>, id: ReplyId, what: &str) {
-    reply(fx, id, Err(format!("{what} is not available yet")));
+/// `run retry` (decision 42) of a blocked task that is neither L nor `dep_cancelled`:
+/// `failures = 1`, `bounces`, `budget_exceeded` and `conflicts` cleared, rung 2 on
+/// `roster::escalate(route)` (decision 38's rung 2), and a fresh session in the same
+/// worktree from the task's own start commit (carry M8a.11), with decision 30's
+/// hand-over prompt; its old session, if alive, is killed first. The hand-back context
+/// ends (carry T14-R2), so the fresh session's claim passes every gate. A task that
+/// never started is dispatched again instead. A held task (M8a.6 ruling N5) waits for
+/// its dependencies, then has the run head handed back before the fresh session, and
+/// keeps its own block until then (`holds::resume_held`, carries T11-RR and M8a.14).
+pub(super) fn retry(
+    state: &mut EngineState,
+    id: ReplyId,
+    run_id: &str,
+    task_id: &str,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
+    let Some(run) = state.runs.get_mut(run_id) else {
+        return reply(fx, id, Err(unknown(run_id)));
+    };
+    if let Some(how) = finishing_as(run) {
+        return reply(fx, id, Err(format!("run {run_id} is being {how}")));
+    }
+    if !matches!(run.state, RunState::Running | RunState::Paused) {
+        let text = format!("run {run_id} is {}", run.state.label());
+        return reply(fx, id, Err(text));
+    }
+    let Some(i) = run.tasks.iter().position(|t| t.id() == task_id) else {
+        return reply(fx, id, Err(format!("unknown task {task_id}")));
+    };
+    let task = &run.tasks[i];
+    let refusal = match &task.block {
+        _ if task.state != TaskState::Blocked => Some(format!(
+            "task {task_id} is {}; retry applies only to a blocked task",
+            task.state.label()
+        )),
+        Some(b) if b.reason == BlockReason::DepCancelled => Some(format!(
+            "task {task_id} is blocked(dep_cancelled); retry cannot bring back a cancelled dependency"
+        )),
+        _ if task.size == Size::L => Some(format!("task {task_id} is L; split it first")),
+        _ if task.awaiting_deps && !deps_done(run, task) => Some(format!(
+            "task {task_id} waits for its dependencies; retry it once they are merged"
+        )),
+        _ => None,
+    };
+    if let Some(text) = refusal {
+        return reply(fx, id, Err(text));
+    }
+    let block = task.block.clone();
+    let route = escalate(&run.roster, &task.route);
+    ladder::kill_worker(run, i, fx);
+    review::stop_reviewers(run, i, now, fx);
+    let task = &mut run.tasks[i];
+    // A launch the restart lost belongs to the session being replaced.
+    for round in task.rounds.iter_mut().filter(|r| r.relaunch.is_some()) {
+        round.relaunch = None;
+        end_round(round, now);
+    }
+    task.failures = 1;
+    task.bounces = Default::default();
+    task.budget_exceeded = 0;
+    task.conflicts = 0;
+    task.rung = 2;
+    task.route = route;
+    // `kill_worker`'s `supersede` ended the hand-back context (`handed_back`,
+    // `resolution`); its gates' pass goes too (carry T14-R2).
+    task.gates_after_handback = false;
+    let was = block.map_or_else(String::new, |b| {
+        let label = serde_json::to_value(b.reason)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default();
+        format!(" (it was blocked({label}): {})", b.text)
+    });
+    let how = if task.start_commit.is_none() {
+        task.state = TaskState::Queued;
+        task.block = None;
+        task.fresh_session = None;
+        "it is dispatched again"
+    } else {
+        task.fresh_session = Some(FreshSession {
+            reason: format!("the user retried it{was}"),
+            append: None,
+        });
+        if task.awaiting_deps {
+            task.held_answered = true;
+            "the run head is merged into its worktree first"
+        } else {
+            task.state = TaskState::Working;
+            task.block = None;
+            "a fresh session starts"
+        }
+    };
+    history(run, i, now, format!("retried by the user at rung 2{was}"));
+    log(run, now, format!("{task_id} retried at rung 2"));
+    reply(
+        fx,
+        id,
+        Ok(format!("task {task_id} retried at rung 2: {how}")),
+    );
 }

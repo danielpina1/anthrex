@@ -1,6 +1,10 @@
 //! The engine unit tests (M8a.11 onwards).
 
 mod budgets;
+mod control;
+mod control_restore;
+mod control_resume;
+mod control_retry;
 mod dispatch;
 mod dispatch_edits;
 mod dispatch_slots;
@@ -14,6 +18,7 @@ mod gates_review;
 mod gates_rounds;
 mod holds;
 mod holds_conflicts;
+mod liveness;
 mod merge;
 mod merge_complete;
 mod merge_fixes;

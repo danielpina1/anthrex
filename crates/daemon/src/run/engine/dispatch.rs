@@ -11,7 +11,7 @@ use proto::{AgentRole, BlockInfo, BlockReason, RunState, Runtime, TaskState};
 
 use super::schedule::{deps_done, dispatch_order, hub_holds_slot, op_in_flight, writers_busy};
 use super::{Effect, OpKind, OpResult, emit_op, next_op};
-use super::{complete, done, gates, holds, ladder, merge, outbox, review, signals};
+use super::{complete, done, gates, holds, ladder, merge, outbox, restore, review, signals};
 use crate::run::contract::{handover_prompt, is_stall_nudge, worker_prompt};
 use crate::run::env::profile_env;
 use crate::run::model::{AgentRound, FreshSession, OpId, Run, StallState, Task, TaskEvent};
@@ -29,6 +29,7 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         match run.state {
             RunState::AwaitingApproval => prewarm(run, now, fx),
             RunState::Running => {
+                restore::relaunch(run, now, fx);
                 holds::resume_held(run, now, fx);
                 signals::watch(run, now, fx);
                 ladder::recover_sessionless(run, now);
@@ -378,6 +379,7 @@ pub(super) fn new_round(
         count_retry_at: None,
         count_turn: 0,
         interrupted: false,
+        relaunch: None,
     }
 }
 

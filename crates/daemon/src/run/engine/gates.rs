@@ -11,8 +11,8 @@ use proto::{BlockReason, GateKind, RunState, TaskState, TestMode};
 
 use super::dispatch::{block, history};
 use super::{
-    Effect, EngineState, OpId, OpKind, OpResult, ReplyId, ScratchAt, emit_op, ladder, next_op,
-    review,
+    Effect, EngineState, OpId, OpKind, OpResult, OverrideCount, ReplyId, ScratchAt, emit_op,
+    ladder, next_op, review,
 };
 use crate::run::contract::{check_failed_message, proof_failed_message};
 use crate::run::env::profile_env;
@@ -307,12 +307,18 @@ pub(super) fn check_done(
     }
 }
 
-/// Decision 35's override: a task in `review`, or `blocked` with an accepted claim's
-/// commits, goes to the merge queue without review, marked for the report and exempt
-/// from the spill checks from then on. A live reviewer is stopped. A held task (M8a.6
-/// ruling N5) or a `dep_cancelled` one is refused: its dependencies come first. M8a.15
-/// owns the rest of override (the paused run, a blocked task whose commits no claim
-/// recorded).
+/// The refusal's tail when a task can go to the merge queue by no override.
+const OVERRIDE_APPLIES: &str = "override applies only to a task in review, or blocked with commits";
+
+/// Decision 35's override: a task in `review`, or `blocked` with at least one commit,
+/// goes to the merge queue without review, marked for the report and exempt from the
+/// spill checks from then on; it still passes the candidate check. A live reviewer is
+/// stopped; the worker's session is left alone (ruling T13-minors m5). A held task
+/// (M8a.6 ruling N5) or a `dep_cancelled` one is refused: its dependencies come first. A
+/// blocked task whose commits no accepted claim recorded (M8a.15, the M8a.13 carry) has
+/// them counted first (`CountCommits`): with none it is refused, else its branch's head
+/// is what merges, and the reply waits for the count. A task that never started has no
+/// commits.
 pub(super) fn override_task(
     state: &mut EngineState,
     reply: ReplyId,
@@ -322,35 +328,77 @@ pub(super) fn override_task(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
-    let mut answer = |result| fx.push(Effect::Reply { reply, result });
+    let answer = |fx: &mut Vec<Effect>, result| fx.push(Effect::Reply { reply, result });
     let Some(run) = state.runs.get_mut(run_id) else {
-        return answer(Err(format!("unknown run {run_id}")));
+        return answer(fx, Err(format!("unknown run {run_id}")));
     };
     if !matches!(run.state, RunState::Running | RunState::Paused) {
-        return answer(Err(format!("run {run_id} is {}", run.state.label())));
+        return answer(fx, Err(format!("run {run_id} is {}", run.state.label())));
     }
     let Some(i) = run.tasks.iter().position(|t| t.id() == task_id) else {
-        return answer(Err(format!("unknown task {task_id}")));
+        return answer(fx, Err(format!("unknown task {task_id}")));
     };
+    if let Some(text) = override_refusal(run, i) {
+        return answer(fx, Err(text));
+    }
     let task = &run.tasks[i];
+    if task.override_count.is_some() {
+        let text = format!(
+            "task {task_id}'s commits are being counted for an override; wait for its reply"
+        );
+        return answer(fx, Err(text));
+    }
+    if task.state == TaskState::Review || task.head.is_some() {
+        let text = send_to_queue(run, i, reason, now, fx);
+        return answer(fx, Ok(text));
+    }
+    let Some(start) = task.start_commit.clone() else {
+        return answer(
+            fx,
+            Err(format!("task {task_id} has no commits; {OVERRIDE_APPLIES}")),
+        );
+    };
+    let kind = OpKind::CountCommits {
+        worktree: task.worktree.clone(),
+        start,
+        run_head: run.run_head.clone(),
+    };
+    let op = next_op(run);
+    run.tasks[i].override_count = Some(OverrideCount {
+        op,
+        reply,
+        reason: reason.to_string(),
+    });
+    emit_op(run, op, Some(task_id), kind, fx);
+    history(run, i, now, "counting its commits for an override");
+}
+
+/// Why task `i` cannot be overridden now, if it cannot: a held or `dep_cancelled` task
+/// waits for its dependencies; any task but one in `review` or `blocked` is refused.
+fn override_refusal(run: &Run, i: usize) -> Option<String> {
+    let task = &run.tasks[i];
+    let id = task.id();
     let dep_cancelled = task
         .block
         .as_ref()
         .is_some_and(|b| b.reason == BlockReason::DepCancelled);
-    let blocked_with_commits = task.state == TaskState::Blocked && task.head.is_some();
     if task.awaiting_deps || dep_cancelled {
-        return answer(Err(format!(
-            "task {task_id} waits for its dependencies; override it once they are merged"
-        )));
+        return Some(format!(
+            "task {id} waits for its dependencies; override it once they are merged"
+        ));
     }
-    if task.state != TaskState::Review && !blocked_with_commits {
-        return answer(Err(format!(
-            "task {task_id} is {}; override applies only to a task in review, or blocked with commits",
+    if !matches!(task.state, TaskState::Review | TaskState::Blocked) {
+        return Some(format!(
+            "task {id} is {}; {OVERRIDE_APPLIES}",
             task.state.label()
-        )));
+        ));
     }
-    let mut effects = Vec::new();
-    review::stop_reviewers(run, i, now, &mut effects);
+    None
+}
+
+/// Task `i` goes to the merge queue without review; the reply's text.
+fn send_to_queue(run: &mut Run, i: usize, reason: &str, now: u64, fx: &mut Vec<Effect>) -> String {
+    review::stop_reviewers(run, i, now, fx);
     let task = &mut run.tasks[i];
     task.merged_without_approval = Some(reason.to_string());
     task.block = None;
@@ -361,11 +409,46 @@ pub(super) fn override_task(
         now,
         format!("overridden: to the merge queue without review ({reason})"),
     );
-    fx.extend(effects);
-    fx.push(Effect::Reply {
-        reply,
-        result: Ok(format!(
-            "task {task_id} goes to the merge queue without review: {reason}"
-        )),
-    });
+    let id = run.tasks[i].id();
+    format!("task {id} goes to the merge queue without review: {reason}")
+}
+
+/// Whether task `i`'s override awaits `op`'s count.
+pub(super) fn awaits_override(run: &Run, i: usize, op: OpId) -> bool {
+    run.tasks[i]
+        .override_count
+        .as_ref()
+        .is_some_and(|c| c.op == op)
+}
+
+/// The override's `CountCommits` result: at least one commit sends the task to the
+/// merge queue at its branch's head, if it can still be overridden.
+pub(super) fn override_counted(
+    run: &mut Run,
+    i: usize,
+    result: OpResult,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
+    let Some(OverrideCount { reply, reason, .. }) = run.tasks[i].override_count.take() else {
+        return;
+    };
+    let id = run.tasks[i].id().to_string();
+    let result = match result {
+        _ if override_refusal(run, i).is_some() => {
+            Err(override_refusal(run, i).unwrap_or_default())
+        }
+        OpResult::Commits { count: 0, .. } => {
+            Err(format!("task {id} has no commits; {OVERRIDE_APPLIES}"))
+        }
+        OpResult::Commits { head, .. } => {
+            run.tasks[i].head = Some(head);
+            Ok(send_to_queue(run, i, &reason, now, fx))
+        }
+        OpResult::Failed { message } => {
+            Err(format!("could not count task {id}'s commits: {message}"))
+        }
+        other => Err(format!("could not count task {id}'s commits: {other:?}")),
+    };
+    fx.push(Effect::Reply { reply, result });
 }

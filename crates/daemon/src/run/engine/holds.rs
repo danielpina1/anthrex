@@ -89,8 +89,8 @@ fn abort_untold_conflict(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>
     );
 }
 
-/// M8a.6 ruling N5: a held task that a message waits for (an answer, or an amendment)
-/// gets the run head merged into its worktree first (decision 36's hand-back) once
+/// M8a.6 ruling N5: a held task that a message waits for (an answer, or an amendment),
+/// or that the user retried (M8a.15), gets the run head merged into its worktree first (decision 36's hand-back) once
 /// every dependency has finished, and resumes only when that comes back. One hand-back
 /// at a time, and none while a conflicted one is being aborted (ruling T11-N1(b)).
 pub(super) fn resume_held(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
@@ -100,14 +100,16 @@ pub(super) fn resume_held(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             .block
             .as_ref()
             .is_some_and(|b| b.reason == BlockReason::Question);
+        let waiting = run
+            .outbox
+            .iter()
+            .any(|m| m.task_id == task.spec.id && m.delivered_at.is_none());
+        // M8a.15: `run retry` of a held task (any block) waits for this hand-back too.
+        let retried = task.held_answered && task.fresh_session.is_some();
         if task.state != TaskState::Blocked
             || !task.awaiting_deps
-            || !question
+            || !(retried || (question && waiting))
             || !deps_done(run, task)
-            || !run
-                .outbox
-                .iter()
-                .any(|m| m.task_id == task.spec.id && m.delivered_at.is_none())
             || op_in_flight(run, task.id(), |k| {
                 matches!(k, OpKind::HandBack { .. } | OpKind::AbortMerge { .. })
             })

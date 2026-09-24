@@ -521,7 +521,8 @@ fn a_failed_resume_after_a_mid_turn_exit_starts_a_fresh_session() {
     assert_eq!(ops_in(&effects, "DiffSoFar").len(), 1, "{effects:#?}");
 }
 
-/// T12-N: a restart awaits no count; the next turn end counts again.
+/// T12-N: a restart awaits no count; the next turn end counts again. M8a.15: the
+/// restore ends the session, so that next turn is the resumed one.
 #[test]
 fn a_restore_awaits_no_count() {
     let (mut fx, window) = working_on(ROOMY);
@@ -532,7 +533,9 @@ fn a_restore_awaits_no_count() {
         runs: vec![run],
         replay: vec![],
     });
-    restored.run_mut().state = proto::RunState::Running;
+    let effects = super::control::resume(&mut restored);
+    let (resume, _) = ops_in(&effects, "ResumeSession")[0].clone();
+    restored.done(resume, OpResult::Resumed);
     let effects = restored.turn_completed(window);
     assert_eq!(ops_in(&effects, "CountCommits").len(), 1, "{effects:#?}");
 }

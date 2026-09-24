@@ -23,7 +23,9 @@
 //! M8a.14 adds `merge.rs` (decision 36's merge queue and hand-back, decision 21's ref
 //! guard and `run resume --rebaseline`) and `complete.rs` (decision 37's completion,
 //! the `finish` edit, `run cancel`, and `run accept`/`discard` of a complete run).
-//! M8a.15 adds `restore.rs`.
+//! M8a.15 adds `restore.rs` (restore after a daemon restart, `run resume` and the
+//! launches a restart lost), `run retry` in `requests.rs`, and the rest of `run
+//! override` in `gates.rs`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -44,13 +46,14 @@ mod merge;
 mod ops;
 mod outbox;
 mod requests;
+mod restore;
 mod review;
 pub(crate) mod schedule;
 mod signals;
 mod tools;
 
 pub use crate::headless::TurnOutcome;
-pub use ops::{OpKind, OpResult, ResolutionAt, ScratchAt};
+pub use ops::{OpKind, OpResult, OverrideCount, ResolutionAt, ScratchAt};
 pub use signals::INTERRUPT_GRACE_SECS;
 
 /// Identifies a client request waiting for its [`Effect::Reply`].
@@ -271,7 +274,11 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             edits,
             scope,
         } => requests::edit(&mut state, reply, &run_id, &edits, &scope, now, &mut fx),
-        EventKind::Retry { reply, .. } => requests::not_yet(&mut fx, reply, "run retry"),
+        EventKind::Retry {
+            reply,
+            run_id,
+            task_id,
+        } => requests::retry(&mut state, reply, &run_id, &task_id, now, &mut fx),
         EventKind::Override {
             reply,
             run_id,
@@ -285,7 +292,7 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             reply,
             run_id,
             rebaseline,
-        } => merge::resume(&mut state, reply, &run_id, rebaseline, now, &mut fx),
+        } => restore::resume(&mut state, reply, &run_id, rebaseline, now, &mut fx),
         EventKind::Finish {
             reply,
             run_id,
@@ -314,10 +321,7 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             }
         }
         EventKind::Restore { runs, replay } => {
-            requests::restore(&mut state, runs, now);
-            for (run_id, op, result) in replay {
-                op_done(&mut state, &run_id, op, result, now, &mut fx);
-            }
+            restore::restore(&mut state, runs, replay, now, &mut fx)
         }
         EventKind::Stop => {
             state.stopped = true;
@@ -437,6 +441,9 @@ fn op_done(
             dispatch::removed(run, i, &path, result, now)
         }
         (OpKind::VerifyDone { .. }, Some(i)) => done::checked(run, i, op, result, now, fx),
+        (OpKind::CountCommits { .. }, Some(i)) if gates::awaits_override(run, i, op) => {
+            gates::override_counted(run, i, result, now, fx)
+        }
         (OpKind::CountCommits { .. }, Some(i)) => fallback::counted(run, i, op, result, now, fx),
         (OpKind::DiffSoFar { .. }, Some(i)) => ladder::fresh_diff(run, i, result, now, fx),
         (OpKind::ResumeSession { .. }, Some(i)) => outbox::resumed(run, i, op, result, now, fx),

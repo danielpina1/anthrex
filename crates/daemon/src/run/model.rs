@@ -231,6 +231,10 @@ pub struct AgentRound {
     /// ended the grace (M8a.12 fix round 4, ruling T12-R4 on N3-1).
     #[serde(default)]
     pub interrupted: bool,
+    /// The `CreateWindow` lost at a daemon restart (M8a.15): re-issued, with a new op
+    /// id, by the first running pass (decision 44's "the engine re-issues").
+    #[serde(default)]
+    pub relaunch: Option<Box<OpKind>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -400,6 +404,10 @@ pub struct Task {
     /// only its resolution goes straight back to the merge queue.
     #[serde(default)]
     pub resolution: Option<super::engine::ResolutionAt>,
+    /// M8a.15: `run override` of a blocked task no claim recorded a head for, waiting
+    /// for its `CountCommits` (decision 35).
+    #[serde(default)]
+    pub override_count: Option<super::engine::OverrideCount>,
     pub start_commit: Option<String>,
     pub head: Option<String>,
     pub done: Option<DoneClaim>,
@@ -524,6 +532,14 @@ pub struct Run {
     /// needs no `--rebaseline`.
     #[serde(default)]
     pub halt_retryable: bool,
+    /// M8a.15: the time of the daemon restart that ended this run's sessions; the next
+    /// resume resumes them (decision 45).
+    #[serde(default)]
+    pub restored: Option<u64>,
+    /// M8a.15: when the run was paused; a live session's idle part of the pause is no
+    /// session time (decision 40's minutes).
+    #[serde(default)]
+    pub paused_at: Option<u64>,
 }
 
 impl Run {

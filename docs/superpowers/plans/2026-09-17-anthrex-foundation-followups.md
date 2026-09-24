@@ -801,6 +801,11 @@ scope.
   before it blocks. A worker still running can keep editing a blocked task's worktree.
   Decide in M8a.13/M8a.15, with the unblock and resume work, whether to kill it or to
   keep the session for the resume.
+  **Decided in M8a.15: kept.** A blocked task dispatches nothing and gets no mail, so
+  the session idles; `run retry` kills it first (`ladder::kill_worker`) and starts a
+  fresh one, `run override` sends the counted head to the merge queue, and a cancel
+  kills it. A restart ends it with every other session. Killing at the block would
+  lose nothing either, but would diverge from the delivery-failure block (T12-A2).
 - **A failed resume drops an in-flight wrap-up.** `outbox::resumed`'s failure path now
   calls `ladder::supersede`, which removes the task's delivered-but-unconfirmed outbox
   messages. Before, a late `Delivered{ok:false}` queued them again into the fresh

@@ -6174,3 +6174,233 @@ test was red first.
 **Scope note.** `verify_done`'s `status --porcelain` (the dirty count) still follows the
 submodule config. An uncommitted gitlink change is never merged, so it is left out here
 and recorded as a follow-up.
+
+### M8a.15 engine V: edits, retry, override, pause, restore and resume (2026-09-24)
+
+Decisions 13 (engine side), 28, 35's override, 42, 45 and 46 (engine side) in the
+reducer. `run retry`, `run resume`, the `pause` and `resume` edits and the restore after
+a daemon restart replace the M8a.11 `not_yet` stubs.
+
+**Layout.**
+- New: `engine/restore.rs`, which holds the restore, `run resume` for a paused run,
+  `unpause` and the relaunch of lost launches.
+- `run retry` is in `requests.rs`, and the override is in `gates.rs`.
+- The tests are split by responsibility for size:
+  - `tests/control.rs`: edits, answers, pause, a paused run's refusals, stop.
+  - `tests/control_retry.rs`: retry and override.
+  - `tests/control_restore.rs`: restore and resume.
+  - `tests/control_resume.rs`: what a resume must not do, and what a restart must not
+    lose.
+  - `tests/liveness.rs`: the liveness check, moved out of `turns_fixes.rs`, which
+    re-exports it.
+
+**Name corrections and additions.**
+- The brief lists three files. The change also touches:
+  - `mod.rs` (routing);
+  - `gates.rs` (the override);
+  - `holds.rs` (a retried held task's hand-back);
+  - `merge.rs` (the paused arm of `resume` moved to `restore.rs`);
+  - `dispatch.rs` (the running pass relaunches);
+  - `review.rs` (`owes_verdict` is `pub(super)`);
+  - `schedule.rs` (`holds_reader`, below);
+  - `ops.rs` (`OverrideCount`);
+  - `contract.rs` (`RESUME_WORKER` and `RESUME_REVIEWER`, with the Interfaces texts);
+  - `model.rs`, `plan.rs` and `validate.rs`.
+- New persisted fields, each `#[serde(default)]`:
+  - `AgentRound.relaunch`: a `CreateWindow` the restart lost.
+  - `Task.override_count`: the count an override awaits, with the reply id and reason.
+  - `Run.restored`: the time of the restart that ended the sessions.
+  - `Run.paused_at`: when the run was paused.
+- `resume_resumes_sessions_and_reissues_gate_ops` uses the fixture's own window ids and
+  the session ids `s-tw` and `s-rw`. The brief's "worker 4, session `s-4`" and
+  "reviewer 6" are illustrative.
+
+**Invented texts.**
+- Pause and resume edits: `run <id> is <state>; only a running run can be paused` and
+  `run <id> is <state>; only a paused run can be resumed`. Either refusal rejects the
+  whole batch.
+- Retry refusals, in this order:
+  - `run <id> is being <accepted|discarded>`;
+  - `run <id> is <state>` (only a running or paused run takes a retry);
+  - `unknown task <id>`;
+  - `task <id> is <state>; retry applies only to a blocked task`;
+  - `task <id> is blocked(dep_cancelled); retry cannot bring back a cancelled
+    dependency`;
+  - `task <id> is L; split it first` (decision 12's text);
+  - `task <id> waits for its dependencies; retry it once they are merged`.
+- Retry reply: `task <id> retried at rung 2: <how>`, where `<how>` is one of:
+  - `it is dispatched again` (never started);
+  - `the run head is merged into its worktree first` (held);
+  - `a fresh session starts`.
+- Retry history: `retried by the user at rung 2 (it was blocked(<label>): <text>)`. The
+  fresh session's reason is `the user retried it (it was blocked(<label>): <text>)`.
+- Override:
+  - Refusal suffix: `override applies only to a task in review, or blocked with
+    commits`.
+  - `task <id> has no commits; <suffix>`.
+  - `task <id>'s commits are being counted for an override; wait for its reply`.
+  - `could not count task <id>'s commits: <message>`.
+- Resume of a paused run: `run <id> resumed`, plus ` with --rebaseline: base <branch> at
+  <sha7>, run head <sha7>` when rebaselined (the halted form's pattern).
+- Log and history lines:
+  - `restored after a daemon restart; paused`
+  - `paused by a plan edit`
+  - `resumed`
+  - `launching the session the restart lost`
+  - `its reviewer had no session to resume; a new round`
+  - `an accept or discard did not finish before the restart; request it again`
+  - `its cancel, after its merge did not survive the restart`
+
+**Deviations and decisions.**
+- **A paused run takes edits, retry and override.** Only a running run starts a
+  session (ruling T14-I2). A retry while paused leaves its fresh session for the resume.
+- **Restore.**
+  - Every running run becomes `paused`.
+  - Every session ends through `end_round`, which clears `interrupted`.
+  - These are cleared: the claim, the override count, a `Counting` fallback, `count_op`,
+    `count_retry_at`, `resume_op`, `carried`, `finish_reply` and every outbox
+    `delivered_at`.
+  - Each pending op the journal did not replay is dropped (decision 44), and its task
+    gets what it needs instead:
+    - `CreateRunBranch`, `PrepareWorktree`, `AbortMerge` and `RemoveWorktree` are
+      re-emitted under a new id.
+    - A lost `CreateWindow` is kept in `AgentRound.relaunch`. The first running pass
+      re-issues it with a new op id and, for Claude, a new uuid. If its task no longer
+      wants it, the round ends instead.
+    - A lost `MergeCandidate` clears `merge_op`, as does a lost `HandBack`, which also
+      sets `handback_due` again while the task is in `merge_queue`.
+    - A lost `Proof`, `Check` or `PrepareReview` clears `gate_op`.
+    - A lost `Accept` or `Discard` is logged.
+  - After the replay, a deferred cancel whose candidate did not survive applies.
+- **Resume messages.** `RESUME_WORKER` and `RESUME_REVIEWER` are sent only on the first
+  resume after a restart that ended sessions (`Run.restored`). They go only to a working
+  task's resumable worker with no fresh session pending, and to a reviewer that owes its
+  verdict. A gated task's worker gets its next message later (ruling T13-I3). A reviewer
+  with no session id is given up for a new round. A pause edit's resume sends none.
+- **Stall clocks at resume.**
+  - An `Interrupted` stage whose grace has passed goes to the stall ladder.
+  - An `Interrupted` round that the restart ended becomes `Nudged`. Its `stall_nudge`
+    is already queued and goes out with the resume.
+  - `Watching` is re-armed from now.
+- **Neither the downtime nor a pause counts as session time** (decision 40's minutes):
+  - A round the restart ended is charged up to its last sign of life.
+  - A live round through a pause edit is charged up to its last event or the pause,
+    whichever is later.
+  - The mutation run found this. Before the fix, a 100-minute pause blocked the task at
+    rung 4 on resume. Red: `left: (Blocked, 4)` against `right: (Working, 0)`, with
+    `(0/150 tool calls, 100/60 minutes)`.
+- **One reader per review task across a restart** (`schedule::holds_reader`). A
+  reviewer round that has ended but is resumable, with no verdict yet, still holds its
+  reader slot. Without this, the running pass prepared a second reviewer beside the one
+  being resumed. Red: `one live reviewer: the resumed one`, with a `PrepareReview` in the
+  resume's effects.
+- **Retry** (decision 42):
+  - Kills the old session and stops any reviewer.
+  - Resets `failures = 1`, the bounces, `budget_exceeded` and `conflicts`.
+  - Sets rung 2 on `roster::escalate`.
+  - Replaces any pending fresh session (and its `append`) with its own.
+  - Reuses the start commit and worktree (no `PrepareWorktree`).
+  - `kill_worker`'s `supersede` ends the hand-back context (`handed_back`,
+    `resolution`). The retry's own clear of these was redundant (mutant Q6) and was
+    removed. The retry clears `gates_after_handback` itself.
+  - **Deviation from carry T14-R2:** `resolving` and `handback_due` are kept.
+    `resolving` describes the worktree, where a merge is still in progress, and the fresh
+    session must finish it. `handback_due` is the queue's N5 obligation. Clearing either
+    would merge a worktree with conflict markers or skip a hand-back.
+  - A held task (`awaiting_deps`) keeps its own block. It is handed back first through
+    `holds::resume_held`, whose condition now includes `held_answered &&
+    fresh_session.is_some()`, and it never becomes `blocked(question)`.
+- **Override of a blocked task with no accepted head** (carry M8a.13). A `CountCommits`
+  from the start commit counts its branch, correlated by `Task.override_count.op`. At
+  least one commit sends the counted tip to the merge queue; zero refuses. A fallback
+  count can be in flight at the same time: rung 4 can block a task while its turn-end
+  count is running. The correlation keeps the two apart.
+- **A task blocked by the third failed count keeps its session** (followups item). The
+  decision is recorded in the followups file.
+- **The liveness check covers paused runs.** It clones the state, steps a `Resume` and
+  checks the resumed run. Every new test ends with it. `a_restore_awaits_no_count`
+  (`turns_ops.rs`) now resumes first, because a restore ends every session.
+
+**TDD evidence.**
+- Red run: 20 of 25 new tests failed. Sample lines:
+  - `Err("run retry is not available yet")`;
+  - `left: Running right: Paused` (pause edit);
+  - `left: Complete right: Paused` (M12);
+  - `left: MergeQueue right: Cancelled` (deferred cancel);
+  - `left: [] right: [(2, "s-tw", RESUME_WORKER…), (5, "s-rw", RESUME_REVIEWER…)]`;
+  - `one AbortMerge: []`.
+- Five tests passed at red, pinning existing behaviour: `stop_ignores_everything_after`,
+  `edit_applies_and_delivers`, `answer_resumes_a_question`,
+  `restore_pauses_running_runs_only` and `a_hand_back_result_after_a_cancel_is_dropped`.
+- The mutation-driven tests were each shown red on their mutant, and two of them on the
+  real code: the pause budget and the second reviewer, above.
+
+**Mutations** (scratchpad script from a WIP commit, since folded). 47 distinct mutants
+in total: 40 in the first run, then S1, R22b, P1 and P2, then H2, G2 and R18 (retried
+after their tests landed).
+- First run: 23 of 40 killed. The survivors got tests, or an argued equivalence:
+  - H2: `resume_held`'s retried clause, requiring `held_answered`. Killed by
+    `a_refused_fresh_launch_that_gains_a_dependency_keeps_its_block`: the window limit
+    leaves a fresh session on a blocked task.
+  - R4: the outbox reset.
+  - R6: the override count cleared.
+  - R16: the Watching re-arm.
+  - R17 and R19: `restored` gates the restart messages. R19 uses a Claude reviewer that
+    ended between turns while waiting out a rate limit.
+  - R18: `!fresh`. Needs a second live task, so the restart ended sessions.
+  - R22 and R22b: relaunch's `wanted`, via a cancel edit while paused. `kill_sessions`
+    retires only windowed rounds.
+  - R23: the paused rebaseline clears `base_moved`.
+  - R24: `owes_verdict` in `resume_reviewer`.
+  - Q7: the run-state refusal.
+  - G2: the override correlation.
+- Final state: every mutant is killed except these four, argued equivalent:
+  - **M9** (`cancel_now` keeps `merge_op`). The cancel edit never clears it for a
+    hand-back either. A late result is dropped by the `merge_queue` state guard (M14,
+    killed by `a_hand_back_result_after_a_cancel_is_dropped`), and restore's `lost()`
+    sets `handback_due` only in `merge_queue`.
+  - **M10** (the candidate's `awaits` filter). `op_done` drops any result whose op is
+    not pending. A candidate's op and `merge_op` are cleared together (restore's
+    `lost()`), and a cancel is deferred while the candidate is in flight.
+  - **R7** (restore clears `resume_op`). The dropped op is not pending, so its result is
+    dropped, and the next resume overwrites the field.
+  - **R20** (a sessionless reviewer is set `retiring`). `holds_reader` needs a session
+    id to hold the slot, so the new round starts either way, and nothing can reach the
+    dead round.
+- M8a.14's M12 and M14 are killed through the pause:
+  `refs_verified_while_paused_do_not_complete_the_run` and
+  `a_hand_back_result_after_a_cancel_is_dropped`.
+
+**Carries in.**
+- M8a.11: a retry of a started task reuses its start commit and worktree. Asserted: no
+  `PrepareWorktree`, `DiffSoFar` from the start commit. A lost `PrepareWorktree` is
+  re-emitted unchanged. N5 holds: a held task is handed back first.
+- M8a.12: restore clears a claim and a `Counting` fallback
+  (`restore_clears_a_claim_and_a_count_in_flight` kills R5).
+- M8a.12 fix round 2: retry replaces a pending fresh session and its `append` (`no stale
+  append`).
+- M8a.12 fix round 5 (T12-RR4): `interrupted` is cleared by `end_round`, and
+  `StallState::Interrupted` is settled at the resume.
+- M8a.13:
+  - Override of a blocked task without a head: counted (above).
+  - Restore clears `gate_op`: `resume_resumes_sessions_and_reissues_gate_ops`.
+  - Review m3 and m4 were already done in M8a.13.
+- M8a.14:
+  - T11-RR: retry of a held conflict-blocked task hands back first and is never a
+    question (`a_retried_held_task_*`).
+  - T11-RR2: retry and override both refuse `dep_cancelled`, so nothing lifts it past
+    N5.
+  - Restore re-issues a lost candidate or hand-back, and honours `cancel_deferred` and
+    `handback_due` (`restore_honours_deferred_cancels_and_lost_hand_backs`).
+  - A lost `AbortMerge` is re-emitted (`a_lost_abort_is_sent_again_at_the_restore`).
+  - R9, R10, R12 and R14: see Mutations.
+- M8a.14 fix round 2: retry clears the hand-back flags (the deviation above). The
+  `resolution_only` executor is M8a.22's.
+- Followups: the third failed count's session is decided.
+
+**Carries out.**
+- **M8a.21:** reconcile should report an `AbortMerge` whose worktree has no `MERGE_HEAD`
+  as `MergeAborted`. The re-emitted abort must be idempotent.
+- **M8a.22:** the driver builds `Restore`'s `replay` from the journal: the results of
+  ops still pending in `run.json`. It sends `Restore` before any other event, and it
+  fills `DoneChecked.resolution_only`.

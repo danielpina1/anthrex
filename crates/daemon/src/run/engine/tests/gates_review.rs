@@ -17,7 +17,7 @@ use crate::run::engine::{AgentSignal, Effect, EventKind, OpKind, OpResult};
 use crate::run::model::{OpId, ReviewLevel};
 use crate::run::roster::pick_reviewer;
 
-const CODEX_AUTHOR: &str = "[task.route]\nruntime = \"codex\"\nmodel = \"\"";
+pub(super) const CODEX_AUTHOR: &str = "[task.route]\nruntime = \"codex\"\nmodel = \"\"";
 
 /// A check-mode `t1` whose check passed: its `PrepareReview`.
 pub(super) fn in_review(fx: &mut Fixture, window: u32) -> (OpId, OpKind) {
