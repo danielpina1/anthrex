@@ -1,13 +1,72 @@
 //! Fix round 1 (ruling T16-fix): hostile-input tests for the escaping layer
 //! (`report_escape.rs`), plus M1/M2's content assertions the original suite was
 //! missing.
+//!
+//! Fix round 2 (ruling T16-R2, re-review 1): round 1's `continuation_indent` only
+//! neutralised free text used as a *plain* line (`merged without approval`, a review
+//! summary); the three list-item call sites it also protected (Notes, review
+//! Findings, History) stayed exploitable, since a list item only needs 2 columns of
+//! indentation to stay inside it, leaving 2 of the 4 indented columns still read as a
+//! block start by a real CommonMark parser. `Run.goal`, `ProofRecord.test` and
+//! `Finding.file` were not routed through any escaping at all. `pulldown_cmark` (a new
+//! dev-only dependency — none of the existing ones parse Markdown) verifies the fixed
+//! output structurally rather than by string-matching indentation, which is what let
+//! round 1's own tests pass over a still-broken mechanism.
 
 use proto::{AgentRole, Finding, Runtime, Severity, Verdict};
+use pulldown_cmark::{Event, Options, Parser, Tag};
 
 use super::super::*;
 use super::{base_run, round};
-use crate::run::model::{CheckRecord, ReviewRecord, TaskEvent};
+use crate::run::model::{CheckRecord, LogEntry, ProofRecord, ReviewRecord, TaskEvent};
 use crate::run::test_support::task;
+
+/// Every block-start hazard T16-R2 names, concatenated as one poisoned field: a
+/// heading, a blockquote, a bullet, an ordered marker, a fence (backtick and tilde),
+/// a thematic break and a setext underline — each on its own line.
+const HOSTILE_LINES: &str = "plain first line\n\
+# forged heading\n\
+> forged quote\n\
+- forged bullet\n\
++ forged bullet\n\
+* forged bullet\n\
+1. forged ordered\n\
+42) forged ordered\n\
+```\n\
+forged fence\n\
+```\n\
+~~~\n\
+forged tilde fence\n\
+~~~\n\
+---\n\
+===\n\
+| fake | table |\n\
+|---|---|";
+
+/// Counts of `Start` events per kind pulldown-cmark emits for `text`, with GFM tables
+/// enabled (the report's own `## Tasks` table needs it to parse as a table at all).
+#[derive(Debug, Default, PartialEq, Eq)]
+struct NodeCounts {
+    headings: usize,
+    lists: usize,
+    tables: usize,
+    fences: usize,
+}
+
+fn node_counts(text: &str) -> NodeCounts {
+    let parser = Parser::new_ext(text, Options::ENABLE_TABLES);
+    let mut counts = NodeCounts::default();
+    for event in parser {
+        match event {
+            Event::Start(Tag::Heading { .. }) => counts.headings += 1,
+            Event::Start(Tag::List(_)) => counts.lists += 1,
+            Event::Start(Tag::Table(_)) => counts.tables += 1,
+            Event::Start(Tag::CodeBlock(_)) => counts.fences += 1,
+            _ => {}
+        }
+    }
+    counts
+}
 
 #[test]
 fn title_with_pipe_and_newline_does_not_break_the_table() {
@@ -83,11 +142,17 @@ fn check_tail_with_a_backtick_fence_uses_a_longer_fence() {
 }
 
 #[test]
-fn notes_findings_and_history_with_newlines_and_hash_indent_their_continuation() {
+fn notes_findings_and_history_do_not_forge_real_markdown_structure() {
+    // Round 1's mistake, reproduced: 4-space `continuation_indent` inside a `"- "`
+    // list item leaves only 2 spare columns once the item's own 2-column content
+    // indent is subtracted, and CommonMark still reads a block start at up to 3
+    // columns. A real parser, not a string match on "is it indented", is what catches
+    // this — re-review 1 found it exactly because round 1's own string-matching test
+    // could not tell the difference.
     let mut run = base_run();
+    let baseline = node_counts(&render(&run, 2_000));
     let t = run.tasks.iter_mut().find(|t| t.id() == "t1").unwrap();
-    t.notes
-        .push("note with a newline\n# looks like a heading".to_string());
+    t.notes.push(format!("note first line\n{HOSTILE_LINES}"));
     t.reviews.push(ReviewRecord {
         round: 1,
         route: t.route.clone(),
@@ -97,24 +162,132 @@ fn notes_findings_and_history_with_newlines_and_hash_indent_their_continuation()
         summary: "ok".to_string(),
         findings: vec![Finding {
             severity: Severity::Important,
-            file: None,
-            line: None,
+            file: Some("# evil.rs".to_string()),
+            line: Some(1),
             input: None,
-            text: "finding with a newline\n# looks like a heading".to_string(),
+            text: format!("finding first line\n{HOSTILE_LINES}"),
         }],
     });
     t.history.push(TaskEvent {
         at: 1_800,
-        text: "history with a newline\n# looks like a heading".to_string(),
+        text: format!("history first line\n{HOSTILE_LINES}"),
     });
     let out = render(&run, 2_000);
 
-    // Every continuation line is indented under its item, never a bare line.
-    assert!(!out.contains("\n# looks like a heading"));
+    // Three more list items (one each for the poisoned note, finding and history
+    // entry) are the only structural change a real parser should see: no new
+    // headings, no new fences, no forged table, and only those 3 extra lists.
+    let counts = node_counts(&out);
     assert_eq!(
-        out.matches("\n    # looks like a heading").count(),
-        3,
-        "notes, findings and history must each indent their continuation:\n{out}"
+        counts.headings, baseline.headings,
+        "a poisoned line forged a heading:\n{out}"
+    );
+    assert_eq!(
+        counts.tables, baseline.tables,
+        "a poisoned line forged a table:\n{out}"
+    );
+    assert_eq!(
+        counts.fences, baseline.fences,
+        "a poisoned line forged a fence:\n{out}"
+    );
+    assert_eq!(
+        counts.lists,
+        baseline.lists + 3,
+        "expected exactly 3 new list items (notes, findings, history), not forged nested ones:\n{out}"
+    );
+}
+
+#[test]
+fn run_goal_with_hostile_lines_forges_nothing_n1() {
+    let mut run = base_run();
+    let baseline = node_counts(&render(&run, 2_000));
+    run.goal = format!("Evil goal\n{HOSTILE_LINES}");
+    let out = render(&run, 2_000);
+    assert_eq!(
+        node_counts(&out),
+        baseline,
+        "Run.goal forged Markdown structure:\n{out}"
+    );
+    assert!(out.contains("Goal: Evil goal"));
+}
+
+#[test]
+fn proof_test_field_with_a_newline_does_not_split_its_line_n2() {
+    let mut run = base_run();
+    let t = run.tasks.iter_mut().find(|t| t.id() == "t1").unwrap();
+    t.proofs.push(ProofRecord {
+        at: 1_600,
+        test: "evil::test\n# forged heading".to_string(),
+        red: "a".repeat(40),
+        head: "b".repeat(40),
+        red_failed: true,
+        head_passed: true,
+        matched: true,
+        red_tail: String::new(),
+        head_tail: String::new(),
+    });
+    let out = render(&run, 2_000);
+    let proof_line = out
+        .lines()
+        .find(|l| l.starts_with("Proof 1:"))
+        .expect("a single-line Proof entry");
+    assert!(proof_line.contains("test=evil::test # forged heading"));
+    assert!(proof_line.trim_end().ends_with(')'));
+    assert!(!out.lines().any(|l| l == "# forged heading"));
+}
+
+#[test]
+fn finding_file_with_a_leading_hash_does_not_forge_a_heading_n3() {
+    let mut run = base_run();
+    let t = run.tasks.iter_mut().find(|t| t.id() == "t1").unwrap();
+    t.reviews.push(ReviewRecord {
+        round: 1,
+        route: t.route.clone(),
+        base: "a".repeat(40),
+        head: "b".repeat(40),
+        verdict: Some(Verdict::Changes),
+        summary: "ok".to_string(),
+        findings: vec![Finding {
+            severity: Severity::Important,
+            file: Some("# evil.rs\nsecond line".to_string()),
+            line: Some(1),
+            input: None,
+            text: "unrelated finding text".to_string(),
+        }],
+    });
+    let out = render(&run, 2_000);
+    let counts = node_counts(&out);
+    assert_eq!(counts.headings, 4, "Finding.file forged a heading:\n{out}");
+    assert!(!out.lines().any(|l| l == "# evil.rs"));
+    assert!(!out.lines().any(|l| l == "second line"));
+}
+
+#[test]
+fn log_entries_do_not_forge_markdown_structure() {
+    let mut run = base_run();
+    let baseline = node_counts(&render(&run, 2_000));
+    run.log.push(LogEntry {
+        at: 1_900,
+        text: format!("log first line\n{HOSTILE_LINES}"),
+    });
+    let out = render(&run, 2_000);
+    let counts = node_counts(&out);
+    assert_eq!(
+        counts.headings, baseline.headings,
+        "a log entry forged a heading:\n{out}"
+    );
+    assert_eq!(
+        counts.tables, baseline.tables,
+        "a log entry forged a table:\n{out}"
+    );
+    assert_eq!(
+        counts.fences, baseline.fences,
+        "a log entry forged a fence:\n{out}"
+    );
+    assert_eq!(
+        counts.lists,
+        baseline.lists + 1,
+        "expected exactly 1 new log list item:\n{out}"
     );
 }
 

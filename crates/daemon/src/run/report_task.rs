@@ -7,7 +7,9 @@ use super::contract::{mode_label, sha7, size_label};
 use super::engine::{epoch_spend, ladder};
 use super::model::Task;
 use super::report::{format_utc, verdict_label};
-use super::report_escape::{continuation_indent, escape_heading, fence_for};
+use super::report_escape::{
+    continuation_indent, escape_cell, escape_heading, fence_for, list_item_text,
+};
 
 pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
     out.push_str(&format!(
@@ -25,8 +27,12 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
     if !task.notes.is_empty() {
         out.push_str("Notes:\n");
         for note in &task.notes {
-            out.push_str(&format!("- {}\n", continuation_indent(note)));
+            out.push_str(&format!("- {}\n", list_item_text("", note)));
         }
+        // A blank line closes the list: without it, CommonMark's lazy continuation
+        // would fold the next plain line (`Route:`) into the last note's own
+        // paragraph instead of starting a new one.
+        out.push('\n');
     }
     out.push_str(&format!("Route: {}\n", route_line(&task.route)));
     out.push_str(&format!(
@@ -40,7 +46,7 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
         out.push_str(&format!(
             "Proof {}: test={} red={} red_failed={} head_passed={} matched={} ({})\n",
             i + 1,
-            p.test,
+            escape_cell(&p.test),
             sha7(&p.red),
             p.red_failed,
             p.head_passed,
@@ -82,6 +88,8 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
             out.push_str(&format!("{}\n", continuation_indent(&r.summary)));
         }
         findings_by_severity(r.findings.iter(), out);
+        // Closes the findings list, the same way the notes list is closed above.
+        out.push('\n');
     }
     if !task.salvage_refs.is_empty() {
         out.push_str(&format!("Salvage refs: {}\n", task.salvage_refs.join(", ")));
@@ -96,11 +104,11 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
         out.push_str("History:\n");
         for e in &task.history {
             out.push_str(&format!(
-                "- {} {}\n",
-                format_utc(e.at),
-                continuation_indent(&e.text)
+                "- {}\n",
+                list_item_text(&format!("{} ", format_utc(e.at)), &e.text)
             ));
         }
+        out.push('\n');
     }
 }
 
@@ -144,6 +152,9 @@ fn budget_and_spend(task: &Task, now: u64, out: &mut String) {
             round.denials
         ));
     }
+    if !task.rounds.is_empty() {
+        out.push('\n');
+    }
 }
 
 fn findings_by_severity<'a>(findings: impl Iterator<Item = &'a proto::Finding>, out: &mut String) {
@@ -160,11 +171,11 @@ fn findings_by_severity<'a>(findings: impl Iterator<Item = &'a proto::Finding>, 
         out.push_str(&format!("{label}:\n"));
         for f in group {
             let where_ = match (&f.file, f.line) {
-                (Some(file), Some(line)) => format!("{file}:{line}: "),
-                (Some(file), None) => format!("{file}: "),
+                (Some(file), Some(line)) => format!("{}:{line}: ", escape_cell(file)),
+                (Some(file), None) => format!("{}: ", escape_cell(file)),
                 _ => String::new(),
             };
-            out.push_str(&format!("- {where_}{}\n", continuation_indent(&f.text)));
+            out.push_str(&format!("- {}\n", list_item_text(&where_, &f.text)));
         }
     }
 }

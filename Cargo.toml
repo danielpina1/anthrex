@@ -43,6 +43,7 @@ unicode-segmentation = "1"
 globset = "0.4"
 regex = "1"
 proptest = "1"
+pulldown-cmark = "0.13"
 
 [profile.release]
 lto = "thin"

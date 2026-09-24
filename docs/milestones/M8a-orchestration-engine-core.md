@@ -6818,3 +6818,114 @@ plus the 5 in `report_escape.rs` and the 8 new/M1/M2 tests already counted in
 `report.rs` 211, `report_task.rs` 204, `report_escape.rs` 100, `report_tests.rs` 335,
 `report_tests_escaping.rs` 175 lines — all comfortably under AGENTS.md's ~600-line
 guidance.
+
+### M8a.16 fix round 2 (2026-09-24)
+
+Re-review 1 (`task-16-rereview-1.md`) confirmed C1, C2, M1 and M2 genuinely fixed, but
+found I1 still exploitable for 3 of its 5 call sites, and three more fields never
+routed through any escaping at all.
+
+**Why I1 wasn't actually fixed.** `continuation_indent`'s 4-space indent is correct
+for a *plain* line (`merged without approval`, a review summary — confirmed still
+fine, unchanged). But Notes, review Findings and History all wrap it inside a `"- "`
+list item. A list item only needs indentation to its *content column* (2, for `"- "`)
+to keep a continuation line inside it at all; anything past that is what CommonMark's
+block-start rules see, and they still recognise a heading, blockquote, list or fence
+with up to 3 leading spaces. 4 total minus the 2 the list item itself consumes left 2
+spare columns — not enough. Confirmed with a real parser
+(`markdown-it-py` in the re-review; `pulldown-cmark` here), not by string-matching
+whether a line happened to start with 4 spaces, which is exactly the check round 1's
+own tests ran and which cannot tell "still inside a paragraph" apart from "still
+inside a list item, but interruptible".
+
+**Fix.** `report_escape.rs` gains two functions:
+- `escape_block_start(line)`: escapes the character CommonMark (or its GFM table
+  extension, once `Options::ENABLE_TABLES` is on — the report's own `## Tasks` table
+  needs it) would read as a block start at the beginning of `line`, after up to 3
+  leading spaces: `#`, `>`, `-`, `+`, `*`, `` ` ``, `~`, `=`, `|` get a backslash
+  directly; an ordered marker (1-9 digits then `.` or `)`) gets its *delimiter*
+  escaped instead, since CommonMark can only backslash-escape ASCII punctuation, not a
+  digit (`1\.` is inert; `\1.` is not a recognised escape at all and renders as a
+  literal backslash followed by `1.`, still an ordered marker to the parser). Block-
+  start detection reads the source's raw characters before any inline processing, so a
+  literal `\` immediately defeats every one of these checks regardless of what follows
+  it — the same mechanism C1/C2 already relied on for headings and fences, generalised
+  to every hazard T16-R2 names.
+- `list_item_text(prefix, text)`: replaces the three list-item call sites'
+  `continuation_indent`. `prefix` (already single-line — the caller's job) goes first
+  on the physical line; every line of `text`, the first included, is escaped with
+  `escape_block_start`; every line after the first is indented 2 spaces (the item's
+  content column) so it stays part of the item.
+
+Wired in: Notes and History (`list_item_text("", ..)` /
+`list_item_text("<utc> ", ..)`), review Findings (`list_item_text(&where_, &f.text)`,
+`where_` now built from `escape_cell(file)` rather than the file name raw — N3), and
+`Run.log` (`list_item_text("<utc> ", &entry.text)` — the ruling's "include the log";
+the original review's "engine's own sentences" scope boundary still holds for what the
+*engine* logs, but the ruling now treats every list-item field the same way whatever
+its provenance, which is the more defensible default). `Run.goal` (N1) goes through
+the existing `continuation_indent` — it is a plain line (`Goal: <goal>`), not a list
+item, so round 1's mechanism was always sufficient for it; it simply was never called.
+`ProofRecord.test` (N2) goes through `escape_cell` — it sits *inline*, mid-format-
+string (`"Proof N: test={test} red=..."`), not as its own line, so it needs the
+table-cell treatment (flatten to one line) rather than a line-oriented one.
+
+**A second, unrelated defect found while wiring this up.** Every list in the per-task
+section (Notes, each review round's findings, the round-usage bullets in
+`budget_and_spend`, History) was directly followed by a plain paragraph line
+(`Route:`, the next review round's own `Review round N (...):` line, `Proof N: ...`)
+with **no blank line** between them. CommonMark's lazy-continuation rule folds a
+plain line straight into the preceding list item's last paragraph when nothing
+separates them and the line does not itself look like a new block — so even entirely
+benign multi-line report content merged the report's own trusted metadata lines into
+the wrong list item, and confusingly attributed a genuinely new list item that
+followed later (recognisable as such, "-" can interrupt a paragraph) to the *same*
+list rather than starting a new one. Not a T16-R2 finding and not itself an injection
+(nothing forged — see `notes_findings_and_history_do_not_forge_real_markdown_structure`
+below, which caught it), but real breakage the round's own CommonMark-parser
+verification would otherwise have papered over by asserting the wrong invariant
+("exactly 3 more `List` starts" instead of "exactly 3 more list items, and nothing
+forged"). Fixed by pushing a blank line after each of these four list blocks.
+
+**Tests.** `report_escape.rs` gets 3 more unit tests: `escape_block_start` against
+every named marker plus the two boundary cases (up to 3 leading spaces still count; a
+mid-line marker does not), and two for `list_item_text`. `report_tests_escaping.rs`
+adds a `pulldown-cmark` (new dev-only dependency, workspace-wide in
+`[workspace.dependencies]`, `pulldown-cmark = "0.13"`; nothing already in the
+workspace parses Markdown) verification: `node_counts` parses rendered output with
+`Options::ENABLE_TABLES` and counts `Heading`/`List`/`Table`/`CodeBlock` start events.
+`notes_findings_and_history_do_not_forge_real_markdown_structure` poisons Notes, one
+Finding (`file` and `text`) and History with one line of every named hazard, and
+asserts heading/table/fence counts are unchanged from a clean baseline and exactly 3
+new list items appear (not, e.g., a nested list from an unescaped `-` inside an
+item). `run_goal_with_hostile_lines_forges_nothing_n1` and
+`log_entries_do_not_forge_markdown_structure` do the same for `Run.goal` and
+`Run.log`. `proof_test_field_with_a_newline_does_not_split_its_line_n2` and
+`finding_file_with_a_leading_hash_does_not_forge_a_heading_n3` are direct
+(non-parser) checks, since both are about a single field staying on one line rather
+than about block structure. All five were run against the round-1 code first and
+failed for the stated reason (a genuine list-merge/heading/table count mismatch, not a
+panic) before the fix landed — including reproducing re-review 1's exact I1 finding
+(1 `List` start instead of the expected 3, from the still-open lazy continuation) and,
+once `escape_block_start` existed but before `|` was added to its marker set, a
+forged-table false negative the delimiter-row poison line caught on its own.
+
+**Mutation-checked** by hand (mutate, run `cargo test -p anthrex-daemon --lib
+run::report`, confirm failure, restore, confirm `git status` clean): `list_item_text`
+stripped of its `escape_block_start` calls (leaves only the indent) → caught by 5
+tests, including its own two unit tests and all three list-item hostile-input tests.
+Removing `|` from `escape_block_start`'s marker set → caught by the log and
+notes/findings/history tests (both poison a real GFM delimiter row). Removing the
+ordered-marker branch entirely → caught by `escape_block_start`'s own unit test and
+both list-item hostile-input tests (the `1.`/`42)` lines in `HOSTILE_LINES` turn into
+real ordered lists once unescaped, inflating the list count).
+
+**Gates.** `cargo build --workspace --all-targets`, `cargo clippy --workspace
+--all-targets -- -D warnings` and `cargo fmt --all --check` clean. `cargo test -p
+anthrex-daemon --lib` is 919/919 green. `cargo test -p anthrex-daemon` (full,
+including integration tests) reproduces only the same pre-existing, unrelated
+`git_registry::a_commit_in_a_linked_worktree_triggers_a_probe` flake noted in the
+original M8a.16 notes and fix round 1 (green alone or with `--test-threads=1`;
+nothing in this round touches `run/git/`). File sizes: `report.rs` 214,
+`report_task.rs` 215, `report_escape.rs` 203, `report_tests.rs` 335,
+`report_tests_escaping.rs` 348 lines.
