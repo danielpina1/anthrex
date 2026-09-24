@@ -1002,8 +1002,20 @@ scope.
   `objects/info/` (whose `alternates` would graft another object store into the
   repository). A `git gc`, `git commit-graph write` or `git repack` that writes
   `objects/info/` fails under the sandbox; commits, merges, rebases and resets do not
-  need it (proven under seatbelt). Whether git's automatic `gc --auto` after a commit
-  fails the commit or only warns was not tested.
+  need it (proven under seatbelt). F1 re-review 2 (S5) tested git's automatic
+  `gc --auto` after a commit: it only warns (`error: Unable to create
+  '<common>/packed-refs.lock': Operation not permitted`), the command exits 0, and loose
+  objects accumulate until the user's own git runs `gc`. The repeated `error:` line may
+  lead a model to "fix" something. A fix is to launch workers with `gc.auto=0` and
+  `maintenance.auto=false`, through `GIT_CONFIG_PARAMETERS` or
+  `GIT_CONFIG_COUNT`/`KEY`/`VALUE` in the headless spec's environment.
+- **A task branch made a symbolic ref halts the run with a misleading reason.** Since
+  F1 fix round 4 (S1), every engine call refuses a task branch whose ref is a symbolic
+  ref or link, and blocks the task. D-2's guard (`merge::work_on_base`) still counts the
+  run's refs with `--glob=refs/heads/anthrex/<run>`, which follows such a ref. So a user
+  commit on the base would be reported as "unaccepted run work", and the run halts.
+  That is fail-safe, but the reason is wrong. The guard could list the run's refs with
+  `for-each-ref --format='%(refname) %(symref)'` and name the tampered branch instead.
 
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 

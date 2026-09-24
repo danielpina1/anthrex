@@ -2216,6 +2216,7 @@ mkdir -p /tmp/anthrex-m8a && cd /tmp/anthrex-m8a && git init -b main demo && cd 
     - the worker's `task_done` is rejected with `AGENTS.md configures or instructs future agents…`, and after it reverts, the task merges;
     - `AGENTS.md` on the run branch is unchanged.
 4d. **Codex project config.** If M8a.1 found that Codex loads project config, commit a `.codex/config.toml` and start a run with a Codex task. It is either excluded (the argv carries `codex_user_config_only`) or refused without `--trust-project`, as decision 53 says. Remove the file afterwards.
+4e. **The worker grant in the real CLIs (final fix batch F1, fix round 4, S5).** A worker's sandbox grant is about 260 paths (`objects/00` to `objects/ff`, `objects/pack`, the task's own branch with its lock and reflog, and its git dir's files). With a real Claude worker and a real Codex worker, confirm that each CLI accepts the whole list: Claude's `--settings` `allowWrite`, and Codex's `writable_roots`. Confirm that Claude's generated seatbelt profile and Codex's `-D WRITABLE_ROOT_n` parameters keep every entry, and that the worker's `git commit` succeeds. On Linux, repeat under the Linux sandbox (bubblewrap/landlock). Also check that a hard link from the task's branch file to `refs/heads/main` is refused there, as it is under seatbelt.
 5. In the TUI, typing into a focused worker window does nothing, and the kill and remove commands on it show decision 49's refusal. The run carries on.
 6. While `t2`'s worker runs, `anthrex daemon stop`:
    - `pgrep -fl "claude -p"` shows nothing of this run.
@@ -8760,3 +8761,74 @@ a ref through `HEAD`.
   256 object directories at launch, because git would otherwise need `objects/` writable
   to make one. The consequence is that a worker cannot write a commit-graph or run
   `git gc` (followups).
+
+### Final fix batch F1, fix round 4 (2026-09-24)
+
+Re-review 2 found that a worker could steer the engine through its own task branch's
+ref file, which its sandbox grant must include (a commit moves it).
+
+- **S1: a task branch made a symbolic ref.** A worker could write `ref: refs/heads/main`
+  (or a symbolic link) into its branch file. The hand-back's `update-ref` then followed
+  it and moved the base. Three guards now apply:
+  - Every engine `update-ref` passes `--no-deref`: the hand-back's and the re-point's
+    compare-and-swap, the merge queue's on the run branch, and salvage's.
+    (`delete_branches` already did.) A symbolic ref is then replaced, never followed.
+    This also covers a flip made after every check, while git runs.
+  - `pinned::check`, which runs before every engine git call in an engine worktree,
+    also refuses a task (or run) branch whose loose file is a symbolic link, a
+    directory, a `ref:` file, or anything but a commit id. A missing loose file is
+    allowed (`pack-refs`), because a worker cannot write `packed-refs` and it holds no
+    symbolic refs. Every read in the worktree is covered: the hand-back's `onto`, the
+    done check, the commit count, the diff so far, salvage, reconcile, and the merge
+    queue's source (the done check's `head`).
+  - The root-side reads that name a run branch refuse a symbolic one:
+    `ensure_worktree`'s `branch_head` (so the re-point decision) and `prepare_review`'s
+    branch-name fallback. They use `git symbolic-ref -q`, plus a symbolic-link check on
+    the loose file, because git reads through a link whose target is not a ref name.
+  - The refusal is "…is a symbolic ref to refs/heads/main; the task's branch was
+    tampered with". The engine blocks the task with it, as it does any other failed git
+    op. The engine never repairs the branch.
+- **S1(d): no sandbox-side fix.** A seatbelt `subpath` grant cannot require a path to
+  stay a regular file. So a worker can replace its branch file with a symbolic link or
+  a `ref:` file, and the engine-side checks above are the guard. Seatbelt does deny a
+  **hard link** from the granted path to another branch's file (verified: `ln` gets
+  "Operation not permitted"). Linux sandboxes are unverified (manual check 4e).
+- **S2: a hand-back refused after its merge ran now undoes that merge.** Before, the
+  merge was left in progress, and every later hand-back was refused.
+  - A clean merge is undone with a two-way `read-tree -m -u <merged tree> <HEAD>` (what
+    `git checkout` does), then `merge --quit`. No ref is written. A worker's
+    uncommitted edits to files the merge did not touch are kept.
+  - A conflicted merge is left in place and the refusal says so. That only happens when
+    `HEAD` moves during the merge.
+- **S2: other hand-back changes.**
+  - A detached `HEAD` is now refused before anything is merged ("…'s HEAD is not on
+    <branch> (detached, or mid-rebase)"). Before round 3, a merge commit was made on the
+    detached `HEAD`. Round 3 then failed after merging.
+  - At entry, the hand-back recognises the engine's own leftover of the same run head
+    and clears it:
+    - if it was committed (`HEAD^2` is the run head), only its merge state is dropped;
+    - if it is uncommitted and untouched, it is undone and the hand-back proceeds.
+  - Any other merge in progress is refused as before.
+  - A stale `<branch>.lock` left by a killed worker git still fails the compare-and-swap
+    each time, now with nothing left in progress. Removing it is left to the user.
+- **S3: an uncommitted merge is undone only when untouched.** Reconcile and the
+  hand-back's entry treat it as "untouched" only if the index is exactly the clean
+  merge's tree: `git diff-index --cached --quiet <tree>`, where the tree comes from
+  `merge-tree --write-tree HEAD <run head>`. A conflicted hand-back that the worker
+  resolved and staged has no clean tree, so it is left alone and noted. If
+  `merge-tree` and `git merge` ever disagree, the merge is refused rather than reset.
+- **S4.** `abort_merge` resets to `HEAD`'s commit, as `git merge --abort` does, not to
+  the branch's tip.
+- **File split.** `git/merge.rs` would have passed 600 lines, so the hand-back, the
+  abort and the leftover classification moved to `git/handback.rs`. The public API is
+  unchanged.
+- **S5, recorded.**
+  - Under the grant, git's automatic `gc` after a worker's commit, merge or rebase only
+    warns: `error: Unable to create '<common>/packed-refs.lock': Operation not
+    permitted`. The command still exits 0, and loose objects accumulate until the
+    user's own git runs `gc`. The worker's launch does not set `gc.auto=0` (followups).
+  - The grant is 260 paths, about 16 KB, in one argv element: Claude's `--settings`
+    JSON, and Codex's `-c sandbox_workspace_write.writable_roots=[…]`. macOS has no
+    per-argument limit (`ARG_MAX` is 1 MiB). Linux's `MAX_ARG_STRLEN` (128 KiB) is only
+    reached with a common-dir path of about 480 characters.
+  - Whether each real CLI accepts all 260 entries is manual check 4e.
