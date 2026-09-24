@@ -20,10 +20,9 @@ use tokio::net::UnixStream;
 use super::run_daemon::{DAEMON_EXIT_WAIT, DAEMON_START_WAIT, DaemonProcess};
 use super::{ANTHREX, RunningCommand, fake_agent_bin, runtime};
 
-/// Decision-derived bound for one task path (brief, "End-to-end tests"): at most 40
-/// sequential engine git calls at `git_timeout_secs = 5` (200 s), at most 4 check or
-/// proof runs at `check_timeout_secs = 10` (40 s) and at most 20 s of scripted waits,
-/// together 260 s, rounded up. A scenario of `k` task paths waits `k * RUN_WAIT`.
+/// One task path (brief, "End-to-end tests"): 40 engine git calls at 5 s, 4 check or
+/// proof runs at 10 s and 20 s of scripted waits, 260 s, rounded up. A scenario of `k`
+/// task paths waits `k * RUN_WAIT` (`docs/timing-budgets.md`).
 pub const RUN_WAIT: Duration = Duration::from_secs(300);
 
 /// How long one raw request may take, `run accept` and `run discard` aside: `run
@@ -261,6 +260,11 @@ impl RunHarness {
         if let Err(error) = self.start_daemon(DAEMON_START_WAIT) {
             panic!("the daemon did not restart: {error}\n{}", self.log_tail());
         }
+    }
+
+    /// Drops `key` from the daemon's environment from its next (re)start on.
+    pub fn unset_env(&mut self, key: &str) {
+        self.env.retain(|(k, _)| k != key);
     }
 
     /// The last 60 lines of `daemon.log`.

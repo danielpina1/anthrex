@@ -174,3 +174,27 @@ pub fn user_texts(lines: &[String]) -> Vec<String> {
         })
         .collect()
 }
+
+/// A read-only `git <args>` in `dir` beside a running engine (M8a.25 fix round 1):
+/// `--no-optional-locks`, the user's configuration and every inherited `GIT_*`
+/// location variable left out (AGENTS.md rule 11). Its trimmed stdout, or `None` when
+/// it failed.
+pub fn git_read(dir: &Path, args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .arg("--no-optional-locks")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_PREFIX")
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}

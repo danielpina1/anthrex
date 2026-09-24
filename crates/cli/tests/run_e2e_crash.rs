@@ -117,28 +117,16 @@ fn green_tree(h: &RunHarness, base: &str) -> BTreeSet<String> {
         .lines()
         .map(str::to_string)
         .collect();
-    let a = hash_blob(&h.repo, "a\n");
+    let a = hash_blob(h, "a\n");
     files.insert(format!("100644 blob {a}\ta.txt"));
     files
 }
 
-fn hash_blob(repo: &Path, content: &str) -> String {
-    use std::io::Write;
-    let mut child = std::process::Command::new("git")
-        .args(["hash-object", "--stdin"])
-        .current_dir(repo)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(content.as_bytes())
-        .unwrap();
-    let out = child.wait_with_output().unwrap();
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
+/// The blob id of `content`, written to a scratch file in the harness's temp dir.
+fn hash_blob(h: &RunHarness, content: &str) -> String {
+    let file = h.dir.path().join("blob");
+    std::fs::write(&file, content).unwrap();
+    git_read(&h.repo, &["hash-object", file.to_str().unwrap()]).expect("git hash-object")
 }
 
 fn crash_after(kind: &str) {
@@ -168,7 +156,15 @@ fn crash_after(kind: &str) {
     assert_eq!(runs.len(), 1, "{kind}: {runs:?}");
     assert_ordered(kind, &runs[0]);
 
-    h.restart_daemon(&[("ANTHREX_TEST_ABORT_AFTER_INTENT", "")]);
+    // The ordering checks above mean something only with the hold in force.
+    let log = std::fs::read_to_string(h.data().join("daemon.log")).unwrap_or_default();
+    assert!(
+        log.contains("ANTHREX_TEST_DELAY_DONE_MS: holding op done lines"),
+        "{kind}: the done-line hold was not armed:\n{log}"
+    );
+
+    h.unset_env("ANTHREX_TEST_ABORT_AFTER_INTENT");
+    h.restart_daemon(&[]);
     let id = h
         .snapshot()
         .runs

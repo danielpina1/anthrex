@@ -85,7 +85,8 @@ fn e2e_daemon_restart_pauses_and_resume_continues() {
     // The first turn is held open (`hang`) rather than ended: a worker turn that ends
     // with commits and no task_done gets decision 32's DONE_NUDGE at once, which a
     // `read_message` expecting the restart message would take instead. See the
-    // Implementation notes for M8a.25.
+    // Implementation notes for M8a.25. `t3`'s session is idle at the restart instead:
+    // its task is blocked on a question, its turn ended (M8a.25 fix round 1).
     h.script(
         "worker-t1-1",
         &[
@@ -104,13 +105,25 @@ fn e2e_daemon_restart_pauses_and_resume_continues() {
             done("added b"),
         ],
     );
-    h.script("reviewer-t1-1", &[approve()]);
-    h.script("reviewer-t2-1", &[approve()]);
+    h.script(
+        "worker-t3-1",
+        &[
+            blocked_question("which file?"),
+            read("Answer to your question: c.txt"),
+            commit("c.txt", "c\n"),
+            done("added c"),
+        ],
+    );
+    for task in ["t1", "t2", "t3"] {
+        h.script(&format!("reviewer-{task}-1"), &[approve()]);
+    }
+    let claude = "route = { runtime = \"claude\" }";
     let plan = plan(
         "",
         &[
-            task("t1", &["a.txt"], "route = { runtime = \"claude\" }"),
+            task("t1", &["a.txt"], claude),
             task("t2", &["b.txt"], CODEX),
+            task("t3", &["c.txt"], claude),
         ],
     );
     let id = h.start(&plan, true);
@@ -120,37 +133,37 @@ fn e2e_daemon_restart_pauses_and_resume_continues() {
             .iter()
             .any(|r| r.role == AgentRole::Worker && r.session_id.is_some())
             && t(run, task).worktree.join(file).exists()
-            && std::process::Command::new("git")
-                .args(["log", "-1", "--format=%s"])
-                .current_dir(&t(run, task).worktree)
-                .output()
-                .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains(&format!("add {file}")))
+            && git_read(&t(run, task).worktree, &["log", "-1", "--format=%s"])
+                .is_some_and(|s| s.contains(&format!("add {file}")))
     };
     let run = h.wait_run(
         &id,
-        |r| committed(r, "t1", "a.txt") && committed(r, "t2", "b.txt"),
+        |r| {
+            committed(r, "t1", "a.txt")
+                && committed(r, "t2", "b.txt")
+                && t(r, "t3").state == TaskState::Blocked
+                && !worker_round(r, "t3").turn_open
+        },
         RUN_WAIT,
     );
-    let ids = [
-        worker_round(&run, "t1").session_id.clone().unwrap(),
-        worker_round(&run, "t2").session_id.clone().unwrap(),
-    ];
-    let windows = [
-        worker_round(&run, "t1").window_id.unwrap(),
-        worker_round(&run, "t2").window_id.unwrap(),
-    ];
-    let before = until("both workers' pids in run.json", RUN_WAIT, || {
+    let ids = ["t1", "t2", "t3"].map(|task| worker_round(&run, task).session_id.clone().unwrap());
+    let windows = ["t1", "t2", "t3"].map(|task| worker_round(&run, task).window_id.unwrap());
+    let before = until("the workers' pids in run.json", RUN_WAIT, || {
         let run = h.run(&id)?;
-        let pids: BTreeSet<u32> = ["t1", "t2"]
+        let pids: BTreeSet<u32> = ["t1", "t2", "t3"]
             .iter()
             .flat_map(|task| recorded_pids(&run, task))
             .collect();
-        (pids.len() >= 2).then_some(pids)
+        (pids.len() >= 3).then_some(pids)
     });
-    let first_claude = argvs(&h, "worker-t1-1")
+    let first_t1 = argvs(&h, "worker-t1-1")
         .first()
         .cloned()
         .expect("t1's first argv");
+    let first_t3 = argvs(&h, "worker-t3-1")
+        .first()
+        .cloned()
+        .expect("t3's first argv");
 
     h.restart_daemon(&[]);
     let run = h.run(&id).expect("the run is restored");
@@ -166,7 +179,7 @@ fn e2e_daemon_restart_pauses_and_resume_continues() {
         assert_eq!(info.status, Status::Exited, "{info:#?}");
     }
     let mut pids = before;
-    for task in ["t1", "t2"] {
+    for task in ["t1", "t2", "t3"] {
         pids.extend(recorded_pids(&run, task));
     }
     for pid in pids {
@@ -188,30 +201,49 @@ fn e2e_daemon_restart_pauses_and_resume_continues() {
         "run resume: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    // The idle session takes its next message, the answer, as a resume.
+    match h.request(RunRequest::Edit {
+        run_id: id.clone(),
+        edits: vec![PlanEdit::Answer {
+            task_id: "t3".into(),
+            text: "c.txt".into(),
+        }],
+    }) {
+        RunReply::Done { .. } => {}
+        other => panic!("the answer: {other:?}"),
+    }
     let run = h.wait_run(&id, complete, RUN_WAIT);
-    for task in ["t1", "t2"] {
+    for task in ["t1", "t2", "t3"] {
         assert_eq!(t(&run, task).state, TaskState::Merged, "{task}");
         assert_eq!(t(&run, task).failures, 0, "{task}");
     }
 
-    let claude = argvs(&h, "worker-t1-1");
-    let resumed = claude
-        .iter()
-        .find(|a| a.windows(2).any(|w| w[0] == "--resume" && w[1] == ids[0]))
-        .unwrap_or_else(|| panic!("no --resume {}: {claude:#?}", ids[0]));
-    let mut skip = false;
-    for arg in &first_claude {
-        if skip {
-            skip = false;
-            continue;
-        }
-        if arg == "--session-id" {
-            skip = true;
-            continue;
-        }
+    // Every flag of the first argv, each in its place, with `--resume <id>` where
+    // `--session-id <id>` was.
+    for (name, first, session) in [
+        ("worker-t1-1", &first_t1, &ids[0]),
+        ("worker-t3-1", &first_t3, &ids[2]),
+    ] {
+        let expected: Vec<String> = first
+            .iter()
+            .map(|a| {
+                if a == "--session-id" {
+                    "--resume".into()
+                } else {
+                    a.clone()
+                }
+            })
+            .collect();
         assert!(
-            resumed.contains(arg),
-            "the resume lost {arg}: {resumed:#?}\nfirst: {first_claude:#?}"
+            expected
+                .windows(2)
+                .any(|w| w[0] == "--resume" && w[1] == **session),
+            "{name}: {first:#?}"
+        );
+        let all = argvs(&h, name);
+        assert!(
+            all.contains(&expected),
+            "{name}: no resume argv equal to {expected:#?}\nin {all:#?}"
         );
     }
     let codex = argvs(&h, "worker-t2-1");

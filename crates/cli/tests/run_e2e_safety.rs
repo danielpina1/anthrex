@@ -141,13 +141,8 @@ fn t1_committed(h: &RunHarness, id: &str) {
     let worktree = t(&h.run(id).unwrap(), "t1").worktree.clone();
     until("t1's first commit", RUN_WAIT, || {
         let branch = format!("anthrex/{id}/t1");
-        let out = std::process::Command::new("git")
-            .args(["log", "--format=%s", &branch])
-            .current_dir(&h.repo)
-            .output()
-            .ok()?;
-        (worktree.exists() && String::from_utf8_lossy(&out.stdout).contains("add a.txt"))
-            .then_some(())
+        let log = git_read(&h.repo, &["log", "--format=%s", &branch])?;
+        (worktree.exists() && log.contains("add a.txt")).then_some(())
     });
 }
 
