@@ -97,13 +97,41 @@ pub(crate) fn forget_missing(
     Ok(())
 }
 
+/// The commit `branch` points at, or `None` when it does not exist. Fix round 4, S1: a
+/// branch that is a symbolic ref (a worker can write its own task branch's file) is
+/// refused, never resolved to the tip of the branch it names.
 fn branch_head(g: Git<'_>, root: &Path, branch: &str) -> Result<Option<String>, String> {
     let refname = format!("refs/heads/{branch}");
+    not_symbolic(g, root, &refname)?;
     let output = g.read(
         root,
         &[os("rev-parse"), os("-q"), os("--verify"), os(&refname)],
     )?;
     Ok(output.success.then(|| output.stdout.trim().to_string()))
+}
+
+/// Fix round 4, S1: refuses `refname` when it is a symbolic ref (`ref: …`, or a
+/// symbolic link git reads as one), which would make the engine read another branch's
+/// tip as its own. A run's own branch (`refs/heads/anthrex/…`, which a worker can write)
+/// is also refused when its loose file is any symbolic link: git reads through one that
+/// is not a ref name.
+fn not_symbolic(g: Git<'_>, root: &Path, refname: &str) -> Result<(), String> {
+    let output = g.read(root, &[os("symbolic-ref"), os("-q"), os(refname)])?;
+    if output.success {
+        return Err(format!(
+            "{refname} is a symbolic ref to {}; the branch was tampered with",
+            output.stdout.trim()
+        ));
+    }
+    if refname.starts_with("refs/heads/anthrex/") {
+        let file = common_dir(g, root)?.join(refname);
+        if std::fs::symlink_metadata(&file).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            return Err(format!(
+                "{refname} is a symbolic link; the branch was tampered with"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// `git merge-base --is-ancestor`: exit 0 is yes, exit 1 (silent) is no, anything
@@ -198,7 +226,15 @@ fn ensure_worktree(
         // ref is written through `HEAD` (once `checkout -B` and `reset --hard`, whose
         // reset wrote whatever branch `HEAD` named at that instant).
         let own = format!("refs/heads/{branch}");
-        let cas = [os("update-ref"), os(&own), os(from), os(&head)];
+        // Fix round 4, S1: `--no-deref`, so a branch made a symbolic ref is replaced,
+        // never followed onto the branch it names.
+        let cas = [
+            os("update-ref"),
+            os("--no-deref"),
+            os(&own),
+            os(from),
+            os(&head),
+        ];
         let output = g.write_raw(path, &cas)?;
         if !output.success {
             return Err(format!(
@@ -287,6 +323,11 @@ fn lock(g: Git<'_>, root: &Path, path: &Path, reason: &str) -> Result<(), String
 }
 
 fn resolve_commit(g: Git<'_>, root: &Path, reference: &str) -> Result<String, String> {
+    // A run's own branch named in place of a commit (a review of a task that has not
+    // claimed one) is read only when it is not a symbolic ref (fix round 4, S1).
+    if reference.starts_with("anthrex/") {
+        not_symbolic(g, root, &format!("refs/heads/{reference}"))?;
+    }
     let spec = format!("{reference}^{{commit}}");
     let output = g.read(
         root,

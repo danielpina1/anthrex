@@ -93,7 +93,13 @@ pub fn salvage(
     // existing one, so this guards only against another writer creating it since.
     g.write(
         worktree,
-        &[os("update-ref"), os(reference), os(&commit), os("")],
+        &[
+            os("update-ref"),
+            os("--no-deref"),
+            os(reference),
+            os(&commit),
+            os(""),
+        ],
     )?;
     Ok(Some(reference.to_string()))
 }

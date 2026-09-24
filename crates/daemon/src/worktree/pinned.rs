@@ -11,7 +11,9 @@
 //! refused. It also verifies `HEAD`, which a worker may write: it must name the
 //! worktree's own branch or be detached, so no engine merge, reset or checkout can be
 //! steered onto another branch (fix round 2, R1). The git directory is found once,
-//! uniquely, comparing `<worktree>/.git` without following it (R2).
+//! uniquely, comparing `<worktree>/.git` without following it (R2). And it verifies the
+//! worktree's own branch ref, which a worker may also write: it must hold a commit, never
+//! a symbolic ref or a symbolic link to another branch (fix round 4, S1).
 //!
 //! The registry is process-wide and tiny: a map behind [`crate::lock`], read and
 //! written without I/O under the lock.
@@ -183,7 +185,56 @@ pub fn check(worktree: &Path, pin: &Pin) -> Result<(), String> {
     if pin.git_dir.join("config.worktree").exists() {
         return refused("it has a config.worktree".to_string());
     }
-    check_head(pin).or_else(refused)
+    check_head(pin).or_else(refused)?;
+    check_own_ref(pin).map_err(|what| {
+        format!(
+            "refusing git in {}: {what}; the task's branch was tampered with",
+            worktree.display()
+        )
+    })
+}
+
+/// Fix round 4, S1: the worktree's own branch ref, which a worker may write (a commit
+/// moves it), holds a commit and nothing else. A worker could make it `ref:
+/// refs/heads/main` or a symbolic link, and every engine read of the branch (the
+/// hand-back's `onto`, the done check's `HEAD`, a salvage's parent) would then judge
+/// another branch's tip, and a dereferencing write would move that branch. A missing
+/// loose ref is fine: `pack-refs` moves it into `packed-refs`, which a worker cannot
+/// write and which holds no symbolic ref.
+fn check_own_ref(pin: &Pin) -> Result<(), String> {
+    let Some(own) = pin.head.as_deref() else {
+        return Ok(());
+    };
+    let file = pin.common_dir.join(own);
+    let meta = match std::fs::symlink_metadata(&file) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(format!("its branch {own} cannot be read ({err})")),
+    };
+    if meta.file_type().is_symlink() {
+        return Err(format!("its branch {own} is a symbolic link"));
+    }
+    if !meta.is_file() {
+        return Err(format!("its branch {own} is not a plain file"));
+    }
+    let text = std::fs::read_to_string(&file)
+        .map_err(|err| format!("its branch {own} cannot be read ({err})"))?;
+    let text = text.trim_end_matches(['\n', '\r']);
+    if let Some(named) = text.strip_prefix("ref:") {
+        return Err(format!(
+            "its branch {own} is a symbolic ref to {}",
+            named.trim()
+        ));
+    }
+    if is_sha(text) {
+        Ok(())
+    } else {
+        Err(format!("its branch {own} holds {text:?}"))
+    }
+}
+
+fn is_sha(text: &str) -> bool {
+    (text.len() == 40 || text.len() == 64) && text.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// Fix round 2, R1: the worktree's `HEAD` names its own branch, or is detached. A
@@ -206,11 +257,7 @@ fn check_head(pin: &Pin) -> Result<(), String> {
             "its HEAD names {named}, not {}",
             pin.head.as_deref().unwrap_or("a detached commit")
         )),
-        None if (text.len() == 40 || text.len() == 64)
-            && text.bytes().all(|b| b.is_ascii_hexdigit()) =>
-        {
-            Ok(())
-        }
+        None if is_sha(text) => Ok(()),
         None => Err(format!("its HEAD holds {text:?}")),
     }
 }

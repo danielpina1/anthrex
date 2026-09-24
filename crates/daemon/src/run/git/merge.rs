@@ -159,7 +159,13 @@ pub fn cas_update(
 ) -> Result<bool, String> {
     let g = Git::new(git, timeout);
     let refname = format!("refs/heads/{branch}");
-    let args = [os("update-ref"), os(&refname), os(new), os(old)];
+    let args = [
+        os("update-ref"),
+        os("--no-deref"),
+        os(&refname),
+        os(new),
+        os(old),
+    ];
     let output = g.write_raw(root, &args)?;
     if output.success {
         return Ok(true);
@@ -481,7 +487,15 @@ pub fn hand_back(
         )?
         .trim()
         .to_string();
-    let cas = [os("update-ref"), os(&own), os(&commit), os(&onto)];
+    // Fix round 4, S1: `--no-deref`, so a branch made a symbolic ref is replaced,
+    // never followed onto the branch it names.
+    let cas = [
+        os("update-ref"),
+        os("--no-deref"),
+        os(&own),
+        os(&commit),
+        os(&onto),
+    ];
     let output = g.write_raw(worktree, &cas)?;
     if !output.success {
         return Err(format!(

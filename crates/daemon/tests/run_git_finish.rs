@@ -278,12 +278,13 @@ fn salvage_never_overwrites_a_ref_created_under_it() {
     let tools = tempfile::tempdir().unwrap();
     let git = wrapper_git(
         tools.path(),
-        r#"prev=""
+        // Any option (`--no-deref`, fix round 4) may sit between `update-ref` and the ref.
+        r#"seen=""
 for a in "$@"; do
-  if [ "$prev" = "update-ref" ]; then
-    case "$a" in refs/anthrex/salvage/*) "$REAL" -C "$2" update-ref "$a" HEAD || exit 99 ;; esac
+  if [ -n "$seen" ]; then
+    case "$a" in refs/anthrex/salvage/*) "$REAL" -C "$2" update-ref "$a" HEAD || exit 99; break ;; esac
   fi
-  prev="$a"
+  [ "$a" = "update-ref" ] && seen=1
 done"#,
     );
     let reference = "refs/anthrex/salvage/sv05/t1/1";
