@@ -480,3 +480,37 @@ fn accept_conflict_keeps_the_run_complete() {
     let effects = finish(&mut fx, FinishAction::Accept);
     assert_eq!(ops_in(&effects, "Accept").len(), 1, "{effects:#?}");
 }
+
+/// Final fix batch F1, finding D-4: the base advanced during the run, then the user
+/// reset it back. The driver's read at accept finds it at `base_sha` again and says so
+/// (a `BaseAdvanced` to `base_sha`); accept then expects `base_sha`, not the old `to`,
+/// which no longer exists on the base, so accept is not refused on every attempt.
+#[test]
+fn a_base_back_at_base_sha_clears_base_moved_and_accept_expects_it() {
+    let mut fx = all_merged();
+    base_advanced(&mut fx, X, 3);
+    verify(&mut fx, OpResult::RefsOk);
+    assert!(fx.run().base_moved.is_some());
+
+    let base_sha = fx.run().base_sha.clone();
+    base_advanced(&mut fx, &base_sha, 0);
+    assert_eq!(fx.run().base_moved, None);
+    assert!(
+        !attention(&fx)
+            .iter()
+            .any(|l| l.starts_with("base main moved")),
+        "{:?}",
+        attention(&fx)
+    );
+    assert!(
+        fx.run().log.iter().any(|l| l.text.contains("back at")),
+        "logged"
+    );
+
+    finish(&mut fx, FinishAction::Accept);
+    let (_, kind) = pending_one(&fx, "Accept", None);
+    let OpKind::Accept { expected_base, .. } = kind else {
+        unreachable!()
+    };
+    assert_eq!(expected_base, base_sha);
+}

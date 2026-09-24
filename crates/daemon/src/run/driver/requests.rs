@@ -475,6 +475,14 @@ impl RunService {
         );
         match moved {
             None if confirm.as_deref() == Some(run_id.as_str()) => {
+                // Final fix batch F1, finding D-4: a base that advanced during the run
+                // and came back is at `base_sha` again; the engine drops its record, so
+                // accept expects `base_sha`, not a head the base no longer has.
+                self.send(EventKind::BaseAdvanced {
+                    run_id: run_id.clone(),
+                    to: base_sha,
+                    commits: 0,
+                });
                 self.finish_now(run_id, action).await
             }
             None => RunReply::ConfirmNeeded {

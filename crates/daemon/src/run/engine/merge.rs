@@ -421,10 +421,21 @@ pub(super) fn base_advanced(
     let Some(run) = state.runs.get_mut(run_id) else {
         return;
     };
-    if run.state.is_terminal()
-        || to == run.base_sha
-        || run.base_moved.as_ref().is_some_and(|m| m.to == to)
-    {
+    if run.state.is_terminal() || run.base_moved.as_ref().is_some_and(|m| m.to == to) {
+        return;
+    }
+    if to == run.base_sha {
+        // Final fix batch F1, finding D-4: the base came back (the user reset their
+        // commits away). What was recorded no longer describes it, and accept must
+        // expect `base_sha` again.
+        if run.base_moved.take().is_some() {
+            let text = format!(
+                "base {} is back at {}",
+                run.base_branch,
+                sha7(&run.base_sha)
+            );
+            log(run, now, text);
+        }
         return;
     }
     let text = format!(
