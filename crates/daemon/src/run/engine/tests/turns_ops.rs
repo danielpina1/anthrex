@@ -4,9 +4,10 @@
 //! only its rejection) and T12-later (the stall clock waits for a check; a Codex
 //! interrupt before its session has an id is rung 2).
 
+use proto::{PlanEdit, RunState};
 use serde_json::json;
 
-use super::dispatch::replies;
+use super::dispatch::{edit, replies};
 use super::fixture::*;
 use super::holds::delivers;
 use super::turns::{exited, killed_exit, queue, working_on};
@@ -14,7 +15,7 @@ use super::turns_fixes::assert_alive;
 use crate::run::contract::{
     DONE_ACCEPTED, DONE_NUDGE, NO_COMMIT_NUDGE, protected_file_message, stall_nudge,
 };
-use crate::run::engine::{Effect, EventKind, OpKind, OpResult};
+use crate::run::engine::{Effect, EventKind, OpId, OpKind, OpResult};
 use crate::run::model::{FallbackState, StallState};
 
 const ROOMY: &str = "[task.budget]\ntool_calls = 1000\nminutes = 1000";
@@ -378,6 +379,60 @@ fn the_stall_clock_waits_for_a_task_done_check() {
     assert!(!effects.contains(&Effect::Interrupt { window_id: window }));
     let effects = fx.send(verdict + stall_after, EventKind::Tick);
     assert!(effects.contains(&Effect::Interrupt { window_id: window }));
+}
+
+/// Ruling T15-R4 (N-4): the open-turn watchdog keeps T12-later too. A paused run's open
+/// turn that waits on its own `task_done` check is not interrupted, and keeps its nudge.
+#[test]
+fn a_paused_run_s_stall_clock_waits_for_a_task_done_check() {
+    let (mut fx, window) = working_on(ROOMY);
+    let effects = fx.tool(window, "task_done", args());
+    let (verify, _) = ops_in(&effects, "VerifyDone")[0].clone();
+    edit(&mut fx, vec![PlanEdit::Pause]);
+    assert_eq!(fx.run().state, RunState::Paused);
+    claim_outlasts_the_stall(&mut fx, window, verify);
+    assert_alive(&fx);
+}
+
+/// Ruling T15-R4 (N-4): the same in a halted run. Its proof waits for the resume.
+#[test]
+fn a_halted_run_s_stall_clock_waits_for_a_task_done_check() {
+    let (mut fx, window) = working_on(ROOMY);
+    let effects = fx.tool(window, "task_done", args());
+    let (verify, _) = ops_in(&effects, "VerifyDone")[0].clone();
+    let run = fx.run_mut();
+    run.state = RunState::Halted;
+    run.halted_reason = Some("refs/heads/main was rewritten".into());
+    claim_outlasts_the_stall(&mut fx, window, verify);
+    let reply = fx.reply();
+    let effects = fx.next(EventKind::Resume {
+        reply,
+        run_id: RUN_ID.into(),
+        rebaseline: Some((BASE.to_string(), "5".repeat(40))),
+    });
+    assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
+    assert!(!ops_in(&effects, "Proof").is_empty(), "{effects:#?}");
+    assert_alive(&fx);
+}
+
+/// A tick past `stall_after` while the check is in flight interrupts nothing and spends
+/// no nudge; the verdict then leaves the stall clock armed.
+fn claim_outlasts_the_stall(fx: &mut Fixture, window: u32, verify: OpId) {
+    let stall_after = fx.run().limits.stall_after_secs;
+    let quiet = fx.task("t1").rounds[0].last_event;
+    let effects = fx.send(quiet + stall_after + 5, EventKind::Tick);
+    assert!(
+        !effects.contains(&Effect::Interrupt { window_id: window }),
+        "{effects:#?}"
+    );
+    let round = &fx.task("t1").rounds[0];
+    assert_eq!(
+        (round.stall, round.interrupted),
+        (StallState::Watching, false)
+    );
+    let result = fx.clean_check("t1");
+    fx.done(verify, result);
+    assert_eq!(fx.task("t1").rounds[0].stall, StallState::Watching);
 }
 
 /// Probe P4 (T12-later): a Codex turn interrupted before its session had an id has

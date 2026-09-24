@@ -107,7 +107,8 @@ pub(super) fn watch_open_turns(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         let quiet = round.last_event.max(round.rate_limited_until.unwrap_or(0));
         let why = if let Some(what) = breached(spend, task.budget) {
             format!("its open turn passed its budget ({what})")
-        } else if now >= quiet + stall_after {
+        } else if now >= quiet + stall_after && task.claim.is_none() {
+            // Ruling T12-later (T15-R4): no stall while its `task_done` is being checked.
             "its open turn made no progress".to_string()
         } else {
             continue;

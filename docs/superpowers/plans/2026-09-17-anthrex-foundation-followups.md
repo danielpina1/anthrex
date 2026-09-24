@@ -838,3 +838,12 @@ scope.
   change or a dirty submodule does not count toward `dirty_tracked`. Nothing
   uncommitted is merged, so this is not a gate bypass. The claim is accepted with work
   left behind, though, which M8a.9's salvage then has to catch.
+
+## From M8a.15's fix round 4 (2026-09-24), for M8a
+
+- **The liveness oracle rejects a halted run's task in `proof` or `check`.**
+  `gates_alive` (`run/engine/tests/liveness.rs`) wants the gate op in flight, but
+  `start_gates` runs only while the run runs, so such a task rightly waits for the
+  resume. `assert_alive` resumes a paused run before checking, and nothing does that
+  for a halted one. The review branch already exempts a stopped run; `proof` and
+  `check` should too, or the oracle should resume a halted run with a rebaseline.

@@ -6637,3 +6637,21 @@ accepted estimate from concern 3.
 - The earlier clock mutants were re-run and are killed: F1, F2, F5, F16 (the one
   remaining `sync`), F17, F18, F19, G1, G3 and R16.
 - G2 is still equivalent, as re-review 2 accepted.
+
+#### M8a.15 fix round 4
+
+Re-review 3 (`task-15-rereview-3.md`) confirmed N-3 and M-5. It found N-4 (Important,
+low likelihood). Ruling T15-R4 is binding.
+
+**N-4 / T15-R4: the open-turn watchdog keeps T12-later.** `clock::watch_open_turns`
+interrupted an open turn whose `task_done` check was in flight in a paused or halted
+run. That aborted the pending tool call, spent the session's one nudge and left a stale
+`stall_nudge` in the outbox. Its stall branch now skips a task with a claim in flight
+(`task.claim.is_none()`), the same rule `signals::watch` applies to a running run. The
+budget branch still fires during a claim, as `check_budget` does in `signals::watch`.
+- **Red** (both at the no-interrupt assertion in `claim_outlasts_the_stall`):
+  - `a_paused_run_s_stall_clock_waits_for_a_task_done_check`;
+  - `a_halted_run_s_stall_clock_waits_for_a_task_done_check`. Its proof waits for the
+    resume, so the test resumes with a rebaseline, checks that the `Proof` op starts,
+    then runs the liveness assertion.
+- **Mutation.** Removing the new condition fails both tests.
