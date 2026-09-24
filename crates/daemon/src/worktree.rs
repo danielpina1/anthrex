@@ -273,6 +273,12 @@ pub fn run_git_head_tail(
     )
 }
 
+/// Every daemon git call ignores a configured `core.fsmonitor`: a sandboxed worker
+/// could once write the repository's shared config, and git runs the fsmonitor command
+/// on every `status`, which here would run it unsandboxed, as the daemon (final fix
+/// batch F1, findings C-C1 and D-5). Passed right after `--no-optional-locks`.
+pub const NO_FSMONITOR: [&str; 2] = ["-c", "core.fsmonitor=false"];
+
 enum Capture {
     Capped(usize),
     HeadTail(usize, usize),
@@ -304,6 +310,7 @@ fn run_git_capturing(
         .arg("-C")
         .arg(dir)
         .arg("--no-optional-locks")
+        .args(NO_FSMONITOR)
         .args(args)
         .env("LC_ALL", "C")
         .env("GIT_TERMINAL_PROMPT", "0");

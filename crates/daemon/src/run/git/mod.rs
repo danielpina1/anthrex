@@ -13,7 +13,10 @@
 //! and a per-command timeout last. Every git command goes through
 //! [`crate::worktree::run_git_with_cap`], so AGENTS.md rules 10 and 11 hold by
 //! construction: `-C <dir> --no-optional-locks` and a scrubbed environment on every
-//! invocation. Every engine **write** also carries [`WRITE_FLAGS`] (decision 18).
+//! invocation, and `-c core.fsmonitor=false` ([`crate::worktree::NO_FSMONITOR`]). Every
+//! engine **read**, and `run accept`'s merge, carries [`NO_HOOKS`]; every engine
+//! **write** carries [`WRITE_FLAGS`] (decision 18), which include it (final fix batch
+//! F1, findings C-C1 and D-5).
 
 mod done;
 mod merge;
@@ -53,6 +56,14 @@ use super::plan::Preflight;
 use crate::project;
 use crate::subprocess::HeadTail;
 use crate::worktree::{GitOutput, run_git_head_tail, run_git_with_cap};
+
+/// Every engine git call that is not a [`WRITE_FLAGS`] write passes this ahead of its
+/// subcommand: reads, and `run accept`'s merge and its abort in the user's checkout. A
+/// hook planted in the repository's hooks directory (a worker could once write it)
+/// never runs inside the daemon, nor inside accept. Final fix batch F1 (C-C1, D-5); for
+/// accept this departs from decision 18, which let the user's hooks run there
+/// (Implementation notes).
+pub const NO_HOOKS: [&str; 2] = ["-c", "core.hooksPath=/dev/null"];
 
 /// Decision 18: every engine write passes these ahead of its subcommand, so a user's
 /// hooks or a signing pinentry can never hang a run.
@@ -114,7 +125,7 @@ impl<'a> Git<'a> {
         run_git_head_tail(
             self.program,
             dir,
-            args,
+            &Self::unhooked(args),
             Instant::now() + self.timeout,
             REVIEW_DIFF_MAX,
             REVIEW_DIFF_MAX,
@@ -136,7 +147,7 @@ impl<'a> Git<'a> {
         run_git_head_tail(
             self.program,
             dir,
-            args,
+            &Self::unhooked(args),
             Instant::now() + self.timeout,
             head_bytes,
             0,
@@ -144,14 +155,22 @@ impl<'a> Git<'a> {
         .map_err(|err| err.to_string())
     }
 
+    /// `args` as given: the caller has put [`NO_HOOKS`] or [`WRITE_FLAGS`] first.
     fn raw(&self, dir: &Path, args: &[&OsStr], cap: usize) -> Result<GitOutput, String> {
         run_git_with_cap(self.program, dir, args, Instant::now() + self.timeout, cap)
             .map_err(|err| err.to_string())
     }
 
+    /// [`NO_HOOKS`], then `args`.
+    fn unhooked<'b>(args: &[&'b OsStr]) -> Vec<&'b OsStr> {
+        let mut full: Vec<&OsStr> = NO_HOOKS.iter().map(|flag| os(flag)).collect();
+        full.extend_from_slice(args);
+        full
+    }
+
     /// A read whose failure the caller interprets.
     pub(crate) fn read(&self, dir: &Path, args: &[&OsStr]) -> Result<GitOutput, String> {
-        self.raw(dir, args, LARGE_OUTPUT_BYTES)
+        self.raw(dir, &Self::unhooked(args), LARGE_OUTPUT_BYTES)
     }
 
     /// A read that must succeed; its stdout.
@@ -168,10 +187,10 @@ impl<'a> Git<'a> {
     }
 
     /// A write into the user's own checkout (`run accept`), which decision 18 exempts
-    /// from [`WRITE_FLAGS`]: their hooks and signing apply to their merge. The caller
-    /// interprets its failure.
+    /// from [`WRITE_FLAGS`]: their signing applies to their merge. Their hooks do not
+    /// ([`NO_HOOKS`], final fix batch F1). The caller interprets its failure.
     pub(crate) fn user_write(&self, dir: &Path, args: &[&OsStr]) -> Result<GitOutput, String> {
-        self.raw(dir, args, LARGE_OUTPUT_BYTES)
+        self.raw(dir, &Self::unhooked(args), LARGE_OUTPUT_BYTES)
     }
 
     /// A write that must succeed; its stdout.

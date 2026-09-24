@@ -2,7 +2,9 @@
 //!
 //! [`probe`] spawns exactly the one command design decision 5 names
 //! (`git -C <root> --no-optional-locks status --porcelain=v2 --branch
-//! --untracked-files=normal -z`) — no more — and hands its stdout to
+//! --untracked-files=normal -z`) — no more, plus `-c core.fsmonitor=false` so a
+//! command planted in a repository's config never runs as the daemon (M8a final fix
+//! batch F1) — and hands its stdout to
 //! [`crate::git::parse::parse_porcelain_v2_z`]. It fills in the in-progress operation
 //! by resolving the worktree's own git dir straight from the filesystem
 //! ([`resolve_git_dir`], no extra process) and stat-ing it with [`detect_operation`] —
@@ -43,6 +45,8 @@ pub fn probe(git: &OsStr, root: &Path, timeout: Duration) -> Option<GitState> {
     let mut command = Command::new(git);
     command.arg("-C").arg(root).args([
         "--no-optional-locks",
+        "-c",
+        "core.fsmonitor=false",
         "status",
         "--porcelain=v2",
         "--branch",

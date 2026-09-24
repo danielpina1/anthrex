@@ -6,7 +6,7 @@
 //! Blocking; call only from `spawn_blocking`. Every function here writes, so each
 //! belongs behind the caller's [`super::GitQueue::write`]. The engine-owned writes carry
 //! decision 18's flags; [`accept`], the only write into the user's checkout, carries
-//! neither (decision 18).
+//! only [`super::NO_HOOKS`] (decision 18, as amended by final fix batch F1).
 
 use std::ffi::OsStr;
 use std::path::Path;
@@ -219,9 +219,9 @@ fn checked_out_branches(g: Git<'_>, root: &Path) -> Result<Vec<String>, String> 
 }
 
 /// How long `run accept`'s own `git merge` may take. Longer than an engine git call's
-/// `git_timeout`, because the user's hooks and signing run inside it (decision 18): a
-/// `commit-msg` hook on a cold `npx` cache, or a signing key waiting for a touch
-/// (fix round 1, ruling T9-I2).
+/// `git_timeout`, because the user's signing runs inside it (decision 18): a signing
+/// key waiting for a touch (fix round 1, ruling T9-I2). Their hooks no longer run there
+/// (final fix batch F1, [`super::NO_HOOKS`]).
 pub const ACCEPT_MERGE_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Decision 20's accept, in `root`, the user's own checkout. Refused unless:
@@ -240,8 +240,10 @@ pub const ACCEPT_MERGE_TIMEOUT: Duration = Duration::from_secs(600);
 /// undone with `git reset --keep HEAD^1`, keeping that commit, and refused as a base
 /// that moved again (ruling T9-m1).
 ///
-/// No decision 18 flags: this is the user's checkout, and their hooks and signing
-/// apply to their merge.
+/// Not decision 18's [`super::WRITE_FLAGS`]: this is the user's checkout, and their
+/// signing applies to their merge. Their hooks do not run ([`super::NO_HOOKS`], final
+/// fix batch F1: a sandboxed worker could once plant one in the repository's hooks
+/// directory).
 pub fn accept(
     git: &OsStr,
     root: &Path,

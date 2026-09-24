@@ -24,6 +24,7 @@ const SCRUBBED: [&str; 5] = [
     "GIT_INDEX_FILE",
     "GIT_PREFIX",
 ];
+const NO_HOOKS: [&str; 2] = ["-c", "core.hooksPath=/dev/null"];
 const WRITE_FLAGS: [&str; 4] = [
     "-c",
     "core.hooksPath=/dev/null",
@@ -222,10 +223,23 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
         assert_eq!(argv[0], "-C", "{argv:?}");
         assert!(std::path::Path::new(argv[1]).is_absolute(), "{argv:?}");
         assert_eq!(argv[2], "--no-optional-locks", "{argv:?}");
-        let rest = &argv[3..];
+        // Final fix batch F1 (C-C1, D-5): no call runs a configured fsmonitor, and a
+        // call that is not a write still runs no hook.
+        assert_eq!(&argv[3..5], ["-c", "core.fsmonitor=false"], "{argv:?}");
+        let rest = &argv[5..];
         let (flags, command) = if rest.starts_with(&WRITE_FLAGS) {
             (true, &rest[4..])
+        } else if rest.starts_with(&NO_HOOKS) {
+            (false, &rest[2..])
         } else {
+            // Only preflight's root detection (`project::detect_roots_with`, shared with
+            // the rest of the daemon) runs outside `run::git`'s `Git`; a `rev-parse`
+            // runs no hook.
+            assert_eq!(
+                rest.last(),
+                Some(&"--show-toplevel"),
+                "a read that may run hooks: {argv:?}"
+            );
             (false, rest)
         };
         if is_write(command) {

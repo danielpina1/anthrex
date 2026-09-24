@@ -236,22 +236,22 @@ fn accept_merge_that_outlives_its_deadline_is_aborted() {
     write(&repo.root, "notes.txt", "untracked, mine\n");
     let status_before = out(&repo.root, &["status", "--porcelain"]);
 
-    // The user's `commit-msg` hook runs inside accept's merge (decision 18 keeps it), after
-    // git has written the merged index, the tree and `MERGE_HEAD`; it outlives the
-    // merge's deadline. A local `core.hooksPath` so a global one cannot hide it.
-    let hooks = repo.root.join(".git/hooks");
-    std::fs::create_dir_all(&hooks).unwrap();
-    let marker = repo.root.join(".git/hook-started");
-    let hook = hooks.join("commit-msg");
+    // The user's signing runs inside accept's merge (decision 18 keeps it; their hooks
+    // no longer run there, final fix batch F1), after git has merged the index and the
+    // tree; a signing program waiting for a touch outlives the merge's deadline.
+    let tools = tempfile::tempdir().unwrap();
+    let marker = tools.path().join("signing-started");
+    let signer = tools.path().join("slow-gpg");
     std::fs::write(
-        &hook,
+        &signer,
         format!("#!/bin/sh\n: > '{}'\nsleep 30\n", marker.display()),
     )
     .unwrap();
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(&signer, std::fs::Permissions::from_mode(0o755)).unwrap();
+    out(&repo.root, &["config", "commit.gpgSign", "true"]);
     out(
         &repo.root,
-        &["config", "core.hooksPath", hooks.to_str().unwrap()],
+        &["config", "gpg.program", signer.to_str().unwrap()],
     );
 
     let result = accept_with_merge_timeout(
@@ -260,7 +260,7 @@ fn accept_merge_that_outlives_its_deadline_is_aborted() {
         "main",
         &base,
         "anthrex/to01/integration",
-        "anthrex: accept run to01: slow hook",
+        "anthrex: accept run to01: slow signing",
         Duration::from_secs(2),
         T,
     );
@@ -268,7 +268,7 @@ fn accept_merge_that_outlives_its_deadline_is_aborted() {
     assert!(err.contains("timed out"), "{err}");
     assert!(
         marker.exists(),
-        "the merge was inside the hook when it was killed"
+        "the merge was inside its signing when it was killed"
     );
     assert!(
         !try_git(&repo.root, &["rev-parse", "-q", "--verify", "MERGE_HEAD"])

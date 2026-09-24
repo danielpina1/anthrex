@@ -191,7 +191,7 @@ pub enum OpKind {
     /// `git::accept`, then `salvage` and `remove_worktree` for every one of
     /// `worktrees`, then `delete_branches(branch_prefix)`; every step is a write through
     /// `GitQueue::write`. **The executor must never wrap `accept` in a timeout shorter
-    /// than `git::ACCEPT_MERGE_TIMEOUT` (10 minutes)**: the user's hooks and signing run
+    /// than `git::ACCEPT_MERGE_TIMEOUT` (10 minutes)**: the user's signing runs
     /// inside its merge, and it aborts that merge itself when its own deadline passes.
     /// `expected_base` is the base head the user confirmed (`Run.base_moved`'s `to` when
     /// the base advanced; the driver sends `Event::BaseAdvanced` before `Finish` when

@@ -174,7 +174,8 @@ fn reconcile_merge_candidate_with_swapped_parents_is_ref_moved() {
 }
 
 /// m5: the abort in the user's checkout runs as `git::accept` runs there: the scrubbed
-/// environment and `--no-optional-locks`, without decision 18's engine write flags.
+/// environment and `--no-optional-locks`, without decision 18's signing override; and,
+/// since final fix batch F1 (C-C1), with no hook and no fsmonitor.
 #[test]
 fn the_accept_abort_in_the_users_checkout_has_no_engine_write_flags() {
     let mut w = World::new();
@@ -208,7 +209,8 @@ fn the_accept_abort_in_the_users_checkout_has_no_engine_write_flags() {
         .find(|l| l.starts_with("argv") && l.ends_with("\tmerge\t--abort"))
         .unwrap_or_else(|| panic!("no abort in {log}"));
     assert!(abort.contains("\t--no-optional-locks\t"), "{abort}");
-    assert!(!abort.contains("core.hooksPath"), "{abort}");
+    assert!(abort.contains("\tcore.hooksPath=/dev/null\t"), "{abort}");
+    assert!(abort.contains("\tcore.fsmonitor=false\t"), "{abort}");
     assert!(!abort.contains("commit.gpgSign"), "{abort}");
     assert!(
         !log.lines().any(|l| l.starts_with("env\tGIT_DIR=")),
