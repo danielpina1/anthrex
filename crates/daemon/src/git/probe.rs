@@ -42,17 +42,37 @@ pub const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 /// parse is returned as `Some` with [`proto::GitState::stale`] set, per design
 /// decision 9. `stale` is never set anywhere else.
 pub fn probe(git: &OsStr, root: &Path, timeout: Duration) -> Option<GitState> {
+    // M8a final fix batch F1, fix round 1 (N1, N2): a run worktree is probed through
+    // the git directory the daemon pinned for it, never its `.git` file, and without
+    // looking inside nested repositories, whose own config a worker writes.
+    let pin = match crate::worktree::pinned::pinned(root) {
+        Some(pin) => {
+            if let Err(error) = crate::worktree::pinned::check(root, &pin) {
+                tracing::warn!(%error, "not probing a tampered run worktree");
+                return None;
+            }
+            Some(pin)
+        }
+        None => None,
+    };
     let mut command = Command::new(git);
-    command.arg("-C").arg(root).args([
-        "--no-optional-locks",
-        "-c",
-        "core.fsmonitor=false",
+    command
+        .arg("-C")
+        .arg(root)
+        .args(["--no-optional-locks", "-c", "core.fsmonitor=false"]);
+    if let Some(pin) = &pin {
+        command.args(crate::worktree::pinned::flags(root, pin));
+    }
+    command.args([
         "status",
         "--porcelain=v2",
         "--branch",
         "--untracked-files=normal",
         "-z",
     ]);
+    if pin.is_some() {
+        command.arg("--ignore-submodules=dirty");
+    }
 
     let (output, stale) = match subprocess::run(&mut command, MAX_OUTPUT_BYTES, timeout) {
         Outcome::Complete(output) => (output, false),
@@ -68,7 +88,11 @@ pub fn probe(git: &OsStr, root: &Path, timeout: Duration) -> Option<GitState> {
     // on how much of `status` was read before the deadline or the cap. Skipping it when
     // `stale` is set lost the red `rebase` marker on exactly the repositories big enough
     // to time out, which is when it matters most.
-    let operation = resolve_git_dir(root).and_then(|git_dir| detect_operation(&git_dir));
+    let git_dir = match &pin {
+        Some(pin) => Some(pin.git_dir.clone()),
+        None => resolve_git_dir(root),
+    };
+    let operation = git_dir.and_then(|git_dir| detect_operation(&git_dir));
 
     Some(GitState {
         head: parsed.head,

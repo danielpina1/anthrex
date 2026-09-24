@@ -23,6 +23,7 @@
 
 mod dirty;
 mod ops;
+pub mod pinned;
 
 pub use dirty::{DirtyReason, dirty_reason};
 pub use ops::{
@@ -305,12 +306,28 @@ fn run_git_capturing(
     }
     let timeout = deadline - now;
 
+    // A worktree the run engine created is pinned to its git directory, never to what
+    // its `.git` file says (M8a final fix batch F1, fix round 1, N2).
+    let pin = match pinned::pinned(dir) {
+        Some(pin) => match pinned::check(dir, &pin) {
+            Ok(()) => Some(pinned::flags(dir, &pin)),
+            Err(stderr) => {
+                return Err(WorktreeError::Git {
+                    action: joined_args,
+                    stderr,
+                });
+            }
+        },
+        None => None,
+    };
+
     let mut command = Command::new(git);
     command
         .arg("-C")
         .arg(dir)
         .arg("--no-optional-locks")
         .args(NO_FSMONITOR)
+        .args(pin.iter().flatten())
         .args(args)
         .env("LC_ALL", "C")
         .env("GIT_TERMINAL_PROMPT", "0");

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::{Git, diff, failure, os};
+use crate::worktree::pinned;
 
 /// What `git worktree list --porcelain -z` says about one worktree.
 pub(crate) struct Listed {
@@ -179,6 +180,7 @@ fn ensure_worktree(
             }
         }
     }
+    pin_in(g, root, path)?;
     if repoint
         && let Some(head) = branch_head(g, root, branch)?
         && head != from
@@ -316,6 +318,7 @@ pub fn prepare_review(
             if found.locked {
                 g.write(root, &[os("worktree"), os("unlock"), path.as_os_str()])?;
             }
+            repair_git_file(path)?;
             g.write(
                 root,
                 &[
@@ -325,6 +328,7 @@ pub fn prepare_review(
                     path.as_os_str(),
                 ],
             )?;
+            pinned::unpin(path);
         }
     }
     g.write(
@@ -337,6 +341,7 @@ pub fn prepare_review(
             os(&head),
         ],
     )?;
+    pin_in(g, root, path)?;
     let patch = diff(g, root, &format!("{base}..{head}"))?;
     Ok((base, head, patch))
 }
@@ -357,6 +362,7 @@ pub fn prepare_scratch(
     let g = Git::new(git, timeout);
     if let Some(found) = listed(g, root, path)? {
         if path.exists() {
+            pin_in(g, root, path)?;
             return Ok(false);
         }
         forget_missing(g, root, path, &found)?;
@@ -371,6 +377,7 @@ pub fn prepare_scratch(
             os(at),
         ],
     )?;
+    pin_in(g, root, path)?;
     Ok(true)
 }
 
@@ -380,4 +387,67 @@ pub fn absolute_git_dir(git: &OsStr, dir: &Path, timeout: Duration) -> Result<Pa
     let g = Git::new(git, timeout);
     let out = g.ok(dir, &[os("rev-parse"), os("--absolute-git-dir")])?;
     Ok(PathBuf::from(out.trim_end_matches(['\n', '\r'])))
+}
+
+/// The repository's git common directory, read in `root` (the user's checkout, which
+/// no worker writes).
+pub(crate) fn common_dir(g: Git<'_>, root: &Path) -> Result<PathBuf, String> {
+    let out = g.ok(
+        root,
+        &[
+            os("rev-parse"),
+            os("--path-format=absolute"),
+            os("--git-common-dir"),
+        ],
+    )?;
+    let common = PathBuf::from(out.trim_end_matches(['\n', '\r']));
+    Ok(common.canonicalize().unwrap_or(common))
+}
+
+/// M8a final fix batch F1, fix round 1 (N2): pins the engine worktree `path` to its git
+/// directory as the repository lists it, so no later call in it reads its `.git` file.
+fn pin_in(g: Git<'_>, root: &Path, path: &Path) -> Result<(), String> {
+    let common = common_dir(g, root)?;
+    match pinned::pin(&common, path).broken {
+        Some(reason) => Err(reason),
+        None => Ok(()),
+    }
+}
+
+/// Pins each existing worktree of `paths` in the repository whose common directory is
+/// `common` (a daemon restart, before any call in them). One whose git directory cannot
+/// be found is pinned as broken, so every call in it is refused. Blocking.
+pub fn pin_worktrees(common: &Path, paths: &[PathBuf]) {
+    for path in paths.iter().filter(|path| path.exists()) {
+        pinned::pin(common, path);
+    }
+}
+
+/// Puts back the `.git` file of a pinned worktree before git itself (`worktree remove`,
+/// run from the user's checkout) reads it: a worker may have rewritten it.
+pub(crate) fn repair_git_file(path: &Path) -> Result<(), String> {
+    let Some(pin) = pinned::pinned(path) else {
+        return Ok(());
+    };
+    if pin.broken.is_some() || !path.exists() {
+        return Ok(());
+    }
+    let file = path.join(".git");
+    let wanted = format!("gitdir: {}\n", pin.git_dir.display());
+    if std::fs::read_to_string(&file).ok().as_deref() == Some(wanted.as_str()) {
+        return Ok(());
+    }
+    if file.is_dir() {
+        std::fs::remove_dir_all(&file)
+    } else {
+        std::fs::remove_file(&file).or_else(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                Ok(())
+            } else {
+                Err(err)
+            }
+        })
+    }
+    .and_then(|()| std::fs::write(&file, wanted))
+    .map_err(|err| format!("cannot restore {}: {err}", file.display()))
 }

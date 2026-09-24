@@ -199,6 +199,7 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
     }
     let log = std::fs::read_to_string(scripts.path().join("git.log")).unwrap();
     let mut calls = 0;
+    let mut pinned = 0;
     let mut writes = 0;
     let mut no_replace = 0;
     for line in log.lines() {
@@ -226,7 +227,20 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
         // Final fix batch F1 (C-C1, D-5): no call runs a configured fsmonitor, and a
         // call that is not a write still runs no hook.
         assert_eq!(&argv[3..5], ["-c", "core.fsmonitor=false"], "{argv:?}");
-        let rest = &argv[5..];
+        let mut rest = &argv[5..];
+        // Fix round 1 (N2): a call in an engine worktree is pinned to its git dir, and
+        // then names it and the work tree itself.
+        if rest.first().is_some_and(|a| a.starts_with("--git-dir=")) {
+            pinned += 1;
+            assert!(rest[1].starts_with("--work-tree="), "{argv:?}");
+            assert_eq!(&rest[1]["--work-tree=".len()..], argv[1], "{argv:?}");
+            rest = &rest[2..];
+        } else {
+            assert!(
+                !argv[1].contains("/runs/"),
+                "an engine worktree call that is not pinned: {argv:?}"
+            );
+        }
         let (flags, command) = if rest.starts_with(&WRITE_FLAGS) {
             (true, &rest[4..])
         } else if rest.starts_with(&NO_HOOKS) {
@@ -251,6 +265,10 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
         }
     }
     assert!(calls >= 20, "only {calls} git calls were recorded:\n{log}");
+    assert!(
+        pinned >= 5,
+        "only {pinned} pinned calls were recorded:\n{log}"
+    );
     assert!(writes >= 5, "only {writes} writes were recorded:\n{log}");
     assert_eq!(no_replace, calls, "replace objects allowed:\n{log}");
 }

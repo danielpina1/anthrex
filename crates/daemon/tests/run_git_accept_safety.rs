@@ -149,3 +149,47 @@ fn accept_refuses_a_run_branch_that_moved_since_it_was_verified() {
     assert_eq!(out(&repo.root, &["rev-parse", "main"]), base);
     assert!(!repo.root.join("a.txt").exists());
 }
+
+/// Fix round 1, review N5: git's whitespace clean-up rewrites a goal with trailing
+/// spaces or repeated blank lines. Accept still knows its own merge, and undoes it when
+/// a commit landed on the base just before it.
+#[test]
+fn accept_knows_its_own_merge_whatever_the_goals_whitespace() {
+    let repo = repo();
+    let (base, run_head) = run_branch(&repo, "ws01");
+    let tools = tempfile::tempdir().unwrap();
+    let git = support::run_git::wrapper_git(
+        tools.path(),
+        r#"for a in "$@"; do
+  if [ "$a" = "--no-ff" ]; then
+    "$REAL" -C "$2" -c user.name=t -c user.email=t@t -c commit.gpgsign=false \
+      -c core.hooksPath=/dev/null commit -q --allow-empty -m sneak || exit 99
+    break
+  fi
+done"#,
+    );
+    let result = accept(
+        git.as_os_str(),
+        &repo.root,
+        "main",
+        &base,
+        "anthrex/ws01/integration",
+        &run_head,
+        "anthrex: accept run ws01: fix  \n\n\n  the thing   ",
+        T,
+    );
+    assert_eq!(
+        result,
+        Err("the base branch moved again; run accept again".to_string())
+    );
+    let main = out(&repo.root, &["rev-parse", "main"]);
+    assert_eq!(
+        out(&repo.root, &["log", "-1", "--format=%s", &main]),
+        "sneak"
+    );
+    assert_eq!(
+        parents(&repo.root, &main),
+        vec![base],
+        "the merge was undone"
+    );
+}

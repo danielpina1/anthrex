@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use super::{OpCtx, RunService, cleanup, effects, unix_now};
 use crate::run::engine::{Event, EventKind, OpKind, OpResult, step};
+use crate::run::git;
 use crate::run::journal;
 use crate::run::model::{LogEntry, OpId, Run};
 use crate::run::reconcile;
@@ -55,6 +56,9 @@ impl RunService {
             let timeout = Duration::from_secs(run.limits.git_timeout_secs);
             let snapshot = run.clone();
             let checked = tokio::task::spawn_blocking(move || {
+                // Fix round 1 of final fix batch F1 (N2): every run worktree is pinned to
+                // its git directory before any git call in it, reconcile's included.
+                git::pin_worktrees(&snapshot.git_common_dir, &run_worktree_paths(&snapshot));
                 reconcile::reconcile(&git, &snapshot, &lines, &windows, timeout)
             })
             .await;
@@ -244,6 +248,18 @@ fn hold_unreconciled(run: &mut Run, now: u64) {
             .to_string(),
     );
     run.halt_retryable = true;
+}
+
+/// Every engine worktree `run` can have: its integration worktree and each task's
+/// task, review and proof worktrees.
+fn run_worktree_paths(run: &Run) -> Vec<std::path::PathBuf> {
+    let mut paths = vec![run.integration_path()];
+    for task in &run.tasks {
+        paths.push(task.worktree.clone());
+        paths.push(run.review_path(task.id()));
+        paths.push(run.proof_path(task.id()));
+    }
+    paths
 }
 
 /// A pending `Accept` whose `Finished` the journal replays: the old daemon merged, and

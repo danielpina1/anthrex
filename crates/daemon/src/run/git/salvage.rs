@@ -13,8 +13,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use super::merge::{AcceptOutcome, read, short, unmerged};
-use super::worktrees::{forget_missing, is_ancestor, listed};
-use super::{DIFF_FLAGS, Git, failure, os};
+use super::worktrees::{forget_missing, is_ancestor, listed, repair_git_file};
+use super::{DIFF_FLAGS, Git, NO_NESTED, failure, nul_fields, os};
 
 /// Decision 20's salvage. A worktree with nothing to save (`git status --porcelain`,
 /// untracked files included, ignored ones not) writes nothing and gives `None`.
@@ -42,6 +42,7 @@ pub fn salvage(
         os("--porcelain"),
         os("-z"),
         os("--untracked-files=normal"),
+        os(NO_NESTED),
     ];
     // Only whether there is any output matters, so none of it is held: a worktree with
     // a vast untracked build tree is still salvaged, not failed over a cap.
@@ -62,7 +63,17 @@ pub fn salvage(
             Err(format!("salvage ref {reference} already holds other work"))
         };
     }
-    g.write(worktree, &[os("add"), os("-A")])?;
+    // Every gitlink is left out of `add -A`: staging a tracked nested repository runs
+    // `git status` inside it, under its own (worker-written) config (fix round 1, N1).
+    // Its uncommitted contents cannot be salvaged into this repository anyway.
+    let gitlinks = gitlinks(g, worktree)?;
+    let excludes: Vec<String> = gitlinks
+        .iter()
+        .map(|path| format!(":(exclude,literal){path}"))
+        .collect();
+    let mut add = vec![os("add"), os("-A"), os("--"), os(".")];
+    add.extend(excludes.iter().map(|e| os(e)));
+    g.write(worktree, &add)?;
     let tree = g.write(worktree, &[os("write-tree")])?.trim().to_string();
     let commit = g
         .write(
@@ -85,6 +96,15 @@ pub fn salvage(
         &[os("update-ref"), os(reference), os(&commit), os("")],
     )?;
     Ok(Some(reference.to_string()))
+}
+
+/// The gitlink (nested repository) paths in `dir`'s index.
+fn gitlinks(g: Git<'_>, dir: &Path) -> Result<Vec<String>, String> {
+    let listing = g.ok(dir, &[os("ls-files"), os("-s"), os("-z")])?;
+    Ok(nul_fields(&listing)
+        .filter(|entry| entry.starts_with("160000 "))
+        .filter_map(|entry| entry.split_once('\t').map(|(_, path)| path.to_string()))
+        .collect())
 }
 
 /// Whether the worktree holds exactly the salvage `reference` already saved, read
@@ -136,6 +156,7 @@ pub fn remove_worktree(
             if entry.locked {
                 g.write(root, &[os("worktree"), os("unlock"), path.as_os_str()])?;
             }
+            repair_git_file(path)?;
             g.write(
                 root,
                 &[
@@ -150,6 +171,7 @@ pub fn remove_worktree(
     // No unconditional `git worktree prune` (final fix batch F1, D-12): `worktree
     // remove` already deregisters, and a prune would also forget the user's own
     // worktrees whose directories are merely missing.
+    crate::worktree::pinned::unpin(path);
     Ok(())
 }
 
@@ -297,6 +319,9 @@ pub fn accept_with_merge_timeout(
     merge_timeout: Duration,
     timeout: Duration,
 ) -> Result<AcceptOutcome, String> {
+    // Fix round 1, review N5: the message exactly as git will store it, so accept can
+    // recognise its own merge by it.
+    let message = &cleaned(message);
     let g = Git::new(git, timeout);
     if let Some(kind) = operation_in_progress(g, root)? {
         return Err(format!(
@@ -318,7 +343,12 @@ pub fn accept_with_merge_timeout(
             current.as_deref().unwrap_or("a detached HEAD")
         ));
     }
-    let status = [os("status"), os("--porcelain"), os("--untracked-files=no")];
+    let status = [
+        os("status"),
+        os("--porcelain"),
+        os("--untracked-files=no"),
+        os(NO_NESTED),
+    ];
     let (output, kept) = g.read_head(root, &status, 0)?;
     if !output.success {
         return Err(failure(&status, &output));
@@ -515,4 +545,21 @@ fn check_first_parent(
 fn own_message(g: Git<'_>, root: &Path, commit: &str, message: &str) -> Result<bool, String> {
     let text = g.ok(root, &[os("log"), os("-1"), os("--format=%B"), os(commit)])?;
     Ok(text.trim_end() == message.trim_end())
+}
+
+/// `message` as `git commit`'s default `whitespace` clean-up stores it: trailing
+/// whitespace stripped from every line, runs of blank lines collapsed to one, and
+/// leading and trailing blank lines dropped.
+fn cleaned(message: &str) -> String {
+    let mut lines: Vec<&str> = Vec::new();
+    for line in message.lines().map(str::trim_end) {
+        if line.is_empty() && lines.last().is_none_or(|last| last.is_empty()) {
+            continue;
+        }
+        lines.push(line);
+    }
+    while lines.last().is_some_and(|last| last.is_empty()) {
+        lines.pop();
+    }
+    lines.join("\n")
 }

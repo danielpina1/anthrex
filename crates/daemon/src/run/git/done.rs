@@ -5,7 +5,7 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::time::Duration;
 
-use super::{DIFF_FLAGS, Git, nul_fields, os};
+use super::{DIFF_FLAGS, Git, NO_NESTED, nul_fields, os};
 use crate::run::globs::{OwnsMatcher, ProtectedMatcher, names_literally};
 
 /// What `verify_done` found (decision 32's done gate, split per decisions 55 and 56).
@@ -92,6 +92,7 @@ pub fn verify_done(
             os("--porcelain"),
             os("-z"),
             os("--untracked-files=all"),
+            os(NO_NESTED),
         ],
     )?;
     let (dirty_tracked, untracked) = parse_status(&status);

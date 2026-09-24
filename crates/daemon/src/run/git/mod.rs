@@ -45,8 +45,8 @@ pub use queue::{GitQueue, LOCK_RETRY_DELAYS_MS};
 pub use resolution::resolution_only;
 pub use sandbox::worker_git_dirs;
 pub use worktrees::{
-    absolute_git_dir, create_run_branch, lock_worktree, prepare_review, prepare_scratch,
-    prepare_worktree,
+    absolute_git_dir, create_run_branch, lock_worktree, pin_worktrees, prepare_review,
+    prepare_scratch, prepare_worktree,
 };
 
 use std::ffi::OsStr;
@@ -89,13 +89,16 @@ pub(crate) const LARGE_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
 /// (`color.ui=always`), no external diff driver, no textconv filter (a
 /// `.gitattributes`-selected command could run, or stall, inside the diff). Fix round
 /// 1, finding 6. Nor can `diff.ignoreSubmodules` or a `.gitmodules` `ignore = all` hide
-/// a gitlink change from the owns, protected and resolution checks (ruling T14-R3).
-pub(crate) const DIFF_FLAGS: [&str; 4] = [
-    "--no-color",
-    "--no-ext-diff",
-    "--no-textconv",
-    "--ignore-submodules=none",
-];
+/// a gitlink change from the owns, protected and resolution checks (ruling T14-R3):
+/// `dirty` still reports every gitlink whose commit changed, but never looks inside a
+/// nested repository's working tree, which would run `git status` there under that
+/// repository's own (worker-written) config (M8a final fix batch F1, fix round 1, N1).
+pub(crate) const DIFF_FLAGS: [&str; 4] =
+    ["--no-color", "--no-ext-diff", "--no-textconv", NO_NESTED];
+
+/// On every engine `status` and worktree `diff`: never recurse into a nested
+/// repository (N1). Gitlink commit changes are still reported.
+pub(crate) const NO_NESTED: &str = "--ignore-submodules=dirty";
 
 /// A patch's `a/` and `b/` prefixes, whatever `diff.noprefix` or
 /// `diff.mnemonicPrefix` say (`--default-prefix` needs git 2.41; runs need 2.38).
@@ -300,9 +303,32 @@ pub fn preflight(git: &OsStr, dir: &Path, timeout: Duration) -> Result<Preflight
         ));
     }
 
+    // M8a final fix batch F1, fix round 1 (N2): per-worktree config would live in each
+    // engine worktree's git directory, where the engine cannot keep it inert.
+    let worktree_config = g.read(
+        &root,
+        &[
+            os("config"),
+            os("--bool"),
+            os("--get"),
+            os("extensions.worktreeConfig"),
+        ],
+    )?;
+    if worktree_config.success && worktree_config.stdout.trim() == "true" {
+        return Err(format!(
+            "{} uses per-worktree config (extensions.worktreeConfig), which anthrex runs do not support",
+            root.display()
+        ));
+    }
+
     let status = g.ok(
         &root,
-        &[os("status"), os("--porcelain"), os("--untracked-files=no")],
+        &[
+            os("status"),
+            os("--porcelain"),
+            os("--untracked-files=no"),
+            os(NO_NESTED),
+        ],
     )?;
     if !status.trim().is_empty() {
         return Err(format!(

@@ -287,3 +287,18 @@ fn preflight_refuses_a_base_branch_under_anthrex() {
         )
     );
 }
+
+/// Final fix batch F1, fix round 1 (N2): a repository with per-worktree config is
+/// refused, since that config would live where the engine cannot keep it inert.
+#[test]
+fn preflight_refuses_per_worktree_config() {
+    let repo = repo();
+    out(&repo.root, &["config", "extensions.worktreeConfig", "true"]);
+    assert_eq!(
+        preflight(real_git(), &repo.root, T).unwrap_err(),
+        format!(
+            "{} uses per-worktree config (extensions.worktreeConfig), which anthrex runs do not support",
+            repo.root.display()
+        )
+    );
+}
