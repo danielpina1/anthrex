@@ -120,11 +120,21 @@ pub(super) async fn candidate(
         let swapped = service
             .write(ctx, move |g, t| git::cas_update(g, &r, &b, &c, &old, t))
             .await?;
-        reattach().await?;
         if !swapped {
+            reattach().await?;
             return Ok(OpResult::RefMoved {
                 reason: format!("refs/heads/{run_branch} moved during the merge"),
             });
+        }
+        // Final fix batch F1, finding D-7: the run branch holds the candidate now, so
+        // the task is merged whatever the reattach does. A failed reattach is a note, as
+        // in reconcile; the next candidate's `materialize` checks out over it anyway.
+        if let Err(error) = reattach().await {
+            tracing::warn!(
+                run = %ctx.run_id,
+                %error,
+                "merged, but the integration worktree could not go back on its branch"
+            );
         }
         Ok(OpResult::Merged { commit })
     }

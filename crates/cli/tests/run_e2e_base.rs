@@ -2,7 +2,8 @@
 //! through a real daemon with `fake-agent` as both runtimes. A worker that moves the
 //! base branch onto its own work halts the run (D-2); accept after the user merged the
 //! run by hand leaves their merge alone (D-1); a base that advanced and came back is
-//! accepted (D-4); a run branch moved after `complete` is not what accept merges (D-6).
+//! accepted (D-4); a run branch moved after `complete` is not what accept merges (D-6);
+//! a failed reattach after the compare-and-swap still merges the task (D-7).
 
 mod support;
 
@@ -186,4 +187,39 @@ fn e2e_accept_refuses_a_run_branch_moved_after_complete() {
     );
     assert_eq!(h.git(&["rev-parse", "main"]), base, "nothing was merged");
     assert_eq!(h.run(&id).unwrap().state, RunState::Complete);
+}
+
+/// Final fix batch F1, finding D-7: the compare-and-swap put the candidate on the run
+/// branch, then putting the integration worktree back on its branch failed (here: an
+/// `index.lock` the check left behind). The task's work is on the run branch: it is
+/// merged, and the run head follows it.
+#[test]
+fn e2e_a_failed_reattach_after_the_swap_still_merges_the_task() {
+    let h = RunHarness::new("");
+    green_scripts(&h.repo);
+    let once = h.dir.path().join("locked-once");
+    let check = format!(
+        "case \"$PWD\" in */integration) [ -e '{once}' ] || {{ : > '{once}'; : > \"$(git rev-parse --git-path index.lock)\"; }};; esac; true",
+        once = once.display()
+    );
+    let toml = plan("", &[task("t1", &["a.txt"], "")])
+        .replace("check = \"true\"", &format!("check = {check:?}"));
+    let id = h.start(&toml, true);
+    let run = h.wait_run(
+        &id,
+        |r| {
+            let s = t(r, "t1").state;
+            s == TaskState::Merged || s == TaskState::Blocked
+        },
+        RUN_WAIT,
+    );
+    assert!(
+        once.exists(),
+        "the check never ran in the integration worktree"
+    );
+    assert_eq!(t(&run, "t1").state, TaskState::Merged, "{run:?}");
+    let run_ref = format!("refs/heads/anthrex/{id}/integration");
+    let head = h.git(&["rev-parse", &run_ref]);
+    let run = h.wait_run(&id, |r| r.run_head == head, RUN_WAIT);
+    assert_ne!(run.state, RunState::Halted, "{:?}", run.halted_reason);
 }
