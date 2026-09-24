@@ -8581,9 +8581,8 @@ fake-agent harness.
     commit works, config/hook/base/other-run writes fail; the old grant lets all
     through). A commit's auto-maintenance then prints a harmless `packed-refs.lock`
     error. Not verified on Linux, and a reftable repository cannot commit (followups).
-  - Residual (followups): a worker can still point its own worktree's `.git` file or
-    `commondir` at a repository it made, whose `filter.*` config would apply to the
-    engine's later git calls in that worktree.
+  - The residual first recorded here (a rewritten `.git` file or `commondir`) was
+    reachable, and fixed in fix round 1 below.
 - **D-2.** `guard_refs` halts with `refs/heads/<base> contains unaccepted run work (<n>
   commit[s])` when any of the base's new commits is reachable from the run's branches or
   salvage refs (`run::git::run_work_on_base`), instead of reporting an advance. Accept's
@@ -8624,3 +8623,54 @@ fake-agent harness.
   `remove_worktree` no longer prunes after a removal (decision 20's discard text lists a
   `git worktree prune`; only `forget_missing` still prunes). D-10 was not done
   (followups).
+
+### Final fix batch F1, fix round 1 (2026-09-24)
+
+The F1 review (`final-fix-F1-review.md`) found two more routes from a sandboxed worker to
+unsandboxed code, both reproduced with real git and `sandbox-exec`. Both are fixed
+test-first (`run_git_escape.rs`, red on the F1 code for all four cases).
+
+- **N2, redirected git pointers (deviation from decisions 18 and 25).** Every daemon
+  git call in an engine-created worktree, and the probe of one, now passes
+  `--git-dir=<its git dir> --work-tree=<it>`.
+  - The git dir is found from the repository's side: the `<common>/worktrees/*/gitdir`
+    file naming `<worktree>/.git` (`worktree::pinned`). The worktree's `.git` file is
+    never read.
+  - The pin is set by `create_run_branch`, `prepare_worktree`, `prepare_review` and
+    `prepare_scratch`, and for every run worktree at a restart, before reconcile
+    (`run::git::pin_worktrees`).
+  - Before each call, the git dir's `commondir` must name the repository's common dir,
+    its `gitdir` must point back, and there must be no `config.worktree`. Otherwise the
+    call is refused ("tampered"), which fails the op. A worktree the repository does not
+    list is pinned as broken, and every call in it is refused.
+  - `remove_worktree` puts the `.git` file back before `git worktree remove`.
+  - Preflight refuses a repository with `extensions.worktreeConfig`.
+  - The coordinator ruled out `GIT_DIR`/`GIT_WORK_TREE` in the environment (AGENTS.md
+    rule 11); these are command-line flags.
+- **N2 and N3, the sandbox grant.** Inside the worktree's git dir, a worker may write
+  only the files a commit, amend, reset, revert, merge conclusion or rebase needs,
+  found by running each under seatbelt:
+  - `HEAD`, `index`, `ORIG_HEAD`, `COMMIT_EDITMSG`, `MERGE_HEAD`, `MERGE_MSG`,
+    `MERGE_MODE`, `MERGE_RR`, `AUTO_MERGE`, `REBASE_HEAD`, `CHERRY_PICK_HEAD`,
+    `REVERT_HEAD` and `FETCH_HEAD`, each with its `.lock`;
+  - `logs/`, `rebase-merge/`, `rebase-apply/` and `sequencer/`.
+
+  In the common dir it may write only `objects/` and the task's own branch
+  `refs/heads/anthrex/<run>/<task>`, its `.lock` and its reflog. `commondir`, `gitdir`,
+  `config.worktree`, sibling task branches and the run branch are now unwritable.
+  Linux is unverified: several granted paths do not exist at launch (followups).
+- **N1, nested repositories.** Every engine `status` and worktree `diff` passes
+  `--ignore-submodules=dirty`, and so does the probe of a pinned worktree.
+  - `DIFF_FLAGS` changes from `none` to `dirty`. That still reports a gitlink whose
+    commit changed, which is what ruling T14-R3 needs, but never runs `git status`
+    inside the nested repository.
+  - Salvage's `add -A` excludes every gitlink in the index (`:(exclude,literal)`),
+    since staging one runs `git status` inside it.
+  - A nested repository's uncommitted contents are therefore not salvaged (followups).
+- **N5.** Accept passes its message through git's whitespace clean-up first, so the
+  message it compares is the one git stored.
+- **N4.** `expected_run_head` has `#[serde(default)]`.
+- **N6.** Reconcile's `PrepareWorktree` row no longer prunes, and `Discard`'s doc no
+  longer lists a prune.
+- **N7.** Recorded in the followups: M4's worktree calls get `fsmonitor=false` but not
+  `NO_HOOKS`.
