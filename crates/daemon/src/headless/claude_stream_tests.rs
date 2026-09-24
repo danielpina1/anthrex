@@ -519,3 +519,35 @@ fn tool_result_text_parts_are_joined_by_newlines() {
         }]
     );
 }
+
+/// M8a.24: the synthetic `assistant` line a failed API turn ends with
+/// (`is_api_error_message`) is that failure's text, not the model's: `ApiErrorText`, which
+/// the engine does not count as progress, so a retry streak that ran straight into the
+/// failure stays one rate-limit event (decision 32).
+#[test]
+fn a_failed_api_turns_synthetic_message_is_api_error_text() {
+    let events = parse_all(CLAUDE_DOCUMENTED);
+    let errors: Vec<&SessionEvent> = events
+        .iter()
+        .filter(|e| matches!(e, SessionEvent::ApiErrorText { .. }))
+        .collect();
+    assert_eq!(
+        errors,
+        [
+            &SessionEvent::ApiErrorText {
+                text: "You've hit your session limit · resets 3:45pm".into()
+            },
+            &SessionEvent::ApiErrorText {
+                text: "Credit balance is too low".into()
+            },
+            &SessionEvent::ApiErrorText {
+                text: "Not logged in · Please run /login".into()
+            },
+        ]
+    );
+    assert!(
+        !events.iter().any(|e| matches!(e,
+            SessionEvent::AssistantText { text, .. } if text.starts_with("Credit balance"))),
+        "{events:#?}"
+    );
+}

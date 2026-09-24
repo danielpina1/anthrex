@@ -97,6 +97,12 @@ pub enum SessionEvent {
         text: String,
         parent: Option<String>,
     },
+    /// The text of the synthetic `assistant` line a failed API turn ends with
+    /// (`is_api_error_message`, Claude): part of that failure, not the model's progress,
+    /// so the engine does not see it as activity (M8a.24; decision 32's retry streak).
+    ApiErrorText {
+        text: String,
+    },
     ToolUse {
         id: String,
         name: String,

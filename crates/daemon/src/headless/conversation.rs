@@ -121,7 +121,8 @@ pub fn map(
                 input.hooks.push(cursor.hook(HookKind::SessionStart));
             }
         }
-        SessionEvent::AssistantText { text, parent: None } => {
+        SessionEvent::AssistantText { text, parent: None }
+        | SessionEvent::ApiErrorText { text } => {
             let ordinal = if hooks_fire && cursor.hook_feed {
                 cursor
                     .prompts_seen

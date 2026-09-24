@@ -8,7 +8,8 @@
 //!   `TurnStarted` each time; a turn Claude Code starts by itself (a background
 //!   sub-agent finishing) is then an ordinary turn.
 //! - A failed API turn's category is on the synthetic `assistant` line before the
-//!   `result` (`"error": "<category>"`), so the parser carries it to that `result`.
+//!   `result` (`"error": "<category>"`), so the parser carries it to that `result`. That
+//!   line's text is `ApiErrorText`, not `AssistantText` (M8a.24).
 //! - A turn is interrupted when its `result` has `subtype: "error_during_execution"` and
 //!   `terminal_reason` `aborted_tools` or `aborted_streaming`.
 //! - `result.usage` is per turn and is passed through.
@@ -78,6 +79,19 @@ impl ClaudeStream {
                     && let Some(category) = object.get("error").and_then(Value::as_str)
                 {
                     self.pending_failure = Some(category_kind(category));
+                    // The failure's own message (M8a.24): its text, never activity.
+                    return or_unknown(
+                        blocks(&object)
+                            .iter()
+                            .filter_map(|block| match assistant_block(block, &None)? {
+                                SessionEvent::AssistantText { text, .. } => {
+                                    Some(SessionEvent::ApiErrorText { text })
+                                }
+                                other => Some(other),
+                            })
+                            .collect(),
+                        line,
+                    );
                 }
                 or_unknown(
                     blocks(&object)

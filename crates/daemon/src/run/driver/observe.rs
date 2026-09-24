@@ -13,7 +13,9 @@
 //!   and a session can print many lines a second.
 //! - Stderr lines, unparsed lines and diagnostics are not activity (the M8a.17 carry's
 //!   open question): Claude writes hook-progress lines constantly, and a session that
-//!   only complains on stderr is not making progress.
+//!   only complains on stderr is not making progress. Nor is a failed API turn's own
+//!   message (`ApiErrorText`, M8a.24): it would end the retry streak that ran into the
+//!   failure, and count one rate-limit event twice (decision 32).
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -82,7 +84,8 @@ pub fn translate(
         },
         SessionEvent::StderrLine { .. }
         | SessionEvent::Unknown { .. }
-        | SessionEvent::Diagnostic { .. } => return None,
+        | SessionEvent::Diagnostic { .. }
+        | SessionEvent::ApiErrorText { .. } => return None,
         SessionEvent::UserText { .. }
         | SessionEvent::AssistantText { .. }
         | SessionEvent::ToolResult { .. }
@@ -304,6 +307,8 @@ mod tests {
             SessionEvent::StderrLine { line: "x".into() },
             SessionEvent::Unknown { line: "x".into() },
             SessionEvent::Diagnostic { text: "x".into() },
+            // M8a.24: a failed API turn's own message is part of the failure.
+            SessionEvent::ApiErrorText { text: "x".into() },
         ] {
             assert_eq!(translate(&session(5, 7, event), &mut last, t0), None);
         }
