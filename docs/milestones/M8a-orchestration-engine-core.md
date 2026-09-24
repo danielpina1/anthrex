@@ -8422,3 +8422,14 @@ Review `task-24-review.md`; rulings T24-I1, T24-I2, T24-clock and T24-minors.
   starts with a zero wait, drops the harness, and checks with `ps -E -p <pid>` (that
   one pid) that no process with the test's `ANTHREX_DATA_DIR` survives. The old `Drop`
   (return when there is no socket) fails it.
+- **Fix round 2 (re-review N1, N2; harness only).**
+  - N1: `forget_dead_daemon` takes the daemon out of the lock into a local, kills it
+    if it has not exited, and only then asserts; the harness's lock is taken through
+    `RunHarness::daemon()`, which recovers a poisoned mutex, so `Drop` always reaches
+    the daemon. Relied on reading (a test would need a daemon that outlives its own
+    death for 30 s).
+  - N2: `impl Drop for DaemonProcess` kills and reaps an unreaped child through its own
+    handle, and `stop_daemon`'s `daemon stop` goes through the new
+    `RunningCommand::try_finish`, which returns `None` on timeout instead of panicking,
+    so the kill fallback always runs. Test: `a_dropped_daemon_process_is_killed`
+    (red first: the unwound `sleep 3737` child was still running).

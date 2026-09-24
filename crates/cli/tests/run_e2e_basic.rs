@@ -441,3 +441,30 @@ fn daemon_of(pid: u32, data: &std::path::Path) -> bool {
         && String::from_utf8_lossy(&output.stdout)
             .contains(&format!("ANTHREX_DATA_DIR={}", data.display()))
 }
+
+/// M8a.24 fix round 2 (N2): an owned daemon process dropped without a completed stop
+/// (here a panic unwinds past it) is killed through its own handle. The child is a
+/// distinctive `sleep`, so the check reads that one pid's argv.
+#[test]
+fn a_dropped_daemon_process_is_killed() {
+    let dir = support::tempdir();
+    let mut command = std::process::Command::new("sleep");
+    command.arg("3737");
+    let mut pid = 0;
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let daemon =
+            support::run_daemon::DaemonProcess::spawn(&mut command, &dir.path().join("out"));
+        pid = daemon.pid();
+        panic!("the stop timed out");
+    }));
+    assert!(unwound.is_err());
+    let output = std::process::Command::new("ps")
+        .args(["-o", "command=", "-p", &pid.to_string()])
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("sleep 3737"),
+        "pid {pid} still runs: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}

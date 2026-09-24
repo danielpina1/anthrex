@@ -94,6 +94,19 @@ impl RunningCommand {
         self.child.try_wait().unwrap().is_none()
     }
 
+    /// Like [`Self::finish`], but `None` when the child outlives `limit` (it is then
+    /// killed on drop) instead of a panic: for callers inside `Drop`.
+    pub fn try_finish(mut self, limit: Duration) -> Option<Output> {
+        let deadline = Instant::now() + limit;
+        while self.child.try_wait().ok().flatten().is_none() {
+            if Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        Some(self.finish(limit))
+    }
+
     pub fn finish(mut self, limit: Duration) -> Output {
         drop(self.child.stdin.take());
         let deadline = Instant::now() + limit;

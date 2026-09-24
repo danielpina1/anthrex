@@ -217,23 +217,35 @@ impl RunHarness {
         let mut command = self.command(&["daemon", "start", "--foreground"]);
         let mut daemon = DaemonProcess::spawn(&mut command, &self.dir.path().join("daemon.out"));
         let up = daemon.wait_up(&self.socket(), wait);
-        *self.daemon.lock().unwrap() = Some(daemon);
+        *self.daemon() = Some(daemon);
         up
+    }
+
+    /// The owned daemon's slot, recovering from a poisoned lock (N1): `Drop` must
+    /// always reach the daemon.
+    fn daemon(&self) -> std::sync::MutexGuard<'_, Option<DaemonProcess>> {
+        self.daemon
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// The pid of the daemon this harness started, while it is owned.
     pub fn daemon_pid(&self) -> Option<u32> {
-        self.daemon.lock().unwrap().as_ref().map(DaemonProcess::pid)
+        self.daemon().as_ref().map(DaemonProcess::pid)
     }
 
     /// Stops the owned daemon, waiting out a slow start first (`DaemonProcess::stop`),
     /// and removes a socket file a killed daemon left behind.
     fn stop_daemon(&self) {
-        let Some(mut daemon) = self.daemon.lock().unwrap().take() else {
+        let taken = self.daemon().take();
+        let Some(mut daemon) = taken else {
             return;
         };
+        // Never panics (M8a.24 fix round 2, N2): a stop that times out falls through to
+        // the kill.
         daemon.stop(&self.socket(), DAEMON_START_WAIT, || {
-            let _ = self.anthrex(&["daemon", "stop"]);
+            let _ = RunningCommand::start(&mut self.command(&["daemon", "stop"]))
+                .try_finish(REQUEST_WAIT);
         });
         if std::os::unix::net::UnixStream::connect(self.socket()).is_err() {
             let _ = std::fs::remove_file(self.socket());
@@ -333,11 +345,13 @@ impl RunHarness {
             assert!(Instant::now() < deadline, "the daemon did not die");
             std::thread::sleep(Duration::from_millis(50));
         }
-        if let Some(mut daemon) = self.daemon.lock().unwrap().take() {
-            assert!(
-                daemon.wait_exit(DAEMON_EXIT_WAIT),
-                "the dead daemon's process is still running"
-            );
+        // M8a.24 fix round 2 (N1): taken out of the lock first, and killed before the
+        // assertion, so a failure neither poisons the lock nor leaks the process.
+        let taken = self.daemon().take();
+        if let Some(mut daemon) = taken {
+            let exited = daemon.wait_exit(DAEMON_EXIT_WAIT);
+            daemon.kill();
+            assert!(exited, "the dead daemon's process was still running");
         }
         let _ = std::fs::remove_file(self.socket());
     }

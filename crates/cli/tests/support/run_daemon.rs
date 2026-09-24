@@ -108,11 +108,24 @@ impl DaemonProcess {
                 return;
             }
         }
+        self.kill();
+    }
+
+    /// Kills the process if it has not exited, and reaps it. Our own unreaped child:
+    /// its pid cannot have been reused, and nothing else is signalled.
+    pub fn kill(&mut self) {
         if !self.has_exited() {
-            // Our own unreaped child: its pid cannot have been reused.
             let _ = self.child.kill();
             let _ = self.child.wait();
             self.exited = true;
         }
+    }
+}
+
+/// M8a.24 fix round 2 (N2): a daemon dropped without a completed stop (a panic in the
+/// stop, a harness unwinding) is killed, never leaked.
+impl Drop for DaemonProcess {
+    fn drop(&mut self) {
+        self.kill();
     }
 }
