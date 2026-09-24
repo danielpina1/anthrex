@@ -6561,3 +6561,79 @@ same check.
   G2+G3+G4 mutant is killed by `a_restore_does_not_excuse_a_pause_twice` and the
   property test.
 - G2 and G4 stay as the ruling's explicit defences.
+
+#### M8a.15 fix round 3
+
+Re-review 2 (`task-15-rereview-2.md`) confirmed N-1 and N-2 and accepted G2, G4 and the
+P1c note. It found N-3 (Important) and M-5 (Minor). Ruling T15-R3 refines T15-I3 and is
+binding.
+
+**N-3 / T15-R3: an open turn is charged and watched.** The task clock now also runs
+while the latest worker round has a turn open, whatever the task's state (blocked,
+held, in a gate) or the run's (paused, halted). This is `clock::open_turn`. Only spans
+with no open turn are excused. Before, a worker could call `task_blocked` and then stream
+for an hour uncharged and unwatched, and a turn open at a pause ran to its end for free.
+- **`clock::watch_open_turns`.** It runs at the start of every scheduler pass and
+  watches every open turn that `signals::watch` does not, meaning the task is not
+  working or the run is not running.
+  - A turn past its session's hard budget, or silent for `stall_after_secs`, is
+    interrupted, once per turn (`AgentRound.interrupted`). The history line is `<why>
+    while <state>; interrupting it` (invented).
+  - The task keeps its state, and the ladder applies once it works again: the next
+    `check_budget` sees the charged spend.
+  - A working task's silence in a paused or halted run is the watchdog's first stage,
+    as in `signals::watch`: `StallState::Interrupted`, with `stall_nudge` queued for the
+    resume. Without the nudge the resumed worker had nothing pending, and the liveness
+    check caught it.
+  - A blocked or gated task gets no nudge, because its answer or its gate's result
+    re-engages it.
+- **Red:**
+  - `a_turn_streaming_after_task_blocked_is_charged_and_breaches`: `charged 62`.
+  - `a_silent_open_turn_of_a_blocked_task_is_interrupted`: `left: 0 right: 1`.
+  - `a_pause_with_an_open_streaming_turn_is_charged`: failed.
+- **Tests rewritten to the ruling.** These round-1 tests assumed an open turn is excused
+  once its task stops:
+  - `a_turn_open_through_the_gates_is_watched_then_excused`;
+  - `a_block_is_excused_from_the_end_of_its_turn`;
+  - `a_stopped_clock_shows_no_growing_spend` (the turn now ends first);
+  - `a_resume_re_arms_the_first_stall_stage_from_now` (roomy budget, and a 30-minute
+    pause under the next size's ceiling);
+  - `a_paused_session_s_open_turn_is_watched_then_excused`;
+  - `a_restore_right_after_a_resume_stops_the_clock_at_the_resume`, which replaces the
+    answer variant: a nudged round between turns keeps its old last event through a
+    resume, so G3 is still needed;
+  - `an_older_ended_session_keeps_its_end` (the fresh session's first turn ends before
+    the pause).
+- **Removed as dead under the ruling.** Both were shown by their mutants (F4, F15)
+  surviving every test:
+  - The stall-silence shift at a clock restart. The stall watchdog watches only open
+    turns, and an open turn keeps the clock running.
+  - The `sync` at the start of the pass. The spend read anywhere subtracts the open stop
+    (`round_spend`), so one `sync` at the end of the pass records every stop and
+    restart.
+
+**M-5: the charge covers the time worked.** `the_charge_covers_the_time_worked`
+(`tests/control_open_turn.rs`) ports the reviewer's Q1 generator: 400 sequences of 60
+pseudo-random steps.
+- A work step's seconds count when the worker's session is live and either its task
+  works in a running run or its turn is open. After every step the test asserts
+  `total_spend >= worked`, plus `assert_clock_sound`.
+- Red: `sequence 0: charged 4 < worked 728`.
+- It also kills G1, G3 and F19.
+
+**Observation (re-review 2, out of scope).** A restore may lower the shown spend by up
+to one silence span. The stop sits at the session's last sign of life, which is the
+accepted estimate from concern 3.
+
+**Mutations.**
+- The new guards are all killed:
+  - H1: the open-turn term of `charging`.
+  - H2: the `watch_open_turns` call.
+  - H3: the budget branch.
+  - H4: the stall branch.
+  - H5: once per turn, killed by the added second tick.
+  - H6: a working task's first stage, killed by liveness.
+  - H7: skipping the tasks `signals::watch` covers.
+- The earlier clock mutants were re-run and are killed: F1, F2, F5, F16 (the one
+  remaining `sync`), F17, F18, F19, G1, G3 and R16.
+- G2 is still equivalent, as re-review 2 accepted.

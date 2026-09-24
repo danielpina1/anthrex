@@ -1,16 +1,20 @@
 //! What a worker session is charged for. Rulings T15-I2 and T15-I3: its minutes
-//! (decision 40) and its stall silence (decision 32) count only while its task is
-//! working (or its session launching) in a running run. Blocked, held, in the gates,
-//! or with the run paused or halted, the task's clock is stopped (`Task.clock`); when both hold again,
-//! every worker round is excused the stopped span it overlapped. Ruling T15-C1: `run
-//! retry` starts a new budget epoch, and rung 4 counts from it; `spent_total` keeps the
-//! whole for the report.
+//! (decision 40) and its stall silence (decision 32) count while its task is working
+//! (or its session launching) in a running run; ruling T15-R3: and whenever a worker
+//! turn is open, whatever the task's or the run's state. Otherwise (blocked, held, in
+//! a gate, or the run paused or halted, with no turn open) the task's clock is stopped
+//! (`Task.clock`); when it runs again, every worker round is excused the stopped span
+//! it overlapped. Ruling T15-C1: `run retry` starts a new budget epoch, and rung 4
+//! counts from it; `spent_total` keeps the whole for the report.
 
 use proto::{AgentRole, RunState, Spend, TaskState};
 use serde::{Deserialize, Serialize};
 
-use super::ladder::{round_spend, worker_round};
-use crate::run::model::{Run, Task};
+use super::dispatch::history;
+use super::ladder::{breached, round_spend, worker_round};
+use super::{Effect, INTERRUPT_GRACE_SECS, outbox};
+use crate::run::contract::stall_nudge;
+use crate::run::model::{Run, StallState, Task};
 
 /// The spend before a `run retry` (ruling T15-C1).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,8 +34,10 @@ pub struct TaskClock {
     pub restarted: u64,
 }
 
-/// Each scheduler pass, before and after its work: a task's clock stops when it stops
-/// working or the run stops running, and restarts when both hold again.
+/// At the end of each scheduler pass: a task's clock stops when it stops working or
+/// the run stops running and no worker turn is open, and restarts when either holds
+/// again. The stall silence needs no shift: the watchdog watches only open turns, and
+/// an open turn keeps the clock running (ruling T15-R3).
 pub(super) fn sync(run: &mut Run, now: u64) {
     let running = run.state == RunState::Running;
     for task in run.tasks.iter_mut() {
@@ -49,7 +55,8 @@ pub(super) fn sync(run: &mut Run, now: u64) {
                     | TaskState::Check
                     | TaskState::Review
                     | TaskState::MergeQueue
-            );
+            )
+            || open_turn(task).is_some();
         match task.clock.stopped {
             None if !charging => task.clock.stopped = Some(now),
             Some(since) if charging => {
@@ -64,11 +71,74 @@ pub(super) fn sync(run: &mut Run, now: u64) {
     }
 }
 
-/// A restore stops a working task's clock at its session's last sign of life: the
+/// Ruling T15-R3: the index of the task's latest worker round if it is live with a turn
+/// open. Its clock runs whatever the task's or the run's state, and the watchdog
+/// watches it (`signals::watch_open_turns`).
+pub(super) fn open_turn(task: &Task) -> Option<usize> {
+    worker_round(task).filter(|&r| {
+        let round = &task.rounds[r];
+        round.turn_open && round.window_id.is_some() && !round.ended && !round.retiring
+    })
+}
+
+/// Ruling T15-R3: the watchdog on an open worker turn that `signals::watch` does not
+/// see (its task not working, or the run not running). A turn past its session's hard
+/// budget, or silent for `stall_after_secs`, is interrupted once; the task keeps its
+/// state, and the ladder applies once it works again. A working task's silence (its run
+/// paused or halted) is the watchdog's first stage, as in `signals::watch`: its
+/// `stall_nudge` is queued for the resume. A blocked or gated task gets none: its
+/// answer or its gate's result re-engages it.
+pub(super) fn watch_open_turns(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+    let running = run.state == RunState::Running;
+    let stall_after = run.limits.stall_after_secs;
+    for i in 0..run.tasks.len() {
+        let task = &run.tasks[i];
+        if running && task.state == TaskState::Working {
+            continue;
+        }
+        let Some(r) = open_turn(task) else {
+            continue;
+        };
+        let round = &task.rounds[r];
+        if round.interrupted {
+            continue;
+        }
+        let spend = round_spend(round, task.clock.stopped, now);
+        let quiet = round.last_event.max(round.rate_limited_until.unwrap_or(0));
+        let why = if let Some(what) = breached(spend, task.budget) {
+            format!("its open turn passed its budget ({what})")
+        } else if now >= quiet + stall_after {
+            "its open turn made no progress".to_string()
+        } else {
+            continue;
+        };
+        let state = if running {
+            task.state.label()
+        } else {
+            run.state.label()
+        };
+        let silent = breached(spend, task.budget).is_none();
+        let working = task.state == TaskState::Working;
+        let window_id = round.window_id.unwrap_or_default();
+        fx.push(Effect::Interrupt { window_id });
+        let round = &mut run.tasks[i].rounds[r];
+        round.interrupted = true;
+        if silent && working {
+            round.stall = StallState::Interrupted {
+                deadline: now + INTERRUPT_GRACE_SECS,
+            };
+            let id = run.tasks[i].id().to_string();
+            outbox::queue(run, &id, stall_nudge(stall_after / 60), now);
+        }
+        history(run, i, now, format!("{why} while {state}; interrupting it"));
+    }
+}
+
+/// A restore stops a running task clock at its session's last sign of life: the
 /// downtime before the restore is no session time either. Ruling T15-R2 (N-2): never
 /// before the round ended or the clock last restarted, so no span is excused twice.
 pub(super) fn stop_at_restore(task: &mut Task) {
-    if task.state != TaskState::Working || task.clock.stopped.is_some() {
+    if task.clock.stopped.is_some() {
         return;
     }
     let restarted = task.clock.restarted;
@@ -109,10 +179,6 @@ fn restart(task: &mut Task, since: u64, now: u64) {
             .unwrap_or(now)
             .saturating_sub(round.started_at);
         round.excused_secs = round.excused_secs.min(elapsed);
-        // The silence before the stop still counts; the stop's does not.
-        if !round.ended {
-            round.last_event += now.saturating_sub(since.max(round.last_event));
-        }
     }
 }
 

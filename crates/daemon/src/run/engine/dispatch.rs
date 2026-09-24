@@ -23,8 +23,7 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     if run.state.is_terminal() || finishing(run) {
         return;
     }
-    // Rulings T15-I2, T15-I3: a task that works again is excused its stop first.
-    clock::sync(run, now);
+    clock::watch_open_turns(run, now, fx);
     holds::enforce_holds(run, now, fx);
     requeue(run);
     if integration_ready(run) {
@@ -53,6 +52,8 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         outbox::deliver(run, now, fx);
         complete::complete_pass(run, now, fx);
     }
+    // Rulings T15-I2, T15-I3, T15-R3: the task clocks, after the pass's changes. A
+    // stop still open is subtracted wherever spend is read (`ladder::round_spend`).
     clock::sync(run, now);
 }
 

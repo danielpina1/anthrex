@@ -235,26 +235,32 @@ fn the_probe_sequences_keep_the_clock_sound() {
     assert_alive(&fx);
 }
 
-/// N-2 for a live session: an answer restarts the clock and shifts the turn's
-/// silence, so its last event lies inside the excused block; a restore right after
-/// stops the clock at the answer, not at that event, and the charge does not go
-/// backwards. (A resume re-arms the silence from `now`, so only an answer shows it.)
+/// N-2 for a live session between turns whose last event lies inside an excused
+/// pause: a nudged round (a resume re-arms only a watching one) keeps its old last
+/// event through the resume, so a restore right after must stop the clock at the
+/// resume, not at that event, or the pause is excused twice.
 #[test]
-fn a_restore_right_after_an_answer_stops_the_clock_at_the_answer() {
+fn a_restore_right_after_a_resume_stops_the_clock_at_the_resume() {
     let (mut fx, window) = working();
-    fx.signal(window, AgentSignal::Activity);
+    let stall_after = fx.run().limits.stall_after_secs;
+    let effects = fx.send(fx.now + stall_after + 1, EventKind::Tick);
+    assert!(interrupted(&effects));
+    fx.turn_completed(window);
+    fx.turn_completed(window);
+    let round = &fx.task("t1").rounds[0];
+    assert!(!round.ended && !round.turn_open, "{round:#?}");
     fx.now += 100;
-    super::control::blocked(&mut fx, window, "question", "which table?");
+    edit(&mut fx, vec![PlanEdit::Pause]);
     fx.now += 3_600;
-    edit(&mut fx, vec![answer("users")]);
-    let at_answer = first_round_spend(&fx);
+    resume(&mut fx);
+    let at_resume = first_round_spend(&fx);
     fx.now += 5;
     restart(&mut fx, Vec::new());
     fx.now += 3_600;
     resume(&mut fx);
     assert!(
-        first_round_spend(&fx) >= at_answer,
-        "{} < {at_answer}",
+        first_round_spend(&fx) >= at_resume,
+        "{} < {at_resume}",
         first_round_spend(&fx)
     );
     assert_alive(&fx);

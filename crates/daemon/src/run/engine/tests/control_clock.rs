@@ -13,9 +13,9 @@ use super::gates::{check_result, only_op};
 use super::holds::{add_dep, answer, blocked_t1};
 use super::liveness::assert_alive;
 use super::merge::{claim, doc_task, head_of, pending_one, start_on, window_of};
-use super::turns::{exited, working};
+use super::turns::{exited, working, working_on};
 use crate::run::engine::ladder::round_spend;
-use crate::run::engine::{AgentSignal, Effect, EventKind, OpResult};
+use crate::run::engine::{AgentSignal, Effect, EventKind, OpResult, TurnOutcome};
 use crate::run::snapshot::snapshot;
 
 fn interrupted(effects: &[Effect]) -> bool {
@@ -35,22 +35,27 @@ fn state_and_rung(fx: &Fixture) -> (TaskState, u8) {
     (t1.state, t1.rung)
 }
 
-/// A turn open through a two-hour check that fails (Claude started it by itself, for a
-/// background sub-agent) is not silent for the check's time: nothing is interrupted.
+/// Ruling T15-R3: a turn open through a check (Claude started it by itself, for a
+/// background sub-agent) is watched and charged: once it falls silent it is
+/// interrupted, and when it ends the rest of the two-hour check is excused.
 #[test]
-fn a_turn_open_through_the_gates_is_not_silent_for_them() {
+fn a_turn_open_through_the_gates_is_watched_then_excused() {
     let (mut fx, windows) = start_on(PROFILE, &[doc_task("t1", "")]);
     let window = window_of(&windows, "t1");
     claim(&mut fx, "t1", window, &head_of("t1"));
     fx.signal(window, AgentSignal::TurnStarted);
-    assert!(fx.task("t1").rounds[0].turn_open);
     let (op, _) = pending_one(&fx, "Check", Some("t1"));
+    let stall_after = fx.run().limits.stall_after_secs;
+    let effects = fx.send(fx.now + stall_after + 1, EventKind::Tick);
+    assert!(interrupted(&effects), "{effects:#?}");
+    fx.turn_ended(window, TurnOutcome::Interrupted);
     fx.now += 2 * 3_600;
-    let effects = fx.done(op, check_result(false));
-    assert!(!interrupted(&effects), "{effects:#?}");
+    fx.done(op, check_result(false));
     let effects = fx.tick();
     assert!(!interrupted(&effects), "{effects:#?}");
     assert_eq!(state_and_rung(&fx), (TaskState::Working, 1));
+    let secs = session_secs(&fx);
+    assert!((stall_after..stall_after + 120).contains(&secs), "{secs}");
     assert_alive(&fx);
 }
 
@@ -78,26 +83,29 @@ fn the_downtime_before_a_restore_is_not_charged() {
     assert_alive(&fx);
 }
 
-/// A block answered two hours later in the next event: the stop is recorded at the
-/// block itself, so the wait is excused.
+/// Ruling T15-R3: a question asked with its turn still open is charged until the turn
+/// ends (here the watchdog interrupts it once it falls silent); the rest of the
+/// two-hour wait is excused, and the answer goes to the same session.
 #[test]
-fn a_block_answered_by_the_next_event_is_excused() {
+fn a_block_is_excused_from_the_end_of_its_turn() {
     let (mut fx, window) = working();
     blocked(&mut fx, window, "question", "which table?");
+    assert!(fx.task("t1").rounds[0].turn_open, "the turn is still open");
+    let stall_after = fx.run().limits.stall_after_secs;
+    let effects = fx.send(fx.now + stall_after + 1, EventKind::Tick);
+    assert!(interrupted(&effects), "{effects:#?}");
+    fx.turn_ended(window, TurnOutcome::Interrupted);
     fx.now += 2 * 3_600;
     let effects = edit(&mut fx, vec![answer("users")]);
-    assert!(fx.task("t1").rounds[0].turn_open, "the turn is still open");
-    assert!(
-        !interrupted(&effects),
-        "not silent for the block: {effects:#?}"
-    );
+    assert!(!interrupted(&effects), "{effects:#?}");
     assert_eq!(
         state_and_rung(&fx),
         (TaskState::Working, 0),
         "{:?}",
         fx.task("t1").history.last()
     );
-    assert!(session_secs(&fx) < 60, "{}", session_secs(&fx));
+    let secs = session_secs(&fx);
+    assert!((stall_after..stall_after + 120).contains(&secs), "{secs}");
     assert_alive(&fx);
 }
 
@@ -132,11 +140,13 @@ fn a_hold_made_in_the_pass_stops_the_clock_at_once() {
     assert_alive(&fx);
 }
 
-/// While the clock is stopped, the snapshot's session spend does not grow.
+/// While the clock is stopped (the task blocked, its turn ended), the snapshot's
+/// session spend does not grow.
 #[test]
 fn a_stopped_clock_shows_no_growing_spend() {
     let (mut fx, window) = working();
     blocked(&mut fx, window, "question", "which table?");
+    fx.turn_completed(window);
     let before = session_secs(&fx);
     fx.now += 3_600;
     assert_eq!(session_secs(&fx), before);
@@ -180,7 +190,9 @@ fn an_older_ended_session_keeps_its_end() {
             patch: String::new(),
         },
     );
-    fx.complete_windows();
+    let fresh = fx.complete_windows()[0].1;
+    // The fresh session's first turn ends, so the pause stops the clock (T15-R3).
+    fx.turn_completed(fresh);
     let old = &fx.task("t1").rounds[0];
     assert!(
         old.ended && !old.retiring && old.session_id.is_some(),
@@ -222,15 +234,17 @@ fn a_claim_accepted_before_the_restart_leaves_no_mark_on_the_resumed_turn() {
 }
 
 /// Decision 45: a first-stage stall deadline is re-armed from the resume, so silence
-/// before a pause does not carry over (the clock alone would keep it).
+/// before a pause does not carry over. (A roomy budget: the open turn is charged
+/// through the pause, ruling T15-R3; the pause stays under the next size's ceiling.)
 #[test]
 fn a_resume_re_arms_the_first_stall_stage_from_now() {
-    let (mut fx, _) = working();
+    let (mut fx, _) = working_on("[task.budget]\ntool_calls = 1000\nminutes = 1000");
     let stall_after = fx.run().limits.stall_after_secs;
     fx.send(fx.now + stall_after - 100, EventKind::Tick);
     edit(&mut fx, vec![PlanEdit::Pause]);
-    fx.now += 3_600;
-    resume(&mut fx);
+    fx.now += 1_800;
+    let effects = resume(&mut fx);
+    assert!(!interrupted(&effects), "{effects:#?}");
     let effects = fx.send(fx.now + 200, EventKind::Tick);
     assert!(!interrupted(&effects), "{effects:#?}");
     let effects = fx.send(fx.now + stall_after, EventKind::Tick);

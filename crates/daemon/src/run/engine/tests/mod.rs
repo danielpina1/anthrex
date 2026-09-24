@@ -5,6 +5,7 @@ mod control;
 mod control_clock;
 mod control_clock_props;
 mod control_fixes;
+mod control_open_turn;
 mod control_restore;
 mod control_resume;
 mod control_retry;

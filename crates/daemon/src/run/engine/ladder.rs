@@ -317,7 +317,7 @@ fn reached(spend: Spend, budget: Budget) -> bool {
 /// Decision 40's hard limit: spend at 1.5 × the budget on any axis is a breach,
 /// compared in integers (`2 × spend >= 3 × budget`, so 7 of 5 tool calls is not and 8
 /// is; 450 seconds of 5 minutes is); what was breached.
-fn breached(spend: Spend, budget: Budget) -> Option<String> {
+pub(super) fn breached(spend: Spend, budget: Budget) -> Option<String> {
     if u64::from(spend.tool_calls).saturating_mul(2)
         >= u64::from(budget.tool_calls).saturating_mul(3)
     {

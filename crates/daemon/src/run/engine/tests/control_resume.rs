@@ -81,14 +81,18 @@ fn a_resume_lost_to_a_second_restart_is_sent_again() {
     assert_alive(&fx);
 }
 
-/// The stall clock does not run while a run is paused: its first stage is re-armed by
-/// the resume, so a session silent through the pause is not interrupted for it, and
-/// the pause is no session time (decision 40's minutes): a long one breaches no budget.
+/// Ruling T15-R3: a turn open at a pause is watched through it: silent, it is
+/// interrupted, and once it ends the rest of the pause is no session time, so a long
+/// pause breaches no budget.
 #[test]
-fn a_paused_session_is_not_stalled_by_the_pause() {
-    let (mut fx, _) = working();
+fn a_paused_session_s_open_turn_is_watched_then_excused() {
+    let (mut fx, window) = working();
     edit(&mut fx, vec![PlanEdit::Pause]);
-    let later = fx.now + 10 * fx.run().limits.stall_after_secs;
+    let stall_after = fx.run().limits.stall_after_secs;
+    let effects = fx.send(fx.now + stall_after + 1, EventKind::Tick);
+    assert_eq!(interrupts(&effects), 1, "{effects:#?}");
+    fx.turn_ended(window, crate::run::engine::TurnOutcome::Interrupted);
+    let later = fx.now + 10 * stall_after;
     assert_eq!(interrupts(&fx.send(later, EventKind::Tick)), 0);
     let effects = resume(&mut fx);
     assert_eq!(fx.run().state, RunState::Running);
