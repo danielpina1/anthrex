@@ -22,6 +22,7 @@
 //! work* — the safety-critical question, kept where it can be read on its own.
 
 mod dirty;
+mod input;
 mod ops;
 pub mod pinned;
 
@@ -249,8 +250,46 @@ pub fn run_git_with_cap(
     deadline: Instant,
     max_output_bytes: usize,
 ) -> Result<GitOutput, WorktreeError> {
-    run_git_capturing(git, dir, args, deadline, Capture::Capped(max_output_bytes))
-        .map(|(output, _)| output)
+    run_git_capturing(
+        git,
+        dir,
+        args,
+        deadline,
+        Capture::Capped(max_output_bytes),
+        None,
+    )
+    .map(|(output, _)| output)
+}
+
+/// As [`run_git_with_cap`], with `input` on git's standard input (`update-index
+/// --index-info`, M8a final fix batch F1, fix round 5). The bytes go to an unlinked
+/// temporary file first, and that file becomes git's stdin, so git reads to its end
+/// and never waits on a pipe: nothing else about the invocation, its deadline or how a
+/// late child is ended changes.
+pub fn run_git_with_input(
+    git: &OsStr,
+    dir: &Path,
+    args: &[&OsStr],
+    deadline: Instant,
+    input: &[u8],
+) -> Result<GitOutput, WorktreeError> {
+    let file = input::input_file(input).map_err(|err| WorktreeError::Git {
+        action: args
+            .iter()
+            .map(|arg| arg.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" "),
+        stderr: format!("cannot stage git's input: {err}"),
+    })?;
+    run_git_capturing(
+        git,
+        dir,
+        args,
+        deadline,
+        Capture::Capped(MAX_OUTPUT_BYTES),
+        Some(&file),
+    )
+    .map(|(output, _)| output)
 }
 
 /// As [`run_git`], for output that may be arbitrarily large: the first `head_bytes`
@@ -271,6 +310,7 @@ pub fn run_git_head_tail(
         args,
         deadline,
         Capture::HeadTail(head_bytes, tail_bytes),
+        None,
     )
 }
 
@@ -291,6 +331,7 @@ fn run_git_capturing(
     args: &[&OsStr],
     deadline: Instant,
     capture: Capture,
+    input: Option<&std::fs::File>,
 ) -> Result<(GitOutput, HeadTail), WorktreeError> {
     let now = Instant::now();
     let joined_args = args
@@ -331,6 +372,25 @@ fn run_git_capturing(
         .args(args)
         .env("LC_ALL", "C")
         .env("GIT_TERMINAL_PROMPT", "0");
+    if let Some(file) = input {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::process::CommandExt;
+        let fd = file.as_raw_fd();
+        // Runs in the child after the standard streams are set up (stdin as
+        // `/dev/null`) and before `exec`: the input file replaces stdin. `dup2` is
+        // async-signal-safe, and `fd` stays open until `exec` (its close-on-exec flag
+        // does not carry over to the duplicate).
+        // SAFETY: only `dup2` and `errno` are touched between fork and exec.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::dup2(fd, libc::STDIN_FILENO) == -1 {
+                    Err(io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
+            });
+        }
+    }
 
     let (outcome, kept, stderr, spawn_error) = match capture {
         Capture::Capped(max) => {
