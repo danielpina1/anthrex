@@ -124,9 +124,10 @@ fn deliveries_wait_for_the_turn_to_end() {
             break;
         }
         let at = fx.now;
-        let early = fx.send(at + DELIVERY_RETRY_SECS - 1, EventKind::Tick);
+        // Ruling T24-clock: at least DELIVERY_RETRY_SECS real seconds.
+        let early = fx.send(at + DELIVERY_RETRY_SECS, EventKind::Tick);
         assert!(delivers(&early).is_empty());
-        last = fx.send(at + DELIVERY_RETRY_SECS, EventKind::Tick);
+        last = fx.send(at + DELIVERY_RETRY_SECS + 1, EventKind::Tick);
         assert_eq!(delivers(&last), vec![ab.clone()]);
     }
     assert_eq!(
@@ -268,9 +269,11 @@ fn stall_interrupts_then_nudges_then_goes_to_rung_2() {
     let (mut fx, window) = working_on(ROOMY);
     let effort = fx.task("t1").route.effort;
     let quiet = fx.task("t1").rounds[0].last_event;
-    let effects = fx.send(quiet + 599, EventKind::Tick);
-    assert!(!effects.contains(&Effect::Interrupt { window_id: window }));
+    // Ruling T24-clock: 600 whole engine seconds may be 599.x real ones; the stall
+    // comes one second later.
     let effects = fx.send(quiet + 600, EventKind::Tick);
+    assert!(!effects.contains(&Effect::Interrupt { window_id: window }));
+    let effects = fx.send(quiet + 601, EventKind::Tick);
     assert!(effects.contains(&Effect::Interrupt { window_id: window }));
     assert!(matches!(
         fx.task("t1").rounds[0].stall,
@@ -287,9 +290,9 @@ fn stall_interrupts_then_nudges_then_goes_to_rung_2() {
     assert_eq!(delivers(&effects), vec![stall_nudge(10)]);
     assert!(ops_in(&effects, "CountCommits").is_empty());
     let quiet = fx.now;
-    let effects = fx.send(quiet + 599, EventKind::Tick);
-    assert!(!effects.contains(&Effect::KillWindow { window_id: window }));
     let effects = fx.send(quiet + 600, EventKind::Tick);
+    assert!(!effects.contains(&Effect::KillWindow { window_id: window }));
+    let effects = fx.send(quiet + 601, EventKind::Tick);
     assert!(effects.contains(&Effect::KillWindow { window_id: window }));
     assert!(!effects.contains(&Effect::Interrupt { window_id: window }));
     let t1 = fx.task("t1");
@@ -326,10 +329,10 @@ fn stall_interrupts_then_nudges_then_goes_to_rung_2() {
     // An interrupt that does not end the turn within INTERRUPT_GRACE: rung 2 directly.
     let (mut fx, window) = working_on(ROOMY);
     let quiet = fx.task("t1").rounds[0].last_event;
-    fx.send(quiet + 600, EventKind::Tick);
-    let effects = fx.send(quiet + 629, EventKind::Tick);
+    fx.send(quiet + 601, EventKind::Tick);
+    let effects = fx.send(quiet + 631, EventKind::Tick);
     assert!(!effects.contains(&Effect::KillWindow { window_id: window }));
-    let effects = fx.send(quiet + 630, EventKind::Tick);
+    let effects = fx.send(quiet + 632, EventKind::Tick);
     assert!(effects.contains(&Effect::KillWindow { window_id: window }));
     let t1 = fx.task("t1");
     assert_eq!((t1.stalls, t1.rung), (1, 2));
@@ -343,7 +346,8 @@ fn rate_limit_retry_suspends_the_stall_clock() {
         delay_ms: 900_000,
     };
     fx.signal(window, retry.clone());
-    let until = fx.now + 900;
+    // Ruling T24-clock: at least the retry's 900 s; the stall 600 s after that.
+    let until = fx.now + 901;
     assert_eq!(fx.task("t1").rounds[0].rate_limited_until, Some(until));
     let effects = fx.send(until - 1, EventKind::Tick);
     assert!(!effects.contains(&Effect::Interrupt { window_id: window }));

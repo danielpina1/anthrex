@@ -10,7 +10,7 @@ use proto::{
     AgentRole, BlockReason, GateKind, RunState, Runtime, Severity, TaskState, ToolCall, Verdict,
 };
 
-use super::clock::not_before;
+use super::clock::{not_before, stall_due};
 use super::dispatch::{block, history, new_round, window_limit_reached};
 use super::schedule::{hub_holds_slot, needs_reviewer, readers_busy};
 use super::signals::{count_rate_limit, end_round};
@@ -516,9 +516,8 @@ pub(super) fn watch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         if round.ended || !round.turn_open {
             continue;
         }
-        let quiet = round.last_event.max(round.rate_limited_until.unwrap_or(0));
         let stall_after = run.limits.stall_after_secs;
-        if now >= quiet + stall_after {
+        if now >= stall_due(round, stall_after) {
             let why = format!("no stream event for {} minutes", stall_after / 60);
             verdictless(run, i, r, &why, now, fx);
         }

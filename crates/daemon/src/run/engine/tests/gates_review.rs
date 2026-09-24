@@ -415,7 +415,10 @@ fn a_reviewer_that_dies_twice_ends_its_round() {
 fn a_silent_reviewer_is_replaced() {
     let (mut fx, _, rwindow) = reviewed(PROFILE, "");
     let quiet = fx.task("t1").rounds.last().unwrap().last_event;
+    // Ruling T24-clock: at least 600 real seconds, one engine second past them.
     let effects = fx.send(quiet + 600, EventKind::Tick);
+    assert!(!effects.contains(&Effect::KillWindow { window_id: rwindow }));
+    let effects = fx.send(quiet + 601, EventKind::Tick);
     assert!(
         effects.contains(&Effect::KillWindow { window_id: rwindow }),
         "{effects:#?}"

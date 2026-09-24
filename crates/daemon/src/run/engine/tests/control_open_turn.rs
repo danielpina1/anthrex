@@ -206,3 +206,26 @@ fn the_charge_covers_the_time_worked() {
         }
     }
 }
+
+/// Ruling T24-clock: a paused run's silent open turn is interrupted once at least
+/// `stall_after_secs` real seconds have passed (one engine second past the whole
+/// seconds, since `now` is truncated), and its grace is at least `INTERRUPT_GRACE`.
+#[test]
+fn a_paused_runs_silent_turn_waits_whole_seconds_to_stall_and_for_its_grace() {
+    let (mut fx, _window) = working();
+    edit(&mut fx, vec![PlanEdit::Pause]);
+    assert_eq!(fx.run().state, RunState::Paused);
+    let stall_after = fx.run().limits.stall_after_secs;
+    let quiet = fx.task("t1").rounds[0].last_event;
+    let effects = fx.send(quiet + stall_after, EventKind::Tick);
+    assert_eq!(interrupts(&effects), 0, "{effects:#?}");
+    let effects = fx.send(quiet + stall_after + 1, EventKind::Tick);
+    assert_eq!(interrupts(&effects), 1, "{effects:#?}");
+    assert_eq!(
+        fx.task("t1").rounds[0].stall,
+        crate::run::model::StallState::Interrupted {
+            deadline: fx.now + crate::run::engine::INTERRUPT_GRACE_SECS + 1
+        }
+    );
+    assert_alive(&fx);
+}

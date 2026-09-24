@@ -271,12 +271,12 @@ fn a_failed_delivery_waits_before_it_is_retried() {
     );
     assert!(delivers(&effects).is_empty(), "{effects:#?}");
     let effects = fx.send(
-        failed_at + DELIVERY_RETRY_SECS - 1,
+        failed_at + DELIVERY_RETRY_SECS,
         crate::run::engine::EventKind::Tick,
     );
     assert!(delivers(&effects).is_empty(), "{effects:#?}");
     let effects = fx.send(
-        failed_at + DELIVERY_RETRY_SECS,
+        failed_at + DELIVERY_RETRY_SECS + 1,
         crate::run::engine::EventKind::Tick,
     );
     assert_eq!(delivers(&effects), vec![answer_message("A")]);

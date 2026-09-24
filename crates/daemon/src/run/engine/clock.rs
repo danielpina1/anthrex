@@ -14,7 +14,7 @@ use super::dispatch::history;
 use super::ladder::{breached, round_spend, worker_round};
 use super::{Effect, INTERRUPT_GRACE_SECS, outbox};
 use crate::run::contract::stall_nudge;
-use crate::run::model::{Run, StallState, Task};
+use crate::run::model::{AgentRound, Run, StallState, Task};
 
 /// The spend before a `run retry` (ruling T15-C1).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +32,17 @@ pub struct BudgetEpoch {
 /// makes a wait that decision 32 promises (`rate_limit_retry_secs`) a lower bound.
 pub(super) fn not_before(now: u64, secs: u64) -> u64 {
     now + secs + 1
+}
+
+/// When a round's open turn has been silent for `stall_after` seconds (decision 32):
+/// at least that long after its last event, and after the end of a rate-limit wait
+/// (`rate_limited_until`, itself already a whole-seconds lower bound). Ruling
+/// T24-clock.
+pub(super) fn stall_due(round: &AgentRound, stall_after: u64) -> u64 {
+    let after_event = not_before(round.last_event, stall_after);
+    round
+        .rate_limited_until
+        .map_or(after_event, |until| after_event.max(until + stall_after))
 }
 
 /// A task's clock: since when it is stopped, if it is, and when it last restarted.
@@ -112,10 +123,9 @@ pub(super) fn watch_open_turns(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             continue;
         }
         let spend = round_spend(round, task.clock.stopped, now);
-        let quiet = round.last_event.max(round.rate_limited_until.unwrap_or(0));
         let why = if let Some(what) = breached(spend, task.budget) {
             format!("its open turn passed its budget ({what})")
-        } else if now >= quiet + stall_after && task.claim.is_none() {
+        } else if now >= stall_due(round, stall_after) && task.claim.is_none() {
             // Ruling T12-later (T15-R4): no stall while its `task_done` is being checked.
             "its open turn made no progress".to_string()
         } else {
@@ -134,7 +144,7 @@ pub(super) fn watch_open_turns(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         round.interrupted = true;
         if silent && working {
             round.stall = StallState::Interrupted {
-                deadline: now + INTERRUPT_GRACE_SECS,
+                deadline: not_before(now, INTERRUPT_GRACE_SECS),
             };
             let id = run.tasks[i].id().to_string();
             outbox::queue(run, &id, stall_nudge(stall_after / 60), now);

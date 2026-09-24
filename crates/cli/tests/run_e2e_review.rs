@@ -9,17 +9,6 @@ use serde_json::{Value, json};
 use support::run_harness::{RUN_WAIT, RunHarness};
 use support::run_plans::*;
 
-/// The last argument of each Codex process `<name>` started: its turn's message.
-fn codex_messages(h: &RunHarness, name: &str) -> Vec<String> {
-    h.io_lines(name, "args")
-        .iter()
-        .map(|l| {
-            let argv: Vec<String> = serde_json::from_str(l).unwrap();
-            argv.last().cloned().unwrap_or_default()
-        })
-        .collect()
-}
-
 fn blocked_question(reason: &str) -> Value {
     json!({"mcp_call": {"tool": "task_blocked", "args": {"kind": "question", "reason": reason}}})
 }
@@ -101,7 +90,7 @@ fn e2e_two_rejections_then_a_fresh_peer_worker_is_approved() {
     assert_eq!(sessions, [1, 2], "{:#?}", t1.rounds);
 
     // Round 2's prompt lists round 1's finding to confirm fixed, and not its own.
-    let prompts = codex_messages(&h, "reviewer-t1-2");
+    let prompts = h.codex_messages("reviewer-t1-2");
     let prompt = prompts.first().expect("reviewer-t1-2 started");
     let (_, earlier) = prompt
         .split_once("Earlier findings to confirm fixed:\n")
@@ -111,6 +100,22 @@ fn e2e_two_rejections_then_a_fresh_peer_worker_is_approved() {
         "{prompt}"
     );
     assert!(!prompt.contains("missing check"), "{prompt}");
+
+    // Ruling T24-I1: round 3's prompt lists every earlier round's findings, round 1's
+    // and round 2's. (The brief's "and not its own" above can never fail: a round's own
+    // finding does not exist when its prompt is built.) Round 3's reviewer is the
+    // engine's peer choice for the Codex worker, so its prompt is read from either.
+    let mut prompts = user_texts(&h.io_lines("reviewer-t1-3", "stdin"));
+    prompts.extend(h.codex_messages("reviewer-t1-3"));
+    let prompt = prompts.first().expect("reviewer-t1-3 started");
+    let (_, earlier) = prompt
+        .split_once("Earlier findings to confirm fixed:\n")
+        .unwrap_or_else(|| panic!("no earlier findings in round 3's prompt:\n{prompt}"));
+    assert!(
+        earlier
+            .starts_with("- [important] a.rs:3 off by one\n- [important] b.rs:9 missing check\n"),
+        "{prompt}"
+    );
 }
 
 #[test]

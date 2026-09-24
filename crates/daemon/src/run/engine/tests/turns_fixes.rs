@@ -49,7 +49,7 @@ fn a_codex_interrupt_exit_ends_the_turn_and_gets_the_nudge() {
         },
     );
     let quiet = fx.task("t1").rounds[0].last_event;
-    let effects = fx.send(quiet + 600, EventKind::Tick);
+    let effects = fx.send(quiet + 601, EventKind::Tick);
     assert!(effects.contains(&Effect::Interrupt { window_id: window }));
     let effects = exited(&mut fx, window);
     assert!(resume_messages(&effects).is_empty(), "{effects:#?}");
@@ -70,7 +70,7 @@ fn a_codex_interrupt_exit_ends_the_turn_and_gets_the_nudge() {
 fn a_claude_exit_on_the_interrupt_resumes_with_the_nudge() {
     let (mut fx, window) = working_on(ROOMY);
     let quiet = fx.task("t1").rounds[0].last_event;
-    fx.send(quiet + 600, EventKind::Tick);
+    fx.send(quiet + 601, EventKind::Tick);
     let effects = exited(&mut fx, window);
     assert_eq!(resume_messages(&effects), vec![stall_nudge(10)]);
     assert!(!resume_messages(&effects).contains(&RESUME_AFTER_EXIT.to_string()));
@@ -259,7 +259,7 @@ fn a_failed_resume_is_final_and_messages_accumulate_for_the_fresh_session() {
 fn a_block_during_an_interrupt_clears_it_so_the_answer_delivers() {
     let (mut fx, window) = working_on(ROOMY);
     let quiet = fx.task("t1").rounds[0].last_event;
-    fx.send(quiet + 600, EventKind::Tick);
+    fx.send(quiet + 601, EventKind::Tick);
     fx.tool(window, "task_blocked", json!({"reason": "which module?"}));
     assert_eq!(fx.task("t1").state, TaskState::Blocked);
     fx.turn_ended(window, TurnOutcome::Interrupted);

@@ -398,6 +398,19 @@ impl RunHarness {
     }
 }
 
+impl RunHarness {
+    /// The turn message of each Codex process claimed as `<name>`: its argv's last
+    /// argument (`FAKE_AGENT_ARGS_FILE`, one JSON array per process).
+    pub fn codex_messages(&self, name: &str) -> Vec<String> {
+        self.io_lines(name, "args")
+            .iter()
+            .filter_map(|l| serde_json::from_str::<Vec<String>>(l).ok())
+            .filter(|argv| argv.first().is_some_and(|a| a == "exec"))
+            .filter_map(|argv| argv.last().cloned())
+            .collect()
+    }
+}
+
 impl Drop for RunHarness {
     fn drop(&mut self) {
         self.stop_daemon();
@@ -437,6 +450,8 @@ async fn connect(socket: &Path) -> UnixStream {
 pub struct RunWatcher {
     messages: Arc<Mutex<VecDeque<DaemonMsg>>>,
     all: Arc<Mutex<Vec<DaemonMsg>>>,
+    /// The unix time each message of `all` was received at.
+    times: Arc<Mutex<Vec<f64>>>,
     sender: tokio::sync::mpsc::UnboundedSender<ClientMsg>,
     _thread: std::thread::JoinHandle<()>,
 }
@@ -446,11 +461,12 @@ impl RunWatcher {
         let socket = socket.to_path_buf();
         let messages: Arc<Mutex<VecDeque<DaemonMsg>>> = Arc::default();
         let all: Arc<Mutex<Vec<DaemonMsg>>> = Arc::default();
+        let times: Arc<Mutex<Vec<f64>>> = Arc::default();
         let (sender, mut outgoing) = tokio::sync::mpsc::unbounded_channel::<ClientMsg>();
         if let Some(first) = first {
             sender.send(first).unwrap();
         }
-        let (queue, log) = (messages.clone(), all.clone());
+        let (queue, log, stamps) = (messages.clone(), all.clone(), times.clone());
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let thread = std::thread::spawn(move || {
             runtime().block_on(async move {
@@ -465,6 +481,11 @@ impl RunWatcher {
                     }
                 });
                 while let Ok(Some(msg)) = proto::read_frame::<_, DaemonMsg>(&mut rd).await {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs_f64();
+                    stamps.lock().unwrap().push(now);
                     log.lock().unwrap().push(msg.clone());
                     queue.lock().unwrap().push_back(msg);
                 }
@@ -477,6 +498,7 @@ impl RunWatcher {
         RunWatcher {
             messages,
             all,
+            times,
             sender,
             _thread: thread,
         }
@@ -489,6 +511,12 @@ impl RunWatcher {
     /// Every message received so far, in order.
     pub fn received(&self) -> Vec<DaemonMsg> {
         self.all.lock().unwrap().clone()
+    }
+
+    /// Every message received so far, in order, with the unix time it arrived at.
+    pub fn received_at(&self) -> Vec<(f64, DaemonMsg)> {
+        let times = self.times.lock().unwrap().clone();
+        times.into_iter().zip(self.received()).collect()
     }
 
     /// Every `RunsSnapshot` received so far, in order.

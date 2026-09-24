@@ -165,7 +165,7 @@ fn interrupted() -> (Fixture, u32, u64) {
     let (mut fx, w) = working_on(ROOMY);
     let stall = fx.run().limits.stall_after_secs;
     let quiet = fx.task("t1").rounds[0].last_event;
-    let effects = fx.send(quiet + stall, EventKind::Tick);
+    let effects = fx.send(quiet + stall + 1, EventKind::Tick);
     assert!(effects.contains(&Effect::Interrupt { window_id: w }));
     let StallState::Interrupted { deadline } = fx.task("t1").rounds[0].stall else {
         panic!("interrupted")

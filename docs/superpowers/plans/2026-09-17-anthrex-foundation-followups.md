@@ -906,4 +906,13 @@ scope.
   other engine timers keep `now + secs`, so each can fire up to a second early in real
   time: the stall clock (`stall_after_secs`), `INTERRUPT_GRACE`, the delivery retry
   and `ApiRetry`'s `rate_limited_until`. None of them is a promised lower bound that a
-  test measures today.
+  test measures today. **Closed in M8a.24's fix round 1** (ruling T24-clock): all four
+  go through `not_before` (the stall clock through `clock::stall_due`), each with an
+  engine unit test at its boundary. The `CountCommits` retry (`count_retry_at`) keeps
+  `now + DELIVERY_RETRY_SECS`: a retry of an engine op, not a promised wait.
+- **`RunHarness` leaks a daemon whose start outlasts the CLI's 3 s.** Under load (seen
+  once in M8a.24's fix round 1, seven tests at once), `anthrex daemon start` gave up
+  after 3 s while the daemon came up at about 4 s. `start_daemon` then panicked,
+  `Drop`'s `stop_daemon` returned early because no socket existed yet, and the temp
+  dir's removal left the daemon running (stopped by hand through its own socket).
+  `stop_daemon` should wait for, or stop through, the pid in `daemon.pid` on that path.

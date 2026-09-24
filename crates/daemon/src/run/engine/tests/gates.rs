@@ -234,7 +234,7 @@ fn proof_accepts_a_red_commit_from_an_earlier_session() {
     // Session 1 committed its red, then stalled twice: rung 2.
     fx.task_mut("t1").rounds[0].stall = crate::run::model::StallState::Nudged;
     let quiet = fx.task("t1").rounds[0].last_event;
-    let effects = fx.send(quiet + 600, crate::run::engine::EventKind::Tick);
+    let effects = fx.send(quiet + 601, crate::run::engine::EventKind::Tick);
     assert!(effects.contains(&Effect::KillWindow { window_id: window }));
     super::turns::killed_exit(&mut fx, window);
     let (op, _) = fx.op("DiffSoFar");

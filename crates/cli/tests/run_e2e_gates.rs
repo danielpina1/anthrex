@@ -222,15 +222,50 @@ fn e2e_rate_limit_retry_is_not_a_stall_and_a_failed_turn_is_continued() {
         .find(|r| r.role == AgentRole::Worker)
         .and_then(|r| r.window_id)
         .unwrap();
-    let attention = watcher.received().iter().any(|m| {
-        matches!(m, DaemonMsg::WindowsChanged { windows }
-            if windows.iter().any(|w| w.id == worker && w.status == Status::Attention))
-    });
-    assert!(attention, "the worker window never showed Attention");
-
-    // The failed turn ended `SILENCE_MS` after the retry, which came right after the
-    // first stamp; the second stamp is taken as soon as the continue arrived.
+    // Ruling T24-I2: the retry's `Attention`, then the failed turn's. The status
+    // machine's two `Attention`s are told apart by time: the retry's is seen before the
+    // failed turn (the first stamp plus `SILENCE_MS`), the failed turn's holds after it
+    // until the continue (at least `RATE_LIMIT_RETRY_SECS` later). The non-`Attention`
+    // step between them (the `ApiErrorText` line gives back the retry's status) lasts
+    // under a millisecond, and the window list is a `watch` channel that coalesces it
+    // in most runs, so it is asserted when seen, not required.
     let failed_at = read_stamp(&h.io, "before-retry") + SILENCE_MS as f64 / 1000.0;
+    let mut statuses: Vec<(f64, Status)> = Vec::new();
+    for (at, m) in watcher.received_at() {
+        if let DaemonMsg::WindowsChanged { windows } = m
+            && let Some(w) = windows.iter().find(|w| w.id == worker)
+            && statuses.last().map(|(_, s)| *s) != Some(w.status)
+        {
+            statuses.push((at, w.status));
+        }
+    }
+    let retry = statuses
+        .iter()
+        .position(|(at, s)| *s == Status::Attention && *at < failed_at)
+        .unwrap_or_else(|| panic!("no Attention during the retry: {statuses:?}"));
+    // Well after the failed turn, well before its continue.
+    let during_wait = failed_at + 3.0;
+    let status_then = statuses
+        .iter()
+        .rev()
+        .find(|(at, _)| *at <= during_wait)
+        .map(|(_, s)| *s);
+    assert_eq!(
+        status_then,
+        Some(Status::Attention),
+        "not Attention while the failed turn waits: {statuses:?}"
+    );
+    let waiting = statuses
+        .iter()
+        .rposition(|(at, _)| *at <= during_wait)
+        .unwrap();
+    assert!(
+        statuses[retry..=waiting]
+            .iter()
+            .all(|(_, s)| matches!(s, Status::Attention | Status::Working)),
+        "{statuses:?}"
+    );
+
     let continued_at = read_stamp(&h.io, "continued");
     assert!(
         continued_at - failed_at >= RATE_LIMIT_RETRY_SECS as f64,

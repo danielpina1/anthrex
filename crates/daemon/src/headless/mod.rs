@@ -97,9 +97,11 @@ pub enum SessionEvent {
         text: String,
         parent: Option<String>,
     },
-    /// The text of the synthetic `assistant` line a failed API turn ends with
-    /// (`is_api_error_message`, Claude): part of that failure, not the model's progress,
-    /// so the engine does not see it as activity (M8a.24; decision 32's retry streak).
+    /// The text of a top-level Claude `assistant` line that carries an API error
+    /// category (`"error": "<category>"`): the synthetic message a failed API turn ends
+    /// with (it also has `is_api_error_message`, which the parser does not check). Part
+    /// of that failure, not the model's progress, so the engine does not see it as
+    /// activity (M8a.24; decision 32's retry streak).
     ApiErrorText {
         text: String,
     },

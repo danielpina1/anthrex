@@ -9,6 +9,7 @@
 
 use proto::{AgentRole, BlockReason, TaskState};
 
+use super::clock::not_before;
 use super::dispatch::{block, history};
 use super::signals::end_round;
 use super::{Effect, OpId, OpKind, OpResult, emit_op, next_op, review};
@@ -257,7 +258,7 @@ fn delivered_to(
         }
         round.turn_open = false;
         round.delivery_failures = round.delivery_failures.saturating_add(1);
-        round.delivery_retry_at = Some(now + DELIVERY_RETRY_SECS);
+        round.delivery_retry_at = Some(not_before(now, DELIVERY_RETRY_SECS));
         let blocks = round.delivery_failures >= DELIVERY_MAX_FAILURES;
         if blocks && !run.tasks[i].state.is_finished() {
             let error = error.clone().unwrap_or_else(|| "unknown error".into());

@@ -6,7 +6,7 @@
 
 use proto::{AgentRole, BlockReason, Runtime, TaskState, TokenUsage};
 
-use super::clock::not_before;
+use super::clock::{not_before, stall_due};
 use super::dispatch::{block, history};
 use super::ladder::{self, check_budget, kill_worker, live, worker_round};
 use super::{
@@ -130,7 +130,7 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
             }
         }
         AgentSignal::ApiRetry { error, delay_ms } => {
-            round.rate_limited_until = Some(now + delay_ms.div_ceil(1000));
+            round.rate_limited_until = Some(not_before(now, delay_ms.div_ceil(1000)));
             if error == RATE_LIMIT {
                 round.in_retry_streak = true;
                 if !streak {
@@ -493,8 +493,7 @@ pub(super) fn watch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             continue;
         }
         let stall_after = run.limits.stall_after_secs;
-        let quiet = round.last_event.max(round.rate_limited_until.unwrap_or(0));
-        let silent = now >= quiet + stall_after;
+        let silent = now >= stall_due(round, stall_after);
         match round.stall {
             StallState::Interrupted { deadline } if now >= deadline => {
                 let reason = "the interrupt did not end its turn".to_string();
@@ -505,7 +504,7 @@ pub(super) fn watch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 fx.push(Effect::Interrupt { window_id });
                 let round = &mut run.tasks[i].rounds[r];
                 round.stall = StallState::Interrupted {
-                    deadline: now + INTERRUPT_GRACE_SECS,
+                    deadline: not_before(now, INTERRUPT_GRACE_SECS),
                 };
                 round.interrupted = true;
                 let id = run.tasks[i].id().to_string();

@@ -261,7 +261,7 @@ fn an_interrupted_turn_with_activity_gets_the_nudge_not_the_fallback() {
     let (mut fx, w) = working_on(ROOMY);
     let stall = fx.run().limits.stall_after_secs;
     let quiet = fx.task("t1").rounds[0].last_event;
-    let effects = fx.send(quiet + stall, EventKind::Tick);
+    let effects = fx.send(quiet + stall + 1, EventKind::Tick);
     assert!(effects.contains(&Effect::Interrupt { window_id: w }));
     fx.signal(w, AgentSignal::Activity);
     let effects = fx.turn_completed(w);
@@ -283,7 +283,7 @@ fn a_codex_interrupt_exit_after_activity_is_the_turns_end() {
     );
     let stall = fx.run().limits.stall_after_secs;
     let quiet = fx.task("t1").rounds[0].last_event;
-    fx.send(quiet + stall, EventKind::Tick);
+    fx.send(quiet + stall + 1, EventKind::Tick);
     fx.signal(w, AgentSignal::Activity);
     let effects = exited(&mut fx, w);
     let resumes: Vec<String> = ops_in(&effects, "ResumeSession")

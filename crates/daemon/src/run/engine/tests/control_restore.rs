@@ -159,7 +159,7 @@ fn resume_fires_only_second_stage_deadlines() {
     fx.ready(true);
     let windows = fx.launch_all();
     let (w1, w2) = (window_of(&windows, "t1"), window_of(&windows, "t2"));
-    let quiet = fx.task("t1").rounds[0].last_event + 600;
+    let quiet = fx.task("t1").rounds[0].last_event + 601;
     fx.send(
         quiet - 1,
         EventKind::Signal {
@@ -196,7 +196,7 @@ fn resume_fires_only_second_stage_deadlines() {
 #[test]
 fn an_interrupt_the_restart_ended_sends_its_nudge_with_the_resume() {
     let (mut fx, window) = super::turns::working_on(ROOMY);
-    let quiet = fx.task("t1").rounds[0].last_event + 600;
+    let quiet = fx.task("t1").rounds[0].last_event + 601;
     fx.send(quiet, EventKind::Tick);
     restart(&mut fx, Vec::new());
     let effects = resume(&mut fx);

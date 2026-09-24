@@ -375,9 +375,9 @@ fn the_stall_clock_waits_for_a_task_done_check() {
     let result = dirty(&fx);
     fx.done(verify, result);
     let verdict = fx.now;
-    let effects = fx.send(verdict + stall_after - 1, EventKind::Tick);
-    assert!(!effects.contains(&Effect::Interrupt { window_id: window }));
     let effects = fx.send(verdict + stall_after, EventKind::Tick);
+    assert!(!effects.contains(&Effect::Interrupt { window_id: window }));
+    let effects = fx.send(verdict + stall_after + 1, EventKind::Tick);
     assert!(effects.contains(&Effect::Interrupt { window_id: window }));
 }
 
@@ -442,7 +442,7 @@ fn a_codex_interrupt_before_its_session_id_is_rung_two() {
     let (mut fx, window) = working_on(CODEX_ROOMY);
     let stall_after = fx.run().limits.stall_after_secs;
     let quiet = fx.task("t1").rounds[0].last_event;
-    let effects = fx.send(quiet + stall_after, EventKind::Tick);
+    let effects = fx.send(quiet + stall_after + 1, EventKind::Tick);
     assert!(effects.contains(&Effect::Interrupt { window_id: window }));
     let effects = exited(&mut fx, window);
     assert!(delivers(&effects).is_empty(), "{effects:#?}");

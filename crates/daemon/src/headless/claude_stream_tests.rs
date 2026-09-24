@@ -520,8 +520,8 @@ fn tool_result_text_parts_are_joined_by_newlines() {
     );
 }
 
-/// M8a.24: the synthetic `assistant` line a failed API turn ends with
-/// (`is_api_error_message`) is that failure's text, not the model's: `ApiErrorText`, which
+/// M8a.24: a top-level `assistant` line carrying an `error` category (the synthetic
+/// message a failed API turn ends with) is that failure's text, not the model's: `ApiErrorText`, which
 /// the engine does not count as progress, so a retry streak that ran straight into the
 /// failure stays one rate-limit event (decision 32).
 #[test]

@@ -1183,7 +1183,7 @@ pub const SCRUB_NAMES: &[&str] = &["CLAUDECODE"];
 | Runtime | Line | Events |
 |---------|------|--------|
 | Claude | `{"type":"system","subtype":"init","session_id":…,"model":…,"mcp_servers":[{"name":…,"status":…}]}` | `Init { mcp_ok: Some(status of "anthrex" == "connected") }` |
-| Claude | `{"type":"assistant","message":{"content":[…]},"parent_tool_use_id":…}` | per block: `text` → `AssistantText`; `tool_use {id,name,input}` → `ToolUse`; `thinking` → `Other` |
+| Claude | `{"type":"assistant","message":{"content":[…]},"parent_tool_use_id":…}` | per block: `text` → `AssistantText`; `tool_use {id,name,input}` → `ToolUse`; `thinking` → `Other`. *(M8a.24, 2026-09-24: a top-level line carrying `"error": "<category>"` — the synthetic message a failed API turn ends with — gives `ApiErrorText` for its text blocks instead: shown in the conversation like `AssistantText`, never engine activity.)* |
 | Claude | `{"type":"user","message":{"content":[…]},"parent_tool_use_id":…}` | per block: `tool_result {tool_use_id,content,is_error}` → `ToolResult` (content string, or its text parts joined, cut to 4 KiB; `ok = !is_error`); `text` → `UserText` |
 | Claude | `{"type":"system","subtype":"api_retry","attempt":…,"retry_delay_ms":…,"error":…}` | `ApiRetry` |
 | Claude | `{"type":"system","subtype":"permission_denied",…}` | `PermissionDenied { tool, reason }` |
@@ -1748,7 +1748,7 @@ If a flag, key or event is missing, stop work on the item that uses it, as AGENT
   - Another `stall_after_secs` of silence gives `KillWindow` and a new session (rung 2, `stalls == 1`).
   - An interrupt that produces no turn end within `INTERRUPT_GRACE` gives `KillWindow` and rung 2 directly.
 - `rate_limit_retry_suspends_the_stall_clock`: `ApiRetry { rate_limit, delay_ms: 900_000 }` followed by silence past `stall_after_secs` gives no interrupt until `rate_limited_until + stall_after_secs`. `rate_limits["claude"]` counts one per streak.
-- `failed_turns`: a `Failed { RateLimit }` turn gives `rate_limit_continue` after exactly `rate_limit_retry_secs`, with no failure counted, and the round is rate-limited until then. `Authentication` and `Billing` give `blocked(environment)` at once. Two `Other` failures in a row give `blocked(environment)`.
+- `failed_turns`: a `Failed { RateLimit }` turn gives `rate_limit_continue` after exactly `rate_limit_retry_secs` *(M8a.24, 2026-09-24: after at least `rate_limit_retry_secs` real seconds, i.e. at engine second `now + rate_limit_retry_secs + 1`, because the engine's `now` is truncated; ruling T24-clock gives the stall clock, `INTERRUPT_GRACE`, `ApiRetry`'s deadline and the delivery retry the same one-second margin)*, with no failure counted, and the round is rate-limited until then. `Authentication` and `Billing` give `blocked(environment)` at once. Two `Other` failures in a row give `blocked(environment)`.
 - `a_failed_rate_limit_turn_is_a_rate_limit_event`: a `Failed { RateLimit }` turn with no `ApiRetry` in it gives `rate_limits["claude"] == 1`; an `ApiRetry { rate_limit }` streak that runs straight into a `Failed { RateLimit }` gives 1, not 2; a streak, then a `ToolUse` (the streak ends), then a `Failed { RateLimit }` gives 2.
 - `denials_block_at_the_threshold`: with `denials_before_block = 3`, two `PermissionDenied` and a `TurnEnded` carrying one more distinct denial give `blocked(environment)` with `denied_text`, plus `KillWindow`. A denial already seen as an event is not counted again from `permission_denials`.
 - `a_process_that_dies_mid_turn_is_resumed_once`: `ProcessExited` during an open turn gives `Op ResumeSession` with `RESUME_AFTER_EXIT`. A second one in the same round is a stall (rung 2).
@@ -8313,9 +8313,9 @@ Review `task-23-review.md`; rulings T23-I1, T23-I2, T23-I3 and T23-minors.
   could fire `rate_limit_retry_secs - 1` real seconds after the failed turn. The e2e
   test measured 6.666 s for a 7 s wait. Fix: `engine::clock::not_before(now, secs)` =
   `now + secs + 1`, used for the worker's and the reviewer's continue and for their
-  `rate_limited_until`. Six engine unit tests that pinned `now + 300` now pin
-  `now + 301`. The other engine timers keep whole-second deadlines; that is recorded in
-  the follow-ups file.
+  `rate_limited_until`. Seven engine unit tests that pinned `now + 300` now pin
+  `now + 301` (corrected in fix round 1; this said six). The other engine timers kept
+  whole-second deadlines; fix round 1 (ruling T24-clock) gave them the same margin.
 - **Bug 2 (daemon): a rate-limit streak that ran into its failed turn was counted
   twice.** Claude writes a synthetic `assistant` line (`is_api_error_message`) just
   before a failed turn's `result`. It was parsed as `AssistantText`, which the driver
@@ -8363,3 +8363,46 @@ Review `task-23-review.md`; rulings T23-I1, T23-I2, T23-I3 and T23-minors.
   - minor findings left out of the report (minor).
 
   The rate-limit test was red three times, once for each fix above.
+
+#### M8a.24 fix round 1 (2026-09-24)
+
+Review `task-24-review.md`; rulings T24-I1, T24-I2, T24-clock and T24-minors.
+
+- **I1: the earlier findings accumulate.** The brief's "round 2's prompt lists round
+  1's finding and not its own" has a half that can never fail: a round's own finding
+  does not exist when its prompt is built (a spec-fixture defect in the brief's
+  wording). The test now also asserts that round 3's prompt (`reviewer-t1-3`, read from
+  its stdin or its Codex argv) lists `- [important] a.rs:3 off by one` then
+  `- [important] b.rs:9 missing check` under `Earlier findings to confirm fixed:`. It
+  kills the mutant that lists only the previous round's findings.
+- **I2: the retry's Attention (deviation from the ruling's letter, with evidence).**
+  The status machine sets `Attention` both on a retry and on a failed turn.
+  `RunWatcher` now records when each message arrived (`received_at`). The ruling asked
+  for `Attention`, then non-`Attention`, then `Attention`. The non-`Attention` step (the
+  `ApiErrorText` line gives back the retry's status) lasts about 0.1 ms, and the window
+  list is a `watch` channel: in 2 of 3 runs it was coalesced away (`[.., Attention
+  (retry), Working (continue), ..]`), so requiring it fails a correct daemon. The test
+  keeps the order by time instead: an `Attention` seen before the failed turn (the
+  first stamp plus the script's 9 s; kills the mutant where a retry sets no
+  `Attention`), and the window's status 3 s after the failed turn, well before its
+  continue, is `Attention` (kills the mutant where a failed turn sets `Idle`), with
+  only `Attention` or `Working` between.
+- **The e2e is not the truncation fix's guard.** Without `not_before`, the continue's
+  real gap lies anywhere in (6 s, 8 s), so the e2e's "≥ 7 s" catches it only sometimes
+  (the review's mutant survived 4 runs in 5). The engine unit tests pinning `+301` are
+  the regression guard; the e2e separates 7 s from `stall_after_secs`' 5 s every time.
+- **T24-clock.** `not_before` now also sets the stall clock (`clock::stall_due`, used
+  by the worker watchdog, the open-turn watchdog and the reviewer's; a rate-limit wait
+  end, already a lower bound, gets no second margin), both `INTERRUPT_GRACE`
+  deadlines, `ApiRetry`'s `rate_limited_until` and the delivery retry. Boundary unit
+  tests (each fails without the `+1`, shown by mutants): `stall_interrupts_then_nudges_then_goes_to_rung_2`
+  (stall and grace), `rate_limit_retry_suspends_the_stall_clock` (the retry deadline),
+  `deliveries_wait_for_the_turn_to_end` and `a_failed_delivery_waits_before_it_is_retried`
+  (the delivery retry), the new `a_paused_runs_silent_turn_waits_whole_seconds_to_stall_and_for_its_grace`
+  (the open-turn watchdog and its grace) and `a_silent_reviewer_is_replaced` (now with
+  its lower side). Twelve other unit tests that ticked at the old boundary moved one
+  second. Excused time is untouched (deadlines only), so `excused ≤ elapsed` holds;
+  `assert_clock_sound` passes throughout.
+- **Minors.** The `ApiErrorText` doc comments say it is keyed on the line's `error`
+  category; the translation table and the `failed_turns` line carry dated notes;
+  the note above says seven unit tests; `codex_messages` is `RunHarness::codex_messages`.
