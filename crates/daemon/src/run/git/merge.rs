@@ -221,7 +221,9 @@ pub(crate) fn read(g: Git<'_>, root: &Path, refname: &str) -> Result<Option<Stri
 
 /// Decision 21: the run ref first (only the engine writes it, so any difference halts),
 /// then the base ref: equal is fine, a descendant of `base_sha` is an advance (with
-/// its commit count), anything else (rewritten or deleted) halts.
+/// its commit count) unless the run's own refs reach any of its new commits (final
+/// fix batch F1, finding D-2: [`run_work_on_base`]), anything else (rewritten or
+/// deleted, or run work) halts.
 pub fn guard_refs(
     git: &OsStr,
     root: &Path,
@@ -268,17 +270,90 @@ pub fn guard_refs(
             ),
         });
     }
+    // Final fix batch F1, finding D-2: a base that "advanced" onto the run's own work
+    // was moved by something inside the run (a worker's `update-ref`, a check), not by
+    // someone committing on it.
+    let run_id = run_id_of(run_branch);
+    let from_run = work_on_base(g, root, run_id, base_sha, &to, None)?;
+    if from_run > 0 {
+        return Ok(RefCheck::Halt {
+            reason: format!(
+                "{base_ref} contains unaccepted run work ({from_run} {})",
+                if from_run == 1 { "commit" } else { "commits" }
+            ),
+        });
+    }
     let commits = count(g, root, base_sha, &to)?;
     Ok(RefCheck::BaseAdvanced { to, commits })
+}
+
+/// `<run>` of the run branch `anthrex/<run>/integration`.
+fn run_id_of(run_branch: &str) -> &str {
+    run_branch
+        .strip_prefix("anthrex/")
+        .and_then(|rest| rest.rsplit_once('/'))
+        .map_or(run_branch, |(run, _)| run)
+}
+
+/// Final fix batch F1, finding D-2: how many of the base's new commits
+/// (`<base_sha>..<to>`) the run's own refs reach — its branches
+/// `refs/heads/anthrex/<run>/…` and its salvage refs `refs/anthrex/salvage/<run>/…` —
+/// leaving out, when `merged` is given and `to` contains it, the history of `merged`:
+/// the run head, merged into the base by the user (decision 20's advice after an accept
+/// conflict). Any other count above zero is run work on the base that no accept put
+/// there.
+pub fn run_work_on_base(
+    git: &OsStr,
+    root: &Path,
+    run_id: &str,
+    base_sha: &str,
+    to: &str,
+    merged: Option<&str>,
+    timeout: Duration,
+) -> Result<u32, String> {
+    work_on_base(Git::new(git, timeout), root, run_id, base_sha, to, merged)
+}
+
+fn work_on_base(
+    g: Git<'_>,
+    root: &Path,
+    run_id: &str,
+    base_sha: &str,
+    to: &str,
+    merged: Option<&str>,
+) -> Result<u32, String> {
+    let not_base = format!("^{base_sha}");
+    let mut range = vec![os("rev-list"), os("--count"), os(to), os(&not_base)];
+    let not_merged = match merged {
+        Some(head) if is_ancestor(g, root, head, to)? => Some(format!("^{head}")),
+        _ => None,
+    };
+    if let Some(not_merged) = &not_merged {
+        range.push(os(not_merged));
+    }
+    let all = parse_count(&g.ok(root, &range)?)?;
+    if all == 0 {
+        return Ok(0);
+    }
+    // Without a wildcard, `--glob` matches every ref below the prefix, and only below
+    // it: `anthrex/r1` never reaches `anthrex/r10/…`.
+    let branches = format!("--glob=refs/heads/anthrex/{run_id}");
+    let salvage = format!("--glob=refs/anthrex/salvage/{run_id}");
+    range.extend([os("--not"), os(&branches), os(&salvage)]);
+    let outside = parse_count(&g.ok(root, &range)?)?;
+    Ok(all.saturating_sub(outside))
+}
+
+fn parse_count(text: &str) -> Result<u32, String> {
+    text.trim()
+        .parse::<u32>()
+        .map_err(|_| format!("git rev-list --count printed {:?}", text.trim()))
 }
 
 /// `git rev-list --count <from>..<to>`.
 fn count(g: Git<'_>, root: &Path, from: &str, to: &str) -> Result<u32, String> {
     let range = format!("{from}..{to}");
-    let text = g.ok(root, &[os("rev-list"), os("--count"), os(&range)])?;
-    text.trim()
-        .parse::<u32>()
-        .map_err(|_| format!("git rev-list --count printed {:?}", text.trim()))
+    parse_count(&g.ok(root, &[os("rev-list"), os("--count"), os(&range)])?)
 }
 
 /// Decision 20: the base's new commits, `<sha7> <author>: <subject>`, newest first, at

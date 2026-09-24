@@ -411,10 +411,10 @@ impl RunService {
         let Ok((root, base_branch, run_branch, timeout)) = self.run_refs_of(&run_id) else {
             return refused(format!("unknown run {run_id}"));
         };
-        let base_sha = crate::lock(&self.state)
+        let (base_sha, run_head) = crate::lock(&self.state)
             .runs
             .get(&run_id)
-            .map(|run| run.base_sha.clone())
+            .map(|run| (run.base_sha.clone(), run.run_head.clone()))
             .unwrap_or_default();
         if action == FinishAction::Discard {
             if confirm.as_deref() != Some(run_id.as_str()) {
@@ -429,7 +429,7 @@ impl RunService {
             return self.finish_now(run_id, action).await;
         }
         let git = self.ctx.git.clone();
-        let (from, r) = (base_sha.clone(), root.clone());
+        let (from, r, id) = (base_sha.clone(), root.clone(), run_id.clone());
         let base_ref = format!("refs/heads/{base_branch}");
         let classified = blocking(move || {
             let Some(to) = git::read_ref(&git, &r, &base_ref, timeout)? else {
@@ -443,6 +443,16 @@ impl RunService {
                     "{base_ref} was rewritten since the run started ({} is not an ancestor of {}); merge {run_branch} by hand, or discard the run",
                     git::short(&from),
                     git::short(&to)
+                ));
+            }
+            // Final fix batch F1, finding D-2: run work on the base that no accept put
+            // there (only the run head, merged whole by the user, is theirs to confirm).
+            let run_work =
+                git::run_work_on_base(&git, &r, &id, &from, &to, Some(&run_head), timeout)?;
+            if run_work > 0 {
+                return Err(format!(
+                    "{base_ref} contains unaccepted run work ({run_work} {}) that no accept merged; move {base_ref} off it, or discard the run",
+                    if run_work == 1 { "commit" } else { "commits" }
                 ));
             }
             let (commits, total) =

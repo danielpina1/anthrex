@@ -30,6 +30,7 @@ pub use done::{DoneChecked, verify_done};
 pub use merge::{
     ACCEPT_LIST_MAX, AcceptOutcome, CandidateStep, HandBack, RefCheck, abort_merge, cas_update,
     commit_tree, commits_since, guard_refs, hand_back, materialize, merge_tree, read_ref, reattach,
+    run_work_on_base,
 };
 pub use salvage::{
     ACCEPT_MERGE_TIMEOUT, accept, accept_with_merge_timeout, delete_branches, remove_worktree,
