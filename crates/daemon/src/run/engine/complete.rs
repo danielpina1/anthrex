@@ -251,6 +251,8 @@ pub(super) fn cancel(
         }
         other => return answer(fx, Err(format!("run {run_id} is {}", other.label()))),
     }
+    // T15-minors (M-4): nothing resumes a cancelled run.
+    run.restored = None;
     let mut merging = Vec::new();
     for i in 0..run.tasks.len() {
         if !run.tasks[i].state.is_finished() && cancel_task(run, i, "run cancel", now, fx) {

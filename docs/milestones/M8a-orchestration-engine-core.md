@@ -6282,7 +6282,8 @@ a daemon restart replace the M8a.11 `not_yet` stubs.
   - An `Interrupted` round that the restart ended becomes `Nudged`. Its `stall_nudge`
     is already queued and goes out with the resume.
   - `Watching` is re-armed from now.
-- **Neither the downtime nor a pause counts as session time** (decision 40's minutes):
+- **Neither the downtime nor a pause counts as session time** (decision 40's minutes;
+  superseded by the task clock in fix round 1):
   - A round the restart ended is charged up to its last sign of life.
   - A live round through a pause edit is charged up to its last event or the pause,
     whichever is later.
@@ -6303,7 +6304,8 @@ a daemon restart replace the M8a.11 `not_yet` stubs.
   - `kill_worker`'s `supersede` ends the hand-back context (`handed_back`,
     `resolution`). The retry's own clear of these was redundant (mutant Q6) and was
     removed. The retry clears `gates_after_handback` itself.
-  - **Deviation from carry T14-R2:** `resolving` and `handback_due` are kept.
+  - **Deviation from carry T14-R2, confirmed by ruling T15-concern1, which amends
+    the carry:** `resolving` and `handback_due` are kept.
     `resolving` describes the worktree, where a merge is still in progress, and the fresh
     session must finish it. `handback_due` is the queue's N5 obligation. Clearing either
     would merge a worktree with conflict markers or skip a hand-back.
@@ -6404,3 +6406,104 @@ after their tests landed).
 - **M8a.22:** the driver builds `Restore`'s `replay` from the journal: the results of
   ops still pending in `run.json`. It sends `Restore` before any other event, and it
   fills `DoneChecked.resolution_only`.
+
+#### M8a.15 fix round 1
+
+The review (`task-15-review.md`) found 1 Critical, 3 Important and 4 Minor findings.
+The rulings T15-C1, T15-I1, T15-I2, T15-I3, T15-concern1 and T15-minors are binding.
+Each of the reviewer's probes became a regression test that failed first. The tests
+are in `tests/control_fixes.rs` and `tests/control_clock.rs`; both split out for size.
+
+**C-1 / T15-C1: a retry starts a new budget epoch.**
+- `run retry` records `Task.epoch` (`clock::BudgetEpoch`): the fresh session's round
+  index, and `spent_total`'s tool calls and tokens at the retry.
+- Rung 4 weighs `clock::epoch_spend`: the worker rounds from that index, plus the tool
+  calls and tokens since the retry.
+- `spent_total` and the snapshot's total keep everything, for the report.
+- Red: `a_retried_rung_4_task_gets_a_fresh_ceiling`, `left: (Blocked, 4)` against
+  `right: (Working, 2)`. After the fix, the new epoch reaches rung 4 again at its own
+  ceiling.
+
+**I-2, I-3 / T15-I2, T15-I3: the task clock (new `engine/clock.rs`).** It replaces
+M8a.15's separate shifts for the pause and the restore, and `Run.paused_at` is gone.
+- **When the clock stops.** A task's clock stops (`Task.clock_stopped`) while the run is
+  not `running`, or while the task is blocked (held included), in `proof`, `check` or
+  `review`, or in `merge_queue`.
+  - A session that is launching (`preparing`) keeps charging, because the launch is
+    the worker's own. Without this the brief's pinned minute counts moved by the launch
+    latency.
+- **What the stop excuses.** When the clock restarts, each worker round is excused its
+  overlap with the stop (`AgentRound.excused_secs`).
+  - The latest round, if it ended but can still be resumed, is excused the whole stop,
+    and its `ended_at` becomes now. Once resumed, it is charged from its start.
+  - An open turn's `last_event` moves on by the stopped span, so silence before the stop
+    still counts toward a stall and silence during it does not.
+  - Decision 45's re-arm from `now` at a resume stays, and is stricter than the shift.
+    `a_resume_re_arms_the_first_stall_stage_from_now` pins it (R16).
+- **Restore.** `clock::stop_at_restore` stops a working task's clock at its session's
+  last sign of life, so the downtime before the restore is excused as well.
+- **Where it runs.** `clock::sync` runs at the start of every scheduler pass, so a task
+  that works again is excused before the watchdog looks at it. It runs again at the
+  end, so a stop made inside the pass (`enforce_holds` holding an answered task) is
+  recorded at once.
+- **Spend while stopped.** `ladder::round_spend` takes the open stop, so the snapshot's
+  spend does not grow while the clock is stopped.
+- **Red:** the halt (probe B), the late answer (Q), the retry after a long block (Q2)
+  and `time_in_the_gates_is_not_charged` all showed `left: (Blocked, 4)`.
+- **Scope.** A second-stage (`Interrupted`) deadline is not moved by a stop. Decision 45
+  fires it at the resume, for a halt as for a pause.
+
+**I-1 / T15-I1: a restore re-engages every working task.**
+- `Run.restored` is set on every restore of a run that has had a session. Before, it was
+  set only when a live session was ended.
+- The resume then sends `RESUME_WORKER` to every working task's resumable worker, or
+  lets `recover_sessionless` or the relaunch start one.
+- Red: `left: []` against `right: [RESUME_WORKER]` (probe A); `left: 0 right: 1`
+  (probe A3, the lost count timer). Liveness holds with no other live task.
+
+**Minors (T15-minors).**
+- **M-1: an overridden task's due hand-back goes first.** `merge::start_merge` starts no
+  candidate for a queue head with `handback_due` set or a merge op in flight, so the
+  task awaits one merge op at a time. The hand-back's clean result puts it back in the
+  queue at the new head, and the candidate follows
+  (`an_override_with_a_due_hand_back_hands_back_first`).
+  - A hand-back into a worktree with a merge still in progress fails in the executor.
+    The message tells the user to finish or abort that merge, and the task is
+    `blocked(environment)`.
+  - The first attempt also cleared `gates_after_handback` in `send_to_queue`. That line
+    is unreachable: an override applies only in `review` or `blocked`, and every path
+    that sets the flag leaves the task in `merge_queue` or takes the flag first. It
+    was removed (mutant F13).
+- **M-2: an override of a blocked task always counts its branch.** With an accepted
+  claim, the claim merges only if it is still the branch's tip. Otherwise the reply is
+  `task <id> has commits after its accepted claim; retry it to have them checked`
+  (invented). A task in `review` merges its claimed head at once, as before.
+  - Red: `left: 0 right: 1`; no `CountCommits`.
+- **M-3: tests that kill V2, V5, V6, V15 and V16.**
+  - V2: `an_override_count_that_comes_after_a_retry_is_refused`.
+  - V5: `a_sub_agent_the_restart_killed_defers_nothing`.
+  - V6: `a_restart_ends_a_deferred_fallback_s_wait`.
+  - V15: `a_rate_limit_streak_ends_at_the_restart`.
+  - V16: `a_claim_accepted_before_the_restart_leaves_no_mark_on_the_resumed_turn`,
+    with the claim accepted mid-turn.
+- **M-4:** `run cancel` clears `Run.restored`. `paused_at` no longer exists.
+
+**Concern 1 (T15-concern1).** Retry keeps `resolving` and `handback_due`. This amends
+T14-R2's carry (see M8a.15 above).
+
+**Mutations** (scratchpad script from a WIP commit, since folded).
+- 24 new mutants:
+  - F1 to F19 over the clock, the epoch, the restore mark, the start-merge guard, the
+    override tip check and the cancel;
+  - the reviewer's V2, V5, V6, V15 and V16.
+- All are killed except F13, which is unreachable and whose line was removed.
+- Survivors of the first run got a test each:
+  - F4 and F15 (the stall shift, and the sync before the watchdog):
+    `a_block_answered_by_the_next_event_is_excused`, with the turn still open.
+  - F5 (the restore's stop): `the_downtime_before_a_restore_is_not_charged`.
+  - F16 (the closing sync): `a_hold_made_in_the_pass_stops_the_clock_at_once`.
+  - F17 (the open stop in the spend): `a_stopped_clock_shows_no_growing_spend`.
+  - F18 and F19 (the resumable-latest rule): `an_older_ended_session_keeps_its_end`
+    (after a retry) and `an_ended_session_keeps_its_time_to_the_pause`.
+  - V16: see M-3.
+- M8a.15's R14 to R19 were re-run and are killed. R16 is killed by its new test.

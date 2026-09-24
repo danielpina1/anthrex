@@ -278,14 +278,16 @@ fn rung4(run: &mut Run, i: usize, text: String, now: u64, fx: &mut Vec<Effect>) 
 }
 
 /// A worker round's session spend (decision 40): its tool calls, its wall-clock
-/// seconds since it started, and its billable tokens.
-pub(crate) fn round_spend(round: &AgentRound, now: u64) -> Spend {
+/// seconds since it started less those its task's clock was stopped (`stopped` is the
+/// open stop, rulings T15-I2 and T15-I3), and its billable tokens.
+pub(crate) fn round_spend(round: &AgentRound, stopped: Option<u64>, now: u64) -> Spend {
+    let end = round.ended_at.unwrap_or(now);
+    let open = stopped.map_or(0, |since| end.saturating_sub(since.max(round.started_at)));
     Spend {
         tool_calls: round.tool_calls,
-        secs: round
-            .ended_at
-            .unwrap_or(now)
-            .saturating_sub(round.started_at),
+        secs: end
+            .saturating_sub(round.started_at)
+            .saturating_sub(round.excused_secs + open),
         tokens: round.usage.billable(),
     }
 }
@@ -297,7 +299,7 @@ pub(crate) fn total_spend(task: &Task, now: u64) -> Spend {
         .rounds
         .iter()
         .filter(|r| r.role == AgentRole::Worker)
-        .map(|r| round_spend(r, now).secs)
+        .map(|r| round_spend(r, task.clock_stopped, now).secs)
         .sum();
     Spend {
         secs,
@@ -359,7 +361,8 @@ pub(super) fn check_budget(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effec
     let Some(r) = worker_round(task).filter(|&r| live(&task.rounds[r])) else {
         return false;
     };
-    let total = total_spend(task, now);
+    // Ruling T15-C1: the spend since the last retry.
+    let total = super::clock::epoch_spend(task, now);
     let next = ceiling(run, task);
     if reached(total, next) {
         let text = format!(
@@ -372,7 +375,7 @@ pub(super) fn check_budget(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effec
         rung4(run, i, text, now, fx);
         return true;
     }
-    let spend = round_spend(&task.rounds[r], now);
+    let spend = round_spend(&task.rounds[r], task.clock_stopped, now);
     let budget = task.budget;
     if let Some(what) = breached(spend, budget) {
         breach(run, i, what, now, fx);

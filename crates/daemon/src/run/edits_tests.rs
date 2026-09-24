@@ -413,6 +413,7 @@ fn open_round() -> AgentRound {
         delivery_failures: 0,
         delivery_retry_at: None,
         turn_denied: Vec::new(),
+        excused_secs: 0,
         last_denial: None,
         fallback_waiting: false,
         carried: Vec::new(),

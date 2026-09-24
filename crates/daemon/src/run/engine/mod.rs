@@ -35,6 +35,7 @@ use proto::{FinishAction, PlanEdit, TokenUsage, ToolCall};
 use super::model::{OpId, PendingOp, Run};
 use super::validate::EditScope;
 
+mod clock;
 mod complete;
 mod dispatch;
 mod done;
@@ -53,6 +54,7 @@ mod signals;
 mod tools;
 
 pub use crate::headless::TurnOutcome;
+pub use clock::BudgetEpoch;
 pub use ops::{OpKind, OpResult, OverrideCount, ResolutionAt, ScratchAt};
 pub use signals::INTERRUPT_GRACE_SECS;
 

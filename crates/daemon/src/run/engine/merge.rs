@@ -50,6 +50,11 @@ pub(super) fn start_merge(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     let Some(i) = run.tasks.iter().position(|t| t.id() == id) else {
         return;
     };
+    // T15-minors: a hand-back due or in flight comes first (an overridden task's), so
+    // the task awaits one merge op at a time.
+    if run.tasks[i].handback_due || run.tasks[i].merge_op.is_some() {
+        return;
+    }
     let Some(task_head) = run.tasks[i].head.clone() else {
         // Unreachable: a task reaches the merge queue only with an accepted claim.
         run.merge_queue.retain(|q| *q != id);

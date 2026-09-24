@@ -2,6 +2,8 @@
 
 mod budgets;
 mod control;
+mod control_clock;
+mod control_fixes;
 mod control_restore;
 mod control_resume;
 mod control_retry;

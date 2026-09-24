@@ -11,7 +11,7 @@ use proto::{AgentRole, BlockInfo, BlockReason, RunState, Runtime, TaskState};
 
 use super::schedule::{deps_done, dispatch_order, hub_holds_slot, op_in_flight, writers_busy};
 use super::{Effect, OpKind, OpResult, emit_op, next_op};
-use super::{complete, done, gates, holds, ladder, merge, outbox, restore, review, signals};
+use super::{clock, complete, done, gates, holds, ladder, merge, outbox, restore, review, signals};
 use crate::run::contract::{handover_prompt, is_stall_nudge, worker_prompt};
 use crate::run::env::profile_env;
 use crate::run::model::{AgentRound, FreshSession, OpId, Run, StallState, Task, TaskEvent};
@@ -23,6 +23,8 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     if run.state.is_terminal() || finishing(run) {
         return;
     }
+    // Rulings T15-I2, T15-I3: a task that works again is excused its stop first.
+    clock::sync(run, now);
     holds::enforce_holds(run, now, fx);
     requeue(run);
     if integration_ready(run) {
@@ -51,6 +53,7 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         outbox::deliver(run, now, fx);
         complete::complete_pass(run, now, fx);
     }
+    clock::sync(run, now);
 }
 
 /// A `Discard` or `Accept` in flight, named as a reply says it (`discarded`,
@@ -369,6 +372,7 @@ pub(super) fn new_round(
         delivery_failures: 0,
         delivery_retry_at: None,
         turn_denied: Vec::new(),
+        excused_secs: 0,
         last_denial: None,
         fallback_waiting: false,
         carried: Vec::new(),

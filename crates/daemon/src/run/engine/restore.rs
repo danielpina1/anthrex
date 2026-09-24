@@ -21,7 +21,8 @@
 //! verdict, is resumed with `RESUME_WORKER` or `RESUME_REVIEWER` through the outbox
 //! (decisions 28, 29); a worker whose task is in a gate gets its next message when the
 //! task works again (ruling T13-I3). A resume that fails starts a fresh session
-//! (`outbox::resumed`). The restart's downtime is not charged to a session's minutes.
+//! (`outbox::resumed`). Neither the downtime nor the pause is session time
+//! (`clock`).
 
 use std::collections::BTreeSet;
 
@@ -32,7 +33,7 @@ use super::ladder::{self, worker_round};
 use super::requests::log;
 use super::signals::end_round;
 use super::{
-    Effect, EngineState, OpId, OpKind, OpResult, ReplyId, complete, emit_op, merge, next_op,
+    Effect, EngineState, OpId, OpKind, OpResult, ReplyId, clock, complete, emit_op, merge, next_op,
     op_done, outbox, review,
 };
 use crate::run::contract::{RESUME_REVIEWER, RESUME_WORKER, sha7};
@@ -83,10 +84,13 @@ fn prepare(run: &mut Run, kept: &BTreeSet<OpId>, now: u64, fx: &mut Vec<Effect>)
     if run.state.is_terminal() {
         return;
     }
+    // Rulings T15-I2, T15-I3: the downtime is no session time.
+    for task in run.tasks.iter_mut() {
+        clock::stop_at_restore(task);
+    }
     if run.state == RunState::Running {
         run.state = RunState::Paused;
         run.paused_from = Some(RunState::Running);
-        run.paused_at = Some(now);
         log(run, now, "restored after a daemon restart; paused");
     }
     for message in run.outbox.iter_mut() {
@@ -175,7 +179,11 @@ fn settle(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     if run.state.is_terminal() {
         return;
     }
-    let mut ended = false;
+    // Ruling T15-I1: whatever a session waited for died with the old daemon, so the
+    // next resume re-engages every working task, whether or not a session was live.
+    if run.tasks.iter().any(|t| !t.rounds.is_empty()) {
+        run.restored = Some(now);
+    }
     for round in run.tasks.iter_mut().flat_map(|t| t.rounds.iter_mut()) {
         if round.window_id.is_none() || round.ended {
             continue;
@@ -187,10 +195,6 @@ fn settle(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         round.fallback_waiting = false;
         round.in_retry_streak = false;
         round.turn_had_task_done = false;
-        ended = true;
-    }
-    if ended {
-        run.restored = Some(now);
     }
     for i in 0..run.tasks.len() {
         if run.tasks[i].cancel_deferred && !merge::candidate_in_flight(run, i) {
@@ -260,24 +264,11 @@ pub(super) fn unpause(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 
 /// Decision 45's resume of a run that runs again.
 fn resumed(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+    // The time charged is `clock::sync`'s (rulings T15-I2, T15-I3).
     let restored = run.restored.take();
-    let paused_at = run.paused_at.take();
     for i in 0..run.tasks.len() {
         if run.tasks[i].state.is_finished() {
             continue;
-        }
-        // The downtime is no session time (decision 40's minutes): a round the restart
-        // ended counts up to its last sign of life.
-        for round in run.tasks[i].rounds.iter_mut() {
-            if restored.is_some() && round.ended_at == restored {
-                let alive = round.last_event.max(round.started_at);
-                round.started_at += now.saturating_sub(alive);
-                round.ended_at = Some(now);
-            } else if let Some(paused_at) = paused_at.filter(|_| !round.ended) {
-                // A live session through a pause edit: charged while it showed life.
-                let alive = round.last_event.max(round.started_at).max(paused_at);
-                round.started_at += now.saturating_sub(alive);
-            }
         }
         resume_worker(run, i, restored.is_some(), now, fx);
         resume_reviewer(run, i, restored.is_some(), now);

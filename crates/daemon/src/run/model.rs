@@ -197,6 +197,9 @@ pub struct AgentRound {
     /// round 1, review m-4).
     #[serde(default)]
     pub turn_denied: Vec<String>,
+    /// Seconds not charged: the task was not working or the run not running (T15-I3).
+    #[serde(default)]
+    pub excused_secs: u64,
     /// The latest denial, `<tool>: <reason>`, for `denied_text` (decision 32; M8a.12).
     #[serde(default)]
     pub last_denial: Option<String>,
@@ -408,6 +411,12 @@ pub struct Task {
     /// for its `CountCommits` (decision 35).
     #[serde(default)]
     pub override_count: Option<super::engine::OverrideCount>,
+    /// Since when the task's clock is stopped (rulings T15-I2, T15-I3).
+    #[serde(default)]
+    pub clock_stopped: Option<u64>,
+    /// The spend before the last `run retry`; rung 4 counts from it (ruling T15-C1).
+    #[serde(default)]
+    pub epoch: Option<super::engine::BudgetEpoch>,
     pub start_commit: Option<String>,
     pub head: Option<String>,
     pub done: Option<DoneClaim>,
@@ -536,10 +545,6 @@ pub struct Run {
     /// resume resumes them (decision 45).
     #[serde(default)]
     pub restored: Option<u64>,
-    /// M8a.15: when the run was paused; a live session's idle part of the pause is no
-    /// session time (decision 40's minutes).
-    #[serde(default)]
-    pub paused_at: Option<u64>,
 }
 
 impl Run {

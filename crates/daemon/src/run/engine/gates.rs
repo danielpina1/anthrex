@@ -348,7 +348,9 @@ pub(super) fn override_task(
         );
         return answer(fx, Err(text));
     }
-    if task.state == TaskState::Review || task.head.is_some() {
+    // A blocked task's branch is counted even with an accepted claim: only a claim that
+    // is still the branch's tip merges (T15-minors).
+    if task.state == TaskState::Review {
         let text = send_to_queue(run, i, reason, now, fx);
         return answer(fx, Ok(text));
     }
@@ -422,7 +424,8 @@ pub(super) fn awaits_override(run: &Run, i: usize, op: OpId) -> bool {
 }
 
 /// The override's `CountCommits` result: at least one commit sends the task to the
-/// merge queue at its branch's head, if it can still be overridden.
+/// merge queue at its branch's head, if it can still be overridden and any accepted
+/// claim is that head. A hand-back due goes first (`merge::start_merge`).
 pub(super) fn override_counted(
     run: &mut Run,
     i: usize,
@@ -440,6 +443,16 @@ pub(super) fn override_counted(
         }
         OpResult::Commits { count: 0, .. } => {
             Err(format!("task {id} has no commits; {OVERRIDE_APPLIES}"))
+        }
+        OpResult::Commits { head, .. }
+            if run.tasks[i]
+                .head
+                .as_ref()
+                .is_some_and(|claimed| *claimed != head) =>
+        {
+            Err(format!(
+                "task {id} has commits after its accepted claim; retry it to have them checked"
+            ))
         }
         OpResult::Commits { head, .. } => {
             run.tasks[i].head = Some(head);

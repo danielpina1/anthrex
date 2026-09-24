@@ -232,7 +232,6 @@ pub(super) fn edit(
             EditConsequence::Pause => {
                 run.state = RunState::Paused;
                 run.paused_from = Some(RunState::Running);
-                run.paused_at = Some(now);
                 log(run, now, "paused by a plan edit");
             }
             EditConsequence::Resume => restore::unpause(run, now, fx),
@@ -353,6 +352,8 @@ pub(super) fn retry(
     task.conflicts = 0;
     task.rung = 2;
     task.route = route;
+    // Ruling T15-C1: a new budget epoch; rung 4 counts from the fresh session.
+    super::clock::new_epoch(task);
     // `kill_worker`'s `supersede` ended the hand-back context (`handed_back`,
     // `resolution`); its gates' pass goes too (carry T14-R2).
     task.gates_after_handback = false;
