@@ -8832,3 +8832,130 @@ ref file, which its sandbox grant must include (a commit moves it).
     per-argument limit (`ARG_MAX` is 1 MiB). Linux's `MAX_ARG_STRLEN` (128 KiB) is only
     reached with a common-dir path of about 480 characters.
   - Whether each real CLI accepts all 260 entries is manual check 4e.
+
+### Final fix batch F1, fix round 5, post-breaker (2026-09-25)
+
+Re-review 3 found N1: a worker's `ORIG_HEAD` made `ref: refs/heads/main` let the
+hand-back's `git merge` move the base. That was the fourth route in four rounds by which
+an **unsandboxed engine git command, running in a git directory the worker can write**,
+was redirected onto the base (`HEAD`, `commondir`, the task's branch, `ORIG_HEAD`). The
+controller's ruling was to remove the class, not the route. A worker process may still be
+running while the engine acts (a `setsid`'d child), so no check made before a command is
+enough.
+
+- **The rule.** No engine git command that writes a ref or a pseudo-ref (`merge`,
+  `commit`, `checkout`, `reset`, `cherry-pick`, `revert`, `rebase`, `stash`, `pull`,
+  `am`) runs with a worker-writable git dir. Swept: the hand-back (clean and
+  conflicted), `abort_merge`, the leftover undo, decision 19's re-point, salvage and
+  reconcile's hand-back row. The re-point (`update-ref --no-deref <own> <from> <head>`,
+  `read-tree -u --reset`) and salvage (`add -A`, `write-tree`, `commit-tree`,
+  `update-ref --no-deref` of its own `refs/anthrex/salvage/…` ref) already complied.
+  The integration worktree's `checkout`s and accept's `merge`, `merge --abort` and
+  `reset --keep` run in git directories no worker can write, and are unchanged.
+- **Deviation from decision 36 step 6 (the hand-back).** The decision says `git merge
+  --no-ff --no-edit <run_head>` in the task worktree. It is now plumbing only:
+  1. refuse a merge in progress that is not the engine's own leftover, a `HEAD` not on
+     the task's branch, and staged changes (as `git merge` does);
+  2. read the task's branch once (`onto`); a run head already in its history is
+     "already up to date", as before;
+  3. `merge-tree --write-tree -z onto <run head>` (objects only);
+  4. **clean:** `commit-tree <tree> -p onto -p <run head>` with `Merge commit '<run
+     head>' into <branch>`; a `read-tree -n -m -u onto <commit>` dry run (untracked files
+     in the way, local edits over merged paths); `update-ref --no-deref <own> <commit>
+     onto`; `read-tree -m -u onto <commit>`. If that last step still fails (a racing
+     edit), the branch goes back by the reverse compare-and-swap;
+  5. **conflicted:** `read-tree -m -u onto <marker tree>` (refuses, changing nothing,
+     where the worker's files are in the way); the engine writes `MERGE_MSG` (`Merge
+     commit '<run head>' into <branch>`, a blank line, `# Conflicts:` and `#\t<path>`
+     lines, as `git merge` writes it), `MERGE_MODE` (`no-ff`) and then `MERGE_HEAD`,
+     each to `anthrex-<name>.tmp` (created exclusively; the worker cannot write that
+     name) and renamed into place; finally `update-index -z --index-info` stages
+     `merge-tree`'s unmerged entries (each path first removed with a mode-0 line). A
+     failure after the `read-tree` clears the merge state and reads the index and files
+     back (`read-tree -m -u <marker tree> onto`, lossless: `update-index` writes the
+     index whole or not at all).
+
+  The worker sees a real unmerged merge: `git status` lists the paths as unmerged, `git
+  diff` shows the combined diff, and its own `git commit` (inside its sandbox, which
+  cannot write the base) makes the merge commit with parents `(HEAD, run head)`, and
+  `git merge --abort` works. Every existing hand-back, merge, resolution and journal
+  test passes; three changed, each only where it named the old command (below).
+- **What differs from `git merge`.**
+  - The conflict markers' "ours" label is `onto`'s sha, not `HEAD`: `merge-tree` labels
+    each side with the name it is given, and naming `HEAD` would let a racing worker
+    choose what is merged. It now matches `resolution_only`'s reference tree exactly,
+    which already came from `merge-tree onto <run head>`.
+  - No `ORIG_HEAD` and no `AUTO_MERGE` are written; nothing in the hand-back or the
+    worker's conclusion reads them.
+  - `MERGE_MSG`'s comment character is always `#` (a user's `core.commentChar` is not
+    read).
+  - A hand-back with staged changes was refused by `git merge`; it still is, now with
+    the engine's own message ("…has staged changes (or unmerged paths)…").
+- **The pseudo-ref check (N1's direct fix, defence in depth).** `pinned::check` also
+  refuses a git dir whose `ORIG_HEAD`, `MERGE_HEAD`, `AUTO_MERGE`, `REBASE_HEAD`,
+  `CHERRY_PICK_HEAD`, `REVERT_HEAD` or `FETCH_HEAD` is a symbolic link, not a plain
+  file, or a `ref:` file ("…its ORIG_HEAD is a symbolic ref to refs/heads/main; the
+  worktree's git directory … was tampered with"). Git never writes one there. `--no-deref`
+  on every engine `update-ref`, the pin, the `HEAD` check and the own-ref check all
+  stay.
+- **Merge state without git.** `merge --quit` is gone: `merge_state::clear` unlinks
+  `MERGE_HEAD` (first), `MERGE_MSG`, `MERGE_MODE`, `MERGE_RR` and `AUTO_MERGE`. The
+  abort (`read-tree -u --reset <HEAD's commit>`), the committed-leftover case and
+  reconcile use it.
+- **Git's stdin.** `update-index --index-info` reads stdin, which `subprocess::capture`
+  sets to `/dev/null`. `worktree::run_git_with_input` puts the input in an exclusively
+  created, unlinked temporary file and `dup2`s it onto stdin in `pre_exec`, after the
+  standard streams are set up. `subprocess.rs` and its kill path are untouched.
+- **Decision 43/44, the reconcile row for `HandBack`.** New crash points, one test each
+  (`run_journal::git_handback`):
+  - after `commit-tree`, before the branch moved: nothing visible, `NotStarted`;
+  - after the compare-and-swap, before `read-tree`: `HEAD^2` is the run head and the
+    index is still `HEAD^1`'s tree; reconcile runs the `read-tree` (`finish_clean`) and
+    replays `HandedBack { files: [] }` (if it cannot, the branch goes back and the op is
+    `NotStarted`);
+  - after the marker tree, before `MERGE_HEAD` (a stray `MERGE_MSG` possibly written):
+    no `MERGE_HEAD`, the run head conflicts with `HEAD`, the index is exactly the marker
+    tree: undone (`interrupted_conflict`), `NotStarted`;
+  - after `MERGE_HEAD`, before `update-index`: `leftover` now counts an index that is
+    exactly the merge's tree **with its markers** as `Untouched` (before, only a clean
+    merge's tree), so it is undone, `NotStarted`; the live hand-back's entry clears it
+    the same way;
+  - after `update-index`: replayed with its files, as before.
+  The round 3 and 4 states (a `git merge --no-commit` left mid-merge, committed or not,
+  and a resolved-and-staged conflict left alone) keep their tests and behaviour.
+- **Preflight.** `run start` already refuses git older than 2.38 ("anthrex runs need git
+  2.38 or newer for merge-tree --write-tree (found X)", decision 17, `MIN_GIT`); the
+  hand-back now depends on it too. Nothing changed.
+- **Round 4's residuals.** A conflicted merge can no longer be left in progress by a
+  refusal: no check follows the last write of a conflicted hand-back, and a failure
+  before it backs the whole merge out (re-review 3, N3: moot). A stale `<branch>.lock`
+  still fails the clean hand-back's compare-and-swap every time (the conflicted one
+  writes no ref); the refusal now says to remove the stale lock if no git is running
+  there (N2).
+- **Tests changed, and why.**
+  - `run_git_handback::hand_back_reports_the_tip_it_actually_merged_onto`: its sneak
+    commit was triggered by `--no-ff`; it is now triggered at the `HEAD` check, just
+    before the branch is read. The assertion (`onto` is the tip merged onto) is
+    unchanged. A commit landing after the read now fails the compare-and-swap instead
+    (covered by `run_git_handback_recovery`).
+  - `run_git_pointers::a_head_flipped_during_the_hand_back_moves_no_base`: the flip
+    trigger adds `merge-tree` to `--no-ff`.
+  - `run_git_pseudo_refs::pseudo_refs_planted_after_the_checks_steer_nothing` was written
+    this round.
+- **New tests.** `run_git_pseudo_refs` (N1's reproduction for `ORIG_HEAD`, clean and
+  conflicted, failing on b896f54 with the base moved; `MERGE_HEAD` and `AUTO_MERGE`
+  as `ref:` files and links; links and symrefs planted after every check; and the
+  plumbing verified with plain git to write no pseudo-ref and no other ref even with
+  `HEAD` naming the base; and the conflict compared with plain `git merge --no-ff` for
+  content, modify/delete, add/add and rename/rename conflicts: the same unmerged stages,
+  `git status` and files), `run_git_live_race` (a `/bin/sh` racer, killed by its own
+  pid, flips `HEAD`, `ORIG_HEAD` and the task's branch to the base during 36 hand-backs
+  and aborts; on b896f54 the base moved in two runs of three), the five reconcile crash
+  points, and `worktree::input`'s stdin test.
+- **Found, not fixed (followups).** An engine `update-ref` in the task worktree appends
+  to the reflogs the worker may write (`<git dir>/logs/HEAD`, and the task branch's
+  reflog in the common dir), and a reflog append opens its file without refusing a
+  symbolic link: a worker can make the engine append a reflog line to any file the user
+  can write (verified with plain git). It cannot move a ref: a loose ref keeps its first
+  line. The object directories carry the same kind of risk for object writes (not
+  verified).

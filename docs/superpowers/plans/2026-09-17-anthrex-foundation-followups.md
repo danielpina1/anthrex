@@ -1016,6 +1016,30 @@ scope.
   commit on the base would be reported as "unaccepted run work", and the run halts.
   That is fail-safe, but the reason is wrong. The guard could list the run's refs with
   `for-each-ref --format='%(refname) %(symref)'` and name the tampered branch instead.
+- **F1 fix round 5: an engine reflog append follows a worker's symbolic link.** The
+  worker may write its worktree git dir's `logs/` and its task branch's reflog
+  (`<common>/logs/refs/heads/anthrex/<run>/<task>`); its commits append to them. The
+  engine's own `update-ref --no-deref <own>` (the hand-back's and the re-point's
+  compare-and-swap) appends a line to the same two files, and git opens an existing
+  reflog with `O_APPEND` without refusing a symbolic link (verified with git 2.50.1:
+  `logs/HEAD` linked to a file outside the repository got the line). So a worker can
+  make the unsandboxed engine append one uncontrolled reflog line (two shas, the
+  daemon's identity, a time) to any file the user can write. It cannot move a ref (a
+  loose ref keeps its first line; `packed-refs` or a config file would only become
+  unparsable). `core.logAllRefUpdates=false` does not stop an append to an existing
+  log. A fix sketch: create task branches without reflogs (`-c
+  core.logAllRefUpdates=false` on the engine's writes, and remove the ones `worktree
+  add` makes), launch workers with `core.logAllRefUpdates=false`
+  (`GIT_CONFIG_COUNT`/`KEY`/`VALUE`), and drop the reflog paths and `logs/` from the
+  grant. The object directories (`objects/00`…`ff`, granted as subpaths) may carry the
+  same risk for the engine's object writes, if a worker can replace one with a link
+  (not verified).
+- **F1 re-review 3, N4: a worker can create refs under its own branch name.** The
+  task branch's `subpath` grant lets a worker make `refs/heads/anthrex/<run>/<task>` a
+  directory holding refs of its own. Every effect is fail-safe today: the own-ref
+  check refuses a directory, D-2's `--glob` only widens, and `delete_branches` deletes
+  them `--no-deref`. A later change to that glob or to the clean-up must keep these
+  refs in mind.
 
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
