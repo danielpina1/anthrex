@@ -8713,3 +8713,50 @@ committed onto `main`, and the grant named the integration's git dir.
   with `merge --continue`. **A worker cannot `git stash`:** `refs/stash` in the common
   dir is not granted. This was already true under F1.
 - **R4.** Recorded in the followups (`objects/` is granted whole).
+
+### Final fix batch F1, fix round 3 (2026-09-24)
+
+The coordinator ruled that R1's remaining window (a `HEAD` rewritten between the
+engine's check and git's read of it, by a worker's leftover process) had to be closed,
+not recorded. No engine git call in a task, review or integration worktree now updates
+a ref through `HEAD`.
+
+- **Hand-back** (`git::hand_back`) runs `git merge --no-commit --no-ff --no-autostash`,
+  which writes only the index, the files and the merge state.
+  - A clean merge is committed with `write-tree` and `commit-tree -p <tip> -p <run
+    head>`. The message is `Merge commit '<run head>' into <branch>`, as git's own merge
+    of a commit spells it.
+  - The task's own branch, the one ref its pin names (`pinned::own_ref`), is then
+    moved with `update-ref refs/heads/<branch> <new> <tip>`, a compare-and-swap. Finally
+    `merge --quit` drops the merge state.
+  - `onto` is the branch's value read after the merge ran (review N4 still holds). It
+    must equal `ORIG_HEAD` and `HEAD`, both read through the pin's `HEAD` check;
+    otherwise the hand-back fails with nothing committed.
+  - A conflicted merge is left for the worker, as before. The worker's own commit runs
+    under its sandbox, which cannot write the base.
+- **Abort** (`git::abort_merge`) no longer runs `git merge --abort`, whose reset writes
+  through `HEAD`. It runs `read-tree -u --reset <the branch's tip>` and then
+  `merge --quit`.
+- **Re-point** (`ensure_worktree`, decision 19) no longer runs `checkout -B` and
+  `reset --hard`. It runs `update-ref refs/heads/<branch> <from> <head>`, a
+  compare-and-swap, then `read-tree -u --reset <from>`. Tracked edits are dropped and
+  untracked files are kept, as before.
+- **Reconcile** handles the two new crash states of a hand-back:
+  - The branch took the merge commit, but the merge state is left: it runs
+    `merge --quit` and replays the clean hand-back.
+  - A clean merge was never committed: the merge is undone as abort does, and the
+    hand-back runs again.
+- **Unchanged, because they write no ref through `HEAD`:**
+  - the integration worktree's `checkout --detach` (writes `HEAD` itself) and
+    `checkout <run branch>` (writes the symbolic ref only);
+  - the merge queue's `commit-tree` and compare-and-swap on the run branch;
+  - salvage's `commit-tree` and `update-ref` of its salvage ref;
+  - `worktree add`.
+- **Not in scope:** accept's merge, abort and `reset --keep` run in the user's own
+  checkout, by design.
+- The `HEAD` check stays as defence in depth.
+- **R4 closed:** workers are granted `objects/00` to `objects/ff` and `objects/pack`, not
+  `objects/` whole, so `objects/info/alternates` is unwritable. The driver creates the
+  256 object directories at launch, because git would otherwise need `objects/` writable
+  to make one. The consequence is that a worker cannot write a commit-graph or run
+  `git gc` (followups).

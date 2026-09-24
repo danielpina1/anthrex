@@ -997,20 +997,13 @@ scope.
   deadline is now recognised as merged, but `subprocess::capture` still waits for EOF on
   both pipes after git exits. Ending the capture a short grace after the process exits
   would bound it.
-- **`objects/` is granted to workers whole, `objects/info/alternates` included (F1
-  re-review R4).** This predates F1 (decision 25). An alternates entry runs no code, but
-  a worker can graft another object store into the user's repository's lookup, or
-  delete objects, and either persists after the run. The narrow fix would grant
-  `objects/??/` and `objects/pack/` only, after checking under seatbelt that commits,
-  gc and repacks still work.
-- **R1's check-to-use window (fix round 2).** Every pinned engine git call checks the
-  worktree's `HEAD` file just before git starts. A live worker could rewrite `HEAD` in
-  the milliseconds between that check and git reading it (a background process of the
-  worker's can still be running during a hand-back or done check). If a commit did land
-  on the base this way, the D-2 guard halts the run before accept. Closing the window
-  entirely needs the engine's writes to name the ref explicitly: `commit-tree`
-  followed by `update-ref refs/heads/<own> <new> <old>` instead of `merge` or `commit`
-  in the worktree.
+- **A worker cannot run `git gc` or write a commit-graph.** Since fix round 3 (R4) a
+  worker may write only `objects/00` to `objects/ff` and `objects/pack`, not
+  `objects/info/` (whose `alternates` would graft another object store into the
+  repository). A `git gc`, `git commit-graph write` or `git repack` that writes
+  `objects/info/` fails under the sandbox; commits, merges, rebases and resets do not
+  need it (proven under seatbelt). Whether git's automatic `gc --auto` after a commit
+  fails the commit or only warns was not tested.
 
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
