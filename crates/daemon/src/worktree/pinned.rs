@@ -111,6 +111,13 @@ pub fn pinned(dir: &Path) -> Option<Pin> {
     crate::lock(&PINS).get(&key).cloned()
 }
 
+/// Fix round 3: the one branch ref (`refs/heads/…`) an engine write in `dir` may move,
+/// when `dir` is a pinned worktree on a branch of its own. Engine writes name it
+/// explicitly, with a compare-and-swap old value, and never write a ref through `HEAD`.
+pub fn own_ref(dir: &Path) -> Option<String> {
+    pinned(dir).filter(|pin| pin.broken.is_none())?.head
+}
+
 /// The git directory `<common>/worktrees/<name>` whose `gitdir` file names
 /// `<worktree>/.git`. Read from the repository, never from the worktree.
 pub fn find_git_dir(common_dir: &Path, worktree: &Path) -> Result<PathBuf, String> {

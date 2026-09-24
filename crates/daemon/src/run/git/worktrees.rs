@@ -188,24 +188,27 @@ fn ensure_worktree(
     {
         // Decision 19 as clarified by ruling T8-I4: the branch has no commit of its
         // own, so the worktree holds only what the engine's setup made. Its edits to
-        // tracked files are dropped (`--force`, then `reset --hard`: a lockfile setup
-        // rewrote must neither block the checkout nor leak into the task's start
-        // state); untracked build output is kept. The caller re-runs setup after a
-        // re-point, which it sees as a returned `HEAD` different from the branch's
-        // earlier start.
-        g.write(
-            path,
-            &[
-                os("checkout"),
-                os("-q"),
-                os("--force"),
-                os("-B"),
-                os(branch),
-                os(from),
-            ],
-        )?;
-        g.write(path, &[os("reset"), os("-q"), os("--hard"), os(from)])?;
+        // tracked files are dropped (a lockfile setup rewrote must not leak into the
+        // task's start state); untracked build output is kept. The caller re-runs setup
+        // after a re-point, which it sees as a returned `HEAD` different from the
+        // branch's earlier start.
+        //
+        // Final fix batch F1, fix round 3: the branch is moved by name, compare-and-swap
+        // from the head just read, and the index and files follow with `read-tree`; no
+        // ref is written through `HEAD` (once `checkout -B` and `reset --hard`, whose
+        // reset wrote whatever branch `HEAD` named at that instant).
+        let own = format!("refs/heads/{branch}");
+        let cas = [os("update-ref"), os(&own), os(from), os(&head)];
+        let output = g.write_raw(path, &cas)?;
+        if !output.success {
+            return Err(format!(
+                "{branch} moved while it was re-pointed: {}",
+                failure(&cas, &output)
+            ));
+        }
+        g.write(path, &[os("read-tree"), os("-u"), os("--reset"), os(from)])?;
     }
+    // Through the pin's `HEAD` check: a `HEAD` that no longer names the branch fails here.
     Ok(g.ok(path, &[os("rev-parse"), os("HEAD")])?
         .trim()
         .to_string())

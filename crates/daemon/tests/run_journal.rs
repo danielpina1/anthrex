@@ -16,6 +16,8 @@ mod fixture;
 mod git;
 #[path = "run_journal/git_guards.rs"]
 mod git_guards;
+#[path = "run_journal/git_handback.rs"]
+mod git_handback;
 #[path = "run_journal/sessions.rs"]
 mod sessions;
 

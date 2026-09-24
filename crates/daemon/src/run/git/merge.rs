@@ -2,7 +2,8 @@
 //! `merge-tree` of the run head and the task head, the candidate commit, the
 //! compare-and-swap that advances the run branch, the integration worktree's
 //! detach-and-reattach around the candidate's check, the conflict hand-back into the
-//! task worktree, and the guard that classifies the run and base refs.
+//! task worktree, and the guard that classifies the run and base refs. No write in a
+//! worktree updates a ref through its `HEAD` (final fix batch F1, fix round 3).
 //!
 //! Blocking; call only from `spawn_blocking`. Writes (`commit_tree`, `materialize`,
 //! `cas_update`, `reattach`, `hand_back`) carry decision 18's flags through
@@ -388,14 +389,20 @@ pub fn commits_since(
     Ok((lines, count(g, root, from, to)?))
 }
 
-/// Decision 36 step 6: `git merge --no-ff --no-edit <run_head>` in the task worktree.
-/// A clean merge is committed and gives no files. A conflict leaves its markers and
-/// `MERGE_HEAD` for the worker and gives the unmerged files. Any other failure
-/// (untracked files in the way, say), or a merge already in progress, is an error.
-/// The result names the tip the merge was made onto (ruling T14-C1), read after the
-/// merge (`HEAD^1` of a clean merge commit whose `HEAD^2` is the run head, else `HEAD`,
-/// as for a conflicted merge or one already up to date; review N4, ruling T14-R3):
-/// the engine re-queues a hand-back only when that tip is the claimed commit.
+/// Decision 36 step 6: the run head merged into the task worktree. A clean merge is
+/// committed and gives no files. A conflict leaves its markers and `MERGE_HEAD` for the
+/// worker and gives the unmerged files. Any other failure (untracked files in the way,
+/// say), or a merge already in progress, is an error. The result names the tip the
+/// merge was made onto (ruling T14-C1), read after the merge ran (review N4): the
+/// engine re-queues a hand-back only when that tip is the claimed commit.
+///
+/// Final fix batch F1, fix round 3: no ref is written through `HEAD`, which a worker's
+/// leftover process could point at the base between the engine's check and git's read
+/// of it. `git merge --no-commit --no-ff` writes only the index, the files and the
+/// merge state; the merge commit is made with `write-tree` and `commit-tree` (parents
+/// explicit), and the task's own branch, the one ref its pin names, is moved with a
+/// compare-and-swap `update-ref`. A merge not made onto that branch's tip, or a `HEAD`
+/// that no longer names it, is an error, and nothing but that branch was written.
 pub fn hand_back(
     git: &OsStr,
     worktree: &Path,
@@ -403,6 +410,7 @@ pub fn hand_back(
     timeout: Duration,
 ) -> Result<HandBack, String> {
     let g = Git::new(git, timeout);
+    let own = own_ref(worktree)?;
     // Ruling T11-N1(a): a leftover MERGE_HEAD would make git refuse the merge and
     // `unmerged` report the old merge's files as if they were this one's conflict.
     if merge_in_progress(g, worktree)? {
@@ -411,60 +419,139 @@ pub fn hand_back(
             worktree.display()
         ));
     }
+    let run_head = read(g, worktree, &format!("{run_head}^{{commit}}"))?
+        .ok_or_else(|| format!("{run_head} is not a commit"))?;
     let args = [
         os("merge"),
         os("-q"),
         os("--no-ff"),
-        os("--no-edit"),
-        os(run_head),
+        os("--no-commit"),
+        os("--no-autostash"),
+        os(&run_head),
     ];
-    let tip = |g| {
-        read(g, worktree, "HEAD")?
-            .ok_or_else(|| format!("{} has no HEAD commit", worktree.display()))
-    };
     let output = g.write_raw(worktree, &args)?;
-    // Review N4: `onto` is read from what the merge did, never before it, so a commit
-    // that lands in between is reported as the tip the merge was made onto.
-    if output.success {
-        let head = tip(g)?;
-        // Ruling T14-R3 (R2-2): a run head already in the task's history makes no merge
-        // commit ("Already up to date"); the tip merged onto is then `HEAD` itself.
-        let target = read(g, worktree, &format!("{run_head}^{{commit}}"))?;
-        let merged = read(g, worktree, "HEAD^2")?;
-        let onto = if merged.is_some() && merged == target {
-            read(g, worktree, "HEAD^1")?.unwrap_or_else(|| head.clone())
+    // Review N4: `onto` is read after the merge ran, from the branch itself.
+    let onto = read(g, worktree, &own)?.ok_or_else(|| format!("{own} does not exist"))?;
+    // Every read below goes through the pin's `HEAD` check: a `HEAD` that no longer
+    // names the task's branch is refused there.
+    let head = read(g, worktree, "HEAD")?;
+    if head.as_deref() != Some(onto.as_str()) {
+        return Err(moved(worktree, &own));
+    }
+    if !output.success {
+        let files = unmerged(g, worktree)?;
+        return if files.is_empty() {
+            Err(failure(&args, &output))
         } else {
-            head.clone()
+            Ok(HandBack {
+                head: onto.clone(),
+                onto,
+                files,
+            })
         };
+    }
+    if !merge_in_progress(g, worktree)? {
+        // Ruling T14-R3 (R2-2): a run head already in the task's history ("Already up
+        // to date") leaves no merge state; the tip merged onto is the branch itself.
         return Ok(HandBack {
+            head: onto.clone(),
             onto,
-            head,
             files: Vec::new(),
         });
     }
-    let files = unmerged(g, worktree)?;
-    if files.is_empty() {
-        Err(failure(&args, &output))
-    } else {
-        // A conflicted merge leaves `HEAD` where the merge was made.
-        let onto = tip(g)?;
-        Ok(HandBack {
-            head: onto.clone(),
-            onto,
-            files,
-        })
+    if read(g, worktree, "ORIG_HEAD")?.as_deref() != Some(onto.as_str()) {
+        return Err(moved(worktree, &own));
     }
+    let tree = g.write(worktree, &[os("write-tree")])?.trim().to_string();
+    let branch = own.trim_start_matches("refs/heads/");
+    let message = format!("Merge commit '{run_head}' into {branch}");
+    let commit = g
+        .write(
+            worktree,
+            &[
+                os("commit-tree"),
+                os(&tree),
+                os("-p"),
+                os(&onto),
+                os("-p"),
+                os(&run_head),
+                os("-m"),
+                os(&message),
+            ],
+        )?
+        .trim()
+        .to_string();
+    let cas = [os("update-ref"), os(&own), os(&commit), os(&onto)];
+    let output = g.write_raw(worktree, &cas)?;
+    if !output.success {
+        return Err(format!(
+            "{}; {}",
+            moved(worktree, &own),
+            failure(&cas, &output)
+        ));
+    }
+    // The index already holds the merge's tree; only the merge state goes.
+    quit_merge(g, worktree)?;
+    if read(g, worktree, "HEAD")?.as_deref() != Some(commit.as_str()) {
+        return Err(moved(worktree, &own));
+    }
+    Ok(HandBack {
+        onto,
+        head: commit,
+        files: Vec::new(),
+    })
 }
 
-/// Ruling T11-N1(b): undoes a hand-back's conflicted merge in a task worktree
-/// (`git merge --abort`, decision 18's flags) so the next hand-back starts from the
-/// task's own commit. Without a `MERGE_HEAD` there is nothing to undo.
+/// Fix round 3: the branch ref the engine may move in `worktree` (its pin's), or an
+/// error: the engine writes no ref it cannot name.
+fn own_ref(worktree: &Path) -> Result<String, String> {
+    crate::worktree::pinned::own_ref(worktree).ok_or_else(|| {
+        format!(
+            "{} is not an engine worktree on a branch of its own; refusing to write in it",
+            worktree.display()
+        )
+    })
+}
+
+fn moved(worktree: &Path, own: &str) -> String {
+    format!(
+        "{own} or {}'s HEAD moved during the hand-back; the merge left in progress there \
+         was not committed",
+        worktree.display()
+    )
+}
+
+/// Ruling T11-N1(b): undoes a hand-back's conflicted merge in a task worktree so the
+/// next hand-back starts from the task's own commit. Without a `MERGE_HEAD` there is
+/// nothing to undo. Fix round 3: not `git merge --abort`, whose reset writes `HEAD`'s
+/// ref; the index and files are read back from the task's own branch (`read-tree
+/// --reset -u`), and `merge --quit` drops the merge state. No ref is written.
 pub fn abort_merge(git: &OsStr, worktree: &Path, timeout: Duration) -> Result<(), String> {
     let g = Git::new(git, timeout);
+    // Refused up front in a worktree without a branch of its own, merge or not.
+    own_ref(worktree)?;
     if !merge_in_progress(g, worktree)? {
         return Ok(());
     }
-    g.write(worktree, &[os("merge"), os("--abort")]).map(|_| ())
+    drop_merge(g, worktree)
+}
+
+/// Fix round 3: the merge in progress in `worktree` undone without writing a ref: the
+/// index and files read back from the task's own branch, then the merge state dropped.
+pub(crate) fn drop_merge(g: Git<'_>, worktree: &Path) -> Result<(), String> {
+    let own = own_ref(worktree)?;
+    let tip = read(g, worktree, &own)?.ok_or_else(|| format!("{own} does not exist"))?;
+    g.write(
+        worktree,
+        &[os("read-tree"), os("-u"), os("--reset"), os(&tip)],
+    )?;
+    quit_merge(g, worktree)
+}
+
+/// `git merge --quit`: the merge state (`MERGE_HEAD`, `MERGE_MSG`, …) dropped; the
+/// index, the files and every ref are left as they are.
+pub(crate) fn quit_merge(g: Git<'_>, worktree: &Path) -> Result<(), String> {
+    g.write(worktree, &[os("merge"), os("--quit")]).map(|_| ())
 }
 
 fn merge_in_progress(g: Git<'_>, worktree: &Path) -> Result<bool, String> {

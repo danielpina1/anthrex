@@ -3,6 +3,9 @@
 //! worktree), but neither may steer the engine's own, unsandboxed git calls: a `HEAD`
 //! naming another branch must never make an engine merge commit onto it, and a `.git`
 //! symlinked to another worktree's must never pin (or grant) that worktree's git dir.
+//! Fix round 3 closes R1's remaining window: a `HEAD` flipped after the engine's check,
+//! while its git command runs, still moves no branch but the task's own, because no
+//! engine write in a worktree updates a ref through `HEAD`.
 
 mod support;
 
@@ -14,7 +17,7 @@ use daemon::run::plan::BUILTIN_PROTECTED;
 use daemon::run::role_launch::worker_git_roots;
 use std::path::{Path, PathBuf};
 use support::TempRepo;
-use support::run_git::{T, commit_file, head, out, real_git, repo, wt_dir};
+use support::run_git::{T, commit_file, head, out, real_git, repo, wrapper_git, wt_dir};
 
 struct World {
     repo: TempRepo,
@@ -178,5 +181,92 @@ fn a_git_symlink_to_another_worktree_never_moves_the_pin_or_the_grant() {
         std::fs::read(theirs.join("index")).unwrap(),
         index_before,
         "salvage staged into the integration worktree's index"
+    );
+}
+
+/// A git that, the first time its arguments include one of `triggers`, does what a
+/// worker's leftover process could do in that instant: point the worktree's `HEAD` at
+/// `main` (and make the index and files follow), after the engine's `HEAD` check and
+/// before git reads it. Then it runs the engine's command.
+fn racing_git(tools: &Path, admin: &Path, triggers: &[&str]) -> PathBuf {
+    let marker = tools.join("flipped");
+    let cases = triggers.join("|");
+    wrapper_git(
+        tools,
+        &format!(
+            r#"if [ ! -e '{marker}' ]; then
+  for a in "$@"; do
+    case "$a" in
+      {cases})
+        : > '{marker}'
+        printf 'ref: refs/heads/main\n' > '{admin}/HEAD'
+        "$REAL" -C "$2" -c core.hooksPath=/dev/null reset -q --hard || exit 98
+        break;;
+    esac
+  done
+fi"#,
+            marker = marker.display(),
+            admin = admin.display(),
+        ),
+    )
+}
+
+/// Fix round 3: `HEAD` flips to the base while the hand-back's merge runs. The base
+/// must not move; the hand-back fails.
+#[test]
+fn a_head_flipped_during_the_hand_back_moves_no_base() {
+    let w = world("hp03");
+    commit_file(&w.task, "t.txt", "task\n", "task work");
+    let run_head = commit_file(&w.integration, "r.txt", "run\n", "run work");
+    let tools = tempfile::tempdir().unwrap();
+    let git = racing_git(tools.path(), &git_dir(&w.task), &["--no-ff"]);
+
+    let result = hand_back(git.as_os_str(), &w.task, &run_head, T);
+    assert!(tools.path().join("flipped").exists(), "the race never ran");
+    assert_eq!(
+        out(&w.repo.root, &["rev-parse", "main"]),
+        w.base,
+        "the base moved: {result:?}"
+    );
+    let err = result.unwrap_err();
+    assert!(err.contains("HEAD"), "{err}");
+}
+
+/// Fix round 3: `HEAD` flips to the base while a task branch with no commit of its own
+/// is re-pointed. The base must not move; the re-point fails.
+#[test]
+fn a_head_flipped_during_a_repoint_moves_no_base() {
+    let w = world("hp04");
+    let from = commit_file(&w.integration, "r.txt", "run\n", "run work");
+    let tools = tempfile::tempdir().unwrap();
+    let git = racing_git(
+        tools.path(),
+        &git_dir(&w.task),
+        &["--hard", "read-tree", "update-ref"],
+    );
+
+    let result = prepare_worktree(
+        git.as_os_str(),
+        &w.repo.root,
+        &format!("anthrex/{}/t1", w.run),
+        &from,
+        &w.task,
+        T,
+    );
+    assert!(tools.path().join("flipped").exists(), "the race never ran");
+    assert_eq!(
+        out(&w.repo.root, &["rev-parse", "main"]),
+        w.base,
+        "the base moved: {result:?}"
+    );
+    let err = result.unwrap_err();
+    assert!(err.contains("HEAD"), "{err}");
+    // The task's own branch took the re-point; nothing else did.
+    assert_eq!(
+        out(
+            &w.repo.root,
+            &["rev-parse", &format!("anthrex/{}/t1", w.run)]
+        ),
+        from
     );
 }

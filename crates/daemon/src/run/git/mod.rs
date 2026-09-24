@@ -38,7 +38,7 @@ pub use salvage::{
 };
 
 /// Reads reconcile (M8a.21) shares with the ops it checks.
-pub(crate) use merge::{read, reattach_in, short, unmerged};
+pub(crate) use merge::{drop_merge, quit_merge, read, reattach_in, short, unmerged};
 pub(crate) use worktrees::{forget_missing, is_ancestor, listed as listed_worktree_in};
 
 pub use queue::{GitQueue, LOCK_RETRY_DELAYS_MS};

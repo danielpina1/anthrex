@@ -9,8 +9,8 @@ use super::Reconciled;
 use crate::run::contract::sha7;
 use crate::run::engine::OpResult;
 use crate::run::git::{
-    Git, failure, forget_missing, is_ancestor, listed_worktree_in, os, read, reattach_in, short,
-    unmerged,
+    Git, drop_merge, failure, forget_missing, is_ancestor, listed_worktree_in, os, quit_merge,
+    read, reattach_in, short, unmerged,
 };
 
 /// `CreateRunBranch`, `PrepareWorktree`: the path listed on its branch is the op's
@@ -164,6 +164,30 @@ pub(super) fn hand_back(
     let head = read(g, worktree, "HEAD")?;
     if let Some(merge_head) = read(g, worktree, "MERGE_HEAD")? {
         let files = unmerged(g, worktree)?;
+        if Some(&merge_head) == target.as_ref() && files.is_empty() {
+            // Final fix batch F1, fix round 3: the hand-back's own clean merge, made
+            // with `--no-commit`. Committed (the branch's `HEAD^2` is the run head), only
+            // its merge state was left; not yet, it is undone and the hand-back runs
+            // again. Neither writes a ref.
+            if read(g, worktree, "HEAD^2")? == target {
+                quit_merge(g, worktree)?;
+                notes.push(format!(
+                    "dropped the committed hand-back's merge state in {}",
+                    worktree.display()
+                ));
+                return Ok(Reconciled::Replay(OpResult::HandedBack {
+                    files,
+                    onto: read(g, worktree, "HEAD^1")?,
+                    head,
+                }));
+            }
+            drop_merge(g, worktree)?;
+            notes.push(format!(
+                "undid the hand-back's uncommitted merge in {}",
+                worktree.display()
+            ));
+            return Ok(Reconciled::NotStarted);
+        }
         if Some(&merge_head) != target.as_ref() || files.is_empty() {
             notes.push(format!(
                 "{} has a merge of {} in progress that is not the run head's conflicted \
