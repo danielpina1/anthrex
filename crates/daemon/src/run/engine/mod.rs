@@ -54,7 +54,7 @@ mod signals;
 mod tools;
 
 pub use crate::headless::TurnOutcome;
-pub use clock::BudgetEpoch;
+pub use clock::{BudgetEpoch, TaskClock};
 pub use ops::{OpKind, OpResult, OverrideCount, ResolutionAt, ScratchAt};
 pub use signals::INTERRUPT_GRACE_SECS;
 

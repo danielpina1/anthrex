@@ -365,6 +365,8 @@ pub(super) fn relaunch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             }
             round.launch_op = op;
             round.started_at = now;
+            // Ruling T15-R2 (N-1): the new session owes nothing to the lost launch.
+            round.excused_secs = 0;
             round.last_event = now;
             let id = run.tasks[i].id().to_string();
             emit_op(run, op, Some(&id), kind, fx);

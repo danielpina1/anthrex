@@ -447,7 +447,7 @@ fn new_task(
         handback_due: false,
         gates_after_handback: false,
         override_count: None,
-        clock_stopped: None,
+        clock: Default::default(),
         epoch: None,
         resolution: None,
         start_commit: None,

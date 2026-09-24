@@ -6507,3 +6507,57 @@ T14-R2's carry (see M8a.15 above).
     (after a retry) and `an_ended_session_keeps_its_time_to_the_pause`.
   - V16: see M-3.
 - M8a.15's R14 to R19 were re-run and are killed. R16 is killed by its new test.
+
+#### M8a.15 fix round 2
+
+Re-review 1 (`task-15-rereview-1.md`) confirmed C-1, I-1 to I-3 and the minors, and
+accepted concerns 1 to 4. It found two clock bugs that let a worker run far past its
+budget. Ruling T15-R2 is binding.
+
+**The invariant.** No round is excused more time than it has lasted (`excused_secs <=
+ended_at.unwrap_or(now) - started_at`), so no spend is negative and no excused time is
+banked as credit.
+- `clock::restart` caps `excused_secs` at the round's elapsed time, on top of its
+  saturating arithmetic.
+- The liveness helper checks the invariant (`liveness::assert_clock_sound`, called by
+  `assert_alive`), so every engine test sequence checks it.
+
+**N-1: a relaunch starts with no credit.** `restore::relaunch` resets `excused_secs` to
+0 along with `started_at`. A launch lost at a restart gave its relaunched session the
+restore-to-resume span as unmetered minutes.
+- Red (probe P1c): `left: 7201` against `right: 0`.
+- Test: `a_relaunched_session_gets_no_credit_from_its_lost_launch`. An active
+  relaunched worker is now stopped by its 15-minute budget.
+
+**N-2: each period is excused once.** `Task.clock_stopped` became `Task.clock:
+TaskClock { stopped, restarted }`, which fits the model file's size limit.
+`clock::stop_at_restore` stops the clock no earlier than the latest round's `ended_at`
+or the clock's last restart (`restarted`). Before, a restore could reach back into a
+stop already excused.
+- Red (probe P2): `t1 round 0: excused 10916 of 7919 elapsed`.
+- Tests: `a_restore_does_not_excuse_a_pause_twice`, and
+  `a_restore_right_after_an_answer_stops_the_clock_at_the_answer`. The second
+  covers a live round whose turn silence the answer shifted into the excused block;
+  a resume re-arms the silence from `now`, so only an answer shows this case.
+
+**Property-style test.** `no_sequence_excuses_more_than_elapsed` drives 300
+pseudo-random sequences of 40 steps each and checks the invariant after every step. The
+steps cover time, activity, turn starts and ends, exits, pauses, resumes, restarts,
+blocks, answers, retries, and the launches, diffs, resumes and counts the steps wait on.
+`the_probe_sequences_keep_the_clock_sound` replays the probes' own sequences with the
+same check.
+- Red: `t1 round 1: excused 3 of 0 elapsed` and `t1 round 0: excused 7201 of 1
+  elapsed`.
+- The tests are in `tests/control_clock_props.rs`.
+
+**Mutations.** Five mutants:
+- G1 (the relaunch reset): killed.
+- G3 (`restarted` in the restore's stop): killed.
+- G5 (`restarted` not recorded): killed.
+- G2 (the round's `ended_at` in the restore's stop) survives, and is equivalent. An exit
+  is a signal and moves `last_event`, and an `ended_at` set by a restart equals
+  `restarted`.
+- G4 (the cap) survives, and is unreachable while G2 and G3 hold. The combined
+  G2+G3+G4 mutant is killed by `a_restore_does_not_excuse_a_pause_twice` and the
+  property test.
+- G2 and G4 stay as the ruling's explicit defences.

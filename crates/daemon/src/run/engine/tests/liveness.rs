@@ -9,11 +9,31 @@ use super::fixture::{Fixture, RUN_ID};
 use crate::run::engine::{Event, EventKind, OpKind, step};
 use crate::run::model::{FailedTurn, Run, StallState};
 
+/// Ruling T15-R2: no round is excused more time than it has lasted, so no spend is
+/// negative and no excused time is banked as credit.
+pub(super) fn assert_clock_sound(run: &Run, now: u64) {
+    for task in &run.tasks {
+        for (r, round) in task.rounds.iter().enumerate() {
+            let elapsed = round
+                .ended_at
+                .unwrap_or(now)
+                .saturating_sub(round.started_at);
+            assert!(
+                round.excused_secs <= elapsed,
+                "{} round {r}: excused {} of {elapsed} elapsed",
+                task.id(),
+                round.excused_secs
+            );
+        }
+    }
+}
+
 /// The whole check on the fixture's run. A paused run (by the `pause` edit or by a
 /// restore) waits for the user, by design; it is alive when resuming it leaves nothing
 /// stuck (M8a.15): the check runs on the state a `run resume` one second later
 /// produces.
 pub(super) fn assert_alive(fx: &Fixture) {
+    assert_clock_sound(fx.run(), fx.now);
     if fx.run().state != RunState::Paused {
         run_alive(fx.run());
     } else {

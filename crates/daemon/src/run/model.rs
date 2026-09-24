@@ -411,9 +411,9 @@ pub struct Task {
     /// for its `CountCommits` (decision 35).
     #[serde(default)]
     pub override_count: Option<super::engine::OverrideCount>,
-    /// Since when the task's clock is stopped (rulings T15-I2, T15-I3).
+    /// The task's clock (rulings T15-I2, T15-I3, T15-R2).
     #[serde(default)]
-    pub clock_stopped: Option<u64>,
+    pub clock: super::engine::TaskClock,
     /// The spend before the last `run retry`; rung 4 counts from it (ruling T15-C1).
     #[serde(default)]
     pub epoch: Option<super::engine::BudgetEpoch>,

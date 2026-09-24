@@ -299,7 +299,7 @@ pub(crate) fn total_spend(task: &Task, now: u64) -> Spend {
         .rounds
         .iter()
         .filter(|r| r.role == AgentRole::Worker)
-        .map(|r| round_spend(r, task.clock_stopped, now).secs)
+        .map(|r| round_spend(r, task.clock.stopped, now).secs)
         .sum();
     Spend {
         secs,
@@ -375,7 +375,7 @@ pub(super) fn check_budget(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effec
         rung4(run, i, text, now, fx);
         return true;
     }
-    let spend = round_spend(&task.rounds[r], task.clock_stopped, now);
+    let spend = round_spend(&task.rounds[r], task.clock.stopped, now);
     let budget = task.budget;
     if let Some(what) = breached(spend, budget) {
         breach(run, i, what, now, fx);

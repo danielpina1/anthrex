@@ -137,7 +137,7 @@ fn session_spend(task: &Task, now: u64) -> Spend {
         .iter()
         .rev()
         .find(|r| r.role == AgentRole::Worker)
-        .map(|r| round_spend(r, task.clock_stopped, now))
+        .map(|r| round_spend(r, task.clock.stopped, now))
         .unwrap_or_default()
 }
 
