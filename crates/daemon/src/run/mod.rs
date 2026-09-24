@@ -34,6 +34,7 @@ pub mod model;
 pub mod plan;
 pub mod proof;
 pub mod report;
+mod report_escape;
 mod report_task;
 pub mod role_launch;
 pub mod roster;

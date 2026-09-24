@@ -7,9 +7,14 @@ use super::contract::{mode_label, sha7, size_label};
 use super::engine::{epoch_spend, ladder};
 use super::model::Task;
 use super::report::{format_utc, verdict_label};
+use super::report_escape::{continuation_indent, escape_heading, fence_for};
 
 pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
-    out.push_str(&format!("## {}: {}\n\n", task.spec.id, task.spec.title));
+    out.push_str(&format!(
+        "## {}: {}\n\n",
+        task.spec.id,
+        escape_heading(&task.spec.title)
+    ));
     out.push_str(&format!(
         "State: {} (size {}, {} mode, rung {})\n",
         task.state.label(),
@@ -20,7 +25,7 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
     if !task.notes.is_empty() {
         out.push_str("Notes:\n");
         for note in &task.notes {
-            out.push_str(&format!("- {note}\n"));
+            out.push_str(&format!("- {}\n", continuation_indent(note)));
         }
     }
     out.push_str(&format!("Route: {}\n", route_line(&task.route)));
@@ -54,12 +59,15 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
             format_utc(c.at),
             if c.on_candidate { ", on candidate" } else { "" }
         ));
-        out.push_str("```\n");
+        let fence = fence_for(&c.tail);
+        out.push_str(&fence);
+        out.push('\n');
         out.push_str(&c.tail);
         if !c.tail.ends_with('\n') {
             out.push('\n');
         }
-        out.push_str("```\n");
+        out.push_str(&fence);
+        out.push('\n');
     }
     for r in &task.reviews {
         out.push_str(&format!(
@@ -71,7 +79,7 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
             sha7(&r.head)
         ));
         if !r.summary.is_empty() {
-            out.push_str(&format!("{}\n", r.summary));
+            out.push_str(&format!("{}\n", continuation_indent(&r.summary)));
         }
         findings_by_severity(r.findings.iter(), out);
     }
@@ -79,12 +87,19 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
         out.push_str(&format!("Salvage refs: {}\n", task.salvage_refs.join(", ")));
     }
     if let Some(reason) = &task.merged_without_approval {
-        out.push_str(&format!("merged without approval: {reason}\n"));
+        out.push_str(&format!(
+            "merged without approval: {}\n",
+            continuation_indent(reason)
+        ));
     }
     if !task.history.is_empty() {
         out.push_str("History:\n");
         for e in &task.history {
-            out.push_str(&format!("- {} {}\n", format_utc(e.at), e.text));
+            out.push_str(&format!(
+                "- {} {}\n",
+                format_utc(e.at),
+                continuation_indent(&e.text)
+            ));
         }
     }
 }
@@ -149,7 +164,7 @@ fn findings_by_severity<'a>(findings: impl Iterator<Item = &'a proto::Finding>, 
                 (Some(file), None) => format!("{file}: "),
                 _ => String::new(),
             };
-            out.push_str(&format!("- {where_}{}\n", f.text));
+            out.push_str(&format!("- {where_}{}\n", continuation_indent(&f.text)));
         }
     }
 }

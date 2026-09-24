@@ -15,6 +15,7 @@ use proto::{DoneSignal, RunState, Verdict};
 
 use super::contract::{mode_label, sha7, size_label};
 use super::model::Run;
+use super::report_escape::escape_cell;
 use super::report_task::render_task;
 
 /// The whole document.
@@ -148,7 +149,7 @@ fn tasks_table(run: &Run, out: &mut String) {
         out.push_str(&format!(
             "| {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             t.spec.id,
-            t.spec.title,
+            escape_cell(&t.spec.title),
             size_label(t.size),
             mode_label(t.test_mode),
             t.state.label(),

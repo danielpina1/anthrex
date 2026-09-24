@@ -6736,3 +6736,85 @@ anthrex-daemon` is green except for a pre-existing, unrelated flake,
 timing test): it fails intermittently under the full parallel suite and passes every
 time run alone or with `--test-threads=1`. Nothing in this task touches git
 registration, probing, or anything under `run/git/`.
+
+### M8a.16 fix round 1 (2026-09-24)
+
+The review (`task-16-review.md`) found the report had **no Markdown escaping
+anywhere**, despite rendering text with no closed vocabulary: a plan's task title
+(LLM-authored, C1), a check's raw tool output (C2), and a reviewer's summary and
+findings plus the engine's own free-text notes and history lines (I1). Two gaps (M1,
+M2) were also found in the test suite itself: `report_has_every_section` asserted a
+section *label* ("Salvage refs:", "Route:") was present without ever asserting the
+*value* it was supposed to carry, so a mutated or dropped value would have passed.
+
+**Fix.** One new pure module, `run/report_escape.rs`, with the whole escaping layer:
+- `escape_cell`: a table cell — flattens `\n`/`\r` to spaces, escapes `|` as `\|`. Used
+  for the one field in the `## Tasks` table that is not from a closed vocabulary: the
+  task title.
+- `escape_heading`: a `##`-heading line — flattens newlines the same way, and escapes
+  a genuine *leading* `#` (only the string's own first character, once newlines are
+  gone) as `\#`. Used for the task title in `## <id>: <title>`.
+- `continuation_indent`: a free-text line or list item's text — the first line is
+  unchanged, every later line is indented 4 spaces. CommonMark never reads 4+ leading
+  spaces as an ATX heading, and a line indented under a list item's marker (`"- "`,
+  width 2) stays part of that item rather than becoming its own block — so one
+  mechanism defuses both hazards the ruling named (an embedded newline starting a new
+  block, and a leading `#` reading as a heading). Used for task notes, review
+  findings' `text`, `merged without approval: <reason>`, and task history entries —
+  every free-text field the review flagged (I1), plus a reviewer's round summary,
+  which is the same kind of field (LLM-authored prose) even though the review did not
+  name it explicitly.
+- `fence_for`: the longest run of backticks in a check's tail, plus one, never fewer
+  than 3 — exactly the brief's own stated fix for C2. `report_task.rs`'s check
+  rendering now opens and closes with this fence instead of a fixed ` ``` `.
+
+Not escaped, on purpose: `t.spec.id` (validated against `ID_PATTERN` in
+`validate.rs`, so it cannot carry a `|`, a newline or a leading `#`), every enum
+label (`size_label`, `mode_label`, `done_signal_label`, `verdict_label`, route
+labels — a closed, hand-written vocabulary), every sha (`sha7`, hex-only), branch
+and ref names (git's own naming rules already forbid the dangerous characters), and
+`Run.log` text (already reviewed and accepted as-is in the original M8a.16 pass,
+since it is the engine's own constructed sentences, not raw agent output — carried
+forward here as a scope boundary, not re-litigated).
+
+**Tests.** `report_escape.rs` gets 5 unit tests on the four pure functions in
+isolation. `report_tests_escaping.rs` (declared from `report_tests.rs` the way
+`plan_tests.rs` declares its own split-out siblings) adds:
+- Four hostile-input tests, one per finding: a title with `|` and a newline (C1,
+  table), a title starting with `#` and a newline (C1, heading), a check tail
+  containing a ` ``` ` fence (C2), and notes/findings/history each carrying a newline
+  followed by `# looks like a heading` (I1) — asserted with `assert_eq!(...count(),
+  3, ...)` so a fix that escaped only one or two of the three fields would still fail.
+  All four were run against the unescaped code first and failed for the stated
+  reason (a missing escape, not a panic or a compile error) before the fix landed;
+  two of my first drafts of these assertions were themselves wrong (a substring check
+  that matched a valid 4-backtick fence's `` ``` `` prefix, and a bare "no `title
+  across two lines`" check that didn't account for the same title appearing correctly
+  in the task's own heading below the table) — caught by re-reading the failure output
+  and fixed before considering the tests trustworthy.
+- `salvage_ref_content_is_asserted_m1`: asserts the literal ref string, not just the
+  `"Salvage refs:"` label.
+- `route_and_review_route_content_is_asserted_m2`: asserts the exact `Route:`/`Review
+  route:` line built from `t.route`/`t.review_route`'s actual runtime, model,
+  strength and effort, not just the label.
+- `round_usage_line_survives_alongside_escaping`: a guard that the escaping pass did
+  not touch the per-round usage line, which carries only counters.
+
+**Mutation-checked** by hand (mutate `report_escape.rs`, run `cargo test -p
+anthrex-daemon --lib run::report`, confirm a failure, restore from the same file's
+backup, confirm `git status` clean):
+- `escape_cell` stops escaping `|` → caught (its own unit test and
+  `title_with_pipe_and_newline_does_not_break_the_table`).
+- `fence_for` hardcoded to always return `` ``` `` → caught (its own unit test and
+  `check_tail_with_a_backtick_fence_uses_a_longer_fence`).
+- `continuation_indent` made an identity function → caught (its own unit test and
+  `notes_findings_and_history_with_newlines_and_hash_indent_their_continuation`).
+
+**Gates.** `cargo build --workspace --all-targets`, `cargo clippy --workspace
+--all-targets -- -D warnings` and `cargo fmt --all --check` clean. `cargo test -p
+anthrex-daemon --lib` is 912/912 green (899 before this fix round's 13 new tests,
+plus the 5 in `report_escape.rs` and the 8 new/M1/M2 tests already counted in
+`report_tests_escaping.rs`'s prior red run — final count 912, 0 failed). File sizes:
+`report.rs` 211, `report_task.rs` 204, `report_escape.rs` 100, `report_tests.rs` 335,
+`report_tests_escaping.rs` 175 lines — all comfortably under AGENTS.md's ~600-line
+guidance.

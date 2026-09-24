@@ -330,3 +330,6 @@ fn task_lookup_helper_finds_t1() {
     let run = base_run();
     assert_eq!(task(&run, "t1").id(), "t1");
 }
+
+#[path = "report_tests_escaping.rs"]
+mod escaping;
