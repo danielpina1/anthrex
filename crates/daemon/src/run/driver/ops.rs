@@ -9,12 +9,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::{DONE_CHECK_GIT_TIMEOUT, OpCtx, RunService, cleanup, merge};
-use crate::headless::SessionArg;
+use crate::headless::{HeadlessSpec, SessionArg};
 use crate::run::engine::{EventKind, OpKind, OpResult, ResolutionAt, ScratchAt};
 use crate::run::exec::{ShellOutcome, run_shell};
 use crate::run::git::{self, RefCheck};
 use crate::run::globs::{OwnsMatcher, ProtectedMatcher};
 use crate::run::proof::{ProofError, ProofOp, SETUP_MARKER, run_proof};
+use proto::AgentRole;
 
 pub(super) fn failed(message: impl Into<String>) -> OpResult {
     OpResult::Failed {
@@ -89,6 +90,50 @@ impl RunService {
     }
 }
 
+/// A sandboxed worker's writable git roots, completed at launch (final fix batch F1):
+/// the parts of the common dir `role_launch` named, created when missing, plus the
+/// worktree's own administrative directory, which only git can name. A session with no
+/// sandbox roots (a reviewer, or `worker_sandbox = false`) is left as it is.
+async fn sandbox_git_dirs(
+    service: &Arc<RunService>,
+    ctx: &OpCtx,
+    spec: &mut HeadlessSpec,
+) -> Result<(), String> {
+    let worker = spec
+        .run_ref
+        .as_ref()
+        .is_some_and(|r| r.role == AgentRole::Worker);
+    let claude = spec
+        .claude_sandbox
+        .as_ref()
+        .map(|s| s.writable_roots.clone());
+    let roots = match claude {
+        Some(roots) if !roots.is_empty() => roots,
+        _ => spec.codex_writable_roots.clone(),
+    };
+    if !worker || roots.is_empty() {
+        return Ok(());
+    }
+    let common = crate::lock(&service.state)
+        .runs
+        .get(&ctx.run_id)
+        .map(|run| run.git_common_dir.clone())
+        .ok_or_else(|| format!("unknown run {}", ctx.run_id))?;
+    let cwd = spec.cwd.clone();
+    let dirs = service
+        .write(ctx, move |g, t| {
+            git::worker_git_dirs(g, &common, &cwd, &roots, t)
+        })
+        .await?;
+    if let Some(sandbox) = spec.claude_sandbox.as_mut() {
+        sandbox.writable_roots = dirs.clone();
+    }
+    if !spec.codex_writable_roots.is_empty() {
+        spec.codex_writable_roots = dirs;
+    }
+    Ok(())
+}
+
 /// Executes `kind` for the run of `ctx`.
 pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) -> OpResult {
     let git = service.git();
@@ -142,6 +187,10 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
             jitter_ms,
         } => {
             tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
+            let mut spec = spec;
+            if let Err(error) = sandbox_git_dirs(service, ctx, &mut spec).await {
+                return failed(error);
+            }
             let session = SessionArg::New { uuid: session_uuid };
             match service
                 .manager

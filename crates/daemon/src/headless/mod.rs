@@ -52,7 +52,9 @@ pub struct HeadlessSpec {
 }
 
 /// Decision 54's sandbox block. The worktree (the session's cwd) is writable by default;
-/// this adds the repository's git common directory.
+/// this adds the parts of the repository's git common directory a commit needs
+/// (`run::role_launch::worker_git_roots`, completed by the driver at launch; final fix
+/// batch F1).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaudeSandbox {
     pub writable_roots: Vec<PathBuf>,

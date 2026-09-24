@@ -126,7 +126,8 @@ pub fn caps_with_test_overrides(
 
 /// M3's hook settings (`launch::claude::settings`, unchanged) plus, for a worker,
 /// decision 54's sandbox block: enabled, unsandboxed commands disallowed, refusing to
-/// start without a working sandbox (M8a.1 item 4b), and the git common dir writable.
+/// start without a working sandbox (M8a.1 item 4b), and the given parts of the git
+/// common dir writable (final fix batch F1).
 pub fn claude_settings(
     exe: &Path,
     window_id: u32,

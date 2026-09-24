@@ -23,6 +23,7 @@ mod merge;
 mod queue;
 mod resolution;
 mod salvage;
+mod sandbox;
 mod worktrees;
 
 pub use done::{DoneChecked, verify_done};
@@ -41,6 +42,7 @@ pub(crate) use worktrees::{forget_missing, is_ancestor, listed as listed_worktre
 
 pub use queue::{GitQueue, LOCK_RETRY_DELAYS_MS};
 pub use resolution::resolution_only;
+pub use sandbox::worker_git_dirs;
 pub use worktrees::{
     absolute_git_dir, create_run_branch, lock_worktree, prepare_review, prepare_scratch,
     prepare_worktree,

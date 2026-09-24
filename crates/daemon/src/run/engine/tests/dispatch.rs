@@ -191,9 +191,17 @@ fn approve_starts_dispatch_and_yes_skips_the_gate() {
     assert_eq!(spec.runtime, Runtime::Codex);
     assert_eq!(uuid, &None);
     let common = PathBuf::from("/tmp/p/.git");
-    assert_eq!(spec.codex_writable_roots, vec![common]);
-    assert_ne!(spec.codex_writable_roots[0], PathBuf::from("/tmp/x/.git"));
-    assert_ne!(spec.codex_writable_roots[0], PathBuf::from("/tmp/p"));
+    // Final fix batch F1: the run's own parts of the common dir, never all of it.
+    let run_dir = format!("refs/heads/anthrex/{}", fx.run().id);
+    assert_eq!(
+        spec.codex_writable_roots,
+        vec![
+            common.join("objects"),
+            common.join(&run_dir),
+            common.join("logs").join(&run_dir),
+        ]
+    );
+    assert!(!spec.codex_writable_roots.contains(&common));
     assert!(fx.task("t1").rounds.last().unwrap().turn_open);
 }
 
