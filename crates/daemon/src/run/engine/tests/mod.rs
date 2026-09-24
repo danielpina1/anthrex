@@ -23,6 +23,7 @@ mod gates_review;
 mod gates_rounds;
 mod holds;
 mod holds_conflicts;
+mod launch_pid;
 mod liveness;
 mod merge;
 mod merge_complete;

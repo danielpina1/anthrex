@@ -57,7 +57,10 @@ pub(super) fn restored_window(
         .map(|w| w.id)
         .max()
         .map_or(Reconciled::NotStarted, |window_id| {
-            Reconciled::Replay(OpResult::Window { window_id })
+            Reconciled::Replay(OpResult::Window {
+                window_id,
+                pid: None,
+            })
         })
 }
 

@@ -285,6 +285,10 @@ pub enum OpResult {
     },
     Window {
         window_id: u32,
+        /// The session's first process, whose own `ProcessStarted` came before any
+        /// round had the window (M8a.25). `None` in a replay.
+        #[serde(default)]
+        pid: Option<u32>,
     },
     Resumed,
     ResumeFailed {

@@ -68,7 +68,13 @@ fn reconcile_create_window_finds_the_restored_window() {
     assert_eq!(
         got,
         vec![
-            (5, Reconciled::Replay(OpResult::Window { window_id: 9 })),
+            (
+                5,
+                Reconciled::Replay(OpResult::Window {
+                    window_id: 9,
+                    pid: None,
+                })
+            ),
             (6, Reconciled::NotStarted),
             (8, Reconciled::NotStarted),
         ]

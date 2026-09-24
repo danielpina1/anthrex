@@ -89,7 +89,13 @@ fn a_reviewer_window_for_a_task_no_longer_under_review_is_killed() {
     );
     let (launch, _) = only_op(&effects, "CreateWindow");
     override_t1(&mut fx);
-    let effects = fx.done(launch, OpResult::Window { window_id: 77 });
+    let effects = fx.done(
+        launch,
+        OpResult::Window {
+            window_id: 77,
+            pid: None,
+        },
+    );
     assert!(
         effects.contains(&Effect::KillWindow { window_id: 77 }),
         "{effects:#?}"

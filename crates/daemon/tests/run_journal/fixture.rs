@@ -396,7 +396,10 @@ pub fn some_results() -> Vec<OpResult> {
         OpResult::Worktree {
             head: "a".repeat(40),
         },
-        OpResult::Window { window_id: 3 },
+        OpResult::Window {
+            window_id: 3,
+            pid: None,
+        },
         OpResult::MergeAborted,
         OpResult::HandedBack {
             files: vec!["x".into()],

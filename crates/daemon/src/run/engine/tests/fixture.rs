@@ -236,7 +236,13 @@ impl Fixture {
         for (op, task) in pending {
             let window_id = self.next_window;
             self.next_window += 1;
-            self.done(op, OpResult::Window { window_id });
+            self.done(
+                op,
+                OpResult::Window {
+                    window_id,
+                    pid: None,
+                },
+            );
             out.push((task, window_id));
         }
         out

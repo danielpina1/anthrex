@@ -148,7 +148,10 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
                 .create_headless(name, *spec, session, first_turn, project, worktree)
                 .await
             {
-                Ok(info) => OpResult::Window { window_id: info.id },
+                Ok(info) => OpResult::Window {
+                    window_id: info.id,
+                    pid: service.manager.headless_pid(info.id),
+                },
                 Err(error) => failed(error.to_string()),
             }
         }

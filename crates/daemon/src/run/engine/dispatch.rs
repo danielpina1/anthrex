@@ -503,9 +503,13 @@ pub(super) fn window_done(
     let stale_reviewer =
         round.role == AgentRole::Reviewer && (state != TaskState::Review || round.retiring);
     match result {
-        OpResult::Window { window_id } => {
+        OpResult::Window { window_id, pid } => {
             let round = &mut run.tasks[i].rounds[r];
             round.window_id = Some(window_id);
+            // M8a.25: the first process's `ProcessStarted` came before the window.
+            if round.pid.is_none() {
+                round.pid = pid;
+            }
             if state.is_finished() || stale_reviewer {
                 round.retiring = true;
                 fx.push(Effect::KillWindow { window_id });
