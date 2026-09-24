@@ -937,6 +937,22 @@ scope.
   reproduced it with `fake-agent`: the worker's turn stayed open with no claim.
   Options: buffer a window's signals until its round has it, and accept a worker tool
   call whose `RunRef` names the round whose launch is in flight.
+  - **Its interaction with the recorded pid (M8a.25 fix round 1, review finding 1).**
+    Recording that pid made the race worse at one point: a session whose process exited
+    before its window was known had a round with the dead pid, and `kill_effect` waited
+    for that pid's exit, already delivered and dropped, so the round never ended and
+    rung 2 never started. `kill_effect` now synthesises the engine's exit whenever the
+    window has no live process (a duplicate reaches an ended round, which ignores it).
+    `e2e_a_session_that_exits_before_its_window_is_known_still_escalates` reproduces the
+    race with `ANTHREX_TEST_DELAY_WINDOW_MS`. The dropped early events themselves are
+    still open: that test's later sessions wait out the hold before their tool calls.
 - **`fake-agent`'s `git_commit` step does not create a missing directory** (`a/flag`
   fails, and the process exits mid-turn). The M8a.25 tests commit into a new directory
   with `sh` instead.
+- **The restart test's idle working worker.** `e2e_daemon_restart_pauses_and_resume_continues`
+  covers a session idle at the restart only for a task blocked on a question (`t3`,
+  M8a.25 fix round 1). A *working* task's session cannot be idle at a restart with
+  `fake-agent` long enough to aim at: every turn end of a working worker without
+  `task_done` runs decision 32's fallback at once, whose nudge turn then claims the
+  task. So the queued `RESUME_WORKER` for an idle working round is covered by the
+  engine unit tests of `restore.rs` only.

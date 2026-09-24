@@ -8510,3 +8510,48 @@ Review `task-24-review.md`; rulings T24-I1, T24-I2, T24-clock and T24-minors.
   (advanced), `RESUME_AFTER_EXIT` reworded (one death), three deaths to stall (two
   deaths), the denial text reworded (denials); the crash test by the two ordering
   mutants.
+
+#### M8a.25 fix round 1 (2026-09-24)
+
+Review `task-25-review.md`: one Important finding, six Minors.
+
+- **I1: a dead recorded pid wedged the ladder.** `OpResult::Window`'s pid is the
+  spawned one, reaped or not. A session whose process exited before its window was known
+  had its exit dropped and its round recorded that dead pid; the kill of a later stall
+  then waited in `kill_effect` for that pid's exit, which had already come, so the round
+  never ended and rung 2's fresh session never started. Fix (`driver/effects.rs`):
+  `kill_effect` synthesises `ProcessExited { killed_by_engine: true }` whenever the
+  window has no live process, even when the round's pid is the window's last one. If
+  that process's own exit is still on its way it reaches an ended round, which ignores
+  it (`signals::apply`'s first check). Recording only a live pid instead would narrow
+  the race, not close it (the process can still exit during the `done` line's append).
+  - Test: `e2e_a_session_that_exits_before_its_window_is_known_still_escalates`
+    (`run_e2e_sessions.rs`). A second debug-only hold, `ANTHREX_TEST_DELAY_WINDOW_MS`
+    (`effects::DoneHolds`, beside `ANTHREX_TEST_DELAY_DONE_MS`), holds a
+    `CreateWindow`'s `done` line 2 s, so `worker-t1-1`'s immediate `exit` is dropped.
+    Red: the run never completed within 635 s (round 1 `retiring`, not `ended`, pid
+    recorded; no session 2). Green: 57 s. Session 2 and the reviewer wait 4 s before
+    their tool calls, since the hold applies to their windows too.
+- **m1 (the restart test's idle session).** `t3` (Claude) is now blocked on a question
+  when the daemon restarts, so its session is idle, `ended` by the restart; after `run
+  resume`, the answer reaches it as `--resume <id>`, and it merges. An idle *working*
+  session is not reachable with `fake-agent` (the followups file says why).
+- **m2.** `DoneHolds::from_env` logs each armed hold once
+  (`<VAR>: holding op done lines`); the crash test asserts the line is in
+  `daemon.log` before its ordering checks, and the new test does the same for its hold.
+- **m3.** The crash test restarts without `ANTHREX_TEST_ABORT_AFTER_INTENT`
+  (`RunHarness::unset_env`), not with it empty. (`run_e2e_finish.rs`, M8a.22's, still
+  sets it empty; left alone.)
+- **m4 (c93a4c9's effect on Codex, recorded).** With the first process's pid known, a
+  Codex round's first `exec` exit after its turn ended now takes the T13-P1
+  between-turns branch (`closed_pid == pid`: `round.pid = None`, the round stays open)
+  instead of `exited()` ending the round; its next message is a `Deliver` (a new `exec
+  resume`), not a `ResumeSession`. That is how every later Codex turn already went.
+- **m5.** Test-side `git` reads beside a running engine go through
+  `run_plans::git_read` (`--no-optional-locks`, no user config, the `GIT_*` location
+  variables removed): `t1_committed`, the restart test's `committed`, and the crash
+  test's blob hash (now `hash-object` of a scratch file).
+- **m6.** The restart test compares each resumed Claude argv with the first one
+  element by element, `--session-id <id>` replaced by `--resume <id>`.
+- `run_harness.rs` is 604 lines (the `unset_env` helper; `RUN_WAIT`'s comment was
+  shortened to make room).
