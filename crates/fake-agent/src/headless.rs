@@ -25,15 +25,17 @@ use crate::script::{Step, Usage};
 use crate::stream_claude::{self, Claude, Line};
 use crate::stream_codex::Codex;
 
-/// A bound on one `sh` or `capture` command.
-const SH_TIMEOUT: Duration = Duration::from_secs(120);
+/// A bound on one `sh` or `capture` command: the spec's `RUN_WAIT` (300 s), the
+/// longest a scripted deadline loop may run in M8a.24, plus slack.
+const SH_TIMEOUT: Duration = Duration::from_secs(330);
 const POLL: Duration = Duration::from_millis(10);
 
 /// What each runtime writes for the events a script produces.
 pub trait Events {
     fn turn_started(&mut self) -> Result<()>;
     fn text(&mut self, text: &str) -> Result<()>;
-    fn command(&mut self, command: &str, output: &str, code: i32) -> Result<()>;
+    fn command_started(&mut self, command: &str) -> Result<()>;
+    fn command_finished(&mut self, command: &str, output: &str, code: i32) -> Result<()>;
     fn mcp_started(&mut self, tool: &str, args: &Value) -> Result<()>;
     fn mcp_finished(&mut self, tool: &str, args: &Value, reply: &Reply) -> Result<()>;
     fn deny(&mut self, tool: &str, reason: &str) -> Result<()>;
@@ -149,6 +151,7 @@ pub fn detect(args: &[String]) -> Option<Invocation> {
 }
 
 pub fn run(args: &[String], invocation: Invocation) -> Result<i32> {
+    steps::install_signal_handlers();
     let hooks = runtime::discover(args)?;
     let server = runtime::mcp_server(args)?;
     let flag = |name| server.as_ref().and_then(|s| s.flag(name)).map(String::from);
@@ -532,6 +535,12 @@ mod tests {
         ] {
             assert_eq!(detect(&terminal), None, "{terminal:?}");
         }
+    }
+
+    /// Ruling T20-m6: an `sh` deadline loop in M8a.24 may run for one `RUN_WAIT`.
+    #[test]
+    fn sh_timeout_outlasts_the_specs_run_wait() {
+        assert!(super::SH_TIMEOUT > std::time::Duration::from_secs(300));
     }
 
     #[test]

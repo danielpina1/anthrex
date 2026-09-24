@@ -7667,3 +7667,87 @@ reverting it fails its test.
   - `sh` and `capture` are bounded at 120 s, and the `git rev-parse` at 5 s.
   - The tests wait 20 s for a process without an MCP call. For one with an MCP call
     they wait 150 s, which is `MCP_CALL_TIMEOUT` plus slack.
+
+### M8a.20 fix round 1 (2026-09-24)
+
+Review `.superpowers/sdd/M8a-orchestration-engine-core/task-20-review.md`, rulings T20-I1,
+T20-I2, T20-I3 and T20-minors.
+
+- **I1: `sh` and `capture` children never outlive the fake.**
+  - The child now stays in the agent's process group, so the daemon's group kill
+    reaches it. That includes a SIGKILL, which no handler can see.
+  - On an interrupt or `SH_TIMEOUT`, the fake stops the child, lists its descendants
+    with `ps -A -o pid= -o ppid=`, and SIGKILLs the whole tree. The group itself
+    cannot be signalled without the fake.
+  - In a headless mode, SIGINT, SIGTERM and SIGHUP handlers only touch atomics. With
+    no `sh` running, the signal is re-raised with its default action at once. With an
+    `sh` running, the `sh` loop sees the flag within `POLL` (10 ms), kills the tree,
+    then re-raises.
+  - This covers Codex's interrupt, which is SIGINT to the leader alone, and a
+    background job inside `sh`, which ignores SIGINT even when the whole group gets it.
+  - Test: `sh_children_die_with_the_agent`, with SIGTERM to the group, SIGKILL to the
+    group, and SIGINT to the leader alone. In each case a background `sleep` must be
+    gone within a deadline.
+- **I2: decision 51's check runs both ways.**
+  - Every recorded sample of an event type, observed and documented, is merged into
+    one schema: the JSON types at each path, the keys allowed, and the keys every
+    sample has.
+  - Array elements are grouped by their `type` string.
+  - A key some sample lacks is optional. Each key every sample has must be written.
+  - `input`, `arguments`, `tool_input`, `modelUsage` and `by_type` hold free-form data
+    (a tool's arguments; maps keyed by model or agent-type names). Only their JSON type
+    is checked.
+  - Numbers are one type, so integer and float are not told apart.
+  - To pass it, Claude's lines now carry every key the recordings always have: the
+    whole `system/init`, the assistant `message` envelope and `usage`, `caller` on
+    `tool_use`, and on `result` the full `usage`, `modelUsage: {}`, `subagent_stats`,
+    `fast_mode_*`, `queued_turn_count` and `result_index`.
+  - `mcp_servers` entries now include `source: "dynamic"`, which every recording has.
+    The brief's shape omitted it.
+  - The reviewer's M5b, M6 and M7 mutants are now killed.
+- **I3: the surviving mutants each have a test,** in the new
+  `tests/headless_turns.rs`:
+  - `a_read_message_timeout_exits_4`;
+  - `end_turn_ends_the_turn`, on both runtimes;
+  - `an_exit_mid_turn_writes_no_turn_end`, on both runtimes;
+  - `an_interrupt_ends_an_sh_and_kills_it`;
+  - `mcp_call_sends_initialized_between_initialize_and_the_call`, against an `sh`
+    MCP server that logs what it reads;
+  - `a_claude_expect_mismatch_exits_3`.
+
+  Each was shown red by its mutant, because the code already behaved correctly.
+- **m1.** `anthrex-daemon` is now a dev-dependency of `fake-agent`, with no cycle.
+  The tests build their argv with `daemon::headless::argv::{claude_args, codex_args}`
+  and `CLI_CAPS`. The placeholder flag is passed through
+  `codex_user_config_only`. The spec's instructions contain `--`, `-p`, quotes and a
+  newline.
+- **m3.**
+  - An `sh` or `capture` is now announced as a `Bash` `tool_use` before it runs.
+  - An interrupt inside one writes the recorded rejection `tool_result`, then
+    `[Request interrupted by user for tool use]`, then a `result` with
+    `aborted_tools` and `stop_reason: "tool_use"`.
+  - An interrupt outside a tool (`hang`, `wait_ms`, an `api_retry` delay) keeps
+    `aborted_streaming`, with `stop_reason: "end_turn"`. That is unrecorded: the only
+    recording has a string there, so `null` would fail I2's type check.
+- **m4.** `.pos` and `.vars` are written to `<file>.tmp`, then renamed into place.
+  Test: `roles::tests::state_files_are_replaced_by_a_rename`, which checks that the
+  inode changes and that no temporary file is left.
+- **m5.** A Claude `hang` checks for stdin's EOF every 100 ms and exits 0 when it
+  sees it, as the real CLI exits at EOF. Test: `a_claude_hang_ends_at_stdin_eof`.
+- **m6.** `SH_TIMEOUT` is now 330 s: the spec's `RUN_WAIT` (300 s) for M8a.24's longest
+  scripted loop, plus slack. Test: `sh_timeout_outlasts_the_specs_run_wait`.
+- **m8.** Claude accepts exactly one text block, as recorded. `session_id` stays
+  optional, because `claude_stream::user_message(text, None)` omits it. Test:
+  `refuses_every_other_shape` now includes two blocks.
+- **Carries for M8a.24 (no code):**
+  - **m2.** `mcp_call`, `hook` and `git_commit` cannot be interrupted. An interrupt
+    during one stays queued: the step finishes, the turn ends `success`, and only then
+    is the interrupt answered with a bare `control_response`. No M8a.24 scenario
+    should interrupt during a tool call and expect `Interrupted`.
+  - **m7.** On Claude, the steps after `end_turn` run at once, as an unprompted turn.
+    On Codex they run only on the next `exec resume` message. So the same script
+    behaves differently on each runtime unless `end_turn` is followed by
+    `read_message`.
+  - **m7, continued.** The fake fires no turn hooks (`UserPromptSubmit`, `Stop`) of
+    its own. So a fake Claude session's conversation view gets no hook feed, whether
+    a turn is prompted or not.

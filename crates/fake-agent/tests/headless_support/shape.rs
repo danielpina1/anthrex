@@ -1,11 +1,11 @@
 //! Decision 51's shape test: `fake-agent`'s headless output against M8a.1's recorded
-//! fixtures.
+//! fixtures, in both directions (ruling T20-I2).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// Decision 51's event type: `type`, plus `subtype` for Claude's `system` and `result`
 /// lines, or `item.type` for a Codex item line.
@@ -20,39 +20,116 @@ pub fn event_type(event: &Value) -> String {
     kind
 }
 
-/// Keys whose values are free-form input (a tool's arguments): only their presence is
-/// checked, never their inner keys.
-const OPAQUE: &[&str] = &["input", "arguments", "tool_input"];
+/// Keys whose values are free-form data rather than a fixed shape: a tool's arguments,
+/// and maps keyed by a model or agent-type name. Only their JSON type is checked.
+const OPAQUE: &[&str] = &["input", "arguments", "tool_input", "modelUsage", "by_type"];
 
-/// Whether `fixture`, recursively, has every key `ours` writes. An array in `ours` must
-/// have each element contained in some element of the fixture's array.
-fn contains(fixture: &Value, ours: &Value) -> bool {
-    match ours {
-        Value::Object(object) => {
-            let Value::Object(theirs) = fixture else {
-                return false;
-            };
-            object.iter().all(|(key, value)| match theirs.get(key) {
-                None => false,
-                Some(_) if OPAQUE.contains(&key.as_str()) => true,
-                Some(their) => contains(their, value),
-            })
-        }
-        Value::Array(items) => {
-            let Value::Array(theirs) = fixture else {
-                return items.is_empty();
-            };
-            items
-                .iter()
-                .all(|item| theirs.iter().any(|their| contains(their, item)))
-        }
-        _ => true,
+/// Every recorded sample of one event type, merged: the JSON types seen at each path,
+/// the keys an object may have, the keys every sample's object has (the required ones;
+/// a key some sample lacks is optional), and one schema per array element kind (an
+/// element's `type` string, or `""`).
+#[derive(Default, Debug)]
+struct Schema {
+    types: BTreeSet<&'static str>,
+    keys: BTreeMap<String, Schema>,
+    required: Option<BTreeSet<String>>,
+    items: BTreeMap<String, Schema>,
+    opaque: bool,
+}
+
+fn kind(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
     }
 }
 
-fn fixtures(runtime: &str) -> (Vec<Value>, Vec<Value>) {
+fn element_kind(value: &Value) -> String {
+    value["type"].as_str().unwrap_or("").to_string()
+}
+
+impl Schema {
+    fn merge(&mut self, value: &Value) {
+        self.types.insert(kind(value));
+        if self.opaque {
+            return;
+        }
+        match value {
+            Value::Object(object) => {
+                let present: BTreeSet<String> = object.keys().cloned().collect();
+                self.required = Some(match self.required.take() {
+                    None => present,
+                    Some(required) => required.intersection(&present).cloned().collect(),
+                });
+                for (key, child) in object {
+                    let schema = self.keys.entry(key.clone()).or_default();
+                    schema.opaque = OPAQUE.contains(&key.as_str());
+                    schema.merge(child);
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    self.items
+                        .entry(element_kind(item))
+                        .or_default()
+                        .merge(item);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Every problem with `ours` at `path`: a JSON type no sample had there, a key no
+    /// sample has, a key every sample has that `ours` lacks, or an array element kind
+    /// no sample has.
+    fn check(&self, ours: &Value, path: &str, problems: &mut Vec<String>) {
+        if !self.types.contains(kind(ours)) {
+            let recorded = &self.types;
+            problems.push(format!(
+                "{path}: {} where recorded {recorded:?}",
+                kind(ours)
+            ));
+            return;
+        }
+        if self.opaque {
+            return;
+        }
+        match ours {
+            Value::Object(object) => {
+                for (key, value) in object {
+                    match self.keys.get(key) {
+                        None => problems.push(format!("{path}.{key}: not recorded")),
+                        Some(child) => child.check(value, &format!("{path}.{key}"), problems),
+                    }
+                }
+                for key in self.required.iter().flatten() {
+                    if !object.contains_key(key) {
+                        problems.push(format!("{path}.{key}: in every recorded sample, missing"));
+                    }
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    let element = element_kind(item);
+                    match self.items.get(&element) {
+                        None => problems.push(format!("{path}[{element:?}]: not recorded")),
+                        Some(schema) => schema.check(item, &format!("{path}[{element}]"), problems),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Every recorded stream event of `runtime`, observed and documented.
+fn fixtures(runtime: &str) -> Vec<Value> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../daemon/tests/fixtures/headless");
-    let (mut observed, mut documented) = (Vec::new(), Vec::new());
+    let mut events = Vec::new();
     for entry in fs::read_dir(&dir).unwrap() {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -60,51 +137,42 @@ fn fixtures(runtime: &str) -> (Vec<Value>, Vec<Value>) {
         if !name.starts_with(runtime) || !name.ends_with(".jsonl") || name.contains("-input") {
             continue;
         }
-        let meta: Value = serde_json::from_slice(
-            &fs::read(path.with_file_name(name.replace(".jsonl", ".meta.json"))).unwrap(),
-        )
-        .unwrap();
         let text = fs::read_to_string(&path).unwrap();
-        let events = text
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .map(|l| serde_json::from_str::<Value>(l).unwrap())
-            // The hooks fixture holds hook payloads, which have no `type`.
-            .filter(|v| v.get("type").is_some());
-        if meta["observed"] == json!(false) {
-            documented.extend(events);
-        } else {
-            observed.extend(events);
-        }
+        events.extend(
+            text.lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| serde_json::from_str::<Value>(l).unwrap())
+                // The hooks fixture holds hook payloads, which have no `type`.
+                .filter(|v| v.get("type").is_some()),
+        );
     }
-    (observed, documented)
+    events
 }
 
-/// Decision 51's shape test: for every event `fake-agent` wrote, a fixture event of the
-/// same type (observed first, else documented) contains every key it wrote. Returns
-/// the event types checked.
+/// Decision 51's shape test, both ways: for every event `fake-agent` wrote, against
+/// every recorded sample of its type merged, each key it writes is recorded, each key
+/// every sample has is written, and each value has a recorded JSON type. A key only
+/// some samples have is optional. Returns the event types checked.
 pub fn assert_conforms(runtime: &str, events: &[Value]) -> BTreeSet<String> {
-    let (observed, documented) = fixtures(runtime);
+    let mut schemas: BTreeMap<String, Schema> = BTreeMap::new();
+    for sample in fixtures(runtime) {
+        schemas
+            .entry(event_type(&sample))
+            .or_default()
+            .merge(&sample);
+    }
     let mut types = BTreeSet::new();
     for event in events {
         let kind = event_type(event);
-        let same = |pool: &[Value]| -> Vec<Value> {
-            pool.iter()
-                .filter(|f| event_type(f) == kind)
-                .cloned()
-                .collect()
-        };
-        let (observed, documented) = (same(&observed), same(&documented));
+        let schema = schemas
+            .get(&kind)
+            .unwrap_or_else(|| panic!("{runtime}: no recorded event of type {kind} for {event}"));
+        let mut problems = Vec::new();
+        schema.check(event, &kind, &mut problems);
         assert!(
-            !observed.is_empty() || !documented.is_empty(),
-            "{runtime}: no recorded event of type {kind} for {event}"
-        );
-        // Observed recordings first; a shape only the documented file has (a failed
-        // turn's synthetic assistant line) is checked against it.
-        assert!(
-            observed.iter().any(|c| contains(c, event))
-                || documented.iter().any(|c| contains(c, event)),
-            "{runtime}: no recorded {kind} event has every key of {event}"
+            problems.is_empty(),
+            "{runtime}: {event}\n{}",
+            problems.join("\n")
         );
         types.insert(kind);
     }

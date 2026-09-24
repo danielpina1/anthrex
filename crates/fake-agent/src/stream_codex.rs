@@ -57,8 +57,13 @@ impl Events for Codex {
         self.item("item.completed", item)
     }
 
+    /// Written once the command has exited: see `command_finished`.
+    fn command_started(&mut self, _command: &str) -> Result<()> {
+        Ok(())
+    }
+
     /// M8a.1 item 7: a command that exits non-zero is not reported at all.
-    fn command(&mut self, command: &str, output: &str, code: i32) -> Result<()> {
+    fn command_finished(&mut self, command: &str, output: &str, code: i32) -> Result<()> {
         if code != 0 {
             return Ok(());
         }

@@ -74,7 +74,7 @@ fn claude_mode_output_conforms_to_the_fixture() {
     assert_eq!(init["session_id"], CLAUDE_ID);
     assert_eq!(
         init["mcp_servers"],
-        json!([{"name": "anthrex", "status": "connected"}])
+        json!([{"name": "anthrex", "status": "connected", "source": "dynamic"}])
     );
     assert_eq!(
         inits.iter().filter(|v| v["subtype"] == "init").count(),

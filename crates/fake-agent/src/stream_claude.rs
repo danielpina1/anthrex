@@ -23,8 +23,8 @@ pub enum Line {
 }
 
 /// M8a.1's user-message envelope (`{"type":"user","message":{"role":"user","content":
-/// [{"type":"text","text":…}]},"parent_tool_use_id":null,"session_id":…}`, the last key
-/// optional) or its interrupt control request. Anything else is `None`.
+/// [{"type":"text","text":…}]},"parent_tool_use_id":null,"session_id":…}`, with exactly
+/// one text block and the last key optional) or its interrupt control request. Anything else is `None`.
 pub fn parse_line(line: &str) -> Option<Line> {
     let Ok(Value::Object(object)) = serde_json::from_str::<Value>(line) else {
         return None;
@@ -47,16 +47,15 @@ pub fn parse_line(line: &str) -> Option<Line> {
             if message.len() != 2 || message.get("role")? != "user" {
                 return None;
             }
-            let blocks = message.get("content")?.as_array()?;
-            let mut texts = Vec::new();
-            for block in blocks {
-                let block = block.as_object()?;
-                if block.len() != 2 || block.get("type")? != "text" {
-                    return None;
-                }
-                texts.push(block.get("text")?.as_str()?);
+            // Exactly the recorded one text block.
+            let [block] = message.get("content")?.as_array()?.as_slice() else {
+                return None;
+            };
+            let block = block.as_object()?;
+            if block.len() != 2 || block.get("type")? != "text" {
+                return None;
             }
-            (!texts.is_empty()).then(|| Line::Message(texts.join("\n")))
+            Some(Line::Message(block.get("text")?.as_str()?.to_owned()))
         }
         "control_request" => {
             if object.len() != 3 {
@@ -105,8 +104,11 @@ pub struct Claude {
     /// The turn's last assistant text, the `result`'s `result`.
     last_text: String,
     denials: Vec<Value>,
+    /// The `tool_use` id of the step running now, if it is a tool.
     open_tool: Option<String>,
     counter: u64,
+    /// The session's `result` count, its `result_index`.
+    results: u64,
 }
 
 impl Claude {
@@ -125,6 +127,7 @@ impl Claude {
             denials: Vec::new(),
             open_tool: None,
             counter: 0,
+            results: 0,
         }
     }
 
@@ -147,6 +150,7 @@ impl Claude {
 
     fn assistant(&mut self, block: Value, extra: Value) -> Result<()> {
         let id = format!("msg_fake{:04}", self.next());
+        let synthetic = self.model == "<synthetic>";
         let mut fields = json!({
             "message": {
                 "model": self.model,
@@ -154,8 +158,21 @@ impl Claude {
                 "type": "message",
                 "role": "assistant",
                 "content": [block],
-                "stop_reason": null,
-                "usage": {"input_tokens": 1, "output_tokens": 1},
+                "container": null,
+                "stop_reason": if synthetic { json!("stop_sequence") } else { Value::Null },
+                "stop_sequence": if synthetic { json!("") } else { Value::Null },
+                "stop_details": null,
+                "usage": {
+                    "input_tokens": 1,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                    "cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 0},
+                    "output_tokens": 1,
+                    "service_tier": "standard",
+                    "inference_geo": "not_available",
+                },
+                "diagnostics": null,
+                "context_management": null,
             },
             "parent_tool_use_id": null,
             "timestamp": timestamp(),
@@ -168,7 +185,13 @@ impl Claude {
 
     fn tool_use(&mut self, name: &str, input: Value) -> Result<String> {
         let id = format!("toolu_fake{:04}", self.next());
-        let block = json!({"type": "tool_use", "id": id, "name": name, "input": input});
+        let block = json!({
+            "type": "tool_use",
+            "id": id,
+            "name": name,
+            "input": input,
+            "caller": {"type": "direct"},
+        });
         self.assistant(block, json!({}))?;
         Ok(id)
     }
@@ -180,6 +203,10 @@ impl Claude {
             "content": text,
             "is_error": is_error,
         });
+        self.user(block)
+    }
+
+    fn user(&mut self, block: Value) -> Result<()> {
         self.line(
             "user",
             json!({
@@ -191,6 +218,8 @@ impl Claude {
     }
 
     fn result(&mut self, fields: Value, usage: Usage) -> Result<()> {
+        let index = self.results;
+        self.results += 1;
         let mut object = json!({
             "duration_ms": 1,
             "duration_api_ms": 1,
@@ -199,11 +228,38 @@ impl Claude {
             "total_cost_usd": 0,
             "usage": {
                 "input_tokens": usage.input,
-                "output_tokens": usage.output,
-                "cache_read_input_tokens": usage.cache_read,
                 "cache_creation_input_tokens": usage.cache_write,
+                "cache_read_input_tokens": usage.cache_read,
+                "output_tokens": usage.output,
+                "output_tokens_details": {"thinking_tokens": 0},
+                "server_tool_use": {"web_search_requests": 0, "web_fetch_requests": 0},
+                "service_tier": "standard",
+                "cache_creation": {
+                    "ephemeral_1h_input_tokens": usage.cache_write,
+                    "ephemeral_5m_input_tokens": 0,
+                },
+                "inference_geo": "not_available",
+                "iterations": [],
+                "speed": "standard",
             },
+            "modelUsage": {},
             "permission_denials": std::mem::take(&mut self.denials),
+            "fast_mode_state": "off",
+            "fast_mode_disabled_reason": "sdk_opt_in_required",
+            "subagent_stats": {
+                "spawned": 0,
+                "requested": {"background": 0, "foreground": 0, "unset": 0},
+                "started_in_background": 0,
+                "max_depth": 0,
+                "spawned_by_subagents": 0,
+                "completed": 0,
+                "failed": 0,
+                "killed": {"parent": 0, "user": 0, "system": 0},
+                "refused": {"depth_limit": 0, "concurrency_limit": 0, "budget": 0},
+                "by_type": {},
+            },
+            "queued_turn_count": 0,
+            "result_index": index,
         });
         if let (Value::Object(object), Value::Object(fields)) = (&mut object, fields) {
             object.extend(fields);
@@ -217,7 +273,7 @@ impl Claude {
 impl Events for Claude {
     fn turn_started(&mut self) -> Result<()> {
         let servers = if self.mcp {
-            json!([{"name": "anthrex", "status": "connected"}])
+            json!([{"name": "anthrex", "status": "connected", "source": "dynamic"}])
         } else {
             json!([])
         };
@@ -228,8 +284,21 @@ impl Events for Claude {
             "mcp_servers": servers,
             "model": self.model,
             "permissionMode": self.permission_mode,
+            "slash_commands": [],
+            "terminal_slash_commands": [],
             "apiKeySource": "none",
             "claude_code_version": "2.1.278",
+            "output_style": "default",
+            "agents": [],
+            "skills": [],
+            "plugins": [],
+            "capabilities": ["interrupt_receipt_v1", "interrupt_cancel_queued_v1", "msg_lifecycle_v1"],
+            "analytics_disabled": false,
+            "product_feedback_disabled": false,
+            "memory_paths": {"auto": ""},
+            "messaging_socket_path": "",
+            "fast_mode_state": "off",
+            "fast_mode_disabled_reason": "sdk_opt_in_required",
         });
         self.line("system", fields)
     }
@@ -239,8 +308,14 @@ impl Events for Claude {
         self.assistant(json!({"type": "text", "text": text}), json!({}))
     }
 
-    fn command(&mut self, command: &str, output: &str, code: i32) -> Result<()> {
+    fn command_started(&mut self, command: &str) -> Result<()> {
         let id = self.tool_use("Bash", json!({"command": command}))?;
+        self.open_tool = Some(id);
+        Ok(())
+    }
+
+    fn command_finished(&mut self, _command: &str, output: &str, code: i32) -> Result<()> {
+        let id = self.open_tool.take().unwrap_or_default();
         let text = if code == 0 {
             output.to_owned()
         } else {
@@ -321,13 +396,26 @@ impl Events for Claude {
         self.result(fields, usage)
     }
 
+    /// M8a.1 item 2's interrupt: inside a tool step, the recorded rejection
+    /// `tool_result`, the `[Request interrupted by user for tool use]` text and
+    /// `aborted_tools` / `stop_reason: "tool_use"`; outside one, `aborted_streaming`.
     fn interrupted(&mut self, request_id: &str, usage: Usage) -> Result<()> {
         self.control_response(request_id)?;
+        let (terminal, stop) = match self.open_tool.take() {
+            Some(id) => {
+                self.tool_result(&id, TOOL_REJECTED, true)?;
+                let text = "[Request interrupted by user for tool use]";
+                self.user(json!({"type": "text", "text": text}))?;
+                ("aborted_tools", "tool_use")
+            }
+            // Unrecorded: `stop_reason` is a string in the only recording.
+            None => ("aborted_streaming", "end_turn"),
+        };
         let fields = json!({
             "subtype": "error_during_execution",
             "is_error": true,
-            "stop_reason": null,
-            "terminal_reason": "aborted_streaming",
+            "stop_reason": stop,
+            "terminal_reason": terminal,
             "errors": [],
         });
         self.result(fields, usage)
@@ -342,6 +430,9 @@ impl Events for Claude {
         self.out.write(&line)
     }
 }
+
+/// The recorded text of a tool the user interrupted.
+const TOOL_REJECTED: &str = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.";
 
 /// The status the documented `api_retry` lines pair with each category.
 fn error_status(error: &str) -> u16 {
@@ -390,6 +481,7 @@ mod tests {
             r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"x"}]},"parent_tool_use_id":"t"}"#,
             r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"x"}]},"parent_tool_use_id":null,"extra":1}"#,
             r#"{"type":"user","message":{"role":"user","content":[]},"parent_tool_use_id":null}"#,
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"x"},{"type":"text","text":"y"}]},"parent_tool_use_id":null}"#,
             r#"{"type":"control_request","request_id":"1","request":{"subtype":"can_use_tool"}}"#,
             r#"{"type":"control_request","request_id":1,"request":{"subtype":"interrupt"}}"#,
         ] {

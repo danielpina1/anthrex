@@ -52,11 +52,10 @@ impl Script {
     }
 
     pub fn save_pos(&self, pos: usize) -> Result<()> {
-        if let Some(path) = self.sidecar(".pos") {
-            fs::write(&path, pos.to_string())
-                .with_context(|| format!("write {}", path.display()))?;
+        match self.sidecar(".pos") {
+            Some(path) => replace(&path, pos.to_string().as_bytes()),
+            None => Ok(()),
         }
-        Ok(())
     }
 
     pub fn vars(&self) -> Vars {
@@ -67,12 +66,23 @@ impl Script {
     }
 
     pub fn save_vars(&self, vars: &Vars) -> Result<()> {
-        if let Some(path) = self.sidecar(".vars") {
-            let bytes = serde_json::to_vec(vars).context("encode script variables")?;
-            fs::write(&path, bytes).with_context(|| format!("write {}", path.display()))?;
+        match self.sidecar(".vars") {
+            Some(path) => {
+                let bytes = serde_json::to_vec(vars).context("encode script variables")?;
+                replace(&path, &bytes)
+            }
+            None => Ok(()),
         }
-        Ok(())
     }
+}
+
+/// Writes `bytes` to `<path>.tmp`, then renames it over `path`, so a kill mid-write
+/// never leaves a truncated file for the next process to read as position 0.
+fn replace(path: &Path, bytes: &[u8]) -> Result<()> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    fs::write(&tmp, bytes).with_context(|| format!("write {}", Path::new(&tmp).display()))?;
+    fs::rename(&tmp, path).with_context(|| format!("replace {}", path.display()))
 }
 
 /// The script for a session. A resumed session continues the script whose claim holds
@@ -263,4 +273,42 @@ fn record(var: &str, name: &str, ext: &str, line: &str, overwrite_file: bool) ->
         .with_context(|| format!("open {}", path.display()))?;
     file.write_all(format!("{line}\n").as_bytes())
         .with_context(|| format!("append to {}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Vars, claimed};
+    use std::os::unix::fs::MetadataExt;
+
+    /// Ruling T20-m4: a kill mid-write must never leave a truncated `.pos` or `.vars`,
+    /// so each is written to a temporary file and renamed over the old one.
+    #[test]
+    fn state_files_are_replaced_by_a_rename() {
+        let dir = tempfile::tempdir_in("/tmp").unwrap();
+        let script = claimed(dir.path().join("worker-t1-1.jsonl"));
+        let pos = dir.path().join("worker-t1-1.jsonl.pos");
+        let vars = dir.path().join("worker-t1-1.jsonl.vars");
+        script.save_pos(1).unwrap();
+        script.save_vars(&Vars::default()).unwrap();
+        let (pos_inode, vars_inode) = (
+            std::fs::metadata(&pos).unwrap().ino(),
+            std::fs::metadata(&vars).unwrap().ino(),
+        );
+
+        script.save_pos(2).unwrap();
+        let next = Vars {
+            result: "done".into(),
+            ..Vars::default()
+        };
+        script.save_vars(&next).unwrap();
+
+        assert_ne!(std::fs::metadata(&pos).unwrap().ino(), pos_inode);
+        assert_ne!(std::fs::metadata(&vars).unwrap().ino(), vars_inode);
+        assert_eq!((script.pos(), script.vars()), (2, next));
+        let names: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names.len(), 2, "no temporary file is left: {names:?}");
+    }
 }

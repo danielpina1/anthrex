@@ -139,6 +139,8 @@ dependencies = [
 name = "anthrex-fake-agent"
 version = "0.1.0"
 dependencies = [
+ "anthrex-config",
+ "anthrex-daemon",
  "anthrex-proto",
  "anyhow",
  "libc",

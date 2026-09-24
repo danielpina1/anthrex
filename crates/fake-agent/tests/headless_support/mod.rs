@@ -19,7 +19,9 @@ use std::time::{Duration, Instant};
 mod shape;
 pub use shape::assert_conforms;
 
-use proto::{ClientMsg, DaemonMsg, RunReply, RunRequest, ToolCall};
+use daemon::headless::argv;
+use daemon::headless::{HeadlessSpec, McpTarget, SessionArg};
+use proto::{AgentRole, ClientMsg, DaemonMsg, Effort, RunReply, RunRequest, Runtime, ToolCall};
 use serde_json::{Value, json};
 
 /// A bound on one `fake-agent` process that makes no MCP call: its own steps are all
@@ -147,18 +149,21 @@ impl Mcp {
         }
     }
 
-    /// `daemon::headless::argv::mcp_args`, window 7, run `r1`.
-    fn args(&self) -> Vec<String> {
-        let mut args = vec!["mcp", "--role", self.role, "--run", "r1"];
-        if let Some(task) = self.task {
-            args.extend(["--task", task]);
+    fn target(&self) -> McpTarget {
+        McpTarget {
+            role: match self.role {
+                "worker" => AgentRole::Worker,
+                "reviewer" => AgentRole::Reviewer,
+                _ => AgentRole::Orchestrator,
+            },
+            run_id: "r1".into(),
+            task_id: self.task.map(String::from),
         }
-        let mut args: Vec<String> = args.into_iter().map(String::from).collect();
-        args.extend(["--window".into(), "7".into(), "--socket".into()]);
-        args.push(self.socket.display().to_string());
-        args
     }
 }
+
+/// The window id every argv here is built for.
+pub const WINDOW: u32 = 7;
 
 /// `SessionArg` of the argv builders.
 pub enum Session<'a> {
@@ -166,85 +171,74 @@ pub enum Session<'a> {
     Resume(&'a str),
 }
 
-/// The shape of `daemon::headless::argv::claude_args` with M8a.1's `CLI_CAPS`.
+/// A worker's spec, as the engine builds one, with `mcp` as its MCP target.
+fn spec(runtime: Runtime, mcp: Option<&Mcp>) -> HeadlessSpec {
+    HeadlessSpec {
+        runtime,
+        model: "sonnet".into(),
+        effort: Effort::Low,
+        cwd: PathBuf::from("/tmp/unused"),
+        instructions: "be brief -- and -p \"quoted\"\nsecond line".into(),
+        mcp: mcp.map(Mcp::target),
+        allowed_tools: vec!["mcp__anthrex__task_done".into(), "Bash".into()],
+        claude_permission_mode: Some("acceptEdits".into()),
+        claude_disallowed_tools: vec![],
+        claude_sandbox: None,
+        codex_sandbox: "workspace-write".into(),
+        codex_writable_roots: vec![],
+        env: vec![],
+        claude_auth: config::ClaudeAuth::Login,
+        api_key_helper: None,
+        run_ref: None,
+    }
+}
+
+fn exe_and_socket(mcp: Option<&Mcp>) -> (PathBuf, PathBuf) {
+    match mcp {
+        Some(mcp) => (mcp.exe.clone(), mcp.socket.clone()),
+        None => (
+            "/nonexistent/anthrex".into(),
+            "/tmp/nonexistent.sock".into(),
+        ),
+    }
+}
+
+/// The daemon's own Claude argv (`daemon::headless::argv::claude_args`, M8a.1's caps).
 pub fn claude_argv(session: Session, mcp: Option<&Mcp>) -> Vec<String> {
-    let mut args: Vec<String> = [
-        "-p",
-        "--input-format",
-        "stream-json",
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "--permission-prompts",
-        "none",
-    ]
-    .map(String::from)
-    .to_vec();
-    match session {
-        Session::New(id) => args.extend(["--session-id".into(), id.into()]),
-        Session::Resume(id) => args.extend(["--resume".into(), id.into()]),
-    }
-    args.extend(["--setting-sources", "user", "--strict-mcp-config"].map(String::from));
-    args.extend(["--settings".into(), json!({"hooks": {}}).to_string()]);
-    if let Some(mcp) = mcp {
-        let config = json!({"mcpServers": {"anthrex": {
-            "type": "stdio",
-            "command": mcp.exe.display().to_string(),
-            "args": mcp.args(),
-        }}});
-        args.extend(["--mcp-config".into(), config.to_string()]);
-    }
-    args.extend(["--append-system-prompt", "be brief", "--model", "sonnet"].map(String::from));
-    args.extend(["--effort".into(), "low".into()]);
-    args
+    let session = match session {
+        Session::New(id) => SessionArg::New {
+            uuid: Some(id.into()),
+        },
+        Session::Resume(id) => SessionArg::Resume {
+            session_id: id.into(),
+        },
+    };
+    let (exe, socket) = exe_and_socket(mcp);
+    let spec = spec(Runtime::Claude, mcp);
+    argv::claude_args(&spec, &session, &exe, WINDOW, &socket, &argv::CLI_CAPS)
 }
 
-/// A TOML basic string, as `launch::codex::toml_string` writes one.
-fn toml_string(s: &str) -> String {
-    serde_json::to_string(s).unwrap()
-}
-
-/// The shape of `daemon::headless::argv::codex_args`, with decision 53's test
-/// placeholder flag when `exclude` is set.
+/// The daemon's own Codex argv (`daemon::headless::argv::codex_args`). With `exclude`,
+/// the caps carry decision 53's test placeholder flag.
 pub fn codex_argv(
     resume: Option<&str>,
     mcp: Option<&Mcp>,
     exclude: bool,
     msg: &str,
 ) -> Vec<String> {
-    let mut args = vec!["exec".to_string()];
-    if let Some(id) = resume {
-        args.extend(["resume".into(), id.into()]);
-    }
-    args.push("--json".into());
+    let session = match resume {
+        Some(id) => SessionArg::Resume {
+            session_id: id.into(),
+        },
+        None => SessionArg::New { uuid: None },
+    };
+    let mut caps = argv::CLI_CAPS;
     if exclude {
-        args.push("--anthrex-test-exclude-project-config".into());
+        caps.codex_user_config_only = Some(&["--anthrex-test-exclude-project-config"]);
     }
-    if let Some(mcp) = mcp {
-        let list: Vec<String> = mcp.args().iter().map(|a| toml_string(a)).collect();
-        args.extend([
-            "-c".into(),
-            format!(
-                "mcp_servers.anthrex.command={}",
-                toml_string(&mcp.exe.display().to_string())
-            ),
-            "-c".into(),
-            format!("mcp_servers.anthrex.args=[{}]", list.join(",")),
-            "-c".into(),
-            "mcp_servers.anthrex.tool_timeout_sec=120".into(),
-        ]);
-    }
-    args.extend([
-        "-c".into(),
-        format!("developer_instructions={}", toml_string("be brief")),
-    ]);
-    args.extend(["-c".into(), "approval_policy=\"never\"".into()]);
-    match resume {
-        Some(_) => args.extend(["-c".into(), "sandbox_mode=\"workspace-write\"".into()]),
-        None => args.extend(["-s".into(), "workspace-write".into()]),
-    }
-    args.extend(["--".into(), msg.into()]);
-    args
+    let (exe, socket) = exe_and_socket(mcp);
+    let spec = spec(Runtime::Codex, mcp);
+    argv::codex_args(&spec, &session, msg, &exe, WINDOW, &socket, &caps)
 }
 
 /// M8a.1's accepted stream-json user message (`claude_stream::user_message`).
@@ -403,6 +397,22 @@ impl Agent {
         }
     }
 
+    /// Sends `signal` to the agent's whole process group, as the daemon's kill does.
+    pub fn signal_group(&self, signal: libc::c_int) {
+        // SAFETY: the negative PID targets only the fresh process group made at spawn.
+        unsafe {
+            libc::kill(-self.group, signal);
+        }
+    }
+
+    /// Sends `signal` to the agent alone, as the daemon's Codex interrupt does.
+    pub fn signal(&self, signal: libc::c_int) {
+        // SAFETY: the pid of our own unreaped child.
+        unsafe {
+            libc::kill(self.group, signal);
+        }
+    }
+
     pub fn is_running(&mut self) -> bool {
         self.child.try_wait().unwrap().is_none()
     }
@@ -547,4 +557,45 @@ pub fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../daemon/tests/fixtures/headless")
         .join(name)
+}
+
+/// Whether `pid` still exists (signal 0).
+pub fn alive(pid: libc::pid_t) -> bool {
+    // SAFETY: signal 0 only checks that the pid exists.
+    unsafe { libc::kill(pid, 0) == 0 }
+}
+
+/// Waits for `path` to hold a pid, within `RUN`.
+pub fn wait_pid(path: &Path) -> libc::pid_t {
+    let deadline = Instant::now() + RUN;
+    loop {
+        if let Some(pid) = fs::read_to_string(path)
+            .ok()
+            .and_then(|text| text.trim().parse().ok())
+        {
+            return pid;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{} never held a pid",
+            path.display()
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Waits, within `RUN`, for `pid` to be gone; kills it first if it is not, so a
+/// failing test leaves nothing behind.
+pub fn assert_gone(pid: libc::pid_t, what: &str) {
+    let deadline = Instant::now() + RUN;
+    while alive(pid) {
+        if Instant::now() >= deadline {
+            // SAFETY: cleanup of the leftover process the assertion is about.
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+            panic!("{what}: pid {pid} outlived the agent");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
 }
