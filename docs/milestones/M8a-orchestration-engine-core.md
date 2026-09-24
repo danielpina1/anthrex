@@ -7751,3 +7751,93 @@ T20-I2, T20-I3 and T20-minors.
   - **m7, continued.** The fake fires no turn hooks (`UserPromptSubmit`, `Stop`) of
     its own. So a fake Claude session's conversation view gets no hook feed, whether
     a turn is prompted or not.
+
+### M8a.21 the intent journal and reconciliation (2026-09-24)
+
+- **Files.** `run/journal.rs`; `run/reconcile/` instead of `run/reconcile.rs`, split by
+  seam for the 600-line rule: `mod.rs` (types, the journal lookup, the per-kind
+  dispatch), `git.rs` (the git rows), `sessions.rs` (the `CreateWindow` row and decision
+  28's leftover processes). The tests are `tests/run_journal.rs` plus
+  `tests/run_journal/{fixture,git,sessions}.rs`.
+- **Interface change: `reconcile` returns `Reconciliation { ops, notes }`**, not a bare
+  `Vec<(OpId, Reconciled)>`. `ops` is that vector, in op order. `notes` says what
+  reconcile killed, removed, pruned, re-attached or aborted, and what it could not
+  read; M8a.22 should put them in the run's log. `Reconciliation::replay(run_id)` gives
+  `Event::Restore`'s `replay` entries for the run.
+- **Journal additions.** `JournalLine::op()`, `runs_dir`, `needs_compact(dir)` (the 1 MiB
+  test), and the file-name constants. `JournalLine` is `#[serde(untagged)]` with the
+  fields renamed, so the lines are exactly `{"op":1,"intent":{…}}` and
+  `{"op":1,"done":{…}}`.
+- **Deviation: `compact` also keeps the `done` line of a still-pending op.** Decision 43
+  says "only pending ops' intents". A result appended between the op's return and the
+  `Persist` that retires it would otherwise be lost to a compaction in that window, and
+  reconcile would re-check reality instead of replaying it. The intents come from the
+  `pending` map (the persisted `run.json`), not from the old journal.
+- **Durability, as the acceptance asks.** Every write in `journal.rs` is followed by
+  `sync_all`: `save_run` (`run.json.tmp` synced, renamed, the directory synced),
+  `append` (one `write_all`, `sync_all`; the directory synced when the file is new),
+  `compact` (temp, sync, rename, directory sync), and `ensure_dir` syncs the parents of
+  a new run directory. `load_all` removes a leftover `run.json.tmp` or
+  `journal.jsonl.tmp`, skips a run whose `run.json` is missing or bad with a problem,
+  drops an unparseable line with a problem, and drops a torn last line (no `\n`) with a
+  problem that says `torn`.
+- **Reconcile rules the table left open.**
+  - An op with a `done` line replays it without any git call; an op with no line at all
+    is `NotStarted` without any git call; a line for an op no longer in `pending_ops` is
+    ignored.
+  - A check that cannot read reality (a git error or timeout) answers `NotStarted` with
+    a note. Every op is idempotent, and a re-issued `MergeCandidate` over a run branch
+    that did move is caught by its own ref guard.
+  - `CreateRunBranch`/`PrepareWorktree`: listed on the branch **and** the directory
+    exists → `Worktree { head }` (the porcelain `HEAD`), unless there is a `setup`. A
+    path listed on another branch is `NotStarted` and left alone. Only an unlisted
+    directory is removed, then `git worktree prune`.
+  - `MergeCandidate`: a deleted run ref is `RefMoved { "<ref> was deleted" }`; a moved
+    one is `RefMoved { "<ref> moved from <sha7> to <sha7>" }`, `guard_refs`'s texts. The
+    integration worktree is re-attached in the `Merged` case too (a crash between the
+    CAS and `reattach`), and only when it is not already on the run branch.
+  - `HandBack`: `MERGE_HEAD` must be the run head and there must be conflicted files;
+    otherwise `NotStarted` with a note. `head` and `onto` are filled as `git::hand_back`
+    reports them (T14-C1): the conflicted case has both `HEAD`; the clean case (`HEAD^2`
+    is the run head) has `head = HEAD`, `onto = HEAD^1`.
+  - **Carry (ruling on task 15): `AbortMerge` with no `MERGE_HEAD` → `MergeAborted`**;
+    with one → `NotStarted` (the reducer re-emits the idempotent abort). Test:
+    `reconcile_abort_merge_without_merge_head_is_aborted`.
+  - `RemoveWorktree`: a gone path still registered (the daemon died before the prune) is
+    unlocked and pruned; `salvage_ref` is reported only if the ref exists.
+  - `Accept`: the conflicted-accept abort is `git merge --abort` with decision 18's
+    flags. `kept_branches` is empty in the replayed `Finished`.
+  - `CreateWindow`: the window must be `Headless` with `run` equal to the spec's
+    `RunRef` (the round's, if the spec has none); the highest id wins.
+- **Leftover session processes (decision 28), made precise.** The candidates are the
+  session ids the run still has live: every round not `ended` with a `session_id`, each
+  pending `CreateWindow`'s `session_uuid`, each pending `ResumeSession`'s `session_id`
+  (ids shorter than 8 characters or with whitespace are skipped). One
+  `ps -ww -A -o pid= -o pgid= -o args=` finds every process whose command line contains
+  one. That also finds a process whose pid was never recorded. A process without the
+  id is never signalled, whatever pid a round recorded. `SIGTERM` goes to the group when
+  the process leads its own group (and it is not the daemon's group), else to the pid;
+  after `SESSION_KILL_GRACE` (2 s), a pid whose `ps -o args= -p` still carries the id
+  gets `SIGKILL`, so a pid reused meanwhile is never signalled. Codex's first turn
+  carries no id on its command line and cannot be found; its round has no `session_id`
+  yet either.
+- **Git layer.** `worktrees::Listed` gained `head` and is `pub(crate)`; `listed`,
+  `forget_missing`, `is_ancestor`, `read`, `short`, `unmerged` and a new
+  `reattach_in(Git, …)` (the body of `reattach`) are re-exported `pub(crate)` for
+  reconcile. `OpKind::name()` was added (for notes, and for decision 48's crash
+  injection in M8a.22).
+- **Carry T8-RR2 is untouched.** Reconcile never computes a diff: `VerifyDone`,
+  `DiffSoFar` and `CountCommits` are `NotStarted` with no reality check. The
+  `<run_head>...HEAD` range after `resume --rebaseline` stays for M8a.22 or the final
+  review.
+- **Left to M8a.22.** Building `Restore`'s `replay` from `Reconciliation::replay`,
+  sending `Restore` before any other event, compacting the journal after the restore,
+  and filling `DoneChecked.resolution_only`.
+- **Concerns for later tasks.**
+  - A replayed `Accept` `Finished` skips the clean-up that follows the merge (salvage,
+    worktree removal, branch deletion), so a crash between accept's merge and its
+    clean-up leaves those worktrees and branches. The table asks only for `Finished`.
+  - `session_uuid(run_id, op)` is deterministic. Two daemons with the same run id (a
+    test daemon and another one) would share the uuid of the same op, and one's
+    reconcile could kill the other's session. Run ids carry a random suffix, so this
+    needs a collision.

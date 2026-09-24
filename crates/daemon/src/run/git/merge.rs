@@ -179,7 +179,10 @@ pub fn reattach(
     branch: &str,
     timeout: Duration,
 ) -> Result<(), String> {
-    let g = Git::new(git, timeout);
+    reattach_in(Git::new(git, timeout), integration, branch)
+}
+
+pub(crate) fn reattach_in(g: Git<'_>, integration: &Path, branch: &str) -> Result<(), String> {
     // The trailing `--` keeps a branch name from ever being read as a path.
     g.write(
         integration,

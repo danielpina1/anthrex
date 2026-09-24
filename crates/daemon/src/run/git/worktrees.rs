@@ -11,10 +11,12 @@ use std::time::Duration;
 use super::{Git, diff, failure, os};
 
 /// What `git worktree list --porcelain -z` says about one worktree.
-pub(super) struct Listed {
+pub(crate) struct Listed {
     /// `refs/heads/<branch>`, or `None` when detached.
-    pub(super) branch: Option<String>,
-    pub(super) locked: bool,
+    pub(crate) branch: Option<String>,
+    /// The worktree's `HEAD` commit, `None` when git lists none (M8a.21's reconcile).
+    pub(crate) head: Option<String>,
+    pub(crate) locked: bool,
 }
 
 /// Decision 18's lock reason, `anthrex run <run>`, with `<run>` read from the branch
@@ -44,7 +46,7 @@ fn normalize(path: &Path) -> PathBuf {
 }
 
 /// The entry git has for `path`, if any.
-pub(super) fn listed(g: Git<'_>, root: &Path, path: &Path) -> Result<Option<Listed>, String> {
+pub(crate) fn listed(g: Git<'_>, root: &Path, path: &Path) -> Result<Option<Listed>, String> {
     let list = g.ok(
         root,
         &[os("worktree"), os("list"), os("--porcelain"), os("-z")],
@@ -62,11 +64,14 @@ pub(super) fn listed(g: Git<'_>, root: &Path, path: &Path) -> Result<Option<List
         }
         let mut entry = Listed {
             branch: None,
+            head: None,
             locked: false,
         };
         for field in fields {
             if let Some(branch) = field.strip_prefix("branch ") {
                 entry.branch = Some(branch.to_string());
+            } else if let Some(head) = field.strip_prefix("HEAD ") {
+                entry.head = Some(head.to_string());
             } else if field == "locked" || field.starts_with("locked ") {
                 entry.locked = true;
             }
@@ -78,7 +83,7 @@ pub(super) fn listed(g: Git<'_>, root: &Path, path: &Path) -> Result<Option<List
 
 /// Forgets a registered worktree whose directory is gone: unlock (a locked entry is
 /// never pruned), then prune.
-pub(super) fn forget_missing(
+pub(crate) fn forget_missing(
     g: Git<'_>,
     root: &Path,
     path: &Path,
@@ -102,7 +107,7 @@ fn branch_head(g: Git<'_>, root: &Path, branch: &str) -> Result<Option<String>, 
 
 /// `git merge-base --is-ancestor`: exit 0 is yes, exit 1 (silent) is no, anything
 /// with an error message is an error.
-pub(super) fn is_ancestor(
+pub(crate) fn is_ancestor(
     g: Git<'_>,
     dir: &Path,
     ancestor: &str,

@@ -220,6 +220,32 @@ pub enum OpKind {
     },
 }
 
+impl OpKind {
+    /// The variant's name, as the journal spells it (`"MergeCandidate"`): for notes,
+    /// logs and decision 48's `ANTHREX_TEST_ABORT_AFTER_INTENT=<op kind>` (M8a.21).
+    pub fn name(&self) -> &'static str {
+        match self {
+            OpKind::CreateRunBranch { .. } => "CreateRunBranch",
+            OpKind::PrepareWorktree { .. } => "PrepareWorktree",
+            OpKind::CreateWindow { .. } => "CreateWindow",
+            OpKind::ResumeSession { .. } => "ResumeSession",
+            OpKind::VerifyDone { .. } => "VerifyDone",
+            OpKind::CountCommits { .. } => "CountCommits",
+            OpKind::DiffSoFar { .. } => "DiffSoFar",
+            OpKind::Proof { .. } => "Proof",
+            OpKind::Check { .. } => "Check",
+            OpKind::PrepareReview { .. } => "PrepareReview",
+            OpKind::MergeCandidate { .. } => "MergeCandidate",
+            OpKind::HandBack { .. } => "HandBack",
+            OpKind::AbortMerge { .. } => "AbortMerge",
+            OpKind::RemoveWorktree { .. } => "RemoveWorktree",
+            OpKind::VerifyRefs { .. } => "VerifyRefs",
+            OpKind::Accept { .. } => "Accept",
+            OpKind::Discard { .. } => "Discard",
+        }
+    }
+}
+
 /// The merge queue's conflicted hand-back a claim may resolve (ruling T14-R2): the tip
 /// the run head was merged onto, that run head, and the files that conflicted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

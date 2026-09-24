@@ -21,6 +21,9 @@
 //! `role_launch.rs` (session specs and ids), `messages.rs` (decision 29's clamp and
 //! join), `snapshot.rs` (decision 47's snapshot), and the contracts and prompts in
 //! `contract.rs`.
+//! M8a.21 adds `journal.rs` (decision 43's `run.json` and intent journal) and
+//! `reconcile/` (decision 44's check of each unfinished op against git, the restored
+//! windows and leftover session processes); both blocking I/O.
 
 pub mod contract;
 pub mod edits;
@@ -29,10 +32,12 @@ pub mod env;
 pub mod exec;
 pub mod git;
 pub mod globs;
+pub mod journal;
 pub mod messages;
 pub mod model;
 pub mod plan;
 pub mod proof;
+pub mod reconcile;
 pub mod report;
 mod report_escape;
 mod report_task;
