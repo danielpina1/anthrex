@@ -411,3 +411,33 @@ fn e2e_a_failed_merge_candidate_reattaches_the_integration_worktree() {
     let head = git_in(&integration, &["symbolic-ref", "-q", "HEAD"]);
     assert_eq!(head, format!("refs/heads/anthrex/{id}/integration"));
 }
+
+/// M8a.24 fix round 1: a daemon that binds its socket after the harness stopped waiting
+/// (a slow start, simulated by a zero wait) is still the harness's, and dropping the
+/// harness stops it. Before this, `Drop` saw no socket and left the daemon running.
+#[test]
+fn a_slow_starting_daemon_does_not_outlive_its_harness() {
+    let (h, started) = RunHarness::try_started("", Duration::ZERO);
+    assert!(started.is_err(), "{started:?}");
+    let pid = h.daemon_pid().expect("the harness owns its daemon");
+    let data = h.data();
+    assert!(daemon_of(pid, &data), "the daemon is starting");
+    drop(h);
+    assert!(
+        !daemon_of(pid, &data),
+        "the daemon of {} survived",
+        data.display()
+    );
+}
+
+/// Whether process `pid` (one pid, never a scan) is a daemon of `data`: its environment
+/// names that data directory.
+fn daemon_of(pid: u32, data: &std::path::Path) -> bool {
+    let output = std::process::Command::new("ps")
+        .args(["-E", "-o", "command=", "-p", &pid.to_string()])
+        .output()
+        .unwrap();
+    output.status.success()
+        && String::from_utf8_lossy(&output.stdout)
+            .contains(&format!("ANTHREX_DATA_DIR={}", data.display()))
+}

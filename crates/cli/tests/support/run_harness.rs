@@ -17,6 +17,7 @@ use proto::{
 use serde_json::Value;
 use tokio::net::UnixStream;
 
+use super::run_daemon::{DAEMON_EXIT_WAIT, DAEMON_START_WAIT, DaemonProcess};
 use super::{ANTHREX, RunningCommand, fake_agent_bin, runtime};
 
 /// Decision-derived bound for one task path (brief, "End-to-end tests"): at most 40
@@ -53,6 +54,8 @@ pub struct RunHarness {
     /// `FAKE_AGENT_ARGS_FILE` and `FAKE_AGENT_STDIN_FILE`: `<name>.args`, `<name>.stdin`.
     pub io: PathBuf,
     env: Vec<(String, String)>,
+    /// The daemon this harness started and must stop (`run_daemon.rs`).
+    daemon: Mutex<Option<DaemonProcess>>,
 }
 
 /// Initialises a repository at `path` with one commit of `README` (and `files`).
@@ -109,6 +112,27 @@ impl RunHarness {
         git_off: bool,
         files: &[(&str, &str)],
     ) -> Self {
+        let harness = Self::unstarted(orchestrator, env, git_off, files);
+        if let Err(error) = harness.start_daemon(DAEMON_START_WAIT) {
+            panic!("the daemon did not start: {error}\n{}", harness.log_tail());
+        }
+        harness
+    }
+
+    /// A harness whose daemon start waited only `start_wait` (a slow start, simulated),
+    /// and what that start came to. The harness owns the daemon either way.
+    pub fn try_started(orchestrator: &str, start_wait: Duration) -> (Self, Result<(), String>) {
+        let harness = Self::unstarted(orchestrator, &[], true, &[]);
+        let started = harness.start_daemon(start_wait);
+        (harness, started)
+    }
+
+    fn unstarted(
+        orchestrator: &str,
+        env: &[(&str, &str)],
+        git_off: bool,
+        files: &[(&str, &str)],
+    ) -> Self {
         let dir = tempfile::Builder::new()
             .prefix("ax-run")
             .tempdir_in("/tmp")
@@ -141,14 +165,13 @@ impl RunHarness {
             all.push(("ANTHREX_GIT".into(), "off".into()));
         }
         all.extend(env.iter().map(|(k, v)| (k.to_string(), v.to_string())));
-        let harness = RunHarness {
+        RunHarness {
             dir,
             repo,
             io,
             env: all,
-        };
-        harness.start_daemon();
-        harness
+            daemon: Mutex::new(None),
+        }
     }
 
     pub fn socket(&self) -> PathBuf {
@@ -187,28 +210,33 @@ impl RunHarness {
         running.finish(FINISH_WAIT)
     }
 
-    fn start_daemon(&self) {
-        let output = self.anthrex(&["daemon", "start"]);
-        assert!(
-            output.status.success(),
-            "daemon start failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !self.socket().exists() {
-            assert!(Instant::now() < deadline, "no socket: {}", self.log_tail());
-            std::thread::sleep(Duration::from_millis(20));
-        }
+    /// Starts `anthrex daemon start --foreground` as this harness's own child and waits
+    /// at most `wait` for its socket. On `Err` the daemon is still owned, and stopped
+    /// with the harness.
+    fn start_daemon(&self, wait: Duration) -> Result<(), String> {
+        let mut command = self.command(&["daemon", "start", "--foreground"]);
+        let mut daemon = DaemonProcess::spawn(&mut command, &self.dir.path().join("daemon.out"));
+        let up = daemon.wait_up(&self.socket(), wait);
+        *self.daemon.lock().unwrap() = Some(daemon);
+        up
     }
 
+    /// The pid of the daemon this harness started, while it is owned.
+    pub fn daemon_pid(&self) -> Option<u32> {
+        self.daemon.lock().unwrap().as_ref().map(DaemonProcess::pid)
+    }
+
+    /// Stops the owned daemon, waiting out a slow start first (`DaemonProcess::stop`),
+    /// and removes a socket file a killed daemon left behind.
     fn stop_daemon(&self) {
-        if !self.socket().exists() {
+        let Some(mut daemon) = self.daemon.lock().unwrap().take() else {
             return;
-        }
-        let _ = self.anthrex(&["daemon", "stop"]);
-        let deadline = Instant::now() + Duration::from_secs(15);
-        while self.socket().exists() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(20));
+        };
+        daemon.stop(&self.socket(), DAEMON_START_WAIT, || {
+            let _ = self.anthrex(&["daemon", "stop"]);
+        });
+        if std::os::unix::net::UnixStream::connect(self.socket()).is_err() {
+            let _ = std::fs::remove_file(self.socket());
         }
     }
 
@@ -218,7 +246,9 @@ impl RunHarness {
         assert!(!self.socket().exists(), "the daemon did not stop");
         self.env
             .extend(extra.iter().map(|(k, v)| (k.to_string(), v.to_string())));
-        self.start_daemon();
+        if let Err(error) = self.start_daemon(DAEMON_START_WAIT) {
+            panic!("the daemon did not restart: {error}\n{}", self.log_tail());
+        }
     }
 
     /// The last 60 lines of `daemon.log`.
@@ -302,6 +332,12 @@ impl RunHarness {
         while std::os::unix::net::UnixStream::connect(self.socket()).is_ok() {
             assert!(Instant::now() < deadline, "the daemon did not die");
             std::thread::sleep(Duration::from_millis(50));
+        }
+        if let Some(mut daemon) = self.daemon.lock().unwrap().take() {
+            assert!(
+                daemon.wait_exit(DAEMON_EXIT_WAIT),
+                "the dead daemon's process is still running"
+            );
         }
         let _ = std::fs::remove_file(self.socket());
     }

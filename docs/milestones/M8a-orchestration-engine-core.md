@@ -8406,3 +8406,19 @@ Review `task-24-review.md`; rulings T24-I1, T24-I2, T24-clock and T24-minors.
 - **Minors.** The `ApiErrorText` doc comments say it is keyed on the line's `error`
   category; the translation table and the `failed_turns` line carry dated notes;
   the note above says seven unit tests; `codex_messages` is `RunHarness::codex_messages`.
+- **The harness owns its daemon (coordinator's addition to fix round 1).** Under load,
+  `anthrex daemon start` gave up after its 3 s while the daemon bound its socket at
+  about 4 s; the harness panicked, its `Drop` saw no socket and skipped the stop, and
+  seven daemons were left running (stopped by hand through their own sockets). The
+  harness now spawns `anthrex daemon start --foreground` itself (what the detached
+  spawn runs; in its own process group, output in `<tmp>/daemon.out`) and keeps the
+  `Child` (`tests/support/run_daemon.rs`). It waits `DAEMON_START_WAIT` (60 s, derived
+  in `docs/timing-budgets.md`) for the socket, failing at once if the daemon exits.
+  `Drop` (and `restart_daemon`) wait out a slow start, run `anthrex daemon stop` with the
+  harness's own `ANTHREX_SOCKET` and `ANTHREX_DATA_DIR`, wait `DAEMON_EXIT_WAIT`, and
+  otherwise kill the child. The pid is the unreaped `Child`'s, so it can name no other
+  process, and nothing scans the process table. `forget_dead_daemon` reaps the crashed
+  child. Test: `a_slow_starting_daemon_does_not_outlive_its_harness` (`run_e2e_basic.rs`)
+  starts with a zero wait, drops the harness, and checks with `ps -E -p <pid>` (that
+  one pid) that no process with the test's `ANTHREX_DATA_DIR` survives. The old `Drop`
+  (return when there is no socket) fails it.

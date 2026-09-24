@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod run_daemon;
 pub mod run_harness;
 pub mod run_plans;
 

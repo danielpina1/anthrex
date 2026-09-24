@@ -916,3 +916,8 @@ scope.
   `Drop`'s `stop_daemon` returned early because no socket existed yet, and the temp
   dir's removal left the daemon running (stopped by hand through its own socket).
   `stop_daemon` should wait for, or stop through, the pid in `daemon.pid` on that path.
+  **Closed in M8a.24's fix round 1:** the harness starts `anthrex daemon start
+  --foreground` as its own child (`support/run_daemon.rs`), waits `DAEMON_START_WAIT`
+  for the socket, and its `Drop` stops that child whatever the start came to (through
+  `anthrex daemon stop` once the socket is up, else by killing the unreaped child).
+  Test: `a_slow_starting_daemon_does_not_outlive_its_harness`.
