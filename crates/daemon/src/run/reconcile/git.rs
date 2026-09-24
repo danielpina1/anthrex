@@ -9,8 +9,8 @@ use super::Reconciled;
 use crate::run::contract::sha7;
 use crate::run::engine::OpResult;
 use crate::run::git::{
-    Git, drop_merge, failure, forget_missing, is_ancestor, listed_worktree_in, os, quit_merge,
-    read, reattach_in, short, unmerged,
+    Git, Leftover, failure, forget_missing, is_ancestor, leftover, listed_worktree_in, os,
+    quit_merge, read, reattach_in, short, undo_clean_merge, unmerged,
 };
 
 /// `CreateRunBranch`, `PrepareWorktree`: the path listed on its branch is the op's
@@ -164,12 +164,18 @@ pub(super) fn hand_back(
     let head = read(g, worktree, "HEAD")?;
     if let Some(merge_head) = read(g, worktree, "MERGE_HEAD")? {
         let files = unmerged(g, worktree)?;
-        if Some(&merge_head) == target.as_ref() && files.is_empty() {
-            // Final fix batch F1, fix round 3: the hand-back's own clean merge, made
-            // with `--no-commit`. Committed (the branch's `HEAD^2` is the run head), only
-            // its merge state was left; not yet, it is undone and the hand-back runs
-            // again. Neither writes a ref.
-            if read(g, worktree, "HEAD^2")? == target {
+        let kind = match &target {
+            Some(target) => leftover(g, worktree, target)?,
+            None => Leftover::Other,
+        };
+        // Final fix batch F1, fix round 3: the hand-back's own clean merge, made with
+        // `--no-commit`. Committed (the branch's `HEAD^2` is the run head), only its
+        // merge state was left; not yet, and untouched, it is undone and the hand-back
+        // runs again. Neither writes a ref. Fix round 4, S3: only an index that is
+        // exactly the clean merge's tree is undone; a conflict the worker resolved and
+        // staged is left for the hand-back to report.
+        match kind {
+            Leftover::Committed => {
                 quit_merge(g, worktree)?;
                 notes.push(format!(
                     "dropped the committed hand-back's merge state in {}",
@@ -181,17 +187,25 @@ pub(super) fn hand_back(
                     head,
                 }));
             }
-            drop_merge(g, worktree)?;
-            notes.push(format!(
-                "undid the hand-back's uncommitted merge in {}",
-                worktree.display()
-            ));
-            return Ok(Reconciled::NotStarted);
+            Leftover::Untouched => {
+                notes.push(match undo_clean_merge(g, worktree) {
+                    Ok(()) => format!(
+                        "undid the hand-back's uncommitted merge in {}",
+                        worktree.display()
+                    ),
+                    Err(err) => format!(
+                        "could not undo the hand-back's uncommitted merge in {}: {err}",
+                        worktree.display()
+                    ),
+                });
+                return Ok(Reconciled::NotStarted);
+            }
+            Leftover::Other => {}
         }
         if Some(&merge_head) != target.as_ref() || files.is_empty() {
             notes.push(format!(
-                "{} has a merge of {} in progress that is not the run head's conflicted \
-                 hand-back; left for the hand-back to report",
+                "{} has a merge of {} in progress that is neither the run head's conflicted \
+                 hand-back nor its untouched clean merge; left for the hand-back to report",
                 worktree.display(),
                 short(&merge_head)
             ));

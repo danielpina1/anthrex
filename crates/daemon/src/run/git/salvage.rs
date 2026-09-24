@@ -12,7 +12,8 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::time::Duration;
 
-use super::merge::{AcceptOutcome, read, short, unmerged};
+use super::handback::unmerged;
+use super::merge::{AcceptOutcome, read, short};
 use super::worktrees::{forget_missing, is_ancestor, listed, repair_git_file};
 use super::{DIFF_FLAGS, Git, NO_NESTED, failure, nul_fields, os};
 

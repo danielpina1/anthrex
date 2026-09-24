@@ -4,7 +4,8 @@
 //! fresh session is handed (decision 30). The done check itself is in [`done`], the
 //! run, task and review worktrees in [`worktrees`], and the per-repository write queue
 //! in [`queue`]. M8a.9 adds [`merge`] (the merge candidate, the compare-and-swap, the
-//! hand-back and the ref guard, decisions 21 and 36) and [`salvage`] (salvage, removal,
+//! hand-back and the ref guard, decisions 21 and 36; the hand-back is in [`handback`])
+//! and [`salvage`] (salvage, removal,
 //! branch deletion and accept, decision 20).
 //!
 //! Does I/O (design decision 2). Every function here is **blocking** — call it only from
@@ -19,6 +20,7 @@
 //! F1, findings C-C1 and D-5).
 
 mod done;
+mod handback;
 mod merge;
 mod queue;
 mod resolution;
@@ -27,10 +29,10 @@ mod sandbox;
 mod worktrees;
 
 pub use done::{DoneChecked, verify_done};
+pub use handback::{HandBack, abort_merge, hand_back};
 pub use merge::{
-    ACCEPT_LIST_MAX, AcceptOutcome, CandidateStep, HandBack, RefCheck, abort_merge, cas_update,
-    commit_tree, commits_since, guard_refs, hand_back, materialize, merge_tree, read_ref, reattach,
-    run_work_on_base,
+    ACCEPT_LIST_MAX, AcceptOutcome, CandidateStep, RefCheck, cas_update, commit_tree,
+    commits_since, guard_refs, materialize, merge_tree, read_ref, reattach, run_work_on_base,
 };
 pub use salvage::{
     ACCEPT_MERGE_TIMEOUT, accept, accept_with_merge_timeout, delete_branches, remove_worktree,
@@ -38,7 +40,8 @@ pub use salvage::{
 };
 
 /// Reads reconcile (M8a.21) shares with the ops it checks.
-pub(crate) use merge::{drop_merge, quit_merge, read, reattach_in, short, unmerged};
+pub(crate) use handback::{Leftover, leftover, quit_merge, undo_clean_merge, unmerged};
+pub(crate) use merge::{read, reattach_in, short};
 pub(crate) use worktrees::{forget_missing, is_ancestor, listed as listed_worktree_in};
 
 pub use queue::{GitQueue, LOCK_RETRY_DELAYS_MS};

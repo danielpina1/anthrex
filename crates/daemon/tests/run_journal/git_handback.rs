@@ -94,3 +94,39 @@ fn reconcile_an_uncommitted_hand_back_merge_undoes_it() {
     assert!(!t1.join("src/r.txt").exists());
     assert_eq!(out(w.root(), &["rev-parse", "main"]), base);
 }
+
+/// Fix round 4, S3: a conflicted hand-back of the run head that the worker resolved and
+/// staged, uncommitted, looks like the engine's clean leftover (`MERGE_HEAD` is the run
+/// head, nothing is unmerged, `HEAD^2` is not the run head). It is the worker's work:
+/// reconcile must leave it, never reset it away.
+#[test]
+fn reconcile_leaves_a_resolved_conflicted_hand_back_alone() {
+    let mut w = World::new();
+    let (t1, t1_head) = w.task_with_commit("t1", "src/a.txt", "task\n");
+    let run_head = commit_file(&w.run.integration_path(), "src/a.txt", "run\n", "run");
+    w.run.run_head = run_head.clone();
+    let merge = try_git(&t1, &["merge", "-q", "--no-ff", "--no-commit", &run_head]);
+    assert!(!merge.status.success(), "the merge did not conflict");
+    std::fs::write(t1.join("src/a.txt"), "resolved\n").unwrap();
+    out(&t1, &["add", "src/a.txt"]);
+    pend(
+        &mut w.run,
+        1,
+        Some("t1"),
+        OpKind::HandBack {
+            worktree: t1.clone(),
+            run_head,
+            task_head: None,
+        },
+    );
+
+    assert_eq!(w.reconcile(), vec![(1, Reconciled::NotStarted)]);
+    assert!(merge_head_exists(&t1), "the worker's merge was undone");
+    assert_eq!(head(&t1), t1_head);
+    assert_eq!(
+        std::fs::read_to_string(t1.join("src/a.txt")).unwrap(),
+        "resolved\n",
+        "the worker's resolution was wiped"
+    );
+    assert_eq!(out(&t1, &["diff", "--cached", "--name-only"]), "src/a.txt");
+}
