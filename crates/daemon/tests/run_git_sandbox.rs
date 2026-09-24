@@ -5,7 +5,8 @@
 //! linked task worktree works; writing the shared config, a hook, the base branch,
 //! another run's branch, a sibling task's branch, the run branch, or the files of its own
 //! git dir that choose its repository and config (`commondir`, `gitdir`,
-//! `config.worktree`; fix round 1, N2 and N3) does not. The worker's ordinary git work
+//! `config.worktree`; fix round 1, N2 and N3), or `objects/info/alternates` (fix round 3,
+//! R4) does not. The worker's ordinary git work
 //! (fix round 2, R3) succeeds. The same harness with the whole common dir writable (the
 //! grant before this fix) lets every write through, which shows the profile is live. Skipped where `sandbox-exec` does not exist.
 
@@ -123,7 +124,7 @@ fn work_script(branch: &str) -> String {
 
 /// What a worker tries: a commit (and a revert, which writes `MERGE_MSG` and more) on
 /// its own branch, then writes it must not make.
-fn attempts(s: &Setup, profile: &str) -> [bool; 10] {
+fn attempts(s: &Setup, profile: &str) -> [bool; 11] {
     let hook = s.common.join("hooks/post-merge");
     let admin = PathBuf::from(out(&s.task, &["rev-parse", "--absolute-git-dir"]));
     let run = s.run.as_str();
@@ -158,6 +159,7 @@ fn attempts(s: &Setup, profile: &str) -> [bool; 10] {
         write(admin.join("commondir")),
         write(admin.join("gitdir")),
         write(admin.join("config.worktree")),
+        write(s.common.join("objects/info/alternates")),
     ]
 }
 
@@ -194,6 +196,7 @@ fn a_sandboxed_worker_commits_but_cannot_write_config_hooks_or_other_branches() 
         "its git dir's commondir",
         "its git dir's gitdir",
         "a config.worktree",
+        "objects/info/alternates",
     ];
     for (wrote, what) in rest.iter().zip(names) {
         assert!(!wrote, "the worker wrote {what}");
@@ -214,7 +217,7 @@ fn the_whole_common_dir_writable_lets_every_write_through() {
     }
     let s = setup("sb02");
     let writable = vec![s.task.clone(), s.common.clone()];
-    assert_eq!(attempts(&s, &profile(&writable)), [true; 10]);
+    assert_eq!(attempts(&s, &profile(&writable)), [true; 11]);
 }
 
 /// The grant is found from the repository's side: a `.git` file the worker pointed at

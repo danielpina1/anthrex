@@ -41,9 +41,10 @@ pub const WORKTREE_GIT_DIRS: [&str; 4] = ["logs", "rebase-merge", "rebase-apply"
 /// the `<common>/worktrees/*/gitdir` file naming `<worktree>/.git`), never from the
 /// worktree's `.git` file, which the worker can rewrite.
 ///
-/// The parent directory of every root is created when missing: a `git pack-refs` can
-/// remove the run's empty branch directories, and git cannot create a lock file in a
-/// directory that does not exist.
+/// The parent directory of every ref root is created when missing: a `git pack-refs`
+/// can remove the run's empty branch directories, and git cannot create a lock file in a
+/// directory that does not exist. Every object directory root is created itself, since
+/// `objects/` is not writable (fix round 3, R4).
 pub fn worker_git_dirs(
     git_common_dir: &Path,
     worktree: &Path,
@@ -65,9 +66,16 @@ pub fn worker_git_dirs(
                 git_common_dir.display()
             ));
         }
-        if let Some(parent) = root.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|err| format!("cannot create {}: {err}", parent.display()))?;
+        // An object directory is created itself (git makes it on first use, which would
+        // need `objects/` writable); for a ref, its parent.
+        let dir = if root.starts_with(git_common_dir.join("objects")) {
+            Some(root.as_path())
+        } else {
+            root.parent()
+        };
+        if let Some(dir) = dir {
+            std::fs::create_dir_all(dir)
+                .map_err(|err| format!("cannot create {}: {err}", dir.display()))?;
         }
         dirs.push(root.clone());
     }

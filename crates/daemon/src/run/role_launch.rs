@@ -36,21 +36,29 @@ pub const REVIEWER_CODEX_SANDBOX: &str = "read-only";
 
 /// The parts of the repository's git common directory a worker's sandbox may write
 /// (decisions 25 and 54, narrowed by final fix batch F1, findings C-C1 and D-5, and its
-/// fix round 1, N3): the object store, and the task's own branch
-/// `refs/heads/anthrex/<run>/<task>`, its `.lock` and its reflog. Not `config`,
-/// `hooks/`, `info/`, `packed-refs` or any other branch, the base branch, the run branch
-/// and sibling tasks' branches included. The driver adds the files of the worktree's own
-/// git directory a commit needs ([`crate::run::git::worker_git_dirs`]) at launch.
+/// fix round 1, N3): the object store's loose-object directories `objects/00` to
+/// `objects/ff` and `objects/pack`, and the task's own branch
+/// `refs/heads/anthrex/<run>/<task>`, its `.lock` and its reflog. Not `objects/info/`
+/// (its `alternates` would graft another object store into the repository; fix round 3,
+/// R4), `config`, `hooks/`, `info/`, `packed-refs` or any other branch, the base branch,
+/// the run branch and sibling tasks' branches included. The driver adds the files of the
+/// worktree's own git directory a commit needs ([`crate::run::git::worker_git_dirs`]) at
+/// launch, and creates the object directories.
 pub fn worker_git_roots(git_common_dir: &Path, run_id: &str, task_id: &str) -> Vec<PathBuf> {
     let branch = Path::new("refs/heads/anthrex").join(run_id).join(task_id);
     let mut lock = branch.clone().into_os_string();
     lock.push(".lock");
-    vec![
-        git_common_dir.join("objects"),
+    let objects = git_common_dir.join("objects");
+    let mut roots: Vec<PathBuf> = (0..=255u8)
+        .map(|byte| objects.join(format!("{byte:02x}")))
+        .collect();
+    roots.push(objects.join("pack"));
+    roots.extend([
         git_common_dir.join(&branch),
         git_common_dir.join(lock),
         git_common_dir.join("logs").join(&branch),
-    ]
+    ]);
+    roots
 }
 
 /// The worker session of `task`'s current session number, in its worktree.
@@ -253,10 +261,13 @@ mod tests {
         // Final fix batch F1: never the whole common dir, whose config and hooks the
         // daemon and the user's checkout would run.
         let branch = format!("refs/heads/anthrex/{}/t1", run.id);
+        let roots = &sandbox.writable_roots;
+        assert_eq!(roots.len(), 256 + 4, "{roots:?}");
+        assert_eq!(roots[0x3a], PathBuf::from("/tmp/p/.git/objects/3a"));
         assert_eq!(
-            sandbox.writable_roots,
-            vec![
-                PathBuf::from("/tmp/p/.git/objects"),
+            roots[256..],
+            [
+                PathBuf::from("/tmp/p/.git/objects/pack"),
                 PathBuf::from("/tmp/p/.git").join(&branch),
                 PathBuf::from("/tmp/p/.git").join(format!("{branch}.lock")),
                 PathBuf::from("/tmp/p/.git/logs").join(&branch),
