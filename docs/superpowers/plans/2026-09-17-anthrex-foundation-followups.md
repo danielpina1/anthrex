@@ -942,7 +942,9 @@ scope.
     before its window was known had a round with the dead pid, and `kill_effect` waited
     for that pid's exit, already delivered and dropped, so the round never ended and
     rung 2 never started. `kill_effect` now synthesises the engine's exit whenever the
-    window has no live process (a duplicate reaches an ended round, which ignores it).
+    window has no live process. A duplicate reaches an ended round, which ignores it,
+    or a round resumed since, which drops it as a repeat of the exit it took (final fix
+    batch F3, B-10; before F3 it ended that round or counted a death, T25-N1).
     `e2e_a_session_that_exits_before_its_window_is_known_still_escalates` reproduces the
     race with `ANTHREX_TEST_DELAY_WINDOW_MS`. The dropped early events themselves are
     still open: that test's later sessions wait out the hold before their tool calls.
@@ -1182,6 +1184,53 @@ scope.
 - **C-I4's cost: a profile cannot set `PATH`, `HOME`, a proxy or a CA bundle.** They come
   from the daemon's environment. A project whose checks need a tool on a
   repository-relative path must name it in the command (`./node_modules/.bin/x`).
+
+## From M8a's final fix batch F3 (2026-09-25), for M8a/M8b
+
+- **`max_writers` can be exceeded by a task that comes back to `working` (final review
+  A-I2, cap half; recorded, not changed).** Decision 41 frees a writer slot at `review`
+  and `merge_queue` and takes one "again while a handed-back task is `working`"; the
+  return paths (rung 1 after a rejection or a red candidate, rung 2, a hand-back, an
+  answer, `run retry`) take it whether or not one is free. Holding a returning task until
+  a slot frees needs a wait state on each of those five paths; counting `review` and
+  `merge_queue` against the cap at dispatch contradicts decision 41's "hold none". The
+  over-subscription is bounded by the tasks in those states. F3 closed the hub half.
+- **A blocked non-hub task can come back beside a running hub task (A-I2 residual).** A
+  hub task now waits for every task in `review` or `merge_queue` (they come back on their
+  own) and keeps the hub from its start until it finishes, but it does not wait for
+  `blocked` tasks: an answer, a retry or an override returns one to `working` while the
+  hub runs. Waiting for them could deadlock (a task held on the hub as a dependency, or
+  one the user never unblocks).
+- **A panic in an effect, not in `step`, still ends the event loop (B-I2 residual).**
+  `step` runs under `catch_unwind` (state put back, the request failed, the loop kept),
+  and a run whose restore panics is left out. A panic in the driver's own effect code
+  (`execute`) still ends the loop task with no log and leaves waiting requests hanging.
+  A data-dependent panic in the scheduler, which runs over every run on every step, makes
+  every step fail until the daemon restarts without that run; each is logged.
+- **B-6 (not done: process-kill code).** `kill_leftovers` takes its candidates from
+  `run.json`'s round pids only; a pid that reached only the journal's `done` line of a
+  `CreateWindow` is not examined. The fix changes which pids the leftover-session killer
+  examines, so under the process-kill safety rule it is left for a change reviewed line
+  by line.
+- **B-7 (not done: process-kill code).** Orphaned `setup`, `check` and proof shells of a
+  dead daemon are neither found nor killed, and a re-issued op runs beside them. Finding
+  them needs a recorded pgid and a kill at reconcile, which is process-kill code.
+- **B-5's other half.** A restored run with a leftover session still costs up to 2 s of
+  SIGTERM grace, serially, before the socket is bound (`kill_leftovers`, process-kill
+  code). F3 removed the unconditional `run.json` rewrite and journal compaction of
+  unchanged runs.
+- **B-10 residuals.** A synthetic exit carries pid 0 when the round never recorded one;
+  the real exit of that unrecorded process is then not recognised as a repeat. And a
+  Claude process's last `TurnEnded` (its usage) that lands after its round ended is
+  still ignored, so that spend is not counted.
+- **The pre-`CreateWindow` event race is still open** (the From M8a.25 entry): F3 made
+  the test that reproduces it wait on the condition (`run.json` records the session's
+  window) instead of a 4 s sleep (T25-N2), and assert the race was reproduced
+  (T25-N3). Buffering a window's signals until its round has it was not cheap.
+- **A fresh session's hand-over diff is `start..HEAD` (A-I5's sibling).** The review
+  diff is now the task's net change from its merge base with the run head; the rung-2
+  hand-over prompt's `git diff --stat <start>..HEAD` and diff (decision 30) still include
+  every hand-back's merged work.
 
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 

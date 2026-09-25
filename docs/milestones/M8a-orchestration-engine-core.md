@@ -9787,3 +9787,83 @@ sandbox-level deny as defence in depth for the C-I1 race.
 - **N5:** the case-insensitive match is noted above. The `.codex`/`.agents` strings claim
   stays marked unverified.
 
+
+### Final fix batch F3: engine and driver correctness (2026-09-25)
+
+Findings from the final review's areas A and B, each fixed test-first (a red test on
+the code before the fix) unless marked otherwise.
+
+- **A-I1, rule 9 (deviation from decision 11's wording).** Rule 9 compares the runtimes
+  the *plan* gives (the spec's `route.runtime`, else `limits.default_runtime`), not
+  `task.route`, and applies to a pair only when the batch touches one of the two. A rung-2
+  or `run retry` escalation to the peer runtime is the engine's, like rung 3's size raise,
+  and no longer makes every later edit fail; a runtime the user names is still checked.
+  `validate_tasks`'s unused `profile` parameter became `default_runtime`. Test:
+  `an_engine_escalation_to_the_peer_runtime_does_not_block_later_edits`.
+- **A-I2, hub alone (deviation from decision 41's wording).** A hub task holds the hub
+  from `preparing` until it is merged or cancelled (`schedule::hub_started`), so nothing
+  else is dispatched while it is in `review`, `merge_queue` or `blocked`; its reviewer
+  (and others) still start (`hub_holds_slot` keeps governing reviews). A hub task also
+  waits for every task in `review` or `merge_queue`, which come back to `working` on
+  their own; decision 41 let it start beside them ("no writer slot held").
+  `hub_runs_alone`'s last step changed accordingly. Tests: `hub_runs_alone`,
+  `a_started_hub_task_holds_the_hub_until_it_finishes`. **Not changed:** the
+  `max_writers` over-subscription by a returning task (decision 41 itself takes the slot
+  "again" on return; a wait state on five paths would be needed), and a `blocked`
+  non-hub task answered or retried beside a running hub (waiting for blocked tasks can
+  deadlock). Both in the follow-ups.
+- **A-I5.** `PrepareReview`'s `base_ref` is the run head, and `prepare_review` diffs from
+  `merge-base(base_ref, head)`: the task's net change, as the spill check sees it. The
+  returned (and prompted) `Base:` is that merge base. Tests:
+  `the_review_diff_is_the_net_change_from_the_merge_base_with_the_run_head` (real git),
+  `the_review_is_prepared_against_the_run_head`. Still valid after F1c: the head is
+  imported into the user's store by the done check before any review.
+- **B-I2.** `step` runs under `catch_unwind` (`driver/guard.rs`): on a panic the state is
+  put back as it was, the event dropped and logged, its request answered with an error,
+  and the loop goes on. The restore steps all runs at once, and on a panic one run at a
+  time, leaving out a run whose own restore panics (its `run.json` untouched, its
+  windows kept, its held accept dropped); the daemon starts. Tests:
+  `a_panicking_step_keeps_the_state_and_the_loop`,
+  `a_run_whose_restore_panics_does_not_stop_the_others` (a revision at `u64::MAX` makes
+  the bump overflow in test builds). Residual (follow-ups): a panic in effect code.
+- **A-6.** The reviewer is picked against the last worker round's route (the session
+  that wrote the claimed commit), not the task's current route. `a_review_after_rung_2_…`
+  now also gives the rung-2 round its route, as a real fresh session has. Test:
+  `the_reviewer_is_picked_against_the_authoring_sessions_route`.
+- **A-8.** The report sends `Check:` and the halted reason through `plain_text_line`,
+  and renders a finding's `input` as a locator (`file:line, input <x>: text`). Tests:
+  three new fields in the per-field sweeps, `a_finding_located_by_its_input_shows_the_input`.
+- **B-3.** An op of a run whose `run.json` its step could not save, or whose intent line
+  could not be appended, is not started; it is answered `Failed { "could not journal the
+  op (…); it was not started" }`. Test: `an_op_whose_run_could_not_be_saved_is_not_started`.
+- **B-4.** A restore with no run still removes headless windows of gone runs. Test:
+  `a_restore_with_no_runs_still_removes_stale_headless_windows`.
+- **B-5.** A run the restore leaves exactly as loaded is not rewritten, and a run loaded
+  with an empty journal and nothing pending is not compacted. Test:
+  `restoring_an_unchanged_finished_run_writes_nothing`. `kill_leftovers`' serial grace is
+  process-kill code: not changed (follow-ups).
+- **B-6, B-7: not done.** Both change which processes the engine examines or kills;
+  under the process-kill safety rule they are recorded in the follow-ups.
+- **B-9.** `stop_now` writes every report still due, ignoring `REPORT_EVERY`. Test:
+  `a_stop_writes_the_reports_still_due`.
+- **B-10 (T25-N1, both orders).** `AgentRound.exited_pid` (serde default) records the
+  process whose exit the round took; a later exit of the same pid while the round has no
+  process is dropped, and `ProcessStarted` clears it. So the engine's synthetic exit and
+  the real one, in either order, never end or charge a death to a round a hand-back or
+  decision 32's resume reopened. The driver is unchanged (a synthetic exit still carries
+  the round's pid, else 0; using the window's spawned pid instead would re-open M8a.25's
+  wedge). The engine test helpers `exited`/`killed_exit` now send the process's
+  `ProcessStarted` first (they reused pid 7 for successive processes). Tests:
+  `exit_duplicates.rs`.
+- **B-11.** `RunService::snapshots()`, its `watch` and `RunContext.exe`/`socket_path` are
+  removed (decision 47's `watch` is `pushes()`); `run/mod.rs`'s doc, `journal::compact`'s
+  doc and a timing-budgets site corrected.
+- **B-12.** `load_all` sets `run.data_dir` to the directory it loaded, and skips (with a
+  problem) a directory whose name is not its run's id. Test:
+  `load_all_takes_a_runs_directory_from_where_it_is`.
+- **T25-N2, N3.** `e2e_a_session_that_exits_before_its_window_is_known_still_escalates`'s
+  later sessions wait until `run.json` records their window (an `sh` gate) instead of
+  4 s, and the test asserts session 1's round took no death (the race was reproduced).
+  The pre-`CreateWindow` event race itself stays in the follow-ups.
+- **The dispatch said "re-checked for every task"** for A-I1; the finding and the fix
+  plan say the opposite (only for pairs the batch touches). F3 followed the finding.
