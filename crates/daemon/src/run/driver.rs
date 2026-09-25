@@ -17,6 +17,7 @@
 //! `driver/requests.rs` answers client requests (reading git first for start, finish and
 //! resume), and `driver/restore.rs` restores the runs of an earlier daemon (decision 44).
 
+mod adapt;
 mod cleanup;
 mod effects;
 mod guard;

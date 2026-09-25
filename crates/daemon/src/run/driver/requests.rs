@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use proto::run_wire::request;
-use proto::{BaseMovedInfo, FinishAction, RunReply, RunRequest, Runtime};
+use proto::{BaseMovedInfo, FinishAction, Plan, RunReply, RunRequest, Runtime};
 
 use super::{RunService, unix_now};
 use crate::run::confine;
@@ -229,7 +229,22 @@ impl RunService {
         trust_project: bool,
         unconfined_checks: bool,
     ) -> Result<Run, String> {
-        let config = self.ctx.orchestrator.clone();
+        let plan = parse_plan(&plan_toml)?;
+        self.build_plan(plan, dir, yes, trust_project, unconfined_checks)
+            .await
+    }
+
+    /// Everything `run start` checks and builds for a parsed plan (M8b decision 22 shares
+    /// it with the fast path); decision 6's profile choice right after preflight.
+    pub(super) async fn build_plan(
+        &self,
+        mut plan: Plan,
+        dir: PathBuf,
+        yes: bool,
+        trust_project: bool,
+        unconfined_checks: bool,
+    ) -> Result<Run, String> {
+        let mut config = self.ctx.orchestrator.clone();
         // Final fix batch F1c round 2: never run worker-written code unconfined unless
         // the user said so, on the command line or in their own config.
         let available = confine::available();
@@ -237,13 +252,13 @@ impl RunService {
         if let Some(refusal) = confine::start_refusal(config.worker_sandbox, available, allowed) {
             return Err(refusal);
         }
-        let plan = parse_plan(&plan_toml)?;
         let timeout = Duration::from_secs(config.git_timeout_secs);
         let git = self.ctx.git.clone();
         let g = git.clone();
         let mut pre = blocking(move || git::preflight(&g, &dir, timeout)).await?;
+        let choice = self.choose_profile(&mut plan, &mut config, &pre).await?;
 
-        // Decision 17 (carry): the protected files, by the resolved profile's matcher,
+        // Decision 17 (carry): the protected files, by the chosen profile's matcher,
         // before `build_run` turns them into the plan's warnings (decision 56).
         let profile = resolve_profile(&plan.profile, &config.profile);
         let matcher = ProtectedMatcher::new(&profile.protected)?;
@@ -255,12 +270,13 @@ impl RunService {
         let refs = blocking(move || run_refs(&g, &root, timeout)).await?;
         let id = self.pick_id(&plan.goal, &refs)?;
         let wt_dir = repo_worktrees_dir(&self.ctx.worktrees_root, &pre.project);
+        let now = unix_now();
         let ctx = BuildContext {
             id: id.clone(),
             wt_dir,
             data_dir: runs_dir(&self.ctx.data_dir).join(&id),
             config: &config,
-            now: unix_now(),
+            now,
             yes,
         };
         let mut run = crate::run::plan::build_run(plan, pre, ctx).map_err(|errors| {
@@ -270,6 +286,7 @@ impl RunService {
                 .collect::<Vec<_>>()
                 .join("\n")
         })?;
+        super::adapt::apply_choice(&mut run, choice, now);
         run.limits.unconfined_checks = run.limits.worker_sandbox && !available;
         run.session_nonce = random_nonce();
         run.codex_project_config = Some(self.ctx.cli_caps.codex_project_config());

@@ -26,6 +26,7 @@ pub mod lockfile;
 pub mod logfile;
 pub mod manager;
 mod process;
+pub mod profile;
 pub mod project;
 pub mod run;
 pub mod server;

@@ -24,6 +24,11 @@ use super::engine::OpKind;
 mod rounds;
 pub use rounds::*;
 
+// Milestone 8b's additions (M8b decision 1). M8b.4 adds only `impl Run` items; the
+// structs its later tasks add there are re-exported here with `pub use adapt::*`.
+#[path = "model_adapt.rs"]
+mod adapt;
+
 /// How thoroughly a task is reviewed, decision 35: `S` tasks get `Small`, `M` tasks
 /// `Medium`, hub tasks `Frontier`, each possibly raised by the level rule (no `check` in
 /// the profile, or a non-`tdd` task whose `owns` touch `source`).
@@ -377,6 +382,20 @@ pub struct Run {
     /// every Codex session's checkout must match them (`headless::codex_guard`).
     #[serde(default)]
     pub codex_config_base: Vec<crate::headless::codex_guard::GuardEntry>,
+    /// M8b decision 6: where the profile came from; `None` for a run from milestone 8a.
+    #[serde(default)]
+    pub profile_source: Option<proto::ProfileSource>,
+    /// M8b decision 28: a stored profile's filter settings, else the defaults.
+    #[serde(default)]
+    pub output_filter: proto::OutputFilter,
+    #[serde(default)]
+    pub filter_prefixes: Vec<String>,
+    /// M8b decision 4: the repository's data directory (empty: a run from milestone 8a).
+    #[serde(default)]
+    pub repo_dir: PathBuf,
+    /// M8b decision 7: files changed since the stored profile was confirmed.
+    #[serde(default)]
+    pub stale_profile: Vec<String>,
 }
 
 impl Run {
