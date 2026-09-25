@@ -245,7 +245,9 @@ async fn a_panicking_step_keeps_the_state_and_the_loop() {
     assert!(error.contains("run engine failed"), "{error}");
     assert_eq!(crate::lock(&s.state).runs.get("bad"), Some(&run));
     assert_eq!(s.current().runs.len(), 1);
-    // The loop still steps: an unrelated request gets the engine's own answer.
+    // The loop still steps: an unrelated request gets the engine's own answer. The
+    // poison goes first, since every step schedules every run (F3 review N5).
+    crate::lock(&s.state).runs.remove("bad");
     let answer = tokio::time::timeout(
         Duration::from_secs(10),
         s.ask(|reply| EventKind::Cancel {
@@ -257,6 +259,7 @@ async fn a_panicking_step_keeps_the_state_and_the_loop() {
     .expect("the loop still answers");
     let error = answer.expect_err("an unknown run is refused");
     assert!(!error.contains("shutting down"), "{error}");
+    assert!(!error.contains("run engine failed"), "{error}");
     assert!(!handle.is_finished());
     s.stop().await;
 }
