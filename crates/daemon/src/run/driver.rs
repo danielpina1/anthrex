@@ -19,6 +19,7 @@
 
 mod cleanup;
 mod effects;
+mod guard;
 mod merge;
 mod observe;
 mod ops;
@@ -36,9 +37,7 @@ use proto::RunsSnapshot;
 use tokio::sync::{RwLock, broadcast, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
-use super::engine::{
-    AgentSignal, EngineState, Event, EventKind, INTERRUPT_GRACE_SECS, ReplyId, step,
-};
+use super::engine::{AgentSignal, EngineState, Event, EventKind, INTERRUPT_GRACE_SECS, ReplyId};
 use super::git::GitQueue;
 use super::snapshot::snapshot;
 use crate::headless::argv::CliCaps;
@@ -345,14 +344,14 @@ impl RunService {
     async fn stop_now(&self) {
         let runs = {
             let mut state = crate::lock(&self.state);
-            let (next, _) = step(
-                std::mem::take(&mut *state),
-                Event {
-                    now: unix_now(),
-                    kind: EventKind::Stop,
-                },
-            );
-            *state = next;
+            let stop = Event {
+                now: unix_now(),
+                kind: EventKind::Stop,
+            };
+            if guard::guarded_step(&mut state, stop).is_err() {
+                // The state is as it was; `stopped` below still ends the service.
+                tracing::error!("the run engine panicked on stop");
+            }
             state.runs.values().cloned().collect::<Vec<_>>()
         };
         self.stopped.store(true, Ordering::SeqCst);
@@ -405,11 +404,23 @@ impl RunService {
         let now = unix_now();
         let tick = matches!(kind, EventKind::Tick);
         let kind = self.mark_killed(kind);
+        let reply = guard::reply_of(&kind);
         let prepared = {
             let mut state = crate::lock(&self.state);
-            let (next, fx) = step(std::mem::take(&mut *state), Event { now, kind });
-            *state = next;
-            effects::prepare(&state, fx, now)
+            match guard::guarded_step(&mut state, Event { now, kind }) {
+                Ok(fx) => Some(effects::prepare(&state, fx, now)),
+                Err(panic) => {
+                    tracing::error!(%panic, "the run engine panicked on an event; the event is dropped");
+                    None
+                }
+            }
+        };
+        let Some(prepared) = prepared else {
+            let waiting = reply.and_then(|id| crate::lock(&self.replies).remove(&id));
+            if let Some(tx) = waiting {
+                let _ = tx.send(Err(guard::STEP_PANICKED.to_string()));
+            }
+            return;
         };
         self.execute(prepared, now).await;
         if tick {

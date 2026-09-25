@@ -203,3 +203,82 @@ async fn a_stop_whose_loop_is_stuck_saving_still_saves_every_run() {
         "stop() returned with b's last run.json never written"
     );
 }
+
+/// A run whose next change panics the reducer: its revision is at `u64::MAX`, so the
+/// bump `finish` (or the restore) gives a changed run overflows (debug builds check
+/// arithmetic, as every test build does). Final review B-I2's stand-in for any bug in
+/// `step`.
+fn poisoned_run(id: &str, data: &Path) -> crate::run::model::Run {
+    use crate::run::test_support::{PROFILE, plan_with, run_ok, task_toml};
+    let mut run = run_ok(&plan_with(
+        PROFILE,
+        &[task_toml("t1", "S", "[\"crates/a/**\"]", "")],
+    ));
+    run.id = id.to_string();
+    run.data_dir = data.join("runs").join(id);
+    run.state = proto::RunState::Running;
+    run.revision = u64::MAX;
+    run
+}
+
+/// Final review B-I2: a panic in `step` leaves the engine's state as it was before the
+/// event, fails that event's request, and keeps the event loop alive for the next one.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_panicking_step_keeps_the_state_and_the_loop() {
+    let s = service();
+    let data = tempfile::tempdir().unwrap();
+    let run = poisoned_run("bad", data.path());
+    crate::lock(&s.state)
+        .runs
+        .insert(run.id.clone(), run.clone());
+    let handle = s.spawn(CancellationToken::new());
+    let answer = tokio::time::timeout(
+        Duration::from_secs(10),
+        s.ask(|reply| EventKind::Cancel {
+            reply,
+            run_id: "bad".into(),
+        }),
+    )
+    .await
+    .expect("a request whose step panicked is answered");
+    let error = answer.expect_err("the request failed");
+    assert!(error.contains("run engine failed"), "{error}");
+    assert_eq!(crate::lock(&s.state).runs.get("bad"), Some(&run));
+    assert_eq!(s.current().runs.len(), 1);
+    // The loop still steps: an unrelated request gets the engine's own answer.
+    let answer = tokio::time::timeout(
+        Duration::from_secs(10),
+        s.ask(|reply| EventKind::Cancel {
+            reply,
+            run_id: "nope".into(),
+        }),
+    )
+    .await
+    .expect("the loop still answers");
+    let error = answer.expect_err("an unknown run is refused");
+    assert!(!error.contains("shutting down"), "{error}");
+    assert!(!handle.is_finished());
+    s.stop().await;
+}
+
+/// Final review B-I2: a run whose restore panics is left out, the others are restored,
+/// and the daemon starts.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_whose_restore_panics_does_not_stop_the_others() {
+    let data = tempfile::tempdir().unwrap();
+    let config = ManagerConfig::new("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+    let (manager, _events) = WindowManager::new(config);
+    let s = RunService::for_manager(&manager, data.path().to_path_buf(), Arc::new(NoRoots));
+    let bad = poisoned_run("bad", data.path());
+    let mut good = poisoned_run("good", data.path());
+    good.revision = 3;
+    for run in [&bad, &good] {
+        crate::run::journal::save_run(run).unwrap();
+    }
+    tokio::time::timeout(Duration::from_secs(60), s.restore())
+        .await
+        .expect("the restore returns");
+    let state = crate::lock(&s.state);
+    assert_eq!(state.runs.keys().collect::<Vec<_>>(), vec!["good"]);
+    assert_eq!(state.runs["good"].state, proto::RunState::Paused);
+}

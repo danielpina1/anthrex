@@ -8,8 +8,9 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::guard::guarded_step;
 use super::{OpCtx, RunService, cleanup, effects, unix_now};
-use crate::run::engine::{Event, EventKind, OpKind, OpResult, step};
+use crate::run::engine::{Event, EventKind, OpKind, OpResult};
 use crate::run::git;
 use crate::run::journal;
 use crate::run::model::{LogEntry, OpId, Run};
@@ -92,22 +93,61 @@ impl RunService {
         if runs.is_empty() {
             return;
         }
-        let prepared = {
-            let mut state = crate::lock(&self.state);
-            let (next, fx) = step(
-                std::mem::take(&mut *state),
-                Event {
-                    now,
-                    kind: EventKind::Restore { runs, replay, held },
-                },
-            );
-            *state = next;
-            effects::prepare(&state, fx, now)
-        };
+        let (prepared, skipped) = self.restore_step(runs, replay, held, now);
+        crate::lock(&self.held_accepts).retain(|c| !skipped.contains(&c.ctx.run_id));
         self.execute(prepared, now).await;
         self.compact_after_restore().await;
         self.watch_live_worktrees();
-        self.remove_stale_windows();
+        self.remove_stale_windows(&skipped);
+    }
+
+    /// Steps `Event::Restore` for every run at once; when that panics (final review
+    /// B-I2), for each run on its own, leaving out any run whose own restore panics.
+    /// A run left out stays on disk as it was (nothing writes its `run.json`), and the
+    /// next start tries it again; its windows are kept. Returns the effects to execute
+    /// and the ids of the runs left out.
+    fn restore_step(
+        &self,
+        runs: Vec<Run>,
+        replay: Vec<(String, OpId, OpResult)>,
+        held: Vec<(String, OpId)>,
+        now: u64,
+    ) -> (Vec<effects::Ready>, BTreeSet<String>) {
+        let mut state = crate::lock(&self.state);
+        let all = Event {
+            now,
+            kind: EventKind::Restore {
+                runs: runs.clone(),
+                replay: replay.clone(),
+                held: held.clone(),
+            },
+        };
+        let panic = match guarded_step(&mut state, all) {
+            Ok(fx) => return (effects::prepare(&state, fx, now), BTreeSet::new()),
+            Err(panic) => panic,
+        };
+        tracing::error!(%panic, "restoring the runs panicked; restoring them one at a time");
+        let mut fx = Vec::new();
+        let mut skipped = BTreeSet::new();
+        for run in runs {
+            let id = run.id.clone();
+            let one = Event {
+                now,
+                kind: EventKind::Restore {
+                    runs: vec![run],
+                    replay: replay.iter().filter(|(r, ..)| *r == id).cloned().collect(),
+                    held: held.iter().filter(|(r, _)| *r == id).cloned().collect(),
+                },
+            };
+            match guarded_step(&mut state, one) {
+                Ok(more) => fx.extend(more),
+                Err(panic) => {
+                    tracing::error!(run = %id, %panic, "restoring the run panicked; it is left out until the next start");
+                    skipped.insert(id);
+                }
+            }
+        }
+        (effects::prepare(&state, fx, now), skipped)
     }
 
     /// Ruling T22-N3, with m5's report: each accept whose merge landed before the
@@ -207,8 +247,9 @@ impl RunService {
     }
 
     /// The M8a.17 carry: a restored headless window whose run is gone or finished is
-    /// removed; only the engine can remove one (decision 49).
-    fn remove_stale_windows(&self) {
+    /// removed; only the engine can remove one (decision 49). A run whose restore
+    /// panicked (`skipped`) keeps its windows.
+    fn remove_stale_windows(&self, skipped: &BTreeSet<String>) {
         let live: BTreeSet<String> = {
             let state = crate::lock(&self.state);
             state
@@ -216,6 +257,7 @@ impl RunService {
                 .values()
                 .filter(|run| !run.state.is_terminal())
                 .map(|run| run.id.clone())
+                .chain(skipped.iter().cloned())
                 .collect()
         };
         for window in self.manager.list() {
