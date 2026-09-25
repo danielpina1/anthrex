@@ -848,6 +848,8 @@ scope.
   resume. `assert_alive` resumes a paused run before checking, and nothing does that
   for a halted one. The review branch already exempts a stopped run; `proof` and
   `check` should too, or the oracle should resume a halted run with a rebaseline.
+  **Done in final fix batch F4 (T15-P1):** `proof` and `check` are exempt in a halted
+  or paused run.
 
 ## From M8a.18 (2026-09-24), for M8a
 
@@ -1078,6 +1080,9 @@ scope.
   (load average 35) right after `complete`; F1c round 2 moved it to the deadline
   helper `report_with`. `run_e2e_basic.rs:67`, `run_e2e_finish.rs:113` and
   `run_e2e_settings.rs:183` still call `report(&run)` directly after `complete`.
+  **Done in final fix batch F4:** `run_e2e_basic` waits with `report_with`;
+  `run_e2e_finish` reads the text its deadline wait returned; `run_e2e_settings` had
+  already moved into an `until` loop.
 - **N4: a reviewer's allowed git commands could once write files.** A Claude reviewer
   now runs under a read-only seatbelt sandbox (empty `allowWrite`) and a Codex reviewer
   under `-s read-only`, so `git diff --output=<path>` cannot write. Claude Code's
@@ -1202,6 +1207,8 @@ scope.
   hub runs. Waiting for them could deadlock (a task held on the hub as a dependency, or
   one the user never unblocks).
 - **A panic in an effect, not in `step`, still ends the event loop (B-I2 residual).**
+  (F4, F3 review N3: preparing a step's effects, the snapshot included, is now guarded
+  too, in the loop and at restore; a panic there costs that publish only.)
   `step` runs under `catch_unwind` (state put back, the request failed, the loop kept),
   and a run whose restore panics is left out. A panic in the driver's own effect code
   (`execute`) still ends the loop task with no log and leaves waiting requests hanging.
@@ -1219,7 +1226,9 @@ scope.
   SIGTERM grace, serially, before the socket is bound (`kill_leftovers`, process-kill
   code). F3 removed the unconditional `run.json` rewrite and journal compaction of
   unchanged runs.
-- **B-10 residuals.** A synthetic exit carries pid 0 when the round never recorded one;
+- **B-10 residuals.** (F4, F3 review N2: a second pid-0 synthetic exit is no longer
+  taken for a repeat, so a second kill of a reopened round ends it.) A synthetic exit
+  carries pid 0 when the round never recorded one;
   the real exit of that unrecorded process is then not recognised as a repeat. And a
   Claude process's last `TurnEnded` (its usage) that lands after its round ended is
   still ignored, so that spend is not counted.
@@ -1231,6 +1240,72 @@ scope.
   diff is now the task's net change from its merge base with the run head; the rung-2
   hand-over prompt's `git diff --stat <start>..HEAD` and diff (decision 30) still include
   every hand-back's merged work.
+
+## From M8a's final fix batch F4 (2026-09-25), for the user and for M8a/M8b
+
+- **Claude sessions no longer deny nested `CLAUDE.md`/`AGENTS.md` writes (F2 re-review
+  I2).** Published packages ship these files (recharts ships `AGENTS.md`), and Claude's
+  `denyWrite` globs cannot leave `node_modules`, `.venv` or `vendor` out, so the
+  `<checkout>/**/…` entries made `rm -rf node_modules` and pnpm/bun installs fail. A
+  Claude session now denies only the root files, `.claude`, `.codex` and `.mcp.json`.
+  Nested ones are judged by the done gate (any depth, any case, tracked changes), and
+  Codex reads `AGENTS.md` only from the root down to its cwd, the root. The seatbelt
+  profile of checks, proofs and `setup` keeps the nested deny outside dependency trees
+  (`seatbelt::DEPENDENCY_DIRS`). A worker (or its leftover child) can still plant a
+  nested `CLAUDE.md` that a later Claude session of the same task reads when it works
+  in that directory.
+- **Letter case (F2 re-review I1) was not reproducible on macOS 26.2.** Seatbelt's
+  `literal`, `subpath` and `regex` filters already matched `.CODEX`, `agents.md`,
+  `sub/Claude.md` and `.MCP.JSON` on the default case-insensitive APFS volume (probed
+  with `sandbox-exec` directly, F4 report). The confined profile now spells the names
+  with bracket classes anyway; Claude's entries rely on the kernel's folding (manual
+  check 4e, F4). A case-sensitive volume needs no folding.
+- **F2 re-review M2 (optional): Claude's `Edit`/`Write` tools** could get the same
+  protected list as `permissions.deny` `Edit(//<abs>)` entries. Not done: the rule
+  syntax is unverified against the real CLI, and the C-I1 race involves leftover
+  children, which the sandbox covers.
+- **F2 re-review M4: other inherited secrets reach checks.** `GITHUB_TOKEN`, `GH_TOKEN`,
+  `AWS_*`, `NPM_TOKEN` and the like are inherited by checks, proofs and `setup`; with
+  the user's `confined_network`, worker-written test code can send them out. An
+  allow-list for `engine_env` is the real fix; it needs the user to decide which
+  variables a project's checks may see.
+- **F3 review N7: `guarded_step` clones the whole `EngineState` per event** under the
+  engine lock (a second clone beside `step`'s own `before`). A performance cost, not a
+  correctness one; `step` could hand its `before` back on the panic path.
+- **F3 review N4: a note-only restore does not bump the run's revision.** F4 saves such
+  a run (its `as_loaded` is now taken before the restore's notes), but
+  `engine::restore` compares against the runs as passed in, which already hold the
+  notes. Clients re-read snapshots after a daemon start, so nothing shows stale.
+- **B-8 (final review B): retired headless windows lost at a crash stay listed.** A
+  dormant `Exited` headless window of a run counts against `max_windows` until the run
+  finishes, and decision 49 lets no one else remove it. Not fixed: it needs the
+  window-removal path the restore already walks (`remove_stale_windows`) to know which
+  of a live run's windows no round will resume.
+- **E-M8: the e2e harness's fallback kill leaves the daemon's headless children
+  running.** When `anthrex daemon stop` times out, `DaemonProcess::kill` SIGKILLs the
+  daemon alone; its `fake-agent` sessions (own process groups) keep running up to their
+  own timeouts. A leak of test processes, not a safety problem; any fix must stay
+  scoped to recorded pids (process-kill safety rule).
+- **T20-P1, T20-P2 (fake-agent signal handling, not changed: kill code).** A SIGTERM
+  that lands while an interrupted `sh` is being killed (`kill_tree` running `ps`) only
+  sets the flag and is acted on at the next `sh`; a signal between the child's spawn and
+  its pid being stored is likewise late. `kill_tree` runs `ps` with no timeout. The
+  fake's `shell()` joins its drain threads after `sh` exits with no bound, so a
+  background job holding the pipe blocks the step (pre-existing).
+- **T21-P1..P3 (reconcile's leftover-session killer, not changed: process-scan code).**
+  `reconcile_with_orphan_parent` is plain `pub` (should be `#[doc(hidden)]` or
+  test-gated); the `round.ended` filter, the uid check and the non-group `kill` branch
+  have no negative test (an ended round's recorded orphan must survive); the note says
+  "killed" even when the signal failed with something other than `ESRCH`. Each needs a
+  change reviewed line by line under the safety rule.
+- **T22-P5: `run start`'s decision-53 refusal does not say why** a Claude-only plan
+  reaches Codex (escalation or review) or that a one-runtime roster avoids it.
+- **T23 M2: `run accept`'s pre-check is a snapshot.** The run is checked `complete`
+  before any question, and the daemon checks again at the merge; a run that changes in
+  between is refused by the daemon, in its own words.
+- **`crates/config/src/lib.rs` is 605 lines** (600 on `main`; M8a added the
+  `orchestrator` hooks) and `lib_tests.rs` 742 (741 on `main`). Left for a config
+  change that has a reason to split them.
 
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
