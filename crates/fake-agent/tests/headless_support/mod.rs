@@ -7,7 +7,6 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::net::UnixListener;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
@@ -18,10 +17,13 @@ use std::time::{Duration, Instant};
 
 mod shape;
 pub use shape::assert_conforms;
+mod stub_daemon;
+#[allow(unused_imports)] // Not every test binary uses the stub daemon.
+pub use stub_daemon::StubDaemon;
 
 use daemon::headless::argv;
 use daemon::headless::{HeadlessSpec, McpTarget, SessionArg};
-use proto::{AgentRole, ClientMsg, DaemonMsg, Effort, RunReply, RunRequest, Runtime, ToolCall};
+use proto::{AgentRole, Effort, Runtime};
 use serde_json::{Value, json};
 
 /// A bound on one `fake-agent` process that makes no MCP call: its own steps are all
@@ -440,78 +442,6 @@ impl Drop for Agent {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-/// A stub daemon on a `/tmp` socket: `Welcome` to every `Hello`, then the scripted
-/// `ToolResult { ok, text }` for each `Run(Tool(..))`, recording every call.
-pub struct StubDaemon {
-    pub socket: PathBuf,
-    calls: Arc<Mutex<Vec<ToolCall>>>,
-    _dir: tempfile::TempDir,
-}
-
-impl StubDaemon {
-    pub fn start(ok: bool, text: &str) -> Self {
-        let dir = tempdir();
-        let socket = dir.path().join("d.sock");
-        let listener = UnixListener::bind(&socket).unwrap();
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let record = calls.clone();
-        let text = text.to_string();
-        thread::spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(mut stream) = stream else { return };
-                let Some(ClientMsg::Hello { .. }) = read_frame(&mut stream) else {
-                    continue;
-                };
-                write_frame(
-                    &mut stream,
-                    &DaemonMsg::Welcome {
-                        daemon_version: "stub".into(),
-                        windows: vec![],
-                    },
-                );
-                if let Some(ClientMsg::Run(RunRequest::Tool(call))) = read_frame(&mut stream) {
-                    record.lock().unwrap().push(call);
-                    let reply = RunReply::ToolResult {
-                        ok,
-                        text: text.clone(),
-                    };
-                    write_frame(&mut stream, &DaemonMsg::Run(reply));
-                }
-            }
-        });
-        Self {
-            socket,
-            calls,
-            _dir: dir,
-        }
-    }
-
-    pub fn calls(&self) -> Vec<ToolCall> {
-        self.calls.lock().unwrap().clone()
-    }
-
-    pub fn mcp(&self, role: &'static str, task: &'static str) -> Mcp {
-        Mcp {
-            exe: anthrex(),
-            role,
-            task: Some(task),
-            socket: self.socket.clone(),
-        }
-    }
-}
-
-fn read_frame(stream: &mut impl Read) -> Option<ClientMsg> {
-    let mut header = [0u8; 4];
-    stream.read_exact(&mut header).ok()?;
-    let mut body = vec![0u8; u32::from_be_bytes(header) as usize];
-    stream.read_exact(&mut body).ok()?;
-    proto::decode(&body).ok()
-}
-
-fn write_frame(stream: &mut impl Write, msg: &DaemonMsg) {
-    let _ = stream.write_all(&proto::encode(msg).unwrap());
 }
 
 /// The assistant texts, Claude's or Codex's.
