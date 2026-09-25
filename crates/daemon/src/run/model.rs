@@ -572,7 +572,8 @@ pub struct Run {
     /// M8a.22: drawn at start, mixed into session uuids (`role_launch::session_uuid_of`).
     #[serde(default)]
     pub session_nonce: u64,
-    #[serde(default)] // M8a.23, ruling T23-C1: decision 53's Codex branch at start.
+    /// M8a.23, ruling T23-C1: decision 53's Codex branch at start.
+    #[serde(default)]
     pub codex_project_config: Option<crate::headless::argv::CodexProjectConfig>,
     /// Final fix batch F2 (C-I1): `base_sha`'s `.codex` entries, read at `run start`;
     /// every Codex session's checkout must match them (`headless::codex_guard`).

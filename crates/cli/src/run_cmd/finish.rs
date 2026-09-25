@@ -11,7 +11,11 @@ const CONFIRM_MISMATCH: &str = "confirmation does not match the run id";
 
 /// Printed once, before the first prompt, when stdin is not a terminal (ruling
 /// T23-minors, M5): a pipe that stays open would otherwise wait with no explanation.
-const NOT_A_TERMINAL: &str = "stdin is not a terminal; pass --yes or --confirm";
+/// Each command names its own flags (T23-P2, F4).
+const NOT_A_TERMINAL_ACCEPT: &str =
+    "stdin is not a terminal; pass --yes (and --base <head> for a moved base)";
+/// ... for `run reject` and `run discard`, whose only flag is `--confirm`.
+const NOT_A_TERMINAL_CONFIRM: &str = "stdin is not a terminal; pass --confirm <run id>";
 
 /// How many times `run accept` lists a base that keeps moving before it gives up
 /// (ruling T23-minors, M7). Each round is one more commit on the base between the
@@ -57,6 +61,17 @@ pub(super) async fn accept(
         if let Some(moved) = &base_moved {
             eprint!("{}", status::base_moved_listing(&info.base_branch, moved));
         }
+        // Review E-M6 (F4): on a base that has not moved, `--base` must name the run's
+        // own base, or "merge only if the base is at X" would merge onto another.
+        if let (None, Some(sha)) = (&base_moved, base)
+            && !base_matches(sha, &info.base_sha)
+        {
+            anyhow::bail!(
+                "--base {sha} is not {}'s head {}; not merged",
+                info.base_branch,
+                info.base_sha
+            );
+        }
         if let (Some(moved), Some(sha)) = (&base_moved, base)
             && !base_matches(sha, &moved.to)
         {
@@ -66,7 +81,7 @@ pub(super) async fn accept(
             );
         }
         if !asked {
-            if !ask_yes(&format!("{prompt} [y/N] ")).await? {
+            if !ask_yes(&format!("{prompt} [y/N] "), NOT_A_TERMINAL_ACCEPT).await? {
                 anyhow::bail!("not merged");
             }
             asked = true;
@@ -76,7 +91,7 @@ pub(super) async fn accept(
             Some(moved) => {
                 if base.is_none() {
                     let question = status::base_moved_question(&info.base_branch, &moved);
-                    if !ask_yes(&question).await? {
+                    if !ask_yes(&question, NOT_A_TERMINAL_ACCEPT).await? {
                         anyhow::bail!("not merged");
                     }
                 }
@@ -107,7 +122,13 @@ pub(super) async fn confirm_id(
 ) -> anyhow::Result<()> {
     let typed = match given {
         Some(given) => given,
-        None => read_answer(&format!("{prompt}\ntype the run id to confirm: ")).await?,
+        None => {
+            read_answer(
+                &format!("{prompt}\ntype the run id to confirm: "),
+                NOT_A_TERMINAL_CONFIRM,
+            )
+            .await?
+        }
     };
     if typed.trim() != run_id {
         anyhow::bail!(CONFIRM_MISMATCH);
@@ -115,23 +136,24 @@ pub(super) async fn confirm_id(
     Ok(())
 }
 
-async fn ask_yes(question: &str) -> anyhow::Result<bool> {
-    let answer = read_answer(question).await?;
+async fn ask_yes(question: &str, hint: &str) -> anyhow::Result<bool> {
+    let answer = read_answer(question, hint).await?;
     Ok(matches!(
         answer.trim().to_ascii_lowercase().as_str(),
         "y" | "yes"
     ))
 }
 
-/// Prints `prompt` on stderr and reads one line of stdin (empty at end of input). When
+/// Prints `prompt` on stderr (after `hint`, once, when stdin is not a terminal) and
+/// reads one line of stdin (empty at end of input). When
 /// the answer did not end the prompt's line on the screen (end of input, or stdin that
 /// is not a terminal and so echoes nothing), a newline does, so what follows starts
 /// on its own line.
-async fn read_answer(prompt: &str) -> anyhow::Result<String> {
+async fn read_answer(prompt: &str, hint: &str) -> anyhow::Result<String> {
     static HINTED: AtomicBool = AtomicBool::new(false);
     let terminal = std::io::stdin().is_terminal();
     if !terminal && !HINTED.swap(true, Ordering::Relaxed) {
-        eprintln!("{NOT_A_TERMINAL}");
+        eprintln!("{hint}");
     }
     eprint!("{prompt}");
     let _ = std::io::stderr().flush();

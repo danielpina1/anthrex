@@ -61,7 +61,9 @@ fn refused_with(out: &Out, message: &str) {
 
 /// Printed before the first prompt when stdin is not a terminal, which it never is here
 /// (ruling T23-minors, M5).
-const HINT: &str = "stdin is not a terminal; pass --yes or --confirm\n";
+const HINT: &str = "stdin is not a terminal; pass --yes (and --base <head> for a moved base)\n";
+/// ... and for `run reject` and `run discard`, whose only flag is `--confirm` (T23-P2).
+const CONFIRM_HINT: &str = "stdin is not a terminal; pass --confirm <run id>\n";
 
 /// A worker that commits and then waits for a message that never comes: the run stays
 /// `running`.
@@ -209,7 +211,7 @@ fn reject_needs_the_id() {
     assert_eq!(
         out.stderr,
         format!(
-            "{HINT}reject run {id}: remove its worktrees and delete its branches?\ntype the run id to confirm: \nconfirmation does not match the run id\n"
+            "{CONFIRM_HINT}reject run {id}: remove its worktrees and delete its branches?\ntype the run id to confirm: \nconfirmation does not match the run id\n"
         )
     );
     assert_eq!(out.code, 1);
@@ -243,7 +245,7 @@ fn discard_keeps_salvage_refs() {
     assert_eq!(
         out.stderr,
         format!(
-            "{HINT}discard run {id}: remove its worktrees and delete its branches?\ntype the run id to confirm: \nconfirmation does not match the run id\n"
+            "{CONFIRM_HINT}discard run {id}: remove its worktrees and delete its branches?\ntype the run id to confirm: \nconfirmation does not match the run id\n"
         )
     );
     assert_eq!(out.code, 1);
@@ -448,4 +450,31 @@ fn accept_with_the_listed_base_merges() {
     );
     assert_eq!(h.run(&id).unwrap().state, RunState::Accepted);
     assert_eq!(h.git(&["show", "main:a.txt"]), "a");
+}
+
+/// Review E-M6 (F4): `--base` on a base that has not moved must name the run's base,
+/// or a script that meant "only if main is at X" would merge onto another commit.
+#[test]
+fn accept_with_a_base_that_is_not_the_runs_base_is_refused() {
+    let h = RunHarness::new("");
+    green_scripts(&h.repo);
+    let (id, _) = start(&h, &plan("", &[task("t1", &["a.txt"], "")]), &["--yes"]);
+    h.wait_run(&id, complete, RUN_WAIT);
+    let base = h.run(&id).unwrap().base_sha;
+    let out = run(&h, &["accept", &id, "--yes", "--base", "abcdef1"], "");
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(
+        out.stderr.ends_with(&format!(
+            "--base abcdef1 is not main's head {base}; not merged\n"
+        )),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(h.run(&id).unwrap().state, RunState::Complete);
+    ok(&run(
+        &h,
+        &["accept", &id, "--yes", "--base", &base[..7]],
+        "",
+    ));
+    assert_eq!(h.run(&id).unwrap().state, RunState::Accepted);
 }

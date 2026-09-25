@@ -105,7 +105,7 @@ enum RunCommand {
         /// Do not ask before merging (a moved base still needs --base)
         #[arg(long)]
         yes: bool,
-        /// Merge onto a moved base whose listed head is this sha
+        /// Merge only if the base is at this sha (a moved base's listed head, or the run's own base)
         #[arg(long)]
         base: Option<String>,
     },
