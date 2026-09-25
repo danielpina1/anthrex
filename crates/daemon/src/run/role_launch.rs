@@ -10,6 +10,8 @@ use proto::{AgentRole, Route, RunRef, Runtime};
 use super::contract::{REVIEWER_CONTRACT, WORKER_CONTRACT};
 use super::env::profile_env;
 use super::model::{OpId, Run, Task};
+use crate::headless::argv::CodexProjectConfig;
+use crate::headless::codex_guard::{CodexConfigGuard, ObjectFormat};
 use crate::headless::{ClaudeSandbox, HeadlessSpec, McpTarget};
 
 /// Every worker's first two allowed tools; `worker_allowed_tools` follows (decision 24).
@@ -129,6 +131,21 @@ fn worker_env(run: &Run, task: &Task) -> Vec<(String, String)> {
     env
 }
 
+/// Final fix batch F2 (C-I1): a Codex session's guard against project config the run
+/// did not start with, unless the run started under a Codex CLI that does not load
+/// project config or is told not to (decision 53's first two branches). A run from
+/// before M8a.23 (no branch recorded) is guarded.
+pub fn codex_config_guard(run: &Run, runtime: Runtime) -> Option<CodexConfigGuard> {
+    let loads = !matches!(
+        run.codex_project_config,
+        Some(CodexProjectConfig::NotLoaded | CodexProjectConfig::Excluded)
+    );
+    (runtime == Runtime::Codex && loads).then(|| CodexConfigGuard {
+        format: ObjectFormat::of(&run.base_sha),
+        entries: run.codex_config_base.clone(),
+    })
+}
+
 /// The worker session of `task`'s current session number, in its worktree.
 pub fn worker_spec(run: &Run, task: &Task) -> HeadlessSpec {
     let route = &task.route;
@@ -168,6 +185,7 @@ pub fn worker_spec(run: &Run, task: &Task) -> HeadlessSpec {
             role: AgentRole::Worker,
             session: task.session,
         }),
+        codex_config_guard: codex_config_guard(run, route.runtime),
     }
 }
 
@@ -220,6 +238,7 @@ pub fn reviewer_spec(run: &Run, task: &Task, route: &Route) -> HeadlessSpec {
             role: AgentRole::Reviewer,
             session: round,
         }),
+        codex_config_guard: codex_config_guard(run, route.runtime),
     }
 }
 
@@ -386,5 +405,51 @@ mod tests {
             worker.claude_permission_mode.as_deref(),
             Some("acceptEdits")
         );
+    }
+
+    /// Final fix batch F2 (C-I1): every Codex session (worker and reviewer) carries the
+    /// base's `.codex` as its guard, unless the run's Codex CLI does not load project
+    /// config or is told not to; Claude sessions never do.
+    #[test]
+    fn codex_sessions_carry_the_base_codex_config_guard() {
+        use crate::headless::argv::CodexProjectConfig;
+        use crate::headless::codex_guard::{EntryKind, GuardEntry, ObjectFormat};
+        let mut run = run_ok(&plan_with(
+            PROFILE,
+            &[task_toml("t1", "S", "[\"crates/a/**\"]", "")],
+        ));
+        let entry = GuardEntry {
+            path: ".codex/config.toml".into(),
+            kind: EntryKind::File,
+            oid: "a".repeat(40),
+        };
+        run.codex_config_base = vec![entry.clone()];
+        let route = |runtime| Route {
+            runtime,
+            model: "m".into(),
+            strength: Strength::Standard,
+            effort: Effort::Medium,
+        };
+        let mut task = run.tasks[0].clone();
+        for branch in [None, Some(CodexProjectConfig::Loaded)] {
+            run.codex_project_config = branch;
+            task.route = route(Runtime::Codex);
+            let guard = worker_spec(&run, &task)
+                .codex_config_guard
+                .expect("guarded");
+            assert_eq!(guard.format, ObjectFormat::Sha1);
+            assert_eq!(guard.entries, std::slice::from_ref(&entry));
+            let review = reviewer_spec(&run, &task, &route(Runtime::Codex));
+            assert_eq!(review.codex_config_guard, Some(guard));
+            task.route = route(Runtime::Claude);
+            assert_eq!(worker_spec(&run, &task).codex_config_guard, None);
+            let review = reviewer_spec(&run, &task, &route(Runtime::Claude));
+            assert_eq!(review.codex_config_guard, None);
+        }
+        task.route = route(Runtime::Codex);
+        for branch in [CodexProjectConfig::NotLoaded, CodexProjectConfig::Excluded] {
+            run.codex_project_config = Some(branch);
+            assert_eq!(worker_spec(&run, &task).codex_config_guard, None);
+        }
     }
 }

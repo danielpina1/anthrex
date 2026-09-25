@@ -256,6 +256,11 @@ impl RunService {
         run.limits.unconfined_checks = run.limits.worker_sandbox && !available;
         run.session_nonce = random_nonce();
         run.codex_project_config = Some(self.ctx.cli_caps.codex_project_config());
+        // Final fix batch F2 (C-I1): the base's `.codex`, which every Codex session's
+        // checkout must still hold when its process starts.
+        let (g, root, base) = (git.clone(), run.root.clone(), run.base_sha.clone());
+        run.codex_config_base =
+            blocking(move || git::codex_config_tree(&g, &root, &base, timeout)).await?;
 
         let runtimes = reachable_runtimes(&run);
         let checks = self.check_runtimes(&run, &runtimes, timeout).await?;

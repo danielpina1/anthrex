@@ -190,6 +190,7 @@ fn spec(runtime: Runtime, mcp: Option<&Mcp>) -> HeadlessSpec {
         claude_auth: config::ClaudeAuth::Login,
         api_key_helper: None,
         run_ref: None,
+        codex_config_guard: None,
     }
 }
 

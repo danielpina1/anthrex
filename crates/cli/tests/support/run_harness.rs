@@ -28,7 +28,8 @@ pub const RUN_WAIT: Duration = Duration::from_secs(300);
 /// How long one raw request may take, `run accept` and `run discard` aside: `run
 /// start`'s legal worst case is its preflight's git calls at the harness's 5 s
 /// `git_timeout_secs` (six calls, 30 s) plus the id draw's and the settings scan's
-/// (three more, 15 s), 45 s; every other request is one engine step. Recorded in
+/// (three more, 15 s) and the base's `.codex` listing (final fix batch F2, 5 s), 50 s;
+/// every other request is one engine step. Recorded in
 /// `docs/timing-budgets.md`.
 const REQUEST_WAIT: Duration = Duration::from_secs(60);
 

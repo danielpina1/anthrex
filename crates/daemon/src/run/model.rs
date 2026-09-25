@@ -569,6 +569,10 @@ pub struct Run {
     pub session_nonce: u64,
     #[serde(default)] // M8a.23, ruling T23-C1: decision 53's Codex branch at start.
     pub codex_project_config: Option<crate::headless::argv::CodexProjectConfig>,
+    /// Final fix batch F2 (C-I1): `base_sha`'s `.codex` entries, read at `run start`;
+    /// every Codex session's checkout must match them (`headless::codex_guard`).
+    #[serde(default)]
+    pub codex_config_base: Vec<crate::headless::codex_guard::GuardEntry>,
 }
 
 impl Run {

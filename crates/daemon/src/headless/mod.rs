@@ -11,6 +11,7 @@
 
 pub mod argv;
 pub mod claude_stream;
+pub mod codex_guard;
 pub mod codex_stream;
 pub mod conversation;
 pub mod session;
@@ -49,6 +50,11 @@ pub struct HeadlessSpec {
     pub api_key_helper: Option<String>,
     /// `WindowInfo.run`.
     pub run_ref: Option<RunRef>,
+    /// Final fix batch F2 (C-I1): a Codex session's checkout must hold exactly this
+    /// `.codex` before each of its processes starts ([`codex_guard`]). `None`: not
+    /// checked (Claude, or a Codex CLI that does not load project config).
+    #[serde(default)]
+    pub codex_config_guard: Option<codex_guard::CodexConfigGuard>,
 }
 
 /// Decision 54's sandbox block. The worktree (the session's cwd) is writable by default;

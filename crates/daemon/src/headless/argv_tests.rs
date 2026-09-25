@@ -50,6 +50,7 @@ pub(super) fn worker(runtime: Runtime) -> HeadlessSpec {
             role: AgentRole::Worker,
             session: 1,
         }),
+        codex_config_guard: None,
     }
 }
 

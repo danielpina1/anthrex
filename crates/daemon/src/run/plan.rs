@@ -411,6 +411,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         restored: None,
         session_nonce: 0,
         codex_project_config: None,
+        codex_config_base: Vec::new(),
     })
 }
 

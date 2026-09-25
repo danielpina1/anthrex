@@ -30,6 +30,7 @@ mod queue;
 mod resolution;
 mod salvage;
 mod sandbox;
+mod settings;
 mod tmp;
 mod worktrees;
 
@@ -44,6 +45,7 @@ pub use merge::{
 };
 pub use merge_state::abort_merge;
 pub use salvage::{delete_branches, remove_checkout, remove_worktree, salvage};
+pub use settings::{codex_config_tree, project_settings};
 
 /// Reads reconcile (M8a.21) shares with the ops it checks.
 pub(crate) use handback::{finish_clean, interrupted_conflict};
@@ -125,10 +127,6 @@ pub(crate) const NO_NESTED: &str = "--ignore-submodules=dirty";
 /// A patch's `a/` and `b/` prefixes, whatever `diff.noprefix` or
 /// `diff.mnemonicPrefix` say (`--default-prefix` needs git 2.41; runs need 2.38).
 const PATCH_PREFIXES: [&str; 2] = ["--src-prefix=a/", "--dst-prefix=b/"];
-
-/// The files Claude Code reads as project settings (decision 53).
-const CLAUDE_SETTINGS: [&str; 2] = [".claude/settings.json", ".claude/settings.local.json"];
-const CLAUDE_MCP: &str = ".mcp.json";
 
 /// One git program with one per-command timeout: the deadline is taken afresh for
 /// every command (decision 18, "a deadline of `now + git_timeout`").
@@ -472,7 +470,12 @@ fn check_version(output: &str) -> Result<(), String> {
 
 /// Tracked paths at `sha`, limited to `paths` when it is not empty (`ls-tree` matches
 /// its path arguments literally, as path prefixes).
-fn tracked_at(g: Git<'_>, root: &Path, sha: &str, paths: &[&str]) -> Result<Vec<String>, String> {
+pub(super) fn tracked_at(
+    g: Git<'_>,
+    root: &Path,
+    sha: &str,
+    paths: &[&str],
+) -> Result<Vec<String>, String> {
     let mut args = vec![
         os("ls-tree"),
         os("-r"),
@@ -488,65 +491,6 @@ fn tracked_at(g: Git<'_>, root: &Path, sha: &str, paths: &[&str]) -> Result<Vec<
 
 pub(crate) fn nul_fields(text: &str) -> impl Iterator<Item = &str> {
     text.split('\0').filter(|field| !field.is_empty())
-}
-
-/// Decision 53: the project settings in the base commit's tree that a headless session
-/// would load without asking. With `claude`, each tracked `.claude/settings.json` or
-/// `.claude/settings.local.json` with a non-empty `hooks` key (or that is not valid
-/// JSON, so cannot be shown to be hook-free) and a tracked `.mcp.json`; with
-/// `codex_paths`, each of those paths that is tracked. Sorted by path.
-pub fn project_settings(
-    git: &OsStr,
-    root: &Path,
-    base_sha: &str,
-    claude: bool,
-    codex_paths: Option<&[&str]>,
-    timeout: Duration,
-) -> Result<Vec<String>, String> {
-    let mut candidates: Vec<&str> = Vec::new();
-    if claude {
-        candidates.extend(CLAUDE_SETTINGS);
-        candidates.push(CLAUDE_MCP);
-    }
-    if let Some(paths) = codex_paths {
-        candidates.extend(paths.iter().copied());
-    }
-    if candidates.is_empty() {
-        return Ok(Vec::new());
-    }
-    let g = Git::new(git, timeout);
-    let mut found = Vec::new();
-    for path in tracked_at(g, root, base_sha, &candidates)? {
-        if !candidates.contains(&path.as_str()) {
-            continue;
-        }
-        let codex = codex_paths.is_some_and(|paths| paths.contains(&path.as_str()));
-        if claude && CLAUDE_SETTINGS.contains(&path.as_str()) && !codex {
-            let blob = format!("{base_sha}:{path}");
-            let text = g.ok(root, &[os("cat-file"), os("blob"), os(&blob)])?;
-            if !has_hooks(&text) {
-                continue;
-            }
-        }
-        found.push(path);
-    }
-    found.sort();
-    found.dedup();
-    Ok(found)
-}
-
-/// A settings file has hooks unless it parses and its `hooks` key is absent, `null`,
-/// or an empty object or array.
-fn has_hooks(text: &str) -> bool {
-    match serde_json::from_str::<serde_json::Value>(text) {
-        Err(_) => true,
-        Ok(value) => match value.get("hooks") {
-            None | Some(serde_json::Value::Null) => false,
-            Some(serde_json::Value::Object(map)) => !map.is_empty(),
-            Some(serde_json::Value::Array(items)) => !items.is_empty(),
-            Some(_) => true,
-        },
-    }
 }
 
 /// Decision 56: the files tracked at `base_sha` that `protected` matches, in git's

@@ -163,10 +163,17 @@ impl WindowManager {
         };
         let env = session_env(id, &self.config.socket_path, &spec.env);
         let remove = crate::headless::credential_scrub(spec);
+        let guard = spec.codex_config_guard.clone();
         let cwd = spec.cwd.clone();
         let weak = Arc::downgrade(self);
         let pause = self.config.headless_install_pause;
         let handle = tokio::task::spawn_blocking(move || {
+            // Final fix batch F2 (C-I1): Codex reads the checkout's `.codex` again in
+            // every process, so each one is checked first, off the lock, on this
+            // blocking thread.
+            if let Some(guard) = &guard {
+                guard.check(&cwd).map_err(anyhow::Error::msg)?;
+            }
             let spawned = HeadlessHandle::spawn(
                 runtime,
                 program.as_ref(),

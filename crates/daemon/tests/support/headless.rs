@@ -47,6 +47,7 @@ pub fn spec(runtime: Runtime, cwd: &Path) -> HeadlessSpec {
         claude_auth: config::ClaudeAuth::Login,
         api_key_helper: None,
         run_ref: Some(run_ref()),
+        codex_config_guard: None,
     }
 }
 
