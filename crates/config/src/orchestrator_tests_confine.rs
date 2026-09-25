@@ -1,6 +1,7 @@
-//! The confinement keys of `[orchestrator]` (M8a final fix batch F1d): absolute
-//! `cache_dirs` entries only, and `confined_network` keyed by repository root. Split
-//! out of `orchestrator_tests.rs` to keep that file under the 600-line rule.
+//! The confinement and profile keys of `[orchestrator]` (M8a final fix batch F1d):
+//! absolute `cache_dirs` entries only, `confined_network` keyed by repository root,
+//! `unconfined_checks`, and the profile's `generated` and `protected` (moved here in
+//! F4). Split out of `orchestrator_tests.rs` to keep that file under the 600-line rule.
 
 use super::*;
 
@@ -108,4 +109,81 @@ fn confined_unix_sockets_and_localhost_ports_are_read_keyed_by_repo_root() {
         assert!(problems.iter().any(|p| p.key == key), "{key}: {problems:?}");
     }
     assert_eq!(problems.len(), 3, "{problems:?}");
+}
+
+#[test]
+fn profile_generated_is_read() {
+    let (config, problems) = parse(
+        r#"
+[orchestrator.profile]
+generated = ["gen/**", "vendor/**"]
+"#,
+    );
+    assert!(problems.is_empty());
+    assert_eq!(
+        config.orchestrator.profile.generated,
+        Some(vec!["gen/**".to_string(), "vendor/**".to_string()])
+    );
+}
+
+#[test]
+fn profile_protected_is_read_as_additions() {
+    // Decision 56: the config crate cannot see `daemon::run::plan::BUILTIN_PROTECTED`,
+    // so this reads back exactly what was written; `resolve_profile` (M8a.5) adds the
+    // built-ins (Ruling Q12 of the brief refresh, tested there as
+    // `plan_protected_adds_to_config_and_builtins`).
+    let (config, problems) = parse(
+        r#"
+[orchestrator.profile]
+protected = ["x/**"]
+"#,
+    );
+    assert!(problems.is_empty());
+    assert_eq!(
+        config.orchestrator.profile.protected,
+        Some(vec!["x/**".to_string()])
+    );
+}
+
+#[test]
+fn cache_dirs_are_read_keyed_by_repo_root() {
+    // M8a final fix batch F1c round 3 (N3): `[orchestrator.cache_dirs]`, per repository.
+    let (config, problems) = parse(
+        r#"
+[orchestrator.cache_dirs]
+"/Users/me/work/anthrex" = ["~/.cache/sccache", "/opt/cache"]
+"/Users/me/other" = ["~/.cargo/registry"]
+"#,
+    );
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(
+        config.orchestrator.cache_dirs.get("/Users/me/work/anthrex"),
+        Some(&vec![
+            "~/.cache/sccache".to_string(),
+            "/opt/cache".to_string()
+        ])
+    );
+    assert_eq!(
+        config.orchestrator.cache_dirs.get("/Users/me/other"),
+        Some(&vec!["~/.cargo/registry".to_string()])
+    );
+    // It is not a profile key any more.
+    let (_, problems) = parse("[orchestrator.profile]\ncache_dirs = [\"x\"]\n");
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.key == "orchestrator.profile.cache_dirs"),
+        "{problems:?}"
+    );
+}
+
+#[test]
+fn unconfined_checks_is_read_and_off_by_default() {
+    // M8a final fix batch F1c round 2.
+    let (config, problems) = parse("");
+    assert!(problems.is_empty());
+    assert!(!config.orchestrator.unconfined_checks);
+    let (config, problems) = parse("[orchestrator]\nunconfined_checks = true\n");
+    assert!(problems.is_empty(), "{problems:?}");
+    assert!(config.orchestrator.unconfined_checks);
 }
