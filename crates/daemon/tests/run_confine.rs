@@ -9,80 +9,19 @@
 
 mod support;
 
-use daemon::run::confine::ConfineSpec;
 use daemon::run::exec::{OUTPUT_GRACE, run_confined};
-use daemon::run::git::{checkout_repo_dir, prepare_task_worktree};
+use daemon::run::git::checkout_repo_dir;
 use daemon::run::proof::{ProofOp, direct, proof_command, proof_pattern, run_proof};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, Instant};
-use support::TempRepo;
-use support::run_git::{T, commit_file, real_git, repo, wt_dir};
+use support::confine::world;
+use support::run_git::{T, commit_file, real_git};
 
 const LONG: Duration = Duration::from_secs(60);
 /// Spawning `sandbox-exec`, killing and reaping on a loaded machine, beyond the legal
 /// worst case the code derives from `OUTPUT_GRACE` (docs/timing-budgets.md rule 1; the
 /// same allowance as `run_exec.rs`'s `SLACK`).
 const SLACK: Duration = Duration::from_secs(2);
-
-struct World {
-    repo: TempRepo,
-    _wt: tempfile::TempDir,
-    wt: PathBuf,
-    _data: tempfile::TempDir,
-    data: PathBuf,
-    _outside: tempfile::TempDir,
-    /// A stand-in for the user's `$HOME` and for a cache directory, outside everything.
-    outside: PathBuf,
-}
-
-fn world() -> World {
-    let repo = repo();
-    commit_file(&repo.root, "README", "base\n", "base");
-    let (wt, wt_path) = wt_dir();
-    let data = tempfile::tempdir().unwrap();
-    let data_path = data.path().canonicalize().unwrap().join("runs/cf01");
-    let outside = tempfile::tempdir().unwrap();
-    let outside_path = outside.path().canonicalize().unwrap();
-    World {
-        repo,
-        _wt: wt,
-        wt: wt_path,
-        _data: data,
-        data: data_path,
-        _outside: outside,
-        outside: outside_path,
-    }
-}
-
-impl World {
-    fn common(&self) -> PathBuf {
-        self.repo.root.join(".git").canonicalize().unwrap()
-    }
-
-    fn spec(&self, cache_dirs: &[&Path]) -> ConfineSpec {
-        ConfineSpec {
-            data_dir: self.data.clone(),
-            common_dir: self.common(),
-            cache_dirs: cache_dirs.iter().map(|p| p.display().to_string()).collect(),
-        }
-    }
-
-    fn task(&self) -> PathBuf {
-        let path = self.wt.join("runs/cf01/t1");
-        let base = support::run_git::head(&self.repo.root);
-        prepare_task_worktree(
-            real_git(),
-            &self.repo.root,
-            "anthrex/cf01/t1",
-            &base,
-            &path,
-            &checkout_repo_dir(&self.data, &path),
-            T,
-        )
-        .unwrap();
-        path
-    }
-}
 
 /// Writes that must be denied: the user's object store, the user's index, a file in
 /// `$HOME`. Each is attempted, and the command still exits 0.
@@ -129,10 +68,10 @@ fn a_confined_check_writes_only_its_checkout_tmp_objects_and_caches() {
     // Allowed: the checkout, the temporary directory, the cache, its own objects.
     assert!(task.join("built.txt").is_file());
     assert!(confinement.tmp().join("scratch").is_file());
-    assert!(
-        confinement
-            .tmp()
-            .starts_with(checkout_repo_dir(&w.data, &task))
+    // F1d: the task's own short temporary directory.
+    assert_eq!(
+        confinement.tmp(),
+        daemon::run::git::task_tmp(&checkout_repo_dir(&w.data, &task))
     );
     assert!(cache.join("c").is_file());
     assert!(objects.join("allowed").is_file());

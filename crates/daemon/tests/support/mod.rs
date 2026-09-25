@@ -5,6 +5,8 @@
 //! guideline once `tests/server_git.rs` needed the same harness.
 #![allow(dead_code)]
 
+#[cfg(target_os = "macos")]
+pub mod confine;
 pub mod headless;
 pub mod run_git;
 

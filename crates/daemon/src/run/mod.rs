@@ -26,6 +26,7 @@
 //! windows and leftover session processes); both blocking I/O.
 
 pub mod confine;
+mod confine_cache;
 pub mod contract;
 pub mod driver;
 pub mod edits;
@@ -46,6 +47,7 @@ mod report_escape;
 mod report_task;
 pub mod role_launch;
 pub mod roster;
+pub mod seatbelt;
 pub mod snapshot;
 pub mod validate;
 mod validate_graph;
