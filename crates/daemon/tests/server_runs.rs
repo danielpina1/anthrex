@@ -95,3 +95,53 @@ async fn a_disconnected_client_is_not_held_open_by_its_run_request() {
     );
     shutdown.cancel();
 }
+
+/// Milestone 8b task 2: each new request is refused, labelled, until the task that
+/// answers it lands.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_milestone_8b_request_is_refused_until_its_task_lands() {
+    use proto::run_wire::{ProfileRequest, request};
+    let dir = tempfile::Builder::new()
+        .prefix("ax-runs8b")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let (manager, _events) = WindowManager::new(ManagerConfig::new(
+        dir.path().join("d.sock"),
+        "/bin/sh".into(),
+    ));
+    let git = GitWiring::new(config::Git::default());
+    let ctx = RunContext::new(
+        dir.path().join("data"),
+        manager.config(),
+        config::Orchestrator::default(),
+        git.registry.clone(),
+    );
+    let runs = RunService::new(manager, ctx);
+    let here = dir.path().to_path_buf();
+    for (req, label) in [
+        (
+            RunRequest::StartGoal {
+                goal: "g".into(),
+                dir: here.clone(),
+                yes: true,
+                trust_project: false,
+                unconfined_checks: false,
+            },
+            request::START_GOAL,
+        ),
+        (RunRequest::Promote { run_id: "r".into() }, request::PROMOTE),
+        (RunRequest::Stats { dir: here.clone() }, request::STATS),
+        (
+            RunRequest::Profile(ProfileRequest::Status { dir: here.clone() }),
+            request::PROFILE,
+        ),
+    ] {
+        assert_eq!(
+            runs.request(req).await,
+            proto::RunReply::Refused {
+                request: label.to_string(),
+                message: "not available yet".to_string(),
+            }
+        );
+    }
+}

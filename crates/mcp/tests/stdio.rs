@@ -67,6 +67,7 @@ async fn tool_call_is_forwarded_with_role_run_task_and_window() {
             window_id: 7,
             tool: "task_done".into(),
             args,
+            scout_id: None,
         })
     );
 

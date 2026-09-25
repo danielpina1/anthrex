@@ -10,11 +10,16 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::adapt::{
+    DeciderSource, DiffStats, PhaseSecs, RunPath, RunUsage, SizeCheckInfo, TriageInfo,
+};
+use crate::profile::ProfileSource;
 use crate::run::{
     AgentRole, BlockReason, Budget, DoneSignal, GateCounts, Route, RunState, Size, TaskKind,
     TaskState, TestMode, Verdict,
 };
 pub use crate::run::{Finding, Severity};
+use crate::scout::ScoutInfo;
 
 /// How much of a task's or agent round's budget has been used.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,6 +48,16 @@ impl TokenUsage {
     }
 }
 
+/// Field-wise (milestone 8b's usage by role).
+impl std::ops::AddAssign for TokenUsage {
+    fn add_assign(&mut self, other: Self) {
+        self.input += other.input;
+        self.output += other.output;
+        self.cache_read += other.cache_read;
+        self.cache_write += other.cache_write;
+    }
+}
+
 /// Why a task is blocked, with the human-readable detail.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockInfo {
@@ -60,6 +75,11 @@ pub struct CheckInfo {
     pub secs: u64,
     pub summary: String,
     pub on_candidate: bool,
+    /// Milestone 8b: the decider's ≤ 40-line summary; `summary` stays the raw tail.
+    #[serde(default)]
+    pub decider_summary: Option<String>,
+    #[serde(default)]
+    pub summary_source: Option<DeciderSource>,
 }
 
 /// The outcome of one proof (TDD red/green) run.
@@ -156,6 +176,17 @@ pub struct TaskInfo {
     pub wave: u32,
     /// The last 10 events, newest first, each `"<hh:mm> <text>"`.
     pub history: Vec<String>,
+    // Milestone 8b.
+    #[serde(default)]
+    pub decider_usage: Option<TokenUsage>,
+    #[serde(default)]
+    pub size_check: Option<SizeCheckInfo>,
+    #[serde(default)]
+    pub diff: Option<DiffStats>,
+    #[serde(default)]
+    pub phases: Option<PhaseSecs>,
+    #[serde(default)]
+    pub block_source: Option<DeciderSource>,
 }
 
 /// The base branch has moved under a run (decision 21): not a halt on its own, but
@@ -212,6 +243,19 @@ pub struct RunInfo {
     pub report_path: PathBuf,
     pub outcome: Option<String>,
     pub created_at: u64,
+    // Milestone 8b.
+    #[serde(default)]
+    pub path: Option<RunPath>,
+    #[serde(default)]
+    pub triage: Option<TriageInfo>,
+    #[serde(default)]
+    pub promote_requested_at: Option<u64>,
+    #[serde(default)]
+    pub profile_source: Option<ProfileSource>,
+    #[serde(default)]
+    pub usage: Option<RunUsage>,
+    #[serde(default)]
+    pub scouts: Vec<ScoutInfo>,
 }
 
 /// Every run the daemon knows about, at one revision.

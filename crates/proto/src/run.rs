@@ -22,6 +22,8 @@ pub enum AgentRole {
     Orchestrator,
     Worker,
     Reviewer,
+    /// Milestone 8b: a read-only headless scout (`"scout"`).
+    Scout,
 }
 
 /// Identifies one agent round: which run, optionally which task, which role, and which

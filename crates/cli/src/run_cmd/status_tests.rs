@@ -96,6 +96,11 @@ fn task(
         on_critical_path: false,
         wave: 0,
         history: vec![],
+        decider_usage: None,
+        size_check: None,
+        diff: None,
+        phases: None,
+        block_source: None,
     }
 }
 
@@ -189,6 +194,12 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
         ),
         outcome: None,
         created_at: 100,
+        path: None,
+        triage: None,
+        promote_requested_at: None,
+        profile_source: None,
+        usage: None,
+        scouts: vec![],
     }
 }
 

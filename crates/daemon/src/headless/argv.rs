@@ -240,6 +240,7 @@ pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Vec<String
         AgentRole::Orchestrator => "orchestrator",
         AgentRole::Worker => "worker",
         AgentRole::Reviewer => "reviewer",
+        AgentRole::Scout => "scout",
     };
     let mut args = vec![
         "mcp".to_string(),

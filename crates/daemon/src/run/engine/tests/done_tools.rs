@@ -76,6 +76,7 @@ fn tool_authorization() {
             window_id: window,
             tool: "task_done".into(),
             args: done_args(),
+            scout_id: None,
         },
     });
     refused(&mut fx, effects, "unknown run nope");

@@ -86,6 +86,9 @@ fn run_refs(git: &OsString, root: &Path, timeout: Duration) -> Result<Vec<String
     Ok(listing.lines().map(str::to_string).collect())
 }
 
+/// The answer to a milestone-8b request whose task has not landed yet.
+const NOT_YET: &str = "not available yet";
+
 impl RunService {
     /// Answers every `RunRequest` but `Subscribe` and `Unsubscribe` (`server/run_api.rs`).
     pub async fn request(&self, req: RunRequest) -> RunReply {
@@ -165,6 +168,11 @@ impl RunService {
                     Err(text) => RunReply::ToolResult { ok: false, text },
                 }
             }
+            // Milestone 8b: refused until the task that answers each one lands.
+            RunRequest::StartGoal { .. } => answer(request::START_GOAL, Err(NOT_YET.into())),
+            RunRequest::Promote { .. } => answer(request::PROMOTE, Err(NOT_YET.into())),
+            RunRequest::Stats { .. } => answer(request::STATS, Err(NOT_YET.into())),
+            RunRequest::Profile(_) => answer(request::PROFILE, Err(NOT_YET.into())),
             RunRequest::Subscribe | RunRequest::Unsubscribe => RunReply::Refused {
                 request: "run".to_string(),
                 message: "subscriptions are answered by the connection".to_string(),

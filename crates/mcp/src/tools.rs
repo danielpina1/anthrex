@@ -19,6 +19,8 @@ pub fn tools_for(role: AgentRole) -> Vec<Tool> {
         AgentRole::Worker => vec![task_done(), task_blocked()],
         AgentRole::Reviewer => vec![submit_review()],
         AgentRole::Orchestrator => Vec::new(),
+        // Milestone 8b task 9 adds `submit_scout_report`.
+        AgentRole::Scout => Vec::new(),
     }
 }
 
@@ -34,6 +36,7 @@ pub fn role_name(role: AgentRole) -> &'static str {
         AgentRole::Orchestrator => "orchestrator",
         AgentRole::Worker => "worker",
         AgentRole::Reviewer => "reviewer",
+        AgentRole::Scout => "scout",
     }
 }
 
@@ -150,6 +153,13 @@ mod tests {
         assert_eq!(done["required"], json!(["summary"]));
         let blocked = schema(AgentRole::Worker, "task_blocked");
         assert_eq!(blocked["required"], json!(["reason"]));
+    }
+
+    #[test]
+    fn scout_is_named_scout_and_serves_nothing_yet() {
+        assert_eq!(role_name(AgentRole::Scout), "scout");
+        assert!(names(AgentRole::Scout).is_empty());
+        assert!(!allowed(AgentRole::Scout, TASK_DONE));
     }
 
     #[test]

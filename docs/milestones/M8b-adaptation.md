@@ -2201,3 +2201,16 @@ So the "empty-root `ClaudeSandbox`" M8a gives reviewers (F1c N4) and decision 12
 - R-T1-4 (M8b.7): the fenced JSON in assistant or result text is parsed even when the turn limit is hit.
 - R-T1-5 (M8b.15): the OTLP receiver never logs request bodies.
 - R-T1-6 (M8b.5): Claude deciders pass `--tools ""`, keeping `--setting-sources user`.
+
+### M8b.2 protocol (2026-09-25)
+
+**`PROTO_VERSION` = 8.** `pub const PROTO_VERSION: u32 = 7;` stood at `crates/proto/src/lib.rs:25` before the change (set by M8a task 2), so main was at 7 as the header requires; 7 + 1 = 8. `proto_version_is_seven` became `proto_version_is_eight`. Every client reads the one constant (`tui::connection`, `anthrex hook`, `mcp::forward`, the CLI's run client), so none hard-codes a version.
+
+**Deviations:**
+- `RunReply::Profile` carries `Box<ProfileReply>`, not `ProfileReply`. Reason: `ProfileStatus` holds a `ProposalRecord` with two inline `RepoProfile`s (≥ 1536 bytes), which made `RunReply`, and `DaemonMsg` that every broadcast slot holds, trip `clippy::large_enum_variant`. A `Box` is invisible on the wire; the daemon writes `RunReply::Profile(Box::new(reply))`. `ProfileReply` itself carries `#[allow(clippy::large_enum_variant)]` (built once per request, and boxed where it is carried).
+- `ScoutReport` and `ScoutInfo` also derive `Eq`: `RunInfo` (which derives `Eq`) holds `Vec<ScoutInfo>`, and `ProfileStatus` (`Eq`) holds `Option<ScoutInfo>`.
+- The tests are split into `adapt_tests.rs` (494 lines) and its builders `adapt_tests_fixtures.rs`, to stay under 600 lines. `adapt_tests.rs` also loads M8a's `run_tests_fixtures.rs` a second time, as a private module, under `#[allow(clippy::duplicate_mod)]`; the M8a fixtures gained the new fields, unset.
+- Budgets: `run_info.rs` grew +44 (222 → 266; budget +25) and `run_wire.rs` +89 (118 → 207; budget +50), because Interfaces puts every new field `#[serde(default)]` (one attribute line each) and places `ProfileRequest`/`ProfileReply` in `run_wire.rs`. Both files stay far under 600.
+- Beyond the listed files, every constructor of `RunInfo`, `TaskInfo`, `CheckInfo` and `ToolCall` gained the new fields as `None`/empty: `run/snapshot.rs` (M8b's later tasks fill them), `cli/src/run_cmd/status_tests.rs`, `mcp/src/forward.rs` (`scout_id: None` until M8b.9), and the tests `engine/tests/{fixture,done_tools}.rs`, `mcp/tests/stdio.rs`, `fake-agent/tests/headless_modes.rs`.
+- `crates/cli/src/run_cmd.rs` needed no change: its reply handling has no exhaustive `match` on `RunReply` (each site ends in `other => …`). The TUI's `DaemonMsg::Run(_)` arm and `anthrex hook` needed none either.
+- `mcp::tools_for(Scout)` is empty and `role_name(Scout)` is `"scout"` until M8b.9 adds `submit_scout_report`; `anthrex mcp --role scout` parses. The daemon refuses `StartGoal`, `Promote`, `Stats` and `Profile(_)` with `Refused { request: <its label>, message: "not available yet" }` (test `every_milestone_8b_request_is_refused_until_its_task_lands`, `crates/daemon/tests/server_runs.rs`).

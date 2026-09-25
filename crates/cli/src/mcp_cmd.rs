@@ -20,12 +20,14 @@ pub struct McpArgs {
 }
 
 /// `--role`. `orchestrator` is accepted because the launcher can build it; it serves no
-/// tools until milestone 9.
+/// tools until milestone 9. `scout` (milestone 8b) serves none until its task 9 adds
+/// `submit_scout_report`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum RoleArg {
     Worker,
     Reviewer,
     Orchestrator,
+    Scout,
 }
 
 impl From<RoleArg> for proto::AgentRole {
@@ -34,6 +36,7 @@ impl From<RoleArg> for proto::AgentRole {
             RoleArg::Worker => proto::AgentRole::Worker,
             RoleArg::Reviewer => proto::AgentRole::Reviewer,
             RoleArg::Orchestrator => proto::AgentRole::Orchestrator,
+            RoleArg::Scout => proto::AgentRole::Scout,
         }
     }
 }
@@ -68,6 +71,7 @@ mod tests {
             (AgentRole::Worker, Some("t1")),
             (AgentRole::Reviewer, Some("t2")),
             (AgentRole::Orchestrator, None),
+            (AgentRole::Scout, None),
         ] {
             let target = McpTarget {
                 role,

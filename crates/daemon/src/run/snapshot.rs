@@ -75,6 +75,13 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         report_path: run.report_path(),
         outcome: run.outcome.clone(),
         created_at: run.created_at,
+        // Milestone 8b: filled by its later tasks (triage, metering, scouts).
+        path: None,
+        triage: None,
+        promote_requested_at: None,
+        profile_source: None,
+        usage: None,
+        scouts: Vec::new(),
     }
 }
 
@@ -204,6 +211,8 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64) -> TaskInfo 
             secs: c.secs,
             summary: summary(&c.tail),
             on_candidate: c.on_candidate,
+            decider_summary: None,
+            summary_source: None,
         }),
         last_proof: t.proofs.last().map(|p| ProofInfo {
             at: p.at,
@@ -226,5 +235,10 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64) -> TaskInfo 
             .take(HISTORY_SHOWN)
             .map(|e| format!("{} {}", clock(e.at), e.text))
             .collect(),
+        decider_usage: None,
+        size_check: None,
+        diff: None,
+        phases: None,
+        block_source: None,
     }
 }

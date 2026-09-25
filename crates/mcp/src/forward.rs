@@ -71,6 +71,7 @@ pub async fn forward(opts: &McpOptions, tool: &str, args: serde_json::Value) -> 
         window_id: opts.window_id,
         tool: tool.to_string(),
         args,
+        scout_id: None,
     };
     if let Err(e) = write_frame(&mut wr, &ClientMsg::Run(RunRequest::Tool(call))).await {
         return (false, unreachable(&e));

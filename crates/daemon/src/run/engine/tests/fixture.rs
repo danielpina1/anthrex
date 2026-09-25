@@ -282,6 +282,7 @@ impl Fixture {
                 window_id: window,
                 tool: tool.into(),
                 args,
+                scout_id: None,
             },
         })
     }
