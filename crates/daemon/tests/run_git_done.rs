@@ -301,10 +301,26 @@ fn verify_done_edge_cases() {
     let t = task(&repo, &wt, "case");
     commit_file(&t.path, "agents.md", "lower\n", "lower agents");
     commit_file(&t.path, ".Claude/settings.json", "{}", "mixed claude");
+    // Nested instruction files in another case: since Claude sessions may write nested
+    // CLAUDE.md/AGENTS.md (F4), the done gate is the only barrier for them.
+    commit_file(&t.path, "src/Claude.md", "mixed\n", "nested claude");
+    commit_file(&t.path, "docs/agents.md", "lower\n", "nested agents");
+    commit_file(
+        &t.path,
+        "node_modules/x/agents.md",
+        "dep\n",
+        "dependency agents",
+    );
     let r = check(&t, &t.start, &["**"], &[], None);
     assert_eq!(
         r.protected_changed,
-        strings(&[".Claude/settings.json", "agents.md"])
+        strings(&[
+            ".Claude/settings.json",
+            "agents.md",
+            "docs/agents.md",
+            "node_modules/x/agents.md",
+            "src/Claude.md",
+        ])
     );
 
     // A rename from outside owns into owns reports the source (`--no-renames`); a
