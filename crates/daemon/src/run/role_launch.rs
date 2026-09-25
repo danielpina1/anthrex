@@ -38,7 +38,8 @@ pub const REVIEWER_CODEX_SANDBOX: &str = "read-only";
 /// (decisions 25 and 54, narrowed by final fix batch F1, findings C-C1 and D-5, and its
 /// fix round 1, N3): the object store's loose-object directories `objects/00` to
 /// `objects/ff` and `objects/pack`, and the task's own branch
-/// `refs/heads/anthrex/<run>/<task>`, its `.lock` and its reflog. Not `objects/info/`
+/// `refs/heads/anthrex/<run>/<task>` and its `.lock`. Not its reflog (fix round 5: the
+/// worker's git writes none, [`WORKER_GIT_CONFIG`]), not `objects/info/`
 /// (its `alternates` would graft another object store into the repository; fix round 3,
 /// R4), `config`, `hooks/`, `info/`, `packed-refs` or any other branch, the base branch,
 /// the run branch and sibling tasks' branches included. The driver adds the files of the
@@ -53,12 +54,42 @@ pub fn worker_git_roots(git_common_dir: &Path, run_id: &str, task_id: &str) -> V
         .map(|byte| objects.join(format!("{byte:02x}")))
         .collect();
     roots.push(objects.join("pack"));
-    roots.extend([
-        git_common_dir.join(&branch),
-        git_common_dir.join(lock),
-        git_common_dir.join("logs").join(&branch),
-    ]);
+    roots.extend([git_common_dir.join(&branch), git_common_dir.join(lock)]);
     roots
+}
+
+/// Final fix batch F1, fix round 5: git configuration every worker's git runs with,
+/// passed in its environment. `core.logAllRefUpdates=false`: the worker's commits,
+/// resets and rebases write no reflog, so its grant names none and it cannot plant a
+/// symbolic link where the engine's own ref writes would append. A worker that
+/// overrides it only makes its own commits fail: it cannot write a reflog.
+pub const WORKER_GIT_CONFIG: [(&str, &str); 1] = [("core.logAllRefUpdates", "false")];
+
+/// `env` with [`WORKER_GIT_CONFIG`] in `GIT_CONFIG_PARAMETERS` (git's own format for
+/// `-c`, `'key'='value'` separated by spaces), appended after any entries a profile
+/// already sets there, so ours come last and win. Not `GIT_CONFIG_COUNT` and
+/// `GIT_CONFIG_KEY_<n>`: Codex's default shell environment policy drops every variable
+/// whose name contains `KEY`, which would leave a count without its key and make every
+/// git command in the session fail. Neither is among AGENTS.md rule 11's scrubbed five
+/// (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_PREFIX`), which
+/// the daemon's own git calls drop; this is the worker's environment.
+pub fn with_worker_git_config(mut env: Vec<(String, String)>) -> Vec<(String, String)> {
+    let ours: Vec<String> = WORKER_GIT_CONFIG
+        .iter()
+        .map(|(key, value)| format!("'{key}'='{value}'"))
+        .collect();
+    let mut value = ours.join(" ");
+    if let Some(at) = env
+        .iter()
+        .position(|(key, _)| key == "GIT_CONFIG_PARAMETERS")
+    {
+        let (_, theirs) = env.remove(at);
+        if !theirs.trim().is_empty() {
+            value = format!("{} {value}", theirs.trim());
+        }
+    }
+    env.push(("GIT_CONFIG_PARAMETERS".to_string(), value));
+    env
 }
 
 /// The worker session of `task`'s current session number, in its worktree.
@@ -91,7 +122,7 @@ pub fn worker_spec(run: &Run, task: &Task) -> HeadlessSpec {
         } else {
             worker_git_roots(&run.git_common_dir, &run.id, task.id())
         },
-        env: profile_env(&run.profile, &task.worktree),
+        env: with_worker_git_config(profile_env(&run.profile, &task.worktree)),
         claude_auth: limits.claude_auth.into(),
         api_key_helper: limits.api_key_helper.clone(),
         run_ref: Some(RunRef {
@@ -262,7 +293,7 @@ mod tests {
         // daemon and the user's checkout would run.
         let branch = format!("refs/heads/anthrex/{}/t1", run.id);
         let roots = &sandbox.writable_roots;
-        assert_eq!(roots.len(), 256 + 4, "{roots:?}");
+        assert_eq!(roots.len(), 256 + 3, "{roots:?}");
         assert_eq!(roots[0x3a], PathBuf::from("/tmp/p/.git/objects/3a"));
         assert_eq!(
             roots[256..],
@@ -270,8 +301,24 @@ mod tests {
                 PathBuf::from("/tmp/p/.git/objects/pack"),
                 PathBuf::from("/tmp/p/.git").join(&branch),
                 PathBuf::from("/tmp/p/.git").join(format!("{branch}.lock")),
-                PathBuf::from("/tmp/p/.git/logs").join(&branch),
             ]
+        );
+        // Fix round 5: the worker's git writes no reflog.
+        assert!(worker.env.contains(&(
+            "GIT_CONFIG_PARAMETERS".to_string(),
+            "'core.logAllRefUpdates'='false'".to_string()
+        )));
+        // A profile's own entries are kept, ours after them.
+        let env = with_worker_git_config(vec![(
+            "GIT_CONFIG_PARAMETERS".to_string(),
+            "'a.b'='c'".to_string(),
+        )]);
+        assert_eq!(
+            env,
+            [(
+                "GIT_CONFIG_PARAMETERS".to_string(),
+                "'a.b'='c' 'core.logAllRefUpdates'='false'".to_string()
+            )]
         );
         assert_eq!(
             worker.claude_permission_mode.as_deref(),

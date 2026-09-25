@@ -28,8 +28,10 @@ pub const WORKTREE_GIT_FILES: [&str; 13] = [
     "FETCH_HEAD",
 ];
 
-/// The directories of a linked worktree's git directory a worker may write whole.
-pub const WORKTREE_GIT_DIRS: [&str; 4] = ["logs", "rebase-merge", "rebase-apply", "sequencer"];
+/// The directories of a linked worktree's git directory a worker may write whole. Not
+/// `logs/` (final fix batch F1, fix round 5): the worker's git writes no reflog
+/// (`core.logAllRefUpdates=false`, [`crate::run::role_launch::WORKER_GIT_CONFIG`]).
+pub const WORKTREE_GIT_DIRS: [&str; 3] = ["rebase-merge", "rebase-apply", "sequencer"];
 
 /// The writable paths of a worker session in `worktree`: `roots` (the parts of the
 /// common dir [`crate::run::role_launch::worker_git_roots`] names: the object store and
@@ -84,5 +86,24 @@ pub fn worker_git_dirs(
         dirs.push(admin.join(format!("{file}.lock")));
     }
     dirs.extend(WORKTREE_GIT_DIRS.iter().map(|dir| admin.join(dir)));
+    // Fix round 5: no reflog is left for the worker's git (which could not write it) or
+    // for the engine's (which must never append through one): the worktree's `HEAD`'s,
+    // and each granted ref's.
+    let mut reflogs = vec![admin.join("logs/HEAD")];
+    reflogs.extend(
+        roots
+            .iter()
+            .filter_map(|root| root.strip_prefix(git_common_dir).ok())
+            .filter(|rel| rel.starts_with("refs"))
+            .map(|rel| git_common_dir.join("logs").join(rel)),
+    );
+    for log in reflogs {
+        match std::fs::remove_file(&log) {
+            Err(err) if err.kind() != std::io::ErrorKind::NotFound => {
+                return Err(format!("cannot remove the reflog {}: {err}", log.display()));
+            }
+            _ => {}
+        }
+    }
     Ok(dirs)
 }

@@ -77,12 +77,16 @@ use crate::worktree::{GitOutput, run_git_head_tail, run_git_with_cap, run_git_wi
 pub const NO_HOOKS: [&str; 2] = ["-c", "core.hooksPath=/dev/null"];
 
 /// Decision 18: every engine write passes these ahead of its subcommand, so a user's
-/// hooks or a signing pinentry can never hang a run.
-pub const WRITE_FLAGS: [&str; 4] = [
+/// hooks or a signing pinentry can never hang a run. Final fix batch F1, fix round 5:
+/// and no engine write creates a reflog, so an engine worktree never has one a worker's
+/// symbolic link could redirect (git appends to an existing reflog through a link).
+pub const WRITE_FLAGS: [&str; 6] = [
     "-c",
     "core.hooksPath=/dev/null",
     "-c",
     "commit.gpgSign=false",
+    "-c",
+    "core.logAllRefUpdates=false",
 ];
 
 /// Decision 17: `merge-tree --write-tree` needs git 2.38.

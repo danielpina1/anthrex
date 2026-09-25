@@ -25,11 +25,13 @@ const SCRUBBED: [&str; 5] = [
     "GIT_PREFIX",
 ];
 const NO_HOOKS: [&str; 2] = ["-c", "core.hooksPath=/dev/null"];
-const WRITE_FLAGS: [&str; 4] = [
+const WRITE_FLAGS: [&str; 6] = [
     "-c",
     "core.hooksPath=/dev/null",
     "-c",
     "commit.gpgSign=false",
+    "-c",
+    "core.logAllRefUpdates=false",
 ];
 
 /// Subcommands that change the repository or a worktree.
@@ -242,7 +244,7 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
             );
         }
         let (flags, command) = if rest.starts_with(&WRITE_FLAGS) {
-            (true, &rest[4..])
+            (true, &rest[WRITE_FLAGS.len()..])
         } else if rest.starts_with(&NO_HOOKS) {
             (false, &rest[2..])
         } else {

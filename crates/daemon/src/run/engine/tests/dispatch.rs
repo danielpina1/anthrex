@@ -194,7 +194,7 @@ fn approve_starts_dispatch_and_yes_skips_the_gate() {
     // Final fix batch F1: the run's own parts of the common dir, never all of it.
     let branch = format!("refs/heads/anthrex/{}/t1", fx.run().id);
     let roots = &spec.codex_writable_roots;
-    assert_eq!(roots.len(), 256 + 4, "{roots:?}");
+    assert_eq!(roots.len(), 256 + 3, "{roots:?}");
     assert_eq!(roots[0], common.join("objects/00"));
     assert_eq!(roots[255], common.join("objects/ff"));
     assert_eq!(
@@ -203,7 +203,6 @@ fn approve_starts_dispatch_and_yes_skips_the_gate() {
             common.join("objects/pack"),
             common.join(&branch),
             common.join(format!("{branch}.lock")),
-            common.join("logs").join(&branch),
         ]
     );
     // Fix round 3, R4: never the object store whole, nor `objects/info`.

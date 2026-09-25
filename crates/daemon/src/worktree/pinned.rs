@@ -191,6 +191,7 @@ pub fn check(worktree: &Path, pin: &Pin) -> Result<(), String> {
     }
     check_head(pin).or_else(refused)?;
     check_pseudo_refs(pin).or_else(refused)?;
+    check_reflogs(pin).or_else(refused)?;
     check_own_ref(pin).map_err(|what| {
         format!(
             "refusing git in {}: {what}; the task's branch was tampered with",
@@ -240,6 +241,31 @@ fn check_pseudo_refs(pin: &Pin) -> Result<(), String> {
         if let Some(named) = start.trim_start().strip_prefix("ref:") {
             let named = named.lines().next().unwrap_or_default().trim();
             return Err(format!("its {name} is a symbolic ref to {named}"));
+        }
+    }
+    Ok(())
+}
+
+/// Final fix batch F1, fix round 5: no reflog an engine write here could append to is a
+/// symbolic link (git appends to an existing reflog through one): `logs/` and
+/// `logs/HEAD` of the git directory, and the own branch's reflog. Engine worktrees
+/// have no reflogs at all (the engine writes with `core.logAllRefUpdates=false`, and
+/// removes any before a worker launches), and a worker can no longer write them; this
+/// refuses one left from before, or planted by anything else.
+fn check_reflogs(pin: &Pin) -> Result<(), String> {
+    let mut logs = vec![
+        ("logs".to_string(), pin.git_dir.join("logs")),
+        ("logs/HEAD".to_string(), pin.git_dir.join("logs/HEAD")),
+    ];
+    if let Some(own) = pin.head.as_deref() {
+        logs.push((
+            format!("{own}'s reflog"),
+            pin.common_dir.join("logs").join(own),
+        ));
+    }
+    for (name, path) in logs {
+        if std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            return Err(format!("its reflog {name} is a symbolic link"));
         }
     }
     Ok(())

@@ -13,7 +13,7 @@
 mod support;
 
 use daemon::run::git::{prepare_worktree, worker_git_dirs};
-use daemon::run::role_launch::worker_git_roots;
+use daemon::run::role_launch::{with_worker_git_config, worker_git_roots};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use support::run_git::{T, head, out, real_git, repo, try_git, wt_dir};
@@ -32,12 +32,14 @@ fn profile(writable: &[PathBuf]) -> String {
     rules
 }
 
-/// Runs `script` with `sh -c` in `dir` under `profile`; whether it exited 0.
+/// Runs `script` with `sh -c` in `dir` under `profile`, with the git configuration a
+/// worker's environment carries (fix round 5); whether it exited 0.
 fn sandboxed(profile: &str, dir: &Path, script: &str) -> bool {
     let output = Command::new(SANDBOX_EXEC)
         .args(["-p", profile, "sh", "-c", script])
         .current_dir(dir)
         .env("GIT_CONFIG_NOSYSTEM", "1")
+        .envs(with_worker_git_config(Vec::new()))
         .output()
         .unwrap();
     output.status.success()
@@ -123,8 +125,9 @@ fn work_script(branch: &str) -> String {
 }
 
 /// What a worker tries: a commit (and a revert, which writes `MERGE_MSG` and more) on
-/// its own branch, then writes it must not make.
-fn attempts(s: &Setup, profile: &str) -> [bool; 11] {
+/// its own branch, then writes it must not make. Fix round 5: its ordinary git work
+/// runs with its grant naming no reflog, and it can write none.
+fn attempts(s: &Setup, profile: &str) -> [bool; 14] {
     let hook = s.common.join("hooks/post-merge");
     let admin = PathBuf::from(out(&s.task, &["rev-parse", "--absolute-git-dir"]));
     let run = s.run.as_str();
@@ -160,6 +163,24 @@ fn attempts(s: &Setup, profile: &str) -> [bool; 11] {
         write(admin.join("gitdir")),
         write(admin.join("config.worktree")),
         write(s.common.join("objects/info/alternates")),
+        // Fix round 5: no reflog, and no link where one would be.
+        sandboxed(
+            profile,
+            &s.task,
+            &format!(
+                "mkdir -p '{logs}' && ln -s /dev/null '{logs}/HEAD'",
+                logs = admin.join("logs").display()
+            ),
+        ),
+        write(admin.join("logs/HEAD")),
+        sandboxed(
+            profile,
+            &s.task,
+            &format!(
+                "mkdir -p '{dir}' && printf 'x\\n' > '{dir}/t1'",
+                dir = s.common.join("logs/refs/heads/anthrex").join(run).display()
+            ),
+        ),
     ]
 }
 
@@ -197,6 +218,9 @@ fn a_sandboxed_worker_commits_but_cannot_write_config_hooks_or_other_branches() 
         "its git dir's gitdir",
         "a config.worktree",
         "objects/info/alternates",
+        "a link at its worktree's HEAD reflog",
+        "its worktree's HEAD reflog",
+        "its branch's reflog",
     ];
     for (wrote, what) in rest.iter().zip(names) {
         assert!(!wrote, "the worker wrote {what}");
@@ -217,7 +241,7 @@ fn the_whole_common_dir_writable_lets_every_write_through() {
     }
     let s = setup("sb02");
     let writable = vec![s.task.clone(), s.common.clone()];
-    assert_eq!(attempts(&s, &profile(&writable)), [true; 11]);
+    assert_eq!(attempts(&s, &profile(&writable)), [true; 14]);
 }
 
 /// The grant is found from the repository's side: a `.git` file the worker pointed at
