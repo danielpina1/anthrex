@@ -349,3 +349,56 @@ async fn a_stop_writes_the_reports_still_due() {
     s.stop().await;
     assert!(report.is_file(), "the due report was not written at stop");
 }
+
+/// Final review B-3: when a step's `run.json` cannot be saved (or the op's intent line
+/// cannot be appended), the step's ops are not started: each is answered `Failed`, so
+/// no op ever runs that the disk does not know of (decision 43).
+#[tokio::test(flavor = "multi_thread")]
+async fn an_op_whose_run_could_not_be_saved_is_not_started() {
+    let s = service();
+    let mut rx = crate::lock(&s.rx).take().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    // A file where the run's directory should be: every save and append fails.
+    let blocked = data.path().join("not-a-dir");
+    std::fs::write(&blocked, b"x").unwrap();
+    let mut run = poisoned_run("r1", data.path());
+    run.revision = 1;
+    run.data_dir = blocked.join("r1");
+    crate::lock(&s.state)
+        .runs
+        .insert(run.id.clone(), run.clone());
+    let marker = data.path().join("the-op-ran");
+    let mut ctx = OpCtx::of(&run);
+    ctx.confine = None;
+    let kind = crate::run::engine::OpKind::Check {
+        dir: data.path().to_path_buf(),
+        command: format!("touch '{}'", marker.display()),
+        timeout_secs: 20,
+        env: Vec::new(),
+        scratch: None,
+    };
+    s.execute(
+        vec![
+            effects::Ready::Save(Box::new(run)),
+            effects::Ready::Op { ctx, op: 7, kind },
+        ],
+        0,
+    )
+    .await;
+    let msg = tokio::time::timeout(Duration::from_secs(30), rx.recv())
+        .await
+        .expect("the op is answered")
+        .expect("a message");
+    let Msg::Event(EventKind::OpDone { op, result, .. }) = msg else {
+        panic!("expected an OpDone");
+    };
+    assert_eq!(op, 7);
+    let crate::run::engine::OpResult::Failed { message } = result else {
+        panic!("expected Failed, got {result:?}");
+    };
+    assert!(message.contains("could not journal"), "{message}");
+    assert!(
+        !marker.exists(),
+        "the op ran although its run was never saved"
+    );
+}

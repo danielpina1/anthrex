@@ -151,27 +151,41 @@ impl RunWrites {
 }
 
 /// A [`RunWrites::writer`] on a blocking thread; a failure is logged (the next persist
-/// of the run writes it again).
-pub(super) async fn save(writes: &RunWrites, run: Run) {
+/// of the run writes it again). `false` when the write failed.
+pub(super) async fn save(writes: &RunWrites, run: Run) -> bool {
     let id = run.id.clone();
     match tokio::task::spawn_blocking(writes.writer(run)).await {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => tracing::error!(run = %id, %error, "could not save run.json"),
-        Err(error) => tracing::error!(run = %id, %error, "saving run.json panicked"),
+        Ok(Ok(())) => true,
+        Ok(Err(error)) => {
+            tracing::error!(run = %id, %error, "could not save run.json");
+            false
+        }
+        Err(error) => {
+            tracing::error!(run = %id, %error, "saving run.json panicked");
+            false
+        }
     }
 }
 
 impl RunService {
-    /// Executes one step's effects in order, the engine lock released.
+    /// Executes one step's effects in order, the engine lock released. An op of a run
+    /// whose `run.json` this step could not save is not started (final review B-3).
     pub(super) async fn execute(self: &Arc<Self>, ready: Vec<Ready>, now: u64) {
+        let mut unsaved = std::collections::HashSet::new();
         for item in ready {
             match item {
                 Ready::Save(run) => {
                     crate::lock(&self.book).dirty.remove(&run.id);
-                    save(&self.writes, *run).await;
+                    let id = run.id.clone();
+                    if !save(&self.writes, *run).await {
+                        unsaved.insert(id);
+                    }
                 }
                 Ready::Dirty(run_id) => {
                     crate::lock(&self.book).dirty.insert(run_id);
+                }
+                Ready::Op { ctx, op, .. } if unsaved.contains(&ctx.run_id) => {
+                    self.not_started(ctx, op, "run.json could not be saved");
                 }
                 Ready::Op { ctx, op, kind } => self.start_op(ctx, op, kind).await,
                 Ready::Publish(snap) => self.publish(*snap),
@@ -299,7 +313,9 @@ impl RunService {
             op,
             kind: kind.clone(),
         };
-        self.append(&ctx, line).await;
+        if !self.append(&ctx, line).await {
+            return self.not_started(ctx, op, "its intent line could not be appended");
+        }
         self.crash_injection(name);
         let service = self.clone();
         tokio::spawn(async move {
@@ -323,6 +339,19 @@ impl RunService {
                 op,
                 result,
             });
+        });
+    }
+
+    /// Final review B-3: an op the journal cannot know of is not started (decision 43);
+    /// it is answered `Failed`, which the engine handles as any failed op.
+    fn not_started(&self, ctx: OpCtx, op: OpId, why: &str) {
+        tracing::error!(run = %ctx.run_id, op, why, "an op was not started");
+        self.send(EventKind::OpDone {
+            run_id: ctx.run_id,
+            op,
+            result: crate::run::engine::OpResult::Failed {
+                message: format!("could not journal the op ({why}); it was not started"),
+            },
         });
     }
 
@@ -354,8 +383,8 @@ impl RunService {
         self.append(ctx, line).await;
     }
 
-    /// Appends one journal line, fsynced, on a blocking thread.
-    pub(super) async fn append(&self, ctx: &OpCtx, line: JournalLine) {
+    /// Appends one journal line, fsynced, on a blocking thread. `false` when it failed.
+    pub(super) async fn append(&self, ctx: &OpCtx, line: JournalLine) -> bool {
         let lock = self.journal.clone();
         let dir = ctx.data_dir.clone();
         let appended = tokio::task::spawn_blocking(move || {
@@ -364,9 +393,15 @@ impl RunService {
         })
         .await;
         match appended {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => tracing::error!(run = %ctx.run_id, %error, "journal append failed"),
-            Err(error) => tracing::error!(run = %ctx.run_id, %error, "journal append panicked"),
+            Ok(Ok(())) => true,
+            Ok(Err(error)) => {
+                tracing::error!(run = %ctx.run_id, %error, "journal append failed");
+                false
+            }
+            Err(error) => {
+                tracing::error!(run = %ctx.run_id, %error, "journal append panicked");
+                false
+            }
         }
     }
 
