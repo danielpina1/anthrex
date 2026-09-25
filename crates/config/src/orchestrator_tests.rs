@@ -533,6 +533,9 @@ mod roster;
 #[path = "orchestrator_tests_confine.rs"]
 mod confine;
 
+#[path = "orchestrator_tests_adapt.rs"]
+mod adapt;
+
 /// Final fix batch F2 (C-I3), decision 50's recorded ruling: whether `--settings` hooks
 /// and `--mcp-config` still apply under `--bare` is not verified, so `auth = "api_key"`
 /// is refused at config load with a problem, and `login` is kept.

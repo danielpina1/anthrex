@@ -20,8 +20,11 @@ use std::str::FromStr;
 
 use super::*;
 
+mod adapt;
 mod profile;
 mod roster;
+
+pub use adapt::{Deciders, Metering, Onboarding, Scouts};
 
 use profile::{read_profile, report_unknown_profile};
 pub use roster::default_roster;
@@ -86,6 +89,12 @@ pub struct Orchestrator {
     pub builtin_models: bool,
     pub models: Vec<proto::ModelEntry>,
     pub profile: proto::ProfileSpec,
+    /// M8b decision 3: `[orchestrator] fast_path` and the adaptation tables.
+    pub fast_path: bool,
+    pub deciders: Deciders,
+    pub scouts: Scouts,
+    pub onboarding: Onboarding,
+    pub metering: Metering,
 }
 
 /// `[orchestrator.claude] auth`, decision 50: whether a headless Claude session reads
@@ -149,6 +158,11 @@ impl Default for Orchestrator {
             builtin_models: true,
             models: default_roster(),
             profile: proto::ProfileSpec::default(),
+            fast_path: true,
+            deciders: Deciders::default(),
+            scouts: Scouts::default(),
+            onboarding: Onboarding::default(),
+            metering: Metering::default(),
         }
     }
 }
@@ -273,6 +287,7 @@ pub(crate) fn read(table: &toml::Table, problems: &mut Vec<Problem>) -> Orchestr
     );
     read_models(t, &mut o, problems);
     read_profile(t, &mut o, problems);
+    adapt::read_adapt(t, &mut o, problems);
 
     o
 }

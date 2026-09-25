@@ -21,7 +21,10 @@ pub use git::{
     GIT_DEBOUNCE_MS_RANGE, GIT_IGNORE_MAX_CHARS, GIT_IGNORE_MAX_ENTRIES, GIT_POLL_SECS_RANGE, Git,
 };
 use git::{KNOWN_GIT_KEYS, read_git};
-pub use orchestrator::{ClaudeAuth, ClaudeHeadless, Orchestrator, default_roster};
+pub use orchestrator::{
+    ClaudeAuth, ClaudeHeadless, Deciders, Metering, Onboarding, Orchestrator, Scouts,
+    default_roster,
+};
 
 /// The parsed, validated configuration. Always usable: any invalid or
 /// unknown key in the source file is reported as a [`Problem`] and the

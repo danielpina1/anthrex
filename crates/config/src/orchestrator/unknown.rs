@@ -1,6 +1,9 @@
 //! `[orchestrator]`'s unknown keys, each reported as `unknown key, ignored` (split out
 //! of `orchestrator.rs` to keep it under the 600-line rule, F4).
 
+use super::adapt::{
+    KNOWN_DECIDERS_KEYS, KNOWN_METERING_KEYS, KNOWN_ONBOARDING_KEYS, KNOWN_SCOUTS_KEYS,
+};
 use super::report_unknown_profile;
 use crate::{Problem, report_unknown_nested, unknown_key_problem};
 
@@ -36,7 +39,8 @@ pub(crate) fn report_unknown(value: &toml::Value, problems: &mut Vec<Problem>) {
             | "cache_dirs"
             | "confined_network"
             | "confined_unix_sockets"
-            | "confined_localhost_ports" => {}
+            | "confined_localhost_ports"
+            | "fast_path" => {}
             "models" => report_unknown_model_keys(sub, problems),
             "review" => {
                 report_unknown_nested(sub, "orchestrator.review", KNOWN_REVIEW_KEYS, problems)
@@ -46,6 +50,21 @@ pub(crate) fn report_unknown(value: &toml::Value, problems: &mut Vec<Problem>) {
                 report_unknown_nested(sub, "orchestrator.claude", KNOWN_CLAUDE_KEYS, problems)
             }
             "profile" => report_unknown_profile(sub, problems),
+            "deciders" => {
+                report_unknown_nested(sub, "orchestrator.deciders", KNOWN_DECIDERS_KEYS, problems)
+            }
+            "scouts" => {
+                report_unknown_nested(sub, "orchestrator.scouts", KNOWN_SCOUTS_KEYS, problems)
+            }
+            "onboarding" => report_unknown_nested(
+                sub,
+                "orchestrator.onboarding",
+                KNOWN_ONBOARDING_KEYS,
+                problems,
+            ),
+            "metering" => {
+                report_unknown_nested(sub, "orchestrator.metering", KNOWN_METERING_KEYS, problems)
+            }
             other => problems.push(unknown_key_problem(&format!("orchestrator.{other}"))),
         }
     }
