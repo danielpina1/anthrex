@@ -140,6 +140,32 @@ fn journal_lines_round_trip_and_a_torn_last_line_is_dropped() {
     assert!(problems[0].contains(JOURNAL_FILE), "{problems:?}");
 }
 
+/// Final review B-12: a run is loaded from where it is, never from where its
+/// `run.json` says it was (a moved data directory, a changed `ANTHREX_DATA_DIR`), and a
+/// directory whose name is not its run's id (a copy) is skipped with a problem, so two
+/// directories never load as one run.
+#[test]
+fn load_all_takes_a_runs_directory_from_where_it_is() {
+    let old = tempfile::tempdir().unwrap();
+    let run = plain_run(old.path());
+    save_run(&run).unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let runs_dir = data.path().join("runs");
+    std::fs::create_dir_all(&runs_dir).unwrap();
+    let moved = runs_dir.join(&run.id);
+    std::fs::rename(&run.data_dir, &moved).unwrap();
+    let copy = runs_dir.join("zz-a-copy-0000");
+    std::fs::create_dir_all(&copy).unwrap();
+    std::fs::copy(moved.join(RUN_FILE), copy.join(RUN_FILE)).unwrap();
+
+    let (runs, problems) = load_all(data.path());
+    assert_eq!(runs.len(), 1, "{problems:?}");
+    assert_eq!(runs[0].0.data_dir, moved);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(problems[0].contains("zz-a-copy-0000"), "{problems:?}");
+    assert!(problems[0].contains(&run.id), "{problems:?}");
+}
+
 #[test]
 fn load_all_skips_a_bad_run_with_a_problem() {
     let data = tempfile::tempdir().unwrap();

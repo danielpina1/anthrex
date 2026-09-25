@@ -202,7 +202,7 @@ pub fn load_all(data_dir: &Path) -> (Vec<(Run, Vec<JournalLine>)>, Vec<String>) 
             }
         }
         let run_file = dir.join(RUN_FILE);
-        let run: Run = match fs::read(&run_file) {
+        let mut run: Run = match fs::read(&run_file) {
             Ok(bytes) => match serde_json::from_slice(&bytes) {
                 Ok(run) => run,
                 Err(err) => {
@@ -223,6 +223,17 @@ pub fn load_all(data_dir: &Path) -> (Vec<(Run, Vec<JournalLine>)>, Vec<String>) 
                 continue;
             }
         };
+        // Final review B-12: a run lives where it is found. A directory whose name is
+        // not its run's id is a copy, and would load as a second run of the same id.
+        if name(&dir) != run.id {
+            problems.push(format!(
+                "run {} skipped: its run.json is run {}'s",
+                name(&dir),
+                run.id
+            ));
+            continue;
+        }
+        run.data_dir = dir.clone();
         let journal_file = dir.join(JOURNAL_FILE);
         match read_journal(&journal_file) {
             Ok((lines, found)) => {
