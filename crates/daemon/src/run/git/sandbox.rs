@@ -133,11 +133,17 @@ pub(crate) fn engine_child(path: &Path) -> Result<PathBuf, String> {
     if name == ".." || name == "." {
         return Err(format!("{} does not name a directory", path.display()));
     }
-    std::fs::create_dir_all(parent)
-        .map_err(|err| format!("cannot create {}: {err}", parent.display()))?;
-    let parent = parent
-        .canonicalize()
-        .map_err(|err| format!("cannot resolve {}: {err}", parent.display()))?;
+    // Final fix batch F1d: a task's temporary directory lives under the daemon's short
+    // root, which is made private and checked with `lstat`, never resolved.
+    let parent = if parent == super::tmp::tmp_root() {
+        super::tmp::ensure_root()?
+    } else {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("cannot create {}: {err}", parent.display()))?;
+        parent
+            .canonicalize()
+            .map_err(|err| format!("cannot resolve {}: {err}", parent.display()))?
+    };
     let dir = parent.join(name);
     match std::fs::create_dir(&dir) {
         Err(err) if err.kind() != std::io::ErrorKind::AlreadyExists => {

@@ -149,12 +149,42 @@ fn mcp_config(role: &str, task: &str) -> Value {
 }
 
 fn sandbox_block() -> Value {
+    sandbox_block_writing(json!([COMMON]))
+}
+
+/// Decision 54's block with `allow_write`, and (final fix batch F1d, R5) every widening
+/// key pinned closed.
+fn sandbox_block_writing(allow_write: Value) -> Value {
     json!({
         "enabled": true,
         "allowUnsandboxedCommands": false,
         "failIfUnavailable": true,
-        "filesystem": {"allowWrite": [COMMON]},
+        "filesystem": {"allowWrite": allow_write, "disabled": false},
+        "network": {
+            "allowedDomains": [],
+            "strictAllowlist": true,
+            "allowUnixSockets": [],
+            "allowAllUnixSockets": false,
+            "allowLocalBinding": false,
+            "allowMachLookup": [],
+        },
+        "allowAppleEvents": false,
+        "enableWeakerNetworkIsolation": false,
+        "enableWeakerNestedSandbox": false,
+        "excludedCommands": [],
     })
+}
+
+/// Final fix batch F1d (R5): the Codex settings every session pins.
+fn codex_pins() -> Vec<String> {
+    strs(&[
+        "-c",
+        "sandbox_workspace_write.network_access=false",
+        "-c",
+        "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+        "-c",
+        "sandbox_workspace_write.exclude_slash_tmp=true",
+    ])
 }
 
 fn strs(items: &[&str]) -> Vec<String> {
@@ -279,12 +309,7 @@ fn argv_builders() {
     );
     // F1c round 3 (N4): the reviewer's settings now carry a read-only sandbox block.
     let mut reviewer_expected = launch::claude::settings(Path::new(EXE), WINDOW);
-    reviewer_expected["sandbox"] = json!({
-        "enabled": true,
-        "allowUnsandboxedCommands": false,
-        "failIfUnavailable": true,
-        "filesystem": {"allowWrite": []},
-    });
+    reviewer_expected["sandbox"] = sandbox_block_writing(json!([]));
     assert_eq!(json_after(&reviewer_argv, "--settings"), reviewer_expected);
     assert_eq!(
         json_after(&reviewer_argv, "--mcp-config"),
@@ -330,11 +355,16 @@ fn argv_builders() {
             "approval_policy=\"never\"",
             "-s",
             "workspace-write",
+        ])
+        .into_iter()
+        .chain(codex_pins())
+        .chain(strs(&[
             "-c",
             "sandbox_workspace_write.writable_roots=[\"/tmp/x/.git\"]",
             "--",
             "Do t1",
-        ])
+        ]))
+        .collect::<Vec<_>>()
     );
 
     // A resume: `exec resume <id>`, the sandbox through `-c sandbox_mode` (M8a.1 item 6:
@@ -386,11 +416,11 @@ fn argv_builders() {
             "approval_policy=\"never\"",
             "-s",
             "read-only",
-            "-m",
-            "gpt-5.5",
-            "--",
-            "Review t2",
         ])
+        .into_iter()
+        .chain(codex_pins())
+        .chain(strs(&["-m", "gpt-5.5", "--", "Review t2"]))
+        .collect::<Vec<_>>()
     );
 }
 
@@ -434,11 +464,17 @@ fn codex_worker_args_add_the_git_common_dir_as_writable() {
             .position(|a| a == roots)
             .expect("the writable root");
         assert_eq!(argv[at - 1], "-c");
-        // Codex's default `/tmp` and `$TMPDIR` stay writable: M8a.1 excluded them only to
-        // make its recording prove something.
-        assert!(!argv.iter().any(|a| a.contains("exclude_slash_tmp")));
-        assert!(!argv.iter().any(|a| a.contains("exclude_tmpdir_env_var")));
+        // Final fix batch F1d (R5): Codex's network, `$TMPDIR` and `/tmp` are pinned off
+        // on every turn, so the user's `~/.codex/config.toml` cannot widen them (the
+        // daemon's `$TMPDIR` holds its socket on macOS).
         let reviewer = codex(&reviewer(Runtime::Codex), &session, "go", &CLI_CAPS);
+        for argv in [&argv, &reviewer] {
+            let pins = codex_pins();
+            assert!(
+                argv.windows(pins.len()).any(|w| w == pins.as_slice()),
+                "{argv:?}"
+            );
+        }
         assert!(!reviewer.iter().any(|a| a.contains("writable_roots")));
     }
     // Several roots make one TOML array.
@@ -468,13 +504,15 @@ fn worker_settings_json_enables_the_sandbox() {
             allow_unsandboxed: "escape",
             write_allow: "fs.write.paths",
             fail_if_unavailable: "strict",
+            pins: &[("net.sockets", Pin::Empty), ("net.local", Pin::Bool(false))],
         },
         ..CLI_CAPS
     };
     assert_eq!(
         claude_settings(Path::new(EXE), WINDOW, Some(&sandbox), &renamed)["sandbox"],
         json!({"on": true, "escape": false, "strict": true,
-               "fs": {"write": {"paths": [COMMON]}}})
+               "fs": {"write": {"paths": [COMMON]}},
+               "net": {"sockets": [], "local": false}})
     );
     // A reviewer's has none, and neither has a worker's with `worker_sandbox = false`.
     let plain = launch::claude::settings(Path::new(EXE), WINDOW);
@@ -490,12 +528,7 @@ fn worker_settings_json_enables_the_sandbox() {
     );
     assert_eq!(
         reviewer_settings["sandbox"],
-        json!({
-            "enabled": true,
-            "allowUnsandboxedCommands": false,
-            "failIfUnavailable": true,
-            "filesystem": {"allowWrite": []},
-        })
+        sandbox_block_writing(json!([]))
     );
     // A worker with `worker_sandbox = false` (no sandbox spec) still has none.
     let mut unsandboxed = worker(Runtime::Claude);

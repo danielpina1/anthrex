@@ -30,6 +30,7 @@ mod queue;
 mod resolution;
 mod salvage;
 mod sandbox;
+mod tmp;
 mod worktrees;
 
 pub use accept::{ACCEPT_MERGE_TIMEOUT, accept, accept_with_merge_timeout};
@@ -56,6 +57,8 @@ pub(crate) use worktrees::{forget_missing, is_ancestor, listed as listed_worktre
 pub use queue::{GitQueue, LOCK_RETRY_DELAYS_MS};
 pub use resolution::resolution_only;
 pub use sandbox::{private_dir, worker_git_dirs};
+pub(crate) use tmp::remove as remove_task_tmp;
+pub use tmp::{task_tmp, tmp_root};
 pub use worktrees::{
     absolute_git_dir, create_run_branch, lock_worktree, pin_worktrees, prepare_review,
     prepare_review_in, prepare_scratch, prepare_scratch_in, prepare_task_worktree,

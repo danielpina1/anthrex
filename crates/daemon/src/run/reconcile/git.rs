@@ -355,6 +355,10 @@ pub(super) fn remove_worktree(
             )),
         }
     }
+    // Final fix batch F1d: its temporary directory is outside it.
+    if let Err(err) = crate::run::git::remove_task_tmp(repo) {
+        notes.push(format!("could not remove the removed checkout's {err}"));
+    }
     if let Some(entry) = listed_worktree_in(g, root, path)? {
         match forget_missing(g, root, path, &entry) {
             Ok(()) => notes.push(format!("pruned the removed worktree {}", path.display())),

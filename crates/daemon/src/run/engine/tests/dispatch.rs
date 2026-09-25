@@ -195,8 +195,14 @@ fn approve_starts_dispatch_and_yes_skips_the_gate() {
     // private object directory and its temporary directory under the run's data
     // directory. The checkout's repository names its own objects: no environment.
     let objects = fx.run().data_dir.join("tasks/t1/git/objects");
-    let tmp = fx.run().data_dir.join("tasks/t1/tmp");
-    assert_eq!(spec.codex_writable_roots, [objects, tmp]);
+    // F1d: its temporary directory is short, under the daemon's own root, and is the
+    // worker's `TMPDIR`.
+    let tmp = crate::run::git::task_tmp(&fx.run().data_dir.join("tasks/t1"));
+    assert_eq!(spec.codex_writable_roots, [objects, tmp.clone()]);
+    assert!(
+        spec.env
+            .contains(&("TMPDIR".to_string(), tmp.display().to_string()))
+    );
     assert!(
         !spec
             .codex_writable_roots

@@ -58,10 +58,11 @@ pub fn task_engine_dir(data_dir: &Path, task_id: &str) -> PathBuf {
     task_repo_dir(data_dir, task_id).join("engine")
 }
 
-/// Final fix batch F1c: the task's temporary directory, `<run data dir>/tasks/<task>/tmp`,
-/// in its worker's grant and its checks' (`TMPDIR`).
+/// Final fix batch F1c: the task's temporary directory, in its worker's grant and its
+/// checks', and `TMPDIR` for both. Since F1d a short directory under the daemon's own
+/// root (`run::git::task_tmp`), never the daemon's `$TMPDIR`.
 pub fn task_tmp_dir(data_dir: &Path, task_id: &str) -> PathBuf {
-    task_repo_dir(data_dir, task_id).join("tmp")
+    crate::run::git::task_tmp(&task_repo_dir(data_dir, task_id))
 }
 
 /// What a worker's sandbox may write besides its worktree (decisions 25 and 54, as
@@ -113,6 +114,20 @@ pub fn with_worker_git_config(mut env: Vec<(String, String)>) -> Vec<(String, St
     env
 }
 
+/// A worker's environment: the profile's, [`WORKER_GIT_CONFIG`], and (final fix batch
+/// F1d, R5) `TMPDIR` set last to the task's own short temporary directory, so neither
+/// the daemon's `$TMPDIR` (which holds its socket on macOS) nor a profile's `TMPDIR`
+/// reaches the worker.
+fn worker_env(run: &Run, task: &Task) -> Vec<(String, String)> {
+    let mut env = with_worker_git_config(profile_env(&run.profile, &task.worktree));
+    env.retain(|(key, _)| key != "TMPDIR");
+    env.push((
+        "TMPDIR".to_string(),
+        task_tmp_dir(&run.data_dir, task.id()).display().to_string(),
+    ));
+    env
+}
+
 /// The worker session of `task`'s current session number, in its worktree.
 pub fn worker_spec(run: &Run, task: &Task) -> HeadlessSpec {
     let route = &task.route;
@@ -143,7 +158,7 @@ pub fn worker_spec(run: &Run, task: &Task) -> HeadlessSpec {
         } else {
             worker_git_roots(&run.data_dir, task.id())
         },
-        env: with_worker_git_config(profile_env(&run.profile, &task.worktree)),
+        env: worker_env(run, task),
         claude_auth: limits.claude_auth.into(),
         api_key_helper: limits.api_key_helper.clone(),
         run_ref: Some(RunRef {
@@ -323,8 +338,19 @@ mod tests {
         // run's data directory. The checkout's repository is self-describing: no
         // object-directory variable is set.
         let objects = PathBuf::from(format!("/tmp/data/runs/{}/tasks/t1/git/objects", run.id));
-        let tmp = PathBuf::from(format!("/tmp/data/runs/{}/tasks/t1/tmp", run.id));
-        assert_eq!(sandbox.writable_roots, [objects, tmp]);
+        // F1d: the temporary directory is short, under the daemon's own root.
+        let tmp = crate::run::git::task_tmp(&PathBuf::from(format!(
+            "/tmp/data/runs/{}/tasks/t1",
+            run.id
+        )));
+        assert!(tmp.starts_with(crate::run::git::tmp_root()), "{tmp:?}");
+        assert_eq!(sandbox.writable_roots, [objects, tmp.clone()]);
+        // F1d (R5): `TMPDIR` is that directory, last, whatever the profile set.
+        assert_eq!(
+            worker.env.last(),
+            Some(&("TMPDIR".to_string(), tmp.display().to_string()))
+        );
+        assert_eq!(worker.env.iter().filter(|(k, _)| k == "TMPDIR").count(), 1);
         assert!(
             !sandbox
                 .writable_roots

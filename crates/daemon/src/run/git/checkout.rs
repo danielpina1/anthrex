@@ -14,7 +14,10 @@
 //! - `engine/`: the engine's own, never in any grant: its copies of the index
 //!   (`GIT_INDEX_FILE`, finding C1), the import's staging repository, and `ready`,
 //!   written once the checkout's files are in place.
-//! - `tmp/`: the task's temporary directory (its checks' `TMPDIR`).
+//!
+//! The task's temporary directory (its worker's and its checks' `TMPDIR`) is not in
+//! it: since final fix batch F1d it is a short directory under the daemon's own root
+//! ([`super::tmp`]), so a Unix socket fits under it.
 //!
 //! The engine's git in the checkout (`--git-dir=<git> --work-tree=<checkout>`, pinned)
 //! uses the common store as its object directory ([`crate::worktree::pinned::Pin`]'s
@@ -62,9 +65,10 @@ impl Repo {
         self.dir.join("engine")
     }
 
-    /// The task's temporary directory.
+    /// The task's temporary directory: short, under the daemon's own root, never inside
+    /// this directory (final fix batch F1d, [`super::tmp`]).
     pub fn tmp(&self) -> PathBuf {
-        self.dir.join("tmp")
+        super::tmp::task_tmp(&self.dir)
     }
 
     /// Whether the checkout's files were put in place.
@@ -273,6 +277,7 @@ pub(crate) fn remove(path: &Path, repo: &Repo) -> Result<(), String> {
         std::fs::remove_dir_all(&repo.dir)
             .map_err(|err| format!("cannot remove {}: {err}", repo.dir.display()))?;
     }
+    super::tmp::remove(&repo.dir)?;
     pinned::unpin(path);
     Ok(())
 }

@@ -43,7 +43,48 @@ pub struct SandboxKeys {
     /// M8a.1 item 4b: without it a sandbox that cannot start only warns and runs
     /// commands unsandboxed.
     pub fail_if_unavailable: &'static str,
+    /// Final fix batch F1d (R5): keys under `"sandbox"` pinned to their closed value,
+    /// so the user's own `~/.claude/settings.json` (loaded by `--setting-sources user`)
+    /// cannot widen a worker's or reviewer's sandbox: no network, no Unix socket, no
+    /// local binding, no extra Mach service, no AppleEvents, no excluded command, and
+    /// filesystem isolation on. Dotted paths, as for `write_allow`.
+    pub pins: &'static [(&'static str, Pin)],
 }
+
+/// A pinned sandbox value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pin {
+    Bool(bool),
+    /// An empty list.
+    Empty,
+}
+
+/// The closed values of Claude Code 2.1.280's sandbox settings schema (read from the
+/// CLI's own settings schema): `network.allowedDomains = []` also turns on its network
+/// restriction, which is off when the key is absent.
+pub const CLAUDE_SANDBOX_PINS: &[(&str, Pin)] = &[
+    ("network.allowedDomains", Pin::Empty),
+    ("network.strictAllowlist", Pin::Bool(true)),
+    ("network.allowUnixSockets", Pin::Empty),
+    ("network.allowAllUnixSockets", Pin::Bool(false)),
+    ("network.allowLocalBinding", Pin::Bool(false)),
+    ("network.allowMachLookup", Pin::Empty),
+    ("allowAppleEvents", Pin::Bool(false)),
+    ("enableWeakerNetworkIsolation", Pin::Bool(false)),
+    ("enableWeakerNestedSandbox", Pin::Bool(false)),
+    ("excludedCommands", Pin::Empty),
+    ("filesystem.disabled", Pin::Bool(false)),
+];
+
+/// Final fix batch F1d (R5): Codex's `workspace-write` settings pinned on every Codex
+/// session, so the user's own `~/.codex/config.toml` cannot widen them: no network,
+/// and neither `$TMPDIR` nor `/tmp` writable (a worker's `TMPDIR` is its own task
+/// temporary directory, which is among its writable roots).
+pub const CODEX_SANDBOX_PINS: &[&str] = &[
+    "sandbox_workspace_write.network_access=false",
+    "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+    "sandbox_workspace_write.exclude_slash_tmp=true",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterruptMode {
@@ -66,6 +107,7 @@ pub const CLI_CAPS: CliCaps = CliCaps {
         allow_unsandboxed: "allowUnsandboxedCommands",
         write_allow: "filesystem.allowWrite",
         fail_if_unavailable: "failIfUnavailable",
+        pins: CLAUDE_SANDBOX_PINS,
     },
     codex_loads_project_config: true,
     codex_project_config_paths: &[".codex/config.toml", ".codex/hooks.json"],
@@ -126,8 +168,8 @@ pub fn caps_with_test_overrides(
 
 /// M3's hook settings (`launch::claude::settings`, unchanged) plus, for a worker,
 /// decision 54's sandbox block: enabled, unsandboxed commands disallowed, refusing to
-/// start without a working sandbox (M8a.1 item 4b), and the given parts of the git
-/// common dir writable (final fix batch F1).
+/// start without a working sandbox (M8a.1 item 4b), the given paths writable (final
+/// fix batch F1), and every widening key pinned closed ([`SandboxKeys::pins`], F1d).
 pub fn claude_settings(
     exe: &Path,
     window_id: u32,
@@ -147,6 +189,13 @@ pub fn claude_settings(
             .map(|p| Value::String(p.display().to_string()))
             .collect();
         insert_path(&mut block, keys.write_allow, Value::Array(roots));
+        for (path, pin) in keys.pins {
+            let value = match pin {
+                Pin::Bool(on) => Value::Bool(*on),
+                Pin::Empty => Value::Array(Vec::new()),
+            };
+            insert_path(&mut block, path, value);
+        }
         settings["sandbox"] = Value::Object(block);
     }
     settings
@@ -289,8 +338,9 @@ pub fn claude_args(
 /// one, the MCP server, the instructions, effort and approval policy, the sandbox, a
 /// worker's writable roots, the model when named, `--`, and the turn's message. `exec
 /// resume` rejects `-s` (M8a.1 item 6), so a resume passes `-c sandbox_mode=…` unless
-/// the caps say otherwise. Codex's default writable `/tmp` is left alone. Every TOML
-/// string comes from `launch::codex::toml_string`.
+/// the caps say otherwise. Since final fix batch F1d Codex's network, `$TMPDIR` and
+/// `/tmp` are pinned off ([`CODEX_SANDBOX_PINS`]). Every TOML string comes from
+/// `launch::codex::toml_string`.
 pub fn codex_args(
     spec: &HeadlessSpec,
     session: &SessionArg,
@@ -339,6 +389,9 @@ pub fn codex_args(
         config(format!("sandbox_mode={}", toml_string(&spec.codex_sandbox)));
     } else {
         args.extend(["-s".into(), spec.codex_sandbox.clone()]);
+    }
+    for pin in CODEX_SANDBOX_PINS {
+        args.extend(["-c".into(), pin.to_string()]);
     }
     if !spec.codex_writable_roots.is_empty() {
         let roots: Vec<String> = spec
