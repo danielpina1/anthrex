@@ -457,13 +457,18 @@ fn a_slow_starting_daemon_does_not_outlive_its_harness() {
 /// Whether process `pid` (one pid, never a scan) is a daemon of `data`: its environment
 /// names that data directory.
 fn daemon_of(pid: u32, data: &std::path::Path) -> bool {
+    let wanted = format!("ANTHREX_DATA_DIR={}", data.display());
+    // Linux: `ps -E` is BSD-only; read this one pid's environment from /proc.
+    if cfg!(target_os = "linux") {
+        return std::fs::read(format!("/proc/{pid}/environ"))
+            .map(|env| env.split(|b| *b == 0).any(|v| v == wanted.as_bytes()))
+            .unwrap_or(false);
+    }
     let output = std::process::Command::new("ps")
         .args(["-E", "-o", "command=", "-p", &pid.to_string()])
         .output()
         .unwrap();
-    output.status.success()
-        && String::from_utf8_lossy(&output.stdout)
-            .contains(&format!("ANTHREX_DATA_DIR={}", data.display()))
+    output.status.success() && String::from_utf8_lossy(&output.stdout).contains(&wanted)
 }
 
 /// M8a.24 fix round 2 (N2): an owned daemon process dropped without a completed stop

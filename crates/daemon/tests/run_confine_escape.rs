@@ -259,14 +259,12 @@ fn a_confined_checks_tmpdir_holds_a_unix_socket() {
     let confinement = w.spec(&[]).for_checkout(&task).unwrap();
     let tmp = confinement.tmp().display().to_string();
     assert!(tmp.len() <= 48, "TMPDIR is {} bytes: {tmp}", tmp.len());
-    assert!(
-        !confinement.tmp().starts_with(
-            proto::paths::socket_dir()
-                .canonicalize()
-                .unwrap_or_default()
-        ),
-        "{tmp}"
-    );
+    // The socket dir may not exist (no daemon on a CI runner): compare against its
+    // literal path then. `unwrap_or_default()` gave an empty path, which every path
+    // starts with.
+    let socket_dir = proto::paths::socket_dir();
+    let socket_dir = socket_dir.canonicalize().unwrap_or(socket_dir);
+    assert!(!confinement.tmp().starts_with(&socket_dir), "{tmp}");
     let command = "python3 - <<'PY'\n\
          import socket, tempfile, os\n\
          d=tempfile.mkdtemp()\n\
