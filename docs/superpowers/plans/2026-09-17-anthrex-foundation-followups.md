@@ -997,18 +997,14 @@ scope.
   deadline is now recognised as merged, but `subprocess::capture` still waits for EOF on
   both pipes after git exits. Ending the capture a short grace after the process exits
   would bound it.
-- **A worker cannot run `git gc` or write a commit-graph.** Since fix round 3 (R4) a
-  worker may write only `objects/00` to `objects/ff` and `objects/pack`, not
-  `objects/info/` (whose `alternates` would graft another object store into the
-  repository). A `git gc`, `git commit-graph write` or `git repack` that writes
-  `objects/info/` fails under the sandbox; commits, merges, rebases and resets do not
-  need it (proven under seatbelt). F1 re-review 2 (S5) tested git's automatic
-  `gc --auto` after a commit: it only warns (`error: Unable to create
-  '<common>/packed-refs.lock': Operation not permitted`), the command exits 0, and loose
-  objects accumulate until the user's own git runs `gc`. The repeated `error:` line may
-  lead a model to "fix" something. A fix is to launch workers with `gc.auto=0` and
-  `maintenance.auto=false`, through `GIT_CONFIG_PARAMETERS` or
-  `GIT_CONFIG_COUNT`/`KEY`/`VALUE` in the headless spec's environment.
+- **A worker's `gc --auto` warns.** Since final fix batch F1b a worker's git writes
+  objects only to its private object directory, where its `gc`, `repack` and
+  `commit-graph write` work; its `gc --auto` still tries `pack-refs` in the common dir,
+  which its sandbox denies, and warns (`error: Unable to create
+  '<common>/packed-refs.lock': Operation not permitted`, exit 0; tested before F1b by
+  F1 re-review 2, S5). The repeated `error:` line may lead a model to "fix" something.
+  A fix is to launch workers with `gc.auto=0` and `maintenance.auto=false` through
+  `GIT_CONFIG_PARAMETERS` in the headless spec's environment.
 - **A task branch made a symbolic ref halts the run with a misleading reason.** Since
   F1 fix round 4 (S1), every engine call refuses a task branch whose ref is a symbolic
   ref or link, and blocks the task. D-2's guard (`merge::work_on_base`) still counts the
@@ -1016,32 +1012,25 @@ scope.
   commit on the base would be reported as "unaccepted run work", and the run halts.
   That is fail-safe, but the reason is wrong. The guard could list the run's refs with
   `for-each-ref --format='%(refname) %(symref)'` and name the tampered branch instead.
-- **Critical, found in F1 fix round 5, not fixed: a worker can rewrite the base
-  branch's content through the shared object store.** The worker's grant names
-  `objects/00` to `objects/ff` and `objects/pack` as writable subpaths. Verified with
-  git 2.50.1 under a `sandbox-exec` profile built like the worker's: the sandboxed
-  process removed the loose object of the blob `main:f` and put another object's file
-  under its name, and `git show main:f` then printed the other content. No ref moved,
-  so D-2's guard sees nothing; git does not re-hash an object on read. A pack or its
-  `.idx` in `objects/pack` can be replaced the same way. The same grant lets a worker
-  swap `objects/<xx>` itself for a symbolic link (verified: the unsandboxed engine's
-  next object write, `hash-object -w`, created its file in a directory outside the
-  repository), and plant a link or a file under a name the engine will write (git then
-  skips the write and only touches the target's time, and the engine's commit points
-  at the planted content). Fixing it needs the worker's objects out of the shared store:
-  sketch — a private object directory per task (`GIT_OBJECT_DIRECTORY`, with the common
-  store as `GIT_ALTERNATE_OBJECT_DIRECTORIES`, read-only), and the engine importing a
-  task's objects with verification (`pack-objects` from the private store into
-  `index-pack --stdin` in the common one, which re-hashes every object) before any
-  engine read of the task's branch, index or salvage. That touches the launch, the
-  grant, every task-branch read and reconcile, so it was stopped and recorded here per
-  AGENTS.md, for the coordinator to rule on.
-- **F1 re-review 3, N4: a worker can create refs under its own branch name.** The
-  task branch's `subpath` grant lets a worker make `refs/heads/anthrex/<run>/<task>` a
-  directory holding refs of its own. Every effect is fail-safe today: the own-ref
-  check refuses a directory, D-2's `--glob` only widens, and `delete_branches` deletes
-  them `--no-deref`. A later change to that glob or to the clean-up must keep these
-  refs in mind.
+- **F1b: the user's own git fails while a worker has unimported commits.** Since
+  final fix batch F1b a worker commits into its private object directory on a detached
+  `HEAD` in `<common>/worktrees/<task>/`, and the engine imports the commit only at its
+  next turn-end count, done check or hand-back. Until then the user's `git gc`, `git
+  repack -a -d`, `git prune`, `git log --all` and `git fsck` in their own checkout fail
+  with `fatal: bad object worktrees/<task>/HEAD` (reproduced with git 2.50.1): git walks
+  every worktree's `HEAD` and index as roots. Nothing is lost or changed, and a
+  background `gc --auto` only fails and logs. Fixes to weigh: make each task worktree a
+  separate repository (its own git dir under the run's data directory, the common store
+  as its alternate) so the user's repository never names the worker's objects; or have
+  the engine import on every turn end, not only when the fallback counts.
+- **F1b: a worker's unimported commits are lost if its worktree is deleted by hand.**
+  `prepare_worktree` forgets a registered task worktree whose directory is gone and
+  re-adds it at the task branch's tip; commits the worker made since the last import
+  stay only as unreachable objects in `<data_dir>/runs/<run>/tasks/<task>/objects`.
+  Importing from the old `worktrees/<task>/HEAD` before forgetting it would keep them.
+- **F1b: private object directories are never removed.** Each task's
+  `<data_dir>/runs/<run>/tasks/<task>/objects` and `staging.git` stay with the run's
+  data directory after accept or discard.
 
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 

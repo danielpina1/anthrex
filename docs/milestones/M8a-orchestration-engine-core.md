@@ -1282,10 +1282,10 @@ You are a reviewer in an anthrex orchestration run.
 | `check_failed_message` | `[anthrex] The check failed (<exit <code> \| timed out after <m> minutes>): <command>` / `Last 40 lines:` / the summary / `Fix it, commit, then call task_done again.` |
 | `proof_failed_message` | `[anthrex] The test proof failed: <reason>` where reason is one of `at the red commit <red7> the test passed, so it does not fail without your change`, `at your head <head7> the test failed`, `the output did not show that <test> ran and passed (expected a line matching <regex>)`, `this is a tdd task and no test or red commit was named; call task_done with test and red` / `Command: <command>` / `Last 40 lines:` / tail / `Fix it, commit, then call task_done again.` |
 | `review_changes_message` | `[anthrex] Review round <n> asked for changes. Fix every finding below, commit, then call task_done again.` then one line per critical or important finding: `- [<severity>] <file>:<line> <text>` or `- [<severity>] input <input>: <text>` |
-| `candidate_red_message` | `[anthrex] Your branch merged cleanly into the run branch, but the check failed on the merged result (<exit …>): <command>` / `Last 40 lines:` / summary / `Fix it on your branch, commit, then call task_done again.` |
+| `candidate_red_message` | `[anthrex] Your work merged cleanly into the run branch, but the check failed on the merged result (<exit …>): <command>` / `Last 40 lines:` / summary / `Fix it in your worktree, commit, then call task_done again.` |
 | `conflict_message` | `[anthrex] Your branch conflicts with the run branch. The run branch has been merged into your worktree with conflict markers left in:` / `- <file>` per file / `Resolve every conflict, commit the merge, then call task_done again.` |
-| `DONE_NUDGE` | `[anthrex] Your turn ended with commits on your branch and no task_done. If the task is complete, call task_done now (for a tdd task, with test and red). If you are stuck, call task_blocked.` |
-| `NO_COMMIT_NUDGE` | `[anthrex] Your turn ended and your branch has no commit yet. Continue the task and commit, or call task_blocked with the reason.` |
+| `DONE_NUDGE` | `[anthrex] Your turn ended with commits in your worktree and no task_done. If the task is complete, call task_done now (for a tdd task, with test and red). If you are stuck, call task_blocked.` |
+| `NO_COMMIT_NUDGE` | `[anthrex] Your turn ended and your worktree has no commit yet. Continue the task and commit, or call task_blocked with the reason.` |
 | `REVIEW_NUDGE` | `[anthrex] Your turn ended without a verdict. Call submit_review now, exactly once.` |
 | `stall_nudge` | `[anthrex] Your last turn was interrupted after <n> minutes without any progress. Continue the task, or call task_blocked if you cannot.` |
 | `budget_wrap_up` | `[anthrex] This task has used its budget (<calls>/<limit> tool calls, <m>/<limit> minutes). Wrap up now: commit what works and call task_done, or call task_blocked with kind mis_sized.` |
@@ -2216,7 +2216,7 @@ mkdir -p /tmp/anthrex-m8a && cd /tmp/anthrex-m8a && git init -b main demo && cd 
     - the worker's `task_done` is rejected with `AGENTS.md configures or instructs future agents…`, and after it reverts, the task merges;
     - `AGENTS.md` on the run branch is unchanged.
 4d. **Codex project config.** If M8a.1 found that Codex loads project config, commit a `.codex/config.toml` and start a run with a Codex task. It is either excluded (the argv carries `codex_user_config_only`) or refused without `--trust-project`, as decision 53 says. Remove the file afterwards.
-4e. **The worker grant in the real CLIs (final fix batch F1, fix round 4, S5).** A worker's sandbox grant is about 260 paths (`objects/00` to `objects/ff`, `objects/pack`, the task's own branch with its lock and reflog, and its git dir's files). With a real Claude worker and a real Codex worker, confirm that each CLI accepts the whole list: Claude's `--settings` `allowWrite`, and Codex's `writable_roots`. Confirm that Claude's generated seatbelt profile and Codex's `-D WRITABLE_ROOT_n` parameters keep every entry, and that the worker's `git commit` succeeds. On Linux, repeat under the Linux sandbox (bubblewrap/landlock). Also check that a hard link from the task's branch file to `refs/heads/main` is refused there, as it is under seatbelt. Since F1 fix round 5 the grant names no reflog: confirm that each real CLI's shell passes `GIT_CONFIG_PARAMETERS` through to the worker's git (`git config --get core.logAllRefUpdates` prints `false`) and that its commit succeeds.
+4e. **The worker grant in the real CLIs (final fix batch F1, fix round 4, S5; replaced by F1b).** Since F1b a worker's grant names nothing of the repository's git common directory: its private object directory (`<data_dir>/runs/<run>/tasks/<task>/objects`) and about 30 files and directories of its worktree's own git dir (`HEAD`, `index`, the merge and rebase files, each with its `.lock`). With a real Claude worker and a real Codex worker, confirm that each CLI accepts the list (Claude's `--settings` `allowWrite`, Codex's `writable_roots`), that Claude's generated seatbelt profile and Codex's `-D WRITABLE_ROOT_n` parameters keep every entry, and that `touch <common>/objects/x` and `git update-ref refs/heads/x HEAD` are refused in the worker's shell. Confirm that each CLI's shell passes `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` and `GIT_CONFIG_PARAMETERS` through to the worker's git (`env | grep ^GIT_`; Codex's default shell environment policy drops names containing `KEY`, `SECRET` or `TOKEN`, which these do not), that `git config --get core.logAllRefUpdates` prints `false`, that the worker's `git status` shows a detached `HEAD`, and that its `git commit` succeeds and its commit reaches the task's branch only after `task_done` (`git rev-parse anthrex/<run>/<task>` before and after). On Linux, repeat under the Linux sandbox (bubblewrap/landlock).
 5. In the TUI, typing into a focused worker window does nothing, and the kill and remove commands on it show decision 49's refusal. The run carries on.
 6. While `t2`'s worker runs, `anthrex daemon stop`:
    - `pgrep -fl "claude -p"` shows nothing of this run.
@@ -8986,3 +8986,145 @@ enough.
   engine will write, so the engine's commit points at the planted content. The fix needs
   a per-task private object store with a verified import, which touches the launch, the
   grant and every task-branch read. Stopped and recorded for a ruling, per AGENTS.md.
+
+### Final fix batch F1b: the worker writes nothing of the common git dir (2026-09-25)
+
+The coordinator's ruling on F1 round 5's object-store finding. A worker's sandbox grant
+names nothing under the repository's git common directory any more.
+
+- **Deviation from decisions 25 and 54 (and the spec's writable common dir).** Those
+  decisions grant a worker the repository's git common directory (F1 narrowed it to the
+  object directories and the task's own branch). Now a worker's writable roots are its
+  worktree (the session's cwd), its **private object directory**
+  (`<data_dir>/runs/<run>/tasks/<task>/objects`, created by the daemon, outside the
+  repository), and the commit files of its worktree's own git dir
+  (`WORKTREE_GIT_FILES` with their `.lock`s, and `rebase-merge`, `rebase-apply`,
+  `sequencer`: 30 entries, down from 259). Codex's `writable_roots` and Claude's
+  `allowWrite` carry exactly that. Why: with any part of the shared object store
+  writable, a worker could (a) replace the object behind the base branch's content
+  with no ref moving, (b) make `objects/<xx>` a link so the unsandboxed engine's
+  object writes land outside the repository, (c) pre-plant objects the engine then
+  trusts. None of that is fixable engine-side (F1 round 5's follow-up).
+- **The worker's objects.** Its session environment sets `GIT_OBJECT_DIRECTORY` to the
+  private directory and `GIT_ALTERNATE_OBJECT_DIRECTORIES` to the common store
+  (`role_launch::with_worker_objects`, set last, replacing a profile's own). A worker
+  that unsets them only fails its own git: it would write to the common store, which
+  its sandbox denies. Neither name contains `KEY`, `SECRET` or `TOKEN`, so Codex's
+  default shell environment policy passes them (manual check 4e, now rewritten for the
+  new grant). A worker with `worker_sandbox = false` gets the same environment.
+- **The worker's refs: a detached `HEAD`.** A task worktree is created detached
+  (`worktree add --detach <path> <branch tip>`) and pinned with no `HEAD` branch:
+  `pinned::check` refuses every engine call while its `HEAD` names any branch. The task
+  branch `refs/heads/anthrex/<run>/<task>` is the engine's alone (`Pin::own`). The
+  worker contract (rule 3) now says the `HEAD` is detached, that the engine records the
+  commits on the task's branch, and never to create, switch or push branches. The
+  nudges and messages that said "your branch" say "your worktree" or "your work"
+  (`DONE_NUDGE`, `NO_COMMIT_NUDGE`, `candidate_red_message`, `UNCLAIMED_COMMITS`; the
+  interface table above is updated). The round-4 "refuse a detached `HEAD`" checks are
+  inverted: detached is the norm, and a `HEAD` that names a branch or a stopped rebase
+  (`rebase-merge`/`rebase-apply` present) is what is refused. The done check returns
+  `head_branch: None` for either without judging or recording anything, and the engine
+  rejects the claim with "this worktree's HEAD must be a detached commit with no rebase
+  in progress; run git checkout --detach (or finish the rebase), commit, and call
+  task_done again". The hand-back refuses them with a message naming the fix. Salvage
+  puts a `HEAD` that names a branch back at the task branch's tip (by rename; nothing
+  can be lost, since the worker could commit on no branch).
+- **The import (`run::git::import`, new).** Whenever the engine needs the worker's work
+  (the done check, the turn-end count, the diff so far, the hand-back, the abort,
+  salvage, a re-point, reconcile of a hand-back) it first runs `sync_in`:
+  1. reads the worktree's `HEAD` file from the pinned git dir, never through git or a
+     link, and accepts only a plain lower-case 40- or 64-hex id;
+  2. when the repository lacks that commit, checks the private directory (a real
+     directory that resolves to itself, with no `info/alternates` or
+     `info/http-alternates`), writes an engine-owned bare staging repository
+     `<task>/staging.git` next to it (outside the grant; its `objects/info/alternates`
+     names the private directory and the common store; commit-graph, bitmaps and
+     multi-pack-index off), runs `pack-objects --revs` there for `<head> --not <branch
+     tip>`, and feeds the pack to `index-pack --stdin --strict` in the repository,
+     which computes every object's id from its content; then checks that the commit
+     arrived and that `rev-list --objects <head> ^<tip>` is complete;
+  3. imports the blobs the index names that the repository lacks (the worker's staged,
+     uncommitted work; best effort, so a broken index fails only the engine command
+     that needs it), because the engine's `status` reads them to detect a rename (found
+     by a test: it failed with "unable to read <blob>");
+  4. moves the task branch with `update-ref --no-deref <own> <head> <tip>`.
+  The engine's own git never reads the private directory: `run_git_capturing` removes
+  `GIT_OBJECT_DIRECTORY` and `GIT_ALTERNATE_OBJECT_DIRECTORIES` from every daemon git
+  call, and only the staging repository's `pack-objects` names it. The one exception
+  is the TUI's display probe (`git::probe`), which adds the private directory as an
+  alternate, read-only (`--no-optional-locks`), so a worker's unimported commit shows.
+  Rule 11: the staging `pack-objects` names its repository with an explicit
+  `--git-dir=` flag (as the pinned calls do), with the scrubbed environment and
+  `WRITE_FLAGS`; `index-pack` runs in the task worktree through the pin like every
+  other engine write. The import is idempotent (a `HEAD` already imported and recorded
+  writes nothing), so decision 43's reconcile needs no new row: an import interrupted
+  before `index-pack` or before the branch's `update-ref` is finished by the next
+  `sync_in` (tested for both points).
+- **Engine writes stay in the common store.** The hand-back's merge (`merge-tree`,
+  `commit-tree`), salvage's `add -A`/`write-tree`/`commit-tree` and re-points write
+  there; the worker reads them through its alternate. The clean hand-back now moves the
+  worktree's detached `HEAD` too, by `update-ref --no-deref HEAD <merge> <onto>` after
+  the branch's compare-and-swap (and moves the branch back if `HEAD` moved meanwhile);
+  a re-point moves `HEAD` the same way. That adds one crash point to decision 36's
+  hand-back: after the branch moved, before `HEAD` did. Reconcile's `sync_in` then
+  records the worker's `HEAD` back on the branch and the hand-back runs again
+  (`NotStarted`, tested).
+- **Review N4 recast.** The hand-back reads `HEAD` once (the file) and works from that
+  value; a commit that lands after the read makes the engine's `HEAD` compare-and-swap
+  fail, so the hand-back is refused, the branch goes back, and the next hand-back is
+  made onto the late commit and says so (`run_git_handback`).
+- **The branch follows the worktree.** `sync_in` moves the task branch to whatever the
+  worker's `HEAD` holds, fast-forward or not (an amend or a rebase rewrites it), so a
+  task branch moved by anything but the engine is put back at the worker's `HEAD` on
+  the next sync (the S2 test now expects that).
+- **Reconcile's `PrepareWorktree` row.** A task worktree is replayed when git lists it
+  detached and its branch exists (was: listed on its branch).
+- **Grant clean-up.** `worker_git_roots` names only the private directory; the object
+  directories, `objects/pack`, the own branch and its lock are gone, and so are their
+  tests. `private_dir` refuses a root inside (or containing) the common dir, and one
+  that is a link.
+- **Tests.** Before = the pre-F1b grant, after = this change.
+  - `run_git_sandbox::a_sandboxed_worker_commits_but_writes_nothing_of_the_common_dir`
+    (after): under `sandbox-exec` with the new grant and the worker's environment, the
+    worker's commit, amend, revert, `reset --hard`, rebase, `rebase -i --exec` and a
+    conflicted merge concluded with `merge --continue` all succeed on its detached
+    `HEAD`; 20 writes to the common dir are denied, among them the loose object behind
+    `main:g.txt` (a), a pack, a new object at an id the engine could write (c), a link
+    in place of an object directory (b), a new object directory, `packed-refs` and its
+    own branch; the common object store is byte-for-byte unchanged, `main:g.txt` and
+    `main:f.txt` read as before; `sync` then imports the worker's commit onto its
+    branch and `fsck --connectivity-only` passes. The whole-common-dir control still
+    lets all 21 through.
+  - `run_git_sandbox::the_grant_before_f1b_let_a_worker_rewrite_the_bases_content`
+    (before): with the pre-F1b grant, (a) the worker's copy over the loose object makes
+    `git show main:g.txt` print `evil` with `main` unmoved, and (b) its link in place of
+    `objects/<xx>` makes an unsandboxed `hash-object -w` write outside the repository.
+  - `run_git_import` (new, six tests): commits imported and recorded once (idempotent,
+    an amend recorded); (c) an object in the private directory whose content does not
+    match its name is refused, nothing imported and the branch unmoved; a private
+    directory replaced by a link or given `info/alternates` is refused; an import
+    interrupted at `index-pack` or at the branch's `update-ref` is finished by the next;
+    conflicted and clean hand-backs reach the worker through its alternate and its
+    resolution is imported; staged work in the private directory (an inexact rename and
+    a new file) is judged dirty by the done check and saved by salvage (that test failed
+    with "unable to read" before the index import).
+  - Migrated to detached worktrees: `run_git_worktrees`, `run_git_done` (a `HEAD` on a
+    branch, and a stopped rebase, give `DoneChecked::default()`), `run_git_handback`,
+    `run_git_handback_recovery` (the detached-refusal test is now "a `HEAD` on a branch
+    or mid-rebase is refused"), `run_git_merge`, `run_git_pointers`,
+    `run_git_pseudo_refs`, `run_git_review`, `run_journal` (a new crash point),
+    `engine::tests::dispatch` and `role_launch` (the grant and the environment),
+    `run_e2e_basic::e2e_task_worktree_is_watched` (the probe shows the worker's
+    unimported commit on a detached `HEAD`), `run_e2e_safety`'s `t1_committed` (the
+    worktree's `HEAD` leaves the base, not the branch) and `run_e2e_sessions` (reads the
+    worker's commit with its private directory as an alternate, `worker_git_read`).
+- **File split.** `count_commits` and `diff_so_far` moved from `run/git/mod.rs` to
+  `run/git/done.rs` (mod.rs was past 600 lines); the public API is unchanged.
+- **Found, not fixed (followups):** while a worker has commits the engine has not yet
+  imported, the user's own `git gc`, `git repack -a -d`, `git prune`, `git log --all`
+  and `git fsck` in their checkout fail with `bad object worktrees/<task>/HEAD`
+  (reproduced with git 2.50.1): git walks every worktree's `HEAD` and index, and the
+  commit is in the private directory. Nothing is lost or changed; the window closes at
+  the next import (a turn-end count, a done check, a hand-back). Commits a worker made
+  since the last import are also lost to the run if the user deletes the worktree by
+  hand (their objects stay in the private directory).
