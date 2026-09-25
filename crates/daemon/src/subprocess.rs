@@ -445,6 +445,15 @@ fn lossy_stderr(bytes: Vec<u8>) -> String {
 /// ([`crate::worktree::engine_index`]), so no engine write ever goes through an index
 /// file the worker can replace with a symbolic link. That is the only such use.
 pub(crate) fn scrub_git_env(command: &mut Command) -> &mut Command {
+    scrub_git_location_env(command).env("GIT_NO_REPLACE_OBJECTS", "1")
+}
+
+/// Rule 11's inherited location variables removed, as in [`scrub_git_env`], without
+/// `GIT_NO_REPLACE_OBJECTS`: for a process that runs the project's or an agent's own
+/// commands (a check, a proof, `setup`, a headless session), whose git is the user's
+/// to configure (final fix batch F4, T14-P1). The engine's own git calls go through
+/// [`scrub_git_env`].
+pub(crate) fn scrub_git_location_env(command: &mut Command) -> &mut Command {
     for key in config::reserved_env::GIT_LOCATION_VARS {
         let set_here = command
             .get_envs()
@@ -453,7 +462,7 @@ pub(crate) fn scrub_git_env(command: &mut Command) -> &mut Command {
             command.env_remove(key);
         }
     }
-    command.env("GIT_NO_REPLACE_OBJECTS", "1")
+    command
 }
 
 pub(crate) fn set_nonblocking(stream: &impl AsRawFd) -> io::Result<()> {

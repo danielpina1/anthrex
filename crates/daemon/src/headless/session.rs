@@ -26,7 +26,7 @@ mod pipes;
 use super::argv::InterruptMode;
 use super::claude_stream;
 use super::{SessionEvent, UNKNOWN_LINE_CHARS};
-use crate::subprocess::scrub_git_env;
+use crate::subprocess::scrub_git_location_env;
 use anyhow::Context;
 use pipes::{dispatch, read_stderr, read_stdout, wait_leader, write_lines};
 use proto::Runtime;
@@ -360,7 +360,7 @@ impl HeadlessHandle {
 
 /// Decision 26's environment on `command`, less `remove`, then `env` on top.
 fn session_env(command: &mut Command, env: &[(String, String)], remove: &[&str]) {
-    scrub_git_env(command);
+    scrub_git_location_env(command);
     for (key, _) in std::env::vars_os() {
         let bytes = key.as_bytes();
         if SCRUB_PREFIXES

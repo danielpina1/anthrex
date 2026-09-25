@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 use regex::Regex;
 
 use super::confine::{Confinement, SANDBOX_EXEC};
-use crate::subprocess::{scrub_git_env, set_nonblocking, wait_readable};
+use crate::subprocess::{scrub_git_location_env, set_nonblocking, wait_readable};
 
 /// Lines of output a [`ShellOutcome`] keeps (decision 34).
 pub const CHECK_TAIL_LINES: usize = 200;
@@ -125,7 +125,7 @@ pub fn run_confined(
 /// `ANTHREX_DATA_DIR`), even though the sandbox already denies the connection.
 fn engine_env(command: &mut Command, env: &[(String, String)], confined: bool) {
     use config::reserved_env::{SCRUBBED_NAMES, SCRUBBED_PREFIXES};
-    scrub_git_env(command);
+    scrub_git_location_env(command);
     for (key, _) in std::env::vars_os() {
         let bytes = key.as_bytes();
         if SCRUBBED_PREFIXES
@@ -534,6 +534,14 @@ mod tests {
         assert!(envs.contains(&(OsStr::new("ANTHREX_WINDOW_ID"), None)));
         assert!(envs.contains(&(OsStr::new("GIT_DIR"), None)));
         assert!(envs.contains(&(OsStr::new("A"), Some(OsStr::new("1")))));
+        // T14-P1 (F4): `GIT_NO_REPLACE_OBJECTS` is for the engine's own git calls; a
+        // check, proof or `setup` runs the project's commands with the user's git.
+        assert!(
+            !envs
+                .iter()
+                .any(|(name, _)| *name == OsStr::new("GIT_NO_REPLACE_OBJECTS")),
+            "{envs:?}"
+        );
         // Unconfined, other `ANTHREX_*` variables are left alone.
         assert!(!envs.contains(&(OsStr::new("ANTHREX_SOCKET"), None)));
 
