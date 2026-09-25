@@ -1110,13 +1110,42 @@ scope.
   They grant nothing to the user's own repository, but they accumulate, and a later
   directory at the same path would be trusted. Remove them by hand; anthrex does not
   edit the user's Codex config.
-- **C-I1's residual: a leftover worker process can write `.codex` after the guard's
-  check.** The guard runs just before each Codex spawn; a worker's `setsid` child that
-  outlives its turn could write `<checkout>/.codex/config.toml` between the check and
-  Codex's read. A sandbox-level deny would close it: codex-cli 0.156's binary names
-  `.codex` and `.agents` beside `.git` among the protected subpaths of a writable root
-  (unverified, manual check 4e, F2 (1)); if confirmed, record it; otherwise weigh a
-  Codex permission profile that makes `<cwd>/.codex` read-only.
+- **C-I1's residual: a leftover process can write `.codex` after the guard's check.**
+  The guard runs just before each Codex spawn. A `setsid` child that outlives its turn
+  could write `<checkout>/.codex/config.toml` between the check and Codex's read. What
+  is closed, since F2 round 2:
+  - a confined check, proof or `setup` (the F1d profile denies the protected paths);
+  - a Claude worker's or reviewer's `Bash` (`sandbox.filesystem.denyWrite`). Seatbelt
+    restrictions are inherited by every descendant, so an escaped child is still denied.
+
+  What is open is a Codex worker's own children. The legacy `sandbox_workspace_write`
+  has no deny list. codex-cli 0.156's `[permissions.<name>]` profiles have `deny`
+  filesystem entries, but the binary says a profile cannot yet grant writes outside the
+  workspace root, which F1c's grant needs (the task git dir and tmp). The binary may
+  also protect `.codex` and `.agents` itself. Manual check 4e, F2 round 2 (6), has the
+  probe. A route edit that puts a task whose `owns` names a `.codex` path on Codex could
+  also be refused up front, since the guard blocks it anyway (the F2 review's item 4).
+- **Cross-cutting: worker children that escape their session's process group survive
+  the turn.** Evidence:
+  - The session waiter kills only the leader's process group, in its `WNOWAIT` window
+    (`headless/session.rs`, `signal_locked` → `killpg`).
+  - Before the next turn, the manager waits only for the leader (`is_ended()` in
+    `manager/headless_turns.rs`).
+  - Any descendant that called `setsid`/`setpgid` (seatbelt forbids neither) is not
+    signalled. `session.rs`'s `OUTPUT_GRACE` already allows for "a process that escaped
+    the group" holding a pipe.
+  - Whether Codex puts its own tool commands in separate process groups, which would
+    make an ordinary `cmd &` survive too, is unverified.
+
+  Consequences:
+  - a sandboxed survivor keeps its sandbox, and so its write grant (the checkout, its
+    objects, its tmp) into later turns and later engine operations on that checkout;
+  - an unsandboxed one (`worker_sandbox = false`) keeps everything.
+
+  Not changed in F2: kill and process-scan code is under the safety rule. A fix to
+  weigh: at retire and at task end, find the survivors by a marker the daemon controls
+  (a per-session environment token, or a sandbox extension) and signal them by exact
+  pid, never by pattern. That fix needs its own review under that rule.
 - **`.agents/` is not guarded.** Codex reads repository skills (`.agents/skills`) and a
   plugin marketplace (`.agents/plugins/marketplace.json`) from the project. The
   protected list is the user's five paths verbatim; whether to add `.agents/**` to it,
@@ -1141,6 +1170,15 @@ scope.
   interactive `claude` in the task checkout on the user's normal settings. Restoring it
   as a headless window with no spec (or a `Dormant` that refuses restart) would keep
   decision 49's refusals.
+- **F2 round 2's costs.**
+  - A profile can no longer set the shell and interpreter start-up variables
+    (`PYTHONPATH`, `NODE_PATH`, `RUBYLIB`, `XDG_*`, `SHELL`, ...). A check sets them in its
+    own command.
+  - A Codex user who authenticates only through an exported `OPENAI_API_KEY` or
+    `CODEX_API_KEY` must run `codex login --with-api-key` instead, since sessions drop
+    the inherited keys.
+  - A confined check or `setup` that writes `CLAUDE.md`, `AGENTS.md`, `.mcp.json`,
+    `.claude/` or `.codex/` in its checkout now fails.
 - **C-I4's cost: a profile cannot set `PATH`, `HOME`, a proxy or a CA bundle.** They come
   from the daemon's environment. A project whose checks need a tool on a
   repository-relative path must name it in the command (`./node_modules/.bin/x`).
