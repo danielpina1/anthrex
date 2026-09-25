@@ -10,7 +10,7 @@
 
 | | |
 |--|--|
-| Status | `ready` — milestone 6 is `done`, and milestone 6.5 merged in PR #13 as `6f22681`. |
+| Status | `done` — manual check 4e outstanding for the user (see Implementation notes, "Manual verification — OUTSTANDING"). |
 | Depends on | Milestone 6 (persistence, `config` crate, restart) and milestone 6.5 (merged in PR #13: it raised the protocol to 6 and added `proto::Role`, which this brief must not collide with). |
 | Spec sections | The spec §2 (terms), §4 (roles, headless sessions, read-only launch, "Every headless agent is also contained"), §4.1 (one writer per task), §4.2 (headless run agents, kill and remove refused), §5.3 steps 3–7, §6 (profile values only, `generated` and `protected` included; the onboarding scout is M8b), §7.1–§7.3, §8, §8.1, §9, §10, §11.1–§11.6, §12.1–§12.3, §13 items 2–5, §14 items 2, 3 (hooks still run in `-p`; the filter itself is M8b), 4, 7 and 8 (per-turn usage from the stream; OTLP for the orchestrator is M8b), §16.2 (an agent round points at a headless window; the node kinds are M8c), §16.4 "Navigation" (the conversation view is how a run agent is watched; the TUI part here is a placeholder, decision 49), §16.5 (snapshot and revision only; views are M8c), §17 in full, §22.1 (headless sessions on the user's login), §23 first two risks (`--bare`, the stream-json input envelope), §18 (the task record), §19 (worker and reviewer tools), §21 (M8a row and the scenario list). From the refreshed M8 brief: its decisions 1, 2, 4, 5, 7, 9, 10, 15, 20, 24, 34 and 44 as amended below; its 37–38 (paste delivery) are replaced by decision 29. |
 | Branch | `m8a-engine-core` |
@@ -2271,6 +2271,68 @@ The five input classes or failure modes most likely to bite a user that the task
 New follow-ups to record in `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md` during implementation: move `crates/config/src/lib.rs`'s remaining top-level readers (`prefix`, `accent`, `bell`, `ui`, `panes`, `runtimes`) out of it, since M6.5 split off only `conversation` and `git` and this milestone leaves it just over 600 lines; split `crates/daemon/src/server.rs` (605 lines at `6f22681`) further if `server/git_wiring.rs` does not bring it under 600; prune old run directories under `<data_dir>/runs/`; the environment policy for PTY windows; the PTY status machine's `StopFailure`/compaction gap, now only the orchestrator's (M9); re-recording the headless fixtures on each CLI major version.
 
 ## Implementation notes
+
+### Summary of deviations (read first)
+
+The sections below are the full record, task by task and round by round. The
+deviations a reader of the Design decisions must know:
+
+- **Decision 25 (task worktrees and the worker's writable roots).** A task, review or
+  proof checkout is not a linked worktree of the user's repository but a **standalone
+  repository** in anthrex's data directory (`<data_dir>/runs/<run>/tasks/<name>/git`),
+  whose only link to the user's repository is an `alternates` entry naming its object
+  store (F1c, 3a). A worker's grant names nothing of the user's repository: its
+  checkout, its **private object directory**, its task tmp and about 30 files of its
+  own git dir (F1b, F1c). The engine imports a worker's objects only through a verified
+  import (`run::git::import`, F1b).
+- **Decision 36 (the hand-back).** No `git merge` in the task checkout: the hand-back is
+  plumbing (`merge-tree`, `commit-tree`, `read-tree`) run by the engine, and since F1c
+  it is **ref-free** in the task repository (a detached `HEAD`; the engine moves only
+  its own `anthrex/<run>/<task>` branch, by compare-and-swap) (F1 round 5, F1c).
+- **Decision 41 (a hub task runs alone).** A hub holds the hub from `preparing` until it
+  is merged or cancelled; while held on a dependency it gained, only that dependency's
+  closure may dispatch (F3 A-I2, F4 N1).
+- **Decision 54 (and 18, 25): the writable git common directory and hooks.** No worker
+  may write any part of the user's common git directory; engine git calls pass
+  `core.hooksPath=/dev/null` and `core.fsmonitor=false`, including `run accept`'s merge,
+  so the user's hooks no longer run inside accept (F1, F1b).
+- **Deny-by-default confinement.** Checks, proofs and `setup` run under an anthrex
+  seatbelt profile on macOS that denies by default (writes, the daemon socket, network
+  unless the user's `confined_network`), and worker sandboxes are pinned on the command
+  line (F1c, F1d). Protected agent-config files are denied in any letter case; nested
+  `CLAUDE.md`/`AGENTS.md` are denied outside dependency trees for confined commands and
+  not at all for Claude sessions, and the **done gate** is the barrier for them (F4; see
+  "Wrap-up" below).
+- **Unconfined checks refused on Linux.** No confinement exists there yet, so `run
+  start` refuses unless the user passes `--unconfined-checks` (or sets
+  `[orchestrator] unconfined_checks = true` in their own config); the run records and
+  reports it (F1c).
+- **Reserved environment.** One list (`config::reserved_env`) of variables a profile's
+  `env` may not set: rule 11's git variables, the session identity, `TMPDIR`, the API
+  credentials, and the shell/interpreter start-up families (F2 C-I4, F2 round 2; the Python value-only switches allowed in F4).
+
+### Manual verification — OUTSTANDING
+
+Manual check 4e (above, in "Manual check") has **not been run**. The agent that built
+this milestone could not run it: running a real Codex worker writes a
+`[projects."<path>"] trust_level = "trusted"` entry into `~/.codex/config.toml`, and both
+CLIs need the user's own logins, and AGENTS.md's rules forbid the agent to touch
+`~/.codex`, `~/.claude` or the user's credentials. **The user must run these** before
+relying on the worker sandbox:
+
+- the real Claude and Codex sandbox probes of 4e (the grant is accepted and kept; the
+  user's checkout, common store and daemon socket are refused; `open -g`, `defaults
+  write` and `launchctl submit` fail; `TMPDIR` and network pins hold);
+- the settings-merge behaviour: Claude `--settings` arrays replace the user's rather
+  than merge, and a user proxy port does not open egress;
+- Codex `default_permissions`: whether a user permission profile overrides `-s
+  workspace-write` and the `sandbox_workspace_write.*` pins;
+- Claude `denyWrite` is honoured (root protected files, `.claude`, `.codex`,
+  `.mcp.json`, in any case; an exact `owns` lifts it);
+- the ~260-path grant (the F1 grant; ~30 entries since F1b/F1c) is accepted by both CLIs
+  and every entry survives into the generated profiles;
+- Linux: the worker sandbox under bubblewrap/landlock, and the `--unconfined-checks`
+  refusal and report.
 
 ### Brief refresh against main (6f22681)
 
@@ -9893,7 +9955,11 @@ touched test targets only (named in the F4 report).
   <dependency dir>))`, the dependency dirs being `node_modules`, `.venv`, `venv`,
   `vendor`, `target`, `bower_components`, `.yarn` and `.pnpm-store` at any depth
   (`seatbelt::DEPENDENCY_DIRS`); the root files, `.claude`, `.codex` and `.mcp.json`
-  stay denied. Test: `a_confined_command_may_install_and_remove_dependencies_that_ship_agent_files`
+  stay denied. Nested files outside dependency trees are denied only to *direct*
+  creation: a confined check can still plant one by writing `node_modules/d/CLAUDE.md`
+  and renaming the directory (`mv node_modules/d src/d`), since a directory rename is
+  checked on the directory, not its contents (F4 review M1). The done gate is the
+  barrier for nested files, for checks as for Claude sessions. Test: `a_confined_command_may_install_and_remove_dependencies_that_ship_agent_files`
   (red before: `node_modules/recharts/AGENTS.md: Operation not permitted`).
   **Deviation (Claude sessions):** Claude's `denyWrite` globs cannot exclude a tree, so
   the two any-depth entries (`<checkout>/**/CLAUDE.md`, `**/AGENTS.md`) are removed; a
@@ -9994,3 +10060,17 @@ touched test targets only (named in the F4 report).
   stub daemon to `stub_daemon.rs`). Every M8a file is now at or under 600 lines except
   `config/src/lib.rs` (605; 600 on `main`), recorded in the follow-ups; the other files
   over 600 predate M8a.
+
+### Wrap-up: F4 review M1–M3 (2026-09-25)
+
+- **M1.** The F4 note above and the follow-ups now say that a confined check can plant a
+  nested `CLAUDE.md`/`AGENTS.md` outside a dependency tree by a directory rename out of
+  `node_modules`; the done gate, not the sandbox, is the barrier for nested files.
+- **M2.** `prepare_guarded`'s double panic (the snapshot and the publish-free retry
+  both panic) drops the step's ops and save while memory already holds them: recorded
+  in the follow-ups, not fixed.
+- **M3.** `verify_done_edge_cases` (`crates/daemon/tests/run_git_done.rs`) now commits
+  `src/Claude.md`, `docs/agents.md` and `node_modules/x/agents.md` and expects all three
+  in `protected_changed`; a case-sensitive matcher would report none of them.
+- **Status.** Milestone 8a is `done` in `docs/ROADMAP.md`, with manual check 4e
+  outstanding (above).

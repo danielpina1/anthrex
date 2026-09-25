@@ -12,7 +12,7 @@ The design is layered, newest first:
 5. `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` — milestones 2 to 9.
 6. `docs/superpowers/specs/2026-09-17-anthrex-design.md` — milestone 1 and the parts of the core it still governs.
 
-The protocol version currently on `main` is **6**, raised from 5 by milestone 6.5 (`crates/proto/src/lib.rs:19`); milestone 6 did not change it. Protocol numbers written in the milestone 8b to 9.5 briefs predate this and are re-derived from this line when each milestone is implemented; milestone 8a's brief was refreshed against it and uses 7.
+The protocol version currently on `main` is **7**, raised from 6 by milestone 8a (`crates/proto/src/lib.rs:25`). Protocol numbers written in the milestone 8b to 9.5 briefs predate this and are re-derived from this line when each milestone is implemented: milestone 8b will use 8.
 
 ## What anthrex does when all milestones are done
 
@@ -39,7 +39,7 @@ The protocol version currently on `main` is **6**, raised from 5 by milestone 6.
 | 6.5 | Agent conversation view: structured turns, folded tool calls, sub-agent links | `docs/milestones/M6.5-conversation-view.md` | 6 | `done` |
 | 7 | Split panes | `docs/milestones/M7-split-panes.md` | 4 | `blocked` |
 | 8 | ~~Orchestration engine~~ — superseded by 8a, 8b, 8c | `docs/milestones/M8-orchestration-engine.md` | — | `superseded` |
-| 8a | Orchestration engine core: task graph, headless sessions, gates, merge queue, escalation, journal | `docs/milestones/M8a-orchestration-engine-core.md` | 5, 6, 6.5 | `ready` |
+| 8a | Orchestration engine core: task graph, headless sessions, gates, merge queue, escalation, journal | `docs/milestones/M8a-orchestration-engine-core.md` | 5, 6, 6.5 | `done` |
 | 8b | Adaptation: repo profile, scouts, deciders, fast path, output filter, metering, run history | `docs/milestones/M8b-adaptation.md` | 8a | `blocked` |
 | 8c | The live run view in `C-b T` and the run inspector | `docs/milestones/M8c-live-run-view.md` | 8a | `blocked` |
 | 9 | ~~Orchestrator agent~~ — superseded by the new 9 brief below | `docs/milestones/M9-orchestrator-agent.md` | — | `superseded` |

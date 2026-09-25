@@ -1251,7 +1251,10 @@ scope.
   Nested ones are judged by the done gate (any depth, any case, tracked changes), and
   Codex reads `AGENTS.md` only from the root down to its cwd, the root. The seatbelt
   profile of checks, proofs and `setup` keeps the nested deny outside dependency trees
-  (`seatbelt::DEPENDENCY_DIRS`). A worker (or its leftover child) can still plant a
+  (`seatbelt::DEPENDENCY_DIRS`), but only against direct creation: a confined check can
+  write `node_modules/d/CLAUDE.md` and `mv node_modules/d src/d`, leaving
+  `src/d/CLAUDE.md` (a directory rename is checked on the directory, not its contents;
+  F4 review M1). For nested files the done gate is the barrier. A worker (or its leftover child) can still plant a
   nested `CLAUDE.md` that a later Claude session of the same task reads when it works
   in that directory.
 - **Letter case (F2 re-review I1) was not reproducible on macOS 26.2.** Seatbelt's
@@ -1269,6 +1272,13 @@ scope.
   the user's `confined_network`, worker-written test code can send them out. An
   allow-list for `engine_env` is the real fix; it needs the user to decide which
   variables a project's checks may see.
+- **F4 review M2: `prepare_guarded`'s double panic stalls a run.** If `effects::prepare`
+  panics and the publish-free retry panics too, nothing runs: the step's new
+  `pending_ops` and bumped revision are in the in-memory state but never executed and
+  never saved, so memory and disk diverge until the next restart, and a run waiting on
+  such an op stalls. Needs a panic in `prepare`'s mapping code (very unlikely). Fix:
+  on a double panic restore the pre-step runs, as `guarded_step` does
+  (`crates/daemon/src/run/driver/guard.rs`, `prepare_guarded_with`).
 - **F3 review N7: `guarded_step` clones the whole `EngineState` per event** under the
   engine lock (a second clone beside `step`'s own `before`). A performance cost, not a
   correctness one; `step` could hand its `before` back on the panic path.
