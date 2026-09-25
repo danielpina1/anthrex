@@ -305,16 +305,25 @@ fn unknown_orchestrator_keys_are_reported() {
 max_parallel = 3
 done_quiet_secs = 5
 
+[orchestrator.budget]
+xl = 5
+
 [orchestrator.budget.x]
 tool_calls = 10
+
+[orchestrator.budget.y]
 "#,
     );
+    // Review E-M5 (F4): an unknown rung is reported itself, a scalar or an empty
+    // table included.
     assert_eq!(
         keys(&problems),
         HashSet::from([
             "orchestrator.max_parallel".to_string(),
             "orchestrator.done_quiet_secs".to_string(),
-            "orchestrator.budget.x.tool_calls".to_string(),
+            "orchestrator.budget.xl".to_string(),
+            "orchestrator.budget.x".to_string(),
+            "orchestrator.budget.y".to_string(),
         ])
     );
     for p in &problems {

@@ -112,3 +112,25 @@ builtin_models = false
     );
     assert_eq!(config.orchestrator.models, default_roster());
 }
+
+/// Review E-M5 (F4): an entry's key outside `runtime`, `model`, `strength` and `note`
+/// is reported, keyed by the entry's index; the entry still loads.
+#[test]
+fn unknown_model_entry_keys_are_reported() {
+    let (config, problems) = parse(
+        r#"
+[orchestrator]
+builtin_models = false
+
+[[orchestrator.models]]
+runtime = "claude"
+model = "claude-opus-5"
+strength = "frontier"
+effort = "high"
+"#,
+    );
+    let keys: Vec<&str> = problems.iter().map(|p| p.key.as_str()).collect();
+    assert_eq!(keys, ["orchestrator.models[0].effort"]);
+    assert_eq!(problems[0].message, "unknown key, ignored");
+    assert_eq!(config.orchestrator.models.len(), 1);
+}

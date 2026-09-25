@@ -594,8 +594,8 @@ pub(crate) fn report_unknown(value: &toml::Value, problems: &mut Vec<Problem>) {
             | "cache_dirs"
             | "confined_network"
             | "confined_unix_sockets"
-            | "confined_localhost_ports"
-            | "models" => {}
+            | "confined_localhost_ports" => {}
+            "models" => report_unknown_model_keys(sub, problems),
             "review" => {
                 report_unknown_nested(sub, "orchestrator.review", KNOWN_REVIEW_KEYS, problems)
             }
@@ -621,8 +621,27 @@ fn report_unknown_budget(value: &toml::Value, problems: &mut Vec<Problem>) {
                 KNOWN_BUDGET_RUNG_KEYS,
                 problems,
             ),
-            other => {
-                report_unknown_nested(sub, &format!("orchestrator.budget.{other}"), &[], problems)
+            // Review E-M5 (F4): the rung itself, a scalar or an empty table too.
+            other => problems.push(unknown_key_problem(&format!("orchestrator.budget.{other}"))),
+        }
+    }
+}
+
+/// Review E-M5 (F4): each `[[orchestrator.models]]` entry's keys outside the four it
+/// has, keyed by the entry's index. A malformed entry is reported by the roster parse.
+fn report_unknown_model_keys(value: &toml::Value, problems: &mut Vec<Problem>) {
+    let Some(entries) = value.as_array() else {
+        return;
+    };
+    for (i, entry) in entries.iter().enumerate() {
+        let Some(table) = entry.as_table() else {
+            continue;
+        };
+        for key in table.keys() {
+            if !matches!(key.as_str(), "runtime" | "model" | "strength" | "note") {
+                problems.push(unknown_key_problem(&format!(
+                    "orchestrator.models[{i}].{key}"
+                )));
             }
         }
     }
