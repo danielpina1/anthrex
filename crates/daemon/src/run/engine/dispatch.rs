@@ -10,7 +10,8 @@ use std::path::Path;
 use proto::{AgentRole, BlockInfo, BlockReason, RunState, Runtime, TaskState};
 
 use super::schedule::{
-    deps_done, dispatch_order, hub_started, may_return_to_working, op_in_flight, writers_busy,
+    deps_done, dispatch_order, held_hub_waits_for, hub_started, may_return_to_working,
+    op_in_flight, writers_busy,
 };
 use super::{Effect, OpKind, OpResult, emit_op, next_op};
 use super::{clock, complete, done, gates, holds, ladder, merge, outbox, restore, review, signals};
@@ -188,8 +189,14 @@ fn prewarm(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 
 /// Writer dispatch in critical-path order while writer slots are free (decision 41).
 fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+    // F3 review N1: a held hub task lets only what it waits for start.
+    let only = held_hub_waits_for(run);
     for i in dispatch_order(run) {
-        if run.tasks[i].state != TaskState::Queued {
+        if run.tasks[i].state != TaskState::Queued
+            || only
+                .as_ref()
+                .is_some_and(|waits| !waits.iter().any(|id| id == run.tasks[i].id()))
+        {
             continue;
         }
         let busy = writers_busy(run);

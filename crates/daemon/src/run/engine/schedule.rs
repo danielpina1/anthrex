@@ -34,10 +34,49 @@ pub fn hub_holds_slot(run: &Run) -> bool {
 /// or `blocked` holds no writer slot, yet comes back to `working` (a rejection, a
 /// hand-back, an answer), so once started it keeps the hub. Its own reviewer, and
 /// other tasks' reviewers, still start ([`hub_holds_slot`] governs those).
+///
+/// F3 review N1: a hub task held on a dependency it gained (M8a.6 ruling N5,
+/// `awaiting_deps`) does not hold it: that dependency must run, or the run freezes.
+/// While it is held only its unfinished dependencies start ([`held_hub_waits_for`]).
 pub fn hub_started(run: &Run) -> bool {
     run.tasks.iter().any(|t| {
-        t.hub && !t.state.is_finished() && (holds_writer(t.state) || t.start_commit.is_some())
+        t.hub
+            && !t.state.is_finished()
+            && (holds_writer(t.state) || t.start_commit.is_some())
+            && !held_on_deps(run, t)
     })
+}
+
+/// A started task carrying M8a.6's hold with a dependency still unfinished.
+fn held_on_deps(run: &Run, task: &Task) -> bool {
+    task.awaiting_deps && !deps_done(run, task)
+}
+
+/// F3 review N1: while a started hub task is held on unfinished dependencies, the only
+/// tasks that may start are those it waits for, transitively; `None` when no hub task
+/// is held.
+pub fn held_hub_waits_for(run: &Run) -> Option<Vec<String>> {
+    let mut waits: Vec<String> = run
+        .tasks
+        .iter()
+        .filter(|t| t.hub && !t.state.is_finished() && held_on_deps(run, t))
+        .flat_map(|t| unfinished_deps(run, t))
+        .collect();
+    if waits.is_empty() {
+        return None;
+    }
+    let mut next = 0;
+    while next < waits.len() {
+        if let Some(task) = run.tasks.iter().find(|t| t.id() == waits[next]) {
+            for dep in unfinished_deps(run, task) {
+                if !waits.contains(&dep) {
+                    waits.push(dep);
+                }
+            }
+        }
+        next += 1;
+    }
+    Some(waits)
 }
 
 /// Final review A-I2: a task in `review` or `merge_queue` holds no writer slot but can

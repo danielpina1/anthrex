@@ -176,6 +176,50 @@ fn a_started_hub_task_holds_the_hub_until_it_finishes() {
     assert_eq!(tasks_of(&fx.log, "PrepareWorktree"), vec!["h", "t4", "t5"]);
 }
 
+/// F3 review N1: a started hub task held on a dependency it gained (`add_dep` while it
+/// is blocked, M8a.6 ruling N5) does not hold the hub against that dependency, or the
+/// run freezes: the dependency never dispatches and the hub waits for it forever. Only
+/// the held hub's unfinished dependencies start meanwhile; once they are merged the hub
+/// holds it again.
+#[test]
+fn a_hub_task_held_on_a_new_dependency_lets_that_dependency_run() {
+    let plan = plan_with(
+        &profile_with("max_writers = 3"),
+        &[
+            task("h", "M", "proto", ""),
+            task("t4", "S", "a", ""),
+            task("t5", "S", "b", ""),
+        ],
+    );
+    let mut fx = Fixture::new(&plan);
+    fx.ready(true);
+    fx.launch_all();
+    let h = fx.task_mut("h");
+    h.state = TaskState::Blocked;
+    h.block = Some(proto::BlockInfo {
+        reason: BlockReason::Question,
+        text: "which one?".into(),
+    });
+    fx.tick();
+    assert_eq!(tasks_of(&fx.log, "PrepareWorktree"), vec!["h"]);
+    let effects = super::dispatch::edit(&mut fx, vec![super::holds::add_dep("h", "t4")]);
+    assert!(
+        super::dispatch::replies(&effects)[0].is_ok(),
+        "{effects:#?}"
+    );
+    assert!(fx.task("h").awaiting_deps, "h is held on t4");
+    fx.tick();
+    assert_eq!(tasks_of(&fx.log, "PrepareWorktree"), vec!["h", "t4"]);
+    fx.launch_all();
+    fx.merge("t4", &"c4".repeat(20));
+    fx.tick();
+    assert_eq!(
+        tasks_of(&fx.log, "PrepareWorktree"),
+        vec!["h", "t4"],
+        "t5 waits for the hub"
+    );
+}
+
 #[test]
 fn window_limit_blocks_the_task_as_environment() {
     let config = config::Orchestrator {
