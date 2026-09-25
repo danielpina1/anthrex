@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 
 # `RUN_WAIT` in `crates/cli/tests/support/run_harness.rs` (300 s), the bound on one
@@ -130,7 +131,12 @@ def run_engine_stage(run_cmd, fail):
         with open(plan, "w") as f:
             f.write(PLAN)
 
-        started = run_cmd(["run", "start", "--plan", plan, "--dir", repo], timeout=RUN_CMD_TIMEOUT)
+        start = ["run", "start", "--plan", plan, "--dir", repo]
+        if sys.platform != "darwin":
+            # Checks can be confined only on macOS; elsewhere the run refuses to start
+            # without this explicit opt-in (M8a F1c round 2).
+            start.append("--unconfined-checks")
+        started = run_cmd(start, timeout=RUN_CMD_TIMEOUT)
         run_id = started.stdout.strip()
         if not run_id or "\n" in run_id:
             fail(f"`anthrex run start` printed no single run id:\n{started.stdout}")
