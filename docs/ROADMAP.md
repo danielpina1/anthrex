@@ -40,7 +40,7 @@ The protocol version currently on `main` is **7**, raised from 6 by milestone 8a
 | 7 | Split panes | `docs/milestones/M7-split-panes.md` | 4 | `blocked` |
 | 8 | ~~Orchestration engine~~ — superseded by 8a, 8b, 8c | `docs/milestones/M8-orchestration-engine.md` | — | `superseded` |
 | 8a | Orchestration engine core: task graph, headless sessions, gates, merge queue, escalation, journal | `docs/milestones/M8a-orchestration-engine-core.md` | 5, 6, 6.5 | `done` |
-| 8b | Adaptation: repo profile, scouts, deciders, fast path, output filter, metering, run history | `docs/milestones/M8b-adaptation.md` | 8a | `blocked` |
+| 8b | Adaptation: repo profile, scouts, deciders, fast path, output filter, metering, run history | `docs/milestones/M8b-adaptation.md` | 8a | `ready` |
 | 8c | The live run view in `C-b T` and the run inspector | `docs/milestones/M8c-live-run-view.md` | 8a | `blocked` |
 | 9 | ~~Orchestrator agent~~ — superseded by the new 9 brief below | `docs/milestones/M9-orchestrator-agent.md` | — | `superseded` |
 | 9 | Orchestrator and sub-planners: the one interactive agent, planning, steering, plan gate | `docs/milestones/M9-orchestrator-and-subplanners.md` | 8a, 8b, 8c | `blocked` |
