@@ -7,15 +7,19 @@
 //! | `profile.meta.json` | its `ProfileMeta` |
 //! | `proposal.json` | the one pending `ProposalRecord` |
 //!
-//! Every write is [`write_atomic`]: a temp file, `fsync`, rename, `fsync` of the
-//! directory. A leftover temp file from a crash is never read, and [`load`] removes it.
-//! Nothing here ever writes inside the repository.
+//! Every write is [`write_atomic`]: a temp file of its own, `fsync`, rename, `fsync` of
+//! the directory. A read never removes anything: a leftover of a crashed write looks
+//! exactly like a concurrent writer's temp file, and readers ignore both. Leftovers are
+//! removed only by [`sweep_leftovers`], where no writer can run (daemon start). Nothing
+//! here ever writes inside the repository.
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use proto::{ProfileMeta, ProposalRecord, RepoProfile};
 
@@ -46,9 +50,14 @@ pub enum Stored {
     Absent,
 }
 
+/// Makes every temp name of this process distinct.
+static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// A temp name no other write uses: `<file>.<pid>.<counter>.tmp`.
 fn tmp_path(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
-    name.push(".tmp");
+    let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    name.push(format!(".{}.{n}.tmp", std::process::id()));
     PathBuf::from(name)
 }
 
@@ -56,30 +65,63 @@ fn sync_dir(dir: &Path) -> io::Result<()> {
     File::open(dir)?.sync_all()
 }
 
-/// Replaces `path` with `bytes` atomically and durably: `<path>.tmp` (mode `0600`,
-/// truncating any leftover), `fsync`, rename, `fsync` of the directory. The directory
-/// is created when missing.
+/// Replaces `path` with `bytes` atomically and durably: a temp file of this write's own
+/// (`create_new`, mode `0600`), `fsync`, rename, `fsync` of the directory. Concurrent
+/// writes of one path never share a temp file, so each rename installs one whole
+/// write. The directory is created when missing; on failure the temp file is removed.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(dir)?;
     let tmp = tmp_path(path);
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&tmp)?;
-    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(&tmp, path)?;
+    let written = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp)?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&tmp, path)
+    })();
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
     sync_dir(dir)
 }
 
-/// Removes a leftover temp file of `path`, if any; a failure only leaves it ignored.
-fn remove_leftover(path: &Path) {
-    let _ = std::fs::remove_file(tmp_path(path));
+/// Removes every leftover temp file of this module's files in `repo_dir` (a crashed
+/// write's). Only where no writer can run: a concurrent write's temp file looks the
+/// same. `ProfileService::restore` calls it at daemon start (M8b.11). A missing
+/// directory has nothing to sweep.
+pub fn sweep_leftovers(repo_dir: &Path) -> io::Result<()> {
+    let entries = match std::fs::read_dir(repo_dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    let mut removed = false;
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let ours = [PROFILE_FILE, META_FILE, PROPOSAL_FILE]
+            .iter()
+            .any(|file| name.starts_with(&format!("{file}.")));
+        if ours && name.ends_with(".tmp") {
+            match std::fs::remove_file(entry.path()) {
+                Ok(()) => removed = true,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
+        }
+    }
+    if removed {
+        sync_dir(repo_dir)?;
+    }
+    Ok(())
 }
 
 fn read_optional(path: &Path) -> Result<Option<String>, String> {
@@ -96,8 +138,6 @@ fn read_optional(path: &Path) -> Result<Option<String>, String> {
 pub fn load(repo_dir: &Path) -> Stored {
     let path = repo_dir.join(PROFILE_FILE);
     let meta_path = repo_dir.join(META_FILE);
-    remove_leftover(&path);
-    remove_leftover(&meta_path);
     let text = match read_optional(&path) {
         Ok(Some(text)) => text,
         Ok(None) => return Stored::Absent,
@@ -155,7 +195,6 @@ pub fn save(repo_dir: &Path, profile: &RepoProfile, meta: &ProfileMeta) -> io::R
 /// The pending proposal, if any.
 pub fn load_proposal(repo_dir: &Path) -> Result<Option<ProposalRecord>, String> {
     let path = repo_dir.join(PROPOSAL_FILE);
-    remove_leftover(&path);
     match read_optional(&path)? {
         None => Ok(None),
         Some(text) => serde_json::from_str(&text)
@@ -194,29 +233,70 @@ impl Fnv1a64 {
     }
 }
 
-/// A path the fingerprint may read: relative and never climbing out of the project.
+/// A path the fingerprint may look at: relative and never climbing out of the project.
 fn inside(path: &str) -> bool {
     let p = Path::new(path);
     !path.is_empty() && p.components().all(|c| matches!(c, Component::Normal(_)))
 }
 
-/// One file's fingerprint: `"<16 hex>:<len>"`, or `"missing"` for a file that is absent,
-/// not a regular file (a FIFO would block the read), outside the project, or unreadable.
+fn hash_hex(hash: &Fnv1a64, len: u64) -> String {
+    format!("{:016x}:{len}", hash.0)
+}
+
+/// One file's fingerprint, never following a symlink (a model-written `manifests`
+/// entry must not make the daemon read outside the repository):
+/// - a regular file: `"<16 hex>:<len>"` of its contents;
+/// - a symlink: `"link:<16 hex>:<len>"` of its target's name, never of what it points
+///   at, so retargeting it still shows as a change;
+/// - anything else is `"missing"`: absent, outside the project, under a symlinked
+///   directory, not a regular file (a FIFO would block the read), or unreadable.
 fn one(project: &Path, path: &str) -> String {
     const MISSING: &str = "missing";
     if !inside(path) {
         return MISSING.to_string();
     }
-    let full = project.join(path);
-    let Ok(meta) = std::fs::metadata(&full) else {
+    let rel = Path::new(path);
+    // Every directory on the way must be a real directory, not a link out.
+    let mut dir = project.to_path_buf();
+    if let Some(parent) = rel.parent() {
+        for component in parent.components() {
+            dir.push(component);
+            match std::fs::symlink_metadata(&dir) {
+                Ok(meta) if meta.file_type().is_dir() => {}
+                _ => return MISSING.to_string(),
+            }
+        }
+    }
+    let full = project.join(rel);
+    let Ok(meta) = std::fs::symlink_metadata(&full) else {
         return MISSING.to_string();
     };
-    if !meta.is_file() {
+    if meta.file_type().is_symlink() {
+        let Ok(target) = std::fs::read_link(&full) else {
+            return MISSING.to_string();
+        };
+        let bytes = target.as_os_str().as_bytes();
+        let mut hash = Fnv1a64::new();
+        hash.update(bytes);
+        return format!("link:{}", hash_hex(&hash, bytes.len() as u64));
+    }
+    if !meta.file_type().is_file() {
         return MISSING.to_string();
     }
-    let Ok(file) = File::open(&full) else {
+    // `O_NOFOLLOW`: a file swapped for a symlink since the check is refused, not read.
+    let Ok(file) = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&full)
+    else {
         return MISSING.to_string();
     };
+    let Ok(opened) = file.metadata() else {
+        return MISSING.to_string();
+    };
+    if !opened.is_file() {
+        return MISSING.to_string();
+    }
     let mut hash = Fnv1a64::new();
     let mut reader = file.take(FINGERPRINT_MAX_BYTES);
     let mut buf = [0u8; 64 * 1024];
@@ -228,7 +308,7 @@ fn one(project: &Path, path: &str) -> String {
             Err(_) => return MISSING.to_string(),
         }
     }
-    format!("{:016x}:{}", hash.0, meta.len())
+    hash_hex(&hash, opened.len())
 }
 
 /// Decision 7: each path (relative to `project`) to its fingerprint.

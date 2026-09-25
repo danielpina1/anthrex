@@ -89,3 +89,61 @@ pub(super) fn apply_choice(run: &mut Run, choice: ProfileChoice, now: u64) {
             .map(|text| LogEntry { at: now, text }),
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use proto::{OutputFilter, ProfileSource};
+
+    use super::{ProfileChoice, apply_choice};
+    use crate::run::plan::{BuildContext, Preflight, build_run, parse_plan};
+
+    fn run() -> crate::run::model::Run {
+        let plan = parse_plan(
+            "goal = \"g\"\n[[task]]\nid = \"t1\"\ntitle = \"One\"\nsize = \"S\"\nowns = [\"a.rs\"]\nbrief = \"b\"\nacceptance = [\"a\"]\n",
+        )
+        .unwrap();
+        let config = config::Orchestrator::default();
+        let pre = Preflight {
+            root: PathBuf::from("/tmp/ax-adapt-root"),
+            project: PathBuf::from("/tmp/ax-adapt-root"),
+            git_common_dir: PathBuf::from("/tmp/ax-adapt-root/.git"),
+            base_branch: "main".into(),
+            base_sha: "b".repeat(40),
+            protected_files: Vec::new(),
+        };
+        let ctx = BuildContext {
+            id: "g-0001".into(),
+            wt_dir: PathBuf::from("/tmp/wt"),
+            data_dir: PathBuf::from("/tmp/data/runs/g-0001"),
+            config: &config,
+            now: 1,
+            yes: false,
+        };
+        build_run(plan, pre, ctx).unwrap_or_else(|e| panic!("{e:?}"))
+    }
+
+    #[test]
+    fn apply_choice_copies_every_field_and_logs_each_note() {
+        let mut run = run();
+        assert_eq!(run.profile_source, None);
+        assert_eq!(run.repo_dir, PathBuf::new());
+        let choice = ProfileChoice {
+            source: ProfileSource::Stored,
+            output_filter: OutputFilter::Tail,
+            filter_prefixes: vec!["cargo test".into()],
+            repo_dir: PathBuf::from("/data/repos/r-00000000"),
+            stale: vec!["Cargo.toml".into()],
+            notes: vec!["note one".into(), "note two".into()],
+        };
+        apply_choice(&mut run, choice, 42);
+        assert_eq!(run.profile_source, Some(ProfileSource::Stored));
+        assert_eq!(run.output_filter, OutputFilter::Tail);
+        assert_eq!(run.filter_prefixes, vec!["cargo test".to_string()]);
+        assert_eq!(run.repo_dir, PathBuf::from("/data/repos/r-00000000"));
+        assert_eq!(run.stale_profile, vec!["Cargo.toml".to_string()]);
+        let logged: Vec<(u64, &str)> = run.log.iter().map(|e| (e.at, e.text.as_str())).collect();
+        assert_eq!(logged, vec![(42, "note one"), (42, "note two")]);
+    }
+}

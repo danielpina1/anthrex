@@ -471,10 +471,36 @@ fn a_stale_profile_gets_the_attention_line() {
     let mut run = build_run(plan, pre, ctx).unwrap_or_else(|e| panic!("{e:?}"));
     assert_eq!(run.stale_profile_line(), None);
     run.stale_profile = strings(&["Cargo.toml", "AGENTS.md"]);
-    assert_eq!(
-        run.stale_profile_line().as_deref(),
-        Some(
-            "the repository profile may be stale: Cargo.toml, AGENTS.md changed since it was confirmed; run anthrex profile detect"
-        )
+    let line = "the repository profile may be stale: Cargo.toml, AGENTS.md changed since it was confirmed; run anthrex profile detect";
+    assert_eq!(run.stale_profile_line().as_deref(), Some(line));
+
+    // The snapshot shows the line and the run's profile source.
+    run.profile_source = Some(ProfileSource::Stored);
+    let mut state = crate::run::engine::EngineState {
+        runs: Default::default(),
+        revision: 1,
+        stopped: false,
+    };
+    state.runs.insert(run.id.clone(), run.clone());
+    let info = &crate::run::snapshot::snapshot(&state, 2).runs[0];
+    assert_eq!(info.profile_source, Some(ProfileSource::Stored));
+    assert!(
+        info.attention.iter().any(|l| l == line),
+        "{:?}",
+        info.attention
+    );
+
+    // Not stale, degraded: no line, and the source is still shown.
+    run.stale_profile.clear();
+    run.profile_source = Some(ProfileSource::None);
+    state.runs.insert(run.id.clone(), run);
+    let info = &crate::run::snapshot::snapshot(&state, 2).runs[0];
+    assert_eq!(info.profile_source, Some(ProfileSource::None));
+    assert!(
+        info.attention
+            .iter()
+            .all(|l| !l.contains("profile may be stale")),
+        "{:?}",
+        info.attention
     );
 }

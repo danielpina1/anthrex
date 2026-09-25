@@ -79,19 +79,41 @@ fn repo_dir_is_shared_by_linked_worktrees() {
     ]);
 }
 
+/// Every temp file in `dir`, by name, sorted.
+fn temps(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".tmp"))
+        .collect();
+    names.sort();
+    names
+}
+
 #[test]
 fn save_and_load_round_trip_atomically() {
     let data = tempfile::tempdir().unwrap();
     let dir = data.path().join("repos").join("r-00000000");
-    let tmp = dir.join("profile.toml.tmp");
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(&tmp, "garbage = [").unwrap();
+    // Leftovers of crashed writes, in the old and the per-write naming.
+    let leftovers = [
+        "profile.toml.1.0.tmp",
+        "profile.toml.tmp",
+        "proposal.json.7.3.tmp",
+    ];
+    for name in leftovers {
+        std::fs::write(dir.join(name), "garbage = [").unwrap();
+    }
     let written = meta(BTreeMap::new());
     save(&dir, &profile(), &written).unwrap();
-    assert!(!tmp.exists(), "the save's own temp file is renamed away");
+    assert_eq!(
+        temps(&dir),
+        leftovers,
+        "a save leaves no temp file of its own"
+    );
 
-    // A leftover from a crash between write and rename is ignored and removed.
-    std::fs::write(&tmp, "garbage = [").unwrap();
+    // A read ignores the leftovers and never removes them: a concurrent writer's temp
+    // file looks exactly like one.
     match load(&dir) {
         Stored::Found {
             profile: p,
@@ -104,8 +126,109 @@ fn save_and_load_round_trip_atomically() {
         }
         other => panic!("expected the stored profile, got {other:?}"),
     }
-    assert!(!tmp.exists(), "a leftover temp file is removed");
+    assert_eq!(load_proposal(&dir), Ok(None));
+    assert_eq!(temps(&dir), leftovers, "a read removes nothing");
+
+    // The sweep, run where no writer can be (daemon start), removes them all.
+    store::sweep_leftovers(&dir).unwrap();
+    assert!(temps(&dir).is_empty());
+    assert!(matches!(load(&dir), Stored::Found { .. }));
     assert!(matches!(load(&data.path().join("nothing")), Stored::Absent));
+    store::sweep_leftovers(&data.path().join("nothing")).unwrap();
+}
+
+#[test]
+fn saves_succeed_while_other_threads_load() {
+    let data = tempfile::tempdir().unwrap();
+    let dir = data.path().join("repos").join("r-00000000");
+    let versions: Vec<RepoProfile> = (0..200)
+        .map(|i| RepoProfile {
+            check: Some(format!("check {i}")),
+            ..profile()
+        })
+        .collect();
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let readers: Vec<_> = (0..2)
+        .map(|_| {
+            let (dir, done, versions) = (dir.clone(), done.clone(), versions.clone());
+            std::thread::spawn(move || {
+                let mut found = 0u32;
+                while !done.load(std::sync::atomic::Ordering::SeqCst) {
+                    match load(&dir) {
+                        Stored::Found { profile, .. } => {
+                            assert!(versions.contains(&profile), "{profile:?}");
+                            found += 1;
+                        }
+                        Stored::Absent => {}
+                        other => panic!("a load during saves gave {other:?}"),
+                    }
+                    let proposal = load_proposal(&dir);
+                    assert!(proposal.is_ok(), "{proposal:?}");
+                }
+                found
+            })
+        })
+        .collect();
+    // Two writers on the same files, as `run start`'s read and `profile confirm` or
+    // detection's proposal writes are never serialised with each other.
+    let writers: Vec<_> = (0..2)
+        .map(|w| {
+            let (dir, versions) = (dir.clone(), versions.clone());
+            std::thread::spawn(move || {
+                for (i, version) in versions.iter().enumerate().filter(|(i, _)| i % 2 == w) {
+                    save(&dir, version, &meta(BTreeMap::new()))
+                        .unwrap_or_else(|e| panic!("save {i} failed: {e}"));
+                    save_proposal(&dir, &proposal(Path::new("/src/p")))
+                        .unwrap_or_else(|e| panic!("proposal save {i} failed: {e}"));
+                }
+            })
+        })
+        .collect();
+    for writer in writers {
+        writer.join().unwrap();
+    }
+    done.store(true, std::sync::atomic::Ordering::SeqCst);
+    for reader in readers {
+        reader.join().unwrap();
+    }
+    assert!(matches!(load(&dir), Stored::Found { .. }));
+    assert!(temps(&dir).is_empty(), "{:?}", temps(&dir));
+}
+
+#[test]
+fn a_missing_meta_reads_as_confirmed_at_zero_and_never_stale() {
+    let data = tempfile::tempdir().unwrap();
+    let dir = data.path().to_path_buf();
+    std::fs::write(dir.join("profile.toml"), "check = \"cargo test\"\n").unwrap();
+    match load(&dir) {
+        Stored::Found { profile, meta, .. } => {
+            assert_eq!(profile.check.as_deref(), Some("cargo test"));
+            assert_eq!(meta.confirmed_at, 0);
+            assert_eq!(meta.report, None);
+            assert!(meta.fingerprint.is_empty());
+            assert!(stale(data.path(), &meta).is_empty());
+        }
+        other => panic!("expected Found, got {other:?}"),
+    }
+    // A meta file without a profile is no stored profile.
+    let alone = tempfile::tempdir().unwrap();
+    std::fs::write(alone.path().join("profile.meta.json"), "{}").unwrap();
+    assert!(matches!(load(alone.path()), Stored::Absent));
+}
+
+#[test]
+fn a_corrupt_meta_is_unparseable_naming_the_meta_file() {
+    let data = tempfile::tempdir().unwrap();
+    let dir = data.path().to_path_buf();
+    std::fs::write(dir.join("profile.toml"), "check = \"cargo test\"\n").unwrap();
+    std::fs::write(dir.join("profile.meta.json"), "{").unwrap();
+    match load(&dir) {
+        Stored::Unparseable { path, error } => {
+            assert_eq!(path, dir.join("profile.meta.json"));
+            assert!(error.contains("EOF"), "{error}");
+        }
+        other => panic!("expected Unparseable, got {other:?}"),
+    }
 }
 
 #[test]
@@ -179,6 +302,43 @@ fn fingerprint_changes_with_content_length_and_absence() {
     let fp = fingerprint(project.path(), &outside);
     assert_eq!(fp["../escape"], "missing");
     assert_eq!(fp["/etc/hosts"], "missing");
+}
+
+#[test]
+fn fingerprint_never_follows_a_symlink_out_of_the_project() {
+    let project = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let secret = elsewhere.path().join("secret");
+    std::fs::write(&secret, "abc").unwrap();
+    std::fs::write(project.path().join("real"), "abc").unwrap();
+    let secret_hash = fingerprint(project.path(), &["real".to_string()])["real"].clone();
+    std::os::unix::fs::symlink(&secret, project.path().join("Cargo.toml")).unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), project.path().join("sub")).unwrap();
+    let paths = vec!["Cargo.toml".to_string(), "sub/secret".to_string()];
+    let fp = fingerprint(project.path(), &paths);
+    // A symlink is fingerprinted by its target's name, never its target's contents.
+    let target = secret.as_os_str().len();
+    assert_ne!(fp["Cargo.toml"], secret_hash);
+    assert!(
+        fp["Cargo.toml"].starts_with("link:"),
+        "{}",
+        fp["Cargo.toml"]
+    );
+    assert!(
+        fp["Cargo.toml"].ends_with(&format!(":{target}")),
+        "{}",
+        fp["Cargo.toml"]
+    );
+    // A path through a symlinked directory is not read at all.
+    assert_eq!(fp["sub/secret"], "missing");
+
+    // Retargeting the link changes the fingerprint, so staleness still sees it.
+    let before = fp["Cargo.toml"].clone();
+    std::fs::remove_file(project.path().join("Cargo.toml")).unwrap();
+    std::os::unix::fs::symlink("real", project.path().join("Cargo.toml")).unwrap();
+    let after = fingerprint(project.path(), &paths)["Cargo.toml"].clone();
+    assert_ne!(before, after);
+    assert!(after.ends_with(":4"), "{after}");
 }
 
 #[test]
