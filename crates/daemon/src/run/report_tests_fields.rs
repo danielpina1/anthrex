@@ -134,6 +134,36 @@ const FIELDS: &[Field] = &[
         new_fences: 0,
     },
     Field {
+        name: "Finding.input",
+        plant: |run, v| {
+            let mut f = finding(None, "finding".to_string());
+            f.input = Some(v);
+            review(run, "ok".to_string(), vec![f])
+        },
+        new_lists: 1,
+        one_line: true,
+        new_fences: 0,
+    },
+    // Final review A-8: the plan's check command (from M9 a model writes plans) and
+    // the halted reason (it can carry git's stderr).
+    Field {
+        name: "Profile.check",
+        plant: |run, v| run.profile.check = Some(v),
+        new_lists: 0,
+        one_line: false,
+        new_fences: 0,
+    },
+    Field {
+        name: "Run.halted_reason",
+        plant: |run, v| {
+            run.state = proto::RunState::Halted;
+            run.halted_reason = Some(v);
+        },
+        new_lists: 0,
+        one_line: false,
+        new_fences: 0,
+    },
+    Field {
         name: "Task.history",
         plant: |run, v| t1(run).history.push(TaskEvent { at: 1_800, text: v }),
         new_lists: 1,
@@ -224,4 +254,22 @@ fn every_ascii_punctuation_character_at_line_start_forges_nothing() {
             }
         }
     }
+}
+
+/// Final review A-8: a finding located only by its failing input (decision 35 makes
+/// `input` a locator) shows that input in the report.
+#[test]
+fn a_finding_located_by_its_input_shows_the_input() {
+    let mut run = base_run();
+    let mut located = finding(None, "crashes".to_string());
+    located.input = Some("an empty name".to_string());
+    let mut both = finding(Some("src/a.rs".to_string()), "also".to_string());
+    both.input = Some("a | pipe".to_string());
+    review(&mut run, "ok".to_string(), vec![located, both]);
+    let out = render(&run, 2_000);
+    assert!(out.contains("- input an empty name: crashes\n"), "{out}");
+    assert!(
+        out.contains("- src/a.rs:1, input a \\| pipe: also\n"),
+        "{out}"
+    );
 }

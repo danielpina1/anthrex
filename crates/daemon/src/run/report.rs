@@ -64,9 +64,10 @@ fn header(run: &Run, out: &mut String) {
 
 fn state_line(run: &Run) -> String {
     match run.state {
+        // Final review A-8: the reason can carry git's stderr.
         RunState::Halted => format!(
             "halted: {}",
-            run.halted_reason.as_deref().unwrap_or("unknown reason")
+            plain_text_line(run.halted_reason.as_deref().unwrap_or("unknown reason"))
         ),
         other => other.label().to_string(),
     }
@@ -83,7 +84,8 @@ fn approved_by_line(run: &Run) -> String {
 /// (`profile.check.is_none()`).
 fn profile_summary(run: &Run, out: &mut String) {
     match &run.profile.check {
-        Some(check) => out.push_str(&format!("Check: {check}\n")),
+        // Final review A-8: plan-authored (from M9, by a model).
+        Some(check) => out.push_str(&format!("Check: {}\n", plain_text_line(check))),
         None => out.push_str("no check command: this run is unverified\n"),
     }
     if run.unverified && run.profile.check.is_some() {

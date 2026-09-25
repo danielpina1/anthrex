@@ -160,10 +160,21 @@ fn findings_by_severity<'a>(findings: impl Iterator<Item = &'a proto::Finding>, 
         }
         out.push_str(&format!("{label}:\n"));
         for f in group {
-            let where_ = match (&f.file, f.line) {
-                (Some(file), Some(line)) => format!("{}:{line}: ", escape_cell(file)),
-                (Some(file), None) => format!("{}: ", escape_cell(file)),
-                _ => String::new(),
+            // Final review A-8: the failing input is a locator too (decision 35).
+            let file = match (&f.file, f.line) {
+                (Some(file), Some(line)) => Some(format!("{}:{line}", escape_cell(file))),
+                (Some(file), None) => Some(escape_cell(file)),
+                _ => None,
+            };
+            let input = f
+                .input
+                .as_ref()
+                .map(|i| format!("input {}", escape_cell(i)));
+            let parts: Vec<String> = file.into_iter().chain(input).collect();
+            let where_ = if parts.is_empty() {
+                String::new()
+            } else {
+                format!("{}: ", parts.join(", "))
             };
             out.push_str(&format!("- {}\n", list_item_text(&where_, &f.text)));
         }
