@@ -2216,7 +2216,7 @@ mkdir -p /tmp/anthrex-m8a && cd /tmp/anthrex-m8a && git init -b main demo && cd 
     - the worker's `task_done` is rejected with `AGENTS.md configures or instructs future agents…`, and after it reverts, the task merges;
     - `AGENTS.md` on the run branch is unchanged.
 4d. **Codex project config.** If M8a.1 found that Codex loads project config, commit a `.codex/config.toml` and start a run with a Codex task. It is either excluded (the argv carries `codex_user_config_only`) or refused without `--trust-project`, as decision 53 says. Remove the file afterwards.
-4e. **The worker grant in the real CLIs (final fix batch F1, fix round 4, S5; replaced by F1b, then by F1c).** Since F1c a task checkout is its own repository in anthrex's data directory (`<data_dir>/runs/<run>/tasks/<task>/git`, the user's `<common>/objects` its only alternate), and a worker's grant names nothing of the user's repository: its checkout, the checkout's private object directory (`<data_dir>/runs/<run>/tasks/<task>/git/objects`), its per-task tmp (`.../tasks/<task>/tmp`), and about 30 files and directories of the checkout's own git dir (`HEAD`, `index`, the merge and rebase files, each with its `.lock`). With a real Claude worker and a real Codex worker, confirm that each CLI accepts the list (Claude's `--settings` `allowWrite`, Codex's `writable_roots`), that Claude's generated seatbelt profile and Codex's `-D WRITABLE_ROOT_n` parameters keep every entry, and that `touch <common>/objects/x`, `touch <user checkout>/.git/index` and `git -C <user checkout> update-ref refs/heads/x HEAD` are refused in the worker's shell. Confirm that `env | grep ^GIT_` in the worker's shell shows `GIT_CONFIG_PARAMETERS` and no `GIT_OBJECT_DIRECTORY` or `GIT_ALTERNATE_OBJECT_DIRECTORIES` (the checkout's repository is self-describing), that `git config --get core.logAllRefUpdates` prints `false` and `git config --get gc.auto` prints `0`, that the worker's `git status` shows a detached `HEAD`, that `git worktree list` in the user's checkout does not list the task, and that the worker's `git commit` succeeds and its commit reaches the task's branch only after `task_done` (`git rev-parse anthrex/<run>/<task>` in the user's checkout before and after). On Linux, repeat under the Linux sandbox (bubblewrap/landlock). Since F1c (I2) checks and proofs are confined too on macOS: with a plan whose `check` tries `touch <common>/objects/x`, `touch <user checkout>/.git/index` and `touch ~/x`, confirm each is denied (`Operation not permitted` in the check's output) and a real `cargo test` check still passes. Confirm `setup` is denied the same writes. **On Linux, checks, proofs and setup cannot be confined**: confirm that `anthrex run start` refuses with a message naming `--unconfined-checks`, that with the flag the run starts and `anthrex run status` and the report say its checks are unconfined, and treat such a run's checks as having the daemon's own write access. F1c round 3: confirm a confined check cannot reach the anthrex daemon, so a check that connects to `$ANTHREX_SOCKET` (or the default socket path) is denied, and `env | grep ^ANTHREX_` in the check's shell is empty; confirm `launchctl submit` from a check does not run its job. Confirm a Claude reviewer runs under a read-only sandbox: `git diff --output=$HOME/x` and `git show --output=<repo>/.git/hooks/post-checkout` are denied, and a Codex reviewer runs `-s read-only`. Confirm `[orchestrator.cache_dirs]` is read only from the user's own config keyed by repository root (a plan's `[profile] cache_dirs` is refused at `run start`), and that a `cache_dirs` entry of `~`, `~/.ssh`, `~/.gitconfig` or `~/Library` is refused. **F1d (deny-by-default confinement, pinned worker sandboxes).** From a real Claude worker's Bash and a real Codex worker's shell, with the user's own `~/.claude/settings.json` and `~/.codex/config.toml` in place (and again with a throwaway user setting that widens them, such as `sandbox.network.allowUnixSockets = ["/"]` or `[sandbox_workspace_write] network_access = true`, to see whether the command-line pins win), each of these must fail: `python3 -c 'import socket;s=socket.socket(socket.AF_UNIX);s.connect("<the daemon socket, e.g. $TMPDIR/anthrex-$(id -u)/daemon.sock of a throwaway daemon>")'`; `rm -i <a throwaway daemon's socket>` (answer n); `open -g <an .app the worker built in its checkout>` (then `lsregister -u` it); `defaults write com.anthrex.probe k v` (then `defaults delete com.anthrex.probe`); `launchctl submit -l com.anthrex.probe -- /usr/bin/touch <marker>` (then `launchctl remove com.anthrex.probe`). Confirm `echo $TMPDIR` in each worker's shell prints `/private/tmp/ax-<uid>/<16 hex>`, and that Claude's generated seatbelt profile has its network restriction on (with `allowedDomains = []`). With a plan whose `check` runs the same five probes plus `python3 -c 'import pty;pty.openpty()'` and a TCP connect to a local service, confirm the five and the TCP connect are denied and the PTY works; then set `[orchestrator.confined_network] "<repo>" = true` in the user's config and confirm the TCP connect works while the daemon socket connect and `security find-generic-password -s <a nonexistent item>` still fail (the latter with a connection error, not "could not be found"). Confirm a relative `cache_dirs` entry is reported at config load.
+4e. **The worker grant in the real CLIs (final fix batch F1, fix round 4, S5; replaced by F1b, then by F1c).** Since F1c a task checkout is its own repository in anthrex's data directory (`<data_dir>/runs/<run>/tasks/<task>/git`, the user's `<common>/objects` its only alternate), and a worker's grant names nothing of the user's repository: its checkout, the checkout's private object directory (`<data_dir>/runs/<run>/tasks/<task>/git/objects`), its per-task tmp (`.../tasks/<task>/tmp`), and about 30 files and directories of the checkout's own git dir (`HEAD`, `index`, the merge and rebase files, each with its `.lock`). With a real Claude worker and a real Codex worker, confirm that each CLI accepts the list (Claude's `--settings` `allowWrite`, Codex's `writable_roots`), that Claude's generated seatbelt profile and Codex's `-D WRITABLE_ROOT_n` parameters keep every entry, and that `touch <common>/objects/x`, `touch <user checkout>/.git/index` and `git -C <user checkout> update-ref refs/heads/x HEAD` are refused in the worker's shell. Confirm that `env | grep ^GIT_` in the worker's shell shows `GIT_CONFIG_PARAMETERS` and no `GIT_OBJECT_DIRECTORY` or `GIT_ALTERNATE_OBJECT_DIRECTORIES` (the checkout's repository is self-describing), that `git config --get core.logAllRefUpdates` prints `false` and `git config --get gc.auto` prints `0`, that the worker's `git status` shows a detached `HEAD`, that `git worktree list` in the user's checkout does not list the task, and that the worker's `git commit` succeeds and its commit reaches the task's branch only after `task_done` (`git rev-parse anthrex/<run>/<task>` in the user's checkout before and after). On Linux, repeat under the Linux sandbox (bubblewrap/landlock). Since F1c (I2) checks and proofs are confined too on macOS: with a plan whose `check` tries `touch <common>/objects/x`, `touch <user checkout>/.git/index` and `touch ~/x`, confirm each is denied (`Operation not permitted` in the check's output) and a real `cargo test` check still passes. Confirm `setup` is denied the same writes. **On Linux, checks, proofs and setup cannot be confined**: confirm that `anthrex run start` refuses with a message naming `--unconfined-checks`, that with the flag the run starts and `anthrex run status` and the report say its checks are unconfined, and treat such a run's checks as having the daemon's own write access. F1c round 3: confirm a confined check cannot reach the anthrex daemon, so a check that connects to `$ANTHREX_SOCKET` (or the default socket path) is denied, and `env | grep ^ANTHREX_` in the check's shell is empty; confirm `launchctl submit` from a check does not run its job. Confirm a Claude reviewer runs under a read-only sandbox: `git diff --output=$HOME/x` and `git show --output=<repo>/.git/hooks/post-checkout` are denied, and a Codex reviewer runs `-s read-only`. Confirm `[orchestrator.cache_dirs]` is read only from the user's own config keyed by repository root (a plan's `[profile] cache_dirs` is refused at `run start`), and that a `cache_dirs` entry of `~`, `~/.ssh`, `~/.gitconfig` or `~/Library` is refused. **F1d (deny-by-default confinement, pinned worker sandboxes).** From a real Claude worker's Bash and a real Codex worker's shell, with the user's own `~/.claude/settings.json` and `~/.codex/config.toml` in place (and again with a throwaway user setting that widens them, such as `sandbox.network.allowUnixSockets = ["/"]` or `[sandbox_workspace_write] network_access = true`, to see whether the command-line pins win), each of these must fail: `python3 -c 'import socket;s=socket.socket(socket.AF_UNIX);s.connect("<the daemon socket, e.g. $TMPDIR/anthrex-$(id -u)/daemon.sock of a throwaway daemon>")'`; `rm -i <a throwaway daemon's socket>` (answer n); `open -g <an .app the worker built in its checkout>` (then `lsregister -u` it); `defaults write com.anthrex.probe k v` (then `defaults delete com.anthrex.probe`); `launchctl submit -l com.anthrex.probe -- /usr/bin/touch <marker>` (then `launchctl remove com.anthrex.probe`). Confirm `echo $TMPDIR` in each worker's shell prints `/private/tmp/ax-<uid>/<16 hex>`, and that Claude's generated seatbelt profile has its network restriction on (with `allowedDomains = []`). With a plan whose `check` runs the same five probes plus `python3 -c 'import pty;pty.openpty()'` and a TCP connect to a local service, confirm the five and the TCP connect are denied and the PTY works; then set `[orchestrator.confined_network] "<repo>" = true` in the user's config and confirm a TCP connect to a remote host works (a local one stays denied, round 2) while the daemon socket connect and `security find-generic-password -s <a nonexistent item>` still fail (the latter with a connection error, not "could not be found"). Confirm a relative `cache_dirs` entry is reported at config load. **F1d round 2.** With `confined_network` on for a repository, confirm from a check that `curl https://example.com` works while a connect to a local redis or any `127.0.0.1` port, to this machine's LAN address, to tmux's `/private/tmp/tmux-$(id -u)/default` and to Docker's socket is denied; then list one socket in `confined_unix_sockets` and one port in `confined_localhost_ports` and confirm exactly those connect. From real workers, with a hostile copy of the user's settings: (1) Claude `--settings` arrays (`allowWrite`, `allowUnixSockets`, `allowedDomains`, `excludedCommands`, `allowMachLookup`) replace the user's rather than merge (a user entry naming a scratch dir or socket must stay unreachable); (2) a user `httpProxyPort`/`socksProxyPort` does not open egress; (3) `curl https://example.com` fails in a Claude worker, and note which `TMPDIR` its Bash tool actually sees (Claude Code may substitute its own); (4) a user `[sandbox_workspace_write] network_access = true` does not beat the `-c` pin; (5) **Codex permission profiles:** does a user `default_permissions = "<a profile with network enabled and allow_unix_sockets>"` in `~/.codex/config.toml` override `-s workspace-write` and the `sandbox_workspace_write.*` pins? If it does, record it and pin `-c default_permissions=...` to a known closed profile or refuse to launch Codex workers; (6) with `exclude_slash_tmp`, `touch /tmp/x` fails in a Codex worker; (7) re-review 2's probes (`open -g` of a built `.app`, `defaults write`, `launchctl submit`, a connect to and an `rm` of a throwaway daemon's socket) fail from both workers.
 5. In the TUI, typing into a focused worker window does nothing, and the kill and remove commands on it show decision 49's refusal. The run carries on.
 6. While `t2`'s worker runs, `anthrex daemon stop`:
    - `pgrep -fl "claude -p"` shows nothing of this run.
@@ -9424,7 +9424,7 @@ F1d: rebuild the profile deny-by-default.
   `com.apple.securityd.xpc`, LaunchServices (`launchservicesd`, `lsd.*`,
   `coreservicesd`), launchd, setuid programs (`ps`, `crontab`), and the network. Verified
   under the new profile: `/usr/bin/git` init/commit, `cargo test --offline` of a crate with
-  a Unix-socket test in `$TMPDIR`, a TCP-bind test and `fs::copy` (clonefile), `cc`,
+  a Unix-socket test in `$TMPDIR` and `fs::copy` (clonefile), `cc`,
   `node`, `python3 -m venv`, Python multiprocessing, `script(1)`. Tests
   (`tests/run_confine_escape.rs`, all red on `6f0e852`):
   `a_confined_check_cannot_open_an_app_it_built` (an app bundle the check built, opened
@@ -9439,27 +9439,17 @@ F1d: rebuild the profile deny-by-default.
   the module doc: on macOS it is `$TMPDIR/anthrex-<uid>/daemon.sock`; the profile now
   denies it by its exact path (and its resolved path) after every allow.
 - **R4 (Important): network off for confined commands unless the user's config enables it
-  for the repository.** Without it a confined check reaches no TCP or UDP, localhost
-  included, and no Unix socket outside its own directories
-  (`a_confined_check_cannot_reach_localhost`, a TCP listener and a UDP socket the test
-  owns on 127.0.0.1). The new user-config table `[orchestrator.confined_network]`, keyed
-  by repository root like `cache_dirs` (`"/path/to/repo" = true`), enables TCP, UDP and
-  Unix sockets plus the Mach services name resolution and TLS verification need
-  (`seatbelt::NETWORK_MACH_SERVICES`: configd, DNSConfiguration, networkd, trustd,
-  trustd.agent, ocspd), but never the keychain (`SecurityServer`; curl and git over https
-  verified working without it), the anthrex daemon's socket, or launchd's per-user
-  sockets under `/private/tmp/com.apple.launchd.*` (ssh-agent). It is frozen in the run
-  record (`Profile::confined_network`, `serde(default)` = off). A plan's `[profile]
-  confined_network` is refused (`deny_unknown_fields`), and it is not an
-  `[orchestrator.profile]` key. Tests:
-  `confined_network_opens_the_network_but_never_the_daemon_or_the_keychain`,
-  `confined_network_is_read_keyed_by_repo_root_and_off_by_default`, the plan tests.
-  **Cost (minor, recorded):** a check that needs a local Postgres, MySQL or Docker socket
-  (testcontainers), or fetches packages, fails unless the user sets `confined_network`
-  for that repository; with it, the check can read the user's files (`~/.ssh`,
-  `~/.config/gh`, `~/.netrc`) and send them anywhere, which is the user's explicit
-  choice per repository. Keychain-held tokens (the `gh` token of re-review 2's R4) stay
-  out of reach either way.
+  for the repository** (narrowed in F1d round 2, S1, below). Without it a confined check
+  reaches no TCP or UDP, localhost included, and no Unix socket outside its own
+  directories (`a_confined_check_cannot_reach_localhost`, a TCP listener and a UDP socket
+  the test owns on 127.0.0.1). Any test suite that binds a localhost port (hyper, axum,
+  pytest live servers, supertest) therefore fails its check unless the user lists the
+  port in `confined_localhost_ports` (round 2, S2). The user-config table
+  `[orchestrator.confined_network]`, keyed by repository root like `cache_dirs`
+  (`"/path/to/repo" = true`), is frozen in the run record (`Profile::confined_network`,
+  `serde(default)` = off); a plan's `[profile] confined_network` is refused
+  (`deny_unknown_fields`), and it is not an `[orchestrator.profile]` key. What it opens,
+  and its cost, are in the round 2 notes below.
 - **R2 (Important): PTYs work.** `(allow pseudo-tty)`, `/dev/ptmx` read/write/ioctl, and
   `/dev/ttys[0-9]+` read/write/ioctl only with the `com.apple.sandbox.pty` extension, which
   the kernel gives the PTYs the sandboxed process opens itself (Codex's rule). Every
@@ -9494,7 +9484,9 @@ F1d: rebuild the profile deny-by-default.
   (`/tmp/ax-<uid>/…` off macOS; `run/git/tmp.rs`), about 36 bytes, named by FNV-1a of the
   checkout repository's path. The root is the daemon's own: created mode 0700 and checked
   with `lstat` before every use (a real directory, owned by this user, closed to others),
-  so another user cannot pre-create it and a link there is refused. It is removed with
+  so a directory or link another user pre-creates there is refused rather than used
+  (which fails every sandboxed launch of this user until it is removed: a local denial
+  of service, round 2's S4). It is removed with
   the checkout's repository (`remove`, and reconcile's `remove_worktree`). A worker's
   `TMPDIR` is set last in its environment (a profile's own `TMPDIR` is dropped for
   workers; a confined command still honours a profile `TMPDIR`, which only moves where
@@ -9521,3 +9513,84 @@ F1d: rebuild the profile deny-by-default.
   without `--unconfined-checks`. The worker `TMPDIR` and the CLI pins apply on Linux too.
 - **Test hygiene.** Tests that make task checkouts without removing them leave empty
   directories under `/private/tmp/ax-<uid>`; macOS clears `/private/tmp` at boot.
+
+#### F1d round 2 (2026-09-25)
+
+F1d re-review 1 (`final-fix-F1d-rereview-1.md`) found R1–R5 and M1–M3 fixed, one
+Important (S1) and five Minor (S2–S6).
+
+- **S1 (Important): `confined_network` means outbound IP to remote hosts, nothing
+  local.** Round 1 opened `(allow network*)` and `(allow system-socket)`, which let a
+  networked check reach every Unix socket (tmux, Docker, an IDE, another anthrex daemon)
+  and every localhost service, any of which can run a command unconfined. Now the network
+  block is `(allow system-socket (socket-domain AF_INET/AF_INET6))`, `(allow
+  network-outbound (remote ip "*:*"))`, the mDNSResponder socket for DNS, the AF_SYSTEM
+  socket the resolver uses and the resolution/TLS Mach services, followed by `(deny
+  network-outbound (remote ip "localhost:*"))`. Measured under `sandbox-exec`: seatbelt's
+  `localhost` also matches this machine's own interface addresses (a listener on
+  192.168.0.103 was denied), so a service bound to `0.0.0.0` is out of reach too; remote
+  TCP (`curl https://example.com`, 200) and remote UDP work. Unix sockets stay limited to
+  the command's own directories. Two new user-config-only tables, keyed by repository
+  root, are the only ways to a local service: `[orchestrator.confined_unix_sockets]`
+  (absolute socket paths, resolved like `cache_dirs` with no link a run could plant, and
+  refused when they name the daemon's socket or its directory, anything under anthrex's
+  socket directory or with `anthrex` in its path, launchd's per-user sockets or
+  `$SSH_AUTH_SOCK`; each is allowed by its exact path) and
+  `[orchestrator.confined_localhost_ports]` (loopback ports the check may connect to, bind
+  and accept on; seatbelt expresses per-port loopback rules, verified). Both work with or
+  without `confined_network`, are frozen in the run record (`serde(default)` = none), and
+  cannot be set by a plan or the repo profile. The daemon socket and launchd denies still
+  come last. Tests (`tests/run_confine_network.rs`):
+  `confined_network_alone_reaches_no_local_service` (a Unix listener outside the task, the
+  daemon's socket and a loopback listener, all denied with the network on, and the
+  keychain lookup denied; red on round 1),
+  `confined_network_keeps_remote_ip_and_name_resolution` (remote IP cannot be reached from
+  the suite, and this machine's own address counts as local, so the rule text and its
+  order are asserted, and DNS resolution runs for real),
+  `listed_unix_sockets_and_localhost_ports_are_the_only_local_services` (listed ones
+  connect, unlisted ones and the daemon do not, network on and off; the daemon's socket
+  cannot be listed); `confine_cache` and config unit tests. **Cost, plainly:** with
+  `confined_network` on, a check runs worker-written code that can read every file the
+  user can read (an unencrypted `~/.ssh/id_*`, `~/.config/gh/hosts.yml`,
+  `~/.git-credentials`, `~/.netrc`, cloud credentials) and send it to any host on the
+  internet, or use it directly, for example to `git push` to `origin`'s base branch with
+  a plaintext credential. Only keychain-held secrets, ssh-agent, the anthrex daemon and
+  local services stay out of reach. Enabling it for a repository is close to trusting
+  that repository's checks with the user's credentials. A listed Unix socket or port
+  is as powerful as the service behind it: listing Docker's socket makes a check
+  unconfined (it can mount `$HOME` into a container).
+- **S2 (Minor): recorded and remedied.** Round 1's toolchain list wrongly said a TCP-bind
+  test works confined; with the network off a loopback bind is `EPERM`. The claim is
+  corrected above, and `confined_localhost_ports` lets a user open exactly the ports a
+  suite binds. A suite that binds port 0 (an ephemeral port) cannot be listed; it needs a
+  fixed port or runs its check unconfined. Recorded.
+- **S3 (Minor): fixed.** `confine_cache::walk` now follows links one at a time (every hop
+  checked) and refuses a link in a world-writable directory (`/tmp`), or one owned by
+  neither this user nor root. `sensitive_reason` also refuses whole trees under `$HOME`
+  that configure, start or authenticate programs: `~/.ssh`, `~/.gnupg`, `~/.aws`,
+  `~/.config`, `~/.docker`, `~/.kube`, `~/.claude`, `~/.codex`,
+  `~/Library/LaunchAgents`, `~/Library/Preferences`, `~/Library/Keychains` and anthrex's
+  data directory. Tests: `a_link_in_a_world_writable_directory_is_refused` (a link and a
+  link to it), the extended sensitive-path test.
+- **S4 (Minor): doc corrected, denial of service recorded.** Another local user can
+  pre-create `/private/tmp/ax-<uid>`; `ensure_root` refuses it (fails closed), so this
+  user's sandboxed launches and confined checks fail until it is removed. macOS's
+  periodic `/tmp` clean-up can remove an idle root or task directory; both are made
+  again on the next use (a worker's grant is made at launch). A fallback root under
+  `confstr(_CS_DARWIN_USER_TEMP_DIR)` was not added: that directory's length varies
+  (about 50 bytes), which would undo M2 for long names.
+- **S5 (Minor): recorded for manual check 4e.** Claude's `network.httpProxyPort`,
+  `network.socksProxyPort`, `network.tlsTerminate` and `sandbox.credentials` in the user's
+  own settings still reach workers: pinning a port to "absent" is not expressible, and a
+  guessed value could break the user's own set-up. Codex 0.156's permission profiles
+  (`default_permissions`, `[permissions.<name>]`) may override both `-s workspace-write`
+  and the legacy `sandbox_workspace_write.*` pins, and pinning `default_permissions`
+  without its schema could break every Codex launch. Both questions are in 4e; if Codex
+  honours a user `default_permissions` over the pins, the fix is to pin a known profile or
+  refuse to launch Codex workers.
+- **S6 (Minor): recorded.** The allow-list still lets a confined command post and set
+  state on any notifyd name (`notifyutil -p`), open and unlink other processes' named
+  POSIX semaphores and shared memory (except `apple.*` for writes), and possibly request
+  system sleep through `RootDomainUserClient` (not tested, to avoid sleeping the
+  machine). Each is a denial of service at worst; no route to an unconfined actor was
+  found through them.
