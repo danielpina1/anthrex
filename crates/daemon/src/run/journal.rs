@@ -139,7 +139,8 @@ pub fn needs_compact(dir: &Path) -> bool {
 }
 
 /// Rewrites `<dir>/journal.jsonl` with the lines of the ops still pending: each one's
-/// `intent`, from `pending` (the persisted `run.json`'s, which is authoritative), then
+/// `intent`, from `pending` (the driver passes the in-memory state's, which equals the
+/// persisted `run.json`'s once that step's save has succeeded), then
 /// any `done` line the journal already has for it. Keeping that `done` is M8a.21's
 /// addition to decision 43's "only pending ops' intents": a result written between the
 /// op's return and the `Persist` that retires it is replayed rather than re-checked.

@@ -34,7 +34,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use proto::RunsSnapshot;
-use tokio::sync::{RwLock, broadcast, mpsc, oneshot, watch};
+use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use super::engine::{AgentSignal, EngineState, Event, EventKind, INTERRUPT_GRACE_SECS, ReplyId};
@@ -61,8 +61,6 @@ pub const REPORT_EVERY: Duration = Duration::from_millis(500);
 pub struct RunContext {
     pub data_dir: PathBuf,
     pub worktrees_root: PathBuf,
-    pub exe: PathBuf,
-    pub socket_path: PathBuf,
     pub orchestrator: config::Orchestrator,
     pub git_roots: Arc<dyn GitRoots>,
     pub git: OsString,
@@ -82,8 +80,6 @@ impl RunContext {
         RunContext {
             data_dir,
             worktrees_root: manager.worktrees_root.clone(),
-            exe: manager.exe.clone(),
-            socket_path: manager.socket_path.clone(),
             orchestrator,
             git_roots,
             git: OsString::from("git"),
@@ -159,7 +155,6 @@ pub struct RunService {
     signals: Mutex<Option<broadcast::Receiver<WindowSignal>>>,
     replies: Mutex<HashMap<ReplyId, oneshot::Sender<Result<String, String>>>>,
     next_reply: AtomicU64,
-    snapshot_tx: watch::Sender<RunsSnapshot>,
     pushes: broadcast::Sender<Arc<RunsSnapshot>>,
     queue: Arc<GitQueue>,
     book: Mutex<Book>,
@@ -225,10 +220,6 @@ impl RunService {
     pub fn new(manager: Arc<WindowManager>, ctx: RunContext) -> Arc<Self> {
         let (tx, rx) = mpsc::unbounded_channel();
         let signals = manager.signals();
-        let (snapshot_tx, _) = watch::channel(RunsSnapshot {
-            revision: 0,
-            runs: Vec::new(),
-        });
         let (pushes, _) = broadcast::channel(256);
         Arc::new(RunService {
             manager,
@@ -239,7 +230,6 @@ impl RunService {
             signals: Mutex::new(Some(signals)),
             replies: Mutex::new(HashMap::new()),
             next_reply: AtomicU64::new(1),
-            snapshot_tx,
             pushes,
             queue: Arc::new(GitQueue::new()),
             book: Mutex::new(Book {
@@ -364,10 +354,6 @@ impl RunService {
         for (_, reply) in waiting {
             let _ = reply.send(Err("the daemon is shutting down".to_string()));
         }
-    }
-
-    pub fn snapshots(&self) -> watch::Receiver<RunsSnapshot> {
-        self.snapshot_tx.subscribe()
     }
 
     /// Every snapshot the service publishes from now on, one per structural change
@@ -582,8 +568,7 @@ impl RunService {
     }
 
     fn publish(&self, snap: RunsSnapshot) {
-        let _ = self.pushes.send(Arc::new(snap.clone()));
-        self.snapshot_tx.send_replace(snap);
+        let _ = self.pushes.send(Arc::new(snap));
     }
 
     fn watch_root(&self, root: &Path) {

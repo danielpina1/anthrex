@@ -3,27 +3,24 @@
 //! Design decision 1: the engine lives inside the daemon, not a new crate, because it
 //! needs the window manager, the git runner, the registry and the data directory. Design
 //! decision 2 draws the pure/impure line module by module; every submodule's own doc
-//! comment says which side of that line it is on. This task (M8a.4) adds `globs.rs`
-//! (`owns`-glob rules, decision 11 and decision 56's literal-name check) and `roster.rs`
-//! (the reviewer and escalation policy, decisions 23, 35 and 39), plus `model.rs`, which
-//! for now holds only `ReviewLevel` — `roster::pick_reviewer` needs it, and the rest of
-//! the pure model arrives in M8a.5 (refresh note C41). M8a.5 adds `plan.rs` (parsing,
-//! profile and limit resolution, `build_run`, the run-id slug), `validate.rs` (task
-//! resolution, decisions 8–10) with `validate_graph.rs` (the cross-task rules,
-//! decisions 11–13), `env.rs`
-//! (the profile environment) and the rest of `model.rs`. M8a.6 adds `edits.rs` (plan
-//! edits, decision 13) and starts `contract.rs` with the two message texts edits need.
-//! M8a.8 adds `git/` (preflight, worktrees, the done check and the per-repository
-//! write queue; blocking I/O) and `contract.rs`'s `REVIEW_DIFF_MAX` diff clamp.
-//! M8a.10 adds `exec.rs` (the engine's bounded, scrubbed shells: `setup` and `check`)
-//! and `proof.rs` (the fail-to-pass test proof), both blocking I/O. M8a.11 adds the
-//! pure reducer `engine/` (start, the plan gate, the scheduler and dispatch),
-//! `role_launch.rs` (session specs and ids), `messages.rs` (decision 29's clamp and
-//! join), `snapshot.rs` (decision 47's snapshot), and the contracts and prompts in
-//! `contract.rs`.
-//! M8a.21 adds `journal.rs` (decision 43's `run.json` and intent journal) and
-//! `reconcile/` (decision 44's check of each unfinished op against git, the restored
-//! windows and leftover session processes); both blocking I/O.
+//! comment says which side of that line it is on.
+//!
+//! - **The plan model (pure).** `model.rs` (the run, its tasks and rounds), `plan.rs`
+//!   (parsing, profile and limit resolution, `build_run`, the run-id slug), `validate.rs`
+//!   with `validate_graph.rs` (task resolution and the cross-task rules, decisions
+//!   8–13), `edits.rs` (plan edits, decision 13), `globs.rs` (`owns` globs, decisions 11
+//!   and 56), `roster.rs` (reviewer and escalation policy, decisions 23, 35 and 39),
+//!   `contract.rs` and `messages.rs` (contracts, prompts and message texts), `env.rs`
+//!   (the profile environment), `role_launch.rs` (session specs and ids), `reach.rs`
+//!   (which runtimes a run can reach), `snapshot.rs` (decision 47's snapshot) and
+//!   `report.rs` with `report_escape.rs` and `report_task.rs` (the run report).
+//! - **The reducer (pure).** `engine/`: every event in, effects out.
+//! - **The driver and I/O.** `driver/` (`RunService`: executes effects in decision 43's
+//!   order), `journal.rs` (`run.json` and the intent journal), `reconcile/` (decision
+//!   44's check on start), `git/` (every engine git command and the per-repository write
+//!   queue), `exec.rs` (the engine's bounded shells), `proof.rs` (the fail-to-pass
+//!   proof), and `confine.rs`, `confine_cache.rs` and `seatbelt.rs` (confinement of
+//!   checks and sandbox profiles).
 
 pub mod confine;
 mod confine_cache;
