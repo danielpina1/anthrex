@@ -82,7 +82,8 @@ impl RunService {
             return OpResult::Worktree { head };
         };
         let (dir, timeout, confine) = (dir.to_path_buf(), ctx.check_timeout, ctx.confine.clone());
-        match blocking(move || Ok(confined(&dir, &setup, &env, timeout, confine.as_ref()))).await {
+        match blocking(move || Ok(confined(&dir, &setup, &env, timeout, confine.as_deref()))).await
+        {
             Ok(outcome) if outcome.ok => OpResult::Worktree { head },
             Ok(outcome) => OpResult::SetupFailed {
                 output: setup_output(&outcome),
@@ -316,7 +317,7 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
                 timeout_secs,
                 setup,
                 env,
-                confine: ctx.confine.clone(),
+                confine: ctx.confine.as_deref().cloned(),
             };
             proof(service, ctx, op).await
         }
@@ -536,7 +537,7 @@ async fn check(
                 }
                 let (at, env, confine) = (dir.clone(), env.clone(), ctx.confine.clone());
                 let outcome =
-                    blocking(move || Ok(confined(&at, &setup, &env, timeout, confine.as_ref())))
+                    blocking(move || Ok(confined(&at, &setup, &env, timeout, confine.as_deref())))
                         .await;
                 match outcome {
                     Ok(outcome) if !outcome.ok => {
@@ -566,7 +567,7 @@ async fn check(
         }
     }
     let confine = ctx.confine.clone();
-    match blocking(move || Ok(confined(&dir, &command, &env, timeout, confine.as_ref()))).await {
+    match blocking(move || Ok(confined(&dir, &command, &env, timeout, confine.as_deref()))).await {
         Ok(outcome) => OpResult::Check {
             ok: outcome.ok,
             code: outcome.code,

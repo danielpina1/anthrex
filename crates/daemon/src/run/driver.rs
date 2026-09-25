@@ -131,8 +131,9 @@ pub(crate) struct OpCtx {
     pub git_timeout: Duration,
     pub check_timeout: Duration,
     /// Final fix batch F1c (I2): how checks and proofs are confined, when the run's
-    /// workers are sandboxed and this platform can confine them.
-    pub confine: Option<crate::run::confine::ConfineSpec>,
+    /// workers are sandboxed and this platform can confine them. Boxed: it is large,
+    /// and every queued op carries a context.
+    pub confine: Option<Box<crate::run::confine::ConfineSpec>>,
 }
 
 impl OpCtx {
@@ -144,7 +145,7 @@ impl OpCtx {
             data_dir: run.data_dir.clone(),
             git_timeout: Duration::from_secs(run.limits.git_timeout_secs),
             check_timeout: Duration::from_secs(run.profile.check_timeout_secs),
-            confine: crate::run::confine::ConfineSpec::for_run(run),
+            confine: crate::run::confine::ConfineSpec::for_run(run).map(Box::new),
         }
     }
 }

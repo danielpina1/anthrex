@@ -49,6 +49,8 @@ impl World {
             common_dir: self.common(),
             cache_dirs: cache_dirs.iter().map(|p| p.display().to_string()).collect(),
             network: false,
+            unix_sockets: Vec::new(),
+            localhost_ports: Vec::new(),
             daemon_socket: self.outside.join("daemon.sock"),
         }
     }
@@ -68,4 +70,21 @@ impl World {
         .unwrap();
         path
     }
+}
+
+/// A Python probe that looks up each Mach service by name and prints `<name> <kr>`
+/// (0: found).
+pub fn lookup_probe(names: &[&str]) -> String {
+    let list: Vec<String> = names.iter().map(|n| format!("{n:?}")).collect();
+    format!(
+        "python3 - <<'PY'\n\
+         import ctypes\n\
+         lib=ctypes.CDLL('/usr/lib/libSystem.B.dylib')\n\
+         bp=ctypes.c_uint.in_dll(lib,'bootstrap_port')\n\
+         for n in [{}]:\n\
+         \x20 p=ctypes.c_uint(0)\n\
+         \x20 print(n, lib.bootstrap_look_up(bp, n.encode(), ctypes.byref(p)))\n\
+         PY",
+        list.join(",")
+    )
 }

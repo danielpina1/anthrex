@@ -102,7 +102,7 @@ pub(super) async fn candidate(
                     &check,
                     &env,
                     timeout,
-                    confine.as_ref(),
+                    confine.as_deref(),
                 ))
             })
             .await?;

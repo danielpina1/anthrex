@@ -9,8 +9,12 @@
 //! Now it is `<root>/<16 hex digits>`, where the root is `/private/tmp/ax-<uid>` on
 //! macOS (`/tmp/ax-<uid>` elsewhere): about 36 bytes. The root is the daemon's own:
 //! made with mode 0700 and, before every use, checked with `lstat` to be a real
-//! directory owned by this user and closed to everyone else, so another local user
-//! cannot pre-create it and a link there is refused. The leaf is named from the
+//! directory owned by this user and closed to everyone else. Another local user can
+//! pre-create `/private/tmp/ax-<uid>` (it is in world-writable `/tmp`), or a link there;
+//! the check then refuses it, so they cannot take it over, but every sandboxed worker
+//! launch and confined check of this user fails until the directory is removed: a
+//! local denial of service, recorded (F1d round 2, S4). macOS's periodic `/tmp`
+//! clean-up may also remove an idle root; it is made again on the next use. The leaf is named from the
 //! checkout repository's path (FNV-1a), so every caller that names the same repository
 //! names the same directory without storing it. Blocking; call only from
 //! `spawn_blocking` or a dedicated thread (AGENTS.md rule 2).

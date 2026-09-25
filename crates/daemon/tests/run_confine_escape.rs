@@ -16,7 +16,7 @@ mod support;
 use daemon::run::exec::run_confined;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use support::confine::world;
+use support::confine::{lookup_probe, world};
 
 const LONG: Duration = Duration::from_secs(60);
 /// How long a test watches for a marker that only an escaped process would write,
@@ -117,23 +117,6 @@ fn a_confined_check_cannot_write_preferences() {
         "a confined check wrote the preference domain {domain}: {outcome:?}"
     );
     assert!(outcome.tail.contains("write=1"), "{}", outcome.tail);
-}
-
-/// A Python probe that looks up each Mach service by name and prints `<name> <kr>`
-/// (0: found).
-fn lookup_probe(names: &[&str]) -> String {
-    let list: Vec<String> = names.iter().map(|n| format!("{n:?}")).collect();
-    format!(
-        "python3 - <<'PY'\n\
-         import ctypes\n\
-         lib=ctypes.CDLL('/usr/lib/libSystem.B.dylib')\n\
-         bp=ctypes.c_uint.in_dll(lib,'bootstrap_port')\n\
-         for n in [{}]:\n\
-         \x20 p=ctypes.c_uint(0)\n\
-         \x20 print(n, lib.bootstrap_look_up(bp, n.encode(), ctypes.byref(p)))\n\
-         PY",
-        list.join(",")
-    )
 }
 
 /// R1, R4: the keychain (securityd), LaunchServices and AppleEvents are out of reach;
@@ -295,66 +278,6 @@ fn a_confined_checks_tmpdir_holds_a_unix_socket() {
     let outcome = run_confined(&task, command, &[], LONG, Some(&confinement));
     assert!(outcome.ok, "{outcome:?}");
     assert!(outcome.tail.contains("bound"), "{}", outcome.tail);
-}
-
-/// R4: with the user's `confined_network` for the repository, a confined check reaches
-/// localhost and a Unix socket outside its directories (a local database, Docker), but
-/// never the anthrex daemon's socket, and never the keychain.
-#[test]
-fn confined_network_opens_the_network_but_never_the_daemon_or_the_keychain() {
-    use std::os::unix::net::UnixListener;
-    let w = world();
-    let task = w.task();
-    let mut spec = w.spec(&[]);
-    spec.network = true;
-    let confinement = spec.for_checkout(&task).unwrap();
-    let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    // A short base path: a Unix socket address must fit in ~104 bytes.
-    let base = PathBuf::from(format!("/tmp/axnet-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&base);
-    std::fs::create_dir_all(&base).unwrap();
-    let service = base.join("db.sock");
-    let _service = UnixListener::bind(&service).unwrap();
-    let daemon = UnixListener::bind(&spec.daemon_socket).unwrap();
-    daemon.set_nonblocking(true).unwrap();
-    let command = format!(
-        "python3 - <<'PY'\n\
-         import socket\n\
-         s=socket.socket(); s.settimeout(5)\n\
-         try:\n\
-         \x20 s.connect(('127.0.0.1',{tcp})); print('tcp connected')\n\
-         except Exception as e:\n\
-         \x20 print('tcp denied', e)\n\
-         for name, p in [('service', {service:?}), ('daemon', {daemon:?})]:\n\
-         \x20 u=socket.socket(socket.AF_UNIX)\n\
-         \x20 try:\n\
-         \x20  u.connect(p); print(name, 'connected')\n\
-         \x20 except Exception as e:\n\
-         \x20  print(name, 'denied')\n\
-         PY\n{keychain}",
-        tcp = tcp.local_addr().unwrap().port(),
-        service = service.display().to_string(),
-        daemon = spec.daemon_socket.display().to_string(),
-        keychain = lookup_probe(&["com.apple.SecurityServer"]),
-    );
-    let outcome = run_confined(&task, &command, &[], LONG, Some(&confinement));
-    let _ = std::fs::remove_dir_all(&base);
-    assert!(outcome.tail.contains("tcp connected"), "{}", outcome.tail);
-    assert!(
-        outcome.tail.contains("service connected"),
-        "{}",
-        outcome.tail
-    );
-    assert!(outcome.tail.contains("daemon denied"), "{}", outcome.tail);
-    assert!(
-        !outcome.tail.contains("com.apple.SecurityServer 0"),
-        "{}",
-        outcome.tail
-    );
-    assert!(
-        matches!(daemon.accept(), Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock),
-        "the daemon's socket saw a connection from the confined check"
-    );
 }
 
 /// R3: a `cache_dirs` entry whose path runs through a link a worker or an earlier check

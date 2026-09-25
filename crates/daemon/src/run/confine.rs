@@ -21,8 +21,10 @@
 //! - a few harmless `/dev` nodes, and the PTYs it opens itself.
 //!
 //! It reaches no network, localhost included, unless the user's own config enables it
-//! for the repository (`[orchestrator.confined_network]`, F1d R4); even then never the
-//! anthrex daemon's socket, launchd's per-user sockets (ssh-agent) or the keychain. It
+//! for the repository: `[orchestrator.confined_network]` (F1d R4) opens outbound IP to
+//! remote hosts and DNS only (round 2, S1); `confined_unix_sockets` names exact Unix
+//! sockets and `confined_localhost_ports` loopback ports. Never the anthrex daemon's
+//! socket, launchd's per-user sockets (ssh-agent) or the keychain. It
 //! cannot hand work to an unconfined actor: LaunchServices (`open`), cfprefsd
 //! (`defaults write`), AppleEvents and launchd are all outside the allow-list.
 //! `run::exec::engine_env` also strips every `ANTHREX_*` variable from a confined
@@ -42,7 +44,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::confine_cache::{Areas, resolve_all};
+use super::confine_cache::{Areas, resolve_all, resolve_sockets};
 use super::exec::{ShellOutcome, run_confined};
 use super::git::{Repo, checkout_repo_dir, private_dir, tmp_root};
 use super::model::Run;
@@ -89,8 +91,13 @@ pub struct ConfineSpec {
     /// The user's `cache_dirs` for the repository, as written (absolute, or `~/…` under
     /// the daemon's `$HOME`).
     pub cache_dirs: Vec<String>,
-    /// The user's `confined_network` for the repository (F1d, R4).
+    /// The user's `confined_network` for the repository (F1d, R4): outbound IP to
+    /// remote hosts only (round 2, S1).
     pub network: bool,
+    /// The user's `confined_unix_sockets` for the repository, as written (F1d round 2).
+    pub unix_sockets: Vec<String>,
+    /// The user's `confined_localhost_ports` for the repository (F1d round 2).
+    pub localhost_ports: Vec<u16>,
     /// The anthrex daemon's socket, never reachable (F1d).
     pub daemon_socket: PathBuf,
 }
@@ -102,6 +109,8 @@ pub struct Confinement {
     writable: Vec<PathBuf>,
     tmp: PathBuf,
     network: bool,
+    unix_sockets: Vec<PathBuf>,
+    localhost_ports: Vec<u16>,
     daemon_socket: PathBuf,
 }
 
@@ -114,6 +123,8 @@ impl ConfineSpec {
                 common_dir: run.git_common_dir.clone(),
                 cache_dirs: run.profile.cache_dirs.clone(),
                 network: run.profile.confined_network,
+                unix_sockets: run.profile.confined_unix_sockets.clone(),
+                localhost_ports: run.profile.confined_localhost_ports.clone(),
                 daemon_socket: proto::paths::socket_path(),
             }
         })
@@ -148,10 +159,13 @@ impl ConfineSpec {
             daemon_socket: &self.daemon_socket,
         };
         writable.extend(resolve_all(&self.cache_dirs, &areas)?);
+        let unix_sockets = resolve_sockets(&self.unix_sockets, &areas)?;
         Ok(Confinement {
             writable,
             tmp,
             network: self.network,
+            unix_sockets,
+            localhost_ports: self.localhost_ports.clone(),
             daemon_socket: self.daemon_socket.clone(),
         })
     }
@@ -173,6 +187,8 @@ impl Confinement {
         profile(&Grants {
             writable: &self.writable,
             network: self.network,
+            unix_sockets: &self.unix_sockets,
+            localhost_ports: &self.localhost_ports,
             daemon_socket: &self.daemon_socket,
         })
     }
@@ -230,6 +246,8 @@ mod tests {
             common_dir: common,
             cache_dirs: cache_dirs.iter().map(|s| s.to_string()).collect(),
             network: false,
+            unix_sockets: Vec::new(),
+            localhost_ports: Vec::new(),
             daemon_socket: root.join("sock/daemon.sock"),
         }
     }
@@ -273,7 +291,7 @@ mod tests {
             .unwrap()
             .profile()
             .unwrap();
-        assert!(profile.contains("(allow network*)"), "{profile}");
+        assert!(profile.contains("(remote ip \"*:*\")"), "{profile}");
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 

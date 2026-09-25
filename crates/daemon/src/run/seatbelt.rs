@@ -29,10 +29,14 @@
 //! `com.apple.securityd.xpc`), launchd and every other Mach service, setuid programs,
 //! and the network, localhost included.
 //!
-//! With the user's `confined_network` for the repository, TCP/UDP and Unix sockets are
-//! allowed, with the Mach services name resolution and TLS verification need (never
-//! the keychain), except the anthrex daemon's socket and launchd's per-user sockets
-//! (ssh-agent's among them).
+//! With the user's `confined_network` for the repository (F1d round 2, S1), outbound
+//! TCP/UDP to remote hosts is allowed, with DNS and the Mach services name resolution
+//! and TLS verification need (never the keychain); loopback and this machine's own
+//! addresses stay denied, as does every Unix socket outside the command's own
+//! directories. The user's `confined_unix_sockets` (exact socket paths) and
+//! `confined_localhost_ports` are the only ways to a local service. The anthrex
+//! daemon's socket and launchd's per-user sockets (ssh-agent's among them) are denied
+//! last, whatever else is allowed.
 
 use std::path::{Path, PathBuf};
 
@@ -115,8 +119,15 @@ const DEV_NODES: &[&str] = &[
 pub struct Grants<'a> {
     /// Where it may write, and bind and connect Unix sockets.
     pub writable: &'a [PathBuf],
-    /// The user's `confined_network` for the repository.
+    /// The user's `confined_network` for the repository: outbound IP to remote hosts
+    /// and DNS, never loopback or a Unix socket (F1d round 2, S1).
     pub network: bool,
+    /// The user's `confined_unix_sockets`: Unix sockets it may connect to, resolved and
+    /// checked by `confine_cache` (never the daemon's, ssh-agent's or anthrex's).
+    pub unix_sockets: &'a [PathBuf],
+    /// The user's `confined_localhost_ports`: loopback ports it may connect to, bind
+    /// and accept on.
+    pub localhost_ports: &'a [u16],
     /// The anthrex daemon's socket, denied even with `network`.
     pub daemon_socket: &'a Path,
 }
@@ -152,18 +163,47 @@ pub fn profile(grants: &Grants<'_>) -> Result<String, String> {
         p.push_str(&format!("  (global-name \"{name}\")\n"));
     }
     p.push_str("  (local-name \"com.apple.cfprefsd.agent\"))\n");
+    if !grants.unix_sockets.is_empty() {
+        p.push_str("\n; The user's confined_unix_sockets, each by its exact path.\n");
+        for socket in grants.unix_sockets {
+            let socket = sbpl_string(socket)?;
+            p.push_str(&format!(
+                "(allow network-outbound (remote unix-socket (literal {socket})))\n"
+            ));
+        }
+    }
+    if grants.network || !grants.localhost_ports.is_empty() {
+        p.push_str(
+            "\n; IP sockets, for confined_network or confined_localhost_ports.\n\
+             (allow system-socket (socket-domain AF_INET))\n\
+             (allow system-socket (socket-domain AF_INET6))\n",
+        );
+    }
     if grants.network {
         p.push_str(
-            "\n; The user's confined_network: TCP, UDP and Unix sockets, name resolution\n\
-             ; and TLS verification; never the keychain.\n\
-             (allow network*)\n\
-             (allow system-socket)\n\
+            "\n; The user's confined_network: outbound IP to remote hosts, name resolution\n\
+             ; and TLS verification; never the keychain. Seatbelt's \"localhost\" also\n\
+             ; matches this machine's own interface addresses, so the deny below keeps\n\
+             ; every local service (bound to loopback or to 0.0.0.0) out of reach.\n\
+             (allow network-outbound (remote ip \"*:*\"))\n\
+             (allow network-outbound (literal \"/private/var/run/mDNSResponder\"))\n\
+             (allow system-socket (require-all (socket-domain AF_SYSTEM) (socket-protocol 2)))\n\
              (allow mach-lookup\n",
         );
         for (name, _) in NETWORK_MACH_SERVICES {
             p.push_str(&format!("  (global-name \"{name}\")\n"));
         }
-        p.push_str(")\n");
+        p.push_str(")\n(deny network-outbound (remote ip \"localhost:*\"))\n");
+    }
+    if !grants.localhost_ports.is_empty() {
+        p.push_str("\n; The user's confined_localhost_ports.\n");
+        for port in grants.localhost_ports {
+            p.push_str(&format!(
+                "(allow network-outbound (remote ip \"localhost:{port}\"))\n\
+                 (allow network-bind (local ip \"localhost:{port}\"))\n\
+                 (allow network-inbound (local ip \"localhost:{port}\"))\n"
+            ));
+        }
     }
     // Last, so it wins over every allow above: the daemon's socket, and launchd's
     // per-user sockets (ssh-agent), are never reachable.
@@ -263,6 +303,8 @@ mod tests {
         profile(&Grants {
             writable: &writable,
             network,
+            unix_sockets: &[],
+            localhost_ports: &[],
             daemon_socket: Path::new("/s/daemon.sock"),
         })
         .unwrap()
@@ -301,17 +343,44 @@ mod tests {
     }
 
     #[test]
-    fn network_adds_sockets_and_resolution_but_never_the_keychain_or_the_daemon() {
+    fn network_is_remote_ip_only_and_listed_local_services_are_exact() {
         let p = grants(true);
-        assert!(p.contains("(allow network*)"), "{p}");
+        assert!(
+            p.contains("(allow network-outbound (remote ip \"*:*\"))"),
+            "{p}"
+        );
         assert!(p.contains("com.apple.trustd"), "{p}");
         assert!(!p.contains("SecurityServer"), "{p}");
-        let allow = p.find("(allow network*)").unwrap();
-        let deny = p.find("(literal \"/s/daemon.sock\")").unwrap();
+        assert!(!p.contains("(allow network*)"), "{p}");
+        assert!(!p.contains("(allow system-socket)\n"), "{p}");
+        let allow = p.find("(remote ip \"*:*\")").unwrap();
+        let loopback = p
+            .find("(deny network-outbound (remote ip \"localhost:*\"))")
+            .unwrap();
+        let daemon = p.find("(literal \"/s/daemon.sock\")").unwrap();
+        assert!(loopback > allow && daemon > loopback, "{p}");
+        let writable = [PathBuf::from("/w")];
+        let listed = profile(&Grants {
+            writable: &writable,
+            network: true,
+            unix_sockets: &[PathBuf::from("/tmp/.s.PGSQL.5432")],
+            localhost_ports: &[6379],
+            daemon_socket: Path::new("/s/daemon.sock"),
+        })
+        .unwrap();
         assert!(
-            deny > allow,
-            "the daemon deny must come after the allow: {p}"
+            listed.contains(
+                "(allow network-outbound (remote unix-socket (literal \"/tmp/.s.PGSQL.5432\")))"
+            ),
+            "{listed}"
         );
+        let port = listed.find("(remote ip \"localhost:6379\")").unwrap();
+        let loopback = listed.find("(remote ip \"localhost:*\")").unwrap();
+        assert!(
+            port > loopback,
+            "a listed port must follow the loopback deny: {listed}"
+        );
+        assert!(listed.rfind("/s/daemon.sock").unwrap() > port, "{listed}");
     }
 
     #[test]
