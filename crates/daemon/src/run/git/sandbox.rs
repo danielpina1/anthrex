@@ -68,6 +68,16 @@ pub fn worker_git_dirs(
         dirs.push(admin.join(format!("{file}.lock")));
     }
     dirs.extend(WORKTREE_GIT_DIRS.iter().map(|dir| admin.join(dir)));
+    // Final fix batch F1c (I1's sweep): every entry is named lexically under the
+    // engine's own git directory, never resolved. A link a worker left at one of them
+    // is removed before the next session is granted it, so a sandbox that resolves its
+    // grants is never handed the link's target.
+    for granted in dirs.iter().skip(roots.len()) {
+        if std::fs::symlink_metadata(granted).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            std::fs::remove_file(granted)
+                .map_err(|err| format!("cannot remove the link {}: {err}", granted.display()))?;
+        }
+    }
     // Fix round 5: no reflog is left for the worker's git (which could not write it) or
     // for the engine's (which must never append through one): the worktree's `HEAD`'s,
     // and the task branch's.
@@ -89,26 +99,59 @@ pub fn worker_git_dirs(
 /// Final fix batch F1b: the private object directory `root`, created when missing, a
 /// real directory outside the git common directory, spelled canonically (a sandbox
 /// matches resolved paths).
+///
+/// Final fix batch F1c (re-review 4, I1): no sandbox grant is ever computed from a path
+/// a worker could have swapped. `root` itself is inside the worker's grant, so a
+/// leftover worker process could replace it with a link at any moment; resolving it
+/// (`canonicalize`) after checking it could grant the next session whatever the link
+/// named. So only the parent, which is the engine's own, is resolved; the leaf's name
+/// is appended to it, the directory is made without following a link (`mkdir` fails
+/// on one), and the leaf is then checked with `lstat`: anything but a real directory
+/// fails closed. The returned path is never the result of resolving the leaf.
 pub fn private_dir(git_common_dir: &Path, root: &Path) -> Result<PathBuf, String> {
-    std::fs::create_dir_all(root)
-        .map_err(|err| format!("cannot create {}: {err}", root.display()))?;
-    let meta = std::fs::symlink_metadata(root)
-        .map_err(|err| format!("cannot read {}: {err}", root.display()))?;
-    if meta.file_type().is_symlink() || !meta.is_dir() {
-        return Err(format!("{} is not a plain directory", root.display()));
-    }
-    let canonical = root
-        .canonicalize()
-        .map_err(|err| format!("cannot resolve {}: {err}", root.display()))?;
+    let dir = engine_child(root)?;
     let common = git_common_dir
         .canonicalize()
         .unwrap_or_else(|_| git_common_dir.to_path_buf());
-    if canonical.starts_with(&common) || common.starts_with(&canonical) {
+    if dir.starts_with(&common) || common.starts_with(&dir) {
         return Err(format!(
             "{} overlaps the git common directory {}; a worker may write nothing of it",
-            canonical.display(),
+            dir.display(),
             common.display()
         ));
     }
-    Ok(canonical)
+    Ok(dir)
+}
+
+/// `path` as a real directory whose parent is the engine's: the parent created and
+/// resolved, the leaf's name appended, the leaf made with `mkdir` (which never follows
+/// a link) and checked with `lstat`. A link or a file at the leaf is refused.
+pub(crate) fn engine_child(path: &Path) -> Result<PathBuf, String> {
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return Err(format!("{} has no parent directory", path.display()));
+    };
+    if name == ".." || name == "." {
+        return Err(format!("{} does not name a directory", path.display()));
+    }
+    std::fs::create_dir_all(parent)
+        .map_err(|err| format!("cannot create {}: {err}", parent.display()))?;
+    let parent = parent
+        .canonicalize()
+        .map_err(|err| format!("cannot resolve {}: {err}", parent.display()))?;
+    let dir = parent.join(name);
+    match std::fs::create_dir(&dir) {
+        Err(err) if err.kind() != std::io::ErrorKind::AlreadyExists => {
+            return Err(format!("cannot create {}: {err}", dir.display()));
+        }
+        _ => {}
+    }
+    let meta = std::fs::symlink_metadata(&dir)
+        .map_err(|err| format!("cannot read {}: {err}", dir.display()))?;
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        return Err(format!(
+            "{} is not a plain directory; it was tampered with",
+            dir.display()
+        ));
+    }
+    Ok(dir)
 }
