@@ -125,6 +125,20 @@ Every bound below is derived from the harness's own configuration
 | `a_run_whose_restore_panics_does_not_stop_the_others`, the restore | `driver/tests.rs` | `60s` | Two `run.json` loads, two reconciles with no pending op and no round pid (no git op row, no process examined), two restore steps, one save. Well under a second. | **Recorded.** A hang guard. |
 | `an_op_whose_run_could_not_be_saved_is_not_started`, its `OpDone` | `driver/tests.rs` | `30s` | The refusal is sent at once. Before the fix the op ran: a `check` of `touch` with `timeout_secs = 20`, so the bound is over that too and the test fails on the result, not the wait. | **Recorded.** |
 
+### Recorded, from M8a's final fix batch F4 (2026-09-25)
+
+Review E-M7: bounds in the M8a surface that had no row. Each wait is one in-memory step
+or one push, far under its bound; each absence window is paired with a positive check.
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `e2e` approval gate, the absence window | `crates/cli/tests/run_e2e_basic.rs` (the 1 s loop polled every 100 ms after the integration worktree exists) | `1s` absence | An absence: nothing may start before `run approve`. The positive half (the approve, then the run completes) follows. | **Recorded.** |
+| The pushed `Snapshot` and `ConversationSnapshot` | `run_e2e_basic.rs` (`watcher.wait_for`, twice) | `10s` each | One push from the driver's publish (the run is already `complete`, the conversation already recorded). | **Recorded.** |
+| `mcp_cli.rs`'s `DEADLINE` | `crates/cli/tests/mcp_cli.rs` | `20s` | One `anthrex mcp` spawn, its handshake and one tool call to a harness daemon. | **Recorded.** |
+| The launch gate's absence | `crates/daemon/tests/headless_windows.rs` (the 200 ms sleep before `!args.exists()`) | `200ms` absence | An absence: nothing spawns while the gate is closed. The positive half (the gate opens, the session spawns) follows. | **Recorded.** |
+| The PTY quiet rule, then `tick()` | `headless_windows.rs` (`QUIET_AFTER + 300ms`) | `QUIET_AFTER + 300ms` | Derived from the rule's own constant; `tick()` is synchronous. | **Recorded.** |
+| `report_with`, used for `## t1:` since F4 | `crates/cli/tests/support/run_plans.rs` | `10s` | The report is rewritten at most every 500 ms (`REPORT_EVERY`) on `spawn_blocking`. | **Recorded.** (F1c's third report read without a deadline, `run_e2e_basic.rs`.) |
+
 ### Fixed, from the main-branch CI failures (2026-09-23)
 
 | Test | Site | Bound (as found) | The code's own legal worst case | Status |

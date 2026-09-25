@@ -64,7 +64,8 @@ fn e2e_green_s_task_runs_to_merged() {
     assert!(!t1.worktree.with_file_name("t1.review").exists());
     assert!(!t1.worktree.with_file_name("t1.proof").exists());
     assert!(integration(t1).exists(), "the integration worktree remains");
-    assert!(report(&run).contains("## t1:"), "{}", report(&run));
+    // The report is written at most every 500 ms: waited for, with a deadline (F4).
+    report_with(&run, "## t1:");
 
     let worker_round = t1
         .rounds

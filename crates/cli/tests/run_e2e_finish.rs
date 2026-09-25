@@ -97,7 +97,9 @@ fn e2e_a_replayed_accept_reports_its_clean_up() {
     // removal it makes is held for CLEAN_UP_HELD, so a daemon that cleaned up before
     // binding would answer with the run already accepted.
     let path = slow_worktree_removal(&h);
-    h.restart_daemon(&[("ANTHREX_TEST_ABORT_AFTER_INTENT", ""), ("PATH", &path)]);
+    // Unset, not blank (task 25's m3): a blank value is still a set variable.
+    h.unset_env("ANTHREX_TEST_ABORT_AFTER_INTENT");
+    h.restart_daemon(&[("PATH", &path)]);
     assert_eq!(
         h.run(&id).unwrap().state,
         RunState::Complete,
@@ -105,12 +107,11 @@ fn e2e_a_replayed_accept_reports_its_clean_up() {
     );
 
     h.wait_run(&id, |r| r.state == RunState::Accepted, RUN_WAIT);
-    until("the clean-up to reach the report", RUN_WAIT, || {
-        report(&h.run(&id)?)
-            .contains("clean-up after the restart: merged into the base branch")
-            .then_some(())
+    let text = until("the clean-up to reach the report", RUN_WAIT, || {
+        let text = report(&h.run(&id)?);
+        text.contains("clean-up after the restart: merged into the base branch")
+            .then_some(text)
     });
-    let text = report(&h.run(&id).unwrap());
     assert!(!text.contains("branches kept because"), "{text}");
     assert!(no_run_branches(&h.repo));
 }
