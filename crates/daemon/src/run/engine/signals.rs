@@ -69,9 +69,11 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
             return;
         }
         // Final review B-10 (T25-N1, both orders): the second copy of an exit the round
-        // took already, reaching a round resumed since with no process yet.
+        // took already, reaching a round resumed since with no process yet. Pid 0 is the
+        // engine's synthetic exit for a round with no process, one per kill, so it is
+        // never a repeat (F3 review N2).
         AgentSignal::ProcessExited { pid, .. }
-            if round.pid.is_none() && round.exited_pid == Some(pid) =>
+            if pid != 0 && round.pid.is_none() && round.exited_pid == Some(pid) =>
         {
             return;
         }

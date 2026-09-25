@@ -63,3 +63,21 @@ fn the_other_copy_of_a_killed_exit_leaves_a_reopened_round_alone() {
         assert_eq!(round.deaths, 0, "second_killed = {second_killed}");
     }
 }
+
+/// F3 review N2: the engine's synthetic exit for a round with no process carries pid 0,
+/// and one kill sends only one. A second kill of the reopened round (before its resumed
+/// process starts) sends another pid-0 exit, which is new, not a repeat: it ends the
+/// round.
+#[test]
+fn a_second_synthetic_exit_ends_a_reopened_round() {
+    let (mut fx, window) = working_on("");
+    exit(&mut fx, window, 0, true);
+    assert!(fx.task("t1").rounds[0].ended);
+    let round = &mut fx.task_mut("t1").rounds[0];
+    round.ended = false;
+    round.ended_at = None;
+    round.turn_open = true;
+    round.pid = None;
+    exit(&mut fx, window, 0, true);
+    assert!(fx.task("t1").rounds[0].ended, "the second kill ends it");
+}
