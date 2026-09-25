@@ -23,7 +23,7 @@ use std::time::Duration;
 use regex::Regex;
 
 use super::confine::ConfineSpec;
-use super::exec::{ShellOutcome, run_matching, run_shell};
+use super::exec::{ShellOutcome, run_matching};
 use super::git::{absolute_git_dir, materialize, prepare_scratch_in};
 use crate::launch::shell_quote;
 
@@ -47,9 +47,9 @@ pub struct ProofOp {
     pub setup: Option<String>,
     /// The profile's env, `{worktree}` already the proof worktree.
     pub env: Vec<(String, String)>,
-    /// Final fix batch F1c (I2): when set, both test runs are confined to the proof
-    /// worktree, its own object store, its temporary directory and the profile's
-    /// `cache_dirs` (`super::confine`). `setup` is not.
+    /// Final fix batch F1c (I2, and round 2 for `setup`): when set, `setup` and both
+    /// test runs are confined to the proof worktree, its own object store, its
+    /// temporary directory and the profile's `cache_dirs` (`super::confine`).
     pub confine: Option<ConfineSpec>,
 }
 
@@ -128,6 +128,13 @@ pub fn run_proof(
     }))
     .map_err(ProofError::Failed)?;
 
+    let confined = op
+        .confine
+        .as_ref()
+        .map(|spec| spec.for_checkout(&op.path))
+        .transpose()
+        .map_err(|error| ProofError::Failed(format!("the proof cannot be confined: {error}")))?;
+    let confined = confined.as_ref();
     let marker = absolute_git_dir(git, &op.path, git_timeout)
         .map_err(ProofError::Failed)?
         .join(SETUP_MARKER);
@@ -135,7 +142,7 @@ pub fn run_proof(
         if let Some(setup) = &op.setup {
             // A reused worktree may be at any commit; setup runs at red, as in a new one.
             git_write(checkout(git, &op.path, &op.red, git_timeout)).map_err(ProofError::Failed)?;
-            let outcome = run_shell(&op.path, setup, &op.env, timeout);
+            let (outcome, _) = run_matching(&op.path, setup, &op.env, timeout, None, confined);
             if !outcome.ok {
                 return Err(ProofError::SetupFailed {
                     output: with_timeout_note(outcome),
@@ -147,13 +154,6 @@ pub fn run_proof(
         })?;
     }
 
-    let confined = op
-        .confine
-        .as_ref()
-        .map(|spec| spec.for_checkout(&op.path))
-        .transpose()
-        .map_err(|error| ProofError::Failed(format!("the proof cannot be confined: {error}")))?;
-    let confined = confined.as_ref();
     git_write(checkout(git, &op.path, &op.red, git_timeout)).map_err(ProofError::Failed)?;
     let (red, _) = run_matching(&op.path, &op.command, &op.env, timeout, None, confined);
     let mut runs = ProofRuns {

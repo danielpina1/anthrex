@@ -12,7 +12,7 @@ use super::{DONE_CHECK_GIT_TIMEOUT, OpCtx, RunService, cleanup, merge};
 use crate::headless::{HeadlessSpec, SessionArg};
 use crate::run::confine::confined;
 use crate::run::engine::{EventKind, OpKind, OpResult, ResolutionAt, ScratchAt};
-use crate::run::exec::{ShellOutcome, run_shell};
+use crate::run::exec::ShellOutcome;
 use crate::run::git::{self, RefCheck};
 use crate::run::globs::{OwnsMatcher, ProtectedMatcher};
 use crate::run::proof::{ProofError, ProofOp, SETUP_MARKER, run_proof};
@@ -81,8 +81,8 @@ impl RunService {
         let Some(setup) = setup else {
             return OpResult::Worktree { head };
         };
-        let (dir, timeout) = (dir.to_path_buf(), ctx.check_timeout);
-        match blocking(move || Ok(run_shell(&dir, &setup, &env, timeout))).await {
+        let (dir, timeout, confine) = (dir.to_path_buf(), ctx.check_timeout, ctx.confine.clone());
+        match blocking(move || Ok(confined(&dir, &setup, &env, timeout, confine.as_ref()))).await {
             Ok(outcome) if outcome.ok => OpResult::Worktree { head },
             Ok(outcome) => OpResult::SetupFailed {
                 output: setup_output(&outcome),
@@ -534,8 +534,10 @@ async fn check(
                 {
                     return failed(error);
                 }
-                let (at, env) = (dir.clone(), env.clone());
-                let outcome = blocking(move || Ok(run_shell(&at, &setup, &env, timeout))).await;
+                let (at, env, confine) = (dir.clone(), env.clone(), ctx.confine.clone());
+                let outcome =
+                    blocking(move || Ok(confined(&at, &setup, &env, timeout, confine.as_ref())))
+                        .await;
                 match outcome {
                     Ok(outcome) if !outcome.ok => {
                         return OpResult::SetupFailed {

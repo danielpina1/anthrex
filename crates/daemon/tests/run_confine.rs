@@ -211,6 +211,54 @@ fn a_confined_proof_cannot_write_the_users_git() {
     assert!(!home.join("pwned").exists());
 }
 
+/// Round 2: `setup` runs worker-authored code too. At the proof's scratch checkout it
+/// runs at `red`, the worker's test commit, so a `setup.sh` the worker committed is
+/// confined like the test runs.
+#[test]
+fn a_worker_committed_setup_at_the_proof_checkout_is_confined() {
+    let w = world();
+    let setup = format!("{}echo set up\n", attacks(&w.common()));
+    commit_file(&w.repo.root, "setup.sh", &setup, "worker's setup");
+    let red = commit_file(
+        &w.repo.root,
+        "tests/t_reset.sh",
+        "grep -q reset impl.txt || exit 1\necho 'PASS t_reset'\n",
+        "red",
+    );
+    let green = commit_file(&w.repo.root, "impl.txt", "fn reset() {}\n", "green");
+    let home = w.outside.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let path = w.wt.join("runs/cf01/t1.proof");
+    let op = ProofOp {
+        root: w.repo.root.clone(),
+        repo: checkout_repo_dir(&w.data, &path),
+        path,
+        red,
+        head: green,
+        command: proof_command("sh tests/{test}.sh", "t_reset"),
+        passed: proof_pattern("PASS {test}", "t_reset"),
+        timeout_secs: 60,
+        setup: Some("sh setup.sh".to_string()),
+        env: vec![("HOME".to_string(), home.display().to_string())],
+        confine: Some(w.spec(&[])),
+    };
+    let index_before = std::fs::read(w.common().join("index")).unwrap();
+    let runs = run_proof(real_git(), &op, T, &direct).unwrap();
+    assert!(
+        runs.red_failed && runs.head_passed && runs.matched,
+        "{runs:?}"
+    );
+    assert!(
+        !w.common().join("objects/pwned").exists(),
+        "setup wrote the store"
+    );
+    assert_eq!(
+        std::fs::read(w.common().join("index")).unwrap(),
+        index_before
+    );
+    assert!(!home.join("pwned").exists(), "setup wrote $HOME");
+}
+
 /// `sandbox-exec` `exec`s the shell, so the pid the engine times out and kills is the
 /// shell's: a confined command that outlives its timeout, with a child of its own, is
 /// ended as an unconfined one is.
