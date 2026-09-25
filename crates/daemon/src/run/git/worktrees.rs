@@ -156,6 +156,20 @@ pub(crate) fn is_ancestor(
     }
 }
 
+/// `git merge-base <a> <b>`, or `a` when the two commits share no history (exit 1,
+/// silent).
+fn merge_base(g: Git<'_>, dir: &Path, a: &str, b: &str) -> Result<String, String> {
+    let args = [os("merge-base"), os(a), os(b)];
+    let output = g.read(dir, &args)?;
+    if output.success {
+        Ok(output.stdout.trim().to_string())
+    } else if output.stderr.trim().is_empty() {
+        Ok(a.to_string())
+    } else {
+        Err(failure(&args, &output))
+    }
+}
+
 /// The run branch `branch` checked out at `path` (the integration worktree, which no
 /// worker writes), locked with decision 18's reason: created from `from` when the branch
 /// does not exist; reused when both exist; re-added when the branch exists without its
@@ -424,8 +438,10 @@ fn resolve_commit(g: Git<'_>, root: &Path, reference: &str) -> Result<String, St
 
 /// Decision 35 and ruling Q4: a fresh review checkout at `path`, detached at
 /// `head_ref`, replacing any earlier round's, and the reviewer's diff `git diff
-/// <base>..<head>` clamped to `REVIEW_DIFF_MAX`. Returns `(base, head, patch)` with
-/// both refs resolved to full shas. Final fix batch F1c (3a): the checkout is its own
+/// <base_ref>...<head>` clamped to `REVIEW_DIFF_MAX`: from their merge base, so the
+/// task's net change against the run head `base_ref`, as the spill check sees it
+/// (final review A-I5). Returns `(base, head, patch)`, `base` being that merge base
+/// (`base_ref` itself when the two share no history), both full shas. Final fix batch F1c (3a): the checkout is its own
 /// repository ([`checkout::default_repo_dir`]; [`prepare_review_in`] names one).
 pub fn prepare_review(
     git: &OsStr,
@@ -450,8 +466,8 @@ pub fn prepare_review_in(
     timeout: Duration,
 ) -> Result<(String, String, String), String> {
     let g = Git::new(git, timeout);
-    let base = resolve_commit(g, root, base_ref)?;
     let head = resolve_commit(g, root, head_ref)?;
+    let base = merge_base(g, root, &resolve_commit(g, root, base_ref)?, &head)?;
     let repo = Repo::at(repo);
     let common = common_dir(g, root)?;
     // The earlier round's checkout goes first, whole: a reviewer starts from the head.

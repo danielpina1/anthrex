@@ -279,3 +279,18 @@ fn a_verdict_drops_the_reviewers_mail() {
     assert!(fx.run().outbox.is_empty(), "{:#?}", fx.run().outbox);
     assert_eq!(fx.task("t1").state, TaskState::MergeQueue);
 }
+
+/// Final review A-I5: the review is prepared against the run head, which the git layer
+/// turns into the merge base with the claimed commit, so a run head that moved on (a
+/// task merged, a hand-back) never puts another task's work in the reviewer's diff.
+#[test]
+fn the_review_is_prepared_against_the_run_head() {
+    let (mut fx, window) = working_on(PROFILE, CHECK_MODE);
+    let moved = "c7".repeat(20);
+    fx.run_mut().run_head = moved.clone();
+    let (_, kind) = in_review(&mut fx, window);
+    let crate::run::engine::OpKind::PrepareReview { base_ref, .. } = kind else {
+        unreachable!()
+    };
+    assert_eq!(base_ref, moved);
+}

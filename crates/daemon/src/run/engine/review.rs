@@ -65,10 +65,10 @@ pub(super) fn dispatch_reviewers(run: &mut Run, fx: &mut Vec<Effect>) {
             root: run.root.clone(),
             // Ruling T13-I3: the claimed commit, never the branch tip.
             head_ref: task.head.clone().unwrap_or_else(|| task.branch.clone()),
-            base_ref: task
-                .start_commit
-                .clone()
-                .unwrap_or_else(|| run.run_head.clone()),
+            // Final review A-I5: the run head; the git layer diffs from its merge base
+            // with the head (`run_head...head`), the task's net change, as the spill
+            // check does. `start_commit` would bring in every hand-back's merged work.
+            base_ref: run.run_head.clone(),
             path: run.review_path(task.id()),
         };
         let id = task.id().to_string();

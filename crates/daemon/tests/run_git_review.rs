@@ -212,3 +212,34 @@ fn diffs_ignore_the_users_colour_prefix_and_textconv_config() {
         assert!(diff.contains("\n+two\n"), "{diff:?}");
     }
 }
+
+/// Final review A-I5: the reviewer's diff is the task's net change against the run
+/// head, `git diff <run_head>...<head>` (from their merge base), exactly as the spill
+/// check sees it. A run head that moved on since the task started (another task
+/// merged) must not show up in the patch, reversed or otherwise.
+#[test]
+fn the_review_diff_is_the_net_change_from_the_merge_base_with_the_run_head() {
+    let repo = repo();
+    let base = head(&repo.root);
+    let (_keep, wt) = wt_dir();
+    let task = wt.join("runs/r7/t1");
+    let branch = "anthrex/r7/t1";
+    prepare_worktree(real_git(), &repo.root, branch, &base, &task, T).unwrap();
+    let own = task_commit(&task, "src/own.rs", "pub fn own() {}\n", "own");
+    // Another task merged: the run head moves on from `base` with a file t1 never saw.
+    let out = try_git(
+        &repo.root,
+        &["checkout", "-q", "-b", "anthrex/r7/integration"],
+    );
+    assert!(out.status.success(), "{out:?}");
+    let run_head = commit_file(&repo.root, "src/other.rs", "pub fn other() {}\n", "other");
+    let review = wt.join("runs/r7/t1.review");
+
+    let (b, h, patch) =
+        prepare_review(real_git(), &repo.root, branch, &run_head, &review, T).unwrap();
+
+    assert_eq!((b.as_str(), h.as_str()), (base.as_str(), own.as_str()));
+    assert_eq!(patch, full_diff(&repo.root, &base, &own));
+    assert!(patch.contains("src/own.rs"), "{patch}");
+    assert!(!patch.contains("src/other.rs"), "{patch}");
+}
