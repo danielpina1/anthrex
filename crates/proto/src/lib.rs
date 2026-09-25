@@ -61,8 +61,8 @@ pub use conversation::{
     TurnPatch, TurnState,
 };
 pub use history::{
-    GateTally, HistoryLine, HistoryStats, RevertRecord, RunRecord, SeverityTally, StatsRow,
-    TaskOutcome, TaskRecord,
+    GateTally, HISTORY_VERSION, HistoryLine, HistoryStats, RevertRecord, RunRecord, SeverityTally,
+    StatsRow, TaskOutcome, TaskRecord,
 };
 pub use messages::{ClientMsg, DaemonMsg, HookSource};
 // Re-exported by name, never by glob (C20): a glob re-export of `run` or `run_wire`

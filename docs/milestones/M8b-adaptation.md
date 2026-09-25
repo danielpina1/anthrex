@@ -2214,6 +2214,8 @@ So the "empty-root `ClaudeSandbox`" M8a gives reviewers (F1c N4) and decision 12
 - Beyond the listed files, every constructor of `RunInfo`, `TaskInfo`, `CheckInfo` and `ToolCall` gained the new fields as `None`/empty: `run/snapshot.rs` (M8b's later tasks fill them), `cli/src/run_cmd/status_tests.rs`, `mcp/src/forward.rs` (`scout_id: None` until M8b.9), and the tests `engine/tests/{fixture,done_tools}.rs`, `mcp/tests/stdio.rs`, `fake-agent/tests/headless_modes.rs`.
 - `crates/cli/src/run_cmd.rs` needed no change: its reply handling has no exhaustive `match` on `RunReply` (each site ends in `other => …`). The TUI's `DaemonMsg::Run(_)` arm and `anthrex hook` needed none either.
 - `mcp::tools_for(Scout)` is empty and `role_name(Scout)` is `"scout"` until M8b.9 adds `submit_scout_report`; `anthrex mcp --role scout` parses. The daemon refuses `StartGoal`, `Promote`, `Stats` and `Profile(_)` with `Refused { request: <its label>, message: "not available yet" }` (test `every_milestone_8b_request_is_refused_until_its_task_lands`, `crates/daemon/tests/server_runs.rs`).
+- `ProfileRequest` and `ProfileReply` carry no `#[serde(rename_all)]`, so their variants are PascalCase on the wire (`"Status"`, `"Confirm"`, …). This is by design: it matches M8a's `RunRequest` and `RunReply`, which carry them. (Task 2 review.)
+- `proto::HISTORY_VERSION` is re-exported at the crate root with the other `history` names (added after the task 2 review; `adapt_tests.rs` imports it from the root).
 
 ### M8b.3 configuration (2026-09-26)
 

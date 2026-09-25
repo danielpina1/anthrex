@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::history::HISTORY_VERSION;
+use crate::HISTORY_VERSION;
 use crate::run_wire::{ProfileReply, ProfileRequest};
 use crate::*;
 
