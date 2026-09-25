@@ -212,11 +212,16 @@ fn e2e_task_worktree_is_watched() {
     h.script("reviewer-t1-1", &[approve()]);
     let watcher = h.watch(None);
     let id = h.start(&plan("", &[task("t1", &["a.txt"], "")]), true);
-    let path = t(&h.run(&id).unwrap(), "t1").worktree.clone();
-    let branch = format!("anthrex/{id}/t1");
+    let run = h.run(&id).unwrap();
+    let path = t(&run, "t1").worktree.clone();
+    // Final fix batch F1b: the task worktree is detached, and its probe shows the
+    // worker's own commit (read from its private object directory) before the engine
+    // has imported it.
+    let base = run.base_sha.clone();
     watcher.wait_for(RUN_WAIT, |m| {
         matches!(m, DaemonMsg::Git { root, state: Some(s) }
-            if *root == path && s.head == Head::Branch(branch.clone()))
+            if *root == path
+                && matches!(&s.head, Head::Detached(short) if !base.starts_with(short.as_str())))
     });
     h.wait_run(&id, complete, RUN_WAIT);
 }

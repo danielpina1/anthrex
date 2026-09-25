@@ -1,6 +1,7 @@
 //! The run's engine-owned worktrees (decisions 16, 18 and 19): the integration
-//! worktree on `anthrex/<run>/integration`, a task's worktree on `anthrex/<run>/<task>`
-//! (created, reused, re-added or re-pointed), their locks, and a review round's
+//! worktree on `anthrex/<run>/integration`, a task's worktree, detached, whose work the
+//! engine records on `anthrex/<run>/<task>` (created, reused, re-added or re-pointed;
+//! final fix batch F1b), their locks, and a review round's
 //! detached worktree with the diff the reviewer is given (ruling Q4). Blocking; every
 //! write carries decision 18's flags through [`Git::write`].
 
@@ -8,8 +9,9 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use super::import::{move_head, sync_in};
 use super::{Git, diff, failure, os};
-use crate::worktree::pinned;
+use crate::worktree::pinned::{self, PinAs};
 
 /// What `git worktree list --porcelain -z` says about one worktree.
 pub(crate) struct Listed {
@@ -153,28 +155,19 @@ pub(crate) fn is_ancestor(
     }
 }
 
-/// The branch `branch` checked out at `path`, locked with decision 18's reason:
-/// created from `from` when the branch does not exist; reused when both exist;
-/// re-added when the branch exists without its worktree. With `repoint`, an existing
-/// branch that has no commit of its own (its head is a strict ancestor of `from`) is
-/// moved to `from` with `git checkout -B` in its worktree (decision 19). Returns the
-/// worktree's `HEAD`.
-fn ensure_worktree(
+/// The run branch `branch` checked out at `path` (the integration worktree, which no
+/// worker writes), locked with decision 18's reason: created from `from` when the branch
+/// does not exist; reused when both exist; re-added when the branch exists without its
+/// worktree. Returns the worktree's `HEAD`.
+fn ensure_run_worktree(
     g: Git<'_>,
     root: &Path,
     branch: &str,
     from: &str,
     path: &Path,
-    repoint: bool,
 ) -> Result<String, String> {
     let reason = lock_reason(branch);
-    let mut entry = listed(g, root, path)?;
-    if let Some(found) = &entry
-        && !path.exists()
-    {
-        forget_missing(g, root, path, found)?;
-        entry = None;
-    }
+    let entry = current_entry(g, root, path)?;
     let add = [
         os("worktree"),
         os("add"),
@@ -208,26 +201,115 @@ fn ensure_worktree(
             }
         }
     }
-    pin_in(g, root, path, Some(branch))?;
-    if repoint
-        && let Some(head) = branch_head(g, root, branch)?
-        && head != from
-        && is_ancestor(g, path, &head, from)?
+    let head = format!("refs/heads/{branch}");
+    pin_in(
+        g,
+        root,
+        path,
+        PinAs {
+            head: Some(head),
+            ..PinAs::default()
+        },
+    )?;
+    // Through the pin's `HEAD` check: a `HEAD` that no longer names the branch fails here.
+    Ok(g.ok(path, &[os("rev-parse"), os("HEAD")])?
+        .trim()
+        .to_string())
+}
+
+/// `git worktree list`'s entry for `path`, after forgetting one whose directory is gone.
+fn current_entry(g: Git<'_>, root: &Path, path: &Path) -> Result<Option<Listed>, String> {
+    let entry = listed(g, root, path)?;
+    if let Some(found) = &entry
+        && !path.exists()
     {
-        // Decision 19 as clarified by ruling T8-I4: the branch has no commit of its
-        // own, so the worktree holds only what the engine's setup made. Its edits to
-        // tracked files are dropped (a lockfile setup rewrote must not leak into the
-        // task's start state); untracked build output is kept. The caller re-runs setup
-        // after a re-point, which it sees as a returned `HEAD` different from the
-        // branch's earlier start.
+        forget_missing(g, root, path, found)?;
+        return Ok(None);
+    }
+    Ok(entry)
+}
+
+/// Final fix batch F1b: a task's worktree at `path`, **detached**, locked with decision
+/// 18's reason, and its branch `branch`, which only the engine writes. The branch is
+/// created at `from` when it does not exist; the worktree is added detached at the
+/// branch's tip when git does not list it, and reused (it must be detached) when it
+/// does. The worker's `HEAD` is then imported onto the branch ([`sync_in`]). With
+/// `repoint`, a task that has no commit of its own (its `HEAD` a strict ancestor of
+/// `from`) is moved to `from` (decision 19). Returns the worktree's `HEAD`.
+fn ensure_task_worktree(
+    g: Git<'_>,
+    root: &Path,
+    branch: &str,
+    from: &str,
+    path: &Path,
+    objects: Option<&Path>,
+) -> Result<String, String> {
+    let reason = lock_reason(branch);
+    let own = format!("refs/heads/{branch}");
+    let entry = current_entry(g, root, path)?;
+    let tip = match branch_head(g, root, branch)? {
+        Some(tip) => tip,
+        None => {
+            refuse_a_parent_branch(g, root, branch)?;
+            let args = [
+                os("update-ref"),
+                os("--no-deref"),
+                os(&own),
+                os(from),
+                os(""),
+            ];
+            g.write(root, &args)?;
+            from.to_string()
+        }
+    };
+    match entry {
+        None => {
+            let args = [
+                os("worktree"),
+                os("add"),
+                os("--lock"),
+                os("--reason"),
+                os(&reason),
+                os("--detach"),
+                path.as_os_str(),
+                os(&tip),
+            ];
+            g.write(root, &args)?;
+        }
+        Some(found) => {
+            if let Some(on) = found.branch {
+                return Err(format!(
+                    "worktree {} is on {on}; a task worktree is detached",
+                    path.display()
+                ));
+            }
+            if !found.locked {
+                lock(g, root, path, &reason)?;
+            }
+        }
+    }
+    pin_in(
+        g,
+        root,
+        path,
+        PinAs {
+            head: None,
+            own: Some(own.clone()),
+            objects: objects.map(Path::to_path_buf),
+        },
+    )?;
+    let head = sync_in(g, path)?;
+    if head != from && is_ancestor(g, path, &head, from)? {
+        // Decision 19 as clarified by ruling T8-I4: the task has no commit of its own,
+        // so the worktree holds only what the engine's setup made. Its edits to tracked
+        // files are dropped (a lockfile setup rewrote must not leak into the task's
+        // start state); untracked build output is kept. The caller re-runs setup after
+        // a re-point, which it sees as a returned `HEAD` different from the task's
+        // earlier start.
         //
-        // Final fix batch F1, fix round 3: the branch is moved by name, compare-and-swap
-        // from the head just read, and the index and files follow with `read-tree`; no
-        // ref is written through `HEAD` (once `checkout -B` and `reset --hard`, whose
-        // reset wrote whatever branch `HEAD` named at that instant).
-        let own = format!("refs/heads/{branch}");
-        // Fix round 4, S1: `--no-deref`, so a branch made a symbolic ref is replaced,
-        // never followed onto the branch it names.
+        // Final fix batch F1, fix round 3, and F1b: the branch and the worktree's `HEAD`
+        // are each moved by name, `--no-deref`, compare-and-swap from the head just
+        // read, and the index and files follow with `read-tree`.
         let cas = [
             os("update-ref"),
             os("--no-deref"),
@@ -242,12 +324,11 @@ fn ensure_worktree(
                 failure(&cas, &output)
             ));
         }
+        move_head(g, path, from, &head)?;
         g.write(path, &[os("read-tree"), os("-u"), os("--reset"), os(from)])?;
+        return Ok(from.to_string());
     }
-    // Through the pin's `HEAD` check: a `HEAD` that no longer names the branch fails here.
-    Ok(g.ok(path, &[os("rev-parse"), os("HEAD")])?
-        .trim()
-        .to_string())
+    Ok(head)
 }
 
 /// Git cannot create `a/b/c` while a branch `a/b` or `a` exists (a directory/file ref
@@ -277,13 +358,15 @@ pub fn create_run_branch(
     path: &Path,
     timeout: Duration,
 ) -> Result<String, String> {
-    ensure_worktree(Git::new(git, timeout), root, branch, base_sha, path, false)
+    ensure_run_worktree(Git::new(git, timeout), root, branch, base_sha, path)
 }
 
 /// Decision 19: the task branch `anthrex/<run>/<task>` from `from` (the run head at
-/// dispatch), checked out and locked at `path`. Reuses an existing branch and path,
-/// re-adds an existing branch whose worktree is gone, and re-points a branch that has
-/// no commit of its own to `from`. Returns its `HEAD`.
+/// dispatch) and its worktree at `path`, detached at the branch's tip and locked (final
+/// fix batch F1b). Reuses an existing branch and path, re-adds an existing branch whose
+/// worktree is gone, and re-points a task that has no commit of its own to `from`.
+/// Returns its `HEAD`. The worker's objects are read only from the repository: see
+/// [`prepare_task_worktree`] for a worker with a private object directory.
 pub fn prepare_worktree(
     git: &OsStr,
     root: &Path,
@@ -292,7 +375,22 @@ pub fn prepare_worktree(
     path: &Path,
     timeout: Duration,
 ) -> Result<String, String> {
-    ensure_worktree(Git::new(git, timeout), root, branch, from, path, true)
+    prepare_task_worktree(git, root, branch, from, path, None, timeout)
+}
+
+/// [`prepare_worktree`] for a worker whose git writes its objects to `objects` (its
+/// private object directory, final fix batch F1b): the engine imports its commits from
+/// there, re-hashing each object, before it reads them.
+pub fn prepare_task_worktree(
+    git: &OsStr,
+    root: &Path,
+    branch: &str,
+    from: &str,
+    path: &Path,
+    objects: Option<&Path>,
+    timeout: Duration,
+) -> Result<String, String> {
+    ensure_task_worktree(Git::new(git, timeout), root, branch, from, path, objects)
 }
 
 /// Decision 18: `git worktree lock --reason <reason> <path>`. Already locked is fine.
@@ -385,7 +483,7 @@ pub fn prepare_review(
             os(&head),
         ],
     )?;
-    pin_in(g, root, path, None)?;
+    pin_in(g, root, path, PinAs::default())?;
     let patch = diff(g, root, &format!("{base}..{head}"))?;
     Ok((base, head, patch))
 }
@@ -406,7 +504,7 @@ pub fn prepare_scratch(
     let g = Git::new(git, timeout);
     if let Some(found) = listed(g, root, path)? {
         if path.exists() {
-            pin_in(g, root, path, None)?;
+            pin_in(g, root, path, PinAs::default())?;
             return Ok(false);
         }
         forget_missing(g, root, path, &found)?;
@@ -421,7 +519,7 @@ pub fn prepare_scratch(
             os(at),
         ],
     )?;
-    pin_in(g, root, path, None)?;
+    pin_in(g, root, path, PinAs::default())?;
     Ok(true)
 }
 
@@ -450,26 +548,24 @@ pub(crate) fn common_dir(g: Git<'_>, root: &Path) -> Result<PathBuf, String> {
 
 /// M8a final fix batch F1, fix round 1 (N2): pins the engine worktree `path` to its git
 /// directory as the repository lists it, so no later call in it reads its `.git` file.
-/// Its `HEAD` may name only `branch` (none: always detached), or be detached (fix round
-/// 2, R1).
-fn pin_in(g: Git<'_>, root: &Path, path: &Path, branch: Option<&str>) -> Result<(), String> {
+/// Its `HEAD` may name only `as_.head` (none: always detached), or be detached (fix round
+/// 2, R1); a task worktree also carries its own branch and object directory (F1b).
+fn pin_in(g: Git<'_>, root: &Path, path: &Path, as_: PinAs) -> Result<(), String> {
     let common = common_dir(g, root)?;
-    let head = branch.map(|branch| format!("refs/heads/{branch}"));
-    match pinned::pin(&common, path, head.as_deref()).broken {
+    match pinned::pin(&common, path, as_).broken {
         Some(reason) => Err(reason),
         None => Ok(()),
     }
 }
 
-/// Pins each existing worktree of `worktrees` (its path, and the branch its `HEAD` may
-/// name, `None` for an always-detached one) in the repository whose common directory is
-/// `common`: a daemon restart, before any call in them. The git directory is found from
-/// the repository's side and must be unique; one that cannot be found is pinned as
-/// broken, so every call in it is refused. Blocking.
-pub fn pin_worktrees(common: &Path, worktrees: &[(PathBuf, Option<String>)]) {
-    for (path, branch) in worktrees.iter().filter(|(path, _)| path.exists()) {
-        let head = branch.as_ref().map(|branch| format!("refs/heads/{branch}"));
-        pinned::pin(common, path, head.as_deref());
+/// Pins each existing worktree of `worktrees` (its path, and what it is pinned as) in
+/// the repository whose common directory is `common`: a daemon restart, before any call
+/// in them. The git directory is found from the repository's side and must be unique;
+/// one that cannot be found is pinned as broken, so every call in it is refused.
+/// Blocking.
+pub fn pin_worktrees(common: &Path, worktrees: &[(PathBuf, PinAs)]) {
+    for (path, as_) in worktrees.iter().filter(|(path, _)| path.exists()) {
+        pinned::pin(common, path, as_.clone());
     }
 }
 

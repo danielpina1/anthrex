@@ -97,11 +97,10 @@ fn verify_done_reports_each_condition() {
 
     // A merge in progress.
     let t = task(&repo, &wt, "merging");
-    out(&t.path, &["checkout", "-q", "-b", "side-vd"]);
-    commit_file(&t.path, "src/lib.rs", "side\n", "side");
-    out(&t.path, &["checkout", "-q", "anthrex/vd01/merging"]);
+    let side = commit_file(&t.path, "src/lib.rs", "side\n", "side");
+    out(&t.path, &["checkout", "-q", "--detach", &t.start]);
     commit_file(&t.path, "src/lib.rs", "mine\n", "mine");
-    assert!(!try_git(&t.path, &["merge", "side-vd"]).status.success());
+    assert!(!try_git(&t.path, &["merge", &side]).status.success());
     let r = check(&t, &t.start, &["src/**"], &[], None);
     assert!(r.merge_in_progress, "{r:?}");
 
@@ -328,33 +327,35 @@ fn verify_done_edge_cases() {
     let r = check(&t, &t.start, &["src/**"], &[], None);
     assert_eq!(r.dirty_tracked, 1, "{r:?}");
 
-    // The branch HEAD is on: another branch, then detached. Since final fix batch F1's
-    // fix round 2 (R1), a `HEAD` naming any branch but the task's own refuses the check
-    // itself, naming the branch; detached is still reported.
+    // Final fix batch F1b: a task worktree is detached, and the worker commits there.
+    // A `HEAD` naming a branch (any branch: the worker's sandbox would not let it commit
+    // on one) or a stopped rebase is no claim: nothing is judged or recorded, and
+    // `head_branch` is `None`, which the engine rejects with a hint. Detached again, the
+    // commit is imported and recorded on the task's branch.
     let t = task(&repo, &wt, "switched");
     out(&t.path, &["switch", "-q", "-c", "scratch-vd"]);
-    commit_file(&t.path, "src/s.rs", "s\n", "on scratch");
-    let generated = OwnsMatcher::new(&[]).unwrap();
-    let protected = ProtectedMatcher::new(&strings(BUILTIN_PROTECTED)).unwrap();
-    let err = verify_done(
-        real_git(),
-        &t.path,
-        &t.start,
-        &t.start,
-        &strings(&["src/**"]),
-        &generated,
-        &protected,
-        None,
-        T,
-    )
-    .unwrap_err();
-    assert!(
-        err.contains("its HEAD names refs/heads/scratch-vd, not refs/heads/anthrex/vd01/switched"),
-        "{err}"
+    let s = commit_file(&t.path, "src/s.rs", "s\n", "on scratch");
+    let r = check(&t, &t.start, &["src/**"], &[], None);
+    assert_eq!(r, DoneChecked::default());
+    assert_eq!(
+        out(&repo.root, &["rev-parse", "anthrex/vd01/switched"]),
+        t.start,
+        "nothing was recorded"
     );
     out(&t.path, &["switch", "-q", "--detach"]);
     let r = check(&t, &t.start, &["src/**"], &[], None);
-    assert_eq!(r.head_branch, None);
+    assert_eq!(r.head_branch.as_deref(), Some("anthrex/vd01/switched"));
+    assert_eq!((r.commits, r.head.as_str()), (1, s.as_str()));
+    assert_eq!(out(&repo.root, &["rev-parse", "anthrex/vd01/switched"]), s);
+
+    // A rebase stopped on a conflict: its `HEAD` is an intermediate commit.
+    let t = task(&repo, &wt, "rebasing");
+    let side = commit_file(&t.path, "src/lib.rs", "side\n", "side");
+    out(&t.path, &["checkout", "-q", "--detach", &t.start]);
+    commit_file(&t.path, "src/lib.rs", "mine\n", "mine");
+    assert!(!try_git(&t.path, &["rebase", "-q", &side]).status.success());
+    let r = check(&t, &t.start, &["src/**"], &[], None);
+    assert_eq!(r, DoneChecked::default());
 }
 
 #[test]

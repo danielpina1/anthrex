@@ -12,6 +12,7 @@ use daemon::git::probe::{PROBE_TIMEOUT, probe};
 use daemon::run::git::{pin_worktrees, prepare_worktree, salvage, verify_done};
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
 use daemon::run::plan::BUILTIN_PROTECTED;
+use daemon::worktree::pinned::PinAs;
 use std::path::{Path, PathBuf};
 use support::TempRepo;
 use support::run_git::{T, commit_file, head, out, real_git, repo, wt_dir};
@@ -243,8 +244,14 @@ fn a_restart_pins_existing_worktrees_before_any_call() {
     pin_worktrees(
         &common,
         &[
-            (restarted.clone(), Some("anthrex/es05/t2".to_string())),
-            (stray.clone(), None),
+            (
+                restarted.clone(),
+                PinAs {
+                    own: Some("refs/heads/anthrex/es05/t2".to_string()),
+                    ..PinAs::default()
+                },
+            ),
+            (stray.clone(), PinAs::default()),
         ],
     );
 

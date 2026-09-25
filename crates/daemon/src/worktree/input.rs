@@ -1,7 +1,34 @@
-//! Standard input for the one git command that needs it (`update-index --index-info`,
-//! M8a final fix batch F1, fix round 5): see [`super::run_git_with_input`].
+//! Standard input for the git commands that need it (`update-index --index-info`,
+//! M8a final fix batch F1, fix round 5: see [`super::run_git_with_input`]; and the
+//! import of a worker's objects, `index-pack --stdin` fed a pack file, final fix batch
+//! F1b: [`run_git_with_stdin_file`]).
 
+use std::ffi::OsStr;
 use std::io;
+use std::path::Path;
+use std::time::Instant;
+
+use super::{Capture, GitOutput, MAX_OUTPUT_BYTES, WorktreeError, run_git_capturing};
+
+/// As [`super::run_git_with_input`], with an open file as git's standard input (read
+/// from its current position to its end): a pack too large to hold in memory.
+pub fn run_git_with_stdin_file(
+    git: &OsStr,
+    dir: &Path,
+    args: &[&OsStr],
+    deadline: Instant,
+    file: &std::fs::File,
+) -> Result<GitOutput, WorktreeError> {
+    run_git_capturing(
+        git,
+        dir,
+        args,
+        deadline,
+        Capture::Capped(MAX_OUTPUT_BYTES),
+        Some(file),
+    )
+    .map(|(output, _)| output)
+}
 
 /// `input` in a new file under the temporary directory, created exclusively (`0600`),
 /// unlinked at once, and rewound: only the returned handle reaches it.

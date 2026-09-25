@@ -15,7 +15,7 @@ use std::time::Duration;
 use super::merge::{AcceptOutcome, read, short};
 use super::merge_state::unmerged;
 use super::worktrees::{forget_missing, is_ancestor, listed, repair_git_file};
-use super::{DIFF_FLAGS, Git, NO_NESTED, failure, nul_fields, os};
+use super::{DIFF_FLAGS, Git, NO_NESTED, failure, import, nul_fields, os};
 
 /// Decision 20's salvage. A worktree with nothing to save (`git status --porcelain`,
 /// untracked files included, ignored ones not) writes nothing and gives `None`.
@@ -36,6 +36,16 @@ pub fn salvage(
     timeout: Duration,
 ) -> Result<Option<String>, String> {
     let g = Git::new(git, timeout);
+    // Final fix batch F1b: in a task worktree, the worker's detached `HEAD` is imported
+    // and recorded on the task's branch first (its objects are in its private directory
+    // until then), and it is the salvage's parent. A `HEAD` left naming a branch (on
+    // which the worker's sandbox let it commit nothing) is put back at the branch's tip.
+    let parent = if import::task_pin(worktree).is_ok() {
+        import::redetach(g, worktree)?;
+        import::sync_in(g, worktree)?
+    } else {
+        "HEAD".to_string()
+    };
     // `--untracked-files=normal` explicitly: a user's `status.showUntrackedFiles=no`
     // must not hide new files from the salvage.
     let args = [
@@ -75,6 +85,11 @@ pub fn salvage(
     let mut add = vec![os("add"), os("-A"), os("--"), os(".")];
     add.extend(excludes.iter().map(|e| os(e)));
     g.write(worktree, &add)?;
+    if parent != "HEAD" {
+        // F1b: blobs the worker staged and left unchanged are still only in its private
+        // directory; `write-tree` needs them in the repository.
+        import::import_index(g, worktree)?;
+    }
     let tree = g.write(worktree, &[os("write-tree")])?.trim().to_string();
     let commit = g
         .write(
@@ -83,7 +98,7 @@ pub fn salvage(
                 os("commit-tree"),
                 os(&tree),
                 os("-p"),
-                os("HEAD"),
+                os(&parent),
                 os("-m"),
                 os(message),
             ],

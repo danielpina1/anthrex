@@ -54,17 +54,14 @@ fn reconcile_accept_leaves_the_users_own_merge_alone() {
 #[test]
 fn reconcile_hand_back_ignores_a_merge_of_something_else() {
     let mut w = World::new();
-    let (t1, _) = w.task_with_commit("t1", "src/shared.txt", "task\n");
+    let (t1, t1_head) = w.task_with_commit("t1", "src/shared.txt", "task\n");
     let run_head = commit_file(&w.run.integration_path(), "README", "run\n", "run");
     w.run.run_head = run_head.clone();
-    out(&t1, &["checkout", "-q", "-b", "side", "HEAD~1"]);
+    out(&t1, &["checkout", "-q", "--detach", "HEAD~1"]);
     let side = commit_file(&t1, "src/shared.txt", "side\n", "side");
-    out(
-        &t1,
-        &["checkout", "-q", &format!("anthrex/{}/t1", w.run.id)],
-    );
+    out(&t1, &["checkout", "-q", "--detach", &t1_head]);
     assert!(
-        !try_git(&t1, &["merge", "-q", "--no-edit", "side"])
+        !try_git(&t1, &["merge", "-q", "--no-edit", &side])
             .status
             .success()
     );

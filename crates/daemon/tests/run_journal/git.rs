@@ -66,6 +66,9 @@ impl World {
         )
         .unwrap();
         let sha = commit_file(&path, file, content, &format!("{task}: {file}"));
+        // Final fix batch F1b: the worker commits on a detached `HEAD`; the done check
+        // that precedes a hand-back records it on the task's branch.
+        assert_eq!(daemon::run::git::sync(real_git(), &path, T).unwrap(), sha);
         (path, sha)
     }
 

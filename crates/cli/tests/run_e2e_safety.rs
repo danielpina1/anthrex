@@ -137,12 +137,15 @@ fn held_t1(h: &RunHarness) -> std::path::PathBuf {
 }
 
 /// Waits until `t1` has its first commit (it is then held on its release file).
+/// Final fix batch F1b: the worker commits on a detached `HEAD` (its objects in its
+/// private directory until the engine imports them), so its commit shows as the
+/// worktree's `HEAD` moving off the run's base, not on the task's branch.
 fn t1_committed(h: &RunHarness, id: &str) {
-    let worktree = t(&h.run(id).unwrap(), "t1").worktree.clone();
+    let run = h.run(id).unwrap();
+    let worktree = t(&run, "t1").worktree.clone();
     until("t1's first commit", RUN_WAIT, || {
-        let branch = format!("anthrex/{id}/t1");
-        let log = git_read(&h.repo, &["log", "--format=%s", &branch])?;
-        (worktree.exists() && log.contains("add a.txt")).then_some(())
+        let head = git_read(&worktree, &["rev-parse", "HEAD"])?;
+        (head.trim() != run.base_sha).then_some(())
     });
 }
 

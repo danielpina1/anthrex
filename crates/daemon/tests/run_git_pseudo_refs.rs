@@ -12,7 +12,7 @@
 
 mod support;
 
-use daemon::run::git::{create_run_branch, hand_back, prepare_worktree};
+use daemon::run::git::{create_run_branch, hand_back, prepare_worktree, sync};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use support::TempRepo;
@@ -320,6 +320,8 @@ fn the_hand_backs_plumbing_writes_no_other_ref_or_pseudo_ref() {
     let w = world("pr31");
     let run_head = conflict_case(&w);
     let onto = head(&w.task);
+    // Final fix batch F1b: the worker's detached `HEAD`, recorded on its branch first.
+    assert_eq!(sync(real_git(), &w.task, T).unwrap(), onto);
     let admin = w.admin();
     std::fs::write(admin.join("HEAD"), SYMREF_MAIN).unwrap();
     for name in [

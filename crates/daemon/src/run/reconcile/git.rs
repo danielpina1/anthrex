@@ -10,8 +10,8 @@ use crate::run::contract::sha7;
 use crate::run::engine::OpResult;
 use crate::run::git::{
     Git, Leftover, clear_merge_state, failure, finish_clean, forget_missing, interrupted_conflict,
-    is_ancestor, leftover, listed_worktree_in, os, read, reattach_in, short, undo_clean_merge,
-    unmerged,
+    is_ancestor, leftover, listed_worktree_in, os, read, reattach_in, short, sync_in,
+    undo_clean_merge, unmerged,
 };
 
 /// `CreateRunBranch`, `PrepareWorktree`: the path listed on its branch is the op's
@@ -19,10 +19,12 @@ use crate::run::git::{
 /// does not list is what a `worktree add` that died part way leaves: it is removed, but
 /// only under `own` (the run's `<wt_dir>/runs/<run>`;
 /// fix round 1, m1): any other path a corrupted `run.json` names is left alone.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn worktree(
     g: Git<'_>,
     root: &Path,
     branch: &str,
+    detached: bool,
     path: &Path,
     has_setup: bool,
     own: &Path,
@@ -30,7 +32,13 @@ pub(super) fn worktree(
 ) -> Result<Reconciled, String> {
     match listed_worktree_in(g, root, path)? {
         Some(entry) => {
-            let on_branch = entry.branch.as_deref() == Some(&format!("refs/heads/{branch}"));
+            // Final fix batch F1b: a task's worktree is detached, with its branch made;
+            // the run branch's worktree is on it.
+            let on_branch = if detached {
+                entry.branch.is_none() && read(g, root, &format!("refs/heads/{branch}"))?.is_some()
+            } else {
+                entry.branch.as_deref() == Some(&format!("refs/heads/{branch}"))
+            };
             Ok(match entry.head {
                 Some(head) if on_branch && path.is_dir() && !has_setup => {
                     Reconciled::Replay(OpResult::Worktree { head })
@@ -170,11 +178,25 @@ pub(super) fn hand_back(
     notes: &mut Vec<String>,
 ) -> Result<Reconciled, String> {
     let target = read(g, worktree, &format!("{run_head}^{{commit}}"))?;
-    let head = read(g, worktree, "HEAD")?;
+    // Final fix batch F1b: the worker's detached `HEAD`, imported and recorded on the
+    // task's branch first (idempotent). One that cannot be is left for the hand-back,
+    // which refuses it the same way.
+    let tip = match sync_in(g, worktree) {
+        Ok(tip) => tip,
+        Err(err) => {
+            notes.push(format!(
+                "could not import {}'s HEAD: {err}; the hand-back runs again",
+                worktree.display()
+            ));
+            return Ok(Reconciled::NotStarted);
+        }
+    };
+    let head = Some(tip.clone());
+    let parent = |n: u8| read(g, worktree, &format!("{tip}^{n}"));
     if let Some(merge_head) = read(g, worktree, "MERGE_HEAD")? {
         let files = unmerged(g, worktree)?;
         let kind = match &target {
-            Some(target) => leftover(g, worktree, target)?,
+            Some(target) => leftover(g, worktree, target, &tip)?,
             None => Leftover::Other,
         };
         // Fix round 3: the hand-back's own merge, committed (the branch's `HEAD^2` is
@@ -191,12 +213,12 @@ pub(super) fn hand_back(
                 ));
                 return Ok(Reconciled::Replay(OpResult::HandedBack {
                     files,
-                    onto: read(g, worktree, "HEAD^1")?,
+                    onto: parent(1)?,
                     head,
                 }));
             }
             Leftover::Untouched => {
-                notes.push(match undo_clean_merge(g, worktree) {
+                notes.push(match undo_clean_merge(g, worktree, &tip) {
                     Ok(()) => format!(
                         "undid the hand-back's unfinished merge in {}",
                         worktree.display()
@@ -225,10 +247,10 @@ pub(super) fn hand_back(
             head,
         }));
     }
-    let (Some(target), Some(tip)) = (target, head.clone()) else {
+    let Some(target) = target else {
         return Ok(Reconciled::NotStarted);
     };
-    if read(g, worktree, "HEAD^2")?.as_deref() == Some(target.as_str()) {
+    if parent(2)?.as_deref() == Some(target.as_str()) {
         match finish_clean(g, worktree, &tip) {
             Ok(false) => {}
             Ok(true) => notes.push(format!(
@@ -245,7 +267,7 @@ pub(super) fn hand_back(
         }
         return Ok(Reconciled::Replay(OpResult::HandedBack {
             files: Vec::new(),
-            onto: read(g, worktree, "HEAD^1")?,
+            onto: parent(1)?,
             head,
         }));
     }

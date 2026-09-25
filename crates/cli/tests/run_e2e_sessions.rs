@@ -133,8 +133,14 @@ fn e2e_daemon_restart_pauses_and_resume_continues() {
             .iter()
             .any(|r| r.role == AgentRole::Worker && r.session_id.is_some())
             && t(run, task).worktree.join(file).exists()
-            && git_read(&t(run, task).worktree, &["log", "-1", "--format=%s"])
-                .is_some_and(|s| s.contains(&format!("add {file}")))
+            && worker_git_read(
+                &h.dir.path().join("data"),
+                &run.run_id,
+                task,
+                &t(run, task).worktree,
+                &["log", "-1", "--format=%s"],
+            )
+            .is_some_and(|s| s.contains(&format!("add {file}")))
     };
     let run = h.wait_run(
         &id,

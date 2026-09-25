@@ -96,7 +96,9 @@ fn a_head_naming_the_base_branch_steers_no_engine_call() {
             .collect::<Vec<_>>(),
     )
     .unwrap();
-    let err = verify_done(
+    // Final fix batch F1b: the done check judges nothing and records nothing for a
+    // `HEAD` that names a branch; the engine rejects the claim.
+    let checked = verify_done(
         real_git(),
         &w.task,
         &w.base,
@@ -107,10 +109,10 @@ fn a_head_naming_the_base_branch_steers_no_engine_call() {
         None,
         T,
     )
-    .unwrap_err();
-    assert!(err.contains("HEAD"), "{err}");
+    .unwrap();
+    assert_eq!((checked.head.as_str(), checked.head_branch), ("", None));
 
-    // A detached `HEAD` (mid-rebase) is not a redirection: the done check still runs.
+    // A detached `HEAD` is the norm: the done check runs.
     std::fs::write(admin.join("HEAD"), format!("{}\n", head(&w.integration))).unwrap();
     assert!(
         verify_done(
@@ -141,7 +143,8 @@ fn a_git_symlink_to_another_worktree_never_moves_the_pin_or_the_grant() {
     std::os::unix::fs::symlink(w.integration.join(".git"), w.task.join(".git")).unwrap();
 
     let common = w.repo.root.join(".git").canonicalize().unwrap();
-    let roots = worker_git_roots(&common, &w.run, "t1");
+    let data = tempfile::tempdir().unwrap();
+    let roots = worker_git_roots(data.path(), "t1");
     for _ in 0..8 {
         let granted = worker_git_dirs(&common, &w.task, &roots).unwrap();
         assert!(

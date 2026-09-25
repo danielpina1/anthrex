@@ -233,11 +233,11 @@ fn rejection(run: &Run, i: usize, claim: &PendingClaim, result: &OpResult) -> Op
     let task = &run.tasks[i];
     let branch = &task.branch;
     let explicit = claim.claim.signal == DoneSignal::TaskDone;
-    // Carry T8 (M8a.8 minor 11): commits made off the task's branch are not its work.
+    // Carry T8 (M8a.8 minor 11), as final fix batch F1b recasts it: the worker commits
+    // on a detached `HEAD`, which the engine records on the task's branch; a `HEAD` that
+    // names a branch, or a stopped rebase, is not a claim the branch can carry.
     Some(if head_branch.as_deref() != Some(branch.as_str()) {
-        format!(
-            "task_done rejected: HEAD is not on {branch}; commit your work on {branch} and call task_done again"
-        )
+        "task_done rejected: this worktree's HEAD must be a detached commit with no rebase in progress; run git checkout --detach (or finish the rebase), commit, and call task_done again".to_string()
     } else if *commits == 0 {
         "task_done rejected: the branch has no commit since the task started; commit your work first".into()
     } else if *dirty_tracked > 0 {

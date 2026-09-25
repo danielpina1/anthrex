@@ -11,7 +11,8 @@
 //!   files, no pseudo-ref);
 //! - a clean one is committed with `commit-tree` (explicit parents), the task's own
 //!   branch, named explicitly, is moved with `update-ref --no-deref <own> <new> <old>`,
-//!   and the index and files follow with a two-way `read-tree -m -u`;
+//!   the worktree's detached `HEAD` likewise (final fix batch F1b), and the index and
+//!   files follow with a two-way `read-tree -m -u`;
 //! - a conflicted one is put in with `read-tree -m -u` (its markers) and `update-index
 //!   --index-info` (its unmerged stages), and the engine writes `MERGE_HEAD`,
 //!   `MERGE_MSG` and `MERGE_MODE` itself, by rename ([`super::merge_state`]). The
@@ -24,6 +25,7 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::time::Duration;
 
+use super::import::{move_head, rebase_in_progress, sync_in, task_pin};
 use super::merge::{read, short};
 use super::merge_state::{
     self, Leftover, index_is, leftover, merge_in_progress, own_ref, undo_clean_merge,
@@ -41,12 +43,13 @@ pub struct HandBack {
     pub files: Vec<String>,
 }
 
-/// Decision 36 step 6: the run head merged into the task worktree. A clean merge is
-/// committed and gives no files. A conflict leaves its markers, its unmerged stages and
+/// Decision 36 step 6: the run head merged into the task worktree, onto the worker's
+/// detached `HEAD` (imported first, final fix batch F1b). A clean merge is committed
+/// and gives no files. A conflict leaves its markers, its unmerged stages and
 /// `MERGE_HEAD` for the worker and gives the unmerged files. Any other failure
-/// (untracked files in the way, say), staged changes, a `HEAD` not on the task's own
-/// branch, or a merge already in progress that is not this hand-back's own untouched
-/// leftover, is an error. The result names the tip the merge was made onto (ruling
+/// (untracked files in the way, say), staged changes, a `HEAD` that is not a detached
+/// commit, a stopped rebase, or a merge already in progress that is not this
+/// hand-back's own untouched leftover, is an error. The result names the tip the merge was made onto (ruling
 /// T14-C1), the one value of the branch the engine read and compared-and-swapped from
 /// (review N4): the engine re-queues a hand-back only when that tip is the claimed
 /// commit.
@@ -58,6 +61,19 @@ pub fn hand_back(
 ) -> Result<HandBack, String> {
     let g = Git::new(git, timeout);
     let own = own_ref(worktree)?;
+    // Fix round 4, S2, as F1b recasts it: a stopped rebase's `HEAD` is an intermediate
+    // commit, not the worker's work; the merge would be made onto it.
+    if rebase_in_progress(&task_pin(worktree)?) {
+        return Err(format!(
+            "a rebase is stopped in {}; finish or abort it before the run head can be \
+             handed back",
+            worktree.display()
+        ));
+    }
+    // Final fix batch F1b (and review N4): the worker's detached `HEAD`, imported and
+    // recorded on the task's branch, read once; every write below is made from it, and
+    // the branch and `HEAD` each move only if they still hold it.
+    let onto = sync_in(g, worktree)?;
     let run_head = read(g, worktree, &format!("{run_head}^{{commit}}"))?
         .ok_or_else(|| format!("{run_head} is not a commit"))?;
     // Ruling T11-N1(a): a leftover MERGE_HEAD would make `unmerged` report the old
@@ -65,9 +81,9 @@ pub fn hand_back(
     // own leftover of this run head (a crash, or an undo that failed) is recognised and
     // cleared instead.
     if merge_in_progress(g, worktree)? {
-        match leftover(g, worktree, &run_head)? {
+        match leftover(g, worktree, &run_head, &onto)? {
             Leftover::Committed => merge_state::clear(worktree)?,
-            Leftover::Untouched => undo_clean_merge(g, worktree)?,
+            Leftover::Untouched => undo_clean_merge(g, worktree, &onto)?,
             Leftover::Other => {
                 return Err(format!(
                     "a merge is already in progress in {}; finish it or run git merge --abort",
@@ -76,20 +92,6 @@ pub fn hand_back(
             }
         }
     }
-    // Fix round 4, S2: a detached `HEAD` (a stopped rebase, a `checkout <sha>`) is
-    // refused: the worker's commit of the merge would not land on its branch.
-    let on = g.read(worktree, &[os("symbolic-ref"), os("-q"), os("HEAD")])?;
-    if !on.success || on.stdout.trim() != own {
-        return Err(format!(
-            "{}'s HEAD is not on {own} (detached, or mid-rebase); check out {} there \
-             before the run head can be handed back",
-            worktree.display(),
-            own.trim_start_matches("refs/heads/")
-        ));
-    }
-    // Review N4: the tip is read from the branch itself, once; every write below is
-    // made from it, and the branch moves only if it still holds it.
-    let onto = read(g, worktree, &own)?.ok_or_else(|| format!("{own} does not exist"))?;
     if is_ancestor(g, worktree, &run_head, &onto)? {
         // Ruling T14-R3 (R2-2): a run head already in the task's history ("Already up
         // to date") makes no merge; the tip merged onto is the branch itself.
@@ -219,6 +221,16 @@ fn clean(
         ],
     )?;
     cas(g, worktree, own, &commit, &onto)?;
+    // Final fix batch F1b: the worktree is detached, so its `HEAD` moves by itself.
+    if let Err(err) = move_head(g, worktree, &commit, &onto) {
+        return Err(match cas(g, worktree, own, &onto, &commit) {
+            Ok(()) => format!("{err}; {own} was moved back to {}", short(&onto)),
+            Err(back) => format!(
+                "{err}; {own} could not be moved back to {}: {back}",
+                short(&onto)
+            ),
+        });
+    }
     settle(g, worktree, own, &onto, &commit)?;
     Ok(HandBack {
         onto,
@@ -227,10 +239,10 @@ fn clean(
     })
 }
 
-/// The index and files moved from `onto` to `commit`, the branch having just moved
-/// there: a two-way `read-tree -m -u`, which keeps the worker's edits to paths the merge
-/// did not change. If it fails, the branch goes back to `onto`, so it never holds a
-/// commit its worktree does not show.
+/// The index and files moved from `onto` to `commit`, the branch and `HEAD` having just
+/// moved there: a two-way `read-tree -m -u`, which keeps the worker's edits to paths the
+/// merge did not change. If it fails, `HEAD` and the branch go back to `onto`, so
+/// neither holds a commit its worktree does not show.
 pub(crate) fn settle(
     g: Git<'_>,
     worktree: &Path,
@@ -241,6 +253,10 @@ pub(crate) fn settle(
     let args = [os("read-tree"), os("-m"), os("-u"), os(onto), os(commit)];
     let Err(err) = g.write(worktree, &args) else {
         return Ok(());
+    };
+    let err = match move_head(g, worktree, onto, commit) {
+        Ok(()) => err,
+        Err(back) => format!("{err}; HEAD could not be moved back: {back}"),
     };
     Err(match cas(g, worktree, own, onto, commit) {
         Ok(()) => format!("{err}; {own} was moved back to {}", short(onto)),

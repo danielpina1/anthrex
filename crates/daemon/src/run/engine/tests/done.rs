@@ -194,7 +194,6 @@ fn task_done_runs_verify_done_and_replies_after_it() {
 
 #[test]
 fn task_done_rejections_leave_the_task_working() {
-    let branch = format!("anthrex/{RUN_ID}/t1");
     type Case = (
         &'static str,
         serde_json::Value,
@@ -286,17 +285,17 @@ fn task_done_rejections_leave_the_task_working() {
                     *head_branch = Some("main".into());
                 }
             }),
-            format!("task_done rejected: HEAD is not on {branch}; commit your work on {branch} and call task_done again"),
+            "task_done rejected: this worktree's HEAD must be a detached commit with no rebase in progress; run git checkout --detach (or finish the rebase), commit, and call task_done again".to_string(),
         ),
         (
-            "detached",
+            "not a detached commit (F1b: a branch checked out, a rebase stopped)",
             done_args(),
             Box::new(|r| {
                 if let OpResult::DoneChecked { head_branch, .. } = r {
                     *head_branch = None;
                 }
             }),
-            format!("task_done rejected: HEAD is not on {branch}; commit your work on {branch} and call task_done again"),
+            "task_done rejected: this worktree's HEAD must be a detached commit with no rebase in progress; run git checkout --detach (or finish the rebase), commit, and call task_done again".to_string(),
         ),
     ];
     for (name, args, edit, text) in cases {

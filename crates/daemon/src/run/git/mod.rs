@@ -21,6 +21,7 @@
 
 mod done;
 mod handback;
+mod import;
 mod merge;
 mod merge_state;
 mod queue;
@@ -29,8 +30,9 @@ mod salvage;
 mod sandbox;
 mod worktrees;
 
-pub use done::{DoneChecked, verify_done};
+pub use done::{DoneChecked, count_commits, diff_so_far, verify_done};
 pub use handback::{HandBack, hand_back};
+pub use import::{HeadFile, head_file, rebase_in_progress, sync};
 pub use merge::{
     ACCEPT_LIST_MAX, AcceptOutcome, CandidateStep, RefCheck, cas_update, commit_tree,
     commits_since, guard_refs, materialize, merge_tree, read_ref, reattach, run_work_on_base,
@@ -43,6 +45,7 @@ pub use salvage::{
 
 /// Reads reconcile (M8a.21) shares with the ops it checks.
 pub(crate) use handback::{finish_clean, interrupted_conflict};
+pub(crate) use import::sync_in;
 pub(crate) use merge::{read, reattach_in, short};
 pub(crate) use merge_state::{
     Leftover, clear as clear_merge_state, leftover, undo_clean_merge, unmerged,
@@ -51,10 +54,10 @@ pub(crate) use worktrees::{forget_missing, is_ancestor, listed as listed_worktre
 
 pub use queue::{GitQueue, LOCK_RETRY_DELAYS_MS};
 pub use resolution::resolution_only;
-pub use sandbox::worker_git_dirs;
+pub use sandbox::{private_dir, worker_git_dirs};
 pub use worktrees::{
     absolute_git_dir, create_run_branch, lock_worktree, pin_worktrees, prepare_review,
-    prepare_scratch, prepare_worktree,
+    prepare_scratch, prepare_task_worktree, prepare_worktree,
 };
 
 use std::ffi::OsStr;
@@ -66,7 +69,9 @@ use super::globs::ProtectedMatcher;
 use super::plan::Preflight;
 use crate::project;
 use crate::subprocess::HeadTail;
-use crate::worktree::{GitOutput, run_git_head_tail, run_git_with_cap, run_git_with_input};
+use crate::worktree::{
+    GitOutput, run_git_head_tail, run_git_with_cap, run_git_with_input, run_git_with_stdin_file,
+};
 
 /// Every engine git call that is not a [`WRITE_FLAGS`] write passes this ahead of its
 /// subcommand: reads, and `run accept`'s merge and its abort in the user's checkout. A
@@ -220,6 +225,46 @@ impl<'a> Git<'a> {
             &full,
             Instant::now() + self.timeout,
             input,
+        )
+        .map_err(|err| err.to_string())?;
+        succeeded(args, output)
+    }
+
+    /// A read fed `input` on stdin, that must succeed; its stdout (`cat-file
+    /// --batch-check`, final fix batch F1b).
+    pub(crate) fn read_input(
+        &self,
+        dir: &Path,
+        args: &[&OsStr],
+        input: &[u8],
+    ) -> Result<String, String> {
+        let output = run_git_with_input(
+            self.program,
+            dir,
+            &Self::unhooked(args),
+            Instant::now() + self.timeout,
+            input,
+        )
+        .map_err(|err| err.to_string())?;
+        succeeded(args, output)
+    }
+
+    /// A write (decision 18's flags first) with `file` as its stdin, that must succeed;
+    /// its stdout (`index-pack --stdin` of an imported pack, final fix batch F1b).
+    pub(crate) fn write_file(
+        &self,
+        dir: &Path,
+        args: &[&OsStr],
+        file: &std::fs::File,
+    ) -> Result<String, String> {
+        let mut full: Vec<&OsStr> = WRITE_FLAGS.iter().map(|flag| os(flag)).collect();
+        full.extend_from_slice(args);
+        let output = run_git_with_stdin_file(
+            self.program,
+            dir,
+            &full,
+            Instant::now() + self.timeout,
+            file,
         )
         .map_err(|err| err.to_string())?;
         succeeded(args, output)
@@ -513,65 +558,6 @@ pub fn protected_files(
         .into_iter()
         .filter(|path| protected.matches(path))
         .collect())
-}
-
-/// The task's own commits (`git rev-list --count HEAD ^<start> ^<run_head>`, as
-/// [`verify_done`] counts them) and `HEAD`: the turn-end fallback's question (decision
-/// 32). With `run_head` excluded, a run head merged in by a hand-back is not counted
-/// as the task's work (fix round 1, finding 10).
-pub fn count_commits(
-    git: &OsStr,
-    worktree: &Path,
-    start: &str,
-    run_head: &str,
-    timeout: Duration,
-) -> Result<(u32, String), String> {
-    let g = Git::new(git, timeout);
-    let not_start = format!("^{start}");
-    let not_run_head = format!("^{run_head}");
-    let count = g.ok(
-        worktree,
-        &[
-            os("rev-list"),
-            os("--count"),
-            os("HEAD"),
-            os(&not_start),
-            os(&not_run_head),
-        ],
-    )?;
-    let count = count
-        .trim()
-        .parse::<u32>()
-        .map_err(|_| format!("git rev-list --count printed {:?}", count.trim()))?;
-    let head = g.ok(worktree, &[os("rev-parse"), os("HEAD")])?;
-    Ok((count, head.trim().to_string()))
-}
-
-/// Decision 30's hand-over material: the stat and the diff of the task's net change,
-/// clamped to [`REVIEW_DIFF_MAX`]. Uncommitted work is not in either. The range is
-/// `<start>..HEAD` until a hand-back merges a newer run head in, then
-/// `<run_head>..HEAD`: `<run_head>...HEAD` gives exactly that, since the merge base of
-/// the run head and `HEAD` is the start commit or the merged run head (fix round 1,
-/// finding 10).
-pub fn diff_so_far(
-    git: &OsStr,
-    worktree: &Path,
-    start: &str,
-    run_head: &str,
-    timeout: Duration,
-) -> Result<(String, String), String> {
-    let g = Git::new(git, timeout);
-    // A run head that has moved on without a hand-back has `start` as its merge base
-    // with `HEAD`; one that was merged in is its own. So `run_head...HEAD` never needs
-    // `start`, which is kept for the op's record and to match `count_commits`.
-    let _ = start;
-    let range = format!("{run_head}...HEAD");
-    let mut stat_args = vec![os("diff")];
-    stat_args.extend(DIFF_FLAGS.map(os));
-    stat_args.extend([os("--stat"), os(&range)]);
-    let stat = g.ok(worktree, &stat_args)?;
-    let patch = diff(g, worktree, &range)?;
-    Ok((stat, patch))
 }
 
 /// `git diff <range>` with [`DIFF_FLAGS`] and [`PATCH_PREFIXES`], clamped to

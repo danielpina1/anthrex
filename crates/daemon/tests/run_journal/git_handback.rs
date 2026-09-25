@@ -1,7 +1,8 @@
 //! M8a final fix batch F1, fix round 3: the hand-back now merges with `--no-commit`,
 //! commits with `commit-tree` and moves the task's branch with a compare-and-swap
 //! `update-ref`, so a crash can leave two new states. Reconcile finishes the first and
-//! undoes the second, writing no ref in either.
+//! undoes the second, writing no ref in either. Final fix batch F1b adds the move of the
+//! worktree's detached `HEAD` after the branch's, and a crash point between them.
 
 use crate::fixture::pend;
 use crate::git::World;
@@ -39,6 +40,11 @@ fn reconcile_a_committed_hand_back_left_mid_merge_finishes_it() {
     );
     let own = format!("refs/heads/anthrex/{}/t1", w.run.id);
     out(&t1, &["update-ref", &own, &commit, &t1_head]);
+    // Final fix batch F1b: the worktree is detached, so its `HEAD` moved too.
+    out(
+        &t1,
+        &["update-ref", "--no-deref", "HEAD", &commit, &t1_head],
+    );
     pend(
         &mut w.run,
         1,
@@ -189,9 +195,42 @@ fn reconcile_a_clean_hand_back_stopped_before_its_branch_moved_is_not_started() 
     assert_eq!(out(&t1, &["status", "--porcelain"]), "");
 }
 
-/// Died after the branch's compare-and-swap, before `read-tree`: the branch holds the
-/// merge commit and the index and files are still the task's. Reconcile moves them on
-/// and replays the clean hand-back.
+/// Final fix batch F1b: died after the branch's compare-and-swap, before the
+/// worktree's `HEAD` moved. The branch follows the worker's `HEAD` (reconcile records
+/// it back), and the hand-back runs again.
+#[test]
+fn reconcile_a_clean_hand_back_stopped_before_its_head_moved_is_not_started() {
+    let mut w = World::new();
+    let (t1, t1_head) = w.task_with_commit("t1", "src/a.txt", "task\n");
+    let run_head = commit_file(&w.run.integration_path(), "src/r.txt", "run\n", "run");
+    w.run.run_head = run_head.clone();
+    let tree = merge_tree(&t1, &t1_head, &run_head);
+    let commit = out(
+        &t1,
+        &[
+            "commit-tree",
+            &tree,
+            "-p",
+            &t1_head,
+            "-p",
+            &run_head,
+            "-m",
+            "m",
+        ],
+    );
+    let own = format!("refs/heads/anthrex/{}/t1", w.run.id);
+    out(&t1, &["update-ref", "--no-deref", &own, &commit, &t1_head]);
+    pend_hand_back(&mut w, &t1, &run_head);
+
+    assert_eq!(w.reconcile(), vec![(1, Reconciled::NotStarted)]);
+    assert_eq!(head(&t1), t1_head);
+    assert_eq!(out(&t1, &["rev-parse", &own]), t1_head);
+    assert_eq!(out(&t1, &["status", "--porcelain"]), "");
+}
+
+/// Died after the branch's compare-and-swap and the move of `HEAD` (F1b), before
+/// `read-tree`: `HEAD` and the branch hold the merge commit and the index and files are
+/// still the task's. Reconcile moves them on and replays the clean hand-back.
 #[test]
 fn reconcile_a_clean_hand_back_whose_files_never_followed_finishes_it() {
     let mut w = World::new();
@@ -214,6 +253,10 @@ fn reconcile_a_clean_hand_back_whose_files_never_followed_finishes_it() {
     );
     let own = format!("refs/heads/anthrex/{}/t1", w.run.id);
     out(&t1, &["update-ref", "--no-deref", &own, &commit, &t1_head]);
+    out(
+        &t1,
+        &["update-ref", "--no-deref", "HEAD", &commit, &t1_head],
+    );
     pend_hand_back(&mut w, &t1, &run_head);
 
     assert_eq!(

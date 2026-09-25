@@ -60,7 +60,7 @@ pub(crate) fn write(worktree: &Path, run_head: &str, message: &str) -> Result<()
 
 /// `content` written to `<dir>/anthrex-<name>.tmp` (created exclusively, so never
 /// through a link) and renamed over `<dir>/<name>`.
-fn put(dir: &Path, name: &str, content: &[u8]) -> Result<(), String> {
+pub(crate) fn put(dir: &Path, name: &str, content: &[u8]) -> Result<(), String> {
     let temp = dir.join(format!("anthrex-{name}.tmp"));
     let failed = |err: std::io::Error| format!("cannot write {}: {err}", dir.join(name).display());
     remove(&temp).map_err(failed)?;
@@ -121,19 +121,23 @@ pub(crate) enum Leftover {
 }
 
 /// Classifies the merge in progress in `worktree` against the run head `target` (a
-/// full sha). Reads only, except that `merge-tree` writes objects.
-pub(crate) fn leftover(g: Git<'_>, worktree: &Path, target: &str) -> Result<Leftover, String> {
+/// full sha), its `HEAD` being `head` (imported, final fix batch F1b). Reads only,
+/// except that `merge-tree` writes objects.
+pub(crate) fn leftover(
+    g: Git<'_>,
+    worktree: &Path,
+    target: &str,
+    head: &str,
+) -> Result<Leftover, String> {
     if read(g, worktree, "MERGE_HEAD")?.as_deref() != Some(target)
         || !unmerged(g, worktree)?.is_empty()
     {
         return Ok(Leftover::Other);
     }
-    if read(g, worktree, "HEAD^2")?.as_deref() == Some(target) {
+    if read(g, worktree, &format!("{head}^2"))?.as_deref() == Some(target) {
         return Ok(Leftover::Committed);
     }
-    let Some(head) = read(g, worktree, "HEAD")? else {
-        return Ok(Leftover::Other);
-    };
+    let head = head.to_string();
     // A conflicted hand-back the worker resolved and staged looks the same up to here;
     // only an index that is exactly the merge's own tree, markers and all, is untouched
     // (S3).
@@ -184,15 +188,13 @@ pub(crate) fn index_is(g: Git<'_>, dir: &Path, tree: &str) -> Result<bool, Strin
 /// without writing a ref and without touching the worker's own uncommitted edits: a
 /// two-way `read-tree -m -u` from the index's tree back to `HEAD` (what `git checkout`
 /// does), then the merge state dropped. It fails, changing nothing, where an edit would
-/// be overwritten.
-pub(crate) fn undo_clean_merge(g: Git<'_>, worktree: &Path) -> Result<(), String> {
+/// be overwritten. `head` is the worktree's `HEAD`, imported (final fix batch F1b).
+pub(crate) fn undo_clean_merge(g: Git<'_>, worktree: &Path, head: &str) -> Result<(), String> {
     own_ref(worktree)?;
-    let head = read(g, worktree, "HEAD")?
-        .ok_or_else(|| format!("{}'s HEAD does not name a commit", worktree.display()))?;
     let merged = g.write(worktree, &[os("write-tree")])?.trim().to_string();
     g.write(
         worktree,
-        &[os("read-tree"), os("-m"), os("-u"), os(&merged), os(&head)],
+        &[os("read-tree"), os("-m"), os("-u"), os(&merged), os(head)],
     )?;
     clear(worktree)
 }
@@ -209,19 +211,19 @@ pub fn abort_merge(git: &OsStr, worktree: &Path, timeout: Duration) -> Result<()
     if !merge_in_progress(g, worktree)? {
         return Ok(());
     }
-    drop_merge(g, worktree)
+    // Final fix batch F1b: the worker's `HEAD`, imported and recorded on the branch.
+    let head = super::import::sync_in(g, worktree)?;
+    drop_merge(g, worktree, &head)
 }
 
 /// Fix round 3: the merge in progress in `worktree` undone without writing a ref: the
 /// index and files read back from `HEAD`, then the merge state dropped. Fix round 4,
 /// S4: `HEAD`'s commit, as `git merge --abort` would, not the branch's tip, which a
-/// detached `HEAD` does not hold.
-fn drop_merge(g: Git<'_>, worktree: &Path) -> Result<(), String> {
-    let head = read(g, worktree, "HEAD")?
-        .ok_or_else(|| format!("{}'s HEAD does not name a commit", worktree.display()))?;
+/// detached `HEAD` does not hold. `head` is that commit, imported (F1b).
+fn drop_merge(g: Git<'_>, worktree: &Path, head: &str) -> Result<(), String> {
     g.write(
         worktree,
-        &[os("read-tree"), os("-u"), os("--reset"), os(&head)],
+        &[os("read-tree"), os("-u"), os("--reset"), os(head)],
     )?;
     clear(worktree)
 }

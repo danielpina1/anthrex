@@ -27,6 +27,7 @@ mod ops;
 pub mod pinned;
 
 pub use dirty::{DirtyReason, dirty_reason};
+pub use input::run_git_with_stdin_file;
 pub use ops::{
     Created, ManagedWorktree, create, create_with_cleanup_timeout, discard_and_describe,
     discard_and_describe_with, discard_new, discard_new_with, remove,
@@ -371,7 +372,11 @@ fn run_git_capturing(
         .args(pin.iter().flatten())
         .args(args)
         .env("LC_ALL", "C")
-        .env("GIT_TERMINAL_PROMPT", "0");
+        .env("GIT_TERMINAL_PROMPT", "0")
+        // Final fix batch F1b: the daemon's git reads and writes the repository's own
+        // object store only, whatever the daemon's environment says.
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES");
     if let Some(file) = input {
         use std::os::fd::AsRawFd;
         use std::os::unix::process::CommandExt;

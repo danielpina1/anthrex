@@ -120,7 +120,8 @@ fn engine_worktrees_have_no_reflogs() {
         std::fs::create_dir_all(log.parent().unwrap()).unwrap();
         std::fs::write(&log, "old\n").unwrap();
     }
-    let roots = worker_git_roots(&w.common, &w.run, "t1");
+    let data = tempfile::tempdir().unwrap();
+    let roots = worker_git_roots(data.path(), "t1");
     let granted = worker_git_dirs(&w.common, &w.task, &roots).unwrap();
     for log in w.reflogs() {
         assert!(!exists(&log), "{} survived the grant", log.display());

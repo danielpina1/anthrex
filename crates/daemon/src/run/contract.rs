@@ -19,7 +19,7 @@ use super::model::{CheckRecord, ProofRecord, ReviewLevel, ReviewRecord, Run, Tas
 pub const WORKER_CONTRACT: &str = "You are a worker in an anthrex orchestration run.
 1. Work only in this worktree and only in the paths this task owns. Changing files outside them stops the task.
 2. Follow the test mode in your task prompt. For tdd: write the named test first, commit it while it fails (that commit is the red commit), then make it pass.
-3. Commit your work on this branch with clear messages. Never push, switch branches, or rewrite commits already there. Commit new files: untracked files are not part of your work.
+3. Commit your work in this worktree with clear messages. Its HEAD is detached: commit on it, and the engine records your commits on the task's branch. Never create, switch or push branches, and never rewrite commits already there. Commit new files: untracked files are not part of your work.
 4. Use sub-agents to read and explore if you like; do all writing yourself.
 5. When the task is complete and committed, call the anthrex tool task_done with a summary (and, for tdd, the test and the red commit). Then stop.
 6. If you cannot continue, call task_blocked: kind question if you need an answer, mis_sized if the task is bigger than one task, environment if a tool or setup is broken. Then stop.
@@ -259,10 +259,10 @@ pub fn blocked_recorded(kind: &str) -> String {
 }
 
 /// Decision 32's turn-end fallback, with commits (exact).
-pub const DONE_NUDGE: &str = "[anthrex] Your turn ended with commits on your branch and no task_done. If the task is complete, call task_done now (for a tdd task, with test and red). If you are stuck, call task_blocked.";
+pub const DONE_NUDGE: &str = "[anthrex] Your turn ended with commits in your worktree and no task_done. If the task is complete, call task_done now (for a tdd task, with test and red). If you are stuck, call task_blocked.";
 
 /// Decision 32's turn-end fallback, without a commit (exact).
-pub const NO_COMMIT_NUDGE: &str = "[anthrex] Your turn ended and your branch has no commit yet. Continue the task and commit, or call task_blocked with the reason.";
+pub const NO_COMMIT_NUDGE: &str = "[anthrex] Your turn ended and your worktree has no commit yet. Continue the task and commit, or call task_blocked with the reason.";
 
 /// Decision 32: a session whose process died mid-turn, resumed (exact).
 pub const RESUME_AFTER_EXIT: &str = "[anthrex] Your session's process stopped in the middle of a turn and has been resumed. Check the state of your worktree, continue, commit, and call task_done when complete.";
@@ -371,7 +371,7 @@ pub fn check_failed_message(command: &str, c: &CheckRecord) -> String {
 /// lines. M8a.14.
 pub fn candidate_red_message(command: &str, c: &CheckRecord) -> String {
     format!(
-        "[anthrex] Your branch merged cleanly into the run branch, but the check failed on the merged result ({}): {command}\nLast 40 lines:\n{}\nFix it on your branch, commit, then call task_done again.",
+        "[anthrex] Your work merged cleanly into the run branch, but the check failed on the merged result ({}): {command}\nLast 40 lines:\n{}\nFix it in your worktree, commit, then call task_done again.",
         ended_how(c.code, c.timed_out, c.secs),
         summary(&c.tail)
     )
@@ -380,7 +380,7 @@ pub fn candidate_red_message(command: &str, c: &CheckRecord) -> String {
 /// Ruling T14-C1 (invented text): the run head was merged into the worktree onto a
 /// tip past the claimed commit, so the worker's later commits have not passed the
 /// gates; its next `task_done` goes through all of them.
-pub const UNCLAIMED_COMMITS: &str = "[anthrex] The run branch was merged into your worktree, but your branch has commits after your last task_done, and they have not passed the gates. Check the result, commit, then call task_done again.";
+pub const UNCLAIMED_COMMITS: &str = "[anthrex] The run branch was merged into your worktree, but your worktree has commits after your last task_done, and they have not passed the gates. Check the result, commit, then call task_done again.";
 
 /// Decision 20's refusal when accept's merge conflicts with an advanced base (exact):
 /// `commits` new commits on `base`. M8a.14.

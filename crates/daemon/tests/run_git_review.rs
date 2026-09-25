@@ -5,10 +5,19 @@
 mod support;
 
 use daemon::run::contract::{DIFF_CUT_MARKER, REVIEW_DIFF_MAX};
-use daemon::run::git::{diff_so_far, prepare_review, prepare_worktree};
+use daemon::run::git::{diff_so_far, prepare_review, prepare_worktree, sync};
 use support::run_git::{
     T, commit_file, head, real_git, repo, try_git, worktree_block, write, wt_dir,
 };
+
+/// A worker's commit in the task worktree `task`, recorded on the task's branch by the
+/// engine (final fix batch F1b: the worker commits on a detached `HEAD`, and the done
+/// check that precedes every review records it).
+fn task_commit(task: &std::path::Path, path: &str, content: &str, message: &str) -> String {
+    let commit = commit_file(task, path, content, message);
+    assert_eq!(sync(real_git(), task, T).unwrap(), commit);
+    commit
+}
 
 #[test]
 fn review_worktree_is_detached_at_the_task_head_and_replaced() {
@@ -18,7 +27,7 @@ fn review_worktree_is_detached_at_the_task_head_and_replaced() {
     let task = wt.join("runs/r7/t1");
     let branch = "anthrex/r7/t1";
     prepare_worktree(real_git(), &repo.root, branch, &base, &task, T).unwrap();
-    let small = commit_file(&task, "src/lib.rs", "pub fn f() {}\n", "small");
+    let small = task_commit(&task, "src/lib.rs", "pub fn f() {}\n", "small");
     let review = wt.join("runs/r7/t1.review");
 
     let (b, h, patch) = prepare_review(real_git(), &repo.root, branch, &base, &review, T).unwrap();
@@ -35,7 +44,7 @@ fn review_worktree_is_detached_at_the_task_head_and_replaced() {
     // The next round replaces the worktree, and a diff over the limit is clamped.
     write(&review, "leftover.txt", "from round one\n");
     let big_body: String = "世世世世\n".repeat(6000);
-    let big = commit_file(&task, "src/big.txt", &big_body, "big");
+    let big = task_commit(&task, "src/big.txt", &big_body, "big");
 
     let (b, h, patch) = prepare_review(real_git(), &repo.root, branch, &base, &review, T).unwrap();
 
@@ -102,7 +111,7 @@ fn clamped_review_diffs_cut_on_character_boundaries_at_every_offset() {
     for k in 0..6 {
         support::run_git::out(&task, &["reset", "-q", "--hard", &base]);
         let name = format!("src/big{}.txt", "x".repeat(k));
-        let h = commit_file(&task, &name, &body, "big");
+        let h = task_commit(&task, &name, &body, "big");
 
         let (_, _, patch) =
             prepare_review(real_git(), &repo.root, branch, &base, &review, T).unwrap();
@@ -132,7 +141,7 @@ fn a_diff_larger_than_any_capture_cap_is_clamped_not_failed() {
     for n in 0..700_000u32 {
         body.push_str(&format!("{n:0>99}\n"));
     }
-    commit_file(&task, "data/big.txt", &body, "vendor a dataset");
+    task_commit(&task, "data/big.txt", &body, "vendor a dataset");
     drop(body);
 
     let (_, _, patch) = prepare_review(
@@ -180,7 +189,7 @@ fn diffs_ignore_the_users_colour_prefix_and_textconv_config() {
     let task = wt.join("runs/cf01/t1");
     let branch = "anthrex/cf01/t1";
     prepare_worktree(real_git(), &repo.root, branch, &base, &task, T).unwrap();
-    commit_file(&task, "src/a.txt", "one\ntwo\n", "a");
+    task_commit(&task, "src/a.txt", "one\ntwo\n", "a");
 
     let (_, _, review) = prepare_review(
         real_git(),

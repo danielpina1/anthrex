@@ -191,27 +191,24 @@ fn approve_starts_dispatch_and_yes_skips_the_gate() {
     assert_eq!(spec.runtime, Runtime::Codex);
     assert_eq!(uuid, &None);
     let common = PathBuf::from("/tmp/p/.git");
-    // Final fix batch F1: the run's own parts of the common dir, never all of it.
-    let branch = format!("refs/heads/anthrex/{}/t1", fx.run().id);
-    let roots = &spec.codex_writable_roots;
-    assert_eq!(roots.len(), 256 + 3, "{roots:?}");
-    assert_eq!(roots[0], common.join("objects/00"));
-    assert_eq!(roots[255], common.join("objects/ff"));
-    assert_eq!(
-        roots[256..],
-        [
-            common.join("objects/pack"),
-            common.join(&branch),
-            common.join(format!("{branch}.lock")),
-        ]
-    );
-    // Fix round 3, R4: never the object store whole, nor `objects/info`.
-    assert!(!roots.contains(&common.join("objects")));
+    // Final fix batch F1b: nothing of the common dir, only the task's private object
+    // directory under the run's data directory, which its git writes to.
+    let objects = fx.run().data_dir.join("tasks/t1/objects");
+    assert_eq!(spec.codex_writable_roots, std::slice::from_ref(&objects));
     assert!(
-        !roots
+        !spec
+            .codex_writable_roots
             .iter()
-            .any(|root| root.starts_with(common.join("objects/info")))
+            .any(|root| root.starts_with(&common))
     );
+    assert!(spec.env.contains(&(
+        "GIT_OBJECT_DIRECTORY".to_string(),
+        objects.display().to_string()
+    )));
+    assert!(spec.env.contains(&(
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES".to_string(),
+        common.join("objects").display().to_string()
+    )));
     assert!(!spec.codex_writable_roots.contains(&common));
     assert!(fx.task("t1").rounds.last().unwrap().turn_open);
 }

@@ -11,7 +11,8 @@ use daemon::run::git::{
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
 use support::TempRepo;
 use support::run_git::{
-    T, commit_file, head, out, real_git, repo, try_git, worktree_block, write, wt_dir,
+    T, assert_detached, commit_file, head, out, real_git, repo, try_git, worktree_block, write,
+    wt_dir,
 };
 
 #[test]
@@ -59,7 +60,7 @@ fn task_branch_starts_at_the_given_run_head_and_is_reused() {
     let h = prepare_worktree(real_git(), &repo.root, branch, &first, &path, T).unwrap();
     assert_eq!(h, first);
     assert_eq!(out(&repo.root, &["rev-parse", branch]), first);
-    assert_eq!(out(&path, &["symbolic-ref", "--short", "HEAD"]), branch);
+    assert_detached(&path);
     assert!(
         worktree_block(&repo.root, &path)
             .unwrap()
@@ -93,14 +94,14 @@ fn task_branch_starts_at_the_given_run_head_and_is_reused() {
     assert!(!path.exists());
     let h = prepare_worktree(real_git(), &repo.root, branch, &first, &path, T).unwrap();
     assert_eq!(h, first);
-    assert_eq!(out(&path, &["symbolic-ref", "--short", "HEAD"]), branch);
+    assert_detached(&path);
 
     // A newer `from` while the branch has no commit of its own re-points it.
     let h = prepare_worktree(real_git(), &repo.root, branch, &second, &path, T).unwrap();
     assert_eq!(h, second);
     assert_eq!(out(&repo.root, &["rev-parse", branch]), second);
     assert_eq!(head(&path), second);
-    assert_eq!(out(&path, &["symbolic-ref", "--short", "HEAD"]), branch);
+    assert_detached(&path);
 
     // With a commit of its own, a newer `from` leaves it alone.
     let own = commit_file(&path, "own.txt", "own\n", "task work");
@@ -308,7 +309,7 @@ fn a_task_worktree_deleted_by_hand_or_unlocked_is_restored_and_relocked() {
     std::fs::remove_dir_all(&path).unwrap();
     let h = prepare_worktree(real_git(), &repo.root, branch, &base, &path, T).unwrap();
     assert_eq!(h, base);
-    assert_eq!(out(&path, &["symbolic-ref", "--short", "HEAD"]), branch);
+    assert_detached(&path);
     assert!(locked(&repo.root, &path));
 
     // Unlocked by someone: a reuse locks it again.
@@ -345,10 +346,8 @@ fn assert_re_pointed(repo: &TempRepo, path: &std::path::Path, second: &str) {
     let h = prepare_worktree(real_git(), &repo.root, "anthrex/pw01/t1", second, path, T).unwrap();
     assert_eq!(h, second);
     assert_eq!(out(&repo.root, &["rev-parse", "anthrex/pw01/t1"]), second);
-    assert_eq!(
-        out(path, &["symbolic-ref", "--short", "HEAD"]),
-        "anthrex/pw01/t1"
-    );
+    assert_detached(path);
+    assert_eq!(head(path), second);
     assert_eq!(
         out(path, &["status", "--porcelain", "--untracked-files=no"]),
         ""

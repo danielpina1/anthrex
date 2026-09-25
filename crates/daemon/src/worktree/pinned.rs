@@ -34,9 +34,26 @@ pub struct Pin {
     /// The only branch the worktree's `HEAD` may name (`refs/heads/…`), or `None` for a
     /// worktree that is always detached. A detached `HEAD` is always allowed: a
     /// rebase detaches it, and no engine git call writes a branch through it (fix round
-    /// 2, R1).
+    /// 2, R1). A task worktree has none (final fix batch F1b): its `HEAD` is always a
+    /// commit id.
     pub head: Option<String>,
+    /// A task worktree's own branch (`refs/heads/anthrex/<run>/<task>`), which only the
+    /// engine writes: the worker commits on a detached `HEAD`, and the engine moves the
+    /// branch to it after importing its objects (final fix batch F1b).
+    pub own: Option<String>,
+    /// A task worktree's private object directory, which the worker's git writes
+    /// (`GIT_OBJECT_DIRECTORY`) and the engine only ever reads, to import from (F1b).
+    pub objects: Option<PathBuf>,
     pub broken: Option<String>,
+}
+
+/// What a worktree is pinned as: the branch its `HEAD` may name, the branch the engine
+/// owns for it, and its private object directory (final fix batch F1b).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PinAs {
+    pub head: Option<String>,
+    pub own: Option<String>,
+    pub objects: Option<PathBuf>,
 }
 
 static PINS: LazyLock<Mutex<HashMap<PathBuf, Pin>>> = LazyLock::new(Default::default);
@@ -56,31 +73,40 @@ fn key(path: &Path) -> PathBuf {
 }
 
 /// Pins `worktree` to its git directory in `common_dir`, whose `HEAD` may name only
-/// `head` (or be detached). A worktree already pinned keeps the git directory it was
+/// `as_.head` (or be detached). A worktree already pinned keeps the git directory it was
 /// pinned to: it is found once, from the repository's side, and never recomputed while
 /// the daemon runs (fix round 2, R2). Otherwise it is found by [`find_git_dir`]; one that
 /// cannot be found is pinned as broken. Blocking (reads the common directory); returns
 /// the pin.
-pub fn pin(common_dir: &Path, worktree: &Path, head: Option<&str>) -> Pin {
+pub fn pin(common_dir: &Path, worktree: &Path, as_: PinAs) -> Pin {
     let key_path = key(worktree);
     let common = key(common_dir);
-    let head = head.map(str::to_string);
+    let PinAs { head, own, objects } = as_;
     let existing = crate::lock(&PINS).get(&key_path).cloned();
     let pin = match existing {
         Some(pin) if pin.broken.is_none() && pin.common_dir == common && pin.git_dir.is_dir() => {
-            Pin { head, ..pin }
+            Pin {
+                head,
+                own,
+                objects,
+                ..pin
+            }
         }
         _ => match find_git_dir(common_dir, worktree) {
             Ok(git_dir) => Pin {
                 git_dir,
                 common_dir: common,
                 head,
+                own,
+                objects,
                 broken: None,
             },
             Err(reason) => Pin {
                 git_dir: PathBuf::new(),
                 common_dir: common,
                 head,
+                own,
+                objects,
                 broken: Some(reason),
             },
         },
@@ -116,10 +142,19 @@ pub fn pinned(dir: &Path) -> Option<Pin> {
 }
 
 /// Fix round 3: the one branch ref (`refs/heads/…`) an engine write in `dir` may move,
-/// when `dir` is a pinned worktree on a branch of its own. Engine writes name it
-/// explicitly, with a compare-and-swap old value, and never write a ref through `HEAD`.
+/// when `dir` is a pinned task worktree. Engine writes name it explicitly, with a
+/// compare-and-swap old value, and never write a ref through `HEAD`. Final fix batch
+/// F1b: the task's branch is the engine's own; the worker's `HEAD` is detached.
 pub fn own_ref(dir: &Path) -> Option<String> {
-    pinned(dir).filter(|pin| pin.broken.is_none())?.head
+    pinned(dir).filter(|pin| pin.broken.is_none())?.own
+}
+
+impl Pin {
+    /// The branch ref of this worktree that the checks below guard: the engine-owned
+    /// task branch, else the branch its `HEAD` may name.
+    fn guarded_ref(&self) -> Option<&str> {
+        self.own.as_deref().or(self.head.as_deref())
+    }
 }
 
 /// The git directory `<common>/worktrees/<name>` whose `gitdir` file names
@@ -257,7 +292,7 @@ fn check_reflogs(pin: &Pin) -> Result<(), String> {
         ("logs".to_string(), pin.git_dir.join("logs")),
         ("logs/HEAD".to_string(), pin.git_dir.join("logs/HEAD")),
     ];
-    if let Some(own) = pin.head.as_deref() {
+    if let Some(own) = pin.guarded_ref() {
         logs.push((
             format!("{own}'s reflog"),
             pin.common_dir.join("logs").join(own),
@@ -279,7 +314,7 @@ fn check_reflogs(pin: &Pin) -> Result<(), String> {
 /// loose ref is fine: `pack-refs` moves it into `packed-refs`, which a worker cannot
 /// write and which holds no symbolic ref.
 fn check_own_ref(pin: &Pin) -> Result<(), String> {
-    let Some(own) = pin.head.as_deref() else {
+    let Some(own) = pin.guarded_ref() else {
         return Ok(());
     };
     let file = pin.common_dir.join(own);

@@ -14,6 +14,8 @@ use crate::run::git;
 use crate::run::journal;
 use crate::run::model::{LogEntry, OpId, Run};
 use crate::run::reconcile;
+use crate::run::role_launch::task_objects_dir;
+use crate::worktree::pinned::PinAs;
 use proto::RunState;
 
 /// The engine's cap on a run's log (Interfaces, `LogEntry`).
@@ -250,15 +252,29 @@ fn hold_unreconciled(run: &mut Run, now: u64) {
     run.halt_retryable = true;
 }
 
-/// Every engine worktree `run` can have, each with the branch its `HEAD` may name: its
-/// integration worktree (the run branch) and each task's task (its branch), review and
-/// proof (detached) worktrees.
-fn run_worktree_paths(run: &Run) -> Vec<(std::path::PathBuf, Option<String>)> {
-    let mut paths = vec![(run.integration_path(), Some(run.run_branch()))];
+/// Every engine worktree `run` can have, each with what it is pinned as: its
+/// integration worktree (its `HEAD` on the run branch), each task's worktree (detached,
+/// with the task's engine-owned branch and private object directory; final fix batch
+/// F1b), and its review and proof (detached) worktrees.
+fn run_worktree_paths(run: &Run) -> Vec<(std::path::PathBuf, PinAs)> {
+    let mut paths = vec![(
+        run.integration_path(),
+        PinAs {
+            head: Some(format!("refs/heads/{}", run.run_branch())),
+            ..PinAs::default()
+        },
+    )];
     for task in &run.tasks {
-        paths.push((task.worktree.clone(), Some(task.branch.clone())));
-        paths.push((run.review_path(task.id()), None));
-        paths.push((run.proof_path(task.id()), None));
+        paths.push((
+            task.worktree.clone(),
+            PinAs {
+                head: None,
+                own: Some(format!("refs/heads/{}", task.branch)),
+                objects: Some(task_objects_dir(&run.data_dir, task.id())),
+            },
+        ));
+        paths.push((run.review_path(task.id()), PinAs::default()));
+        paths.push((run.proof_path(task.id()), PinAs::default()));
     }
     paths
 }

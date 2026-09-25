@@ -35,11 +35,11 @@ fn task_worktree(repo: &TempRepo, run: &str) -> (tempfile::TempDir, PathBuf) {
     (keep, path)
 }
 
-/// Review N4: a commit that lands in the worktree between the hand-back's read of
-/// `HEAD` and its merge is the tip the merge was made onto, and `onto` says so. Fix
-/// round 5: the hand-back reads the branch once, after its `HEAD` check, and merges
-/// onto and compares-and-swaps from that value; the sneak commit lands at that check
-/// (it once landed at `git merge --no-ff`, which the hand-back no longer runs).
+/// Review N4, as final fix batch F1b recasts it: the hand-back reads the worker's
+/// `HEAD` once (the file, before any git call) and merges onto, and compares-and-swaps
+/// from, that value. A commit that lands in the worktree after that read (here, at
+/// `merge-tree`) makes the engine's move of `HEAD` fail: the hand-back is refused, the
+/// task's branch goes back to what it recorded, and the late commit is left as it is.
 #[test]
 fn hand_back_reports_the_tip_it_actually_merged_onto() {
     let repo = repo();
@@ -47,23 +47,35 @@ fn hand_back_reports_the_tip_it_actually_merged_onto() {
     let claimed = commit_file(&task, "b.txt", "task\n", "task work");
     let run_head = commit_on(&repo.root, "anthrex/hb7/integration", "a.txt", "run\n");
     let tools = tempfile::tempdir().unwrap();
+    let once = tools.path().join("once");
     let git = wrapper_git(
         tools.path(),
-        r#"for a in "$@"; do
-  if [ "$a" = "symbolic-ref" ]; then
-    "$REAL" -C "$2" -c user.name=t -c user.email=t@t -c commit.gpgsign=false \
+        &format!(
+            r#"case " $* " in *" merge-tree "*)
+  if [ ! -e '{once}' ]; then
+    : > '{once}'
+    "$REAL" -C '{task}' -c user.name=t -c user.email=t@t -c commit.gpgsign=false \
       -c core.hooksPath=/dev/null commit -q --allow-empty -m sneak || exit 99
-    break
-  fi
-done"#,
+  fi;;
+esac"#,
+            once = once.display(),
+            task = task.display()
+        ),
     );
 
-    let back = hand_back(git.as_os_str(), &task, &run_head, T).unwrap();
-    assert!(back.files.is_empty(), "{back:?}");
-    let sneak = out(&task, &["rev-parse", "HEAD^1"]);
+    let err = hand_back(git.as_os_str(), &task, &run_head, T).unwrap_err();
+    assert!(err.contains("HEAD moved"), "{err}");
+    let sneak = head(&task);
     assert_ne!(sneak, claimed);
+    assert_eq!(out(&task, &["rev-parse", "HEAD^"]), claimed);
+    assert_eq!(out(&repo.root, &["rev-parse", "anthrex/hb7/t1"]), claimed);
+
+    // The next hand-back is made onto the late commit, and says so.
+    let back = hand_back(real_git(), &task, &run_head, T).unwrap();
+    assert!(back.files.is_empty(), "{back:?}");
     assert_eq!(back.onto, sneak);
     assert_eq!(back.head, head(&task));
+    assert_eq!(out(&repo.root, &["rev-parse", "anthrex/hb7/t1"]), back.head);
 }
 
 /// A task and a run branch that both change `shared.txt` (and one other file each);

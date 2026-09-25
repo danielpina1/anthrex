@@ -34,29 +34,53 @@ pub const REVIEWER_DISALLOWED_TOOLS: [&str; 3] = ["Edit", "Write", "NotebookEdit
 /// A reviewer's Codex sandbox, always (decision 25).
 pub const REVIEWER_CODEX_SANDBOX: &str = "read-only";
 
-/// The parts of the repository's git common directory a worker's sandbox may write
-/// (decisions 25 and 54, narrowed by final fix batch F1, findings C-C1 and D-5, and its
-/// fix round 1, N3): the object store's loose-object directories `objects/00` to
-/// `objects/ff` and `objects/pack`, and the task's own branch
-/// `refs/heads/anthrex/<run>/<task>` and its `.lock`. Not its reflog (fix round 5: the
-/// worker's git writes none, [`WORKER_GIT_CONFIG`]), not `objects/info/`
-/// (its `alternates` would graft another object store into the repository; fix round 3,
-/// R4), `config`, `hooks/`, `info/`, `packed-refs` or any other branch, the base branch,
-/// the run branch and sibling tasks' branches included. The driver adds the files of the
-/// worktree's own git directory a commit needs ([`crate::run::git::worker_git_dirs`]) at
-/// launch, and creates the object directories.
-pub fn worker_git_roots(git_common_dir: &Path, run_id: &str, task_id: &str) -> Vec<PathBuf> {
-    let branch = Path::new("refs/heads/anthrex").join(run_id).join(task_id);
-    let mut lock = branch.clone().into_os_string();
-    lock.push(".lock");
-    let objects = git_common_dir.join("objects");
-    let mut roots: Vec<PathBuf> = (0..=255u8)
-        .map(|byte| objects.join(format!("{byte:02x}")))
-        .collect();
-    roots.push(objects.join("pack"));
-    roots.extend([git_common_dir.join(&branch), git_common_dir.join(lock)]);
-    roots
+/// Final fix batch F1b: a task's private object directory,
+/// `<run data dir>/tasks/<task>/objects`, outside the repository. The worker's git
+/// writes every object there ([`with_worker_objects`]); the engine only reads it, to
+/// import the worker's commits into the repository, re-hashing each object
+/// (`run::git::sync`). The engine's own `staging.git` sits next to it, outside the
+/// worker's grant.
+pub fn task_objects_dir(data_dir: &Path, task_id: &str) -> PathBuf {
+    data_dir.join("tasks").join(task_id).join("objects")
 }
+
+/// What a worker's sandbox may write besides its worktree (decisions 25 and 54, as
+/// replaced by final fix batch F1b): its private object directory, and nothing at all
+/// of the repository's git common directory: no object, no ref, no reflog, no
+/// `packed-refs`, `config` or hook. (Before F1b the grant named the shared object
+/// store and the task's branch, and a worker could replace the object behind the base
+/// branch's content without moving any ref.) The driver adds the files of the
+/// worktree's own git directory a commit on its detached `HEAD` needs
+/// ([`crate::run::git::worker_git_dirs`]) at launch, and creates the directory.
+pub fn worker_git_roots(data_dir: &Path, task_id: &str) -> Vec<PathBuf> {
+    vec![task_objects_dir(data_dir, task_id)]
+}
+
+/// `env` with the worker's object directories (final fix batch F1b):
+/// `GIT_OBJECT_DIRECTORY` its private directory `objects`, where every object its git
+/// writes goes, and `GIT_ALTERNATE_OBJECT_DIRECTORIES` the repository's object store
+/// `common_objects`, which it reads (its sandbox cannot write it). Set last, replacing a
+/// profile's own. A worker that unsets them only makes its own git fail: it would write
+/// to the common store, which its sandbox denies. Neither name contains `KEY`, `SECRET`
+/// or `TOKEN`, so Codex's default shell environment policy passes them.
+pub fn with_worker_objects(
+    mut env: Vec<(String, String)>,
+    objects: &Path,
+    common_objects: &Path,
+) -> Vec<(String, String)> {
+    env.retain(|(key, _)| key != OBJECT_DIRECTORY && key != ALTERNATE_OBJECT_DIRECTORIES);
+    env.push((OBJECT_DIRECTORY.to_string(), objects.display().to_string()));
+    env.push((
+        ALTERNATE_OBJECT_DIRECTORIES.to_string(),
+        common_objects.display().to_string(),
+    ));
+    env
+}
+
+/// The environment variable naming the worker's private object directory.
+pub const OBJECT_DIRECTORY: &str = "GIT_OBJECT_DIRECTORY";
+/// The environment variable naming the repository's object store, as an alternate.
+pub const ALTERNATE_OBJECT_DIRECTORIES: &str = "GIT_ALTERNATE_OBJECT_DIRECTORIES";
 
 /// Final fix batch F1, fix round 5: git configuration every worker's git runs with,
 /// passed in its environment. `core.logAllRefUpdates=false`: the worker's commits,
@@ -114,15 +138,19 @@ pub fn worker_spec(run: &Run, task: &Task) -> HeadlessSpec {
         claude_permission_mode: claude.then(|| limits.worker_permission_mode.clone()),
         claude_disallowed_tools: Vec::new(),
         claude_sandbox: (claude && limits.worker_sandbox).then(|| ClaudeSandbox {
-            writable_roots: worker_git_roots(&run.git_common_dir, &run.id, task.id()),
+            writable_roots: worker_git_roots(&run.data_dir, task.id()),
         }),
         codex_sandbox: limits.worker_codex_sandbox.clone(),
         codex_writable_roots: if claude {
             Vec::new()
         } else {
-            worker_git_roots(&run.git_common_dir, &run.id, task.id())
+            worker_git_roots(&run.data_dir, task.id())
         },
-        env: with_worker_git_config(profile_env(&run.profile, &task.worktree)),
+        env: with_worker_objects(
+            with_worker_git_config(profile_env(&run.profile, &task.worktree)),
+            &task_objects_dir(&run.data_dir, task.id()),
+            &run.git_common_dir.join("objects"),
+        ),
         claude_auth: limits.claude_auth.into(),
         api_key_helper: limits.api_key_helper.clone(),
         run_ref: Some(RunRef {
@@ -289,18 +317,38 @@ mod tests {
         }
         let worker = worker_spec(&run, task);
         let sandbox = worker.claude_sandbox.expect("workers run sandboxed");
-        // Final fix batch F1: never the whole common dir, whose config and hooks the
-        // daemon and the user's checkout would run.
-        let branch = format!("refs/heads/anthrex/{}/t1", run.id);
-        let roots = &sandbox.writable_roots;
-        assert_eq!(roots.len(), 256 + 3, "{roots:?}");
-        assert_eq!(roots[0x3a], PathBuf::from("/tmp/p/.git/objects/3a"));
+        // Final fix batch F1b: nothing of the git common dir, only the task's private
+        // object directory under the run's data directory.
+        let objects = PathBuf::from(format!("/tmp/data/runs/{}/tasks/t1/objects", run.id));
+        assert_eq!(sandbox.writable_roots, std::slice::from_ref(&objects));
+        assert!(
+            !sandbox
+                .writable_roots
+                .iter()
+                .any(|root| root.starts_with("/tmp/p/.git"))
+        );
+        assert!(worker.env.contains(&(
+            "GIT_OBJECT_DIRECTORY".to_string(),
+            objects.display().to_string()
+        )));
+        assert!(worker.env.contains(&(
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES".to_string(),
+            "/tmp/p/.git/objects".to_string()
+        )));
+        // A profile's own object directories are replaced, ours last.
+        let env = with_worker_objects(
+            vec![("GIT_OBJECT_DIRECTORY".to_string(), "/elsewhere".to_string())],
+            Path::new("/o"),
+            Path::new("/c"),
+        );
         assert_eq!(
-            roots[256..],
+            env,
             [
-                PathBuf::from("/tmp/p/.git/objects/pack"),
-                PathBuf::from("/tmp/p/.git").join(&branch),
-                PathBuf::from("/tmp/p/.git").join(format!("{branch}.lock")),
+                ("GIT_OBJECT_DIRECTORY".to_string(), "/o".to_string()),
+                (
+                    "GIT_ALTERNATE_OBJECT_DIRECTORIES".to_string(),
+                    "/c".to_string()
+                ),
             ]
         );
         // Fix round 5: the worker's git writes no reflog.

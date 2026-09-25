@@ -321,10 +321,10 @@ fn hand_back_that_is_clean_commits_the_merge() {
             .success()
     );
     assert_eq!(out(&task, &["status", "--porcelain"]), "");
-    assert_eq!(
-        out(&task, &["symbolic-ref", "--short", "HEAD"]),
-        "anthrex/hb2/t1"
-    );
+    // Final fix batch F1b: the worktree stays detached; the engine moved its `HEAD`
+    // and the task's branch to the merge.
+    support::run_git::assert_detached(&task);
+    assert_eq!(out(&repo.root, &["rev-parse", "anthrex/hb2/t1"]), back.head);
 }
 
 #[test]

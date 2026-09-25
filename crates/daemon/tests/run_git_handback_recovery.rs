@@ -2,13 +2,14 @@
 //! after its merge ran must not leave that merge in progress, or every later hand-back
 //! of the task is refused ("a merge is already in progress") and a held task retried
 //! loops. The refused merge is undone (keeping the worker's own uncommitted edits), a
-//! detached `HEAD` is refused before anything is merged, and the engine's own untouched
+//! `HEAD` on a branch or mid-rebase is refused before anything is merged (F1b: detached
+//! is the norm), and the engine's own untouched
 //! leftover is cleared on the next hand-back's entry. An abort resets to `HEAD`, not to
 //! the branch tip.
 
 mod support;
 
-use daemon::run::git::{abort_merge, create_run_branch, hand_back, prepare_worktree};
+use daemon::run::git::{abort_merge, create_run_branch, hand_back, prepare_worktree, sync};
 use std::path::{Path, PathBuf};
 use support::TempRepo;
 use support::run_git::{T, commit_file, head, out, real_git, repo, try_git, wrapper_git, wt_dir};
@@ -78,7 +79,11 @@ fn a_hand_back_refused_after_its_merge_undoes_it_and_the_next_one_succeeds() {
     let w = world("hr01");
     let tip = commit_file(&w.task, "t.txt", "task\n", "task work");
     let run_head = commit_file(&w.integration, "r.txt", "run\n", "run work");
-    // A commit the worker's leftover process lands on the branch mid-hand-back.
+    // Final fix batch F1b: the engine records the worker's detached `HEAD` on the
+    // task's branch first, so the race below hits the hand-back's own compare-and-swap.
+    assert_eq!(sync(real_git(), &w.task, T).unwrap(), tip);
+    // A commit that lands on the branch mid-hand-back (only the engine writes the
+    // branch since F1b; this is the compare-and-swap's defence in depth).
     let tree = out(&w.task, &["rev-parse", "HEAD^{tree}"]);
     let side = out(&w.task, &["commit-tree", &tree, "-p", &tip, "-m", "side"]);
     let tools = tempfile::tempdir().unwrap();
@@ -114,33 +119,47 @@ fi"#,
     );
     assert_eq!(out(&w.task, &["status", "--porcelain"]), "M g.txt");
 
+    // The next hand-back records the worker's `HEAD` on the branch again (the branch
+    // follows the worktree, whatever moved it) and succeeds onto it.
     let done = hand_back(real_git(), &w.task, &run_head, T).unwrap();
-    assert_eq!(done.onto, side);
+    assert_eq!(done.onto, tip);
     assert!(done.files.is_empty());
     assert_eq!(second_parent(&w.task, &done.head), run_head);
     assert_eq!(head(&w.task), done.head);
     assert!(!merge_head_exists(&w.task));
 }
 
-/// S2: a detached `HEAD` is refused before anything is merged; once the worktree is
-/// back on its branch, the hand-back succeeds.
+/// S2, as final fix batch F1b recasts it: a task worktree works on a detached `HEAD`.
+/// One that names a branch (the task's own, checked out) or a stopped rebase is refused
+/// before anything is merged or recorded; detached again, the hand-back succeeds.
 #[test]
-fn a_detached_head_is_refused_before_the_merge() {
+fn a_head_on_a_branch_or_mid_rebase_is_refused_before_the_merge() {
     let w = world("hr02");
-    commit_file(&w.task, "t.txt", "task\n", "task work");
+    let tip = commit_file(&w.task, "t.txt", "task\n", "task work");
     let run_head = commit_file(&w.integration, "r.txt", "run\n", "run work");
-    out(&w.task, &["checkout", "-q", "--detach", "HEAD~1"]);
+    let branch = format!("anthrex/{}/t1", w.run);
+    let recorded = out(&w.task, &["rev-parse", &branch]);
+    out(&w.task, &["checkout", "-q", &branch]);
 
     let err = hand_back(real_git(), &w.task, &run_head, T).unwrap_err();
-    assert!(err.contains("not on"), "{err}");
+    assert!(err.contains("detached HEAD"), "{err}");
     assert!(!merge_head_exists(&w.task), "a merge was left: {err}");
+    assert_eq!(out(&w.task, &["rev-parse", &branch]), recorded);
 
-    out(
-        &w.task,
-        &["checkout", "-q", &format!("anthrex/{}/t1", w.run)],
-    );
+    // A rebase stopped on a conflict.
+    out(&w.task, &["checkout", "-q", "--detach", &tip]);
+    let side = commit_file(&w.task, "t.txt", "side\n", "side");
+    out(&w.task, &["checkout", "-q", "--detach", &tip]);
+    commit_file(&w.task, "t.txt", "mine\n", "mine");
+    assert!(!try_git(&w.task, &["rebase", "-q", &side]).status.success());
+    let err = hand_back(real_git(), &w.task, &run_head, T).unwrap_err();
+    assert!(err.contains("rebase is stopped"), "{err}");
+    assert!(!merge_head_exists(&w.task), "a merge was left: {err}");
+    out(&w.task, &["rebase", "--abort"]);
+
     let done = hand_back(real_git(), &w.task, &run_head, T).unwrap();
     assert_eq!(second_parent(&w.task, &done.head), run_head);
+    assert_eq!(out(&w.task, &["rev-parse", &branch]), done.head);
 }
 
 /// S2: the engine's own clean merge, left uncommitted and untouched (a crash, or an

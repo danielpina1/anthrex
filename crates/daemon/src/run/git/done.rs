@@ -5,7 +5,8 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::time::Duration;
 
-use super::{DIFF_FLAGS, Git, NO_NESTED, nul_fields, os};
+use super::import::{HeadFile, head_file, rebase_in_progress, sync_in, task_pin};
+use super::{DIFF_FLAGS, Git, NO_NESTED, diff, nul_fields, os};
 use crate::run::globs::{OwnsMatcher, ProtectedMatcher, names_literally};
 
 /// What `verify_done` found (decision 32's done gate, split per decisions 55 and 56).
@@ -31,14 +32,17 @@ pub struct DoneChecked {
     /// its start commit.
     pub red_ok: Option<bool>,
     pub head: String,
-    /// The branch `HEAD` is on, without `refs/heads/`; `None` when detached (fix round
-    /// 1, finding 11). The engine rejects a claim made off the task's branch, whose
-    /// commits the branch would not carry.
+    /// The task's branch, without `refs/heads/`, once the engine has recorded `head` on
+    /// it (final fix batch F1b; fix round 1, finding 11). `None` when the worktree's
+    /// `HEAD` is not a detached commit (a branch checked out, a rebase stopped): the
+    /// engine rejects that claim, whose commits the branch would not carry.
     pub head_branch: Option<String>,
 }
 
-/// Decision 32's done check in `worktree`, at most six git calls: `HEAD`, resolved
-/// once to `<head>` and judged throughout (final fix batch F1, A-I4), the task's own
+/// Decision 32's done check in `worktree`. Final fix batch F1b: the worker's detached
+/// `HEAD` is first imported and recorded on the task's branch ([`super::sync`]; a
+/// branch checked out or a rebase stopped gives `head_branch: None` and nothing else).
+/// Then: `<head>`, judged throughout (final fix batch F1, A-I4), the task's own
 /// commits (`<head> ^start ^run_head`), `status`, `MERGE_HEAD`, the spill diff
 /// (`git diff --name-only <run_head>...<head>`), and — only with a `red` — `red`
 /// resolved. The changed paths are split per decision 56 (protected, unless `owns`
@@ -58,21 +62,16 @@ pub fn verify_done(
 ) -> Result<DoneChecked, String> {
     let owns_matcher = OwnsMatcher::new(owns)?;
     let g = Git::new(git, timeout);
-    // One call: `HEAD`'s sha, then the ref it is on (`HEAD` itself when detached).
-    let heads = g.ok(
-        worktree,
-        &[
-            os("rev-parse"),
-            os("HEAD"),
-            os("--symbolic-full-name"),
-            os("HEAD"),
-        ],
-    )?;
-    let mut heads = heads.lines();
-    let head = heads.next().unwrap_or_default().trim().to_string();
-    let head_branch = heads
-        .next()
-        .and_then(|line| line.trim().strip_prefix("refs/heads/"))
+    let pin = task_pin(worktree)?;
+    let ready = matches!(head_file(&pin)?, HeadFile::Commit(_)) && !rebase_in_progress(&pin);
+    if !ready {
+        return Ok(DoneChecked::default());
+    }
+    let head = sync_in(g, worktree)?;
+    let head_branch = pin
+        .own
+        .as_deref()
+        .and_then(|own| own.strip_prefix("refs/heads/"))
         .map(str::to_string);
 
     let not_start = format!("^{start}");
@@ -177,4 +176,67 @@ fn parse_status(status: &str) -> (u32, Vec<String>) {
         }
     }
     (dirty, untracked)
+}
+
+/// The task's own commits (`git rev-list --count <head> ^<start> ^<run_head>`, as
+/// [`verify_done`] counts them) and `<head>`: the turn-end fallback's question (decision
+/// 32). With `run_head` excluded, a run head merged in by a hand-back is not counted
+/// as the task's work (fix round 1, finding 10). Final fix batch F1b: `<head>` is the
+/// worker's detached `HEAD`, imported and recorded on the task's branch first
+/// ([`super::sync`]), so this writes: call it behind the run's [`super::GitQueue::write`].
+pub fn count_commits(
+    git: &OsStr,
+    worktree: &Path,
+    start: &str,
+    run_head: &str,
+    timeout: Duration,
+) -> Result<(u32, String), String> {
+    let g = Git::new(git, timeout);
+    let head = sync_in(g, worktree)?;
+    let not_start = format!("^{start}");
+    let not_run_head = format!("^{run_head}");
+    let count = g.ok(
+        worktree,
+        &[
+            os("rev-list"),
+            os("--count"),
+            os(&head),
+            os(&not_start),
+            os(&not_run_head),
+        ],
+    )?;
+    let count = count
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| format!("git rev-list --count printed {:?}", count.trim()))?;
+    Ok((count, head))
+}
+
+/// Decision 30's hand-over material: the stat and the diff of the task's net change,
+/// clamped to [`crate::run::contract::REVIEW_DIFF_MAX`]. Uncommitted work is not in either. The range is
+/// `<start>..HEAD` until a hand-back merges a newer run head in, then
+/// `<run_head>..HEAD`: `<run_head>...HEAD` gives exactly that, since the merge base of
+/// the run head and `HEAD` is the start commit or the merged run head (fix round 1,
+/// finding 10). Final fix batch F1b: `HEAD` is the worker's detached `HEAD`, imported
+/// and recorded on the task's branch first ([`super::sync`]); this writes.
+pub fn diff_so_far(
+    git: &OsStr,
+    worktree: &Path,
+    start: &str,
+    run_head: &str,
+    timeout: Duration,
+) -> Result<(String, String), String> {
+    let g = Git::new(git, timeout);
+    let head = sync_in(g, worktree)?;
+    // A run head that has moved on without a hand-back has `start` as its merge base
+    // with `HEAD`; one that was merged in is its own. So `run_head...HEAD` never needs
+    // `start`, which is kept for the op's record and to match `count_commits`.
+    let _ = start;
+    let range = format!("{run_head}...{head}");
+    let mut stat_args = vec![os("diff")];
+    stat_args.extend(DIFF_FLAGS.map(os));
+    stat_args.extend([os("--stat"), os(&range)]);
+    let stat = g.ok(worktree, &stat_args)?;
+    let patch = diff(g, worktree, &range)?;
+    Ok((stat, patch))
 }

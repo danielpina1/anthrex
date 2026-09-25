@@ -136,8 +136,11 @@ fn check(
             path,
             setup,
             ..
+        } => {
+            let own = run.wt_dir.join("runs").join(&run.id);
+            git::worktree(g, root, branch, false, path, setup.is_some(), &own, notes)
         }
-        | OpKind::PrepareWorktree {
+        OpKind::PrepareWorktree {
             root,
             branch,
             path,
@@ -145,7 +148,7 @@ fn check(
             ..
         } => {
             let own = run.wt_dir.join("runs").join(&run.id);
-            git::worktree(g, root, branch, path, setup.is_some(), &own, notes)
+            git::worktree(g, root, branch, true, path, setup.is_some(), &own, notes)
         }
         OpKind::CreateWindow { spec, .. } => Ok(sessions::restored_window(
             run,

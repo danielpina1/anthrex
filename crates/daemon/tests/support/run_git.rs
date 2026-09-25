@@ -106,3 +106,15 @@ pub fn wrapper_git(dir: &Path, before: &str) -> PathBuf {
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
     script
 }
+
+/// Final fix batch F1b: a task worktree's `HEAD` is detached (a plain commit id), never
+/// on the task's branch, which only the engine moves.
+pub fn assert_detached(dir: &Path) {
+    assert!(
+        !try_git(dir, &["symbolic-ref", "-q", "HEAD"])
+            .status
+            .success(),
+        "{}'s HEAD is on a branch; a task worktree is detached",
+        dir.display()
+    );
+}

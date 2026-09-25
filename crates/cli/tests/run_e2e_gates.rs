@@ -291,7 +291,7 @@ fn e2e_turn_end_fallback_completes_a_silent_worker() {
     assert_eq!(t1.state, TaskState::Merged);
     assert_eq!(t1.done_signal, Some(DoneSignal::TurnEndFallback));
     let texts = user_texts(&h.io_lines("worker-t1-1", "stdin"));
-    let nudge = "[anthrex] Your turn ended with commits on your branch and no task_done. If the task is complete, call task_done now (for a tdd task, with test and red). If you are stuck, call task_blocked.";
+    let nudge = "[anthrex] Your turn ended with commits in your worktree and no task_done. If the task is complete, call task_done now (for a tdd task, with test and red). If you are stuck, call task_blocked.";
     assert!(texts.iter().any(|t| t == nudge), "{texts:#?}");
 }
 

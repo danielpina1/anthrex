@@ -15,6 +15,7 @@ use crate::run::exec::{ShellOutcome, run_shell};
 use crate::run::git::{self, RefCheck};
 use crate::run::globs::{OwnsMatcher, ProtectedMatcher};
 use crate::run::proof::{ProofError, ProofOp, SETUP_MARKER, run_proof};
+use crate::run::role_launch::{task_objects_dir, with_worker_objects};
 use proto::AgentRole;
 
 pub(super) fn failed(message: impl Into<String>) -> OpResult {
@@ -90,41 +91,67 @@ impl RunService {
     }
 }
 
-/// A sandboxed worker's writable git roots, completed at launch (final fix batch F1 and
-/// its fix round 1): the parts of the common dir `role_launch` named (their directories
-/// created when missing), plus the commit's files in the worktree's own git directory,
-/// found from the repository's side. A session with no
-/// sandbox roots (a reviewer, or `worker_sandbox = false`) is left as it is.
-async fn sandbox_git_dirs(
+/// Final fix batch F1b: the private object directory of the task whose worktree is
+/// `worktree` in the run of `ctx`, `None` when no task of the run has that worktree.
+fn task_objects(service: &Arc<RunService>, ctx: &OpCtx, worktree: &Path) -> Option<PathBuf> {
+    let state = crate::lock(&service.state);
+    let run = state.runs.get(&ctx.run_id)?;
+    let task = run.tasks.iter().find(|task| task.worktree == worktree)?;
+    Some(task_objects_dir(&ctx.data_dir, task.id()))
+}
+
+/// A worker's object directories and sandbox, completed at launch (final fix batch F1
+/// and its fix round 1; F1b): its private object directory created (by the daemon,
+/// never through a link) and named canonically in its environment, with the
+/// repository's object store as its read-only alternate; and, when it is sandboxed, its
+/// writable roots: that directory plus the commit's files in the worktree's own git
+/// directory, found from the repository's side. Nothing of the git common directory.
+/// Any other session (a reviewer) is left as it is.
+async fn worker_git_dirs(
     service: &Arc<RunService>,
     ctx: &OpCtx,
     spec: &mut HeadlessSpec,
 ) -> Result<(), String> {
-    let worker = spec
+    let task = spec
         .run_ref
         .as_ref()
-        .is_some_and(|r| r.role == AgentRole::Worker);
-    let claude = spec
-        .claude_sandbox
-        .as_ref()
-        .map(|s| s.writable_roots.clone());
-    let roots = match claude {
-        Some(roots) if !roots.is_empty() => roots,
-        _ => spec.codex_writable_roots.clone(),
-    };
-    if !worker || roots.is_empty() {
+        .filter(|r| r.role == AgentRole::Worker)
+        .and_then(|r| r.task_id.clone());
+    let Some(task) = task else {
         return Ok(());
-    }
+    };
     let common = crate::lock(&service.state)
         .runs
         .get(&ctx.run_id)
         .map(|run| run.git_common_dir.clone())
         .ok_or_else(|| format!("unknown run {}", ctx.run_id))?;
+    let objects = task_objects_dir(&ctx.data_dir, &task);
+    let sandboxed = spec
+        .claude_sandbox
+        .as_ref()
+        .is_some_and(|s| !s.writable_roots.is_empty())
+        || !spec.codex_writable_roots.is_empty();
     let cwd = spec.cwd.clone();
-    let dirs = service
-        .write(ctx, move |_, _| git::worker_git_dirs(&common, &cwd, &roots))
+    let (objects, dirs) = service
+        .write(ctx, move |_, _| {
+            let objects = git::private_dir(&common, &objects)?;
+            let dirs = if sandboxed {
+                git::worker_git_dirs(&common, &cwd, std::slice::from_ref(&objects))?
+            } else {
+                Vec::new()
+            };
+            Ok((objects, dirs))
+        })
         .await?;
-    if let Some(sandbox) = spec.claude_sandbox.as_mut() {
+    let common_objects = crate::lock(&service.state)
+        .runs
+        .get(&ctx.run_id)
+        .map(|run| run.git_common_dir.join("objects"))
+        .ok_or_else(|| format!("unknown run {}", ctx.run_id))?;
+    spec.env = with_worker_objects(std::mem::take(&mut spec.env), &objects, &common_objects);
+    if let Some(sandbox) = spec.claude_sandbox.as_mut()
+        && !sandbox.writable_roots.is_empty()
+    {
         sandbox.writable_roots = dirs.clone();
     }
     if !spec.codex_writable_roots.is_empty() {
@@ -166,9 +193,12 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
             env,
         } => {
             let at = path.clone();
+            // Final fix batch F1b: the worker's objects are imported from its private
+            // directory.
+            let objects = task_objects(service, ctx, &path);
             let made = service
                 .write(ctx, move |g, t| {
-                    git::prepare_worktree(g, &root, &branch, &from, &at, t)
+                    git::prepare_task_worktree(g, &root, &branch, &from, &at, objects.as_deref(), t)
                 })
                 .await;
             match made {
@@ -187,7 +217,7 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
         } => {
             tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
             let mut spec = spec;
-            if let Err(error) = sandbox_git_dirs(service, ctx, &mut spec).await {
+            if let Err(error) = worker_git_dirs(service, ctx, &mut spec).await {
                 return failed(error);
             }
             let session = SessionArg::New { uuid: session_uuid };
@@ -231,36 +261,51 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
             spill_exempt: _,
             red,
             resolution,
-        } => settle(
-            blocking(move || {
-                verify_done(
-                    &git, &worktree, &start, &run_head, &owns, &generated, &protected, red,
-                    resolution, t,
-                )
-            })
-            .await,
-        ),
+        } => {
+            // Final fix batch F1b: through the queue, since each of these imports the
+            // worker's commits and records them on the task's branch first.
+            settle(
+                service
+                    .write(ctx, move |g, t| {
+                        verify_done(
+                            g,
+                            &worktree,
+                            &start,
+                            &run_head,
+                            &owns,
+                            &generated,
+                            &protected,
+                            red.clone(),
+                            resolution.clone(),
+                            t,
+                        )
+                    })
+                    .await,
+            )
+        }
         OpKind::CountCommits {
             worktree,
             start,
             run_head,
         } => settle(
-            blocking(move || {
-                git::count_commits(&git, &worktree, &start, &run_head, t)
-                    .map(|(count, head)| OpResult::Commits { count, head })
-            })
-            .await,
+            service
+                .write(ctx, move |g, t| {
+                    git::count_commits(g, &worktree, &start, &run_head, t)
+                        .map(|(count, head)| OpResult::Commits { count, head })
+                })
+                .await,
         ),
         OpKind::DiffSoFar {
             worktree,
             start,
             run_head,
         } => settle(
-            blocking(move || {
-                git::diff_so_far(&git, &worktree, &start, &run_head, t)
-                    .map(|(stat, patch)| OpResult::Diff { stat, patch })
-            })
-            .await,
+            service
+                .write(ctx, move |g, t| {
+                    git::diff_so_far(g, &worktree, &start, &run_head, t)
+                        .map(|(stat, patch)| OpResult::Diff { stat, patch })
+                })
+                .await,
         ),
         OpKind::Proof {
             root,

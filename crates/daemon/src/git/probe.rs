@@ -63,6 +63,15 @@ pub fn probe(git: &OsStr, root: &Path, timeout: Duration) -> Option<GitState> {
     if let Some(pin) = &pin {
         command.args(crate::worktree::pinned::flags(root, pin));
     }
+    // Final fix batch F1b: a task worktree's `HEAD` is the worker's commit, whose
+    // objects stay in its private directory until the engine imports them; `status`
+    // reads them from there, as an alternate, for this display only. No engine decision
+    // reads the private directory, and nothing here writes (`--no-optional-locks`).
+    match pin.as_ref().and_then(|pin| pin.objects.as_ref()) {
+        Some(objects) => command.env("GIT_ALTERNATE_OBJECT_DIRECTORIES", objects),
+        None => command.env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES"),
+    };
+    command.env_remove("GIT_OBJECT_DIRECTORY");
     command.args([
         "status",
         "--porcelain=v2",

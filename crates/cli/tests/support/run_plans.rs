@@ -180,7 +180,36 @@ pub fn user_texts(lines: &[String]) -> Vec<String> {
 /// location variable left out (AGENTS.md rule 11). Its trimmed stdout, or `None` when
 /// it failed.
 pub fn git_read(dir: &Path, args: &[&str]) -> Option<String> {
-    let output = std::process::Command::new("git")
+    git_read_with(dir, None, args)
+}
+
+/// Final fix batch F1b: [`git_read`] in a task worktree, reading the worker's objects
+/// too (its private directory, `<data>/runs/<run>/tasks/<task>/objects`, as an
+/// alternate), which the engine imports into the repository only at a done check, a
+/// turn-end count or a hand-back.
+pub fn worker_git_read(
+    data: &Path,
+    run: &str,
+    task: &str,
+    dir: &Path,
+    args: &[&str],
+) -> Option<String> {
+    let objects = data
+        .join("runs")
+        .join(run)
+        .join("tasks")
+        .join(task)
+        .join("objects");
+    git_read_with(dir, Some(&objects), args)
+}
+
+fn git_read_with(dir: &Path, alternate: Option<&Path>, args: &[&str]) -> Option<String> {
+    let mut command = std::process::Command::new("git");
+    match alternate {
+        Some(objects) => command.env("GIT_ALTERNATE_OBJECT_DIRECTORIES", objects),
+        None => command.env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES"),
+    };
+    let output = command
         .arg("--no-optional-locks")
         .args(args)
         .current_dir(dir)

@@ -496,7 +496,7 @@ fn red_candidate_is_a_merge_failure() {
     let text = candidate_red_message("cargo test", &record);
     assert_eq!(
         text,
-        "[anthrex] Your branch merged cleanly into the run branch, but the check failed on the merged result (exit 101): cargo test\nLast 40 lines:\ncompiling\ntest a::works ... FAILED\nFix it on your branch, commit, then call task_done again."
+        "[anthrex] Your work merged cleanly into the run branch, but the check failed on the merged result (exit 101): cargo test\nLast 40 lines:\ncompiling\ntest a::works ... FAILED\nFix it in your worktree, commit, then call task_done again."
     );
     assert_eq!(delivers(&effects), vec![text]);
     assert!(fx.run().merge_queue.is_empty());
