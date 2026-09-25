@@ -61,6 +61,9 @@ impl RunService {
             if lines.is_empty() && run.pending_ops.is_empty() {
                 quiet.insert(run.id.clone());
             }
+            // F3 review N4: as on disk, before the restore's own log notes, so a run
+            // whose only change is a note is still saved.
+            as_loaded.insert(run.id.clone(), run.clone());
             let (git, windows) = (self.ctx.git.clone(), windows.clone());
             let timeout = Duration::from_secs(run.limits.git_timeout_secs);
             let snapshot = run.clone();
@@ -95,7 +98,6 @@ impl RunService {
                 crate::lock(&self.held_accepts).push(cleanup);
             }
             replay.extend(answers);
-            as_loaded.insert(run.id.clone(), run.clone());
             runs.push(run);
         }
         if runs.is_empty() {
