@@ -2216,7 +2216,7 @@ mkdir -p /tmp/anthrex-m8a && cd /tmp/anthrex-m8a && git init -b main demo && cd 
     - the worker's `task_done` is rejected with `AGENTS.md configures or instructs future agents…`, and after it reverts, the task merges;
     - `AGENTS.md` on the run branch is unchanged.
 4d. **Codex project config.** If M8a.1 found that Codex loads project config, commit a `.codex/config.toml` and start a run with a Codex task. It is either excluded (the argv carries `codex_user_config_only`) or refused without `--trust-project`, as decision 53 says. Remove the file afterwards.
-4e. **The worker grant in the real CLIs (final fix batch F1, fix round 4, S5).** A worker's sandbox grant is about 260 paths (`objects/00` to `objects/ff`, `objects/pack`, the task's own branch with its lock and reflog, and its git dir's files). With a real Claude worker and a real Codex worker, confirm that each CLI accepts the whole list: Claude's `--settings` `allowWrite`, and Codex's `writable_roots`. Confirm that Claude's generated seatbelt profile and Codex's `-D WRITABLE_ROOT_n` parameters keep every entry, and that the worker's `git commit` succeeds. On Linux, repeat under the Linux sandbox (bubblewrap/landlock). Also check that a hard link from the task's branch file to `refs/heads/main` is refused there, as it is under seatbelt.
+4e. **The worker grant in the real CLIs (final fix batch F1, fix round 4, S5).** A worker's sandbox grant is about 260 paths (`objects/00` to `objects/ff`, `objects/pack`, the task's own branch with its lock and reflog, and its git dir's files). With a real Claude worker and a real Codex worker, confirm that each CLI accepts the whole list: Claude's `--settings` `allowWrite`, and Codex's `writable_roots`. Confirm that Claude's generated seatbelt profile and Codex's `-D WRITABLE_ROOT_n` parameters keep every entry, and that the worker's `git commit` succeeds. On Linux, repeat under the Linux sandbox (bubblewrap/landlock). Also check that a hard link from the task's branch file to `refs/heads/main` is refused there, as it is under seatbelt. Since F1 fix round 5 the grant names no reflog: confirm that each real CLI's shell passes `GIT_CONFIG_PARAMETERS` through to the worker's git (`git config --get core.logAllRefUpdates` prints `false`) and that its commit succeeds.
 5. In the TUI, typing into a focused worker window does nothing, and the kill and remove commands on it show decision 49's refusal. The run carries on.
 6. While `t2`'s worker runs, `anthrex daemon stop`:
    - `pgrep -fl "claude -p"` shows nothing of this run.
@@ -8952,10 +8952,37 @@ enough.
   pid, flips `HEAD`, `ORIG_HEAD` and the task's branch to the base during 36 hand-backs
   and aborts; on b896f54 the base moved in two runs of three), the five reconcile crash
   points, and `worktree::input`'s stdin test.
-- **Found, not fixed (followups).** An engine `update-ref` in the task worktree appends
-  to the reflogs the worker may write (`<git dir>/logs/HEAD`, and the task branch's
-  reflog in the common dir), and a reflog append opens its file without refusing a
-  symbolic link: a worker can make the engine append a reflog line to any file the user
-  can write (verified with plain git). It cannot move a ref: a loose ref keeps its first
-  line. The object directories carry the same kind of risk for object writes (not
-  verified).
+- **Reflogs (the coordinator's follow-up to this round).** An engine `update-ref` of
+  the task's branch appended to the worktree's `logs/HEAD` and the branch's reflog, both
+  worker-writable, and git appends to an existing reflog through a symbolic link: a
+  worker could make the unsandboxed engine append a line to any file the user can
+  write (reproduced: `run_git_reflogs`, failing before). Now:
+  - every engine write passes `-c core.logAllRefUpdates=false` (in `WRITE_FLAGS`), so
+    `worktree add` and every engine ref write create no reflog;
+  - `worker_git_dirs`, run before each worker launch, removes the worktree's
+    `logs/HEAD` and the granted ref's reflog if they exist, and the grant no longer
+    names `logs/` or the branch's reflog;
+  - workers' git runs with `core.logAllRefUpdates=false`, passed as
+    `GIT_CONFIG_PARAMETERS='core.logAllRefUpdates'='false'` (appended after a profile's
+    own entries). **Deviation from the coordinator's `GIT_CONFIG_COUNT`/`KEY`/`VALUE`:**
+    Codex's default shell environment policy drops variables whose names contain `KEY`,
+    which would leave a count without its key and break every git command in a Codex
+    worker (from Codex's documented defaults; not run against a real Codex, manual check
+    4e). Neither form is among rule 11's scrubbed five, which apply to the daemon's own
+    git calls, not a worker's environment. Without the setting a worker's commit fails
+    under the new grant ("unable to create directory for …/logs/HEAD", verified), so a
+    worker that unsets it only stops itself;
+  - `pinned::check` refuses a git dir whose `logs`, `logs/HEAD` or own branch's reflog is
+    a symbolic link.
+  Under `sandbox-exec` with the new grant, the worker's commit, amend, revert, `reset
+  --hard`, rebase, `rebase -i --exec` and conflicted merge with `merge --continue` all
+  succeed, and it can write neither reflog nor a link at `logs/HEAD`
+  (`run_git_sandbox`). Nothing in the engine reads a reflog.
+- **Found, not fixed: the shared object store (Critical, followups).** Checking the
+  object directories as asked, with plain git under `sandbox-exec`: the worker's grant
+  lets it replace an existing loose object (or a pack) of the base, so `main`'s content
+  changes with no ref moved; swap an `objects/<xx>` directory for a link, so the engine's
+  next object write lands outside the repository; and plant an object under a name the
+  engine will write, so the engine's commit points at the planted content. The fix needs
+  a per-task private object store with a verified import, which touches the launch, the
+  grant and every task-branch read. Stopped and recorded for a ruling, per AGENTS.md.

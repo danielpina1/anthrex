@@ -1016,24 +1016,26 @@ scope.
   commit on the base would be reported as "unaccepted run work", and the run halts.
   That is fail-safe, but the reason is wrong. The guard could list the run's refs with
   `for-each-ref --format='%(refname) %(symref)'` and name the tampered branch instead.
-- **F1 fix round 5: an engine reflog append follows a worker's symbolic link.** The
-  worker may write its worktree git dir's `logs/` and its task branch's reflog
-  (`<common>/logs/refs/heads/anthrex/<run>/<task>`); its commits append to them. The
-  engine's own `update-ref --no-deref <own>` (the hand-back's and the re-point's
-  compare-and-swap) appends a line to the same two files, and git opens an existing
-  reflog with `O_APPEND` without refusing a symbolic link (verified with git 2.50.1:
-  `logs/HEAD` linked to a file outside the repository got the line). So a worker can
-  make the unsandboxed engine append one uncontrolled reflog line (two shas, the
-  daemon's identity, a time) to any file the user can write. It cannot move a ref (a
-  loose ref keeps its first line; `packed-refs` or a config file would only become
-  unparsable). `core.logAllRefUpdates=false` does not stop an append to an existing
-  log. A fix sketch: create task branches without reflogs (`-c
-  core.logAllRefUpdates=false` on the engine's writes, and remove the ones `worktree
-  add` makes), launch workers with `core.logAllRefUpdates=false`
-  (`GIT_CONFIG_COUNT`/`KEY`/`VALUE`), and drop the reflog paths and `logs/` from the
-  grant. The object directories (`objects/00`…`ff`, granted as subpaths) may carry the
-  same risk for the engine's object writes, if a worker can replace one with a link
-  (not verified).
+- **Critical, found in F1 fix round 5, not fixed: a worker can rewrite the base
+  branch's content through the shared object store.** The worker's grant names
+  `objects/00` to `objects/ff` and `objects/pack` as writable subpaths. Verified with
+  git 2.50.1 under a `sandbox-exec` profile built like the worker's: the sandboxed
+  process removed the loose object of the blob `main:f` and put another object's file
+  under its name, and `git show main:f` then printed the other content. No ref moved,
+  so D-2's guard sees nothing; git does not re-hash an object on read. A pack or its
+  `.idx` in `objects/pack` can be replaced the same way. The same grant lets a worker
+  swap `objects/<xx>` itself for a symbolic link (verified: the unsandboxed engine's
+  next object write, `hash-object -w`, created its file in a directory outside the
+  repository), and plant a link or a file under a name the engine will write (git then
+  skips the write and only touches the target's time, and the engine's commit points
+  at the planted content). Fixing it needs the worker's objects out of the shared store:
+  sketch — a private object directory per task (`GIT_OBJECT_DIRECTORY`, with the common
+  store as `GIT_ALTERNATE_OBJECT_DIRECTORIES`, read-only), and the engine importing a
+  task's objects with verification (`pack-objects` from the private store into
+  `index-pack --stdin` in the common one, which re-hashes every object) before any
+  engine read of the task's branch, index or salvage. That touches the launch, the
+  grant, every task-branch read and reconcile, so it was stopped and recorded here per
+  AGENTS.md, for the coordinator to rule on.
 - **F1 re-review 3, N4: a worker can create refs under its own branch name.** The
   task branch's `subpath` grant lets a worker make `refs/heads/anthrex/<run>/<task>` a
   directory holding refs of its own. Every effect is fail-safe today: the own-ref
