@@ -85,6 +85,13 @@ fn a_count_after_a_failed_resume_is_dropped() {
                 error: "gone".into(),
             },
         );
+        // T12-P1 (F4): the failed resume itself supersedes the count the round awaited
+        // (`ladder::supersede`), before its result comes; `drop_stale` is not what
+        // drops it.
+        assert!(
+            fx.task("t1").rounds.iter().all(|r| r.count_op.is_none()),
+            "count {count}"
+        );
         let fresh = fx.task("t1").fresh_session.clone();
         let effects = fx.done(c2, commits(count));
         let t1 = fx.task("t1");
