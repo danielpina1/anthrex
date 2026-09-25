@@ -59,6 +59,8 @@ fn the_environment_is_scrubbed() {
             )]),
             cache_dirs: Vec::new(),
             confined_network: false,
+            confined_unix_sockets: Vec::new(),
+            confined_localhost_ports: Vec::new(),
         };
         let mut spec = spec(Runtime::Claude, &worktree);
         spec.env = profile_env(&profile, &worktree);

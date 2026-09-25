@@ -79,6 +79,10 @@ pub struct Orchestrator {
     /// repository root: whether confined checks there have the network. The user's own
     /// config only.
     pub confined_network: std::collections::BTreeMap<String, bool>,
+    /// F1d round 2 (S1): `[orchestrator.confined_unix_sockets]` and
+    /// `[orchestrator.confined_localhost_ports]`, keyed by repository root.
+    pub confined_unix_sockets: std::collections::BTreeMap<String, Vec<String>>,
+    pub confined_localhost_ports: std::collections::BTreeMap<String, Vec<u16>>,
     pub claude: ClaudeHeadless,
     pub builtin_models: bool,
     pub models: Vec<proto::ModelEntry>,
@@ -140,6 +144,8 @@ impl Default for Orchestrator {
             unconfined_checks: false,
             cache_dirs: std::collections::BTreeMap::new(),
             confined_network: std::collections::BTreeMap::new(),
+            confined_unix_sockets: std::collections::BTreeMap::new(),
+            confined_localhost_ports: std::collections::BTreeMap::new(),
             claude: ClaudeHeadless::default(),
             builtin_models: true,
             models: default_roster(),
@@ -257,6 +263,8 @@ pub(crate) fn read(table: &toml::Table, problems: &mut Vec<Problem>) -> Orchestr
     read_claude(t, &mut o, problems);
     profile::read_cache_dirs(t, &mut o, problems);
     profile::read_confined_network(t, &mut o, problems);
+    profile::read_confined_unix_sockets(t, &mut o, problems);
+    profile::read_confined_localhost_ports(t, &mut o, problems);
     read_bool_key(
         t,
         "builtin_models",
@@ -577,6 +585,8 @@ pub(crate) fn report_unknown(value: &toml::Value, problems: &mut Vec<Problem>) {
             | "builtin_models"
             | "cache_dirs"
             | "confined_network"
+            | "confined_unix_sockets"
+            | "confined_localhost_ports"
             | "models" => {}
             "review" => {
                 report_unknown_nested(sub, "orchestrator.review", KNOWN_REVIEW_KEYS, problems)

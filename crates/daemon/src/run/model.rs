@@ -68,6 +68,14 @@ pub struct Profile {
     /// never a plan's. Absent from a run recorded before F1d: off.
     #[serde(default)]
     pub confined_network: bool,
+    /// The Unix sockets confined commands may connect to (F1d round 2, S1): the user's
+    /// own `[orchestrator.confined_unix_sockets]` for the repository.
+    #[serde(default)]
+    pub confined_unix_sockets: Vec<String>,
+    /// The loopback ports confined commands may use (F1d round 2, S1/S2): the user's
+    /// own `[orchestrator.confined_localhost_ports]` for the repository.
+    #[serde(default)]
+    pub confined_localhost_ports: Vec<u16>,
 }
 
 /// `[orchestrator.claude] auth`, mirrored here with serde because `config::ClaudeAuth`

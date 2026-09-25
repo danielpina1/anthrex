@@ -247,3 +247,95 @@ pub(super) fn read_confined_network(
     }
     o.confined_network = out;
 }
+
+/// `[orchestrator.confined_unix_sockets]` (M8a final fix batch F1d round 2, S1): a table
+/// keyed by repository root, each value the absolute paths of Unix sockets (a local
+/// database's, Docker's) confined checks there may connect to. A relative entry is a
+/// problem and drops that repository's list. Only the user's own config sets this.
+pub(super) fn read_confined_unix_sockets(
+    table: &toml::Table,
+    o: &mut Orchestrator,
+    problems: &mut Vec<Problem>,
+) {
+    let key = "confined_unix_sockets";
+    let Some(map) = keyed_table(table, key, problems) else {
+        return;
+    };
+    for (root, value) in map {
+        let items = value.as_array().and_then(|a| {
+            a.iter()
+                .map(|v| v.as_str().map(str::to_string))
+                .collect::<Option<Vec<_>>>()
+        });
+        let problem = match &items {
+            None => Some("expected an array of strings".to_string()),
+            Some(list) => list
+                .iter()
+                .find(|s| !(s.starts_with('/') || s.starts_with("~/")))
+                .map(|s| {
+                    format!("{s:?} is not an absolute path; each entry must start with / or ~/")
+                }),
+        };
+        match (items, problem) {
+            (Some(list), None) => {
+                o.confined_unix_sockets.insert(root.clone(), list);
+            }
+            (_, Some(message)) => problems.push(Problem {
+                key: format!("orchestrator.{key}.{root:?}"),
+                message,
+                default: "unset".to_string(),
+            }),
+            (None, None) => {}
+        }
+    }
+}
+
+/// `[orchestrator.confined_localhost_ports]` (M8a final fix batch F1d round 2, S1/S2): a
+/// table keyed by repository root, each value the loopback ports confined checks there
+/// may connect to, bind and accept on (a test server, a local database). Only the
+/// user's own config sets this.
+pub(super) fn read_confined_localhost_ports(
+    table: &toml::Table,
+    o: &mut Orchestrator,
+    problems: &mut Vec<Problem>,
+) {
+    let key = "confined_localhost_ports";
+    let Some(map) = keyed_table(table, key, problems) else {
+        return;
+    };
+    for (root, value) in map {
+        let ports = value.as_array().and_then(|a| {
+            a.iter()
+                .map(|v| {
+                    v.as_integer()
+                        .and_then(|n| u16::try_from(n).ok())
+                        .filter(|p| *p > 0)
+                })
+                .collect::<Option<Vec<u16>>>()
+        });
+        match ports {
+            Some(ports) => {
+                o.confined_localhost_ports.insert(root.clone(), ports);
+            }
+            None => problems.push(Problem {
+                key: format!("orchestrator.{key}.{root:?}"),
+                message: "expected an array of port numbers from 1 to 65535".to_string(),
+                default: "unset".to_string(),
+            }),
+        }
+    }
+}
+
+/// `[orchestrator.<key>]` as a table, or a problem when it is something else.
+fn keyed_table<'a>(
+    table: &'a toml::Table,
+    key: &str,
+    problems: &mut Vec<Problem>,
+) -> Option<&'a toml::Table> {
+    let value = table.get(key)?;
+    let map = value.as_table();
+    if map.is_none() {
+        problems.push(not_a_table_problem(&format!("orchestrator.{key}")));
+    }
+    map
+}

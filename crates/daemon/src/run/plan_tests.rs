@@ -131,6 +131,14 @@ fn cache_dirs_come_from_the_users_config_keyed_by_repo_root() {
     config
         .confined_network
         .insert(preflight().root.display().to_string(), true);
+    // F1d round 2 (S1): and the listed local services.
+    config.confined_unix_sockets.insert(
+        preflight().root.display().to_string(),
+        vec!["/tmp/.s.PGSQL.5432".to_string()],
+    );
+    config
+        .confined_localhost_ports
+        .insert(preflight().root.display().to_string(), vec![6379]);
     let text = crate::run::test_support::plan_with(
         PROFILE,
         &[crate::run::test_support::task_toml(
@@ -143,6 +151,8 @@ fn cache_dirs_come_from_the_users_config_keyed_by_repo_root() {
     let run = build_with(&text, &config).unwrap_or_else(|e| panic!("{e:?}"));
     assert_eq!(run.profile.cache_dirs, vec!["~/.cache/c".to_string()]);
     assert!(run.profile.confined_network);
+    assert_eq!(run.profile.confined_unix_sockets, ["/tmp/.s.PGSQL.5432"]);
+    assert_eq!(run.profile.confined_localhost_ports, [6379]);
 
     // A repository the config does not name gets none.
     let mut pre = preflight();

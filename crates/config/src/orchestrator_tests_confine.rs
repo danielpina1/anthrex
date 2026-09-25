@@ -72,3 +72,40 @@ fn confined_network_is_read_keyed_by_repo_root_and_off_by_default() {
         "{problems:?}"
     );
 }
+
+#[test]
+fn confined_unix_sockets_and_localhost_ports_are_read_keyed_by_repo_root() {
+    // F1d round 2 (S1): the only ways from a confined check to a local service.
+    let (config, problems) = parse(
+        r#"
+[orchestrator.confined_unix_sockets]
+"/r/a" = ["/tmp/.s.PGSQL.5432", "~/.colima/default/docker.sock"]
+"/r/b" = ["docker.sock"]
+
+[orchestrator.confined_localhost_ports]
+"/r/a" = [5432, 6379]
+"/r/b" = [0]
+"/r/c" = [70000]
+"#,
+    );
+    assert_eq!(
+        config.orchestrator.confined_unix_sockets.get("/r/a"),
+        Some(&vec![
+            "/tmp/.s.PGSQL.5432".to_string(),
+            "~/.colima/default/docker.sock".to_string()
+        ])
+    );
+    assert_eq!(config.orchestrator.confined_unix_sockets.get("/r/b"), None);
+    assert_eq!(
+        config.orchestrator.confined_localhost_ports.get("/r/a"),
+        Some(&vec![5432, 6379])
+    );
+    for key in [
+        "orchestrator.confined_unix_sockets.\"/r/b\"",
+        "orchestrator.confined_localhost_ports.\"/r/b\"",
+        "orchestrator.confined_localhost_ports.\"/r/c\"",
+    ] {
+        assert!(problems.iter().any(|p| p.key == key), "{key}: {problems:?}");
+    }
+    assert_eq!(problems.len(), 3, "{problems:?}");
+}

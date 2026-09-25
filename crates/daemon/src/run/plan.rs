@@ -149,6 +149,8 @@ pub fn resolve_profile(plan: &ProfileSpec, config: &ProfileSpec) -> Profile {
         // is set on the run by `build_run`.
         cache_dirs: Vec::new(),
         confined_network: false,
+        confined_unix_sockets: Vec::new(),
+        confined_localhost_ports: Vec::new(),
     }
 }
 
@@ -304,6 +306,12 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
     profile.confined_network = for_repo(&config.confined_network, &pre.root)
         .copied()
         .unwrap_or(false);
+    profile.confined_unix_sockets = for_repo(&config.confined_unix_sockets, &pre.root)
+        .cloned()
+        .unwrap_or_default();
+    profile.confined_localhost_ports = for_repo(&config.confined_localhost_ports, &pre.root)
+        .cloned()
+        .unwrap_or_default();
     let limits = run_limits(config, plan.max_writers, plan.max_readers, plan.max_bounces);
     let mut errors = Vec::new();
     check_plan(&plan, &profile, &mut errors);
