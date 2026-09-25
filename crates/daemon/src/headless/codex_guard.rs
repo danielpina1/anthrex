@@ -133,7 +133,8 @@ fn mismatch(checkout: &Path, what: &str) -> String {
     format!(
         "{} has Codex project config this run did not start with ({what}); Codex loads a \
          checkout's .codex on every turn, so no Codex session starts there. Revert it, \
-         or route the task to Claude (decision 53)",
+         or route the task to Claude (decision 53). A tracked file the checkout converts \
+         (a line-ending or filter attribute) differs from the base too",
         checkout.display()
     )
 }

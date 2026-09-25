@@ -166,3 +166,24 @@ fn ls_tree_records_are_parsed() {
     );
     assert!(parse_ls_tree("garbage\0").is_err());
 }
+
+/// F2 review N4: a tracked `.codex` file that a checkout converts (here `eol=crlf`)
+/// differs from its blob, so it is refused (fail closed), and the message says why that
+/// can happen with nobody changing it.
+#[test]
+fn a_converted_tracked_file_is_refused_with_the_reason_named() {
+    let (dir, guard) = repo(
+        &[
+            (".gitattributes", b".codex/* text eol=crlf\n"),
+            (".codex/config.toml", b"model = \"x\"\n"),
+        ],
+        false,
+    );
+    std::fs::remove_file(dir.path().join(".codex/config.toml")).unwrap();
+    git(dir.path(), &["checkout", "--", ".codex/config.toml"]);
+    let bytes = std::fs::read(dir.path().join(".codex/config.toml")).unwrap();
+    assert!(bytes.ends_with(b"\r\n"), "{bytes:?}");
+    let error = guard.check(dir.path()).unwrap_err();
+    assert!(error.contains(".codex/config.toml"), "{error}");
+    assert!(error.contains("line-ending or filter"), "{error}");
+}
