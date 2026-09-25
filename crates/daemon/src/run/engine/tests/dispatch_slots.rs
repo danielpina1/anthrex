@@ -129,8 +129,51 @@ fn hub_runs_alone() {
     fx.launch_all();
     fx.force("t1", TaskState::Check);
     assert_eq!(tasks_of(&fx.log, "PrepareWorktree"), vec!["t1"]);
+    // Final review A-I2: nor while one is in review or the merge queue, from where it
+    // can come back to `working` (a rejection, a hand-back) beside the hub.
     fx.force("t1", TaskState::Review);
+    assert_eq!(tasks_of(&fx.log, "PrepareWorktree"), vec!["t1"]);
+    fx.end_review("t1");
+    fx.tick();
+    assert_eq!(tasks_of(&fx.log, "PrepareWorktree"), vec!["t1"]);
+    fx.merge("t1", &"c1".repeat(20));
     assert_eq!(tasks_of(&fx.log, "PrepareWorktree"), vec!["t1", "h"]);
+}
+
+/// Final review A-I2: a started hub task holds the hub until it finishes, wherever it
+/// is, so nothing else starts while it is in review, in the merge queue or blocked on
+/// a question, from where it comes back to `working`.
+#[test]
+fn a_started_hub_task_holds_the_hub_until_it_finishes() {
+    let plan = plan_with(
+        &profile_with("max_writers = 3"),
+        &[
+            task("h", "M", "proto", ""),
+            task("t4", "S", "a", ""),
+            task("t5", "S", "b", ""),
+        ],
+    );
+    let mut fx = Fixture::new(&plan);
+    fx.ready(true);
+    assert_eq!(tasks_of(&fx.log, "PrepareWorktree"), vec!["h"]);
+    fx.launch_all();
+    let effects = fx.force("h", TaskState::Review);
+    // Its own reviewer starts.
+    assert_eq!(tasks_of(&effects, "PrepareReview"), vec!["h"]);
+    assert_eq!(tasks_of(&fx.log, "PrepareWorktree"), vec!["h"]);
+    fx.end_review("h");
+    fx.tick();
+    assert_eq!(tasks_of(&fx.log, "PrepareWorktree"), vec!["h"]);
+    let h = fx.task_mut("h");
+    h.state = TaskState::Blocked;
+    h.block = Some(proto::BlockInfo {
+        reason: BlockReason::Question,
+        text: "which one?".into(),
+    });
+    fx.tick();
+    assert_eq!(tasks_of(&fx.log, "PrepareWorktree"), vec!["h"]);
+    fx.merge("h", &"c1".repeat(20));
+    assert_eq!(tasks_of(&fx.log, "PrepareWorktree"), vec!["h", "t4", "t5"]);
 }
 
 #[test]

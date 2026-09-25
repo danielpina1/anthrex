@@ -23,9 +23,29 @@ pub fn writers_busy(run: &Run) -> usize {
     run.tasks.iter().filter(|t| holds_writer(t.state)).count()
 }
 
-/// A hub task holds a writer slot: nothing else starts (decision 41, "hub alone").
+/// A hub task holds a writer slot: nothing else starts, reviews included (decision
+/// 41, "hub alone").
 pub fn hub_holds_slot(run: &Run) -> bool {
     run.tasks.iter().any(|t| t.hub && holds_writer(t.state))
+}
+
+/// A hub task holds the hub from `preparing` until it is merged or cancelled: no other
+/// writer starts meanwhile. Final review A-I2: a hub task in `review`, `merge_queue`
+/// or `blocked` holds no writer slot, yet comes back to `working` (a rejection, a
+/// hand-back, an answer), so once started it keeps the hub. Its own reviewer, and
+/// other tasks' reviewers, still start ([`hub_holds_slot`] governs those).
+pub fn hub_started(run: &Run) -> bool {
+    run.tasks.iter().any(|t| {
+        t.hub && !t.state.is_finished() && (holds_writer(t.state) || t.start_commit.is_some())
+    })
+}
+
+/// Final review A-I2: a task in `review` or `merge_queue` holds no writer slot but can
+/// come back to `working` on its own (a rejection, a hand-back), so a hub task does
+/// not start beside it. A `blocked` task comes back only through the user (an answer,
+/// a retry, an override) and does not hold a hub task back (recorded residual).
+pub fn may_return_to_working(state: TaskState) -> bool {
+    matches!(state, TaskState::Review | TaskState::MergeQueue)
 }
 
 /// Whether an op of `task` matching `pred` is in flight.

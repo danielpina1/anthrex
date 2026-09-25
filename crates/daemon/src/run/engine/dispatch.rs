@@ -9,7 +9,9 @@ use std::path::Path;
 
 use proto::{AgentRole, BlockInfo, BlockReason, RunState, Runtime, TaskState};
 
-use super::schedule::{deps_done, dispatch_order, hub_holds_slot, op_in_flight, writers_busy};
+use super::schedule::{
+    deps_done, dispatch_order, hub_started, may_return_to_working, op_in_flight, writers_busy,
+};
 use super::{Effect, OpKind, OpResult, emit_op, next_op};
 use super::{clock, complete, done, gates, holds, ladder, merge, outbox, restore, review, signals};
 use crate::run::contract::{handover_prompt, is_stall_nudge, worker_prompt};
@@ -191,10 +193,12 @@ fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             continue;
         }
         let busy = writers_busy(run);
-        if busy >= usize::from(run.limits.max_writers) || hub_holds_slot(run) {
+        if busy >= usize::from(run.limits.max_writers) || hub_started(run) {
             break;
         }
-        if run.tasks[i].hub && busy > 0 {
+        if run.tasks[i].hub
+            && (busy > 0 || run.tasks.iter().any(|t| may_return_to_working(t.state)))
+        {
             continue;
         }
         run.tasks[i].state = TaskState::Preparing;
