@@ -1071,6 +1071,11 @@ scope.
   like checks. A `setup` that installs dependencies (`npm ci`, `pip install`) writes
   the package manager's cache under `$HOME` and fails until the profile lists it in
   `cache_dirs`. Network access is not restricted.
+- **E2e tests read the report without waiting.** `run_e2e_settings.rs`'s
+  `e2e_trust_project_is_accepted_and_reported` read an empty report once under load
+  (load average 35) right after `complete`; F1c round 2 moved it to the deadline
+  helper `report_with`. `run_e2e_basic.rs:67`, `run_e2e_finish.rs:113` and
+  `run_e2e_settings.rs:183` still call `report(&run)` directly after `complete`.
 - **`git worktree list` no longer shows the run's task checkouts.** Only the
   integration checkout stays a linked worktree. `anthrex run status` is where the
   checkouts are listed.

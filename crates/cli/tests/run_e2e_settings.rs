@@ -102,10 +102,11 @@ fn e2e_trust_project_is_accepted_and_reported() {
         run.trusted_project,
         vec![".claude/settings.json".to_string()]
     );
-    let text = report(&run);
-    assert!(
-        text.contains("project settings trusted by --trust-project: .claude/settings.json"),
-        "{text}"
+    // The report is written after `complete` is published: wait for it with a deadline
+    // (it read empty once under load, final fix batch F1c round 2).
+    report_with(
+        &run,
+        "project settings trusted by --trust-project: .claude/settings.json",
     );
 }
 
