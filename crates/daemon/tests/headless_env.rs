@@ -46,7 +46,16 @@ fn the_environment_is_scrubbed() {
                 out = out.display()
             ),
         );
-        let m = manager(&claude, &claude, |_| {});
+        let codex_out = worktree.join("codex-env.txt");
+        let codex = script(
+            &worktree,
+            "codex",
+            &format!(
+                "env > '{out}.tmp' && mv '{out}.tmp' '{out}'; exec sleep 30",
+                out = codex_out.display()
+            ),
+        );
+        let m = manager(&claude, &codex, |_| {});
         // The profile's env as the engine builds a session's (`worker_spec`).
         let profile = Profile {
             modules: Vec::new(),
@@ -101,6 +110,27 @@ fn the_environment_is_scrubbed() {
         );
         assert!(
             lines.contains(&format!("CARGO_TARGET_DIR={}/target", worktree.display()).as_str()),
+            "{env}"
+        );
+        m.remove(info.id).unwrap();
+
+        // Final fix batch F2 (review C, M5): a Codex session gets neither the window id
+        // nor the socket (only Claude's hooks read them; its MCP server has `--socket`
+        // on its argv), nor the inherited ones.
+        let mut codex_spec = support::headless::spec(Runtime::Codex, &worktree);
+        codex_spec.env = profile_env(&profile, &worktree);
+        let info = create(&m, "codex-env", codex_spec, "hi").await;
+        wait_until("the codex env dump", || codex_out.exists()).await;
+        let env = std::fs::read_to_string(&codex_out).unwrap();
+        assert!(
+            !env.lines().any(|l| l.starts_with("ANTHREX_WINDOW_ID=")
+                || l.starts_with("ANTHREX_SOCKET=")
+                || l.starts_with("ANTHROPIC_API_KEY=")),
+            "{env}"
+        );
+        assert!(
+            env.lines()
+                .any(|l| l == format!("CARGO_TARGET_DIR={}/target", worktree.display())),
             "{env}"
         );
         m.remove(info.id).unwrap();

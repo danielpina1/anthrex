@@ -33,17 +33,22 @@ pub const RESUME_START_TIMEOUT: Duration = Duration::from_secs(120);
 /// Claude's control requests are numbered per daemon; the id only has to be unique.
 static INTERRUPT_REQUESTS: AtomicU64 = AtomicU64::new(1);
 
-/// Decision 26: the session's own window id and socket, exactly as `launch::plan` sets
-/// them for a PTY window (`anthrex hook` reads both), after the profile's env so the
-/// profile cannot point a session's hooks at another window.
+/// Decision 26: a Claude session's own window id and socket, exactly as `launch::plan`
+/// sets them for a PTY window (`anthrex hook` reads both), after the profile's env so
+/// the profile cannot point a session's hooks at another window. A Codex session gets
+/// neither (final fix batch F2, review C, M5): it runs no anthrex hook, and its MCP
+/// server has the socket on its argv, so they would only point its agent at the socket.
 fn session_env(
+    runtime: Runtime,
     window_id: u32,
     socket: &Path,
     profile: &[(String, String)],
 ) -> Vec<(String, String)> {
     let mut env = profile.to_vec();
-    env.push(("ANTHREX_WINDOW_ID".into(), window_id.to_string()));
-    env.push(("ANTHREX_SOCKET".into(), socket.display().to_string()));
+    if runtime == Runtime::Claude {
+        env.push(("ANTHREX_WINDOW_ID".into(), window_id.to_string()));
+        env.push(("ANTHREX_SOCKET".into(), socket.display().to_string()));
+    }
     env
 }
 
@@ -161,7 +166,7 @@ impl WindowManager {
             Runtime::Claude => self.config.claude_bin.clone(),
             _ => self.config.codex_bin.clone(),
         };
-        let env = session_env(id, &self.config.socket_path, &spec.env);
+        let env = session_env(runtime, id, &self.config.socket_path, &spec.env);
         let remove = crate::headless::credential_scrub(spec);
         let guard = spec.codex_config_guard.clone();
         let cwd = spec.cwd.clone();
