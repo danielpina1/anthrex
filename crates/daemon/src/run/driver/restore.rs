@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::guard::guarded_step;
+use super::guard::{guarded_step, prepare_guarded};
 use super::{OpCtx, RunService, cleanup, effects, unix_now};
 use crate::run::engine::{Event, EventKind, OpKind, OpResult};
 use crate::run::git;
@@ -138,7 +138,7 @@ impl RunService {
             },
         };
         let panic = match guarded_step(&mut state, all) {
-            Ok(fx) => return (effects::prepare(&state, fx, now), BTreeSet::new()),
+            Ok(fx) => return (prepare_guarded(&state, fx, now), BTreeSet::new()),
             Err(panic) => panic,
         };
         tracing::error!(%panic, "restoring the runs panicked; restoring them one at a time");
@@ -162,7 +162,7 @@ impl RunService {
                 }
             }
         }
-        (effects::prepare(&state, fx, now), skipped)
+        (prepare_guarded(&state, fx, now), skipped)
     }
 
     /// Ruling T22-N3, with m5's report: each accept whose merge landed before the

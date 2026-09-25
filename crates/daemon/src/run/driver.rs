@@ -395,7 +395,7 @@ impl RunService {
         let prepared = {
             let mut state = crate::lock(&self.state);
             match guard::guarded_step(&mut state, Event { now, kind }) {
-                Ok(fx) => Some(effects::prepare(&state, fx, now)),
+                Ok(fx) => Some(guard::prepare_guarded(&state, fx, now)),
                 Err(panic) => {
                     tracing::error!(%panic, "the run engine panicked on an event; the event is dropped");
                     None
