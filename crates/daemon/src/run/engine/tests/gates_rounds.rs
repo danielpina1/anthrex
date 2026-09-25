@@ -294,3 +294,22 @@ fn the_review_is_prepared_against_the_run_head() {
     };
     assert_eq!(base_ref, moved);
 }
+
+/// Final review A-6: the reviewer is on the other runtime from the session that wrote
+/// the claimed commit. A route amended while that session lived (a `blocked` task's
+/// `amend_task { route }`, then an answer that resumes the same session) is the next
+/// fresh session's, not the author's.
+#[test]
+fn the_reviewer_is_picked_against_the_authoring_sessions_route() {
+    let (mut fx, window) = working_on(PROFILE, CHECK_MODE);
+    let author = fx.task("t1").rounds[0].route.clone();
+    assert_eq!(author.runtime, proto::Runtime::Claude);
+    fx.task_mut("t1").route.runtime = proto::Runtime::Codex;
+    let (op, _) = in_review(&mut fx, window);
+    let _ = reviewer(&mut fx, op, "diff --git a/x b/x");
+    let t1 = fx.task("t1");
+    let level = t1.review_level.unwrap();
+    let expected = crate::run::roster::pick_reviewer(&fx.run().roster, &author, level);
+    assert_eq!(expected.runtime, proto::Runtime::Codex);
+    assert_eq!(t1.review_route, Some(expected));
+}

@@ -573,9 +573,14 @@ fn a_review_after_rung_2_is_picked_against_the_new_author() {
     fx.task_mut("t1").route.runtime = Runtime::Codex;
     fx.task_mut("t1").route.model = String::new();
     fx.task_mut("t1").state = TaskState::Review;
+    // Rung 2's fresh session runs on the new route, and wrote the claimed commit
+    // (final review A-6: the reviewer is picked against that session's route).
+    let new_route = fx.task("t1").route.clone();
     for round in fx.task_mut("t1").rounds.iter_mut() {
         if round.role == AgentRole::Reviewer {
             round.ended = true;
+        } else {
+            round.route = new_route.clone();
         }
     }
     let effects = fx.tick();

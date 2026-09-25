@@ -117,9 +117,16 @@ pub(super) fn review_ready(
     let op = next_op(run);
     let task = &run.tasks[i];
     let level = task.review_level.unwrap_or(ReviewLevel::Medium);
-    // The author's route may have escalated (rung 2): the reviewer is picked against
-    // the current one, so it stays on the other runtime.
-    let route = pick_reviewer(&run.roster, &task.route, level);
+    // The reviewer is picked against the route of the session that wrote the claimed
+    // commit, the last worker round's (an escalation to the peer runtime included), so
+    // it stays on the other runtime. A route amended while that session lived applies
+    // from the next fresh session (final review A-6).
+    let author = task
+        .rounds
+        .iter()
+        .rfind(|r| r.role == AgentRole::Worker)
+        .map_or(&task.route, |r| &r.route);
+    let route = pick_reviewer(&run.roster, author, level);
     let spec = reviewer_spec(run, task, &route);
     let round_no = spec.run_ref.as_ref().map_or(1, |r| r.session);
     let first_turn = reviewer_prompt(run, task, round_no, &base, &head, &patch);
