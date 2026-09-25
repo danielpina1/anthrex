@@ -1,6 +1,6 @@
 # anthrex roadmap
 
-anthrex is built in sixteen milestones. Milestones 1 to 6.5 are merged. Each later milestone has an implementation brief in `docs/milestones/`, written so that a coding agent such as Codex can implement it without further questions. `AGENTS.md` at the repository root holds the rules that apply to every milestone.
+anthrex is built in sixteen milestones. Milestones 1 to 6.5 and 8a are merged. Each later milestone has an implementation brief in `docs/milestones/`, written so that a coding agent such as Codex can implement it without further questions. `AGENTS.md` at the repository root holds the rules that apply to every milestone.
 
 The design is layered, newest first:
 
