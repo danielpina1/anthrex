@@ -52,10 +52,10 @@ pub const DECIDER_CAPS: DeciderCaps = DeciderCaps {
     // A schema leaving `reason` out of `required` was accepted and answered; the
     // triage schema's `anyOf` with null and `["string","null"]` types were accepted too.
     strict_schemas: false,
-    // `--output-schema` exists in `codex exec --help`, but no Codex call was run
-    // (outstanding), so Codex deciders rely on the prompt alone and `parse` validates
-    // everything.
-    codex_output_schema: false,
+    // `--output-schema` exists in `codex exec --help` (controller ruling: a flag that
+    // exists is passed). No Codex call was run, so its runtime behaviour is unverified
+    // (outstanding for the user); `parse` validates every answer either way.
+    codex_output_schema: true,
     // `--ephemeral` ("Run without persisting session files to disk") exists in
     // `codex exec --help`; passing it only reduces what a call writes.
     codex_ephemeral: true,

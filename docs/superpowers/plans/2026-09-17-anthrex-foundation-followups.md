@@ -1319,7 +1319,7 @@ scope.
 
 ## From M8b.1 (2026-09-25), for the user and for M8b
 
-- **Scouts' Bash can write their working directory (M8b.9, needs a ruling).** With
+- **Scouts' Bash can write their working directory (M8b.9; ruled R-T1-1: the checkout root goes in the scout's `denyWrite`).** With
   an empty `sandbox.filesystem.allowWrite`, Claude Code 2.1.280 still lets sandboxed
   Bash write the session's working directory (`touch x` succeeded). Adding the checkout
   root to `denyWrite` denies it while `ls`, `git log` and the MCP call keep working

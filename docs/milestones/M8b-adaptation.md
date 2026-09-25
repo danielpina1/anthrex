@@ -2090,33 +2090,63 @@ Verified on macOS (Darwin 25.2, arm64) against `claude` 2.1.280 and `codex-cli` 
   3. `result.result`, the same object as JSON text.
 
   So `DECIDER_CAPS.answer_source = ResultField`, and M8b.7 adds `SessionEvent::StructuredOutput { value }` from `result.structured_output` (decision 16's source 1). Source 2 (the `StructuredOutput` tool use) also matches both streams and stays as the fallback.
-- **The triage call answered in text first.** With the exact triage schema and prompt, the model first wrote the answer as fenced JSON in an assistant text block; the CLI then injected a user text message, `[structured-output-enforce] You MUST call the StructuredOutput tool to complete this request. Call this tool now.`, and the model called `StructuredOutput`. `num_turns` was **3**, exactly `--max-turns 3` (the `blocked_reason` calls used 2). So the margin decision 16 leaves is zero for a model that answers in text first. What the CLI does when it hits `--max-turns` before `StructuredOutput` was not probed; decision 16's source 3 (the last top-level assistant text, fence removed) would still find the fenced answer in the stream, provided M8b.7 reads the events before treating a failed turn as final. Recorded for M8b.5/M8b.7; decision 16's `--max-turns 3` is unchanged.
+- **The triage call answered in text first.** With the exact triage schema and prompt, the model first wrote the answer as fenced JSON in an assistant text block; the CLI then injected a user text message, `[structured-output-enforce] You MUST call the StructuredOutput tool to complete this request. Call this tool now.`, and the model called `StructuredOutput`. `num_turns` was **3**, exactly `--max-turns 3` (the `blocked_reason` calls used 2). So the margin decision 16 leaves is zero for a model that answers in text first. What the CLI does when it hits `--max-turns` before `StructuredOutput` was not probed; decision 16's source 3 (the last top-level assistant text, fence removed) would still find the fenced answer in the stream, provided M8b.7 reads the events before treating a failed turn as final. Ruling R-T1-4: M8b.7 parses that fenced text even when the turn limit is hit; `--max-turns 3` is unchanged.
 - **Strict schemas: not required.** A `blocked_reason` schema whose `required` lists only `kind` was accepted and answered (exit 0, `structured_output` present). The triage schema's `anyOf` with `{"type":"null"}` and its `["string","null"]` types were accepted too, so the risk note "Strict schemas" needs no simplification. `DECIDER_CAPS.strict_schemas = false`.
 - **Usage** (`result.usage`, the same names M8a.1 recorded, plus `output_tokens_details.thinking_tokens` and `iterations[]`): for `blocked_reason`, input 10, output 357 (257 thinking), `cache_read_input_tokens` 0, `cache_creation_input_tokens` 17 688, `total_cost_usd` 0.0372. `modelUsage` is keyed by `claude-haiku-4-5`. No new usage field needs adding to M8a.1's list.
 - **Exit.** Every call exited 0, 0.37 to 0.80 s after the `result` line, with stdin already closed.
-- **What else loads into a decider.** Under `--setting-sources user` the user's own `SessionStart` hooks run (`system/hook_started`/`hook_response`) and `system/commands_changed` lines list the user's skills; that context is why a one-line classification cost 17 688 cache-creation tokens. `system/init.tools` lists built-in tools `--disallowedTools` does not name (`CronCreate`, `SendMessage`, `RemoteTrigger`, `PushNotification`, `Workflow`, `Skill`, `ToolSearch`, `Task*` and others) beside `StructuredOutput`. Two cheap extra calls, same argv plus one flag:
+- **What else loads into a decider.** Under `--setting-sources user` the user's own `SessionStart` hooks run (`system/hook_started`/`hook_response`) and `system/commands_changed` lines list the user's skills (the fixtures empty those arrays; see each meta's `redactions`); that context is why a one-line classification cost 17 688 cache-creation tokens. `system/init.tools` lists built-in tools `--disallowedTools` does not name (`CronCreate`, `SendMessage`, `RemoteTrigger`, `PushNotification`, `Workflow`, `Skill`, `ToolSearch`, `Task*` and others) beside `StructuredOutput`. Two cheap extra calls, same argv plus one flag:
   - `--tools ""`: `init.tools` is exactly `["StructuredOutput"]`, the answer arrives as before, and cache creation fell to 10 763 tokens. The user's `SessionStart` hooks still ran.
   - `--restricted`: no `SessionStart` hooks ran (it ignores user settings files), cache creation 9 313 tokens, but `init.tools` still listed 18 tools.
 
-  Decision 16's argv is unchanged; `--tools ""` is recorded as a follow-up for M8b.5 (it would need a `DeciderCaps` field and a ruling).
+  Ruling R-T1-6: Claude deciders pass `--tools ""` (M8b.5); this task leaves decision 16's argv as it is.
 
-**Item 2, a Codex decider call: not run (controller ruling).** From `codex --version` (`codex-cli 0.156.1`) and `codex exec --help`: `--json`, `--skip-git-repo-check`, `--ephemeral` ("Run without persisting session files to disk"), `-s/--sandbox read-only|workspace-write|danger-full-access`, `-c/--config <key=value>`, `--output-schema <FILE>` ("Path to a JSON Schema file describing the model's final response shape") and `-m/--model` all exist; `--ignore-user-config` also exists (M8a.1). OUTSTANDING for the user: that the final `agent_message` text is the JSON, `turn.completed.usage`, whether `--output-schema` is honoured, and whether the run writes `~/.codex/config.toml`. The exact command, in an empty directory, with `/tmp/m8b1-schema.json` holding the `blocked_reason` schema:
+**Item 2, a Codex decider call: not run (controller ruling).** From `codex --version` (`codex-cli 0.156.1`) and `codex exec --help`: `--json`, `--skip-git-repo-check`, `--ephemeral` ("Run without persisting session files to disk"), `-s/--sandbox read-only|workspace-write|danger-full-access`, `-c/--config <key=value>`, `--output-schema <FILE>` ("Path to a JSON Schema file describing the model's final response shape") and `-m/--model` all exist; `--ignore-user-config` also exists (M8a.1). OUTSTANDING for the user: that the final `agent_message` text is the JSON, `turn.completed.usage`, whether `--output-schema` is honoured at run time, and whether the run writes `~/.codex/config.toml`. The command below is copy-pasteable: it makes an empty directory, writes the `blocked_reason` schema and prompt exactly as the Claude probe used them (the schema and prompt in `claude-2.1.280-decider.meta.json`'s `command`), and hashes the config before and after.
 
 ```sh
+mkdir -p /tmp/anthrex-m8b1-codex && cd /tmp/anthrex-m8b1-codex
+cat > schema.json <<'SCHEMA'
+{"type":"object","additionalProperties":false,"required":["kind","reason"],"properties":{"kind":{"enum":["question","mis_sized","environment"]},"reason":{"type":"string","minLength":1,"maxLength":300}}}
+SCHEMA
+cat > prompt.txt <<'PROMPT'
+[anthrex decider] blocked_reason v1
+A coding agent stopped its task and gave the reason below without saying what kind of block it is. Classify it. question: it needs an answer or a decision about the task. mis_sized: the task is bigger than one task, or needs changes outside the paths it owns. environment: a tool, command, permission, dependency or setup is broken or missing. Answer with one JSON object that matches the schema, and nothing else.
+
+Task t1: Add a retry to the fetch helper
+Reason:
+cargo test fails before my change: the linker `cc` is not installed in this checkout's environment.
+PROMPT
 shasum -a 256 ~/.codex/config.toml
 env -i HOME="$HOME" PATH="$PATH" USER="$USER" LOGNAME="$LOGNAME" SHELL="$SHELL" TERM="$TERM" LANG="$LANG" \
   codex exec --json --skip-git-repo-check --ephemeral -s read-only \
   -c sandbox_workspace_write.network_access=false -c approval_policy="never" -c model_reasoning_effort="low" \
-  --output-schema /tmp/m8b1-schema.json -- "<the blocked_reason prompt>" > codex-decider.jsonl
+  --output-schema schema.json -- "$(cat prompt.txt)" > codex-decider.jsonl 2> codex-decider.stderr
 shasum -a 256 ~/.codex/config.toml
 ```
 
-Until then Codex deciders take the conservative caps: `codex_output_schema = false` (the prompt alone asks for the JSON, and `parse` validates everything) and `codex_ephemeral = true` (the flag exists and only reduces what a call persists). No `codex-<version>-decider.jsonl` fixture exists; M8b.6's shape test skips it with a printed reason.
+Codex's caps follow the controller's ruling that a flag `codex exec --help` lists is passed: `codex_output_schema = true` and `codex_ephemeral = true`. Their runtime behaviour is **unverified** (outstanding for the user, above); `parse` validates every answer whatever `--output-schema` does, and a refused schema only makes a Codex decider fall back, which never blocks a run. No `codex-<version>-decider.jsonl` fixture exists; M8b.6's shape test skips it with a printed reason.
 
-**Item 3, the filter hook under `-p`: run.** A worker-shaped session: `--permission-mode acceptEdits` (M8a's default worker mode), `--allowedTools Bash`, `--permission-prompts none`, `--setting-sources user --strict-mcp-config`, M8a's sandbox block as `claude_settings` writes it (`enabled`, `allowUnsandboxedCommands false`, `failIfUnavailable true`, `filesystem.allowWrite [repo, task TMPDIR]`, `denyWrite` of the protected paths, every pin), and `TMPDIR` set to the task directory. `--settings` had two `PreToolUse` groups: M3's recording group (matcher `""`) and a `Bash` group whose script printed `{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{…every tool_input key…,"command":<rewritten>}}}` **without** `permissionDecision`. The prompt asked for `echo original`.
+**Item 3, the filter hook under `-p`: run.** A worker-shaped session: `--permission-mode acceptEdits` (M8a's default worker mode), `--allowedTools Bash`, `--permission-prompts none`, `--setting-sources user --strict-mcp-config`, M8a's sandbox block as `claude_settings` writes it (`enabled`, `allowUnsandboxedCommands false`, `failIfUnavailable true`, `filesystem.allowWrite [repo, task TMPDIR]`, `denyWrite` of the protected paths, every pin), and `TMPDIR` set to the task directory. `--settings` had two `PreToolUse` groups: a recording group in M3's place (matcher `""`, M8a.1's recording command; see the deviations below) and a `Bash` group whose script printed `{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{…every tool_input key…,"command":<rewritten>}}}` **without** `permissionDecision`. The prompt asked for `echo original`.
+- **Where the hook facts come from.** "Both groups fired" and the payload keys are not in the stream (it has only `SessionStart` hook lines); they come from the probe's recording files. The recording group's file is committed as `claude-2.1.280-filter-hook-hooks.jsonl` (hook payloads, one per line: its `PreToolUse` has the original command, its `PostToolUse` the rewritten one). The rewrite group's own recording (one `PreToolUse` payload, identical to the recording group's before redaction) was not committed.
+- **The rewrite hook**, `/tmp/fixture/bin/rewrite-hook.py` (scratch paths as run; `rewrite-cmd` held the rewritten command, and no `allow-flag` file or `M8B1_ALLOW` existed, so no `permissionDecision` was printed):
+
+  ```python
+  #!/usr/bin/env python3
+  import json, sys, os
+  payload = json.load(sys.stdin)
+  open("/tmp/anthrex-m8b1/out/filter-hook-payloads.jsonl","a").write(json.dumps(payload)+"\n")
+  if payload.get("tool_name") != "Bash": sys.exit(0)
+  ti = dict(payload.get("tool_input", {}))
+  ti["command"] = open("/tmp/anthrex-m8b1/rewrite-cmd").read().strip() if os.path.exists("/tmp/anthrex-m8b1/rewrite-cmd") else 'echo rewritten > "$TMPDIR/anthrex-logs/probe"'
+  out = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "updatedInput": ti}}
+  if os.environ.get("M8B1_ALLOW") == "1" or os.path.exists("/tmp/anthrex-m8b1/allow-flag"):
+      out["hookSpecificOutput"]["permissionDecision"] = "allow"
+  print(json.dumps(out))
+  ```
+
+  The recorded run's rewritten command: `echo rewritten > /tmp/fixture/s3/tmp/anthrex-logs/probe; echo "tmpdir=$TMPDIR"`. The first run (no `rewrite-cmd`) used the brief's `echo rewritten > "$TMPDIR/anthrex-logs/probe"`.
 - **Both groups fired**, in order, once per Bash call.
 - **The rewritten command ran.** The tool result is the rewritten command's output, and the probe file was written. So `updatedInput` applies without `"permissionDecision":"allow"`: **`output_filter::HOOK_SETS_ALLOW = false`**.
-- **The assistant `tool_use` keeps the original command.** The stream's `tool_use.input.command` is `echo original`; only the `tool_result` shows that the rewrite ran. Decision 37's `bash` step emits "the `tool_use` (with the final command)", which differs from the real CLI: M8b.6 should emit the original command in `tool_use` so the shape and content match. Recorded for M8b.6's ruling.
+- **The assistant `tool_use` keeps the original command.** The stream's `tool_use.input.command` is `echo original`; only the `tool_result` shows that the rewrite ran. Decision 37's `bash` step emits "the `tool_use` (with the final command)", which differs from the real CLI: Ruling R-T1-3: M8b.6's `bash` step emits the original command in `tool_use`.
 - **`$TMPDIR` inside the Bash tool is not the process's `TMPDIR`.** The brief's command, `echo rewritten > "$TMPDIR/anthrex-logs/probe"`, failed with `no such file or directory: /tmp/claude-<uid>/anthrex-logs/probe`: Claude Code's sandbox sets `TMPDIR` to its own `/tmp/claude-<uid>` for Bash. A second run whose rewrite wrote to the task directory **by absolute path** (`<task TMPDIR>/anthrex-logs/probe`) succeeded, and printed `tmpdir=/tmp/claude-<uid>`. Decision 28 is unaffected, because `filter-hook` bakes the absolute `--log-dir` into the command and the task directory is in the worker's `allowWrite`; but anything that relies on a worker's Bash commands seeing M8a's per-task `TMPDIR` does not hold (follow-up).
 - **Payload.** Keys: `cwd`, `hook_event_name`, `permission_mode`, `prompt_id`, `session_id`, `tool_input`, `tool_name`, `tool_use_id`, `transcript_path`; `tool_input` keys: `command`, `description`. `updatedInput` carrying every original key worked.
 - Claude Code created an empty `.claude/.cc-writes/` directory in the working directory (items 3 and 4, not the deciders). git ignores empty directories, so `git status` stays clean.
@@ -2129,7 +2159,7 @@ Until then Codex deciders take the conservative caps: `codex_output_schema = fal
 - **The MCP call was allowed** under `dontAsk` with unscoped `Bash` allowed: the model loaded it through `ToolSearch` and the stub recorded `submit_scout_report` with its arguments. So M8b.9's launch is not stopped on that account.
 - **A second run with the checkout root itself added to `denyWrite`** (`claude-2.1.280-scout-deny-cwd.jsonl`): `touch x` was denied, `ls`, `git log -1` and the MCP call still worked, the absolute-`TMPDIR` write and `curl` were still denied. `/tmp/claude-<uid>` stayed writable.
 
-So the "empty-root `ClaudeSandbox`" M8a gives reviewers (F1c N4) and decision 12 gives scouts is **not read-only for Bash**: the working directory stays writable. A reviewer is covered by `dontAsk` and its scoped `Bash(git …)` allow rules (M8a.1 recorded `touch reviewer.txt` denied by mode), but a scout allows unscoped `Bash`, so the sandbox is its only barrier. Per AGENTS.md this is recorded, not worked around: M8b.9 needs a ruling before it launches scouts. The probe shows one fix that works: add the checkout root to the scout's `denyWrite` (Claude Code's own `/tmp/claude-<uid>` stays writable either way; the scout's checkout is disposable and removed after salvage, decision 8).
+So the "empty-root `ClaudeSandbox`" M8a gives reviewers (F1c N4) and decision 12 gives scouts is **not read-only for Bash**: the working directory stays writable. A reviewer is covered by `dontAsk` and its scoped `Bash(git …)` allow rules (M8a.1 recorded `touch reviewer.txt` denied by mode), but a scout allows unscoped `Bash`, so the sandbox is its only barrier. Per AGENTS.md this was recorded, not worked around; the controller's ruling R-T1-1 takes the fix the probe shows works: add the checkout root to the scout's `denyWrite` (Claude Code's own `/tmp/claude-<uid>` stays writable either way; the scout's checkout is disposable and removed after salvage, decision 8).
 
 **Item 5, OTLP: run.** `claude -p --no-session-persistence --model claude-haiku-4-5 "reply ok"` with the brief's six variables, against a listener in the probe's own process that wrote each request's headers and body and answered `200 {}`.
 - **Two requests**, both `POST /v1/metrics`, `Content-Type: application/json`, a **`Content-Length`** body (1 601 and 6 798 bytes; not chunked), **no `Content-Encoding`** (no compression by default), `User-Agent: OTel-OTLP-Exporter-JavaScript/0.208.0`, `Connection: keep-alive`. The first carried only `claude_code.session.count`; the second `claude_code.cost.usage`, `claude_code.token.usage` and `claude_code.active_time.total`.
@@ -2150,9 +2180,24 @@ So the "empty-root `ClaudeSandbox`" M8a gives reviewers (F1c N4) and decision 12
 | `claude_no_session_persistence` | `true` | item 1: accepted |
 | `answer_source` | `AnswerSource::ResultField` | item 1: `result.structured_output` (also a top-level `StructuredOutput` tool use and `result.result` text) |
 | `strict_schemas` | `false` | item 1: a schema without every property in `required` was accepted; `anyOf`/nullable types too |
-| `codex_output_schema` | `false` | item 2 not run (ruling): the flag exists, but its behaviour is unverified, so Codex deciders use the prompt alone |
+| `codex_output_schema` | `true` | item 2: the flag exists in `codex exec --help` (controller ruling); runtime behaviour unverified, outstanding |
 | `codex_ephemeral` | `true` | item 2: the flag exists in `codex exec --help` |
 
 `output_filter::HOOK_SETS_ALLOW` (M8b.8) is **`false`** (item 3).
 
-**OUTSTANDING, for the user:** item 2 (the Codex call, the command above). **Needs a ruling:** item 4's writable working directory before M8b.9 launches scouts (the probe-backed fix: the checkout root in the scout's `denyWrite`); item 3's `tool_use` command for M8b.6's `bash` step; and, optionally, `--tools ""` for deciders (item 1).
+**Deviations from the task text** (all in the meta files' `command`):
+- Items 3 and 4 added `--effort low` (M8a's headless sessions pass `--effort` when `claude_effort_flag`; the cheapest setting).
+- The recording group in items 3 and 4 was `sh -c '{ cat; echo; } >> <file>'`, M8a.1's recording command, not M3's `anthrex hook --window <n> --source claude` (no daemon ran). It sits in the same place (the first `PreToolUse` group, matcher `""`) and fires for the same events.
+- Item 4's standalone checkout was `git clone --shared` (objects by alternate, like M8a's `prepare_scratch_in`), and its MCP server a stub that records `tools/call`, not `anthrex mcp`.
+- Item 5's listener ran inside the probe's own Python process, so no background process existed to stop.
+- Item 1 added two calls beyond the task (`--tools ""` and `--restricted`), at the controller's request.
+
+**OUTSTANDING, for the user:** item 2 (the Codex call and the runtime behaviour of `--output-schema` and `--ephemeral`, the command above).
+
+**Rulings on these findings** (the controller's R-T1-1 to R-T1-6, restated):
+- R-T1-1 (M8b.9): a scout's Claude sandbox adds the checkout root, and every repository path it can see, to `denyWrite`, and a test asserts it. Reviewers are unchanged.
+- R-T1-2: Claude's Bash sets `TMPDIR=/tmp/claude-<uid>`, shared by every sandboxed Claude session: a follow-up, not fixed in M8b.
+- R-T1-3 (M8b.6): `fake-agent`'s `bash` step matches the real stream: `tool_use` shows the original command, `tool_result` the rewritten run.
+- R-T1-4 (M8b.7): the fenced JSON in assistant or result text is parsed even when the turn limit is hit.
+- R-T1-5 (M8b.15): the OTLP receiver never logs request bodies.
+- R-T1-6 (M8b.5): Claude deciders pass `--tools ""`, keeping `--setting-sources user`.
