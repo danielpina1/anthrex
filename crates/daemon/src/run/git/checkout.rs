@@ -27,7 +27,7 @@
 use std::path::{Path, PathBuf};
 
 use super::merge_state::put;
-use super::sandbox::engine_child;
+use super::sandbox::{engine_child, put_beneath};
 use super::{Git, os};
 use crate::worktree::pinned::{self, PinAs};
 
@@ -154,9 +154,12 @@ pub(crate) fn ensure(
     let git_dir = engine_child(&repo.git_dir())?;
     let objects = engine_child(&repo.objects())?;
     let engine = engine_child(&repo.engine())?;
+    // F1c round 3 (N2): `objects/` is writable by the worker and by confined commands,
+    // so its subdirectories are made and checked like `objects` itself: a link planted
+    // at `objects/info` is refused, never written through.
+    engine_child(&objects.join("info"))?;
+    engine_child(&objects.join("pack"))?;
     for dir in [
-        objects.join("info"),
-        objects.join("pack"),
         git_dir.join("refs/heads"),
         git_dir.join("refs/tags"),
         git_dir.join("info"),
@@ -171,7 +174,12 @@ pub(crate) fn ensure(
     let sha256 = at.len() == 64;
     put(&git_dir, "config", config(common, &path, sha256).as_bytes())?;
     let alternates = format!("{}\n", common.join("objects").display());
-    put(&objects.join("info"), "alternates", alternates.as_bytes())?;
+    put_beneath(
+        &git_dir,
+        &["objects", "info"],
+        "alternates",
+        alternates.as_bytes(),
+    )?;
     if let Ok(exclude) = std::fs::read(common.join("info/exclude")) {
         put(&git_dir.join("info"), "exclude", &exclude)?;
     }
@@ -206,12 +214,15 @@ pub(crate) fn ensure(
         return Ok(false);
     }
     let head = if is_task {
-        match super::import::sync_in(g, &path) {
-            Ok(head) => head,
-            Err(_) => {
-                // A `HEAD` that cannot be imported (not a commit, or not the worker's)
-                // starts again from `at`; the worker's sandbox let it write no ref, so
-                // nothing reachable is lost.
+        // F1c round 3 (N6): only a `HEAD` that names no commit (a symbolic ref, a
+        // link, garbage) starts again from `at`; the worker's sandbox let it write no
+        // ref, so nothing reachable is lost. Any other failure (an import that timed
+        // out, a git that did not start) is returned, and the op is retried with the
+        // worker's commits still in place.
+        let pin = super::import::task_pin(&path)?;
+        match super::import::head_file(&pin)? {
+            super::import::HeadFile::Commit(_) => super::import::sync_in(g, &path)?,
+            super::import::HeadFile::Symbolic(_) | super::import::HeadFile::Other(_) => {
                 put(&git_dir, "HEAD", format!("{at}\n").as_bytes())?;
                 at.to_string()
             }

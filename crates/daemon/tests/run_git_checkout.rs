@@ -88,3 +88,78 @@ fn a_checkout_interrupted_before_its_files_is_finished_by_the_next_attempt() {
             .success()
     );
 }
+
+/// F1c round 3 (N2): `objects/` is writable by the worker and by confined commands. A
+/// link planted at `objects/info` must not make the engine write `alternates` into
+/// the directory it names; the next prepare refuses and the other directory is
+/// untouched.
+#[test]
+fn a_link_at_objects_info_is_refused_and_nothing_is_written_through_it() {
+    let repo = repo();
+    let base = commit_file(&repo.root, "f.txt", "base\n", "base");
+    let (_wt, wt) = wt_dir();
+    let data = tempfile::tempdir().unwrap();
+    let path = wt.join("runs/ck02/t1");
+    let dir = data.path().join("tasks/t1");
+    let prepare = || {
+        prepare_task_worktree(
+            real_git(),
+            &repo.root,
+            "anthrex/ck02/t1",
+            &base,
+            &path,
+            &dir,
+            T,
+        )
+    };
+    prepare().unwrap();
+    let victim = tempfile::tempdir().unwrap();
+    std::fs::write(victim.path().join("alternates"), "VICTIM\n").unwrap();
+    let info = Repo::at(&dir).objects().join("info");
+    std::fs::remove_dir_all(&info).unwrap();
+    std::os::unix::fs::symlink(victim.path(), &info).unwrap();
+
+    let err = prepare().unwrap_err();
+    assert!(err.contains("tampered"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(victim.path().join("alternates")).unwrap(),
+        "VICTIM\n",
+        "the engine wrote through the link"
+    );
+    let names: Vec<_> = std::fs::read_dir(victim.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names.len(), 1, "{names:?}");
+}
+
+/// F1c round 3 (N6): an import that fails for a passing reason (here `index-pack`
+/// fails) while a checkout is re-made keeps the worker's `HEAD`; the next attempt
+/// imports its commit instead of starting again from the branch tip.
+#[test]
+fn a_failed_import_while_re_making_a_checkout_keeps_the_workers_head() {
+    let repo = repo();
+    let base = commit_file(&repo.root, "f.txt", "base\n", "base");
+    let (_wt, wt) = wt_dir();
+    let data = tempfile::tempdir().unwrap();
+    let path = wt.join("runs/ck03/t1");
+    let dir = data.path().join("tasks/t1");
+    let prepare = |git: &std::ffi::OsStr| {
+        prepare_task_worktree(git, &repo.root, "anthrex/ck03/t1", &base, &path, &dir, T)
+    };
+    prepare(real_git()).unwrap();
+    let work = commit_file(&path, "w.txt", "w\n", "work");
+    std::fs::remove_dir_all(&path).unwrap();
+
+    let tools = tempfile::tempdir().unwrap();
+    let failing = wrapper_git(
+        tools.path(),
+        r#"case " $* " in *" index-pack "*) exit 99;; esac"#,
+    );
+    assert!(prepare(failing.as_os_str()).is_err());
+    let head = std::fs::read_to_string(Repo::at(&dir).git_dir().join("HEAD")).unwrap();
+    assert_eq!(head.trim(), work, "the worker's HEAD was reset");
+
+    assert_eq!(prepare(real_git()).unwrap(), work);
+    assert_eq!(out(&repo.root, &["rev-parse", "anthrex/ck03/t1"]), work);
+}

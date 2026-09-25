@@ -155,3 +155,89 @@ pub(crate) fn engine_child(path: &Path) -> Result<PathBuf, String> {
     }
     Ok(dir)
 }
+
+/// F1c round 3 (N2): writes `content` as `base/<dirs…>/<name>` without following a link
+/// at any of `dirs` (which a worker or a confined command may control; `base` is the
+/// engine's own). Each directory is opened `O_DIRECTORY | O_NOFOLLOW` relative to the
+/// last, the file is written to an exclusive temporary name in the final one and
+/// renamed over `name` there, so a link swapped in at any step makes the write fail
+/// rather than land elsewhere.
+pub(crate) fn put_beneath(
+    base: &Path,
+    dirs: &[&str],
+    name: &str,
+    content: &[u8],
+) -> Result<(), String> {
+    use std::ffi::CString;
+    use std::io::Write as _;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let shown = dirs
+        .iter()
+        .fold(base.to_path_buf(), |p, d| p.join(d))
+        .join(name);
+    let failed = |what: &str| {
+        format!(
+            "cannot write {} ({what}: {}); it was tampered with or is unwritable",
+            shown.display(),
+            std::io::Error::last_os_error()
+        )
+    };
+    let c = |s: &[u8]| CString::new(s).map_err(|_| format!("{} holds a NUL", shown.display()));
+    let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    let base_c = c(base.as_os_str().as_bytes())?;
+    // SAFETY: a valid NUL-terminated path; the result is checked.
+    let fd = unsafe { libc::open(base_c.as_ptr(), flags) };
+    if fd < 0 {
+        return Err(failed("open"));
+    }
+    // SAFETY: `fd` is a descriptor this function just opened and owns.
+    let mut dir = unsafe { OwnedFd::from_raw_fd(fd) };
+    for d in dirs {
+        let d_c = c(d.as_bytes())?;
+        // SAFETY: as above, relative to an owned directory descriptor.
+        let fd = unsafe { libc::openat(dir.as_raw_fd(), d_c.as_ptr(), flags) };
+        if fd < 0 {
+            return Err(failed(d));
+        }
+        // SAFETY: as above.
+        dir = unsafe { OwnedFd::from_raw_fd(fd) };
+    }
+    let temp = format!("anthrex-{name}.tmp");
+    let temp_c = c(temp.as_bytes())?;
+    let name_c = c(name.as_bytes())?;
+    // SAFETY: unlinking a name inside an owned directory descriptor.
+    unsafe { libc::unlinkat(dir.as_raw_fd(), temp_c.as_ptr(), 0) };
+    let fflags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    // SAFETY: as above; mode 0644.
+    let fd = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            temp_c.as_ptr(),
+            fflags,
+            0o644 as libc::c_uint,
+        )
+    };
+    if fd < 0 {
+        return Err(failed("create"));
+    }
+    // SAFETY: an owned, freshly created file descriptor.
+    let mut file = std::fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) });
+    file.write_all(content)
+        .map_err(|err| format!("cannot write {}: {err}", shown.display()))?;
+    drop(file);
+    // SAFETY: both names are inside the same owned directory descriptor.
+    let renamed = unsafe {
+        libc::renameat(
+            dir.as_raw_fd(),
+            temp_c.as_ptr(),
+            dir.as_raw_fd(),
+            name_c.as_ptr(),
+        )
+    };
+    if renamed != 0 {
+        return Err(failed("rename"));
+    }
+    Ok(())
+}
