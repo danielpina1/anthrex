@@ -2,7 +2,8 @@
 //! `CLAUDE_CODE_*` variables and `CLAUDECODE`, has `ANTHREX_WINDOW_ID` and
 //! `ANTHREX_SOCKET` set to its own window and socket, and gets the profile's `env`.
 //! Since final fix batch F2 a login session also loses `ANTHROPIC_API_KEY` and
-//! `ANTHROPIC_AUTH_TOKEN`.
+//! `ANTHROPIC_AUTH_TOKEN`; since its round 2, every session loses the OpenAI and Codex
+//! env credentials and the inherited shell start-up variables.
 //!
 //! Alone in its own test binary, because it sets variables in this process's
 //! environment, and in edition 2024 that races any process spawn on another libtest
@@ -29,6 +30,14 @@ fn the_environment_is_scrubbed() {
         // daemon inherited, so `claude -p` cannot prefer it over the user's login.
         std::env::set_var("ANTHROPIC_API_KEY", "sk-inherited");
         std::env::set_var("ANTHROPIC_AUTH_TOKEN", "tok-inherited");
+        // F2 round 2 (N2): nor Codex's own env credentials; (N1) nor the inherited
+        // shell start-up inlets.
+        std::env::set_var("OPENAI_API_KEY", "sk-openai-inherited");
+        std::env::set_var("CODEX_API_KEY", "sk-codex-inherited");
+        std::env::set_var("CODEX_ACCESS_TOKEN", "tok-codex-inherited");
+        std::env::set_var("BASH_ENV", "/nonexistent/env.sh");
+        std::env::set_var("SHELLOPTS", "xtrace");
+        std::env::set_var("BASH_FUNC_anthrexprobe%%", "() { true; }");
     }
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -100,6 +109,7 @@ fn the_environment_is_scrubbed() {
                     || l.starts_with("ANTHROPIC_AUTH_TOKEN=")),
             "{env}"
         );
+        assert_no_inherited_inlets(&env);
         assert!(
             lines.contains(&format!("ANTHREX_WINDOW_ID={}", info.id).as_str()),
             "{env}"
@@ -128,6 +138,7 @@ fn the_environment_is_scrubbed() {
                 || l.starts_with("ANTHROPIC_API_KEY=")),
             "{env}"
         );
+        assert_no_inherited_inlets(&env);
         assert!(
             env.lines()
                 .any(|l| l == format!("CARGO_TARGET_DIR={}/target", worktree.display())),
@@ -135,4 +146,19 @@ fn the_environment_is_scrubbed() {
         );
         m.remove(info.id).unwrap();
     });
+}
+
+/// F2 round 2 (N1, N2): no inherited OpenAI or Codex credential, and no inherited
+/// shell start-up inlet, in a session's `env` dump.
+fn assert_no_inherited_inlets(env: &str) {
+    for name in [
+        "OPENAI_API_KEY=",
+        "CODEX_API_KEY=",
+        "CODEX_ACCESS_TOKEN=",
+        "BASH_ENV=",
+        "SHELLOPTS=",
+        "BASH_FUNC_anthrexprobe%%=",
+    ] {
+        assert!(!env.lines().any(|l| l.starts_with(name)), "{name} in {env}");
+    }
 }

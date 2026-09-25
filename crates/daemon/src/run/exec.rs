@@ -135,7 +135,12 @@ fn engine_env(command: &mut Command, env: &[(String, String)], confined: bool) {
             command.env_remove(&key);
         }
     }
-    for name in SCRUBBED_NAMES {
+    // F2 round 2 (N2): checks, proofs and setup run worker-written code, and none
+    // authenticates to a model provider.
+    let credentials = config::reserved_env::API_CREDENTIALS
+        .iter()
+        .chain(config::reserved_env::OPENAI_CREDENTIALS);
+    for name in SCRUBBED_NAMES.iter().chain(credentials) {
         command.env_remove(name);
     }
     command.env_remove("ANTHREX_WINDOW_ID");

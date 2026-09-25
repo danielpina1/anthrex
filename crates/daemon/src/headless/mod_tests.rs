@@ -131,8 +131,8 @@ fn a_headless_spec_round_trips_through_json() {
     assert_eq!(serde_json::from_value::<HeadlessSpec>(json).unwrap(), spec);
 }
 
-/// Final fix batch F2 (review C, M2): only a Claude `api_key` session keeps the
-/// inherited API credentials.
+/// Final fix batch F2 (review C, M2; round 2, N2): only a Claude `api_key` session keeps
+/// the inherited Anthropic credentials, and no session keeps OpenAI's or Codex's.
 #[test]
 fn only_a_claude_api_key_session_keeps_the_api_credentials() {
     let base = HeadlessSpec {
@@ -162,9 +162,16 @@ fn only_a_claude_api_key_session_keeps_the_api_credentials() {
         };
         credential_scrub(&spec).to_vec()
     };
-    let all = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
+    let openai = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"];
+    let all = [
+        "OPENAI_API_KEY",
+        "CODEX_API_KEY",
+        "CODEX_ACCESS_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+    ];
     assert_eq!(scrub(Runtime::Claude, config::ClaudeAuth::Login), all);
-    assert_eq!(scrub(Runtime::Claude, config::ClaudeAuth::ApiKey), [""; 0]);
+    assert_eq!(scrub(Runtime::Claude, config::ClaudeAuth::ApiKey), openai);
     assert_eq!(scrub(Runtime::Codex, config::ClaudeAuth::Login), all);
     assert_eq!(scrub(Runtime::Codex, config::ClaudeAuth::ApiKey), all);
 }

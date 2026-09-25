@@ -20,6 +20,15 @@ fn engine_commands_get_the_profile_env_and_lose_agent_variables() {
         std::env::set_var("CLAUDECODE", "1");
         std::env::set_var("ANTHREX_WINDOW_ID", "9");
         std::env::set_var("ANTHREX_M8A10_KEPT", "kept");
+        // Final fix batch F2 round 2 (N2): checks, proofs and setup lose every inherited
+        // API credential; (N1) and the shell start-up inlets.
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-inherited");
+        std::env::set_var("ANTHROPIC_AUTH_TOKEN", "tok-inherited");
+        std::env::set_var("OPENAI_API_KEY", "sk-openai-inherited");
+        std::env::set_var("CODEX_API_KEY", "sk-codex-inherited");
+        std::env::set_var("CODEX_ACCESS_TOKEN", "tok-codex-inherited");
+        std::env::set_var("BASH_ENV", "/nonexistent/env.sh");
+        std::env::set_var("SHELLOPTS", "braceexpand");
     }
     let dir = tempfile::tempdir().unwrap();
     let worktree = dir.path().canonicalize().unwrap();
@@ -62,6 +71,39 @@ fn engine_commands_get_the_profile_env_and_lose_agent_variables() {
             !line.starts_with("ANTHREX_WINDOW_ID="),
             "an engine command belongs to no window: {line}"
         );
+    }
+    // Every engine-command entry point (a check or `setup` through `run_shell` or
+    // `confine::confined`, a confined one through `run_confined`; proofs share their
+    // spawn): no inherited credential or start-up inlet.
+    let probe = "env | grep -E '^(ANTHROPIC|OPENAI|CODEX|BASH_ENV|SHELLOPTS)' ; true";
+    let t = Duration::from_secs(60);
+    let denied = [
+        "ANTHROPIC_API_KEY=",
+        "ANTHROPIC_AUTH_TOKEN=",
+        "OPENAI_API_KEY=",
+        "CODEX_API_KEY=",
+        "CODEX_ACCESS_TOKEN=",
+        "BASH_ENV=",
+        "SHELLOPTS=",
+    ];
+    for (entry, outcome) in [
+        ("run_shell", run_shell(&worktree, probe, &env, t)),
+        (
+            "run_confined",
+            daemon::run::exec::run_confined(&worktree, probe, &env, t, None),
+        ),
+        (
+            "confined",
+            daemon::run::confine::confined(&worktree, probe, &env, t, None),
+        ),
+    ] {
+        assert!(outcome.ok, "{entry}: {outcome:?}");
+        for line in outcome.tail.lines() {
+            assert!(
+                !denied.iter().any(|name| line.starts_with(name)),
+                "{entry}: an inherited credential or inlet reached an engine command: {line}"
+            );
+        }
     }
     let target = format!("CARGO_TARGET_DIR={}/target", worktree.display());
     assert!(lines.contains(&target.as_str()), "{lines:?}");

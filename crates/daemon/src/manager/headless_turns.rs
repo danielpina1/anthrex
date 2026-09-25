@@ -185,7 +185,7 @@ impl WindowManager {
                 &args,
                 &cwd,
                 &env,
-                remove,
+                &remove,
                 move |pid, event| {
                     if let Some(manager) = weak.upgrade() {
                         manager.apply_session_event(id, pid, &event);

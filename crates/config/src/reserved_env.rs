@@ -21,10 +21,22 @@ pub const GIT_LOCATION_VARS: [&str; 5] = [
 ];
 
 /// Decision 26: inherited variables removed from every headless session and every
-/// engine command, by prefix ...
-pub const SCRUBBED_PREFIXES: &[&str] = &["CLAUDE_CODE_"];
-/// ... and by name.
-pub const SCRUBBED_NAMES: &[&str] = &["CLAUDECODE"];
+/// engine command, by prefix ... Since F2 round 2 (N1) also exported shell functions
+/// (`BASH_FUNC_<name>%%`), which bash imports at start-up.
+pub const SCRUBBED_PREFIXES: &[&str] = &["CLAUDE_CODE_", "BASH_FUNC_"];
+/// ... and by name. Since F2 round 2 (N1) also the shell start-up inlets that exist
+/// only to run or reshape code at a shell's start (a user's own `ZDOTDIR`, `SHELL` or
+/// `PYTHONPATH` is kept: it is their own setting, and only a profile may not set it).
+pub const SCRUBBED_NAMES: &[&str] = &[
+    "CLAUDECODE",
+    "BASH_ENV",
+    "ENV",
+    "SHELLOPTS",
+    "BASHOPTS",
+    "PS4",
+    "IFS",
+    "CDPATH",
+];
 
 /// Set on every session by the launch itself, after the profile's `env`: its own
 /// window id and socket (decision 26). Inherited values are scrubbed first.
@@ -34,14 +46,29 @@ pub const SESSION_IDENTITY: &[&str] = &["ANTHREX_WINDOW_ID", "ANTHREX_SOCKET"];
 /// temporary directory (final fix batch F1d, R5).
 pub const TASK_TMPDIR: &str = "TMPDIR";
 
-/// API credentials removed from every session that does not authenticate with them
-/// (final fix batch F2, review C minor M2): with `auth = "login"`, `claude -p` would
-/// otherwise prefer a key the daemon happened to inherit over the user's login.
+/// Anthropic API credentials, removed from every session that does not authenticate
+/// with them (final fix batch F2, review C minor M2): with `auth = "login"`, `claude -p`
+/// would otherwise prefer a key the daemon happened to inherit over the user's login.
 pub const API_CREDENTIALS: &[&str] = &["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
+
+/// OpenAI and Codex env credentials (F2 round 2, N2). anthrex has no Codex auth setting:
+/// its Codex sessions use the user's own `codex login` (`~/.codex/auth.json`), so every
+/// session loses these, and a Codex session never bills an inherited key.
+pub const OPENAI_CREDENTIALS: &[&str] = &["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"];
 
 /// Reserved families, matched on the upper-cased name, with the reason a profile may
 /// not set them.
+/// Why a start-up inlet is reserved.
+const START_UP: &str =
+    "a shell, an interpreter or the agent reads it at start-up, outside the sandbox";
+
 const RESERVED_PREFIXES: &[(&str, &str)] = &[
+    ("BASH_FUNC_", START_UP),
+    ("PYTHON", START_UP),
+    ("PERL5", START_UP),
+    ("RUBY", START_UP),
+    ("NPM_CONFIG_", START_UP),
+    ("XDG_", "it chooses which user settings and state load"),
     (
         "CLAUDE",
         "it chooses which Claude Code settings, session or credentials load",
@@ -72,6 +99,28 @@ const RESERVED_PREFIXES: &[(&str, &str)] = &[
 
 /// Reserved names, matched on the upper-cased name, with the reason.
 const RESERVED_NAMES: &[(&str, &str)] = &[
+    // F2 round 2 (N1): shell and interpreter start-up inlets. Claude Code 2.1.280 lists
+    // the same names as unsandboxed-exec inlets; that list is the floor.
+    ("BASH_ENV", START_UP),
+    ("ENV", START_UP),
+    ("ZDOTDIR", START_UP),
+    ("SHELL", START_UP),
+    ("SHELLOPTS", START_UP),
+    ("BASHOPTS", START_UP),
+    ("PS4", START_UP),
+    ("IFS", START_UP),
+    ("CDPATH", START_UP),
+    ("BUN_OPTIONS", START_UP),
+    ("NODE_PATH", START_UP),
+    ("JAVA_TOOL_OPTIONS", START_UP),
+    ("_JAVA_OPTIONS", START_UP),
+    ("EDITOR", START_UP),
+    ("VISUAL", START_UP),
+    ("PAGER", START_UP),
+    ("LESSOPEN", START_UP),
+    ("LESSCLOSE", START_UP),
+    ("SSH_ASKPASS", START_UP),
+    ("SUDO_ASKPASS", START_UP),
     ("HOME", "it chooses which user settings load"),
     ("XDG_CONFIG_HOME", "it chooses which user settings load"),
     ("PATH", "it chooses which program runs as the agent"),
@@ -138,7 +187,8 @@ mod tests {
             .chain(SCRUBBED_NAMES)
             .chain(SESSION_IDENTITY)
             .chain(&[TASK_TMPDIR])
-            .chain(API_CREDENTIALS);
+            .chain(API_CREDENTIALS)
+            .chain(OPENAI_CREDENTIALS);
         for name in names {
             assert!(reserved_env(name).is_some(), "{name} is not reserved");
         }
@@ -165,6 +215,37 @@ mod tests {
             "HOME",
             "https_proxy",
             "Tmpdir",
+            // F2 round 2 (N1): shell and interpreter start-up inlets, which the agent
+            // CLIs' own shells and start-up commands read outside the sandbox.
+            "BASH_ENV",
+            "ENV",
+            "ZDOTDIR",
+            "SHELL",
+            "SHELLOPTS",
+            "BASHOPTS",
+            "PS4",
+            "IFS",
+            "CDPATH",
+            "BASH_FUNC_x%%",
+            "BUN_OPTIONS",
+            "NODE_PATH",
+            "PYTHONSTARTUP",
+            "PYTHONPATH",
+            "PYTHONHOME",
+            "RUBYOPT",
+            "RUBYLIB",
+            "PERL5OPT",
+            "PERL5LIB",
+            "XDG_DATA_HOME",
+            "XDG_STATE_HOME",
+            "EDITOR",
+            "VISUAL",
+            "PAGER",
+            "LESSOPEN",
+            "GIT_EDITOR",
+            "JAVA_TOOL_OPTIONS",
+            "npm_config_script_shell",
+            "SSH_ASKPASS",
         ] {
             assert!(reserved_env(key).is_some(), "{key} is not reserved");
         }

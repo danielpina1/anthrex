@@ -18,7 +18,7 @@ fn reserved_env_keys_are_refused() {
         "CLAUDE_CONFIG_DIR = \"{worktree}/.cfg\"\nCODEX_HOME = \"{worktree}/.codex\"\n\
          GIT_INDEX_FILE = \"x\"\nCLAUDE_CODE_ENTRYPOINT = \"x\"\nANTHREX_SOCKET = \"x\"\n\
          TMPDIR = \"x\"\nPATH = \"{worktree}/bin\"\nANTHROPIC_BASE_URL = \"x\"\n\
-         CARGO_TARGET_DIR = \"{worktree}/target\"\n",
+         BASH_ENV = \"{worktree}/env.sh\"\nCARGO_TARGET_DIR = \"{worktree}/target\"\n",
     );
     let refused: Vec<String> = errors_of(&text)
         .into_iter()
@@ -35,6 +35,7 @@ fn reserved_env_keys_are_refused() {
         [
             "ANTHREX_SOCKET",
             "ANTHROPIC_BASE_URL",
+            "BASH_ENV",
             "CLAUDE_CODE_ENTRYPOINT",
             "CLAUDE_CONFIG_DIR",
             "CODEX_HOME",

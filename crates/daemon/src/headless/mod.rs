@@ -204,17 +204,19 @@ pub(crate) fn bounded_text(text: &str) -> String {
     )
 }
 
-/// Final fix batch F2 (review C, M2): the inherited API credentials a session's process
-/// must not see. Every session loses them except a Claude session with `auth =
-/// "api_key"`, which authenticates with them (decision 50); `claude -p` would otherwise
-/// prefer a key the daemon inherited over the user's login, and a Codex session never
-/// uses Anthropic's.
-pub fn credential_scrub(spec: &HeadlessSpec) -> &'static [&'static str] {
-    if spec.runtime == Runtime::Claude && spec.claude_auth == config::ClaudeAuth::ApiKey {
-        &[]
-    } else {
-        config::reserved_env::API_CREDENTIALS
+/// Final fix batch F2 (review C, M2; round 2, N2): the inherited API credentials a
+/// session's process must not see. Every session loses the OpenAI and Codex ones
+/// (anthrex's Codex sessions use the user's `codex login`), and the Anthropic ones
+/// unless it is a Claude session with `auth = "api_key"`, which authenticates with them
+/// (decision 50); `claude -p` would otherwise prefer a key the daemon inherited over the
+/// user's login.
+pub fn credential_scrub(spec: &HeadlessSpec) -> Vec<&'static str> {
+    use config::reserved_env::{API_CREDENTIALS, OPENAI_CREDENTIALS};
+    let mut names = OPENAI_CREDENTIALS.to_vec();
+    if !(spec.runtime == Runtime::Claude && spec.claude_auth == config::ClaudeAuth::ApiKey) {
+        names.extend(API_CREDENTIALS);
     }
+    names
 }
 
 /// `config::ClaudeAuth` has no serde derive (the config crate does not depend on serde),
