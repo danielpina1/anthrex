@@ -100,13 +100,24 @@ fn normalize_line(line: &str) -> String {
 /// their first line with safe static text, so normalizing it is a no-op there; a
 /// review summary has no such prefix, so normalizing its first line is what fixes
 /// NB1 (round 2's `continuation_indent` only touched *continuation* lines).
+///
+/// T16-P1 (F4): a blank line ends the paragraph, and a 4-space line after it would be
+/// an indented code block; so the line after a blank one starts a new paragraph at
+/// column 0 (normalized, so it opens no block), and a run of blank lines is one.
 pub(super) fn plain_text_line(s: &str) -> String {
     let s = normalize_line_endings(s);
     let mut lines = s.lines();
     let mut out = normalize_line(lines.next().unwrap_or(""));
+    let mut after_blank = false;
     for line in lines {
-        out.push_str("\n    ");
-        out.push_str(&normalize_line(line));
+        let line = normalize_line(line);
+        if line.is_empty() {
+            after_blank = true;
+            continue;
+        }
+        out.push_str(if after_blank { "\n\n" } else { "\n    " });
+        after_blank = false;
+        out.push_str(&line);
     }
     out
 }
@@ -189,6 +200,16 @@ mod tests {
             plain_text_line("first\n# looks like a heading\nthird"),
             "first\n    \\# looks like a heading\n    third"
         );
+    }
+
+    /// T16-P1 (F4): a blank line ends the paragraph, so the next line is not indented
+    /// (4 spaces there would open an indented code block); it starts a new paragraph,
+    /// normalized like every line. Runs of blank lines count as one.
+    #[test]
+    fn plain_text_line_starts_a_paragraph_after_a_blank_line() {
+        assert_eq!(plain_text_line("a\n\nb\nc"), "a\n\nb\n    c");
+        assert_eq!(plain_text_line("a\n \n\n\t# h\nc"), "a\n\n\\# h\n    c");
+        assert_eq!(plain_text_line("a\n\n"), "a");
     }
 
     #[test]
