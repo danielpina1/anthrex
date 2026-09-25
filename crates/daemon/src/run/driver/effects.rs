@@ -269,8 +269,11 @@ impl RunService {
     /// M8a.25 fix round 1 (review finding 1): even when the round's recorded pid is the
     /// window's last process. That process's own exit may have reached the engine
     /// before its round had the window, and been dropped, so waiting for it could wait
-    /// for ever. If it is still on its way, it comes second, to a round already ended,
-    /// which ignores it.
+    /// for ever. If it is still on its way, it comes second: to a round already ended,
+    /// which ignores it, or to one a hand-back has resumed since, which drops it as a
+    /// repeat of the exit it took (`AgentRound.exited_pid`, final review B-10). A
+    /// synthetic exit carries pid 0 when the round never recorded one; the real exit of
+    /// that unrecorded process is then not recognised (recorded in the followups).
     fn kill_effect(&self, window_id: u32) {
         self.kill_window(window_id);
         if self.manager.child_pid(window_id).ok().flatten().is_some() {

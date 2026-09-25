@@ -426,6 +426,7 @@ fn open_round() -> AgentRound {
         interrupted: false,
         relaunch: None,
         closed_pid: None,
+        exited_pid: None,
     }
 }
 

@@ -32,7 +32,12 @@ pub(super) fn queue(fx: &mut Fixture, text: &str) {
     crate::run::engine::outbox::queue(fx.run_mut(), "t1", text.to_string(), now);
 }
 
+/// The exit of the window's process, pid 7. Every process the helpers end has started
+/// first (the ordering contract, `AgentSignal`'s doc), so a later one of the same
+/// window is a new process, not a repeat of the last exit (final review B-10 drops a
+/// repeat): the helpers reuse pid 7 for each.
 pub(super) fn exited(fx: &mut Fixture, window: u32) -> Vec<Effect> {
+    fx.signal(window, AgentSignal::ProcessStarted { pid: 7 });
     fx.signal(
         window,
         AgentSignal::ProcessExited {
@@ -44,6 +49,7 @@ pub(super) fn exited(fx: &mut Fixture, window: u32) -> Vec<Effect> {
 }
 
 pub(super) fn killed_exit(fx: &mut Fixture, window: u32) -> Vec<Effect> {
+    fx.signal(window, AgentSignal::ProcessStarted { pid: 7 });
     fx.signal(
         window,
         AgentSignal::ProcessExited {

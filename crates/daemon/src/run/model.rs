@@ -263,6 +263,11 @@ pub struct AgentRound {
     /// The process a turn last ended in (ruling T13-P1): its later exit is normal.
     #[serde(default)]
     pub closed_pid: Option<u32>,
+    /// The process whose exit the round last took (final review B-10): its exit again
+    /// (the engine's synthetic copy and the real one) is dropped until the next
+    /// process starts.
+    #[serde(default)]
+    pub exited_pid: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

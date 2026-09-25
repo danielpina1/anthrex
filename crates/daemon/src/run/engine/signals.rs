@@ -65,6 +65,14 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
     match signal {
         AgentSignal::ProcessStarted { pid } => {
             round.pid = Some(pid);
+            round.exited_pid = None;
+            return;
+        }
+        // Final review B-10 (T25-N1, both orders): the second copy of an exit the round
+        // took already, reaching a round resumed since with no process yet.
+        AgentSignal::ProcessExited { pid, .. }
+            if round.pid.is_none() && round.exited_pid == Some(pid) =>
+        {
             return;
         }
         // Ruling T13-R2: the exit of another process than the round's (a late exit of
@@ -88,8 +96,10 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
             return;
         }
         AgentSignal::ProcessExited {
-            killed_by_engine, ..
-        } => return exited(run, i, r, killed_by_engine, now, fx),
+            killed_by_engine,
+            pid,
+            ..
+        } => return exited(run, i, r, (pid, killed_by_engine), now, fx),
         _ if round.retiring => return,
         _ => {}
     }
@@ -353,7 +363,15 @@ fn failed_turn(
 /// round is marked ended, and the next delivery resumes it. Any other task's worker
 /// session is marked ended too, so a held task is never resumed here (M8a.6 ruling
 /// N5): only a delivery resumes it, once it takes messages again.
-fn exited(run: &mut Run, i: usize, r: usize, killed: bool, now: u64, fx: &mut Vec<Effect>) {
+/// `(pid, killed)`: the exited process and whether the engine killed it.
+fn exited(
+    run: &mut Run,
+    i: usize,
+    r: usize,
+    (pid, killed): (u32, bool),
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
     let working = run.tasks[i].state == TaskState::Working;
     let round = &mut run.tasks[i].rounds[r];
     let worker = round.role == AgentRole::Worker;
@@ -365,6 +383,7 @@ fn exited(run: &mut Run, i: usize, r: usize, killed: bool, now: u64, fx: &mut Ve
         return;
     }
     round.pid = None;
+    round.exited_pid = Some(pid);
     // Decision 35's resume rule for reviewers (M8a.13).
     if !worker {
         return review::exited(run, i, r, killed, now, fx);
