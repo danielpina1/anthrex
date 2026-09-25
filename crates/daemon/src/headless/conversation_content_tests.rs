@@ -404,3 +404,24 @@ fn without_a_hook_feed_the_timing_rule_still_applies() {
         &[("first", "reply one"), (BG, ""), ("second", "reply two")],
     );
 }
+
+/// T18-N4 (F4): a new process of the session (a send or resume) closes the old
+/// process's open prompts, but keeps the texts the daemon sent that no prompt has
+/// matched yet: the new process's prompt hook for one is still the daemon's turn.
+#[test]
+fn a_replaced_process_keeps_the_texts_sent_and_not_yet_prompted() {
+    let mut cursor = StreamCursor::fed();
+    let _ = sent_turn(Runtime::Claude, true, "go on", &mut cursor);
+    cursor.process_replaced();
+    let hook = crate::hooks::parse(
+        HookSource::Claude,
+        &json!({"hook_event_name": "UserPromptSubmit", "session_id": SESSION, "prompt": "go on"}),
+    )
+    .unwrap();
+    let input = observe_hook(Runtime::Claude, &hook, &mut cursor);
+    let [Record::UserText { human, text, .. }] = input.records.as_slice() else {
+        panic!("{input:?}");
+    };
+    assert_eq!(text, "go on");
+    assert!(*human, "the sent text was forgotten by process_replaced");
+}
