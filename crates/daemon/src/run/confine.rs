@@ -42,6 +42,30 @@ pub const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
 /// Whether this platform can confine a command.
 pub const AVAILABLE: bool = cfg!(target_os = "macos");
 
+/// The daemon environment variable that, set to `unavailable`, makes the daemon treat
+/// this platform as one without confinement: the tests' stand-in for Linux on macOS.
+/// It can only lead to a refusal, or to what `--unconfined-checks` allows.
+pub const CONFINEMENT_ENV: &str = "ANTHREX_CHECK_CONFINEMENT";
+
+/// Whether the daemon can confine checks here ([`AVAILABLE`], unless
+/// [`CONFINEMENT_ENV`] says otherwise).
+pub fn available() -> bool {
+    AVAILABLE && std::env::var_os(CONFINEMENT_ENV).is_none_or(|v| v != "unavailable")
+}
+
+/// Final fix batch F1c round 2: `run start`'s refusal of a run whose checks, proofs and
+/// `setup` could not be confined, unless the user allowed it. `None` when the run may
+/// start. A run whose workers are unsandboxed (`worker_sandbox = false`) is already the
+/// user's explicit choice and is not refused here.
+pub fn start_refusal(worker_sandbox: bool, available: bool, allowed: bool) -> Option<String> {
+    (worker_sandbox && !available && !allowed).then(|| {
+        "this platform cannot confine the run's checks, proofs and setup, which run code \
+         the workers wrote; pass --unconfined-checks to run them unconfined anyway, or set \
+         [orchestrator] unconfined_checks = true in your config"
+            .to_string()
+    })
+}
+
 /// What a run's confined commands may write, from its frozen record: set only when its
 /// workers are sandboxed and [`AVAILABLE`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,10 +89,12 @@ pub struct Confinement {
 impl ConfineSpec {
     /// `run`'s, when its workers are sandboxed and this platform can confine.
     pub fn for_run(run: &Run) -> Option<Self> {
-        (run.limits.worker_sandbox && AVAILABLE).then(|| ConfineSpec {
-            data_dir: run.data_dir.clone(),
-            common_dir: run.git_common_dir.clone(),
-            cache_dirs: run.profile.cache_dirs.clone(),
+        (run.limits.worker_sandbox && !run.limits.unconfined_checks && AVAILABLE).then(|| {
+            ConfineSpec {
+                data_dir: run.data_dir.clone(),
+                common_dir: run.git_common_dir.clone(),
+                cache_dirs: run.profile.cache_dirs.clone(),
+            }
         })
     }
 
@@ -303,6 +329,16 @@ mod tests {
         std::os::unix::fs::symlink(&root, &checkout).unwrap();
         let err = spec(&root, &[]).for_checkout(&checkout).unwrap_err();
         assert!(err.contains("tampered"), "{err}");
+    }
+
+    #[test]
+    fn start_is_refused_only_for_sandboxed_workers_without_confinement_or_leave() {
+        assert!(start_refusal(true, false, false).is_some());
+        assert!(start_refusal(true, false, true).is_none());
+        assert!(start_refusal(true, true, false).is_none());
+        assert!(start_refusal(false, false, false).is_none());
+        let text = start_refusal(true, false, false).unwrap();
+        assert!(text.contains("--unconfined-checks"), "{text}");
     }
 
     #[test]

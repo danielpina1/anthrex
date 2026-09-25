@@ -1059,18 +1059,18 @@ scope.
   finds nothing. The prompts name commits by id, so no role depends on it, but a model
   may be confused. Mirroring the base and run refs read-only into the checkout's
   `packed-refs` at dispatch would give it names.
-- **I2: checks and proofs run unconfined on Linux.** `run/confine.rs` confines them
-  with `sandbox-exec` on macOS only. A bubblewrap (read-only bind of `/`, writable
-  binds of the checkout, its objects, its tmp and `cache_dirs`) or landlock wrapper
-  would close it; until then a Linux run's checks can write the user's `.git`.
-- **I2: `setup` runs unconfined.** A task's `setup` runs at its `from` (reviewed work),
-  but a proof's scratch runs `setup` at `red`, which holds the worker's test commit:
-  a worker-written install script can run there with the daemon's rights. Confining
-  `setup` needs `cache_dirs` for the package managers' caches and network access;
-  weigh confining it at the proof scratch only.
-- **I2: `run report` does not say that checks are unconfined.** When
-  `worker_sandbox = false`, or on Linux, the report could say so beside "worker
-  sandbox: off".
+- **I2: no check confinement on Linux (bubblewrap).** `run/confine.rs` confines
+  checks, proofs and `setup` with `sandbox-exec` on macOS only. Since F1c round 2 a
+  Linux `run start` refuses unless the user passes `--unconfined-checks` or sets
+  `[orchestrator] unconfined_checks = true`, and the run, `run status` and the report
+  say so. A bubblewrap wrapper (read-only bind of `/`, writable binds of the checkout,
+  its objects, its tmp and `cache_dirs`, `--die-with-parent`, the shell `exec`ed as
+  the group leader) or landlock would let Linux runs confine instead; when `bwrap` is
+  on `PATH` the refusal could offer it. Not implemented, by ruling.
+- **I2: confined `setup` needs `cache_dirs`.** Since F1c round 2 `setup` is confined
+  like checks. A `setup` that installs dependencies (`npm ci`, `pip install`) writes
+  the package manager's cache under `$HOME` and fails until the profile lists it in
+  `cache_dirs`. Network access is not restricted.
 - **`git worktree list` no longer shows the run's task checkouts.** Only the
   integration checkout stays a linked worktree. `anthrex run status` is where the
   checkouts are listed.

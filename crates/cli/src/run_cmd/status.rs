@@ -49,6 +49,11 @@ pub fn run_block(run: &RunInfo) -> String {
     }
     out.push_str(&format!("  goal: {}\n", run.goal));
     out.push_str(&format!("  report: {}\n", run.report_path.display()));
+    if run.unconfined_checks {
+        out.push_str(
+            "  checks: unconfined (this platform cannot confine checks, proofs and setup)\n",
+        );
+    }
     out.push_str(&row(
         "ID", "SIZE", "MODE", "STATE", "RUNG", "BOUNCES", "ROUTE", "WINDOWS",
     ));

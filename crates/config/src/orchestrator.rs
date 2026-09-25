@@ -67,6 +67,10 @@ pub struct Orchestrator {
     pub worker_allowed_tools: Vec<String>,
     pub worker_codex_sandbox: String,
     pub worker_sandbox: bool,
+    /// M8a final fix batch F1c round 2: allow checks, proofs and `setup` to run
+    /// unconfined where the platform cannot confine them (as `run start
+    /// --unconfined-checks`). The user's own config only: a plan cannot set it.
+    pub unconfined_checks: bool,
     pub claude: ClaudeHeadless,
     pub builtin_models: bool,
     pub models: Vec<proto::ModelEntry>,
@@ -125,6 +129,7 @@ impl Default for Orchestrator {
                 .collect(),
             worker_codex_sandbox: "workspace-write".to_string(),
             worker_sandbox: true,
+            unconfined_checks: false,
             claude: ClaudeHeadless::default(),
             builtin_models: true,
             models: default_roster(),
@@ -230,6 +235,13 @@ pub(crate) fn read(table: &toml::Table, problems: &mut Vec<Problem>) -> Orchestr
         "worker_sandbox",
         "orchestrator.worker_sandbox",
         &mut o.worker_sandbox,
+        problems,
+    );
+    read_bool_key(
+        t,
+        "unconfined_checks",
+        "orchestrator.unconfined_checks",
+        &mut o.unconfined_checks,
         problems,
     );
     read_claude(t, &mut o, problems);
@@ -549,6 +561,7 @@ pub(crate) fn report_unknown(value: &toml::Value, problems: &mut Vec<Problem>) {
             | "worker_allowed_tools"
             | "worker_codex_sandbox"
             | "worker_sandbox"
+            | "unconfined_checks"
             | "builtin_models"
             | "models" => {}
             "review" => {

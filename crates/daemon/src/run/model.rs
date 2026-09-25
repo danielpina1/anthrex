@@ -116,6 +116,11 @@ pub struct RunLimits {
     pub worker_allowed_tools: Vec<String>,
     pub worker_codex_sandbox: String,
     pub worker_sandbox: bool,
+    /// M8a final fix batch F1c round 2: checks, proofs and `setup` run unconfined
+    /// (the platform cannot confine them, and the user allowed it at `run start`).
+    /// Absent from a run recorded before: `false`.
+    #[serde(default)]
+    pub unconfined_checks: bool,
     pub claude_auth: ClaudeAuth,
     /// `[orchestrator.claude] api_key_helper`, passed to Claude sessions under
     /// `auth = "api_key"` (decision 50). Added by M8a.11: a session spec is built from

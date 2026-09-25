@@ -141,6 +141,14 @@ impl RunHarness {
         let io = dir.path().join("agent-io");
         std::fs::create_dir_all(&io).unwrap();
         let config = dir.path().join("config.toml");
+        // Final fix batch F1c round 2: where the platform cannot confine checks (Linux
+        // CI), the e2e runs allow it, as a user must; a test that says otherwise wins.
+        let orchestrator =
+            if cfg!(target_os = "macos") || orchestrator.contains("unconfined_checks") {
+                orchestrator.to_string()
+            } else {
+                format!("unconfined_checks = true\n{orchestrator}")
+            };
         std::fs::write(
             &config,
             format!(
@@ -378,6 +386,7 @@ impl RunHarness {
             dir: dir.to_path_buf(),
             yes,
             trust_project: trust,
+            unconfined_checks: false,
         })
     }
 

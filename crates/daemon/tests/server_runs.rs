@@ -71,6 +71,8 @@ async fn a_disconnected_client_is_not_held_open_by_its_run_request() {
         dir: dir.path().to_path_buf(),
         yes: true,
         trust_project: false,
+        // Final fix batch F1c round 2: Linux cannot confine checks.
+        unconfined_checks: !cfg!(target_os = "macos"),
     });
     write_frame(&mut wr, &start).await.unwrap();
     wr.shutdown().await.unwrap();

@@ -196,6 +196,11 @@ pub struct RunInfo {
     pub unverified: bool,
     /// Decision 54; reported `false` when the sandbox could not be enabled.
     pub worker_sandbox: bool,
+    /// M8a final fix batch F1c round 2: this run's checks, proofs and `setup` run
+    /// unconfined, because the daemon's platform cannot confine them and the user
+    /// allowed it (`--unconfined-checks` or `[orchestrator] unconfined_checks`).
+    #[serde(default)]
+    pub unconfined_checks: bool,
     /// Decision 53: the project settings `--trust-project` accepted.
     pub trusted_project: Vec<String>,
     /// Per runtime label, for M9.5.

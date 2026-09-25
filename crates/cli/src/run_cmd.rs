@@ -54,6 +54,10 @@ enum RunCommand {
         /// Accept the repository's tracked agent settings (decision 53)
         #[arg(long)]
         trust_project: bool,
+        /// Where this platform cannot confine checks, proofs and setup (which run code
+        /// the workers wrote), run them unconfined anyway
+        #[arg(long)]
+        unconfined_checks: bool,
     },
     /// Show every run, or one, newest first
     Status {
@@ -128,9 +132,10 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
         plan,
         yes,
         trust_project,
+        unconfined_checks,
     } = command
     {
-        return start(socket, dir, &plan, yes, trust_project).await;
+        return start(socket, dir, &plan, yes, trust_project, unconfined_checks).await;
     }
     let mut runs = Runs::connect(socket).await?;
     match command {
@@ -230,6 +235,7 @@ async fn start(
     plan: &Path,
     yes: bool,
     trust_project: bool,
+    unconfined_checks: bool,
 ) -> anyhow::Result<()> {
     let plan_toml = std::fs::read_to_string(plan)
         .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", plan.display()))?;
@@ -242,6 +248,7 @@ async fn start(
             dir,
             yes,
             trust_project,
+            unconfined_checks,
         })
         .await?;
     let run_id = match reply {

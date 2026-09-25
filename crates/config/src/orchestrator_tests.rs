@@ -571,5 +571,16 @@ cache_dirs = ["~/.cache/sccache", "/opt/cache"]
     );
 }
 
+#[test]
+fn unconfined_checks_is_read_and_off_by_default() {
+    // M8a final fix batch F1c round 2.
+    let (config, problems) = parse("");
+    assert!(problems.is_empty());
+    assert!(!config.orchestrator.unconfined_checks);
+    let (config, problems) = parse("[orchestrator]\nunconfined_checks = true\n");
+    assert!(problems.is_empty(), "{problems:?}");
+    assert!(config.orchestrator.unconfined_checks);
+}
+
 #[path = "orchestrator_tests_roster.rs"]
 mod roster;

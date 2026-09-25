@@ -175,6 +175,7 @@ pub fn run_limits(
         worker_allowed_tools: config.worker_allowed_tools.clone(),
         worker_codex_sandbox: config.worker_codex_sandbox.clone(),
         worker_sandbox: config.worker_sandbox,
+        unconfined_checks: false,
         claude_auth: config.claude.auth.into(),
         api_key_helper: config.claude.api_key_helper.clone(),
     }

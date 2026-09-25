@@ -66,6 +66,7 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         readers_busy: u8::try_from(readers_busy(run)).unwrap_or(u8::MAX),
         unverified: run.unverified,
         worker_sandbox: run.limits.worker_sandbox,
+        unconfined_checks: run.limits.unconfined_checks,
         trusted_project: run.trusted_project.clone(),
         rate_limits: run.rate_limits.clone(),
         tasks,

@@ -464,6 +464,7 @@ fn a_run_info() -> RunInfo {
         readers_busy: 0,
         unverified: false,
         worker_sandbox: true,
+        unconfined_checks: true,
         trusted_project: vec![".codex/config.toml".into()],
         rate_limits,
         tasks: vec![a_task_info()],
@@ -501,6 +502,7 @@ fn every_run_request_and_reply_round_trips() {
             dir: PathBuf::from("/tmp/p"),
             yes: false,
             trust_project: true,
+            unconfined_checks: true,
         },
         RunRequest::Approve {
             run_id: "run-a1b2".into(),
@@ -552,13 +554,22 @@ fn every_run_request_and_reply_round_trips() {
         dir: PathBuf::from("/tmp/p"),
         yes: false,
         trust_project: true,
+        unconfined_checks: true,
     });
     let packed = rmp_serde::to_vec_named(&start).unwrap();
-    let ClientMsg::Run(RunRequest::Start { dir, .. }) = rmp_serde::from_slice(&packed).unwrap()
+    let ClientMsg::Run(RunRequest::Start {
+        dir,
+        unconfined_checks,
+        ..
+    }) = rmp_serde::from_slice(&packed).unwrap()
     else {
         panic!("must decode back to RunRequest::Start");
     };
     assert_eq!(dir, PathBuf::from("/tmp/p"));
+    assert!(
+        unconfined_checks,
+        "F1c round 2's flag lands in its own field"
+    );
 
     let retry = ClientMsg::Run(RunRequest::Retry {
         run_id: "run-a1b2".into(),

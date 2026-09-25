@@ -136,6 +136,11 @@ fn containment(run: &Run, out: &mut String) {
     }
     if !run.limits.worker_sandbox {
         out.push_str("worker sandbox: off ([orchestrator] worker_sandbox = false)\n");
+        out.push_str("checks, proofs and setup: unconfined (the workers are unsandboxed)\n");
+    } else if run.limits.unconfined_checks {
+        out.push_str(
+            "checks, proofs and setup: unconfined (this platform cannot confine them; allowed at run start)\n",
+        );
     }
 }
 

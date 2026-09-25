@@ -145,6 +145,7 @@ fn crash_after(kind: &str) {
         dir: h.repo.clone(),
         yes: true,
         trust_project: false,
+        unconfined_checks: false,
     });
     wait_dead(&h);
     h.forget_dead_daemon();

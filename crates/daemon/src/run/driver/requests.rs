@@ -14,6 +14,7 @@ use proto::run_wire::request;
 use proto::{BaseMovedInfo, FinishAction, RunReply, RunRequest, Runtime};
 
 use super::{RunService, unix_now};
+use crate::run::confine;
 use crate::run::engine::EventKind;
 use crate::run::git::{self, Git, os};
 use crate::run::globs::ProtectedMatcher;
@@ -95,7 +96,11 @@ impl RunService {
                 dir,
                 yes,
                 trust_project,
-            } => self.start(plan_toml, dir, yes, trust_project).await,
+                unconfined_checks,
+            } => {
+                self.start(plan_toml, dir, yes, trust_project, unconfined_checks)
+                    .await
+            }
             RunRequest::Approve { run_id } => answer(
                 request::APPROVE,
                 self.ask(|reply| EventKind::Approve { reply, run_id }).await,
@@ -166,12 +171,16 @@ impl RunService {
         dir: PathBuf,
         yes: bool,
         trust_project: bool,
+        unconfined_checks: bool,
     ) -> RunReply {
         let refused = |message: String| RunReply::Refused {
             request: request::START.to_string(),
             message,
         };
-        match self.build(plan_toml, dir, yes, trust_project).await {
+        match self
+            .build(plan_toml, dir, yes, trust_project, unconfined_checks)
+            .await
+        {
             Ok(run) => {
                 let run_id = run.id.clone();
                 match self
@@ -201,8 +210,16 @@ impl RunService {
         dir: PathBuf,
         yes: bool,
         trust_project: bool,
+        unconfined_checks: bool,
     ) -> Result<Run, String> {
         let config = self.ctx.orchestrator.clone();
+        // Final fix batch F1c round 2: never run worker-written code unconfined unless
+        // the user said so, on the command line or in their own config.
+        let available = confine::available();
+        let allowed = unconfined_checks || config.unconfined_checks;
+        if let Some(refusal) = confine::start_refusal(config.worker_sandbox, available, allowed) {
+            return Err(refusal);
+        }
         let plan = parse_plan(&plan_toml)?;
         let timeout = Duration::from_secs(config.git_timeout_secs);
         let git = self.ctx.git.clone();
@@ -236,6 +253,7 @@ impl RunService {
                 .collect::<Vec<_>>()
                 .join("\n")
         })?;
+        run.limits.unconfined_checks = run.limits.worker_sandbox && !available;
         run.session_nonce = random_nonce();
         run.codex_project_config = Some(self.ctx.cli_caps.codex_project_config());
 

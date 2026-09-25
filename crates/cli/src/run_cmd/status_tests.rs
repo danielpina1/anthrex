@@ -178,6 +178,7 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
         readers_busy: 1,
         unverified: false,
         worker_sandbox: true,
+        unconfined_checks: false,
         trusted_project: vec![],
         rate_limits: BTreeMap::new(),
         tasks,

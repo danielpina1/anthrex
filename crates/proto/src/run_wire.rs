@@ -26,6 +26,11 @@ pub enum RunRequest {
         dir: PathBuf,
         yes: bool,
         trust_project: bool,
+        /// M8a final fix batch F1c round 2: allows checks, proofs and `setup` to run
+        /// unconfined where the daemon's platform cannot confine them. Never turns
+        /// confinement off where it is available.
+        #[serde(default)]
+        unconfined_checks: bool,
     },
     Approve {
         run_id: String,
