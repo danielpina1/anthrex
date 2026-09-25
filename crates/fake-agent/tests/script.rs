@@ -530,23 +530,6 @@ fn git_commit_creates_a_commit() {
 }
 
 #[test]
-fn mcp_call_is_not_supported_yet() {
-    let temp = tempfile::tempdir_in("/tmp").unwrap();
-    let script = script_file(
-        &temp,
-        &[json!({"mcp_call": {"tool": "report_done", "args": {}}})],
-    );
-
-    let output = run(command(&script));
-
-    assert_eq!(output.status.code(), Some(3));
-    assert_eq!(
-        output.stdout,
-        b"fake-agent: mcp_call arrives in milestone 8\n"
-    );
-}
-
-#[test]
 fn a_transcript_step_appends_one_line() {
     let temp = tempfile::tempdir_in("/tmp").unwrap();
     let transcript_path = temp.path().join("transcript.jsonl");

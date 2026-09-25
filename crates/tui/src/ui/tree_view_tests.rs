@@ -124,6 +124,8 @@ fn a_deep_name_is_truncated_not_the_guides() {
         model: None,
         subagents,
         exit: None,
+        kind: proto::WindowKind::Pty,
+        run: None,
     };
     let app = App::new(vec![window], "/tmp".into(), UiSettings::default());
     let rows = app.rows();
@@ -194,6 +196,8 @@ fn worktree_window(
         model: None,
         subagents: vec![],
         exit: None,
+        kind: proto::WindowKind::Pty,
+        run: None,
     }
 }
 

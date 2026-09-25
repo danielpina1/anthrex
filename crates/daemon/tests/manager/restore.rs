@@ -287,6 +287,7 @@ fn distinct_record() -> WindowRecord {
         created_at: 1_650_000_000,
         status: Status::Idle,
         run: None,
+        kind: Default::default(),
     }
 }
 

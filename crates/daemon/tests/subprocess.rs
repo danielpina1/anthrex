@@ -2,7 +2,7 @@
 //! than git, so these tests exercise the runner's own hardening (stdout/stderr capture,
 //! the byte caps, the deadline, the spawn-error distinction) and not git's behaviour.
 
-use daemon::subprocess::{Outcome, run, run_captured};
+use daemon::subprocess::{HeadTail, Outcome, run, run_captured, run_captured_head_tail};
 use std::fs;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
@@ -20,6 +20,17 @@ fn write_script(dir: &Path, name: &str, body: &str) -> PathBuf {
     script
 }
 
+/// Runs `script` as `/bin/sh <script>` rather than exec'ing the file itself. Linux
+/// refuses to exec a file some process still holds open for writing (ETXTBSY), and
+/// with tests running in parallel, a fork on another test thread can briefly inherit
+/// the descriptor `write_script` just wrote through. `sh` only reads the script, so
+/// it is immune, and these tests still pin the runner, not the exec.
+fn sh(script: &Path) -> Command {
+    let mut command = Command::new("/bin/sh");
+    command.arg(script);
+    command
+}
+
 /// The three scripts `run_is_unchanged` re-runs through `run`, exactly as written here,
 /// to pin that `run`'s own behaviour has not moved.
 const WRITES_BOTH: &str =
@@ -32,7 +43,7 @@ fn run_captured_returns_stdout_and_stderr() {
     let scripts = tempdir().unwrap();
     let script = write_script(scripts.path(), "writes-both", WRITES_BOTH);
 
-    let mut command = Command::new(&script);
+    let mut command = sh(&script);
     let captured = run_captured(&mut command, 64 * 1024, 64 * 1024, Duration::from_secs(5));
 
     match captured.outcome {
@@ -48,7 +59,7 @@ fn a_non_zero_exit_keeps_its_stderr() {
     let scripts = tempdir().unwrap();
     let script = write_script(scripts.path(), "fails-with-stderr", FAILS_WITH_STDERR);
 
-    let mut command = Command::new(&script);
+    let mut command = sh(&script);
     let captured = run_captured(&mut command, 64 * 1024, 64 * 1024, Duration::from_secs(5));
 
     assert!(
@@ -89,7 +100,7 @@ fn stderr_is_bounded_and_does_not_block_the_child() {
     let max_stderr_bytes = 4096;
     let started = Instant::now();
 
-    let mut command = Command::new(&script);
+    let mut command = sh(&script);
     let captured = run_captured(
         &mut command,
         64 * 1024,
@@ -125,13 +136,13 @@ fn run_is_unchanged() {
     let fails_with_stderr =
         write_script(scripts.path(), "fails-with-stderr-plain", FAILS_WITH_STDERR);
 
-    let mut command = Command::new(&writes_both);
+    let mut command = sh(&writes_both);
     match run(&mut command, 64 * 1024, Duration::from_secs(5)) {
         Outcome::Complete(stdout) => assert_eq!(stdout, b"stdout-line\n"),
         other => panic!("expected Outcome::Complete, got {other:?}"),
     }
 
-    let mut command = Command::new(&fails_with_stderr);
+    let mut command = sh(&fails_with_stderr);
     assert!(matches!(
         run(&mut command, 64 * 1024, Duration::from_secs(5)),
         Outcome::Failed
@@ -142,4 +153,42 @@ fn run_is_unchanged() {
         run(&mut command, 64 * 1024, Duration::from_secs(5)),
         Outcome::Failed
     ));
+}
+
+/// `run_captured_head_tail` keeps the first and last bytes of an output of any size,
+/// drains the rest, and never reports it as over a cap.
+#[test]
+fn head_tail_keeps_both_ends_of_a_large_output() {
+    let scripts = tempdir().unwrap();
+    // 2 000 000 numbered lines, about 15 MB: far past any head or tail kept here.
+    let script = write_script(
+        scripts.path(),
+        "counts",
+        "#!/bin/sh\nawk 'BEGIN{for(i=1;i<=2000000;i++)print i}'\nprintf 'err\\n' 1>&2\n",
+    );
+    let (outcome, kept, stderr, spawn_error) =
+        run_captured_head_tail(&mut sh(&script), 8, 12, 1024, Duration::from_secs(60));
+    assert!(matches!(outcome, Outcome::Complete(_)), "{outcome:?}");
+    assert_eq!(spawn_error, None);
+    assert_eq!(stderr, "err\n");
+    assert_eq!(kept.head, b"1\n2\n3\n4\n");
+    assert_eq!(kept.tail, b"999\n2000000\n");
+    assert!(kept.dropped());
+    let expected_total: u64 = (1..=2_000_000u64)
+        .map(|n| n.to_string().len() as u64 + 1)
+        .sum();
+    assert_eq!(kept.total, expected_total);
+
+    // A short output is all in the head, nothing dropped.
+    let short = write_script(scripts.path(), "short", "#!/bin/sh\nprintf 'abcdef'\n");
+    let (_, kept, _, _) = run_captured_head_tail(&mut sh(&short), 4, 4, 64, Duration::from_secs(5));
+    assert_eq!(
+        kept,
+        HeadTail {
+            head: b"abcd".to_vec(),
+            tail: b"ef".to_vec(),
+            total: 6
+        }
+    );
+    assert!(!kept.dropped());
 }

@@ -80,7 +80,7 @@ impl App {
             return vec![];
         }
         if self.parser.screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None {
-            let Some(id) = self.focused else {
+            let Some(id) = self.focused_pty() else {
                 return vec![];
             };
             let x = column - main_inner.x + 1;

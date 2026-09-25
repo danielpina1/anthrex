@@ -22,9 +22,13 @@
 //! work* — the safety-critical question, kept where it can be read on its own.
 
 mod dirty;
+pub mod engine_index;
+mod input;
 mod ops;
+pub mod pinned;
 
 pub use dirty::{DirtyReason, dirty_reason};
+pub use input::run_git_with_stdin_file;
 pub use ops::{
     Created, ManagedWorktree, create, create_with_cleanup_timeout, discard_and_describe,
     discard_and_describe_with, discard_new, discard_new_with, remove,
@@ -37,7 +41,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use crate::subprocess::{self, Outcome};
+use crate::subprocess::{self, HeadTail, Outcome};
 
 /// Design decision 3: the deadline shared by every git command one worktree operation
 /// (one create, one removal) runs.
@@ -233,6 +237,104 @@ pub fn run_git(
     args: &[&OsStr],
     deadline: Instant,
 ) -> Result<GitOutput, WorktreeError> {
+    run_git_with_cap(git, dir, args, deadline, MAX_OUTPUT_BYTES)
+}
+
+/// As [`run_git`], with a caller-chosen cap on stdout instead of 256 KiB. Milestone 8a's
+/// run git operations (`crate::run::git`) read whole-tree listings and diffs, which a
+/// real repository can push past the default cap; everything else about the invocation
+/// — `-C <dir> --no-optional-locks`, the scrubbed environment, the deadline — is
+/// identical, because it is the same code.
+pub fn run_git_with_cap(
+    git: &OsStr,
+    dir: &Path,
+    args: &[&OsStr],
+    deadline: Instant,
+    max_output_bytes: usize,
+) -> Result<GitOutput, WorktreeError> {
+    run_git_capturing(
+        git,
+        dir,
+        args,
+        deadline,
+        Capture::Capped(max_output_bytes),
+        None,
+    )
+    .map(|(output, _)| output)
+}
+
+/// As [`run_git_with_cap`], with `input` on git's standard input (`update-index
+/// --index-info`, M8a final fix batch F1, fix round 5). The bytes go to an unlinked
+/// temporary file first, and that file becomes git's stdin, so git reads to its end
+/// and never waits on a pipe: nothing else about the invocation, its deadline or how a
+/// late child is ended changes.
+pub fn run_git_with_input(
+    git: &OsStr,
+    dir: &Path,
+    args: &[&OsStr],
+    deadline: Instant,
+    input: &[u8],
+) -> Result<GitOutput, WorktreeError> {
+    let file = input::input_file(input).map_err(|err| WorktreeError::Git {
+        action: args
+            .iter()
+            .map(|arg| arg.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" "),
+        stderr: format!("cannot stage git's input: {err}"),
+    })?;
+    run_git_capturing(
+        git,
+        dir,
+        args,
+        deadline,
+        Capture::Capped(MAX_OUTPUT_BYTES),
+        Some(&file),
+    )
+    .map(|(output, _)| output)
+}
+
+/// As [`run_git`], for output that may be arbitrarily large: the first `head_bytes`
+/// and the last `tail_bytes` of stdout are kept and the rest is read and dropped
+/// ([`subprocess::run_captured_head_tail`]), so the command never fails for its size.
+/// The returned [`GitOutput`]'s `stdout` is empty; the output is the [`HeadTail`].
+pub fn run_git_head_tail(
+    git: &OsStr,
+    dir: &Path,
+    args: &[&OsStr],
+    deadline: Instant,
+    head_bytes: usize,
+    tail_bytes: usize,
+) -> Result<(GitOutput, HeadTail), WorktreeError> {
+    run_git_capturing(
+        git,
+        dir,
+        args,
+        deadline,
+        Capture::HeadTail(head_bytes, tail_bytes),
+        None,
+    )
+}
+
+/// Every daemon git call ignores a configured `core.fsmonitor`: a sandboxed worker
+/// could once write the repository's shared config, and git runs the fsmonitor command
+/// on every `status`, which here would run it unsandboxed, as the daemon (final fix
+/// batch F1, findings C-C1 and D-5). Passed right after `--no-optional-locks`.
+pub const NO_FSMONITOR: [&str; 2] = ["-c", "core.fsmonitor=false"];
+
+enum Capture {
+    Capped(usize),
+    HeadTail(usize, usize),
+}
+
+fn run_git_capturing(
+    git: &OsStr,
+    dir: &Path,
+    args: &[&OsStr],
+    deadline: Instant,
+    capture: Capture,
+    input: Option<&std::fs::File>,
+) -> Result<(GitOutput, HeadTail), WorktreeError> {
     let now = Instant::now();
     let joined_args = args
         .iter()
@@ -247,19 +349,107 @@ pub fn run_git(
     }
     let timeout = deadline - now;
 
+    // A worktree the run engine created is pinned to its git directory, never to what
+    // its `.git` file says (M8a final fix batch F1, fix round 1, N2).
+    let pinned_as = match pinned::pinned(dir) {
+        Some(pin) => match pinned::check(dir, &pin) {
+            Ok(()) => Some(pin),
+            Err(stderr) => {
+                return Err(WorktreeError::Git {
+                    action: joined_args,
+                    stderr,
+                });
+            }
+        },
+        None => None,
+    };
+    let pin = pinned_as.as_ref().map(|pin| pinned::flags(dir, pin));
+    // Final fix batch F1c (C1): in a checkout a worker writes, git works on the
+    // engine's own copy of the index, installed afterwards by rename.
+    let staged = match pinned_as.as_ref().and_then(|pin| {
+        pin.engine
+            .as_ref()
+            .map(|engine| engine_index::stage(&pin.git_dir, engine))
+    }) {
+        Some(Ok(staged)) => Some(staged),
+        Some(Err(what)) => {
+            return Err(WorktreeError::Git {
+                action: joined_args,
+                stderr: format!("refusing git in {}: {what}", dir.display()),
+            });
+        }
+        None => None,
+    };
+
     let mut command = Command::new(git);
     command
         .arg("-C")
         .arg(dir)
         .arg("--no-optional-locks")
+        .args(NO_FSMONITOR)
+        .args(pin.iter().flatten())
         .args(args)
         .env("LC_ALL", "C")
-        .env("GIT_TERMINAL_PROMPT", "0");
+        .env("GIT_TERMINAL_PROMPT", "0")
+        // Final fix batch F1b: the daemon's git reads and writes the repository's own
+        // object store only, whatever the daemon's environment says.
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES");
+    if let Some(staged) = &staged {
+        // Set deliberately; `subprocess::scrub_git_env` removes only an inherited one.
+        command.env("GIT_INDEX_FILE", staged.path());
+    }
+    if let Some(pin) = pinned_as.as_ref().filter(|pin| pin.standalone) {
+        // Final fix batch F1c (3a): a standalone checkout's own object directory is the
+        // worker's; the engine reads and writes only the repository's common store
+        // (with its own alternates), never the checkout's.
+        command.env("GIT_OBJECT_DIRECTORY", pin.common_dir.join("objects"));
+    }
+    if let Some(file) = input {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::process::CommandExt;
+        let fd = file.as_raw_fd();
+        // Runs in the child after the standard streams are set up (stdin as
+        // `/dev/null`) and before `exec`: the input file replaces stdin. `dup2` is
+        // async-signal-safe, and `fd` stays open until `exec` (its close-on-exec flag
+        // does not carry over to the duplicate).
+        // SAFETY: only `dup2` and `errno` are touched between fork and exec.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::dup2(fd, libc::STDIN_FILENO) == -1 {
+                    Err(io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
+            });
+        }
+    }
 
-    let captured =
-        subprocess::run_captured(&mut command, MAX_OUTPUT_BYTES, MAX_STDERR_BYTES, timeout);
+    let (outcome, kept, stderr, spawn_error) = match capture {
+        Capture::Capped(max) => {
+            let captured = subprocess::run_captured(&mut command, max, MAX_STDERR_BYTES, timeout);
+            (
+                captured.outcome,
+                HeadTail::default(),
+                captured.stderr,
+                captured.spawn_error,
+            )
+        }
+        Capture::HeadTail(head, tail) => {
+            subprocess::run_captured_head_tail(&mut command, head, tail, MAX_STDERR_BYTES, timeout)
+        }
+    };
 
-    if let Some(kind) = captured.spawn_error {
+    if let Some(staged) = staged
+        && let Err(stderr) = staged.install()
+    {
+        return Err(WorktreeError::Git {
+            action: joined_args,
+            stderr,
+        });
+    }
+
+    if let Some(kind) = spawn_error {
         return if kind == io::ErrorKind::NotFound {
             Err(WorktreeError::GitMissing)
         } else {
@@ -270,17 +460,23 @@ pub fn run_git(
         };
     }
 
-    match captured.outcome {
-        Outcome::Complete(stdout) => Ok(GitOutput {
-            stdout: String::from_utf8_lossy(&stdout).into_owned(),
-            stderr: captured.stderr,
-            success: true,
-        }),
-        Outcome::Failed => Ok(GitOutput {
-            stdout: String::new(),
-            stderr: captured.stderr,
-            success: false,
-        }),
+    match outcome {
+        Outcome::Complete(stdout) => Ok((
+            GitOutput {
+                stdout: String::from_utf8_lossy(&stdout).into_owned(),
+                stderr,
+                success: true,
+            },
+            kept,
+        )),
+        Outcome::Failed => Ok((
+            GitOutput {
+                stdout: String::new(),
+                stderr,
+                success: false,
+            },
+            kept,
+        )),
         Outcome::TimedOut(_) => Err(WorktreeError::TimedOut {
             args: joined_args,
             secs: timeout.as_secs(),
@@ -293,145 +489,4 @@ pub fn run_git(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
-
-    fn write_script(dir: &Path, name: &str, body: &str) -> PathBuf {
-        let script = dir.join(name);
-        fs::write(&script, body).unwrap();
-        let mut permissions = fs::metadata(&script).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&script, permissions).unwrap();
-        script
-    }
-
-    #[test]
-    fn hash8_matches_fnv1a_vectors() {
-        assert_eq!(hash8(Path::new("")), "811c9dc5");
-        assert_eq!(hash8(Path::new("a")), "e40c292c");
-        assert_eq!(hash8(Path::new("/tmp/repo")), "a3cbe2c8");
-    }
-
-    #[test]
-    fn branch_dir_name_replaces_slashes() {
-        assert_eq!(branch_dir_name("feat/api/v2"), "feat-api-v2");
-    }
-
-    #[test]
-    fn repo_worktrees_dir_uses_sanitized_basename_and_hash() {
-        let worktrees_root = Path::new("/data/worktrees");
-        let project_root = Path::new("/tmp/my repo");
-
-        let dir = repo_worktrees_dir(worktrees_root, project_root);
-
-        let expected = worktrees_root.join(format!("my-repo-{}", hash8(project_root)));
-        assert_eq!(dir, expected);
-    }
-
-    #[test]
-    fn branch_syntax_rules_and_messages() {
-        let cases = [
-            ("", "branch name is required"),
-            ("   ", "branch name is required"),
-            ("feat api", "branch name cannot contain spaces"),
-            (" feat", "branch name cannot contain spaces"),
-            ("-feat", "branch name cannot start with '-'"),
-            (
-                "anthrex/run",
-                "branches under anthrex/ are reserved for orchestration runs",
-            ),
-        ];
-        for (branch, expected) in cases {
-            let error = check_branch_syntax(branch).unwrap_err();
-            assert_eq!(error.to_string(), expected, "branch {branch:?}");
-        }
-
-        assert!(check_branch_syntax("feat/api").is_ok());
-    }
-
-    // `the_git_helper_passes_no_optional_locks_and_scrubs_the_environment` lives in
-    // `crates/daemon/tests/worktree_env.rs`, its own test binary, not here: it mutates
-    // the real process environment, and `a_missing_git_is_reported_as_such` below
-    // spawns a process on another libtest thread of *this* binary — a concurrent
-    // `environ` reader racing that mutation, which is undefined behaviour regardless of
-    // which variable either side touches. See that file's module doc comment.
-
-    #[test]
-    fn a_passed_deadline_fails_without_spawning() {
-        let scripts = tempdir().unwrap();
-        let argv_log = scripts.path().join("argv.log");
-        let script = write_script(
-            scripts.path(),
-            "should-not-run",
-            &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n",
-                argv_log.display()
-            ),
-        );
-        let dir = tempdir().unwrap();
-        let deadline = Instant::now() - Duration::from_secs(1);
-
-        let result = run_git(
-            script.as_os_str(),
-            dir.path(),
-            &[OsStr::new("status")],
-            deadline,
-        );
-
-        assert!(
-            matches!(result, Err(WorktreeError::TimedOut { .. })),
-            "{result:?}"
-        );
-        assert!(
-            !argv_log.exists(),
-            "the script must never have run for a deadline already in the past"
-        );
-    }
-
-    #[test]
-    fn a_missing_git_is_reported_as_such() {
-        let dir = tempdir().unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-
-        let result = run_git(
-            OsStr::new("/definitely/missing/git-xyz"),
-            dir.path(),
-            &[OsStr::new("status")],
-            deadline,
-        );
-
-        assert!(
-            matches!(result, Err(WorktreeError::GitMissing)),
-            "{result:?}"
-        );
-    }
-
-    #[test]
-    fn stderr_tail_keeps_the_last_lines_within_the_cap() {
-        let lines: Vec<String> = (1..=50).map(|n| format!("line {n}")).collect();
-        let output = GitOutput {
-            stdout: String::new(),
-            stderr: lines.join("\n"),
-            success: false,
-        };
-
-        let tail = output.stderr_tail();
-
-        assert!(tail.starts_with("line 31"), "{tail:?}");
-        assert_eq!(tail.lines().count(), 20);
-        assert!(tail.ends_with("line 50"), "{tail:?}");
-
-        let huge = GitOutput {
-            stdout: String::new(),
-            stderr: "x".repeat(5000),
-            success: false,
-        };
-
-        let tail = huge.stderr_tail();
-
-        assert_eq!(tail.chars().count(), STDERR_TAIL_CHARS);
-    }
-}
+mod tests;

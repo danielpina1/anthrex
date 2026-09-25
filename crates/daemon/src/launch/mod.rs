@@ -48,6 +48,11 @@ pub fn hook_command(exe: &Path, window_id: u32, source: HookSource) -> String {
         HookSource::Claude => "claude",
         HookSource::CodexNotify => "codex-notify",
         HookSource::CodexHook => "codex-hook",
+        // A headless run-engine session's own stream never calls `anthrex hook`
+        // through a shell command line (M8a.17 reads its events directly), so this
+        // arm is unreached today; it exists only so the match stays exhaustive as
+        // `HookSource` gains variants.
+        HookSource::Stream => "stream",
     };
     format!(
         "{} hook --window {window_id} --source {label}",

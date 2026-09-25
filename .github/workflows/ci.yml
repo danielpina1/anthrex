@@ -12,7 +12,7 @@ jobs:
   ci:
     name: ci (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -36,7 +36,7 @@ jobs:
         run: cargo build --workspace --all-targets
 
       - name: cargo test --workspace
-        run: cargo test --workspace
+        run: cargo test --workspace --no-fail-fast
 
       - name: python3 scripts/pty-smoke.py
         run: python3 scripts/pty-smoke.py

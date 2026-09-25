@@ -1,6 +1,6 @@
 # anthrex roadmap
 
-anthrex is built in eighteen milestones. Milestones 1 to 6 are merged. Each later milestone has an implementation brief in `docs/milestones/`, written so that a coding agent such as Codex can implement it without further questions. `AGENTS.md` at the repository root holds the rules that apply to every milestone.
+anthrex is built in sixteen milestones. Milestones 1 to 6.5 and 8a are merged. Each later milestone has an implementation brief in `docs/milestones/`, written so that a coding agent such as Codex can implement it without further questions. `AGENTS.md` at the repository root holds the rules that apply to every milestone.
 
 The design is layered, newest first:
 
@@ -13,7 +13,7 @@ The design is layered, newest first:
 6. `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` — milestones 2 to 9.
 7. `docs/superpowers/specs/2026-09-17-anthrex-design.md` — milestone 1 and the parts of the core it still governs.
 
-The protocol version currently on `main` is **5**, raised from 4 by milestone 5. Milestone 6 did not change it. Protocol numbers written in the milestone 5 to 9 briefs predate this and are wrong; each is re-derived from this line when that milestone is implemented.
+The protocol version currently on `main` is **7**, raised from 6 by milestone 8a (`crates/proto/src/lib.rs:25`). Protocol numbers written in the milestone 8b to 9.5 briefs predate this and are re-derived from this line when each milestone is implemented: milestone 8b will use 8.
 
 ## What anthrex does when all milestones are done
 
@@ -40,7 +40,7 @@ The protocol version currently on `main` is **5**, raised from 4 by milestone 5.
 | 6.5 | Agent conversation view: structured turns, folded tool calls, sub-agent links | `docs/milestones/M6.5-conversation-view.md` | 6 | `done` |
 | 7 | Split panes | `docs/milestones/M7-split-panes.md` | 4 | `blocked` |
 | 8 | ~~Orchestration engine~~ — superseded by 8a, 8b, 8c | `docs/milestones/M8-orchestration-engine.md` | — | `superseded` |
-| 8a | Orchestration engine core: task graph, headless sessions, gates, merge queue, escalation, journal | `docs/milestones/M8a-orchestration-engine-core.md` | 5, 6, 6.5 | `blocked` |
+| 8a | Orchestration engine core: task graph, headless sessions, gates, merge queue, escalation, journal | `docs/milestones/M8a-orchestration-engine-core.md` | 5, 6, 6.5 | `done` |
 | 8b | Adaptation: repo profile, scouts, deciders, fast path, output filter, metering, run history | `docs/milestones/M8b-adaptation.md` | 8a | `blocked` |
 | 8c | The live run view in `C-b T` and the run inspector | `docs/milestones/M8c-live-run-view.md` | 8a | `blocked` |
 | 9 | ~~Orchestrator agent~~ — superseded by the new 9 brief below | `docs/milestones/M9-orchestrator-agent.md` | — | `superseded` |

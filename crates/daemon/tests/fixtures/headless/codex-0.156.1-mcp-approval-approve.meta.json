@@ -1,0 +1,11 @@
+{
+  "runtime": "codex",
+  "cli_version": "0.156.1",
+  "captured": "2026-09-23",
+  "redactions": [
+    "scratch-dirs"
+  ],
+  "note": "The same run with default_tools_approval_mode \"approve\": the MCP call completes, its result has content text parts and structured_content null. The -s workspace-write run gave the same lines apart from ids and token counts (not committed). Captured by the M8a controller against codex-cli 0.156.1 with an isolated CODEX_HOME, so none of the capturing user's config, trust entries or MCP servers loaded. The MCP server named probe is a small stdio JSON-RPC echo server with one tool, echo_probe, which answers 'probe says: <text>'. The exact prompt text was not recorded.",
+  "command": "codex exec --json -s read-only -c approval_policy=\"never\" -c mcp_servers.probe.command=\"/tmp/anthrex-fixture/bin/mcp.py\" -c mcp_servers.probe.default_tools_approval_mode=\"approve\" -- <prompt> (a prompt asking for one echo_probe call)",
+  "observed": true
+}

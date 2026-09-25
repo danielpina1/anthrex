@@ -17,6 +17,7 @@ pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, 
 pub mod agent_state;
 pub mod conversation;
 pub mod git;
+pub mod headless;
 pub mod hooks;
 pub mod launch;
 pub mod lifecycle;
@@ -25,6 +26,7 @@ pub mod logfile;
 pub mod manager;
 mod process;
 pub mod project;
+pub mod run;
 pub mod server;
 pub mod state;
 pub mod status;

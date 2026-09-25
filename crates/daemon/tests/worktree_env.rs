@@ -105,7 +105,9 @@ fn the_git_helper_passes_no_optional_locks_and_scrubs_the_environment() {
     assert_eq!(parts[0], "-C", "{parts:?}");
     assert_eq!(parts[1], dir.path().to_str().unwrap(), "{parts:?}");
     assert_eq!(parts[2], "--no-optional-locks", "{parts:?}");
-    assert_eq!(parts[3], "status", "{parts:?}");
+    // Final fix batch F1: no daemon git call runs a configured fsmonitor.
+    assert_eq!(&parts[3..5], ["-c", "core.fsmonitor=false"], "{parts:?}");
+    assert_eq!(parts[5], "status", "{parts:?}");
 
     let recorded_env = fs::read_to_string(&env_log).unwrap();
     for key in scrubbed {

@@ -1,0 +1,12 @@
+{
+  "runtime": "claude",
+  "cli_version": "2.1.278",
+  "captured": "2026-09-23",
+  "redactions": [
+    "ids",
+    "home"
+  ],
+  "note": "Shapes that cannot be triggered on demand: three system/api_retry (rate_limit 429, overloaded 529, server_error 500), one compact_boundary, and failed turns as the CLI writes them: an assistant line with model <synthetic>, error <category> and is_api_error_message true, followed by a result with subtype success, is_error true, terminal_reason api_error. The rate_limit and billing_error pairs are constructed on that shape with the documented texts. The last pair (authentication_failed, 'Not logged in · Please run /login') was in fact observed from `claude -p --bare` with no API key (M8a.1 item 5) and is the template for the other two. The error category is on the assistant line, not on the result.",
+  "command": "none: constructed from the Claude Code headless and Agent SDK documentation for 2.1.278 (system/api_retry fields and error values, SDKCompactBoundaryMessage, SDKAssistantMessage.error categories, error texts from the error reference)",
+  "observed": false
+}

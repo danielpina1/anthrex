@@ -16,7 +16,13 @@
 ///
 /// Task M6.5.10 added `session_id` to `ConversationDelta` without a further bump: version
 /// 6 has not shipped, so no client or daemon speaking a 6 without it exists.
-pub const PROTO_VERSION: u32 = 6;
+///
+/// Milestone 8a task 2 bumps this to 7: it adds `ClientMsg::Run(RunRequest)` and
+/// `DaemonMsg::Run(RunReply)`, two message shapes a milestone-6.5 daemon or client has
+/// never seen and cannot decode, plus `HookSource::Stream`, a new variant of an existing
+/// enum a milestone-6.5 peer would also fail to decode. Derivation: `PROTO_VERSION` was 6
+/// at `crates/proto/src/lib.rs:19` before this change (set by M6.5); 6 + 1 = 7.
+pub const PROTO_VERSION: u32 = 7;
 
 /// How long the daemon waits for a freshly connected client's `Hello`, and how long a
 /// client waits for the daemon's `Welcome`, before giving up on the handshake. Design
@@ -29,6 +35,9 @@ pub mod codec;
 pub mod conversation;
 pub mod messages;
 pub mod paths;
+pub mod run;
+pub mod run_info;
+pub mod run_wire;
 pub mod types;
 
 pub use codec::{CodecError, MAX_FRAME, decode, encode, read_frame, write_frame};
@@ -37,16 +46,30 @@ pub use conversation::{
     TurnPatch, TurnState,
 };
 pub use messages::{ClientMsg, DaemonMsg, HookSource};
+// Re-exported by name, never by glob (C20): a glob re-export of `run` or `run_wire`
+// could silently shadow an existing root name (for instance `run_wire::request` beside
+// `messages::request`) the next time either module gains a public item, with no
+// compile error to catch it.
+pub use run::{
+    AgentRole, BlockReason, Budget, DoneSignal, EditFile, Effort, Finding, FinishAction,
+    GateCounts, GateKind, ModelEntry, Plan, PlanEdit, PlanTask, ProfileSpec, Route, RouteSpec,
+    RunRef, RunState, Severity, Size, Strength, TaskKind, TaskState, TestMode, Verdict,
+};
+pub use run_info::{
+    AgentRoundInfo, BaseMovedInfo, BlockInfo, CheckInfo, ProofInfo, ReviewInfo, RunInfo,
+    RunsSnapshot, Spend, TaskInfo, TokenUsage,
+};
+pub use run_wire::{RunReply, RunRequest, ToolCall};
 pub use types::{
     ClientKind, ExitInfo, GitOperation, GitState, Head, Runtime, Status, SubagentInfo,
-    SubagentState, WindowInfo, WindowSpec,
+    SubagentState, WindowInfo, WindowKind, WindowSpec,
 };
 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_six() {
-        assert_eq!(super::PROTO_VERSION, 6);
+    fn proto_version_is_seven() {
+        assert_eq!(super::PROTO_VERSION, 7);
     }
 
     #[test]

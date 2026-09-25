@@ -1,0 +1,439 @@
+//! Pinned worktrees (M8a final fix batch F1, fix round 1, finding N2): the linked
+//! worktrees the run engine created, each with the git directory the daemon found for it
+//! in the repository's own `<common>/worktrees/*/gitdir` files. Every daemon git call in
+//! a pinned worktree (through [`super::run_git`], and the probe) passes `--git-dir=<its
+//! git dir> --work-tree=<it>`, so the worktree's `.git` file, which a sandboxed worker
+//! can rewrite, is never read. Before each call, [`check`] verifies that the git dir's
+//! `commondir` still names the repository's common directory, that its `gitdir` still
+//! points back at the worktree, and that it holds no `config.worktree`; a worker cannot
+//! write those files (its sandbox grant inside the git dir names only the files a commit
+//! needs), so a mismatch means something else tampered with them, and the call is
+//! refused. It also verifies `HEAD`, which a worker may write: it must name the
+//! worktree's own branch or be detached, so no engine merge, reset or checkout can be
+//! steered onto another branch (fix round 2, R1). The git directory is found once,
+//! uniquely, comparing `<worktree>/.git` without following it (R2). And it verifies the
+//! worktree's own branch ref, which a worker may also write: it must hold a commit, never
+//! a symbolic ref or a symbolic link to another branch (fix round 4, S1), and that no
+//! pseudo-ref the worker may write (`ORIG_HEAD`, `MERGE_HEAD`, …) is symbolic (fix
+//! round 5, N1).
+//!
+//! The registry is process-wide and tiny: a map behind [`crate::lock`], read and
+//! written without I/O under the lock.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+
+/// A pinned worktree's git directory and its repository's common directory, both
+/// canonical. `broken` is set when the daemon knew the worktree but could not find its
+/// git directory: every call in it is then refused rather than trusting `.git`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pin {
+    pub git_dir: PathBuf,
+    pub common_dir: PathBuf,
+    /// The only branch the worktree's `HEAD` may name (`refs/heads/…`), or `None` for a
+    /// worktree that is always detached. A detached `HEAD` is always allowed: a
+    /// rebase detaches it, and no engine git call writes a branch through it (fix round
+    /// 2, R1). A task worktree has none (final fix batch F1b): its `HEAD` is always a
+    /// commit id.
+    pub head: Option<String>,
+    /// A task worktree's own branch (`refs/heads/anthrex/<run>/<task>`), which only the
+    /// engine writes: the worker commits on a detached `HEAD`, and the engine moves the
+    /// branch to it after importing its objects (final fix batch F1b).
+    pub own: Option<String>,
+    /// A task worktree's private object directory, which the worker's git writes
+    /// (`GIT_OBJECT_DIRECTORY`) and the engine only ever reads, to import from (F1b).
+    pub objects: Option<PathBuf>,
+    /// Final fix batch F1c (C1): a task checkout's engine-owned directory, where every
+    /// engine git command there gets its own copy of the index
+    /// ([`super::engine_index`]). `None` for a checkout no worker writes.
+    pub engine: Option<PathBuf>,
+    /// Final fix batch F1c (3a): the checkout is its own repository in anthrex's data
+    /// directory (`git_dir`, with the common object store as its alternate), not a
+    /// linked worktree of the user's repository. Every daemon git call in it names the
+    /// common object store as its only object directory (`GIT_OBJECT_DIRECTORY`), so
+    /// the engine never reads or writes the checkout's own, worker-written objects.
+    pub standalone: bool,
+    pub broken: Option<String>,
+}
+
+/// What a worktree is pinned as: the branch its `HEAD` may name, the branch the engine
+/// owns for it, and its private object directory (final fix batch F1b).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PinAs {
+    pub head: Option<String>,
+    pub own: Option<String>,
+    pub objects: Option<PathBuf>,
+    /// The engine-owned directory of a task checkout (final fix batch F1c, C1).
+    pub engine: Option<PathBuf>,
+    /// The git directory of a standalone checkout (final fix batch F1c, 3a), which the
+    /// engine made: used as it is, never searched for.
+    pub repo: Option<PathBuf>,
+}
+
+static PINS: LazyLock<Mutex<HashMap<PathBuf, Pin>>> = LazyLock::new(Default::default);
+
+/// `path` canonical where it exists, else its canonical parent joined with its name.
+fn key(path: &Path) -> PathBuf {
+    if let Ok(canonical) = path.canonicalize() {
+        return canonical;
+    }
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => parent
+            .canonicalize()
+            .map(|parent| parent.join(name))
+            .unwrap_or_else(|_| path.to_path_buf()),
+        _ => path.to_path_buf(),
+    }
+}
+
+/// Pins `worktree` to its git directory in `common_dir`, whose `HEAD` may name only
+/// `as_.head` (or be detached). A worktree already pinned keeps the git directory it was
+/// pinned to: it is found once, from the repository's side, and never recomputed while
+/// the daemon runs (fix round 2, R2). Otherwise it is found by [`find_git_dir`]; one that
+/// cannot be found is pinned as broken. Blocking (reads the common directory); returns
+/// the pin.
+pub fn pin(common_dir: &Path, worktree: &Path, as_: PinAs) -> Pin {
+    let key_path = key(worktree);
+    let common = key(common_dir);
+    let PinAs {
+        head,
+        own,
+        objects,
+        engine,
+        repo,
+    } = as_;
+    let standalone = repo.is_some();
+    let existing = crate::lock(&PINS).get(&key_path).cloned();
+    let found = match (existing, repo) {
+        // F1c (3a): a standalone checkout's git directory is the engine's own; it must
+        // hold a `HEAD`, and is never a linked worktree's.
+        (_, Some(repo)) => {
+            let git_dir = key(&repo);
+            if git_dir.join("HEAD").is_file() && !git_dir.join("commondir").exists() {
+                Ok(git_dir)
+            } else {
+                Err(format!(
+                    "{} is not the git directory of the checkout {}",
+                    repo.display(),
+                    worktree.display()
+                ))
+            }
+        }
+        (Some(pin), None)
+            if pin.broken.is_none()
+                && !pin.standalone
+                && pin.common_dir == common
+                && pin.git_dir.is_dir() =>
+        {
+            Ok(pin.git_dir)
+        }
+        _ => find_git_dir(common_dir, worktree),
+    };
+    let (git_dir, broken) = match found {
+        Ok(git_dir) => (git_dir, None),
+        Err(reason) => (PathBuf::new(), Some(reason)),
+    };
+    let pin = Pin {
+        git_dir,
+        common_dir: common,
+        head,
+        own,
+        objects,
+        engine,
+        standalone,
+        broken,
+    };
+    crate::lock(&PINS).insert(key_path, pin.clone());
+    pin
+}
+
+/// `<worktree>/.git` spelled without resolving `.git` itself: the worktree directory
+/// canonical, `.git` appended. A worker can make `.git` a symlink; this never follows
+/// it (fix round 2, R2).
+fn dot_git(worktree: &Path) -> PathBuf {
+    key(worktree).join(".git")
+}
+
+/// A path as written in a `gitdir` file, compared without resolving its last component.
+fn lexical(path: &Path) -> PathBuf {
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => key(parent).join(name),
+        _ => path.to_path_buf(),
+    }
+}
+
+/// Forgets `worktree` (it was removed).
+pub fn unpin(worktree: &Path) {
+    crate::lock(&PINS).remove(&key(worktree));
+}
+
+/// The pin of `dir`, when `dir` is a pinned worktree itself.
+pub fn pinned(dir: &Path) -> Option<Pin> {
+    let key = key(dir);
+    crate::lock(&PINS).get(&key).cloned()
+}
+
+/// Fix round 3: the one branch ref (`refs/heads/…`) an engine write in `dir` may move,
+/// when `dir` is a pinned task worktree. Engine writes name it explicitly, with a
+/// compare-and-swap old value, and never write a ref through `HEAD`. Final fix batch
+/// F1b: the task's branch is the engine's own; the worker's `HEAD` is detached.
+pub fn own_ref(dir: &Path) -> Option<String> {
+    pinned(dir).filter(|pin| pin.broken.is_none())?.own
+}
+
+impl Pin {
+    /// The branch ref of this worktree that the checks below guard: the engine-owned
+    /// task branch, else the branch its `HEAD` may name.
+    fn guarded_ref(&self) -> Option<&str> {
+        self.own.as_deref().or(self.head.as_deref())
+    }
+}
+
+/// The git directory `<common>/worktrees/<name>` whose `gitdir` file names
+/// `<worktree>/.git`. Read from the repository, never from the worktree.
+pub fn find_git_dir(common_dir: &Path, worktree: &Path) -> Result<PathBuf, String> {
+    let common = key(common_dir);
+    let own = dot_git(worktree);
+    let admin = common.join("worktrees");
+    let entries = std::fs::read_dir(&admin)
+        .map_err(|err| format!("cannot read {}: {err}", admin.display()))?;
+    let mut found = Vec::new();
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        let Ok(text) = std::fs::read_to_string(dir.join("gitdir")) else {
+            continue;
+        };
+        if lexical(Path::new(text.trim_end_matches(['\n', '\r']))) == own {
+            found.push(key(&dir));
+        }
+    }
+    match found.as_slice() {
+        [one] => Ok(one.clone()),
+        [] => Err(format!(
+            "{} is not a linked worktree of {}",
+            worktree.display(),
+            common.display()
+        )),
+        _ => Err(format!(
+            "{} is named by more than one git directory of {}",
+            worktree.display(),
+            common.display()
+        )),
+    }
+}
+
+/// Refuses a call in `worktree` when its git directory no longer belongs to it: its
+/// `commondir` names another repository, its `gitdir` points elsewhere, or it has a
+/// `config.worktree` (per-worktree config the engine never writes); when its `HEAD`
+/// names another branch; when a pseudo-ref (`ORIG_HEAD`, `MERGE_HEAD`, …) is symbolic
+/// (fix round 5); or when its own branch is not a plain ref.
+pub fn check(worktree: &Path, pin: &Pin) -> Result<(), String> {
+    if let Some(reason) = &pin.broken {
+        return Err(format!("refusing git in {}: {reason}", worktree.display()));
+    }
+    let refused = |what: String| {
+        Err(format!(
+            "refusing git in {}: {what}; the worktree's git directory {} was tampered with",
+            worktree.display(),
+            pin.git_dir.display()
+        ))
+    };
+    if pin.standalone {
+        // F1c (3a): the checkout's own repository. The engine made its `config` and its
+        // alternates; nothing may turn it into a linked worktree.
+        if pin.git_dir.join("commondir").exists() {
+            return refused("it has a commondir".to_string());
+        }
+    } else {
+        check_linked(worktree, pin).or_else(refused)?;
+    }
+    check_head(pin).or_else(refused)?;
+    if pin.engine.is_some() {
+        // Final fix batch F1c (C1), defence in depth: the engine's own git never uses
+        // this file (it works on a copy), but a linked index is a plant.
+        super::engine_index::plain_or_missing(&pin.git_dir).or_else(refused)?;
+    }
+    check_pseudo_refs(pin).or_else(refused)?;
+    check_reflogs(pin).or_else(refused)?;
+    check_own_ref(pin).map_err(|what| {
+        format!(
+            "refusing git in {}: {what}; the task's branch was tampered with",
+            worktree.display()
+        )
+    })
+}
+
+/// A linked worktree's git directory still belongs to it: its `commondir` names the
+/// repository's common directory, its `gitdir` points back at the worktree, and it has
+/// no `config.worktree`.
+fn check_linked(worktree: &Path, pin: &Pin) -> Result<(), String> {
+    let common = std::fs::read_to_string(pin.git_dir.join("commondir")).unwrap_or_default();
+    let common = common.trim_end_matches(['\n', '\r']);
+    let common = if Path::new(common).is_absolute() {
+        PathBuf::from(common)
+    } else {
+        pin.git_dir.join(common)
+    };
+    if common.as_os_str().is_empty() || key(&common) != pin.common_dir {
+        return Err(format!("commondir names {}", common.display()));
+    }
+    let back = std::fs::read_to_string(pin.git_dir.join("gitdir")).unwrap_or_default();
+    let back = Path::new(back.trim_end_matches(['\n', '\r']));
+    if lexical(back) != dot_git(worktree) {
+        return Err(format!("gitdir names {}", back.display()));
+    }
+    if pin.git_dir.join("config.worktree").exists() {
+        return Err("it has a config.worktree".to_string());
+    }
+    Ok(())
+}
+
+/// The pseudo-refs of a worktree's git directory a worker may write (its sandbox grant,
+/// `run::git::sandbox::WORKTREE_GIT_FILES`), each of which git reads as a ref.
+pub const PSEUDO_REFS: [&str; 7] = [
+    "ORIG_HEAD",
+    "MERGE_HEAD",
+    "AUTO_MERGE",
+    "REBASE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
+    "FETCH_HEAD",
+];
+
+/// Final fix batch F1, fix round 5 (re-review 3, N1): no pseudo-ref of the git
+/// directory is a symbolic ref or a symbolic link. Git itself never writes one there,
+/// so one is a worker's plant, aimed at making a git command that reads or writes it
+/// read or write another ref (`ORIG_HEAD` naming the base once made the hand-back's
+/// merge move the base). No engine command writes a pseudo-ref any more; this refusal
+/// keeps the engine's reads from following one too. A missing file is fine.
+fn check_pseudo_refs(pin: &Pin) -> Result<(), String> {
+    use std::io::Read as _;
+    for name in PSEUDO_REFS {
+        let file = pin.git_dir.join(name);
+        let meta = match std::fs::symlink_metadata(&file) {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(format!("its {name} cannot be read ({err})")),
+        };
+        if meta.file_type().is_symlink() {
+            return Err(format!("its {name} is a symbolic link"));
+        }
+        if !meta.is_file() {
+            return Err(format!("its {name} is not a plain file"));
+        }
+        let mut start = Vec::new();
+        std::fs::File::open(&file)
+            .and_then(|f| f.take(256).read_to_end(&mut start))
+            .map_err(|err| format!("its {name} cannot be read ({err})"))?;
+        let start = String::from_utf8_lossy(&start);
+        if let Some(named) = start.trim_start().strip_prefix("ref:") {
+            let named = named.lines().next().unwrap_or_default().trim();
+            return Err(format!("its {name} is a symbolic ref to {named}"));
+        }
+    }
+    Ok(())
+}
+
+/// Final fix batch F1, fix round 5: no reflog an engine write here could append to is a
+/// symbolic link (git appends to an existing reflog through one): `logs/` and
+/// `logs/HEAD` of the git directory, and the own branch's reflog. Engine worktrees
+/// have no reflogs at all (the engine writes with `core.logAllRefUpdates=false`, and
+/// removes any before a worker launches), and a worker can no longer write them; this
+/// refuses one left from before, or planted by anything else.
+fn check_reflogs(pin: &Pin) -> Result<(), String> {
+    let mut logs = vec![
+        ("logs".to_string(), pin.git_dir.join("logs")),
+        ("logs/HEAD".to_string(), pin.git_dir.join("logs/HEAD")),
+    ];
+    if let Some(own) = pin.guarded_ref() {
+        logs.push((
+            format!("{own}'s reflog"),
+            pin.common_dir.join("logs").join(own),
+        ));
+    }
+    for (name, path) in logs {
+        if std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            return Err(format!("its reflog {name} is a symbolic link"));
+        }
+    }
+    Ok(())
+}
+
+/// Fix round 4, S1: the worktree's own branch ref, which a worker may write (a commit
+/// moves it), holds a commit and nothing else. A worker could make it `ref:
+/// refs/heads/main` or a symbolic link, and every engine read of the branch (the
+/// hand-back's `onto`, the done check's `HEAD`, a salvage's parent) would then judge
+/// another branch's tip, and a dereferencing write would move that branch. A missing
+/// loose ref is fine: `pack-refs` moves it into `packed-refs`, which a worker cannot
+/// write and which holds no symbolic ref.
+fn check_own_ref(pin: &Pin) -> Result<(), String> {
+    let Some(own) = pin.guarded_ref() else {
+        return Ok(());
+    };
+    let file = pin.common_dir.join(own);
+    let meta = match std::fs::symlink_metadata(&file) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(format!("its branch {own} cannot be read ({err})")),
+    };
+    if meta.file_type().is_symlink() {
+        return Err(format!("its branch {own} is a symbolic link"));
+    }
+    if !meta.is_file() {
+        return Err(format!("its branch {own} is not a plain file"));
+    }
+    let text = std::fs::read_to_string(&file)
+        .map_err(|err| format!("its branch {own} cannot be read ({err})"))?;
+    let text = text.trim_end_matches(['\n', '\r']);
+    if let Some(named) = text.strip_prefix("ref:") {
+        return Err(format!(
+            "its branch {own} is a symbolic ref to {}",
+            named.trim()
+        ));
+    }
+    if is_sha(text) {
+        Ok(())
+    } else {
+        Err(format!("its branch {own} holds {text:?}"))
+    }
+}
+
+fn is_sha(text: &str) -> bool {
+    (text.len() == 40 || text.len() == 64) && text.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Fix round 2, R1: the worktree's `HEAD` names its own branch, or is detached. A
+/// worker may write `HEAD` (a rebase needs it), so a `HEAD` naming any other branch,
+/// the base branch included, would make the engine's own merge or reset write that
+/// branch.
+fn check_head(pin: &Pin) -> Result<(), String> {
+    let file = pin.git_dir.join("HEAD");
+    let meta = std::fs::symlink_metadata(&file)
+        .map_err(|err| format!("its HEAD cannot be read ({err})"))?;
+    if !meta.is_file() {
+        return Err("its HEAD is not a plain file".to_string());
+    }
+    let text =
+        std::fs::read_to_string(&file).map_err(|err| format!("its HEAD cannot be read ({err})"))?;
+    let text = text.trim_end_matches(['\n', '\r']);
+    match text.strip_prefix("ref: ") {
+        Some(named) if Some(named) == pin.head.as_deref() => Ok(()),
+        Some(named) => Err(format!(
+            "its HEAD names {named}, not {}",
+            pin.head.as_deref().unwrap_or("a detached commit")
+        )),
+        None if is_sha(text) => Ok(()),
+        None => Err(format!("its HEAD holds {text:?}")),
+    }
+}
+
+/// The flags that pin a call in `worktree`: `--git-dir=<git dir>` and
+/// `--work-tree=<worktree>`.
+pub fn flags(worktree: &Path, pin: &Pin) -> [std::ffi::OsString; 2] {
+    let mut git_dir = std::ffi::OsString::from("--git-dir=");
+    git_dir.push(&pin.git_dir);
+    let mut work_tree = std::ffi::OsString::from("--work-tree=");
+    work_tree.push(worktree);
+    [git_dir, work_tree]
+}

@@ -30,7 +30,7 @@ use load::aside_path_with;
 pub use load::{load, load_with};
 pub use persist::{SAVE_DEBOUNCE, SAVE_MAX_DELAY, save, spawn_persister};
 
-use proto::{Runtime, Status};
+use proto::{Runtime, Status, WindowKind};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashSet;
 use std::fs::OpenOptions;
@@ -129,6 +129,10 @@ pub struct WindowRecord {
     pub status: Status,
     #[serde(default)]
     pub run: Option<serde_json::Value>,
+    /// A headless run session's window, whose `run` holds its `HeadlessSpec` (decisions
+    /// 28 and 49). Defaults to `pty`, so older files need no version bump.
+    #[serde(default)]
+    pub kind: WindowKind,
 }
 
 fn exited() -> Status {

@@ -690,6 +690,633 @@ scope.
   turns, the calls in one and the prose in the other. Not investigated; start from how the
   Codex hooks open and close turns against `codex-0.155.0.jsonl`.
 
+## From the M8a brief refresh (2026-09-23), for the user to decide
+
+- **AGENTS.md's environment-lock rule differs from landed practice.** `AGENTS.md:70` says
+  "Tests that change environment variables must hold a shared lock." The landed code does
+  not do that: each env-mutating test lives alone in its own test binary
+  (`crates/daemon/tests/worktree_env.rs`, `crates/daemon/tests/git_env.rs`), and the
+  daemon crate has no shared env mutex. `worktree_env.rs:1–20` explains why: the hazard
+  is a `set_var` racing a child-process spawn on another libtest thread, which reads the
+  whole `environ` block without taking any lock the crate controls, so a lock around the
+  mutation alone does not help. The M8a brief follows the landed practice
+  (`run_git_env.rs`, `run_exec_env.rs`, `headless_env.rs`). AGENTS.md was left unchanged;
+  the user decides whether to reword the rule to "put the test alone in its own test
+  binary".
+
+## From M8a.6's review (2026-09-23), for milestone 9
+
+- **The sub-planner's `EditScope::Area` limits only `owns`.** Under `Area { globs }`,
+  `apply_edits` still accepts `cancel_task` and `answer` on tasks outside the area, and
+  the run-level `pause`, `resume` and `finish` (task-6 review F7). Decision 12 speaks
+  only of `owns`, so this is within M8a's letter. M9's sub-planner scope must decide
+  which edit kinds, and which tasks, a sub-planner may use.
+- **No `remove_dep` / `replace_dep` edit.** A `blocked(dep_cancelled)` task stays
+  editable (fix round 1, F3), and it can gain a dependency on a replacement task. But its
+  dependency on the cancelled task cannot be removed, so it never becomes runnable. Today
+  the only repair is `split_task` of the blocked task (the children carry fresh deps, and
+  its dependents are rewired to them). M9's re-planning should add `remove_dep` or
+  `replace_dep`, or document split as the path.
+
+## From M8a.7 (2026-09-23), for M8c's conversation view
+
+- **A synthesised Codex tool call's one-line summary reads as JSON.** Decision 27's table
+  makes a headless Codex call's `PostToolUse` carry `tool_response: {"output": text}`
+  (or `{"error": text}`). M6.5's `build::post_tool_use` renders any object response as
+  its compact JSON, so the summary line shows `{"output":"[task-b 9d0ec2a] add a\n…`
+  (asserted in `a_codex_session_builds_a_real_conversation`). A real Claude hook's
+  `{"stdout": …}` object already renders the same way on `main`, so this is not new to
+  M8a. The full text is the enriched `detail`, which is right. M8c, which puts headless
+  conversations in front of the user, should decide whether the summary should read an
+  object's single text field (`output`, `error`, `stdout`) instead.
+
+## From M8a.7's fix round 1 (2026-09-23), for M8a.12, M8a.18, M9.5 and M8c
+
+- **A Codex usage limit names when it resets; mark the runtime unavailable until
+  then** (ruling T7-C2, for M8a.12's rate-limit handling and M9.5's adaptive
+  concurrency). The captured `turn.failed` reads `You’ve hit your usage limit. Visit
+  https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Sep
+  25th, 2026 11:33 AM.` (`crates/daemon/tests/fixtures/headless/codex-0.156.1-usage-limit.jsonl`).
+  Today it parses as `Failed { RateLimit }`, and decision 32 retries every
+  `rate_limit_retry_secs`, which can mean dozens of doomed turns over two days. Parse the
+  `try again at <date>` time. Mark the Codex runtime unavailable until then: no dispatch
+  or delivery to Codex sessions, and route new work to the peer runtime where the roster
+  allows it. Do not retry.
+  - **M8a.12 (2026-09-23) passed this on to M9.5, whole.** Decision 32 fixes the wait
+    after a failed rate-limit turn at `rate_limit_retry_secs`, and no M8a.12 decision
+    covers a per-runtime availability clock, routing around a runtime, or a parsed
+    reset time. The reset time also has no time zone (`Sep 25th, 2026 11:33 AM`), so
+    turning it into the reducer's unix seconds needs a rule nobody has set. M8a.12
+    counts the failure as a rate-limit event (`Run.rate_limits["codex"]`) and waits as
+    decision 32 says.
+- **An interrupted turn stays `Running` in the conversation** (M8a.7 review M3, for M8a.18
+  and M8c). An interrupted Codex turn ends with `ProcessExited` and no `turn.*` line.
+  Claude fires no `Stop` hook for an interrupted turn, and with `hooks_fire` the
+  synthesised `Stop` is dropped. The Assistant turn therefore stays `Running` with its
+  call `Pending`, and the next prompt closes that call as `Denied`. The daemon knows the
+  turn ended. `TurnEnded { Interrupted }`, and a Codex `ProcessExited` while a sent turn is
+  open, could synthesise `Stop` even when `hooks_fire` is true.
+- **`server_git`'s `two_windows_in_one_worktree_register_once` fails when built into
+  `.worktrees/m8a-engine-core/target`** (found during M8a.7's fix round 1, not caused by
+  it). Load average was about 20. In that target dir the binary takes 5.5–6.8 s and fails
+  about 2 runs in 3 on the `Client::recv` 5 s timeout
+  (`crates/daemon/tests/support/mod.rs:118`). It fails there even when built from the
+  base commit `b5173fb`. The same code built into a target dir under the session
+  scratchpad takes 3.0–3.6 s and passes every time, for both the base and the fix-round
+  code. `git_registry`'s `a_commit_in_a_linked_worktree_triggers_a_probe` failed once in
+  a full parallel run and then passed three times alone. Worth a look at what in a
+  `target/` inside a git worktree slows the window-creation path (a file watcher or git
+  probe walking `target/`?). Worth an owner in M8a.8's git work or a flake pass.
+
+## From M8a.9's review (2026-09-23), for M8a (salvage)
+
+- **A git repository nested in a task worktree is salvaged as a gitlink only, and its
+  content is lost when the worktree is removed** (task-9 review m3, ruling T9-m3). This
+  happens when a worker runs `git init` in `nested/`, commits, and leaves `p.txt`
+  uncommitted. Decision 20's `git add -A` then records `160000 commit <sha> nested`. That
+  commit is not in the run repository's object store, and `p.txt` is not saved at all.
+  `git worktree remove --force` then deletes `nested/`. The salvage ref exists, but it
+  does not hold the work.
+  - A cheap guard: refuse the salvage, and so the removal, when the written tree has a
+    gitlink that `HEAD` does not have. The error would name the path.
+  - A fuller fix: salvage the nested repository into its own ref, or copy the directory
+    aside.
+  - Decision 20 prescribes exactly `add -A`, so this needs a ruling before code.
+
+## From M8a.10's review (2026-09-23), for M8a (plan validation)
+
+- **`test_passed` need not contain `{test}`.** `run/plan.rs` (the `profile.test_passed`
+  check near line 229) only compiles the pattern. A profile with `test_passed = "test
+  result: ok"` makes the proof's "the output shows the named test" half vacuous: any
+  passing run matches. Proposed: require `{test}` in `test_passed` when `single_test`
+  is set, as `single_test` itself must contain `{test}`, with the error `must contain
+  {test}`. This is a plan-validation change (M8a.5's territory), ruled out of scope for
+  M8a.10 (ruling T10-M5).
+
+## From M8a.12's re-review 3 (2026-09-23), for M8a (ruling T12-R4, no code change)
+
+- **A task blocked by the third failed `CountCommits` keeps its live session.**
+  `fallback::count_failed` calls `block` without `kill_worker` (re-review 3, probe RE).
+  This matches the delivery-failure block (ruling T12-A2), but `check_denials` kills
+  before it blocks. A worker still running can keep editing a blocked task's worktree.
+  Decide in M8a.13/M8a.15, with the unblock and resume work, whether to kill it or to
+  keep the session for the resume.
+  **Decided in M8a.15: kept.** A blocked task dispatches nothing and gets no mail, so
+  the session idles; `run retry` kills it first (`ladder::kill_worker`) and starts a
+  fresh one, `run override` sends the counted head to the merge queue, and a cancel
+  kills it. A restart ends it with every other session. Killing at the block would
+  lose nothing either, but would diverge from the delivery-failure block (T12-A2).
+- **A failed resume drops an in-flight wrap-up.** `outbox::resumed`'s failure path now
+  calls `ladder::supersede`, which removes the task's delivered-but-unconfirmed outbox
+  messages. Before, a late `Delivered{ok:false}` queued them again into the fresh
+  session's `append`. A wrap-up sent just before a mid-turn exit and a failed resume is
+  therefore missing from the fresh prompt. Decide with M8a.13's resume rules whether
+  `supersede` should keep them for `append`.
+
+## From M8a.13 (2026-09-23), for M8a
+
+- **Messages queued to a worker are dropped by rung 2** (M8a.12's `drop_queued` and
+  `supersede`). The hand-over prompt carries every bounce text and the amended brief,
+  but not an `answer` or an unread `budget_wrap_up` still in the outbox. An answer can
+  only be queued to a `blocked(question)` or `working` task, and a `working` task
+  reaching rung 2 with an undelivered answer is possible (a stall). Consider appending
+  undelivered answers to the fresh session's `append`, as a failed resume does.
+- **A Codex exit that arrives before the next process's `ProcessStarted`** (M8a.13 fix
+  round 2). `signals::exited` now drops an exit whose pid is not the round's. But a
+  delivery opens the next turn at once. If process N's exit comes after that delivery
+  and before N+1's `ProcessStarted`, the round's pid is still N, so the exit is taken
+  for a mid-turn death of the new turn. Closing this needs the round to remember that
+  process N finished its turn (for example an `exiting_pid` set when a delivery opens
+  a Codex turn over a live pid), or the executor must guarantee that `ProcessStarted`
+  for N+1 comes before N's exit. M8a.22's executor should settle which one.
+  **Done in M8a.22:** `AgentRound.closed_pid`, the first option.
+
+## From M8a.14's fix round 3 (2026-09-24), for M8a
+
+- **`verify_done`'s dirty count follows the submodule config.** Its `status
+  --porcelain` has no `--ignore-submodules=none` (`worktree/dirty.rs` passes it). Under
+  `diff.ignoreSubmodules=all` or a `.gitmodules` `ignore = all`, an uncommitted gitlink
+  change or a dirty submodule does not count toward `dirty_tracked`. Nothing
+  uncommitted is merged, so this is not a gate bypass. The claim is accepted with work
+  left behind, though, which M8a.9's salvage then has to catch.
+
+## From M8a.15's fix round 4 (2026-09-24), for M8a
+
+- **The liveness oracle rejects a halted run's task in `proof` or `check`.**
+  `gates_alive` (`run/engine/tests/liveness.rs`) wants the gate op in flight, but
+  `start_gates` runs only while the run runs, so such a task rightly waits for the
+  resume. `assert_alive` resumes a paused run before checking, and nothing does that
+  for a halted one. The review branch already exempts a stopped run; `proof` and
+  `check` should too, or the oracle should resume a halted run with a rebaseline.
+  **Done in final fix batch F4 (T15-P1):** `proof` and `check` are exempt in a halted
+  or paused run.
+
+## From M8a.18 (2026-09-24), for M8a
+
+- **`headless_sessions`'s `kill_sends_sigterm_to_the_whole_group_first` is flaky under
+  load.** It failed 1 run in 40 at the base commit `bc19dca` (and about 1 in 16 on the
+  M8a.18 branch) at load average 20 to 27, on `the group's SIGTERM reached <pid>`: the
+  background `sleep` is still a zombie of the trapping leader 2 s after the `SIGTERM`.
+  `alive()` is `kill(pid, 0)`, which succeeds for an unreaped zombie, and the leader
+  reaps its child only between its own `sleep 0.05` loops. Checking the process state
+  (`ps -o stat=` not `Z`) instead of `kill(pid, 0)` would test what the test means.
+
+
+## From M8a.21's review (2026-09-24), for M8a
+
+- **Codex's first turn needs an anthrex marker in its argv so reconcile can find it.**
+  Decision 28's leftover check signals a recorded pid only when its argv holds the
+  session id, and `codex exec`'s first turn has no thread id yet, so an orphaned first
+  turn survives a daemon restart. Put an anthrex-owned marker on Codex's argv (for
+  example the op's `session_uuid` as a `-c` config value) so `run/reconcile/sessions.rs`
+  can verify a recorded pid (ruling on M8a.21 concern 5).
+- **A replayed accept `Finished` did not run its clean-up.** Reconcile now reports it
+  honestly (`accepted as <sha7>; clean-up did not run before the restart`, with every
+  run branch in `kept_branches`), but the salvage, worktree removal and branch deletion
+  are not re-run. M8a.22 should re-run them after the restore. **Done in M8a.22**
+  (`driver/restore.rs`); the report still names the branches as kept.
+- **Session uuids need a per-run random nonce.** `session_uuid(run_id, op)` is
+  deterministic, so two runs with the same id share uuids (Claude's session store, and
+  any id-based check). Mix a random nonce stored in `run.json` into it (M8a.22).
+  **Done in M8a.22:** `Run.session_nonce`, `role_launch::session_uuid_of`.
+
+## From M8a.22 (2026-09-24), for M8a
+
+- **Decision 53 counts worker routes only.** Fix round 1 (ruling T22-I1) widened the
+  check to reviewers and one escalation, and called that complete; it was not. **Closed
+  in M8a.22's fix round 2** (ruling T22-I1b): decisions 50 and 53 check every runtime
+  a run can reach (`run::reach`), at `run start` and on every plan edit.
+- **The report's `codex project config:` line** (decision 53's three texts) is not
+  written: `report::render` sees only the `Run`, which does not record the caps it
+  started under. **Done in M8a.23** (ruling T23-C1): `Run.codex_project_config`.
+- **The Codex first-turn marker** (above) is still open.
+- **T8-RR2** (the `<run_head>...HEAD` range after `resume --rebaseline`) is still
+  open: the driver passes `DiffSoFar`'s fields through unchanged.
+
+## From M8a.24 (2026-09-24), for M8a
+
+- **A green merge candidate leaves no check record.** `OpResult::Merged` carries no
+  check result, so only a red candidate becomes a `CheckRecord` with `on_candidate:
+  true` (M8a.14). The report and `TaskInfo.last_check` never show the candidate check
+  a merged task passed, and `run override`'s "it still passes the candidate check"
+  (decision 35) is visible only as the merge itself.
+  `e2e_override_merges_without_approval_and_is_reported` proves the candidate check ran
+  with a check that logs its working directory. Decide whether `Merged` should carry
+  the check's record.
+- **Engine deadlines are whole truncated seconds.** M8a.24 made the failed turn's
+  continue wait at least `rate_limit_retry_secs` (`engine::clock::not_before`). The
+  other engine timers keep `now + secs`, so each can fire up to a second early in real
+  time: the stall clock (`stall_after_secs`), `INTERRUPT_GRACE`, the delivery retry
+  and `ApiRetry`'s `rate_limited_until`. None of them is a promised lower bound that a
+  test measures today. **Closed in M8a.24's fix round 1** (ruling T24-clock): all four
+  go through `not_before` (the stall clock through `clock::stall_due`), each with an
+  engine unit test at its boundary. The `CountCommits` retry (`count_retry_at`) keeps
+  `now + DELIVERY_RETRY_SECS`: a retry of an engine op, not a promised wait.
+- **`RunHarness` leaks a daemon whose start outlasts the CLI's 3 s.** Under load (seen
+  once in M8a.24's fix round 1, seven tests at once), `anthrex daemon start` gave up
+  after 3 s while the daemon came up at about 4 s. `start_daemon` then panicked,
+  `Drop`'s `stop_daemon` returned early because no socket existed yet, and the temp
+  dir's removal left the daemon running (stopped by hand through its own socket).
+  `stop_daemon` should wait for, or stop through, the pid in `daemon.pid` on that path.
+  **Closed in M8a.24's fix round 1:** the harness starts `anthrex daemon start
+  --foreground` as its own child (`support/run_daemon.rs`), waits `DAEMON_START_WAIT`
+  for the socket, and its `Drop` stops that child whatever the start came to (through
+  `anthrex daemon stop` once the socket is up, else by killing the unreaped child).
+  Test: `a_slow_starting_daemon_does_not_outlive_its_harness`.
+
+## From M8a.25 (2026-09-24), for M8a
+
+- **A session's signals and tool calls before its `CreateWindow` result are lost.** The
+  engine finds a round by its `window_id`, which it learns from the `Window` result;
+  the session's process starts inside that op, so everything it does before the op's
+  `done` line is written and its `OpDone` stepped is dropped (`signals::on_signal`
+  finds no round) or refused (`task_done` gets `this window is not the current worker
+  of task <id>`). The first `ProcessStarted` was always lost this way; M8a.25 carries
+  that pid in the `Window` result. The rest (an early `TurnEnded`, a quick first
+  `task_done`, a Codex first turn that ends within milliseconds) needs an agent that
+  acts within the few milliseconds of an fsync, so no real CLI is known to hit it; a
+  300 ms hold on the `done` line (`ANTHREX_TEST_DELAY_DONE_MS` on a `CreateWindow`)
+  reproduced it with `fake-agent`: the worker's turn stayed open with no claim.
+  Options: buffer a window's signals until its round has it, and accept a worker tool
+  call whose `RunRef` names the round whose launch is in flight.
+  - **Its interaction with the recorded pid (M8a.25 fix round 1, review finding 1).**
+    Recording that pid made the race worse at one point: a session whose process exited
+    before its window was known had a round with the dead pid, and `kill_effect` waited
+    for that pid's exit, already delivered and dropped, so the round never ended and
+    rung 2 never started. `kill_effect` now synthesises the engine's exit whenever the
+    window has no live process. A duplicate reaches an ended round, which ignores it,
+    or a round resumed since, which drops it as a repeat of the exit it took (final fix
+    batch F3, B-10; before F3 it ended that round or counted a death, T25-N1).
+    `e2e_a_session_that_exits_before_its_window_is_known_still_escalates` reproduces the
+    race with `ANTHREX_TEST_DELAY_WINDOW_MS`. The dropped early events themselves are
+    still open: that test's later sessions wait out the hold before their tool calls.
+- **`fake-agent`'s `git_commit` step does not create a missing directory** (`a/flag`
+  fails, and the process exits mid-turn). The M8a.25 tests commit into a new directory
+  with `sh` instead.
+- **The restart test's idle working worker.** `e2e_daemon_restart_pauses_and_resume_continues`
+  covers a session idle at the restart only for a task blocked on a question (`t3`,
+  M8a.25 fix round 1). A *working* task's session cannot be idle at a restart with
+  `fake-agent` long enough to aim at: every turn end of a working worker without
+  `task_done` runs decision 32's fallback at once, whose nudge turn then claims the
+  task. So the queued `RESUME_WORKER` for an idle working round is covered by the
+  engine unit tests of `restore.rs` only.
+
+## From M8a's final fix batch F1 (2026-09-24), for the user and for M8a/M8b
+
+- **For the user to decide: `AGENTS.override.md` and `CLAUDE.local.md` are not
+  protected.** Codex reads `AGENTS.override.md` and Claude Code reads `CLAUDE.local.md`
+  as instructions, like the five built-in protected paths. The user's rule names five
+  paths verbatim (`.claude/**`, `.mcp.json`, `.codex/**`, `CLAUDE.md`, `AGENTS.md`), so
+  F1 did not add them (final review A-M7, ruling). Adding them is a one-line change to
+  `run::plan::BUILTIN_PROTECTED` plus the brief's decision 56.
+- **Narrowed worker git grants are proven on macOS only.** `run_git_sandbox.rs` proves
+  them under a real `sandbox-exec` profile. Since fix round 1 the grant names single
+  files (the task's branch and its `.lock`, and in the worktree's git dir `HEAD`,
+  `index`, `MERGE_MSG` and the like with their `.lock`s), several of which do not exist
+  at launch. Seatbelt grants a missing path; on Linux, Claude Code's bubblewrap and
+  Codex's Landlock were not run, and if either skips a missing path a worker cannot
+  commit there (blocked, not unsafe). A repository using the reftable ref backend
+  (`extensions.refStorage = reftable`) keeps refs under `reftable/`, which is not
+  granted, so a worker there cannot commit either.
+- **A nested repository's uncommitted contents are not salvaged.** Salvage leaves every
+  gitlink out of `add -A`, and engine `status` does not look inside nested
+  repositories (`--ignore-submodules=dirty`), so a worktree whose only change is inside
+  a nested repository counts as clean and is removed without a salvage ref (fix round
+  1, N1).
+- **M4's worktree git calls run hooks.** `crate::worktree::ops` and `dirty` (the user's
+  own `anthrex worktree` windows) pass `core.fsmonitor=false` but not
+  `core.hooksPath=/dev/null`, so `worktree add` runs the repository's `post-checkout`.
+  These are user-initiated and workers can no longer write the hooks directory; F1
+  scoped `NO_HOOKS` to engine calls (review N7).
+- **D-10 (not done in F1): a stale review worktree is replaced without salvage.**
+  `run::git::prepare_review` removes an earlier round's worktree with `worktree remove
+  --force`; a Claude reviewer with `Bash` could leave untracked files there. Salvage (or
+  refuse) first, as `cleanup::remove_worktree` does.
+- **D-12's remaining prune.** `forget_missing` (a registered engine worktree whose
+  directory is gone) still runs a repository-wide `git worktree prune` (reconcile's
+  `PrepareWorktree` row no longer does, fix round 1), which also
+  forgets the user's own missing worktrees. Git has no per-path prune; removing the
+  one administrative directory by hand would be the narrow fix.
+- **D-3's second half.** A merge whose hook or grandchild holds its output past the
+  deadline is now recognised as merged, but `subprocess::capture` still waits for EOF on
+  both pipes after git exits. Ending the capture a short grace after the process exits
+  would bound it.
+- **A worker's `gc --auto` warns.** Since final fix batch F1b a worker's git writes
+  objects only to its private object directory, where its `gc`, `repack` and
+  `commit-graph write` work; its `gc --auto` still tries `pack-refs` in the common dir,
+  which its sandbox denies, and warns (`error: Unable to create
+  '<common>/packed-refs.lock': Operation not permitted`, exit 0; tested before F1b by
+  F1 re-review 2, S5). The repeated `error:` line may lead a model to "fix" something.
+  A fix is to launch workers with `gc.auto=0` and `maintenance.auto=false` through
+  `GIT_CONFIG_PARAMETERS` in the headless spec's environment. **Resolved by final fix
+  batch F1c:** each task checkout is its own repository whose engine-written config sets
+  `gc.auto=0`, and its refs are its own.
+- **A task branch made a symbolic ref halts the run with a misleading reason.** Since
+  F1 fix round 4 (S1), every engine call refuses a task branch whose ref is a symbolic
+  ref or link, and blocks the task. D-2's guard (`merge::work_on_base`) still counts the
+  run's refs with `--glob=refs/heads/anthrex/<run>`, which follows such a ref. So a user
+  commit on the base would be reported as "unaccepted run work", and the run halts.
+  That is fail-safe, but the reason is wrong. The guard could list the run's refs with
+  `for-each-ref --format='%(refname) %(symref)'` and name the tampered branch instead.
+- **F1b: the user's own git fails while a worker has unimported commits.** Since
+  final fix batch F1b a worker commits into its private object directory on a detached
+  `HEAD` in `<common>/worktrees/<task>/`, and the engine imports the commit only at its
+  next turn-end count, done check or hand-back. Until then the user's `git gc`, `git
+  repack -a -d`, `git prune`, `git log --all` and `git fsck` in their own checkout fail
+  with `fatal: bad object worktrees/<task>/HEAD` (reproduced with git 2.50.1): git walks
+  every worktree's `HEAD` and index as roots. Nothing is lost or changed, and a
+  background `gc --auto` only fails and logs. Fixes to weigh: make each task worktree a
+  separate repository (its own git dir under the run's data directory, the common store
+  as its alternate) so the user's repository never names the worker's objects; or have
+  the engine import on every turn end, not only when the fallback counts. **Resolved by
+  final fix batch F1c** (the first fix; `run_git_users_git.rs`).
+- **F1b: a worker's unimported commits are lost if its worktree is deleted by hand.**
+  `prepare_worktree` forgets a registered task worktree whose directory is gone and
+  re-adds it at the task branch's tip; commits the worker made since the last import
+  stay only as unreachable objects in `<data_dir>/runs/<run>/tasks/<task>/objects`.
+  Importing from the old `worktrees/<task>/HEAD` before forgetting it would keep them.
+  **Resolved by final fix batch F1c:** the checkout's repository lives in the data
+  directory, so a checkout deleted by hand comes back from it with its `HEAD` imported
+  first (`a_task_checkout_deleted_by_hand_comes_back_with_its_work`).
+- **F1b: private object directories are never removed.** Each task's
+  `<data_dir>/runs/<run>/tasks/<task>/objects` and `staging.git` stay with the run's
+  data directory after accept or discard. **Resolved by final fix batch F1c:** removing a
+  checkout removes its repository (private objects, engine files, per-task tmp).
+
+## From M8a's final fix batch F1c (2026-09-25), for the user and for M8a/M8b
+
+- **I1's residual: the CLIs resolve the grant again.** The engine now creates each
+  granted directory as the canonical parent plus the leaf and refuses a link found
+  there, and removes links at the other granted paths. Claude and Codex canonicalise
+  the paths again when they build their sandbox profiles, after the engine's check; a
+  process that swaps a granted path for a link in that window widens the grant. The
+  engine cannot close that window from outside the CLIs; handing them already
+  canonical paths under a directory no worker can write is the most it can do.
+- **Standalone checkouts: LFS, submodules and partial clones.** A task checkout is its
+  own repository with the user's object store as its alternate. Git LFS objects (in
+  `<common>/lfs`), submodules' own repositories (`<common>/modules`) and a partial
+  clone's promisor remote are not wired into it; a project that needs them sees
+  missing files or fetches that fail. Symlinking `lfs/objects` read-only, or giving
+  the checkout the promisor config, are the options to weigh.
+- **Standalone checkouts: the worker sees no branches.** The checkout's repository has
+  no refs but its detached `HEAD`; `git log main` or `git branch` in the worker's shell
+  finds nothing. The prompts name commits by id, so no role depends on it, but a model
+  may be confused. Mirroring the base and run refs read-only into the checkout's
+  `packed-refs` at dispatch would give it names.
+- **I2: no check confinement on Linux (bubblewrap).** `run/confine.rs` confines
+  checks, proofs and `setup` with `sandbox-exec` on macOS only. Since F1c round 2 a
+  Linux `run start` refuses unless the user passes `--unconfined-checks` or sets
+  `[orchestrator] unconfined_checks = true`, and the run, `run status` and the report
+  say so. A bubblewrap wrapper (read-only bind of `/`, writable binds of the checkout,
+  its objects, its tmp and `cache_dirs`, `--die-with-parent`, the shell `exec`ed as
+  the group leader) or landlock would let Linux runs confine instead; when `bwrap` is
+  on `PATH` the refusal could offer it. Not implemented, by ruling.
+- **I2: confined `setup` needs `cache_dirs`.** Since F1c round 2 `setup` is confined
+  like checks. A `setup` that installs dependencies (`npm ci`, `pip install`) writes
+  the package manager's cache under `$HOME` and fails until the profile lists it in
+  `cache_dirs`. Network access is not restricted.
+- **E2e tests read the report without waiting.** `run_e2e_settings.rs`'s
+  `e2e_trust_project_is_accepted_and_reported` read an empty report once under load
+  (load average 35) right after `complete`; F1c round 2 moved it to the deadline
+  helper `report_with`. `run_e2e_basic.rs:67`, `run_e2e_finish.rs:113` and
+  `run_e2e_settings.rs:183` still call `report(&run)` directly after `complete`.
+  **Done in final fix batch F4:** `run_e2e_basic` waits with `report_with`;
+  `run_e2e_finish` reads the text its deadline wait returned; `run_e2e_settings` had
+  already moved into an `until` loop.
+- **N4: a reviewer's allowed git commands could once write files.** A Claude reviewer
+  now runs under a read-only seatbelt sandbox (empty `allowWrite`) and a Codex reviewer
+  under `-s read-only`, so `git diff --output=<path>` cannot write. Claude Code's
+  permission matcher may still allow the `--output` flag on `Bash(git diff:*)`; the
+  sandbox is the real block. Scouts (M9, not built yet) must be launched the same way,
+  a read-only OS sandbox, when they arrive.
+- **N5: a checkout the user deleted by hand loses its unimported commits at run end.**
+  `driver/cleanup.rs::remove_worktree` skips salvage when the checkout directory is
+  gone, and `checkout::remove` then deletes the repository holding the worker's `HEAD`
+  and private objects. Before F1c they survived in the private dir with a recovery
+  recipe. Fix: when the path is gone but `repo.git_dir()/HEAD` names a commit, `sync_in`
+  it (or write a salvage ref) before removal.
+- **N7: `includeIf "gitdir:..."` stops matching for task checkouts (3a regression).** A
+  task checkout's git dir is under anthrex's data dir, so a user who sets their work
+  identity with `[includeIf "gitdir:~/work/"]` gets worker commits with the wrong
+  identity, and those commits are merged into the base branch. Fix to weigh: read the
+  user's `--global`-resolved `user.name`/`user.email` at run start and set them in the
+  checkout's engine-written config, or add an `includeIf "gitdir:<data>/..."`-aware rule.
+- **`git worktree list` no longer shows the run's task checkouts.** Only the
+  integration checkout stays a linked worktree. `anthrex run status` is where the
+  checkouts are listed.
+
+## From M8a's final fix batch F2 (2026-09-25), for the user and for M8a/M8b
+
+- **For the user: Codex marks anthrex's checkouts trusted in your `~/.codex/config.toml`,
+  and anthrex cannot stop it.** On a `workspace-write` turn (every Codex worker), Codex
+  writes `[projects."<project root>"] trust_level = "trusted"` into the user's own
+  `~/.codex/config.toml` by itself (M8a.1 item 7a). `-c projects."<root>".trust_level=...`
+  on the command line does not prevent it. Since F1c a task checkout is a standalone
+  repository, so the root is presumably the checkout (`<worktrees>/runs/<run>/<task>`,
+  manual check 4e, F2 (2)): one entry per Codex worker task, left behind after the run.
+  They grant nothing to the user's own repository, but they accumulate, and a later
+  directory at the same path would be trusted. Remove them by hand; anthrex does not
+  edit the user's Codex config.
+- **C-I1's residual: a leftover process can write `.codex` after the guard's check.**
+  The guard runs just before each Codex spawn. A `setsid` child that outlives its turn
+  could write `<checkout>/.codex/config.toml` between the check and Codex's read. What
+  is closed, since F2 round 2:
+  - a confined check, proof or `setup` (the F1d profile denies the protected paths);
+  - a Claude worker's or reviewer's `Bash` (`sandbox.filesystem.denyWrite`). Seatbelt
+    restrictions are inherited by every descendant, so an escaped child is still denied.
+
+  What is open is a Codex worker's own children. The legacy `sandbox_workspace_write`
+  has no deny list. codex-cli 0.156's `[permissions.<name>]` profiles have `deny`
+  filesystem entries, but the binary says a profile cannot yet grant writes outside the
+  workspace root, which F1c's grant needs (the task git dir and tmp). The binary may
+  also protect `.codex` and `.agents` itself. Manual check 4e, F2 round 2 (6), has the
+  probe. A route edit that puts a task whose `owns` names a `.codex` path on Codex could
+  also be refused up front, since the guard blocks it anyway (the F2 review's item 4).
+- **Cross-cutting: worker children that escape their session's process group survive
+  the turn.** Evidence:
+  - The session waiter kills only the leader's process group, in its `WNOWAIT` window
+    (`headless/session.rs`, `signal_locked` → `killpg`).
+  - Before the next turn, the manager waits only for the leader (`is_ended()` in
+    `manager/headless_turns.rs`).
+  - Any descendant that called `setsid`/`setpgid` (seatbelt forbids neither) is not
+    signalled. `session.rs`'s `OUTPUT_GRACE` already allows for "a process that escaped
+    the group" holding a pipe.
+  - Whether Codex puts its own tool commands in separate process groups, which would
+    make an ordinary `cmd &` survive too, is unverified.
+
+  Consequences:
+  - a sandboxed survivor keeps its sandbox, and so its write grant (the checkout, its
+    objects, its tmp) into later turns and later engine operations on that checkout;
+  - an unsandboxed one (`worker_sandbox = false`) keeps everything.
+
+  Not changed in F2: kill and process-scan code is under the safety rule. A fix to
+  weigh: at retire and at task end, find the survivors by a marker the daemon controls
+  (a per-session environment token, or a sandbox extension) and signal them by exact
+  pid, never by pattern. That fix needs its own review under that rule.
+- **`.agents/` is not guarded.** Codex reads repository skills (`.agents/skills`) and a
+  plugin marketplace (`.agents/plugins/marketplace.json`) from the project. The
+  protected list is the user's five paths verbatim; whether to add `.agents/**` to it,
+  and to the Codex guard, is the user's decision.
+- **A task that changes `.codex/**` runs on Claude only.** The guard refuses every Codex
+  session on a checkout whose `.codex` differs from the base, the task's own Codex
+  reviewer included; such a task needs a Claude worker and a Claude reviewer (a route
+  edit), and later Codex tasks on the run branch are refused as well.
+- **Review C, M1: a failed Claude `headless_send` leaves its turn recorded.**
+  `manager/headless_turns.rs` records the turn in the cursor, then enqueues; a full
+  queue or closed stdin leaves a `pending_sent` entry no prompt hook will match, so a
+  background `result` before the next delivery is classed as `Unprompted`. Fix:
+  enqueue first, under the lock (`send_line` does not block), and record only on
+  success. Not done in F2: testing it needs an enqueue that fails and a later one that
+  succeeds.
+- **Review C, M4: the tool gate knows a session only by its window id.** With
+  `worker_sandbox = false`, a worker that reaches the socket can call
+  `submit_review approve` for its own task. The report now says so. A per-session
+  unguessable token in `anthrex mcp`'s argv, checked by the engine, would close it.
+- **Review C, M7: a restored headless window whose `run` does not parse comes back as a
+  PTY window**, so `headless_guard` no longer refuses `Restart`, and C-b R would start an
+  interactive `claude` in the task checkout on the user's normal settings. Restoring it
+  as a headless window with no spec (or a `Dormant` that refuses restart) would keep
+  decision 49's refusals.
+- **F2 round 2's costs.**
+  - A profile can no longer set the shell and interpreter start-up variables
+    (`PYTHONPATH`, `NODE_PATH`, `RUBYLIB`, `XDG_*`, `SHELL`, ...). A check sets them in its
+    own command.
+  - A Codex user who authenticates only through an exported `OPENAI_API_KEY` or
+    `CODEX_API_KEY` must run `codex login --with-api-key` instead, since sessions drop
+    the inherited keys.
+  - A confined check or `setup` that writes `CLAUDE.md`, `AGENTS.md`, `.mcp.json`,
+    `.claude/` or `.codex/` in its checkout now fails.
+- **C-I4's cost: a profile cannot set `PATH`, `HOME`, a proxy or a CA bundle.** They come
+  from the daemon's environment. A project whose checks need a tool on a
+  repository-relative path must name it in the command (`./node_modules/.bin/x`).
+
+## From M8a's final fix batch F3 (2026-09-25), for M8a/M8b
+
+- **`max_writers` can be exceeded by a task that comes back to `working` (final review
+  A-I2, cap half; recorded, not changed).** Decision 41 frees a writer slot at `review`
+  and `merge_queue` and takes one "again while a handed-back task is `working`"; the
+  return paths (rung 1 after a rejection or a red candidate, rung 2, a hand-back, an
+  answer, `run retry`) take it whether or not one is free. Holding a returning task until
+  a slot frees needs a wait state on each of those five paths; counting `review` and
+  `merge_queue` against the cap at dispatch contradicts decision 41's "hold none". The
+  over-subscription is bounded by the tasks in those states. F3 closed the hub half.
+- **A blocked non-hub task can come back beside a running hub task (A-I2 residual).** A
+  hub task now waits for every task in `review` or `merge_queue` (they come back on their
+  own) and keeps the hub from its start until it finishes, but it does not wait for
+  `blocked` tasks: an answer, a retry or an override returns one to `working` while the
+  hub runs. Waiting for them could deadlock (a task held on the hub as a dependency, or
+  one the user never unblocks).
+- **A panic in an effect, not in `step`, still ends the event loop (B-I2 residual).**
+  (F4, F3 review N3: preparing a step's effects, the snapshot included, is now guarded
+  too, in the loop and at restore; a panic there costs that publish only.)
+  `step` runs under `catch_unwind` (state put back, the request failed, the loop kept),
+  and a run whose restore panics is left out. A panic in the driver's own effect code
+  (`execute`) still ends the loop task with no log and leaves waiting requests hanging.
+  A data-dependent panic in the scheduler, which runs over every run on every step, makes
+  every step fail until the daemon restarts without that run; each is logged.
+- **B-6 (not done: process-kill code).** `kill_leftovers` takes its candidates from
+  `run.json`'s round pids only; a pid that reached only the journal's `done` line of a
+  `CreateWindow` is not examined. The fix changes which pids the leftover-session killer
+  examines, so under the process-kill safety rule it is left for a change reviewed line
+  by line.
+- **B-7 (not done: process-kill code).** Orphaned `setup`, `check` and proof shells of a
+  dead daemon are neither found nor killed, and a re-issued op runs beside them. Finding
+  them needs a recorded pgid and a kill at reconcile, which is process-kill code.
+- **B-5's other half.** A restored run with a leftover session still costs up to 2 s of
+  SIGTERM grace, serially, before the socket is bound (`kill_leftovers`, process-kill
+  code). F3 removed the unconditional `run.json` rewrite and journal compaction of
+  unchanged runs.
+- **B-10 residuals.** (F4, F3 review N2: a second pid-0 synthetic exit is no longer
+  taken for a repeat, so a second kill of a reopened round ends it.) A synthetic exit
+  carries pid 0 when the round never recorded one;
+  the real exit of that unrecorded process is then not recognised as a repeat. And a
+  Claude process's last `TurnEnded` (its usage) that lands after its round ended is
+  still ignored, so that spend is not counted.
+- **The pre-`CreateWindow` event race is still open** (the From M8a.25 entry): F3 made
+  the test that reproduces it wait on the condition (`run.json` records the session's
+  window) instead of a 4 s sleep (T25-N2), and assert the race was reproduced
+  (T25-N3). Buffering a window's signals until its round has it was not cheap.
+- **A fresh session's hand-over diff is `start..HEAD` (A-I5's sibling).** The review
+  diff is now the task's net change from its merge base with the run head; the rung-2
+  hand-over prompt's `git diff --stat <start>..HEAD` and diff (decision 30) still include
+  every hand-back's merged work.
+
+## From M8a's final fix batch F4 (2026-09-25), for the user and for M8a/M8b
+
+- **Claude sessions no longer deny nested `CLAUDE.md`/`AGENTS.md` writes (F2 re-review
+  I2).** Published packages ship these files (recharts ships `AGENTS.md`), and Claude's
+  `denyWrite` globs cannot leave `node_modules`, `.venv` or `vendor` out, so the
+  `<checkout>/**/…` entries made `rm -rf node_modules` and pnpm/bun installs fail. A
+  Claude session now denies only the root files, `.claude`, `.codex` and `.mcp.json`.
+  Nested ones are judged by the done gate (any depth, any case, tracked changes), and
+  Codex reads `AGENTS.md` only from the root down to its cwd, the root. The seatbelt
+  profile of checks, proofs and `setup` keeps the nested deny outside dependency trees
+  (`seatbelt::DEPENDENCY_DIRS`), but only against direct creation: a confined check can
+  write `node_modules/d/CLAUDE.md` and `mv node_modules/d src/d`, leaving
+  `src/d/CLAUDE.md` (a directory rename is checked on the directory, not its contents;
+  F4 review M1). For nested files the done gate is the barrier. A worker (or its leftover child) can still plant a
+  nested `CLAUDE.md` that a later Claude session of the same task reads when it works
+  in that directory.
+- **Letter case (F2 re-review I1) was not reproducible on macOS 26.2.** Seatbelt's
+  `literal`, `subpath` and `regex` filters already matched `.CODEX`, `agents.md`,
+  `sub/Claude.md` and `.MCP.JSON` on the default case-insensitive APFS volume (probed
+  with `sandbox-exec` directly, F4 report). The confined profile now spells the names
+  with bracket classes anyway; Claude's entries rely on the kernel's folding (manual
+  check 4e, F4). A case-sensitive volume needs no folding.
+- **F2 re-review M2 (optional): Claude's `Edit`/`Write` tools** could get the same
+  protected list as `permissions.deny` `Edit(//<abs>)` entries. Not done: the rule
+  syntax is unverified against the real CLI, and the C-I1 race involves leftover
+  children, which the sandbox covers.
+- **F2 re-review M4: other inherited secrets reach checks.** `GITHUB_TOKEN`, `GH_TOKEN`,
+  `AWS_*`, `NPM_TOKEN` and the like are inherited by checks, proofs and `setup`; with
+  the user's `confined_network`, worker-written test code can send them out. An
+  allow-list for `engine_env` is the real fix; it needs the user to decide which
+  variables a project's checks may see.
+- **F4 review M2: `prepare_guarded`'s double panic stalls a run.** If `effects::prepare`
+  panics and the publish-free retry panics too, nothing runs: the step's new
+  `pending_ops` and bumped revision are in the in-memory state but never executed and
+  never saved, so memory and disk diverge until the next restart, and a run waiting on
+  such an op stalls. Needs a panic in `prepare`'s mapping code (very unlikely). Fix:
+  on a double panic restore the pre-step runs, as `guarded_step` does
+  (`crates/daemon/src/run/driver/guard.rs`, `prepare_guarded_with`).
+- **F3 review N7: `guarded_step` clones the whole `EngineState` per event** under the
+  engine lock (a second clone beside `step`'s own `before`). A performance cost, not a
+  correctness one; `step` could hand its `before` back on the panic path.
+- **F3 review N4: a note-only restore does not bump the run's revision.** F4 saves such
+  a run (its `as_loaded` is now taken before the restore's notes), but
+  `engine::restore` compares against the runs as passed in, which already hold the
+  notes. Clients re-read snapshots after a daemon start, so nothing shows stale.
+- **B-8 (final review B): retired headless windows lost at a crash stay listed.** A
+  dormant `Exited` headless window of a run counts against `max_windows` until the run
+  finishes, and decision 49 lets no one else remove it. Not fixed: it needs the
+  window-removal path the restore already walks (`remove_stale_windows`) to know which
+  of a live run's windows no round will resume.
+- **E-M8: the e2e harness's fallback kill leaves the daemon's headless children
+  running.** When `anthrex daemon stop` times out, `DaemonProcess::kill` SIGKILLs the
+  daemon alone; its `fake-agent` sessions (own process groups) keep running up to their
+  own timeouts. A leak of test processes, not a safety problem; any fix must stay
+  scoped to recorded pids (process-kill safety rule).
+- **T20-P1, T20-P2 (fake-agent signal handling, not changed: kill code).** A SIGTERM
+  that lands while an interrupted `sh` is being killed (`kill_tree` running `ps`) only
+  sets the flag and is acted on at the next `sh`; a signal between the child's spawn and
+  its pid being stored is likewise late. `kill_tree` runs `ps` with no timeout. The
+  fake's `shell()` joins its drain threads after `sh` exits with no bound, so a
+  background job holding the pipe blocks the step (pre-existing).
+- **T21-P1..P3 (reconcile's leftover-session killer, not changed: process-scan code).**
+  `reconcile_with_orphan_parent` is plain `pub` (should be `#[doc(hidden)]` or
+  test-gated); the `round.ended` filter, the uid check and the non-group `kill` branch
+  have no negative test (an ended round's recorded orphan must survive); the note says
+  "killed" even when the signal failed with something other than `ESRCH`. Each needs a
+  change reviewed line by line under the safety rule.
+- **T22-P5: `run start`'s decision-53 refusal does not say why** a Claude-only plan
+  reaches Codex (escalation or review) or that a one-runtime roster avoids it.
+- **T23 M2: `run accept`'s pre-check is a snapshot.** The run is checked `complete`
+  before any question, and the daemon checks again at the merge; a run that changes in
+  between is refused by the daemon, in its own words.
+- **`crates/config/src/lib.rs` is 605 lines** (600 on `main`; M8a added the
+  `orchestrator` hooks) and `lib_tests.rs` 742 (741 on `main`). Left for a config
+  change that has a reason to split them.
+
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
 - **The main pane can switch to a new window while the new-agent form is still open and

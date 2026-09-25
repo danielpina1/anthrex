@@ -2,7 +2,9 @@
 //!
 //! [`probe`] spawns exactly the one command design decision 5 names
 //! (`git -C <root> --no-optional-locks status --porcelain=v2 --branch
-//! --untracked-files=normal -z`) — no more — and hands its stdout to
+//! --untracked-files=normal -z`) — no more, plus `-c core.fsmonitor=false` so a
+//! command planted in a repository's config never runs as the daemon (M8a final fix
+//! batch F1) — and hands its stdout to
 //! [`crate::git::parse::parse_porcelain_v2_z`]. It fills in the in-progress operation
 //! by resolving the worktree's own git dir straight from the filesystem
 //! ([`resolve_git_dir`], no extra process) and stat-ing it with [`detect_operation`] —
@@ -40,15 +42,46 @@ pub const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 /// parse is returned as `Some` with [`proto::GitState::stale`] set, per design
 /// decision 9. `stale` is never set anywhere else.
 pub fn probe(git: &OsStr, root: &Path, timeout: Duration) -> Option<GitState> {
+    // M8a final fix batch F1, fix round 1 (N1, N2): a run worktree is probed through
+    // the git directory the daemon pinned for it, never its `.git` file, and without
+    // looking inside nested repositories, whose own config a worker writes.
+    let pin = match crate::worktree::pinned::pinned(root) {
+        Some(pin) => {
+            if let Err(error) = crate::worktree::pinned::check(root, &pin) {
+                tracing::warn!(%error, "not probing a tampered run worktree");
+                return None;
+            }
+            Some(pin)
+        }
+        None => None,
+    };
     let mut command = Command::new(git);
-    command.arg("-C").arg(root).args([
-        "--no-optional-locks",
+    command
+        .arg("-C")
+        .arg(root)
+        .args(["--no-optional-locks", "-c", "core.fsmonitor=false"]);
+    if let Some(pin) = &pin {
+        command.args(crate::worktree::pinned::flags(root, pin));
+    }
+    // Final fix batch F1b and F1c: a task checkout's `HEAD` is the worker's commit,
+    // whose objects stay in the checkout's own object directory until the engine
+    // imports them. The checkout is its own repository (F1c, 3a), with the common store
+    // as its alternate, so `status` reads them from there, for this display only. No
+    // engine decision reads that directory, and nothing here writes
+    // (`--no-optional-locks`).
+    command
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        .env_remove("GIT_OBJECT_DIRECTORY");
+    command.args([
         "status",
         "--porcelain=v2",
         "--branch",
         "--untracked-files=normal",
         "-z",
     ]);
+    if pin.is_some() {
+        command.arg("--ignore-submodules=dirty");
+    }
 
     let (output, stale) = match subprocess::run(&mut command, MAX_OUTPUT_BYTES, timeout) {
         Outcome::Complete(output) => (output, false),
@@ -64,7 +97,11 @@ pub fn probe(git: &OsStr, root: &Path, timeout: Duration) -> Option<GitState> {
     // on how much of `status` was read before the deadline or the cap. Skipping it when
     // `stale` is set lost the red `rebase` marker on exactly the repositories big enough
     // to time out, which is when it matters most.
-    let operation = resolve_git_dir(root).and_then(|git_dir| detect_operation(&git_dir));
+    let git_dir = match &pin {
+        Some(pin) => Some(pin.git_dir.clone()),
+        None => resolve_git_dir(root),
+    };
+    let operation = git_dir.and_then(|git_dir| detect_operation(&git_dir));
 
     Some(GitState {
         head: parsed.head,

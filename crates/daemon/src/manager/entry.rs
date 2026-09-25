@@ -47,6 +47,11 @@ pub(super) enum Process {
         cols: u16,
         rows: u16,
     },
+    /// A headless run session (decision 49): no terminal, a stream instead. Its spec,
+    /// stream status and conversation cursor live here, next to the process, rather than
+    /// as fields of `Entry`, so that `create.rs` and `restart.rs`, which build and swap
+    /// PTY entries, need no change (M8a.17's acceptance).
+    Headless(Box<super::headless::HeadlessWindow>),
 }
 
 pub(super) struct Entry {
@@ -140,7 +145,25 @@ impl Entry {
             model: self.spec.model.clone(),
             subagents: self.state.subagents.infos(now),
             exit: self.exit.clone(),
+            kind: match &self.process {
+                Process::Headless(_) => proto::WindowKind::Headless,
+                _ => proto::WindowKind::Pty,
+            },
+            run: self.headless().and_then(|spec| spec.run_ref.clone()),
         }
+    }
+
+    /// The spec of a headless run session (decision 28's `Entry.headless`); `None` for a
+    /// PTY window.
+    pub(super) fn headless(&self) -> Option<&crate::headless::HeadlessSpec> {
+        match &self.process {
+            Process::Headless(window) => Some(&window.spec),
+            _ => None,
+        }
+    }
+
+    pub(super) fn is_headless(&self) -> bool {
+        matches!(self.process, Process::Headless(_))
     }
 
     /// Applies a status event; returns whether the status changed.
@@ -162,6 +185,7 @@ impl Entry {
         match &self.process {
             Process::Live(window) => window.pid(),
             Process::Dormant { .. } => None,
+            Process::Headless(window) => window.handle.pid(),
         }
     }
 
@@ -171,6 +195,10 @@ impl Entry {
             Process::Live(window) => window.write_input(bytes),
             Process::Dormant { .. } => anyhow::bail!(
                 "window is not running; restart it with C-b R or anthrex restart {}",
+                self.id
+            ),
+            Process::Headless(_) => anyhow::bail!(
+                "window {} is a headless session; only the engine drives it",
                 self.id
             ),
         }
@@ -188,6 +216,8 @@ impl Entry {
                 *r = rows;
                 Ok(())
             }
+            // Decision 49: accepted and ignored, there is no terminal.
+            Process::Headless(_) => Ok(()),
         }
     }
 
@@ -195,18 +225,23 @@ impl Entry {
         match &self.process {
             Process::Live(window) => window.size(),
             Process::Dormant { cols, rows, .. } => (*cols, *rows),
+            Process::Headless(_) => HEADLESS_SIZE,
         }
     }
 
-    pub(super) fn attach(&self) -> Attachment {
+    /// Refused for a headless window (decision 49): there is no terminal to attach to.
+    pub(super) fn attach(&self) -> anyhow::Result<Attachment> {
         match &self.process {
-            Process::Live(window) => window.attach(),
-            Process::Dormant { output, cols, rows } => Attachment {
+            Process::Live(window) => Ok(window.attach()),
+            Process::Dormant { output, cols, rows } => Ok(Attachment {
                 output: output.subscribe(),
                 snapshot: self.dormant_placeholder(),
                 cols: *cols,
                 rows: *rows,
-            },
+            }),
+            Process::Headless(_) => {
+                anyhow::bail!("{}", super::headless::subscribe_refusal(self.id))
+            }
         }
     }
 
@@ -214,6 +249,11 @@ impl Entry {
         match &self.process {
             Process::Live(window) => window.snapshot(),
             Process::Dormant { .. } => self.dormant_placeholder(),
+            Process::Headless(_) => format!(
+                "\x1b[2J\x1b[H[anthrex] {}\r\n",
+                super::headless::subscribe_refusal(self.id)
+            )
+            .into_bytes(),
         }
     }
 
@@ -244,9 +284,16 @@ impl Entry {
         match &self.process {
             Process::Live(window) => window.signal_group(sig),
             Process::Dormant { .. } => Ok(()),
+            Process::Headless(window) => {
+                window.handle.signal_group(sig);
+                Ok(())
+            }
         }
     }
 }
+
+/// The size a headless window reports: it has no terminal (decision 49).
+const HEADLESS_SIZE: (u16, u16) = (80, 24);
 
 pub(super) struct Inner {
     pub(super) next_id: u32,

@@ -1,0 +1,563 @@
+//! Agent-facing message texts (the Interfaces "Contracts and message texts" table).
+//! Pure — no `std::fs`, `std::process`, `std::thread`, `tokio` or
+//! `std::time::SystemTime` (design decision 2).
+//!
+//! M8a.6 created this file with the two texts plan edits need, `answer_message` and
+//! `amend_message`; M8a.8 added the diff clamp. M8a.11 adds the two role contracts, the
+//! worker, hand-over and reviewer prompts (decision 30) and `conflict_message`; the
+//! other message texts arrive with the tasks that send them: M8a.12 adds the done gate's,
+//! the nudges, the stall, budget, rate-limit and denial texts, and decisions 54–56's.
+//! M8a.13 and M8a.14 add the rest.
+
+use proto::{Budget, Finding, Severity, Size, Spend, TestMode};
+
+use super::messages::summary;
+use super::model::{CheckRecord, ProofRecord, ReviewLevel, ReviewRecord, Run, Task};
+
+/// The worker's system prompt (decision 30, exact). It never varies, so the cached
+/// prefix is stable (spec §14.2).
+pub const WORKER_CONTRACT: &str = "You are a worker in an anthrex orchestration run.
+1. Work only in this worktree and only in the paths this task owns. Changing files outside them stops the task.
+2. Follow the test mode in your task prompt. For tdd: write the named test first, commit it while it fails (that commit is the red commit), then make it pass.
+3. Commit your work in this worktree with clear messages. Its HEAD is detached: commit on it, and the engine records your commits on the task's branch. Never create, switch or push branches, and never rewrite commits already there. Commit new files: untracked files are not part of your work.
+4. Use sub-agents to read and explore if you like; do all writing yourself.
+5. When the task is complete and committed, call the anthrex tool task_done with a summary (and, for tdd, the test and the red commit). Then stop.
+6. If you cannot continue, call task_blocked: kind question if you need an answer, mis_sized if the task is bigger than one task, environment if a tool or setup is broken. Then stop.
+7. If you believe a review finding is wrong, do not fix it: call task_blocked with kind question and say why.
+8. Messages that start with [anthrex] come from the orchestration engine. Do what they say, commit, and call task_done again.
+9. Nobody can answer a permission prompt. If a tool is denied, work without it or call task_blocked with kind environment.";
+
+/// The reviewer's system prompt (decision 30, exact).
+pub const REVIEWER_CONTRACT: &str = "You are a reviewer in an anthrex orchestration run.
+1. This worktree is checked out at the change's head. Do not edit, create or delete files, and do not commit.
+2. The change's diff is in your prompt. If it was clamped, or you need history, use git diff, git log or git show in this directory. Judge it against the brief and every acceptance criterion in your prompt.
+3. Read the diff; do not run the build. The engine has already run the check, and its summary is in your prompt.
+4. Call the anthrex tool submit_review exactly once, with verdict approve or changes, a summary, and findings.
+5. Every finding has a severity. critical: wrong or unsafe, must not merge. important: must be fixed before merging. minor: worth noting, does not block. Each critical or important finding must name a file and line, or a failing input.
+6. Use changes only when there is at least one critical or important finding. Earlier rounds' findings, if listed, must each be confirmed fixed.";
+
+/// The first seven characters of a sha (not `rev-parse --short`, which may be longer).
+pub fn sha7(sha: &str) -> &str {
+    sha.get(..7).unwrap_or(sha)
+}
+
+pub(crate) fn mode_label(mode: TestMode) -> &'static str {
+    match mode {
+        TestMode::Tdd => "tdd",
+        TestMode::Check => "check",
+        TestMode::None => "none",
+    }
+}
+
+pub(crate) fn size_label(size: Size) -> &'static str {
+    match size {
+        Size::S => "S",
+        Size::M => "M",
+        Size::L => "L",
+    }
+}
+
+fn level_label(level: Option<ReviewLevel>) -> &'static str {
+    match level {
+        Some(ReviewLevel::Small) => "small",
+        Some(ReviewLevel::Medium) | None => "medium",
+        Some(ReviewLevel::Frontier) => "frontier",
+    }
+}
+
+/// The first turn of a worker session (decision 30, Interfaces "`worker_prompt`"): the
+/// task header and the profile summary, what it owns and must meet, then the brief last.
+pub fn worker_prompt(run: &Run, task: &Task) -> String {
+    let spec = &task.spec;
+    let start = task.start_commit.as_deref().unwrap_or(&run.run_head);
+    let mut lines = vec![
+        format!("[anthrex] Task {}: {}", spec.id, spec.title),
+        format!("Run goal: {}", run.goal),
+        format!("Worktree: {}", task.worktree.display()),
+        format!("Branch: {}", task.branch),
+        format!("Start commit: {}", sha7(start)),
+        format!(
+            "Size: {}{}",
+            size_label(task.size),
+            if task.hub { ", hub" } else { "" }
+        ),
+        format!("Test mode: {}", mode_label(task.test_mode)),
+    ];
+    if task.test_mode == TestMode::Tdd {
+        if let Some(test) = &spec.test_to_write {
+            lines.push(format!("Test to write: {test}"));
+        }
+        if let Some(single) = &run.profile.single_test {
+            lines.push(format!("Single-test command: {single}"));
+        }
+    }
+    if let Some(check) = &run.profile.check {
+        lines.push(format!("Check command: {check}"));
+    }
+    lines.push(String::new());
+    lines.push("This task owns:".to_string());
+    lines.extend(spec.owns.iter().map(|glob| format!("- {glob}")));
+    lines.push("Acceptance criteria:".to_string());
+    lines.extend(spec.acceptance.iter().map(|item| format!("- {item}")));
+    lines.push(String::new());
+    lines.push(spec.brief.clone());
+    lines.join("\n")
+}
+
+/// A fresh session's first turn (decision 30): [`worker_prompt`], then which session
+/// this is and why, the change so far (`git diff --stat` and the diff clamped to
+/// [`REVIEW_DIFF_MAX`]) and every earlier bounce message's text. The layout after the
+/// worker prompt is M8a.11's (the brief names the parts, not their wording).
+pub fn handover_prompt(run: &Run, task: &Task, reason: &str, stat: &str, patch: &str) -> String {
+    let start = task.start_commit.as_deref().unwrap_or(&run.run_head);
+    let mut out = worker_prompt(run, task);
+    out.push_str(&format!(
+        "\n\nThis is session {} of this task.\nWhy a new session: {reason}\n",
+        task.session
+    ));
+    out.push_str(&format!(
+        "Your branch already has the earlier sessions' work. Changes so far (git diff --stat {}..HEAD):\n{}\n",
+        sha7(start),
+        stat.trim_end()
+    ));
+    out.push_str(&format!(
+        "Diff so far:\n{}",
+        clamp_diff(patch, REVIEW_DIFF_MAX)
+    ));
+    if !task.failure_log.is_empty() {
+        out.push_str("\nEarlier failures:");
+        for failure in &task.failure_log {
+            out.push_str("\n- ");
+            out.push_str(failure);
+        }
+    }
+    out
+}
+
+/// One review round's first turn (decision 35, Interfaces "`reviewer_prompt`"). Never
+/// names the author's runtime, model or transcript.
+pub fn reviewer_prompt(
+    run: &Run,
+    task: &Task,
+    round: u32,
+    base: &str,
+    head: &str,
+    patch: &str,
+) -> String {
+    let spec = &task.spec;
+    let level = task.review_level;
+    let mut lines = vec![
+        format!(
+            "[anthrex] Review task {} \"{}\", round {round}, level {}.",
+            spec.id,
+            spec.title,
+            level_label(level)
+        ),
+        format!("Base: {}", sha7(base)),
+        format!("Head: {}", sha7(head)),
+        format!("Test mode: {}", mode_label(task.test_mode)),
+    ];
+    let _ = run;
+    if task.test_mode == TestMode::Tdd {
+        lines.push("Look first for tests that were weakened or made trivial to pass.".into());
+    }
+    if level == Some(ReviewLevel::Small) {
+        lines.push("Review the diff only.".into());
+    }
+    lines.push("Acceptance criteria:".into());
+    lines.extend(spec.acceptance.iter().map(|item| format!("- {item}")));
+    lines.push(format!("Diff ({}..{}):", sha7(base), sha7(head)));
+    let clamped = clamp_diff(patch, REVIEW_DIFF_MAX);
+    lines.push(clamped.clone());
+    if clamped.len() < patch.len() {
+        let kept = clamped.len().saturating_sub(DIFF_CUT_MARKER.len());
+        lines.push(format!(
+            "[diff clamped: {} bytes omitted; read the rest with git diff {}..{}]",
+            patch.len() - kept,
+            sha7(base),
+            sha7(head)
+        ));
+    }
+    if let Some(check) = task.checks.last() {
+        lines.push("Last check (40 lines):".into());
+        lines.push(summary(&check.tail));
+    }
+    let earlier: Vec<String> = task
+        .reviews
+        .iter()
+        .filter(|r| r.round < round)
+        .flat_map(|r| r.findings.iter())
+        .filter(|f| f.severity != Severity::Minor)
+        .map(finding_line)
+        .collect();
+    if round > 1 && !earlier.is_empty() {
+        lines.push("Earlier findings to confirm fixed:".into());
+        lines.extend(earlier);
+    }
+    lines.push(String::new());
+    lines.push(spec.brief.clone());
+    lines.join("\n")
+}
+
+/// `- [<severity>] <file>:<line> <text>` or `- [<severity>] input <input>: <text>`.
+pub fn finding_line(finding: &Finding) -> String {
+    let severity = match finding.severity {
+        Severity::Critical => "critical",
+        Severity::Important => "important",
+        Severity::Minor => "minor",
+    };
+    match (&finding.file, finding.line, &finding.input) {
+        (Some(file), Some(line), _) => format!("- [{severity}] {file}:{line} {}", finding.text),
+        (_, _, Some(input)) => format!("- [{severity}] input {input}: {}", finding.text),
+        (Some(file), None, None) => format!("- [{severity}] {file} {}", finding.text),
+        (None, _, None) => format!("- [{severity}] {}", finding.text),
+    }
+}
+
+const CONFLICT_HEAD: &str = "[anthrex] Your branch conflicts with the run branch. The run branch has been merged into your worktree with conflict markers left in:";
+
+/// Whether `text` is a [`conflict_message`] (M8a.11 fix round 3: the engine drops an
+/// undelivered one when it undoes that merge).
+pub fn is_conflict_message(text: &str) -> bool {
+    text.starts_with(CONFLICT_HEAD)
+}
+
+/// Decision 36's hand-back message (Interfaces, exact).
+pub fn conflict_message(files: &[String]) -> String {
+    let mut lines = vec![CONFLICT_HEAD.to_string()];
+    lines.extend(files.iter().map(|f| format!("- {f}")));
+    lines.push("Resolve every conflict, commit the merge, then call task_done again.".to_string());
+    lines.join("\n")
+}
+
+/// `[anthrex] Answer to your question: <text>`.
+pub fn answer_message(text: &str) -> String {
+    format!("[anthrex] Answer to your question: {text}")
+}
+
+/// `[anthrex] The task was amended.`, `Brief: <brief>`, `Acceptance criteria:`, one
+/// `- <item>` per item and `Continue with the amended task.`, one per line: the amended
+/// brief and acceptance criteria, delivered to a live worker (decision 13).
+pub fn amend_message(task: &Task) -> String {
+    let mut lines = vec![
+        "[anthrex] The task was amended.".to_string(),
+        format!("Brief: {}", task.spec.brief),
+        "Acceptance criteria:".to_string(),
+    ];
+    lines.extend(task.spec.acceptance.iter().map(|item| format!("- {item}")));
+    lines.push("Continue with the amended task.".to_string());
+    lines.join("\n")
+}
+
+/// Decision 32: the reply to an accepted `task_done` (exact).
+pub const DONE_ACCEPTED: &str = "Done recorded. The engine is running the gates now; stop and wait. If anything fails you will get an [anthrex] message.";
+
+/// Decision 32: the reply to `task_blocked`, `Blocked recorded (<kind>). Stop and wait
+/// for an answer.`
+pub fn blocked_recorded(kind: &str) -> String {
+    format!("Blocked recorded ({kind}). Stop and wait for an answer.")
+}
+
+/// Decision 32's turn-end fallback, with commits (exact).
+pub const DONE_NUDGE: &str = "[anthrex] Your turn ended with commits in your worktree and no task_done. If the task is complete, call task_done now (for a tdd task, with test and red). If you are stuck, call task_blocked.";
+
+/// Decision 32's turn-end fallback, without a commit (exact).
+pub const NO_COMMIT_NUDGE: &str = "[anthrex] Your turn ended and your worktree has no commit yet. Continue the task and commit, or call task_blocked with the reason.";
+
+/// Decision 32: a session whose process died mid-turn, resumed (exact).
+pub const RESUME_AFTER_EXIT: &str = "[anthrex] Your session's process stopped in the middle of a turn and has been resumed. Check the state of your worktree, continue, commit, and call task_done when complete.";
+
+/// Decision 28: a worker's session resumed after a daemon restart (exact).
+pub const RESUME_WORKER: &str = "[anthrex] The daemon restarted. Re-read your task above, continue, commit, and call task_done when complete.";
+
+/// Decision 28: a reviewer's session resumed after a daemon restart (exact).
+pub const RESUME_REVIEWER: &str =
+    "[anthrex] The daemon restarted. Finish your review and call submit_review.";
+
+const STALL_NUDGE_HEAD: &str = "[anthrex] Your last turn was interrupted after ";
+
+/// Whether `text` is a [`stall_nudge`] (M8a.12 fix round 1: a block drops a stale one).
+pub fn is_stall_nudge(text: &str) -> bool {
+    text.starts_with(STALL_NUDGE_HEAD)
+}
+
+/// Decision 32's stall nudge, after the interrupted turn.
+pub fn stall_nudge(minutes: u64) -> String {
+    format!(
+        "{STALL_NUDGE_HEAD}{minutes} minutes without any progress. Continue the task, or call task_blocked if you cannot."
+    )
+}
+
+/// Decision 40's soft budget message: the session's spend against the task's budget.
+pub fn budget_wrap_up(spent: Spend, budget: Budget) -> String {
+    format!(
+        "[anthrex] This task has used its budget ({}/{} tool calls, {}/{} minutes). Wrap up now: commit what works and call task_done, or call task_blocked with kind mis_sized.",
+        spent.tool_calls,
+        budget.tool_calls,
+        spent.secs / 60,
+        budget.minutes
+    )
+}
+
+/// Decision 32: the continue after a failed turn's wait.
+pub fn rate_limit_continue(reason: &str) -> String {
+    format!(
+        "[anthrex] Your last turn stopped on an API error ({reason}). Continue the task where you left off."
+    )
+}
+
+/// Decision 32: the block text after `denials_before_block` denials.
+pub fn denied_text(n: u32, tool: &str, reason: &str) -> String {
+    format!("the agent was denied {n} times; last: {tool}: {reason}")
+}
+
+/// `denied_text`'s reason for a denial that only the turn's result lists: its
+/// `permission_denials` entry names the tool, not the reason (M8a.12 fix round 1).
+pub const DENIAL_LISTED_REASON: &str = "listed in the turn's permission_denials";
+
+/// Decision 55's rung-1 message (exact).
+pub fn generated_files_message(files: &[String]) -> String {
+    let files = files.join(", ");
+    format!(
+        "[anthrex] task_done rejected: you changed generated files outside this task's owns: {files}. Revert them (git checkout <start> -- {files}, then commit), or this task must own them. Then call task_done again."
+    )
+}
+
+/// Decision 56's rung-1 message (exact): one line per file.
+pub fn protected_file_message(files: &[String]) -> String {
+    let mut lines = vec!["[anthrex] task_done rejected:".to_string()];
+    lines.extend(files.iter().map(|path| {
+        format!(
+            "{path} configures or instructs future agents; this task may change it only if its owns names it exactly"
+        )
+    }));
+    lines
+        .push("Revert it and call task_done again, or ask for the plan to be amended.".to_string());
+    lines.join("\n")
+}
+
+/// Decision 54: the block text when Claude Code's sandbox cannot start (exact).
+pub fn sandbox_unavailable_text(error: &str) -> String {
+    format!(
+        "Claude Code's sandbox is unavailable here: {error}; set [orchestrator] worker_sandbox = false to run workers unsandboxed"
+    )
+}
+
+/// The closing line of every gate's rung-1 message (Interfaces).
+const FIX_IT: &str = "Fix it, commit, then call task_done again.";
+
+/// How a shell run ended, for a message: `exit <code>`, `timed out after <m> minutes`,
+/// or (invented, a run that never started) `no exit code`.
+fn ended_how(code: Option<i32>, timed_out: bool, secs: u64) -> String {
+    match (timed_out, code) {
+        (true, _) => format!("timed out after {} minutes", secs / 60),
+        (false, Some(code)) => format!("exit {code}"),
+        (false, None) => "no exit code".to_string(),
+    }
+}
+
+/// Decision 34's rung-1 message for a failed check (Interfaces, exact): the command,
+/// how it ended, and the last `CHECK_SUMMARY_LINES` lines of its output.
+pub fn check_failed_message(command: &str, c: &CheckRecord) -> String {
+    format!(
+        "[anthrex] The check failed ({}): {command}\nLast 40 lines:\n{}\n{FIX_IT}",
+        ended_how(c.code, c.timed_out, c.secs),
+        summary(&c.tail)
+    )
+}
+
+/// Decision 36's rung-1 message for a merge candidate whose check failed (Interfaces,
+/// exact): how the check ended on the merged result, its command, and the last 40
+/// lines. M8a.14.
+pub fn candidate_red_message(command: &str, c: &CheckRecord) -> String {
+    format!(
+        "[anthrex] Your work merged cleanly into the run branch, but the check failed on the merged result ({}): {command}\nLast 40 lines:\n{}\nFix it in your worktree, commit, then call task_done again.",
+        ended_how(c.code, c.timed_out, c.secs),
+        summary(&c.tail)
+    )
+}
+
+/// Ruling T14-C1 (invented text): the run head was merged into the worktree onto a
+/// tip past the claimed commit, so the worker's later commits have not passed the
+/// gates; its next `task_done` goes through all of them.
+pub const UNCLAIMED_COMMITS: &str = "[anthrex] The run branch was merged into your worktree, but your worktree has commits after your last task_done, and they have not passed the gates. Check the result, commit, then call task_done again.";
+
+/// Decision 20's refusal when accept's merge conflicts with an advanced base (exact):
+/// `commits` new commits on `base`. M8a.14.
+pub fn accept_conflict_message(run_id: &str, base: &str, commits: u32, files: &[String]) -> String {
+    format!(
+        "accept conflicts with {commits} commits on {base}: {}; resolve by merging anthrex/{run_id}/integration into {base} yourself, or discard the run",
+        files.join(", ")
+    )
+}
+
+/// Decision 33's rung-1 message for a failed test proof (Interfaces, exact): the first
+/// reason that applies, the command, and the last 40 lines of the offending run — the
+/// red run's when it did not fail (the head run was skipped then, M8a.10), else the
+/// head run's. A record with no test or no red is a claim that named neither (the
+/// turn-end fallback's): nothing ran, so the command and tail lines are left out.
+pub fn proof_failed_message(command: &str, p: &ProofRecord, passed: &str) -> String {
+    let (reason, tail) = if p.test.is_empty() || p.red.is_empty() {
+        let reason = "this is a tdd task and no test or red commit was named; call task_done with test and red";
+        return format!("[anthrex] The test proof failed: {reason}\n{FIX_IT}");
+    } else if !p.red_failed {
+        (
+            format!(
+                "at the red commit {} the test passed, so it does not fail without your change",
+                sha7(&p.red)
+            ),
+            &p.red_tail,
+        )
+    } else if !p.head_passed {
+        (
+            format!("at your head {} the test failed", sha7(&p.head)),
+            &p.head_tail,
+        )
+    } else {
+        (
+            format!(
+                "the output did not show that {} ran and passed (expected a line matching {passed})",
+                p.test
+            ),
+            &p.head_tail,
+        )
+    };
+    format!(
+        "[anthrex] The test proof failed: {reason}\nCommand: {command}\nLast 40 lines:\n{}\n{FIX_IT}",
+        summary(tail)
+    )
+}
+
+/// Decision 35's rung-1 message: only the critical and important findings, one line
+/// each (Interfaces, exact).
+pub fn review_changes_message(review: &ReviewRecord) -> String {
+    let mut lines = vec![format!(
+        "[anthrex] Review round {} asked for changes. Fix every finding below, commit, then call task_done again.",
+        review.round
+    )];
+    lines.extend(
+        review
+            .findings
+            .iter()
+            .filter(|f| f.severity != Severity::Minor)
+            .map(finding_line),
+    );
+    lines.join("\n")
+}
+
+/// Decision 35: the one extra turn a reviewer gets when its turn ends without a verdict
+/// (exact).
+pub const REVIEW_NUDGE: &str =
+    "[anthrex] Your turn ended without a verdict. Call submit_review now, exactly once.";
+
+/// The reply to an accepted `submit_review` (MCP section, exact).
+pub const REVIEW_RECORDED: &str = "Review recorded. You are done; end your turn now.";
+
+/// Decision 35's refusal of `approve` with a critical or important finding (exact).
+pub const APPROVE_WITH_BLOCKING: &str =
+    "an approve verdict cannot carry critical or important findings; use changes";
+
+/// Decision 35's block text after two verdict-less review rounds in a row (exact).
+pub const REVIEWER_STOPPED_TWICE: &str = "the reviewer stopped twice without a verdict";
+
+/// Decision 35 (invented text): a reviewer whose process died mid-turn is resumed with
+/// this, the reviewer's form of `RESUME_AFTER_EXIT`.
+pub const REVIEWER_RESUME_AFTER_EXIT: &str = "[anthrex] Your session's process stopped in the middle of a turn and has been resumed. Finish your review and call submit_review, exactly once.";
+
+/// Decision 35 and ruling Q4: the reviewer's diff, and decision 30's hand-over diff, are
+/// clamped to this many bytes.
+pub const REVIEW_DIFF_MAX: usize = 16 * 1024;
+
+/// The line [`clamp_diff`] puts where it cut the middle out of a diff.
+pub const DIFF_CUT_MARKER: &str = "\n[anthrex: the middle of this diff was cut to fit]\n";
+
+/// A head-and-tail clamp on character boundaries: `text` itself when it is at most
+/// `max` bytes, else its first part, [`DIFF_CUT_MARKER`] and its last part, together at
+/// most `max` bytes and never more than 3 bytes short of it (the most a UTF-8 cut can
+/// cost, since the tail takes whatever the head's cut left over).
+pub fn clamp_diff(text: &str, max: usize) -> String {
+    clamp_with(text, max, DIFF_CUT_MARKER)
+}
+
+/// [`clamp_diff`] with another marker line; `messages::clamp` uses it (decision 29).
+pub fn clamp_with(text: &str, max: usize, marker: &str) -> String {
+    if text.len() <= max {
+        return text.to_string();
+    }
+    if max <= marker.len() {
+        return text[..floor_boundary(text, max)].to_string();
+    }
+    let budget = max - marker.len();
+    let head_end = floor_boundary(text, budget / 2);
+    let tail_len = budget - head_end;
+    let tail_start = ceil_boundary(text, text.len() - tail_len);
+    let mut out = String::with_capacity(max);
+    out.push_str(&text[..head_end]);
+    out.push_str(marker);
+    out.push_str(&text[tail_start..]);
+    out
+}
+
+fn floor_boundary(text: &str, mut index: usize) -> usize {
+    while !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn ceil_boundary(text: &str, mut index: usize) -> usize {
+    while !text.is_char_boundary(index) {
+        index += 1;
+    }
+    index
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every cut position modulo a character: `k` ASCII bytes shift a body of 3-byte
+    /// (`世`) or 4-byte (`𝄞`) characters, so over `k` in 0..=3 each cut lands on every
+    /// offset inside a character.
+    #[test]
+    fn clamp_diff_cuts_on_character_boundaries_at_every_offset() {
+        for body in ["世", "𝄞", "a世𝄞"] {
+            for k in 0..=3 {
+                let text = format!("{}{}", "a".repeat(k), body.repeat(20_000));
+                for max in [REVIEW_DIFF_MAX, 1000, 1001, 1002, 1003] {
+                    let out = clamp_diff(&text, max);
+                    assert!(out.len() <= max, "{body} k={k} max={max}: {}", out.len());
+                    assert!(
+                        out.len() >= max - 3,
+                        "{body} k={k} max={max}: {}",
+                        out.len()
+                    );
+                    assert_eq!(out.matches(DIFF_CUT_MARKER).count(), 1);
+                    let (head, tail) = out.split_once(DIFF_CUT_MARKER).unwrap();
+                    assert!(text.starts_with(head), "{body} k={k} max={max}");
+                    assert!(text.ends_with(tail), "{body} k={k} max={max}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn clamp_diff_leaves_text_within_the_limit_alone() {
+        let text = "世".repeat(10);
+        assert_eq!(clamp_diff(&text, 30), text);
+        assert_eq!(clamp_diff(&text, 31), text);
+        let cut = clamp_diff(&text, 29);
+        assert!(cut.len() <= 29, "{cut:?}");
+    }
+
+    #[test]
+    fn clamp_diff_below_the_marker_keeps_a_head_only() {
+        let text = "世".repeat(100);
+        let out = clamp_diff(&text, 10);
+        assert_eq!(out, "世世世");
+    }
+}
+
+#[cfg(test)]
+#[path = "contract_tests.rs"]
+mod prompt_tests;

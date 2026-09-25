@@ -1,5 +1,10 @@
 #![allow(dead_code)]
 
+pub mod run_daemon;
+pub mod run_harness;
+pub mod run_plans;
+pub mod run_watcher;
+
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Output, Stdio};
@@ -88,6 +93,19 @@ impl RunningCommand {
 
     pub fn is_running(&mut self) -> bool {
         self.child.try_wait().unwrap().is_none()
+    }
+
+    /// Like [`Self::finish`], but `None` when the child outlives `limit` (it is then
+    /// killed on drop) instead of a panic: for callers inside `Drop`.
+    pub fn try_finish(mut self, limit: Duration) -> Option<Output> {
+        let deadline = Instant::now() + limit;
+        while self.child.try_wait().ok().flatten().is_none() {
+            if Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        Some(self.finish(limit))
     }
 
     pub fn finish(mut self, limit: Duration) -> Output {

@@ -1,0 +1,13 @@
+{
+  "runtime": "codex",
+  "cli_version": "0.155.0",
+  "captured": "2026-09-23",
+  "redactions": [
+    "home",
+    "scratch-dirs",
+    "ids"
+  ],
+  "note": "codex exec resume <the thread of codex-0.155.0-exec.jsonl's first run> with decision 25's -c flags and -c sandbox_mode=\"workspace-write\" (exec resume rejects -s). thread.started repeats the same thread id. The append-and-commit succeeds; the touch ../escape-resume.txt that followed was refused by the sandbox and does not appear in the stream at all: Codex 0.155's exec --json emits no command_execution item for a command that exits non-zero; only the agent's final message reports it. Captured with a scrubbed environment (env -i with only HOME, PATH, USER, LOGNAME, SHELL, TERM, LANG), because the capture ran inside a Claude Code session whose CLAUDE_CODE_*/CLAUDECODE variables change how a child claude behaves (transcript saving off, messaging the parent). No ANTHROPIC_API_KEY: the subscription login was used.",
+  "command": "cd /tmp/fixture/wt7/task-b && codex exec resume 00000000-0000-4000-8000-000000000157 --json -c 'mcp_servers.anthrex.command=\"/tmp/fixture/bin/mcp_stub.py\"' -c 'mcp_servers.anthrex.args=[]' -c mcp_servers.anthrex.tool_timeout_sec=120 -c 'mcp_servers.anthrex.default_tools_approval_mode=\"auto\"' -c 'developer_instructions=\"You are an anthrex test worker. Keep every reply to one short line.\"' -c 'model_reasoning_effort=\"low\"' -c 'approval_policy=\"never\"' -c 'sandbox_mode=\"workspace-write\"' -c 'sandbox_workspace_write.writable_roots=[\"/tmp/fixture/s7/.git\"]' -c sandbox_workspace_write.exclude_slash_tmp=true -c sandbox_workspace_write.exclude_tmpdir_env_var=true -- 'Append the line two to a.txt, then run: git commit -am \"append two\"  Then run exactly: touch ../escape-resume.txt  Do not work around failures. Reply with each result in one line.'",
+  "observed": true
+}

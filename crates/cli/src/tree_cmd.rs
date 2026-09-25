@@ -291,6 +291,8 @@ mod tests {
             model: None,
             subagents: Vec::new(),
             exit: None,
+            kind: proto::WindowKind::Pty,
+            run: None,
         }
     }
 

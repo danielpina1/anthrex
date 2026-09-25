@@ -1,0 +1,27 @@
+{
+  "runtime": "claude",
+  "cli_version": "2.1.278",
+  "captured": "2026-09-23",
+  "redactions": [
+    "home",
+    "scratch-dirs",
+    "ids",
+    "thinking-signatures",
+    "non-conversation-payloads"
+  ],
+  "note": "One long-lived worker session (decision 24 flags, decision 54 sandbox block, haiku, effort low) and three stream-json user messages, each written after the previous result: (1) ls with Bash, then one foreground Agent call (SubagentStart/Stop in the hooks fixture; the sub-agent's own lines carry parent_tool_use_id); (2) Write to a path outside the working directory, denied: a system/permission_denied line plus result.permission_denials; (3) a 60 s python sleep, interrupted 8 s in with the control request in claude-2.1.278-input.jsonl: control_response success, then result subtype error_during_execution, is_error true, terminal_reason aborted_tools. system/init is re-emitted at the start of every turn. result.usage is per turn; total_cost_usd and modelUsage are cumulative for the session. After result the process stays alive; stdin EOF made it exit (code 1, because the last turn errored) within 0.6 s. 'unmodelled' lists line types the Interfaces mapping table has no row for. Captured with a scrubbed environment (env -i with only HOME, PATH, USER, LOGNAME, SHELL, TERM, LANG), because the capture ran inside a Claude Code session whose CLAUDE_CODE_*/CLAUDECODE variables change how a child claude behaves (transcript saving off, messaging the parent). No ANTHROPIC_API_KEY: the subscription login was used.",
+  "command": "cd /tmp/fixture/s2 && claude -p --input-format stream-json --output-format stream-json --verbose --permission-prompts none --session-id 00000000-0000-4000-8000-000000000003 --setting-sources user --strict-mcp-config --settings '{\"hooks\":{\"Notification\":[{\"hooks\":[{\"command\":\"sh -c '\"'\"'{ cat; echo; } >> /tmp/fixture/out/stream-hooks-raw.jsonl'\"'\"'\",\"type\":\"command\"}],\"matcher\":\"\"}],\"PermissionRequest\":[{\"hooks\":[{\"command\":\"sh -c '\"'\"'{ cat; echo; } >> /tmp/fixture/out/stream-hooks-raw.jsonl'\"'\"'\",\"type\":\"command\"}],\"matcher\":\"\"}],\"PostToolUse\":[{\"hooks\":[{\"command\":\"sh -c '\"'\"'{ cat; echo; } >> /tmp/fixture/out/stream-hooks-raw.jsonl'\"'\"'\",\"type\":\"command\"}],\"matcher\":\"\"}],\"PreToolUse\":[{\"hooks\":[{\"command\":\"sh -c '\"'\"'{ cat; echo; } >> /tmp/fixture/out/stream-hooks-raw.jsonl'\"'\"'\",\"type\":\"command\"}],\"matcher\":\"\"}],\"SessionEnd\":[{\"hooks\":[{\"command\":\"sh -c '\"'\"'{ cat; echo; } >> /tmp/fixture/out/stream-hooks-raw.jsonl'\"'\"'\",\"type\":\"command\"}],\"matcher\":\"\"}],\"SessionStart\":[{\"hooks\":[{\"command\":\"sh -c '\"'\"'{ cat; echo; } >> /tmp/fixture/out/stream-hooks-raw.jsonl'\"'\"'\",\"type\":\"command\"}],\"matcher\":\"\"}],\"Stop\":[{\"hooks\":[{\"command\":\"sh -c '\"'\"'{ cat; echo; } >> /tmp/fixture/out/stream-hooks-raw.jsonl'\"'\"'\",\"type\":\"command\"}],\"matcher\":\"\"}],\"SubagentStart\":[{\"hooks\":[{\"command\":\"sh -c '\"'\"'{ cat; echo; } >> /tmp/fixture/out/stream-hooks-raw.jsonl'\"'\"'\",\"type\":\"command\"}],\"matcher\":\"\"}],\"SubagentStop\":[{\"hooks\":[{\"command\":\"sh -c '\"'\"'{ cat; echo; } >> /tmp/fixture/out/stream-hooks-raw.jsonl'\"'\"'\",\"type\":\"command\"}],\"matcher\":\"\"}],\"UserPromptSubmit\":[{\"hooks\":[{\"command\":\"sh -c '\"'\"'{ cat; echo; } >> /tmp/fixture/out/stream-hooks-raw.jsonl'\"'\"'\",\"type\":\"command\"}],\"matcher\":\"\"}]},\"preferredNotifChannel\":\"terminal_bell\",\"sandbox\":{\"enabled\":true,\"allowUnsandboxedCommands\":false,\"filesystem\":{\"allowWrite\":[\"/tmp/fixture/s2/.git\"]}}}' --mcp-config '{\"mcpServers\":{\"anthrex\":{\"type\":\"stdio\",\"command\":\"/tmp/fixture/bin/mcp_stub.py\",\"args\":[]}}}' --allowedTools Bash,Read --append-system-prompt 'You are an anthrex test worker. Keep every reply to one short line.' --permission-mode acceptEdits --model haiku --effort low",
+  "observed": true,
+  "unmodelled": [
+    "system/hook_started",
+    "system/hook_response",
+    "system/thinking_tokens",
+    "system/task_started",
+    "system/task_updated",
+    "system/task_notification",
+    "system/background_tasks_changed",
+    "system/vcs_state_changed",
+    "rate_limit_event",
+    "control_response"
+  ]
+}

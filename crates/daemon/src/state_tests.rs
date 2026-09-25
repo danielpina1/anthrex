@@ -39,6 +39,7 @@ fn sample_state() -> StateFile {
                 created_at: 1_789_123_456,
                 status: Status::Working,
                 run: None,
+                kind: Default::default(),
             },
             WindowRecord {
                 id: 5,
@@ -54,6 +55,7 @@ fn sample_state() -> StateFile {
                 created_at: 42,
                 status: Status::Idle,
                 run: None,
+                kind: Default::default(),
             },
         ],
         runs: Vec::new(),

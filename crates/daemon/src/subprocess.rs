@@ -14,6 +14,16 @@
 //! must tell the user *why* a command failed — milestone 5's worktree creation and
 //! removal, whose only useful diagnostic is on git's stderr. `run` itself is untouched:
 //! it keeps nulling stderr and reporting only `Outcome`.
+//!
+//! [`run_captured_head_tail`] (M8a.8 fix round 1) is `run_captured` for an output of
+//! any size — a diff of a vendored data file — keeping its first and last bytes and
+//! dropping the middle rather than failing over a cap. Both share one body, `capture`,
+//! which waits for its pipes with `poll(2)` between drains instead of a fixed sleep,
+//! so a large output is read at pipe speed.
+
+mod head_tail;
+
+pub use head_tail::{HeadTail, run_captured_head_tail};
 
 use std::io::{self, Read};
 use std::os::fd::AsRawFd;
@@ -192,6 +202,61 @@ pub fn run_captured(
     max_stderr_bytes: usize,
     timeout: Duration,
 ) -> Captured {
+    let mut sink = CappedSink {
+        output: Vec::new(),
+        max: max_output_bytes,
+    };
+    let (end, stderr, spawn_error) = capture(command, &mut sink, max_stderr_bytes, timeout);
+    let output = sink.output;
+    let outcome = match end {
+        End::Failed => Outcome::Failed,
+        End::Complete => Outcome::Complete(output),
+        End::TimedOut => Outcome::TimedOut(output),
+        End::OverCap => Outcome::Truncated(output),
+    };
+    Captured {
+        outcome,
+        stderr,
+        spawn_error,
+    }
+}
+
+/// Where [`capture`] puts stdout. `accept` returns `false` when the bytes would take
+/// the sink over its cap, which ends the capture as [`End::OverCap`].
+trait StdoutSink {
+    fn accept(&mut self, bytes: &[u8]) -> bool;
+}
+
+struct CappedSink {
+    output: Vec<u8>,
+    max: usize,
+}
+
+impl StdoutSink for CappedSink {
+    fn accept(&mut self, bytes: &[u8]) -> bool {
+        if self.output.len() + bytes.len() > self.max {
+            return false;
+        }
+        self.output.extend_from_slice(bytes);
+        true
+    }
+}
+
+/// How [`capture`] ended.
+enum End {
+    Failed,
+    Complete,
+    TimedOut,
+    OverCap,
+}
+
+/// The shared body of [`run_captured`] and [`run_captured_head_tail`].
+fn capture(
+    command: &mut Command,
+    sink: &mut impl StdoutSink,
+    max_stderr_bytes: usize,
+    timeout: Duration,
+) -> (End, String, Option<io::ErrorKind>) {
     scrub_git_env(command)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -202,11 +267,7 @@ pub fn run_captured(
         Ok(child) => child,
         Err(error) => {
             tracing::debug!(?error, program = ?command.get_program(), "could not spawn child process");
-            return Captured {
-                outcome: Outcome::Failed,
-                stderr: String::new(),
-                spawn_error: Some(error.kind()),
-            };
+            return (End::Failed, String::new(), Some(error.kind()));
         }
     };
 
@@ -214,79 +275,44 @@ pub fn run_captured(
     let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
         tracing::debug!(program = ?command.get_program(), "child process had no stdout or stderr");
         terminate_unreaped(&mut child, &mut status);
-        return Captured {
-            outcome: Outcome::Failed,
-            stderr: String::new(),
-            spawn_error: None,
-        };
+        return (End::Failed, String::new(), None);
     };
-    if let Err(error) = set_nonblocking(&stdout) {
+    if let Err(error) = set_nonblocking(&stdout).and_then(|()| set_nonblocking(&stderr)) {
         tracing::debug!(
             ?error,
             program = ?command.get_program(),
-            "could not make child process stdout nonblocking"
+            "could not make child process output nonblocking"
         );
         terminate_unreaped(&mut child, &mut status);
-        return Captured {
-            outcome: Outcome::Failed,
-            stderr: String::new(),
-            spawn_error: None,
-        };
-    }
-    if let Err(error) = set_nonblocking(&stderr) {
-        tracing::debug!(
-            ?error,
-            program = ?command.get_program(),
-            "could not make child process stderr nonblocking"
-        );
-        terminate_unreaped(&mut child, &mut status);
-        return Captured {
-            outcome: Outcome::Failed,
-            stderr: String::new(),
-            spawn_error: None,
-        };
+        return (End::Failed, String::new(), None);
     }
 
     let started = Instant::now();
-    let mut output = Vec::new();
     let mut stderr_bytes = Vec::new();
     let mut stdout_eof = false;
     let mut stderr_eof = false;
-    loop {
+    let end = loop {
         if !stdout_eof {
-            match drain_stdout(&mut stdout, &mut output, max_output_bytes, started, timeout) {
+            match drain_into(&mut stdout, sink, started, timeout) {
                 Ok(DrainState::Open) => {}
                 Ok(DrainState::Eof) => stdout_eof = true,
                 Ok(DrainState::Deadline) => {
                     tracing::debug!(program = ?command.get_program(), ?timeout, "child process timed out");
                     terminate_unreaped(&mut child, &mut status);
-                    return Captured {
-                        outcome: Outcome::TimedOut(output),
-                        stderr: lossy_stderr(stderr_bytes),
-                        spawn_error: None,
-                    };
+                    break End::TimedOut;
                 }
                 Ok(DrainState::OverCap) => {
                     tracing::debug!(
                         program = ?command.get_program(),
-                        max_output_bytes,
                         "child process output exceeded the cap"
                     );
                     terminate_unreaped(&mut child, &mut status);
-                    return Captured {
-                        outcome: Outcome::Truncated(output),
-                        stderr: lossy_stderr(stderr_bytes),
-                        spawn_error: None,
-                    };
+                    break End::OverCap;
                 }
                 Err(error) => {
                     tracing::debug!(?error, program = ?command.get_program(), "could not read child process stdout");
                     terminate_unreaped(&mut child, &mut status);
-                    return Captured {
-                        outcome: Outcome::Failed,
-                        stderr: lossy_stderr(stderr_bytes),
-                        spawn_error: None,
-                    };
+                    break End::Failed;
                 }
             }
         }
@@ -304,20 +330,12 @@ pub fn run_captured(
                 Ok(CappedDrainState::Deadline) => {
                     tracing::debug!(program = ?command.get_program(), ?timeout, "child process timed out");
                     terminate_unreaped(&mut child, &mut status);
-                    return Captured {
-                        outcome: Outcome::TimedOut(output),
-                        stderr: lossy_stderr(stderr_bytes),
-                        spawn_error: None,
-                    };
+                    break End::TimedOut;
                 }
                 Err(error) => {
                     tracing::debug!(?error, program = ?command.get_program(), "could not read child process stderr");
                     terminate_unreaped(&mut child, &mut status);
-                    return Captured {
-                        outcome: Outcome::Failed,
-                        stderr: lossy_stderr(stderr_bytes),
-                        spawn_error: None,
-                    };
+                    break End::Failed;
                 }
             }
         }
@@ -328,11 +346,7 @@ pub fn run_captured(
                 Err(error) => {
                     tracing::debug!(?error, program = ?command.get_program(), "could not poll child process status");
                     terminate_unreaped(&mut child, &mut status);
-                    return Captured {
-                        outcome: Outcome::Failed,
-                        stderr: lossy_stderr(stderr_bytes),
-                        spawn_error: None,
-                    };
+                    break End::Failed;
                 }
             }
         }
@@ -341,30 +355,79 @@ pub fn run_captured(
             && stdout_eof
             && stderr_eof
         {
-            let outcome = if found.success() {
-                Outcome::Complete(output)
-            } else {
-                tracing::debug!(status = ?found, program = ?command.get_program(), "child process exited non-zero");
-                Outcome::Failed
-            };
-            return Captured {
-                outcome,
-                stderr: lossy_stderr(stderr_bytes),
-                spawn_error: None,
-            };
+            if found.success() {
+                break End::Complete;
+            }
+            tracing::debug!(status = ?found, program = ?command.get_program(), "child process exited non-zero");
+            break End::Failed;
         }
 
         if started.elapsed() >= timeout {
             tracing::debug!(program = ?command.get_program(), ?timeout, "child process timed out");
             terminate_unreaped(&mut child, &mut status);
-            return Captured {
-                outcome: Outcome::TimedOut(output),
-                stderr: lossy_stderr(stderr_bytes),
-                spawn_error: None,
-            };
+            break End::TimedOut;
         }
         let remaining = timeout.saturating_sub(started.elapsed());
-        std::thread::sleep(POLL_INTERVAL.min(remaining));
+        let mut open = Vec::with_capacity(2);
+        if !stdout_eof {
+            open.push(stdout.as_raw_fd());
+        }
+        if !stderr_eof {
+            open.push(stderr.as_raw_fd());
+        }
+        wait_readable(&open, POLL_INTERVAL.min(remaining));
+    };
+    (end, lossy_stderr(stderr_bytes), None)
+}
+
+/// Waits up to `wait` for any of `fds` to be readable (or hung up), or simply sleeps
+/// when none is open. Waking as soon as a pipe has data, rather than after a fixed
+/// sleep, is what lets [`capture`] read a large output at pipe speed: a sleep after
+/// every pipe-full caps it at a few MB/s.
+pub(crate) fn wait_readable(fds: &[std::os::fd::RawFd], wait: Duration) {
+    if fds.is_empty() {
+        std::thread::sleep(wait);
+        return;
+    }
+    let mut polled: Vec<libc::pollfd> = fds
+        .iter()
+        .map(|&fd| libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        })
+        .collect();
+    let millis = wait.as_millis().clamp(1, 1000) as libc::c_int;
+    // SAFETY: `polled` is a live, correctly sized array of `pollfd`s over descriptors
+    // the caller owns for the duration of this call; poll only writes `revents`.
+    unsafe { libc::poll(polled.as_mut_ptr(), polled.len() as libc::nfds_t, millis) };
+}
+
+/// As [`drain_stdout`], into a [`StdoutSink`].
+fn drain_into(
+    stdout: &mut ChildStdout,
+    sink: &mut impl StdoutSink,
+    started: Instant,
+    timeout: Duration,
+) -> io::Result<DrainState> {
+    let mut buffer = [0; 65536];
+    loop {
+        if started.elapsed() >= timeout {
+            return Ok(DrainState::Deadline);
+        }
+        match stdout.read(&mut buffer) {
+            Ok(0) => return Ok(DrainState::Eof),
+            Ok(count) => {
+                if !sink.accept(&buffer[..count]) {
+                    return Ok(DrainState::OverCap);
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                return Ok(DrainState::Open);
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
     }
 }
 
@@ -372,16 +435,37 @@ fn lossy_stderr(bytes: Vec<u8>) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-fn scrub_git_env(command: &mut Command) -> &mut Command {
-    command
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_COMMON_DIR")
-        .env_remove("GIT_INDEX_FILE")
-        .env_remove("GIT_PREFIX")
+/// AGENTS.md rule 11's five variables go, and (ruling T14-R3) git reads no
+/// `refs/replace` objects, so a replacement a worker writes into the shared repository
+/// cannot make one commit read as another to a gate, a merge or a check.
+///
+/// Rule 11 removes an **inherited** value. One the daemon set on `command` itself, on
+/// purpose, is kept: M8a final fix batch F1c (C1) runs every engine git command in a
+/// task checkout with `GIT_INDEX_FILE` naming an engine-owned copy of its index
+/// ([`crate::worktree::engine_index`]), so no engine write ever goes through an index
+/// file the worker can replace with a symbolic link. That is the only such use.
+pub(crate) fn scrub_git_env(command: &mut Command) -> &mut Command {
+    scrub_git_location_env(command).env("GIT_NO_REPLACE_OBJECTS", "1")
 }
 
-fn set_nonblocking(stream: &impl AsRawFd) -> io::Result<()> {
+/// Rule 11's inherited location variables removed, as in [`scrub_git_env`], without
+/// `GIT_NO_REPLACE_OBJECTS`: for a process that runs the project's or an agent's own
+/// commands (a check, a proof, `setup`, a headless session), whose git is the user's
+/// to configure (final fix batch F4, T14-P1). The engine's own git calls go through
+/// [`scrub_git_env`].
+pub(crate) fn scrub_git_location_env(command: &mut Command) -> &mut Command {
+    for key in config::reserved_env::GIT_LOCATION_VARS {
+        let set_here = command
+            .get_envs()
+            .any(|(name, value)| name == key && value.is_some());
+        if !set_here {
+            command.env_remove(key);
+        }
+    }
+    command
+}
+
+pub(crate) fn set_nonblocking(stream: &impl AsRawFd) -> io::Result<()> {
     let fd = stream.as_raw_fd();
     // SAFETY: the caller owns this live pipe descriptor for as long as this call runs.
     // fcntl changes only its status flags and neither transfers nor closes the

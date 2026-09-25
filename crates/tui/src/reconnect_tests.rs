@@ -19,7 +19,8 @@
 use super::*;
 use crate::app::Link;
 use daemon::manager::{ManagerConfig, WindowManager};
-use daemon::server::serve;
+use daemon::run::driver::RunService;
+use daemon::server::{GitWiring, serve};
 use tokio_util::sync::CancellationToken;
 
 /// Starts a daemon listening at exactly `socket`, so a dropped connection can be
@@ -35,12 +36,11 @@ async fn start_daemon_at(socket: &Path) -> CancellationToken {
         }
     });
     let token = CancellationToken::new();
-    tokio::spawn(serve(
-        listener,
-        manager,
-        config::Git::default(),
-        token.clone(),
-    ));
+    let git = GitWiring::new(config::Git::default());
+    let data = socket.parent().unwrap().join("data");
+    let runs = RunService::for_manager(&manager, data, git.registry.clone());
+    runs.spawn(token.clone());
+    tokio::spawn(serve(listener, manager, git, runs, token.clone()));
     token
 }
 

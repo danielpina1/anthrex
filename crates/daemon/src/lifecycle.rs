@@ -4,6 +4,7 @@ use crate::lockfile::{Acquired, DaemonLock};
 use crate::manager::{ManagerConfig, WindowManager};
 
 mod codex_version;
+use crate::run::driver::{RunContext, RunService};
 use crate::server;
 pub use codex_version::{CODEX_PROBE_TIMEOUT, PROBE_FINISHED};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -272,10 +273,25 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     // function has a probe to wait for.
     let launch_gate = crate::launch::LaunchGate::closed();
     config.launch_gate = launch_gate.clone();
+    // Decision 22 (M8a.8): one git registry, shared by the server and the run engine.
+    // `ANTHREX_GIT` can only turn git off; `config.toml`'s `git.enabled` cannot turn it
+    // back on (`git::settings_with`).
+    let git_wiring =
+        server::GitWiring::new(crate::git::settings_from_env(loaded_config.git.clone()));
     let (manager, mut events) = WindowManager::new(config);
+    let run_context = RunContext::new(
+        opts.data_dir.clone(),
+        manager.config(),
+        loaded_config.orchestrator.clone(),
+        git_wiring.registry.clone(),
+    );
     // Decision 12/14: every restored window is listed, dormant and viewable before
     // anything can connect.
     manager.restore(loaded_state);
+    // Decision 44: the runs of the last daemon are loaded, reconciled and restored
+    // before the socket is bound, so the first client sees them.
+    let runs = RunService::new(manager.clone(), run_context);
+    runs.restore().await;
 
     prepare_socket(&opts.socket_path)?;
     let listener = bind_socket(&opts.socket_path)?;
@@ -346,12 +362,12 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     // `manager/create.rs` and `manager/restart.rs`).
     let probe = codex_version::start(codex_bin, launch_gate, probe_shutdown.clone());
 
+    let run_loop = runs.spawn(shutdown.clone());
     let served = server::serve(
         listener,
         manager.clone(),
-        // `ANTHREX_GIT` can only turn git off; `config.toml`'s `git.enabled` cannot turn
-        // it back on (`git::settings_with`).
-        crate::git::settings_from_env(loaded_config.git.clone()),
+        git_wiring,
+        runs.clone(),
         shutdown.clone(),
     )
     .await;
@@ -367,6 +383,9 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     // budget, because `probe`'s own loop checks this token on every turn.
     probe_shutdown.cancel();
     let _ = probe.await;
+    // Decision 46: the engine stops first, so the sessions killed below are not failures.
+    runs.stop().await;
+    let _ = tokio::time::timeout(Duration::from_secs(5), run_loop).await;
     tracing::info!("stopping agents");
     manager.shutdown().await;
 

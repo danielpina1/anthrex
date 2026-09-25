@@ -502,6 +502,8 @@ fn detection_passes_no_optional_locks() {
         &tokens[2..],
         [
             "--no-optional-locks",
+            "-c",
+            "core.fsmonitor=false",
             "rev-parse",
             "--path-format=absolute",
             "--git-common-dir",
