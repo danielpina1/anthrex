@@ -2071,3 +2071,62 @@ Refreshed against branch `m8a-engine-core` at `baa04e1` (PR #17, merging unchang
 - The file-size table: every count taken on `baa04e1`, with budgets that keep every file under 600 (`main.rs` 594 forces the new `pre_clap.rs`; `driver.rs` 598 allows only `mod adapt;` and one field).
 
 **Tasks re-cut.** The old 15 tasks became 19, so each is one implementer's job: onboarding split into proposal/verification (M8b.10) and service/CLI (M8b.11); engine deciders into summaries/classification (M8b.12) and the size cross-check (M8b.13); history into records (M8b.16) and reverts/stats (M8b.17); the end-to-end task into two (M8b.18, M8b.19, which carries smoke stage 11d).
+
+### M8b.1 external facts (2026-09-25)
+
+Verified on macOS (Darwin 25.2, arm64) against `claude` 2.1.280 and `codex-cli` 0.156.1. The one probe that ran used M8a.1's scrubbed environment (`env -i` with only `HOME`, `PATH`, `USER`, `LOGNAME`, `SHELL`, `TERM`, `LANG`), no `ANTHROPIC_API_KEY` (the subscription login), an empty working directory under `/tmp/anthrex-m8b1/`, `--no-session-persistence` and `claude-haiku-4-5`. Fixture: `crates/daemon/tests/fixtures/deciders/claude-2.1.280-decider.jsonl` and its `.meta.json` (exact command, paths redacted to `/tmp/fixture`, ids, thinking signatures and the user's own hook and command payloads redacted).
+
+**Controller ruling for this task.** Real `claude` only for items 1, 3, 4 and 5, one short prompt per probe, and the sha256 of `~/.claude/settings.json`, `~/.claude.json` and `~/.codex/config.toml` taken before the first probe and after each; if any changed, stop every probe and restore nothing. Real `codex` not at all (a Codex exec can write trust entries into `~/.codex/config.toml`); item 2 comes from `codex exec --help` and `codex --version` only.
+
+**Probes stopped after item 1: the Claude decider call rewrote `~/.claude.json`.** Its hash changed (`e607c8f9…` → `728dc753…`, 133 770 → 130 853 bytes) and its mtime (23:18:03) falls inside the probe's 7 s window, although the call passed `--no-session-persistence`. `~/.claude/settings.json` and `~/.codex/config.toml` were unchanged. Nothing was restored. Another Claude Code session writing the file at that moment cannot be ruled out, but the timing points at the probe. If it was the probe, every headless `claude -p` anthrex launches (M8a's workers and reviewers too, not only deciders) rewrites `~/.claude.json`; that is a fact about the CLI, not something M8b can change, and it is for the user to judge. Items 3, 4 and 5 were therefore **not run** and are OUTSTANDING below.
+
+**Item 1, a Claude decider call: run.** The command of decision 16 exactly, every flag present, with the `blocked_reason` schema and prompt of "Decider schemas" and "Decider prompts", one stream-json user message on stdin, stdin then closed.
+- **Flags.** All exist and were accepted (exit 0): `--json-schema`, `--no-session-persistence`, `--permission-prompts none`, `--setting-sources user`, `--strict-mcp-config`, `--permission-mode dontAsk`, `--disallowedTools`, `--model`, and `--max-turns`, which `claude --help` does not list (hidden) but the CLI accepts.
+- **Where the answer appears: three places at once.**
+  1. A top-level assistant `tool_use` named `StructuredOutput` (`parent_tool_use_id: null`) whose `input` is the answer object, followed by a `user` `tool_result` "Structured output provided successfully".
+  2. `result.structured_output`, the same object.
+  3. `result.result`, the same object as JSON text.
+
+  There is no assistant text block (the only other assistant content is an empty `thinking` block). So `DECIDER_CAPS.answer_source = ResultField`, and M8b.7 adds `SessionEvent::StructuredOutput { value }` from `result.structured_output` (decision 16's source 1). Decision 16's source 2 (the `StructuredOutput` tool use) also matches this stream and stays as the fallback; source 3 (assistant text) would find nothing here.
+- **Turns.** `num_turns: 2`: the `StructuredOutput` call and its result count as a turn, so `--max-turns 1` would be too few; 3 leaves one spare. `result.stop_reason` is `"tool_use"`, `terminal_reason` `"completed"`, `subtype` `"success"`, `is_error` false, `permission_denials` `[]`.
+- **Strict schemas: not probed.** The one call used a schema with every property in `required`; whether the CLI refuses one without (`DECIDER_CAPS.strict_schemas`) needed a second call, which the stop prevented. OUTSTANDING; set to `true` (the schemas already satisfy strict modes, so nothing depends on the answer).
+- **Usage** (`result.usage`, the same field names M8a.1 recorded, plus `output_tokens_details.thinking_tokens` and `iterations[]`): input 10, output 357 (257 of them thinking), `cache_read_input_tokens` 0, `cache_creation_input_tokens` 17 688, `total_cost_usd` 0.0372. `modelUsage` is keyed by `claude-haiku-4-5`. No new usage field needs adding to M8a.1's list.
+- **Exit.** The process exited 0, 0.59 s after the `result` line, with stdin already closed.
+- **What else loads into a decider** (observations for M8b.5 and M8b.7, not changes):
+  - Under `--setting-sources user` the user's own `SessionStart` hooks run (`system/hook_started`/`hook_response`, four here, one with 17 KB of plugin context) and `system/commands_changed` lines list the user's skills. That context is why a one-line classification cost 17 688 cache-creation tokens. The decider parser must ignore these lines, as M8a's does.
+  - `system/init.tools` lists built-in tools the decider's `--disallowedTools` does not name (`CronCreate`, `CronDelete`, `CronList`, `DesignSync`, `EnterWorktree`, `ExitWorktree`, `ListAgents`, `Monitor`, `PushNotification`, `RemoteTrigger`, `ReportFindings`, `ScheduleWakeup`, `SendMessage`, `Skill`, `TaskCreate`…`TaskUpdate`, `ToolSearch`, `Workflow`) besides `StructuredOutput`. `dontAsk` with `--permission-prompts none` denies anything that would prompt, and `--max-turns 3` bounds the call, but tools that need no permission remain callable. `claude --help` for 2.1.280 also lists `--tools <tools...>` ("Use \"\" to disable all tools") and `--restricted`; whether `StructuredOutput` survives either is unverified. Recorded as a follow-up; decision 16's argv is unchanged.
+
+**Item 2, a Codex decider call: not run (controller ruling).** From `codex --version` (`codex-cli 0.156.1`) and `codex exec --help`: `--json`, `--skip-git-repo-check`, `--ephemeral` ("Run without persisting session files to disk"), `-s/--sandbox read-only|workspace-write|danger-full-access`, `-c/--config <key=value>`, `--output-schema <FILE>` ("Path to a JSON Schema file describing the model's final response shape") and `-m/--model` all exist; `--ignore-user-config` also exists (M8a.1). OUTSTANDING for the user: that the final `agent_message` text is the JSON, `turn.completed.usage`, whether `--output-schema` is honoured, and whether the run writes `~/.codex/config.toml`. The exact command, in an empty directory, with `/tmp/m8b1-schema.json` holding the `blocked_reason` schema:
+
+```sh
+shasum -a 256 ~/.codex/config.toml
+env -i HOME="$HOME" PATH="$PATH" USER="$USER" LOGNAME="$LOGNAME" SHELL="$SHELL" TERM="$TERM" LANG="$LANG" \
+  codex exec --json --skip-git-repo-check --ephemeral -s read-only \
+  -c sandbox_workspace_write.network_access=false -c approval_policy="never" -c model_reasoning_effort="low" \
+  --output-schema /tmp/m8b1-schema.json -- "<the blocked_reason prompt>" > codex-decider.jsonl
+shasum -a 256 ~/.codex/config.toml
+```
+
+Until then Codex deciders take the conservative caps: `codex_output_schema = false` (the prompt alone asks for the JSON, and `parse` validates everything) and `codex_ephemeral = true` (the flag exists and only reduces what a call persists). No `codex-<version>-decider.jsonl` fixture exists; M8b.6's shape test skips it with a printed reason.
+
+**Item 3, the filter hook under `-p`: not run (probes stopped).** OUTSTANDING: whether both `PreToolUse` groups fire, whether the rewritten command runs and writes under `$TMPDIR/anthrex-logs`, whether `permissionDecision: "allow"` is needed, and the payload's `tool_input` keys. `output_filter::HOOK_SETS_ALLOW` (M8b.8) therefore has no recorded fact and needs a ruling before M8b.8 sets it; per the brief's rule, an ignored hook means M8b.8 lands the hook, `filter-run` and their tests but skips the injection. The command is M8b.1 item 3's, run in a scratch repository with a scrubbed environment and `--no-session-persistence`. No `claude-<version>-filter-hook.jsonl` fixture exists.
+
+**Item 4, the scout launch: not run (probes stopped).** OUTSTANDING: `Bash` running `ls` and `git log -1`, `touch x` and a `$TMPDIR` write denied under an empty `allowWrite` with M8a's pins, `curl https://example.com` failing, and the stub MCP `submit_scout_report` call allowed under `dontAsk` with `Bash` allowed. M8a.1 recorded the reviewer's MCP call allowed under `dontAsk` (without unscoped `Bash`), which is the nearest evidence. The brief's rule stands: if the probe finds the MCP call refused, M8b.9's launch stops until a ruling. No `claude-<version>-scout.jsonl` fixture exists.
+
+**Item 5, OTLP: not run (probes stopped).** OUTSTANDING: the path, content type, `Content-Length` or chunked, compression, metric name, data-point attributes and `type` values, `aggregationTemporality`, and whether the resource attributes arrive. So `orchestrator_env`'s list is the documented set of item 5 (`CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_METRICS_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`, `OTEL_EXPORTER_OTLP_ENDPOINT=<addr>`, `OTEL_METRIC_EXPORT_INTERVAL=1000`, `OTEL_RESOURCE_ATTRIBUTES=anthrex.run=<run>,anthrex.role=orchestrator`), without `OTEL_EXPORTER_OTLP_COMPRESSION`, until the probe says whether compression is on by default. No `claude-<version>-metrics.json` fixture exists; M8b.15 uses its `parses_the_documented_shape` path.
+
+**Stream usage names** (M8a.1 cross-reference). M8a.1 recorded `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` and the rest for Claude; the decider call shows the same names. Codex's `turn.completed.usage` was recorded by M8a.1's Codex fixtures. Nothing to add.
+
+**`DECIDER_CAPS`** (`crates/daemon/src/decider/argv.rs`)
+
+| Field | Value | Set by |
+|-------|-------|--------|
+| `claude_json_schema` | `true` | item 1: accepted, and the answer arrived as structured output |
+| `claude_max_turns` | `true` | item 1: hidden from `--help`, accepted; 2 turns used |
+| `claude_no_session_persistence` | `true` | item 1: accepted |
+| `answer_source` | `AnswerSource::ResultField` | item 1: `result.structured_output` (also a top-level `StructuredOutput` tool use and `result.result` text) |
+| `strict_schemas` | `true` | not probed (OUTSTANDING); assumed, and the all-required schemas satisfy it |
+| `codex_output_schema` | `false` | item 2 not run (ruling): the flag exists, but its behaviour is unverified, so Codex deciders use the prompt alone |
+| `codex_ephemeral` | `true` | item 2: the flag exists in `codex exec --help` |
+
+**OUTSTANDING, for the user:** item 1's strict-schema question; item 2 (the Codex call, the command above); item 3 (the filter hook, `HOOK_SETS_ALLOW`); item 4 (the scout launch); item 5 (OTLP, `orchestrator_env`); and whether a headless `claude -p` run rewriting `~/.claude.json` is acceptable (the stop above). Each of M8b.6, M8b.8, M8b.9 and M8b.15 skips its fixture-based check with a printed reason until its fixture exists.

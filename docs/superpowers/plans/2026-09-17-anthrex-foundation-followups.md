@@ -1317,6 +1317,21 @@ scope.
   `orchestrator` hooks) and `lib_tests.rs` 742 (741 on `main`). Left for a config
   change that has a reason to split them.
 
+## From M8b.1 (2026-09-25), for the user and for M8b
+
+- **A headless `claude -p` call appears to rewrite `~/.claude.json`, even with
+  `--no-session-persistence`.** M8b.1's decider probe changed the file's hash and mtime
+  inside its 7 s window (another session writing it then is not ruled out). If confirmed,
+  every headless session anthrex launches (M8a's workers and reviewers too) does it. For
+  the user to judge; M8b.1 stopped its probes there (brief, "M8b.1 external facts").
+- **Deciders see more tools than `--disallowedTools` names.** Under
+  `--setting-sources user`, `system/init.tools` lists `CronCreate`, `SendMessage`,
+  `RemoteTrigger`, `PushNotification`, `Workflow`, `Skill`, `ToolSearch` and others beside
+  `StructuredOutput`, and the user's `SessionStart` hooks add about 17 k tokens of context
+  to every call. `claude --help` (2.1.280) offers `--tools <tools...>` and `--restricted`;
+  whether `StructuredOutput` survives either is unverified. A later probe could narrow a
+  decider to no tools and cut its cost.
+
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
 - **The main pane can switch to a new window while the new-agent form is still open and
