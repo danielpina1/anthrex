@@ -44,13 +44,20 @@ async fn a_lagged_subscriber_is_resynced_without_replaying_retained_chunks() {
         }))
     };
 
-    // Long enough for every line to be printed and the child to exit.
-    tokio::time::sleep(Duration::from_millis(1500)).await;
-    let expected = window.lock().unwrap().screen_text();
+    // Wait until every line is printed (about 0.4 s of output, far longer on a
+    // loaded CI runner), then a little longer for the child to exit.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut expected = window.lock().unwrap().screen_text();
+    while !expected.contains("line-12") && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        expected = window.lock().unwrap().screen_text();
+    }
     assert!(
         expected.contains("line-12"),
         "the child did not finish: {expected:?}"
     );
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let expected = window.lock().unwrap().screen_text();
 
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut lagged = false;
