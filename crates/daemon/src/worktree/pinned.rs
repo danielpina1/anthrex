@@ -44,6 +44,10 @@ pub struct Pin {
     /// A task worktree's private object directory, which the worker's git writes
     /// (`GIT_OBJECT_DIRECTORY`) and the engine only ever reads, to import from (F1b).
     pub objects: Option<PathBuf>,
+    /// Final fix batch F1c (C1): a task checkout's engine-owned directory, where every
+    /// engine git command there gets its own copy of the index
+    /// ([`super::engine_index`]). `None` for a checkout no worker writes.
+    pub engine: Option<PathBuf>,
     pub broken: Option<String>,
 }
 
@@ -54,6 +58,8 @@ pub struct PinAs {
     pub head: Option<String>,
     pub own: Option<String>,
     pub objects: Option<PathBuf>,
+    /// The engine-owned directory of a task checkout (final fix batch F1c, C1).
+    pub engine: Option<PathBuf>,
 }
 
 static PINS: LazyLock<Mutex<HashMap<PathBuf, Pin>>> = LazyLock::new(Default::default);
@@ -81,7 +87,12 @@ fn key(path: &Path) -> PathBuf {
 pub fn pin(common_dir: &Path, worktree: &Path, as_: PinAs) -> Pin {
     let key_path = key(worktree);
     let common = key(common_dir);
-    let PinAs { head, own, objects } = as_;
+    let PinAs {
+        head,
+        own,
+        objects,
+        engine,
+    } = as_;
     let existing = crate::lock(&PINS).get(&key_path).cloned();
     let pin = match existing {
         Some(pin) if pin.broken.is_none() && pin.common_dir == common && pin.git_dir.is_dir() => {
@@ -89,6 +100,7 @@ pub fn pin(common_dir: &Path, worktree: &Path, as_: PinAs) -> Pin {
                 head,
                 own,
                 objects,
+                engine,
                 ..pin
             }
         }
@@ -99,6 +111,7 @@ pub fn pin(common_dir: &Path, worktree: &Path, as_: PinAs) -> Pin {
                 head,
                 own,
                 objects,
+                engine,
                 broken: None,
             },
             Err(reason) => Pin {
@@ -107,6 +120,7 @@ pub fn pin(common_dir: &Path, worktree: &Path, as_: PinAs) -> Pin {
                 head,
                 own,
                 objects,
+                engine,
                 broken: Some(reason),
             },
         },
@@ -225,6 +239,11 @@ pub fn check(worktree: &Path, pin: &Pin) -> Result<(), String> {
         return refused("it has a config.worktree".to_string());
     }
     check_head(pin).or_else(refused)?;
+    if pin.engine.is_some() {
+        // Final fix batch F1c (C1), defence in depth: the engine's own git never uses
+        // this file (it works on a copy), but a linked index is a plant.
+        super::engine_index::plain_or_missing(&pin.git_dir).or_else(refused)?;
+    }
     check_pseudo_refs(pin).or_else(refused)?;
     check_reflogs(pin).or_else(refused)?;
     check_own_ref(pin).map_err(|what| {

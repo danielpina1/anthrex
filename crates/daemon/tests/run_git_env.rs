@@ -204,10 +204,29 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
     let mut pinned = 0;
     let mut writes = 0;
     let mut no_replace = 0;
+    let mut engine_index = 0;
+    let mut last_dir = String::new();
     for line in log.lines() {
         if let Some(env) = line.strip_prefix("env\t") {
             // Ruling T14-R3: no call reads `refs/replace` objects.
             no_replace += usize::from(env == "GIT_NO_REPLACE_OBJECTS=1");
+            // Final fix batch F1c (C1): a call in the task's worktree works on the
+            // engine's own copy of its index, set deliberately; never the inherited one.
+            if let Some(value) = env.strip_prefix("GIT_INDEX_FILE=") {
+                let name = std::path::Path::new(value)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                assert!(
+                    last_dir.starts_with(&wt.join("runs/env1/t").display().to_string())
+                        && !last_dir.ends_with(".review")
+                        && name.starts_with("index-")
+                        && !value.contains("leak"),
+                    "GIT_INDEX_FILE reached git outside the engine's copy: {env} in {last_dir}"
+                );
+                engine_index += 1;
+                continue;
+            }
             for key in SCRUBBED {
                 assert!(
                     !env.starts_with(&format!("{key}=")),
@@ -224,6 +243,7 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
             .collect();
         calls += 1;
         assert_eq!(argv[0], "-C", "{argv:?}");
+        last_dir = argv[1].to_string();
         assert!(std::path::Path::new(argv[1]).is_absolute(), "{argv:?}");
         assert_eq!(argv[2], "--no-optional-locks", "{argv:?}");
         // Final fix batch F1 (C-C1, D-5): no call runs a configured fsmonitor, and a
@@ -273,4 +293,5 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
     );
     assert!(writes >= 5, "only {writes} writes were recorded:\n{log}");
     assert_eq!(no_replace, calls, "replace objects allowed:\n{log}");
+    assert!(engine_index > 0, "no call used the engine's index:\n{log}");
 }

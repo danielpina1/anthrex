@@ -438,14 +438,28 @@ fn lossy_stderr(bytes: Vec<u8>) -> String {
 /// AGENTS.md rule 11's five variables go, and (ruling T14-R3) git reads no
 /// `refs/replace` objects, so a replacement a worker writes into the shared repository
 /// cannot make one commit read as another to a gate, a merge or a check.
+///
+/// Rule 11 removes an **inherited** value. One the daemon set on `command` itself, on
+/// purpose, is kept: M8a final fix batch F1c (C1) runs every engine git command in a
+/// task checkout with `GIT_INDEX_FILE` naming an engine-owned copy of its index
+/// ([`crate::worktree::engine_index`]), so no engine write ever goes through an index
+/// file the worker can replace with a symbolic link. That is the only such use.
 pub(crate) fn scrub_git_env(command: &mut Command) -> &mut Command {
-    command
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_COMMON_DIR")
-        .env_remove("GIT_INDEX_FILE")
-        .env_remove("GIT_PREFIX")
-        .env("GIT_NO_REPLACE_OBJECTS", "1")
+    for key in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_PREFIX",
+    ] {
+        let set_here = command
+            .get_envs()
+            .any(|(name, value)| name == key && value.is_some());
+        if !set_here {
+            command.env_remove(key);
+        }
+    }
+    command.env("GIT_NO_REPLACE_OBJECTS", "1")
 }
 
 pub(crate) fn set_nonblocking(stream: &impl AsRawFd) -> io::Result<()> {

@@ -36,6 +36,13 @@ pub fn salvage(
     timeout: Duration,
 ) -> Result<Option<String>, String> {
     let g = Git::new(git, timeout);
+    // Final fix batch F1c (C1): an index the worker replaced with a link (or anything
+    // but a plain file) is removed, never written through, and rebuilt from `HEAD`
+    // below: `add -A` then saves the worktree's files whatever the index held.
+    let rebuild = match import::task_pin(worktree) {
+        Ok(pin) => drop_tampered_index(&pin.git_dir)?,
+        Err(_) => false,
+    };
     // Final fix batch F1b: in a task worktree, the worker's detached `HEAD` is imported
     // and recorded on the task's branch first (its objects are in its private directory
     // until then), and it is the salvage's parent. A `HEAD` left naming a branch (on
@@ -46,6 +53,9 @@ pub fn salvage(
     } else {
         "HEAD".to_string()
     };
+    if rebuild {
+        g.write(worktree, &[os("read-tree"), os(&parent)])?;
+    }
     // `--untracked-files=normal` explicitly: a user's `status.showUntrackedFiles=no`
     // must not hide new files from the salvage.
     let args = [
@@ -118,6 +128,21 @@ pub fn salvage(
         ],
     )?;
     Ok(Some(reference.to_string()))
+}
+
+/// Final fix batch F1c (C1): removes `<git_dir>/index` when it is not a plain file (a
+/// link the worker planted: `unlink` removes the link itself). `true` when it did.
+fn drop_tampered_index(git_dir: &Path) -> Result<bool, String> {
+    if crate::worktree::engine_index::plain_or_missing(git_dir).is_ok() {
+        return Ok(false);
+    }
+    let index = git_dir.join("index");
+    let removed = match std::fs::symlink_metadata(&index) {
+        Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(&index),
+        _ => std::fs::remove_file(&index),
+    };
+    removed.map_err(|err| format!("cannot remove the tampered {}: {err}", index.display()))?;
+    Ok(true)
 }
 
 /// The gitlink (nested repository) paths in `dir`'s index.

@@ -44,6 +44,13 @@ pub fn task_objects_dir(data_dir: &Path, task_id: &str) -> PathBuf {
     data_dir.join("tasks").join(task_id).join("objects")
 }
 
+/// Final fix batch F1c (C1): a task's engine-owned directory,
+/// `<run data dir>/tasks/<task>/engine`, never in the worker's grant: every engine git
+/// command in the task's worktree works on its own copy of the index there.
+pub fn task_engine_dir(data_dir: &Path, task_id: &str) -> PathBuf {
+    data_dir.join("tasks").join(task_id).join("engine")
+}
+
 /// What a worker's sandbox may write besides its worktree (decisions 25 and 54, as
 /// replaced by final fix batch F1b): its private object directory, and nothing at all
 /// of the repository's git common directory: no object, no ref, no reflog, no

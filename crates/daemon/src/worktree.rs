@@ -22,6 +22,7 @@
 //! work* — the safety-critical question, kept where it can be read on its own.
 
 mod dirty;
+pub mod engine_index;
 mod input;
 mod ops;
 pub mod pinned;
@@ -350,9 +351,9 @@ fn run_git_capturing(
 
     // A worktree the run engine created is pinned to its git directory, never to what
     // its `.git` file says (M8a final fix batch F1, fix round 1, N2).
-    let pin = match pinned::pinned(dir) {
+    let pinned_as = match pinned::pinned(dir) {
         Some(pin) => match pinned::check(dir, &pin) {
-            Ok(()) => Some(pinned::flags(dir, &pin)),
+            Ok(()) => Some(pin),
             Err(stderr) => {
                 return Err(WorktreeError::Git {
                     action: joined_args,
@@ -360,6 +361,23 @@ fn run_git_capturing(
                 });
             }
         },
+        None => None,
+    };
+    let pin = pinned_as.as_ref().map(|pin| pinned::flags(dir, pin));
+    // Final fix batch F1c (C1): in a checkout a worker writes, git works on the
+    // engine's own copy of the index, installed afterwards by rename.
+    let staged = match pinned_as.as_ref().and_then(|pin| {
+        pin.engine
+            .as_ref()
+            .map(|engine| engine_index::stage(&pin.git_dir, engine))
+    }) {
+        Some(Ok(staged)) => Some(staged),
+        Some(Err(what)) => {
+            return Err(WorktreeError::Git {
+                action: joined_args,
+                stderr: format!("refusing git in {}: {what}", dir.display()),
+            });
+        }
         None => None,
     };
 
@@ -377,6 +395,10 @@ fn run_git_capturing(
         // object store only, whatever the daemon's environment says.
         .env_remove("GIT_OBJECT_DIRECTORY")
         .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES");
+    if let Some(staged) = &staged {
+        // Set deliberately; `subprocess::scrub_git_env` removes only an inherited one.
+        command.env("GIT_INDEX_FILE", staged.path());
+    }
     if let Some(file) = input {
         use std::os::fd::AsRawFd;
         use std::os::unix::process::CommandExt;
@@ -411,6 +433,15 @@ fn run_git_capturing(
             subprocess::run_captured_head_tail(&mut command, head, tail, MAX_STDERR_BYTES, timeout)
         }
     };
+
+    if let Some(staged) = staged
+        && let Err(stderr) = staged.install()
+    {
+        return Err(WorktreeError::Git {
+            action: joined_args,
+            stderr,
+        });
+    }
 
     if let Some(kind) = spawn_error {
         return if kind == io::ErrorKind::NotFound {

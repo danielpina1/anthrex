@@ -288,6 +288,13 @@ fn ensure_task_worktree(
             }
         }
     }
+    // Final fix batch F1c (C1): the engine's copies of the worktree's index live in an
+    // engine-owned directory: next to the private object directory (the run's data
+    // directory), else in the worktree's own git directory, outside the worker's grant.
+    let engine = match objects.and_then(Path::parent) {
+        Some(task_dir) => task_dir.join("engine"),
+        None => pinned::find_git_dir(&common_dir(g, root)?, path)?.join("anthrex-engine"),
+    };
     pin_in(
         g,
         root,
@@ -296,6 +303,7 @@ fn ensure_task_worktree(
             head: None,
             own: Some(own.clone()),
             objects: objects.map(Path::to_path_buf),
+            engine: Some(engine),
         },
     )?;
     let head = sync_in(g, path)?;

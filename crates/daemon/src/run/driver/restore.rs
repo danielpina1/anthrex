@@ -271,6 +271,10 @@ fn run_worktree_paths(run: &Run) -> Vec<(std::path::PathBuf, PinAs)> {
                 head: None,
                 own: Some(format!("refs/heads/{}", task.branch)),
                 objects: Some(task_objects_dir(&run.data_dir, task.id())),
+                engine: Some(crate::run::role_launch::task_engine_dir(
+                    &run.data_dir,
+                    task.id(),
+                )),
             },
         ));
         paths.push((run.review_path(task.id()), PinAs::default()));
