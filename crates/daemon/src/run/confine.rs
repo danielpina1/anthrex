@@ -106,6 +106,8 @@ pub struct ConfineSpec {
 /// network.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Confinement {
+    /// The checkout, whose protected agent-config paths are denied (F2 round 2).
+    checkout: PathBuf,
     writable: Vec<PathBuf>,
     tmp: PathBuf,
     network: bool,
@@ -161,6 +163,7 @@ impl ConfineSpec {
         writable.extend(resolve_all(&self.cache_dirs, &areas)?);
         let unix_sockets = resolve_sockets(&self.unix_sockets, &areas)?;
         Ok(Confinement {
+            checkout,
             writable,
             tmp,
             network: self.network,
@@ -190,6 +193,7 @@ impl Confinement {
             unix_sockets: &self.unix_sockets,
             localhost_ports: &self.localhost_ports,
             daemon_socket: &self.daemon_socket,
+            checkout: Some(&self.checkout),
         })
     }
 }

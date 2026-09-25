@@ -130,6 +130,40 @@ pub struct Grants<'a> {
     pub localhost_ports: &'a [u16],
     /// The anthrex daemon's socket, denied even with `network`.
     pub daemon_socket: &'a Path,
+    /// The checkout whose protected agent-config paths no write may touch (final fix
+    /// batch F2 round 2): [`protected_denial`].
+    pub checkout: Option<&'a Path>,
+}
+
+/// Final fix batch F2 round 2: the unconditional deny, after every allow so it wins
+/// (SBPL takes the last matching rule), of writes to `checkout`'s protected agent-config
+/// paths (decision 56's built-ins): `.claude` and `.codex` (the directories themselves
+/// too, so neither can be created, replaced or renamed), `.mcp.json`, and `CLAUDE.md`
+/// and `AGENTS.md` at any depth. A check, proof or `setup` never needs to write them,
+/// and a child that escapes the command's group is still inside this sandbox.
+pub fn protected_denial(checkout: &Path) -> Result<String, String> {
+    let quoted = |name: &str| sbpl_string(&checkout.join(name));
+    let text = checkout
+        .to_str()
+        .ok_or_else(|| format!("{} is not UTF-8", checkout.display()))?;
+    if text.contains('"') || text.chars().any(char::is_control) {
+        return Err(format!("{text:?} cannot be spelled in an SBPL regex"));
+    }
+    let mut escaped = String::new();
+    for c in text.chars() {
+        if "\\.+*?()|[]{}^$".contains(c) {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    Ok(format!(
+        "\n; Never the checkout's protected agent-config paths (decision 56's built-ins).\n\
+         (deny file-write*\n  (subpath {claude})\n  (subpath {codex})\n  (literal {mcp})\n  \
+         (regex #\"^{escaped}/(.*/)?(CLAUDE|AGENTS)\\.md$\"))\n",
+        claude = quoted(".claude")?,
+        codex = quoted(".codex")?,
+        mcp = quoted(".mcp.json")?,
+    ))
 }
 
 /// The profile for `grants`. A path that cannot be spelled in SBPL is refused.
@@ -151,6 +185,9 @@ pub fn profile(grants: &Grants<'_>) -> Result<String, String> {
         p.push_str(&format!("  (subpath {path})\n"));
     }
     p.push_str(")\n");
+    if let Some(checkout) = grants.checkout {
+        p.push_str(&protected_denial(checkout)?);
+    }
     p.push_str("\n; Unix sockets: only under the command's own directories.\n(allow system-socket (socket-domain AF_UNIX))\n");
     for path in &quoted {
         p.push_str(&format!(
@@ -306,8 +343,31 @@ mod tests {
             unix_sockets: &[],
             localhost_ports: &[],
             daemon_socket: Path::new("/s/daemon.sock"),
+            checkout: Some(Path::new("/w/check.out")),
         })
         .unwrap()
+    }
+
+    /// F2 round 2: the protected agent-config paths of the checkout are denied after
+    /// the write allows, a regex-special character in its path escaped.
+    #[test]
+    fn protected_agent_config_is_denied_after_the_write_allows() {
+        let p = grants(false);
+        let allow = p.find("(subpath \"/w/checkout\")").unwrap();
+        let deny = p.find("(deny file-write*\n").expect("the protected deny");
+        assert!(deny > allow, "{p}");
+        for rule in [
+            "(subpath \"/w/check.out/.claude\")",
+            "(subpath \"/w/check.out/.codex\")",
+            "(literal \"/w/check.out/.mcp.json\")",
+            "(regex #\"^/w/check\\.out/(.*/)?(CLAUDE|AGENTS)\\.md$\")",
+        ] {
+            let at = p
+                .find(rule)
+                .unwrap_or_else(|| panic!("{rule} missing: {p}"));
+            assert!(at > deny, "{rule}");
+        }
+        assert!(protected_denial(Path::new("/w/a\"b")).is_err());
     }
 
     #[test]
@@ -366,6 +426,7 @@ mod tests {
             unix_sockets: &[PathBuf::from("/tmp/.s.PGSQL.5432")],
             localhost_ports: &[6379],
             daemon_socket: Path::new("/s/daemon.sock"),
+            checkout: None,
         })
         .unwrap();
         assert!(
