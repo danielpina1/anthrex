@@ -1,8 +1,9 @@
 //! The read-only run snapshot: what `run list` and the TUI's run view are shown.
 //!
-//! Every field that later milestones (M8c, M9) might add to is `#[serde(default)]`
-//! here, so a struct that gains a field between milestones still deserializes against
-//! an older sender.
+//! An `Option` field tolerates absence (serde's derive reads a missing one as `None`).
+//! A new non-`Option` field (a `Vec`, `bool` or number) needs `#[serde(default)]`, or
+//! a protocol bump, or a snapshot from an older sender fails with "missing field"
+//! (review E-M3, F4).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

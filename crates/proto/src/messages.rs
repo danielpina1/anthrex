@@ -356,6 +356,11 @@ mod tests {
                 proto_version: 1,
                 client: ClientKind::Tui,
             },
+            // Review E-M4 (F4): every client kind the wire carries.
+            ClientMsg::Hello {
+                proto_version: 1,
+                client: ClientKind::Mcp,
+            },
             ClientMsg::ListWindows,
             ClientMsg::CreateWindow {
                 spec,
@@ -417,7 +422,21 @@ mod tests {
                 windows: vec![window.clone()],
             },
             DaemonMsg::WindowsChanged {
-                windows: vec![window],
+                windows: vec![
+                    window.clone(),
+                    // Review E-M4 (F4): a headless run window with its `RunRef`.
+                    WindowInfo {
+                        id: 2,
+                        kind: crate::types::WindowKind::Headless,
+                        run: Some(crate::run::RunRef {
+                            run_id: "r-1".into(),
+                            task_id: Some("t1".into()),
+                            role: crate::run::AgentRole::Reviewer,
+                            session: 2,
+                        }),
+                        ..window
+                    },
+                ],
             },
             DaemonMsg::Created { window_id: 1 },
             DaemonMsg::Snapshot {
