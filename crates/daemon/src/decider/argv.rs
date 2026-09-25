@@ -16,7 +16,7 @@ pub struct DeciderCaps {
     /// Where a Claude decider's JSON answer is taken from first (decision 16's order).
     pub answer_source: AnswerSource,
     /// Whether a structured-output schema must list every property in `required`. The
-    /// decider schemas already do, so `true` changes nothing but records the assumption.
+    /// decider schemas already do, so the value changes nothing in them.
     pub strict_schemas: bool,
     /// Whether `codex exec --output-schema <file>` is passed.
     pub codex_output_schema: bool,
@@ -35,21 +35,23 @@ pub enum AnswerSource {
     Text,
 }
 
-/// M8b.1's findings against `claude` 2.1.280 (one observed call, fixture
-/// `tests/fixtures/deciders/claude-2.1.280-decider.jsonl`) and `codex-cli` 0.156.1
+/// M8b.1's findings against `claude` 2.1.280 (observed calls, fixtures
+/// `tests/fixtures/deciders/claude-2.1.280-decider*.jsonl`) and `codex-cli` 0.156.1
 /// (`codex exec --help` only; no Codex call was run).
 pub const DECIDER_CAPS: DeciderCaps = DeciderCaps {
     // Accepted, and the answer arrived as structured output.
     claude_json_schema: true,
-    // Hidden from `--help`, accepted; the call used 2 turns (the StructuredOutput call
-    // and its result), so 3 leaves one spare.
+    // Hidden from `--help`, accepted. A call uses 2 turns (the StructuredOutput call and
+    // its result), or 3 when the model first answers in text and the CLI makes it call
+    // StructuredOutput (observed on triage), which is exactly `--max-turns 3`.
     claude_max_turns: true,
     claude_no_session_persistence: true,
     // The answer was in `result.structured_output`, in a top-level `StructuredOutput`
     // tool use, and as JSON text in `result.result`; there was no assistant text block.
     answer_source: AnswerSource::ResultField,
-    // Not probed (outstanding): assumed strict, which the all-required schemas satisfy.
-    strict_schemas: true,
+    // A schema leaving `reason` out of `required` was accepted and answered; the
+    // triage schema's `anyOf` with null and `["string","null"]` types were accepted too.
+    strict_schemas: false,
     // `--output-schema` exists in `codex exec --help`, but no Codex call was run
     // (outstanding), so Codex deciders rely on the prompt alone and `parse` validates
     // everything.

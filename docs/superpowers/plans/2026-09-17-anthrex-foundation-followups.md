@@ -1319,18 +1319,30 @@ scope.
 
 ## From M8b.1 (2026-09-25), for the user and for M8b
 
-- **A headless `claude -p` call appears to rewrite `~/.claude.json`, even with
-  `--no-session-persistence`.** M8b.1's decider probe changed the file's hash and mtime
-  inside its 7 s window (another session writing it then is not ruled out). If confirmed,
-  every headless session anthrex launches (M8a's workers and reviewers too) does it. For
-  the user to judge; M8b.1 stopped its probes there (brief, "M8b.1 external facts").
-- **Deciders see more tools than `--disallowedTools` names.** Under
-  `--setting-sources user`, `system/init.tools` lists `CronCreate`, `SendMessage`,
-  `RemoteTrigger`, `PushNotification`, `Workflow`, `Skill`, `ToolSearch` and others beside
-  `StructuredOutput`, and the user's `SessionStart` hooks add about 17 k tokens of context
-  to every call. `claude --help` (2.1.280) offers `--tools <tools...>` and `--restricted`;
-  whether `StructuredOutput` survives either is unverified. A later probe could narrow a
-  decider to no tools and cut its cost.
+- **Scouts' Bash can write their working directory (M8b.9, needs a ruling).** With
+  an empty `sandbox.filesystem.allowWrite`, Claude Code 2.1.280 still lets sandboxed
+  Bash write the session's working directory (`touch x` succeeded). Adding the checkout
+  root to `denyWrite` denies it while `ls`, `git log` and the MCP call keep working
+  (fixtures `claude-2.1.280-scout*.jsonl`). M8a's reviewers are covered by `dontAsk`
+  and their scoped `Bash(git …)` rules, not by the sandbox; worth confirming for any
+  future role that allows unscoped Bash.
+- **A worker's Bash does not see M8a's per-task `TMPDIR` (M8a, recorded).** Claude
+  Code's sandbox sets `TMPDIR` to its own `/tmp/claude-<uid>` inside the Bash tool,
+  and that directory is writable to every sandboxed session, scouts and reviewers
+  included. Decision 28's filter log is unaffected (absolute `--log-dir`); anything
+  that relies on `$TMPDIR` inside a worker's commands, or on it being private per task,
+  is not.
+- **A rewritten Bash call shows its original command in the stream (M8b.6).** The
+  assistant `tool_use` keeps the model's command; only the `tool_result` reflects the
+  `PreToolUse` rewrite. Decision 37's `bash` step emits the final command.
+- **Deciders could run with `--tools ""` (M8b.5, optional).** It leaves only
+  `StructuredOutput` in `init.tools` (the decider otherwise sees `SendMessage`,
+  `RemoteTrigger`, `Workflow`, `Skill` and more) and cut cache creation from 17 688 to
+  10 763 tokens; the answer arrived unchanged. The user's `SessionStart` hooks still
+  run. `--restricted` skips them but leaves 18 tools.
+- **The triage decider can use all of `--max-turns 3`.** The model answered in text
+  first, the CLI forced a `StructuredOutput` call, and `num_turns` was 3. M8b.7 should
+  read the fenced text (decision 16's source 3) even when a turn ends early.
 
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
