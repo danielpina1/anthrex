@@ -64,6 +64,10 @@ pub struct HeadlessSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaudeSandbox {
     pub writable_roots: Vec<PathBuf>,
+    /// `filesystem.denyWrite`: the checkout's protected agent-config paths the session
+    /// may not write (final fix batch F2 round 2, `role_launch::protected_write_denials`).
+    #[serde(default)]
+    pub deny_write: Vec<PathBuf>,
 }
 
 /// Who the session's `anthrex mcp` server speaks for.

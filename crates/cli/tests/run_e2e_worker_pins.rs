@@ -78,6 +78,21 @@ fn e2e_workers_get_their_own_tmpdir_and_pinned_sandbox_settings() {
     assert_eq!(sandbox["allowAppleEvents"], false);
     assert_eq!(sandbox["excludedCommands"], serde_json::json!([]));
     assert_eq!(sandbox["filesystem"]["disabled"], false);
+    // F2 round 2: the checkout's protected agent-config paths are denied (t1 owns
+    // only `a.txt`, so all seven are).
+    let denied: Vec<&str> = sandbox["filesystem"]["denyWrite"]
+        .as_array()
+        .expect("denyWrite")
+        .iter()
+        .map(|p| p.as_str().unwrap())
+        .collect();
+    assert_eq!(denied.len(), 7, "{denied:?}");
+    for tail in ["/.claude", "/.codex", "/.mcp.json", "/**/AGENTS.md"] {
+        assert!(
+            denied.iter().any(|p| p.ends_with(tail)),
+            "{tail}: {denied:?}"
+        );
+    }
     let writable = sandbox["filesystem"]["allowWrite"].as_array().unwrap();
     assert!(
         writable

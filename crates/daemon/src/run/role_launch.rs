@@ -131,6 +131,43 @@ fn worker_env(run: &Run, task: &Task) -> Vec<(String, String)> {
     env
 }
 
+/// Final fix batch F2 round 2 (the F2 review's item 2): the protected agent-config
+/// paths (decision 56's built-ins) a Claude session's sandbox may not write in its
+/// checkout `cwd`: `.claude` and `.codex` (the directories themselves too), `.mcp.json`,
+/// and `CLAUDE.md` and `AGENTS.md` at the root and at any depth. An entry is left out
+/// when `owns` names a path under it exactly (decision 56's literal rule): a deny cannot
+/// carve out one file, and the done gate still judges what the task changed. A child
+/// that outlives its turn stays inside the sandbox, so it cannot plant config for a
+/// later session either.
+pub fn protected_write_denials(cwd: &Path, owns: &[String]) -> Vec<PathBuf> {
+    let literals: Vec<&str> = owns
+        .iter()
+        .filter(|entry| !entry.contains(['*', '?', '[']))
+        .map(|entry| {
+            let entry = entry.strip_prefix("./").unwrap_or(entry);
+            entry.trim_end_matches('/')
+        })
+        .collect();
+    let owned = |test: &dyn Fn(&str) -> bool| literals.iter().any(|l| test(l));
+    let mut denied = Vec::new();
+    for dir in [".claude", ".codex"] {
+        if !owned(&|l| l == dir || l.starts_with(&format!("{dir}/"))) {
+            denied.push(cwd.join(dir));
+        }
+    }
+    for file in [".mcp.json", "CLAUDE.md", "AGENTS.md"] {
+        if !owned(&|l| l == file) {
+            denied.push(cwd.join(file));
+        }
+    }
+    for name in ["CLAUDE.md", "AGENTS.md"] {
+        if !owned(&|l| l == name || l.ends_with(&format!("/{name}"))) {
+            denied.push(cwd.join("**").join(name));
+        }
+    }
+    denied
+}
+
 /// Final fix batch F2 (C-I1): a Codex session's guard against project config the run
 /// did not start with, unless the run started under a Codex CLI that does not load
 /// project config or is told not to (decision 53's first two branches). A run from
@@ -169,6 +206,7 @@ pub fn worker_spec(run: &Run, task: &Task) -> HeadlessSpec {
         claude_disallowed_tools: Vec::new(),
         claude_sandbox: (claude && limits.worker_sandbox).then(|| ClaudeSandbox {
             writable_roots: worker_git_roots(&run.data_dir, task.id()),
+            deny_write: protected_write_denials(&task.worktree, &task.spec.owns),
         }),
         codex_sandbox: limits.worker_codex_sandbox.clone(),
         codex_writable_roots: if claude {
@@ -226,6 +264,7 @@ pub fn reviewer_spec(run: &Run, task: &Task, route: &Route) -> HeadlessSpec {
         // (no writable roots), so such a write is denied, matching Codex's `read-only`.
         claude_sandbox: claude.then(|| ClaudeSandbox {
             writable_roots: Vec::new(),
+            deny_write: protected_write_denials(&path, &[]),
         }),
         codex_sandbox: REVIEWER_CODEX_SANDBOX.to_string(),
         codex_writable_roots: Vec::new(),
@@ -451,5 +490,57 @@ mod tests {
             run.codex_project_config = Some(branch);
             assert_eq!(worker_spec(&run, &task).codex_config_guard, None);
         }
+    }
+
+    /// F2 round 2 (item 2): a Claude worker's sandbox denies writes to the protected
+    /// agent-config paths of its checkout, minus those its `owns` names exactly; a Claude
+    /// reviewer's denies them all.
+    #[test]
+    fn claude_sessions_deny_writes_to_protected_agent_config() {
+        let mut run = run_ok(&plan_with(
+            PROFILE,
+            &[task_toml("t1", "S", "[\"crates/a/**\"]", "")],
+        ));
+        let task = run.tasks[0].clone();
+        let at = |rel: &str| task.worktree.join(rel);
+        let all = [
+            at(".claude"),
+            at(".codex"),
+            at(".mcp.json"),
+            at("CLAUDE.md"),
+            at("AGENTS.md"),
+            at("**/CLAUDE.md"),
+            at("**/AGENTS.md"),
+        ];
+        let denied =
+            |run: &Run, task: &Task| worker_spec(run, task).claude_sandbox.unwrap().deny_write;
+        assert_eq!(denied(&run, &task), all);
+
+        let mut owner = task.clone();
+        owner.spec.owns = vec![
+            "./.claude/settings.json".into(),
+            "docs/AGENTS.md".into(),
+            "CLAUDE.md".into(),
+            ".codex/**".into(),
+        ];
+        assert_eq!(
+            denied(&run, &owner),
+            // `**/CLAUDE.md` also matches the owned root `CLAUDE.md`, so it goes too; a
+            // glob in `owns` (`.codex/**`) never counts (decision 56).
+            [at(".codex"), at(".mcp.json"), at("AGENTS.md")]
+        );
+
+        let route = Route {
+            runtime: Runtime::Claude,
+            model: "m".into(),
+            strength: Strength::Standard,
+            effort: Effort::Medium,
+        };
+        let review = reviewer_spec(&run, &owner, &route).claude_sandbox.unwrap();
+        let path = run.review_path(owner.id());
+        assert_eq!(review.deny_write.len(), 7);
+        assert!(review.deny_write.iter().all(|p| p.starts_with(&path)));
+        run.limits.worker_sandbox = false;
+        assert!(worker_spec(&run, &task).claude_sandbox.is_none());
     }
 }

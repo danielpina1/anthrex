@@ -40,6 +40,10 @@ pub struct SandboxKeys {
     pub enabled: &'static str,
     pub allow_unsandboxed: &'static str,
     pub write_allow: &'static str,
+    /// Final fix batch F2 round 2: paths denied inside the writable set (Claude Code
+    /// 2.1.280's `sandbox.filesystem.denyWrite`, from its settings schema; the user's own
+    /// entries are merged with it, the safe direction).
+    pub write_deny: &'static str,
     /// M8a.1 item 4b: without it a sandbox that cannot start only warns and runs
     /// commands unsandboxed.
     pub fail_if_unavailable: &'static str,
@@ -106,6 +110,7 @@ pub const CLI_CAPS: CliCaps = CliCaps {
         enabled: "enabled",
         allow_unsandboxed: "allowUnsandboxedCommands",
         write_allow: "filesystem.allowWrite",
+        write_deny: "filesystem.denyWrite",
         fail_if_unavailable: "failIfUnavailable",
         pins: CLAUDE_SANDBOX_PINS,
     },
@@ -189,6 +194,14 @@ pub fn claude_settings(
             .map(|p| Value::String(p.display().to_string()))
             .collect();
         insert_path(&mut block, keys.write_allow, Value::Array(roots));
+        if !sandbox.deny_write.is_empty() {
+            let denied = sandbox
+                .deny_write
+                .iter()
+                .map(|p| Value::String(p.display().to_string()))
+                .collect();
+            insert_path(&mut block, keys.write_deny, Value::Array(denied));
+        }
         for (path, pin) in keys.pins {
             let value = match pin {
                 Pin::Bool(on) => Value::Bool(*on),

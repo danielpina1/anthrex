@@ -38,6 +38,7 @@ pub(super) fn worker(runtime: Runtime) -> HeadlessSpec {
         claude_disallowed_tools: vec![],
         claude_sandbox: Some(ClaudeSandbox {
             writable_roots: vec![PathBuf::from(COMMON)],
+            deny_write: vec![],
         }),
         codex_sandbox: "workspace-write".into(),
         codex_writable_roots: vec![PathBuf::from(COMMON)],
@@ -82,6 +83,7 @@ pub(super) fn reviewer(runtime: Runtime) -> HeadlessSpec {
         claude_disallowed_tools: ["Edit", "Write", "NotebookEdit"].map(String::from).to_vec(),
         claude_sandbox: Some(ClaudeSandbox {
             writable_roots: Vec::new(),
+            deny_write: vec![],
         }),
         codex_sandbox: "read-only".into(),
         codex_writable_roots: vec![],
@@ -491,6 +493,7 @@ fn codex_worker_args_add_the_git_common_dir_as_writable() {
 fn worker_settings_json_enables_the_sandbox() {
     let sandbox = ClaudeSandbox {
         writable_roots: vec![PathBuf::from(COMMON)],
+        deny_write: vec![],
     };
     let mut expected = launch::claude::settings(Path::new(EXE), WINDOW);
     expected["sandbox"] = sandbox_block();
@@ -504,6 +507,7 @@ fn worker_settings_json_enables_the_sandbox() {
             enabled: "on",
             allow_unsandboxed: "escape",
             write_allow: "fs.write.paths",
+            write_deny: "fs.write.denied",
             fail_if_unavailable: "strict",
             pins: &[("net.sockets", Pin::Empty), ("net.local", Pin::Bool(false))],
         },
@@ -544,3 +548,34 @@ fn worker_settings_json_enables_the_sandbox() {
 
 #[path = "argv_caps_tests.rs"]
 mod caps;
+
+/// F2 round 2 (item 2): a sandbox's `deny_write` becomes `filesystem.denyWrite`, beside
+/// `allowWrite`; an empty one is omitted.
+#[test]
+fn deny_write_becomes_filesystem_deny_write() {
+    let sandbox = ClaudeSandbox {
+        writable_roots: vec![PathBuf::from(COMMON)],
+        deny_write: vec![
+            PathBuf::from("/tmp/p/.anthrex/wt/t1/.codex"),
+            PathBuf::from("/tmp/p/.anthrex/wt/t1/**/CLAUDE.md"),
+        ],
+    };
+    let settings = claude_settings(Path::new(EXE), WINDOW, Some(&sandbox), &CLI_CAPS);
+    assert_eq!(
+        settings["sandbox"]["filesystem"]["denyWrite"],
+        json!([
+            "/tmp/p/.anthrex/wt/t1/.codex",
+            "/tmp/p/.anthrex/wt/t1/**/CLAUDE.md"
+        ])
+    );
+    assert_eq!(
+        settings["sandbox"]["filesystem"]["allowWrite"],
+        json!([COMMON])
+    );
+    let none = ClaudeSandbox {
+        deny_write: vec![],
+        ..sandbox
+    };
+    let settings = claude_settings(Path::new(EXE), WINDOW, Some(&none), &CLI_CAPS);
+    assert!(settings["sandbox"]["filesystem"].get("denyWrite").is_none());
+}

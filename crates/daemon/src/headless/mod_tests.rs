@@ -117,6 +117,7 @@ fn a_headless_spec_round_trips_through_json() {
         claude_disallowed_tools: vec![],
         claude_sandbox: Some(ClaudeSandbox {
             writable_roots: vec!["/tmp/x/.git".into()],
+            deny_write: vec![],
         }),
         codex_sandbox: "workspace-write".into(),
         codex_writable_roots: vec![],
