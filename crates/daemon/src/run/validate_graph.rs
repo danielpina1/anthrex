@@ -6,10 +6,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use proto::{Size, TaskState};
+use proto::{Runtime, Size, TaskState};
 
 use super::globs::{any_intersect, inside_area, intersects, literal_prefix};
-use super::model::{Profile, Task};
+use super::model::Task;
 use super::plan::PlanError;
 
 /// Where an edit batch may reach: the whole run, or (for M9's sub-planners) only an
@@ -35,16 +35,28 @@ fn is_valid_area_glob(glob: &str) -> bool {
 /// apply only to `touched` tasks (the cancelled-dependency rule can be narrowed further
 /// with [`validate_tasks_with`]) (decision 13's L exemption: a task raised to L by
 /// rung 3 must not block unrelated edits). `max_tasks` counts every task that is not
-/// cancelled. `_profile` is unused: the profile-dependent rules run per task, in
-/// `resolve_task`.
+/// cancelled. Rule 9 compares the runtimes the plan gives (`default_runtime` fills a
+/// spec that names none) and applies to a pair only when the batch touches one of the
+/// two: a runtime the engine escalated to (rung 2, `run retry`) is not the plan's, and
+/// must not block every later edit (final review A-I1, the same reason as the L
+/// exemption); the profile-dependent rules run per task, in `resolve_task`.
 pub fn validate_tasks(
     tasks: &[Task],
     touched: &BTreeSet<String>,
     scope: &EditScope,
     max_tasks: u32,
-    profile: &Profile,
+    default_runtime: Runtime,
 ) -> Vec<PlanError> {
-    validate_tasks_with(tasks, touched, None, scope, max_tasks, profile)
+    validate_tasks_with(tasks, touched, None, scope, max_tasks, default_runtime)
+}
+
+/// The runtime the plan gives `task`: its spec's, or `default_runtime` when the spec
+/// names none or names one a task cannot run on (which `resolve_task` reports).
+fn planned_runtime(task: &Task, default_runtime: Runtime) -> Runtime {
+    match task.spec.route.runtime {
+        Some(runtime) if runtime != Runtime::Shell => runtime,
+        _ => default_runtime,
+    }
 }
 
 /// [`validate_tasks`], with the cancelled-dependency rule limited to `added_deps`
@@ -57,7 +69,7 @@ pub fn validate_tasks_with(
     added_deps: Option<&BTreeSet<(String, String)>>,
     scope: &EditScope,
     max_tasks: u32,
-    _profile: &Profile,
+    default_runtime: Runtime,
 ) -> Vec<PlanError> {
     let mut errors = Vec::new();
     let counted = tasks
@@ -124,8 +136,10 @@ pub fn validate_tasks_with(
                 "L tasks are never executed; split the task (rule 7.2.4)".to_string(),
             ));
         }
+        let runtime = planned_runtime(task, default_runtime);
         for earlier in tasks[..i].iter().filter(|t| is_active(t)) {
-            if earlier.route.runtime == task.route.runtime {
+            let earlier_runtime = planned_runtime(earlier, default_runtime);
+            if earlier_runtime == runtime || !(is_touched || touched.contains(earlier.id())) {
                 continue;
             }
             let hit = earlier
@@ -140,8 +154,8 @@ pub fn validate_tasks_with(
                     format!(
                         "overlaps task {}'s owns ({glob}) and the two tasks run on different runtimes ({}, {}) (rule 9)",
                         earlier.id(),
-                        earlier.route.runtime,
-                        task.route.runtime
+                        earlier_runtime,
+                        runtime
                     ),
                 ));
             }

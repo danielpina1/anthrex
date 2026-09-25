@@ -74,7 +74,7 @@ pub fn apply_edits(
         Some(&added_deps),
         scope,
         edited.limits.max_tasks,
-        &edited.profile,
+        edited.limits.default_runtime,
     ));
     // Decision 41's implicit dependencies follow the edited graph; the combined check
     // is the same backstop `build_run` runs (M8a.6 fix round 1, F2).

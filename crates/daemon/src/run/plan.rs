@@ -350,7 +350,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         &touched,
         &EditScope::Run,
         limits.max_tasks,
-        &profile,
+        limits.default_runtime,
     ));
     if !errors.is_empty() {
         return Err(errors);

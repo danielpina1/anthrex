@@ -506,3 +506,64 @@ fn two_started_tasks_never_wait_for_each_other() {
     assert_eq!(task(&edited, "t1").implicit_deps, Vec::<String>::new());
     assert_eq!(task(&edited, "t3").implicit_deps, Vec::<String>::new());
 }
+
+/// Final review A-I1: rule 9 compares the plan's runtimes. An engine escalation of one
+/// task to the peer runtime (rung 2 at effort high, or `run retry`) must not make every
+/// later edit fail against a task whose `owns` overlap it; a runtime the user names is
+/// still checked.
+#[test]
+fn an_engine_escalation_to_the_peer_runtime_does_not_block_later_edits() {
+    let mut run = run_ok(&plan_with(
+        PROFILE,
+        &[
+            task_toml("t1", "S", "[\"crates/a/**\"]", ""),
+            task_toml("t2", "S", "[\"crates/a/src/lib.rs\"]", ""),
+            one("t3", ""),
+        ],
+    ));
+    set_state(&mut run, "t1", TaskState::Working, None);
+    set_state(
+        &mut run,
+        "t2",
+        TaskState::Blocked,
+        Some(BlockReason::Question),
+    );
+    set_state(
+        &mut run,
+        "t3",
+        TaskState::Blocked,
+        Some(BlockReason::Question),
+    );
+    let t1 = task_mut(&mut run, "t1");
+    t1.route = Route {
+        runtime: Runtime::Codex,
+        model: String::new(),
+        strength: Strength::Standard,
+        effort: Effort::High,
+    };
+    t1.rung = 2;
+
+    // Unrelated edits, and edits of the overlapping task itself, still apply.
+    applied(&run, vec![answer("t3", "yes")]);
+    applied(&run, vec![answer("t2", "yes")]);
+    applied(
+        &run,
+        vec![amend_brief("t2", "a clearer brief", &["it works"])],
+    );
+    applied(&run, vec![PlanEdit::Pause]);
+
+    // Naming the other runtime for the overlapping task is still rule 9.
+    let to_codex = amend(
+        "t2",
+        Amend {
+            route: Some(RouteSpec {
+                runtime: Some(Runtime::Codex),
+                ..RouteSpec::default()
+            }),
+            ..Amend::default()
+        },
+    );
+    let errors = rejected(&run, vec![to_codex]);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("(rule 9)"), "{errors:?}");
+}
