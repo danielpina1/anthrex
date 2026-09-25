@@ -120,7 +120,7 @@ minutes = 121
 tokens = 3003
 
 [orchestrator.claude]
-auth = "api_key"
+auth = "login"
 api_key_helper = "helper.sh"
 
 [[orchestrator.models]]
@@ -187,7 +187,7 @@ FOO = "bar"
     assert_eq!(o.worker_allowed_tools, vec!["Read", "Grep"]);
     assert_eq!(o.worker_codex_sandbox, "read-only");
     assert!(!o.worker_sandbox);
-    assert_eq!(o.claude.auth, ClaudeAuth::ApiKey);
+    assert_eq!(o.claude.auth, ClaudeAuth::Login);
     assert_eq!(o.claude.api_key_helper, Some("helper.sh".to_string()));
     assert!(!o.builtin_models);
     assert_eq!(
@@ -397,12 +397,12 @@ fn claude_auth_and_helper_are_read() {
     let (config, problems) = parse(
         r#"
 [orchestrator.claude]
-auth = "api_key"
+auth = "login"
 api_key_helper = "helper.sh"
 "#,
     );
     assert!(problems.is_empty());
-    assert_eq!(config.orchestrator.claude.auth, ClaudeAuth::ApiKey);
+    assert_eq!(config.orchestrator.claude.auth, ClaudeAuth::Login);
     assert_eq!(
         config.orchestrator.claude.api_key_helper,
         Some("helper.sh".to_string())
@@ -600,3 +600,33 @@ mod roster;
 
 #[path = "orchestrator_tests_confine.rs"]
 mod confine;
+
+/// Final fix batch F2 (C-I3), decision 50's recorded ruling: whether `--settings` hooks
+/// and `--mcp-config` still apply under `--bare` is not verified, so `auth = "api_key"`
+/// is refused at config load with a problem, and `login` is kept.
+#[test]
+fn claude_api_key_auth_is_refused_at_load() {
+    let (config, problems) = parse(
+        r#"
+[orchestrator.claude]
+auth = "api_key"
+api_key_helper = "helper.sh"
+"#,
+    );
+    assert_eq!(
+        keys(&problems),
+        HashSet::from(["orchestrator.claude.auth".to_string()])
+    );
+    assert!(
+        problems[0].message.contains("--bare"),
+        "{}",
+        problems[0].message
+    );
+    assert_eq!(problems[0].default, "login");
+    assert_eq!(config.orchestrator.claude.auth, ClaudeAuth::Login);
+    // The helper is still read, for the day `api_key` is verified.
+    assert_eq!(
+        config.orchestrator.claude.api_key_helper,
+        Some("helper.sh".to_string())
+    );
+}

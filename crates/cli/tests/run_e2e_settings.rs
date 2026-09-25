@@ -68,18 +68,21 @@ fn e2e_a_codex_workers_claude_reviewer_needs_trust_project() {
     );
 }
 
-/// Ruling T22-I1 for decision 50: `auth = "api_key"` with no key and no helper refuses
-/// a plan whose only Claude session is a Codex worker's reviewer.
+/// Final fix batch F2 (C-I3), decision 50's recorded ruling: `auth = "api_key"` is
+/// refused at config load (whether anthrex's hooks and MCP server apply under `--bare`
+/// is unverified), so `login` is kept. Before F2 the run was refused for want of a key
+/// (ruling T22-I1's refusal, which stays for the day `api_key` is verified); now it
+/// starts, and no Claude session is launched with `--bare`.
 #[test]
-fn e2e_api_key_auth_covers_a_claude_reviewer() {
+fn e2e_api_key_auth_is_refused_at_config_load_and_login_kept() {
     let h = RunHarness::new("\n[orchestrator.claude]\nauth = \"api_key\"");
-    let codex = plan("", &[task("t1", &["a.txt"], CODEX)]);
-    let message = refused(h.start_reply(&h.repo, &codex, true, false));
-    assert_eq!(
-        message,
-        "[orchestrator.claude] auth = \"api_key\" needs ANTHROPIC_API_KEY in the daemon's environment or orchestrator.claude.api_key_helper"
-    );
-    assert!(no_run_branches(&h.repo));
+    green_scripts(&h.repo);
+    let id = h.start(&plan("", &[task("t1", &["a.txt"], "")]), true);
+    h.wait_run(&id, complete, RUN_WAIT);
+    for name in ["worker-t1-1", "reviewer-t1-1"] {
+        let argv: Vec<String> = serde_json::from_str(&h.io_lines(name, "args")[0]).unwrap();
+        assert!(!argv.iter().any(|a| a == "--bare"), "{name}: {argv:?}");
+    }
 }
 
 #[test]

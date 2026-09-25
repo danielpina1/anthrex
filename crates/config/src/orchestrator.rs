@@ -538,7 +538,15 @@ fn read_claude(table: &toml::Table, o: &mut Orchestrator, problems: &mut Vec<Pro
     if let Some(v) = claude.get("auth") {
         match v.as_str() {
             Some("login") => o.claude.auth = ClaudeAuth::Login,
-            Some("api_key") => o.claude.auth = ClaudeAuth::ApiKey,
+            // Final fix batch F2 (C-I3): decision 50 refuses `api_key` at load until a
+            // recording shows `--settings` hooks and `--mcp-config` still apply under
+            // `--bare` (M8a.1 did not verify it). The argv and `run start`'s key check
+            // stay for that day; `login` is kept.
+            Some("api_key") => problems.push(Problem {
+                key: "orchestrator.claude.auth".to_string(),
+                message: "\"api_key\" is not supported yet: whether anthrex's hooks, MCP server and worker sandbox still apply under claude --bare is unverified".to_string(),
+                default: "login".to_string(),
+            }),
             _ => problems.push(Problem {
                 key: "orchestrator.claude.auth".to_string(),
                 message: "must be \"login\" or \"api_key\"".to_string(),
