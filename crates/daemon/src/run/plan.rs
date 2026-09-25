@@ -256,6 +256,15 @@ fn check_plan(plan: &Plan, profile: &Profile, errors: &mut Vec<PlanError>) {
                 "profile",
                 format!("key {key} must match [A-Za-z_][A-Za-z0-9_]*"),
             ));
+        } else if let Some(reason) = config::reserved_env::reserved_env(key) {
+            // Final fix batch F2 (C-I4): the one list the session and engine-command
+            // scrubs use too.
+            errors.push(PlanError::new(
+                None,
+                "profile.env",
+                "profile",
+                format!("key {key} may not be set by a profile: {reason}"),
+            ));
         }
     }
     for (field, globs) in [

@@ -445,13 +445,7 @@ fn lossy_stderr(bytes: Vec<u8>) -> String {
 /// ([`crate::worktree::engine_index`]), so no engine write ever goes through an index
 /// file the worker can replace with a symbolic link. That is the only such use.
 pub(crate) fn scrub_git_env(command: &mut Command) -> &mut Command {
-    for key in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_COMMON_DIR",
-        "GIT_INDEX_FILE",
-        "GIT_PREFIX",
-    ] {
+    for key in config::reserved_env::GIT_LOCATION_VARS {
         let set_here = command
             .get_envs()
             .any(|(name, value)| name == key && value.is_some());

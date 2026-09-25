@@ -45,9 +45,11 @@ pub const STDOUT_LINE_MAX: usize = 4 * 1024 * 1024;
 /// Lines queued to a session's stdin writer thread. `send_line` fails once it is full.
 pub const WRITER_QUEUE_MAX: usize = 256;
 /// Inherited variables removed from every session's environment (decision 26), by
-/// prefix and by name.
-pub const SCRUB_PREFIXES: &[&str] = &["CLAUDE_CODE_"];
-pub const SCRUB_NAMES: &[&str] = &["CLAUDECODE"];
+/// prefix and by name: `config::reserved_env`'s lists, which a profile's `env` may not
+/// set back (final fix batch F2, C-I4).
+pub use config::reserved_env::{
+    SCRUBBED_NAMES as SCRUB_NAMES, SCRUBBED_PREFIXES as SCRUB_PREFIXES, SESSION_IDENTITY,
+};
 /// A stderr line is cut to this many bytes (invented: stderr is only diagnosis).
 pub const STDERR_LINE_MAX: usize = 4096;
 /// How long output is still read after the process has exited and its group has been
@@ -110,9 +112,10 @@ impl HeadlessHandle {
 
     /// Starts `program` in `cwd` as its own process group's leader, with every pipe
     /// connected and decision 26's environment: the inherited `CLAUDE_CODE_*` variables,
-    /// `CLAUDECODE`, `ANTHREX_WINDOW_ID`, `ANTHREX_SOCKET` and AGENTS.md rule 11's git
-    /// variables removed, then `env` set (the caller's window id and socket, and the
-    /// profile's env). `on_event(pid, event)` receives every event of the process, from
+    /// `CLAUDECODE`, `ANTHREX_WINDOW_ID`, `ANTHREX_SOCKET`, AGENTS.md rule 11's git
+    /// variables and each of `remove` (final fix batch F2: a login session's API
+    /// credentials, [`super::credential_scrub`]) removed, then `env` set (the caller's
+    /// window id and socket, and the profile's env). `on_event(pid, event)` receives every event of the process, from
     /// one thread, in the order the module doc describes.
     ///
     /// Blocking (a `fork`/`exec` and thread starts): call it from `spawn_blocking` or a
@@ -123,6 +126,7 @@ impl HeadlessHandle {
         args: &[String],
         cwd: &Path,
         env: &[(String, String)],
+        remove: &[&str],
         on_event: impl Fn(u32, SessionEvent) + Send + Sync + 'static,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(
@@ -138,7 +142,7 @@ impl HeadlessHandle {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .process_group(0);
-        session_env(&mut command, env);
+        session_env(&mut command, env, remove);
         let mut child = command
             .spawn()
             .with_context(|| format!("could not start {}", program.to_string_lossy()))?;
@@ -354,8 +358,8 @@ impl HeadlessHandle {
     }
 }
 
-/// Decision 26's environment on `command`, then `env` on top.
-fn session_env(command: &mut Command, env: &[(String, String)]) {
+/// Decision 26's environment on `command`, less `remove`, then `env` on top.
+fn session_env(command: &mut Command, env: &[(String, String)], remove: &[&str]) {
     scrub_git_env(command);
     for (key, _) in std::env::vars_os() {
         let bytes = key.as_bytes();
@@ -366,10 +370,7 @@ fn session_env(command: &mut Command, env: &[(String, String)]) {
             command.env_remove(&key);
         }
     }
-    for name in SCRUB_NAMES
-        .iter()
-        .chain(&["ANTHREX_WINDOW_ID", "ANTHREX_SOCKET"])
-    {
+    for name in SCRUB_NAMES.iter().chain(SESSION_IDENTITY).chain(remove) {
         command.env_remove(name);
     }
     for (key, value) in env {

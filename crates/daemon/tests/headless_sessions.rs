@@ -74,6 +74,7 @@ fn sh(script: &str, runtime: Runtime, events: &Events) -> HeadlessHandle {
         &["-c".to_string(), script.to_string()],
         Path::new("/"),
         &[],
+        &[],
         events.sink(),
     )
     .expect("spawn /bin/sh")

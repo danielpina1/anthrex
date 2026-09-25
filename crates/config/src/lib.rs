@@ -9,6 +9,7 @@ use std::str::FromStr;
 mod conversation;
 mod git;
 mod orchestrator;
+pub mod reserved_env;
 
 pub use conversation::{
     Badge, Badges, CONVERSATION_LINGER_SECS_RANGE, CONVERSATION_MAX_BYTES_HEADROOM,

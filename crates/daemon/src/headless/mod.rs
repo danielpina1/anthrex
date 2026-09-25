@@ -198,6 +198,19 @@ pub(crate) fn bounded_text(text: &str) -> String {
     )
 }
 
+/// Final fix batch F2 (review C, M2): the inherited API credentials a session's process
+/// must not see. Every session loses them except a Claude session with `auth =
+/// "api_key"`, which authenticates with them (decision 50); `claude -p` would otherwise
+/// prefer a key the daemon inherited over the user's login, and a Codex session never
+/// uses Anthropic's.
+pub fn credential_scrub(spec: &HeadlessSpec) -> &'static [&'static str] {
+    if spec.runtime == Runtime::Claude && spec.claude_auth == config::ClaudeAuth::ApiKey {
+        &[]
+    } else {
+        config::reserved_env::API_CREDENTIALS
+    }
+}
+
 /// `config::ClaudeAuth` has no serde derive (the config crate does not depend on serde),
 /// so the spec spells it as decision 50's own config strings.
 mod claude_auth_serde {

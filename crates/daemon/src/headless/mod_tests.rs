@@ -129,3 +129,40 @@ fn a_headless_spec_round_trips_through_json() {
     assert_eq!(json["claude_auth"], "api_key");
     assert_eq!(serde_json::from_value::<HeadlessSpec>(json).unwrap(), spec);
 }
+
+/// Final fix batch F2 (review C, M2): only a Claude `api_key` session keeps the
+/// inherited API credentials.
+#[test]
+fn only_a_claude_api_key_session_keeps_the_api_credentials() {
+    let base = HeadlessSpec {
+        runtime: Runtime::Claude,
+        model: String::new(),
+        effort: Effort::Medium,
+        cwd: "/tmp/p/wt/t1".into(),
+        instructions: String::new(),
+        mcp: None,
+        allowed_tools: vec![],
+        claude_permission_mode: None,
+        claude_disallowed_tools: vec![],
+        claude_sandbox: None,
+        codex_sandbox: "workspace-write".into(),
+        codex_writable_roots: vec![],
+        env: vec![],
+        claude_auth: config::ClaudeAuth::Login,
+        api_key_helper: None,
+        run_ref: None,
+    };
+    let scrub = |runtime, auth| {
+        let spec = HeadlessSpec {
+            runtime,
+            claude_auth: auth,
+            ..base.clone()
+        };
+        credential_scrub(&spec).to_vec()
+    };
+    let all = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
+    assert_eq!(scrub(Runtime::Claude, config::ClaudeAuth::Login), all);
+    assert_eq!(scrub(Runtime::Claude, config::ClaudeAuth::ApiKey), [""; 0]);
+    assert_eq!(scrub(Runtime::Codex, config::ClaudeAuth::Login), all);
+    assert_eq!(scrub(Runtime::Codex, config::ClaudeAuth::ApiKey), all);
+}

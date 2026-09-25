@@ -124,15 +124,21 @@ pub fn run_confined(
 /// wrote, so it must not be handed the daemon's own coordinates (`ANTHREX_SOCKET`,
 /// `ANTHREX_DATA_DIR`), even though the sandbox already denies the connection.
 fn engine_env(command: &mut Command, env: &[(String, String)], confined: bool) {
+    use config::reserved_env::{SCRUBBED_NAMES, SCRUBBED_PREFIXES};
     scrub_git_env(command);
     for (key, _) in std::env::vars_os() {
-        if key.as_bytes().starts_with(b"CLAUDE_CODE_") {
+        let bytes = key.as_bytes();
+        if SCRUBBED_PREFIXES
+            .iter()
+            .any(|prefix| bytes.starts_with(prefix.as_bytes()))
+        {
             command.env_remove(&key);
         }
     }
-    command
-        .env_remove("CLAUDECODE")
-        .env_remove("ANTHREX_WINDOW_ID");
+    for name in SCRUBBED_NAMES {
+        command.env_remove(name);
+    }
+    command.env_remove("ANTHREX_WINDOW_ID");
     if confined {
         command
             .env_remove("ANTHREX_SOCKET")
@@ -189,7 +195,7 @@ pub(super) fn run_matching(
             None => Command::new("/bin/sh"),
         };
         if let Some(confine) = confine {
-            shell.env("TMPDIR", confine.tmp());
+            shell.env(config::reserved_env::TASK_TMPDIR, confine.tmp());
         }
         shell
             .arg("-c")

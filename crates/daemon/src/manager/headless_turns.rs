@@ -162,6 +162,7 @@ impl WindowManager {
             _ => self.config.codex_bin.clone(),
         };
         let env = session_env(id, &self.config.socket_path, &spec.env);
+        let remove = crate::headless::credential_scrub(spec);
         let cwd = spec.cwd.clone();
         let weak = Arc::downgrade(self);
         let pause = self.config.headless_install_pause;
@@ -172,6 +173,7 @@ impl WindowManager {
                 &args,
                 &cwd,
                 &env,
+                remove,
                 move |pid, event| {
                     if let Some(manager) = weak.upgrade() {
                         manager.apply_session_event(id, pid, &event);

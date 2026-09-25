@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
+use config::reserved_env::TASK_TMPDIR;
 use proto::{AgentRole, Route, RunRef, Runtime};
 
 use super::contract::{REVIEWER_CONTRACT, WORKER_CONTRACT};
@@ -120,9 +121,9 @@ pub fn with_worker_git_config(mut env: Vec<(String, String)>) -> Vec<(String, St
 /// reaches the worker.
 fn worker_env(run: &Run, task: &Task) -> Vec<(String, String)> {
     let mut env = with_worker_git_config(profile_env(&run.profile, &task.worktree));
-    env.retain(|(key, _)| key != "TMPDIR");
+    env.retain(|(key, _)| key != TASK_TMPDIR);
     env.push((
-        "TMPDIR".to_string(),
+        TASK_TMPDIR.to_string(),
         task_tmp_dir(&run.data_dir, task.id()).display().to_string(),
     ));
     env

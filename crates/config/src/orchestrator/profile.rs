@@ -127,6 +127,16 @@ fn read_profile_env(table: &toml::Table, o: &mut Orchestrator, problems: &mut Ve
     };
     let mut map = std::collections::BTreeMap::new();
     for (k, v) in env {
+        // Final fix batch F2 (C-I4): the keys a launch scrubs or sets on purpose, and
+        // those that choose what an agent loads, are refused here as in a plan.
+        if let Some(reason) = crate::reserved_env::reserved_env(k) {
+            problems.push(Problem {
+                key: format!("orchestrator.profile.env.{k}"),
+                message: format!("may not be set by a profile: {reason}"),
+                default: "unset".to_string(),
+            });
+            continue;
+        }
         match v.as_str() {
             Some(s) => {
                 map.insert(k.clone(), s.to_string());

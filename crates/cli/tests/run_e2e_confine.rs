@@ -22,10 +22,15 @@ fn e2e_a_check_cannot_write_the_users_git_or_home() {
     std::fs::create_dir_all(&home).unwrap();
     let index_before = std::fs::read(common.join("index")).unwrap();
     let check = format!(
-        "printf x > '{c}/objects/pwned'; printf x >> '{c}/index'; printf x > \"$HOME/pwned\"; true",
+        "printf x > '{c}/objects/pwned'; printf x >> '{c}/index'; printf x > \"$TEST_HOME/pwned\"; true",
         c = common.display()
     );
-    let profile = format!("\n[profile.env]\nHOME = {:?}\n", home.display().to_string());
+    // Final fix batch F2 (C-I4): a profile may not set `HOME`, so the test's stand-in
+    // for it has its own name; the confinement denies the write either way.
+    let profile = format!(
+        "\n[profile.env]\nTEST_HOME = {:?}\n",
+        home.display().to_string()
+    );
     let plan = plan(&profile, &[task("t1", &["a.txt"], "")])
         .replace("check = \"true\"", &format!("check = {check:?}"));
     let id = h.start(&plan, true);
@@ -52,14 +57,14 @@ fn e2e_setup_cannot_write_the_users_git_or_home() {
     let dir = support::tempdir();
     let home = dir.path().canonicalize().unwrap().join("home");
     std::fs::create_dir_all(&home).unwrap();
-    let script = "printf x > \"$ANTHREX_TEST_COMMON/objects/pwned\"; \
-         printf x >> \"$ANTHREX_TEST_COMMON/index\"; printf x > \"$HOME/pwned\"; true\n";
+    let script = "printf x > \"$TEST_COMMON/objects/pwned\"; \
+         printf x >> \"$TEST_COMMON/index\"; printf x > \"$TEST_HOME/pwned\"; true\n";
     let h = RunHarness::with_repo("", &[], true, &[("setup.sh", script)]);
     green_scripts(&h.repo);
     let common = h.repo.join(".git").canonicalize().unwrap();
     let index_before = std::fs::read(common.join("index")).unwrap();
     let profile = format!(
-        "setup = \"sh setup.sh\"\n\n[profile.env]\nHOME = {:?}\nANTHREX_TEST_COMMON = {:?}\n",
+        "setup = \"sh setup.sh\"\n\n[profile.env]\nTEST_HOME = {:?}\nTEST_COMMON = {:?}\n",
         home.display().to_string(),
         common.display().to_string()
     );

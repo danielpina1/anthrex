@@ -1,6 +1,8 @@
 //! M8a.17, decision 26 for headless sessions: every session process loses the inherited
 //! `CLAUDE_CODE_*` variables and `CLAUDECODE`, has `ANTHREX_WINDOW_ID` and
 //! `ANTHREX_SOCKET` set to its own window and socket, and gets the profile's `env`.
+//! Since final fix batch F2 a login session also loses `ANTHROPIC_API_KEY` and
+//! `ANTHROPIC_AUTH_TOKEN`.
 //!
 //! Alone in its own test binary, because it sets variables in this process's
 //! environment, and in edition 2024 that races any process spawn on another libtest
@@ -23,6 +25,10 @@ fn the_environment_is_scrubbed() {
         std::env::set_var("CLAUDE_CODE_CHILD_SESSION", "1");
         std::env::set_var("CLAUDECODE", "1");
         std::env::set_var("ANTHREX_WINDOW_ID", "9");
+        // Final fix batch F2 (review C, M2): a login session never sees an API key the
+        // daemon inherited, so `claude -p` cannot prefer it over the user's login.
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-inherited");
+        std::env::set_var("ANTHROPIC_AUTH_TOKEN", "tok-inherited");
     }
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -76,6 +82,13 @@ fn the_environment_is_scrubbed() {
             !lines
                 .iter()
                 .any(|l| l.starts_with("CLAUDE_CODE_") || l.starts_with("CLAUDECODE=")),
+            "{env}"
+        );
+        assert!(
+            !lines
+                .iter()
+                .any(|l| l.starts_with("ANTHROPIC_API_KEY=")
+                    || l.starts_with("ANTHROPIC_AUTH_TOKEN=")),
             "{env}"
         );
         assert!(
