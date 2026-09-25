@@ -282,10 +282,12 @@ fn sha1(message: &[u8]) -> [u8; 20] {
         data.push(0);
     }
     data.extend_from_slice(&bit_len.to_be_bytes());
-    for block in data.chunks_exact(64) {
+    let (blocks, _) = data.as_chunks::<64>();
+    for block in blocks {
         let mut w = [0u32; 80];
-        for (i, word) in block.chunks_exact(4).enumerate() {
-            w[i] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
+        let (words, _) = block.as_chunks::<4>();
+        for (i, word) in words.iter().enumerate() {
+            w[i] = u32::from_be_bytes(*word);
         }
         for i in 16..80 {
             w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
@@ -315,7 +317,8 @@ fn sha1(message: &[u8]) -> [u8; 20] {
         }
     }
     let mut out = [0u8; 20];
-    for (chunk, word) in out.chunks_exact_mut(4).zip(h) {
+    let (chunks, _) = out.as_chunks_mut::<4>();
+    for (chunk, word) in chunks.iter_mut().zip(h) {
         chunk.copy_from_slice(&word.to_be_bytes());
     }
     out
