@@ -6,7 +6,8 @@
 //! with stdin on `/dev/null`, and with both stdout and stderr on **one** pipe, so the
 //! shell's own complaints (a command not found, a syntax error) land in order with the
 //! command's output. The environment is decision 26's: every inherited `CLAUDE_CODE_*`
-//! variable, `CLAUDECODE` and every `ANTHREX_*` variable are removed, as are AGENTS.md rule
+//! variable, `CLAUDECODE` and `ANTHREX_WINDOW_ID` are removed (a confined command loses
+//! every `ANTHREX_*` variable), as are AGENTS.md rule
 //! 11's five git variables, and the profile's `env` is set on top.
 //!
 //! This is its own loop rather than `crate::subprocess::capture`, which it borrows its
@@ -118,29 +119,28 @@ pub fn run_confined(
 }
 
 /// Removes decision 26's agent variables and AGENTS.md rule 11's git variables from
-/// what `command` inherits, then sets `env`.
-fn engine_env(command: &mut Command, env: &[(String, String)]) {
+/// what `command` inherits, then sets `env`. When `confined`, every `ANTHREX_*`
+/// variable is removed too (F1c round 3, N1): a confined command runs code the workers
+/// wrote, so it must not be handed the daemon's own coordinates (`ANTHREX_SOCKET`,
+/// `ANTHREX_DATA_DIR`), even though the sandbox already denies the connection.
+fn engine_env(command: &mut Command, env: &[(String, String)], confined: bool) {
     scrub_git_env(command);
     for (key, _) in std::env::vars_os() {
         if key.as_bytes().starts_with(b"CLAUDE_CODE_") {
             command.env_remove(&key);
         }
     }
-    // F1c round 3 (N1): a check, proof or setup runs code the workers wrote, so it must
-    // not be handed the daemon's own coordinates. Every `ANTHREX_*` variable is removed
-    // (`ANTHREX_SOCKET` and `ANTHREX_DATA_DIR` among them), so it cannot address the
-    // daemon even though the sandbox already denies the connection. The three the daemon
-    // is known to set are removed by name so it holds whatever the inherited environment
-    // is; any other `ANTHREX_*` present is removed too. The profile's `env` is set
-    // afterwards, so a profile that legitimately sets one still wins.
     command
         .env_remove("CLAUDECODE")
-        .env_remove("ANTHREX_WINDOW_ID")
-        .env_remove("ANTHREX_SOCKET")
-        .env_remove("ANTHREX_DATA_DIR");
-    for (key, _) in std::env::vars_os() {
-        if key.as_bytes().starts_with(b"ANTHREX_") {
-            command.env_remove(&key);
+        .env_remove("ANTHREX_WINDOW_ID");
+    if confined {
+        command
+            .env_remove("ANTHREX_SOCKET")
+            .env_remove("ANTHREX_DATA_DIR");
+        for (key, _) in std::env::vars_os() {
+            if key.as_bytes().starts_with(b"ANTHREX_") {
+                command.env_remove(&key);
+            }
         }
     }
     for (key, value) in env {
@@ -199,7 +199,7 @@ pub(super) fn run_matching(
             .stdout(writer)
             .stderr(stderr)
             .process_group(0);
-        engine_env(&mut shell, env);
+        engine_env(&mut shell, env, confine.is_some());
         shell.spawn()
         // `shell`, and with it this process's copies of the pipe's write end, drops
         // here, so the pipe reaches EOF once the command's own copies close.
@@ -517,13 +517,20 @@ mod tests {
     #[test]
     fn engine_env_is_applied_to_the_command() {
         let mut command = Command::new("env");
-        engine_env(&mut command, &[("A".into(), "1".into())]);
+        engine_env(&mut command, &[("A".into(), "1".into())], false);
         let envs: Vec<(&OsStr, Option<&OsStr>)> = command.get_envs().collect();
         assert!(envs.contains(&(OsStr::new("CLAUDECODE"), None)));
         assert!(envs.contains(&(OsStr::new("ANTHREX_WINDOW_ID"), None)));
-        assert!(envs.contains(&(OsStr::new("ANTHREX_SOCKET"), None)));
-        assert!(envs.contains(&(OsStr::new("ANTHREX_DATA_DIR"), None)));
         assert!(envs.contains(&(OsStr::new("GIT_DIR"), None)));
         assert!(envs.contains(&(OsStr::new("A"), Some(OsStr::new("1")))));
+        // Unconfined, other `ANTHREX_*` variables are left alone.
+        assert!(!envs.contains(&(OsStr::new("ANTHREX_SOCKET"), None)));
+
+        // F1c round 3 (N1): a confined command loses `ANTHREX_SOCKET`/`ANTHREX_DATA_DIR`.
+        let mut confined = Command::new("env");
+        engine_env(&mut confined, &[], true);
+        let confined_envs: Vec<(&OsStr, Option<&OsStr>)> = confined.get_envs().collect();
+        assert!(confined_envs.contains(&(OsStr::new("ANTHREX_SOCKET"), None)));
+        assert!(confined_envs.contains(&(OsStr::new("ANTHREX_DATA_DIR"), None)));
     }
 }

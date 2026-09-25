@@ -141,11 +141,14 @@ fn review_round_uses_a_fresh_session_and_worktree() {
                 spec.claude_disallowed_tools,
                 ["Edit", "Write", "NotebookEdit"]
             );
+            // F1c round 3 (N4): a Claude reviewer runs under a read-only sandbox.
+            let sandbox = spec.claude_sandbox.as_ref().expect("read-only sandbox");
+            assert!(sandbox.writable_roots.is_empty());
         } else {
             assert_eq!(spec.codex_sandbox, "read-only");
             assert!(spec.codex_writable_roots.is_empty());
+            assert_eq!(spec.claude_sandbox, None);
         }
-        assert_eq!(spec.claude_sandbox, None);
         let review = &fx.task("t1").reviews[0];
         assert_eq!((review.round, review.verdict), (1, None));
         assert_alive(&fx);
