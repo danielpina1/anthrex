@@ -183,6 +183,20 @@ pub(super) fn read_cache_dirs(
         let mut ok = true;
         for item in array {
             match item.as_str() {
+                // M8a final fix batch F1d (R3): an entry is absolute, or `~/…`. A relative
+                // one used to mean "in the checkout", which the run itself can rewrite.
+                Some(s) if !(s.starts_with('/') || s.starts_with("~/")) => {
+                    problems.push(Problem {
+                        key: format!("orchestrator.cache_dirs.{root:?}"),
+                        message: format!(
+                            "{s:?} is not an absolute path; each entry must start with / or ~/ \
+                             (the checkout itself is already writable)"
+                        ),
+                        default: "unset".to_string(),
+                    });
+                    ok = false;
+                    break;
+                }
                 Some(s) => list.push(s.to_string()),
                 None => {
                     problems.push(Problem {
@@ -200,4 +214,36 @@ pub(super) fn read_cache_dirs(
         }
     }
     o.cache_dirs = out;
+}
+
+/// `[orchestrator.confined_network]` (M8a final fix batch F1d, R4): a table keyed by
+/// repository root, each value whether confined checks, proofs and `setup` in that
+/// repository may use the network (TCP, UDP and Unix sockets, except the anthrex
+/// daemon's). Off unless named. Only the user's own config sets this.
+pub(super) fn read_confined_network(
+    table: &toml::Table,
+    o: &mut Orchestrator,
+    problems: &mut Vec<Problem>,
+) {
+    let Some(value) = table.get("confined_network") else {
+        return;
+    };
+    let Some(map) = value.as_table() else {
+        problems.push(not_a_table_problem("orchestrator.confined_network"));
+        return;
+    };
+    let mut out = std::collections::BTreeMap::new();
+    for (root, on) in map {
+        match on.as_bool() {
+            Some(on) => {
+                out.insert(root.clone(), on);
+            }
+            None => problems.push(Problem {
+                key: format!("orchestrator.confined_network.{root:?}"),
+                message: "expected true or false".to_string(),
+                default: "false".to_string(),
+            }),
+        }
+    }
+    o.confined_network = out;
 }

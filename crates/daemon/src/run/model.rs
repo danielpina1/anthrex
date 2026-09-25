@@ -63,6 +63,11 @@ pub struct Profile {
     /// `run::confine`). Absent from a run recorded before F1c: none.
     #[serde(default)]
     pub cache_dirs: Vec<String>,
+    /// Whether confined checks, proofs and `setup` have the network (final fix batch
+    /// F1d, R4): the user's own `[orchestrator.confined_network]` for the repository,
+    /// never a plan's. Absent from a run recorded before F1d: off.
+    #[serde(default)]
+    pub confined_network: bool,
 }
 
 /// `[orchestrator.claude] auth`, mirrored here with serde because `config::ClaudeAuth`

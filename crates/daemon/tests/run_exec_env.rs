@@ -39,6 +39,7 @@ fn engine_commands_get_the_profile_env_and_lose_agent_variables() {
             "{worktree}/target".to_string(),
         )]),
         cache_dirs: Vec::new(),
+        confined_network: false,
     };
     let env = profile_env(&profile, &worktree);
     // Filtered so that a long environment cannot push a line out of the 200-line tail.

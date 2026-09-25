@@ -58,6 +58,7 @@ fn the_environment_is_scrubbed() {
                 "{worktree}/target".to_string(),
             )]),
             cache_dirs: Vec::new(),
+            confined_network: false,
         };
         let mut spec = spec(Runtime::Claude, &worktree);
         spec.env = profile_env(&profile, &worktree);

@@ -75,6 +75,10 @@ pub struct Orchestrator {
     /// keyed by repository root of the directories a confined check, proof or `setup`
     /// in that repository may also write. The user's own config only.
     pub cache_dirs: std::collections::BTreeMap<String, Vec<String>>,
+    /// M8a final fix batch F1d (R4): `[orchestrator.confined_network]`, keyed by
+    /// repository root: whether confined checks there have the network. The user's own
+    /// config only.
+    pub confined_network: std::collections::BTreeMap<String, bool>,
     pub claude: ClaudeHeadless,
     pub builtin_models: bool,
     pub models: Vec<proto::ModelEntry>,
@@ -135,6 +139,7 @@ impl Default for Orchestrator {
             worker_sandbox: true,
             unconfined_checks: false,
             cache_dirs: std::collections::BTreeMap::new(),
+            confined_network: std::collections::BTreeMap::new(),
             claude: ClaudeHeadless::default(),
             builtin_models: true,
             models: default_roster(),
@@ -251,6 +256,7 @@ pub(crate) fn read(table: &toml::Table, problems: &mut Vec<Problem>) -> Orchestr
     );
     read_claude(t, &mut o, problems);
     profile::read_cache_dirs(t, &mut o, problems);
+    profile::read_confined_network(t, &mut o, problems);
     read_bool_key(
         t,
         "builtin_models",
@@ -570,6 +576,7 @@ pub(crate) fn report_unknown(value: &toml::Value, problems: &mut Vec<Problem>) {
             | "unconfined_checks"
             | "builtin_models"
             | "cache_dirs"
+            | "confined_network"
             | "models" => {}
             "review" => {
                 report_unknown_nested(sub, "orchestrator.review", KNOWN_REVIEW_KEYS, problems)

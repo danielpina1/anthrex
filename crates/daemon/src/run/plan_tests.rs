@@ -127,6 +127,10 @@ fn cache_dirs_come_from_the_users_config_keyed_by_repo_root() {
         "/some/other/repo".to_string(),
         vec!["~/.cache/other".to_string()],
     );
+    // F1d (R4): `confined_network` the same way, off unless named.
+    config
+        .confined_network
+        .insert(preflight().root.display().to_string(), true);
     let text = crate::run::test_support::plan_with(
         PROFILE,
         &[crate::run::test_support::task_toml(
@@ -138,6 +142,7 @@ fn cache_dirs_come_from_the_users_config_keyed_by_repo_root() {
     );
     let run = build_with(&text, &config).unwrap_or_else(|e| panic!("{e:?}"));
     assert_eq!(run.profile.cache_dirs, vec!["~/.cache/c".to_string()]);
+    assert!(run.profile.confined_network);
 
     // A repository the config does not name gets none.
     let mut pre = preflight();
@@ -145,6 +150,7 @@ fn cache_dirs_come_from_the_users_config_keyed_by_repo_root() {
     let run = crate::run::test_support::build_full(&text, &config, pre)
         .unwrap_or_else(|e| panic!("{e:?}"));
     assert!(run.profile.cache_dirs.is_empty());
+    assert!(!run.profile.confined_network);
 
     // The plan carries no cache_dirs field at all (proto::ProfileSpec dropped it), so a
     // plan cannot set them.
@@ -169,6 +175,10 @@ fn a_plan_setting_cache_dirs_is_refused() {
     );
     let err = parse_plan(&text).unwrap_err();
     assert!(err.to_lowercase().contains("cache_dirs"), "{err}");
+    // F1d (R4): nor `confined_network`.
+    let err = parse_plan(&text.replace("cache_dirs = [\"~/.ssh\"]", "confined_network = true"))
+        .unwrap_err();
+    assert!(err.to_lowercase().contains("confined_network"), "{err}");
 }
 
 #[test]

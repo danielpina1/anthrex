@@ -597,3 +597,6 @@ fn unconfined_checks_is_read_and_off_by_default() {
 
 #[path = "orchestrator_tests_roster.rs"]
 mod roster;
+
+#[path = "orchestrator_tests_confine.rs"]
+mod confine;
