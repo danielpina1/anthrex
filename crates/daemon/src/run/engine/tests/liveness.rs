@@ -155,7 +155,11 @@ fn gates_alive(run: &Run) {
             .values()
             .any(|p| p.task_id.as_deref() == Some(t.id()));
         let alive = match t.state {
-            TaskState::Proof | TaskState::Check => op,
+            // T15-P1 (F4): `start_gates` runs only while the run runs, so a halted
+            // run's gate waits for the resume.
+            TaskState::Proof | TaskState::Check => {
+                op || matches!(run.state, proto::RunState::Halted | proto::RunState::Paused)
+            }
             // M8a.14: queued (the run-level check wants a merge in flight while the run
             // runs), or its candidate or hand-back in flight.
             // Ruling T14-R2 (N3): a due hand-back waits for a halted or paused run.
