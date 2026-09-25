@@ -7665,7 +7665,8 @@ reverting it fails its test.
 - **Bounds.**
   - `MCP_CALL_TIMEOUT` is 120 s, Codex's own `tool_timeout_sec`, above `anthrex mcp`'s
     100 s reply timeout.
-  - `sh` and `capture` are bounded at 120 s, and the `git rev-parse` at 5 s.
+  - `sh` and `capture` are bounded at 120 s (330 s since fix round 1 below), and the
+    `git rev-parse` at 5 s.
   - The tests wait 20 s for a process without an MCP call. For one with an MCP call
     they wait 150 s, which is `MCP_CALL_TIMEOUT` plus slack.
 
