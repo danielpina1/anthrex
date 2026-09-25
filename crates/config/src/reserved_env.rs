@@ -159,10 +159,25 @@ const RESERVED_NAMES: &[(&str, &str)] = &[
     ),
 ];
 
+/// Names inside a reserved family that take a plain value, never a path, a module or a
+/// command, so a profile may set them (final fix batch F4, the F2 re-review's M3):
+/// Python's common determinism switches. `PYTHONWARNINGS` is not among them (a warning
+/// category names a module Python imports).
+const ALLOWED_IN_FAMILY: &[&str] = &[
+    "PYTHONUNBUFFERED",
+    "PYTHONDONTWRITEBYTECODE",
+    "PYTHONHASHSEED",
+    "PYTHONUTF8",
+    "PYTHONIOENCODING",
+];
+
 /// Why a profile's `env` may not set `key`, or `None` when it may. Case-insensitive:
 /// several programs read a lower-case proxy variable too.
 pub fn reserved_env(key: &str) -> Option<&'static str> {
     let upper = key.to_ascii_uppercase();
+    if ALLOWED_IN_FAMILY.contains(&upper.as_str()) {
+        return None;
+    }
     RESERVED_NAMES
         .iter()
         .find(|(name, _)| upper == *name)
@@ -255,6 +270,12 @@ mod tests {
             "NODE_ENV",
             "PATHS",
             "MYHOME",
+            // F4 (the F2 re-review's M3): value-only determinism switches.
+            "PYTHONUNBUFFERED",
+            "PYTHONDONTWRITEBYTECODE",
+            "PYTHONHASHSEED",
+            "PYTHONUTF8",
+            "PYTHONIOENCODING",
         ] {
             assert_eq!(reserved_env(key), None, "{key}");
         }
