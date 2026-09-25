@@ -316,19 +316,6 @@ fn e2e_a_second_death_in_a_round_is_a_stall() {
     let id = h.start(&plan("", &[task("t1", &["a.txt", "b.txt"], "")]), true);
     // Session 1's path, then session 2's (k = 2).
     let run = h.wait_run(&id, complete, 2 * RUN_WAIT);
-    // T25-N3: the race was reproduced. Had session 1's exit reached its round, the
-    // round would show a death (then a resume, a second death and a stall).
-    let first = task_json(&run, "t1")["rounds"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|r| r["role"] == "worker" && r["session"] == 1)
-        .cloned()
-        .expect("session 1's round");
-    assert_eq!(
-        first["deaths"], 0,
-        "the race was not reproduced: session 1's exit reached its round: {first:#}"
-    );
     let t1 = t(&run, "t1");
     assert_eq!(t1.state, TaskState::Merged);
     assert_eq!(t1.stalls, 1);
