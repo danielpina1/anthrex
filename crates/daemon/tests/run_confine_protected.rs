@@ -86,3 +86,106 @@ fn a_confined_command_cannot_write_protected_agent_config() {
     assert!(outcome.ok, "{outcome:?}");
     assert!(task.join("CLAUDE.md").is_file() && task.join(".codex").is_dir());
 }
+
+/// F4 (the F2 re-review's I1): macOS's default volume ignores case, so `.CODEX/`,
+/// `agents.md` or `sub/Claude.md` is the same file Codex and Claude open as `.codex/`,
+/// `AGENTS.md` or `sub/CLAUDE.md`. The deny ignores case too. (On macOS 26.2 the
+/// kernel's matching already folds case on such a volume, so this passed before the
+/// profile spelled the names with bracket classes; it pins the property either way.)
+#[test]
+fn a_confined_command_cannot_write_protected_agent_config_in_another_case() {
+    let w = world();
+    let task = w.task();
+    std::fs::create_dir_all(task.join("sub")).unwrap();
+    let confinement = w.spec(&[]).for_checkout(&task).unwrap();
+    let attempts = [
+        "mkdir .CODEX",
+        "mkdir .Codex",
+        "mkdir .CLAUDE",
+        "printf x > .MCP.json",
+        "printf x > .Mcp.Json",
+        "printf x > agents.md",
+        "printf x > Claude.MD",
+        "printf x > sub/Claude.md",
+        "printf x > sub/agents.MD",
+        "ln -s /tmp .Claude",
+    ];
+    let mut command = String::new();
+    for attempt in attempts {
+        command.push_str(&format!(
+            "({attempt}) 2>/dev/null && echo 'WROTE: {attempt}'; "
+        ));
+    }
+    command.push_str("printf ok > built.txt && echo done");
+
+    let outcome = run_confined(&task, &command, &[], LONG, Some(&confinement));
+    assert!(outcome.ok, "{outcome:?}");
+    assert!(!outcome.tail.contains("WROTE"), "{}", outcome.tail);
+    assert!(outcome.tail.ends_with("done"), "{}", outcome.tail);
+    let names: Vec<String> = std::fs::read_dir(&task)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_lowercase())
+        .collect();
+    for name in [".codex", ".claude", ".mcp.json", "agents.md", "claude.md"] {
+        assert!(!names.iter().any(|n| n == name), "{name}: {names:?}");
+    }
+    assert!(names.iter().any(|n| n == "built.txt"), "{names:?}");
+    assert_eq!(std::fs::read_dir(task.join("sub")).unwrap().count(), 0);
+}
+
+/// F4 (the F2 re-review's I2): published packages ship `AGENTS.md` and `CLAUDE.md`
+/// (recharts does), so the nested deny leaves dependency and vendored trees alone at
+/// any depth: an install and `rm -rf node_modules` work. The root files and nested ones
+/// in source directories stay denied.
+#[test]
+fn a_confined_command_may_install_and_remove_dependencies_that_ship_agent_files() {
+    let w = world();
+    let task = w.task();
+    std::fs::create_dir_all(task.join("src")).unwrap();
+    let confinement = w.spec(&[]).for_checkout(&task).unwrap();
+    let dependency_dirs = [
+        "node_modules/recharts",
+        "packages/a/node_modules/@scope/x",
+        ".venv/lib/site-packages/p",
+        "venv/p",
+        "vendor/github.com/x",
+        "target/doc",
+        "bower_components/x",
+        ".yarn/cache/x",
+        ".pnpm-store/v3/x",
+    ];
+    let mut command = String::from("set -e; ");
+    for dir in dependency_dirs {
+        command.push_str(&format!(
+            "mkdir -p {dir}; printf x > {dir}/AGENTS.md; printf x > {dir}/CLAUDE.md; \
+             test -f {dir}/AGENTS.md; "
+        ));
+    }
+    command.push_str(
+        "rm -rf node_modules packages .venv venv vendor target bower_components .yarn .pnpm-store; \
+         set +e; mkdir -p src/node_modules_notes; ",
+    );
+    for attempt in [
+        "printf x > src/AGENTS.md",
+        "printf x > src/node_modules_notes/CLAUDE.md",
+        "printf x > AGENTS.md",
+        "printf x > CLAUDE.md",
+    ] {
+        command.push_str(&format!(
+            "({attempt}) 2>/dev/null && echo 'WROTE: {attempt}'; "
+        ));
+    }
+    command.push_str("echo done");
+
+    let outcome = run_confined(&task, &command, &[], LONG, Some(&confinement));
+    assert!(outcome.ok, "{outcome:?}");
+    assert!(!outcome.tail.contains("WROTE"), "{}", outcome.tail);
+    assert!(outcome.tail.ends_with("done"), "{}", outcome.tail);
+    assert!(
+        !task.join("node_modules").exists(),
+        "rm -rf node_modules failed"
+    );
+    for path in ["src/AGENTS.md", "AGENTS.md", "CLAUDE.md"] {
+        assert!(!task.join(path).exists(), "{path} was written");
+    }
+}

@@ -134,11 +134,19 @@ fn worker_env(run: &Run, task: &Task) -> Vec<(String, String)> {
 /// Final fix batch F2 round 2 (the F2 review's item 2): the protected agent-config
 /// paths (decision 56's built-ins) a Claude session's sandbox may not write in its
 /// checkout `cwd`: `.claude` and `.codex` (the directories themselves too), `.mcp.json`,
-/// and `CLAUDE.md` and `AGENTS.md` at the root and at any depth. An entry is left out
-/// when `owns` names a path under it exactly (decision 56's literal rule): a deny cannot
-/// carve out one file, and the done gate still judges what the task changed. A child
-/// that outlives its turn stays inside the sandbox, so it cannot plant config for a
-/// later session either.
+/// and `CLAUDE.md` and `AGENTS.md` at the root. An entry is left out when `owns` names a
+/// path under it exactly (decision 56's literal rule): a deny cannot carve out one file,
+/// and the done gate still judges what the task changed. A child that outlives its turn
+/// stays inside the sandbox, so it cannot plant config for a later session either.
+///
+/// F4 (the F2 re-review's I2): no any-depth `**/CLAUDE.md` entry any more. Published
+/// packages ship these files (recharts ships `AGENTS.md`), and Claude's globs cannot
+/// leave `node_modules`, `.venv` or `vendor` out, so the entry made `rm -rf
+/// node_modules` fail. Nested ones are judged by the done gate (any depth, any case);
+/// Codex reads `AGENTS.md` only from the root down to its cwd, the root. Letter case:
+/// on macOS these entries become seatbelt `subpath`/`literal` rules, which the kernel
+/// matches without regard to case on a case-insensitive volume (checked on macOS 26.2,
+/// F4 report), so `.CODEX` or `agents.md` is denied too.
 pub fn protected_write_denials(cwd: &Path, owns: &[String]) -> Vec<PathBuf> {
     let literals: Vec<&str> = owns
         .iter()
@@ -151,18 +159,15 @@ pub fn protected_write_denials(cwd: &Path, owns: &[String]) -> Vec<PathBuf> {
     let owned = |test: &dyn Fn(&str) -> bool| literals.iter().any(|l| test(l));
     let mut denied = Vec::new();
     for dir in [".claude", ".codex"] {
-        if !owned(&|l| l == dir || l.starts_with(&format!("{dir}/"))) {
+        // F4 (the F2 re-review's M1): only a literal strictly under the directory names
+        // a file there; a bare `.claude` names none (`names_literally`).
+        if !owned(&|l| l.starts_with(&format!("{dir}/")) && l.len() > dir.len() + 1) {
             denied.push(cwd.join(dir));
         }
     }
     for file in [".mcp.json", "CLAUDE.md", "AGENTS.md"] {
         if !owned(&|l| l == file) {
             denied.push(cwd.join(file));
-        }
-    }
-    for name in ["CLAUDE.md", "AGENTS.md"] {
-        if !owned(&|l| l == name || l.ends_with(&format!("/{name}"))) {
-            denied.push(cwd.join("**").join(name));
         }
     }
     denied
@@ -494,7 +499,9 @@ mod tests {
 
     /// F2 round 2 (item 2): a Claude worker's sandbox denies writes to the protected
     /// agent-config paths of its checkout, minus those its `owns` names exactly; a Claude
-    /// reviewer's denies them all.
+    /// reviewer's denies them all. F4 (the F2 re-review's I2): no any-depth entry, since
+    /// Claude's globs cannot leave `node_modules` and the like out; (M1) a literal
+    /// `.claude` in `owns` names no file under it, so it keeps the directory denied.
     #[test]
     fn claude_sessions_deny_writes_to_protected_agent_config() {
         let mut run = run_ok(&plan_with(
@@ -509,8 +516,6 @@ mod tests {
             at(".mcp.json"),
             at("CLAUDE.md"),
             at("AGENTS.md"),
-            at("**/CLAUDE.md"),
-            at("**/AGENTS.md"),
         ];
         let denied =
             |run: &Run, task: &Task| worker_spec(run, task).claude_sandbox.unwrap().deny_write;
@@ -525,10 +530,11 @@ mod tests {
         ];
         assert_eq!(
             denied(&run, &owner),
-            // `**/CLAUDE.md` also matches the owned root `CLAUDE.md`, so it goes too; a
-            // glob in `owns` (`.codex/**`) never counts (decision 56).
+            // A glob in `owns` (`.codex/**`) never counts (decision 56).
             [at(".codex"), at(".mcp.json"), at("AGENTS.md")]
         );
+        owner.spec.owns = vec![".claude".into(), ".codex/".into()];
+        assert_eq!(denied(&run, &owner), all);
 
         let route = Route {
             runtime: Runtime::Claude,
@@ -538,7 +544,7 @@ mod tests {
         };
         let review = reviewer_spec(&run, &owner, &route).claude_sandbox.unwrap();
         let path = run.review_path(owner.id());
-        assert_eq!(review.deny_write.len(), 7);
+        assert_eq!(review.deny_write.len(), 5);
         assert!(review.deny_write.iter().all(|p| p.starts_with(&path)));
         run.limits.worker_sandbox = false;
         assert!(worker_spec(&run, &task).claude_sandbox.is_none());

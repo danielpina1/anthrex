@@ -135,12 +135,58 @@ pub struct Grants<'a> {
     pub checkout: Option<&'a Path>,
 }
 
+/// Dependency and vendored trees, at any depth, where the nested `CLAUDE.md`/`AGENTS.md`
+/// deny does not apply (final fix batch F4, the F2 re-review's I2): published packages
+/// ship these files (recharts ships `AGENTS.md`), and an install or `rm -rf
+/// node_modules` must not fail. Spelled as the tools create them (macOS 26.2's kernel
+/// folds case on a case-insensitive volume anyway, which widens nothing: the same
+/// directories).
+pub const DEPENDENCY_DIRS: &[&str] = &[
+    "node_modules",
+    ".venv",
+    "venv",
+    "vendor",
+    "target",
+    "bower_components",
+    ".yarn",
+    ".pnpm-store",
+];
+
+/// `text` escaped for an SBPL (POSIX extended) regex.
+fn regex_escaped(text: &str) -> String {
+    let mut escaped = String::new();
+    for c in text.chars() {
+        if "\\.+*?()|[]{}^$".contains(c) {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    escaped
+}
+
+/// `name` as an SBPL regex that ignores case: every ASCII letter becomes a bracket
+/// class (`.codex` → `\.[Cc][Oo][Dd][Ee][Xx]`), whatever the kernel does with case
+/// (final fix batch F4, the F2 re-review's I1: APFS's default variant ignores case).
+fn any_case(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphabetic() {
+                format!("[{}{}]", c.to_ascii_uppercase(), c.to_ascii_lowercase())
+            } else {
+                regex_escaped(&c.to_string())
+            }
+        })
+        .collect()
+}
+
 /// Final fix batch F2 round 2: the unconditional deny, after every allow so it wins
 /// (SBPL takes the last matching rule), of writes to `checkout`'s protected agent-config
 /// paths (decision 56's built-ins): `.claude` and `.codex` (the directories themselves
 /// too, so neither can be created, replaced or renamed), `.mcp.json`, and `CLAUDE.md`
-/// and `AGENTS.md` at any depth. A check, proof or `setup` never needs to write them,
-/// and a child that escapes the command's group is still inside this sandbox.
+/// and `AGENTS.md` at the root and at any depth outside [`DEPENDENCY_DIRS`] (F4, I2).
+/// Every name is matched in any letter case (F4, I1). A check, proof or `setup` never
+/// needs to write them, and a child that escapes the command's group is still inside
+/// this sandbox.
 pub fn protected_denial(checkout: &Path) -> Result<String, String> {
     let quoted = |name: &str| sbpl_string(&checkout.join(name));
     let text = checkout
@@ -149,20 +195,29 @@ pub fn protected_denial(checkout: &Path) -> Result<String, String> {
     if text.contains('"') || text.chars().any(char::is_control) {
         return Err(format!("{text:?} cannot be spelled in an SBPL regex"));
     }
-    let mut escaped = String::new();
-    for c in text.chars() {
-        if "\\.+*?()|[]{}^$".contains(c) {
-            escaped.push('\\');
-        }
-        escaped.push(c);
-    }
+    let co = regex_escaped(text);
+    let instructions = format!("({}|{})", any_case("CLAUDE.md"), any_case("AGENTS.md"));
+    let dependencies = DEPENDENCY_DIRS
+        .iter()
+        .map(|d| regex_escaped(d))
+        .collect::<Vec<_>>()
+        .join("|");
     Ok(format!(
-        "\n; Never the checkout's protected agent-config paths (decision 56's built-ins).\n\
+        "\n; Never the checkout's protected agent-config paths (decision 56's built-ins),\n\
+         ; in any letter case; nested instruction files outside dependency trees.\n\
          (deny file-write*\n  (subpath {claude})\n  (subpath {codex})\n  (literal {mcp})\n  \
-         (regex #\"^{escaped}/(.*/)?(CLAUDE|AGENTS)\\.md$\"))\n",
+         (regex #\"^{co}/{claude_any}(/|$)\")\n  \
+         (regex #\"^{co}/{codex_any}(/|$)\")\n  \
+         (regex #\"^{co}/{mcp_any}$\")\n  \
+         (regex #\"^{co}/{instructions}$\")\n  \
+         (require-all\n    (regex #\"^{co}/.+/{instructions}$\")\n    \
+         (require-not (regex #\"^{co}/(.*/)?({dependencies})/\"))))\n",
         claude = quoted(".claude")?,
         codex = quoted(".codex")?,
         mcp = quoted(".mcp.json")?,
+        claude_any = any_case(".claude"),
+        codex_any = any_case(".codex"),
+        mcp_any = any_case(".mcp.json"),
     ))
 }
 
@@ -349,7 +404,8 @@ mod tests {
     }
 
     /// F2 round 2: the protected agent-config paths of the checkout are denied after
-    /// the write allows, a regex-special character in its path escaped.
+    /// the write allows, a regex-special character in its path escaped; F4: in any
+    /// letter case, nested instruction files outside dependency trees.
     #[test]
     fn protected_agent_config_is_denied_after_the_write_allows() {
         let p = grants(false);
@@ -360,7 +416,9 @@ mod tests {
             "(subpath \"/w/check.out/.claude\")",
             "(subpath \"/w/check.out/.codex\")",
             "(literal \"/w/check.out/.mcp.json\")",
-            "(regex #\"^/w/check\\.out/(.*/)?(CLAUDE|AGENTS)\\.md$\")",
+            "(regex #\"^/w/check\\.out/\\.[Cc][Oo][Dd][Ee][Xx](/|$)\")",
+            "(regex #\"^/w/check\\.out/\\.[Mm][Cc][Pp]\\.[Jj][Ss][Oo][Nn]$\")",
+            "(require-not (regex #\"^/w/check\\.out/(.*/)?(node_modules|\\.venv|venv|vendor|target|bower_components|\\.yarn|\\.pnpm-store)/\"))",
         ] {
             let at = p
                 .find(rule)
@@ -368,6 +426,15 @@ mod tests {
             assert!(at > deny, "{rule}");
         }
         assert!(protected_denial(Path::new("/w/a\"b")).is_err());
+        assert!(
+            p.contains(&format!(
+                "(regex #\"^/w/check\\.out/({}|{})$\")",
+                any_case("CLAUDE.md"),
+                any_case("AGENTS.md")
+            )),
+            "{p}"
+        );
+        assert_eq!(any_case(".mcp.json"), "\\.[Mm][Cc][Pp]\\.[Jj][Ss][Oo][Nn]");
     }
 
     #[test]
