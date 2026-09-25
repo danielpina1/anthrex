@@ -2216,7 +2216,7 @@ mkdir -p /tmp/anthrex-m8a && cd /tmp/anthrex-m8a && git init -b main demo && cd 
     - the worker's `task_done` is rejected with `AGENTS.md configures or instructs future agents…`, and after it reverts, the task merges;
     - `AGENTS.md` on the run branch is unchanged.
 4d. **Codex project config.** If M8a.1 found that Codex loads project config, commit a `.codex/config.toml` and start a run with a Codex task. It is either excluded (the argv carries `codex_user_config_only`) or refused without `--trust-project`, as decision 53 says. Remove the file afterwards.
-4e. **The worker grant in the real CLIs (final fix batch F1, fix round 4, S5; replaced by F1b, then by F1c).** Since F1c a task checkout is its own repository in anthrex's data directory (`<data_dir>/runs/<run>/tasks/<task>/git`, the user's `<common>/objects` its only alternate), and a worker's grant names nothing of the user's repository: its checkout, the checkout's private object directory (`<data_dir>/runs/<run>/tasks/<task>/git/objects`), its per-task tmp (`.../tasks/<task>/tmp`), and about 30 files and directories of the checkout's own git dir (`HEAD`, `index`, the merge and rebase files, each with its `.lock`). With a real Claude worker and a real Codex worker, confirm that each CLI accepts the list (Claude's `--settings` `allowWrite`, Codex's `writable_roots`), that Claude's generated seatbelt profile and Codex's `-D WRITABLE_ROOT_n` parameters keep every entry, and that `touch <common>/objects/x`, `touch <user checkout>/.git/index` and `git -C <user checkout> update-ref refs/heads/x HEAD` are refused in the worker's shell. Confirm that `env | grep ^GIT_` in the worker's shell shows `GIT_CONFIG_PARAMETERS` and no `GIT_OBJECT_DIRECTORY` or `GIT_ALTERNATE_OBJECT_DIRECTORIES` (the checkout's repository is self-describing), that `git config --get core.logAllRefUpdates` prints `false` and `git config --get gc.auto` prints `0`, that the worker's `git status` shows a detached `HEAD`, that `git worktree list` in the user's checkout does not list the task, and that the worker's `git commit` succeeds and its commit reaches the task's branch only after `task_done` (`git rev-parse anthrex/<run>/<task>` in the user's checkout before and after). On Linux, repeat under the Linux sandbox (bubblewrap/landlock). Since F1c (I2) checks and proofs are confined too on macOS: with a plan whose `check` tries `touch <common>/objects/x`, `touch <user checkout>/.git/index` and `touch ~/x`, confirm each is denied (`Operation not permitted` in the check's output) and a real `cargo test` check still passes. Confirm `setup` is denied the same writes. **On Linux, checks, proofs and setup cannot be confined**: confirm that `anthrex run start` refuses with a message naming `--unconfined-checks`, that with the flag the run starts and `anthrex run status` and the report say its checks are unconfined, and treat such a run's checks as having the daemon's own write access. F1c round 3: confirm a confined check cannot reach the anthrex daemon, so a check that connects to `$ANTHREX_SOCKET` (or the default socket path) is denied, and `env | grep ^ANTHREX_` in the check's shell is empty; confirm `launchctl submit` from a check does not run its job. Confirm a Claude reviewer runs under a read-only sandbox: `git diff --output=$HOME/x` and `git show --output=<repo>/.git/hooks/post-checkout` are denied, and a Codex reviewer runs `-s read-only`. Confirm `[orchestrator.cache_dirs]` is read only from the user's own config keyed by repository root (a plan's `[profile] cache_dirs` is refused at `run start`), and that a `cache_dirs` entry of `~`, `~/.ssh`, `~/.gitconfig` or `~/Library` is refused. **F1d (deny-by-default confinement, pinned worker sandboxes).** From a real Claude worker's Bash and a real Codex worker's shell, with the user's own `~/.claude/settings.json` and `~/.codex/config.toml` in place (and again with a throwaway user setting that widens them, such as `sandbox.network.allowUnixSockets = ["/"]` or `[sandbox_workspace_write] network_access = true`, to see whether the command-line pins win), each of these must fail: `python3 -c 'import socket;s=socket.socket(socket.AF_UNIX);s.connect("<the daemon socket, e.g. $TMPDIR/anthrex-$(id -u)/daemon.sock of a throwaway daemon>")'`; `rm -i <a throwaway daemon's socket>` (answer n); `open -g <an .app the worker built in its checkout>` (then `lsregister -u` it); `defaults write com.anthrex.probe k v` (then `defaults delete com.anthrex.probe`); `launchctl submit -l com.anthrex.probe -- /usr/bin/touch <marker>` (then `launchctl remove com.anthrex.probe`). Confirm `echo $TMPDIR` in each worker's shell prints `/private/tmp/ax-<uid>/<16 hex>`, and that Claude's generated seatbelt profile has its network restriction on (with `allowedDomains = []`). With a plan whose `check` runs the same five probes plus `python3 -c 'import pty;pty.openpty()'` and a TCP connect to a local service, confirm the five and the TCP connect are denied and the PTY works; then set `[orchestrator.confined_network] "<repo>" = true` in the user's config and confirm a TCP connect to a remote host works (a local one stays denied, round 2) while the daemon socket connect and `security find-generic-password -s <a nonexistent item>` still fail (the latter with a connection error, not "could not be found"). Confirm a relative `cache_dirs` entry is reported at config load. **F1d round 2.** With `confined_network` on for a repository, confirm from a check that `curl https://example.com` works while a connect to a local redis or any `127.0.0.1` port, to this machine's LAN address, to tmux's `/private/tmp/tmux-$(id -u)/default` and to Docker's socket is denied; then list one socket in `confined_unix_sockets` and one port in `confined_localhost_ports` and confirm exactly those connect. From real workers, with a hostile copy of the user's settings: (1) Claude `--settings` arrays (`allowWrite`, `allowUnixSockets`, `allowedDomains`, `excludedCommands`, `allowMachLookup`) replace the user's rather than merge (a user entry naming a scratch dir or socket must stay unreachable); (2) a user `httpProxyPort`/`socksProxyPort` does not open egress; (3) `curl https://example.com` fails in a Claude worker, and note which `TMPDIR` its Bash tool actually sees (Claude Code may substitute its own); (4) a user `[sandbox_workspace_write] network_access = true` does not beat the `-c` pin; (5) **Codex permission profiles:** does a user `default_permissions = "<a profile with network enabled and allow_unix_sockets>"` in `~/.codex/config.toml` override `-s workspace-write` and the `sandbox_workspace_write.*` pins? If it does, record it and pin `-c default_permissions=...` to a known closed profile or refuse to launch Codex workers; (6) with `exclude_slash_tmp`, `touch /tmp/x` fails in a Codex worker; (7) re-review 2's probes (`open -g` of a built `.app`, `defaults write`, `launchctl submit`, a connect to and an `rm` of a throwaway daemon's socket) fail from both workers.
+4e. **The worker grant in the real CLIs (final fix batch F1, fix round 4, S5; replaced by F1b, then by F1c).** Since F1c a task checkout is its own repository in anthrex's data directory (`<data_dir>/runs/<run>/tasks/<task>/git`, the user's `<common>/objects` its only alternate), and a worker's grant names nothing of the user's repository: its checkout, the checkout's private object directory (`<data_dir>/runs/<run>/tasks/<task>/git/objects`), its per-task tmp (`.../tasks/<task>/tmp`), and about 30 files and directories of the checkout's own git dir (`HEAD`, `index`, the merge and rebase files, each with its `.lock`). With a real Claude worker and a real Codex worker, confirm that each CLI accepts the list (Claude's `--settings` `allowWrite`, Codex's `writable_roots`), that Claude's generated seatbelt profile and Codex's `-D WRITABLE_ROOT_n` parameters keep every entry, and that `touch <common>/objects/x`, `touch <user checkout>/.git/index` and `git -C <user checkout> update-ref refs/heads/x HEAD` are refused in the worker's shell. Confirm that `env | grep ^GIT_` in the worker's shell shows `GIT_CONFIG_PARAMETERS` and no `GIT_OBJECT_DIRECTORY` or `GIT_ALTERNATE_OBJECT_DIRECTORIES` (the checkout's repository is self-describing), that `git config --get core.logAllRefUpdates` prints `false` and `git config --get gc.auto` prints `0`, that the worker's `git status` shows a detached `HEAD`, that `git worktree list` in the user's checkout does not list the task, and that the worker's `git commit` succeeds and its commit reaches the task's branch only after `task_done` (`git rev-parse anthrex/<run>/<task>` in the user's checkout before and after). On Linux, repeat under the Linux sandbox (bubblewrap/landlock). Since F1c (I2) checks and proofs are confined too on macOS: with a plan whose `check` tries `touch <common>/objects/x`, `touch <user checkout>/.git/index` and `touch ~/x`, confirm each is denied (`Operation not permitted` in the check's output) and a real `cargo test` check still passes. Confirm `setup` is denied the same writes. **On Linux, checks, proofs and setup cannot be confined**: confirm that `anthrex run start` refuses with a message naming `--unconfined-checks`, that with the flag the run starts and `anthrex run status` and the report say its checks are unconfined, and treat such a run's checks as having the daemon's own write access. F1c round 3: confirm a confined check cannot reach the anthrex daemon, so a check that connects to `$ANTHREX_SOCKET` (or the default socket path) is denied, and `env | grep ^ANTHREX_` in the check's shell is empty; confirm `launchctl submit` from a check does not run its job. Confirm a Claude reviewer runs under a read-only sandbox: `git diff --output=$HOME/x` and `git show --output=<repo>/.git/hooks/post-checkout` are denied, and a Codex reviewer runs `-s read-only`. Confirm `[orchestrator.cache_dirs]` is read only from the user's own config keyed by repository root (a plan's `[profile] cache_dirs` is refused at `run start`), and that a `cache_dirs` entry of `~`, `~/.ssh`, `~/.gitconfig` or `~/Library` is refused. **F1d (deny-by-default confinement, pinned worker sandboxes).** From a real Claude worker's Bash and a real Codex worker's shell, with the user's own `~/.claude/settings.json` and `~/.codex/config.toml` in place (and again with a throwaway user setting that widens them, such as `sandbox.network.allowUnixSockets = ["/"]` or `[sandbox_workspace_write] network_access = true`, to see whether the command-line pins win), each of these must fail: `python3 -c 'import socket;s=socket.socket(socket.AF_UNIX);s.connect("<the daemon socket, e.g. $TMPDIR/anthrex-$(id -u)/daemon.sock of a throwaway daemon>")'`; `rm -i <a throwaway daemon's socket>` (answer n); `open -g <an .app the worker built in its checkout>` (then `lsregister -u` it); `defaults write com.anthrex.probe k v` (then `defaults delete com.anthrex.probe`); `launchctl submit -l com.anthrex.probe -- /usr/bin/touch <marker>` (then `launchctl remove com.anthrex.probe`). Confirm `echo $TMPDIR` in each worker's shell prints `/private/tmp/ax-<uid>/<16 hex>`, and that Claude's generated seatbelt profile has its network restriction on (with `allowedDomains = []`). With a plan whose `check` runs the same five probes plus `python3 -c 'import pty;pty.openpty()'` and a TCP connect to a local service, confirm the five and the TCP connect are denied and the PTY works; then set `[orchestrator.confined_network] "<repo>" = true` in the user's config and confirm a TCP connect to a remote host works (a local one stays denied, round 2) while the daemon socket connect and `security find-generic-password -s <a nonexistent item>` still fail (the latter with a connection error, not "could not be found"). Confirm a relative `cache_dirs` entry is reported at config load. **F1d round 2.** With `confined_network` on for a repository, confirm from a check that `curl https://example.com` works while a connect to a local redis or any `127.0.0.1` port, to this machine's LAN address, to tmux's `/private/tmp/tmux-$(id -u)/default` and to Docker's socket is denied; then list one socket in `confined_unix_sockets` and one port in `confined_localhost_ports` and confirm exactly those connect. From real workers, with a hostile copy of the user's settings: (1) Claude `--settings` arrays (`allowWrite`, `allowUnixSockets`, `allowedDomains`, `excludedCommands`, `allowMachLookup`) replace the user's rather than merge (a user entry naming a scratch dir or socket must stay unreachable); (2) a user `httpProxyPort`/`socksProxyPort` does not open egress; (3) `curl https://example.com` fails in a Claude worker, and note which `TMPDIR` its Bash tool actually sees (Claude Code may substitute its own); (4) a user `[sandbox_workspace_write] network_access = true` does not beat the `-c` pin; (5) **Codex permission profiles:** does a user `default_permissions = "<a profile with network enabled and allow_unix_sockets>"` in `~/.codex/config.toml` override `-s workspace-write` and the `sandbox_workspace_write.*` pins? If it does, record it and pin `-c default_permissions=...` to a known closed profile or refuse to launch Codex workers; (6) with `exclude_slash_tmp`, `touch /tmp/x` fails in a Codex worker; (7) re-review 2's probes (`open -g` of a built `.app`, `defaults write`, `launchctl submit`, a connect to and an `rm` of a throwaway daemon's socket) fail from both workers. **F2 (headless isolation).** (1) From a real Codex worker (`-s workspace-write`, the argv of decision 25), try `mkdir -p .codex && echo 'model = "x"' > .codex/config.toml` and `mkdir -p .agents && touch .agents/x`: record whether codex-cli's own seatbelt denies writes under `<cwd>/.codex` and `<cwd>/.agents` (its binary names both beside `.git` among the protected subpaths, unverified). Whatever it does, the next turn must not start: the task is `blocked(environment)` with `... has Codex project config this run did not start with (.codex/config.toml) ...`. (2) After a Codex worker's first turn, look in `~/.codex/config.toml` for the `[projects."<path>"] trust_level = "trusted"` entry Codex writes itself, and record which path it names: the task checkout (`<worktrees>/runs/<run>/<task>`, expected, since the checkout's `.git` file makes it the project root) or the user's repository. Remove the entry by hand afterwards. (3) With `ANTHROPIC_API_KEY` exported in the shell that starts the daemon and `auth = "login"`, confirm a Claude worker is billed to the login (the key is removed from every login session's environment), and that `[orchestrator.claude] auth = "api_key"` is reported as a config problem and `login` used. (4) Whether project `.claude/agents/*.md`, `.claude/skills/**` and `.claude/commands/**` with frontmatter hooks load under `--setting-sources user` (review C, M6; M8a.1 item 4a proved only `.claude/settings.json` hooks and `.mcp.json`).
 5. In the TUI, typing into a focused worker window does nothing, and the kill and remove commands on it show decision 49's refusal. The run carries on.
 6. While `t2`'s worker runs, `anthrex daemon stop`:
    - `pgrep -fl "claude -p"` shows nothing of this run.
@@ -9594,3 +9594,109 @@ Important (S1) and five Minor (S2–S6).
   system sleep through `RootDomainUserClient` (not tested, to avoid sleeping the
   machine). Each is a denial of service at worst; no route to an unconfined actor was
   found through them.
+
+### Final fix batch F2: headless isolation and config (2026-09-25)
+
+Review C's findings (`final-review-C-headless.md`) that F1 to F1d had not already closed,
+each test-first against `fake-agent` and a real daemon, a real PTY-less session, or a
+temporary repository. The user's rule is the yardstick: "Headless agents load only my
+own settings, never a repository's; workers run sandboxed; protected agent-config files
+change only when a task's owns names them exactly."
+
+- **C-I1: no Codex process starts on a checkout whose `.codex` differs from the base
+  (extends decision 53's third branch).** Codex reads a checkout's `.codex/` again in
+  every process (each turn is a new `codex exec` or `exec resume`), and nothing on its
+  command line excludes it (M8a.1 item 7a). Decision 53 checked only the base tree, so a
+  worker could write `.codex/config.toml` in one turn and load it in the next, and a
+  file merged by a task that owned it would load in every later Codex session.
+  - **The choice.** An engine-side guard before every Codex process, not a sandbox
+    deny. Codex's `workspace-write` always makes its cwd writable, and its legacy
+    `sandbox_workspace_write` settings have no deny list; its 0.156 binary names
+    `.codex` and `.agents` beside `.git` among protected subpaths, which is unverified
+    (manual check 4e, F2 (1)). A per-launch check is also what catches case (b), a file
+    that arrives by merge or hand-back rather than by the session's own write.
+  - **How.** `run start` records the base's `.codex` entries (`git ls-tree -r -z` ids,
+    `Run.codex_config_base`, `run::git::codex_config_tree`, now in `run/git/settings.rs`
+    with `project_settings`). Every Codex worker and reviewer spec carries them as
+    `HeadlessSpec.codex_config_guard` (`role_launch::codex_config_guard`), unless the run
+    started under a Codex CLI that does not load project config or is told not to
+    (decision 53's first two branches). `WindowManager::spawn_process` checks it on its
+    blocking thread, off the lock, before each spawn: first turn, `exec resume` and a
+    resume after restart all pass through it. `headless::codex_guard` walks the
+    checkout's `.codex` without following links (files opened `O_NOFOLLOW |
+    O_NONBLOCK`, checked regular after opening), computes git blob ids itself (SHA-1 or
+    SHA-256 by the base's id length), and compares path, kind (file or link) and id.
+    Any added, changed, removed or swapped entry refuses the launch with `<checkout> has
+    Codex project config this run did not start with (<paths>); ... Revert it, or route
+    the task to Claude (decision 53)`. The engine's existing paths then block the task
+    `blocked(environment)`: a failed `CreateWindow` at once, a failed delivery after
+    `DELIVERY_MAX_FAILURES`, a failed resume through a fresh session.
+  - **`--trust-project` still holds.** A task checkout is a standalone repository whose
+    `.git` file makes the checkout Codex's project root, and it is populated from the
+    base, so trusted base config is identical and loads (`run_e2e_settings.rs`'s
+    `load` branch runs a Codex worker to completion on it).
+  - **Consequences.** A task whose `owns` names `.codex/config.toml` can only be worked
+    and reviewed by Claude; a Codex session on any checkout carrying the change is
+    refused (the second e2e shows a Codex reviewer refused). Reviewers are guarded too,
+    although M8a.1 saw `-s read-only` load nothing in an untrusted project, because the
+    trust rule is Codex's and could change. After `run resume --rebaseline` the guard
+    keeps the original base's entries, so a new base with different `.codex` refuses
+    Codex sessions (conservative). A check made before the spawn cannot stop a leftover
+    worker process writing `.codex` between the check and Codex's read (followups).
+  - Tests: `run_e2e_codex_config.rs` (both red before: the worker's second process
+    started; the Codex reviewer launched), `headless::codex_guard` unit tests (blob ids
+    against git, match, written, changed, added, removed, directory and file swapped for
+    links, a FIFO refused without blocking, `ls-tree` parsing),
+    `role_launch::codex_sessions_carry_the_base_codex_config_guard`.
+- **C-I2: closed by F1c round 3 (N4).** A Claude reviewer runs under a read-only
+  seatbelt sandbox (empty `allowWrite`), so `git diff/log/show --output=<path>` cannot
+  write. Asserted by `role_launch::reviewer_spec_is_read_only` and `argv_tests`'s
+  reviewer settings (a sandbox block with an empty `allowWrite` and the F1d pins); no new
+  code.
+- **C-I3: `[orchestrator.claude] auth = "api_key"` is refused at config load**, as
+  decision 50 and the M8a.1 note said, with a problem naming the unverified `--bare`
+  behaviour; `login` is kept and `api_key_helper` is still read. The `--bare` argv and
+  `run start`'s key check stay for the day a recording verifies it; no config path
+  reaches them now. `e2e_api_key_auth_covers_a_claude_reviewer` became
+  `e2e_api_key_auth_is_refused_at_config_load_and_login_kept` (red before: `run start`
+  refused for want of a key).
+- **C-I4: one reserved-environment list (`config::reserved_env`), deviation from spec
+  §17's "per-worktree variables from the profile".** A plan's `[profile.env]` key is
+  refused (`profile.env`, rule `profile`: `key <K> may not be set by a profile:
+  <reason>`), and the user's `[orchestrator.profile.env]` drops it with a config
+  problem, when it is: one of rule 11's five git variables, decision 26's scrubbed
+  `CLAUDE_CODE_*`/`CLAUDECODE`, the session identity (`ANTHREX_WINDOW_ID`,
+  `ANTHREX_SOCKET`), the task `TMPDIR`, or the API credentials; or in the families that
+  choose what an agent loads: `CLAUDE*` (so `CLAUDE_CONFIG_DIR`), `CODEX_*` (`CODEX_HOME`),
+  `ANTHROPIC_*`, `OPENAI_*`, `GIT_*`, `ANTHREX_*`, `DYLD_*`, `LD_*`, and `HOME`,
+  `XDG_CONFIG_HOME`, `PATH`, `NODE_OPTIONS`, the proxy variables and the CA-bundle
+  variables. Case-insensitive. `PATH` is included because `Command` resolves the agent
+  program through a `PATH` set on the command, so a plan's `PATH={worktree}/bin` would
+  have run a repository's `claude` unsandboxed; process-wide values still reach every
+  session and command from the daemon's own environment. The session scrub
+  (`headless::session`), the engine-command scrub (`run::exec::engine_env`) and
+  `subprocess::scrub_git_env` read the same constants, and a unit test asserts every
+  scrubbed or pinned name is reserved. Two e2e tests that set `HOME` and
+  `ANTHREX_TEST_COMMON` in `[profile.env]` (`run_e2e_confine.rs`) now use `TEST_HOME` and
+  `TEST_COMMON`; their confinement assertions are unchanged.
+- **C minors.**
+  - **M2: done.** Every session except a Claude `auth = "api_key"` one loses the
+    inherited `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`
+    (`headless::credential_scrub`; `HeadlessHandle::spawn` takes the names to remove).
+    Codex sessions lose them too: they never use Anthropic's. Test: `headless_env.rs`
+    (red before), `only_a_claude_api_key_session_keeps_the_api_credentials`.
+  - **M3: closed by F1d (R5).** Every Codex session carries
+    `sandbox_workspace_write.exclude_tmpdir_env_var=true` and `exclude_slash_tmp=true`,
+    and a worker's `TMPDIR` is its own task directory, never the daemon's (which holds
+    the socket on macOS). Asserted by `run_e2e_worker_pins.rs`.
+  - **M4: done.** With `worker_sandbox = false` the report adds `an unsandboxed worker can
+    reach the daemon's socket, so nothing stops it approving its own task's review or
+    accepting the run`. A per-session token for the tool gate is not built (followups).
+  - **M5: done.** Codex sessions get neither `ANTHREX_WINDOW_ID` nor `ANTHREX_SOCKET`
+    (decision 26 set them for every session); only Claude's hooks read them. Test:
+    `headless_env.rs`'s Codex half (red before).
+  - **M1, M6, M7: not done, recorded** in the followups (M1 needs a failing enqueue that
+    later succeeds to test; M7 needs a restored window that refuses restart without a
+    spec). M6 is manual check 4e, F2 (4).
+- **Timing.** `run start` makes one more git call (the `.codex` listing):
+  `REQUEST_WAIT`'s row in `docs/timing-budgets.md` now counts ten calls, 50 s of its 60 s.

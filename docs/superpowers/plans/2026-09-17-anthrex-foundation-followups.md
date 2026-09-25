@@ -1098,6 +1098,53 @@ scope.
   integration checkout stays a linked worktree. `anthrex run status` is where the
   checkouts are listed.
 
+## From M8a's final fix batch F2 (2026-09-25), for the user and for M8a/M8b
+
+- **For the user: Codex marks anthrex's checkouts trusted in your `~/.codex/config.toml`,
+  and anthrex cannot stop it.** On a `workspace-write` turn (every Codex worker), Codex
+  writes `[projects."<project root>"] trust_level = "trusted"` into the user's own
+  `~/.codex/config.toml` by itself (M8a.1 item 7a). `-c projects."<root>".trust_level=...`
+  on the command line does not prevent it. Since F1c a task checkout is a standalone
+  repository, so the root is presumably the checkout (`<worktrees>/runs/<run>/<task>`,
+  manual check 4e, F2 (2)): one entry per Codex worker task, left behind after the run.
+  They grant nothing to the user's own repository, but they accumulate, and a later
+  directory at the same path would be trusted. Remove them by hand; anthrex does not
+  edit the user's Codex config.
+- **C-I1's residual: a leftover worker process can write `.codex` after the guard's
+  check.** The guard runs just before each Codex spawn; a worker's `setsid` child that
+  outlives its turn could write `<checkout>/.codex/config.toml` between the check and
+  Codex's read. A sandbox-level deny would close it: codex-cli 0.156's binary names
+  `.codex` and `.agents` beside `.git` among the protected subpaths of a writable root
+  (unverified, manual check 4e, F2 (1)); if confirmed, record it; otherwise weigh a
+  Codex permission profile that makes `<cwd>/.codex` read-only.
+- **`.agents/` is not guarded.** Codex reads repository skills (`.agents/skills`) and a
+  plugin marketplace (`.agents/plugins/marketplace.json`) from the project. The
+  protected list is the user's five paths verbatim; whether to add `.agents/**` to it,
+  and to the Codex guard, is the user's decision.
+- **A task that changes `.codex/**` runs on Claude only.** The guard refuses every Codex
+  session on a checkout whose `.codex` differs from the base, the task's own Codex
+  reviewer included; such a task needs a Claude worker and a Claude reviewer (a route
+  edit), and later Codex tasks on the run branch are refused as well.
+- **Review C, M1: a failed Claude `headless_send` leaves its turn recorded.**
+  `manager/headless_turns.rs` records the turn in the cursor, then enqueues; a full
+  queue or closed stdin leaves a `pending_sent` entry no prompt hook will match, so a
+  background `result` before the next delivery is classed as `Unprompted`. Fix:
+  enqueue first, under the lock (`send_line` does not block), and record only on
+  success. Not done in F2: testing it needs an enqueue that fails and a later one that
+  succeeds.
+- **Review C, M4: the tool gate knows a session only by its window id.** With
+  `worker_sandbox = false`, a worker that reaches the socket can call
+  `submit_review approve` for its own task. The report now says so. A per-session
+  unguessable token in `anthrex mcp`'s argv, checked by the engine, would close it.
+- **Review C, M7: a restored headless window whose `run` does not parse comes back as a
+  PTY window**, so `headless_guard` no longer refuses `Restart`, and C-b R would start an
+  interactive `claude` in the task checkout on the user's normal settings. Restoring it
+  as a headless window with no spec (or a `Dormant` that refuses restart) would keep
+  decision 49's refusals.
+- **C-I4's cost: a profile cannot set `PATH`, `HOME`, a proxy or a CA bundle.** They come
+  from the daemon's environment. A project whose checks need a tool on a
+  repository-relative path must name it in the command (`./node_modules/.bin/x`).
+
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
 - **The main pane can switch to a new window while the new-agent form is still open and
