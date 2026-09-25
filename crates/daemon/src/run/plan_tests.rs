@@ -113,15 +113,62 @@ fn profile_keys_resolve_per_key() {
 }
 
 #[test]
-fn cache_dirs_come_from_the_plan_else_the_config() {
-    // M8a final fix batch F1c (I2).
-    let config = profile_spec(|p| p.cache_dirs = Some(vec!["~/.cache/c".to_string()]));
-    assert_eq!(
-        resolve_profile(&profile_spec(|_| {}), &config).cache_dirs,
-        vec!["~/.cache/c".to_string()]
+fn cache_dirs_come_from_the_users_config_keyed_by_repo_root() {
+    // M8a final fix batch F1c round 3 (N3): only the user's `[orchestrator.cache_dirs]`,
+    // keyed by repository root, sets them; a plan cannot, and the profile does not carry
+    // them.
+    use crate::run::test_support::{build_with, preflight};
+    let mut config = config::Orchestrator::default();
+    config.cache_dirs.insert(
+        preflight().root.display().to_string(),
+        vec!["~/.cache/c".to_string()],
     );
-    let plan = profile_spec(|p| p.cache_dirs = Some(Vec::new()));
-    assert!(resolve_profile(&plan, &config).cache_dirs.is_empty());
+    config.cache_dirs.insert(
+        "/some/other/repo".to_string(),
+        vec!["~/.cache/other".to_string()],
+    );
+    let text = crate::run::test_support::plan_with(
+        PROFILE,
+        &[crate::run::test_support::task_toml(
+            "t1",
+            "S",
+            r#"["crates/a/src/lib.rs"]"#,
+            "",
+        )],
+    );
+    let run = build_with(&text, &config).unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(run.profile.cache_dirs, vec!["~/.cache/c".to_string()]);
+
+    // A repository the config does not name gets none.
+    let mut pre = preflight();
+    pre.root = std::path::PathBuf::from("/tmp/unlisted");
+    let run = crate::run::test_support::build_full(&text, &config, pre)
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    assert!(run.profile.cache_dirs.is_empty());
+
+    // The plan carries no cache_dirs field at all (proto::ProfileSpec dropped it), so a
+    // plan cannot set them.
+    assert!(
+        resolve_profile(&profile_spec(|_| {}), &profile_spec(|_| {}))
+            .cache_dirs
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_plan_setting_cache_dirs_is_refused() {
+    // F1c round 3 (N3): `[profile] cache_dirs` is unknown to the plan schema.
+    let text = crate::run::test_support::plan_with(
+        "[profile]\ncheck = \"cargo test\"\ncache_dirs = [\"~/.ssh\"]\n",
+        &[crate::run::test_support::task_toml(
+            "t1",
+            "S",
+            r#"["crates/a/src/lib.rs"]"#,
+            "",
+        )],
+    );
+    let err = parse_plan(&text).unwrap_err();
+    assert!(err.to_lowercase().contains("cache_dirs"), "{err}");
 }
 
 #[test]

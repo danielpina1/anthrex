@@ -149,10 +149,18 @@ impl RunHarness {
             } else {
                 format!("unconfined_checks = true\n{orchestrator}")
             };
+        // F1c round 3 (N3): `cache_dirs` is the user's config only, keyed by repository
+        // root. Every harness gets one writable cache directory for its repository, so a
+        // confined check that must log outside its checkout can (see `cache_dir`).
+        let cache = dir.path().join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        let repo_key = repo.canonicalize().unwrap_or_else(|_| repo.clone());
         std::fs::write(
             &config,
             format!(
-                "[orchestrator]\ngit_timeout_secs = 5\n{orchestrator}\n\n[orchestrator.profile]\ncheck_timeout_secs = 10\n"
+                "[orchestrator]\ngit_timeout_secs = 5\n{orchestrator}\n\n                 [orchestrator.cache_dirs]\n{:?} = [{:?}]\n\n                 [orchestrator.profile]\ncheck_timeout_secs = 10\n",
+                repo_key.display().to_string(),
+                cache.display().to_string(),
             ),
         )
         .unwrap();
@@ -179,6 +187,12 @@ impl RunHarness {
             env: all,
             daemon: Mutex::new(None),
         }
+    }
+
+    /// The one `cache_dirs` directory this harness's config grants for its repository
+    /// (F1c round 3, N3): where a confined check may write outside its checkout.
+    pub fn cache_dir(&self) -> PathBuf {
+        self.dir.path().join("cache")
     }
 
     pub fn socket(&self) -> PathBuf {

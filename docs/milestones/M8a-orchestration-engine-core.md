@@ -2216,7 +2216,7 @@ mkdir -p /tmp/anthrex-m8a && cd /tmp/anthrex-m8a && git init -b main demo && cd 
     - the worker's `task_done` is rejected with `AGENTS.md configures or instructs future agents…`, and after it reverts, the task merges;
     - `AGENTS.md` on the run branch is unchanged.
 4d. **Codex project config.** If M8a.1 found that Codex loads project config, commit a `.codex/config.toml` and start a run with a Codex task. It is either excluded (the argv carries `codex_user_config_only`) or refused without `--trust-project`, as decision 53 says. Remove the file afterwards.
-4e. **The worker grant in the real CLIs (final fix batch F1, fix round 4, S5; replaced by F1b, then by F1c).** Since F1c a task checkout is its own repository in anthrex's data directory (`<data_dir>/runs/<run>/tasks/<task>/git`, the user's `<common>/objects` its only alternate), and a worker's grant names nothing of the user's repository: its checkout, the checkout's private object directory (`<data_dir>/runs/<run>/tasks/<task>/git/objects`), its per-task tmp (`.../tasks/<task>/tmp`), and about 30 files and directories of the checkout's own git dir (`HEAD`, `index`, the merge and rebase files, each with its `.lock`). With a real Claude worker and a real Codex worker, confirm that each CLI accepts the list (Claude's `--settings` `allowWrite`, Codex's `writable_roots`), that Claude's generated seatbelt profile and Codex's `-D WRITABLE_ROOT_n` parameters keep every entry, and that `touch <common>/objects/x`, `touch <user checkout>/.git/index` and `git -C <user checkout> update-ref refs/heads/x HEAD` are refused in the worker's shell. Confirm that `env | grep ^GIT_` in the worker's shell shows `GIT_CONFIG_PARAMETERS` and no `GIT_OBJECT_DIRECTORY` or `GIT_ALTERNATE_OBJECT_DIRECTORIES` (the checkout's repository is self-describing), that `git config --get core.logAllRefUpdates` prints `false` and `git config --get gc.auto` prints `0`, that the worker's `git status` shows a detached `HEAD`, that `git worktree list` in the user's checkout does not list the task, and that the worker's `git commit` succeeds and its commit reaches the task's branch only after `task_done` (`git rev-parse anthrex/<run>/<task>` in the user's checkout before and after). On Linux, repeat under the Linux sandbox (bubblewrap/landlock). Since F1c (I2) checks and proofs are confined too on macOS: with a plan whose `check` tries `touch <common>/objects/x`, `touch <user checkout>/.git/index` and `touch ~/x`, confirm each is denied (`Operation not permitted` in the check's output) and a real `cargo test` check still passes. Confirm `setup` is denied the same writes. **On Linux, checks, proofs and setup cannot be confined**: confirm that `anthrex run start` refuses with a message naming `--unconfined-checks`, that with the flag the run starts and `anthrex run status` and the report say its checks are unconfined, and treat such a run's checks as having the daemon's own write access.
+4e. **The worker grant in the real CLIs (final fix batch F1, fix round 4, S5; replaced by F1b, then by F1c).** Since F1c a task checkout is its own repository in anthrex's data directory (`<data_dir>/runs/<run>/tasks/<task>/git`, the user's `<common>/objects` its only alternate), and a worker's grant names nothing of the user's repository: its checkout, the checkout's private object directory (`<data_dir>/runs/<run>/tasks/<task>/git/objects`), its per-task tmp (`.../tasks/<task>/tmp`), and about 30 files and directories of the checkout's own git dir (`HEAD`, `index`, the merge and rebase files, each with its `.lock`). With a real Claude worker and a real Codex worker, confirm that each CLI accepts the list (Claude's `--settings` `allowWrite`, Codex's `writable_roots`), that Claude's generated seatbelt profile and Codex's `-D WRITABLE_ROOT_n` parameters keep every entry, and that `touch <common>/objects/x`, `touch <user checkout>/.git/index` and `git -C <user checkout> update-ref refs/heads/x HEAD` are refused in the worker's shell. Confirm that `env | grep ^GIT_` in the worker's shell shows `GIT_CONFIG_PARAMETERS` and no `GIT_OBJECT_DIRECTORY` or `GIT_ALTERNATE_OBJECT_DIRECTORIES` (the checkout's repository is self-describing), that `git config --get core.logAllRefUpdates` prints `false` and `git config --get gc.auto` prints `0`, that the worker's `git status` shows a detached `HEAD`, that `git worktree list` in the user's checkout does not list the task, and that the worker's `git commit` succeeds and its commit reaches the task's branch only after `task_done` (`git rev-parse anthrex/<run>/<task>` in the user's checkout before and after). On Linux, repeat under the Linux sandbox (bubblewrap/landlock). Since F1c (I2) checks and proofs are confined too on macOS: with a plan whose `check` tries `touch <common>/objects/x`, `touch <user checkout>/.git/index` and `touch ~/x`, confirm each is denied (`Operation not permitted` in the check's output) and a real `cargo test` check still passes. Confirm `setup` is denied the same writes. **On Linux, checks, proofs and setup cannot be confined**: confirm that `anthrex run start` refuses with a message naming `--unconfined-checks`, that with the flag the run starts and `anthrex run status` and the report say its checks are unconfined, and treat such a run's checks as having the daemon's own write access. F1c round 3: confirm a confined check cannot reach the anthrex daemon, so a check that connects to `$ANTHREX_SOCKET` (or the default socket path) is denied, and `env | grep ^ANTHREX_` in the check's shell is empty; confirm `launchctl submit` from a check does not run its job. Confirm a Claude reviewer runs under a read-only sandbox: `git diff --output=$HOME/x` and `git show --output=<repo>/.git/hooks/post-checkout` are denied, and a Codex reviewer runs `-s read-only`. Confirm `[orchestrator.cache_dirs]` is read only from the user's own config keyed by repository root (a plan's `[profile] cache_dirs` is refused at `run start`), and that a `cache_dirs` entry of `~`, `~/.ssh`, `~/.gitconfig` or `~/Library` is refused.
 5. In the TUI, typing into a focused worker window does nothing, and the kill and remove commands on it show decision 49's refusal. The run carries on.
 6. While `t2`'s worker runs, `anthrex daemon stop`:
    - `pgrep -fl "claude -p"` shows nothing of this run.
@@ -9333,4 +9333,65 @@ The controller's rulings on F1 re-review 4 (C1, I1, I2 and concern 3a), in that 
   - The e2e harness sets `unconfined_checks = true` in its config on platforms without
     confinement, so Linux CI's runs start; `server_runs.rs` passes the flag there.
   - Linux with bubblewrap: not implemented (ruling); recorded in the follow-ups.
+#### F1c round 3 (2026-09-25)
+
+Re-review 1 (`final-fix-F1c-rereview-1.md`) found the I2 confinement stopped file
+writes but not the ways a confined command reaches the daemon or writes through a
+worker-planted directory link, and that `cache_dirs` came from the plan.
+
+- **N1 (Critical): a confined check, proof or setup cannot reach the anthrex daemon.**
+  The `sandbox-exec` profile is no longer `(allow default)` for the network: Unix-socket
+  `connect` and `bind` are denied everywhere but the command's own writable directories,
+  so the daemon socket (under the data dir) is unreachable; `mach-lookup` of launchd is
+  denied, and `launchctl submit` is blocked by sandbox-exec's container regardless.
+  Outbound TCP/UDP stays allowed for package fetches (the daemon listens on no TCP
+  port), recorded as the accepted design. `run::exec::engine_env` also strips every
+  `ANTHREX_*` variable from a confined command, so it is not handed the socket path.
+  Tests: `run_confine.rs`'s `a_confined_check_cannot_connect_to_a_socket_outside_its_writable_dirs`
+  (a listener the test owns in `/tmp`, denied; one inside the checkout, allowed; red on
+  the old profile) and `a_confined_check_cannot_submit_a_launchd_job`; the profile unit
+  assertions; `run::exec`'s `engine_env` test now pins `ANTHREX_SOCKET`/`ANTHREX_DATA_DIR`
+  removal.
+- **N8 (Minor): `/dev` is no longer writable as a whole subpath.** Only `null`, `zero`,
+  `random`, `urandom`, `tty`, `dtracehelper` and `/dev/fd` are, so a confined command
+  cannot write another terminal's or a window's PTY. Verified cargo and git still build
+  and run under the tightened profile.
+- **N2 (Important): the engine writes a checkout's `alternates` without following a
+  link.** `objects/` is writable by the worker and by confined commands, so a link
+  planted at `objects/info` could redirect the `alternates` write. `ensure` now makes
+  `objects/info` and `objects/pack` with the no-follow `engine_child` walk, and writes
+  `alternates` through `sandbox::put_beneath`, which opens each directory
+  `O_DIRECTORY|O_NOFOLLOW` and writes an exclusive temp renamed with `renameat`. Test:
+  `run_git_checkout.rs`'s `a_link_at_objects_info_is_refused_and_nothing_is_written_through_it`
+  (red on the old `ensure`).
+- **N6 (Minor): a task's `HEAD` is reset to the branch tip only when it names no
+  commit.** `ensure` now resets to `at` only for a `HEAD` that is a symbolic ref, a link
+  or garbage; any other import failure (a timeout, a git that did not start) is returned
+  and the op retried, so the worker's unimported commits are not orphaned. Test:
+  `a_failed_import_while_re_making_a_checkout_keeps_the_workers_head` (red on the old
+  `ensure`).
+- **N3 (Important): `cache_dirs` comes only from the user's own config, keyed by
+  repository root.** It is no longer a `proto::ProfileSpec` field (so a plan's
+  `[profile] cache_dirs` is refused by `deny_unknown_fields`, and `[orchestrator.profile]
+  cache_dirs` is an unknown key), but a new `[orchestrator.cache_dirs]` table keyed by
+  repository root; `build_run` sets the run's list from the entry for its root (matched
+  both as written and canonicalised). `confine::cache_dir` additionally refuses `$HOME`,
+  an ancestor of it, a dotfile directory directly under it (`~/.ssh`, `~/.gitconfig`,
+  `~/.claude`) and `~/Library` itself, while allowing a deeper named path
+  (`~/.cargo/registry`, `~/Library/Caches/x`). Tests: `a_plan_setting_cache_dirs_is_refused`,
+  `cache_dirs_come_from_the_users_config_keyed_by_repo_root`,
+  `cache_dirs_are_read_keyed_by_repo_root`, and `confine.rs`'s
+  `home_dotfiles_and_library_are_sensitive_but_named_subpaths_are_not`. The e2e harness
+  now grants one `cache_dir` per repository (`RunHarness::cache_dir`); the round-2 review
+  test logs there.
+- **N4 (Important): a Claude reviewer runs read-only.** `reviewer_spec` gives a Claude
+  reviewer a seatbelt sandbox with an empty `allowWrite`, so `git diff --output=<path>`
+  (and `log`/`show`) cannot write a file; a Codex reviewer already runs `-s read-only`.
+  Claude Code's permission matcher may still allow the `--output` flag; the sandbox is
+  the block. Asserted in `role_launch.rs`'s `reviewer_spec_is_read_only` and the
+  `argv_tests` reviewer settings. Scouts (M9) must be launched the same way; recorded in
+  the follow-ups.
+- **N5, N7 (Minor): recorded in the follow-ups.** N5: a checkout deleted by hand loses
+  its unimported commits at run end. N7: `includeIf "gitdir:..."` stops matching for task
+  checkouts (a 3a regression in the user's commit identity).
 

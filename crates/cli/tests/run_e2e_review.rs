@@ -202,16 +202,13 @@ fn e2e_override_merges_without_approval_and_is_reported() {
     );
     // The check logs where it ran: a green merge candidate leaves no check record, so
     // the log shows the candidate check (in the integration worktree) did run.
-    // Final fix batch F1c (I2): a confined check writes outside its checkout only to
-    // the profile's `cache_dirs`.
-    let out = h.dir.path().canonicalize().unwrap().join("out");
-    std::fs::create_dir_all(&out).unwrap();
-    let checks = out.join("checks.log");
+    // Final fix batch F1c (I2, round 3 N3): a confined check writes outside its checkout
+    // only to the user config's `cache_dirs`; the harness grants one such directory.
+    let checks = h.cache_dir().join("checks.log");
     let check = format!("pwd >> {}", checks.display());
-    let profile = format!("cache_dirs = [{:?}]", out.display().to_string());
     let plan = format!(
         "max_bounces = 1\n{}",
-        plan(&profile, &[task("t1", &["a.rs"], "")])
+        plan("", &[task("t1", &["a.rs"], "")])
     )
     .replace("check = \"true\"", &format!("check = {check:?}"));
     let id = h.start(&plan, true);

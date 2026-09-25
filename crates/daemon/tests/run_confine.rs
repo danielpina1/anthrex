@@ -293,3 +293,95 @@ fn a_checkout_that_cannot_be_confined_is_refused() {
     let err = w.spec(&[&cache]).for_checkout(&task).unwrap_err();
     assert!(err.contains("overlaps the git common directory"), "{err}");
 }
+
+/// F1c round 3 (N1): a confined check must not reach a Unix socket outside its own
+/// writable directories. The test owns a listener under a short path in `/tmp` (a
+/// stand-in for the anthrex daemon's socket); a `connect()` to it from inside the
+/// profile is denied, while one to a socket inside the checkout is allowed. No accept
+/// thread is joined: a denied connect never arrives, so the listener is polled
+/// non-blocking after the check instead.
+#[test]
+fn a_confined_check_cannot_connect_to_a_socket_outside_its_writable_dirs() {
+    use std::os::unix::net::UnixListener;
+
+    // A short base path: a Unix socket address must fit in ~104 bytes.
+    let base = std::path::PathBuf::from(format!("/tmp/axsock-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let outside = base.join("d.sock");
+    let listener = UnixListener::bind(&outside).unwrap();
+    listener.set_nonblocking(true).unwrap();
+
+    let w = world();
+    let task = w.task();
+    let confinement = w.spec(&[]).for_checkout(&task).unwrap();
+    let inside = task.join("in.sock");
+    let inside_listener = UnixListener::bind(&inside).unwrap();
+    inside_listener.set_nonblocking(true).unwrap();
+    let command = format!(
+        "python3 - <<'PY'\n\
+         import socket\n\
+         for p in [{out:?}, {ins:?}]:\n\
+         \x20 s=socket.socket(socket.AF_UNIX)\n\
+         \x20 try:\n\
+         \x20  s.connect(p); print('connected', p)\n\
+         \x20 except Exception:\n\
+         \x20  print('denied', p)\n\
+         PY",
+        out = outside.display(),
+        ins = inside.display(),
+    );
+
+    let outcome = run_confined(&task, &command, &[], LONG, Some(&confinement));
+    assert!(outcome.ok, "{outcome:?}");
+    assert!(
+        outcome
+            .tail
+            .contains(&format!("denied {}", outside.display())),
+        "the check reached the outside socket: {}",
+        outcome.tail
+    );
+    assert!(
+        outcome
+            .tail
+            .contains(&format!("connected {}", inside.display())),
+        "the check could not reach a socket inside its checkout: {}",
+        outcome.tail
+    );
+    // Nothing ever connected to the outside listener.
+    assert!(
+        matches!(
+            listener.accept(),
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock
+        ),
+        "the outside listener saw a connection from the confined check"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// F1c round 3 (N1): `launchctl submit` from a confined check does not run its job
+/// unsandboxed. The job would only touch a file in the test's temp dir; if it ran, it
+/// is removed by its exact label.
+#[test]
+fn a_confined_check_cannot_submit_a_launchd_job() {
+    let w = world();
+    let task = w.task();
+    let confinement = w.spec(&[]).for_checkout(&task).unwrap();
+    let marker = w.outside.join("launched");
+    let label = format!("com.anthrex.f1c-test.{}", std::process::id());
+    let command = format!(
+        "launchctl submit -l {label} -- /usr/bin/touch {marker}; echo submit=$?",
+        marker = marker.display()
+    );
+    let outcome = run_confined(&task, &command, &[], LONG, Some(&confinement));
+    // Give any job that did slip through a moment, then clean it up by exact label.
+    std::thread::sleep(Duration::from_millis(500));
+    let ran = marker.exists();
+    let _ = std::process::Command::new("launchctl")
+        .args(["remove", &label])
+        .status();
+    assert!(
+        !ran,
+        "launchctl submit ran the job unsandboxed: {outcome:?}"
+    );
+}

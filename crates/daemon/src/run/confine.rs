@@ -13,15 +13,29 @@
 //! - the checkout's own object store when it is its own repository (F1c, 3a);
 //! - its per-checkout temporary directory, `<data>/runs/<run>/tasks/<name>/tmp`, which
 //!   is `TMPDIR` for the command;
-//! - the profile's `cache_dirs`, none of which may overlap the git common directory or
-//!   anthrex's data directory;
-//! - `/dev`.
+//! - the profile's `cache_dirs` (F1c round 3, N3: the user's own
+//!   `[orchestrator.cache_dirs]` keyed by repository root, never a plan or the repo
+//!   profile), none of which may overlap the git common directory or anthrex's data
+//!   directory, be `$HOME`, an ancestor of it, a dotfile directory directly under it,
+//!   or `~/Library` itself;
+//! - a small set of `/dev` nodes (`null`, `zero`, `random`, `urandom`, `tty`,
+//!   `dtracehelper`, `fd`), not all of `/dev`, so the ttys are unreachable (N8).
 //!
 //! Everything else, the user's `.git`, their checkout and `$HOME` included, is
 //! read-only. Every writable path is spelled the way [`super::git::private_dir`] spells
 //! a worker's grant (I1): the engine's parent resolved, the leaf's name appended and
 //! checked with `lstat`, never a path resolved through something the command could
 //! have swapped.
+//!
+//! F1c round 3 (N1): a confined command must not reach the anthrex daemon and have it
+//! act unconfined. The profile denies Unix-socket `connect` and `bind` everywhere but
+//! the command's own writable directories (so the daemon socket, which lives under the
+//! data directory, is unreachable), and denies `mach-lookup` of launchd; `launchctl
+//! submit` is blocked by sandbox-exec's container regardless. Outbound TCP/UDP stays
+//! allowed, because checks legitimately fetch packages and this cannot be restricted
+//! without a per-project allow-list; the daemon listens on no TCP port, so that opens
+//! no route to it. `run::exec::engine_env` also strips every `ANTHREX_*` variable from
+//! a confined command, so it is not even handed the socket path.
 //!
 //! On macOS the profile is applied with `/usr/bin/sandbox-exec -p <profile> /bin/sh`,
 //! which applies the profile and `exec`s the shell: the pid the engine waits for and
@@ -35,6 +49,18 @@ use std::time::Duration;
 use super::exec::{ShellOutcome, run_confined};
 use super::git::{Repo, checkout_repo_dir, private_dir};
 use super::model::Run;
+
+/// The `/dev` nodes a confined command may open, instead of all of `/dev` (F1c round 3,
+/// N8): the ttys are excluded, so a command cannot write another terminal's or a
+/// window's PTY.
+const DEV_NODES: &[&str] = &[
+    "/dev/null",
+    "/dev/zero",
+    "/dev/random",
+    "/dev/urandom",
+    "/dev/tty",
+    "/dev/dtracehelper",
+];
 
 /// The program that applies a profile, on macOS.
 pub const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
@@ -151,14 +177,42 @@ impl Confinement {
     /// The `sandbox-exec` profile: everything allowed but file writes, which are
     /// allowed only under [`Self::writable`] and `/dev`.
     pub fn profile(&self) -> Result<String, String> {
-        let mut profile =
-            String::from("(version 1)\n(allow default)\n(deny file-write*)\n(allow file-write*\n");
-        profile.push_str("  (subpath \"/dev\")");
-        for path in &self.writable {
-            profile.push_str(&format!("\n  (subpath {})", sbpl_string(path)?));
+        // F1c round 3 (N1, N8): file writes are denied except under the writable set and
+        // a small list of `/dev` nodes; a check must not reach a Unix socket (the
+        // anthrex daemon's among them) outside its own writable dirs, so Unix-socket
+        // connect and bind are denied except there. `launchctl submit` and the like are
+        // already blocked by sandbox-exec's container; `mach-lookup` of launchd is
+        // denied as well, for defence in depth. Outbound TCP/UDP stays allowed for
+        // package fetches (see the module doc); the daemon listens on no TCP port.
+        let mut writes = String::new();
+        // N8: only the harmless `/dev` nodes a build needs, not all of `/dev` (which
+        // includes the ttys).
+        for node in DEV_NODES {
+            writes.push_str(&format!("  (literal \"{node}\")\n"));
         }
-        profile.push_str(")\n");
-        Ok(profile)
+        writes.push_str("  (subpath \"/dev/fd\")\n");
+        let mut connects = String::new();
+        let mut binds = String::new();
+        for path in &self.writable {
+            let quoted = sbpl_string(path)?;
+            writes.push_str(&format!("  (subpath {quoted})\n"));
+            connects.push_str(&format!("  (remote unix-socket (subpath {quoted}))\n"));
+            binds.push_str(&format!("  (local unix-socket (subpath {quoted}))\n"));
+        }
+        // DNS resolution over the system resolver's socket.
+        connects
+            .push_str("  (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\"))\n");
+        Ok(format!(
+            "(version 1)\n\
+             (allow default)\n\
+             (deny file-write*)\n\
+             (allow file-write*\n{writes})\n\
+             (deny network-outbound (remote unix-socket))\n\
+             (deny network-bind (local unix-socket))\n\
+             (allow network-outbound\n{connects})\n\
+             (allow network-bind\n{binds})\n\
+             (deny mach-lookup (global-name \"com.apple.xpc.launchd\"))\n"
+        ))
     }
 }
 
@@ -221,6 +275,18 @@ fn cache_dir(raw: &str, checkout: &Path) -> Result<PathBuf, String> {
             "profile cache_dirs entry {raw:?} must be a path without `..`"
         ));
     }
+    // F1c round 3 (N3): even from the user's own config, refuse $HOME itself, an
+    // ancestor of it, a dotfile directory directly under it (`~/.ssh`, `~/.gitconfig`,
+    // `~/.claude`) and `~/Library` itself. A deeper path the user named exactly
+    // (`~/.cargo/registry`, `~/Library/Caches/x`) is allowed.
+    if let Some(home) = std::env::var_os("HOME")
+        && let Some(why) = sensitive_reason(&path, Path::new(&home))
+    {
+        return Err(format!(
+            "cache_dirs entry {raw:?} resolves to {} ({why}); name a directory inside it instead",
+            path.display()
+        ));
+    }
     let mut existing = path.as_path();
     let mut rest = Vec::new();
     while !existing.exists() {
@@ -237,6 +303,24 @@ fn cache_dir(raw: &str, checkout: &Path) -> Result<PathBuf, String> {
         resolved.push(name);
     }
     Ok(resolved)
+}
+
+/// F1c round 3 (N3): why `path` is too sensitive to be a `cache_dirs` entry, given
+/// `home`, or `None` when it is fine. Pure.
+fn sensitive_reason(path: &Path, home: &Path) -> Option<&'static str> {
+    if path == home || home.starts_with(path) {
+        return Some("$HOME or an ancestor of it");
+    }
+    if path.parent() == Some(home) {
+        let name = path.file_name().and_then(|n| n.to_str());
+        if name.is_some_and(|n| n.starts_with('.')) {
+            return Some("a dotfile directory directly under $HOME");
+        }
+        if name == Some("Library") {
+            return Some("~/Library");
+        }
+    }
+    None
 }
 
 fn canonical(path: &Path) -> PathBuf {
@@ -296,6 +380,14 @@ mod tests {
         let profile = c.profile().unwrap();
         assert!(profile.contains("(deny file-write*)"), "{profile}");
         assert!(profile.contains(&format!("(subpath \"{}\")", checkout.display())));
+        // F1c round 3 (N1, N8): the daemon socket and the ttys are unreachable.
+        assert!(
+            profile.contains("(deny network-outbound (remote unix-socket))"),
+            "{profile}"
+        );
+        assert!(profile.contains("com.apple.xpc.launchd"), "{profile}");
+        assert!(!profile.contains("(subpath \"/dev\")"), "{profile}");
+        assert!(profile.contains("(literal \"/dev/null\")"), "{profile}");
     }
 
     #[test]
@@ -316,6 +408,37 @@ mod tests {
             assert!(
                 err.contains("overlaps") || err.contains("`..`"),
                 "{bad}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn home_dotfiles_and_library_are_sensitive_but_named_subpaths_are_not() {
+        // F1c round 3 (N3). Pure, so it needs no $HOME mutation.
+        let home = Path::new("/Users/me");
+        for bad in [
+            "/Users/me",
+            "/Users",
+            "/",
+            "/Users/me/.ssh",
+            "/Users/me/.gitconfig",
+            "/Users/me/.claude",
+            "/Users/me/Library",
+        ] {
+            assert!(
+                sensitive_reason(Path::new(bad), home).is_some(),
+                "{bad} was allowed"
+            );
+        }
+        for ok in [
+            "/Users/me/.cargo/registry",
+            "/Users/me/Library/Caches/anthrex",
+            "/Users/me/builds",
+            "/tmp/cache",
+        ] {
+            assert!(
+                sensitive_reason(Path::new(ok), home).is_none(),
+                "{ok} was refused"
             );
         }
     }

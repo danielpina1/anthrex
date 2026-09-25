@@ -6,7 +6,7 @@
 //! with stdin on `/dev/null`, and with both stdout and stderr on **one** pipe, so the
 //! shell's own complaints (a command not found, a syntax error) land in order with the
 //! command's output. The environment is decision 26's: every inherited `CLAUDE_CODE_*`
-//! variable, `CLAUDECODE` and `ANTHREX_WINDOW_ID` are removed, as are AGENTS.md rule
+//! variable, `CLAUDECODE` and every `ANTHREX_*` variable are removed, as are AGENTS.md rule
 //! 11's five git variables, and the profile's `env` is set on top.
 //!
 //! This is its own loop rather than `crate::subprocess::capture`, which it borrows its
@@ -126,9 +126,23 @@ fn engine_env(command: &mut Command, env: &[(String, String)]) {
             command.env_remove(&key);
         }
     }
+    // F1c round 3 (N1): a check, proof or setup runs code the workers wrote, so it must
+    // not be handed the daemon's own coordinates. Every `ANTHREX_*` variable is removed
+    // (`ANTHREX_SOCKET` and `ANTHREX_DATA_DIR` among them), so it cannot address the
+    // daemon even though the sandbox already denies the connection. The three the daemon
+    // is known to set are removed by name so it holds whatever the inherited environment
+    // is; any other `ANTHREX_*` present is removed too. The profile's `env` is set
+    // afterwards, so a profile that legitimately sets one still wins.
     command
         .env_remove("CLAUDECODE")
-        .env_remove("ANTHREX_WINDOW_ID");
+        .env_remove("ANTHREX_WINDOW_ID")
+        .env_remove("ANTHREX_SOCKET")
+        .env_remove("ANTHREX_DATA_DIR");
+    for (key, _) in std::env::vars_os() {
+        if key.as_bytes().starts_with(b"ANTHREX_") {
+            command.env_remove(&key);
+        }
+    }
     for (key, value) in env {
         command.env(key, value);
     }
@@ -507,6 +521,8 @@ mod tests {
         let envs: Vec<(&OsStr, Option<&OsStr>)> = command.get_envs().collect();
         assert!(envs.contains(&(OsStr::new("CLAUDECODE"), None)));
         assert!(envs.contains(&(OsStr::new("ANTHREX_WINDOW_ID"), None)));
+        assert!(envs.contains(&(OsStr::new("ANTHREX_SOCKET"), None)));
+        assert!(envs.contains(&(OsStr::new("ANTHREX_DATA_DIR"), None)));
         assert!(envs.contains(&(OsStr::new("GIT_DIR"), None)));
         assert!(envs.contains(&(OsStr::new("A"), Some(OsStr::new("1")))));
     }

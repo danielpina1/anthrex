@@ -71,6 +71,10 @@ pub struct Orchestrator {
     /// unconfined where the platform cannot confine them (as `run start
     /// --unconfined-checks`). The user's own config only: a plan cannot set it.
     pub unconfined_checks: bool,
+    /// M8a final fix batch F1c round 3 (N3): `[orchestrator.cache_dirs]`, a table
+    /// keyed by repository root of the directories a confined check, proof or `setup`
+    /// in that repository may also write. The user's own config only.
+    pub cache_dirs: std::collections::BTreeMap<String, Vec<String>>,
     pub claude: ClaudeHeadless,
     pub builtin_models: bool,
     pub models: Vec<proto::ModelEntry>,
@@ -130,6 +134,7 @@ impl Default for Orchestrator {
             worker_codex_sandbox: "workspace-write".to_string(),
             worker_sandbox: true,
             unconfined_checks: false,
+            cache_dirs: std::collections::BTreeMap::new(),
             claude: ClaudeHeadless::default(),
             builtin_models: true,
             models: default_roster(),
@@ -245,6 +250,7 @@ pub(crate) fn read(table: &toml::Table, problems: &mut Vec<Problem>) -> Orchestr
         problems,
     );
     read_claude(t, &mut o, problems);
+    profile::read_cache_dirs(t, &mut o, problems);
     read_bool_key(
         t,
         "builtin_models",
@@ -563,6 +569,7 @@ pub(crate) fn report_unknown(value: &toml::Value, problems: &mut Vec<Problem>) {
             | "worker_sandbox"
             | "unconfined_checks"
             | "builtin_models"
+            | "cache_dirs"
             | "models" => {}
             "review" => {
                 report_unknown_nested(sub, "orchestrator.review", KNOWN_REVIEW_KEYS, problems)

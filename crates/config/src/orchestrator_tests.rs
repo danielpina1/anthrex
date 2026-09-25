@@ -553,21 +553,34 @@ protected = ["x/**"]
 }
 
 #[test]
-fn profile_cache_dirs_are_read() {
-    // M8a final fix batch F1c (I2): where a confined check may also write.
+fn cache_dirs_are_read_keyed_by_repo_root() {
+    // M8a final fix batch F1c round 3 (N3): `[orchestrator.cache_dirs]`, per repository.
     let (config, problems) = parse(
         r#"
-[orchestrator.profile]
-cache_dirs = ["~/.cache/sccache", "/opt/cache"]
+[orchestrator.cache_dirs]
+"/Users/me/work/anthrex" = ["~/.cache/sccache", "/opt/cache"]
+"/Users/me/other" = ["~/.cargo/registry"]
 "#,
     );
     assert!(problems.is_empty(), "{problems:?}");
     assert_eq!(
-        config.orchestrator.profile.cache_dirs,
-        Some(vec![
+        config.orchestrator.cache_dirs.get("/Users/me/work/anthrex"),
+        Some(&vec![
             "~/.cache/sccache".to_string(),
             "/opt/cache".to_string()
         ])
+    );
+    assert_eq!(
+        config.orchestrator.cache_dirs.get("/Users/me/other"),
+        Some(&vec!["~/.cargo/registry".to_string()])
+    );
+    // It is not a profile key any more.
+    let (_, problems) = parse("[orchestrator.profile]\ncache_dirs = [\"x\"]\n");
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.key == "orchestrator.profile.cache_dirs"),
+        "{problems:?}"
     );
 }
 

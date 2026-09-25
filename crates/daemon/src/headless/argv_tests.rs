@@ -79,7 +79,9 @@ pub(super) fn reviewer(runtime: Runtime) -> HeadlessSpec {
         .to_vec(),
         claude_permission_mode: Some("dontAsk".into()),
         claude_disallowed_tools: ["Edit", "Write", "NotebookEdit"].map(String::from).to_vec(),
-        claude_sandbox: None,
+        claude_sandbox: Some(ClaudeSandbox {
+            writable_roots: Vec::new(),
+        }),
         codex_sandbox: "read-only".into(),
         codex_writable_roots: vec![],
         ..worker(runtime)
@@ -275,10 +277,15 @@ fn argv_builders() {
             "medium",
         ])
     );
-    assert_eq!(
-        json_after(&reviewer_argv, "--settings"),
-        launch::claude::settings(Path::new(EXE), WINDOW)
-    );
+    // F1c round 3 (N4): the reviewer's settings now carry a read-only sandbox block.
+    let mut reviewer_expected = launch::claude::settings(Path::new(EXE), WINDOW);
+    reviewer_expected["sandbox"] = json!({
+        "enabled": true,
+        "allowUnsandboxedCommands": false,
+        "failIfUnavailable": true,
+        "filesystem": {"allowWrite": []},
+    });
+    assert_eq!(json_after(&reviewer_argv, "--settings"), reviewer_expected);
     assert_eq!(
         json_after(&reviewer_argv, "--mcp-config"),
         mcp_config("reviewer", "t2")
@@ -475,13 +482,30 @@ fn worker_settings_json_enables_the_sandbox() {
         claude_settings(Path::new(EXE), WINDOW, None, &CLI_CAPS),
         plain
     );
+    // F1c round 3 (N4): a Claude reviewer runs read-only, so its settings carry a
+    // sandbox block whose `allowWrite` is empty.
+    let reviewer_settings = json_after(
+        &claude(&reviewer(Runtime::Claude), &new_session(), &CLI_CAPS),
+        "--settings",
+    );
+    assert_eq!(
+        reviewer_settings["sandbox"],
+        json!({
+            "enabled": true,
+            "allowUnsandboxedCommands": false,
+            "failIfUnavailable": true,
+            "filesystem": {"allowWrite": []},
+        })
+    );
+    // A worker with `worker_sandbox = false` (no sandbox spec) still has none.
     let mut unsandboxed = worker(Runtime::Claude);
     unsandboxed.claude_sandbox = None;
-    for spec in [reviewer(Runtime::Claude), unsandboxed] {
-        let settings = json_after(&claude(&spec, &new_session(), &CLI_CAPS), "--settings");
-        assert!(settings.get("sandbox").is_none(), "{settings}");
-        assert_eq!(settings, plain);
-    }
+    let settings = json_after(
+        &claude(&unsandboxed, &new_session(), &CLI_CAPS),
+        "--settings",
+    );
+    assert!(settings.get("sandbox").is_none(), "{settings}");
+    assert_eq!(settings, plain);
 }
 
 #[path = "argv_caps_tests.rs"]

@@ -144,7 +144,10 @@ pub fn resolve_profile(plan: &ProfileSpec, config: &ProfileSpec) -> Profile {
         generated: pick(&plan.generated, &config.generated).unwrap_or_default(),
         protected,
         env: pick(&plan.env, &config.env).unwrap_or_default(),
-        cache_dirs: pick(&plan.cache_dirs, &config.cache_dirs).unwrap_or_default(),
+        // F1c round 3 (N3): `cache_dirs` is not part of the shared profile; it comes
+        // from the user's own `[orchestrator.cache_dirs]`, keyed by repository root, and
+        // is set on the run by `build_run`.
+        cache_dirs: Vec::new(),
     }
 }
 
@@ -267,9 +270,34 @@ fn check_plan(plan: &Plan, profile: &Profile, errors: &mut Vec<PlanError>) {
 /// Turns a parsed plan into a run in `awaiting_approval`, or every problem found.
 /// `ctx.yes` records `approved by --yes` in `approved_by`; moving the run to `running`
 /// is the engine's (M8a.11), since that needs the run branch first.
+/// F1c round 3 (N3): the confined checks' extra writable directories for the repository
+/// at `root`, from the user's `[orchestrator.cache_dirs]`. The key is matched both as
+/// written and canonicalised, so a config that names the repository by a path with a
+/// symlink or a trailing slash still applies.
+fn cache_dirs_for(config: &config::Orchestrator, root: &std::path::Path) -> Vec<String> {
+    let canonical = root.canonicalize().ok();
+    let same = |a: Option<&std::path::Path>, b: Option<&std::path::Path>| match (a, b) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    };
+    for (key, dirs) in &config.cache_dirs {
+        let key_path = std::path::Path::new(key);
+        let key_canonical = key_path.canonicalize().ok();
+        let matches = key_path == root
+            || same(canonical.as_deref(), Some(key_path))
+            || same(key_canonical.as_deref(), canonical.as_deref())
+            || same(key_canonical.as_deref(), Some(root));
+        if matches {
+            return dirs.clone();
+        }
+    }
+    Vec::new()
+}
+
 pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Run, Vec<PlanError>> {
     let config = ctx.config;
-    let profile = resolve_profile(&plan.profile, &config.profile);
+    let mut profile = resolve_profile(&plan.profile, &config.profile);
+    profile.cache_dirs = cache_dirs_for(config, &pre.root);
     let limits = run_limits(config, plan.max_writers, plan.max_readers, plan.max_bounces);
     let mut errors = Vec::new();
     check_plan(&plan, &profile, &mut errors);

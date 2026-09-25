@@ -1076,6 +1076,24 @@ scope.
   (load average 35) right after `complete`; F1c round 2 moved it to the deadline
   helper `report_with`. `run_e2e_basic.rs:67`, `run_e2e_finish.rs:113` and
   `run_e2e_settings.rs:183` still call `report(&run)` directly after `complete`.
+- **N4: a reviewer's allowed git commands could once write files.** A Claude reviewer
+  now runs under a read-only seatbelt sandbox (empty `allowWrite`) and a Codex reviewer
+  under `-s read-only`, so `git diff --output=<path>` cannot write. Claude Code's
+  permission matcher may still allow the `--output` flag on `Bash(git diff:*)`; the
+  sandbox is the real block. Scouts (M9, not built yet) must be launched the same way,
+  a read-only OS sandbox, when they arrive.
+- **N5: a checkout the user deleted by hand loses its unimported commits at run end.**
+  `driver/cleanup.rs::remove_worktree` skips salvage when the checkout directory is
+  gone, and `checkout::remove` then deletes the repository holding the worker's `HEAD`
+  and private objects. Before F1c they survived in the private dir with a recovery
+  recipe. Fix: when the path is gone but `repo.git_dir()/HEAD` names a commit, `sync_in`
+  it (or write a salvage ref) before removal.
+- **N7: `includeIf "gitdir:..."` stops matching for task checkouts (3a regression).** A
+  task checkout's git dir is under anthrex's data dir, so a user who sets their work
+  identity with `[includeIf "gitdir:~/work/"]` gets worker commits with the wrong
+  identity, and those commits are merged into the base branch. Fix to weigh: read the
+  user's `--global`-resolved `user.name`/`user.email` at run start and set them in the
+  checkout's engine-written config, or add an `includeIf "gitdir:<data>/..."`-aware rule.
 - **`git worktree list` no longer shows the run's task checkouts.** Only the
   integration checkout stays a linked worktree. `anthrex run status` is where the
   checkouts are listed.

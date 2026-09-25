@@ -148,11 +148,6 @@ pub struct ProfileSpec {
     pub protected: Option<Vec<String>>,
     #[serde(default)]
     pub env: Option<std::collections::BTreeMap<String, String>>,
-    /// Directories the engine's confined checks and proofs may write besides the
-    /// checkout and its temporary directory (M8a final fix batch F1c, I2): a build
-    /// cache, for example. `~/` is the daemon's `$HOME`.
-    #[serde(default)]
-    pub cache_dirs: Option<Vec<String>>,
 }
 
 /// One `[[task]]` table in a plan file.

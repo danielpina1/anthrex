@@ -187,7 +187,12 @@ pub fn reviewer_spec(run: &Run, task: &Task, route: &Route) -> HeadlessSpec {
         } else {
             Vec::new()
         },
-        claude_sandbox: None,
+        // F1c round 3 (N4): a Claude reviewer's allowed `git diff`/`log`/`show` accept
+        // `--output=<path>`, which writes a file. It runs under a read-only sandbox
+        // (no writable roots), so such a write is denied, matching Codex's `read-only`.
+        claude_sandbox: claude.then(|| ClaudeSandbox {
+            writable_roots: Vec::new(),
+        }),
         codex_sandbox: REVIEWER_CODEX_SANDBOX.to_string(),
         codex_writable_roots: Vec::new(),
         env: profile_env(&run.profile, &path),
@@ -297,10 +302,13 @@ mod tests {
                 ]
             );
             assert_eq!(spec.mcp.as_ref().unwrap().role, AgentRole::Reviewer);
-            assert_eq!(spec.claude_sandbox, None);
             assert_eq!(spec.codex_sandbox, "read-only");
             assert!(spec.codex_writable_roots.is_empty());
             if runtime == Runtime::Claude {
+                // F1c round 3 (N4): a read-only sandbox, so `git diff --output` cannot
+                // write.
+                let sandbox = spec.claude_sandbox.as_ref().expect("read-only sandbox");
+                assert!(sandbox.writable_roots.is_empty());
                 assert_eq!(spec.claude_permission_mode.as_deref(), Some("dontAsk"));
                 assert_eq!(
                     spec.claude_disallowed_tools,

@@ -22,7 +22,6 @@ const KNOWN_PROFILE_KEYS: &[&str] = &[
     "generated",
     "protected",
     "env",
-    "cache_dirs",
 ];
 
 pub(super) fn read_profile(table: &toml::Table, o: &mut Orchestrator, problems: &mut Vec<Problem>) {
@@ -43,7 +42,6 @@ pub(super) fn read_profile(table: &toml::Table, o: &mut Orchestrator, problems: 
     read_profile_string_list(profile, "source", &mut o.profile.source, problems);
     read_profile_string_list(profile, "generated", &mut o.profile.generated, problems);
     read_profile_string_list(profile, "protected", &mut o.profile.protected, problems);
-    read_profile_string_list(profile, "cache_dirs", &mut o.profile.cache_dirs, problems);
 
     if let Some(v) = profile.get("check_timeout_secs") {
         match v
@@ -152,4 +150,54 @@ pub(super) fn report_unknown_profile(value: &toml::Value, problems: &mut Vec<Pro
             problems.push(unknown_key_problem(&format!("orchestrator.profile.{key}")));
         }
     }
+}
+
+/// `[orchestrator.cache_dirs]` (M8a final fix batch F1c round 3, N3): a table keyed by
+/// repository root, each value the directories a confined check, proof or `setup` in
+/// that repository may also write. Only the user's own config sets this (never a plan
+/// or the repo profile), because a `cache_dirs` entry can name a place whose files run
+/// as the user.
+pub(super) fn read_cache_dirs(
+    table: &toml::Table,
+    o: &mut Orchestrator,
+    problems: &mut Vec<Problem>,
+) {
+    let Some(value) = table.get("cache_dirs") else {
+        return;
+    };
+    let Some(map) = value.as_table() else {
+        problems.push(not_a_table_problem("orchestrator.cache_dirs"));
+        return;
+    };
+    let mut out = std::collections::BTreeMap::new();
+    for (root, dirs) in map {
+        let Some(array) = dirs.as_array() else {
+            problems.push(Problem {
+                key: format!("orchestrator.cache_dirs.{root:?}"),
+                message: "expected an array of strings".to_string(),
+                default: "unset".to_string(),
+            });
+            continue;
+        };
+        let mut list = Vec::new();
+        let mut ok = true;
+        for item in array {
+            match item.as_str() {
+                Some(s) => list.push(s.to_string()),
+                None => {
+                    problems.push(Problem {
+                        key: format!("orchestrator.cache_dirs.{root:?}"),
+                        message: "expected an array of strings".to_string(),
+                        default: "unset".to_string(),
+                    });
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if ok {
+            out.insert(root.clone(), list);
+        }
+    }
+    o.cache_dirs = out;
 }
