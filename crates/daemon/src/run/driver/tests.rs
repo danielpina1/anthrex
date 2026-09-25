@@ -329,3 +329,23 @@ async fn a_restore_with_no_runs_still_removes_stale_headless_windows() {
     s.restore().await;
     assert!(manager.list().is_empty(), "{:?}", manager.list());
 }
+
+/// Final review B-9: a report still held back by `REPORT_EVERY` when the daemon stops
+/// is written by the stop, so `REPORT.md` never stays stale for good.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_writes_the_reports_still_due() {
+    let s = service();
+    s.stop_wait_ms.store(50, Ordering::SeqCst);
+    let data = tempfile::tempdir().unwrap();
+    let mut run = poisoned_run("r1", data.path());
+    run.revision = 1;
+    let report = run.report_path();
+    crate::lock(&s.state).runs.insert(run.id.clone(), run);
+    {
+        let mut book = crate::lock(&s.book);
+        book.reports_due.insert("r1".into());
+        book.reports_written.insert("r1".into(), Instant::now());
+    }
+    s.stop().await;
+    assert!(report.is_file(), "the due report was not written at stop");
+}

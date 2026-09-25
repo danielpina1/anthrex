@@ -358,6 +358,7 @@ impl RunService {
         for run in runs {
             effects::save(&self.writes, run).await;
         }
+        self.write_due_reports(unix_now(), true).await;
         self.saved.store(true, Ordering::SeqCst);
         let waiting: Vec<_> = crate::lock(&self.replies).drain().collect();
         for (_, reply) in waiting {
@@ -516,7 +517,7 @@ impl RunService {
                 effects::save(&self.writes, run).await;
             }
         }
-        self.write_due_reports(now).await;
+        self.write_due_reports(now, false).await;
         self.compact_journals().await;
     }
 

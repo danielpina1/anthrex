@@ -241,7 +241,7 @@ impl RunService {
             Effect::UnwatchWorktree { root } => self.unwatch_root(&root),
             Effect::WriteReport { run_id } => {
                 crate::lock(&self.book).reports_due.insert(run_id);
-                self.write_due_reports(now).await;
+                self.write_due_reports(now, false).await;
             }
             Effect::Persist { .. } | Effect::Op { .. } | Effect::Publish { .. } => {}
         }
@@ -370,16 +370,18 @@ impl RunService {
         }
     }
 
-    /// Writes every due report not written in the last [`REPORT_EVERY`]: a temp file,
-    /// then a rename.
-    pub(super) async fn write_due_reports(&self, now: u64) {
+    /// Writes every due report not written in the last [`REPORT_EVERY`] (every due
+    /// report when `all`, as the stop does: final review B-9): a temp file, then a
+    /// rename.
+    pub(super) async fn write_due_reports(&self, now: u64, all: bool) {
         let due: Vec<Run> = {
             let mut book = crate::lock(&self.book);
             let ready: Vec<String> = book
                 .reports_due
                 .iter()
                 .filter(|id| {
-                    book.reports_written
+                    all || book
+                        .reports_written
                         .get(*id)
                         .is_none_or(|at| at.elapsed() >= REPORT_EVERY)
                 })
