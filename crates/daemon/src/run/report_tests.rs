@@ -342,6 +342,13 @@ fn containment_is_reported_sandbox_off() {
     run.limits.worker_sandbox = false;
     let out = render(&run, 2_000);
     assert!(out.contains("worker sandbox: off ([orchestrator] worker_sandbox = false)"));
+    // Final fix batch F2 (review C, M4): what that opt-out also gives up.
+    assert!(
+        out.contains(
+            "an unsandboxed worker can reach the daemon's socket, so nothing stops it approving its own task's review or accepting the run\n"
+        ),
+        "{out}"
+    );
 }
 
 #[test]

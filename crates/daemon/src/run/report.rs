@@ -136,6 +136,11 @@ fn containment(run: &Run, out: &mut String) {
     }
     if !run.limits.worker_sandbox {
         out.push_str("worker sandbox: off ([orchestrator] worker_sandbox = false)\n");
+        // Final fix batch F2 (review C, M4): the engine's tool gate knows a session only
+        // by its window id, which any socket client can list.
+        out.push_str(
+            "an unsandboxed worker can reach the daemon's socket, so nothing stops it approving its own task's review or accepting the run\n",
+        );
         out.push_str("checks, proofs and setup: unconfined (the workers are unsandboxed)\n");
     } else if run.limits.unconfined_checks {
         out.push_str(
