@@ -117,6 +117,12 @@ fn resolve(task: &Path, extra: &[(&str, &str)]) -> String {
 }
 
 fn only(task: &Path, head: &str, onto: &str, run_head: &str) -> bool {
+    // As the done check does first (final fix batch F1b): the claimed commit imported,
+    // with the worktree's `HEAD` at it for the import, then put back.
+    let was = out(task, &["rev-parse", "HEAD"]);
+    out(task, &["update-ref", "--no-deref", "HEAD", head]);
+    assert_eq!(daemon::run::git::sync(real_git(), task, T).unwrap(), head);
+    out(task, &["update-ref", "--no-deref", "HEAD", &was]);
     let files = vec!["shared.txt".to_string()];
     resolution_only(real_git(), task, head, onto, run_head, &files, T).unwrap()
 }

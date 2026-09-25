@@ -10,6 +10,24 @@ use crate::support::run_git::{T, commit_file, head, out, real_git, try_git};
 use daemon::run::engine::{OpKind, OpResult};
 use daemon::run::reconcile::Reconciled;
 
+/// Git in the task checkout as the engine runs it (final fix batch F1c): the
+/// repository's common object store as its object directory. Asserts success; stdout.
+fn engine(w: &World, dir: &std::path::Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_OBJECT_DIRECTORY", w.root().join(".git/objects"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
 fn merge_head_exists(dir: &std::path::Path) -> bool {
     try_git(dir, &["rev-parse", "-q", "--verify", "MERGE_HEAD"])
         .status
@@ -23,9 +41,14 @@ fn reconcile_a_committed_hand_back_left_mid_merge_finishes_it() {
     let (t1, t1_head) = w.task_with_commit("t1", "src/a.txt", "task\n");
     let run_head = commit_file(&w.run.integration_path(), "src/r.txt", "run\n", "run");
     w.run.run_head = run_head.clone();
-    out(&t1, &["merge", "-q", "--no-ff", "--no-commit", &run_head]);
-    let tree = out(&t1, &["write-tree"]);
-    let commit = out(
+    engine(
+        &w,
+        &t1,
+        &["merge", "-q", "--no-ff", "--no-commit", &run_head],
+    );
+    let tree = engine(&w, &t1, &["write-tree"]);
+    let commit = engine(
+        &w,
         &t1,
         &[
             "commit-tree",
@@ -39,7 +62,7 @@ fn reconcile_a_committed_hand_back_left_mid_merge_finishes_it() {
         ],
     );
     let own = format!("refs/heads/anthrex/{}/t1", w.run.id);
-    out(&t1, &["update-ref", &own, &commit, &t1_head]);
+    out(w.root(), &["update-ref", &own, &commit, &t1_head]);
     // Final fix batch F1b: the worktree is detached, so its `HEAD` moved too.
     out(
         &t1,
@@ -157,8 +180,14 @@ fn pend_hand_back(w: &mut World, t1: &std::path::Path, run_head: &str) {
 }
 
 /// `merge-tree --write-tree`'s tree for `ours` and `theirs`, conflict or not.
-fn merge_tree(dir: &std::path::Path, ours: &str, theirs: &str) -> String {
-    let output = try_git(dir, &["merge-tree", "--write-tree", ours, theirs]);
+fn merge_tree(w: &World, dir: &std::path::Path, ours: &str, theirs: &str) -> String {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["merge-tree", "--write-tree", ours, theirs])
+        .env("GIT_OBJECT_DIRECTORY", w.root().join(".git/objects"))
+        .output()
+        .unwrap();
     let text = String::from_utf8(output.stdout).unwrap();
     text.lines().next().unwrap().to_string()
 }
@@ -174,8 +203,9 @@ fn reconcile_a_clean_hand_back_stopped_before_its_branch_moved_is_not_started() 
     let (t1, t1_head) = w.task_with_commit("t1", "src/a.txt", "task\n");
     let run_head = commit_file(&w.run.integration_path(), "src/r.txt", "run\n", "run");
     w.run.run_head = run_head.clone();
-    let tree = merge_tree(&t1, &t1_head, &run_head);
-    out(
+    let tree = merge_tree(&w, &t1, &t1_head, &run_head);
+    engine(
+        &w,
         &t1,
         &[
             "commit-tree",
@@ -204,8 +234,9 @@ fn reconcile_a_clean_hand_back_stopped_before_its_head_moved_is_not_started() {
     let (t1, t1_head) = w.task_with_commit("t1", "src/a.txt", "task\n");
     let run_head = commit_file(&w.run.integration_path(), "src/r.txt", "run\n", "run");
     w.run.run_head = run_head.clone();
-    let tree = merge_tree(&t1, &t1_head, &run_head);
-    let commit = out(
+    let tree = merge_tree(&w, &t1, &t1_head, &run_head);
+    let commit = engine(
+        &w,
         &t1,
         &[
             "commit-tree",
@@ -219,12 +250,15 @@ fn reconcile_a_clean_hand_back_stopped_before_its_head_moved_is_not_started() {
         ],
     );
     let own = format!("refs/heads/anthrex/{}/t1", w.run.id);
-    out(&t1, &["update-ref", "--no-deref", &own, &commit, &t1_head]);
+    out(
+        w.root(),
+        &["update-ref", "--no-deref", &own, &commit, &t1_head],
+    );
     pend_hand_back(&mut w, &t1, &run_head);
 
     assert_eq!(w.reconcile(), vec![(1, Reconciled::NotStarted)]);
     assert_eq!(head(&t1), t1_head);
-    assert_eq!(out(&t1, &["rev-parse", &own]), t1_head);
+    assert_eq!(out(w.root(), &["rev-parse", &own]), t1_head);
     assert_eq!(out(&t1, &["status", "--porcelain"]), "");
 }
 
@@ -237,8 +271,9 @@ fn reconcile_a_clean_hand_back_whose_files_never_followed_finishes_it() {
     let (t1, t1_head) = w.task_with_commit("t1", "src/a.txt", "task\n");
     let run_head = commit_file(&w.run.integration_path(), "src/r.txt", "run\n", "run");
     w.run.run_head = run_head.clone();
-    let tree = merge_tree(&t1, &t1_head, &run_head);
-    let commit = out(
+    let tree = merge_tree(&w, &t1, &t1_head, &run_head);
+    let commit = engine(
+        &w,
         &t1,
         &[
             "commit-tree",
@@ -252,7 +287,10 @@ fn reconcile_a_clean_hand_back_whose_files_never_followed_finishes_it() {
         ],
     );
     let own = format!("refs/heads/anthrex/{}/t1", w.run.id);
-    out(&t1, &["update-ref", "--no-deref", &own, &commit, &t1_head]);
+    out(
+        w.root(),
+        &["update-ref", "--no-deref", &own, &commit, &t1_head],
+    );
     out(
         &t1,
         &["update-ref", "--no-deref", "HEAD", &commit, &t1_head],
@@ -287,7 +325,7 @@ fn reconcile_a_conflicted_hand_back_stopped_before_merge_head_undoes_it() {
     let (t1, t1_head) = w.task_with_commit("t1", "src/a.txt", "task\n");
     let run_head = commit_file(&w.run.integration_path(), "src/a.txt", "run\n", "run");
     w.run.run_head = run_head.clone();
-    let tree = merge_tree(&t1, &t1_head, &run_head);
+    let tree = merge_tree(&w, &t1, &t1_head, &run_head);
     out(&t1, &["read-tree", "-m", "-u", &t1_head, &tree]);
     std::fs::write(admin(&t1).join("MERGE_MSG"), "Merge commit\n").unwrap();
     pend_hand_back(&mut w, &t1, &run_head);
@@ -317,7 +355,7 @@ fn reconcile_a_conflicted_hand_back_stopped_before_its_stages_undoes_it() {
     let (t1, t1_head) = w.task_with_commit("t1", "src/a.txt", "task\n");
     let run_head = commit_file(&w.run.integration_path(), "src/a.txt", "run\n", "run");
     w.run.run_head = run_head.clone();
-    let tree = merge_tree(&t1, &t1_head, &run_head);
+    let tree = merge_tree(&w, &t1, &t1_head, &run_head);
     out(&t1, &["read-tree", "-m", "-u", &t1_head, &tree]);
     let admin = admin(&t1);
     std::fs::write(admin.join("MERGE_MSG"), "Merge commit\n").unwrap();

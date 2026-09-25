@@ -151,7 +151,10 @@ fn a_task_branch_made_a_symref_to_the_base_is_refused() {
     let run_head = commit_file(&w.integration, "r.txt", "run\n", "run work");
     commit_file(&w.task, "t.txt", "task\n", "task work");
     std::fs::write(w.own_file(), "ref: refs/heads/main\n").unwrap();
-    out(&w.task, &["read-tree", "-u", "--reset", "main"]);
+    // The files follow the base (named by id: the task's checkout, its own repository
+    // since final fix batch F1c, has no branches).
+    let main = out(&w.repo.root, &["rev-parse", "main"]);
+    out(&w.task, &["read-tree", "-u", "--reset", &main]);
     assert_every_engine_call_refuses(&w, &run_head);
 }
 

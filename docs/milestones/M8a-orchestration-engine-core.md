@@ -2216,7 +2216,7 @@ mkdir -p /tmp/anthrex-m8a && cd /tmp/anthrex-m8a && git init -b main demo && cd 
     - the worker's `task_done` is rejected with `AGENTS.md configures or instructs future agents…`, and after it reverts, the task merges;
     - `AGENTS.md` on the run branch is unchanged.
 4d. **Codex project config.** If M8a.1 found that Codex loads project config, commit a `.codex/config.toml` and start a run with a Codex task. It is either excluded (the argv carries `codex_user_config_only`) or refused without `--trust-project`, as decision 53 says. Remove the file afterwards.
-4e. **The worker grant in the real CLIs (final fix batch F1, fix round 4, S5; replaced by F1b).** Since F1b a worker's grant names nothing of the repository's git common directory: its private object directory (`<data_dir>/runs/<run>/tasks/<task>/objects`) and about 30 files and directories of its worktree's own git dir (`HEAD`, `index`, the merge and rebase files, each with its `.lock`). With a real Claude worker and a real Codex worker, confirm that each CLI accepts the list (Claude's `--settings` `allowWrite`, Codex's `writable_roots`), that Claude's generated seatbelt profile and Codex's `-D WRITABLE_ROOT_n` parameters keep every entry, and that `touch <common>/objects/x` and `git update-ref refs/heads/x HEAD` are refused in the worker's shell. Confirm that each CLI's shell passes `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` and `GIT_CONFIG_PARAMETERS` through to the worker's git (`env | grep ^GIT_`; Codex's default shell environment policy drops names containing `KEY`, `SECRET` or `TOKEN`, which these do not), that `git config --get core.logAllRefUpdates` prints `false`, that the worker's `git status` shows a detached `HEAD`, and that its `git commit` succeeds and its commit reaches the task's branch only after `task_done` (`git rev-parse anthrex/<run>/<task>` before and after). On Linux, repeat under the Linux sandbox (bubblewrap/landlock).
+4e. **The worker grant in the real CLIs (final fix batch F1, fix round 4, S5; replaced by F1b, then by F1c).** Since F1c a task checkout is its own repository in anthrex's data directory (`<data_dir>/runs/<run>/tasks/<task>/git`, the user's `<common>/objects` its only alternate), and a worker's grant names nothing of the user's repository: its checkout, the checkout's private object directory (`<data_dir>/runs/<run>/tasks/<task>/git/objects`), its per-task tmp (`.../tasks/<task>/tmp`), and about 30 files and directories of the checkout's own git dir (`HEAD`, `index`, the merge and rebase files, each with its `.lock`). With a real Claude worker and a real Codex worker, confirm that each CLI accepts the list (Claude's `--settings` `allowWrite`, Codex's `writable_roots`), that Claude's generated seatbelt profile and Codex's `-D WRITABLE_ROOT_n` parameters keep every entry, and that `touch <common>/objects/x`, `touch <user checkout>/.git/index` and `git -C <user checkout> update-ref refs/heads/x HEAD` are refused in the worker's shell. Confirm that `env | grep ^GIT_` in the worker's shell shows `GIT_CONFIG_PARAMETERS` and no `GIT_OBJECT_DIRECTORY` or `GIT_ALTERNATE_OBJECT_DIRECTORIES` (the checkout's repository is self-describing), that `git config --get core.logAllRefUpdates` prints `false` and `git config --get gc.auto` prints `0`, that the worker's `git status` shows a detached `HEAD`, that `git worktree list` in the user's checkout does not list the task, and that the worker's `git commit` succeeds and its commit reaches the task's branch only after `task_done` (`git rev-parse anthrex/<run>/<task>` in the user's checkout before and after). On Linux, repeat under the Linux sandbox (bubblewrap/landlock).
 5. In the TUI, typing into a focused worker window does nothing, and the kill and remove commands on it show decision 49's refusal. The run carries on.
 6. While `t2`'s worker runs, `anthrex daemon stop`:
    - `pgrep -fl "claude -p"` shows nothing of this run.
@@ -9128,3 +9128,125 @@ names nothing under the repository's git common directory any more.
   the next import (a turn-end count, a done check, a hand-back). Commits a worker made
   since the last import are also lost to the run if the user deletes the worktree by
   hand (their objects stay in the private directory).
+
+### Final fix batch F1c: engine-owned index, grants, standalone checkouts, confined checks (2026-09-25)
+
+The controller's rulings on F1 re-review 4 (C1, I1, I2 and concern 3a), in that order.
+
+- **C1: the engine never writes an index a worker can write or replace.** Every daemon
+  git command in a task checkout (a pin with an engine directory) runs with
+  `GIT_INDEX_FILE` naming a fresh copy of the checkout's index in the task's
+  engine-owned directory (`<data_dir>/runs/<run>/tasks/<task>/engine/index-<n>`, never
+  in any grant; `worktree::engine_index`). The copy is made by opening `index` with
+  `O_NOFOLLOW | O_NONBLOCK` (a link, a FIFO or anything but a regular file is refused)
+  and keeps its modification time (git's racy-entry test sees what it would on the
+  original). When git changed the copy, it is written to an engine-only temporary name
+  in the checkout's git dir and renamed over `index`: a rename replaces a planted link,
+  it never writes through it. Unchanged, nothing is touched. `pinned::check` also
+  refuses a linked `index` (defence in depth), and salvage removes a non-plain `index`
+  and rebuilds it from `HEAD` (`read-tree <head>`) before `add -A`, so a checkout whose
+  worker planted a link is still salvaged whole.
+  - **Rule 11 exception.** `subprocess::scrub_git_env` now removes the five variables
+    only when *inherited*; one the daemon set on the `Command` itself is kept. The
+    daemon sets exactly two such values, both in `run_git_capturing` for pinned
+    checkouts: `GIT_INDEX_FILE` (the engine's copy, above) and, for a standalone
+    checkout, `GIT_OBJECT_DIRECTORY` (below; not one of the five, but it used to be
+    removed unconditionally too). `run_git_env` asserts `GIT_INDEX_FILE` reaches git only
+    as an engine copy, only in a task checkout.
+  - A worker writing its index while the engine acts loses that write (its own task
+    only).
+- **I1: no grant is computed from a path a worker could have swapped.**
+  `sandbox::private_dir` resolved the private directory with `canonicalize` after
+  checking it with `lstat`; a leftover worker process swapping it for a link between
+  the two widened the next session's grant to any directory (reproduced: 19 of 6659
+  calls under a racing thread). It now resolves only the engine-owned parent, appends
+  the leaf name, makes the leaf with `mkdir` (never follows a link) and checks it with
+  `lstat`, failing closed (`engine_child`). Sweep: `worker_git_dirs` names every entry
+  lexically under the pinned git dir and now removes a symbolic link a worker left at
+  any granted path before the next session is granted it, so a CLI that resolves its
+  grants is never handed the link's target. Residual (recorded in the followups): a
+  live leftover process can still plant a link between that removal and the CLI's own
+  resolution of its grant; whether Claude's and Codex's sandboxes resolve grants is
+  manual check 4e.
+- **3a: each task, review and proof checkout is its own repository (deviation from
+  decision 25).** Decision 25 made a task's worktree a linked worktree of the user's
+  repository (`git worktree add`). Since F1b a worker's commits live only in its private
+  store until imported, and git walks every linked worktree's `HEAD` and index: the
+  user's `fetch`, `pull`, `gc`, `repack`, `prune`, `fsck` and `log --all` failed with
+  `bad object worktrees/<task>/HEAD` during every worker turn. Now a checkout at
+  `<wt>/runs/<run>/<name>` (`<task>`, `<task>.review`, `<task>.proof`) has its own
+  repository at `<data_dir>/runs/<run>/tasks/<name>/` (`run::git::checkout`):
+  - `git/`: the checkout's git dir. `objects/` **is** the worker's private store, with
+    `objects/info/alternates` naming the user's common store (engine-written); `config`
+    (engine-written, not in any grant) sets the repository format (and `objectformat =
+    sha256` for a sha256 repository), `hooksPath = <common>/hooks`, then includes the
+    user's `<common>/config` (their identity, filters and hooks path), then `bare =
+    false`, `worktree = <checkout>`, `logAllRefUpdates = false` and `gc.auto = 0`. Its
+    `info/exclude` is a copy of the user's. No refs: `HEAD` is a detached commit id.
+  - `engine/`: the engine's index copies, the import's `staging.git` (moved here from
+    next to the private directory) and `ready`, written last, once the checkout's files
+    are in place.
+  - `tmp/`: the task's temporary directory (in the worker's grant; its checks'
+    `TMPDIR`).
+  The checkout's `.git` file names `git/` (written by temporary file and rename). The
+  user's `.git` gets no `worktrees/<id>` entry for any task, review or proof: their git
+  works normally during a run (`run_git_users_git`: `fetch`, `pull --ff-only`, `gc
+  --prune=now`, `prune --expire=now`, `repack -a -d`, `fsck`, `log --all` all succeed
+  while a worker holds two unimported commits, one in its own store and one in a store
+  elsewhere; the worker's commit still imports afterwards).
+  - **The engine's view.** Engine git in a checkout is pinned (`--git-dir=<git>
+    --work-tree=<checkout>`) with `GIT_OBJECT_DIRECTORY=<common>/objects`, so it reads
+    and writes only the user's store, never the worker's (the F1b rule holds without
+    the environment removal it used to rely on). `GIT_COMMON_DIR` cannot be used for
+    refs (git's files backend reads a git dir's `commondir` file, ignoring the
+    variable; checked with git 2.50.1), so every ref the engine names in a task
+    (its branch, a salvage ref) is read and written in the user's repository
+    (`pin.common_dir`): `sync_in`'s record, the hand-back's and re-point's
+    compare-and-swaps, salvage's ref. Everything else is by commit id.
+  - **The worker's view.** The repository is self-describing: `GIT_OBJECT_DIRECTORY`
+    and `GIT_ALTERNATE_OBJECT_DIRECTORIES` are no longer set in the worker's
+    environment (`with_worker_objects` is gone; manual check 4e no longer depends on
+    the CLIs passing them through). The grant is the checkout, `git/objects` (the
+    private store, one subpath), `tmp/`, and the commit files of `git/` (as F1b). The
+    worker sees no branches (`git log main` fails; it works by id, as its contract's
+    commands already do).
+  - **The integration worktree stays a linked worktree.** It is per run, not per task;
+    `git merge` and `reattach` need a checkout on the run branch; no worker ever writes
+    it or its git dir; its `HEAD` is always a commit of the user's store, so the
+    user's git never meets a missing object through it. Integration-candidate checks
+    run confined (I2) with write access to its files only, never its git dir.
+  - **Pins, restore, reconcile.** A standalone checkout is pinned to its known git dir
+    (`PinAs::repo`, `Pin::standalone`), never found from `.git`; `pinned::check`
+    refuses one with a `commondir`. Restore pins every task, review and proof checkout
+    from the run's data directory. Reconcile's `PrepareWorktree` row (`task_checkout`):
+    replayed only when the checkout's `ready` marker is there, its directory exists, its
+    branch exists, and its `HEAD` is a commit of the user's store that is not a strict
+    ancestor of the op's `from` (else the re-point had not happened); anything else is
+    not started, and the re-issued op finishes the checkout (every step idempotent), so
+    reconcile never removes a partial checkout. `RemoveWorktree` removes a repository a
+    crash left behind once its checkout is gone.
+  - **Removal and run end (F1b concern 3).** Removing a checkout removes its directory
+    and its whole repository (the worker's private objects, the engine's files, `tmp/`),
+    only when the daemon pinned it as that repository's checkout. Accept and discard
+    remove every task, review and proof checkout, so nothing of a task is left in the
+    data directory but the run's own records.
+  - **A checkout deleted by hand (F1b concern 2).** Its repository survives, so the
+    next prepare imports the worker's unimported commits from it, records them on the
+    branch and puts the files back (`a_task_checkout_deleted_by_hand_comes_back_with_its_work`).
+  - **Degraded, recorded:** the user's `git worktree list` no longer shows task, review
+    or proof checkouts (the TUI still does); Git LFS objects (`<common>/lfs`) and
+    submodule repositories (`<common>/modules`) are not shared with a checkout; a
+    partial clone's promisor remote is not configured in it.
+  - `fake-agent` finds its per-role scripts through the checkout's alternate (the user's
+    `.git/fake-agent`).
+  - **M1 (re-review 4):** `repair_git_file` now writes the integration worktree's `.git`
+    by temporary file and rename.
+  - **Tests.** `run_git_users_git.rs` (the user's fetch, pull, gc, prune, repack, fsck
+    and `log --all` while a worker holds unimported commits in its own store and in a
+    store elsewhere; red on `dc4d46f` with `bad object`), `run_git_checkout.rs` (a
+    checkout interrupted before its files is finished by the next prepare; the
+    engine-written config). `run_e2e_base.rs`'s D-2 test had a worker run `git
+    update-ref refs/heads/main HEAD` in its checkout; since F1c that moves only the
+    checkout's own ref, which the new `e2e_an_update_ref_of_the_base_in_a_checkout_leaves_the_users_base`
+    pins, so the D-2 test's worker now writes the user's repository directly
+    (`git -C <repo> fetch` then `update-ref`), what an unsandboxed worker could still do.

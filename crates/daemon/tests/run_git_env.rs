@@ -135,7 +135,14 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
         ),
         (
             "lock_worktree",
-            lock_worktree(git, &repo.root, &task, "anthrex run env1", T).map(drop),
+            lock_worktree(
+                git,
+                &repo.root,
+                &wt.join("runs/env1/integration"),
+                "anthrex run env1",
+                T,
+            )
+            .map(drop),
         ),
         (
             "verify_done",
@@ -258,8 +265,10 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
             assert_eq!(&rest[1]["--work-tree=".len()..], argv[1], "{argv:?}");
             rest = &rest[2..];
         } else {
+            // The import's staging repository names its git dir itself (F1b); it lives
+            // in the checkout's repository, which the tests keep under `<wt>/runs`.
             assert!(
-                !argv[1].contains("/runs/"),
+                !argv[1].contains("/runs/") || argv[1].ends_with("/staging.git"),
                 "an engine worktree call that is not pinned: {argv:?}"
             );
         }

@@ -24,12 +24,17 @@ fn e2e_a_worker_that_moves_the_base_halts_the_run() {
     let h = RunHarness::new("");
     let base = h.git(&["rev-parse", "main"]);
     // What a sandbox could not stop before final fix batch F1: `update-ref` of the base
-    // from inside a linked task worktree (fake-agent runs unsandboxed).
+    // from inside a linked task worktree. Since F1c the checkout is its own repository,
+    // so that reaches only the worker's own refs; a worker that runs unsandboxed
+    // (fake-agent does) and writes the user's repository directly is what is left.
+    let repo = h.repo.display().to_string();
     h.script(
         "worker-t1-1",
         &[
             commit("a.txt", "a\n"),
-            sh("git update-ref refs/heads/main HEAD"),
+            sh(&format!(
+                "git -C '{repo}' fetch -q \"$(pwd)\" HEAD && git -C '{repo}' update-ref refs/heads/main FETCH_HEAD"
+            )),
             done("added a"),
         ],
     );
@@ -45,6 +50,29 @@ fn e2e_a_worker_that_moves_the_base_halts_the_run() {
     assert_ne!(t(&run, "t1").state, TaskState::Merged);
     assert!(run.base_moved.is_none(), "reported as the user's commit");
     assert_ne!(h.git(&["rev-parse", "main"]), base, "the worker moved it");
+}
+
+/// Final fix batch F1c (3a): the task checkout is its own repository, so the same
+/// `update-ref` of the base from inside it moves only the worker's own ref; the user's
+/// base stays put and the run completes.
+#[test]
+fn e2e_an_update_ref_of_the_base_in_a_checkout_leaves_the_users_base() {
+    let h = RunHarness::new("");
+    let base = h.git(&["rev-parse", "main"]);
+    h.script(
+        "worker-t1-1",
+        &[
+            commit("a.txt", "a\n"),
+            sh("git update-ref refs/heads/main HEAD"),
+            done("added a"),
+        ],
+    );
+    h.script("reviewer-t1-1", &[approve()]);
+    let id = h.start(&plan("", &[task("t1", &["a.txt"], "")]), true);
+    let run = h.wait_run(&id, complete, RUN_WAIT);
+    assert_eq!(t(&run, "t1").state, TaskState::Merged);
+    assert!(run.halted_reason.is_none(), "{run:?}");
+    assert_eq!(h.git(&["rev-parse", "main"]), base, "the user's base moved");
 }
 
 #[test]

@@ -134,7 +134,10 @@ pub(crate) fn sync_in(g: Git<'_>, worktree: &Path) -> Result<String, String> {
             return Err(format!("{}'s {what}", worktree.display()));
         }
     };
-    let old = read(g, worktree, &own)?;
+    // Final fix batch F1c (3a): the task's branch is in the user's repository; a
+    // standalone checkout has no refs.
+    let refs_at = pin.common_dir.as_path();
+    let old = read(g, refs_at, &own)?;
     if !has_commit(g, worktree, &head)? {
         import_revs(g, worktree, &pin, &head, old.as_deref())?;
     }
@@ -150,7 +153,7 @@ pub(crate) fn sync_in(g: Git<'_>, worktree: &Path) -> Result<String, String> {
             os(&head),
             os(old.as_deref().unwrap_or("")),
         ];
-        let output = g.write_raw(worktree, &args)?;
+        let output = g.write_raw(refs_at, &args)?;
         if !output.success {
             return Err(format!(
                 "{own} moved while the worker's HEAD was recorded on it: {}",
@@ -274,12 +277,17 @@ fn missing(g: Git<'_>, dir: &Path, ids: &[&str]) -> Result<Vec<String>, String> 
 }
 
 /// The engine-owned staging repository for the private directory `objects`:
-/// `<objects>/../staging.git`, bare, with no refs, whose alternates are `objects` and
-/// the common store. Written afresh (its files by rename) before each import.
+/// `staging.git` in the task's engine directory (final fix batch F1c; else next to
+/// `objects`), bare, with no refs, whose alternates are `objects` and the common
+/// store. Written afresh (its files by rename) before each import.
 fn staging(pin: &Pin, objects: &Path, id_len: usize) -> Result<PathBuf, String> {
-    let parent = objects
-        .parent()
-        .ok_or_else(|| format!("{} has no parent directory", objects.display()))?;
+    let parent = match &pin.engine {
+        Some(engine) => engine.clone(),
+        None => objects
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| format!("{} has no parent directory", objects.display()))?,
+    };
     let dir = parent.join("staging.git");
     let failed = |err: std::io::Error| format!("cannot prepare {}: {err}", dir.display());
     std::fs::create_dir_all(dir.join("objects/info")).map_err(failed)?;
@@ -310,7 +318,7 @@ fn staging(pin: &Pin, objects: &Path, id_len: usize) -> Result<PathBuf, String> 
 /// The private directory must be a real directory, reached through no symbolic link
 /// the worker could have made: it (and its task directory) are the daemon's own, but
 /// the worker's grant covers the directory itself, so it could replace it with a link.
-fn check_private(objects: &Path) -> Result<(), String> {
+fn check_private(objects: &Path, common_dir: &Path) -> Result<(), String> {
     let meta = std::fs::symlink_metadata(objects)
         .map_err(|err| format!("{} cannot be read ({err})", objects.display()))?;
     if meta.file_type().is_symlink() || !meta.is_dir() {
@@ -331,8 +339,27 @@ fn check_private(objects: &Path) -> Result<(), String> {
         }
     }
     // Git follows a directory's own alternates: the import would read whatever object
-    // store the worker named there. Its git never writes one.
-    for name in ["info/alternates", "info/http-alternates"] {
+    // store the worker named there. Its git never writes one. Final fix batch F1c (3a):
+    // a task checkout's object directory has the engine's own, naming the common store
+    // and nothing else; any other is a plant. (A live worker could still change it
+    // after this check: that only lets the import *read* another store, whose objects
+    // are re-hashed on the way in; re-review 4, M3.)
+    let expected = format!("{}\n", common_dir.join("objects").display());
+    match std::fs::symlink_metadata(objects.join("info/alternates")) {
+        Ok(meta)
+            if meta.is_file()
+                && std::fs::read_to_string(objects.join("info/alternates")).ok()
+                    == Some(expected) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        _ => {
+            return Err(format!(
+                "{} has info/alternates naming another object store; the task's object \
+                 directory was tampered with",
+                objects.display()
+            ));
+        }
+    }
+    for name in ["info/http-alternates"] {
         if std::fs::symlink_metadata(objects.join(name)).is_ok() {
             return Err(format!(
                 "{} has {name}, which the worker's git never writes; the task's object \
@@ -355,7 +382,7 @@ fn import(
     input: &str,
     revs: bool,
 ) -> Result<(), String> {
-    check_private(objects)?;
+    check_private(objects, &pin.common_dir)?;
     let id_len = input.lines().next().map(str::len).unwrap_or(40);
     let staging = staging(pin, objects, id_len)?;
     clear_packs(&staging)?;
@@ -371,14 +398,16 @@ fn import(
     args.push(base.as_os_str());
     let hash = g.write_input(&staging, &args, input.as_bytes())?;
     let pack = staging.join(format!("import-{}.pack", hash.trim()));
-    let result = index_pack(g, worktree, &pack);
+    // Into the user's repository's own object store, run there.
+    let _ = worktree;
+    let result = index_pack(g, &pin.common_dir, &pack);
     clear_packs(&staging)?;
     result
 }
 
-/// `index-pack --stdin --strict` of `pack` in the repository of `worktree`, unless the
-/// pack holds no object.
-fn index_pack(g: Git<'_>, worktree: &Path, pack: &Path) -> Result<(), String> {
+/// `index-pack --stdin --strict` of `pack` in the repository whose git directory is
+/// `common`, unless the pack holds no object.
+fn index_pack(g: Git<'_>, common: &Path, pack: &Path) -> Result<(), String> {
     use std::io::{Read as _, Seek as _};
     let failed = |err: std::io::Error| format!("cannot read {}: {err}", pack.display());
     let mut file = std::fs::File::open(pack).map_err(failed)?;
@@ -389,7 +418,7 @@ fn index_pack(g: Git<'_>, worktree: &Path, pack: &Path) -> Result<(), String> {
     }
     file.rewind().map_err(failed)?;
     g.write_file(
-        worktree,
+        common,
         &[os("index-pack"), os("--stdin"), os("--strict")],
         &file,
     )

@@ -298,11 +298,12 @@ fn snapshot(admin: &Path) -> Vec<(String, String)> {
 }
 
 /// `git update-index -z --index-info` in `dir`, fed `input`.
-fn index_info(dir: &Path, input: &[u8]) {
+fn index_info(dir: &Path, objects: &Path, input: &[u8]) {
     let mut child = std::process::Command::new("git")
         .args(["-C"])
         .arg(dir)
         .args(["update-index", "-z", "--index-info"])
+        .env("GIT_OBJECT_DIRECTORY", objects)
         .stdin(std::process::Stdio::piped())
         .spawn()
         .unwrap();
@@ -314,7 +315,9 @@ fn index_info(dir: &Path, input: &[u8]) {
 /// `HEAD` names the base and whose every pseudo-ref is a symbolic ref to it: none of
 /// `merge-tree --write-tree`, `commit-tree`, `read-tree` (two-way, and `--reset`),
 /// `update-index --index-info` or `update-ref --no-deref <own>` writes `ORIG_HEAD`, any
-/// other pseudo-ref, or any ref but the one named.
+/// other pseudo-ref, or any ref but the one named. Final fix batch F1c: run as the
+/// engine runs them, with the repository's common object store as the object
+/// directory, and the ref moved in the user's repository.
 #[test]
 fn the_hand_backs_plumbing_writes_no_other_ref_or_pseudo_ref() {
     let w = world("pr31");
@@ -337,49 +340,69 @@ fn the_hand_backs_plumbing_writes_no_other_ref_or_pseudo_ref() {
     }
     let before = snapshot(&admin);
     let refs = w.other_refs();
+    let objects = w.main_file().parent().unwrap().join("../../objects");
+    let objects = objects.canonicalize().unwrap();
+    let engine = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&w.task)
+            .args(args)
+            .env("GIT_OBJECT_DIRECTORY", &objects)
+            .output()
+            .unwrap();
+        (
+            output.status.code(),
+            String::from_utf8(output.stdout).unwrap().trim().to_string(),
+        )
+    };
+    let ok = |args: &[&str]| {
+        let (code, text) = engine(args);
+        assert_eq!(code, Some(0), "git {args:?}");
+        text
+    };
 
-    let merged = try_git(
-        &w.task,
-        &[
+    let merged = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&w.task)
+        .env("GIT_OBJECT_DIRECTORY", &objects)
+        .args([
             "merge-tree",
             "--write-tree",
             "-z",
             "--no-messages",
             &onto,
             &run_head,
-        ],
-    );
+        ])
+        .output()
+        .unwrap();
     assert_eq!(merged.status.code(), Some(1), "no conflict");
     let text = String::from_utf8(merged.stdout).unwrap();
     let mut fields = text.split('\0').filter(|f| !f.is_empty());
     let tree = fields.next().unwrap().to_string();
     let entries: Vec<&str> = fields.collect();
     assert_eq!(entries.len(), 3, "{entries:?}");
-    out(&w.task, &["read-tree", "-m", "-u", &onto, &tree]);
+    ok(&["read-tree", "-m", "-u", &onto, &tree]);
     let mut input = format!("0 {} 0\tf.txt\0", "0".repeat(onto.len())).into_bytes();
     for entry in &entries {
         input.extend_from_slice(entry.as_bytes());
         input.push(0);
     }
-    index_info(&w.task, &input);
+    index_info(&w.task, &objects, &input);
     assert_eq!(out(&w.task, &["ls-files", "-u"]).lines().count(), 3);
-    let commit = out(
-        &w.task,
-        &[
-            "commit-tree",
-            &tree,
-            "-p",
-            &onto,
-            "-p",
-            &run_head,
-            "-m",
-            "m",
-        ],
-    );
-    out(&w.task, &["read-tree", "--reset", "-u", &onto]);
-    out(&w.task, &["read-tree", "-m", "-u", &onto, &commit]);
+    let commit = ok(&[
+        "commit-tree",
+        &tree,
+        "-p",
+        &onto,
+        "-p",
+        &run_head,
+        "-m",
+        "m",
+    ]);
+    ok(&["read-tree", "--reset", "-u", &onto]);
+    ok(&["read-tree", "-m", "-u", &onto, &commit]);
     out(
-        &w.task,
+        &w.repo.root,
         &["update-ref", "--no-deref", &w.own(), &commit, &onto],
     );
 

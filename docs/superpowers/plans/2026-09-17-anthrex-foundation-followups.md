@@ -1004,7 +1004,9 @@ scope.
   '<common>/packed-refs.lock': Operation not permitted`, exit 0; tested before F1b by
   F1 re-review 2, S5). The repeated `error:` line may lead a model to "fix" something.
   A fix is to launch workers with `gc.auto=0` and `maintenance.auto=false` through
-  `GIT_CONFIG_PARAMETERS` in the headless spec's environment.
+  `GIT_CONFIG_PARAMETERS` in the headless spec's environment. **Resolved by final fix
+  batch F1c:** each task checkout is its own repository whose engine-written config sets
+  `gc.auto=0`, and its refs are its own.
 - **A task branch made a symbolic ref halts the run with a misleading reason.** Since
   F1 fix round 4 (S1), every engine call refuses a task branch whose ref is a symbolic
   ref or link, and blocks the task. D-2's guard (`merge::work_on_base`) still counts the
@@ -1022,15 +1024,44 @@ scope.
   background `gc --auto` only fails and logs. Fixes to weigh: make each task worktree a
   separate repository (its own git dir under the run's data directory, the common store
   as its alternate) so the user's repository never names the worker's objects; or have
-  the engine import on every turn end, not only when the fallback counts.
+  the engine import on every turn end, not only when the fallback counts. **Resolved by
+  final fix batch F1c** (the first fix; `run_git_users_git.rs`).
 - **F1b: a worker's unimported commits are lost if its worktree is deleted by hand.**
   `prepare_worktree` forgets a registered task worktree whose directory is gone and
   re-adds it at the task branch's tip; commits the worker made since the last import
   stay only as unreachable objects in `<data_dir>/runs/<run>/tasks/<task>/objects`.
   Importing from the old `worktrees/<task>/HEAD` before forgetting it would keep them.
+  **Resolved by final fix batch F1c:** the checkout's repository lives in the data
+  directory, so a checkout deleted by hand comes back from it with its `HEAD` imported
+  first (`a_task_checkout_deleted_by_hand_comes_back_with_its_work`).
 - **F1b: private object directories are never removed.** Each task's
   `<data_dir>/runs/<run>/tasks/<task>/objects` and `staging.git` stay with the run's
-  data directory after accept or discard.
+  data directory after accept or discard. **Resolved by final fix batch F1c:** removing a
+  checkout removes its repository (private objects, engine files, per-task tmp).
+
+## From M8a's final fix batch F1c (2026-09-25), for the user and for M8a/M8b
+
+- **I1's residual: the CLIs resolve the grant again.** The engine now creates each
+  granted directory as the canonical parent plus the leaf and refuses a link found
+  there, and removes links at the other granted paths. Claude and Codex canonicalise
+  the paths again when they build their sandbox profiles, after the engine's check; a
+  process that swaps a granted path for a link in that window widens the grant. The
+  engine cannot close that window from outside the CLIs; handing them already
+  canonical paths under a directory no worker can write is the most it can do.
+- **Standalone checkouts: LFS, submodules and partial clones.** A task checkout is its
+  own repository with the user's object store as its alternate. Git LFS objects (in
+  `<common>/lfs`), submodules' own repositories (`<common>/modules`) and a partial
+  clone's promisor remote are not wired into it; a project that needs them sees
+  missing files or fetches that fail. Symlinking `lfs/objects` read-only, or giving
+  the checkout the promisor config, are the options to weigh.
+- **Standalone checkouts: the worker sees no branches.** The checkout's repository has
+  no refs but its detached `HEAD`; `git log main` or `git branch` in the worker's shell
+  finds nothing. The prompts name commits by id, so no role depends on it, but a model
+  may be confused. Mirroring the base and run refs read-only into the checkout's
+  `packed-refs` at dispatch would give it names.
+- **`git worktree list` no longer shows the run's task checkouts.** Only the
+  integration checkout stays a linked worktree. `anthrex run status` is where the
+  checkouts are listed.
 
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 

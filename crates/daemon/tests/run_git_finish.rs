@@ -4,7 +4,7 @@
 
 mod support;
 
-use daemon::run::git::{delete_branches, prepare_worktree, remove_worktree, salvage};
+use daemon::run::git::{delete_branches, prepare_worktree, remove_worktree, salvage, sync};
 use std::path::{Path, PathBuf};
 use support::TempRepo;
 use support::run_git::{
@@ -168,13 +168,11 @@ fn salvage_of_a_conflicted_hand_back_keeps_the_markers() {
 fn remove_refuses_nothing_after_salvage() {
     let repo = repo();
     let (_keep, task) = task_worktree(&repo, "rm01", "t1");
-    assert!(
-        worktree_block(&repo.root, &task)
-            .unwrap()
-            .lines()
-            .any(|l| l.starts_with("locked")),
-        "the task worktree is locked"
-    );
+    // Final fix batch F1c (3a): the task's checkout is its own repository; the user's
+    // repository lists no worktree for it.
+    assert_eq!(worktree_block(&repo.root, &task), None);
+    let own_repo = task.parent().unwrap().join(".anthrex/t1");
+    assert!(own_repo.join("git/HEAD").is_file());
     write(&task, "wip.txt", "uncommitted\n");
     write(&task, "README", "edited\n");
 
@@ -184,6 +182,10 @@ fn remove_refuses_nothing_after_salvage() {
     remove_worktree(real_git(), &repo.root, &task, T).unwrap();
 
     assert!(!task.exists());
+    assert!(
+        !own_repo.exists(),
+        "the checkout's repository was left behind"
+    );
     assert_eq!(worktree_block(&repo.root, &task), None);
     assert!(tree_names(&repo.root, reference).contains(&"wip.txt".to_string()));
     // The task branch is kept (decision 20: until accept or discard).
@@ -258,6 +260,8 @@ fn a_refused_salvage_leaves_the_index_untouched() {
     );
     // A caller that reused a `<seq>`: the ref holds other work.
     let reference = "refs/anthrex/salvage/sv04/t1/1";
+    // The task's commit is the worker's until the engine imports it (F1b).
+    assert_eq!(sync(real_git(), &task, T).unwrap(), task_head);
     out(&repo.root, &["update-ref", reference, &task_head]);
     let unmerged = || out(&task, &["diff", "--name-only", "--diff-filter=U"]);
     assert_eq!(unmerged(), "shared.txt");

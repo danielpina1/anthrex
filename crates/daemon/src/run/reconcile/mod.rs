@@ -138,17 +138,20 @@ fn check(
             ..
         } => {
             let own = run.wt_dir.join("runs").join(&run.id);
-            git::worktree(g, root, branch, false, path, setup.is_some(), &own, notes)
+            git::worktree(g, root, branch, path, setup.is_some(), &own, notes)
         }
         OpKind::PrepareWorktree {
             root,
             branch,
+            from,
             path,
             setup,
             ..
         } => {
-            let own = run.wt_dir.join("runs").join(&run.id);
-            git::worktree(g, root, branch, true, path, setup.is_some(), &own, notes)
+            // Final fix batch F1c (3a): a task's checkout is its own repository in the
+            // run's data directory.
+            let repo = crate::run::git::checkout_repo_dir(&run.data_dir, path);
+            git::task_checkout(g, root, branch, from, path, &repo, setup.is_some())
         }
         OpKind::CreateWindow { spec, .. } => Ok(sessions::restored_window(
             run,
@@ -180,7 +183,10 @@ fn check(
             root,
             path,
             salvage_ref,
-        } => git::remove_worktree(g, root, path, salvage_ref, notes),
+        } => {
+            let repo = crate::run::git::checkout_repo_dir(&run.data_dir, path);
+            git::remove_worktree(g, root, path, &repo, salvage_ref, notes)
+        }
         OpKind::Accept {
             root,
             base_branch,

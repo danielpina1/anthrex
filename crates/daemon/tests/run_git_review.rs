@@ -38,8 +38,10 @@ fn review_worktree_is_detached_at_the_task_head_and_replaced() {
             .unwrap();
     assert_eq!(patch, expected);
     assert_eq!(head(&review), small);
-    let block = worktree_block(&repo.root, &review).unwrap();
-    assert!(block.lines().any(|l| l == "detached"), "{block}");
+    // Final fix batch F1c (3a): the review checkout is its own repository (detached,
+    // the common store its alternate); the user's repository lists no worktree for it.
+    assert_eq!(worktree_block(&repo.root, &review), None);
+    support::run_git::assert_detached(&review);
 
     // The next round replaces the worktree, and a diff over the limit is clamped.
     write(&review, "leftover.txt", "from round one\n");
@@ -54,12 +56,8 @@ fn review_worktree_is_detached_at_the_task_head_and_replaced() {
         !review.join("leftover.txt").exists(),
         "the old round's worktree is gone"
     );
-    assert!(
-        worktree_block(&repo.root, &review)
-            .unwrap()
-            .lines()
-            .any(|l| l == "detached")
-    );
+    assert_eq!(worktree_block(&repo.root, &review), None);
+    support::run_git::assert_detached(&review);
     assert!(patch.len() <= REVIEW_DIFF_MAX, "{}", patch.len());
     assert!(patch.len() >= REVIEW_DIFF_MAX - 3, "{}", patch.len());
     // `src/big.txt` sorts before `src/lib.rs`: the head is the big file's, the tail the

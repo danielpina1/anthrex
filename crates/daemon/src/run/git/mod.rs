@@ -19,6 +19,8 @@
 //! **write** carries [`WRITE_FLAGS`] (decision 18), which include it (final fix batch
 //! F1, findings C-C1 and D-5).
 
+mod accept;
+mod checkout;
 mod done;
 mod handback;
 mod import;
@@ -30,6 +32,8 @@ mod salvage;
 mod sandbox;
 mod worktrees;
 
+pub use accept::{ACCEPT_MERGE_TIMEOUT, accept, accept_with_merge_timeout};
+pub use checkout::{Repo, checkout_repo_dir, default_repo_dir};
 pub use done::{DoneChecked, count_commits, diff_so_far, verify_done};
 pub use handback::{HandBack, hand_back};
 pub use import::{HeadFile, head_file, rebase_in_progress, sync};
@@ -38,14 +42,11 @@ pub use merge::{
     commits_since, guard_refs, materialize, merge_tree, read_ref, reattach, run_work_on_base,
 };
 pub use merge_state::abort_merge;
-pub use salvage::{
-    ACCEPT_MERGE_TIMEOUT, accept, accept_with_merge_timeout, delete_branches, remove_worktree,
-    salvage,
-};
+pub use salvage::{delete_branches, remove_checkout, remove_worktree, salvage};
 
 /// Reads reconcile (M8a.21) shares with the ops it checks.
 pub(crate) use handback::{finish_clean, interrupted_conflict};
-pub(crate) use import::sync_in;
+pub(crate) use import::{is_id, sync_in};
 pub(crate) use merge::{read, reattach_in, short};
 pub(crate) use merge_state::{
     Leftover, clear as clear_merge_state, leftover, undo_clean_merge, unmerged,
@@ -57,7 +58,8 @@ pub use resolution::resolution_only;
 pub use sandbox::{private_dir, worker_git_dirs};
 pub use worktrees::{
     absolute_git_dir, create_run_branch, lock_worktree, pin_worktrees, prepare_review,
-    prepare_scratch, prepare_task_worktree, prepare_worktree,
+    prepare_review_in, prepare_scratch, prepare_scratch_in, prepare_task_worktree,
+    prepare_worktree,
 };
 
 use std::ffi::OsStr;

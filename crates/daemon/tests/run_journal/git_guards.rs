@@ -3,11 +3,12 @@
 
 use crate::fixture::intents;
 use crate::fixture::pend;
-use crate::git::{World, accept_op, prepare};
+use crate::git::{World, prepare};
+use crate::git_accept::accept_op;
 use crate::support::recording_git;
 use crate::support::run_git::{T, commit_file, head, out, real_git, try_git, write};
 use daemon::run::engine::{OpKind, OpResult};
-use daemon::run::git::{CandidateStep, cas_update, commit_tree, merge_tree, prepare_worktree};
+use daemon::run::git::{CandidateStep, cas_update, commit_tree, merge_tree};
 use daemon::run::reconcile::{Reconciled, reconcile};
 
 fn merge_head(dir: &std::path::Path) -> Option<String> {
@@ -76,8 +77,9 @@ fn reconcile_hand_back_ignores_a_merge_of_something_else() {
     assert_eq!(merge_head(&t1), Some(side));
 }
 
-/// m1: reconcile removes an unregistered directory only under the run's own worktree
-/// root, whatever path a corrupted `run.json` names.
+/// m1: reconcile removes nothing a corrupted `run.json` names outside the run's own
+/// worktree root. Final fix batch F1c (3a): reconcile removes no partial task checkout
+/// at all (the re-issued op finishes it), so nothing is removed anywhere.
 #[test]
 fn reconcile_never_removes_a_directory_outside_the_runs_worktrees() {
     let mut w = World::new();
@@ -106,13 +108,8 @@ fn reconcile_never_removes_a_directory_outside_the_runs_worktrees() {
     );
     assert!(victim.join("work.txt").is_file(), "never removed");
     assert!(escape.join("work.txt").is_file(), "never removed");
-    assert_eq!(
-        result
-            .notes
-            .iter()
-            .filter(|n| n.contains("outside"))
-            .count(),
-        2,
+    assert!(
+        !result.notes.iter().any(|n| n.contains("removed")),
         "{:?}",
         result.notes
     );
@@ -125,7 +122,7 @@ fn reconcile_prepare_worktree_whose_directory_is_gone_is_not_started() {
     let mut w = World::new();
     let branch = format!("anthrex/{}/t1", w.run.id);
     let path = w.run.task_path("t1");
-    prepare_worktree(real_git(), w.root(), &branch, &w.run.base_sha, &path, T).unwrap();
+    w.prepare_task("t1", &branch, &w.run.base_sha.clone());
     std::fs::remove_dir_all(&path).unwrap();
     let kind = prepare(&w.run, "t1", &branch, None);
     pend(&mut w.run, 1, Some("t1"), kind);

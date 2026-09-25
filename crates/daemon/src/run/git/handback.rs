@@ -270,6 +270,8 @@ pub(crate) fn settle(
 /// `update-ref --no-deref <own> <new> <old>`: the task's own branch, named, moved only
 /// if it still holds `old`; a symbolic ref there is replaced, never followed.
 fn cas(g: Git<'_>, worktree: &Path, own: &str, new: &str, old: &str) -> Result<(), String> {
+    // Final fix batch F1c (3a): the task's branch is in the user's repository.
+    let refs_at = task_pin(worktree)?.common_dir;
     let args = [
         os("update-ref"),
         os("--no-deref"),
@@ -277,7 +279,7 @@ fn cas(g: Git<'_>, worktree: &Path, own: &str, new: &str, old: &str) -> Result<(
         os(new),
         os(old),
     ];
-    let output = g.write_raw(worktree, &args)?;
+    let output = g.write_raw(&refs_at, &args)?;
     if output.success {
         return Ok(());
     }

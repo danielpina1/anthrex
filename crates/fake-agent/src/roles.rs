@@ -137,10 +137,19 @@ fn stem(path: &Path) -> String {
         .unwrap_or_else(|| "fake-agent".into())
 }
 
-/// `<git common dir>/fake-agent`, when the cwd is in a repository that has one.
+/// `<git common dir>/fake-agent`, when the cwd is in a repository that has one. A run's
+/// task, review and proof checkouts are each their own repository (M8a final fix batch
+/// F1c) whose only object alternate is the user's store: its scripts are then found
+/// next to that store, in the user's repository.
 fn script_dir() -> Option<PathBuf> {
     let common = git_common_dir().ok()??;
     let dir = common.join("fake-agent");
+    if dir.is_dir() {
+        return Some(dir);
+    }
+    let alternates = std::fs::read_to_string(common.join("objects/info/alternates")).ok()?;
+    let objects = PathBuf::from(alternates.lines().next()?.trim());
+    let dir = objects.parent()?.join("fake-agent");
     dir.is_dir().then_some(dir)
 }
 

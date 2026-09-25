@@ -9,6 +9,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use super::checkout::{self, Kind, Repo};
 use super::import::{move_head, sync_in};
 use super::{Git, diff, failure, os};
 use crate::worktree::pinned::{self, PinAs};
@@ -229,24 +230,31 @@ fn current_entry(g: Git<'_>, root: &Path, path: &Path) -> Result<Option<Listed>,
     Ok(entry)
 }
 
-/// Final fix batch F1b: a task's worktree at `path`, **detached**, locked with decision
-/// 18's reason, and its branch `branch`, which only the engine writes. The branch is
-/// created at `from` when it does not exist; the worktree is added detached at the
-/// branch's tip when git does not list it, and reused (it must be detached) when it
-/// does. The worker's `HEAD` is then imported onto the branch ([`sync_in`]). With
-/// `repoint`, a task that has no commit of its own (its `HEAD` a strict ancestor of
-/// `from`) is moved to `from` (decision 19). Returns the worktree's `HEAD`.
+/// Final fix batch F1b, as F1c (3a) recasts it: a task's checkout at `path`, its own
+/// repository `repo` in anthrex's data directory ([`checkout`]), on a detached `HEAD`,
+/// and its branch `branch` in the user's repository, which only the engine writes. The
+/// branch is created at `from` when it does not exist; the checkout is made at the
+/// branch's tip when it does not exist, and reused (its files put back when its
+/// directory is gone) when it does. The worker's `HEAD` is then imported onto the
+/// branch ([`sync_in`]). With `repoint`, a task that has no commit of its own (its
+/// `HEAD` a strict ancestor of `from`) is moved to `from` (decision 19). Returns the
+/// checkout's `HEAD`.
 fn ensure_task_worktree(
     g: Git<'_>,
     root: &Path,
     branch: &str,
     from: &str,
     path: &Path,
-    objects: Option<&Path>,
+    repo: &Repo,
 ) -> Result<String, String> {
-    let reason = lock_reason(branch);
     let own = format!("refs/heads/{branch}");
-    let entry = current_entry(g, root, path)?;
+    if listed(g, root, path)?.is_some() {
+        return Err(format!(
+            "{} is a linked worktree of the repository; a task checkout is its own \
+             repository (remove the worktree with git worktree remove)",
+            path.display()
+        ));
+    }
     let tip = match branch_head(g, root, branch)? {
         Some(tip) => tip,
         None => {
@@ -262,50 +270,8 @@ fn ensure_task_worktree(
             from.to_string()
         }
     };
-    match entry {
-        None => {
-            let args = [
-                os("worktree"),
-                os("add"),
-                os("--lock"),
-                os("--reason"),
-                os(&reason),
-                os("--detach"),
-                path.as_os_str(),
-                os(&tip),
-            ];
-            g.write(root, &args)?;
-        }
-        Some(found) => {
-            if let Some(on) = found.branch {
-                return Err(format!(
-                    "worktree {} is on {on}; a task worktree is detached",
-                    path.display()
-                ));
-            }
-            if !found.locked {
-                lock(g, root, path, &reason)?;
-            }
-        }
-    }
-    // Final fix batch F1c (C1): the engine's copies of the worktree's index live in an
-    // engine-owned directory: next to the private object directory (the run's data
-    // directory), else in the worktree's own git directory, outside the worker's grant.
-    let engine = match objects.and_then(Path::parent) {
-        Some(task_dir) => task_dir.join("engine"),
-        None => pinned::find_git_dir(&common_dir(g, root)?, path)?.join("anthrex-engine"),
-    };
-    pin_in(
-        g,
-        root,
-        path,
-        PinAs {
-            head: None,
-            own: Some(own.clone()),
-            objects: objects.map(Path::to_path_buf),
-            engine: Some(engine),
-        },
-    )?;
+    let common = common_dir(g, root)?;
+    checkout::ensure(g, &common, path, repo, &tip, Kind::Task { own: &own })?;
     let head = sync_in(g, path)?;
     if head != from && is_ancestor(g, path, &head, from)? {
         // Decision 19 as clarified by ruling T8-I4: the task has no commit of its own,
@@ -317,7 +283,8 @@ fn ensure_task_worktree(
         //
         // Final fix batch F1, fix round 3, and F1b: the branch and the worktree's `HEAD`
         // are each moved by name, `--no-deref`, compare-and-swap from the head just
-        // read, and the index and files follow with `read-tree`.
+        // read, and the index and files follow with `read-tree`. F1c: the branch lives
+        // in the user's repository, and is moved there.
         let cas = [
             os("update-ref"),
             os("--no-deref"),
@@ -325,7 +292,7 @@ fn ensure_task_worktree(
             os(from),
             os(&head),
         ];
-        let output = g.write_raw(path, &cas)?;
+        let output = g.write_raw(&common, &cas)?;
         if !output.success {
             return Err(format!(
                 "{branch} moved while it was re-pointed: {}",
@@ -370,11 +337,11 @@ pub fn create_run_branch(
 }
 
 /// Decision 19: the task branch `anthrex/<run>/<task>` from `from` (the run head at
-/// dispatch) and its worktree at `path`, detached at the branch's tip and locked (final
-/// fix batch F1b). Reuses an existing branch and path, re-adds an existing branch whose
-/// worktree is gone, and re-points a task that has no commit of its own to `from`.
-/// Returns its `HEAD`. The worker's objects are read only from the repository: see
-/// [`prepare_task_worktree`] for a worker with a private object directory.
+/// dispatch) and its checkout at `path`, detached at the branch's tip (final fix batch
+/// F1b), its own repository next to it ([`checkout::default_repo_dir`]; the daemon
+/// names one in its data directory, [`prepare_task_worktree`]). Reuses an existing
+/// branch and checkout, re-makes a checkout that is gone, and re-points a task that has
+/// no commit of its own to `from`. Returns its `HEAD`.
 pub fn prepare_worktree(
     git: &OsStr,
     root: &Path,
@@ -383,22 +350,31 @@ pub fn prepare_worktree(
     path: &Path,
     timeout: Duration,
 ) -> Result<String, String> {
-    prepare_task_worktree(git, root, branch, from, path, None, timeout)
+    let repo = checkout::default_repo_dir(path);
+    prepare_task_worktree(git, root, branch, from, path, &repo, timeout)
 }
 
-/// [`prepare_worktree`] for a worker whose git writes its objects to `objects` (its
-/// private object directory, final fix batch F1b): the engine imports its commits from
-/// there, re-hashing each object, before it reads them.
+/// [`prepare_worktree`] with the checkout's repository at `repo`
+/// (`<data>/runs/<run>/tasks/<task>`, final fix batch F1c): the worker's commits go to
+/// its object directory, from which the engine imports them, re-hashing each object,
+/// before it reads them.
 pub fn prepare_task_worktree(
     git: &OsStr,
     root: &Path,
     branch: &str,
     from: &str,
     path: &Path,
-    objects: Option<&Path>,
+    repo: &Path,
     timeout: Duration,
 ) -> Result<String, String> {
-    ensure_task_worktree(Git::new(git, timeout), root, branch, from, path, objects)
+    ensure_task_worktree(
+        Git::new(git, timeout),
+        root,
+        branch,
+        from,
+        path,
+        &Repo::at(repo),
+    )
 }
 
 /// Decision 18: `git worktree lock --reason <reason> <path>`. Already locked is fine.
@@ -446,10 +422,11 @@ fn resolve_commit(g: Git<'_>, root: &Path, reference: &str) -> Result<String, St
     }
 }
 
-/// Decision 35 and ruling Q4: a fresh review worktree at `path`, detached at
-/// `head_ref`, replacing any earlier round's (`git worktree remove --force`), and the
-/// reviewer's diff `git diff <base>..<head>` clamped to `REVIEW_DIFF_MAX`. Returns
-/// `(base, head, patch)` with both refs resolved to full shas.
+/// Decision 35 and ruling Q4: a fresh review checkout at `path`, detached at
+/// `head_ref`, replacing any earlier round's, and the reviewer's diff `git diff
+/// <base>..<head>` clamped to `REVIEW_DIFF_MAX`. Returns `(base, head, patch)` with
+/// both refs resolved to full shas. Final fix batch F1c (3a): the checkout is its own
+/// repository ([`checkout::default_repo_dir`]; [`prepare_review_in`] names one).
 pub fn prepare_review(
     git: &OsStr,
     root: &Path,
@@ -458,50 +435,41 @@ pub fn prepare_review(
     path: &Path,
     timeout: Duration,
 ) -> Result<(String, String, String), String> {
+    let repo = checkout::default_repo_dir(path);
+    prepare_review_in(git, root, head_ref, base_ref, path, &repo, timeout)
+}
+
+/// [`prepare_review`] with the checkout's repository at `repo`.
+pub fn prepare_review_in(
+    git: &OsStr,
+    root: &Path,
+    head_ref: &str,
+    base_ref: &str,
+    path: &Path,
+    repo: &Path,
+    timeout: Duration,
+) -> Result<(String, String, String), String> {
     let g = Git::new(git, timeout);
     let base = resolve_commit(g, root, base_ref)?;
     let head = resolve_commit(g, root, head_ref)?;
-    if let Some(found) = listed(g, root, path)? {
-        if !path.exists() {
-            forget_missing(g, root, path, &found)?;
-        } else {
-            if found.locked {
-                g.write(root, &[os("worktree"), os("unlock"), path.as_os_str()])?;
-            }
-            repair_git_file(path)?;
-            g.write(
-                root,
-                &[
-                    os("worktree"),
-                    os("remove"),
-                    os("--force"),
-                    path.as_os_str(),
-                ],
-            )?;
-            pinned::unpin(path);
-        }
+    let repo = Repo::at(repo);
+    let common = common_dir(g, root)?;
+    // The earlier round's checkout goes first, whole: a reviewer starts from the head.
+    if path.exists() || repo.dir.exists() {
+        pin_standalone(&common, path, &repo);
+        checkout::remove(path, &repo)?;
     }
-    g.write(
-        root,
-        &[
-            os("worktree"),
-            os("add"),
-            os("--detach"),
-            path.as_os_str(),
-            os(&head),
-        ],
-    )?;
-    pin_in(g, root, path, PinAs::default())?;
+    checkout::ensure(g, &common, path, &repo, &head, Kind::ReadOnly)?;
     let patch = diff(g, root, &format!("{base}..{head}"))?;
     Ok((base, head, patch))
 }
 
-/// Decision 33's proof worktree: a scratch worktree at `path`, detached at `at`,
-/// **reused** when git already lists it with its directory (the caller then checks out
-/// what it needs), re-added when its directory is gone. `true` when it was created now,
-/// which is when the caller runs the profile's `setup` in it ("created on first use
-/// with `setup`"). Never locked and never watched (decision 22): nothing of an agent's
-/// lives in it.
+/// Decision 33's proof checkout: a scratch checkout at `path`, detached at `at`,
+/// **reused** when it is in place (the caller then checks out what it needs), re-made
+/// when its directory is gone. `true` when it was made now, which is when the caller
+/// runs the profile's `setup` in it ("created on first use with `setup`"). Never
+/// watched (decision 22): nothing of an agent's lives in it. Final fix batch F1c (3a):
+/// its own repository ([`checkout::default_repo_dir`]; [`prepare_scratch_in`]).
 pub fn prepare_scratch(
     git: &OsStr,
     root: &Path,
@@ -509,26 +477,38 @@ pub fn prepare_scratch(
     at: &str,
     timeout: Duration,
 ) -> Result<bool, String> {
+    let repo = checkout::default_repo_dir(path);
+    prepare_scratch_in(git, root, path, at, &repo, timeout)
+}
+
+/// [`prepare_scratch`] with the checkout's repository at `repo`.
+pub fn prepare_scratch_in(
+    git: &OsStr,
+    root: &Path,
+    path: &Path,
+    at: &str,
+    repo: &Path,
+    timeout: Duration,
+) -> Result<bool, String> {
     let g = Git::new(git, timeout);
-    if let Some(found) = listed(g, root, path)? {
-        if path.exists() {
-            pin_in(g, root, path, PinAs::default())?;
-            return Ok(false);
-        }
-        forget_missing(g, root, path, &found)?;
+    let common = common_dir(g, root)?;
+    checkout::ensure(g, &common, path, &Repo::at(repo), at, Kind::ReadOnly)
+}
+
+/// Pins `path` as the standalone checkout of `repo` when its git directory is there,
+/// so an existing one can be removed ([`checkout::remove`] removes only such a
+/// checkout).
+fn pin_standalone(common: &Path, path: &Path, repo: &Repo) {
+    if repo.git_dir().join("HEAD").is_file() && pinned::pinned(path).is_none() {
+        pinned::pin(
+            common,
+            path,
+            PinAs {
+                repo: Some(repo.git_dir()),
+                ..PinAs::default()
+            },
+        );
     }
-    g.write(
-        root,
-        &[
-            os("worktree"),
-            os("add"),
-            os("--detach"),
-            path.as_os_str(),
-            os(at),
-        ],
-    )?;
-    pin_in(g, root, path, PinAs::default())?;
-    Ok(true)
 }
 
 /// `git rev-parse --absolute-git-dir` in `dir`: a linked worktree's own git directory
@@ -591,17 +571,12 @@ pub(crate) fn repair_git_file(path: &Path) -> Result<(), String> {
     if std::fs::read_to_string(&file).ok().as_deref() == Some(wanted.as_str()) {
         return Ok(());
     }
-    if file.is_dir() {
+    // Final fix batch F1c (re-review 4, M1): written to an exclusive temporary name and
+    // renamed over `.git`, so a link a racing process put there is replaced, never
+    // written through.
+    if file.is_dir() && !file.is_symlink() {
         std::fs::remove_dir_all(&file)
-    } else {
-        std::fs::remove_file(&file).or_else(|err| {
-            if err.kind() == std::io::ErrorKind::NotFound {
-                Ok(())
-            } else {
-                Err(err)
-            }
-        })
+            .map_err(|err| format!("cannot restore {}: {err}", file.display()))?;
     }
-    .and_then(|()| std::fs::write(&file, wanted))
-    .map_err(|err| format!("cannot restore {}: {err}", file.display()))
+    super::merge_state::put(path, ".git", wanted.as_bytes())
 }

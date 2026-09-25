@@ -61,8 +61,13 @@ pub(super) async fn remove_worktree(
     } else {
         None
     };
+    // Final fix batch F1c: a standalone checkout goes with its repository (the
+    // worker's private objects, the engine's own files, its temporary directory).
+    let repo = git::checkout_repo_dir(&ctx.data_dir, &path);
     service
-        .write(ctx, move |g, t| git::remove_worktree(g, &root, &path, t))
+        .write(ctx, move |g, t| {
+            git::remove_checkout(g, &root, &path, Some(&repo), t)
+        })
         .await?;
     Ok(salvaged)
 }

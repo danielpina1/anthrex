@@ -138,16 +138,19 @@ fn a_head_on_a_branch_or_mid_rebase_is_refused_before_the_merge() {
     let tip = commit_file(&w.task, "t.txt", "task\n", "task work");
     let run_head = commit_file(&w.integration, "r.txt", "run\n", "run work");
     let branch = format!("anthrex/{}/t1", w.run);
-    let recorded = out(&w.task, &["rev-parse", &branch]);
-    out(&w.task, &["checkout", "-q", &branch]);
+    let recorded = out(&w._repo.root, &["rev-parse", &branch]);
+    // Final fix batch F1c: the checkout is its own repository, with no branches; its
+    // `HEAD` naming one is what a worker could write.
+    let admin = std::path::PathBuf::from(out(&w.task, &["rev-parse", "--absolute-git-dir"]));
+    std::fs::write(admin.join("HEAD"), format!("ref: refs/heads/{branch}\n")).unwrap();
 
     let err = hand_back(real_git(), &w.task, &run_head, T).unwrap_err();
     assert!(err.contains("detached HEAD"), "{err}");
     assert!(!merge_head_exists(&w.task), "a merge was left: {err}");
-    assert_eq!(out(&w.task, &["rev-parse", &branch]), recorded);
+    assert_eq!(out(&w._repo.root, &["rev-parse", &branch]), recorded);
 
     // A rebase stopped on a conflict.
-    out(&w.task, &["checkout", "-q", "--detach", &tip]);
+    std::fs::write(admin.join("HEAD"), format!("{tip}\n")).unwrap();
     let side = commit_file(&w.task, "t.txt", "side\n", "side");
     out(&w.task, &["checkout", "-q", "--detach", &tip]);
     commit_file(&w.task, "t.txt", "mine\n", "mine");
@@ -159,7 +162,7 @@ fn a_head_on_a_branch_or_mid_rebase_is_refused_before_the_merge() {
 
     let done = hand_back(real_git(), &w.task, &run_head, T).unwrap();
     assert_eq!(second_parent(&w.task, &done.head), run_head);
-    assert_eq!(out(&w.task, &["rev-parse", &branch]), done.head);
+    assert_eq!(out(&w._repo.root, &["rev-parse", &branch]), done.head);
 }
 
 /// S2: the engine's own clean merge, left uncommitted and untouched (a crash, or an

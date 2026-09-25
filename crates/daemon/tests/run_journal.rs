@@ -14,6 +14,8 @@ mod support;
 mod fixture;
 #[path = "run_journal/git.rs"]
 mod git;
+#[path = "run_journal/git_accept.rs"]
+mod git_accept;
 #[path = "run_journal/git_guards.rs"]
 mod git_guards;
 #[path = "run_journal/git_handback.rs"]

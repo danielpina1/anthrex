@@ -184,9 +184,9 @@ pub fn git_read(dir: &Path, args: &[&str]) -> Option<String> {
 }
 
 /// Final fix batch F1b: [`git_read`] in a task worktree, reading the worker's objects
-/// too (its private directory, `<data>/runs/<run>/tasks/<task>/objects`, as an
-/// alternate), which the engine imports into the repository only at a done check, a
-/// turn-end count or a hand-back.
+/// too (its private directory, `<data>/runs/<run>/tasks/<task>/git/objects` since final
+/// fix batch F1c, as an alternate), which the engine imports into the repository only
+/// at a done check, a turn-end count or a hand-back.
 pub fn worker_git_read(
     data: &Path,
     run: &str,
@@ -199,6 +199,7 @@ pub fn worker_git_read(
         .join(run)
         .join("tasks")
         .join(task)
+        .join("git")
         .join("objects");
     git_read_with(dir, Some(&objects), args)
 }

@@ -48,6 +48,12 @@ pub struct Pin {
     /// engine git command there gets its own copy of the index
     /// ([`super::engine_index`]). `None` for a checkout no worker writes.
     pub engine: Option<PathBuf>,
+    /// Final fix batch F1c (3a): the checkout is its own repository in anthrex's data
+    /// directory (`git_dir`, with the common object store as its alternate), not a
+    /// linked worktree of the user's repository. Every daemon git call in it names the
+    /// common object store as its only object directory (`GIT_OBJECT_DIRECTORY`), so
+    /// the engine never reads or writes the checkout's own, worker-written objects.
+    pub standalone: bool,
     pub broken: Option<String>,
 }
 
@@ -60,6 +66,9 @@ pub struct PinAs {
     pub objects: Option<PathBuf>,
     /// The engine-owned directory of a task checkout (final fix batch F1c, C1).
     pub engine: Option<PathBuf>,
+    /// The git directory of a standalone checkout (final fix batch F1c, 3a), which the
+    /// engine made: used as it is, never searched for.
+    pub repo: Option<PathBuf>,
 }
 
 static PINS: LazyLock<Mutex<HashMap<PathBuf, Pin>>> = LazyLock::new(Default::default);
@@ -92,38 +101,48 @@ pub fn pin(common_dir: &Path, worktree: &Path, as_: PinAs) -> Pin {
         own,
         objects,
         engine,
+        repo,
     } = as_;
+    let standalone = repo.is_some();
     let existing = crate::lock(&PINS).get(&key_path).cloned();
-    let pin = match existing {
-        Some(pin) if pin.broken.is_none() && pin.common_dir == common && pin.git_dir.is_dir() => {
-            Pin {
-                head,
-                own,
-                objects,
-                engine,
-                ..pin
+    let found = match (existing, repo) {
+        // F1c (3a): a standalone checkout's git directory is the engine's own; it must
+        // hold a `HEAD`, and is never a linked worktree's.
+        (_, Some(repo)) => {
+            let git_dir = key(&repo);
+            if git_dir.join("HEAD").is_file() && !git_dir.join("commondir").exists() {
+                Ok(git_dir)
+            } else {
+                Err(format!(
+                    "{} is not the git directory of the checkout {}",
+                    repo.display(),
+                    worktree.display()
+                ))
             }
         }
-        _ => match find_git_dir(common_dir, worktree) {
-            Ok(git_dir) => Pin {
-                git_dir,
-                common_dir: common,
-                head,
-                own,
-                objects,
-                engine,
-                broken: None,
-            },
-            Err(reason) => Pin {
-                git_dir: PathBuf::new(),
-                common_dir: common,
-                head,
-                own,
-                objects,
-                engine,
-                broken: Some(reason),
-            },
-        },
+        (Some(pin), None)
+            if pin.broken.is_none()
+                && !pin.standalone
+                && pin.common_dir == common
+                && pin.git_dir.is_dir() =>
+        {
+            Ok(pin.git_dir)
+        }
+        _ => find_git_dir(common_dir, worktree),
+    };
+    let (git_dir, broken) = match found {
+        Ok(git_dir) => (git_dir, None),
+        Err(reason) => (PathBuf::new(), Some(reason)),
+    };
+    let pin = Pin {
+        git_dir,
+        common_dir: common,
+        head,
+        own,
+        objects,
+        engine,
+        standalone,
+        broken,
     };
     crate::lock(&PINS).insert(key_path, pin.clone());
     pin
@@ -220,23 +239,14 @@ pub fn check(worktree: &Path, pin: &Pin) -> Result<(), String> {
             pin.git_dir.display()
         ))
     };
-    let common = std::fs::read_to_string(pin.git_dir.join("commondir")).unwrap_or_default();
-    let common = common.trim_end_matches(['\n', '\r']);
-    let common = if Path::new(common).is_absolute() {
-        PathBuf::from(common)
+    if pin.standalone {
+        // F1c (3a): the checkout's own repository. The engine made its `config` and its
+        // alternates; nothing may turn it into a linked worktree.
+        if pin.git_dir.join("commondir").exists() {
+            return refused("it has a commondir".to_string());
+        }
     } else {
-        pin.git_dir.join(common)
-    };
-    if common.as_os_str().is_empty() || key(&common) != pin.common_dir {
-        return refused(format!("commondir names {}", common.display()));
-    }
-    let back = std::fs::read_to_string(pin.git_dir.join("gitdir")).unwrap_or_default();
-    let back = Path::new(back.trim_end_matches(['\n', '\r']));
-    if lexical(back) != dot_git(worktree) {
-        return refused(format!("gitdir names {}", back.display()));
-    }
-    if pin.git_dir.join("config.worktree").exists() {
-        return refused("it has a config.worktree".to_string());
+        check_linked(worktree, pin).or_else(refused)?;
     }
     check_head(pin).or_else(refused)?;
     if pin.engine.is_some() {
@@ -252,6 +262,31 @@ pub fn check(worktree: &Path, pin: &Pin) -> Result<(), String> {
             worktree.display()
         )
     })
+}
+
+/// A linked worktree's git directory still belongs to it: its `commondir` names the
+/// repository's common directory, its `gitdir` points back at the worktree, and it has
+/// no `config.worktree`.
+fn check_linked(worktree: &Path, pin: &Pin) -> Result<(), String> {
+    let common = std::fs::read_to_string(pin.git_dir.join("commondir")).unwrap_or_default();
+    let common = common.trim_end_matches(['\n', '\r']);
+    let common = if Path::new(common).is_absolute() {
+        PathBuf::from(common)
+    } else {
+        pin.git_dir.join(common)
+    };
+    if common.as_os_str().is_empty() || key(&common) != pin.common_dir {
+        return Err(format!("commondir names {}", common.display()));
+    }
+    let back = std::fs::read_to_string(pin.git_dir.join("gitdir")).unwrap_or_default();
+    let back = Path::new(back.trim_end_matches(['\n', '\r']));
+    if lexical(back) != dot_git(worktree) {
+        return Err(format!("gitdir names {}", back.display()));
+    }
+    if pin.git_dir.join("config.worktree").exists() {
+        return Err("it has a config.worktree".to_string());
+    }
+    Ok(())
 }
 
 /// The pseudo-refs of a worktree's git directory a worker may write (its sandbox grant,

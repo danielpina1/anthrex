@@ -15,7 +15,7 @@ use crate::run::exec::{ShellOutcome, run_shell};
 use crate::run::git::{self, RefCheck};
 use crate::run::globs::{OwnsMatcher, ProtectedMatcher};
 use crate::run::proof::{ProofError, ProofOp, SETUP_MARKER, run_proof};
-use crate::run::role_launch::{task_objects_dir, with_worker_objects};
+use crate::run::role_launch::worker_git_roots;
 use proto::AgentRole;
 
 pub(super) fn failed(message: impl Into<String>) -> OpResult {
@@ -91,22 +91,13 @@ impl RunService {
     }
 }
 
-/// Final fix batch F1b: the private object directory of the task whose worktree is
-/// `worktree` in the run of `ctx`, `None` when no task of the run has that worktree.
-fn task_objects(service: &Arc<RunService>, ctx: &OpCtx, worktree: &Path) -> Option<PathBuf> {
-    let state = crate::lock(&service.state);
-    let run = state.runs.get(&ctx.run_id)?;
-    let task = run.tasks.iter().find(|task| task.worktree == worktree)?;
-    Some(task_objects_dir(&ctx.data_dir, task.id()))
-}
-
-/// A worker's object directories and sandbox, completed at launch (final fix batch F1
-/// and its fix round 1; F1b): its private object directory created (by the daemon,
-/// never through a link) and named canonically in its environment, with the
-/// repository's object store as its read-only alternate; and, when it is sandboxed, its
-/// writable roots: that directory plus the commit's files in the worktree's own git
-/// directory, found from the repository's side. Nothing of the git common directory.
-/// Any other session (a reviewer) is left as it is.
+/// A worker's sandbox, completed at launch (final fix batch F1 and its fix round 1;
+/// F1b; F1c): when it is sandboxed, its writable roots are its checkout's private
+/// object directory and its temporary directory (each made by the daemon, never
+/// through a link, and named by appending to the engine's own directory, never by
+/// resolving a path the worker could have swapped: I1), plus the commit's files in the
+/// checkout's own git directory. Nothing of the git common directory. Any other session
+/// (a reviewer) is left as it is.
 async fn worker_git_dirs(
     service: &Arc<RunService>,
     ctx: &OpCtx,
@@ -125,30 +116,25 @@ async fn worker_git_dirs(
         .get(&ctx.run_id)
         .map(|run| run.git_common_dir.clone())
         .ok_or_else(|| format!("unknown run {}", ctx.run_id))?;
-    let objects = task_objects_dir(&ctx.data_dir, &task);
+    let roots = worker_git_roots(&ctx.data_dir, &task);
     let sandboxed = spec
         .claude_sandbox
         .as_ref()
         .is_some_and(|s| !s.writable_roots.is_empty())
         || !spec.codex_writable_roots.is_empty();
+    if !sandboxed {
+        return Ok(());
+    }
     let cwd = spec.cwd.clone();
-    let (objects, dirs) = service
+    let dirs = service
         .write(ctx, move |_, _| {
-            let objects = git::private_dir(&common, &objects)?;
-            let dirs = if sandboxed {
-                git::worker_git_dirs(&common, &cwd, std::slice::from_ref(&objects))?
-            } else {
-                Vec::new()
-            };
-            Ok((objects, dirs))
+            let roots = roots
+                .iter()
+                .map(|root| git::private_dir(&common, root))
+                .collect::<Result<Vec<_>, _>>()?;
+            git::worker_git_dirs(&common, &cwd, &roots)
         })
         .await?;
-    let common_objects = crate::lock(&service.state)
-        .runs
-        .get(&ctx.run_id)
-        .map(|run| run.git_common_dir.join("objects"))
-        .ok_or_else(|| format!("unknown run {}", ctx.run_id))?;
-    spec.env = with_worker_objects(std::mem::take(&mut spec.env), &objects, &common_objects);
     if let Some(sandbox) = spec.claude_sandbox.as_mut()
         && !sandbox.writable_roots.is_empty()
     {
@@ -193,12 +179,12 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
             env,
         } => {
             let at = path.clone();
-            // Final fix batch F1b: the worker's objects are imported from its private
+            // Final fix batch F1c (3a): the checkout's own repository, in the run's data
             // directory.
-            let objects = task_objects(service, ctx, &path);
+            let repo = git::checkout_repo_dir(&ctx.data_dir, &path);
             let made = service
                 .write(ctx, move |g, t| {
-                    git::prepare_task_worktree(g, &root, &branch, &from, &at, objects.as_deref(), t)
+                    git::prepare_task_worktree(g, &root, &branch, &from, &at, &repo, t)
                 })
                 .await;
             match made {
@@ -320,6 +306,7 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
         } => {
             let op = ProofOp {
                 root,
+                repo: git::checkout_repo_dir(&ctx.data_dir, &path),
                 path,
                 red,
                 head,
@@ -343,14 +330,15 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
             head_ref,
             base_ref,
             path,
-        } => settle(
+        } => settle({
+            let repo = git::checkout_repo_dir(&ctx.data_dir, &path);
             service
                 .write(ctx, move |g, t| {
-                    git::prepare_review(g, &root, &head_ref, &base_ref, &path, t)
+                    git::prepare_review_in(g, &root, &head_ref, &base_ref, &path, &repo, t)
                 })
                 .await
-                .map(|(base, head, patch)| OpResult::Review { base, head, patch }),
-        ),
+                .map(|(base, head, patch)| OpResult::Review { base, head, patch })
+        }),
         OpKind::MergeCandidate { .. } => settle(merge::candidate(service, ctx, kind).await),
         OpKind::HandBack {
             worktree,
@@ -515,8 +503,11 @@ async fn check(
     }) = scratch
     {
         let (at, c) = (dir.clone(), commit.clone());
+        let repo = git::checkout_repo_dir(&ctx.data_dir, &dir);
         if let Err(error) = service
-            .write(ctx, move |g, t| git::prepare_scratch(g, &root, &at, &c, t))
+            .write(ctx, move |g, t| {
+                git::prepare_scratch_in(g, &root, &at, &c, &repo, t)
+            })
             .await
         {
             return failed(error);

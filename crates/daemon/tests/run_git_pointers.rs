@@ -154,12 +154,21 @@ fn a_git_symlink_to_another_worktree_never_moves_the_pin_or_the_grant() {
         assert!(granted.contains(&own.join("HEAD")), "{granted:?}");
     }
 
-    // After a restart nothing is pinned yet: the repository's side names the task's own
-    // git dir, uniquely, whatever its `.git` symlink says.
-    assert_eq!(
-        daemon::worktree::pinned::find_git_dir(&common, &w.task).unwrap(),
-        own.canonicalize().unwrap()
+    // After a restart the daemon pins the task's checkout to its own repository, which
+    // it names from its data directory (final fix batch F1c), whatever the `.git`
+    // symlink says.
+    daemon::worktree::pinned::unpin(&w.task);
+    let pin = daemon::worktree::pinned::pin(
+        &common,
+        &w.task,
+        daemon::worktree::pinned::PinAs {
+            repo: Some(own.clone()),
+            own: Some(format!("refs/heads/anthrex/{}/t1", w.run)),
+            ..Default::default()
+        },
     );
+    assert_eq!(pin.broken, None);
+    assert_eq!(pin.git_dir, own.canonicalize().unwrap());
 
     // A reuse of the task worktree (a re-dispatch) keeps its own git dir.
     prepare_worktree(
@@ -191,7 +200,7 @@ fn a_git_symlink_to_another_worktree_never_moves_the_pin_or_the_grant() {
 /// worker's leftover process could do in that instant: point the worktree's `HEAD` at
 /// `main` (and make the index and files follow), after the engine's `HEAD` check and
 /// before git reads it. Then it runs the engine's command.
-fn racing_git(tools: &Path, admin: &Path, triggers: &[&str]) -> PathBuf {
+fn racing_git(tools: &Path, task: &Path, admin: &Path, triggers: &[&str]) -> PathBuf {
     let marker = tools.join("flipped");
     let cases = triggers.join("|");
     wrapper_git(
@@ -203,13 +212,14 @@ fn racing_git(tools: &Path, admin: &Path, triggers: &[&str]) -> PathBuf {
       {cases})
         : > '{marker}'
         printf 'ref: refs/heads/main\n' > '{admin}/HEAD'
-        "$REAL" -C "$2" -c core.hooksPath=/dev/null reset -q --hard || exit 98
+        "$REAL" -C '{task}' -c core.hooksPath=/dev/null reset -q --hard 2>/dev/null || :
         break;;
     esac
   done
 fi"#,
             marker = marker.display(),
             admin = admin.display(),
+            task = task.display(),
         ),
     )
 }
@@ -223,7 +233,12 @@ fn a_head_flipped_during_the_hand_back_moves_no_base() {
     commit_file(&w.task, "t.txt", "task\n", "task work");
     let run_head = commit_file(&w.integration, "r.txt", "run\n", "run work");
     let tools = tempfile::tempdir().unwrap();
-    let git = racing_git(tools.path(), &git_dir(&w.task), &["--no-ff", "merge-tree"]);
+    let git = racing_git(
+        tools.path(),
+        &w.task,
+        &git_dir(&w.task),
+        &["--no-ff", "merge-tree"],
+    );
 
     let result = hand_back(git.as_os_str(), &w.task, &run_head, T);
     assert!(tools.path().join("flipped").exists(), "the race never ran");
@@ -245,6 +260,7 @@ fn a_head_flipped_during_a_repoint_moves_no_base() {
     let tools = tempfile::tempdir().unwrap();
     let git = racing_git(
         tools.path(),
+        &w.task,
         &git_dir(&w.task),
         &["--hard", "read-tree", "update-ref"],
     );

@@ -281,6 +281,7 @@ fn op(p: &ProofRepo, name: &str, red: &str, head: &str, test: &str) -> ProofOp {
     ProofOp {
         root: p.repo.root.clone(),
         path: p.wt.join(format!("runs/r1/{name}.proof")),
+        repo: p.wt.join(format!("data/tasks/{name}.proof")),
         red: red.to_string(),
         head: head.to_string(),
         command: proof_command(SINGLE_TEST, test),

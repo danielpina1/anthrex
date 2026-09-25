@@ -3,9 +3,9 @@
 //! and the roots the engine grants, as Claude Code's and Codex's sandboxes do.
 //!
 //! Final fix batch F1b: the worker's grant holds nothing of the git common directory.
-//! Its objects go to a private directory (`GIT_OBJECT_DIRECTORY`, the common store its
-//! read-only alternate) and it commits on a detached `HEAD`; the engine imports its
-//! work. Its ordinary git work (commits, an amend, a revert, a `reset --hard`, a
+//! Its objects go to a private directory (since F1c its checkout's own repository's
+//! object directory, the common store its read-only alternate; no environment needed)
+//! and it commits on a detached `HEAD`; the engine imports its work. Its ordinary git work (commits, an amend, a revert, a `reset --hard`, a
 //! rebase, an interactive `rebase --exec`, a conflicted merge concluded with `merge
 //! --continue`) succeeds; every write to the common directory is denied: the shared
 //! config, a hook, any branch (its own task's included), `packed-refs`, a reflog, the
@@ -19,9 +19,7 @@
 mod support;
 
 use daemon::run::git::{prepare_task_worktree, sync, worker_git_dirs};
-use daemon::run::role_launch::{
-    task_objects_dir, with_worker_git_config, with_worker_objects, worker_git_roots,
-};
+use daemon::run::role_launch::{task_repo_dir, with_worker_git_config, worker_git_roots};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use support::run_git::{T, commit_file, head, out, real_git, repo, try_git, wt_dir};
@@ -53,16 +51,10 @@ struct Setup {
 }
 
 impl Setup {
-    /// The worker's environment: its git configuration and its object directories.
+    /// The worker's environment: its git configuration (final fix batch F1c: no object
+    /// directories; its checkout's repository names its own).
     fn env(&self) -> Vec<(String, String)> {
-        let objects = task_objects_dir(self.data.path(), "t1")
-            .canonicalize()
-            .unwrap();
-        with_worker_objects(
-            with_worker_git_config(Vec::new()),
-            &objects,
-            &self.common.join("objects"),
-        )
+        with_worker_git_config(Vec::new())
     }
 
     /// Runs `script` with `sh -c` in the task worktree under `profile`, with the
@@ -72,6 +64,8 @@ impl Setup {
             .args(["-p", profile, "sh", "-c", script])
             .current_dir(&self.task)
             .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env_remove("GIT_OBJECT_DIRECTORY")
+            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
             .envs(self.env())
             .output()
             .unwrap();
@@ -105,14 +99,13 @@ fn setup(run: &str) -> Setup {
     let (wt, wt_path) = wt_dir();
     let data = tempfile::tempdir().unwrap();
     let task = wt_path.join(format!("runs/{run}/t1"));
-    let objects = task_objects_dir(data.path(), "t1");
     prepare_task_worktree(
         real_git(),
         &repo.root,
         &format!("anthrex/{run}/t1"),
         &base,
         &task,
-        Some(&objects),
+        &task_repo_dir(data.path(), "t1"),
         T,
     )
     .unwrap();
@@ -312,9 +305,7 @@ fn a_sandboxed_worker_commits_but_writes_nothing_of_the_common_dir() {
     let s = setup("sb01");
     let writable = s.writable();
     assert!(
-        !writable[1..]
-            .iter()
-            .any(|p| p.starts_with(&s.common) && !p.starts_with(s.common.join("worktrees"))),
+        !writable[1..].iter().any(|p| p.starts_with(&s.common)),
         "the grant names the common dir: {writable:?}"
     );
     let objects_before: Vec<_> = walk(&s.common.join("objects"));
@@ -401,6 +392,11 @@ fn the_whole_common_dir_writable_lets_every_write_through() {
     let s = setup("sb02");
     let mut writable = s.writable();
     writable.push(s.common.clone());
+    // F1c: the checkout's git directory is no longer inside the common dir.
+    writable.push(PathBuf::from(out(
+        &s.task,
+        &["rev-parse", "--absolute-git-dir"],
+    )));
     assert_eq!(attempts(&s, &profile(&writable)), [true; 21]);
 }
 

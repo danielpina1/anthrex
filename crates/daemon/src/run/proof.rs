@@ -23,7 +23,7 @@ use std::time::Duration;
 use regex::Regex;
 
 use super::exec::{ShellOutcome, run_matching, run_shell};
-use super::git::{absolute_git_dir, materialize, prepare_scratch};
+use super::git::{absolute_git_dir, materialize, prepare_scratch_in};
 use crate::launch::shell_quote;
 
 /// `OpKind::Proof`'s fields (the interface block's `ProofOp`).
@@ -33,6 +33,8 @@ pub struct ProofOp {
     pub root: PathBuf,
     /// The proof worktree, `<wt>/runs/<run>/<task>.proof`.
     pub path: PathBuf,
+    /// Its own repository (final fix batch F1c, 3a): `<data>/runs/<run>/tasks/<task>.proof`.
+    pub repo: PathBuf,
     pub red: String,
     pub head: String,
     /// `single_test` with `{test}` already replaced ([`proof_command`]).
@@ -115,9 +117,9 @@ pub fn run_proof(
     })?;
     let timeout = Duration::from_secs(op.timeout_secs);
     let (program, root, path) = (git.to_os_string(), op.root.clone(), op.path.clone());
-    let red = op.red.clone();
+    let (red, repo) = (op.red.clone(), op.repo.clone());
     git_write(Box::new(move || {
-        prepare_scratch(&program, &root, &path, &red, git_timeout).map(|_created| ())
+        prepare_scratch_in(&program, &root, &path, &red, &repo, git_timeout).map(|_created| ())
     }))
     .map_err(ProofError::Failed)?;
 

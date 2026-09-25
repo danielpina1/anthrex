@@ -61,13 +61,23 @@ fn task_branch_starts_at_the_given_run_head_and_is_reused() {
     assert_eq!(h, first);
     assert_eq!(out(&repo.root, &["rev-parse", branch]), first);
     assert_detached(&path);
-    assert!(
-        worktree_block(&repo.root, &path)
-            .unwrap()
-            .lines()
-            .any(|l| l.starts_with("locked")),
-        "a task worktree is locked right after creation"
+    // Final fix batch F1c (3a): the task's checkout is its own repository, next to it
+    // here (the daemon's is in its data directory), with the common store as its only
+    // alternate; the user's repository lists no worktree for it.
+    assert_eq!(worktree_block(&repo.root, &path), None);
+    let own_repo = wt.join("runs/r-9f0e/.anthrex/t1/git");
+    assert_eq!(
+        std::fs::read_to_string(own_repo.join("objects/info/alternates")).unwrap(),
+        format!(
+            "{}\n",
+            repo.root
+                .join(".git/objects")
+                .canonicalize()
+                .unwrap()
+                .display()
+        )
     );
+    assert!(!own_repo.join("commondir").exists());
 
     // A second call with the same arguments reuses everything.
     let refs_before = out(&repo.root, &["for-each-ref"]);
@@ -80,18 +90,8 @@ fn task_branch_starts_at_the_given_run_head_and_is_reused() {
         list_before
     );
 
-    // The worktree goes (two `--force`s: it is locked); the branch is re-added.
-    out(
-        &repo.root,
-        &[
-            "worktree",
-            "remove",
-            "--force",
-            "--force",
-            path.to_str().unwrap(),
-        ],
-    );
-    assert!(!path.exists());
+    // The checkout goes (the user deletes it); it is made again.
+    std::fs::remove_dir_all(&path).unwrap();
     let h = prepare_worktree(real_git(), &repo.root, branch, &first, &path, T).unwrap();
     assert_eq!(h, first);
     assert_detached(&path);
@@ -289,39 +289,58 @@ fn engine_paths_with_spaces_and_unicode_work() {
     assert_eq!(worktree_block(&repo.root, &task), None);
 }
 
-fn locked(root: &std::path::Path, path: &std::path::Path) -> bool {
-    worktree_block(root, path)
-        .unwrap()
-        .lines()
-        .any(|l| l.starts_with("locked"))
-}
-
+/// Final fix batch F1c (3a): a task checkout the user deletes by hand is made again
+/// from its own repository, which still holds the worker's commits the engine had not
+/// yet imported: they are imported, recorded on the branch, and checked out again.
 #[test]
-fn a_task_worktree_deleted_by_hand_or_unlocked_is_restored_and_relocked() {
+fn a_task_checkout_deleted_by_hand_comes_back_with_its_work() {
     let repo = repo();
     let base = head(&repo.root);
     let (_keep, wt) = wt_dir();
     let path = wt.join("runs/rl01/t1");
     let branch = "anthrex/rl01/t1";
     prepare_worktree(real_git(), &repo.root, branch, &base, &path, T).unwrap();
+    let work = commit_file(&path, "work.txt", "work\n", "task work");
+    assert!(
+        !try_git(&repo.root, &["cat-file", "-e", &work])
+            .status
+            .success()
+    );
 
-    // Deleted by hand: git still lists it, locked and prunable.
     std::fs::remove_dir_all(&path).unwrap();
     let h = prepare_worktree(real_git(), &repo.root, branch, &base, &path, T).unwrap();
-    assert_eq!(h, base);
+    assert_eq!(h, work);
+    assert_eq!(out(&repo.root, &["rev-parse", branch]), work);
+    assert_eq!(
+        std::fs::read_to_string(path.join("work.txt")).unwrap(),
+        "work\n"
+    );
     assert_detached(&path);
-    assert!(locked(&repo.root, &path));
+    assert_eq!(out(&path, &["status", "--porcelain"]), "");
 
-    // Unlocked by someone: a reuse locks it again.
-    out(&repo.root, &["worktree", "unlock", path.to_str().unwrap()]);
-    assert!(!locked(&repo.root, &path));
-    prepare_worktree(real_git(), &repo.root, branch, &base, &path, T).unwrap();
-    assert!(locked(&repo.root, &path));
-
-    // Locking an already locked worktree is not an error.
-    lock_worktree(real_git(), &repo.root, &path, "anthrex run rl01", T).unwrap();
-    lock_worktree(real_git(), &repo.root, &path, "anthrex run rl01", T).unwrap();
-    assert!(locked(&repo.root, &path));
+    // Linked worktrees (the integration worktree) still lock; locking twice is fine.
+    let integration = wt.join("runs/rl01/integration");
+    create_run_branch(
+        real_git(),
+        &repo.root,
+        "anthrex/rl01/integration",
+        &base,
+        &integration,
+        T,
+    )
+    .unwrap();
+    out(
+        &repo.root,
+        &["worktree", "unlock", integration.to_str().unwrap()],
+    );
+    lock_worktree(real_git(), &repo.root, &integration, "anthrex run rl01", T).unwrap();
+    lock_worktree(real_git(), &repo.root, &integration, "anthrex run rl01", T).unwrap();
+    assert!(
+        worktree_block(&repo.root, &integration)
+            .unwrap()
+            .lines()
+            .any(|l| l.starts_with("locked"))
+    );
 }
 
 /// A pre-warmed worktree at `first` in which setup edited `edited` (tracked) and wrote

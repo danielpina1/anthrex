@@ -14,7 +14,6 @@ use crate::run::git;
 use crate::run::journal;
 use crate::run::model::{LogEntry, OpId, Run};
 use crate::run::reconcile;
-use crate::run::role_launch::task_objects_dir;
 use crate::worktree::pinned::PinAs;
 use proto::RunState;
 
@@ -265,20 +264,29 @@ fn run_worktree_paths(run: &Run) -> Vec<(std::path::PathBuf, PinAs)> {
         },
     )];
     for task in &run.tasks {
+        // Final fix batch F1c (3a): each checkout is its own repository in the run's
+        // data directory.
+        let repo = git::Repo::at(&git::checkout_repo_dir(&run.data_dir, &task.worktree));
         paths.push((
             task.worktree.clone(),
             PinAs {
                 head: None,
                 own: Some(format!("refs/heads/{}", task.branch)),
-                objects: Some(task_objects_dir(&run.data_dir, task.id())),
-                engine: Some(crate::run::role_launch::task_engine_dir(
-                    &run.data_dir,
-                    task.id(),
-                )),
+                objects: Some(repo.objects()),
+                engine: Some(repo.engine()),
+                repo: Some(repo.git_dir()),
             },
         ));
-        paths.push((run.review_path(task.id()), PinAs::default()));
-        paths.push((run.proof_path(task.id()), PinAs::default()));
+        for path in [run.review_path(task.id()), run.proof_path(task.id())] {
+            let repo = git::Repo::at(&git::checkout_repo_dir(&run.data_dir, &path));
+            paths.push((
+                path,
+                PinAs {
+                    repo: Some(repo.git_dir()),
+                    ..PinAs::default()
+                },
+            ));
+        }
     }
     paths
 }

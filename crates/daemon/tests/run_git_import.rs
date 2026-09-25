@@ -1,7 +1,8 @@
 //! Final fix batch F1b: a worker's commits reach the repository only through the
-//! engine's import. The worker's git (here plain git with the worker's environment:
-//! `GIT_OBJECT_DIRECTORY` its private directory, the common store its alternate) writes
-//! its objects outside the repository and commits on a detached `HEAD`; the engine
+//! engine's import. The worker's git (here plain git in the checkout, which is its own
+//! repository since final fix batch F1c: its object directory is the private one, the
+//! common store its alternate) writes its objects outside the repository and commits on
+//! a detached `HEAD`; the engine
 //! imports what its `HEAD` reaches, re-hashing every object, and records it on the
 //! task's branch. An object whose content does not match its name is refused, a
 //! tampered private directory is refused, an interrupted import is finished by the
@@ -15,7 +16,7 @@ use daemon::run::git::{
 };
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
 use daemon::run::plan::BUILTIN_PROTECTED;
-use daemon::run::role_launch::task_objects_dir;
+use daemon::run::role_launch::{task_objects_dir, task_repo_dir};
 use std::path::PathBuf;
 use std::process::Command;
 use support::TempRepo;
@@ -44,7 +45,6 @@ fn world(run: &str) -> World {
     ))
     .canonicalize()
     .unwrap();
-    let objects = private_dir(&common, &task_objects_dir(data.path(), "t1")).unwrap();
     let task = wt_path.join(format!("runs/{run}/t1"));
     prepare_task_worktree(
         real_git(),
@@ -52,10 +52,11 @@ fn world(run: &str) -> World {
         &format!("anthrex/{run}/t1"),
         &base,
         &task,
-        Some(&objects),
+        &task_repo_dir(data.path(), "t1"),
         T,
     )
     .unwrap();
+    let objects = private_dir(&common, &task_objects_dir(data.path(), "t1")).unwrap();
     World {
         repo,
         _wt: wt,
@@ -69,7 +70,9 @@ fn world(run: &str) -> World {
 }
 
 impl World {
-    /// Git as the worker runs it: its objects to its private directory.
+    /// Git as the worker runs it, in its checkout: its objects to its private
+    /// directory, with no environment of ours (final fix batch F1c: the checkout's
+    /// repository is self-describing).
     fn worker(&self, args: &[&str]) -> std::process::Output {
         Command::new("git")
             .args([
@@ -84,11 +87,8 @@ impl World {
             ])
             .args(args)
             .current_dir(&self.task)
-            .env("GIT_OBJECT_DIRECTORY", &self.objects)
-            .env(
-                "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-                self.common.join("objects"),
-            )
+            .env_remove("GIT_OBJECT_DIRECTORY")
+            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
             .output()
             .unwrap()
     }
@@ -257,10 +257,12 @@ fn a_tampered_private_directory_is_refused() {
     // Its own alternates would make the import read another object store.
     let info = w.objects.join("info");
     std::fs::create_dir_all(&info).unwrap();
+    let ours = std::fs::read_to_string(info.join("alternates")).unwrap();
+    assert_eq!(ours, format!("{}\n", w.common.join("objects").display()));
     std::fs::write(info.join("alternates"), "/elsewhere/objects\n").unwrap();
     let err = sync(real_git(), &w.task, T).unwrap_err();
     assert!(err.contains("tampered"), "{err}");
-    std::fs::remove_file(info.join("alternates")).unwrap();
+    std::fs::write(info.join("alternates"), ours).unwrap();
 
     // Replaced by a link (the worker's grant covers the directory itself).
     let moved = w.objects.with_file_name("moved");

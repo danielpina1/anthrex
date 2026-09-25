@@ -8,13 +8,50 @@ use std::path::Path;
 use super::Reconciled;
 use crate::run::contract::sha7;
 use crate::run::engine::OpResult;
+use crate::run::git::is_id;
 use crate::run::git::{
-    Git, Leftover, clear_merge_state, failure, finish_clean, forget_missing, interrupted_conflict,
-    is_ancestor, leftover, listed_worktree_in, os, read, reattach_in, short, sync_in,
-    undo_clean_merge, unmerged,
+    Git, Leftover, Repo, clear_merge_state, failure, finish_clean, forget_missing,
+    interrupted_conflict, is_ancestor, leftover, listed_worktree_in, os, read, reattach_in, short,
+    sync_in, undo_clean_merge, unmerged,
 };
 
-/// `CreateRunBranch`, `PrepareWorktree`: the path listed on its branch is the op's
+/// `PrepareWorktree` (final fix batch F1c, 3a): the task's checkout is its own
+/// repository at `repo`. It is the op's result when it has no `setup` (a setup re-runs;
+/// it is idempotent), its branch exists, its files were put in place (the engine's
+/// `ready` marker, written last), and its `HEAD` is a commit the repository has that is
+/// not a strict ancestor of `from` (else the op's re-point had not happened). Anything
+/// else is not started: the op makes or finishes the checkout, idempotently, so a
+/// partial one is never removed here.
+pub(super) fn task_checkout(
+    g: Git<'_>,
+    root: &Path,
+    branch: &str,
+    from: &str,
+    path: &Path,
+    repo: &Path,
+    has_setup: bool,
+) -> Result<Reconciled, String> {
+    let repo = Repo::at(repo);
+    if has_setup || !repo.ready() || !path.is_dir() {
+        return Ok(Reconciled::NotStarted);
+    }
+    if read(g, root, &format!("refs/heads/{branch}"))?.is_none() {
+        return Ok(Reconciled::NotStarted);
+    }
+    let head = std::fs::read_to_string(repo.git_dir().join("HEAD")).unwrap_or_default();
+    let head = head.trim_end_matches(['\n', '\r']);
+    if !is_id(head) || read(g, root, &format!("{head}^{{commit}}"))?.is_none() {
+        return Ok(Reconciled::NotStarted);
+    }
+    if head != from && is_ancestor(g, root, head, from)? {
+        return Ok(Reconciled::NotStarted);
+    }
+    Ok(Reconciled::Replay(OpResult::Worktree {
+        head: head.to_string(),
+    }))
+}
+
+/// `CreateRunBranch`: the path listed on its branch is the op's
 /// result when it has no `setup` (a setup re-runs; it is idempotent). A directory git
 /// does not list is what a `worktree add` that died part way leaves: it is removed, but
 /// only under `own` (the run's `<wt_dir>/runs/<run>`;
@@ -24,7 +61,6 @@ pub(super) fn worktree(
     g: Git<'_>,
     root: &Path,
     branch: &str,
-    detached: bool,
     path: &Path,
     has_setup: bool,
     own: &Path,
@@ -32,13 +68,7 @@ pub(super) fn worktree(
 ) -> Result<Reconciled, String> {
     match listed_worktree_in(g, root, path)? {
         Some(entry) => {
-            // Final fix batch F1b: a task's worktree is detached, with its branch made;
-            // the run branch's worktree is on it.
-            let on_branch = if detached {
-                entry.branch.is_none() && read(g, root, &format!("refs/heads/{branch}"))?.is_some()
-            } else {
-                entry.branch.as_deref() == Some(&format!("refs/heads/{branch}"))
-            };
+            let on_branch = entry.branch.as_deref() == Some(&format!("refs/heads/{branch}"));
             Ok(match entry.head {
                 Some(head) if on_branch && path.is_dir() && !has_setup => {
                     Reconciled::Replay(OpResult::Worktree { head })
@@ -299,17 +329,31 @@ pub(super) fn abort_merge(g: Git<'_>, worktree: &Path) -> Result<Reconciled, Str
 }
 
 /// `RemoveWorktree`: the path gone is the removal (a registration left behind, the
-/// daemon having died before the prune, is forgotten now); its salvage ref, if the
-/// salvage made one, is reported.
+/// daemon having died before the prune, is forgotten now; a standalone checkout's
+/// repository left behind, final fix batch F1c, is removed now); its salvage ref, if
+/// the salvage made one, is reported.
 pub(super) fn remove_worktree(
     g: Git<'_>,
     root: &Path,
     path: &Path,
+    repo: &Path,
     salvage_ref: &str,
     notes: &mut Vec<String>,
 ) -> Result<Reconciled, String> {
     if path.exists() {
         return Ok(Reconciled::NotStarted);
+    }
+    if repo.exists() {
+        match std::fs::remove_dir_all(repo) {
+            Ok(()) => notes.push(format!(
+                "removed {}, the removed checkout's repository",
+                repo.display()
+            )),
+            Err(err) => notes.push(format!(
+                "could not remove the removed checkout's repository {}: {err}",
+                repo.display()
+            )),
+        }
     }
     if let Some(entry) = listed_worktree_in(g, root, path)? {
         match forget_missing(g, root, path, &entry) {
