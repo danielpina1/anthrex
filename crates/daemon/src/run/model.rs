@@ -59,6 +59,10 @@ pub struct Profile {
     pub generated: Vec<String>,
     pub protected: Vec<String>,
     pub env: BTreeMap<String, String>,
+    /// Directories a confined check or proof may also write (final fix batch F1c, I2;
+    /// `run::confine`). Absent from a run recorded before F1c: none.
+    #[serde(default)]
+    pub cache_dirs: Vec<String>,
 }
 
 /// `[orchestrator.claude] auth`, mirrored here with serde because `config::ClaudeAuth`

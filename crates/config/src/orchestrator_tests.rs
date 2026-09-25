@@ -552,5 +552,24 @@ protected = ["x/**"]
     );
 }
 
+#[test]
+fn profile_cache_dirs_are_read() {
+    // M8a final fix batch F1c (I2): where a confined check may also write.
+    let (config, problems) = parse(
+        r#"
+[orchestrator.profile]
+cache_dirs = ["~/.cache/sccache", "/opt/cache"]
+"#,
+    );
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(
+        config.orchestrator.profile.cache_dirs,
+        Some(vec![
+            "~/.cache/sccache".to_string(),
+            "/opt/cache".to_string()
+        ])
+    );
+}
+
 #[path = "orchestrator_tests_roster.rs"]
 mod roster;

@@ -95,12 +95,7 @@ pub(super) fn prepare(state: &EngineState, fx: Vec<Effect>, now: u64) -> Vec<Rea
                 Ready::Op {
                     ctx: OpCtx {
                         run_id,
-                        project: run.project.clone(),
-                        data_dir: run.data_dir.clone(),
-                        git_timeout: std::time::Duration::from_secs(run.limits.git_timeout_secs),
-                        check_timeout: std::time::Duration::from_secs(
-                            run.profile.check_timeout_secs,
-                        ),
+                        ..OpCtx::of(run)
                     },
                     op,
                     kind,

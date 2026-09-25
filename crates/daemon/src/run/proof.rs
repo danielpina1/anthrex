@@ -22,6 +22,7 @@ use std::time::Duration;
 
 use regex::Regex;
 
+use super::confine::ConfineSpec;
 use super::exec::{ShellOutcome, run_matching, run_shell};
 use super::git::{absolute_git_dir, materialize, prepare_scratch_in};
 use crate::launch::shell_quote;
@@ -46,6 +47,10 @@ pub struct ProofOp {
     pub setup: Option<String>,
     /// The profile's env, `{worktree}` already the proof worktree.
     pub env: Vec<(String, String)>,
+    /// Final fix batch F1c (I2): when set, both test runs are confined to the proof
+    /// worktree, its own object store, its temporary directory and the profile's
+    /// `cache_dirs` (`super::confine`). `setup` is not.
+    pub confine: Option<ConfineSpec>,
 }
 
 /// What the two runs showed: `OpResult::Proof`'s fields, which M8a.11 wraps (as
@@ -142,8 +147,15 @@ pub fn run_proof(
         })?;
     }
 
+    let confined = op
+        .confine
+        .as_ref()
+        .map(|spec| spec.for_checkout(&op.path))
+        .transpose()
+        .map_err(|error| ProofError::Failed(format!("the proof cannot be confined: {error}")))?;
+    let confined = confined.as_ref();
     git_write(checkout(git, &op.path, &op.red, git_timeout)).map_err(ProofError::Failed)?;
-    let (red, _) = run_matching(&op.path, &op.command, &op.env, timeout, None);
+    let (red, _) = run_matching(&op.path, &op.command, &op.env, timeout, None, confined);
     let mut runs = ProofRuns {
         red_failed: !red.ok && !red.timed_out,
         ..ProofRuns::default()
@@ -154,7 +166,14 @@ pub fn run_proof(
     }
 
     git_write(checkout(git, &op.path, &op.head, git_timeout)).map_err(ProofError::Failed)?;
-    let (head, matched) = run_matching(&op.path, &op.command, &op.env, timeout, Some(&pattern));
+    let (head, matched) = run_matching(
+        &op.path,
+        &op.command,
+        &op.env,
+        timeout,
+        Some(&pattern),
+        confined,
+    );
     runs.head_passed = head.ok;
     runs.matched = matched;
     runs.head_tail = with_timeout_note(head);

@@ -31,6 +31,7 @@ use std::time::{Duration, Instant};
 
 use regex::Regex;
 
+use super::confine::{Confinement, SANDBOX_EXEC};
 use crate::subprocess::{scrub_git_env, set_nonblocking, wait_readable};
 
 /// Lines of output a [`ShellOutcome`] keeps (decision 34).
@@ -75,6 +76,20 @@ pub struct ShellOutcome {
     pub secs: u64,
 }
 
+impl ShellOutcome {
+    /// A command that was not run because it could not be confined (final fix batch
+    /// F1c, I2): failed, with `reason` as its output.
+    pub fn refused(reason: String) -> Self {
+        ShellOutcome {
+            ok: false,
+            code: None,
+            timed_out: false,
+            tail: format!("not run: {reason}"),
+            secs: 0,
+        }
+    }
+}
+
 /// Runs `command` in `dir` under decision 34's rules: its own process group, stdin
 /// `/dev/null`, stderr merged into stdout, decision 26's environment plus `env`, and
 /// `SIGKILL` for the whole group on timeout or once it has finished.
@@ -84,7 +99,22 @@ pub fn run_shell(
     env: &[(String, String)],
     timeout: Duration,
 ) -> ShellOutcome {
-    run_matching(dir, command, env, timeout, None).0
+    run_matching(dir, command, env, timeout, None, None).0
+}
+
+/// [`run_shell`] under `confine` when it is set (final fix batch F1c, I2; see
+/// `super::confine`): the shell is started by `sandbox-exec` with the confinement's
+/// profile, which `exec`s it, so its pid and process group are the ones waited for
+/// and killed as before; `TMPDIR` is the confinement's (the profile's `env` may still
+/// set its own).
+pub fn run_confined(
+    dir: &Path,
+    command: &str,
+    env: &[(String, String)],
+    timeout: Duration,
+    confine: Option<&Confinement>,
+) -> ShellOutcome {
+    run_matching(dir, command, env, timeout, None, confine).0
 }
 
 /// Removes decision 26's agent variables and AGENTS.md rule 11's git variables from
@@ -113,6 +143,7 @@ pub(super) fn run_matching(
     env: &[(String, String)],
     timeout: Duration,
     pattern: Option<&Regex>,
+    confine: Option<&Confinement>,
 ) -> (ShellOutcome, bool) {
     let started = Instant::now();
     let not_started = |error: io::Error| ShellOutcome {
@@ -121,6 +152,10 @@ pub(super) fn run_matching(
         timed_out: false,
         tail: format!("could not run /bin/sh in {}: {error}", dir.display()),
         secs: started.elapsed().as_secs(),
+    };
+    let profile = match confine.map(Confinement::profile).transpose() {
+        Ok(profile) => profile,
+        Err(error) => return (not_started(io::Error::other(error)), false),
     };
     let (mut reader, writer) = match io::pipe() {
         Ok(pipe) => pipe,
@@ -131,7 +166,17 @@ pub(super) fn run_matching(
             Ok(stderr) => stderr,
             Err(error) => return (not_started(error), false),
         };
-        let mut shell = Command::new("/bin/sh");
+        let mut shell = match &profile {
+            Some(profile) => {
+                let mut sandboxed = Command::new(SANDBOX_EXEC);
+                sandboxed.arg("-p").arg(profile).arg("/bin/sh");
+                sandboxed
+            }
+            None => Command::new("/bin/sh"),
+        };
+        if let Some(confine) = confine {
+            shell.env("TMPDIR", confine.tmp());
+        }
         shell
             .arg("-c")
             .arg(format!("{{ {command}\n}} 2>&1"))

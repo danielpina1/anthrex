@@ -225,14 +225,38 @@ fn e2e_accept_refuses_a_run_branch_moved_after_complete() {
 fn e2e_a_failed_reattach_after_the_swap_still_merges_the_task() {
     let h = RunHarness::new("");
     green_scripts(&h.repo);
-    let once = h.dir.path().join("locked-once");
+    // Final fix batch F1c (I2): the check is confined and can no longer write the
+    // integration worktree's git dir, so it waits at the candidate while this test
+    // leaves the `index.lock` there, from outside.
+    let go = h.dir.path().join("go");
     let check = format!(
-        "case \"$PWD\" in */integration) [ -e '{once}' ] || {{ : > '{once}'; : > \"$(git rev-parse --git-path index.lock)\"; }};; esac; true",
-        once = once.display()
+        "case \"$PWD\" in */integration) for i in $(seq 1 1500); do [ -e '{go}' ] && exit 0; sleep 0.2; done; exit 1;; esac; true",
+        go = go.display()
     );
     let toml = plan("", &[task("t1", &["a.txt"], "")])
         .replace("check = \"true\"", &format!("check = {check:?}"));
     let id = h.start(&toml, true);
+    let lock = until("the candidate's check", RUN_WAIT, || {
+        let run = h.run(&id)?;
+        let at = integration(t(&run, "t1"));
+        let at_candidate = at.is_dir()
+            && git_read(&at, &["symbolic-ref", "-q", "HEAD"]).is_none()
+            && git_read(&at, &["rev-parse", "HEAD^2"]).is_some();
+        if !at_candidate {
+            return None;
+        }
+        git_read(
+            &at,
+            &[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "index.lock",
+            ],
+        )
+    });
+    std::fs::write(&lock, "").unwrap();
+    std::fs::write(&go, "").unwrap();
     let run = h.wait_run(
         &id,
         |r| {
@@ -240,10 +264,6 @@ fn e2e_a_failed_reattach_after_the_swap_still_merges_the_task() {
             s == TaskState::Merged || s == TaskState::Blocked
         },
         RUN_WAIT,
-    );
-    assert!(
-        once.exists(),
-        "the check never ran in the integration worktree"
     );
     assert_eq!(t(&run, "t1").state, TaskState::Merged, "{run:?}");
     let run_ref = format!("refs/heads/anthrex/{id}/integration");

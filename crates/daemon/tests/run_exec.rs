@@ -289,6 +289,7 @@ fn op(p: &ProofRepo, name: &str, red: &str, head: &str, test: &str) -> ProofOp {
         timeout_secs: 60,
         setup: None,
         env: Vec::new(),
+        confine: None,
     }
 }
 

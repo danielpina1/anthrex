@@ -9,7 +9,6 @@ use std::time::Duration;
 use super::ops::blocking;
 use super::{OpCtx, RunService};
 use crate::run::engine::{EventKind, OpKind, OpResult};
-use crate::run::exec::run_shell;
 use crate::run::git::{self, CandidateStep, RefCheck};
 
 /// Decision 36, one attempt of the merge queue (see `OpKind::MergeCandidate`).
@@ -96,7 +95,17 @@ pub(super) async fn candidate(
                 .await?;
             let at = integration.clone();
             let timeout = Duration::from_secs(timeout_secs);
-            let outcome = blocking(move || Ok(run_shell(&at, &check, &env, timeout))).await?;
+            let confine = ctx.confine.clone();
+            let outcome = blocking(move || {
+                Ok(crate::run::confine::confined(
+                    &at,
+                    &check,
+                    &env,
+                    timeout,
+                    confine.as_ref(),
+                ))
+            })
+            .await?;
             if !outcome.ok {
                 reattach().await?;
                 return Ok(OpResult::CandidateRed {

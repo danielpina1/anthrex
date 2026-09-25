@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use super::{DONE_CHECK_GIT_TIMEOUT, OpCtx, RunService, cleanup, merge};
 use crate::headless::{HeadlessSpec, SessionArg};
+use crate::run::confine::confined;
 use crate::run::engine::{EventKind, OpKind, OpResult, ResolutionAt, ScratchAt};
 use crate::run::exec::{ShellOutcome, run_shell};
 use crate::run::git::{self, RefCheck};
@@ -315,6 +316,7 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
                 timeout_secs,
                 setup,
                 env,
+                confine: ctx.confine.clone(),
             };
             proof(service, ctx, op).await
         }
@@ -561,7 +563,8 @@ async fn check(
             return failed(error);
         }
     }
-    match blocking(move || Ok(run_shell(&dir, &command, &env, timeout))).await {
+    let confine = ctx.confine.clone();
+    match blocking(move || Ok(confined(&dir, &command, &env, timeout, confine.as_ref()))).await {
         Ok(outcome) => OpResult::Check {
             ok: outcome.ok,
             code: outcome.code,

@@ -113,6 +113,18 @@ fn profile_keys_resolve_per_key() {
 }
 
 #[test]
+fn cache_dirs_come_from_the_plan_else_the_config() {
+    // M8a final fix batch F1c (I2).
+    let config = profile_spec(|p| p.cache_dirs = Some(vec!["~/.cache/c".to_string()]));
+    assert_eq!(
+        resolve_profile(&profile_spec(|_| {}), &config).cache_dirs,
+        vec!["~/.cache/c".to_string()]
+    );
+    let plan = profile_spec(|p| p.cache_dirs = Some(Vec::new()));
+    assert!(resolve_profile(&plan, &config).cache_dirs.is_empty());
+}
+
+#[test]
 fn a_blank_plan_key_clears_the_config_value() {
     let plan = profile_spec(|p| p.check = Some("  ".to_string()));
     let config = profile_spec(|p| p.check = Some("config check".to_string()));

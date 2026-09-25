@@ -25,6 +25,7 @@
 //! `reconcile/` (decision 44's check of each unfinished op against git, the restored
 //! windows and leftover session processes); both blocking I/O.
 
+pub mod confine;
 pub mod contract;
 pub mod driver;
 pub mod edits;

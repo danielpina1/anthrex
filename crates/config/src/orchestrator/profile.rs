@@ -22,6 +22,7 @@ const KNOWN_PROFILE_KEYS: &[&str] = &[
     "generated",
     "protected",
     "env",
+    "cache_dirs",
 ];
 
 pub(super) fn read_profile(table: &toml::Table, o: &mut Orchestrator, problems: &mut Vec<Problem>) {
@@ -42,6 +43,7 @@ pub(super) fn read_profile(table: &toml::Table, o: &mut Orchestrator, problems: 
     read_profile_string_list(profile, "source", &mut o.profile.source, problems);
     read_profile_string_list(profile, "generated", &mut o.profile.generated, problems);
     read_profile_string_list(profile, "protected", &mut o.profile.protected, problems);
+    read_profile_string_list(profile, "cache_dirs", &mut o.profile.cache_dirs, problems);
 
     if let Some(v) = profile.get("check_timeout_secs") {
         match v

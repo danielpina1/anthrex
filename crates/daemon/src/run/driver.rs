@@ -130,6 +130,23 @@ pub(crate) struct OpCtx {
     pub data_dir: PathBuf,
     pub git_timeout: Duration,
     pub check_timeout: Duration,
+    /// Final fix batch F1c (I2): how checks and proofs are confined, when the run's
+    /// workers are sandboxed and this platform can confine them.
+    pub confine: Option<crate::run::confine::ConfineSpec>,
+}
+
+impl OpCtx {
+    /// `run`'s context for an op.
+    pub(crate) fn of(run: &crate::run::model::Run) -> Self {
+        OpCtx {
+            run_id: run.id.clone(),
+            project: run.project.clone(),
+            data_dir: run.data_dir.clone(),
+            git_timeout: Duration::from_secs(run.limits.git_timeout_secs),
+            check_timeout: Duration::from_secs(run.profile.check_timeout_secs),
+            confine: crate::run::confine::ConfineSpec::for_run(run),
+        }
+    }
 }
 
 /// Runs the engine. See the module doc.

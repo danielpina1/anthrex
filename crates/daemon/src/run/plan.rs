@@ -144,6 +144,7 @@ pub fn resolve_profile(plan: &ProfileSpec, config: &ProfileSpec) -> Profile {
         generated: pick(&plan.generated, &config.generated).unwrap_or_default(),
         protected,
         env: pick(&plan.env, &config.env).unwrap_or_default(),
+        cache_dirs: pick(&plan.cache_dirs, &config.cache_dirs).unwrap_or_default(),
     }
 }
 

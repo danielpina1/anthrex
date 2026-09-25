@@ -310,13 +310,7 @@ fn replayed_accept(run: &Run, answers: &[(String, u64, OpResult)]) -> Option<Acc
         Some(AcceptCleanUp {
             op: *op,
             merged: outcome.clone(),
-            ctx: OpCtx {
-                run_id: run.id.clone(),
-                project: run.project.clone(),
-                data_dir: run.data_dir.clone(),
-                git_timeout: Duration::from_secs(run.limits.git_timeout_secs),
-                check_timeout: Duration::from_secs(run.profile.check_timeout_secs),
-            },
+            ctx: OpCtx::of(run),
             root: root.clone(),
             worktrees: worktrees.clone(),
             branch_prefix: branch_prefix.clone(),

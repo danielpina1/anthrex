@@ -403,16 +403,34 @@ fn e2e_a_failed_merge_candidate_reattaches_the_integration_worktree() {
     let h = RunHarness::new("");
     green_scripts(&h.repo);
     let base = h.git(&["symbolic-ref", "--short", "HEAD"]);
+    // Final fix batch F1c (I2): the check is confined and can no longer move the base
+    // itself, so it waits at the candidate while this test does, from outside.
+    let go = h.dir.path().join("go");
     let check = format!(
-        "case \"$PWD\" in */integration) printf '%s\\n' 1111111111111111111111111111111111111111 > \"$(git rev-parse --git-common-dir)/refs/heads/{base}\";; esac"
+        "case \"$PWD\" in */integration) for i in $(seq 1 1500); do [ -e '{}' ] && exit 0; sleep 0.2; done; exit 1;; esac",
+        go.display()
     );
     let plan = plan("", &[task("t1", &["a.txt"], "")])
         .replace("check = \"true\"", &format!("check = {check:?}"));
     let id = h.start(&plan, true);
+    let integration = until("the candidate's check", RUN_WAIT, || {
+        let run = h.run(&id)?;
+        let at = integration(t(&run, "t1"));
+        let detached = at.is_dir()
+            && git_read(&at, &["symbolic-ref", "-q", "HEAD"]).is_none()
+            && git_read(&at, &["rev-parse", "HEAD^2"]).is_some();
+        detached.then_some(at)
+    });
+    let common = h.git(&["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    std::fs::write(
+        std::path::Path::new(&common).join(format!("refs/heads/{base}")),
+        "1111111111111111111111111111111111111111\n",
+    )
+    .unwrap();
+    std::fs::write(&go, "").unwrap();
     let run = h.wait_run(&id, |r| t(r, "t1").state == TaskState::Blocked, RUN_WAIT);
     let block = t(&run, "t1").block.clone().expect("a block");
     assert!(block.text.contains("could not merge"), "{block:?}");
-    let integration = integration(t(&run, "t1"));
     let head = git_in(&integration, &["symbolic-ref", "-q", "HEAD"]);
     assert_eq!(head, format!("refs/heads/anthrex/{id}/integration"));
 }
