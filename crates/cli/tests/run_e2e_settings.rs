@@ -295,7 +295,11 @@ fn e2e_a_claude_bound_plan_starts_and_an_edit_onto_codex_is_refused() {
     });
     match reply {
         proto::RunReply::Refused { message, .. } => {
-            assert_eq!(message, settings_refusal("Codex", ".codex/config.toml"));
+            // T22-P1 (F4): an edit's own text; `--trust-project` belongs to `run start`.
+            assert_eq!(
+                message,
+                "this edit would start headless Codex sessions, and this repository has project settings they would run without asking: .codex/config.toml; a run trusts only what its start checked, so review them and start a new run with --trust-project"
+            );
         }
         other => panic!("expected a refusal, got {other:?}"),
     }

@@ -19,6 +19,20 @@ use super::model::{ReviewLevel, Run, Task};
 use super::roster::{escalate, pick_reviewer};
 use super::validate::resolve_task_lenient;
 
+/// Whether `edits` can widen [`reachable_runtimes`] (T22-P2, F4): only a task added,
+/// split or amended can; a pause, resume, finish, cancel, answer or dependency cannot,
+/// so `run edit` probes git for those batches no more, and a git error cannot refuse
+/// them.
+pub fn edits_may_widen(edits: &[proto::PlanEdit]) -> bool {
+    use proto::PlanEdit;
+    edits.iter().any(|edit| {
+        matches!(
+            edit,
+            PlanEdit::AddTask { .. } | PlanEdit::SplitTask { .. } | PlanEdit::AmendTask { .. }
+        )
+    })
+}
+
 /// Every runtime `run` can launch a session on, in `[Claude, Codex]` order.
 pub fn reachable_runtimes(run: &Run) -> Vec<Runtime> {
     let mut found = Vec::new();

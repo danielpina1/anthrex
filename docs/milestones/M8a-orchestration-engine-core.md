@@ -8186,8 +8186,10 @@ Re-review `task-22-rereview-1.md`; rulings T22-I1b, T22-N2, T22-N3 and T22-N4.
     - `e2e_a_codex_bound_plan_starts_beside_claude_settings`.
 
     These are the brief's Claude-only and Codex-only cases. They hold only on rosters
-    that keep the run on one runtime: with the built-in roster, every reviewed task
-    reaches both runtimes.
+    that keep the run on one runtime: with the built-in roster, every task that is not
+    on Claude's frontier entry reaches both runtimes (a Claude fast or standard task
+    escalates onto Codex standard, a Codex task onto Claude sonnet); a Claude-frontier
+    task reaches only Claude (corrected in F4, T22-P4).
 - **N2 and the m8 residual.**
   - `stop()` returns early only once every run's last `run.json` has been written (a
     new `saved` flag, set after `stop_now`'s saves). So a loop aborted inside its own

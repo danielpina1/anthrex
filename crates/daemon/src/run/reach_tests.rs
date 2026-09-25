@@ -192,3 +192,43 @@ fn a_peer_entry_no_rung_can_reach_is_not_counted() {
     assert_eq!(run.tasks[0].review_level, None);
     assert_eq!(reachable_runtimes(&run), vec![Runtime::Claude]);
 }
+
+/// T22-P2 (F4): only an edit that adds or changes a task can widen the runtimes a run
+/// reaches, so only such a batch needs the git probe; a pause, an answer or a cancel
+/// never fails on git.
+#[test]
+fn only_task_edits_may_widen_the_reach() {
+    use proto::PlanEdit;
+    let quiet = [
+        PlanEdit::Pause,
+        PlanEdit::Resume,
+        PlanEdit::Finish,
+        PlanEdit::CancelTask {
+            task_id: "t1".into(),
+        },
+        PlanEdit::Answer {
+            task_id: "t1".into(),
+            text: "a".into(),
+        },
+        PlanEdit::AddDep {
+            task_id: "t1".into(),
+            dep: "t2".into(),
+        },
+    ];
+    assert!(!edits_may_widen(&quiet));
+    let amend = PlanEdit::AmendTask {
+        task_id: "t1".into(),
+        brief: None,
+        acceptance: None,
+        route: None,
+        test_mode: None,
+        test_mode_reason: None,
+        priority: None,
+        size: Some(proto::Size::M),
+    };
+    assert!(edits_may_widen(&[PlanEdit::Pause, amend]));
+    assert!(edits_may_widen(&[PlanEdit::SplitTask {
+        task_id: "t1".into(),
+        into: Vec::new(),
+    }]));
+}

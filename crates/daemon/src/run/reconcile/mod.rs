@@ -99,7 +99,8 @@ pub fn reconcile_with_orphan_parent(
             JournalLine::Intent { op, .. } => {
                 intents.insert(*op);
             }
-            // The last `done` of an op wins; an op runs once, so there is one.
+            // The last `done` of an op wins. An op runs once, but a replayed accept's
+            // clean-up appends a second `Done` for it (ruling T22-N3), which wins.
             JournalLine::Done { op, result } => {
                 dones.insert(*op, result);
             }

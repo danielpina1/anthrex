@@ -18,6 +18,18 @@ use crate::run::reconcile;
 use crate::worktree::pinned::PinAs;
 use proto::RunState;
 
+/// What a replayed accept's clean-up adds to its outcome.
+const CLEAN_UP_AFTER_RESTART: &str = "; clean-up after the restart: ";
+
+/// The merge's own outcome of a replayed accept's `Finished` (T22-P3, F4): a crash after
+/// a clean-up's `Done` replays that `Done`, whose outcome already carries one clean-up
+/// clause, and the next clean-up replaces it rather than nesting a second.
+pub(super) fn merge_outcome(merged: &str) -> &str {
+    merged
+        .split_once(CLEAN_UP_AFTER_RESTART)
+        .map_or(merged, |(merge, _)| merge)
+}
+
 /// The engine's cap on a run's log (Interfaces, `LogEntry`).
 const LOG_MAX: usize = 500;
 
@@ -192,7 +204,10 @@ impl RunService {
                     return;
                 }
                 let result = OpResult::Finished {
-                    outcome: format!("{}; clean-up after the restart: {outcome}", cleanup.merged),
+                    outcome: format!(
+                        "{}{CLEAN_UP_AFTER_RESTART}{outcome}",
+                        merge_outcome(&cleanup.merged)
+                    ),
                     kept_branches,
                 };
                 let line = journal::JournalLine::Done {

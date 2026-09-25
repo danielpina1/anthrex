@@ -435,3 +435,14 @@ async fn restoring_an_unchanged_finished_run_writes_nothing() {
         "the empty journal was compacted into being"
     );
 }
+
+/// T22-P3 (F4): a clean-up replayed again after a crash replaces the earlier clause.
+#[test]
+fn a_replayed_clean_up_does_not_nest_its_outcome() {
+    use super::restore::merge_outcome;
+    assert_eq!(merge_outcome("merged abc"), "merged abc");
+    assert_eq!(
+        merge_outcome("merged abc; clean-up after the restart: removed 2 worktrees"),
+        "merged abc"
+    );
+}

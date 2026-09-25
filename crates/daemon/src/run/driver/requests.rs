@@ -23,7 +23,7 @@ use crate::run::model::{ClaudeAuth, Run};
 use crate::run::plan::{
     BuildContext, parse_plan, random_suffix, resolve_profile, run_id_taken, slug,
 };
-use crate::run::reach::reachable_runtimes;
+use crate::run::reach::{edits_may_widen, reachable_runtimes};
 use crate::run::validate::EditScope;
 use crate::worktree::repo_worktrees_dir;
 
@@ -37,6 +37,15 @@ const API_KEY_NEEDED: &str = "[orchestrator.claude] auth = \"api_key\" needs ANT
 fn settings_refusal(who: &str, paths: &[String]) -> String {
     format!(
         "this repository has project settings that headless {who} sessions would run without asking: {}; review them, then start again with --trust-project",
+        paths.join(", ")
+    )
+}
+
+/// Decision 53's refusal for an edit that would reach `who` (T22-P1, F4): the run's
+/// start trusted only the settings it checked, and `run edit` has no `--trust-project`.
+fn edit_settings_refusal(who: &str, paths: &[String]) -> String {
+    format!(
+        "this edit would start headless {who} sessions, and this repository has project settings they would run without asking: {}; a run trusts only what its start checked, so review them and start a new run with --trust-project",
         paths.join(", ")
     )
 }
@@ -291,10 +300,11 @@ impl RunService {
     /// `run edit` (ruling T22-I1b): decisions 50 and 53 for each runtime the run cannot
     /// reach yet, so the engine refuses an edit that would reach one whose checks fail
     /// with that check's text. Project settings already trusted at `run start` pass.
+    /// Only a batch that adds, splits or amends a task is probed (T22-P2, F4).
     async fn edit(&self, run_id: String, edits: Vec<proto::PlanEdit>) -> Result<String, String> {
         let run = crate::lock(&self.state).runs.get(&run_id).cloned();
         let mut refusals = Vec::new();
-        if let Some(run) = run {
+        if let Some(run) = run.filter(|_| edits_may_widen(&edits)) {
             let reachable = reachable_runtimes(&run);
             let unreached: Vec<Runtime> = [Runtime::Claude, Runtime::Codex]
                 .into_iter()
@@ -306,7 +316,7 @@ impl RunService {
             for (runtime, who, paths) in checks.settings {
                 let trusted = paths.iter().all(|p| run.trusted_project.contains(p));
                 if !trusted && !refusals.iter().any(|(r, _)| *r == runtime) {
-                    refusals.push((runtime, settings_refusal(who, &paths)));
+                    refusals.push((runtime, edit_settings_refusal(who, &paths)));
                 }
             }
         }

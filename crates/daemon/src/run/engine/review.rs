@@ -116,6 +116,15 @@ pub(super) fn review_ready(
     }
     let op = next_op(run);
     let task = &run.tasks[i];
+    // Only a task with a review level enters `review` (`next_gate`), and `reach` counts
+    // reviewers at the levels a task can have; a future path into review without one
+    // would launch a reviewer `reach` never checked (T22 re-review 2, F4), so debug
+    // builds refuse it.
+    debug_assert!(
+        task.review_level.is_some(),
+        "task {} is in review with no review level",
+        task.id()
+    );
     let level = task.review_level.unwrap_or(ReviewLevel::Medium);
     // The reviewer is picked against the route of the session that wrote the claimed
     // commit, the last worker round's (an escalation to the peer runtime included), so
