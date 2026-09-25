@@ -91,6 +91,8 @@ impl RunService {
             runs.push(run);
         }
         if runs.is_empty() {
+            // Final review B-4: windows of runs that are gone go all the same.
+            self.remove_stale_windows(&BTreeSet::new());
             return;
         }
         let (prepared, skipped) = self.restore_step(runs, replay, held, now);

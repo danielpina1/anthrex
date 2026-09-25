@@ -282,3 +282,50 @@ async fn a_run_whose_restore_panics_does_not_stop_the_others() {
     assert_eq!(state.runs.keys().collect::<Vec<_>>(), vec!["good"]);
     assert_eq!(state.runs["good"].state, proto::RunState::Paused);
 }
+
+/// A manager restored from a `state.json` holding one dormant headless window of run
+/// `run_id`, and the service over `data`.
+fn restored_with_window(run_id: &str, data: &Path) -> (Arc<RunService>, Arc<WindowManager>) {
+    use crate::run::test_support::{PROFILE, plan_with, run_ok, task_toml};
+    let run = run_ok(&plan_with(
+        PROFILE,
+        &[task_toml("t1", "S", "[\"crates/a/**\"]", "")],
+    ));
+    let mut spec = crate::run::role_launch::worker_spec(&run, &run.tasks[0]);
+    spec.run_ref = Some(proto::RunRef {
+        run_id: run_id.to_string(),
+        task_id: Some("t1".into()),
+        role: proto::AgentRole::Worker,
+        session: 1,
+    });
+    let record: crate::state::WindowRecord = serde_json::from_value(serde_json::json!({
+        "id": 1,
+        "name": "abcd/t1.w1",
+        "runtime": "claude",
+        "cwd": data,
+        "kind": "headless",
+        "run": serde_json::to_value(&spec).unwrap(),
+    }))
+    .unwrap();
+    let config = ManagerConfig::new("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+    let (manager, _events) = WindowManager::new(config);
+    manager.restore(crate::state::StateFile {
+        version: crate::state::STATE_VERSION,
+        next_id: 2,
+        windows: vec![record],
+        runs: Vec::new(),
+    });
+    assert_eq!(manager.list().len(), 1, "the headless window is restored");
+    let s = RunService::for_manager(&manager, data.to_path_buf(), Arc::new(NoRoots));
+    (s, manager)
+}
+
+/// Final review B-4: with no run to restore (the runs directory deleted, or its only
+/// `run.json` unreadable), a restored headless window of a gone run is still removed.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restore_with_no_runs_still_removes_stale_headless_windows() {
+    let data = tempfile::tempdir().unwrap();
+    let (s, manager) = restored_with_window("gone", data.path());
+    s.restore().await;
+    assert!(manager.list().is_empty(), "{:?}", manager.list());
+}
