@@ -4,13 +4,14 @@ anthrex is built in sixteen milestones. Milestones 1 to 6.5 and 8a are merged. E
 
 The design is layered, newest first:
 
-0. `docs/superpowers/specs/2026-09-22-adaptive-orchestrator-design.md` — milestones 8a, 8b, 8c, 9 and 9.5: the adaptive orchestrator. Replaces the orchestration parts of every document below (its §18 lists exactly what), and replaces the old milestone 8 and 9 briefs.
-1. `docs/superpowers/specs/2026-09-21-agent-conversation-view-design.md` — milestone 6.5: the structured conversation model and its view. Amends milestone 8's scope and milestone 9's plan gate. Where it disagrees with anything below, it wins.
-2. `docs/superpowers/specs/2026-09-21-node-inspector-design.md` — milestone 4.7: the panel below the graph. Amends the document below.
-3. `docs/superpowers/specs/2026-09-20-graph-overview-design.md` — milestone 4.6: the drawn graph overview and sub-agent labels. Amends §5.1 and §10.3 of the product design below.
-4. `docs/superpowers/specs/2026-09-20-git-surface-and-simple-orchestration-design.md` — milestone 4.5, and the cut-down scope of milestones 8 and 9. Where it disagrees with the document below, it wins.
-5. `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` — milestones 2 to 9.
-6. `docs/superpowers/specs/2026-09-17-anthrex-design.md` — milestone 1 and the parts of the core it still governs.
+0. `docs/superpowers/specs/2026-09-26-tiered-testing-and-pr-delivery-design.md` — milestones 9.1 and 9.2: tiered testing and stacked-PR delivery, plus orchestrator-to-worker messaging (its §12), which joins milestone 9. Amends the adaptive orchestrator spec below; its §11 lists exactly what it replaces. Where the two disagree, it wins.
+1. `docs/superpowers/specs/2026-09-22-adaptive-orchestrator-design.md` — milestones 8a, 8b, 8c, 9 and 9.5: the adaptive orchestrator. Replaces the orchestration parts of every document below (its §18 lists exactly what), and replaces the old milestone 8 and 9 briefs.
+2. `docs/superpowers/specs/2026-09-21-agent-conversation-view-design.md` — milestone 6.5: the structured conversation model and its view. Amends milestone 8's scope and milestone 9's plan gate. Where it disagrees with anything below, it wins.
+3. `docs/superpowers/specs/2026-09-21-node-inspector-design.md` — milestone 4.7: the panel below the graph. Amends the document below.
+4. `docs/superpowers/specs/2026-09-20-graph-overview-design.md` — milestone 4.6: the drawn graph overview and sub-agent labels. Amends §5.1 and §10.3 of the product design below.
+5. `docs/superpowers/specs/2026-09-20-git-surface-and-simple-orchestration-design.md` — milestone 4.5, and the cut-down scope of milestones 8 and 9. Where it disagrees with the document below, it wins.
+6. `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` — milestones 2 to 9.
+7. `docs/superpowers/specs/2026-09-17-anthrex-design.md` — milestone 1 and the parts of the core it still governs.
 
 The protocol version currently on `main` is **7**, raised from 6 by milestone 8a (`crates/proto/src/lib.rs:25`). Protocol numbers written in the milestone 8b to 9.5 briefs predate this and are re-derived from this line when each milestone is implemented: milestone 8b will use 8.
 
@@ -43,10 +44,12 @@ The protocol version currently on `main` is **7**, raised from 6 by milestone 8a
 | 8b | Adaptation: repo profile, scouts, deciders, fast path, output filter, metering, run history | `docs/milestones/M8b-adaptation.md` | 8a | `blocked` |
 | 8c | The live run view in `C-b T` and the run inspector | `docs/milestones/M8c-live-run-view.md` | 8a | `blocked` |
 | 9 | ~~Orchestrator agent~~ — superseded by the new 9 brief below | `docs/milestones/M9-orchestrator-agent.md` | — | `superseded` |
-| 9 | Orchestrator and sub-planners: the one interactive agent, planning, steering, plan gate | `docs/milestones/M9-orchestrator-and-subplanners.md` | 8a, 8b, 8c | `blocked` |
-| 9.5 | Tuning: adaptive concurrency, threshold and budget refit, race and test-writer patterns | `docs/milestones/M9.5-tuning.md` | 9 | `blocked` |
+| 9 | Orchestrator and sub-planners: the one interactive agent, planning, steering, plan gate (+ orchestrator-to-worker messaging, 2026-09-26 spec §12) | `docs/milestones/M9-orchestrator-and-subplanners.md` | 8a, 8b, 8c | `blocked` |
+| 9.1 | Tiered testing: affected-set tiers, test scheduler, result cache, flake handling, bisect, stages | `docs/milestones/M9.1-tiered-testing.md` | 9 | `blocked` |
+| 9.2 | Stacked-PR delivery: CI and review comments become fix tasks; anthrex never merges | `docs/milestones/M9.2-pr-delivery.md` | 9.1 | `blocked` |
+| 9.5 | Tuning: adaptive concurrency, threshold and budget refit, race and test-writer patterns | `docs/milestones/M9.5-tuning.md` | 9.2 | `blocked` |
 
-Work the milestones in numerical order, with one agreed exception: **milestone 7 is deferred** until after the orchestrator, because nothing in 6.5, 8 or 9 depends on split panes and the orchestration work is what is wanted next. The order to follow is **5 → 6 → 6.5 → 8a → (8b and 8c, in either order) → 9 → 9.5**, then 7. Milestones 8b and 8c both need only 8a and touch different crates (8b the daemon, 8c the client), but they share the protocol version, so run them one after the other, not at once.
+Work the milestones in numerical order, with one agreed exception: **milestone 7 is deferred** until after the orchestrator, because nothing in 6.5, 8 or 9 depends on split panes and the orchestration work is what is wanted next. The order to follow is **5 → 6 → 6.5 → 8a → (8b and 8c, in either order) → 9 → 9.1 → 9.2 → 9.5**, then 7. Milestones 8b and 8c both need only 8a and touch different crates (8b the daemon, 8c the client), but they share the protocol version, so run them one after the other, not at once.
 
 Only one milestone should be in progress at a time: they all touch the protocol and the client state.
 
@@ -68,7 +71,9 @@ flowchart LR
   M8a --> M8c[8c Live run view]
   M8b --> M9[9 Orchestrator and sub-planners]
   M8c --> M9
-  M9 --> M95[9.5 Tuning]
+  M9 --> M91[9.1 Tiered testing]
+  M91 --> M92[9.2 Stacked-PR delivery]
+  M92 --> M95[9.5 Tuning]
 ```
 
 ## Why this order
