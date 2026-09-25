@@ -5,7 +5,8 @@
 //! decision 2 draws the pure/impure line module by module; every submodule's own doc
 //! comment says which side of that line it is on.
 //!
-//! - **The plan model (pure).** `model.rs` (the run, its tasks and rounds), `plan.rs`
+//! - **The plan model (pure).** `model.rs` with `model_rounds.rs` (the run, its tasks
+//!   and rounds), `plan.rs`
 //!   (parsing, profile and limit resolution, `build_run`, the run-id slug), `validate.rs`
 //!   with `validate_graph.rs` (task resolution and the cross-task rules, decisions
 //!   8–13), `edits.rs` (plan edits, decision 13), `globs.rs` (`owns` globs, decisions 11
