@@ -53,7 +53,14 @@ impl RunService {
         let mut runs = Vec::new();
         let mut replay = Vec::new();
         let mut held = Vec::new();
+        // Final review B-5: each run as loaded, and the runs with an empty journal and
+        // nothing pending (nothing to compact), so an unchanged run costs no write.
+        let mut as_loaded = std::collections::HashMap::new();
+        let mut quiet = BTreeSet::new();
         for (mut run, lines) in loaded {
+            if lines.is_empty() && run.pending_ops.is_empty() {
+                quiet.insert(run.id.clone());
+            }
             let (git, windows) = (self.ctx.git.clone(), windows.clone());
             let timeout = Duration::from_secs(run.limits.git_timeout_secs);
             let snapshot = run.clone();
@@ -88,6 +95,7 @@ impl RunService {
                 crate::lock(&self.held_accepts).push(cleanup);
             }
             replay.extend(answers);
+            as_loaded.insert(run.id.clone(), run.clone());
             runs.push(run);
         }
         if runs.is_empty() {
@@ -95,10 +103,15 @@ impl RunService {
             self.remove_stale_windows(&BTreeSet::new());
             return;
         }
-        let (prepared, skipped) = self.restore_step(runs, replay, held, now);
+        let (mut prepared, skipped) = self.restore_step(runs, replay, held, now);
         crate::lock(&self.held_accepts).retain(|c| !skipped.contains(&c.ctx.run_id));
+        // A run the restore left exactly as loaded is already on disk.
+        prepared.retain(|item| match item {
+            effects::Ready::Save(run) => as_loaded.get(&run.id) != Some(&**run),
+            _ => true,
+        });
         self.execute(prepared, now).await;
-        self.compact_after_restore().await;
+        self.compact_after_restore(&quiet).await;
         self.watch_live_worktrees();
         self.remove_stale_windows(&skipped);
     }
@@ -196,13 +209,15 @@ impl RunService {
 
     /// Every restored run's journal, rewritten with only its pending ops (decision 43,
     /// M8a.21's "compacting the journal after the restore"). The restore's `Persist`
-    /// has been written by now.
-    async fn compact_after_restore(&self) {
+    /// has been written by now. A run loaded with an empty journal that still has
+    /// nothing pending (`quiet`) has nothing to compact.
+    async fn compact_after_restore(&self, quiet: &BTreeSet<String>) {
         let runs: Vec<_> = {
             let state = crate::lock(&self.state);
             state
                 .runs
                 .values()
+                .filter(|run| !(quiet.contains(&run.id) && run.pending_ops.is_empty()))
                 .map(|run| {
                     (
                         run.id.clone(),

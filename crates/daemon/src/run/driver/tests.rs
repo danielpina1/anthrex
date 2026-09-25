@@ -402,3 +402,33 @@ async fn an_op_whose_run_could_not_be_saved_is_not_started() {
         "the op ran although its run was never saved"
     );
 }
+
+/// Final review B-5: restoring a finished run the restore does not change writes
+/// nothing (no `run.json` rewrite, no journal compaction), so a daemon's start does not
+/// grow with every run it ever finished.
+#[tokio::test(flavor = "multi_thread")]
+async fn restoring_an_unchanged_finished_run_writes_nothing() {
+    use std::os::unix::fs::MetadataExt;
+    let data = tempfile::tempdir().unwrap();
+    let config = ManagerConfig::new("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+    let (manager, _events) = WindowManager::new(config);
+    let s = RunService::for_manager(&manager, data.path().to_path_buf(), Arc::new(NoRoots));
+    let mut run = poisoned_run("done", data.path());
+    run.revision = 4;
+    run.state = proto::RunState::Accepted;
+    crate::run::journal::save_run(&run).unwrap();
+    let file = run.data_dir.join(crate::run::journal::RUN_FILE);
+    let journal = run.data_dir.join(crate::run::journal::JOURNAL_FILE);
+    let before = std::fs::metadata(&file).unwrap().ino();
+    s.restore().await;
+    assert_eq!(crate::lock(&s.state).runs.len(), 1, "the run is restored");
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().ino(),
+        before,
+        "run.json was rewritten"
+    );
+    assert!(
+        !journal.exists(),
+        "the empty journal was compacted into being"
+    );
+}
