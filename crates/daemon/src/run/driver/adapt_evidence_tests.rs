@@ -188,3 +188,33 @@ fn oversized_non_report_and_rootless_evidence_is_skipped() {
     let error = read_evidence(&alias, &run_dir, Path::new(""), Some("onboarding-9")).unwrap_err();
     assert!(error.contains("onboarding: not a stored report"), "{error}");
 }
+
+/// Re-review n1: a FIFO under the scouts directory is refused at once; opening it must
+/// never wait for a writer (that would hold a blocking thread and the size check forever).
+#[test]
+fn a_fifo_report_is_refused_without_blocking() {
+    let tmp = tempfile::tempdir().unwrap();
+    let run_dir = tmp.path().join("data").join("runs").join(RUN);
+    let repo_dir = tmp.path().join("data").join("repos").join("r-00000001");
+    let scouts = run_dir.join("scouts");
+    std::fs::create_dir_all(&scouts).unwrap();
+    let fifo = std::ffi::CString::new(
+        scouts
+            .join("pipe.json")
+            .into_os_string()
+            .into_encoded_bytes(),
+    )
+    .unwrap();
+    // SAFETY: a valid NUL-terminated path; mkfifo only creates a node.
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let refs = vec!["pipe".to_string()];
+        let _ = tx.send(read_evidence(&refs, &run_dir, &repo_dir, None));
+    });
+    let result = rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("reading a FIFO report blocked");
+    let error = result.unwrap_err();
+    assert!(error.contains("pipe: not a regular file"), "{error}");
+}

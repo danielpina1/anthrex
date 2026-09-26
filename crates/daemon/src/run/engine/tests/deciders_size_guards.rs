@@ -59,6 +59,11 @@ fn an_l_answer_keeps_a_dep_cancelled_block_and_retry_stays_refused() {
     assert_eq!(t2.state, TaskState::Blocked);
     assert_eq!(t2.block, Some(block), "the existing block is kept");
     assert_eq!(
+        (t2.size, t2.raised_size),
+        (Size::S, None),
+        "an L answer never raises"
+    );
+    assert_eq!(
         done_info(&fx, "t2").decided,
         Some(Size::L),
         "still recorded"
@@ -97,6 +102,11 @@ fn an_l_answer_keeps_an_environment_block_and_its_setup_output() {
     let t1 = fx.task("t1");
     assert_eq!(t1.state, TaskState::Blocked);
     assert_eq!(t1.block, Some(block), "the setup output is kept");
+    assert_eq!(
+        (t1.size, t1.raised_size),
+        (Size::S, None),
+        "an L answer never raises"
+    );
     assert_eq!(done_info(&fx, "t1").decided, Some(Size::L));
 }
 
