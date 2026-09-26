@@ -21,8 +21,16 @@ pub fn event_type(event: &Value) -> String {
 }
 
 /// Keys whose values are free-form data rather than a fixed shape: a tool's arguments,
-/// and maps keyed by a model or agent-type name. Only their JSON type is checked.
-const OPAQUE: &[&str] = &["input", "arguments", "tool_input", "modelUsage", "by_type"];
+/// and maps keyed by a model or agent-type name, or by a tool use's id (M8b.1's
+/// `wire_tool_inputs`). Only their JSON type is checked.
+const OPAQUE: &[&str] = &[
+    "input",
+    "arguments",
+    "tool_input",
+    "modelUsage",
+    "by_type",
+    "wire_tool_inputs",
+];
 
 /// Every recorded sample of one event type, merged: the JSON types seen at each path,
 /// the keys an object may have, the keys every sample's object has (the required ones;
@@ -126,10 +134,13 @@ impl Schema {
     }
 }
 
-/// Every recorded stream event of `runtime`, observed and documented.
-fn fixtures(runtime: &str) -> Vec<Value> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../daemon/tests/fixtures/headless");
-    let mut events = Vec::new();
+/// The recorded stream files of `runtime` in the fixture directory `dir` (`headless`,
+/// `deciders`), without the input fixture, which is what was written to stdin.
+pub fn fixture_files(dir: &str, runtime: &str) -> Vec<std::path::PathBuf> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../daemon/tests/fixtures")
+        .join(dir);
+    let mut files = Vec::new();
     for entry in fs::read_dir(&dir).unwrap() {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -137,6 +148,16 @@ fn fixtures(runtime: &str) -> Vec<Value> {
         if !name.starts_with(runtime) || !name.ends_with(".jsonl") || name.contains("-input") {
             continue;
         }
+        files.push(path);
+    }
+    files.sort();
+    files
+}
+
+/// Every recorded stream event of `runtime` in the fixture directories `dirs`.
+fn fixtures(dirs: &[&str], runtime: &str) -> Vec<Value> {
+    let mut events = Vec::new();
+    for path in dirs.iter().flat_map(|dir| fixture_files(dir, runtime)) {
         let text = fs::read_to_string(&path).unwrap();
         events.extend(
             text.lines()
@@ -154,8 +175,14 @@ fn fixtures(runtime: &str) -> Vec<Value> {
 /// every sample has is written, and each value has a recorded JSON type. A key only
 /// some samples have is optional. Returns the event types checked.
 pub fn assert_conforms(runtime: &str, events: &[Value]) -> BTreeSet<String> {
+    assert_conforms_in(&["headless"], runtime, events)
+}
+
+/// [`assert_conforms`] against the recordings in the fixture directories `dirs`, merged
+/// (M8b.6: `deciders` holds M8b.1's decider streams).
+pub fn assert_conforms_in(dirs: &[&str], runtime: &str, events: &[Value]) -> BTreeSet<String> {
     let mut schemas: BTreeMap<String, Schema> = BTreeMap::new();
-    for sample in fixtures(runtime) {
+    for sample in fixtures(dirs, runtime) {
         schemas
             .entry(event_type(&sample))
             .or_default()

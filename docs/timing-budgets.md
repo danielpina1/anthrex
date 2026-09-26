@@ -139,6 +139,12 @@ or one push, far under its bound; each absence window is paired with a positive 
 | The PTY quiet rule, then `tick()` | `headless_windows.rs` (`QUIET_AFTER + 300ms`) | `QUIET_AFTER + 300ms` | Derived from the rule's own constant; `tick()` is synchronous. | **Recorded.** |
 | `report_with`, used for `## t1:` since F4 | `crates/cli/tests/support/run_plans.rs` | `10s` | The report is rewritten at most every 500 ms (`REPORT_EVERY`) on `spawn_blocking`. | **Recorded.** (F1c's third report read without a deadline, `run_e2e_basic.rs`.) |
 
+### Recorded, from M8b.6 (2026-09-26)
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `decider_hang_blocks_until_killed` | `crates/fake-agent/tests/adapt_modes.rs` (`HANG_WINDOW`) | `1s` absence, then `RUN` (20s) for the killed process to be reaped | A `{"hang": true}` decider never writes and never exits on its own; the kill is SIGKILL to the one pid the test spawned. | **Recorded.** An observation window for a negative result: load can only hide a hang that wrongly answers, never fail a correct build. The positive half (the kill ends it, by SIGKILL, with nothing written) follows. |
+
 ### Fixed, from the main-branch CI failures (2026-09-23)
 
 | Test | Site | Bound (as found) | The code's own legal worst case | Status |

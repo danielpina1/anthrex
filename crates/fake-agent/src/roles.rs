@@ -96,12 +96,28 @@ pub fn find(role: Option<&str>, task: Option<&str>, session: &str, resume: bool)
     {
         return Ok(claimed(path));
     }
-    if let (Some(role), Some(dir)) = (role, &dir)
-        && let Some(path) = claim(dir, role, task, session)?
-    {
-        return Ok(claimed(path));
+    if let (Some(role), Some(dir)) = (role, &dir) {
+        if let Some(path) = claim(dir, role, task, session)? {
+            return Ok(claimed(path));
+        }
+        // A scout id carries a timestamp (`onboarding-<secs>`), so a script named
+        // without it serves any id of that name (M8b decision 37).
+        if role == "scout"
+            && let Some(base) = task.and_then(scout_base)
+            && let Some(path) = claim(dir, role, Some(base), session)?
+        {
+            return Ok(claimed(path));
+        }
     }
     Ok(fallback())
+}
+
+/// `onboarding` for the scout id `onboarding-1695000000`: the id without its trailing
+/// `-<digits>`.
+fn scout_base(id: &str) -> Option<&str> {
+    let (base, secs) = id.rsplit_once('-')?;
+    let digits = !secs.is_empty() && secs.bytes().all(|b| b.is_ascii_digit());
+    (digits && !base.is_empty()).then_some(base)
 }
 
 fn claimed(path: PathBuf) -> Script {

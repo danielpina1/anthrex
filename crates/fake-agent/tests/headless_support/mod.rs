@@ -17,6 +17,8 @@ use std::time::{Duration, Instant};
 
 mod shape;
 pub use shape::assert_conforms;
+#[allow(unused_imports)] // Only `adapt_modes.rs` reads the decider fixtures.
+pub use shape::{assert_conforms_in, fixture_files};
 mod stub_daemon;
 #[allow(unused_imports)] // Not every test binary uses the stub daemon.
 pub use stub_daemon::StubDaemon;
@@ -279,6 +281,8 @@ impl Agent {
             .env_remove("FAKE_AGENT_SCRIPT")
             .env_remove("FAKE_AGENT_ARGS_FILE")
             .env_remove("FAKE_AGENT_STDIN_FILE")
+            .env_remove("FAKE_AGENT_DECIDER_DIR")
+            .env_remove("FAKE_AGENT_BASH_LOG")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("ANTHREX_SOCKET", cwd.join("never.sock"))

@@ -70,13 +70,29 @@ pub fn parse_line(line: &str) -> Option<Line> {
     }
 }
 
-/// Reads stdin on its own thread: records every line, then sends each accepted one. A
-/// line in any other shape exits the process with 5 at once, which is how a driver that
-/// writes a wrong envelope fails a test. EOF closes the channel.
-pub fn read_stdin(name: String) -> Receiver<Line> {
+/// The first stdin line, read before anything else (M8b decision 36: a decider is
+/// known by its first message). `None` at EOF. The rest stays in stdin's buffer.
+pub fn read_first_line() -> Option<String> {
+    let mut line = String::new();
+    match io::stdin().lock().read_line(&mut line) {
+        Ok(0) | Err(_) => None,
+        Ok(_) => {
+            let end = line.trim_end_matches(['\n', '\r']).len();
+            line.truncate(end);
+            Some(line)
+        }
+    }
+}
+
+/// Reads stdin on its own thread, starting with `first` when the first line was read
+/// already: records every line, then sends each accepted one. A line in any other
+/// shape exits the process with 5 at once, which is how a driver that writes a wrong
+/// envelope fails a test. EOF closes the channel.
+pub fn read_stdin(name: String, first: Option<String>) -> Receiver<Line> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        for line in io::stdin().lock().lines() {
+        let rest = io::stdin().lock().lines();
+        for line in first.into_iter().map(Ok).chain(rest) {
             let Ok(line) = line else { return };
             if let Err(error) = roles::record_stdin(&name, &line) {
                 eprintln!("fake-agent: {error:#}");
@@ -109,6 +125,9 @@ pub struct Claude {
     counter: u64,
     /// The session's `result` count, its `result_index`.
     results: u64,
+    /// A decider call (M8b decision 36): the lines carry the keys M8b.1's decider
+    /// recordings (`crates/daemon/tests/fixtures/deciders/`) add.
+    decider: bool,
 }
 
 impl Claude {
@@ -128,7 +147,54 @@ impl Claude {
             open_tool: None,
             counter: 0,
             results: 0,
+            decider: false,
         }
+    }
+
+    /// This session as a decider call's (M8b decision 36).
+    pub fn decider(mut self) -> Self {
+        self.decider = true;
+        self
+    }
+
+    /// A decider's structured answer as M8b.1 recorded it: a top-level
+    /// `StructuredOutput` tool use whose input is the answer, its tool result, and a
+    /// `result` carrying the answer as `structured_output` and as JSON text.
+    pub fn structured_answer(&mut self, answer: &Value, usage: Usage) -> Result<()> {
+        let id = format!("toolu_fake{:04}", self.next());
+        let block = json!({
+            "type": "tool_use",
+            "id": id,
+            "name": "StructuredOutput",
+            "input": answer,
+            "caller": {"type": "direct"},
+        });
+        let mut wire = Map::new();
+        wire.insert(id.clone(), answer.clone());
+        self.assistant(block, json!({"wire_tool_inputs": wire}))?;
+        let text = "Structured output provided successfully";
+        self.line(
+            "user",
+            json!({
+                "message": {"role": "user", "content": [
+                    {"tool_use_id": id, "type": "tool_result", "content": text},
+                ]},
+                "parent_tool_use_id": null,
+                "timestamp": timestamp(),
+                "tool_use_result": text,
+            }),
+        )?;
+        let fields = json!({
+            "subtype": "success",
+            "is_error": false,
+            "result": answer.to_string(),
+            "structured_output": answer,
+            "stop_reason": "tool_use",
+            "num_turns": 2,
+            "terminal_reason": "completed",
+            "api_error_status": null,
+        });
+        self.result(fields, usage)
     }
 
     fn next(&mut self) -> u64 {
@@ -179,6 +245,10 @@ impl Claude {
         });
         if let (Value::Object(fields), Value::Object(extra)) = (&mut fields, extra) {
             fields.extend(extra);
+        }
+        if self.decider {
+            fields["message"]["input_transformations"] = json!([]);
+            fields["request_id"] = format!("req_fake{:04}", self.next()).into();
         }
         self.line("assistant", fields)
     }
@@ -263,6 +333,16 @@ impl Claude {
         });
         if let (Value::Object(object), Value::Object(fields)) = (&mut object, fields) {
             object.extend(fields);
+        }
+        if self.decider {
+            for key in [
+                "first_content_frame_ms",
+                "time_to_request_ms",
+                "ttft_ms",
+                "ttft_stream_ms",
+            ] {
+                object[key] = json!(1);
+            }
         }
         self.last_text.clear();
         self.open_tool = None;
