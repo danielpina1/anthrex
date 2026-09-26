@@ -267,6 +267,8 @@ A proof failure is a gate failure like any other (§10). The reviewer's first jo
 
 The roster gains a coarse **strength** per model: `fast`, `standard`, `frontier`. The profile or `config.toml` maps each tier to concrete models per runtime, so the policy survives model renames. [E — needed both for reviewer strength and to resolve the M8/M9 tier contradiction]
 
+When several roster entries have the same runtime and strength, the earlier entry wins a default pick. M9.5 adds separate ordered candidate lists for task classes (`s`, `m`, `hub`) and roles (`review`, `scout`, `decider`, `planner`, `orchestrator`): `pick = "first"` uses list order, and `pick = "spread"` rotates eligible work as specified in the M9.5 brief. These are configured choices, not a learned router.
+
 | | **S** | **M** | hub task |
 |---|---|---|---|
 | Worker | fast or standard tier, effort low–medium | standard or frontier tier, effort medium–high | frontier tier, effort high |
@@ -433,6 +435,10 @@ Budgets are enforced by count, never by prediction: token use on the same task v
 Every finished task appends one record to `history.jsonl` in the repository's data directory:
 
 predicted size and route · actual files, hunks and lines changed · tool calls · tokens by type (where metered) · wall-clock per phase (queued, working, check, review, merge) · gate outcomes · review severities · bounces · highest rung · which done signal fired · and, appended later as a separate `revert` record, whether the user reverted it.
+
+**Preserve routing decisions, not just the final route.** Before each task-bound agent session starts, the engine records the effective route decision in the persisted task state; prelaunch plan drafts that never dispatch an agent are not training outcomes. The finished task's history record copies the ordered decisions. This includes the first worker, every fresh worker after escalation, each reviewer round, and M9.5's test writers and race lanes. A decision records the task id, agent role and session/round/lane, time and trigger, the selected runtime/model/strength/effort, whether the choice came from an explicit task route, a configured list, an engine default, review policy or escalation, and the routing policy version. It snapshots the task's title, brief, acceptance criteria, owned paths, kind, size, hub flag, interface-change flag and test mode, plus the profile's languages, **at dispatch time**. Later edits must not overwrite the input that led to an earlier choice.
+
+Each decision keeps an ordered snapshot of its **candidates** with resolved runtime/model/strength/effort. When M9.5's user-configured class or role list applies, that list is the candidate source; otherwise it is the applicable merged roster. Record which candidate was selected and why a listed candidate was skipped (for example, an overlapping task prevents a cross-runtime escalation). Append the selected route if it was outside the candidate source, including an explicit route or a fallback. A later config or roster edit must not rewrite historical candidates. This history stays local to anthrex's data directory; a future training export must be explicit. Do not include agent transcripts, credentials or raw tool output. The task's existing outcome, gate, usage and later revert records supply result labels; an unchosen candidate is **not** labelled as a failure. M8b defines the task-history schema and captures its worker and reviewer decisions; M9.5 extends capture to its configured lists, racers and test writers. This records evidence for a later learned router without enabling one now.
 
 - **Actual size is measured by diff**, not tokens.
 - After `adapt.min_samples` tasks (default 30) of a size, the engine computes new line thresholds and sets each budget to 2–3x the observed median.
