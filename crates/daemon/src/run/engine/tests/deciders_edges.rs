@@ -274,3 +274,27 @@ fn a_deferred_rung_is_taken_only_by_its_own_answer() {
         Some(DeciderSource::Decider)
     );
 }
+
+/// Re-review r1: a new `task_blocked` clears the earlier block's `block_source`, so a
+/// typed block never shows a decider's classification.
+#[test]
+fn a_new_block_clears_the_earlier_block_source() {
+    let (mut fx, window) = working();
+    let op = untyped_block(&mut fx, window);
+    fx.decided(op, classified(BlockKind::Question));
+    assert_eq!(fx.task("t1").block_source, Some(DeciderSource::Decider));
+    let answer = PlanEdit::Answer {
+        task_id: "t1".into(),
+        text: "use the other port".into(),
+    };
+    edit(&mut fx, vec![answer]);
+    fx.turn_completed(window);
+    let args = json!({"kind": "environment", "reason": REASON});
+    let effects = fx.tool(window, "task_blocked", args);
+    assert_eq!(replies(&effects), vec![Ok(blocked_recorded("environment"))]);
+    let snapshot = crate::run::snapshot::snapshot(&fx.state, fx.now);
+    let task = &snapshot.runs[0].tasks[0];
+    assert_eq!(task.block_source, None);
+    assert_eq!(fx.task("t1").block_source, None);
+    assert_alive(&fx);
+}
