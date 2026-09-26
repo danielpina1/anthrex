@@ -144,6 +144,7 @@ or one push, far under its bound; each absence window is paired with a positive 
 | Test | Site | Bound | The code's own legal worst case | Status |
 |---|---|---|---|---|
 | `decider_hang_blocks_until_killed` | `crates/fake-agent/tests/adapt_modes.rs` (`HANG_WINDOW`) | `1s` absence, then `RUN` (20s) for the killed process to be reaped | A `{"hang": true}` decider never writes and never exits on its own; the kill is SIGKILL to the one pid the test spawned. | **Recorded.** An observation window for a negative result: load can only hide a hang that wrongly answers, never fail a correct build. The positive half (the kill ends it, by SIGKILL, with nothing written) follows. |
+| `role_and_resumed_sessions_do_not_read_stdin_before_starting` | `crates/fake-agent/tests/adapt_edges.rs` (`exists_before_stdin`) | `RUN` (20s) for a claim or argv record to appear | One `git rev-parse` (bounded by `GIT_TIMEOUT`, 5s) and a file create: milliseconds. A session that wrongly waits for stdin never writes it. | **Recorded.** A deadline loop polled every 10ms; it returns as soon as the file exists. |
 
 ### Fixed, from the main-branch CI failures (2026-09-23)
 

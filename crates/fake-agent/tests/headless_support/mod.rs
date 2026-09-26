@@ -16,9 +16,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 mod shape;
-pub use shape::assert_conforms;
-#[allow(unused_imports)] // Only `adapt_modes.rs` reads the decider fixtures.
-pub use shape::{assert_conforms_in, fixture_files};
+#[allow(unused_imports)] // Not every test binary checks shapes.
+pub use shape::{assert_conforms, assert_conforms_in, fixture_files};
+mod adapt;
+#[allow(unused_imports)] // Only the M8b.6 tests use these.
+pub use adapt::*;
 mod stub_daemon;
 #[allow(unused_imports)] // Not every test binary uses the stub daemon.
 pub use stub_daemon::StubDaemon;

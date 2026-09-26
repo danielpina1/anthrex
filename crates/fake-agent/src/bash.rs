@@ -25,7 +25,15 @@ pub fn rewrite(runtime: &Runtime, cmd: &str, session: &str) -> Result<String> {
                 "session_id": session,
             });
             crate::fill_hook_payload(&mut payload, "PreToolUse")?;
-            let printed = crate::run_hook_output(hook, &payload)?;
+            // Like the real CLI, a hook that fails (exits non-zero or times out) is a
+            // non-blocking error: the tool runs as it was.
+            let printed = match crate::run_hook_output(hook, &payload) {
+                Ok(printed) => printed,
+                Err(error) => {
+                    eprintln!("fake-agent: PreToolUse hook failed: {error:#}");
+                    continue;
+                }
+            };
             if let Some(updated) = updated_command(&printed) {
                 command = updated;
             }

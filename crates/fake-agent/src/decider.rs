@@ -125,7 +125,10 @@ enum Answerer {
 /// Runs one decider call of `kind`: records it, claims its script and answers. Exits 2
 /// when no script is left, as the caller then falls back.
 fn run(answerer: Answerer, kind: &str, args: &[String], prompt: &str) -> Result<i32> {
-    let dir = std::env::var_os("FAKE_AGENT_DECIDER_DIR").map(PathBuf::from);
+    // A directory that does not exist has no script either (decision 36: exit 2).
+    let dir = std::env::var_os("FAKE_AGENT_DECIDER_DIR")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_dir());
     if let Some(dir) = &dir {
         record(dir, kind, args, prompt)?;
     }

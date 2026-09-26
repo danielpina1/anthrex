@@ -112,11 +112,15 @@ pub fn find(role: Option<&str>, task: Option<&str>, session: &str, resume: bool)
     Ok(fallback())
 }
 
-/// `onboarding` for the scout id `onboarding-1695000000`: the id without its trailing
-/// `-<digits>`.
+/// The fewest digits a scout id's timestamp suffix has (a unix time in seconds).
+const TIMESTAMP_DIGITS: usize = 9;
+
+/// `onboarding` for the scout id `onboarding-1695000000`: the id without a trailing
+/// timestamp, `-<9 or more digits>`. A shorter number is part of the name, so the area
+/// scout `api-2` never takes `api`'s script.
 fn scout_base(id: &str) -> Option<&str> {
     let (base, secs) = id.rsplit_once('-')?;
-    let digits = !secs.is_empty() && secs.bytes().all(|b| b.is_ascii_digit());
+    let digits = secs.len() >= TIMESTAMP_DIGITS && secs.bytes().all(|b| b.is_ascii_digit());
     (digits && !base.is_empty()).then_some(base)
 }
 
