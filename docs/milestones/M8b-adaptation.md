@@ -2332,3 +2332,8 @@ So the "empty-root `ClaudeSandbox`" M8a gives reviewers (F1c N4) and decision 12
   - **M4:** the hang test's control now waits until `pgrep` lists both deciders.
   - **Files:** the fixtures moved to `crates/cli/tests/support/decider.rs`, and the new tests are in `decider_call_edges.rs`, so every file stays under 600 lines.
   - **Proof:** each new test was proved with a mutation of non-kill code, then reverted: R-T1-4 removed; `parse` instead of `parse_for`; `StructuredOutput` dropped; usage kept only when the source is the decider; the roster's first entry; effort `High`. Each mutant fails its test. `a_dropped_call_leaves_no_process` was proved by its red run.
+- **Hardening after approval (the controller's incident rule).**
+  - A reviewer's mutation made the fixtures fall back to the real `claude` and `codex` on `PATH`, because they set only `ANTHREX_DECIDER_BIN`.
+  - `support/decider.rs`'s `context_with` now always sets `ANTHREX_CLAUDE_BIN` and `ANTHREX_CODEX_BIN` to `NO_CLAUDE_BIN` and `NO_CODEX_BIN`. Both are paths under `/nonexistent/anthrex-test/`, whatever the caller's variables say. `decider/tests_context.rs` builds its manager with the same kind of paths.
+  - `the_fixture_never_resolves_to_a_real_agent_binary` covers both modes with no `ANTHREX_DECIDER_BIN`. It asserts the program is the nonexistent path before any call. The call then falls back with `could not start … No such file or directory` and records no call.
+  - Its red run failed on that first assert (`"claude"`), so nothing was spawned.

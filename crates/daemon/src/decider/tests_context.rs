@@ -15,6 +15,15 @@ fn entry(runtime: Runtime, model: &str, strength: Strength) -> ModelEntry {
     }
 }
 
+/// A manager whose runtime commands do not exist: these tests never spawn, and nothing
+/// built here could reach a real agent binary if one did.
+fn manager() -> ManagerConfig {
+    let mut manager = ManagerConfig::new("/tmp/unused.sock".into(), "/bin/sh".into());
+    manager.claude_bin = "/nonexistent/anthrex-test/claude".into();
+    manager.codex_bin = "/nonexistent/anthrex-test/codex".into();
+    manager
+}
+
 fn context(
     mode: DeciderMode,
     models: Option<Vec<ModelEntry>>,
@@ -28,8 +37,7 @@ fn context(
     if let Some(models) = models {
         cfg.models = models;
     }
-    let manager = ManagerConfig::new("/tmp/unused.sock".into(), "/bin/sh".into());
-    DeciderContext::new(&cfg, &manager, Path::new("/data"))
+    DeciderContext::new(&cfg, &manager(), Path::new("/data"))
 }
 
 #[test]
@@ -39,14 +47,17 @@ fn the_context_takes_its_timeout_paths_and_effort_from_the_config() {
     assert_eq!(ctx.cwd, Path::new("/data/deciders/cwd"));
     assert_eq!(ctx.schema_dir, Path::new("/data/deciders/schemas"));
     assert_eq!(ctx.route.effort, Effort::Medium);
-    assert_eq!(ctx.program, "claude");
+    assert_eq!(ctx.program, "/nonexistent/anthrex-test/claude");
     assert_eq!(
         context(DeciderMode::Codex, None, Strength::Fast).program,
-        "codex"
+        "/nonexistent/anthrex-test/codex"
     );
     // The defaults: the fast tier at low effort, within 90 s.
-    let manager = ManagerConfig::new("/tmp/unused.sock".into(), "/bin/sh".into());
-    let default = DeciderContext::new(&config::Orchestrator::default(), &manager, Path::new("/d"));
+    let default = DeciderContext::new(
+        &config::Orchestrator::default(),
+        &manager(),
+        Path::new("/d"),
+    );
     assert_eq!(
         (
             default.route.model.as_str(),

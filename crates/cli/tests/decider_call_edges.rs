@@ -133,3 +133,28 @@ fn the_results_structured_output_wins() {
         }
     );
 }
+
+/// The safety net under every test here: the fixture points both runtime commands at a
+/// path that does not exist, so a context without `ANTHREX_DECIDER_BIN` (or a mutation
+/// that ignores it) can never reach a real `claude` or `codex` on `PATH`.
+#[test]
+fn the_fixture_never_resolves_to_a_real_agent_binary() {
+    let fx = Fixture::new();
+    for (mode, missing) in [
+        (DeciderMode::Claude, NO_CLAUDE_BIN),
+        (DeciderMode::Codex, NO_CODEX_BIN),
+    ] {
+        let ctx = context_with(fx.root(), mode, |_| None);
+        // Checked before any call, so nothing can be spawned if it is wrong.
+        assert_eq!(ctx.program, missing, "{mode:?}");
+        assert!(!std::path::Path::new(missing).exists());
+        let decision = runtime().block_on(decide(&ctx, &blocked("x")));
+        assert_fallback(
+            &decision,
+            &format!(
+                "the decider could not start: could not start {missing}: No such file or directory (os error 2)"
+            ),
+        );
+    }
+    assert!(fx.calls().is_empty(), "{:?}", fx.calls());
+}

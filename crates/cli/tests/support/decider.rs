@@ -95,11 +95,25 @@ impl Fixture {
     }
 }
 
+/// Where every test context's `claude` and `codex` commands point: a path that does not
+/// exist, so no test, and no mutation of program selection, can reach a real agent
+/// binary on `PATH`.
+pub const NO_CLAUDE_BIN: &str = "/nonexistent/anthrex-test/claude";
+pub const NO_CODEX_BIN: &str = "/nonexistent/anthrex-test/codex";
+
+/// A context from `var` (for `ANTHREX_DECIDER_BIN`), whatever it says about the runtime
+/// commands: `ANTHREX_CLAUDE_BIN` and `ANTHREX_CODEX_BIN` are always [`NO_CLAUDE_BIN`]
+/// and [`NO_CODEX_BIN`].
 pub fn context_with(
     root: &Path,
     mode: DeciderMode,
     var: impl Fn(&str) -> Option<String>,
 ) -> DeciderContext {
+    let var = move |key: &str| match key {
+        "ANTHREX_CLAUDE_BIN" => Some(NO_CLAUDE_BIN.to_string()),
+        "ANTHREX_CODEX_BIN" => Some(NO_CODEX_BIN.to_string()),
+        _ => var(key),
+    };
     let mut cfg = config::Orchestrator::default();
     cfg.deciders.mode = mode;
     cfg.deciders.timeout_secs = TIMEOUT_SECS;

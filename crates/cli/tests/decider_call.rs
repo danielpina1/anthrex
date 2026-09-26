@@ -125,8 +125,8 @@ fn decider_bin_wins_over_the_runtime_command() {
     let program = fx.program().to_string_lossy().into_owned();
     let both = |key: &str| match key {
         "ANTHREX_DECIDER_BIN" => Some(program.clone()),
-        "ANTHREX_CLAUDE_BIN" => Some("/nonexistent/claude".to_string()),
-        "ANTHREX_CODEX_BIN" => Some("/nonexistent/codex".to_string()),
+        "ANTHREX_CLAUDE_BIN" => Some(NO_CLAUDE_BIN.to_string()),
+        "ANTHREX_CODEX_BIN" => Some(NO_CODEX_BIN.to_string()),
         _ => None,
     };
     let manager = ManagerConfig::from_vars(
@@ -147,14 +147,14 @@ fn decider_bin_wins_over_the_runtime_command() {
     // Without it (or with it empty) the mode's runtime command is the program.
     let without = |key: &str| match key {
         "ANTHREX_DECIDER_BIN" => Some(String::new()),
-        "ANTHREX_CLAUDE_BIN" => Some("/nonexistent/claude".to_string()),
-        "ANTHREX_CODEX_BIN" => Some("/nonexistent/codex".to_string()),
+        "ANTHREX_CLAUDE_BIN" => Some(NO_CLAUDE_BIN.to_string()),
+        "ANTHREX_CODEX_BIN" => Some(NO_CODEX_BIN.to_string()),
         _ => None,
     };
     let claude = context_with(fx.root(), DeciderMode::Claude, without);
-    assert_eq!(claude.program, "/nonexistent/claude");
+    assert_eq!(claude.program, NO_CLAUDE_BIN);
     let codex = context_with(fx.root(), DeciderMode::Codex, without);
-    assert_eq!(codex.program, "/nonexistent/codex");
+    assert_eq!(codex.program, NO_CODEX_BIN);
 }
 
 #[test]
