@@ -387,8 +387,17 @@ fn structured_output_tool_use_is_read() {
         answer_from_events(&only_subagent).unwrap_err(),
         "the session gave no answer"
     );
-    // The recorded triage call: its StructuredOutput tool use is the answer.
-    let events = stream_events(TRIAGE_FIXTURE);
+    // The recorded triage call: without its result's structured output (M8b.7), its
+    // StructuredOutput tool use is the answer.
+    let events: Vec<SessionEvent> = stream_events(TRIAGE_FIXTURE)
+        .into_iter()
+        .filter(|e| !matches!(e, SessionEvent::StructuredOutput { .. }))
+        .collect();
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, SessionEvent::ToolUse { .. }))
+    );
     let answer = answer_from_events(&events).unwrap();
     assert_eq!(answer["scale"], "single");
     assert_eq!(answer["task"]["owns"], json!(["README.md"]));
@@ -400,7 +409,12 @@ fn assistant_text_in_a_fence_is_parsed() {
     // fenced text is the answer (ruling R-T1-4's case, a turn cut off at --max-turns).
     let events: Vec<SessionEvent> = stream_events(TRIAGE_FIXTURE)
         .into_iter()
-        .filter(|e| !matches!(e, SessionEvent::ToolUse { .. }))
+        .filter(|e| {
+            !matches!(
+                e,
+                SessionEvent::ToolUse { .. } | SessionEvent::StructuredOutput { .. }
+            )
+        })
         .collect();
     let answer = answer_from_events(&events).unwrap();
     assert_eq!(answer["kinds"], json!(["docs"]));

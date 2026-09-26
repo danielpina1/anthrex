@@ -6,6 +6,7 @@
 //! `OpKind::Decide` and `OpResult::Decided`, so they serialize.
 
 pub mod argv;
+pub mod call;
 pub mod fallback;
 pub mod parse;
 pub mod prompt;
@@ -14,10 +15,13 @@ pub mod schema;
 pub use argv::{AnswerSource, DECIDER_CAPS, DeciderCaps};
 
 use crate::headless::argv::CliCaps;
-use proto::{DeciderMode, DeciderSource, Route, Scale, Size, TaskKind, TestMode, TokenUsage};
+use crate::manager::ManagerConfig;
+use proto::{
+    DeciderMode, DeciderSource, Route, Runtime, Scale, Size, TaskKind, TestMode, TokenUsage,
+};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// The four decider kinds (decision 17).
@@ -198,7 +202,7 @@ pub struct Decision {
 }
 
 /// Everything a decider call needs besides its request (decision 16). Built once at
-/// daemon start (`DeciderContext::new`, M8b.7).
+/// daemon start ([`DeciderContext::new`]).
 #[derive(Debug, Clone)]
 pub struct DeciderContext {
     pub mode: DeciderMode,
@@ -210,6 +214,48 @@ pub struct DeciderContext {
     /// `<data_dir>/deciders/schemas`, where Codex's schema files go.
     pub schema_dir: PathBuf,
     pub caps: CliCaps,
+}
+
+impl DeciderContext {
+    /// The context every decider call of this daemon uses (decision 16), built from the
+    /// config and the manager's resolved commands. Pure: the call creates `cwd` and
+    /// `schema_dir` itself.
+    /// - `program`: `ANTHREX_DECIDER_BIN` (`manager.decider_bin`), else the mode's
+    ///   runtime command (`claude_bin` or `codex_bin`; `claude_bin` when off, unused).
+    /// - `route`: on the mode's runtime, the first roster entry at the lowest strength at
+    ///   or above `deciders.strength`, else that runtime's first entry, else no model
+    ///   (the CLI's default), at `deciders.effort`.
+    pub fn new(cfg: &config::Orchestrator, manager: &ManagerConfig, data_dir: &Path) -> Self {
+        let deciders = &cfg.deciders;
+        let runtime = match deciders.mode {
+            DeciderMode::Codex => Runtime::Codex,
+            DeciderMode::Claude | DeciderMode::Off => Runtime::Claude,
+        };
+        let command = match runtime {
+            Runtime::Codex => &manager.codex_bin,
+            _ => &manager.claude_bin,
+        };
+        let program = manager.decider_bin.as_ref().unwrap_or(command);
+        let entry =
+            crate::run::roster::lowest_at_or_above(&cfg.models, runtime, deciders.strength, None)
+                .or_else(|| cfg.models.iter().find(|e| e.runtime == runtime));
+        let route = Route {
+            runtime,
+            model: entry.map(|e| e.model.clone()).unwrap_or_default(),
+            strength: entry.map_or(deciders.strength, |e| e.strength),
+            effort: deciders.effort,
+        };
+        let root = data_dir.join("deciders");
+        DeciderContext {
+            mode: deciders.mode,
+            program: OsString::from(program),
+            route,
+            timeout: Duration::from_secs(deciders.timeout_secs),
+            cwd: root.join("cwd"),
+            schema_dir: root.join("schemas"),
+            caps: manager.cli_caps,
+        }
+    }
 }
 
 #[cfg(test)]

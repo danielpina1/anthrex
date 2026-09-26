@@ -1,7 +1,8 @@
 //! The decider mode (M8b decision 36): a headless call whose prompt's first line is
 //! `[anthrex decider] <kind> v1` answers from `$FAKE_AGENT_DECIDER_DIR/<kind>-<n>.json`,
-//! claimed in order of `n`, and records every call in `calls.jsonl` there. Its output
-//! has only the shapes of M8b.1's decider recordings.
+//! claimed in order of `n`, and records every call in `calls.jsonl` there (and, with
+//! `FAKE_AGENT_ENV_FILE` set, its environment's names in that file). Its output has only
+//! the shapes of M8b.1's decider recordings.
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, ErrorKind, Read, Write};
@@ -125,6 +126,7 @@ enum Answerer {
 /// Runs one decider call of `kind`: records it, claims its script and answers. Exits 2
 /// when no script is left, as the caller then falls back.
 fn run(answerer: Answerer, kind: &str, args: &[String], prompt: &str) -> Result<i32> {
+    record_env_keys()?;
     // A directory that does not exist has no script either (decision 36: exit 2).
     let dir = std::env::var_os("FAKE_AGENT_DECIDER_DIR")
         .map(PathBuf::from)
@@ -217,6 +219,21 @@ fn drain_stdin() -> Result<()> {
         .read_to_end(&mut ignored)
         .context("read stdin to EOF")?;
     Ok(())
+}
+
+/// With `FAKE_AGENT_ENV_FILE` set, writes the names (never the values) of the decider's
+/// environment variables there, sorted, one per line (M8b.7: a decider sees no API
+/// credential).
+fn record_env_keys() -> Result<()> {
+    let Some(path) = std::env::var_os("FAKE_AGENT_ENV_FILE") else {
+        return Ok(());
+    };
+    let mut keys: Vec<String> = std::env::vars_os()
+        .map(|(key, _)| key.to_string_lossy().into_owned())
+        .collect();
+    keys.sort();
+    let text: String = keys.iter().map(|key| format!("{key}\n")).collect();
+    fs::write(&path, text).with_context(|| format!("write {}", path.to_string_lossy()))
 }
 
 /// Appends `{"kind","argv","prompt"}` to `<dir>/calls.jsonl`.

@@ -1344,6 +1344,17 @@ scope.
   first, the CLI forced a `StructuredOutput` call, and `num_turns` was 3. M8b.7 should
   read the fenced text (decision 16's source 3) even when a turn ends early.
 
+## From M8b.7 (2026-09-26), for the user and for M8b
+
+- **An inherited `ANTHROPIC_BASE_URL` reaches every headless session, deciders
+  included (not fixed).** `credential_scrub_for` removes `ANTHROPIC_API_KEY` and
+  `ANTHROPIC_AUTH_TOKEN`, but not `ANTHROPIC_BASE_URL` (or any other `ANTHROPIC_*`
+  endpoint variable). M8b.7's credential test recorded it in a decider's environment,
+  inherited from the shell that ran the tests. A daemon started from such a shell sends
+  every `claude -p` session, with the user's login, to that endpoint. Whether it should
+  be scrubbed (like the keys) or kept (a proxy the user chose) is a policy question for
+  the user; M8a's scrub list is the place.
+
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
 - **The main pane can switch to a new window while the new-agent form is still open and

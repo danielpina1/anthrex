@@ -45,7 +45,7 @@ fn strength_one_up(strength: Strength) -> Option<Strength> {
 /// The roster entry on `runtime` with the lowest strength at or above `min`, first in
 /// roster order among ties; `exclude_model`, when set, skips an entry with that exact
 /// model (decision 35's "preferring a model different from the author's").
-fn lowest_at_or_above<'a>(
+pub(crate) fn lowest_at_or_above<'a>(
     roster: &'a [ModelEntry],
     runtime: Runtime,
     min: Strength,

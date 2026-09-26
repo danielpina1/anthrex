@@ -13,6 +13,8 @@
 //! - A turn is interrupted when its `result` has `subtype: "error_during_execution"` and
 //!   `terminal_reason` `aborted_tools` or `aborted_streaming`.
 //! - `result.usage` is per turn and is passed through.
+//! - `result.structured_output` (a decider's answer under `--json-schema`, M8b.1) is
+//!   `StructuredOutput`, just before the result's `TurnEnded`.
 //! - The line types the stream meta lists as `unmodelled` (hook progress, thinking-token
 //!   counts, task progress, `rate_limit_event`, `control_response`, …) are recognised
 //!   and yield `Other`, so they never crowd real diagnostics out of the window's
@@ -108,7 +110,20 @@ impl ClaudeStream {
                     .collect(),
                 line,
             ),
-            ("result", _) => vec![self.result(&object)],
+            ("result", _) => {
+                // M8b.1 item 1: a decider's answer is also the result's
+                // `structured_output`, delivered before the turn ends (decision 16).
+                let mut events: Vec<SessionEvent> = object
+                    .get("structured_output")
+                    .filter(|value| !value.is_null())
+                    .map(|value| SessionEvent::StructuredOutput {
+                        value: value.clone(),
+                    })
+                    .into_iter()
+                    .collect();
+                events.push(self.result(&object));
+                events
+            }
             (other, _) if RECOGNISED_TYPES.contains(&other) => {
                 vec![SessionEvent::Other { kind: other.into() }]
             }
