@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use daemon::launch::LaunchGate;
 use daemon::manager::{ManagerConfig, WindowManager};
 use daemon::run::driver::{Adaptation, INTERRUPT_GRACE, RETIRE_AFTER, RunService};
 use daemon::scout::contract::SCOUT_NUDGE;
@@ -18,8 +19,8 @@ use daemon::scout::service::{ScoutHandle, ScoutOutcome, ScoutService};
 use daemon::scout::spec::{ScoutContext, ScoutSpec};
 use daemon::server::{GitWiring, serve};
 use proto::{
-    AgentRole, ClientKind, ClientMsg, DaemonMsg, PROTO_VERSION, RunReply, ScoutKind, ScoutReport,
-    ScoutState, Status, ToolCall, read_frame, write_frame,
+    AgentRole, ClientKind, ClientMsg, DaemonMsg, PROTO_VERSION, RunReply, Runtime, ScoutKind,
+    ScoutReport, ScoutState, Status, ToolCall, read_frame, write_frame,
 };
 use serde_json::{Value, json};
 use tokio::net::UnixStream;
@@ -44,6 +45,12 @@ struct Rig {
 
 impl Rig {
     async fn new() -> Rig {
+        Rig::with(Runtime::Claude, None, LaunchGate::open_already()).await
+    }
+
+    /// A rig whose scouts run on `runtime`. Claude is always the test's fake-agent;
+    /// Codex is too for a Codex rig, else a path that does not exist.
+    async fn with(runtime: Runtime, max_tool_calls: Option<u32>, gate: LaunchGate) -> Rig {
         let dir = tempdir();
         let repo = dir.path().join("repo");
         init_repo(&repo, &[("Cargo.toml", "[workspace]\n")]);
@@ -65,11 +72,19 @@ impl Rig {
         let mut config = ManagerConfig::new(socket, "/bin/sh".into());
         config.exe = PathBuf::from(ANTHREX);
         config.claude_bin = wrapper.display().to_string();
-        config.codex_bin = NO_CODEX_BIN.to_string();
+        config.codex_bin = match runtime {
+            Runtime::Codex => wrapper.display().to_string(),
+            _ => NO_CODEX_BIN.to_string(),
+        };
         config.worktrees_root = dir.path().join("worktrees");
+        config.launch_gate = gate;
         // The incident rule: this manager can start nothing but the test's fake-agent.
-        assert!(config.claude_bin.starts_with(dir.path().to_str().unwrap()));
-        assert!(!Path::new(&config.codex_bin).exists());
+        let ours = |bin: &str| bin == wrapper.display().to_string();
+        assert!(ours(&config.claude_bin));
+        match runtime {
+            Runtime::Codex => assert!(ours(&config.codex_bin)),
+            _ => assert!(!Path::new(&config.codex_bin).exists()),
+        }
         let (manager, mut events) = WindowManager::new(config);
         let pump = manager.clone();
         tokio::spawn(async move {
@@ -86,12 +101,14 @@ impl Rig {
         let runs = RunService::for_manager(&manager, data.clone(), git.registry.clone());
         runs.spawn(shutdown.clone());
         let orchestrator = config::Orchestrator::default();
+        let mut limits = orchestrator.scouts.clone();
+        limits.max_tool_calls = max_tool_calls.unwrap_or(limits.max_tool_calls);
         let scouts = ScoutService::new(
             manager.clone(),
             ScoutContext {
                 roster: orchestrator.models.clone(),
-                default_runtime: proto::Runtime::Claude,
-                scouts: orchestrator.scouts.clone(),
+                default_runtime: runtime,
+                scouts: limits,
                 claude: orchestrator.claude.clone(),
                 caps: manager.config().cli_caps,
                 data_dir: data,
@@ -231,7 +248,8 @@ async fn scout_report_is_stored_and_the_session_retired() {
     assert_eq!(report.modules, ["crates/*"]);
     assert_eq!(report.risks, ["no CI configuration"]);
     assert_eq!(report.route.model, "claude-haiku-4-5");
-    assert!(report.tool_calls >= 1, "{report:?}");
+    // Ruling M2: the report call itself is not counted.
+    assert_eq!(report.tool_calls, 0, "{report:?}");
     let profile = report.profile.clone().expect("the onboarding profile");
     assert_eq!(profile.check.as_deref(), Some("cargo test"));
 
@@ -451,4 +469,96 @@ async fn a_run_less_scout_window_refuses_client_input_with_the_profile_hint() {
     rig.scouts.stop(id);
     assert!(matches!(outcome(handle).await, ScoutOutcome::Failed { .. }));
     rig.finish().await;
+}
+
+/// Ruling I2: a Codex scout's first process exits after its turn ends, while the nudge's
+/// `exec resume` runs; that exit is the turn's end, not the scout's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_codex_scout_is_nudged_then_reports() {
+    let rig = Rig::with(Runtime::Codex, None, LaunchGate::open_already()).await;
+    let steps = [
+        json!({"read_message": {}}),
+        json!({"read_message": {"expect": "Your turn ended without a report"}}),
+        report_step(),
+    ];
+    let handle = rig.start("onboarding-1695000006", &steps).await;
+    let report = match outcome(handle).await {
+        ScoutOutcome::Report(report) => report,
+        other => panic!("expected a report, got {other:?}"),
+    };
+    assert_eq!(report.route.runtime, Runtime::Codex);
+    let args: Vec<String> = serde_json::from_str(&rig.file("args.json")).unwrap();
+    assert_eq!(&args[..2], ["exec", "resume"], "{args:?}");
+    assert_eq!(args.last().map(String::as_str), Some(SCOUT_NUDGE));
+    rig.finish().await;
+}
+
+/// Ruling I1: Codex cannot take a message mid-turn, so the wrap-up comes at the turn's
+/// end, in place of the nudge; the report call does not count toward the budget (M2).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_codex_scout_gets_its_wrap_up_at_the_turn_end() {
+    let rig = Rig::with(Runtime::Codex, Some(2), LaunchGate::open_already()).await;
+    let steps = [
+        json!({"read_message": {}}),
+        json!({"sh": {"cmd": "true"}}),
+        json!({"sh": {"cmd": "true"}}),
+        json!({"read_message": {"expect": "You have used 2 tool calls"}}),
+        report_step(),
+    ];
+    let handle = rig.start("onboarding-1695000007", &steps).await;
+    let report = match outcome(handle).await {
+        ScoutOutcome::Report(report) => report,
+        other => panic!("expected a report, got {other:?}"),
+    };
+    assert_eq!(report.tool_calls, 2);
+    let args: Vec<String> = serde_json::from_str(&rig.file("args.json")).unwrap();
+    assert_eq!(
+        args.last().map(String::as_str),
+        Some(daemon::scout::contract::scout_wrap_up(2).as_str())
+    );
+    rig.finish().await;
+}
+
+/// Ruling M4: a stop while `create_headless` waits (here, at a closed launch gate) is
+/// done once the window exists.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_scout_stopped_before_its_window_exists_is_killed_when_it_does() {
+    let gate = LaunchGate::closed();
+    let rig = Arc::new(Rig::with(Runtime::Claude, None, gate.clone()).await);
+    let id = "onboarding-1695000008";
+    script_in(
+        &rig.repo,
+        &format!("scout-{id}-1"),
+        &[json!({"hang": true})],
+    );
+    let starter = {
+        let rig = rig.clone();
+        tokio::spawn(async move { rig.scouts.start(rig.spec(id)).await })
+    };
+    wait_for("the scout to be listed", SESSION_WAIT, || {
+        rig.scouts
+            .info(id)
+            .is_some_and(|i| i.state == ScoutState::Working)
+    })
+    .await;
+    rig.scouts.stop(id);
+    assert_eq!(
+        rig.scouts.info(id).unwrap().failure.as_deref(),
+        Some("stopped by the user")
+    );
+    gate.open();
+    let handle = starter.await.unwrap().expect("the window is still created");
+    let window = handle.window_id;
+    assert_eq!(
+        outcome(handle).await,
+        ScoutOutcome::Failed {
+            reason: "stopped by the user".into()
+        }
+    );
+    wait_for("the stopped scout's session to end", SESSION_WAIT, || {
+        rig.status(window) == Some(Status::Exited)
+            && rig.manager.child_pid(window).ok().flatten().is_none()
+    })
+    .await;
+    Arc::try_unwrap(rig).ok().expect("one rig").finish().await;
 }

@@ -10,6 +10,10 @@ use crate::tools::{closed, one_of, text};
 
 pub const SUBMIT_SCOUT_REPORT: &str = "submit_scout_report";
 
+/// The longest `profile.env` key (ruling M6; the brief bounds only the count and the
+/// values).
+pub const ENV_KEY_MAX: u64 = 64;
+
 /// The pattern every `profile.env` key matches.
 pub const ENV_KEY_PATTERN: &str = "^[A-Za-z_][A-Za-z0-9_]*$";
 
@@ -42,6 +46,7 @@ fn profile() -> rmcp::model::JsonObject {
         "additionalProperties": false,
         "properties": {},
         "maxProperties": 20,
+        "propertyNames": {"maxLength": ENV_KEY_MAX},
         "patternProperties": {
             ENV_KEY_PATTERN: {"type": "string", "minLength": 0, "maxLength": 1000},
         },

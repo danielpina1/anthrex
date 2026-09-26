@@ -99,6 +99,7 @@ fn scout_schema_limits() {
         json!({
             "type": "object", "additionalProperties": false, "properties": {},
             "maxProperties": 20,
+            "propertyNames": {"maxLength": 64},
             "patternProperties": {
                 "^[A-Za-z_][A-Za-z0-9_]*$": {"type": "string", "minLength": 0, "maxLength": 1000},
             },

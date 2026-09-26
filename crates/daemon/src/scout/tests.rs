@@ -420,6 +420,23 @@ fn report_validation_cases() {
             "invalid arguments: profile.env: key 1BAD must match ^[A-Za-z_][A-Za-z0-9_]*$",
         ),
         (
+            report(json!({"profile": {"env": {"K".repeat(65): "x"}}})),
+            ScoutKind::Onboarding,
+            "invalid arguments: profile.env: a key is longer than 64 characters",
+        ),
+        (
+            report(json!({"profile": {"env": {"V": "x".repeat(1001)}}})),
+            ScoutKind::Onboarding,
+            "invalid arguments: profile.env.V: must be at most 1000 characters",
+        ),
+        (
+            report(
+                json!({"profile": {"env": (0..21).map(|i| (format!("K{i}"), json!("v"))).collect::<serde_json::Map<_, _>>()}}),
+            ),
+            ScoutKind::Onboarding,
+            "invalid arguments: profile.env: must have at most 20 properties",
+        ),
+        (
             report(json!({"profile": {"cache_dirs": ["/tmp"]}})),
             ScoutKind::Onboarding,
             "invalid arguments: profile.cache_dirs: not in the schema",
@@ -470,7 +487,7 @@ fn report_validation_cases() {
             "risks": ["no CI"],
             "profile": {
                 "languages": ["rust"], "check": "cargo test", "check_timeout_secs": 600,
-                "output_filter": "tail", "env": {"RUST_LOG": "", "_X": "{worktree}"},
+                "output_filter": "tail", "env": {"RUST_LOG": "", "_X": "{worktree}", "K".repeat(64): "x".repeat(1000)},
             },
         })),
         ScoutKind::Onboarding,

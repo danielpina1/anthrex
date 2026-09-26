@@ -1,11 +1,14 @@
 //! A scout's lifecycle (milestone 8b decision 14): a pure machine that `ScoutService`
 //! drives with the scout's session events and a clock, and whose effects it executes.
 
+use std::collections::HashSet;
 use std::time::Duration;
 
-use proto::{ScoutState, TokenUsage};
+use proto::{Runtime, ScoutState, TokenUsage};
 
 use super::contract::{SCOUT_NUDGE, scout_wrap_up};
+use super::spec::SUBMIT_TOOL;
+use crate::headless::SessionEvent;
 use crate::run::driver::{INTERRUPT_GRACE, RETIRE_AFTER};
 
 /// `[orchestrator.scouts]`'s limits.
@@ -13,6 +16,21 @@ use crate::run::driver::{INTERRUPT_GRACE, RETIRE_AFTER};
 pub struct ScoutLimits {
     pub timeout_secs: u64,
     pub max_tool_calls: u32,
+    /// Whether the runtime takes a message while a turn runs: Claude reads it from
+    /// stdin, Codex's `headless_send` refuses an open turn. Without it the wrap-up waits
+    /// for the turn's end (ruling I1).
+    pub send_mid_turn: bool,
+}
+
+impl ScoutLimits {
+    /// `[orchestrator.scouts]`'s limits for a scout on `runtime`.
+    pub fn new(scouts: &config::Scouts, runtime: Runtime) -> Self {
+        ScoutLimits {
+            timeout_secs: scouts.timeout_secs,
+            max_tool_calls: scouts.max_tool_calls,
+            send_mid_turn: runtime == Runtime::Claude,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +40,8 @@ pub struct ScoutMachine {
     pub turns_without_report: u8,
     pub tool_calls: u32,
     pub wrap_up_sent: bool,
+    /// The wrap-up is owed at the next turn end (a runtime with no mid-turn message).
+    pub wrap_up_pending: bool,
     pub usage: TokenUsage,
     pub failure: Option<String>,
 }
@@ -34,6 +54,7 @@ impl Default for ScoutMachine {
             turns_without_report: 0,
             tool_calls: 0,
             wrap_up_sent: false,
+            wrap_up_pending: false,
             usage: TokenUsage::default(),
             failure: None,
         }
@@ -97,7 +118,13 @@ pub fn step(
         ScoutEvent::TurnEnded { .. } => {
             machine.turns_without_report = machine.turns_without_report.saturating_add(1);
             if machine.turns_without_report == 1 {
-                vec![ScoutEffect::Send(SCOUT_NUDGE.to_string())]
+                // An owed wrap-up goes in the nudge's place (ruling I1).
+                let text = if std::mem::take(&mut machine.wrap_up_pending) {
+                    scout_wrap_up(machine.tool_calls)
+                } else {
+                    SCOUT_NUDGE.to_string()
+                };
+                vec![ScoutEffect::Send(text)]
             } else {
                 fail(
                     &mut machine,
@@ -117,7 +144,12 @@ pub fn step(
                 )
             } else if n >= limits.max_tool_calls && !machine.wrap_up_sent {
                 machine.wrap_up_sent = true;
-                vec![ScoutEffect::Send(scout_wrap_up(n))]
+                if limits.send_mid_turn {
+                    vec![ScoutEffect::Send(scout_wrap_up(n))]
+                } else {
+                    machine.wrap_up_pending = true;
+                    Vec::new()
+                }
             } else {
                 Vec::new()
             }
@@ -175,4 +207,33 @@ fn add(total: &mut TokenUsage, usage: &TokenUsage) {
     total.output += usage.output;
     total.cache_read += usage.cache_read;
     total.cache_write += usage.cache_write;
+}
+
+/// The machine's event for one session event of a scout's process `pid`, or `None`
+/// for one it does not act on. `turn_ended` records the processes in which a turn
+/// ended: a Codex process exits after each turn, so its exit then is the turn's end, not
+/// the session's (M8a's T17-I1). The report call itself does not count toward the tool
+/// budget (ruling M2).
+pub fn scout_event(
+    event: &SessionEvent,
+    pid: Option<u32>,
+    runtime: Runtime,
+    turn_ended: &mut HashSet<u32>,
+) -> Option<ScoutEvent> {
+    match event {
+        SessionEvent::TurnEnded { usage, .. } => {
+            turn_ended.extend(pid);
+            Some(ScoutEvent::TurnEnded { usage: *usage })
+        }
+        SessionEvent::ToolUse { name, .. } if name == SUBMIT_TOOL => None,
+        SessionEvent::ToolUse { .. } => Some(ScoutEvent::ToolUse),
+        SessionEvent::ProcessExited { code, .. } => {
+            let turn_over = pid.is_some_and(|pid| turn_ended.contains(&pid));
+            if runtime == Runtime::Codex && turn_over {
+                return None;
+            }
+            Some(ScoutEvent::Exited { code: *code })
+        }
+        _ => None,
+    }
 }

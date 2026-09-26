@@ -58,6 +58,9 @@ const PROFILE_KEYS: &[&str] = &[
     "env",
 ];
 const ENV_MAX: usize = 20;
+/// Ruling M6: the longest `profile.env` key (the brief bounds only the count, 20, and
+/// the values, 1000 characters).
+const ENV_KEY_CHARS: usize = 64;
 const ENV_KEY: &str = "^[A-Za-z_][A-Za-z0-9_]*$";
 
 /// `args` as a report of a `kind` scout, or `invalid arguments: <field>: <problem>`.
@@ -165,6 +168,12 @@ fn env(value: Option<&Value>) -> Result<BTreeMap<String, String>, String> {
     }
     let mut env = BTreeMap::new();
     for (key, value) in map {
+        // Ruling M6: checked before the pattern, so an oversized key is never echoed.
+        if key.chars().count() > ENV_KEY_CHARS {
+            return Err(format!(
+                "{path}: a key is longer than {ENV_KEY_CHARS} characters"
+            ));
+        }
         if !env_key(key) {
             return Err(format!("{path}: key {key} must match {ENV_KEY}"));
         }
