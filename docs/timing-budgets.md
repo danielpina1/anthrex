@@ -169,6 +169,14 @@ or one push, far under its bound; each absence window is paired with a positive 
 | Every scout's start, outcome and exit wait | `crates/cli/tests/scout_service.rs` (`SESSION_WAIT`) | `30s`, deadline loops every 20 ms | One `fake-agent` spawn through a `/bin/sh` wrapper, one `git rev-parse` for its script (`GIT_TIMEOUT`, 5 s), one `anthrex mcp` spawn (33-85 ms loaded) and its socket round trip, one `write_atomic` on `spawn_blocking`: well under a second. A failed scout's kill is `headless_kill` (SIGTERM, SIGKILL after `KILL_GRACE`). | **Recorded.** A hang guard; nothing asserts a duration. |
 | `scout_report_is_stored_and_the_session_retired`, the removal | `scout_service.rs` (`RETIRE_AFTER + INTERRUPT_GRACE + 5s`) | `65s` | Decision 52's `RETIRE_AFTER` (30 s) from the report's acceptance, checked by `ScoutService`'s 1 s ticker. The session ends by itself when its stdin closes; `INTERRUPT_GRACE` (30 s) covers a session that did not, and 5 s the ticker and the spawn. | **Recorded.** The brief's bound; the test only looks. |
 
+### Recorded, from M8b.10 (2026-09-26)
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| Every command of a verification | `crates/cli/tests/profile_verify.rs` (`COMMAND_TIMEOUT`) | `30s` per command, as the verification's own timeout | A shell builtin or two (`printf`, `echo`, `env | grep`, `sh tests/t_ok.sh`, a `curl` the sandbox refuses at once), under `sandbox-exec` on macOS: tens of milliseconds ("Measured primitive costs", `/bin/sh` spawn). | **Recorded.** A hang guard, not an assertion: a command that ran out of it would show as `timed_out`, and the test would fail naming it. |
+| Every git step of a verification | `profile_verify.rs` (`GIT_TIMEOUT`) | `30s` per git call | M8a's `prepare_scratch_in` (one `rev-parse --git-common-dir`, one `read-tree -u --reset` of a two-file tree), `salvage` (`status`, `add -A`, `write-tree`, `commit-tree`, `update-ref`) and `remove_checkout` (`worktree list`): each well under a second. | **Recorded.** A hang guard. |
+| `a_hanging_verification_command_times_out_and_is_dropped` | `profile_verify.rs` | the command's own `2s` timeout | `sleep 60` never ends by itself; M8a's `run_matching` kills its group at 2 s and reads output for at most `OUTPUT_GRACE` (1 s) more. | **Recorded.** Nothing asserts a duration; the test asserts `timed_out`. |
+
 ### Fixed, from the main-branch CI failures (2026-09-23)
 
 | Test | Site | Bound (as found) | The code's own legal worst case | Status |

@@ -54,7 +54,7 @@ pub(crate) use merge::{read, reattach_in, short};
 pub(crate) use merge_state::{
     Leftover, clear as clear_merge_state, leftover, undo_clean_merge, unmerged,
 };
-pub(crate) use worktrees::{forget_missing, is_ancestor, listed as listed_worktree_in};
+pub(crate) use worktrees::{common_dir, forget_missing, is_ancestor, listed as listed_worktree_in};
 
 pub use queue::{GitQueue, LOCK_RETRY_DELAYS_MS};
 pub use resolution::resolution_only;

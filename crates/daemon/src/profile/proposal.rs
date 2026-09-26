@@ -6,10 +6,14 @@
 //! neither a scout's findings nor an edit can name one: confinement stays the user's own
 //! config (decision 5).
 
-use proto::RepoProfile;
+use std::path::Path;
 
+use proto::{CommandCheck, DroppedCommand, ProfileVerification, RepoProfile};
+
+use super::confined_hint;
 use crate::run::globs::validate_glob;
 use crate::run::plan::BUILTIN_PROTECTED;
+use crate::run::report::format_utc;
 
 /// The keys whose change re-runs verification (decision 10).
 pub const REVERIFY_KEYS: &[&str] = &[
@@ -242,4 +246,217 @@ pub fn apply_edit(
     }
     let reverify = REVERIFY_KEYS.contains(&field) && edited != *stored;
     Ok((edited, reverify))
+}
+
+/// Decision 9: why a `single_test` that cannot be verified is not proposed.
+pub const SINGLE_TEST_NEEDS: &str = "single_test needs sample_test and test_passed to be verified";
+
+/// What every dropped `single_test` reason ends with: the three keys go together.
+const DROPPED_WITH_IT: &str = "; test_passed and sample_test are dropped with it";
+
+/// Why a command the verification has no record of (or a record of another command)
+/// is not proposed.
+const NOT_VERIFIED: &str = "it was not verified";
+
+/// Decision 5's `protected: built-in <5 globs> + <extras or "no extras">`.
+pub fn protected_line(profile: &RepoProfile) -> String {
+    let extras = if profile.protected.is_empty() {
+        "no extras".to_string()
+    } else {
+        profile.protected.join(", ")
+    };
+    format!(
+        "protected: built-in {} + {extras}",
+        BUILTIN_PROTECTED.join(", ")
+    )
+}
+
+/// How a command failed: its timeout, its exit code, or neither.
+fn failure(check: &CommandCheck) -> String {
+    match (check.timed_out, check.code) {
+        (true, _) => format!("timed out after {}s", check.secs),
+        (false, Some(code)) => format!("exit {code} after {}s", check.secs),
+        (false, None) => format!("no exit code after {}s", check.secs),
+    }
+}
+
+/// Why the proposed `single_test` template cannot even be run: M8a decision 7's rules
+/// on the two templates, then decision 9's need for both companions.
+fn single_test_problem(proposed: &RepoProfile, single: &str) -> Option<String> {
+    if !single.contains("{test}") {
+        return Some("single_test: must contain {test}".to_string());
+    }
+    if let Some(problem) = proposed
+        .test_passed
+        .as_deref()
+        .and_then(test_passed_problem)
+    {
+        return Some(format!("test_passed: {problem}"));
+    }
+    (proposed.sample_test.is_none() || proposed.test_passed.is_none())
+        .then(|| SINGLE_TEST_NEEDS.to_string())
+}
+
+/// Decision 9: the proposal keeps only the commands that passed. A `setup` or `check`
+/// that failed, timed out or has no record of its own command in `v` is removed and
+/// listed (with decision 9's hint, naming `root`, when `v` ran confined); a
+/// `single_test` goes with `test_passed` and `sample_test` unless it exited 0 **and**
+/// matched its line. Without a `single_test`, its two companions mean nothing and are
+/// removed silently. The glob lists are left as they are.
+pub fn apply_verification(
+    proposed: &RepoProfile,
+    v: &ProfileVerification,
+    root: &Path,
+) -> (RepoProfile, Vec<DroppedCommand>) {
+    let mut profile = proposed.clone();
+    let mut dropped = Vec::new();
+    let hint = v.confined.then(|| confined_hint(root));
+    for (key, slot, record) in [
+        ("setup", &mut profile.setup, &v.setup),
+        ("check", &mut profile.check, &v.check),
+    ] {
+        let Some(command) = slot.clone() else {
+            continue;
+        };
+        let (reason, tail) = match record {
+            Some(c) if c.command == command && c.ok => continue,
+            Some(c) if c.command == command => {
+                let reason = match &hint {
+                    Some(hint) => format!("{}\n{hint}", failure(c)),
+                    None => failure(c),
+                };
+                (reason, c.tail.clone())
+            }
+            _ => (NOT_VERIFIED.to_string(), String::new()),
+        };
+        *slot = None;
+        dropped.push(DroppedCommand {
+            key: key.to_string(),
+            command,
+            reason,
+            tail,
+        });
+    }
+    let Some(single) = proposed.single_test.clone() else {
+        profile.test_passed = None;
+        profile.sample_test = None;
+        return (profile, dropped);
+    };
+    let failed = match single_test_problem(proposed, &single) {
+        Some(problem) => Some((problem, String::new())),
+        None => match &v.single_test {
+            Some(c) if c.command == single && c.ok => None,
+            Some(c) if c.command == single => {
+                let reason = if !c.timed_out && c.code == Some(0) {
+                    format!(
+                        "exit 0 after {}s, but no output line matched test_passed for \
+                         sample_test {}",
+                        c.secs,
+                        proposed.sample_test.as_deref().unwrap_or_default()
+                    )
+                } else {
+                    failure(c)
+                };
+                Some((reason, c.tail.clone()))
+            }
+            _ => Some((NOT_VERIFIED.to_string(), String::new())),
+        },
+    };
+    if let Some((reason, tail)) = failed {
+        profile.single_test = None;
+        profile.test_passed = None;
+        profile.sample_test = None;
+        dropped.push(DroppedCommand {
+            key: "single_test".to_string(),
+            command: single,
+            reason: format!("{reason}{DROPPED_WITH_IT}"),
+            tail,
+        });
+    }
+    (profile, dropped)
+}
+
+/// The profile as TOML in its field order, empty lists left out, `env` last as its own
+/// table.
+fn profile_toml(profile: &RepoProfile) -> String {
+    let Ok(toml::Value::Table(table)) = toml::Value::try_from(profile) else {
+        return String::new();
+    };
+    let mut out = String::new();
+    for key in EDIT_KEYS.iter().filter(|key| !key.starts_with("env")) {
+        match table.get(*key) {
+            None => {}
+            Some(toml::Value::Array(items)) if items.is_empty() => {}
+            Some(value) => out.push_str(&format!("{key} = {value}\n")),
+        }
+    }
+    if !profile.env.is_empty() {
+        let mut env = toml::Table::new();
+        if let Some(value) = table.get("env") {
+            env.insert("env".to_string(), value.clone());
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&toml::to_string(&env).unwrap_or_default());
+    }
+    out
+}
+
+/// `anthrex profile show`'s text (Interfaces, CLI): the profile as TOML, then a comment
+/// block with decision 5's protected line, the verification (when there is one) and
+/// every dropped command with its reason's further lines and its output tail.
+pub fn show_text(
+    profile: &RepoProfile,
+    verification: Option<&ProfileVerification>,
+    dropped: &[DroppedCommand],
+) -> String {
+    let mut out = profile_toml(profile);
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    out.push_str(&format!("# {}\n", protected_line(profile)));
+    if let Some(v) = verification {
+        let at = format_utc(v.at);
+        let confined = if v.confined { "confined" } else { "unconfined" };
+        out.push_str(&format!(
+            "# verification {} ({confined})\n",
+            at.get(..16).unwrap_or(&at)
+        ));
+        for (key, check) in [
+            ("setup", &v.setup),
+            ("check", &v.check),
+            ("single_test", &v.single_test),
+        ] {
+            let Some(c) = check else {
+                continue;
+            };
+            let status = if c.ok { "ok" } else { "fail" };
+            let mut line = format!("#   {key:<13}{status:<4}{:>4}s   {}", c.secs, c.command);
+            if key == "single_test"
+                && let Some(sample) = &profile.sample_test
+            {
+                line.push_str(&format!("  (sample: {sample})"));
+            }
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+    if !dropped.is_empty() {
+        out.push_str("# dropped\n");
+    }
+    for d in dropped {
+        let mut reason = d.reason.lines();
+        out.push_str(&format!(
+            "#   {}: {}: {}\n",
+            d.key,
+            reason.next().unwrap_or_default(),
+            d.command
+        ));
+        for line in reason.chain(d.tail.lines()) {
+            out.push_str(format!("#     {line}").trim_end());
+            out.push('\n');
+        }
+    }
+    out
 }

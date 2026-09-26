@@ -2405,3 +2405,48 @@ So the "empty-root `ClaudeSandbox`" M8a gives reviewers (F1c N4) and decision 12
   - M5, M6 and M7: each check removed.
 
   `scout_report_is_stored_and_the_session_retired` failed on `tool_calls` before the M2 change.
+
+### M8b.10 onboarding I: proposal rules and confined verification (2026-09-26)
+
+**Deviations and choices the brief leaves open:**
+- **The unit tests are in `profile/tests_verify.rs`**, not `profile/tests.rs`, which is at 506 lines and would pass 600 with them (AGENTS.md rule 8).
+- **`verify::verify(&GitQueue, VerifyJob) -> Result<Verified, String>`** is added beside the Interfaces' four blocking functions. It is decision 9 end to end: a leftover `.profile-verify` checkout is discarded (salvaged) first so every verification starts fresh; `prepare` and `discard` run through `GitQueue::write(pre.project, …)`; `run_commands` runs on `spawn_blocking`; the checkout is discarded whatever the commands did. `Verified` carries the verification and every salvage ref written. `crates/cli/tests/profile_verify.rs` drives it directly, and M8b.11's service calls it. `verify::checkout_path(worktrees_root, project)` names `<wt>/runs/.profile-verify`; `SALVAGE_PREFIX` is `refs/anthrex/salvage/onboarding/` and `SALVAGE_MESSAGE` `anthrex salvage onboarding`.
+- **Salvage names.** `<prefix><unix secs>`. If that ref already holds other work (two salvages in one second), `<secs>-1` to `<secs>-9` are tried in the same queued write: M8a's `salvage` refuses an existing ref before `add -A`, so a refused name changes nothing.
+- **`discard` pins a leftover checkout** (one an earlier daemon made, so not in this daemon's in-memory pins) as the standalone checkout of `repo` before salvaging it, as M8a's `remove_checkout` already does before removing. Without the pin, `salvage` would write its ref into the checkout's own git directory, which the removal then deletes. For this, `run::git` re-exports `worktrees::common_dir` as `pub(crate)` (one existing `use` line).
+- **`run_commands`** takes the command timeout (`onboarding.verify_timeout_secs`, decision 9), not the profile's `check_timeout_secs`. The `{worktree}` substitution goes through `run::env::profile_env`, on the `run::model::Profile` that `resolve_profile` makes from the proposed `env` alone. Each command gets its own `ConfineSpec::for_checkout`, and a checkout that cannot be confined fails the command unrun (`ShellOutcome::refused`), as `run::confine::confined` does. A `single_test` without `{test}`, without both companions, or whose pattern does not compile is not run at all. `CommandCheck.command` is the `single_test` template, not the expanded proof command, so `show` prints the template with `(sample: …)`. `CommandCheck.ok` for `single_test` means exit 0 **and** a matched line. `CommandCheck.tail` is `run::messages::summary` (the last 40 lines).
+- **`apply_verification`**:
+  - A `setup` or `check` whose record is missing, or is a record of a different command, is dropped with `it was not verified`.
+  - A failure's reason is `exit <n> after <s>s`, `timed out after <s>s` or `no exit code after <s>s`.
+  - When the verification ran confined, a dropped `setup` or `check` has the hint as the reason's second line, so the reason is `<first line>\n<hint>`. `show_text` prints the first line in the `#   <key>: <reason>: <command>` header and every further line indented. `DroppedCommand` has no hint field.
+  - A dropped `single_test` is one entry, key `single_test`. Its reason ends `; test_passed and sample_test are dropped with it`, and all three keys are cleared. The reasons are: M8a's `single_test: must contain {test}` or `test_passed: <problem>`; `SINGLE_TEST_NEEDS`; `exit 0 after <s>s, but no output line matched test_passed for sample_test <name>`; or the failure text.
+  - Without a `single_test`, `test_passed` and `sample_test` are cleared silently.
+  - The glob lists are left as `from_findings` made them.
+- **`confined_hint(root)` lives in `profile/mod.rs`**, not `proposal.rs`. Its exact text names the four `[orchestrator.*]` tables, and the Verification grep `rg -n "\bcache_dirs\b|\bconfined_(network|unix_sockets|localhost_ports)\b" … crates/daemon/src/profile/proposal.rs` must find only comments. The grep now prints nothing for `proposal.rs`.
+- **`show_text`.** The profile is printed as TOML in field order, each top-level key `key = <value>`, with empty lists left out. `env` is printed last as its own `[env]` table, and only when it has entries. The `toml` crate here has no `preserve_order`, so a serialized `toml::Table` would come out sorted; the order comes from `EDIT_KEYS` instead. After a blank line comes the comment block:
+  - `# protected: built-in … + <extras | no extras>`. This is `proposal::protected_line`, which `profile::summary` now uses too.
+  - Then, when there is a verification, `# verification <yyyy-mm-dd hh:mm> (confined|unconfined)`, in UTC through `run::report::format_utc`.
+  - Then one row per command run: `#   {key:<13}{ok|fail:<4}{secs:>4}s   {command}`.
+  - Then `# dropped` and the entries.
+  - With no verification, the block has only the protected line.
+- **Already implemented by M8b.4:** `apply_edit` (value parsing, `unknown key`, M8a's messages, the re-verify flag), so `edit_value_parsing`, `edit_rejects_invalid_values_with_the_rule` and `edit_of_a_command_key_needs_reverification_and_of_modules_does_not` passed when first written. They pin behaviour the brief lists here.
+- **Red evidence:**
+  - The five other unit tests failed against stubs.
+  - `profile_verify.rs` did not compile before `profile::verify` existed.
+  - Three of its tests were also shown red by mutations of `verify.rs`, each reverted: salvage skipped, the profile `env` dropped, and `cache_dirs` not taken from the user's table.
+  - The environment test passes through M8a's `engine_env` unchanged. Its child process gets `CLAUDE_CODE_*`, `ANTHROPIC_API_KEY`, `ANTHREX_SOCKET` and a marker on its own `Command` only, and every `*_BIN` is set to a nonexistent path. `ANTHREX_*` is asserted absent only when the verification ran confined, since M8a keeps it unconfined.
+- **`run/exec.rs`:** `run_matching` is `pub(super)` → `pub(crate)`, which adds no lines (budget 0).
+
+**Acceptance: nothing M8b.10 adds or calls writes under the repository root.**
+- *`write_atomic`*: `profile::verify` calls none. The existing callers write only in anthrex's data directory:
+  - `store::save` and `save_proposal`: `<repo_dir>/…`;
+  - `decider::call`: its schema file under anthrex's data directory (`DeciderContext.schema_dir`, `<data>/deciders/schemas`);
+  - `scout::service`: the report under `<repo_dir>/scouts` or the run's directory.
+- *`run_matching`*: M8a's `run_shell`, `run_confined` and `proof.rs` (checkout directories), and the new `verify::run_one`. Its working directory is `<wt>/runs/.profile-verify`, never the root.
+  - Where the platform can confine (the default with sandboxed workers), each command runs under M8a's `(deny default)` profile. It may write only the checkout, the checkout repository's object store, its short `TMPDIR` under `/private/tmp/ax-<uid>`, and the user's own `cache_dirs` for the root, which `confine_cache` refuses when they overlap the repository, its git common directory or anthrex's data.
+  - `profile_verify.rs` shows a `$HOME` write denied and a listed cache directory allowed.
+  - Unconfined verification happens only where the user allowed it (`--unconfined-checks` / `unconfined_checks`, M8b.11's refusal), as M8a's unconfined checks do.
+- *Git writes* (all through `GitQueue::write` in `verify::verify`):
+  - `prepare_scratch_in` → `checkout::ensure`. It writes `<repo_dir>/tasks/.profile-verify/{git,engine}` and the checkout's files (`read-tree -u --reset` in `<wt>/runs/.profile-verify`), and only reads the user's `config`, `hooks` and `info/exclude`.
+  - `salvage`, in the pinned standalone checkout. It runs `add -A` against the checkout's own index, then `write-tree`/`commit-tree` into the user's object store (the pin's object directory, as every M8a salvage does), then one `update-ref refs/anthrex/salvage/onboarding/<secs>` in the user's repository. Decision 4 allows exactly these writes into `.git`.
+  - `remove_checkout`. It runs `git worktree list`, a read, in the root; the checkout is never listed, so the `worktree unlock`/`remove`/`prune` branches never run. It deletes the checkout, its repository and its `TMPDIR` (`checkout::remove`, only for a checkout pinned as this repository's).
+  - No `git worktree add` and no lock, so `.git/worktrees` gains no entry, as `verification_never_touches_the_checkout_and_salvages_dirt` asserts. The same test asserts `git status --porcelain --ignored` is empty and `HEAD` is unchanged.

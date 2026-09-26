@@ -162,7 +162,7 @@ fn engine_env(command: &mut Command, env: &[(String, String)], confined: bool) {
 /// [`run_shell`], also reporting whether any whole output line matched `pattern` (the
 /// proof's `test_passed`, decision 33). Every line is tested as it is read, so a match
 /// early in a long output counts even though the tail no longer holds it.
-pub(super) fn run_matching(
+pub(crate) fn run_matching(
     dir: &Path,
     command: &str,
     env: &[(String, String)],

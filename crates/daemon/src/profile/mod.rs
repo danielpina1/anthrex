@@ -9,6 +9,8 @@
 //! - `proposal.rs` (pure): validation, the scout's findings, and `anthrex profile edit`.
 //! - `store.rs` (blocking I/O): `profile.toml`, `profile.meta.json`, `proposal.json`, and
 //!   decision 7's fingerprint.
+//! - `verify.rs` (blocking I/O): decision 9's verification of a proposal's commands in a
+//!   fresh, confined, standalone checkout.
 //!
 //! The profile holds no confinement setting: `cache_dirs` and the `confined_*` tables
 //! are the user's own config, keyed by repository root, so a model-written profile can
@@ -18,11 +20,10 @@ use std::path::{Path, PathBuf};
 
 use proto::RepoProfile;
 
-use crate::run::plan::BUILTIN_PROTECTED;
-
 pub mod proposal;
 pub mod resolve;
 pub mod store;
+pub mod verify;
 
 /// The onboarding scout's disposable checkout, under `<wt>/runs/` (decision 8).
 pub const ONBOARDING_CHECKOUT: &str = ".onboarding";
@@ -33,6 +34,21 @@ pub const VERIFY_CHECKOUT: &str = ".profile-verify";
 /// checkout), so every linked worktree shares one.
 pub fn repo_dir(data_dir: &Path, project: &Path) -> PathBuf {
     crate::worktree::repo_worktrees_dir(&data_dir.join("repos"), project)
+}
+
+/// Decision 9's hint on a `setup` or `check` that failed confined, naming the
+/// repository root whose `[orchestrator.*]` tables would allow what it needs. It lives
+/// here, not in the pure `proposal.rs`, so no model-writable surface's file spells a
+/// confinement key (the brief's Verification grep).
+pub fn confined_hint(root: &Path) -> String {
+    format!(
+        "it ran confined, as runs do: if it needs the network, a cache directory, a Unix \
+         socket or a localhost port, allow it for {} in your config \
+         ([orchestrator.confined_network], [orchestrator.cache_dirs], \
+         [orchestrator.confined_unix_sockets], [orchestrator.confined_localhost_ports]), \
+         then run anthrex profile detect",
+        root.display()
+    )
 }
 
 /// The profile in a few lines, for triage and `get_context` (Interfaces, "Contracts and
@@ -50,15 +66,7 @@ pub fn summary(profile: &RepoProfile) -> String {
             lines.push(format!("{label}: {}", list.join(", ")));
         }
     }
-    let extras = if profile.protected.is_empty() {
-        "no extras".to_string()
-    } else {
-        profile.protected.join(", ")
-    };
-    lines.push(format!(
-        "protected: built-in {} + {extras}",
-        BUILTIN_PROTECTED.join(", ")
-    ));
+    lines.push(proposal::protected_line(profile));
     lines.push(format!(
         "setup: {}",
         profile.setup.as_deref().unwrap_or("none")
@@ -82,3 +90,5 @@ pub fn summary(profile: &RepoProfile) -> String {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_verify;
