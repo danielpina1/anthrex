@@ -35,6 +35,7 @@ mod tmp;
 mod worktrees;
 
 pub use accept::{ACCEPT_MERGE_TIMEOUT, accept, accept_with_merge_timeout};
+pub(crate) use checkout::restore_owner_access;
 pub use checkout::{Repo, checkout_repo_dir, default_repo_dir};
 pub use done::{DoneChecked, count_commits, diff_so_far, verify_done};
 pub use handback::{HandBack, hand_back};

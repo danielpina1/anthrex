@@ -9,115 +9,24 @@
 
 mod support;
 
-use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
+use daemon::profile::confined_hint;
 use daemon::profile::proposal::apply_verification;
-use daemon::profile::verify::{
-    SALVAGE_PREFIX, Verified, VerifyJob, checkout_path, confine_spec, verify,
-};
-use daemon::profile::{confined_hint, repo_dir};
-use daemon::run::confine::ConfineSpec;
-use daemon::run::git::{GitQueue, checkout_repo_dir, preflight, task_tmp};
-use daemon::run::plan::Preflight;
+use daemon::profile::verify::SALVAGE_PREFIX;
+use daemon::run::git::{checkout_repo_dir, task_tmp};
 use proto::RepoProfile;
 
-use support::run_harness::{git_in, init_repo};
-use support::{runtime, tempdir};
+use support::profile_rig::{COMMAND_TIMEOUT, Rig, check};
+use support::run_harness::git_in;
+use support::tempdir;
 
-const GIT_TIMEOUT: Duration = Duration::from_secs(30);
-/// A command's bound in these tests (each command is a shell builtin or two).
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 /// The child half of `the_engine_environment_applies` finds its directory here.
 const CHILD_DIR: &str = "ANTHREX_M8B10_CHILD_DIR";
 /// Agent binaries that exist nowhere: nothing here may reach a real agent.
 const NO_AGENT_BIN: &str = "/nonexistent/anthrex-test/agent";
-
-struct Rig {
-    _dir: Option<tempfile::TempDir>,
-    root: PathBuf,
-    repo: PathBuf,
-    pre: Preflight,
-    repo_dir: PathBuf,
-}
-
-impl Rig {
-    fn new() -> Rig {
-        let dir = tempdir();
-        let mut rig = Rig::in_dir(&dir.path().canonicalize().unwrap());
-        rig._dir = Some(dir);
-        rig
-    }
-
-    fn in_dir(root: &Path) -> Rig {
-        let repo = root.join("repo");
-        init_repo(&repo, &[("tests/t_ok.sh", "echo PASS t_ok\n")]);
-        let pre = preflight(OsStr::new("git"), &repo, GIT_TIMEOUT).unwrap();
-        let repo_dir = repo_dir(&root.join("data"), &pre.project);
-        Rig {
-            _dir: None,
-            root: root.to_path_buf(),
-            repo,
-            pre,
-            repo_dir,
-        }
-    }
-
-    fn worktrees(&self) -> PathBuf {
-        self.root.join("worktrees")
-    }
-
-    fn checkout(&self) -> PathBuf {
-        checkout_path(&self.worktrees(), &self.pre.project)
-    }
-
-    /// Decision 9's confinement from `config` (the user's tables), as the service
-    /// builds it.
-    fn confine(&self, config: &config::Orchestrator) -> Option<ConfineSpec> {
-        confine_spec(
-            config,
-            &self.repo_dir,
-            &self.pre,
-            &self.root.join("daemon.sock"),
-        )
-    }
-
-    fn verify_with(
-        &self,
-        profile: RepoProfile,
-        confine: Option<ConfineSpec>,
-        timeout: Duration,
-    ) -> Verified {
-        let job = VerifyJob {
-            git: "git".into(),
-            pre: self.pre.clone(),
-            repo_dir: self.repo_dir.clone(),
-            worktrees_root: self.worktrees(),
-            profile,
-            confine,
-            timeout,
-            git_timeout: GIT_TIMEOUT,
-        };
-        runtime()
-            .block_on(verify(&GitQueue::new(), job))
-            .expect("the verification's git steps succeed")
-    }
-
-    /// Verified with the default config's confinement (confined where it can be).
-    fn verify(&self, profile: RepoProfile) -> Verified {
-        let confine = self.confine(&config::Orchestrator::default());
-        self.verify_with(profile, confine, COMMAND_TIMEOUT)
-    }
-}
-
-fn check(command: &str) -> RepoProfile {
-    RepoProfile {
-        check: Some(command.to_string()),
-        ..Default::default()
-    }
-}
 
 #[test]
 fn verification_never_touches_the_checkout_and_salvages_dirt() {
@@ -323,12 +232,19 @@ fn verification_uses_the_users_confinement_not_the_proposal() {
     let home = PathBuf::from(std::env::var_os("HOME").expect("HOME is set"));
     let pwned = home.join(format!("pwned-{}", std::process::id()));
     assert!(!pwned.exists(), "{} is already there", pwned.display());
-    // The proposal has no key that could widen this (`RepoProfile` has no confinement
-    // key; its `env` is only variables).
-    let home_write = check(&format!(
-        "printf x > \"$HOME/pwned-{}\"",
-        std::process::id()
+    // A proposal cannot widen the confinement: `RepoProfile` has no confinement key, and
+    // an `env` naming `HOME`/`TMPDIR` at the home directory changes nothing.
+    let mut home_write = check(&format!(
+        "printf x > \"$HOME/pwned-{pid}\"; printf x > \"$TMPDIR/pwned-{pid}\"; \
+         printf x > '{home}/pwned-{pid}'",
+        pid = std::process::id(),
+        home = home.display()
     ));
+    for key in ["HOME", "TMPDIR"] {
+        home_write
+            .env
+            .insert(key.into(), home.display().to_string());
+    }
     let verified = rig.verify_with(home_write.clone(), confine.clone(), COMMAND_TIMEOUT);
     let written = pwned.exists();
     if written {
@@ -380,4 +296,42 @@ fn a_confined_setup_without_network_is_dropped_with_the_hint() {
             .ends_with(&format!("\n{}", confined_hint(&rig.pre.root))),
         "{dropped:?}"
     );
+}
+
+#[test]
+fn single_test_exit_zero_without_its_line_is_not_ok() {
+    let rig = Rig::new();
+    let proposed = RepoProfile {
+        single_test: Some("sh tests/{test}.sh".into()),
+        test_passed: Some("DONE {test}".into()),
+        sample_test: Some("t_ok".into()),
+        ..Default::default()
+    };
+    let verified = rig.verify(proposed.clone());
+    let c = verified.verification.single_test.clone().expect("it ran");
+    assert_eq!((c.ok, c.code), (false, Some(0)), "{c:?}");
+    assert!(c.tail.contains("PASS t_ok"), "{c:?}");
+    let (profile, dropped) = apply_verification(&proposed, &verified.verification, &rig.pre.root);
+    assert_eq!(profile.single_test, None);
+    assert!(
+        dropped[0].reason.starts_with("exit 0 after "),
+        "{dropped:?}"
+    );
+}
+
+#[test]
+fn reserved_env_keys_of_a_proposal_never_reach_a_command() {
+    let rig = Rig::new();
+    let mut proposed =
+        check("env | grep -E '^(TMPDIR|HOME|GIT_DIR|ANTHREX_SOCKET|M8B10_OK)='; true");
+    for key in ["TMPDIR", "HOME", "GIT_DIR", "ANTHREX_SOCKET"] {
+        assert!(config::reserved_env::reserved_env(key).is_some(), "{key}");
+        proposed.env.insert(key.into(), "/nonexistent/m8b10".into());
+    }
+    proposed.env.insert("M8B10_OK".into(), "kept".into());
+    let verified = rig.verify(proposed);
+    let c = verified.verification.check.expect("the check ran");
+    assert!(c.ok, "{c:?}");
+    assert!(c.tail.lines().any(|line| line == "M8B10_OK=kept"), "{c:?}");
+    assert!(!c.tail.contains("/nonexistent/m8b10"), "{c:?}");
 }

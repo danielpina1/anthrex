@@ -73,7 +73,7 @@ fn is_env_key(key: &str) -> bool {
 }
 
 /// Why `env` may not hold `key`, M8a's texts, or `None`.
-fn env_problem(key: &str) -> Option<String> {
+pub(crate) fn env_problem(key: &str) -> Option<String> {
     if !is_env_key(key) {
         return Some(format!("key {key} must match [A-Za-z_][A-Za-z0-9_]*"));
     }

@@ -1378,6 +1378,26 @@ scope.
   `--permission-prompts none` the rewritten call could be denied. Probe it when real-CLI
   probes are next allowed, or skip the hook when the worker's Bash is scoped.
 
+## From M8b.10's review (2026-09-26), for M8b and M8a
+
+- **A user-immutable flag can still block a removal.** `checkout::remove` now gives the
+  owner read, write and search access back on every real directory inside a checkout
+  before removing it (review I2). It does not clear BSD file flags. A command that sets
+  `chflags uchg` on a file in its checkout would make the removal fail each time. The
+  failure is reported (the error names the salvage ref), not silent. Whether macOS's
+  `(deny default)` profile lets a confined command set the flag is unverified: the
+  grant is a `file-write*` subpath, which may include `file-write-flags`.
+  `profile_verify_leftovers.rs`'s `a_removal_that_fails_after_a_salvage_names_the_ref`
+  shows the failure path with a flag the test sets itself. A fix would clear `uchg`
+  (`chflags(0)` on owner-owned entries, without following links) in
+  `restore_owner_access`, or deny `file-write-flags` in the seatbelt profile.
+- **`restore_owner_access` walks by path.** Each mode change is
+  `fchmodat(AT_SYMLINK_NOFOLLOW)` after an `lstat`, so a link at the leaf is never
+  followed. An intermediate directory swapped for a link between the walk's steps (by a
+  process that escaped the killed group with `setsid`) could still redirect a later
+  step, which would at most add owner `rwx` to a directory the user owns. An
+  `openat`/`fchmodat`-relative walk would close it.
+
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
 - **The main pane can switch to a new window while the new-agent form is still open and

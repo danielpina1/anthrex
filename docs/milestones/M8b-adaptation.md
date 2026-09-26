@@ -2450,3 +2450,33 @@ So the "empty-root `ClaudeSandbox`" M8a gives reviewers (F1c N4) and decision 12
   - `salvage`, in the pinned standalone checkout. It runs `add -A` against the checkout's own index, then `write-tree`/`commit-tree` into the user's object store (the pin's object directory, as every M8a salvage does), then one `update-ref refs/anthrex/salvage/onboarding/<secs>` in the user's repository. Decision 4 allows exactly these writes into `.git`.
   - `remove_checkout`. It runs `git worktree list`, a read, in the root; the checkout is never listed, so the `worktree unlock`/`remove`/`prune` branches never run. It deletes the checkout, its repository and its `TMPDIR` (`checkout::remove`, only for a checkout pinned as this repository's).
   - No `git worktree add` and no lock, so `.git/worktrees` gains no entry, as `verification_never_touches_the_checkout_and_salvages_dirt` asserts. The same test asserts `git status --porcelain --ignored` is empty and `HEAD` is unchanged.
+
+**Review fixes (task 10 review, controller rulings):**
+- **I1: git runs in a leftover only when it is pinned as ours.** `discard` pins a leftover (`pin_leftover`, unchanged: only when `<repo>/git/HEAD` exists). It then salvages only when `pinned(path)` is a standalone, unbroken pin whose git directory is `<repo>/git` (`pinned_as_ours`). Every such git call carries the pin's explicit `--git-dir`/`--work-tree`, never discovery.
+  - A leftover that cannot be pinned so (no repository `HEAD`, as a daemon that died inside `prepare` leaves it, or a broken pin) is removed without salvage and without any git command run in it. That covers the checkout, its repository and its `TMPDIR` (`remove_plain`: a directory after its access is restored, a link or file unlinked, never followed); the pin is then dropped.
+  - Test `a_leftover_without_a_repository_is_removed_without_running_git_in_it`: an enclosing repository stands in for a dotfiles `$HOME`. Its refs and every file under its `.git` (index, objects) are unchanged.
+- **I2: the fix is in M8a's `checkout::remove`** (and `tmp::remove`). `run::git::restore_owner_access(path)` gives the owner `rwx` back on `path` and on every real directory beneath it before `remove_dir_all`. Each entry is read with `symlink_metadata`, links are never followed, and each change is `fchmodat(AT_SYMLINK_NOFOLLOW)`, with a re-checked `set_permissions` fallback where Linux lacks the flag. Nothing outside the path is touched. It protects M8a's task, review and proof checkouts too. No kill, signal or scan code changed.
+  - M8a's `run_git_finish.rs::remove_refuses_nothing_after_salvage` gains `chmod 555`/`500` directories in the checkout and in its repository's object store, plus a link to a locked directory outside, whose mode stays `555`.
+  - `a_command_that_locks_a_directory_cannot_block_removal` has a confined check lock directories in the checkout and in its object store. The checkout goes, and the next verification salvages nothing again.
+- **I3: tests that kill each surviving mutant:**
+  - `single_test_exit_zero_without_its_line_is_not_ok` (exit 0, no match);
+  - `a_leftover_checkout_is_pinned_salvaged_and_replaced_by_a_fresh_one` (a prepared checkout, dirtied and unpinned as after a restart);
+  - `a_taken_salvage_name_moves_to_the_next_and_ten_give_a_clear_error`.
+
+  For the last test, the name loop is `verify::discard_named(git, root, path, repo, secs, timeout)` (public), so a test can pin `secs`. When all ten names hold other work, the error is `every salvage name from <prefix><secs> to <prefix><secs>-9 already holds other work; the checkout <path> is kept`, and the checkout is kept.
+- **M1:** `run_commands` drops every key `proposal::env_problem` refuses (M8a's reserved list, malformed names) from the proposed `env` before use. Test: `reserved_env_keys_of_a_proposal_never_reach_a_command` (`TMPDIR`, `HOME`, `GIT_DIR`, `ANTHREX_SOCKET` never reach it; an ordinary key does). `env_problem` is now `pub(crate)`.
+- **M2:** test `a_record_of_another_command_does_not_verify_the_proposed_one`.
+- **M3:** a removal that fails after a salvage ends its error with `; its work was salvaged to <ref>`. Test: `a_removal_that_fails_after_a_salvage_names_the_ref`, macOS only. It sets `chflags uchg` itself, and clears it on drop.
+- **M4:** the leftover discard's error is `could not discard the leftover verification checkout <path>: <error>` (same test).
+- **M5:** the confinement test's proposal sets `HOME` and `TMPDIR` to the home directory. The writes to `$HOME`, `$TMPDIR` and the literal home path are all denied, and the check fails.
+- **Mutation proof:** each mutant was applied alone and reverted. None touched kill, program-selection or confinement code.
+  - salvage without the ours check → the enclosing-repository test fails;
+  - `ok = outcome.ok` → the single-test test fails;
+  - `pin_leftover` disabled → the leftover test fails;
+  - the leftover discard skipped → three tests fail;
+  - the name loop returning at the first taken name → the suffix test fails;
+  - the env filter disabled → the reserved-env test fails;
+  - the identity check removed → the M2 unit test fails;
+  - `restore_owner_access` as a no-op → both the M8a removal test and the lock test fail.
+- **Files:** the process tests were split for rule 8. `profile_verify.rs` (337 lines) holds the verification behaviour, and the new `profile_verify_leftovers.rs` (276) holds how checkouts end. Both share the new `crates/cli/tests/support/profile_rig.rs` (131). Other sizes: `verify.rs` 473, `checkout.rs` 283 → 346, `tmp.rs` 125, `tests_verify.rs` 508.
+- **Follow-ups** (recorded under "From M8b.10's review"): a `chflags uchg` set by a command would still block removal; `restore_owner_access` walks by path, not by `openat`.

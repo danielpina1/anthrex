@@ -29,6 +29,7 @@ use proto::{CommandCheck, ProfileSpec, ProfileVerification, RepoProfile};
 use regex::Regex;
 
 use super::VERIFY_CHECKOUT;
+use super::proposal::env_problem;
 use crate::run::confine::{self, ConfineSpec};
 use crate::run::env::profile_env;
 use crate::run::exec::{ShellOutcome, run_matching};
@@ -126,7 +127,8 @@ fn record(command: &str, outcome: ShellOutcome, ok: bool) -> CommandCheck {
 }
 
 /// Decision 9's order in the checkout `dir`, each command bounded by `timeout`, with the
-/// profile's `env` (`{worktree}` replaced by `dir`) over M8a's engine environment:
+/// profile's `env` less every reserved key (`{worktree}` replaced by `dir`) over M8a's
+/// engine environment:
 /// `setup` (its failure does not stop the rest), `check`, then `single_test` as the
 /// proof command for `sample_test`, which passes only when it exits 0 and a line matches
 /// `test_passed`. A `single_test` that cannot be verified (no `{test}`, no companions,
@@ -138,9 +140,17 @@ pub fn run_commands(
     timeout: Duration,
     now: u64,
 ) -> ProfileVerification {
+    // M8b.10 review (M1), defence in depth: a reserved key (`TMPDIR`, `HOME`, `GIT_*`,
+    // `ANTHREX_*`, credentials, …) never reaches a command, whoever built `profile`.
+    let env = profile
+        .env
+        .iter()
+        .filter(|(key, _)| env_problem(key).is_none())
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
     let resolved = resolve_profile(
         &ProfileSpec {
-            env: Some(profile.env.clone()),
+            env: Some(env),
             ..ProfileSpec::default()
         },
         &ProfileSpec::default(),
@@ -201,10 +211,111 @@ fn pin_leftover(git: &OsStr, root: &Path, path: &Path, repo: &Path, timeout: Dur
     }
 }
 
+/// The end of every salvage error whose name is taken (M8a's `salvage`).
+const NAME_TAKEN: &str = "already holds other work";
+
+/// Whether `path` is pinned, unbroken, as the standalone checkout of `repo`: only then
+/// does any git command run in it, and always with the pin's explicit git directory
+/// and work tree, never by discovery (M8b.10 review, I1).
+fn pinned_as_ours(path: &Path, repo: &Path) -> bool {
+    let Ok(git_dir) = Repo::at(repo).git_dir().canonicalize() else {
+        return false;
+    };
+    pinned::pinned(path)
+        .is_some_and(|pin| pin.standalone && pin.broken.is_none() && pin.git_dir == git_dir)
+}
+
+/// Salvages the checkout at `path` to `name` when it is there, dirty and pinned as
+/// ours (pinning a leftover first). `.0` is whether git may touch it at all.
+fn salvage_to(
+    git: &OsStr,
+    root: &Path,
+    path: &Path,
+    repo: &Path,
+    name: &str,
+    timeout: Duration,
+) -> Result<(bool, Option<String>), String> {
+    if std::fs::symlink_metadata(path).is_err() {
+        return Ok((true, None));
+    }
+    pin_leftover(git, root, path, repo, timeout);
+    if !pinned_as_ours(path, repo) {
+        return Ok((false, None));
+    }
+    Ok((
+        true,
+        git::salvage(git, path, name, SALVAGE_MESSAGE, timeout)?,
+    ))
+}
+
+/// `path` removed without following a link: a directory after its owner's access is
+/// restored, anything else unlinked.
+fn remove_plain(path: &Path) -> Result<(), String> {
+    let failed = |err: std::io::Error| format!("cannot remove {}: {err}", path.display());
+    match std::fs::symlink_metadata(path) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(failed(err)),
+        Ok(meta) if meta.file_type().is_dir() => {
+            git::restore_owner_access(path)?;
+            std::fs::remove_dir_all(path).map_err(failed)
+        }
+        Ok(_) => std::fs::remove_file(path).map_err(failed),
+    }
+}
+
+/// The checkout and its repository removed: through M8a's `remove_checkout` when it is
+/// ours, else (no repository `HEAD`, a broken pin: nothing git could salvage from)
+/// without running any git in it, together with its temporary directory.
+fn remove(
+    git: &OsStr,
+    root: &Path,
+    path: &Path,
+    repo: &Path,
+    ours: bool,
+    timeout: Duration,
+) -> Result<(), String> {
+    if ours {
+        return git::remove_checkout(git, root, path, Some(repo), timeout);
+    }
+    remove_plain(path)?;
+    remove_plain(repo)?;
+    git::remove_task_tmp(repo)?;
+    pinned::unpin(path);
+    Ok(())
+}
+
+/// Salvages under the first of `names` not already holding other work, then removes.
+/// A removal that fails after a salvage names the salvage ref (review M3).
+fn discard_as(
+    git: &OsStr,
+    root: &Path,
+    path: &Path,
+    repo: &Path,
+    names: &[String],
+    timeout: Duration,
+) -> Result<Option<String>, String> {
+    let mut last = None;
+    for name in names {
+        match salvage_to(git, root, path, repo, name, timeout) {
+            Err(error) if error.ends_with(NAME_TAKEN) => last = Some(error),
+            outcome => {
+                let (ours, salvaged) = outcome?;
+                remove(git, root, path, repo, ours, timeout).map_err(|error| match &salvaged {
+                    Some(reference) => format!("{error}; its work was salvaged to {reference}"),
+                    None => error,
+                })?;
+                return Ok(salvaged);
+            }
+        }
+    }
+    Err(last.unwrap_or_default())
+}
+
 /// The checkout at `path` salvaged to `salvage_ref` if dirty (M8a's `salvage`), then
 /// removed with its repository `repo` (M8a's `remove_checkout`); `Some(ref)` when it
-/// was dirty. A salvage that fails keeps the checkout: nothing is deleted dirty. Git
-/// writes: behind `GitQueue::write`.
+/// was dirty. A salvage that fails keeps the checkout: nothing is deleted dirty. A
+/// leftover that cannot be pinned as ours is removed without any git command run in
+/// it (review I1). Git writes: behind `GitQueue::write`.
 pub fn discard(
     git: &OsStr,
     root: &Path,
@@ -213,14 +324,37 @@ pub fn discard(
     salvage_ref: &str,
     timeout: Duration,
 ) -> Result<Option<String>, String> {
-    let salvaged = if path.exists() {
-        pin_leftover(git, root, path, repo, timeout);
-        git::salvage(git, path, salvage_ref, SALVAGE_MESSAGE, timeout)?
-    } else {
-        None
-    };
-    git::remove_checkout(git, root, path, Some(repo), timeout)?;
-    Ok(salvaged)
+    discard_as(git, root, path, repo, &[salvage_ref.to_string()], timeout)
+}
+
+/// [`discard`] under `<prefix><secs>`, or `<secs>-1` to `<secs>-9` when a name already
+/// holds other work. When all ten do, the checkout is kept and the error says so.
+pub fn discard_named(
+    git: &OsStr,
+    root: &Path,
+    path: &Path,
+    repo: &Path,
+    secs: u64,
+    timeout: Duration,
+) -> Result<Option<String>, String> {
+    let names: Vec<String> = (0..=SALVAGE_SUFFIXES)
+        .map(|n| match n {
+            0 => format!("{SALVAGE_PREFIX}{secs}"),
+            n => format!("{SALVAGE_PREFIX}{secs}-{n}"),
+        })
+        .collect();
+    discard_as(git, root, path, repo, &names, timeout).map_err(|error| {
+        if error.ends_with(NAME_TAKEN) {
+            format!(
+                "every salvage name from {} to {} {NAME_TAKEN}; the checkout {} is kept",
+                names[0],
+                names[names.len() - 1],
+                path.display()
+            )
+        } else {
+            error
+        }
+    })
 }
 
 /// What [`verify`] needs, owned, so its steps can move to other threads.
@@ -272,19 +406,7 @@ async fn discard_queued(
     let secs = unix_now();
     queue
         .write(&job.pre.project, move || {
-            let mut result = Err(String::new());
-            for n in 0..=SALVAGE_SUFFIXES {
-                let name = match n {
-                    0 => format!("{SALVAGE_PREFIX}{secs}"),
-                    n => format!("{SALVAGE_PREFIX}{secs}-{n}"),
-                };
-                result = discard(&git, &root, &path, &repo, &name, timeout);
-                match &result {
-                    Err(error) if error.ends_with("already holds other work") => continue,
-                    _ => break,
-                }
-            }
-            result
+            discard_named(&git, &root, &path, &repo, secs, timeout)
         })
         .await
 }
@@ -297,8 +419,16 @@ pub async fn verify(queue: &GitQueue, job: VerifyJob) -> Result<Verified, String
     let path = checkout_path(&job.worktrees_root, &job.pre.project);
     let repo = checkout_repo_dir(&job.repo_dir, &path);
     let mut salvaged = Vec::new();
-    if path.exists() || repo.exists() {
-        salvaged.extend(discard_queued(queue, &job, &path, &repo).await?);
+    if std::fs::symlink_metadata(&path).is_ok() || repo.exists() {
+        let leftover = discard_queued(queue, &job, &path, &repo)
+            .await
+            .map_err(|error| {
+                format!(
+                    "could not discard the leftover verification checkout {}: {error}",
+                    path.display()
+                )
+            })?;
+        salvaged.extend(leftover);
     }
     let prepared = {
         let (git, pre, p, r, t) = (

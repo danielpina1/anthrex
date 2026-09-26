@@ -474,3 +474,35 @@ fn confine_spec_takes_the_users_tables_for_the_root() {
     config.worker_sandbox = false;
     assert_eq!(confine_spec(&config, &repo_dir, &pre, &socket), None);
 }
+
+#[test]
+fn a_record_of_another_command_does_not_verify_the_proposed_one() {
+    // A verification carried forward (an edit's stored record) names the commands it
+    // ran; a passing record of a different command verifies nothing.
+    let v = verification(
+        false,
+        Some(passed("sh old-setup.sh", 1)),
+        Some(passed("sh old-check.sh", 1)),
+        Some(passed("sh old/{test}.sh", 1)),
+    );
+    let (profile, dropped) = apply_verification(&proposed(), &v, &root());
+    assert_eq!(
+        (&profile.setup, &profile.check, &profile.single_test),
+        (&None, &None, &None)
+    );
+    let keys: Vec<(&str, &str)> = dropped
+        .iter()
+        .map(|d| (d.key.as_str(), d.reason.as_str()))
+        .collect();
+    assert_eq!(
+        keys,
+        vec![
+            ("setup", "it was not verified"),
+            ("check", "it was not verified"),
+            (
+                "single_test",
+                "it was not verified; test_passed and sample_test are dropped with it"
+            ),
+        ]
+    );
+}

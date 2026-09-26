@@ -175,12 +175,39 @@ fn remove_refuses_nothing_after_salvage() {
     assert!(own_repo.join("git/HEAD").is_file());
     write(&task, "wip.txt", "uncommitted\n");
     write(&task, "README", "edited\n");
+    // M8b.10 review (I2): a worker or a confined check may lock a directory it wrote
+    // (`chmod 555`), in the checkout or in the repository's object store; the removal
+    // restores the owner's access inside the path first. A link to a locked directory
+    // outside the path is removed, never followed.
+    use std::os::unix::fs::PermissionsExt;
+    let locked = |dir: &Path| {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("f"), "x").unwrap();
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    };
+    locked(&task.join("d/e"));
+    std::fs::set_permissions(task.join("d"), std::fs::Permissions::from_mode(0o500)).unwrap();
+    locked(&own_repo.join("git/objects/locked"));
+    let outside = task.ancestors().nth(3).unwrap().join("outside");
+    locked(&outside);
+    std::os::unix::fs::symlink(&outside, task.join("link")).unwrap();
 
     let reference = "refs/anthrex/salvage/rm01/t1/1";
     let saved = salvage(real_git(), &task, reference, "anthrex salvage rm01/t1", T).unwrap();
     assert_eq!(saved.as_deref(), Some(reference));
     remove_worktree(real_git(), &repo.root, &task, T).unwrap();
 
+    let outside_mode = std::fs::symlink_metadata(&outside)
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(
+        outside_mode & 0o777,
+        0o555,
+        "a directory outside the path changed"
+    );
+    assert!(outside.join("f").is_file());
+    std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert!(!task.exists());
     assert!(
         !own_repo.exists(),
