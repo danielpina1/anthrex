@@ -22,8 +22,10 @@ fn isolate(cmd: &mut Command, dir: &Path) {
         .env("ANTHREX_DATA_DIR", dir.join("data"))
         .env("ANTHREX_CLAUDE_BIN", "/nonexistent/anthrex-test/claude")
         .env("ANTHREX_CODEX_BIN", "/nonexistent/anthrex-test/codex")
-        // zsh reads no startup file of the user's.
-        .env("ZDOTDIR", dir);
+        // zsh and bash read no startup file of the user's.
+        .env("ZDOTDIR", dir)
+        .env_remove("BASH_ENV")
+        .env_remove("ENV");
 }
 
 fn hook_cmd(dir: &Path, log_dir: &Path, prefixes: &[&str]) -> Command {

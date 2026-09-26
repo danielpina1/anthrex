@@ -23,7 +23,12 @@ fn filter_run(dir: &Path, log_dir: &Path, mode: &str, command: &str) -> Command 
         .env("ANTHREX_SOCKET", dir.join("daemon.sock"))
         .env("ANTHREX_DATA_DIR", dir.join("data"))
         .env("ANTHREX_CLAUDE_BIN", "/nonexistent/anthrex-test/claude")
-        .env("ANTHREX_CODEX_BIN", "/nonexistent/anthrex-test/codex");
+        .env("ANTHREX_CODEX_BIN", "/nonexistent/anthrex-test/codex")
+        // filter-run runs `$SHELL -c` for bash or zsh; pin plain sh so no startup file of
+        // the user's can print into the exact output asserted below.
+        .env("SHELL", "/bin/sh")
+        .env_remove("BASH_ENV")
+        .env_remove("ENV");
     cmd
 }
 
