@@ -160,8 +160,21 @@ fn e2e_a_leftover_without_a_trusted_project_is_kept_and_no_git_runs() {
     let mut h = harness();
     let other = h.dir.path().join("other");
     init_repo(&other, &[("a.txt", "a\n")]);
+    // A clone of `other`: it holds the checkout's objects, so a salvage wrongly run in
+    // it would succeed, and only the fingerprint below would catch it.
     let victim = h.dir.path().join("victim");
-    init_repo(&victim, &[("v.txt", "v\n")]);
+    git_in(
+        h.dir.path(),
+        &[
+            "clone",
+            "-q",
+            other.to_str().unwrap(),
+            victim.to_str().unwrap(),
+        ],
+    );
+    git_in(&victim, &["config", "user.name", "Test User"]);
+    git_in(&victim, &["config", "user.email", "test@example.com"]);
+    git_in(&victim, &["config", "commit.gpgsign", "false"]);
     let (other, victim) = (
         other.canonicalize().unwrap(),
         victim.canonicalize().unwrap(),
