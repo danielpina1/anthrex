@@ -17,7 +17,7 @@ use super::signals::end_round;
 use super::{
     Effect, EngineState, OpId, OpKind, OpResult, ReplyId, complete, emit_op, gates, ladder, next_op,
 };
-use crate::run::contract::{UNCLAIMED_COMMITS, candidate_red_message, conflict_message, sha7};
+use crate::run::contract::{UNCLAIMED_COMMITS, conflict_message, sha7};
 use crate::run::env::profile_env;
 use crate::run::model::{BaseMoved, CheckRecord, Run, Task};
 
@@ -160,12 +160,14 @@ pub(super) fn candidate_done(
                 tail,
                 secs,
                 on_candidate: true,
+                summary: None,
+                summary_source: None,
             };
             let command = run.profile.check.clone().unwrap_or_default();
-            let text = candidate_red_message(&command, &record);
             run.tasks[i].checks.push(record);
             history(run, i, now, "the check failed on the merge candidate");
-            ladder::gate_failure(run, i, GateKind::Merge, text, false, now, fx);
+            // M8b decision 20: the rung waits for the summary; the queue moves on.
+            super::deciders::summarise(run, i, GateKind::Merge, &command, now, fx);
         }
         OpResult::Failed { message } => {
             let text = format!("could not merge: {message}");

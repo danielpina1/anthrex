@@ -10,7 +10,7 @@
 //! (`HeadlessHandle::kill`), which is a no-op once it has been reaped.
 
 use super::argv::{DECIDER_CAPS, claude_decider_args, codex_decider_args, schema_file_name};
-use super::fallback::fallback_decision;
+use super::fallback::{OFF_REASON, fallback_decision};
 use super::parse::{STRUCTURED_OUTPUT_TOOL, answer_from_events, json_from_text, parse_for};
 use super::{DeciderAnswer, DeciderContext, DeciderRequest, Decision, prompt, schema};
 use crate::headless::session::HeadlessHandle;
@@ -38,7 +38,7 @@ pub const EXIT_WAIT: Duration = Duration::from_secs(2);
 pub async fn decide(ctx: &DeciderContext, request: &DeciderRequest) -> Decision {
     let started = Instant::now();
     let runtime = match ctx.mode {
-        DeciderMode::Off => return fallback_decision(request, "deciders are off".into()),
+        DeciderMode::Off => return fallback_decision(request, OFF_REASON.into()),
         DeciderMode::Claude => Runtime::Claude,
         DeciderMode::Codex => Runtime::Codex,
     };

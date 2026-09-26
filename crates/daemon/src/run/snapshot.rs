@@ -212,8 +212,11 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64) -> TaskInfo 
             secs: c.secs,
             summary: summary(&c.tail),
             on_candidate: c.on_candidate,
-            decider_summary: None,
-            summary_source: None,
+            decider_summary: c
+                .summary
+                .clone()
+                .filter(|_| c.summary_source == Some(proto::DeciderSource::Decider)),
+            summary_source: c.summary_source,
         }),
         last_proof: t.proofs.last().map(|p| ProofInfo {
             at: p.at,
@@ -236,10 +239,10 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64) -> TaskInfo 
             .take(HISTORY_SHOWN)
             .map(|e| format!("{} {}", clock(e.at), e.text))
             .collect(),
-        decider_usage: None,
+        decider_usage: (t.decider_usage != Default::default()).then_some(t.decider_usage),
         size_check: None,
         diff: None,
         phases: None,
-        block_source: None,
+        block_source: t.block_source,
     }
 }

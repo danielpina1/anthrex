@@ -170,6 +170,21 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
         {
             run.tasks[i].gate_op = None;
         }
+        // M8b decision 18: a dropped decider is queued again under its own id, so the
+        // task waiting for it still names it.
+        (
+            OpKind::Decide {
+                decider_id,
+                task_ids,
+                request,
+            },
+            _,
+        ) => run.decider_queue.push(crate::run::model::QueuedDecider {
+            decider_id: *decider_id,
+            task_ids: task_ids.clone(),
+            request: request.clone(),
+            queued_at: now,
+        }),
         (OpKind::Accept { .. } | OpKind::Discard { .. }, _) => {
             let text = "an accept or discard did not finish before the restart; request it again";
             log(run, now, text);

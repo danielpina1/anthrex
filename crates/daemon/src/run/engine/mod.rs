@@ -26,6 +26,10 @@
 //! M8a.15 adds `restore.rs` (restore after a daemon restart, `run resume` and the
 //! launches a restart lost), `run retry` in `requests.rs`, and the rest of `run
 //! override` in `gates.rs`.
+//!
+//! M8b.12 adds `deciders.rs` (M8b decisions 18, 20 and 21: decider ops in reader
+//! slots, the check summary a failed check's rung waits for, and the classification of
+//! a `task_blocked` with no kind).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -37,6 +41,7 @@ use super::validate::EditScope;
 
 mod clock;
 mod complete;
+pub(crate) mod deciders;
 mod dispatch;
 mod done;
 mod fallback;
@@ -486,6 +491,7 @@ fn op_done(
         (OpKind::CountCommits { .. }, Some(i)) => fallback::counted(run, i, op, result, now, fx),
         (OpKind::DiffSoFar { .. }, Some(i)) => ladder::fresh_diff(run, i, result, now, fx),
         (OpKind::ResumeSession { .. }, Some(i)) => outbox::resumed(run, i, op, result, now, fx),
+        (kind @ OpKind::Decide { .. }, _) => deciders::op_done(run, &kind, result, now, fx),
         _ => {}
     }
 }

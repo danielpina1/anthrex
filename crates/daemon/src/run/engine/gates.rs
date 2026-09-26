@@ -11,10 +11,10 @@ use proto::{BlockReason, GateKind, RunState, TaskState, TestMode};
 
 use super::dispatch::{block, history};
 use super::{
-    Effect, EngineState, OpId, OpKind, OpResult, OverrideCount, ReplyId, ScratchAt, emit_op,
-    ladder, next_op, review,
+    Effect, EngineState, OpId, OpKind, OpResult, OverrideCount, ReplyId, ScratchAt, deciders,
+    emit_op, ladder, next_op, review,
 };
-use crate::run::contract::{check_failed_message, proof_failed_message};
+use crate::run::contract::proof_failed_message;
 use crate::run::env::profile_env;
 use crate::run::model::{CheckRecord, ProofRecord, Run};
 use crate::run::proof::{proof_command, proof_pattern};
@@ -89,7 +89,8 @@ pub(super) fn start_gates(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             run.tasks[i].gate_op = None;
             continue;
         }
-        if run.tasks[i].gate_op.is_some() {
+        // M8b decision 20: a failed check waiting for its summary runs no other.
+        if run.tasks[i].gate_op.is_some() || run.tasks[i].pending_failure.is_some() {
             continue;
         }
         match state {
@@ -254,7 +255,8 @@ pub(super) fn proof_done(
 }
 
 /// `Check`'s result (decision 34): green passes the gate; red is a gate failure of
-/// `check` with `check_failed_message` (the last 40 lines, deterministically).
+/// `check` with `check_failed_message`, whose rung waits for the check summary (M8b
+/// decision 20, `deciders::summarise`).
 pub(super) fn check_done(
     run: &mut Run,
     i: usize,
@@ -286,13 +288,14 @@ pub(super) fn check_done(
                 tail,
                 secs,
                 on_candidate: false,
+                summary: None,
+                summary_source: None,
             };
-            let text = check_failed_message(command, &record);
             run.tasks[i].checks.push(record);
             if ok {
                 passed(run, i, TaskState::Check, now);
             } else {
-                ladder::gate_failure(run, i, GateKind::Check, text, false, now, fx);
+                deciders::summarise(run, i, GateKind::Check, command, now, fx);
             }
         }
         OpResult::SetupFailed { output } => {

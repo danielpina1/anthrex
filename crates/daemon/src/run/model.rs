@@ -28,6 +28,7 @@ pub use rounds::*;
 // structs its later tasks add there are re-exported here with `pub use adapt::*`.
 #[path = "model_adapt.rs"]
 mod adapt;
+pub use adapt::*;
 
 /// How thoroughly a task is reviewed, decision 35: `S` tasks get `Small`, `M` tasks
 /// `Medium`, hub tasks `Frontier`, each possibly raised by the level rule (no `check` in
@@ -151,6 +152,13 @@ pub struct RunLimits {
     /// the run alone.
     #[serde(default)]
     pub api_key_helper: Option<String>,
+    /// M8b decision 18: `[orchestrator.deciders] mode`. Absent from a run recorded
+    /// before milestone 8b: `off`, so a restored run gains no decider.
+    #[serde(default = "adapt::decider_mode_absent")]
+    pub decider_mode: proto::DeciderMode,
+    /// M8b decision 18: `[orchestrator.deciders] slot_wait_secs`.
+    #[serde(default = "adapt::slot_wait_absent")]
+    pub decider_slot_wait_secs: u64,
 }
 
 /// A resolved task: the planner's spec plus everything decisions 8–10 and 35 derive
@@ -269,6 +277,18 @@ pub struct Task {
     pub salvage_refs: Vec<String>,
     pub failure_log: Vec<String>,
     pub history: Vec<TaskEvent>,
+    /// M8b decision 20: a failed check's rung, deferred until its summary is decided.
+    #[serde(default)]
+    pub pending_failure: Option<PendingFailure>,
+    /// M8b decision 21: a free-text `task_blocked` waits for its classification.
+    #[serde(default)]
+    pub pending_classification: bool,
+    /// M8b decision 21: who classified the block (`None`: the worker typed its kind).
+    #[serde(default)]
+    pub block_source: Option<proto::DeciderSource>,
+    /// M8b decision 18: the usage of the deciders asked about this task alone.
+    #[serde(default)]
+    pub decider_usage: TokenUsage,
 }
 
 impl Task {
@@ -396,6 +416,18 @@ pub struct Run {
     /// M8b decision 7: files changed since the stored profile was confirmed.
     #[serde(default)]
     pub stale_profile: Vec<String>,
+    /// M8b decision 18: deciders waiting for a reader slot, oldest first.
+    #[serde(default)]
+    pub decider_queue: Vec<QueuedDecider>,
+    #[serde(default)]
+    pub next_decider: u64,
+    /// M8b decision 18: every `Decided`, and those that were fallbacks.
+    #[serde(default)]
+    pub decider_calls: u32,
+    #[serde(default)]
+    pub decider_fallbacks: u32,
+    #[serde(default)]
+    pub decider_usage: TokenUsage,
 }
 
 impl Run {

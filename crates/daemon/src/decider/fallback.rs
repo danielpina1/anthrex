@@ -49,6 +49,9 @@ pub fn fallback(request: &DeciderRequest) -> DeciderAnswer {
     }
 }
 
+/// Decision 16's fallback reason with the deciders off (exact).
+pub const OFF_REASON: &str = "deciders are off";
+
 /// The fallback [`Decision`] for `request`, with one of decision 16's reasons.
 pub fn fallback_decision(request: &DeciderRequest, reason: String) -> Decision {
     Decision {

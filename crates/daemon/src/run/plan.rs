@@ -184,6 +184,8 @@ pub fn run_limits(
         unconfined_checks: false,
         claude_auth: config.claude.auth.into(),
         api_key_helper: config.claude.api_key_helper.clone(),
+        decider_mode: config.deciders.mode,
+        decider_slot_wait_secs: config.deciders.slot_wait_secs,
     }
 }
 
@@ -418,6 +420,11 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         filter_prefixes: Vec::new(),
         repo_dir: PathBuf::new(),
         stale_profile: Vec::new(),
+        decider_queue: Vec::new(),
+        next_decider: 0,
+        decider_calls: 0,
+        decider_fallbacks: 0,
+        decider_usage: Default::default(),
     })
 }
 

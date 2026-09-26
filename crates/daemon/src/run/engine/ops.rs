@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::decider::{DeciderRequest, Decision};
 use crate::headless::HeadlessSpec;
 
 /// One engine operation, executed by the driver and journaled before it runs
@@ -225,6 +226,15 @@ pub enum OpKind {
         worktrees: Vec<(PathBuf, String)>,
         branch_prefix: String,
     },
+    /// M8b decision 18: one decider call, holding a reader slot while it runs.
+    /// **Executor contract:** `decider::call::decide` with the adaptation's
+    /// `DeciderContext` (`driver/adapt.rs`), never under a lock; the result is always
+    /// `Decided`, a fallback included. `task_ids` are the tasks the answer is for.
+    Decide {
+        decider_id: u64,
+        task_ids: Vec<String>,
+        request: DeciderRequest,
+    },
 }
 
 impl OpKind {
@@ -249,6 +259,7 @@ impl OpKind {
             OpKind::VerifyRefs { .. } => "VerifyRefs",
             OpKind::Accept { .. } => "Accept",
             OpKind::Discard { .. } => "Discard",
+            OpKind::Decide { .. } => "Decide",
         }
     }
 }
@@ -392,4 +403,7 @@ pub enum OpResult {
     Failed {
         message: String,
     },
+    /// M8b decision 18: `Decide`'s answer, from the decider or its fallback. Boxed: a
+    /// triage answer would triple every result's size (clippy's `large_enum_variant`).
+    Decided(Box<Decision>),
 }

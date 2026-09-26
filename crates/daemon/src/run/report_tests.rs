@@ -108,6 +108,8 @@ fn report_has_every_section() {
             tail: "running 3 tests\ntest result: ok".to_string(),
             secs: 12,
             on_candidate: false,
+            summary: None,
+            summary_source: None,
         });
         t.reviews.push(ReviewRecord {
             round: 1,
@@ -377,3 +379,39 @@ fn task_lookup_helper_finds_t1() {
 
 #[path = "report_tests_escaping.rs"]
 mod escaping;
+
+/// M8b decision 18: a check's summary records its source, and the decider's lines.
+#[test]
+fn a_check_summary_names_its_source() {
+    let mut run = base_run();
+    let record = |summary: Option<&str>, source| CheckRecord {
+        at: 1_700,
+        ok: false,
+        code: Some(1),
+        timed_out: false,
+        tail: "the raw tail".to_string(),
+        secs: 5,
+        on_candidate: false,
+        summary: summary.map(str::to_string),
+        summary_source: source,
+    };
+    run.tasks[0].checks = vec![
+        record(Some("error: a failed"), Some(proto::DeciderSource::Decider)),
+        record(None, Some(proto::DeciderSource::Fallback)),
+        record(None, None),
+    ];
+    let out = render(&run, 2_000);
+    assert!(
+        out.contains(&format!(
+            "Check 1: ok=false code=Some(1) timed_out=false 5s ({}), summary by the decider\n",
+            format_utc(1_700)
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains("Summary:\n```\nerror: a failed\n```\n"),
+        "{out}"
+    );
+    assert!(out.contains(", summary by its fallback\n"), "{out}");
+    assert_eq!(out.matches("summary by").count(), 2, "{out}");
+}

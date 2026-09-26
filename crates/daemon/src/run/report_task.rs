@@ -1,7 +1,7 @@
 //! One task's section of the run report (`## <id>: <title>`). Split out of `report.rs`
 //! by AGENTS.md's file-size rule. Pure, same terms as `report.rs`.
 
-use proto::{Effort, Route, Runtime, Severity, Strength};
+use proto::{DeciderSource, Effort, Route, Runtime, Severity, Strength};
 
 use super::contract::{mode_label, sha7, size_label};
 use super::engine::{epoch_spend, ladder};
@@ -53,8 +53,14 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
         ));
     }
     for (i, c) in task.checks.iter().enumerate() {
+        // M8b decision 18: the summary's source, and the decider's own lines.
+        let source = match c.summary_source {
+            Some(DeciderSource::Decider) => ", summary by the decider",
+            Some(DeciderSource::Fallback) => ", summary by its fallback",
+            None => "",
+        };
         out.push_str(&format!(
-            "Check {}: ok={} code={:?} timed_out={} {}s ({}){}\n",
+            "Check {}: ok={} code={:?} timed_out={} {}s ({}){}{source}\n",
             i + 1,
             c.ok,
             c.code,
@@ -64,6 +70,10 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
             if c.on_candidate { ", on candidate" } else { "" }
         ));
         out.push_str(&fenced(&c.tail));
+        if let (Some(summary), Some(DeciderSource::Decider)) = (&c.summary, c.summary_source) {
+            out.push_str("Summary:\n");
+            out.push_str(&fenced(summary));
+        }
     }
     for r in &task.reviews {
         out.push_str(&format!(

@@ -2,7 +2,7 @@
 //! decision 38's ladder. The review gate (decision 35) is in `gates_review.rs`. Every
 //! sequence ends with the liveness check, extended to the gate states.
 
-use proto::{BlockReason, TaskState};
+use proto::{BlockReason, DeciderSource, TaskState};
 use serde_json::json;
 
 use super::dispatch::{replies, task_path};
@@ -328,6 +328,9 @@ fn check_failure_goes_up_the_ladder() {
         tail: "compiling\ntest a::works ... FAILED".into(),
         secs: 42,
         on_candidate: false,
+        // M8b.12: the fixture's deciders are off, so the summary is the fallback.
+        summary: None,
+        summary_source: Some(DeciderSource::Fallback),
     };
     assert_eq!(t1.checks, vec![record.clone()]);
     let first = check_failed_message("cargo test", &record);
@@ -417,6 +420,8 @@ fn a_timed_out_check_says_so() {
         tail: "slow".into(),
         secs: 1800,
         on_candidate: false,
+        summary: None,
+        summary_source: None,
     };
     assert_eq!(
         check_failed_message("make test", &record),

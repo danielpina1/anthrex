@@ -14,7 +14,8 @@ use super::{
     Effect, EngineState, OpId, OpKind, OpResult, ReplyId, emit_op, fallback, gates, next_op, outbox,
 };
 use crate::run::contract::{
-    DONE_ACCEPTED, blocked_recorded, generated_files_message, protected_file_message,
+    BLOCKED_CLASSIFYING, DONE_ACCEPTED, blocked_recorded, generated_files_message,
+    protected_file_message,
 };
 use crate::run::globs::names_literally;
 use crate::run::model::{DoneClaim, FallbackState, PendingClaim, Run, StallState};
@@ -194,26 +195,37 @@ fn spill_exempt(run: &Run, i: usize) -> bool {
 }
 
 /// `task_blocked` (decision 32): `question` and `environment` block the task, the
-/// session waiting for an answer; `mis_sized` is rung 3.
+/// session waiting for an answer; `mis_sized` is rung 3. With no kind (M8b decision 21)
+/// the task is a question at once, and a decider classifies it.
 #[allow(clippy::too_many_arguments)]
 fn task_blocked(
     run: &mut Run,
     i: usize,
     id: ReplyId,
-    kind: &'static str,
+    kind: Option<&'static str>,
     reason: String,
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
     match kind {
-        "mis_sized" => {
-            let text = format!("the worker reported the task mis-sized: {reason}");
-            ladder::rung3(run, i, text, now, fx);
+        Some("mis_sized") => mis_sized(run, i, &reason, now, fx),
+        Some("environment") => block(run, i, BlockReason::Environment, reason, now),
+        Some(_) => block(run, i, BlockReason::Question, reason, now),
+        None => {
+            block(run, i, BlockReason::Question, reason.clone(), now);
+            if super::deciders::classify(run, i, reason, now, fx) {
+                return reply(fx, id, Ok(BLOCKED_CLASSIFYING.to_string()));
+            }
         }
-        "environment" => block(run, i, BlockReason::Environment, reason, now),
-        _ => block(run, i, BlockReason::Question, reason, now),
     }
-    reply(fx, id, Ok(blocked_recorded(kind)));
+    reply(fx, id, Ok(blocked_recorded(kind.unwrap_or("question"))));
+}
+
+/// A `mis_sized` block (decision 32): rung 3, whether the worker typed it or a decider
+/// classified it (M8b decision 21).
+pub(super) fn mis_sized(run: &mut Run, i: usize, reason: &str, now: u64, fx: &mut Vec<Effect>) {
+    let text = format!("the worker reported the task mis-sized: {reason}");
+    ladder::rung3(run, i, text, now, fx);
 }
 
 /// The first of decision 32's rejections that applies, or `None`.

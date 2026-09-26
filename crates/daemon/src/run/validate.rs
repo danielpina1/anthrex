@@ -465,6 +465,10 @@ fn new_task(
         salvage_refs: Vec::new(),
         failure_log: Vec::new(),
         history: Vec::new(),
+        pending_failure: None,
+        pending_classification: false,
+        block_source: None,
+        decider_usage: Default::default(),
     }
 }
 

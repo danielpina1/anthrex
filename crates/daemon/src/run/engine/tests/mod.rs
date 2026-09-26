@@ -9,6 +9,8 @@ mod control_open_turn;
 mod control_restore;
 mod control_resume;
 mod control_retry;
+mod deciders;
+mod deciders_block;
 mod dispatch;
 mod dispatch_edits;
 mod dispatch_slots;

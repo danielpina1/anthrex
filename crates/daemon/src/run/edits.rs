@@ -558,6 +558,8 @@ impl Batch {
         }
         task.state = TaskState::Working;
         task.block = None;
+        // M8b decision 21: an answer before the classification wins.
+        task.pending_classification = false;
         self.consequences.push(EditConsequence::Deliver {
             task_id: id.to_string(),
             text: answer_message(text),

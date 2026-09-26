@@ -14,7 +14,9 @@ use super::schedule::{
     op_in_flight, writers_busy,
 };
 use super::{Effect, OpKind, OpResult, emit_op, next_op};
-use super::{clock, complete, done, gates, holds, ladder, merge, outbox, restore, review, signals};
+use super::{
+    clock, complete, deciders, done, gates, holds, ladder, merge, outbox, restore, review, signals,
+};
 use crate::run::contract::{handover_prompt, is_stall_nudge, worker_prompt};
 use crate::run::env::profile_env;
 use crate::run::model::{AgentRound, FreshSession, OpId, Run, StallState, Task, TaskEvent};
@@ -45,6 +47,8 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 review::watch(run, now, fx);
                 launch_ready(run, now, fx);
                 dispatch_writers(run, now, fx);
+                // M8b decision 18: queued deciders take free reader slots first.
+                fx.extend(deciders::dispatch(run, now));
                 review::dispatch_reviewers(run, fx);
             }
             _ => {}

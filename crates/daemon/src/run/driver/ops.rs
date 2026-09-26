@@ -411,6 +411,7 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
             worktrees,
             branch_prefix,
         } => cleanup::discard(service, ctx, root, worktrees, branch_prefix).await,
+        OpKind::Decide { request, .. } => service.decide(request).await,
     }
 }
 

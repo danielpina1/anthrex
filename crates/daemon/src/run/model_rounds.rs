@@ -141,6 +141,12 @@ pub struct CheckRecord {
     pub tail: String,
     pub secs: u64,
     pub on_candidate: bool,
+    /// M8b decision 20: the decider's summary of a failed check (its lines joined);
+    /// `None` when the summary was its fallback, the tail's last 40 lines.
+    #[serde(default)]
+    pub summary: Option<String>,
+    #[serde(default)]
+    pub summary_source: Option<proto::DeciderSource>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

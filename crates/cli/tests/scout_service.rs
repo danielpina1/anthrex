@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use daemon::decider::DeciderContext;
 use daemon::launch::LaunchGate;
 use daemon::manager::{ManagerConfig, WindowManager};
 use daemon::profile::service::{ProfileContext, ProfileService};
@@ -129,9 +130,14 @@ impl Rig {
                 daemon_socket: dir.path().join("d.sock"),
             },
         );
+        // No run here asks a decider; mode off keeps any call from spawning one.
+        let mut deciders =
+            DeciderContext::new(&orchestrator, manager.config(), &dir.path().join("data"));
+        deciders.mode = proto::DeciderMode::Off;
         runs.set_adaptation(Adaptation {
             profiles,
             scouts: scouts.clone(),
+            deciders,
         });
         tokio::spawn(serve(
             listener,

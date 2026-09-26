@@ -4,7 +4,7 @@
 //! `merge_complete.rs`. Every sequence ends with the liveness check, extended to the
 //! merge queue and the run's own states.
 
-use proto::{AgentRole, BlockReason, TaskState};
+use proto::{AgentRole, BlockReason, DeciderSource, TaskState};
 use serde_json::json;
 
 use super::dispatch::{replies, task_path};
@@ -487,6 +487,9 @@ fn red_candidate_is_a_merge_failure() {
         tail: "compiling\ntest a::works ... FAILED".into(),
         secs: 42,
         on_candidate: true,
+        // M8b.12: the fixture's deciders are off, so the summary is the fallback.
+        summary: None,
+        summary_source: Some(DeciderSource::Fallback),
     };
     let t1 = fx.task("t1");
     assert_eq!(t1.state, TaskState::Working);

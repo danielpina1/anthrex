@@ -8,6 +8,9 @@
 //! of a scout's tool call to [`ScoutService::tool`] (decision 15).
 //!
 //! M8b.11: `RunRequest::Profile` goes to [`ProfileService::request`].
+//!
+//! M8b.12: `OpKind::Decide`, executed by [`RunService::decide`] with the adaptation's
+//! [`DeciderContext`], on the op's own task and never under a lock (decision 18).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -17,10 +20,13 @@ use proto::{
 };
 
 use super::RunService;
+use crate::decider::call::decide;
+use crate::decider::fallback::fallback_decision;
+use crate::decider::{DeciderContext, DeciderRequest};
 use crate::profile::resolve::{apply_choice as apply_to_plan, run_profile};
 use crate::profile::service::ProfileService;
 use crate::profile::store::{self, PROFILE_FILE, Stored};
-use crate::run::engine::EventKind;
+use crate::run::engine::{EventKind, OpResult};
 use crate::run::model::{LogEntry, Run};
 use crate::run::plan::Preflight;
 use crate::scout::service::ScoutService;
@@ -43,14 +49,27 @@ fn unparseable(path: &std::path::Path, error: &str) -> String {
     )
 }
 
-/// Milestone 8b's services, set once with [`RunService::set_adaptation`]. A later task
-/// adds the decider context.
+/// Milestone 8b's services, set once with [`RunService::set_adaptation`].
 pub struct Adaptation {
     pub profiles: Arc<ProfileService>,
     pub scouts: Arc<ScoutService>,
+    /// Every decider call inside a run (decision 16).
+    pub deciders: DeciderContext,
 }
 
+/// The fallback reason when the daemon has no decider context (a test's service).
+const NO_DECIDERS: &str = "the decider could not start: the daemon has no decider context";
+
 impl RunService {
+    /// `OpKind::Decide` (decision 18): the call, always answered, a fallback included.
+    pub(super) async fn decide(&self, request: DeciderRequest) -> OpResult {
+        let decision = match self.adaptation.get() {
+            Some(adaptation) => decide(&adaptation.deciders, &request).await,
+            None => fallback_decision(&request, NO_DECIDERS.to_string()),
+        };
+        OpResult::Decided(Box::new(decision))
+    }
+
     /// Sets the services once; a second call is ignored.
     pub fn set_adaptation(&self, adaptation: Adaptation) {
         let _ = self.adaptation.set(adaptation);

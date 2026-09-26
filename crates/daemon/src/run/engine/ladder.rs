@@ -134,31 +134,66 @@ pub(super) fn gate_failure(
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> u8 {
+    let rung = count_failure(run, i, gate);
+    take_rung(run, i, gate, rung, text, told, now, fx);
+    rung
+}
+
+/// The counting half of [`gate_failure`]: the bounce and the failure are counted, and
+/// the rung they call for returned. M8b decision 20 takes it later ([`take_rung`]),
+/// once a failed check's summary is decided.
+pub(super) fn count_failure(run: &mut Run, i: usize, gate: GateKind) -> u8 {
     let task = &mut run.tasks[i];
-    let bounces = match gate {
+    let bounces = bounces_mut(task, gate);
+    *bounces = bounces.saturating_add(1);
+    let bounced = *bounces;
+    task.failures = task.failures.saturating_add(1);
+    if bounced > run.limits.max_bounces || task.failures >= 3 {
+        3
+    } else if task.failures == 2 {
+        2
+    } else {
+        1
+    }
+}
+
+fn bounces_mut(task: &mut Task, gate: GateKind) -> &mut u8 {
+    match gate {
         GateKind::Done => &mut task.bounces.done,
         GateKind::Proof => &mut task.bounces.proof,
         GateKind::Check => &mut task.bounces.check,
         GateKind::Review => &mut task.bounces.review,
         GateKind::Merge => &mut task.bounces.merge,
-    };
-    *bounces = bounces.saturating_add(1);
-    let bounced = *bounces;
-    task.failures = task.failures.saturating_add(1);
+    }
+}
+
+/// The acting half of [`gate_failure`]: `rung`, as [`count_failure`] returned it,
+/// with the counts as they stand.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn take_rung(
+    run: &mut Run,
+    i: usize,
+    gate: GateKind,
+    rung: u8,
+    text: String,
+    told: bool,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
+    let task = &mut run.tasks[i];
+    let bounced = *bounces_mut(task, gate);
     task.failure_log.push(text.clone());
     let failures = task.failures;
     let label = gate_label(gate);
-    if bounced > run.limits.max_bounces || failures >= 3 {
+    if rung >= 3 {
         let cause = format!(
             "the {label} gate failed {bounced} times ({failures} failures in all); last: {}",
             first_line(&text)
         );
         rung3(run, i, cause, now, fx);
-        3
-    } else if failures == 2 {
+    } else if rung == 2 {
         let reason = format!("the {label} gate failed again: {}", first_line(&text));
         rung2(run, i, reason, now, fx);
-        2
     } else {
         let task = &mut run.tasks[i];
         task.rung = 1;
@@ -173,7 +208,6 @@ pub(super) fn gate_failure(
             let id = run.tasks[i].id().to_string();
             outbox::queue(run, &id, text, now);
         }
-        1
     }
 }
 

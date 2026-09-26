@@ -363,6 +363,7 @@ pub fn wire(
     runs.set_adaptation(crate::run::driver::Adaptation {
         profiles: profiles.clone(),
         scouts,
+        deciders: crate::decider::DeciderContext::new(orchestrator, manager.config(), data_dir),
     });
     profiles
 }
