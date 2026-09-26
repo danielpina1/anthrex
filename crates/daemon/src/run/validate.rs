@@ -466,7 +466,7 @@ fn new_task(
         failure_log: Vec::new(),
         history: Vec::new(),
         pending_failure: None,
-        pending_classification: false,
+        pending_classification: None,
         block_source: None,
         decider_usage: Default::default(),
     }

@@ -296,6 +296,8 @@ impl Batch {
         task.handback_due = false;
         self.log(i, "cancelled by a plan edit".to_string());
         self.run.merge_queue.retain(|q| *q != id);
+        // Review m3: its queued deciders are dropped.
+        super::engine::deciders::drop_queued(&mut self.run.decider_queue, &id);
         for j in 0..self.run.tasks.len() {
             let dependent = &mut self.run.tasks[j];
             if j == i || dependent.state.is_finished() || !dependent.spec.deps.contains(&id) {
@@ -559,7 +561,7 @@ impl Batch {
         task.state = TaskState::Working;
         task.block = None;
         // M8b decision 21: an answer before the classification wins.
-        task.pending_classification = false;
+        task.pending_classification = None;
         self.consequences.push(EditConsequence::Deliver {
             task_id: id.to_string(),
             text: answer_message(text),

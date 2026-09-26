@@ -26,16 +26,16 @@ use crate::run::model::CheckRecord;
 use crate::run::reconcile::{Reconciled, reconcile};
 
 const CLASSIFYING: &str = "Blocked recorded (classifying). Stop and wait for an answer.";
-const REASON: &str = "the fixture server will not start";
+pub(super) const REASON: &str = "the fixture server will not start";
 
 /// A working check-mode `t1` with the deciders on; its window.
-fn working() -> (Fixture, u32) {
+pub(super) fn working() -> (Fixture, u32) {
     let (fx, windows) = running(PROFILE, &[check_task("t1")], deciding_config());
     let window = window_of(&windows, "t1");
     (fx, window)
 }
 
-fn classified(kind: BlockKind) -> Decision {
+pub(super) fn classified(kind: BlockKind) -> Decision {
     Decision {
         kind: DeciderKind::BlockedReason,
         answer: DeciderAnswer::BlockedReason {
@@ -51,7 +51,7 @@ fn classified(kind: BlockKind) -> Decision {
 
 /// `task_blocked` with no kind: blocked as a question at once, its classification
 /// asked. Returns the `Decide` op.
-fn untyped_block(fx: &mut Fixture, window: u32) -> u64 {
+pub(super) fn untyped_block(fx: &mut Fixture, window: u32) -> u64 {
     let effects = fx.tool(window, "task_blocked", json!({"reason": REASON}));
     assert_eq!(replies(&effects), vec![Ok(CLASSIFYING.to_string())]);
     let t1 = fx.task("t1");
@@ -60,7 +60,7 @@ fn untyped_block(fx: &mut Fixture, window: u32) -> u64 {
         t1.block.as_ref().map(|b| b.reason),
         Some(BlockReason::Question)
     );
-    assert!(t1.pending_classification);
+    assert!(t1.pending_classification.is_some());
     assert_eq!(t1.block_source, None);
     let (op, _, request) = decide_op(&effects);
     assert_eq!(
@@ -87,7 +87,7 @@ fn an_unclassified_block_is_classified() {
     );
     assert_eq!(
         (t1.block_source, t1.pending_classification),
-        (Some(DeciderSource::Decider), false)
+        (Some(DeciderSource::Decider), None)
     );
     assert_alive(&fx);
 
@@ -141,7 +141,7 @@ fn a_typed_kind_is_never_reclassified() {
         assert!(fx.queued_deciders().is_empty());
         let t1 = fx.task("t1");
         assert_eq!(t1.block.as_ref().map(|b| b.reason), Some(reason));
-        assert_eq!((t1.block_source, t1.pending_classification), (None, false));
+        assert_eq!((t1.block_source, t1.pending_classification), (None, None));
         assert_alive(&fx);
     }
 }
@@ -158,7 +158,7 @@ fn an_answer_before_classification_wins() {
     let t1 = fx.task("t1");
     assert_eq!(
         (t1.state, t1.pending_classification),
-        (TaskState::Working, false)
+        (TaskState::Working, None)
     );
     let effects = fx.decided(op, classified(BlockKind::Environment));
     assert!(!effects.contains(&Effect::KillWindow { window_id: window }));

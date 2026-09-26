@@ -358,6 +358,8 @@ pub(super) fn retry(
         end_round(round, now);
     }
     task.failures = 1;
+    // Review I1: an earlier block's classification no longer applies.
+    task.pending_classification = None;
     task.bounces = Default::default();
     task.budget_exceeded = 0;
     task.conflicts = 0;

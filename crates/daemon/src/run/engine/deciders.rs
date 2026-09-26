@@ -109,6 +109,17 @@ pub(crate) fn on_decided(
     decision: Decision,
     now: u64,
 ) -> Vec<Effect> {
+    // Review m4: an answer of another kind than its request is the request's fallback,
+    // so whatever waits for it is never stuck. Its turn's usage is kept.
+    let decision = if answers(&decision.answer, request) {
+        decision
+    } else {
+        Decision {
+            usage: decision.usage,
+            secs: decision.secs,
+            ..fallback_decision(request, MISMATCH.to_string())
+        }
+    };
     run.decider_calls = run.decider_calls.saturating_add(1);
     if decision.source == DeciderSource::Fallback {
         run.decider_fallbacks = run.decider_fallbacks.saturating_add(1);
@@ -124,6 +135,32 @@ pub(crate) fn on_decided(
     let mut fx = Vec::new();
     apply(run, decider_id, task_ids, request, decision, now, &mut fx);
     fx
+}
+
+/// The fallback reason for an answer of another kind than its request (review m4).
+const MISMATCH: &str = "the decider's answer does not match its request";
+
+/// Whether `answer` is of `request`'s kind.
+fn answers(answer: &DeciderAnswer, request: &DeciderRequest) -> bool {
+    matches!(
+        (answer, request),
+        (DeciderAnswer::Triage(_), DeciderRequest::Triage(_))
+            | (DeciderAnswer::SizeCheck(_), DeciderRequest::SizeCheck(_))
+            | (
+                DeciderAnswer::CheckSummary { .. },
+                DeciderRequest::CheckSummary(_)
+            )
+            | (
+                DeciderAnswer::BlockedReason { .. },
+                DeciderRequest::BlockedReason(_)
+            )
+    )
+}
+
+/// Drops the queued deciders asked about task `id` (review m3: a cancelled task's).
+/// One in flight runs to its end; its answer finds nothing waiting.
+pub(crate) fn drop_queued(queue: &mut Vec<QueuedDecider>, id: &str) {
+    queue.retain(|q| q.task_ids.first().map(String::as_str) != Some(id));
 }
 
 /// `Decide`'s result. A `Failed` (the driver always answers `Decided`) is the
@@ -213,10 +250,10 @@ pub(super) fn classify(
         title: task.spec.title.clone(),
         reason,
     });
-    run.tasks[i].pending_classification = true;
-    queue(run, vec![task_id], request, now);
+    let decider_id = queue(run, vec![task_id], request, now);
+    run.tasks[i].pending_classification = Some(decider_id);
     fx.extend(dispatch(run, now));
-    run.tasks[i].pending_classification
+    run.tasks[i].pending_classification.is_some()
 }
 
 /// Applies `decision` to the task it is for. With the deciders off nothing is noted, so
@@ -256,8 +293,20 @@ fn apply(
             );
         }
         (DeciderAnswer::BlockedReason { kind, .. }, DeciderRequest::BlockedReason(input)) => {
-            classified(run, i, input, *kind, decision.source, note, now, fx);
+            classified(
+                run,
+                i,
+                decider_id,
+                input,
+                *kind,
+                decision.source,
+                note,
+                now,
+                fx,
+            );
         }
+        // `on_decided` made the kinds match; triage and the size check are applied by
+        // their own callers (M8b.13, M8b.14).
         _ => {}
     }
 }
@@ -307,13 +356,15 @@ fn summarised(
     ladder::take_rung(run, i, pending.gate, pending.rung, text, false, now, fx);
 }
 
-/// Decision 21: a block still waiting for its classification, as the worker gave it,
+/// Decision 21: a block still waiting for this decider's classification (review I1: a
+/// retry, an override or a typed block ends the wait), as the worker gave it,
 /// becomes what the decider judged: a question stays one, an environment problem
 /// changes the reason, and mis-sized is rung 3 as a typed `mis_sized` is.
 #[allow(clippy::too_many_arguments)]
 fn classified(
     run: &mut Run,
     i: usize,
+    decider_id: u64,
     input: &BlockedReasonInput,
     kind: BlockKind,
     source: DeciderSource,
@@ -322,7 +373,7 @@ fn classified(
     fx: &mut Vec<Effect>,
 ) {
     let task = &mut run.tasks[i];
-    let waiting = task.pending_classification
+    let waiting = task.pending_classification == Some(decider_id)
         && task.state == TaskState::Blocked
         && task
             .block
@@ -331,7 +382,7 @@ fn classified(
     if !waiting {
         return;
     }
-    task.pending_classification = false;
+    task.pending_classification = None;
     task.block_source = Some(source);
     let label = match kind {
         BlockKind::Question => "question",

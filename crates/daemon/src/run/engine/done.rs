@@ -207,6 +207,9 @@ fn task_blocked(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
+    // Review I1: a new block ends any earlier one's classification.
+    run.tasks[i].pending_classification = None;
+    run.tasks[i].block_source = None;
     match kind {
         Some("mis_sized") => mis_sized(run, i, &reason, now, fx),
         Some("environment") => block(run, i, BlockReason::Environment, reason, now),

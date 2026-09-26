@@ -54,6 +54,9 @@ fn cancel_task(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut Vec<Effect
 pub(super) fn cancel_now(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut Vec<Effect>) {
     ladder::kill_worker(run, i, fx);
     review::stop_reviewers(run, i, now, fx);
+    // Review m3: its queued deciders are dropped.
+    let id = run.tasks[i].id().to_string();
+    super::deciders::drop_queued(&mut run.decider_queue, &id);
     let task = &mut run.tasks[i];
     task.state = TaskState::Cancelled;
     task.block = None;

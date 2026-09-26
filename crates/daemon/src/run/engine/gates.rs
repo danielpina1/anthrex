@@ -406,6 +406,8 @@ fn send_to_queue(run: &mut Run, i: usize, reason: &str, now: u64, fx: &mut Vec<E
     review::stop_reviewers(run, i, now, fx);
     let task = &mut run.tasks[i];
     task.merged_without_approval = Some(reason.to_string());
+    // Review I1: a block's classification no longer applies.
+    task.pending_classification = None;
     task.block = None;
     enter(run, i, TaskState::MergeQueue);
     history(

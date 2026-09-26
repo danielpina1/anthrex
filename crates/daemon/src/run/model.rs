@@ -280,9 +280,11 @@ pub struct Task {
     /// M8b decision 20: a failed check's rung, deferred until its summary is decided.
     #[serde(default)]
     pub pending_failure: Option<PendingFailure>,
-    /// M8b decision 21: a free-text `task_blocked` waits for its classification.
+    /// M8b decision 21: a free-text `task_blocked` waits for the classification of this
+    /// decider; any other decider's answer, or one after a retry, an override or a
+    /// typed block, is not applied.
     #[serde(default)]
-    pub pending_classification: bool,
+    pub pending_classification: Option<u64>,
     /// M8b decision 21: who classified the block (`None`: the worker typed its kind).
     #[serde(default)]
     pub block_source: Option<proto::DeciderSource>,

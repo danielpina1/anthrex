@@ -241,7 +241,7 @@ fn candidate_red_uses_the_summary_and_the_queue_moves_on() {
 /// Three check-mode S tasks with `max_readers = 1` and review on: t2's review takes the
 /// reader slot, then t1's check fails. Returns the fixture, t1's decider id, and the
 /// `PrepareReview` op holding the slot.
-fn slot_taken() -> (Fixture, u64, OpId) {
+pub(super) fn slot_taken() -> (Fixture, u64, OpId) {
     let tasks = [check_task("t1"), check_task("t2"), check_task("t3")];
     let config = config::Orchestrator::default();
     let (mut fx, windows) = running(&profile_with("max_readers = 1"), &tasks, config);
@@ -261,6 +261,8 @@ fn slot_taken() -> (Fixture, u64, OpId) {
     let (op, _) = pending_one(&fx, "Check", Some("t3"));
     let effects = fx.done(op, check_result(true));
     assert!(ops_in(&effects, "PrepareReview").is_empty(), "{effects:#?}");
+    // m5: a check waiting for its queued decider is alive.
+    super::liveness::assert_alive(&fx);
     (fx, queued[0].decider_id, review)
 }
 
