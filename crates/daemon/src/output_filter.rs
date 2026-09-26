@@ -28,6 +28,9 @@ pub const HOOK_SETS_ALLOW: bool = false;
 pub const FILTER_HOOK_DEADLINE: Duration = Duration::from_secs(1);
 /// The largest payload `anthrex filter-hook` reads; a larger one is left alone.
 pub const FILTER_HOOK_PAYLOAD_MAX: usize = 1024 * 1024;
+/// The longest wrapped command [`rewrite`] produces; a longer one is left alone, so
+/// the wrapper never turns a command that runs into one `exec` refuses (`E2BIG`).
+pub const WRAPPED_MAX: usize = 128 * 1024;
 
 const TAIL_LINES: usize = 60;
 const SUCCESS_LINES: usize = 10;
@@ -165,6 +168,16 @@ pub fn matches(command: &str, prefixes: &[String]) -> bool {
     })
 }
 
+/// `command` split after its leading `cd <non-space> && ` segments: those segments
+/// (with the whitespace after them), and the rest.
+fn split_cd(command: &str) -> (&str, &str) {
+    let mut rest = command.trim_start();
+    while let Some(after) = strip_cd(rest) {
+        rest = after.trim_start();
+    }
+    command.split_at(command.len() - rest.len())
+}
+
 /// `command` without its leading `cd <non-space> && ` segments and `NAME=value `
 /// assignments, in any order.
 fn strip_leading(command: &str) -> &str {
@@ -203,10 +216,14 @@ fn strip_assignment(text: &str) -> Option<&str> {
 }
 
 /// The command that replaces `command`: `'<exe>' filter-run --mode <m> --log-dir
-/// '<dir>' -c '<command>'`, every part shell-quoted.
+/// '<dir>' -c '<command>'`, every part shell-quoted. Leading `cd <dir> && ` segments
+/// stay in front, unquoted and unchanged (ruling on review I2): the Bash tool keeps its
+/// working directory between calls, so a `cd` inside the wrapper would no longer move
+/// it.
 pub fn wrap(exe: &Path, hook: &FilterHook, command: &str) -> String {
+    let (cds, command) = split_cd(command);
     format!(
-        "{} filter-run --mode {} --log-dir {} -c {}",
+        "{cds}{} filter-run --mode {} --log-dir {} -c {}",
         shell_quote(&exe.display().to_string()),
         mode_label(hook.mode),
         shell_quote(&hook.log_dir.display().to_string()),
@@ -225,8 +242,12 @@ pub fn rewrite(payload: &Value, exe: &Path, hook: &FilterHook) -> Option<Value> 
     if !matches(command, &hook.prefixes) {
         return None;
     }
+    let wrapped = wrap(exe, hook, command);
+    if wrapped.len() > WRAPPED_MAX {
+        return None;
+    }
     let mut updated = input.clone();
-    updated.insert("command".into(), Value::String(wrap(exe, hook, command)));
+    updated.insert("command".into(), Value::String(wrapped));
     let mut out = json!({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "updatedInput": updated,

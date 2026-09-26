@@ -1355,6 +1355,29 @@ scope.
   be scrubbed (like the keys) or kept (a proxy the user chose) is a policy question for
   the user; M8a's scrub list is the place.
 
+## From M8b.8's review (2026-09-26), for the user and for M8b
+
+- **filter-run's shell is not quite the Bash tool's shell (residue of review I1).**
+  filter-run now runs `$SHELL -c` for bash and zsh, else `/bin/sh`, but Claude Code's
+  Bash tool also sources its shell snapshot (the user's aliases, functions and options)
+  before each command; a plain `$SHELL -c` does not, and zsh still reads `~/.zshenv`.
+  A test command that relies on an alias or a snapshot-only option behaves differently
+  once wrapped. On Linux, `/bin/sh` (dash) is used whenever `$SHELL` is another shell.
+- **On a Bash-tool timeout a wrapped command shows nothing (review M3).** filter-run
+  prints the view and the log path only after the command exits. A command the tool
+  kills at its timeout (2 minutes by default) would have streamed partial output
+  unwrapped; wrapped, the agent gets no output and no log path. A fix could print the
+  log path first (to stderr) or stream a bounded head.
+- **A background child that keeps the pipe open keeps filter-run waiting (review M6).**
+  `(sleep 3 &); echo done` returns after 3.1 s. Same as the Bash tool itself; recorded.
+- **A scoped `Bash(...)` allowlist entry and the rewrite are unverified (review M4).**
+  Decision 28's safety premise is that the worker's `--allowedTools` already allows the
+  rewritten command. That holds for M8a's default unscoped `Bash`, which M8b.1 probed.
+  A user's scoped `worker_allowed_tools` entry such as `Bash(cargo test:*)` may not
+  match `'<exe>' filter-run …` (or `cd <dir> && '<exe>' filter-run …`), so under
+  `--permission-prompts none` the rewritten call could be denied. Probe it when real-CLI
+  probes are next allowed, or skip the hook when the worker's Bash is scoped.
+
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
 - **The main pane can switch to a new window while the new-agent form is still open and

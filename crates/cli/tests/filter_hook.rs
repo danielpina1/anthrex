@@ -21,7 +21,9 @@ fn isolate(cmd: &mut Command, dir: &Path) {
         .env("ANTHREX_SOCKET", dir.join("daemon.sock"))
         .env("ANTHREX_DATA_DIR", dir.join("data"))
         .env("ANTHREX_CLAUDE_BIN", "/nonexistent/anthrex-test/claude")
-        .env("ANTHREX_CODEX_BIN", "/nonexistent/anthrex-test/codex");
+        .env("ANTHREX_CODEX_BIN", "/nonexistent/anthrex-test/codex")
+        // zsh reads no startup file of the user's.
+        .env("ZDOTDIR", dir);
 }
 
 fn hook_cmd(dir: &Path, log_dir: &Path, prefixes: &[&str]) -> Command {
@@ -67,7 +69,7 @@ fn hook_wraps_a_matching_command() {
         bash("cd crates/daemon && cargo test -q"),
     );
     let expected = format!(
-        r#"{{"hookSpecificOutput":{{"hookEventName":"PreToolUse","updatedInput":{{"command":"'{}' filter-run --mode failures-only --log-dir '/tmp/ax-t1/anthrex-logs' -c 'cd crates/daemon && cargo test -q'","description":"Run it"}}}}}}"#,
+        r#"{{"hookSpecificOutput":{{"hookEventName":"PreToolUse","updatedInput":{{"command":"cd crates/daemon && '{}' filter-run --mode failures-only --log-dir '/tmp/ax-t1/anthrex-logs' -c 'cargo test -q'","description":"Run it"}}}}}}"#,
         exe().display()
     );
     assert_eq!(
@@ -103,16 +105,18 @@ fn hook_is_silent_for_other_commands_and_tools() {
     assert_silent_success(&hook(dir.path(), &logs, &[], bash("cargo test")));
 }
 
-/// Runs `command` through `/bin/sh -c` in `cwd` with stdout and stderr on one file, as
-/// filter-run's log has them; returns the bytes and the exit code.
-fn sh(cwd: &Path, command: &str, out: &Path) -> (Vec<u8>, Option<i32>) {
+/// Runs `command` through `<shell> -c` in `cwd`, with `SHELL` set to `shell` as the
+/// Bash tool's environment has it, and stdout and stderr on one file, as filter-run's
+/// log has them; returns the bytes and the exit code.
+fn sh(shell: &str, cwd: &Path, command: &str, out: &Path) -> (Vec<u8>, Option<i32>) {
     let file = std::fs::File::create(out).unwrap();
-    let mut cmd = Command::new("/bin/sh");
+    let mut cmd = Command::new(shell);
     cmd.args(["-c", command])
         .stdin(Stdio::null())
         .stdout(file.try_clone().unwrap())
         .stderr(file);
     isolate(&mut cmd, cwd);
+    cmd.env("SHELL", shell);
     let mut child = cmd.spawn().unwrap();
     let deadline = Instant::now() + LIMIT;
     let status = loop {
@@ -131,6 +135,9 @@ fn wrapped_commands_behave_exactly_like_the_original() {
     let work = dir.path().join("work");
     std::fs::create_dir_all(work.join("sub")).unwrap();
     std::fs::write(work.join("sub/listed.txt"), "x").unwrap();
+    std::fs::create_dir_all(work.join("a/b")).unwrap();
+    std::fs::write(work.join("a/test_y.py"), "").unwrap();
+    std::fs::write(work.join("a/b/test_x.py"), "").unwrap();
     let prefixes = ["printf", "echo", "cat", "false", "sh", "ls"];
     let commands = [
         "printf 'a b\\n'",
@@ -140,34 +147,118 @@ fn wrapped_commands_behave_exactly_like_the_original() {
         "FOO=1 sh -c 'echo $FOO'",
         "cd sub && ls",
         "echo 'ü\tafter a tab'; echo \"ü\"",
+        // Under zsh `**` recurses; under sh it is `*`. Either way the wrapped command
+        // must glob as the original does (review I1).
+        "ls **/test_*.py",
     ];
-    for (i, command) in commands.into_iter().enumerate() {
-        let log_dir = dir.path().join(format!("logs-{i}"));
-        let out = hook(dir.path(), &log_dir, &prefixes, bash(command));
-        assert!(out.status.success(), "{command:?}");
-        let answer: Value = serde_json::from_slice(&out.stdout)
-            .unwrap_or_else(|e| panic!("{command:?}: {e}: {:?}", out.stdout));
-        let wrapped = answer["hookSpecificOutput"]["updatedInput"]["command"]
-            .as_str()
-            .expect("wrapped")
-            .to_string();
-        assert!(wrapped.contains(" filter-run "), "{wrapped}");
-
-        let (original, code) = sh(&work, command, &dir.path().join(format!("orig-{i}")));
-        assert!(!original.is_empty(), "{command:?} printed nothing");
-        let (_, wrapped_code) = sh(&work, &wrapped, &dir.path().join(format!("wrap-{i}")));
-        assert_eq!(wrapped_code, code, "{command:?}");
-        let logs: Vec<PathBuf> = std::fs::read_dir(&log_dir)
-            .unwrap()
-            .map(|e| e.unwrap().path())
-            .collect();
-        assert_eq!(logs.len(), 1, "{command:?}");
-        assert_eq!(
-            String::from_utf8_lossy(&std::fs::read(&logs[0]).unwrap()),
-            String::from_utf8_lossy(&original),
-            "{command:?}"
-        );
+    let shells: Vec<&str> = ["/bin/sh", "/bin/bash", "/bin/zsh"]
+        .into_iter()
+        .filter(|shell| Path::new(shell).exists())
+        .collect();
+    if !shells.contains(&"/bin/zsh") {
+        println!("skipping the zsh runs: /bin/zsh does not exist");
     }
+    for shell in shells {
+        let tag = shell.rsplit('/').next().unwrap();
+        for (i, command) in commands.into_iter().enumerate() {
+            let log_dir = dir.path().join(format!("logs-{tag}-{i}"));
+            let original = run_both(&dir, &work, shell, command, &prefixes, &log_dir);
+            if shell == "/bin/zsh" && command.contains("**") {
+                assert!(
+                    String::from_utf8_lossy(&original).contains("a/b/test_x.py"),
+                    "zsh's ** did not recurse"
+                );
+            }
+        }
+    }
+}
+
+/// Wraps `command` through the hook, runs the original and the wrapped command under
+/// `shell`, checks the exit codes and that the log holds exactly the original's
+/// output, and returns that output.
+fn run_both(
+    dir: &tempfile::TempDir,
+    work: &Path,
+    shell: &str,
+    command: &str,
+    prefixes: &[&str],
+    log_dir: &Path,
+) -> Vec<u8> {
+    let tag = log_dir.file_name().unwrap().to_str().unwrap();
+    let out = hook(dir.path(), log_dir, prefixes, bash(command));
+    assert!(out.status.success(), "{command:?}");
+    let answer: Value = serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|e| panic!("{command:?}: {e}: {:?}", out.stdout));
+    let wrapped = answer["hookSpecificOutput"]["updatedInput"]["command"]
+        .as_str()
+        .expect("wrapped")
+        .to_string();
+    assert!(wrapped.contains(" filter-run "), "{wrapped}");
+
+    let (original, code) = sh(
+        shell,
+        work,
+        command,
+        &dir.path().join(format!("orig-{tag}")),
+    );
+    assert!(!original.is_empty(), "{command:?} printed nothing");
+    let (_, wrapped_code) = sh(
+        shell,
+        work,
+        &wrapped,
+        &dir.path().join(format!("wrap-{tag}")),
+    );
+    assert_eq!(wrapped_code, code, "{shell} {command:?}");
+    let logs: Vec<PathBuf> = std::fs::read_dir(log_dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(logs.len(), 1, "{command:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&std::fs::read(&logs[0]).unwrap()),
+        String::from_utf8_lossy(&original),
+        "{shell} {command:?}"
+    );
+    original
+}
+
+/// Review I2: the leading `cd` stays outside the wrapper, so the agent's shell still
+/// moves, and the command still runs in the new directory.
+#[test]
+fn a_wrapped_cd_still_moves_the_agents_shell() {
+    let dir = tempdir();
+    let work = dir.path().join("work");
+    std::fs::create_dir_all(work.join("sub")).unwrap();
+    std::fs::write(work.join("sub/listed.txt"), "x").unwrap();
+    let log_dir = dir.path().join("logs");
+    let out = hook(dir.path(), &log_dir, &["ls"], bash("cd sub && ls"));
+    let answer: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let wrapped = answer["hookSpecificOutput"]["updatedInput"]["command"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        wrapped,
+        format!(
+            "cd sub && '{}' filter-run --mode failures-only --log-dir '{}' -c 'ls'",
+            exe().display(),
+            log_dir.display()
+        )
+    );
+    let (moved, code) = sh(
+        "/bin/sh",
+        &work,
+        &format!("{wrapped}; pwd"),
+        &dir.path().join("out"),
+    );
+    assert_eq!(code, Some(0));
+    let moved = String::from_utf8_lossy(&moved);
+    let sub = std::fs::canonicalize(work.join("sub")).unwrap();
+    assert_eq!(moved.lines().last(), Some(sub.to_str().unwrap()), "{moved}");
+    assert!(
+        moved.starts_with("listed.txt\n[anthrex] full output: "),
+        "{moved}"
+    );
 }
 
 #[test]
@@ -194,10 +285,28 @@ fn hook_exits_zero_silently_on_garbage_and_oversized_input() {
         big.to_string().into_bytes(),
     );
     assert_silent_success(&out);
+    // A valid matching payload followed by more than 1 MiB of whitespace (which JSON
+    // allows) is over the read limit too; the same payload with a little whitespace is
+    // wrapped.
+    let mut padded = bash("cargo test");
+    padded.extend(b" \n".repeat(64));
+    let out = hook(dir.path(), &logs, &["cargo test"], padded.clone());
+    assert!(!out.stdout.is_empty(), "the control was not wrapped");
+    padded.extend(vec![b' '; 1024 * 1024 + 1]);
+    assert_silent_success(&hook(dir.path(), &logs, &["cargo test"], padded));
     // Bad arguments: silent too.
     for args in [
         vec!["filter-hook"],
         vec!["filter-hook", "--mode", "bogus", "--log-dir", "/tmp/x"],
+        vec![
+            "filter-hook",
+            "--mode",
+            "bogus",
+            "--log-dir",
+            "/tmp/x",
+            "--prefix",
+            "cargo test",
+        ],
         vec!["filter-hook", "--help"],
     ] {
         let mut cmd = Command::new(ANTHREX);

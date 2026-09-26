@@ -245,3 +245,42 @@ fn add_hook_appends_a_second_group() {
         before.as_object().unwrap().keys().collect::<Vec<_>>()
     );
 }
+
+/// Review I2: leading `cd <dir> && ` segments stay outside the wrapper, so the Bash
+/// tool's shell still moves; assignments stay inside.
+#[test]
+fn wrap_keeps_leading_cd_segments_outside() {
+    let hook = hook(&["cargo test"]);
+    assert_eq!(
+        wrap(Path::new(EXE), &hook, "cd a && cd 'b' &&  FOO=1 cargo test"),
+        "cd a && cd 'b' &&  '/opt/anthrex/bin/anthrex' filter-run --mode failures-only --log-dir '/tmp/ax/t1/anthrex-logs' -c 'FOO=1 cargo test'"
+    );
+    assert_eq!(
+        wrap(Path::new(EXE), &hook, "FOO=1 cd a && cargo test"),
+        "'/opt/anthrex/bin/anthrex' filter-run --mode failures-only --log-dir '/tmp/ax/t1/anthrex-logs' -c 'FOO=1 cd a && cargo test'"
+    );
+    let payload = json!({"tool_name": "Bash", "tool_input": {"command": "cd x && cargo test"}});
+    let out = rewrite(&payload, Path::new(EXE), &hook).unwrap();
+    let wrapped = out["hookSpecificOutput"]["updatedInput"]["command"]
+        .as_str()
+        .unwrap();
+    assert!(wrapped.starts_with("cd x && '/opt/anthrex/bin/anthrex' filter-run "));
+    // Never wrapped twice.
+    let again = json!({"tool_name": "Bash", "tool_input": {"command": wrapped}});
+    assert_eq!(rewrite(&again, Path::new(EXE), &hook), None);
+}
+
+/// Review M2: `shell_quote` turns each `'` into four bytes, so a command whose wrapped
+/// form would pass `WRAPPED_MAX` is left alone rather than risk `E2BIG`.
+#[test]
+fn rewrite_leaves_an_oversized_command_alone() {
+    let hook = hook(&["echo"]);
+    let payload =
+        |command: String| json!({"tool_name": "Bash", "tool_input": {"command": command}});
+    let quotes = format!("echo {}", "''".repeat(20_000));
+    assert!(quotes.len() < WRAPPED_MAX && wrap(Path::new(EXE), &hook, &quotes).len() > WRAPPED_MAX);
+    assert_eq!(rewrite(&payload(quotes), Path::new(EXE), &hook), None);
+    let plain = format!("echo {}", "x".repeat(100_000));
+    assert!(wrap(Path::new(EXE), &hook, &plain).len() <= WRAPPED_MAX);
+    assert!(rewrite(&payload(plain), Path::new(EXE), &hook).is_some());
+}

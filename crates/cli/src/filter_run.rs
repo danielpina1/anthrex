@@ -1,10 +1,11 @@
 //! `anthrex filter-run --mode <m> --log-dir <dir> -c <command>` (milestone 8b decision
-//! 27): runs `/bin/sh -c <command>` unchanged, logs every byte of its output, and prints
+//! 27): runs `<shell> -c <command>` unchanged ([`shell`]: the Bash tool's bash or zsh,
+//! else `/bin/sh`), logs every byte of its output, and prints
 //! only `daemon::output_filter::apply`'s view of it, then where the full log is. It
 //! exits as the command did. A log it cannot create never stops the command: it then
 //! runs unfiltered.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::process::ExitStatusExt;
@@ -37,7 +38,13 @@ pub fn main(args: Vec<OsString>) -> i32 {
         );
         return 2;
     };
-    let mut command = Command::new("/bin/sh");
+    let program = shell(std::env::var_os("SHELL").as_deref());
+    let program = if program.is_file() {
+        program
+    } else {
+        PathBuf::from("/bin/sh")
+    };
+    let mut command = Command::new(program);
     command
         .arg("-c")
         .arg(&options.command)
@@ -59,7 +66,7 @@ pub fn main(args: Vec<OsString>) -> i32 {
 }
 
 fn spawn_failed(error: std::io::Error) -> i32 {
-    eprintln!("[anthrex] could not run /bin/sh: {error}");
+    eprintln!("[anthrex] could not run the shell: {error}");
     127
 }
 
@@ -90,8 +97,32 @@ fn open_log(dir: &Path) -> std::io::Result<(PathBuf, File)> {
         .map(|d| d.as_millis())
         .unwrap_or_default();
     let path = dir.join(format!("{ms}-{}.log", std::process::id()));
-    let file = File::options().write(true).create_new(true).open(&path)?;
+    let file = create_log(&path)?;
     Ok((path, file))
+}
+
+/// Creates the log file, never opening one that exists (or a link in its place).
+fn create_log(path: &Path) -> std::io::Result<File> {
+    File::options().write(true).create_new(true).open(path)
+}
+
+/// The shell the command runs under (ruling on review I1): the Bash tool's own, `$SHELL`,
+/// when it is an absolute path to `bash` or `zsh` (Claude Code's own rule), so the
+/// wrapped command parses and globs exactly as the original would; `/bin/sh` otherwise.
+fn shell(value: Option<&OsStr>) -> PathBuf {
+    let path = value.map(Path::new);
+    match path {
+        Some(path)
+            if path.is_absolute()
+                && matches!(
+                    path.file_name().and_then(OsStr::to_str),
+                    Some("bash" | "zsh")
+                ) =>
+        {
+            path.to_path_buf()
+        }
+        _ => PathBuf::from("/bin/sh"),
+    }
 }
 
 /// Runs the command with stdout and stderr on one pipe, logs and collects its output,
@@ -273,6 +304,53 @@ mod tests {
         lines.push(b"\n");
         let (total, kept) = lines.finish();
         assert_eq!((total, kept[0].len()), (1, LINE_BYTES));
+    }
+
+    /// Review I1: the Bash tool's own shell when it is bash or zsh, else `/bin/sh`.
+    #[test]
+    fn the_command_runs_under_bash_or_zsh_from_shell_else_bin_sh() {
+        let pick = |value: Option<&str>| shell(value.map(OsStr::new));
+        for yes in [
+            "/bin/zsh",
+            "/bin/bash",
+            "/opt/homebrew/bin/zsh",
+            "/usr/local/bin/bash",
+        ] {
+            assert_eq!(pick(Some(yes)), PathBuf::from(yes));
+        }
+        for no in [
+            None,
+            Some(""),
+            Some("zsh"),
+            Some("bin/bash"),
+            Some("/bin/fish"),
+            Some("/usr/bin/zsh-5.9"),
+            Some("/bin/sh"),
+            Some("/bin/dash"),
+        ] {
+            assert_eq!(pick(no), PathBuf::from("/bin/sh"), "{no:?}");
+        }
+    }
+
+    /// Review M1: the log is created, never reused: an existing file or a symbolic link
+    /// at its path is refused and left as it was.
+    #[test]
+    fn create_log_never_replaces_a_file() {
+        let dir = Path::new("/tmp").join(format!("ax-create-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let existing = dir.join("1-2.log");
+        std::fs::write(&existing, "keep").unwrap();
+        let err = create_log(&existing).unwrap_err();
+        let link = dir.join("3-4.log");
+        std::os::unix::fs::symlink(&existing, &link).unwrap();
+        let link_err = create_log(&link).unwrap_err();
+        let kept = std::fs::read_to_string(&existing).unwrap();
+        let fresh = create_log(&dir.join("5-6.log")).is_ok();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(link_err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(kept, "keep");
+        assert!(fresh);
     }
 
     #[test]

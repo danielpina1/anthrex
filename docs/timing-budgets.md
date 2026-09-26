@@ -160,7 +160,7 @@ or one push, far under its bound; each absence window is paired with a positive 
 | Test | Site | Bound | The code's own legal worst case | Status |
 |---|---|---|---|---|
 | `hook_finishes_within_its_deadline` | `crates/cli/tests/filter_hook.rs` (`FILTER_HOOK_DEADLINE + 2s`) | `3s` from spawn to exit, stdin held open | `FILTER_HOOK_DEADLINE` (1 s, `daemon::output_filter`, imported by the test, not copied), measured from the process's own start, plus the `anthrex` spawn (33-85 ms loaded, "Measured primitive costs") and `process::exit`. | **Recorded.** The bound sits 2 s above the deadline it depends on (standing rule 1); the loop that waits for the exit is itself capped by `LIMIT` (20 s). |
-| Every other `filter_run.rs` / `filter_hook.rs` wait | `LIMIT` (20 s) through `RunningCommand::finish` | `20s` | One `/bin/sh` and at most 5000 short lines through a pipe (well under a second), or the hook's 1 s deadline. | **Recorded.** A hang guard only; nothing asserts a duration. |
+| Every other `filter_run.rs` / `filter_hook.rs` wait | `LIMIT` (20 s) through `RunningCommand::finish` | `20s` | One shell (`/bin/sh`, bash or zsh, per case; the `sh` helper's own loop is capped by `LIMIT` too) and at most 5000 short lines through a pipe (well under a second), or the hook's 1 s deadline. | **Recorded.** A hang guard only; nothing asserts a duration. |
 
 ### Fixed, from the main-branch CI failures (2026-09-23)
 
