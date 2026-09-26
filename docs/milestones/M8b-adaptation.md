@@ -456,6 +456,11 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
     - **Task records.** A task record is appended when a task becomes `merged` (after `DiffMeasured`) or `cancelled`. When a run reaches `accepted`, `discarded` or `failed`, or completes with unfinished tasks, every task without a record gets one with outcome `unfinished`, `blocked` or `cancelled`. Then one `run` record is appended.
     - **Filled by the driver.** For a `run` record with outcome `accepted`, the driver fills in `accepted_commit` just before appending, by resolving `refs/heads/<base>` with `run::git::read_ref`. That is the one field the pure reducer cannot know.
     - **Task fields.** `Task.history_written: bool` is set when the op is emitted. *(Spec §15 list of fields.)*
+33a. **Routing decisions and candidate snapshots, spec §15.** `Task.routing_decisions: Vec<RoutingDecision>` is `#[serde(default)]` in the persisted run. The reducer appends one decision when the effective route is fixed for a task-bound agent session, before the journaled session-start side effect. Prelaunch plan drafts that never dispatch an agent add no decision. Use `(role, session, round, lane)` as its identity so reconciliation or a repeated start does not add a second decision. M8b records initial and escalated workers and every reviewer round; M9.5 adds test writers and race lanes. `history::task_record` copies the ordered vector into `TaskRecord` for merged, cancelled and unfinished tasks. Never reconstruct candidates from the final roster or final task size: either can differ from the dispatch-time state.
+
+    - **Candidates.** Capture the ordered, resolved routes the selector could use from the run's frozen roster, including any skipped candidate with its reason. Append the chosen route when it is outside that pool, whether from an explicit task route or a fallback. `selected_index` identifies the chosen entry; `candidates[selected_index].route == chosen` is an invariant. M9.5's configured class and role lists replace the default candidate source when present, retaining their order and each candidate's resolved effort. Do not store agent transcripts, credentials or raw check output in a routing decision.
+    - **Provenance and training input.** Record the trigger (`initial`, `review`, `escalation`; M9.5 adds `race` and `test_writer`), source (`explicit_task`, `class_default`, `review_policy`, `escalation_policy`; M9.5 adds `configured_list`), and a policy version (`m8a-worker-v1`, `m8a-review-v1` or `m8a-escalate-v1`; M9.5 uses `m9.5-list-v1` for list choices). `pick_policy` is `None` until M9.5's candidate lists apply, then `first`, `spread` or `first_qualifying` for reviewers. Snapshot the task title, brief, acceptance criteria, owned paths, kind, size, hub, interface-change flag and test mode, plus the profile's languages, at dispatch time. This is the input a future router may use; a later plan edit must not rewrite it. The existing task outcome, gate and usage fields and later `revert` records supply results; an unselected candidate has no observed outcome. Routing history remains local; exporting task text for training is a separate, explicit action.
+    - **Durability.** Persist the decision with the task before launch. A daemon restart or fresh worker session preserves earlier decisions. Older `run.json` and `history.jsonl` records deserialize with an empty vector. The new field does not alter routing or `run stats` aggregates.
 34. **Revert detection.** `run::history_io::detect_reverts(git, root, base_branch, history_path, timeout)` runs on `spawn_blocking` at every `run start` (both kinds) and every `run stats`. It considers only `run` records with `accepted_commit`, and their tasks' `merge_commit`s, that are at most 90 days old and have no revert record yet. It reads `git log -n 2000 --format=%H%x1f%B%x1e <base_branch>` through `run_git`. Every commit whose message contains `This reverts commit <sha>` for one of those shas gets a `revert` record: `task_id = Some(..)` for a task's merge commit, and `None` for the run's accept merge, which means every task of that run. A failure only logs a warning. *(Spec §15 "whether the user later reverted it", §23 "Reverts after accept … are the only true signal".)*
 35. **`anthrex run stats [--json]`** sends `RunRequest::Stats { dir }`.
     - **The rows.** The daemon reads the history (keeping the last line per `record_id`) and computes `run::stats::aggregate(&lines) -> HistoryStats`, which is pure. It has one row per class: `S`, `M` (non-hub), and `hub`.
@@ -661,11 +666,26 @@ pub enum HistoryLine { Task(TaskRecord), Run(RunRecord), Revert(RevertRecord) }
                                                     pub review_rounds: u32, pub reviews_rejected: u32, pub candidates_red: u32,
                                                     pub generated_bounces: u32 }
 #[derive(Copy, Eq, Default)] pub struct SeverityTally { pub critical: u32, pub important: u32, pub minor: u32 }
+pub struct RoutingCandidate { pub route: Route, pub skipped_reason: Option<String> }
+pub struct RoutingInput {
+    pub title: String, pub brief: String, pub acceptance: Vec<String>, pub owns: Vec<String>,
+    pub kind: TaskKind, pub size: Size, pub hub: bool, pub interface_change: bool,
+    pub test_mode: TestMode, pub languages: Vec<String>,
+}
+pub struct RoutingDecision {
+    pub seq: u32, pub at: u64, pub role: AgentRole, pub session: u32,
+    pub round: Option<u32>, pub lane: Option<String>,
+    pub trigger: String, pub source: String, pub policy_version: String,
+    #[serde(default)] pub pick_policy: Option<String>,
+    pub input: RoutingInput,
+    pub chosen: Route, pub selected_index: u32, pub candidates: Vec<RoutingCandidate>,
+}
 pub struct TaskRecord {
     pub v: u32, pub record_id: String, pub at: u64, pub run_id: String, pub task_id: String,
     pub path: Option<RunPath>, pub kind: TaskKind, pub hub: bool, pub test_mode: TestMode,
     pub planned_size: Size, pub final_size: Size, pub size_check: Option<SizeCheckInfo>,
     pub route: Route, pub review_routes: Vec<Route>,
+    #[serde(default)] pub routing_decisions: Vec<RoutingDecision>,
     pub outcome: TaskOutcome, pub block: Option<BlockReason>,
     pub diff: Option<DiffStats>, pub tool_calls: u32,
     pub worker_usage: TokenUsage, pub reviewer_usage: TokenUsage, pub decider_usage: TokenUsage,
@@ -1674,13 +1694,15 @@ In `reconcile.rs` tests: `decide_and_measure_diff_are_not_started`.
 
 ### M8b.14 History: phases, diff measurement, `history.jsonl`, reverts and `run stats`
 
-**Files.** Create `run/phases.rs`, `run/history.rs`, `run/stats.rs`, `run/history_io.rs`, `run/history_tests.rs`, `crates/daemon/tests/history_io.rs`. Modify every file under `run/engine/` and `run/edits.rs` that assigns `Task.state` (through `set_state`). Also modify `run/engine/merge.rs` and `requests.rs` (emit `MeasureDiff` and `AppendHistory`), `run/driver/adapt.rs`, `run/reconcile.rs`, `server/run_api.rs` (`Stats`), and `run_cmd/adapt.rs`.
+**Files.** Create `run/phases.rs`, `run/history.rs`, `run/stats.rs`, `run/history_io.rs`, `run/history_tests.rs`, `crates/daemon/tests/history_io.rs`. Modify every file under `run/engine/` and `run/edits.rs` that assigns `Task.state` (through `set_state`); add decision capture at task-bound worker and reviewer launches. Also modify `run/engine/merge.rs` and `requests.rs` (emit `MeasureDiff` and `AppendHistory`), `run/driver/adapt.rs`, `run/reconcile.rs`, `server/run_api.rs` (`Stats`), and `run_cmd/adapt.rs`.
 
 **Tests first:**
 - In `history_tests.rs`:
   - `set_state_accumulates_phase_times`: queued 10 s, preparing 5 s, working 100 s, check 20 s, review 30 s and merge 3 s from injected times; `Pending` counts nowhere;
   - `max_rung_is_tracked`;
   - `task_record_from_a_merged_task`: every field from a fixture task, with two review rounds (one with an `important` finding and one `minor`), one check failure, one generated-file bounce, and `done_signal == TurnEndFallback`;
+  - `routing_history_keeps_choice_time_candidates`: an initial worker, a fresh escalated worker and two reviewer rounds keep ordered candidate snapshots, selected indices, triggers, sources and the full routing input at each choice; amending the brief or size, or changing the roster later, changes none of them;
+  - `old_task_record_has_no_routing_decisions`: a history line without the field deserializes with an empty vector;
   - `unfinished_tasks_get_records_when_the_run_ends`;
   - `run_record_fields`;
   - `stats_medians_by_class_over_merged_tasks` (the lower middle value for an even count; `-` without merged tasks; the exact `render` output);
@@ -1693,11 +1715,12 @@ In `reconcile.rs` tests: `decide_and_measure_diff_are_not_started`.
   - `history_append_is_reconciled_exactly_once`: a `Replay` when the line is present, `NotStarted` when absent, and after the replayed path exactly one line;
   - `detect_reverts_matches_merge_and_accept_commits` (`git revert --no-edit <task merge>` and `git revert -m 1 --no-edit <accept merge>` give two revert records, the second with `task_id == None`; running again adds none).
 - In the engine tests:
+  - `routing_decision_precedes_launch_and_survives_reconcile`: one candidate snapshot is persisted before each worker or reviewer session starts, and replaying a session start does not duplicate it;
   - `merged_task_measures_then_appends_once`;
   - `cancel_without_commits_appends_without_a_diff`;
   - `accept_appends_the_run_record_after_the_tasks`.
 
-**Change.** Decisions 31–35.
+**Change.** Decisions 31–35 and 33a.
 
 **Acceptance.** Tests pass. `rg -n "\.state = TaskState::" crates/daemon/src/run` prints only `run/phases.rs`.
 
@@ -1859,4 +1882,3 @@ New follow-ups to record in `docs/superpowers/plans/2026-09-17-anthrex-foundatio
 8. **§14.8 against M8a decision 40.** §14.8 says usage field names "are verified in the first task of the milestone that implements metering". M8a meters stream usage and pins them in M8a.1; M8b.1 only cross-references them.
 
 ## Implementation notes
-
