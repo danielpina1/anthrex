@@ -55,6 +55,9 @@ pub struct HeadlessSpec {
     /// checked (Claude, or a Codex CLI that does not load project config).
     #[serde(default)]
     pub codex_config_guard: Option<codex_guard::CodexConfigGuard>,
+    /// Milestone 8b decision 28: a Claude worker's `PreToolUse` output-filter hook.
+    #[serde(default)]
+    pub output_filter: Option<crate::output_filter::FilterHook>,
 }
 
 /// Decision 54's sandbox block. The worktree (the session's cwd) is writable by default;

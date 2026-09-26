@@ -13,6 +13,7 @@ use super::model::{OpId, Run, Task};
 use crate::headless::argv::CodexProjectConfig;
 use crate::headless::codex_guard::{CodexConfigGuard, ObjectFormat};
 use crate::headless::{ClaudeSandbox, HeadlessSpec, McpTarget};
+use crate::output_filter::{FilterHook, LOG_DIR_NAME};
 
 /// Every worker's first two allowed tools; `worker_allowed_tools` follows (decision 24).
 pub const WORKER_MCP_TOOLS: [&str; 2] = ["mcp__anthrex__task_done", "mcp__anthrex__task_blocked"];
@@ -229,7 +230,22 @@ pub fn worker_spec(run: &Run, task: &Task) -> HeadlessSpec {
             session: task.session,
         }),
         codex_config_guard: codex_config_guard(run, route.runtime),
+        output_filter: output_filter(run, task).filter(|_| claude),
     }
+}
+
+/// Milestone 8b decision 28: a Claude worker's filter hook, when the run's profile is
+/// stored, filters, and has a prefix. Its log goes under the task's `TMPDIR`, already
+/// in the worker's grant: no new writable root.
+fn output_filter(run: &Run, task: &Task) -> Option<FilterHook> {
+    let filters = run.profile_source == Some(proto::ProfileSource::Stored)
+        && run.output_filter != proto::OutputFilter::None
+        && !run.filter_prefixes.is_empty();
+    filters.then(|| FilterHook {
+        mode: run.output_filter,
+        prefixes: run.filter_prefixes.clone(),
+        log_dir: task_tmp_dir(&run.data_dir, task.id()).join(LOG_DIR_NAME),
+    })
 }
 
 /// A fresh reviewer session on `route`, read-only, in the task's review worktree. Its
@@ -283,6 +299,7 @@ pub fn reviewer_spec(run: &Run, task: &Task, route: &Route) -> HeadlessSpec {
             session: round,
         }),
         codex_config_guard: codex_config_guard(run, route.runtime),
+        output_filter: None,
     }
 }
 
@@ -340,6 +357,10 @@ pub fn jitter_ms(run_id: &str, task_id: &str, session: u32) -> u64 {
         &session.to_le_bytes(),
     ]) % 400
 }
+
+#[cfg(test)]
+#[path = "role_launch_filter_tests.rs"]
+mod filter_tests;
 
 #[cfg(test)]
 mod tests {

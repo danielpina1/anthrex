@@ -155,6 +155,13 @@ or one push, far under its bound; each absence window is paired with a positive 
 | `a_dropped_call_leaves_no_process` | `crates/cli/tests/decider_call_edges.rs` (`CALLER_GIVES_UP`, the control, `GONE_WITHIN`) | the caller's `timeout` at `4s`, one second under `deciders.timeout_secs` (5 s) so the caller gives up first; `3s` for the control to see both deciders; then `5s` for them to go | The spawn (milliseconds) before the control can see them. Dropping the call's future drops its `KillOnDrop` guard: `SIGTERM` to each group at once, `SIGKILL` 2 s later at worst (`KILL_GRACE`). | **Recorded.** Looks only, as the hang test does. |
 | `GOAL_REQUEST_TIMEOUT` (the CLI's wait for `run start --goal`; the constant lands with M8b.14 in `crates/cli/src/run_cmd.rs`) | `anthrex run start --goal` | `810s` | `RUN_REQUEST_TIMEOUT` (180 s) + the largest configurable `deciders.timeout_secs` (600 s, `read_u64_in_range(5..=600)`) + 30 s for `git ls-files`. As landed in M8b.7, one triage call costs at most its `timeout_secs` plus the spawn: the kill never blocks, and a decider that answered waits for its exit only until the same deadline (`EXIT_WAIT`, capped). M8b.14 re-counts the start path's git calls against the 180 s term. | **Recorded.** |
 
+### Recorded, from M8b.8 (2026-09-26)
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `hook_finishes_within_its_deadline` | `crates/cli/tests/filter_hook.rs` (`FILTER_HOOK_DEADLINE + 2s`) | `3s` from spawn to exit, stdin held open | `FILTER_HOOK_DEADLINE` (1 s, `daemon::output_filter`, imported by the test, not copied), measured from the process's own start, plus the `anthrex` spawn (33-85 ms loaded, "Measured primitive costs") and `process::exit`. | **Recorded.** The bound sits 2 s above the deadline it depends on (standing rule 1); the loop that waits for the exit is itself capped by `LIMIT` (20 s). |
+| Every other `filter_run.rs` / `filter_hook.rs` wait | `LIMIT` (20 s) through `RunningCommand::finish` | `20s` | One `/bin/sh` and at most 5000 short lines through a pipe (well under a second), or the hook's 1 s deadline. | **Recorded.** A hang guard only; nothing asserts a duration. |
+
 ### Fixed, from the main-branch CI failures (2026-09-23)
 
 | Test | Site | Bound (as found) | The code's own legal worst case | Status |

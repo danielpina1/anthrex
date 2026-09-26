@@ -52,6 +52,7 @@ pub(super) fn worker(runtime: Runtime) -> HeadlessSpec {
             session: 1,
         }),
         codex_config_guard: None,
+        output_filter: None,
     }
 }
 
@@ -548,6 +549,8 @@ fn worker_settings_json_enables_the_sandbox() {
 
 #[path = "argv_caps_tests.rs"]
 mod caps;
+#[path = "argv_filter_tests.rs"]
+mod filter;
 
 /// F2 round 2 (item 2): a sandbox's `deny_write` becomes `filesystem.denyWrite`, beside
 /// `allowWrite`; an empty one is omitted.

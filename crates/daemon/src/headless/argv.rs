@@ -303,6 +303,8 @@ pub fn claude_args(
         args.extend(flags.iter().map(|f| f.to_string()));
     }
     let mut settings = claude_settings(exe, window_id, spec.claude_sandbox.as_ref(), caps);
+    // Milestone 8b decision 28: a worker's output filter, as a second `PreToolUse` group.
+    crate::output_filter::add_hook(&mut settings, exe, spec.output_filter.as_ref());
     if spec.claude_auth == config::ClaudeAuth::ApiKey
         && let Some(helper) = &spec.api_key_helper
     {

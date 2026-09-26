@@ -1,6 +1,9 @@
 mod client;
+mod filter_hook;
+mod filter_run;
 mod hook;
 mod mcp_cmd;
+mod pre_clap;
 mod run_cmd;
 mod tree_cmd;
 
@@ -155,11 +158,7 @@ enum DaemonAction {
 }
 
 fn main() -> anyhow::Result<()> {
-    let started = std::time::Instant::now();
-    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("hook")) {
-        hook::run(std::env::args_os().skip(2).collect(), started);
-        std::process::exit(0);
-    }
+    pre_clap::dispatch(std::time::Instant::now());
     run_cli()
 }
 
