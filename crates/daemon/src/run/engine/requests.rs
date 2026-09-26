@@ -282,6 +282,7 @@ pub(super) fn edit(
 /// split into, amended or gave a dependency), those still pending or queued (none
 /// dispatched), in plan order.
 fn touched_unstarted(edited: &Run, edits: &[PlanEdit]) -> Vec<String> {
+    // Keep in sync with `run::edits::Batch.touched`, which records the same set.
     let mut touched: Vec<&str> = Vec::new();
     for edit in edits {
         match edit {

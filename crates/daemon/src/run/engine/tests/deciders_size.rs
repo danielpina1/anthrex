@@ -17,15 +17,15 @@ use crate::run::engine::{Effect, OpKind};
 use crate::run::model::{OpId, SizeCheckState};
 
 /// The stored profile's onboarding report every evidenced test names.
-const ONBOARDING: &str = "onboarding-7";
+pub(super) const ONBOARDING: &str = "onboarding-7";
 
-fn plan(tasks: &[String]) -> String {
+pub(super) fn plan(tasks: &[String]) -> String {
     plan_with(PROFILE, tasks)
 }
 
 /// A run of `tasks` whose repository has an onboarding report, started (`yes`: at
 /// once, else at the plan gate) with its integration worktree made; the deciders on.
-fn evidenced(tasks: &[String], yes: bool, config: config::Orchestrator) -> Fixture {
+pub(super) fn evidenced(tasks: &[String], yes: bool, config: config::Orchestrator) -> Fixture {
     let mut fx = Fixture::deciding(&plan(tasks), config);
     fx.start_with(yes, |run| run.onboarding_report = Some(ONBOARDING.into()));
     let (op, _) = fx.op("CreateRunBranch");
@@ -37,7 +37,7 @@ fn evidenced(tasks: &[String], yes: bool, config: config::Orchestrator) -> Fixtu
 }
 
 /// The latest `Decide` op, which must be a size check: its id, task ids and input.
-fn size_check_op(fx: &Fixture) -> (OpId, Vec<String>, crate::decider::SizeCheckInput) {
+pub(super) fn size_check_op(fx: &Fixture) -> (OpId, Vec<String>, crate::decider::SizeCheckInput) {
     match fx.op("Decide") {
         (
             op,
@@ -52,7 +52,7 @@ fn size_check_op(fx: &Fixture) -> (OpId, Vec<String>, crate::decider::SizeCheckI
 }
 
 /// The decider's answer: one verdict per `(id, size, reason)`.
-fn verdicts(v: &[(&str, Size, &str)]) -> Decision {
+pub(super) fn verdicts(v: &[(&str, Size, &str)]) -> Decision {
     Decision {
         kind: DeciderKind::SizeCheck,
         answer: DeciderAnswer::SizeCheck(
@@ -71,14 +71,14 @@ fn verdicts(v: &[(&str, Size, &str)]) -> Decision {
     }
 }
 
-fn done_info(fx: &Fixture, id: &str) -> SizeCheckInfo {
+pub(super) fn done_info(fx: &Fixture, id: &str) -> SizeCheckInfo {
     match &fx.task(id).size_check {
         Some(SizeCheckState::Done(info)) => info.clone(),
         other => panic!("{id}'s size check is {other:?}"),
     }
 }
 
-fn prepared(effects: &[Effect]) -> Vec<String> {
+pub(super) fn prepared(effects: &[Effect]) -> Vec<String> {
     tasks_of(effects, "PrepareWorktree")
 }
 

@@ -155,3 +155,36 @@ async fn evidence_is_read_only_from_stored_reports() {
         "{reason}"
     );
 }
+
+/// Review m1: a report larger than 1 MiB (even a valid one), a JSON file that is not a
+/// report, a directory, and the alias with an empty repository directory are all skipped.
+#[test]
+fn oversized_non_report_and_rootless_evidence_is_skipped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let run_dir = data.join("runs").join(RUN);
+    let repo_dir = data.join("repos").join("r-00000001");
+    // A valid report whose summary alone is past the cap.
+    let big = "x".repeat((1 << 20) + 1);
+    write_report(&run_dir, "huge", &big);
+    std::fs::write(run_dir.join("scouts").join("other.json"), r#"{"a": 1}"#).unwrap();
+    std::fs::create_dir_all(run_dir.join("scouts").join("dir.json")).unwrap();
+    write_report(&run_dir, "fine", "the one that is read");
+    let refs: Vec<String> = ["huge", "other", "dir", "fine"]
+        .iter()
+        .map(|r| r.to_string())
+        .collect();
+    let evidence = read_evidence(&refs, &run_dir, &repo_dir, None).unwrap();
+    let ids: Vec<&str> = evidence.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(ids, vec!["fine"]);
+    let error = read_evidence(&refs[..3], &run_dir, &repo_dir, None).unwrap_err();
+    assert!(error.contains("huge: larger than 1048576 bytes"), "{error}");
+    assert!(error.contains("other: not a report"), "{error}");
+    assert!(error.contains("dir: not a regular file"), "{error}");
+
+    // With no repository directory the alias is never resolved (it would otherwise
+    // name `scouts/<id>.json` relative to the daemon's working directory).
+    let alias = vec!["onboarding".to_string()];
+    let error = read_evidence(&alias, &run_dir, Path::new(""), Some("onboarding-9")).unwrap_err();
+    assert!(error.contains("onboarding: not a stored report"), "{error}");
+}

@@ -9,7 +9,7 @@
 //! never approves, and never changes what a task owns or must meet. The engine names
 //! the reports (`evidence_refs`); the driver reads them. Pure (design decision 2).
 
-use proto::{BlockReason, DeciderMode, DeciderSource, Size, SizeCheckInfo};
+use proto::{BlockReason, DeciderMode, DeciderSource, Size, SizeCheckInfo, TaskState};
 
 use super::dispatch::{block, history};
 use super::{Effect, deciders, ladder};
@@ -165,13 +165,19 @@ pub(super) fn sized(
         if !off {
             history(run, i, now, history_text(&info));
         }
+        let waiting = matches!(run.tasks[i].state, TaskState::Pending | TaskState::Queued);
         match info.decided {
-            Some(Size::L) if engine < Size::L && !run.tasks[i].state.is_finished() => {
-                let text = format!(
-                    "the size cross-check judged this task L: {}; split it (rule 7.2.5)",
-                    info.reason
-                );
-                block(run, i, BlockReason::MisSized, text, now);
+            // Only a task still waiting to run is blocked: one already blocked (a
+            // cancelled dependency, a failed setup) keeps its block, and the verdict
+            // is only recorded (review I1). L is never a raise.
+            Some(Size::L) if engine < Size::L => {
+                if waiting {
+                    let text = format!(
+                        "the size cross-check judged this task L: {}; split it (rule 7.2.5)",
+                        info.reason
+                    );
+                    block(run, i, BlockReason::MisSized, text, now);
+                }
             }
             Some(size) if size > engine => apply_raise(run, &asked.id, size, &info.reason),
             _ => {}

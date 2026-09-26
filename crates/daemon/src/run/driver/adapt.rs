@@ -270,16 +270,32 @@ pub(super) fn read_evidence(
     Ok(evidence)
 }
 
-/// One stored report: a regular file, not through a link, at most 1 MiB.
+/// One stored report: a regular file, not through a link, at most 1 MiB. Opened once
+/// without following a link (and without blocking on a FIFO), checked through the
+/// opened handle, and read through a cap one byte past the limit, so a file swapped
+/// or grown after the check is neither followed nor read whole (review m3).
 fn read_report(path: &Path) -> Result<proto::ScoutReport, String> {
-    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|e| match e.raw_os_error() {
+            Some(libc::ELOOP) => "not a regular file (a symbolic link)".to_string(),
+            _ => e.to_string(),
+        })?;
+    let meta = file.metadata().map_err(|e| e.to_string())?;
     if !meta.file_type().is_file() {
         return Err("not a regular file".to_string());
     }
-    if meta.len() > EVIDENCE_FILE_MAX {
+    let mut bytes = Vec::new();
+    file.take(EVIDENCE_FILE_MAX + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() as u64 > EVIDENCE_FILE_MAX {
         return Err(format!("larger than {EVIDENCE_FILE_MAX} bytes"));
     }
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     serde_json::from_slice(&bytes).map_err(|e| format!("not a report: {e}"))
 }
 
