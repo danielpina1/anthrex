@@ -2245,3 +2245,38 @@ So the "empty-root `ClaudeSandbox`" M8a gives reviewers (F1c N4) and decision 12
 - Extra tests beyond the list: `edit_takes_a_bare_word_as_a_string_and_reports_reverification`, `summary_prints_the_built_ins_and_the_degradations`, `repo_dir_is_keyed_by_project`, `a_proposal_round_trips_and_is_deleted`, and `a_stale_profile_gets_the_attention_line` (written after `model_adapt.rs`, so it did not fail first). After review (finding 3), that test also checks the snapshot: `RunInfo.profile_source` and the stale line in `attention` (verified by mutation: dropping either wiring line fails it); `run/driver/adapt.rs` has `apply_choice_copies_every_field_and_logs_each_note`. After review, `saves_succeed_while_other_threads_load`, `fingerprint_never_follows_a_symlink_out_of_the_project` and the reworked `save_and_load_round_trip_atomically` failed before their fixes; the two meta tests pin behaviour that was already there.
 - Pure-module doc comments are worded without the literal `std::fs`/`tokio`/… tokens, so the Verification purity grep prints nothing for these files.
 - The Verification grep was `rg -n "cache_dirs|confined_" …`, which also matched `ProposalRecord.unconfined_checks` (M8b.2), a user flag and not a confinement setting. It is narrowed (controller ruling after review) to `\bcache_dirs\b|\bconfined_(network|unix_sockets|localhost_ports)\b`.
+
+### M8b.5 deciders I: schemas, prompts, parsing, fallbacks and argv (2026-09-26)
+
+**Deviations and choices the brief leaves open:**
+- **`SessionEvent::StructuredOutput { value }` is added now**, in `headless/mod.rs`, because `structured_output_event_wins` needs it. M8a's two exhaustive consumers treat it as `Other` (`headless/status.rs::next` and `run/driver/observe.rs`, one line each). `ClaudeStream::parse_line` does not emit it yet: M8b.7 owns `claude_stream.rs` and makes `result.structured_output` produce it.
+- **`parse_for(request, value)`** (in `parse.rs`, beside `parse`): `parse(kind, value)` cannot know which task ids were asked, so `parse_for` calls it and then keeps only the size-check verdicts for asked ids, the first one per id. M8b.7's call should use `parse_for`. The whole answer is validated against the schema first, so a bad entry is an error even when its id was not asked for.
+- **`json_from_text(text)`** is public. Per R-T1-4, M8b.7 can parse the fenced JSON in a `result`'s text as well as in assistant text. `answer_from_events` gives `the session gave no answer` when it finds no source, and otherwise serde's message for text that is not JSON.
+- **`DeciderContext::new` is not written yet.** It needs `ManagerConfig.decider_bin` (M8b.7) and `scout::spec::route` (M8b.9, which does not exist yet). The struct is defined, and its fields are the ones Interfaces gives.
+- **Argv.** Per R-T1-6, `--tools ""` comes right after the caps' user-settings flags (`--setting-sources user --strict-mcp-config`) and before `--permission-mode dontAsk`. `--disallowedTools` stays as a second barrier. `claude_decider_args_exact` asserts both. The effort word comes from a private `effort()` in `decider/argv.rs`, so `headless/argv.rs` is unchanged.
+- **Parse error texts** (the brief gives only `tasks[2].size: expected S, M or L`):
+  - `<path>: missing`, `<path>: not in the schema` (an extra property; `additionalProperties: false` is enforced), `expected an object` (at the root);
+  - `<path>: expected an array | a string | a boolean | a string or null`;
+  - `<path>: must have at least|at most <n> item(s)`, `<path>: must not be empty`, `<path>: must be at most <n> characters` (limits count characters, as JSON Schema does);
+  - `<path>: expected a, b or c`, `task: required when scale is single`, `task.size: expected S or M`.
+- **Triage `task` when the scale is not single.** The key must be present, but its value is not read and the answer's `task` is `None`.
+- **Fallback reasons inside the answers** (these are the answers' own `reason` fields, not decision 16's fallback reasons):
+  - triage: `without a decider, the path is plan`;
+  - size check: `the engine's size is kept`;
+  - blocked reason: `an unclassified block is a question`.
+
+  The check-summary fallback is `run::exec::summary(tail)` split on `\n`.
+- **Prompt details the template leaves open:**
+  - A prompt has no trailing newline (the triage golden is M8b.1's recorded probe prompt, byte for byte; `blocked_reason_prompt_is_exact` is the other probe's).
+  - The onboarding-report section is printed when there is a summary or a file list. `Files it named:` is left out when the list is empty.
+  - Size-check task blocks are separated by a newline. Their `owns`, `depends on`, `acceptance` and `brief` lines are left out when empty. Evidence reports are separated by a blank line, and a report's `Files`, `Modules` and `Interfaces` lines are left out when empty.
+  - The check summary's `Result:` is `exit <code>`, `timed out`, or `killed by a signal` when there is no code and no timeout. `Output (last <n> lines):` counts only the tail lines shown, not the marker.
+- **Cutting.**
+  - The marker is the literal `[anthrex] … cut …` (`prompt::CUT_MARKER`). It goes on its own line after cut paths or cut tail lines, as the last item of a cut `Files it named:` list, and straight after a cut summary or brief.
+  - Triage keeps the most tracked paths that fit; only when none fit does it cut the report's list, and only when none of that fits does it cut the summary. The size check does the same with its steps: summaries to 4000 characters, whole reports from the last, then briefs to 2000 characters.
+  - The check summary drops whole lines from the tail's start. When even the last line alone does not fit, it keeps that line's end.
+  - As a last resort, a prompt still over `PROMPT_MAX_BYTES` after the ordered cuts (possible only with a very large goal, command, title or reason) keeps its head and ends with the marker. This makes the 128 KiB bound hold for every input.
+- **Files.** The tests are split three ways to stay under 600 lines: `decider/tests.rs` (schemas, parsing, extraction, fallbacks), `tests_prompt.rs` and `tests_argv.rs`. `crates/daemon/src/lib.rs` needed no change, since `pub mod decider;` has been there since M8b.1. `headless/mod.rs` grew by 12 lines, from 255 to 267, within its +20 budget.
+- **Extra tests beyond the list:** `parse_errors_name_the_path` and `blocked_reason_prompt_is_exact`. `schemas_match_the_brief` reads this brief's own JSON block through `include_str!`, so the schema and the brief cannot drift apart. Two tests parse M8b.1's recorded decider streams through `ClaudeStream`:
+  - both recorded answers pass `parse`;
+  - the triage stream's fenced text answer, with its tool use removed, is found by `answer_from_events` (R-T1-4's case).

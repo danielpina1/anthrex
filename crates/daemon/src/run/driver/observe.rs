@@ -90,6 +90,7 @@ pub fn translate(
         | SessionEvent::AssistantText { .. }
         | SessionEvent::ToolResult { .. }
         | SessionEvent::Compacted
+        | SessionEvent::StructuredOutput { .. }
         | SessionEvent::Other { .. } => return activity(signal.window_id, last_activity, now),
     })
 }
