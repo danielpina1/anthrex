@@ -15,6 +15,7 @@ use super::parse::{STRUCTURED_OUTPUT_TOOL, answer_from_events, json_from_text, p
 use super::{DeciderAnswer, DeciderContext, DeciderRequest, Decision, prompt, schema};
 use crate::headless::session::HeadlessHandle;
 use crate::headless::{SessionEvent, TurnOutcome, claude_stream, credential_scrub_for};
+use anyhow::Context;
 use proto::{DeciderMode, DeciderSource, Runtime, TokenUsage};
 use serde_json::Value;
 use std::path::Path;
@@ -74,8 +75,10 @@ async fn call(
         })
     })
     .await;
-    let handle = match spawned {
-        Ok(Ok(handle)) => handle,
+    // From here every way out of the call, including its future being dropped, kills
+    // the decider: `guard` does it on drop, and the explicit paths call `kill` first.
+    let guard = match spawned {
+        Ok(Ok(guard)) => guard,
         Ok(Err(error)) => return (Err(format!("the decider could not start: {error:#}")), None),
         Err(error) => return (Err(format!("the decider could not start: {error}")), None),
     };
@@ -85,17 +88,17 @@ async fn call(
     let ended = loop {
         match tokio::time::timeout_at(deadline, events.recv()).await {
             Err(_) => {
-                handle.kill(KILL_GRACE);
+                guard.kill();
                 let secs = ctx.timeout.as_secs();
                 return (Err(format!("the decider timed out after {secs} s")), None);
             }
             Ok(None) => {
                 // The dispatcher delivers `ProcessExited` before it ends; defensive.
-                handle.kill(KILL_GRACE);
+                guard.kill();
                 return (Err(exited(None, None)), None);
             }
             Ok(Some(SessionEvent::ProcessExited { code, signal })) => {
-                handle.kill(KILL_GRACE);
+                guard.kill();
                 return (Err(exited(code, signal)), None);
             }
             Ok(Some(SessionEvent::TurnEnded { outcome, usage, .. })) => break (outcome, usage),
@@ -110,7 +113,7 @@ async fn call(
             break;
         }
     }
-    handle.kill(KILL_GRACE);
+    guard.kill();
 
     let (outcome, usage) = ended;
     (judge(request, &seen.events(), outcome), usage)
@@ -123,7 +126,7 @@ fn start(
     runtime: Runtime,
     request: &DeciderRequest,
     on_event: impl Fn(u32, SessionEvent) + Send + Sync + 'static,
-) -> anyhow::Result<HeadlessHandle> {
+) -> anyhow::Result<KillOnDrop> {
     let kind = request.kind();
     let schema = schema::schema(kind);
     let prompt = prompt::render(request);
@@ -139,7 +142,7 @@ fn start(
         _ => claude_decider_args(ctx, &DECIDER_CAPS, &schema),
     };
     let remove = credential_scrub_for(runtime, config::ClaudeAuth::Login);
-    let handle = HeadlessHandle::spawn(
+    let guard = KillOnDrop::new(HeadlessHandle::spawn(
         runtime,
         &ctx.program,
         &args,
@@ -147,16 +150,49 @@ fn start(
         &[],
         &remove,
         on_event,
-    )?;
+    )?);
     if runtime == Runtime::Claude {
+        let handle = guard.handle();
         let sent = handle.send_line(claude_stream::user_message(&prompt, None));
         handle.close_stdin();
-        if let Err(error) = sent {
+        // On an error `guard` is dropped here, which kills the process.
+        sent.context("could not send the prompt")?;
+    }
+    Ok(guard)
+}
+
+/// The decider's process, killed when this is dropped: when the call's future is
+/// dropped (a caller's `timeout` or `select!`, an aborted task, a runtime shutting
+/// down) or unwinds from a panic, as on every explicit return (decision 16).
+///
+/// `HeadlessHandle::kill` never blocks (it sends `SIGTERM` and waits out its grace on a
+/// thread of its own), so dropping this on a tokio worker, or while the runtime shuts
+/// down, is safe and needs no runtime.
+struct KillOnDrop(Option<HeadlessHandle>);
+
+impl KillOnDrop {
+    fn new(handle: HeadlessHandle) -> Self {
+        Self(Some(handle))
+    }
+
+    fn handle(&self) -> &HeadlessHandle {
+        self.0.as_ref().expect("armed until killed")
+    }
+
+    /// Kills now and disarms the guard.
+    fn kill(mut self) {
+        if let Some(handle) = self.0.take() {
             handle.kill(KILL_GRACE);
-            return Err(error.context("could not send the prompt"));
         }
     }
-    Ok(handle)
+}
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            handle.kill(KILL_GRACE);
+        }
+    }
 }
 
 /// Writes `schema` to `file` once: a file already there (same name, same schema hash)

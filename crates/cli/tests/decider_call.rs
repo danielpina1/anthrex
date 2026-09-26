@@ -1,158 +1,20 @@
-//! M8b.7: the decider call (decision 16) against real `fake-agent` processes. Each
-//! test's program is a wrapper script that points `fake-agent` at the test's own
-//! decider directory and `exec`s it through a symlink under the test's temporary
-//! directory, so no test changes its own environment and the process can be found by a
-//! marker that is in no test's command line.
+//! M8b.7: the decider call (decision 16) against real `fake-agent` processes, the tests
+//! the brief names. The fixtures are `support/decider.rs`; further cases are in
+//! `decider_call_edges.rs`.
 
 mod support;
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
 use daemon::decider::call::{ANSWER_MAX_BYTES, decide};
-use daemon::decider::{
-    BlockKind, BlockedReasonInput, DeciderAnswer, DeciderContext, DeciderKind, DeciderRequest,
-    TriageInput,
-};
+use daemon::decider::{BlockKind, DeciderAnswer, DeciderKind};
 use daemon::manager::ManagerConfig;
 use proto::{DeciderMode, DeciderSource, TokenUsage};
 use serde_json::{Value, json};
-use support::{fake_agent_bin, runtime, tempdir};
-
-/// `deciders.timeout_secs` in every test.
-const TIMEOUT_SECS: u64 = 5;
-/// `HeadlessHandle::kill`'s grace in the call.
-const KILL_GRACE: Duration = Duration::from_secs(2);
-/// A spawn and a few thread starts, generously (docs/timing-budgets.md, M8b.7).
-const SPAWN_SLACK: Duration = Duration::from_secs(5);
-/// How long a killed decider may take to disappear from the process table.
-const GONE_WITHIN: Duration = Duration::from_secs(5);
-/// Set on the child process of `the_decider_sees_no_api_credentials` only.
-const CHILD_DIR: &str = "ANTHREX_DECIDER_CALL_CHILD_DIR";
-
-struct Fixture {
-    dir: tempfile::TempDir,
-}
-
-impl Fixture {
-    fn new() -> Self {
-        let fx = Fixture { dir: tempdir() };
-        std::fs::create_dir_all(fx.deciders()).unwrap();
-        let bin = fx.dir.path().join("bin");
-        std::fs::create_dir_all(&bin).unwrap();
-        std::os::unix::fs::symlink(fake_agent_bin(), bin.join("fake-agent")).unwrap();
-        let script = format!(
-            "#!/bin/sh\nexport FAKE_AGENT_DECIDER_DIR='{}'\nexport FAKE_AGENT_ENV_FILE='{}'\nexec '{}' \"$@\"\n",
-            fx.deciders().display(),
-            fx.env_file().display(),
-            bin.join("fake-agent").display()
-        );
-        write_executable(&fx.program(), &script);
-        fx
-    }
-
-    fn root(&self) -> &Path {
-        self.dir.path()
-    }
-
-    fn program(&self) -> PathBuf {
-        self.root().join("decider.sh")
-    }
-
-    fn deciders(&self) -> PathBuf {
-        self.root().join("deciders")
-    }
-
-    fn env_file(&self) -> PathBuf {
-        self.root().join("env-keys.txt")
-    }
-
-    /// A string found in the decider's command line (the symlink's path) and in no test's.
-    fn marker(&self) -> String {
-        self.root()
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .into_owned()
-    }
-
-    fn script(&self, kind: &str, n: u32, value: Value) {
-        let path = self.deciders().join(format!("{kind}-{n}.json"));
-        std::fs::write(path, value.to_string()).unwrap();
-    }
-
-    fn calls(&self) -> Vec<Value> {
-        let text = std::fs::read_to_string(self.deciders().join("calls.jsonl")).unwrap_or_default();
-        text.lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect()
-    }
-
-    fn context(&self, mode: DeciderMode) -> DeciderContext {
-        let program = self.program().to_string_lossy().into_owned();
-        context_with(self.root(), mode, move |key| {
-            (key == "ANTHREX_DECIDER_BIN").then(|| program.clone())
-        })
-    }
-}
-
-fn context_with(
-    root: &Path,
-    mode: DeciderMode,
-    var: impl Fn(&str) -> Option<String>,
-) -> DeciderContext {
-    let mut cfg = config::Orchestrator::default();
-    cfg.deciders.mode = mode;
-    cfg.deciders.timeout_secs = TIMEOUT_SECS;
-    let manager = ManagerConfig::from_vars(
-        root.join("unused.sock"),
-        "/bin/sh".into(),
-        root.join("unused-anthrex"),
-        var,
-        &config::Config::default().runtimes,
-    );
-    DeciderContext::new(&cfg, &manager, &root.join("data"))
-}
-
-fn write_executable(path: &Path, text: &str) {
-    std::fs::write(path, text).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-fn blocked(reason: &str) -> DeciderRequest {
-    DeciderRequest::BlockedReason(BlockedReasonInput {
-        task_id: "t1".into(),
-        title: "Add a retry to the fetch helper".into(),
-        reason: reason.into(),
-    })
-}
-
-fn triage() -> DeciderRequest {
-    DeciderRequest::Triage(TriageInput {
-        goal: "fix the typo in the README".into(),
-        profile_summary: String::new(),
-        report_summary: None,
-        report_files: vec![],
-        files: vec!["README.md".into()],
-        files_total: 1,
-    })
-}
-
-fn answer() -> Value {
-    json!({"kind": "environment", "reason": "the linker is missing"})
-}
-
-fn assert_fallback(decision: &daemon::decider::Decision, reason: &str) {
-    assert_eq!(decision.source, DeciderSource::Fallback, "{decision:?}");
-    assert_eq!(decision.fallback_reason.as_deref(), Some(reason));
-    assert_eq!(
-        decision.answer,
-        daemon::decider::fallback::fallback(&blocked("x")),
-        "{decision:?}"
-    );
-}
+use support::decider::*;
+use support::runtime;
 
 #[test]
 fn claude_mode_returns_the_scripted_answer_and_usage() {
@@ -336,19 +198,11 @@ fn a_hanging_decider_falls_back_at_its_timeout_and_leaves_no_process() {
         fx.context(DeciderMode::Codex),
     );
     let started = Instant::now();
-    // The control: while they hang, the marker does find them.
+    // The control: while they hang, the marker finds both of them.
     let look = marker.clone();
     let (claude, codex, seen) = runtime().block_on(async {
-        let seen = tokio::task::spawn_blocking(move || {
-            let deadline = Instant::now() + Duration::from_secs(TIMEOUT_SECS - 1);
-            while Instant::now() < deadline {
-                if !pgrep(&look).is_empty() {
-                    return true;
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            false
-        });
+        let within = Duration::from_secs(TIMEOUT_SECS - 1);
+        let seen = tokio::task::spawn_blocking(move || saw_running(&look, 2, within));
         let (claude, codex, seen) = tokio::join!(
             decide(&claude_ctx, &request),
             decide(&codex_ctx, &request),
@@ -357,7 +211,7 @@ fn a_hanging_decider_falls_back_at_its_timeout_and_leaves_no_process() {
         (claude, codex, seen.unwrap())
     });
     let elapsed = started.elapsed();
-    assert!(seen, "the marker never matched a running decider");
+    assert!(seen, "the marker never matched both running deciders");
     let timeout = Duration::from_secs(TIMEOUT_SECS);
     assert!(elapsed >= timeout, "{elapsed:?}");
     assert!(elapsed <= timeout + KILL_GRACE + SPAWN_SLACK, "{elapsed:?}");
@@ -365,28 +219,8 @@ fn a_hanging_decider_falls_back_at_its_timeout_and_leaves_no_process() {
         assert_fallback(decision, "the decider timed out after 5 s");
     }
     assert_eq!(fx.calls().len(), 2, "both deciders ran");
-
-    // Only look: `pgrep -f` with a marker in the deciders' command line (the program's
-    // path) and in no test's. The test signals nothing.
-    let deadline = Instant::now() + GONE_WITHIN;
-    loop {
-        let pids = pgrep(&marker);
-        if pids.is_empty() {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "decider processes left after {GONE_WITHIN:?}: {pids}"
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    }
-}
-
-/// The pids `pgrep -f` finds for `marker`, which is in no test's command line (and pgrep
-/// never lists itself). Looks only; signals nothing.
-fn pgrep(marker: &str) -> String {
-    let found = Command::new("pgrep").args(["-f", marker]).output().unwrap();
-    String::from_utf8_lossy(&found.stdout).trim().to_string()
+    // Only look: the test signals nothing.
+    assert_gone(&marker);
 }
 
 #[test]
@@ -395,12 +229,27 @@ fn garbage_empty_and_oversized_answers_fall_back() {
     let ctx = fx.context(DeciderMode::Claude);
     let rt = runtime();
 
-    fx.script("blocked_reason", 1, json!({"text": "not json"}));
+    let usage = json!({"input": 7, "output": 8, "cache_read": 9, "cache_write": 10});
+    fx.script(
+        "blocked_reason",
+        1,
+        json!({"text": "not json", "usage": usage}),
+    );
     let decision = rt.block_on(decide(&ctx, &blocked("x")));
     let error = serde_json::from_str::<Value>("not json").unwrap_err();
     assert_fallback(
         &decision,
         &format!("the decider's answer is not JSON: {error}"),
+    );
+    // The turn ended, so its tokens were spent: a fallback keeps its usage.
+    assert_eq!(
+        decision.usage,
+        Some(TokenUsage {
+            input: 7,
+            output: 8,
+            cache_read: 9,
+            cache_write: 10
+        })
     );
 
     fx.script("triage", 1, json!({"text": "{}"}));

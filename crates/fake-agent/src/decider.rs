@@ -91,6 +91,10 @@ enum Reply {
 struct Scripted {
     reply: Reply,
     usage: Usage,
+    /// With `answer` only: the Claude `result.structured_output` instead of the answer
+    /// (the real CLI sends the same object in both; a test makes them differ to see
+    /// which one the daemon reads).
+    result_output: Option<Value>,
 }
 
 fn parse(value: Value) -> Result<Scripted> {
@@ -101,6 +105,7 @@ fn parse(value: Value) -> Result<Scripted> {
         Some(usage) => serde_json::from_value(usage).context("invalid usage")?,
         None => Usage::default(),
     };
+    let result_output = object.remove("result_output");
     let [(key, value)]: [(String, Value); 1] = object
         .into_iter()
         .collect::<Vec<_>>()
@@ -114,7 +119,14 @@ fn parse(value: Value) -> Result<Scripted> {
         "hang" if value == json!(true) => Reply::Hang,
         other => bail!("unknown decider reply {other:?}"),
     };
-    Ok(Scripted { reply, usage })
+    if result_output.is_some() && !matches!(reply, Reply::Answer(_)) {
+        bail!("result_output goes with an answer only");
+    }
+    Ok(Scripted {
+        reply,
+        usage,
+        result_output,
+    })
 }
 
 /// Which runtime is answering, with what its output needs.
@@ -160,7 +172,8 @@ fn answer_claude(claude: Claude, scripted: Scripted) -> Result<i32> {
         Reply::Hang => hang(),
         Reply::Answer(answer) => {
             claude.turn_started()?;
-            claude.structured_answer(&answer, scripted.usage)?;
+            let result = scripted.result_output.as_ref().unwrap_or(&answer);
+            claude.structured_answer(&answer, result, scripted.usage)?;
         }
         Reply::Text(text) => {
             claude.turn_started()?;
@@ -322,6 +335,9 @@ mod tests {
         let scripted = parse(json!({"answer": {"a": 1}, "usage": usage})).unwrap();
         assert_eq!(scripted.reply, Reply::Answer(json!({"a": 1})));
         assert_eq!(scripted.usage.cache_write, 4);
+        assert_eq!(scripted.result_output, None);
+        let scripted = parse(json!({"answer": {"a": 1}, "result_output": {"b": 2}})).unwrap();
+        assert_eq!(scripted.result_output, Some(json!({"b": 2})));
         for (value, reply) in [
             (json!({"text": "t"}), Reply::Text("t".into())),
             (
@@ -341,6 +357,7 @@ mod tests {
             json!({"hang": false}),
             json!({"wat": 1}),
             json!({"text": "a", "usage": {"input": 1}}),
+            json!({"text": "a", "result_output": {}}),
         ] {
             assert!(parse(bad.clone()).is_err(), "{bad}");
         }

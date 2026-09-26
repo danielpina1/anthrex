@@ -160,7 +160,14 @@ impl Claude {
     /// A decider's structured answer as M8b.1 recorded it: a top-level
     /// `StructuredOutput` tool use whose input is the answer, its tool result, and a
     /// `result` carrying the answer as `structured_output` and as JSON text.
-    pub fn structured_answer(&mut self, answer: &Value, usage: Usage) -> Result<()> {
+    /// `result` is the `result` line's `structured_output` (and JSON text): `answer` in
+    /// every real recording.
+    pub fn structured_answer(
+        &mut self,
+        answer: &Value,
+        result: &Value,
+        usage: Usage,
+    ) -> Result<()> {
         let id = format!("toolu_fake{:04}", self.next());
         let block = json!({
             "type": "tool_use",
@@ -187,8 +194,8 @@ impl Claude {
         let fields = json!({
             "subtype": "success",
             "is_error": false,
-            "result": answer.to_string(),
-            "structured_output": answer,
+            "result": result.to_string(),
+            "structured_output": result,
             "stop_reason": "tool_use",
             "num_turns": 2,
             "terminal_reason": "completed",

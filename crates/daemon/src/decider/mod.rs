@@ -263,4 +263,6 @@ mod tests;
 #[cfg(test)]
 mod tests_argv;
 #[cfg(test)]
+mod tests_context;
+#[cfg(test)]
 mod tests_prompt;
