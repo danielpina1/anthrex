@@ -242,15 +242,16 @@ pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Vec<String
         AgentRole::Reviewer => "reviewer",
         AgentRole::Scout => "scout",
     };
-    let mut args = vec![
-        "mcp".to_string(),
-        "--role".into(),
-        role.into(),
-        "--run".into(),
-        target.run_id.clone(),
-    ];
+    let mut args = vec!["mcp".to_string(), "--role".into(), role.into()];
+    // M8b decision 15: a repository-level scout belongs to no run.
+    if !target.run_id.is_empty() {
+        args.extend(["--run".into(), target.run_id.clone()]);
+    }
     if let Some(task) = &target.task_id {
         args.extend(["--task".into(), task.clone()]);
+    }
+    if let Some(scout) = &target.scout_id {
+        args.extend(["--scout".into(), scout.clone()]);
     }
     args.extend([
         "--window".into(),

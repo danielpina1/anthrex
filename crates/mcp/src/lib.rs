@@ -7,6 +7,7 @@
 
 pub mod forward;
 pub mod tools;
+pub mod tools_scout;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -22,12 +23,14 @@ use rmcp::{ErrorData, ServerHandler, ServiceExt};
 pub use forward::forward;
 pub use tools::tools_for;
 
-/// Who this server speaks for: `anthrex mcp --role --run [--task] --window --socket`.
+/// Who this server speaks for: `anthrex mcp --role [--run] [--task] [--scout] --window
+/// --socket`. `run_id` is empty for a repository-level scout (M8b decision 15).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpOptions {
     pub role: proto::AgentRole,
     pub run_id: String,
     pub task_id: Option<String>,
+    pub scout_id: Option<String>,
     pub window_id: u32,
     pub socket: PathBuf,
 }

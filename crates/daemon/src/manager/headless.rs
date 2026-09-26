@@ -211,11 +211,16 @@ pub fn subscribe_refusal(id: u32) -> String {
 }
 
 /// Decision 49's answer to a client's `Input`, `Kill`, `Remove` or `Restart` for a
-/// headless window of `run` (`?` for a session that belongs to no run).
+/// headless window of `run`, or of no run: a repository-level scout (M8b decision 12).
 pub fn control_refusal(id: u32, run: Option<&RunRef>) -> String {
-    let run = run.map_or("?", |run| run.run_id.as_str());
+    let Some(run) = run else {
+        return format!(
+            "window {id} is a headless scout session; only the daemon drives it. Use anthrex profile reject to stop it"
+        );
+    };
     format!(
-        "window {id} is a headless session of run {run}; only the engine drives it. Use anthrex run cancel to stop it"
+        "window {id} is a headless session of run {}; only the engine drives it. Use anthrex run cancel to stop it",
+        run.run_id
     )
 }
 

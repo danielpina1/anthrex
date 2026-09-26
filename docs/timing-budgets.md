@@ -162,6 +162,13 @@ or one push, far under its bound; each absence window is paired with a positive 
 | `hook_finishes_within_its_deadline` | `crates/cli/tests/filter_hook.rs` (`FILTER_HOOK_DEADLINE + 2s`) | `3s` from spawn to exit, stdin held open | `FILTER_HOOK_DEADLINE` (1 s, `daemon::output_filter`, imported by the test, not copied), measured from the process's own start, plus the `anthrex` spawn (33-85 ms loaded, "Measured primitive costs") and `process::exit`. | **Recorded.** The bound sits 2 s above the deadline it depends on (standing rule 1); the loop that waits for the exit is itself capped by `LIMIT` (20 s). |
 | Every other `filter_run.rs` / `filter_hook.rs` wait | `LIMIT` (20 s) through `RunningCommand::finish` | `20s` | One shell (`/bin/sh`, bash or zsh, per case; the `sh` helper's own loop is capped by `LIMIT` too) and at most 5000 short lines through a pipe (well under a second), or the hook's 1 s deadline. | **Recorded.** A hang guard only; nothing asserts a duration. |
 
+### Recorded, from M8b.9 (2026-09-26)
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| Every scout's start, outcome and exit wait | `crates/cli/tests/scout_service.rs` (`SESSION_WAIT`) | `30s`, deadline loops every 20 ms | One `fake-agent` spawn through a `/bin/sh` wrapper, one `git rev-parse` for its script (`GIT_TIMEOUT`, 5 s), one `anthrex mcp` spawn (33-85 ms loaded) and its socket round trip, one `write_atomic` on `spawn_blocking`: well under a second. A failed scout's kill is `headless_kill` (SIGTERM, SIGKILL after `KILL_GRACE`). | **Recorded.** A hang guard; nothing asserts a duration. |
+| `scout_report_is_stored_and_the_session_retired`, the removal | `scout_service.rs` (`RETIRE_AFTER + INTERRUPT_GRACE + 5s`) | `65s` | Decision 52's `RETIRE_AFTER` (30 s) from the report's acceptance, checked by `ScoutService`'s 1 s ticker. The session ends by itself when its stdin closes; `INTERRUPT_GRACE` (30 s) covers a session that did not, and 5 s the ticker and the spawn. | **Recorded.** The brief's bound; the test only looks. |
+
 ### Fixed, from the main-branch CI failures (2026-09-23)
 
 | Test | Site | Bound (as found) | The code's own legal worst case | Status |

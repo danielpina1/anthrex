@@ -46,6 +46,7 @@ use crate::headless::argv::CliCaps;
 use crate::manager::{GitRoots, ManagerConfig, WindowManager, WindowSignal};
 use book::{Book, Retiring};
 
+pub use adapt::Adaptation;
 pub use observe::{ACTIVITY_EVERY, translate};
 
 /// Decision 52: a retired window stays listed, `Exited`, this long.
@@ -157,6 +158,8 @@ pub struct RunService {
     writes: effects::RunWrites,
     /// Replayed accepts whose clean-up waits for the event loop (ruling T22-N3).
     held_accepts: Mutex<Vec<restore::AcceptCleanUp>>,
+    /// Milestone 8b's services, set once by the daemon (`set_adaptation`).
+    adaptation: std::sync::OnceLock<Adaptation>,
 }
 
 /// Unix seconds, the reducer's clock.
@@ -233,6 +236,7 @@ impl RunService {
             done_holds: effects::DoneHolds::from_env(),
             writes: effects::RunWrites::default(),
             held_accepts: Mutex::new(Vec::new()),
+            adaptation: std::sync::OnceLock::new(),
         })
     }
 

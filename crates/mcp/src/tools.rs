@@ -19,8 +19,7 @@ pub fn tools_for(role: AgentRole) -> Vec<Tool> {
         AgentRole::Worker => vec![task_done(), task_blocked()],
         AgentRole::Reviewer => vec![submit_review()],
         AgentRole::Orchestrator => Vec::new(),
-        // Milestone 8b task 9 adds `submit_scout_report`.
-        AgentRole::Scout => Vec::new(),
+        AgentRole::Scout => vec![crate::tools_scout::submit_scout_report()],
     }
 }
 
@@ -96,16 +95,16 @@ fn submit_review() -> Tool {
 }
 
 /// A string of 1 to `max` characters.
-fn text(max: u64) -> Value {
+pub(crate) fn text(max: u64) -> Value {
     json!({"type": "string", "minLength": 1, "maxLength": max})
 }
 
-fn one_of(values: &[&str]) -> Value {
+pub(crate) fn one_of(values: &[&str]) -> Value {
     json!({"type": "string", "enum": values})
 }
 
 /// `{"type":"object","additionalProperties":false,"properties":…,"required":…}`.
-fn closed(properties: Value, required: &[&str]) -> JsonObject {
+pub(crate) fn closed(properties: Value, required: &[&str]) -> JsonObject {
     let mut o = JsonObject::new();
     o.insert("type".into(), json!("object"));
     o.insert("additionalProperties".into(), json!(false));
@@ -156,9 +155,8 @@ mod tests {
     }
 
     #[test]
-    fn scout_is_named_scout_and_serves_nothing_yet() {
+    fn scout_is_named_scout() {
         assert_eq!(role_name(AgentRole::Scout), "scout");
-        assert!(names(AgentRole::Scout).is_empty());
         assert!(!allowed(AgentRole::Scout, TASK_DONE));
     }
 

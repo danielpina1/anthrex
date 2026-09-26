@@ -30,6 +30,7 @@ mod process;
 pub mod profile;
 pub mod project;
 pub mod run;
+pub mod scout;
 pub mod server;
 pub mod state;
 pub mod status;

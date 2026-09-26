@@ -3,16 +3,22 @@
 //!
 //! M8b.4: [`RunService::choose_profile`], decision 6 at `run start`. The stored profile
 //! is read, and its staleness checked, on `spawn_blocking`, never under a lock.
+//!
+//! M8b.9: [`Adaptation`], the services the daemon hands the driver once, and the routing
+//! of a scout's tool call to [`ScoutService::tool`] (decision 15).
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use proto::{OutputFilter, Plan, ProfileSource};
+use proto::{AgentRole, OutputFilter, Plan, ProfileSource, RunReply, ToolCall};
 
 use super::RunService;
 use crate::profile::resolve::{apply_choice as apply_to_plan, run_profile};
 use crate::profile::store::{self, PROFILE_FILE, Stored};
+use crate::run::engine::EventKind;
 use crate::run::model::{LogEntry, Run};
 use crate::run::plan::Preflight;
+use crate::scout::service::ScoutService;
 
 /// What decision 6 chose, for the run `build_run` makes.
 pub(super) struct ProfileChoice {
@@ -32,7 +38,37 @@ fn unparseable(path: &std::path::Path, error: &str) -> String {
     )
 }
 
+/// Milestone 8b's services, set once with [`RunService::set_adaptation`]. Later tasks
+/// add the profile service and the decider context.
+pub struct Adaptation {
+    pub scouts: Arc<ScoutService>,
+}
+
 impl RunService {
+    /// Sets the services once; a second call is ignored.
+    pub fn set_adaptation(&self, adaptation: Adaptation) {
+        let _ = self.adaptation.set(adaptation);
+    }
+
+    /// A `submit_*` call from an agent (decision 15): a scout's goes to the scout
+    /// service, every other to the engine. Every text reaches the agent verbatim
+    /// (M8a.19), so each is worded for an agent.
+    pub(super) async fn tool(&self, call: ToolCall) -> RunReply {
+        if call.role == AgentRole::Scout {
+            return match self.adaptation.get() {
+                Some(adaptation) => adaptation.scouts.tool(call).await,
+                None => RunReply::ToolResult {
+                    ok: false,
+                    text: format!("unknown scout {}", call.scout_id.unwrap_or_default()),
+                },
+            };
+        }
+        match self.ask(|reply| EventKind::Tool { reply, call }).await {
+            Ok(text) => RunReply::ToolResult { ok: true, text },
+            Err(text) => RunReply::ToolResult { ok: false, text },
+        }
+    }
+
     /// Decision 6, right after preflight: loads the repository's stored profile and,
     /// when there is one, makes it the plan's whole profile and empties the cloned
     /// config's `profile`, so `resolve_profile` fills no deliberate gap. The config's

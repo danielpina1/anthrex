@@ -77,8 +77,12 @@ pub struct ClaudeSandbox {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpTarget {
     pub role: AgentRole,
+    /// Empty for a repository-level scout (M8b decision 15).
     pub run_id: String,
     pub task_id: Option<String>,
+    /// A scout's id (`--scout`), M8b decision 15.
+    #[serde(default)]
+    pub scout_id: Option<String>,
 }
 
 /// Which session a launch starts or continues.

@@ -171,3 +171,33 @@ async fn a_tool_outside_the_role_never_reaches_the_daemon() {
     // would count.
     assert_eq!(stub.accepted(), 0, "{:?}", stub.seen());
 }
+
+/// M8b decision 15: a scout's call names its scout, and a repository-level scout's has
+/// no run.
+#[tokio::test]
+async fn a_scout_call_carries_its_scout_id() {
+    let stub = StubDaemon::start((true, "Report recorded. You are done; end your turn now."));
+    let mut options = opts(AgentRole::Scout, stub.socket.clone());
+    options.run_id = String::new();
+    options.task_id = None;
+    options.scout_id = Some("onboarding-1".into());
+    let mut c = Client::start(options);
+    c.initialize().await;
+    let list = c.request("tools/list", json!({})).await;
+    assert_eq!(list["result"]["tools"][0]["name"], "submit_scout_report");
+    let args = json!({"summary": "s", "files": []});
+    let result = c.call("submit_scout_report", args.clone()).await;
+    assert!(!Client::is_error(&result), "{result}");
+    assert_eq!(
+        stub.seen()[0].call,
+        Some(ToolCall {
+            run_id: String::new(),
+            task_id: None,
+            role: AgentRole::Scout,
+            window_id: 7,
+            tool: "submit_scout_report".into(),
+            args,
+            scout_id: Some("onboarding-1".into()),
+        })
+    );
+}

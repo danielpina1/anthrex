@@ -111,6 +111,7 @@ fn a_headless_spec_round_trips_through_json() {
             role: AgentRole::Worker,
             run_id: "r-3f9a".into(),
             task_id: Some("t1".into()),
+            scout_id: None,
         }),
         allowed_tools: vec!["Bash".into()],
         claude_permission_mode: Some("acceptEdits".into()),

@@ -164,6 +164,7 @@ impl Mcp {
             },
             run_id: "r1".into(),
             task_id: self.task.map(String::from),
+            scout_id: None,
         }
     }
 }

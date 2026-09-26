@@ -160,14 +160,7 @@ impl RunService {
                 confirm,
             } => self.finish(run_id, action, confirm).await,
             RunRequest::List => RunReply::Snapshot(self.current()),
-            RunRequest::Tool(call) => {
-                // Every text here reaches an agent verbatim (M8a.19): the engine's own
-                // tool answers, worded for an agent.
-                match self.ask(|reply| EventKind::Tool { reply, call }).await {
-                    Ok(text) => RunReply::ToolResult { ok: true, text },
-                    Err(text) => RunReply::ToolResult { ok: false, text },
-                }
-            }
+            RunRequest::Tool(call) => self.tool(call).await,
             // Milestone 8b: refused until the task that answers each one lands.
             RunRequest::StartGoal { .. } => answer(request::START_GOAL, Err(NOT_YET.into())),
             RunRequest::Promote { .. } => answer(request::PROMOTE, Err(NOT_YET.into())),

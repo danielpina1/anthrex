@@ -157,6 +157,7 @@ pub fn opts(role: AgentRole, socket: PathBuf) -> McpOptions {
         role,
         run_id: "add-reset-3f9a".into(),
         task_id: Some("t1".into()),
+        scout_id: None,
         window_id: 7,
         socket,
     }
