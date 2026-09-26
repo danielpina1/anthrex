@@ -18,6 +18,7 @@
 //! resume), and `driver/restore.rs` restores the runs of an earlier daemon (decision 44).
 
 mod adapt;
+mod book;
 mod cleanup;
 mod effects;
 mod guard;
@@ -43,6 +44,7 @@ use super::git::GitQueue;
 use super::snapshot::snapshot;
 use crate::headless::argv::CliCaps;
 use crate::manager::{GitRoots, ManagerConfig, WindowManager, WindowSignal};
+use book::{Book, Retiring};
 
 pub use observe::{ACTIVITY_EVERY, translate};
 
@@ -92,30 +94,6 @@ impl RunContext {
 enum Msg {
     Event(EventKind),
     Stop(oneshot::Sender<()>),
-}
-
-/// A window the engine retired (decision 52): its group is killed at `kill_at` if it
-/// still runs, and the window removed at `remove_at`.
-struct Retiring {
-    kill_at: Instant,
-    remove_at: Instant,
-}
-
-/// The event loop's bookkeeping.
-struct Book {
-    retiring: HashMap<u32, Retiring>,
-    /// The process of each window the engine killed: its exit is `killed_by_engine`.
-    killed: HashMap<u32, u32>,
-    /// The roots registered with `GitRoots`, so a watch or unwatch is never doubled.
-    watched: HashSet<PathBuf>,
-    /// Runs with a counter-only change not yet persisted (decision 43).
-    dirty: BTreeSet<String>,
-    last_counter_save: Instant,
-    reports_written: HashMap<String, Instant>,
-    reports_due: BTreeSet<String>,
-    publish_due: bool,
-    /// Decision 48: the intents of each kind appended so far.
-    intents: HashMap<&'static str, u32>,
 }
 
 /// Where an op's work goes: captured under the engine lock at the step that emitted it.
