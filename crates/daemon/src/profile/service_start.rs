@@ -157,6 +157,10 @@ impl ProfileService {
             auto_confirm: false,
         };
         let _writes = self.writes.lock().await;
+        // Review m5: a detection that registered meanwhile keeps its proposal.
+        if self.running(&pre.project).await.is_some() {
+            return;
+        }
         let dir = self.repo_dir(&pre.project);
         if let Err(error) =
             blocking(move || store::save_proposal(&dir, &record).map_err(|e| e.to_string())).await

@@ -28,8 +28,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use proto::{
-    AgentRole, ProfileMeta, ProfileReply, ProfileRequest, ProposalRecord, ProposalState,
-    RepoProfile,
+    ProfileMeta, ProfileReply, ProfileRequest, ProposalRecord, ProposalState, RepoProfile,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -37,7 +36,6 @@ use super::store::{self, Stored};
 use crate::headless::argv::CliCaps;
 use crate::manager::WindowManager;
 use crate::run::confine;
-use crate::run::driver::unix_now;
 use crate::run::git::GitQueue;
 use crate::scout::service::ScoutService;
 
@@ -196,88 +194,6 @@ impl ProfileService {
         self.ctx.orchestrator.worker_sandbox && confine::available()
     }
 
-    /// Decision 11, after `RunService::restore` and before the socket binds: every
-    /// repository's leftover temp files swept (ruling R-T4-1), every interrupted
-    /// proposal failed, its detection checkouts salvaged and removed, and every restored
-    /// run-less scout window removed (ruling R-T9-1). Staleness is not checked here:
-    /// a stored profile does not record its project, so it is checked at `profile
-    /// status` and `run start` (Implementation notes).
-    pub async fn restore(self: &Arc<Self>) {
-        for window in self.manager.list() {
-            let scout = window.run.is_none()
-                && self
-                    .manager
-                    .headless_spec(window.id)
-                    .and_then(|spec| spec.mcp)
-                    .is_some_and(|target| target.role == AgentRole::Scout);
-            if scout && let Err(error) = self.manager.remove(window.id) {
-                tracing::warn!(window = window.id, %error, "could not remove a leftover scout window");
-            }
-        }
-        let repos = self.ctx.data_dir.join("repos");
-        let dirs = blocking(move || {
-            let entries = match std::fs::read_dir(&repos) {
-                Ok(entries) => entries,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    return Ok(Vec::new());
-                }
-                Err(error) => return Err(error.to_string()),
-            };
-            Ok(entries
-                .filter_map(Result::ok)
-                .map(|entry| entry.path())
-                .filter(|path| path.is_dir())
-                .collect::<Vec<_>>())
-        })
-        .await;
-        let dirs = match dirs {
-            Ok(dirs) => dirs,
-            Err(error) => {
-                tracing::warn!(%error, "could not list the repositories' data directories");
-                return;
-            }
-        };
-        for repo_dir in dirs {
-            self.restore_repo(repo_dir).await;
-        }
-    }
-
-    async fn restore_repo(self: &Arc<Self>, repo_dir: PathBuf) {
-        let dir = repo_dir.clone();
-        let loaded = blocking(move || {
-            store::sweep_leftovers(&dir).map_err(|e| e.to_string())?;
-            store::load_proposal(&dir)
-        })
-        .await;
-        let record = match loaded {
-            Ok(Some(record)) => record,
-            Ok(None) => return,
-            Err(error) => {
-                tracing::warn!(repo_dir = %repo_dir.display(), %error, "profile restore");
-                return;
-            }
-        };
-        if in_progress(&record.state) {
-            let mut failed = record.clone();
-            failed.state = ProposalState::Failed {
-                reason: RESTART_REASON.to_string(),
-            };
-            failed.updated_at = unix_now();
-            let dir = repo_dir.clone();
-            if let Err(error) =
-                blocking(move || store::save_proposal(&dir, &failed).map_err(|e| e.to_string()))
-                    .await
-            {
-                tracing::warn!(repo_dir = %repo_dir.display(), %error, "profile restore");
-            }
-        }
-        for name in [super::ONBOARDING_CHECKOUT, super::VERIFY_CHECKOUT] {
-            if let Err(error) = self.discard_checkout(&record.project, name).await {
-                tracing::warn!(project = %record.project.display(), %error, "leftover detection checkout");
-            }
-        }
-    }
-
     /// Decision 6's input for milestone 9: the stored profile and its staleness, or why
     /// there is none.
     pub async fn effective(&self, project: &Path) -> Effective {
@@ -322,7 +238,7 @@ impl ProfileService {
                 unconfined_checks,
             } => self.detect(dir, trust_project, unconfined_checks).await,
             ProfileRequest::Show { dir, proposed } => self.show(dir, proposed).await,
-            ProfileRequest::Confirm { dir } => self.confirm(dir).await,
+            ProfileRequest::Confirm { dir, shown } => self.confirm(dir, shown).await,
             ProfileRequest::Reject { dir } => self.reject(dir).await,
             ProfileRequest::Edit {
                 dir,

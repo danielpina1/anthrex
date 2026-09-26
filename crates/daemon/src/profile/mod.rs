@@ -26,6 +26,7 @@ pub mod proposal;
 pub mod resolve;
 pub mod service;
 mod service_requests;
+mod service_restore;
 pub mod service_run;
 pub mod service_start;
 pub mod store;

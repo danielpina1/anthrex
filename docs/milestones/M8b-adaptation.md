@@ -2491,11 +2491,13 @@ So the "empty-root `ClaudeSandbox`" M8a gives reviewers (F1c N4) and decision 12
 
   The process tests are split the same way: `crates/cli/tests/profile_cli.rs` (354) holds the flows and `profile_cli_refusals.rs` (162) the refusals. `ProfileService::wire` (in `service.rs`) builds both services and calls `set_adaptation`, so `lifecycle.rs` grows by 11 lines (439 → 450), not 46.
 - **Onboarding scout ids (ruling R-T9-2)** stay `onboarding-<n>`. `n` is the current unix second, or one more than the last number handed out, whichever is larger (`service::next_scout_secs`). A number whose report file already exists is skipped. So two detections in one second never share an id, and fake-agent's "a trailing number of 9 or more digits" script rule still matches.
-- **Staleness is not checked at daemon start.** A stored profile does not record its project, so `restore` cannot fingerprint it. It is checked at `profile status` (which starts decision 7's re-detection) and at `run start`. This is recorded as a follow-up. `restore` does everything else decision 11 and the rulings ask, in this order:
+- **`restore`** (in `profile/service_restore.rs` since the review) does, in this order:
   1. It removes every run-less scout window.
   2. For each `<data>/repos/*`, it calls `sweep_leftovers` (R-T4-1) and fails any in-progress proposal with `RESTART_REASON`.
-  3. It salvages and removes both detection checkouts of every proposal's project, in any state.
-- **Automatic re-detection** (decision 7) starts from `profile status` when all of the following hold: `onboarding.auto` is on, the stored profile is stale, no work runs for the project, and `service::auto_allowed` holds (no proposal, or one that failed at least `AUTO_RETRY_AFTER_SECS` = 3600 s ago; a `Ready` proposal counts as pending). It also needs a preflight: a dirty tree logs `no automatic re-detection` and starts nothing. A refusal (project settings, confinement) is stored as the proposal's `Failed` reason.
+  3. It salvages and removes every detection checkout it finds under `<worktrees_root>/*/runs/` or `<data>/repos/*/tasks/`, whether a proposal names it or not (review m1). Git runs in the project a proposal or the stored meta records. Otherwise it runs in the common directory the checkout's repository borrows from (its `objects/info/alternates`). A checkout with no repository `HEAD` is removed without git. One that has a repository but no known project is kept and logged.
+  4. Decision 7 (review I4): for every stored profile whose meta records its project, it computes staleness. When the profile is stale, `auto_on_stale` runs in the background after a preflight of the project.
+- **Staleness at start (review I4).** `ProfileMeta` gains `#[serde(default)] project: Option<PathBuf>`, set by `confirm_record`. A meta written before this has no `project`: it is not checkable at start, and is checked at the next `profile status`. The first commit's deviation, "staleness is not checked at daemon start", is withdrawn.
+- **Automatic re-detection** (decision 7, `ProfileService::auto_on_stale`) starts from `profile status`, from `run start` (`choose_profile`, in the background, after the run's own preflight passed) and from the daemon's start, when all of the following hold: `onboarding.auto` is on, the stored profile is stale, no work runs for the project, and `service::auto_allowed` holds (no proposal, or one that failed at least `AUTO_RETRY_AFTER_SECS` = 3600 s ago; a `Ready` proposal counts as pending). It also needs a preflight: a dirty tree logs `no automatic re-detection` and starts nothing. A refusal (project settings, confinement) is stored as the proposal's `Failed` reason.
 - **Reject while work runs.** `reject` cancels the work's token, stops its scout through `ScoutService::stop` (the existing kill path, unchanged), deletes `proposal.json` and answers at once. The work then discards its own checkouts; verification commands already running end at their own timeout. Two things keep this safe:
   - Every `proposal.json` write of the work goes through `save_if_current` under the `writes` mutex (a tokio mutex, not `daemon::lock`), so a rejected proposal is never written back.
   - The table entry stays until the work ends, so a new detection cannot race the old one's clean-up. Meanwhile `detect`, `edit` and `confirm` are refused with `detection for <project> is stopping after anthrex profile reject; try again in a moment`.
@@ -2508,16 +2510,15 @@ So the "empty-root `ClaudeSandbox`" M8a gives reviewers (F1c N4) and decision 12
   - `show --proposed` of a proposal that is not ready: `the proposal for <project> is not ready yet (state <s>); see anthrex profile status`, or `… failed: <reason>; run anthrex profile detect`.
   - A missing proposal: `no proposal for <project>; run anthrex profile detect` (show) or `no proposal to confirm for <project>; run anthrex profile detect` (confirm).
   - `--unset` prints `proposed: <key> = (unset); …`.
-  - An edit with `--yes` that needs no re-verification is stored at once, and prints the `--yes` text.
+  - An edit with `--yes` that needs no re-verification is stored at once, and prints `proposed: <key> = <value>; stored (it needed no verification)` (review m2).
+  - `confirm` of a proposal that changed since it was shown: `the proposal for <project> changed since it was shown; run anthrex profile confirm again` (review m3).
   - The status line `verification: unconfined (<why>)` reads `(this platform cannot confine it, or worker_sandbox is off)`, since `ProfileStatus` carries only `verify_confined`.
   - The state labels are `preparing`, `scouting`, `verifying`, `ready`, `failed` (`service::state_label`).
+- **`profile confirm` stores exactly what it showed (review m3).** `ProfileRequest::Confirm` gains `#[serde(default)] shown: Option<String>`, within protocol 8, with a round-trip test and a default test. The CLI sends the `show_text` it printed. The daemon recomputes `show_text` of the current proposal and refuses a mismatch. `None` (a raw client) skips the check.
+- **Review m5.** `auto_detect` re-checks `running()` after taking `writes`, so a detection that registered meanwhile keeps its proposal.
+- **Review m4, recorded and not changed.** `writes` is one mutex for every project, and `reject` holds it across `discard_checkout`, which waits on that project's `GitQueue`. A reject behind a long git write in one project delays proposal saves in every project. It is not a deadlock: the queue's closures never take `writes`. Per-project mutexes would remove the contention.
 - **`ProfileReply::Shown`.** `toml` is the whole `proposal::show_text` (the CLI prints it as it is), and `source` is where the stored profile stands (`Stored` or `None`), also for `--proposed`.
-- **`profile edit --yes` confirms only when nothing the edit touched was dropped**, through `service_run::touched_commands`:
-  - `setup` → setup;
-  - `check` and `check_timeout_secs` → check;
-  - `single_test`, `test_passed` and `sample_test` → single_test;
-  - `env.*` → all three;
-  - anything else → none.
+- **`profile edit --yes` confirms only when verification dropped nothing** (review I2, controller ruling). This is stricter than decision 10's "only if nothing the edit touched was dropped", which it implies: a command the user did not touch that fails now is never lost without a human's confirmation, and the proposal stays `Ready`. The first commit's `touched_commands` mapping is gone.
 
   Other rules for an edit:
   - A confirmed edit's `ProfileMeta.report` is `None`, as Interfaces says, and `edited_keys` accumulates the stored meta's keys plus the new one.
@@ -2557,3 +2558,17 @@ So the "empty-root `ClaudeSandbox`" M8a gives reviewers (F1c N4) and decision 12
 - `status`, `confirm`, `edit` and `refuse_if_running` bind the lookup to a `let` before any await.
 
 The only lock held across an await is `writes` (a `tokio::sync::Mutex`), which orders `proposal.json` writes against `reject`. It is always taken before the table lock, never inside it.
+
+**Review fixes (task 11 review, controller rulings):**
+- **I1:** the three M8b.9 fixtures in `scout_service.rs` now script `{"hang": {}}`. The input-refusal test first takes the first turn (`read_message`) and waits until the window is `Working`. It then asserts `Status::Working` after every refusal. With the old `{"hang": true}` the scout exits at once and the new assertion fails.
+- **I2:** `may_auto_confirm` requires `dropped` to be empty. Test: `e2e_edit_yes_does_not_store_when_an_untouched_command_is_dropped`.
+- **I3:**
+  - M5: `e2e_edit_yes_stores_once_verification_drops_nothing` and `e2e_edit_yes_without_reverification_is_stored_at_once`, the second also pinning m2's text;
+  - M12: `e2e_an_edits_verification_refuses_an_unconfinable_platform_without_the_flag` (macOS);
+  - M20: `e2e_reject_with_no_work_running_discards_leftover_checkouts`.
+- **I4:** tests `e2e_a_restart_with_a_stale_profile_starts_an_automatic_proposal` and `e2e_run_start_with_a_stale_profile_starts_an_automatic_proposal`. Both read `proposal.json` directly, never through `profile status`, which would start the detection itself.
+- **m1:** `e2e_a_leftover_checkout_without_a_proposal_is_cleaned_at_restart`. It makes a real, dirty standalone checkout of another repository with `profile::verify::prepare`, restarts the daemon, and finds the checkout and its repository gone and the work in a salvage ref.
+- **m3:** `e2e_confirm_refuses_a_proposal_that_changed_since_it_was_shown`.
+- **m6:** `e2e_running_and_stopping_work_refuse_with_their_texts` pins both texts. It also covers a reject during `Verifying`: nothing is written back.
+- **New files:** `profile/service_restore.rs`, and the process tests `profile_cli_edits.rs` and `profile_cli_restart.rs`. `service.rs` shrinks to 422 lines; `service_restore.rs` is 247.
+- **Red:** the new tests were written after the fixes. Each was shown red by reverting its fix alone, then restoring it (task-11-report.md).

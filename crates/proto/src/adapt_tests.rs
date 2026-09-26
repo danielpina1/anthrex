@@ -297,7 +297,14 @@ fn every_new_request_and_reply_round_trips() {
             dir: dir.clone(),
             proposed: true,
         }),
-        RunRequest::Profile(ProfileRequest::Confirm { dir: dir.clone() }),
+        RunRequest::Profile(ProfileRequest::Confirm {
+            dir: dir.clone(),
+            shown: Some("check = \"cargo test\"\n".into()),
+        }),
+        RunRequest::Profile(ProfileRequest::Confirm {
+            dir: dir.clone(),
+            shown: None,
+        }),
         RunRequest::Profile(ProfileRequest::Reject { dir: dir.clone() }),
         RunRequest::Profile(ProfileRequest::Edit {
             dir: dir.clone(),
@@ -352,6 +359,7 @@ fn every_new_request_and_reply_round_trips() {
                 verification: Some(a_verification()),
                 fingerprint,
                 edited_keys: vec!["check".into()],
+                project: Some("/work/app".into()),
             }),
             verification: Some(a_verification()),
             dropped: vec![a_dropped()],
@@ -489,6 +497,26 @@ fn token_usage_add_assign_is_field_wise() {
             output: 600_020,
             cache_read: 7_000_300,
             cache_write: 80_004_000,
+        }
+    );
+}
+
+/// M8b.11 review (I4, m3): a meta written before `project` existed, and a `Confirm`
+/// without `shown`, still read.
+#[test]
+fn meta_project_and_confirm_shown_default_when_absent() {
+    let meta: crate::ProfileMeta = serde_json::from_str(
+        r#"{"confirmed_at":1,"report":null,"verification":null,"fingerprint":{},"edited_keys":[]}"#,
+    )
+    .unwrap();
+    assert_eq!(meta.project, None);
+    let confirm: crate::ProfileRequest =
+        serde_json::from_str(r#"{"Confirm":{"dir":"/work/app"}}"#).unwrap();
+    assert_eq!(
+        confirm,
+        crate::ProfileRequest::Confirm {
+            dir: "/work/app".into(),
+            shown: None
         }
     );
 }

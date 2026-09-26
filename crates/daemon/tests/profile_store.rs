@@ -42,6 +42,7 @@ fn meta(fingerprint: BTreeMap<String, String>) -> ProfileMeta {
         verification: None,
         fingerprint,
         edited_keys: Vec::new(),
+        project: None,
     }
 }
 

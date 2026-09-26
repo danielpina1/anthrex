@@ -151,6 +151,11 @@ async fn dispatch(
                 },
             )
             .await?;
+            // Review m3: the daemon stores this proposal only if it still reads so.
+            let text = match &shown {
+                ProfileReply::Shown { toml, .. } => Some(toml.clone()),
+                _ => None,
+            };
             show(shown, false)?;
             if !yes {
                 let project = status(&mut client, &dir).await?.project;
@@ -159,7 +164,7 @@ async fn dispatch(
                     anyhow::bail!("not stored");
                 }
             }
-            done(request(&mut client, ProfileRequest::Confirm { dir }).await?)
+            done(request(&mut client, ProfileRequest::Confirm { dir, shown: text }).await?)
         }
         ProfileCommand::Reject => done(request(&mut client, ProfileRequest::Reject { dir }).await?),
         ProfileCommand::Edit {

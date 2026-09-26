@@ -119,6 +119,15 @@ impl RunService {
             Stored::Unparseable { path, error } => return Err(unparseable(&path, &error)),
             Stored::Absent => (None, repo_dir.join(PROFILE_FILE)),
         };
+        // Decision 7 at `run start` (task 11 review, I4): a stale stored profile is still
+        // used, and a re-detection starts beside the run where `onboarding.auto` allows
+        // it. The preflight just passed, so the tree is clean.
+        if !stale.is_empty()
+            && let Some(adaptation) = self.adaptation.get()
+        {
+            let (profiles, pre, stale) = (adaptation.profiles.clone(), pre.clone(), stale.clone());
+            tokio::spawn(async move { profiles.auto_on_stale(&pre, stale).await });
+        }
         let chosen = run_profile(stored.as_ref(), &path, &plan.profile, &config.profile);
         apply_to_plan(&chosen, &mut plan.profile, &mut config.profile);
         Ok(ProfileChoice {

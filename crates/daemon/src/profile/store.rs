@@ -188,6 +188,7 @@ pub fn load(repo_dir: &Path) -> Stored {
             verification: None,
             fingerprint: BTreeMap::new(),
             edited_keys: Vec::new(),
+            project: None,
         },
         Err(error) => {
             return Stored::Unparseable {

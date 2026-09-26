@@ -187,6 +187,11 @@ pub struct ProfileMeta {
     /// Path → `"<16 hex>:<len>"`, or `"missing"` (decision 7).
     pub fingerprint: BTreeMap<String, String>,
     pub edited_keys: Vec<String>,
+    /// The project (main checkout) the profile was confirmed for, so the daemon can
+    /// check its staleness at start (decision 7). Absent in a meta written before
+    /// M8b.11's review: such a profile is checked at the next `profile status`.
+    #[serde(default)]
+    pub project: Option<PathBuf>,
 }
 
 /// `anthrex profile status`.

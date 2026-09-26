@@ -44,18 +44,6 @@ enum Stop {
     Cancelled,
 }
 
-/// The commands `profile edit <key>` touches: `--yes` confirms only when none of them
-/// was dropped (decision 10).
-pub fn touched_commands(key: &str) -> &'static [&'static str] {
-    match key.split('.').next().unwrap_or(key) {
-        "setup" => &["setup"],
-        "check" | "check_timeout_secs" => &["check"],
-        "single_test" | "test_passed" | "sample_test" => &["single_test"],
-        "env" => &["setup", "check", "single_test"],
-        _ => &[],
-    }
-}
-
 impl ProfileService {
     /// `<wt>/runs/<name>` and its repository `<repo_dir>/tasks/<name>`.
     pub(super) fn checkout(&self, project: &Path, name: &str) -> (PathBuf, PathBuf) {
@@ -74,22 +62,31 @@ impl ProfileService {
         name: &str,
     ) -> Result<Option<String>, String> {
         let (path, repo) = self.checkout(project, name);
+        self.discard_at(project, path, repo).await
+    }
+
+    /// The checkout at `path` (its repository `repo`) salvaged if dirty and removed,
+    /// behind `root`'s write queue, git run as `root`'s; nothing to do when neither is
+    /// there.
+    pub(super) async fn discard_at(
+        &self,
+        root: &Path,
+        path: PathBuf,
+        repo: PathBuf,
+    ) -> Result<Option<String>, String> {
         let (p, r) = (path.clone(), repo.clone());
         let present =
             blocking(move || Ok(std::fs::symlink_metadata(&p).is_ok() || r.exists())).await?;
         if !present {
             return Ok(None);
         }
-        let (git, root, timeout) = (
-            self.ctx.git.clone(),
-            project.to_path_buf(),
-            self.git_timeout(),
-        );
+        let (git, root_dir, timeout) =
+            (self.ctx.git.clone(), root.to_path_buf(), self.git_timeout());
         let secs = unix_now();
         self.ctx
             .git_queue
-            .write(project, move || {
-                verify::discard_named(&git, &root, &path, &repo, secs, timeout)
+            .write(root, move || {
+                verify::discard_named(&git, &root_dir, &path, &repo, secs, timeout)
             })
             .await
     }
@@ -335,15 +332,12 @@ impl ProfileService {
         Ok(())
     }
 
-    /// `edit --yes`: only when nothing the edit touched was dropped.
+    /// `edit --yes` (task 11 review, I2): only an edit, and only when verification
+    /// dropped nothing at all, so no command the user did not touch is lost without a
+    /// human confirming it. This implies decision 10's "nothing the edit touched was
+    /// dropped".
     fn may_auto_confirm(&self, record: &ProposalRecord) -> bool {
-        let ProposalOrigin::Edit { keys } = &record.origin else {
-            return false;
-        };
-        !record.dropped.iter().any(|dropped| {
-            keys.iter()
-                .any(|key| touched_commands(key).contains(&dropped.key.as_str()))
-        })
+        matches!(record.origin, ProposalOrigin::Edit { .. }) && record.dropped.is_empty()
     }
 }
 
@@ -385,6 +379,7 @@ pub fn confirm_record(
         verification: record.verification.clone(),
         fingerprint: store::fingerprint(project, &watched),
         edited_keys,
+        project: Some(project.to_path_buf()),
     };
     store::save(repo_dir, &profile, &meta).map_err(|e| e.to_string())?;
     store::delete_proposal(repo_dir).map_err(|e| e.to_string())?;
@@ -393,20 +388,4 @@ pub fn confirm_record(
         project.display(),
         repo_dir.join(store::PROFILE_FILE).display()
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::touched_commands;
-
-    #[test]
-    fn an_edit_touches_the_commands_its_key_feeds() {
-        assert_eq!(touched_commands("check"), ["check"]);
-        assert_eq!(touched_commands("sample_test"), ["single_test"]);
-        assert_eq!(
-            touched_commands("env.RUST_LOG"),
-            ["setup", "check", "single_test"]
-        );
-        assert!(touched_commands("modules").is_empty());
-    }
 }

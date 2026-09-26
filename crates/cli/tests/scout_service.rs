@@ -334,7 +334,7 @@ async fn scout_without_a_report_is_nudged_then_failed() {
 async fn a_report_from_another_window_is_refused() {
     let rig = Rig::new().await;
     let id = "onboarding-1695000002";
-    let handle = rig.start(id, &[json!({"hang": true})]).await;
+    let handle = rig.start(id, &[json!({"hang": {}})]).await;
     let window = handle.window_id;
     assert_eq!(
         refusal(rig.scouts.tool(call(window + 100, id)).await),
@@ -440,10 +440,13 @@ async fn error_reply(stream: &mut UnixStream) -> DaemonMsg {
 async fn a_run_less_scout_window_refuses_client_input_with_the_profile_hint() {
     let rig = Rig::new().await;
     let id = "onboarding-1695000005";
-    let handle = rig.start(id, &[json!({"hang": true})]).await;
+    // The first turn is taken, so the session is working, then it hangs in that turn.
+    let steps = [json!({"read_message": {}}), json!({"hang": {}})];
+    let handle = rig.start(id, &steps).await;
     let window = handle.window_id;
-    wait_for("the scout's process", SESSION_WAIT, || {
+    wait_for("the scout to be working", SESSION_WAIT, || {
         rig.manager.child_pid(window).ok().flatten().is_some()
+            && rig.status(window) == Some(Status::Working)
     })
     .await;
     let pid = rig.manager.child_pid(window).unwrap().unwrap();
@@ -483,6 +486,9 @@ async fn a_run_less_scout_window_refuses_client_input_with_the_profile_hint() {
         );
         assert_eq!(rig.manager.child_pid(window).unwrap(), Some(pid));
     }
+    // Task 11 review I1: the scout is still alive after every refusal, not merely
+    // not yet reaped.
+    assert_eq!(rig.status(window), Some(Status::Working));
     rig.scouts.stop(id);
     assert!(matches!(outcome(handle).await, ScoutOutcome::Failed { .. }));
     rig.finish().await;
@@ -543,11 +549,7 @@ async fn a_scout_stopped_before_its_window_exists_is_killed_when_it_does() {
     let gate = LaunchGate::closed();
     let rig = Arc::new(Rig::with(Runtime::Claude, None, gate.clone()).await);
     let id = "onboarding-1695000008";
-    script_in(
-        &rig.repo,
-        &format!("scout-{id}-1"),
-        &[json!({"hang": true})],
-    );
+    script_in(&rig.repo, &format!("scout-{id}-1"), &[json!({"hang": {}})]);
     let starter = {
         let rig = rig.clone();
         tokio::spawn(async move { rig.scouts.start(rig.spec(id)).await })

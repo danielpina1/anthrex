@@ -61,7 +61,7 @@ impl ProfileService {
         .await
     }
 
-    async fn preflight(&self, dir: PathBuf) -> Result<Preflight, String> {
+    pub(super) async fn preflight(&self, dir: PathBuf) -> Result<Preflight, String> {
         let (g, timeout) = (self.ctx.git.clone(), self.git_timeout());
         blocking(move || git::preflight(&g, &dir, timeout)).await
     }
@@ -113,13 +113,7 @@ impl ProfileService {
         {
             match self.preflight(dir).await {
                 Ok(pre) => {
-                    self.auto_detect(
-                        &pre,
-                        ProposalOrigin::Auto {
-                            stale: stale.clone(),
-                        },
-                    )
-                    .await;
+                    self.auto_on_stale(&pre, stale.clone()).await;
                     proposal = self.load(&project).await?.1;
                 }
                 Err(error) => tracing::info!(%error, "no automatic re-detection"),
@@ -205,7 +199,11 @@ impl ProfileService {
     }
 
     /// `profile confirm`: the ready proposal stored, the proposal deleted.
-    pub(super) async fn confirm(&self, dir: PathBuf) -> Result<ProfileReply, String> {
+    pub(super) async fn confirm(
+        &self,
+        dir: PathBuf,
+        shown: Option<String>,
+    ) -> Result<ProfileReply, String> {
         let project = self.project_of(dir).await?;
         let _writes = self.writes.lock().await;
         let active = crate::lock(&self.table).active.contains_key(&project);
@@ -221,7 +219,12 @@ impl ProfileService {
                 project.display()
             )
         })?;
-        ready_profile(&record)?;
+        let profile = ready_profile(&record)?;
+        // Review m3: only the proposal the user was shown is stored.
+        let current = show_text(&profile, record.verification.as_ref(), &record.dropped);
+        if shown.is_some_and(|shown| shown != current) {
+            return Err(changed_since_shown(&project));
+        }
         let dir = self.repo_dir(&project);
         let p = project.clone();
         let message = blocking(move || confirm_record(&dir, &p, &record)).await?;
@@ -353,14 +356,20 @@ impl ProfileService {
         .await?;
         Ok(ProfileReply::Done {
             message: if yes {
-                format!(
-                    "{shown}; it is stored as soon as verification passes (anthrex profile status)"
-                )
+                format!("{shown}; stored (it needed no verification)")
             } else {
                 format!("{shown}; confirm with anthrex profile confirm")
             },
         })
     }
+}
+
+/// Review m3's refusal: the proposal changed between `show` and `confirm`.
+pub fn changed_since_shown(project: &Path) -> String {
+    format!(
+        "the proposal for {} changed since it was shown; run anthrex profile confirm again",
+        project.display()
+    )
 }
 
 fn unparseable_text(path: &Path, error: &str) -> String {

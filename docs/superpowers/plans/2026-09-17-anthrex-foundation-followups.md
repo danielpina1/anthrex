@@ -1400,19 +1400,12 @@ scope.
 
 ## From M8b.11 (2026-09-26), for M8b
 
-- **Some scout tests script a hang that fake-agent rejects.** `crates/cli/tests/scout_service.rs`
-  writes `{"hang": true}`, but fake-agent's `hang` step takes `{}` (`{"hang": {}}`). The
-  malformed step fails the script at once, so those scouts end immediately instead of
-  hanging. The affected tests (`a_report_from_another_window_is_refused` and the stop
-  tests) still pass, but they do not exercise a hanging scout. M8b.11's own tests use
-  `{"hang": {}}`. Fixing the fixtures would make those tests prove what their names say.
-- **Staleness is not checked at daemon start.** Decision 7 asks for it "at daemon start
-  for every stored profile". A stored profile (`profile.toml`, `profile.meta.json`) does
-  not record its project root, and `repo_dir`'s name (`<basename>-<hash8>`) cannot be
-  inverted, so `ProfileService::restore` cannot find the files to fingerprint. Staleness
-  is checked at `profile status` (which starts decision 7's re-detection) and at `run
-  start` (M8b.4). Recording the project in `profile.meta.json` (a `#[serde(default)]`
-  field) would allow the start-time check.
+- **Both M8b.11 findings first recorded here were fixed in M8b.11's review round:**
+  the M8b.9 `{"hang": true}` fixtures, and the staleness check at daemon start.
+- **`ProfileService.writes` is one mutex for every project (review m4).** `reject` holds
+  it across `discard_checkout`, which waits on the project's git write queue, so a reject
+  behind a long write in one project delays proposal saves in every project. It is not
+  a deadlock. Per-project mutexes, or dropping the guard before the discard, would fix it.
 
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 

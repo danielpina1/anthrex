@@ -7,7 +7,7 @@ mod support;
 use std::time::Duration;
 
 use daemon::run::driver::{INTERRUPT_GRACE, RETIRE_AFTER};
-use proto::{ProfileStatus, ProposalState};
+use proto::{ProfileReply, ProfileRequest, ProfileStatus, ProposalState};
 use serde_json::json;
 
 use support::run_adapt::{PROFILE_LINES, PROFILE_WAIT};
@@ -157,6 +157,87 @@ fn e2e_detect_refuses_an_unconfinable_platform_without_the_flag() {
     let status = settle(&h);
     let record = status.proposal.unwrap();
     assert_eq!(record.state, ProposalState::Ready, "{record:#?}");
+    assert!(record.unconfined_checks);
+    assert!(!record.verification.unwrap().confined);
+}
+
+/// Review m6 (and reject during `Verifying`): while work runs, `confirm` is refused
+/// with decision 8's text; after `reject`, until the stopped work has cleaned up, a new
+/// detection is refused as stopping, and nothing is written back.
+#[test]
+fn e2e_running_and_stopping_work_refuse_with_their_texts() {
+    let h = harness("", &[], &[("slow.sh", "sleep 6; echo checked\n")]);
+    h.onboarding_report(1, json!({"check": "sh slow.sh"}));
+    ok(h.profile(&["detect"]));
+    let status = h.wait_profile(
+        "verification to run",
+        |s| {
+            s.proposal
+                .as_ref()
+                .is_some_and(|r| r.state == ProposalState::Verifying)
+        },
+        PROFILE_WAIT,
+    );
+    let project = status.project.clone();
+    let confirm = h.profile_request(ProfileRequest::Confirm {
+        dir: h.repo.clone(),
+        shown: None,
+    });
+    assert_eq!(
+        confirm,
+        ProfileReply::Refused {
+            message: format!(
+                "detection is already running for {} (state verifying); anthrex profile reject stops it",
+                project.display()
+            )
+        }
+    );
+    ok(h.profile(&["reject"]));
+    let detect = h.profile_request(ProfileRequest::Detect {
+        dir: h.repo.clone(),
+        trust_project: false,
+        unconfined_checks: false,
+    });
+    assert_eq!(
+        detect,
+        ProfileReply::Refused {
+            message: format!(
+                "detection for {} is stopping after anthrex profile reject; try again in a moment",
+                project.display()
+            )
+        }
+    );
+    let verify = daemon::profile::verify::checkout_path(&h.data().join("worktrees"), &project);
+    h.wait_profile(
+        "the stopped verification to clean up",
+        |_| std::fs::symlink_metadata(&verify).is_err(),
+        PROFILE_WAIT,
+    );
+    assert_eq!(h.profile_status().proposal, None, "nothing is written back");
+}
+
+/// Review I3 (M12), ruling R-T10-1 for edits: an edit's re-verification is refused
+/// where it cannot be confined unless the request allows it.
+#[cfg(target_os = "macos")]
+#[test]
+fn e2e_an_edits_verification_refuses_an_unconfinable_platform_without_the_flag() {
+    let h = harness("", &[("ANTHREX_CHECK_CONFINEMENT", "unavailable")], &[]);
+    report(&h);
+    ok(h.profile(&["detect", "--unconfined-checks"]));
+    settle(&h);
+    ok(h.profile(&["confirm", "--yes"]));
+    assert_eq!(
+        refused(h.profile(&["edit", "check", "sh check.sh && true"])),
+        "this platform cannot confine the run's checks, proofs and setup, which run code the workers wrote; pass --unconfined-checks to run them unconfined anyway, or set [orchestrator] unconfined_checks = true in your config"
+    );
+    assert_eq!(h.profile_status().proposal, None);
+    ok(h.profile(&[
+        "edit",
+        "check",
+        "sh check.sh && true",
+        "--unconfined-checks",
+    ]));
+    let record = settle(&h).proposal.unwrap();
     assert!(record.unconfined_checks);
     assert!(!record.verification.unwrap().confined);
 }

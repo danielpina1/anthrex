@@ -107,8 +107,12 @@ pub enum ProfileRequest {
         dir: PathBuf,
         proposed: bool,
     },
+    /// `shown`: the `show_text` the user was shown; a proposal that no longer reads
+    /// so is refused, so confirming stores exactly what was shown.
     Confirm {
         dir: PathBuf,
+        #[serde(default)]
+        shown: Option<String>,
     },
     Reject {
         dir: PathBuf,
