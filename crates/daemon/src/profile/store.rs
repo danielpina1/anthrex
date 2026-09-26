@@ -65,20 +65,40 @@ fn sync_dir(dir: &Path) -> io::Result<()> {
     File::open(dir)?.sync_all()
 }
 
-/// Replaces `path` with `bytes` atomically and durably: a temp file of this write's own
-/// (`create_new`, mode `0600`), `fsync`, rename, `fsync` of the directory. Concurrent
-/// writes of one path never share a temp file, so each rename installs one whole
-/// write. The directory is created when missing; on failure the temp file is removed.
-pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(dir)?;
-    let tmp = tmp_path(path);
-    let written = (|| {
-        let mut file = OpenOptions::new()
+/// How many temp names [`write_atomic`] tries before giving up.
+const TMP_TRIES: u32 = 64;
+
+/// A temp file of this write's own, `create_new` with mode `0600`: a name some other
+/// file already holds (a crashed process's leftover with a reused pid) is skipped for
+/// the next counter, never opened or removed (ruling R-T4-2).
+fn create_tmp(path: &Path) -> io::Result<(PathBuf, File)> {
+    let mut last = None;
+    for _ in 0..TMP_TRIES {
+        let tmp = tmp_path(path);
+        match OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
-            .open(&tmp)?;
+            .open(&tmp)
+        {
+            Ok(file) => return Ok((tmp, file)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => last = Some(e),
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| io::Error::other("no free temp name")))
+}
+
+/// Replaces `path` with `bytes` atomically and durably: a temp file of this write's own
+/// (`create_new`, mode `0600`), `fsync`, rename, `fsync` of the directory. Concurrent
+/// writes of one path never share a temp file, so each rename installs one whole
+/// write. The directory is created when missing; on failure the temp file this call
+/// created is removed, and no other.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    let (tmp, mut file) = create_tmp(path)?;
+    let written = (|| {
         file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
         file.write_all(bytes)?;
         file.sync_all()?;
@@ -327,4 +347,61 @@ pub fn stale(project: &Path, meta: &ProfileMeta) -> Vec<String> {
         .filter(|(path, recorded)| one(project, path) != **recorded)
         .map(|(path, _)| path.clone())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::Ordering;
+
+    use super::{TMP_COUNTER, write_atomic};
+
+    fn temps(dir: &std::path::Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Ruling R-T4-2: a temp name another file already holds is skipped, and that file
+    /// is left exactly as it was.
+    #[test]
+    fn a_taken_temp_name_is_skipped_and_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("proposal.json");
+        let next = TMP_COUNTER.load(Ordering::Relaxed);
+        // Other tests in this binary may take a few names meanwhile: hold many.
+        let taken: Vec<_> = (next..next + 32)
+            .map(|n| {
+                let name = format!("proposal.json.{}.{n}.tmp", std::process::id());
+                std::fs::write(dir.path().join(&name), "other").unwrap();
+                name
+            })
+            .collect();
+        write_atomic(&path, b"mine").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "mine");
+        for name in &taken {
+            assert_eq!(
+                std::fs::read_to_string(dir.path().join(name)).unwrap(),
+                "other",
+                "{name}"
+            );
+        }
+        assert_eq!(temps(dir.path()).len(), taken.len());
+    }
+
+    /// Ruling R-T4-2: a write that fails (here its rename, onto a non-empty directory)
+    /// leaves no temp file behind.
+    #[test]
+    fn a_failed_write_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profile.toml");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("inside"), "x").unwrap();
+        assert!(write_atomic(&path, b"profile").is_err());
+        assert_eq!(temps(dir.path()), Vec::<String>::new());
+        assert!(path.join("inside").exists());
+    }
 }

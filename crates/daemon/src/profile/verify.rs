@@ -217,7 +217,7 @@ const NAME_TAKEN: &str = "already holds other work";
 /// Whether `path` is pinned, unbroken, as the standalone checkout of `repo`: only then
 /// does any git command run in it, and always with the pin's explicit git directory
 /// and work tree, never by discovery (M8b.10 review, I1).
-fn pinned_as_ours(path: &Path, repo: &Path) -> bool {
+pub(super) fn pinned_as_ours(path: &Path, repo: &Path) -> bool {
     let Ok(git_dir) = Repo::at(repo).git_dir().canonicalize() else {
         return false;
     };

@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use daemon::launch::LaunchGate;
 use daemon::manager::{ManagerConfig, WindowManager};
+use daemon::profile::service::{ProfileContext, ProfileService};
 use daemon::run::driver::{Adaptation, INTERRUPT_GRACE, RETIRE_AFTER, RunService};
 use daemon::scout::contract::SCOUT_NUDGE;
 use daemon::scout::service::{ScoutHandle, ScoutOutcome, ScoutService};
@@ -115,7 +116,21 @@ impl Rig {
             },
         );
         scouts.spawn(shutdown.clone());
+        let profiles = ProfileService::new(
+            scouts.clone(),
+            manager.clone(),
+            ProfileContext {
+                data_dir: dir.path().join("data"),
+                worktrees_root: dir.path().join("worktrees"),
+                git: "git".into(),
+                orchestrator: orchestrator.clone(),
+                git_queue: runs.git_queue(),
+                cli_caps: manager.config().cli_caps,
+                daemon_socket: dir.path().join("d.sock"),
+            },
+        );
         runs.set_adaptation(Adaptation {
+            profiles,
             scouts: scouts.clone(),
         });
         tokio::spawn(serve(
@@ -277,6 +292,8 @@ async fn scout_report_is_stored_and_the_session_retired() {
         || rig.status(window).is_none(),
     )
     .await;
+    // Ruling R-T9-2: the finished scout left the table with its window.
+    assert!(rig.scouts.info(id).is_none());
     rig.finish().await;
 }
 

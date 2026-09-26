@@ -11,6 +11,8 @@
 //!   decision 7's fingerprint.
 //! - `verify.rs` (blocking I/O): decision 9's verification of a proposal's commands in a
 //!   fresh, confined, standalone checkout.
+//! - `service.rs` (+ `service_run.rs`, `service_requests.rs`): `ProfileService`,
+//!   decisions 8, 10 and 11: detection, verification, confirmation, `anthrex profile`.
 //!
 //! The profile holds no confinement setting: `cache_dirs` and the `confined_*` tables
 //! are the user's own config, keyed by repository root, so a model-written profile can
@@ -22,6 +24,10 @@ use proto::RepoProfile;
 
 pub mod proposal;
 pub mod resolve;
+pub mod service;
+mod service_requests;
+pub mod service_run;
+pub mod service_start;
 pub mod store;
 pub mod verify;
 

@@ -506,3 +506,25 @@ fn a_record_of_another_command_does_not_verify_the_proposed_one() {
         ]
     );
 }
+
+/// Task 10 re-review m2: a checkout pinned as the standalone checkout of another
+/// repository is not ours, so no git command runs in it.
+#[test]
+fn pinned_as_ours_requires_the_pins_git_dir_to_be_the_repositorys() {
+    let dir = tempfile::tempdir().unwrap();
+    let (ours, other) = (dir.path().join("ours"), dir.path().join("other"));
+    for repo in [&ours, &other] {
+        std::fs::create_dir_all(repo.join("git")).unwrap();
+        std::fs::write(repo.join("git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    }
+    let checkout = dir.path().join("checkout");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let pin_as = |repo: &Path| crate::worktree::pinned::PinAs {
+        repo: Some(repo.join("git")),
+        ..Default::default()
+    };
+    crate::worktree::pinned::pin(dir.path(), &checkout, pin_as(&other));
+    assert!(!super::verify::pinned_as_ours(&checkout, &ours));
+    assert!(super::verify::pinned_as_ours(&checkout, &other));
+    crate::worktree::pinned::unpin(&checkout);
+}

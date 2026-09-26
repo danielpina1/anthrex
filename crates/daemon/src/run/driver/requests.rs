@@ -165,7 +165,7 @@ impl RunService {
             RunRequest::StartGoal { .. } => answer(request::START_GOAL, Err(NOT_YET.into())),
             RunRequest::Promote { .. } => answer(request::PROMOTE, Err(NOT_YET.into())),
             RunRequest::Stats { .. } => answer(request::STATS, Err(NOT_YET.into())),
-            RunRequest::Profile(_) => answer(request::PROFILE, Err(NOT_YET.into())),
+            RunRequest::Profile(profile) => self.profile(profile).await,
             RunRequest::Subscribe | RunRequest::Unsubscribe => RunReply::Refused {
                 request: "run".to_string(),
                 message: "subscriptions are answered by the connection".to_string(),

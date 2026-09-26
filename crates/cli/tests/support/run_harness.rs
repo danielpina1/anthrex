@@ -53,7 +53,7 @@ pub struct RunHarness {
     pub repo: PathBuf,
     /// `FAKE_AGENT_ARGS_FILE` and `FAKE_AGENT_STDIN_FILE`: `<name>.args`, `<name>.stdin`.
     pub io: PathBuf,
-    env: Vec<(String, String)>,
+    pub(super) env: Vec<(String, String)>,
     /// The daemon this harness started and must stop (`run_daemon.rs`).
     daemon: Mutex<Option<DaemonProcess>>,
 }
@@ -144,12 +144,22 @@ impl RunHarness {
         let config = dir.path().join("config.toml");
         // Final fix batch F1c round 2: where the platform cannot confine checks (Linux
         // CI), the e2e runs allow it, as a user must; a test that says otherwise wins.
-        let orchestrator =
+        let mut orchestrator =
             if cfg!(target_os = "macos") || orchestrator.contains("unconfined_checks") {
                 orchestrator.to_string()
             } else {
                 format!("unconfined_checks = true\n{orchestrator}")
             };
+        // M8b decision 36: deciders off and no automatic onboarding, unless the test's
+        // lines say otherwise, so every M8a scenario runs exactly as before.
+        for (table, line) in [
+            ("deciders", "deciders.mode = \"off\""),
+            ("onboarding", "onboarding.auto = false"),
+        ] {
+            if !orchestrator.contains(table) {
+                orchestrator = format!("{line}\n{orchestrator}");
+            }
+        }
         // F1c round 3 (N3): `cache_dirs` is the user's config only, keyed by repository
         // root. Every harness gets one writable cache directory for its repository, so a
         // confined check that must log outside its checkout can (see `cache_dir`).

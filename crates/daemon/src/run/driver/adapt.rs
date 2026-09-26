@@ -6,14 +6,19 @@
 //!
 //! M8b.9: [`Adaptation`], the services the daemon hands the driver once, and the routing
 //! of a scout's tool call to [`ScoutService::tool`] (decision 15).
+//!
+//! M8b.11: `RunRequest::Profile` goes to [`ProfileService::request`].
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use proto::{AgentRole, OutputFilter, Plan, ProfileSource, RunReply, ToolCall};
+use proto::{
+    AgentRole, OutputFilter, Plan, ProfileReply, ProfileRequest, ProfileSource, RunReply, ToolCall,
+};
 
 use super::RunService;
 use crate::profile::resolve::{apply_choice as apply_to_plan, run_profile};
+use crate::profile::service::ProfileService;
 use crate::profile::store::{self, PROFILE_FILE, Stored};
 use crate::run::engine::EventKind;
 use crate::run::model::{LogEntry, Run};
@@ -38,9 +43,10 @@ fn unparseable(path: &std::path::Path, error: &str) -> String {
     )
 }
 
-/// Milestone 8b's services, set once with [`RunService::set_adaptation`]. Later tasks
-/// add the profile service and the decider context.
+/// Milestone 8b's services, set once with [`RunService::set_adaptation`]. A later task
+/// adds the decider context.
 pub struct Adaptation {
+    pub profiles: Arc<ProfileService>,
     pub scouts: Arc<ScoutService>,
 }
 
@@ -48,6 +54,22 @@ impl RunService {
     /// Sets the services once; a second call is ignored.
     pub fn set_adaptation(&self, adaptation: Adaptation) {
         let _ = self.adaptation.set(adaptation);
+    }
+
+    /// The per-repository git write queue, shared with the profile service.
+    pub fn git_queue(&self) -> Arc<crate::run::git::GitQueue> {
+        self.queue.clone()
+    }
+
+    /// `anthrex profile …` (decision 10), answered by the profile service.
+    pub(super) async fn profile(&self, request: ProfileRequest) -> RunReply {
+        let reply = match self.adaptation.get() {
+            Some(adaptation) => adaptation.profiles.request(request).await,
+            None => ProfileReply::Refused {
+                message: "the profile service is not running".to_string(),
+            },
+        };
+        RunReply::Profile(Box::new(reply))
     }
 
     /// A `submit_*` call from an agent (decision 15): a scout's goes to the scout

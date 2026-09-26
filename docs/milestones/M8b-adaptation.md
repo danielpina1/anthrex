@@ -2480,3 +2480,80 @@ So the "empty-root `ClaudeSandbox`" M8a gives reviewers (F1c N4) and decision 12
   - `restore_owner_access` as a no-op → both the M8a removal test and the lock test fail.
 - **Files:** the process tests were split for rule 8. `profile_verify.rs` (337 lines) holds the verification behaviour, and the new `profile_verify_leftovers.rs` (276) holds how checkouts end. Both share the new `crates/cli/tests/support/profile_rig.rs` (131). Other sizes: `verify.rs` 473, `checkout.rs` 283 → 346, `tmp.rs` 125, `tests_verify.rs` 508.
 - **Follow-ups** (recorded under "From M8b.10's review"): a `chflags uchg` set by a command would still block removal; `restore_owner_access` walks by path, not by `openat`.
+
+### M8b.11 onboarding II: the profile service, detection, restart and `anthrex profile` (2026-09-26)
+
+**Deviations and choices the brief leaves open:**
+- **Files (rule 8).** `profile/service.rs` (506 lines) holds the service, its table, `restore`, `effective`, the request dispatch and `wire`. Three more files hold the rest:
+  - `profile/service_start.rs` (167): the refusals, the registration and `start_detection`/`auto_detect`;
+  - `profile/service_run.rs` (412): the background work, the checkouts and `confirm_record`;
+  - `profile/service_requests.rs` (388): the six requests.
+
+  The process tests are split the same way: `crates/cli/tests/profile_cli.rs` (354) holds the flows and `profile_cli_refusals.rs` (162) the refusals. `ProfileService::wire` (in `service.rs`) builds both services and calls `set_adaptation`, so `lifecycle.rs` grows by 11 lines (439 → 450), not 46.
+- **Onboarding scout ids (ruling R-T9-2)** stay `onboarding-<n>`. `n` is the current unix second, or one more than the last number handed out, whichever is larger (`service::next_scout_secs`). A number whose report file already exists is skipped. So two detections in one second never share an id, and fake-agent's "a trailing number of 9 or more digits" script rule still matches.
+- **Staleness is not checked at daemon start.** A stored profile does not record its project, so `restore` cannot fingerprint it. It is checked at `profile status` (which starts decision 7's re-detection) and at `run start`. This is recorded as a follow-up. `restore` does everything else decision 11 and the rulings ask, in this order:
+  1. It removes every run-less scout window.
+  2. For each `<data>/repos/*`, it calls `sweep_leftovers` (R-T4-1) and fails any in-progress proposal with `RESTART_REASON`.
+  3. It salvages and removes both detection checkouts of every proposal's project, in any state.
+- **Automatic re-detection** (decision 7) starts from `profile status` when all of the following hold: `onboarding.auto` is on, the stored profile is stale, no work runs for the project, and `service::auto_allowed` holds (no proposal, or one that failed at least `AUTO_RETRY_AFTER_SECS` = 3600 s ago; a `Ready` proposal counts as pending). It also needs a preflight: a dirty tree logs `no automatic re-detection` and starts nothing. A refusal (project settings, confinement) is stored as the proposal's `Failed` reason.
+- **Reject while work runs.** `reject` cancels the work's token, stops its scout through `ScoutService::stop` (the existing kill path, unchanged), deletes `proposal.json` and answers at once. The work then discards its own checkouts; verification commands already running end at their own timeout. Two things keep this safe:
+  - Every `proposal.json` write of the work goes through `save_if_current` under the `writes` mutex (a tokio mutex, not `daemon::lock`), so a rejected proposal is never written back.
+  - The table entry stays until the work ends, so a new detection cannot race the old one's clean-up. Meanwhile `detect`, `edit` and `confirm` are refused with `detection for <project> is stopping after anthrex profile reject; try again in a moment`.
+
+  With no work running, `reject` discards any leftover checkouts itself. It is refused with `no proposal for <project>` when there was nothing to reject.
+- **Texts the brief leaves open:**
+  - `detect`: `detection started for <project>; follow it with anthrex profile status`.
+  - `confirm`: `stored the profile for <project> at <repo_dir>/profile.toml`.
+  - `reject`: `rejected the proposal for <project>`.
+  - `show --proposed` of a proposal that is not ready: `the proposal for <project> is not ready yet (state <s>); see anthrex profile status`, or `… failed: <reason>; run anthrex profile detect`.
+  - A missing proposal: `no proposal for <project>; run anthrex profile detect` (show) or `no proposal to confirm for <project>; run anthrex profile detect` (confirm).
+  - `--unset` prints `proposed: <key> = (unset); …`.
+  - An edit with `--yes` that needs no re-verification is stored at once, and prints the `--yes` text.
+  - The status line `verification: unconfined (<why>)` reads `(this platform cannot confine it, or worker_sandbox is off)`, since `ProfileStatus` carries only `verify_confined`.
+  - The state labels are `preparing`, `scouting`, `verifying`, `ready`, `failed` (`service::state_label`).
+- **`ProfileReply::Shown`.** `toml` is the whole `proposal::show_text` (the CLI prints it as it is), and `source` is where the stored profile stands (`Stored` or `None`), also for `--proposed`.
+- **`profile edit --yes` confirms only when nothing the edit touched was dropped**, through `service_run::touched_commands`:
+  - `setup` → setup;
+  - `check` and `check_timeout_secs` → check;
+  - `single_test`, `test_passed` and `sample_test` → single_test;
+  - `env.*` → all three;
+  - anything else → none.
+
+  Other rules for an edit:
+  - A confirmed edit's `ProfileMeta.report` is `None`, as Interfaces says, and `edited_keys` accumulates the stored meta's keys plus the new one.
+  - A re-verified edit uses `start_refusal` with the request's `--unconfined-checks`, like detection does.
+  - An edit that needs no re-verification needs no preflight, so it works in a dirty checkout. Its proposal's `base_sha` is empty.
+- **Ruling R-T10-1.** The proposal's `proposed` is the scout's raw profile. Verification and `apply_verification` run on `from_findings(proposed)`. If `verify` returns `Err`, the proposal is `Failed` with that text. The confinement refusal is the task's last test. The extra test `e2e_a_verification_that_cannot_run_fails_the_proposal` puts a file where the checkouts' directory goes, so an edit's verification cannot prepare its checkout, and it checks the reason.
+- **Ruling R-T9-1.** The onboarding scout's `repo_paths` are `<repo_dir>/tasks/.onboarding` and `<git common dir>/objects`. `e2e_detect_proposes_only_verified_commands` finds both in the recorded `--settings` `denyWrite`.
+- **Ruling R-T9-3.** `Scout.installed` is set only by the bind that follows `create_headless`. A kill the machine asks for before that bind sets `kill_on_bind`, whether or not the session feed bound the window early (`step_locked`). The unit test is `a_stop_after_an_early_bind_is_still_owed_to_the_install`.
+- **Ruling R-T9-2.** When the ticker removes a scout's window, the scout leaves the table too. Tests:
+  - the unit test `a_finished_scout_leaves_the_table_with_its_window`;
+  - `scout_report_is_stored_and_the_session_retired`, which now asserts `info(id)` is `None` after the removal.
+- **Ruling R-T4-2.** `write_atomic` tries up to 64 temp names. A name some other file holds (`AlreadyExists`) is skipped, never opened or removed. Only a temp file this call created is removed on failure. Tests:
+  - `a_taken_temp_name_is_skipped_and_left_alone` failed before the change: the write failed and removed the other file.
+  - `a_failed_write_leaves_no_temp_file` pins behaviour that was already there.
+- **Task 10 re-review m2.** `pinned_as_ours` is `pub(super)`. The unit test `pinned_as_ours_requires_the_pins_git_dir_to_be_the_repositorys` pins a checkout as another repository's standalone checkout. It passes on the current code; dropping the `git_dir` comparison makes it fail.
+- **The harness (decision 36)** puts `deciders.mode = "off"` and `onboarding.auto = false` first among the test's `[orchestrator]` lines, unless those lines mention `deciders` or `onboarding`. `RunHarness.env` is `pub(super)`, for `support/run_adapt.rs`.
+- **The first message's inputs** are two reads in the root: `ls-tree -r -z --name-only <base>` for the count, and `ls-tree -z --name-only <base>` for the top-level names.
+- **Red evidence.** The unit tests for R-T4-2, R-T9-2 and R-T9-3 failed before their changes. The e2e tests were written after the service, so each was shown red by a mutation of non-kill, non-selection code, reverted afterwards:
+  - A: `RunRequest::Profile` answered `not available yet` → all seven `profile_cli` tests fail;
+  - B: no `sweep_leftovers` → the restart test fails;
+  - C: no `start_refusal` → the unconfinable-platform test fails;
+  - D: no restart failing → the restart test fails;
+  - E: no scout-window removal → the restart test fails;
+  - F: no checkout discard → the restart test fails;
+  - G: the verify error's text lost → the verification-failure test fails;
+  - H: the raw proposal verified instead of `from_findings`' → the detect test fails;
+  - J: no automatic re-detection → the stale test fails;
+  - K: empty `repo_paths` → the detect test fails.
+- **`PROFILE_WAIT`'s git calls as landed:** 18 on a clean detection, 28 with both checkouts salvaged. Recorded in `docs/timing-budgets.md` (M8b.11), with `WINDOW_GONE`.
+
+**Acceptance: `ProfileService` never holds `daemon::lock` across an await or a manager call.** Every `crate::lock(&self.table)` in `profile/service*.rs` is one expression or a block that ends before the next `.await`, manager call, scout-service call, git call or file access:
+- `running` reads `contains_key`, drops the guard, then awaits the proposal load.
+- `register`, `unregister` and `current` are synchronous and call nothing.
+- `scout_id` takes a number under the guard, then checks the report file on `spawn_blocking` after it.
+- `note_scout` only writes the table.
+- `reject` cancels the token and clones the scout id in a block, then calls `ScoutService::stop` and the file work after the block.
+- `status`, `confirm`, `edit` and `refuse_if_running` bind the lookup to a `let` before any await.
+
+The only lock held across an await is `writes` (a `tokio::sync::Mutex`), which orders `proposal.json` writes against `reject`. It is always taken before the table lock, never inside it.

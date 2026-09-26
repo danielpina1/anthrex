@@ -1398,6 +1398,22 @@ scope.
   step, which would at most add owner `rwx` to a directory the user owns. An
   `openat`/`fchmodat`-relative walk would close it.
 
+## From M8b.11 (2026-09-26), for M8b
+
+- **Some scout tests script a hang that fake-agent rejects.** `crates/cli/tests/scout_service.rs`
+  writes `{"hang": true}`, but fake-agent's `hang` step takes `{}` (`{"hang": {}}`). The
+  malformed step fails the script at once, so those scouts end immediately instead of
+  hanging. The affected tests (`a_report_from_another_window_is_refused` and the stop
+  tests) still pass, but they do not exercise a hanging scout. M8b.11's own tests use
+  `{"hang": {}}`. Fixing the fixtures would make those tests prove what their names say.
+- **Staleness is not checked at daemon start.** Decision 7 asks for it "at daemon start
+  for every stored profile". A stored profile (`profile.toml`, `profile.meta.json`) does
+  not record its project root, and `repo_dir`'s name (`<basename>-<hash8>`) cannot be
+  inverted, so `ProfileService::restore` cannot find the files to fingerprint. Staleness
+  is checked at `profile status` (which starts decision 7's re-detection) and at `run
+  start` (M8b.4). Recording the project in `profile.meta.json` (a `#[serde(default)]`
+  field) would allow the start-time check.
+
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
 - **The main pane can switch to a new window while the new-agent form is still open and

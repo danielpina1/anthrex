@@ -77,6 +77,7 @@ fn insert(service: &ScoutService, window_id: Option<u32>) {
             ended_at: None,
             turn_ended_pids: HashSet::new(),
             kill_on_bind: false,
+            installed: false,
             kill_at: None,
             remove_at: None,
         },
@@ -173,4 +174,55 @@ async fn a_bad_run_id_is_refused_at_start() {
         assert_eq!(error.to_string(), format!("invalid run id {run:?}"));
     }
     assert!(crate::lock(&service.table).scouts.is_empty());
+}
+
+/// Ruling R-T9-3: a stop after the session feed bound the window early, but before
+/// `create_headless` installed the process, is still owed to the start's bind.
+#[tokio::test]
+async fn a_stop_after_an_early_bind_is_still_owed_to_the_install() {
+    let service = service();
+    insert(&service, None);
+    service.bind(ID, WINDOW, false);
+    service.stop(ID);
+    let owed = |service: &ScoutService| crate::lock(&service.table).scouts[ID].kill_on_bind;
+    assert!(owed(&service));
+    service.bind(ID, WINDOW, true);
+    assert!(!owed(&service));
+    // Once installed, a kill is the window's own, never owed.
+    let (machine, _) = crate::scout::machine::step(
+        ScoutMachine::default(),
+        ScoutEvent::Start { now: 0 },
+        &crate::scout::machine::ScoutLimits::new(
+            &service.ctx.scouts,
+            crate::scout::spec::scout_route(&service.ctx).runtime,
+        ),
+    );
+    crate::lock(&service.table)
+        .scouts
+        .get_mut(ID)
+        .unwrap()
+        .machine = machine;
+    service.stop(ID);
+    assert!(!owed(&service));
+}
+
+/// Ruling R-T9-2: a finished scout leaves the table when its window is removed.
+#[tokio::test]
+async fn a_finished_scout_leaves_the_table_with_its_window() {
+    let service = service();
+    insert(&service, Some(WINDOW));
+    service.stop(ID);
+    {
+        let mut table = crate::lock(&service.table);
+        let scout = table.scouts.get_mut(ID).unwrap();
+        assert!(
+            scout.remove_at.is_some(),
+            "a failed scout's window is removed later"
+        );
+        scout.remove_at = Some(std::time::Instant::now());
+    }
+    service.tick();
+    let table = crate::lock(&service.table);
+    assert!(!table.scouts.contains_key(ID));
+    assert!(!table.by_window.contains_key(&WINDOW));
 }

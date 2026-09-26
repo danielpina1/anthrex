@@ -1,0 +1,167 @@
+//! How a proposal's work starts (decisions 8, 9 and 12): the refusals first (work
+//! already running, verification that cannot be confined without the user's leave,
+//! project settings a scout would run unasked), then the registration, the first
+//! `proposal.json` and the background task.
+
+use std::sync::Arc;
+
+use proto::{ProposalOrigin, ProposalRecord, ProposalState, Runtime};
+
+use super::service::{ProfileService, already_running, blocking};
+use super::store;
+use crate::headless::argv::CodexProjectConfig;
+use crate::run::confine;
+use crate::run::driver::unix_now;
+use crate::run::git;
+use crate::run::plan::Preflight;
+use crate::scout::spec::scout_route;
+
+/// Decision 12's refusal of project settings a scout would run without asking.
+pub fn settings_refusal(paths: &[String]) -> String {
+    format!(
+        "this repository has project settings that headless sessions would run without asking: {}; review them, then detect again with --trust-project",
+        paths.join(", ")
+    )
+}
+
+impl ProfileService {
+    /// Decision 12's project-settings check for the scout this service would start,
+    /// and, for a Codex scout that loads project config, the `.codex` entries its guard
+    /// needs. `Err` is the refusal (or a git failure).
+    async fn scout_checks(
+        &self,
+        pre: &Preflight,
+        trust_project: bool,
+    ) -> Result<(Vec<String>, Vec<crate::headless::codex_guard::GuardEntry>), String> {
+        let ctx = self.scouts.context();
+        let runtime = scout_route(ctx).runtime;
+        let caps = self.ctx.cli_caps;
+        let timeout = self.git_timeout();
+        let codex_loaded =
+            runtime == Runtime::Codex && caps.codex_project_config() == CodexProjectConfig::Loaded;
+        let claude_unexcluded =
+            runtime == Runtime::Claude && caps.claude_user_settings_only.is_none();
+        let mut paths = Vec::new();
+        if claude_unexcluded || codex_loaded {
+            let (g, root, base) = (self.ctx.git.clone(), pre.root.clone(), pre.base_sha.clone());
+            let codex = codex_loaded.then_some(caps.codex_project_config_paths);
+            paths = blocking(move || {
+                git::project_settings(&g, &root, &base, claude_unexcluded, codex, timeout)
+            })
+            .await?;
+        }
+        if !paths.is_empty() && !trust_project {
+            return Err(settings_refusal(&paths));
+        }
+        let guard = if codex_loaded {
+            let (g, root, base) = (self.ctx.git.clone(), pre.root.clone(), pre.base_sha.clone());
+            blocking(move || git::codex_config_tree(&g, &root, &base, timeout)).await?
+        } else {
+            Vec::new()
+        };
+        Ok((paths, guard))
+    }
+
+    /// Decision 8: starts detection for the repository `pre` describes, answering at
+    /// once; the work goes on in the background. `Err` is the refusal: detection
+    /// already running, a platform that cannot confine verification without the user's
+    /// leave (decision 9, M8a's `start_refusal`), or project settings a scout would run
+    /// unasked (decision 12).
+    pub async fn start_detection(
+        self: &Arc<Self>,
+        pre: &Preflight,
+        origin: ProposalOrigin,
+        trust_project: bool,
+        unconfined_checks: bool,
+    ) -> Result<(), String> {
+        if let Some(state) = self.running(&pre.project).await {
+            return Err(already_running(&pre.project, &state));
+        }
+        self.confinement_refusal(unconfined_checks)?;
+        let (trusted, codex_config) = self.scout_checks(pre, trust_project).await?;
+        let Some((generation, token)) = self.register(&pre.project) else {
+            return Err(already_running(&pre.project, &ProposalState::Preparing));
+        };
+        let now = unix_now();
+        let record = ProposalRecord {
+            project: pre.project.clone(),
+            state: ProposalState::Preparing,
+            origin,
+            started_at: now,
+            updated_at: now,
+            base_sha: pre.base_sha.clone(),
+            scout_id: None,
+            window_id: None,
+            profile: None,
+            verification: None,
+            dropped: Vec::new(),
+            proposed: None,
+            trusted_project: trusted,
+            unconfined_checks,
+            auto_confirm: false,
+        };
+        self.save_if_current(generation, &record).await;
+        let job = super::service_run::Job {
+            generation,
+            token,
+            pre: pre.clone(),
+            record,
+            codex_config,
+        };
+        tokio::spawn(self.clone().detect_in_background(job));
+        Ok(())
+    }
+
+    /// M8a's `start_refusal` for verification (decision 9, ruling R-T10-1): a platform
+    /// that cannot confine it is refused unless the request or the config allows it.
+    pub(super) fn confinement_refusal(&self, unconfined_checks: bool) -> Result<(), String> {
+        let config = &self.ctx.orchestrator;
+        match confine::start_refusal(
+            config.worker_sandbox,
+            confine::available(),
+            unconfined_checks || config.unconfined_checks,
+        ) {
+            Some(refusal) => Err(refusal),
+            None => Ok(()),
+        }
+    }
+
+    /// An automatic detection (decisions 7 and 22): a refusal is stored as the
+    /// proposal's `Failed` reason, unless the refusal is that one already runs.
+    pub async fn auto_detect(self: &Arc<Self>, pre: &Preflight, origin: ProposalOrigin) {
+        let Err(reason) = self
+            .start_detection(pre, origin.clone(), false, false)
+            .await
+        else {
+            return;
+        };
+        if self.running(&pre.project).await.is_some() {
+            return;
+        }
+        let now = unix_now();
+        let record = ProposalRecord {
+            project: pre.project.clone(),
+            state: ProposalState::Failed { reason },
+            origin,
+            started_at: now,
+            updated_at: now,
+            base_sha: pre.base_sha.clone(),
+            scout_id: None,
+            window_id: None,
+            profile: None,
+            verification: None,
+            dropped: Vec::new(),
+            proposed: None,
+            trusted_project: Vec::new(),
+            unconfined_checks: false,
+            auto_confirm: false,
+        };
+        let _writes = self.writes.lock().await;
+        let dir = self.repo_dir(&pre.project);
+        if let Err(error) =
+            blocking(move || store::save_proposal(&dir, &record).map_err(|e| e.to_string())).await
+        {
+            tracing::warn!(%error, "could not record a refused automatic detection");
+        }
+    }
+}

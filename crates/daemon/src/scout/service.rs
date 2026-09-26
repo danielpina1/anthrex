@@ -90,6 +90,11 @@ impl ScoutService {
         })
     }
 
+    /// What every scout launch reads from the daemon.
+    pub fn context(&self) -> &ScoutContext {
+        &self.ctx
+    }
+
     fn limits(&self, scout: &Scout) -> ScoutLimits {
         ScoutLimits::new(&self.ctx.scouts, scout.route.runtime)
     }
@@ -126,6 +131,7 @@ impl ScoutService {
                     ended_at: None,
                     turn_ended_pids: HashSet::new(),
                     kill_on_bind: false,
+                    installed: false,
                     kill_at: None,
                     remove_at: None,
                 },
@@ -174,6 +180,7 @@ impl ScoutService {
             match table.scouts.get_mut(id) {
                 Some(scout) => {
                     scout.window_id = Some(window_id);
+                    scout.installed |= kill_owed;
                     kill_owed && std::mem::take(&mut scout.kill_on_bind)
                 }
                 None => false,
@@ -303,6 +310,7 @@ impl ScoutService {
     }
 
     /// Every second: the timeout of each working scout, then the kills and removals due.
+    /// A removed window's scout is forgotten (ruling R-T9-2): its report is on disk.
     fn tick(&self) {
         let now = unix_now();
         let working: Vec<String> = {
@@ -335,8 +343,11 @@ impl ScoutService {
                     remove.push(window);
                 }
             }
+            // Ruling R-T9-2: a finished scout leaves the table with its window.
             for window in &remove {
-                table.by_window.remove(window);
+                if let Some(id) = table.by_window.remove(window) {
+                    table.scouts.remove(&id);
+                }
             }
             (kill, remove)
         };

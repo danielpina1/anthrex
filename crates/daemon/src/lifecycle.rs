@@ -292,6 +292,16 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     // before the socket is bound, so the first client sees them.
     let runs = RunService::new(manager.clone(), run_context);
     runs.restore().await;
+    // M8b decisions 8, 11 and 12: the scout and profile services, handed to the engine
+    // once; interrupted detections are failed and cleaned before the socket binds.
+    let profiles = crate::profile::service::wire(
+        &manager,
+        &runs,
+        &opts.data_dir,
+        &opts.socket_path,
+        &loaded_config.orchestrator,
+    );
+    profiles.restore().await;
 
     prepare_socket(&opts.socket_path)?;
     let listener = bind_socket(&opts.socket_path)?;
@@ -363,6 +373,7 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     let probe = codex_version::start(codex_bin, launch_gate, probe_shutdown.clone());
 
     let run_loop = runs.spawn(shutdown.clone());
+    profiles.scouts().spawn(shutdown.clone());
     let served = server::serve(
         listener,
         manager.clone(),

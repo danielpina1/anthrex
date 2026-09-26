@@ -31,6 +31,9 @@ pub(super) struct Scout {
     /// A kill the machine asked for before the window was bound (ruling M4): done at
     /// the bind.
     pub(super) kill_on_bind: bool,
+    /// The start's own bind has happened: `create_headless` returned, so the process is
+    /// installed and a kill reaches it (ruling R-T9-3).
+    pub(super) installed: bool,
     pub(super) kill_at: Option<Instant>,
     pub(super) remove_at: Option<Instant>,
 }
@@ -55,7 +58,9 @@ pub(super) struct Pending {
 pub(super) fn step_locked(scout: &mut Scout, event: ScoutEvent, limits: &ScoutLimits) -> Pending {
     let (next, effects) = machine::step(scout.machine.clone(), event, limits);
     scout.machine = next;
-    if scout.window_id.is_none() && effects.contains(&ScoutEffect::Kill) {
+    // Ruling R-T9-3: until the start's own bind, a kill cannot reach the process (an
+    // early bind from the session feed may come before it is installed), so it is owed.
+    if !scout.installed && effects.contains(&ScoutEffect::Kill) {
         scout.kill_on_bind = true;
     }
     let mut outcome = None;
