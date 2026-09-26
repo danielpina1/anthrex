@@ -1402,6 +1402,10 @@ scope.
 
 - **Both M8b.11 findings first recorded here were fixed in M8b.11's review round:**
   the M8b.9 `{"hang": true}` fixtures, and the staleness check at daemon start.
+- **A leftover detection checkout with no trusted project is kept, and only logged (M8b.11
+  re-review C1).** Restore runs no git for it, so it is neither salvaged nor removed.
+  `anthrex profile status` could list such leftovers, and a command could let the user
+  name the project to salvage into, or discard them.
 - **`ProfileService.writes` is one mutex for every project (review m4).** `reject` holds
   it across `discard_checkout`, which waits on the project's git write queue, so a reject
   behind a long write in one project delays proposal saves in every project. It is not

@@ -101,20 +101,66 @@ impl ProfileService {
     /// Detection end to end (decision 8), then its registration ends.
     pub(super) async fn detect_in_background(self: Arc<Self>, mut job: Job) {
         let (project, generation) = (job.pre.project.clone(), job.generation);
-        let stop = match self.scout_phase(&mut job).await {
-            Ok(proposed) => self.verify_phase(&mut job, proposed).await,
+        let stop = match self.mark(&project).await {
+            Ok(()) => match self.scout_phase(&mut job).await {
+                Ok(proposed) => self.verify_phase(&mut job, proposed).await,
+                Err(stop) => Err(stop),
+            },
             Err(stop) => Err(stop),
         };
         self.end(&mut job, stop).await;
+        self.unmark(&project).await;
         self.unregister(&project, generation);
+    }
+
+    /// The detection marker (`store::DETECTION_FILE`), before any checkout is made: a
+    /// restart then always knows the project to salvage into, even after `reject`
+    /// deleted `proposal.json` (task 11 re-review, C1).
+    async fn mark(&self, project: &Path) -> Result<(), Stop> {
+        let (dir, p) = (self.repo_dir(project), project.to_path_buf());
+        blocking(move || store::save_detection(&dir, &p).map_err(|e| e.to_string()))
+            .await
+            .map_err(|error| Stop::Failed(format!("could not record the detection: {error}")))
+    }
+
+    /// Removes the marker once neither detection checkout is left; a checkout the work
+    /// could not discard keeps it, for the next start.
+    async fn unmark(&self, project: &Path) {
+        let left: Vec<(PathBuf, PathBuf)> = [super::ONBOARDING_CHECKOUT, super::VERIFY_CHECKOUT]
+            .iter()
+            .map(|name| self.checkout(project, name))
+            .collect();
+        let dir = self.repo_dir(project);
+        let removed = blocking(move || {
+            let any = left
+                .iter()
+                .any(|(path, repo)| std::fs::symlink_metadata(path).is_ok() || repo.exists());
+            if any {
+                return Ok(false);
+            }
+            store::delete_detection(&dir).map_err(|e| e.to_string())?;
+            Ok(true)
+        })
+        .await;
+        match removed {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!(project = %project.display(), "a detection checkout is left; the next start cleans it")
+            }
+            Err(error) => tracing::warn!(%error, "could not remove the detection marker"),
+        }
     }
 
     /// An edit's verification (decision 10): no scout, straight to `Verifying`.
     pub(super) async fn verify_in_background(self: Arc<Self>, mut job: Job) {
         let (project, generation) = (job.pre.project.clone(), job.generation);
         let proposed = job.record.proposed.clone().unwrap_or_default();
-        let stop = self.verify_phase(&mut job, proposed).await;
+        let stop = match self.mark(&project).await {
+            Ok(()) => self.verify_phase(&mut job, proposed).await,
+            Err(stop) => Err(stop),
+        };
         self.end(&mut job, stop).await;
+        self.unmark(&project).await;
         self.unregister(&project, generation);
     }
 

@@ -90,6 +90,8 @@ pub(super) struct Table {
     pub(super) active: HashMap<PathBuf, Active>,
     /// The number in the last onboarding scout id handed out (ruling R-T9-2).
     pub(super) last_scout_secs: u64,
+    /// Stored profiles `restore` found, checked for staleness by `spawn` (re-review r1).
+    pub(super) auto_at_start: Vec<(PathBuf, ProfileMeta)>,
 }
 
 /// See the module doc.

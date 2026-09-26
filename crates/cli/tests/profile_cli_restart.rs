@@ -122,14 +122,50 @@ fn exists(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok()
 }
 
-/// Review m1: a dirty detection checkout that no proposal names (here another
-/// repository's, made as the daemon makes one) is salvaged and removed at the start.
+/// Every file under `dir` with its length, sorted: a repository's objects, unchanged
+/// or not.
+fn files(dir: &Path) -> Vec<(PathBuf, u64)> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for entry in std::fs::read_dir(&d).unwrap() {
+            let entry = entry.unwrap();
+            let meta = entry.metadata().unwrap();
+            if meta.is_dir() {
+                stack.push(entry.path());
+            } else {
+                out.push((entry.path(), meta.len()));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// A repository's refs, index and objects.
+fn fingerprint(repo: &Path) -> (String, Vec<u8>, Vec<(PathBuf, u64)>) {
+    (
+        git_in(repo, &["for-each-ref", "--format=%(refname) %(objectname)"]),
+        std::fs::read(repo.join(".git/index")).unwrap(),
+        files(&repo.join(".git/objects")),
+    )
+}
+
+/// Task 11 re-review C1: a leftover checkout no trusted record names (no proposal, no
+/// stored meta, no detection marker for this data directory's own project) is kept, and no git runs for it, even when its
+/// repository's `objects/info/alternates` (writable by confined commands) names
+/// another repository. That repository is left exactly as it was.
 #[test]
-fn e2e_a_leftover_checkout_without_a_proposal_is_cleaned_at_restart() {
+fn e2e_a_leftover_without_a_trusted_project_is_kept_and_no_git_runs() {
     let mut h = harness();
     let other = h.dir.path().join("other");
     init_repo(&other, &[("a.txt", "a\n")]);
-    let other = other.canonicalize().unwrap();
+    let victim = h.dir.path().join("victim");
+    init_repo(&victim, &[("v.txt", "v\n")]);
+    let (other, victim) = (
+        other.canonicalize().unwrap(),
+        victim.canonicalize().unwrap(),
+    );
     let git = std::ffi::OsStr::new("git");
     let timeout = Duration::from_secs(30);
     let pre = daemon::run::git::preflight(git, &other, timeout).unwrap();
@@ -138,23 +174,90 @@ fn e2e_a_leftover_checkout_without_a_proposal_is_cleaned_at_restart() {
         daemon::run::git::checkout_repo_dir(&daemon::profile::repo_dir(&h.data(), &other), &path);
     daemon::profile::verify::prepare(git, &pre, &path, &repo, timeout).unwrap();
     std::fs::write(path.join("work.txt"), "unsaved\n").unwrap();
+    // What a confined command could do: point the borrowed objects elsewhere.
+    std::fs::write(
+        repo.join("git/objects/info/alternates"),
+        format!("{}\n", victim.join(".git/objects").display()),
+    )
+    .unwrap();
+    // A record in this data directory that names another project is not trusted for
+    // it: `repo_dir(victim)` is not this directory.
+    std::fs::write(
+        daemon::profile::repo_dir(&h.data(), &other).join("detection.json"),
+        serde_json::to_vec(&json!({"project": victim})).unwrap(),
+    )
+    .unwrap();
+    let (victim_before, other_before) = (fingerprint(&victim), fingerprint(&other));
+    h.restart_daemon(&[]);
+    assert_eq!(
+        fingerprint(&victim),
+        victim_before,
+        "the victim repository changed"
+    );
+    assert_eq!(
+        fingerprint(&other),
+        other_before,
+        "the other repository changed"
+    );
+    assert!(
+        exists(&path.join("work.txt")),
+        "the dirty leftover must be kept"
+    );
+    let log = std::fs::read_to_string(h.data().join("daemon.log")).unwrap_or_default();
+    assert!(
+        log.contains("no trusted project") && log.contains(&path.display().to_string()),
+        "{}",
+        h.log_tail()
+    );
+}
+
+/// Task 11 re-review C1: `reject` during verification, then a daemon stop before the
+/// stopped work cleans up: the daemon-owned detection marker still names the project,
+/// so the next start salvages the dirty checkout into that project and removes it.
+#[test]
+fn e2e_a_rejected_verification_interrupted_by_a_stop_is_cleaned_in_its_project() {
+    let mut h = RunHarness::with_repo(
+        PROFILE_LINES,
+        &[],
+        true,
+        &[("slow.sh", "echo dirt > dirt.txt; sleep 8; echo checked\n")],
+    );
+    h.onboarding_report(1, json!({"check": "sh slow.sh"}));
+    ok(h.profile(&["detect"]));
+    let status = h.wait_profile(
+        "verification to run",
+        |s| {
+            s.proposal
+                .as_ref()
+                .is_some_and(|r| r.state == ProposalState::Verifying)
+        },
+        PROFILE_WAIT,
+    );
+    let path = daemon::profile::verify::checkout_path(&h.data().join("worktrees"), &status.project);
+    until("the check to dirty its checkout", PROFILE_WAIT, || {
+        exists(&path.join("dirt.txt")).then_some(())
+    });
+    ok(h.profile(&["reject"]));
+    assert!(
+        proposal(&h).is_none(),
+        "reject deletes the proposal at once"
+    );
     h.restart_daemon(&[]);
     assert!(!exists(&path), "{path:?} is left");
-    assert!(!exists(&repo), "{repo:?} is left");
     let salvaged = git_in(
-        &other,
+        &h.repo,
         &[
             "for-each-ref",
             "--format=%(refname)",
             "refs/anthrex/salvage/onboarding/",
         ],
     );
-    assert_eq!(salvaged.lines().count(), 1, "{salvaged}");
-    let reference = salvaged.trim();
+    assert_eq!(salvaged.lines().count(), 1, "{salvaged}\n{}", h.log_tail());
     assert_eq!(
-        git_in(&other, &["show", &format!("{reference}:work.txt")]),
-        "unsaved"
+        git_in(&h.repo, &["show", &format!("{}:dirt.txt", salvaged.trim())]),
+        "dirt"
     );
+    assert!(proposal(&h).is_none(), "nothing is written back");
 }
 
 /// Review I3 (M20): `profile reject` with no work running discards a leftover

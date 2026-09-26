@@ -26,6 +26,11 @@ use proto::{ProfileMeta, ProposalRecord, RepoProfile};
 pub const PROFILE_FILE: &str = "profile.toml";
 pub const META_FILE: &str = "profile.meta.json";
 pub const PROPOSAL_FILE: &str = "proposal.json";
+/// The daemon's own record that detection work (and so its checkouts) may exist for a
+/// project: written before the work makes a checkout, removed after the work has
+/// discarded them. It outlives `proposal.json` when `profile reject` deletes that, so
+/// a restart always knows the project to salvage into (task 11 re-review, C1).
+pub const DETECTION_FILE: &str = "detection.json";
 
 /// Decision 7: only this much of a file is hashed; its full length is still recorded.
 pub const FINGERPRINT_MAX_BYTES: u64 = 4 << 20;
@@ -127,7 +132,7 @@ pub fn sweep_leftovers(repo_dir: &Path) -> io::Result<()> {
         let entry = entry?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        let ours = [PROFILE_FILE, META_FILE, PROPOSAL_FILE]
+        let ours = [PROFILE_FILE, META_FILE, PROPOSAL_FILE, DETECTION_FILE]
             .iter()
             .any(|file| name.starts_with(&format!("{file}.")));
         if ours && name.ends_with(".tmp") {
@@ -227,6 +232,29 @@ pub fn load_proposal(repo_dir: &Path) -> Result<Option<ProposalRecord>, String> 
 pub fn save_proposal(repo_dir: &Path, record: &ProposalRecord) -> io::Result<()> {
     let json = serde_json::to_vec_pretty(record).map_err(io::Error::other)?;
     write_atomic(&repo_dir.join(PROPOSAL_FILE), &json)
+}
+
+/// Records that detection work for `project` may leave checkouts ([`DETECTION_FILE`]).
+pub fn save_detection(repo_dir: &Path, project: &Path) -> io::Result<()> {
+    let json =
+        serde_json::to_vec(&serde_json::json!({ "project": project })).map_err(io::Error::other)?;
+    write_atomic(&repo_dir.join(DETECTION_FILE), &json)
+}
+
+/// The project [`DETECTION_FILE`] names, if it is there and reads.
+pub fn load_detection(repo_dir: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(repo_dir.join(DETECTION_FILE)).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    value["project"].as_str().map(PathBuf::from)
+}
+
+/// Removes [`DETECTION_FILE`]; nothing to remove is not an error.
+pub fn delete_detection(repo_dir: &Path) -> io::Result<()> {
+    match std::fs::remove_file(repo_dir.join(DETECTION_FILE)) {
+        Ok(()) => sync_dir(repo_dir),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
 }
 
 /// Deletes the pending proposal; nothing to delete is not an error.

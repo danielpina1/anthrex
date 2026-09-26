@@ -258,6 +258,8 @@ impl ProfileService {
             for name in [super::ONBOARDING_CHECKOUT, super::VERIFY_CHECKOUT] {
                 self.discard_checkout(&project, name).await?;
             }
+            let dir = self.repo_dir(&project);
+            blocking(move || store::delete_detection(&dir).map_err(|e| e.to_string())).await?;
             if !existed {
                 return Err(format!("no proposal for {}", project.display()));
             }

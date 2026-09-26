@@ -373,7 +373,7 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     let probe = codex_version::start(codex_bin, launch_gate, probe_shutdown.clone());
 
     let run_loop = runs.spawn(shutdown.clone());
-    profiles.scouts().spawn(shutdown.clone());
+    profiles.spawn(shutdown.clone());
     let served = server::serve(
         listener,
         manager.clone(),

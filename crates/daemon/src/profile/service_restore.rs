@@ -32,18 +32,13 @@ fn names_in(dir: &Path) -> Result<Vec<OsString>, String> {
     }
 }
 
-/// The git common directory a standalone checkout's repository borrows its objects
-/// from (`<repo>/git/objects/info/alternates`' first line, less `/objects`): where git
-/// for a leftover whose project is not recorded runs.
-fn borrowed_common_dir(repo: &Path) -> Option<PathBuf> {
-    let text = std::fs::read_to_string(repo.join("git/objects/info/alternates")).ok()?;
-    let objects = PathBuf::from(text.lines().find(|l| !l.trim().is_empty())?.trim());
-    objects.parent().map(Path::to_path_buf)
-}
-
 /// What the start found in one repository's data directory.
 struct Found {
     name: OsString,
+    /// The project a trusted record names (task 11 re-review, C1): the detection
+    /// marker, `proposal.json` or the stored meta, each only when its `repo_dir` is
+    /// this very directory. Never read from a checkout or its repository, which
+    /// confined commands can write.
     project: Option<PathBuf>,
     /// The stored profile's project and meta, when it records its project.
     stored: Option<(PathBuf, proto::ProfileMeta)>,
@@ -55,10 +50,11 @@ impl ProfileService {
     /// 2. in every repository's data directory, leftover temp files swept (ruling
     ///    R-T4-1), then an interrupted proposal failed with [`RESTART_REASON`];
     /// 3. every detection checkout found under the worktrees root or the data
-    ///    directory salvaged and removed, with or without a proposal (review m1);
-    /// 4. decision 7: every stored profile that records its project checked for
-    ///    staleness, and an automatic re-detection started in the background where
-    ///    [`ProfileService::auto_on_stale`] allows it.
+    ///    directory salvaged and removed when a trusted record names its project;
+    ///    otherwise kept, with no git run, and logged (review m1, re-review C1);
+    /// 4. decision 7: every stored profile that records its project queued for the
+    ///    staleness check, which [`ProfileService::spawn`] starts once the scout
+    ///    service listens (re-review r1).
     pub async fn restore(self: &Arc<Self>) {
         for window in self.manager.list() {
             let scout = window.run.is_none()
@@ -101,7 +97,16 @@ impl ProfileService {
         if !self.ctx.orchestrator.onboarding.auto {
             return;
         }
-        for (project, meta) in found.into_iter().filter_map(|f| f.stored) {
+        let queued: Vec<_> = found.into_iter().filter_map(|f| f.stored).collect();
+        crate::lock(&self.table).auto_at_start = queued;
+    }
+
+    /// Starts the scout service's listener, then (re-review r1) the staleness checks
+    /// `restore` queued, so an automatic scout's first events always have a listener.
+    pub fn spawn(self: &Arc<Self>, shutdown: tokio_util::sync::CancellationToken) {
+        self.scouts.spawn(shutdown);
+        let queued = std::mem::take(&mut crate::lock(&self.table).auto_at_start);
+        for (project, meta) in queued {
             let service = self.clone();
             tokio::spawn(async move { service.auto_at_start(project, meta).await });
         }
@@ -113,22 +118,31 @@ impl ProfileService {
         let loaded = blocking(move || {
             store::sweep_leftovers(&dir).map_err(|e| e.to_string())?;
             let proposal = store::load_proposal(&dir).ok().flatten();
-            Ok((proposal, store::load(&dir)))
+            Ok((proposal, store::load(&dir), store::load_detection(&dir)))
         })
         .await;
-        let (proposal, stored) = match loaded {
+        let (proposal, stored, marker) = match loaded {
             Ok(loaded) => loaded,
             Err(error) => {
                 tracing::warn!(repo_dir = %repo_dir.display(), %error, "profile restore");
-                (None, Stored::Absent)
+                (None, Stored::Absent, None)
             }
         };
+        // A record counts only for the data directory its own project keys to, so one
+        // repository's record cannot name another.
+        let ours = |project: &PathBuf| {
+            super::repo_dir(&self.ctx.data_dir, project).file_name() == Some(name.as_os_str())
+        };
         let stored = match stored {
-            Stored::Found { meta, .. } => meta.project.clone().map(|project| (project, meta)),
+            Stored::Found { meta, .. } => meta
+                .project
+                .clone()
+                .filter(|project| ours(project))
+                .map(|project| (project, meta)),
             _ => None,
         };
         let mut project = stored.as_ref().map(|(project, _)| project.clone());
-        if let Some(record) = proposal {
+        if let Some(record) = proposal.filter(|record| ours(&record.project)) {
             project = Some(record.project.clone());
             if in_progress(&record.state) {
                 let mut failed = record;
@@ -147,44 +161,50 @@ impl ProfileService {
             }
         }
         Found {
+            project: marker.filter(|project| ours(project)).or(project),
             name,
-            project,
             stored,
         }
     }
 
-    /// Step 3 for one repository: each detection checkout present is discarded, its
-    /// git run in the recorded project, else in the common directory its repository
-    /// borrows from. One whose repository has neither is left, and logged.
+    /// Step 3 for one repository: each detection checkout present is salvaged and
+    /// removed, git run in the trusted project only. Without one no git runs: the
+    /// leftover is kept (spec §17, nothing dirty is deleted) and logged with its path.
+    /// The detection marker goes once no checkout is left.
     async fn discard_leftovers(&self, found: &Found) {
         let wt = self.ctx.worktrees_root.join(&found.name).join("runs");
         let repo_dir = self.ctx.data_dir.join("repos").join(&found.name);
+        let mut left = false;
         for name in CHECKOUTS {
             let path = wt.join(name);
             let repo = checkout_repo_dir(&repo_dir, &path);
             let (p, r) = (path.clone(), repo.clone());
-            let probed = blocking(move || {
-                let present = std::fs::symlink_metadata(&p).is_ok() || r.exists();
-                let has_repo = r.join("git/HEAD").is_file();
-                Ok((present, has_repo, borrowed_common_dir(&r)))
-            })
-            .await;
-            let Ok((true, has_repo, borrowed)) = probed else {
+            let present = blocking(move || Ok(std::fs::symlink_metadata(&p).is_ok() || r.exists()))
+                .await
+                .unwrap_or(true);
+            if !present {
+                continue;
+            }
+            let Some(project) = &found.project else {
+                tracing::warn!(
+                    path = %path.display(),
+                    repo = %repo.display(),
+                    "a leftover detection checkout with no trusted project is kept; no git runs for it"
+                );
+                left = true;
                 continue;
             };
-            // Without a repository `HEAD` no git runs in it (`verify::discard`), so any
-            // root does; with one, git needs the user's repository.
-            let root = match (&found.project, borrowed) {
-                (Some(project), _) => project.clone(),
-                (None, Some(common)) => common,
-                (None, None) if !has_repo => wt.clone(),
-                (None, None) => {
-                    tracing::warn!(path = %path.display(), "a leftover detection checkout whose repository is unknown is kept");
-                    continue;
-                }
-            };
-            if let Err(error) = self.discard_at(&root, path.clone(), repo).await {
+            if let Err(error) = self.discard_at(project, path.clone(), repo).await {
                 tracing::warn!(path = %path.display(), %error, "leftover detection checkout");
+                left = true;
+            }
+        }
+        if !left {
+            let dir = repo_dir.clone();
+            if let Err(error) =
+                blocking(move || store::delete_detection(&dir).map_err(|e| e.to_string())).await
+            {
+                tracing::warn!(%error, "could not remove the detection marker");
             }
         }
     }
@@ -225,23 +245,5 @@ impl ProfileService {
         if auto_allowed(proposal.as_ref(), unix_now()) {
             self.auto_detect(pre, ProposalOrigin::Auto { stale }).await;
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::borrowed_common_dir;
-
-    #[test]
-    fn a_leftovers_common_dir_is_read_from_its_alternates() {
-        let dir = tempfile::tempdir().unwrap();
-        let info = dir.path().join("git/objects/info");
-        std::fs::create_dir_all(&info).unwrap();
-        std::fs::write(info.join("alternates"), "\n/work/app/.git/objects\n").unwrap();
-        assert_eq!(
-            borrowed_common_dir(dir.path()),
-            Some("/work/app/.git".into())
-        );
-        assert_eq!(borrowed_common_dir(&dir.path().join("none")), None);
     }
 }
