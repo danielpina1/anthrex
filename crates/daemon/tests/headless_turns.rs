@@ -443,9 +443,11 @@ async fn interrupt_follows_cli_caps() {
 
 #[tokio::test]
 async fn a_send_to_an_ended_session_is_an_error() {
-    // Claude: the long-lived process exited.
+    // Claude: the long-lived process exited. It reads its first message before exiting,
+    // so the exit cannot race create_headless's write of that message (CI saw "the
+    // session has ended" from create itself when the script exited first).
     let dir = tempfile::tempdir().unwrap();
-    let claude = script(dir.path(), "claude", "exit 0");
+    let claude = script(dir.path(), "claude", "head -n 1 >/dev/null; exit 0");
     let m = manager(&claude, &claude, |_| {});
     let _cleanup = Cleanup(m.clone());
     let mut feed = m.signals();

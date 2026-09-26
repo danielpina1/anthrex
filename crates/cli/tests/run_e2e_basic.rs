@@ -445,7 +445,17 @@ fn a_slow_starting_daemon_does_not_outlive_its_harness() {
     assert!(started.is_err(), "{started:?}");
     let pid = h.daemon_pid().expect("the harness owns its daemon");
     let data = h.data();
-    assert!(daemon_of(pid, &data), "the daemon is starting");
+    // Linux CI read an empty /proc/<pid>/environ right after the spawn in 2 of 4 runs:
+    // wait (bounded) for the process to show its environment.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !daemon_of(pid, &data) && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        daemon_of(pid, &data),
+        "the daemon is starting: {}",
+        daemon_diagnosis(pid, &data)
+    );
     drop(h);
     assert!(
         !daemon_of(pid, &data),
@@ -469,6 +479,41 @@ fn daemon_of(pid: u32, data: &std::path::Path) -> bool {
         .output()
         .unwrap();
     output.status.success() && String::from_utf8_lossy(&output.stdout).contains(&wanted)
+}
+
+/// What one pid's process looks like, for a failed `daemon_of`: its anthrex variables
+/// (never other values) and the data directory's files.
+fn daemon_diagnosis(pid: u32, data: &std::path::Path) -> String {
+    let env = if cfg!(target_os = "linux") {
+        match std::fs::read(format!("/proc/{pid}/environ")) {
+            Ok(env) => env
+                .split(|b| *b == 0)
+                .map(|v| String::from_utf8_lossy(v).into_owned())
+                .filter(|v| v.starts_with("ANTHREX_"))
+                .collect::<Vec<_>>()
+                .join(" "),
+            Err(e) => format!("no /proc/{pid}/environ: {e}"),
+        }
+    } else {
+        String::from("(not Linux)")
+    };
+    let files: Vec<String> = std::fs::read_dir(data)
+        .map(|d| {
+            d.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    let log = std::fs::read_to_string(data.join("daemon.stderr.log")).unwrap_or_default();
+    let out = data
+        .parent()
+        .map(|dir| std::fs::read_to_string(dir.join("daemon.out")).unwrap_or_default())
+        .unwrap_or_default();
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+    format!(
+        "env [{env}] data {} files {files:?} stderr {log:?} out {out:?} stat {stat:?}",
+        data.display()
+    )
 }
 
 /// M8a.24 fix round 2 (N2): an owned daemon process dropped without a completed stop
