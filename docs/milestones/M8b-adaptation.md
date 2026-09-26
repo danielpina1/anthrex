@@ -2275,8 +2275,18 @@ So the "empty-root `ClaudeSandbox`" M8a gives reviewers (F1c N4) and decision 12
   - The marker is the literal `[anthrex] … cut …` (`prompt::CUT_MARKER`). It goes on its own line after cut paths or cut tail lines, as the last item of a cut `Files it named:` list, and straight after a cut summary or brief.
   - Triage keeps the most tracked paths that fit; only when none fit does it cut the report's list, and only when none of that fits does it cut the summary. The size check does the same with its steps: summaries to 4000 characters, whole reports from the last, then briefs to 2000 characters.
   - The check summary drops whole lines from the tail's start. When even the last line alone does not fit, it keeps that line's end.
+  - **The refill (controller ruling M2 after review, a deviation from the literal cut order).** The brief's cut order is kept. After the last cut, the items that were dropped are re-added in reverse cut order (the item cut last comes back first), each one whole, while the prompt still fits. For triage that means the report's files first, then tracked paths (a 200 KB report summary no longer costs every path). For the size check it means whole evidence reports, in order (briefs that overflow on their own no longer cost the decider its evidence). Items that were only shortened (summaries, briefs) are not restored. The refill is as deterministic as the cuts.
   - As a last resort, a prompt still over `PROMPT_MAX_BYTES` after the ordered cuts (possible only with a very large goal, command, title or reason) keeps its head and ends with the marker. This makes the 128 KiB bound hold for every input.
 - **Files.** The tests are split three ways to stay under 600 lines: `decider/tests.rs` (schemas, parsing, extraction, fallbacks), `tests_prompt.rs` and `tests_argv.rs`. `crates/daemon/src/lib.rs` needed no change, since `pub mod decider;` has been there since M8b.1. `headless/mod.rs` grew by 12 lines, from 255 to 267, within its +20 budget.
+- **Review fixes:**
+  - **I1:** a check-summary tail made of one oversized line lost its end. The room left for it did not count the `\n` after the marker, so the prompt came out 1 byte over and `clamp` cut it again. The room now counts that byte. The fix is tested with ASCII, `世` and `é` single-line tails, under three command lengths so the cut lands inside a character.
+  - **M1:**
+    - a sub-agent `StructuredOutput` placed after the top-level one;
+    - `an_enormous_fixed_input_is_clamped_with_the_marker` (a huge goal, command, title or reason);
+    - the character-boundary cut.
+
+    Each of these was checked by mutation: without its safeguard, its test fails.
+  - **M3:** `DeciderContext::new` moves to M8b.7 (controller ruling).
 - **Extra tests beyond the list:** `parse_errors_name_the_path` and `blocked_reason_prompt_is_exact`. `schemas_match_the_brief` reads this brief's own JSON block through `include_str!`, so the schema and the brief cannot drift apart. Two tests parse M8b.1's recorded decider streams through `ClaudeStream`:
   - both recorded answers pass `parse`;
   - the triage stream's fenced text answer, with its tool use removed, is found by `answer_from_events` (R-T1-4's case).

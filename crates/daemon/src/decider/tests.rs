@@ -375,6 +375,18 @@ fn structured_output_tool_use_is_read() {
         tool_use(json!({"from":"tool"}), None),
     ];
     assert_eq!(answer_from_events(&events).unwrap(), json!({"from":"tool"}));
+    // A sub-agent's StructuredOutput after the top-level one is still not the answer,
+    // so position alone cannot pick the right one.
+    let events = vec![
+        tool_use(json!({"from":"tool"}), None),
+        tool_use(json!({"from":"subagent"}), Some("toolu_0")),
+    ];
+    assert_eq!(answer_from_events(&events).unwrap(), json!({"from":"tool"}));
+    let only_subagent = vec![tool_use(json!({"from":"subagent"}), Some("toolu_0"))];
+    assert_eq!(
+        answer_from_events(&only_subagent).unwrap_err(),
+        "the session gave no answer"
+    );
     // The recorded triage call: its StructuredOutput tool use is the answer.
     let events = stream_events(TRIAGE_FIXTURE);
     let answer = answer_from_events(&events).unwrap();

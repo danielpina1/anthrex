@@ -212,21 +212,31 @@ fn oversized_inputs_are_cut_in_order_with_the_marker() {
     assert!(prompt.len() + paths[kept.len()].len() + 1 > PROMPT_MAX_BYTES);
 
     // A huge report summary: every tracked file and every report file is cut first,
-    // then the summary is cut to 8000 characters.
+    // then the summary is cut to 8000 characters; then the refill (ruling M2) brings
+    // back the report's files whole, then as many tracked paths as fit.
     let request = DeciderRequest::Triage(TriageInput {
         goal: "G".into(),
         profile_summary: String::new(),
         report_summary: Some("x".repeat(200_000)),
         report_files: vec!["a".into(), "b".into()],
-        files: paths,
+        files: paths.clone(),
         files_total: 5000,
     });
     let prompt = render(&request);
     assert!(prompt.len() <= PROMPT_MAX_BYTES);
     assert!(prompt.contains(&format!(
-        "\n\nOnboarding scout report:\n{}{CUT_MARKER}\nFiles it named: {CUT_MARKER}\n\nTracked files (0 of 5000):\n{CUT_MARKER}",
+        "\n\nOnboarding scout report:\n{}{CUT_MARKER}\nFiles it named: a, b\n\nTracked files (",
         "x".repeat(8000)
     )));
+    let tracked = prompt.split("\n\nTracked files (").nth(1).unwrap();
+    let (header, body) = tracked.split_once("):\n").unwrap();
+    let lines: Vec<&str> = body.split('\n').collect();
+    assert_eq!(*lines.last().unwrap(), CUT_MARKER);
+    let kept = &lines[..lines.len() - 1];
+    assert!(kept.len() > 1000, "{}", kept.len());
+    assert_eq!(kept, &paths[..kept.len()]);
+    assert_eq!(header, format!("{} of 5000", kept.len()));
+    assert!(prompt.len() + paths[kept.len()].len() + 1 > PROMPT_MAX_BYTES);
 
     // Size check: evidence summaries to 4000 characters first, then reports from the
     // last, then briefs to 2000 characters.
@@ -247,13 +257,34 @@ fn oversized_inputs_are_cut_in_order_with_the_marker() {
     for task in &mut tasks {
         task.brief = "b".repeat(60_000);
     }
-    let input = size_check(tasks, vec![evidence("s1", &big), evidence("s2", &big)]);
+    // Briefs that alone overflow: every report is dropped before the briefs are cut,
+    // and the refill (ruling M2) then brings every report back, since they fit.
+    let input = size_check(
+        tasks.clone(),
+        vec![evidence("s1", &big), evidence("s2", &big)],
+    );
     let prompt = render(&DeciderRequest::SizeCheck(input));
     assert!(prompt.len() <= PROMPT_MAX_BYTES, "{}", prompt.len());
-    assert!(!prompt.contains("## s1") && !prompt.contains("## s2"));
-    assert!(prompt.ends_with(&format!("\n\nScout evidence:\n{CUT_MARKER}")));
     let cut_brief = format!("  brief: {}{CUT_MARKER}", "b".repeat(2000));
     assert_eq!(prompt.matches(&cut_brief).count(), 3);
+    assert!(prompt.contains(&format!("\n\nScout evidence:\n## s1\n{cut_summary}\n")));
+    assert!(prompt.contains(&format!("\n\n## s2\n{cut_summary}\n")));
+    assert!(prompt.ends_with("Interfaces: fn a()"), "evidence was cut");
+    // Reports that do not all fit even at 4000 characters: dropped from the last,
+    // and the refill keeps the same count (no more fit).
+    for task in &mut tasks {
+        task.brief = "Brief".into();
+    }
+    let reports: Vec<Evidence> = (1..=40).map(|i| evidence(&format!("s{i}"), &big)).collect();
+    let prompt = render(&DeciderRequest::SizeCheck(size_check(tasks, reports)));
+    assert!(prompt.len() <= PROMPT_MAX_BYTES);
+    assert!(prompt.ends_with(&format!("\n\n{CUT_MARKER}")));
+    let kept = prompt.matches("\n## s").count();
+    assert!(kept > 5 && kept < 40, "{kept}");
+    for i in 1..=kept {
+        assert!(prompt.contains(&format!("\n## s{i}\n")), "s{i}");
+    }
+    assert!(!prompt.contains(&format!("\n## s{}\n", kept + 1)));
 
     // Check summary: the tail from its start, keeping its end.
     let tail: String = (0..20_000).map(|i| format!("line {i}\n")).collect();
@@ -267,6 +298,75 @@ fn oversized_inputs_are_cut_in_order_with_the_marker() {
     assert_eq!(first, CUT_MARKER);
     assert_eq!(rest.lines().count().to_string(), n);
     assert!(rest.starts_with("line "));
+
+    // A tail that is one oversized line keeps that line's end (review I1), ASCII and
+    // with multi-byte characters. Commands of 1 to 3 bytes move the cut point across
+    // every byte of a 3-byte character, so it must move to a character boundary.
+    let tails = [
+        format!("{}END", "z".repeat(200_000)),
+        format!("{}世END", "世".repeat(70_000)),
+        format!("{}END", "é".repeat(100_001)),
+    ];
+    for (tail, command) in tails
+        .iter()
+        .flat_map(|t| ["c", "cc", "ccc"].map(|c| (t, c)))
+    {
+        let input = CheckSummaryInput {
+            command: command.into(),
+            ..check_summary(tail)
+        };
+        let prompt = render(&DeciderRequest::CheckSummary(input));
+        assert!(prompt.len() <= PROMPT_MAX_BYTES, "{}", prompt.len());
+        assert!(
+            prompt.len() + 4 > PROMPT_MAX_BYTES,
+            "room left: {}",
+            prompt.len()
+        );
+        assert_eq!(prompt.matches(CUT_MARKER).count(), 1);
+        assert!(prompt.ends_with("END"));
+        let body = prompt.split(&format!("{CUT_MARKER}\n")).nth(1).unwrap();
+        assert!(tail.ends_with(body));
+        assert!(prompt.contains("Output (last 1 lines):\n"));
+    }
+}
+
+#[test]
+fn an_enormous_fixed_input_is_clamped_with_the_marker() {
+    // No ordered cut applies to a goal, command, title or reason: the last-resort
+    // clamp keeps the prompt's head, on a character boundary, and ends in the marker.
+    let wide = |pad: usize| format!("{}{}", "x".repeat(pad), "世".repeat(100_000));
+    for pad in 0..3 {
+        let requests = [
+            DeciderRequest::Triage(triage(&wide(pad))),
+            DeciderRequest::CheckSummary(CheckSummaryInput {
+                command: wide(pad),
+                ..check_summary("error: boom")
+            }),
+            DeciderRequest::BlockedReason(BlockedReasonInput {
+                task_id: "t1".into(),
+                title: wide(pad),
+                reason: "r".into(),
+            }),
+            DeciderRequest::BlockedReason(BlockedReasonInput {
+                task_id: "t1".into(),
+                title: "T".into(),
+                reason: wide(pad),
+            }),
+        ];
+        for request in requests {
+            let prompt = render(&request);
+            let kind = request.kind().label();
+            assert!(prompt.len() <= PROMPT_MAX_BYTES, "{kind}: {}", prompt.len());
+            assert!(
+                prompt.len() + 4 > PROMPT_MAX_BYTES,
+                "{kind}: {}",
+                prompt.len()
+            );
+            assert!(prompt.ends_with(&format!("世\n{CUT_MARKER}")), "{kind}");
+            assert_eq!(prompt.matches(CUT_MARKER).count(), 1, "{kind}");
+            assert!(prompt.starts_with(&format!("[anthrex decider] {kind} v1\n")));
+        }
+    }
 }
 
 #[test]

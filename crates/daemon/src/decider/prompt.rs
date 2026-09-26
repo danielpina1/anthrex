@@ -131,7 +131,9 @@ struct TriageCut {
 }
 
 /// Triage's cutting order: tracked files (from the end), then the report's file list,
-/// then the report summary to 8000 characters.
+/// then the report summary to 8000 characters. After the last cut, the refill (ruling
+/// M2) re-adds what was dropped in reverse cut order, each item whole, while it fits:
+/// the report's files first, then tracked paths.
 fn triage(input: &TriageInput) -> String {
     let full = triage_with(input, TriageCut::default());
     if fits(&full) {
@@ -149,16 +151,30 @@ fn triage(input: &TriageInput) -> String {
         ..files(0)
     };
     let max = input.report_files.len();
-    if let Some(n) = most_that_fit(max, |n| triage_with(input, report(n))) {
-        return triage_with(input, report(n));
-    }
-    triage_with(
-        input,
-        TriageCut {
+    let mut cut = match most_that_fit(max, |n| triage_with(input, report(n))) {
+        Some(n) => report(n),
+        None => TriageCut {
             summary: Some(TRIAGE_SUMMARY_CHARS),
             ..report(0)
         },
-    )
+    };
+    // The refill: every list's count only grows, from what the cuts left.
+    let with_report = |cut: TriageCut, n| TriageCut {
+        report_files: Some(n),
+        ..cut
+    };
+    if let Some(n) = most_that_fit(max, |n| triage_with(input, with_report(cut, n))) {
+        cut = with_report(cut, n);
+    }
+    let with_files = |cut: TriageCut, n| TriageCut {
+        files: Some(n),
+        ..cut
+    };
+    let paths = input.files.len();
+    if let Some(n) = most_that_fit(paths, |n| triage_with(input, with_files(cut, n))) {
+        cut = with_files(cut, n);
+    }
+    triage_with(input, cut)
 }
 
 /// The first `keep` items (all when `None`), then the marker when any were cut.
@@ -225,7 +241,9 @@ struct SizeCut {
 }
 
 /// The size check's cutting order: evidence summaries to 4000 characters, then whole
-/// reports from the last, then briefs to 2000 characters.
+/// reports from the last, then briefs to 2000 characters. After the last cut, the
+/// refill (ruling M2) re-adds dropped reports, whole and in order, while they fit, so
+/// no evidence is lost while room remains.
 fn size_check(input: &SizeCheckInput) -> String {
     let full = size_check_with(input, SizeCut::default());
     if fits(&full) {
@@ -247,13 +265,12 @@ fn size_check(input: &SizeCheckInput) -> String {
     if let Some(n) = most_that_fit(max, |n| size_check_with(input, reports(n))) {
         return size_check_with(input, reports(n));
     }
-    size_check_with(
-        input,
-        SizeCut {
-            brief: Some(BRIEF_CHARS),
-            ..reports(0)
-        },
-    )
+    let briefs = |n| SizeCut {
+        brief: Some(BRIEF_CHARS),
+        ..reports(n)
+    };
+    let n = most_that_fit(max, |n| size_check_with(input, briefs(n))).unwrap_or(0);
+    size_check_with(input, briefs(n))
 }
 
 fn yes_no(b: bool) -> &'static str {
@@ -361,7 +378,8 @@ fn check_summary(input: &CheckSummaryInput) -> String {
         Some(k) if k > 0 => check_summary_with(input, &tail_from(lines.len() - k), true),
         Some(_) => {
             let bare = check_summary_with(input, "", true);
-            let room = PROMPT_MAX_BYTES.saturating_sub(bare.len());
+            // The kept end follows the marker on its own line: count that `\n`.
+            let room = PROMPT_MAX_BYTES.saturating_sub(bare.len() + 1);
             let last = lines.last().copied().unwrap_or("");
             check_summary_with(input, tail_bytes(last, room), true)
         }
