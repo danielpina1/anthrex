@@ -171,6 +171,14 @@ pub fn deps_done(run: &Run, task: &Task) -> bool {
     unfinished_deps(run, task).is_empty()
 }
 
+/// M8b decision 19: the task waits for its size cross-check, so it is not runnable.
+pub fn size_check_pending(task: &Task) -> bool {
+    matches!(
+        task.size_check,
+        Some(crate::run::model::SizeCheckState::Pending { .. })
+    )
+}
+
 /// Decision 41's weights until M9.5's history exists: S = 1, M = 3. An L task never
 /// runs (rule 7.2.4), so its weight only orders the snapshot; it counts as M.
 pub fn weight(task: &Task) -> u32 {

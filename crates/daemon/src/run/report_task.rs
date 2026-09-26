@@ -5,7 +5,7 @@ use proto::{DeciderSource, Effort, Route, Runtime, Severity, Strength};
 
 use super::contract::{mode_label, sha7, size_label};
 use super::engine::{epoch_spend, ladder};
-use super::model::Task;
+use super::model::{SizeCheckState, Task};
 use super::report::{format_utc, verdict_label};
 use super::report_escape::{escape_cell, escape_heading, fenced, list_item_text, plain_text_line};
 
@@ -22,6 +22,17 @@ pub(super) fn render_task(task: &Task, now: u64, out: &mut String) {
         mode_label(task.test_mode),
         task.rung
     ));
+    // M8b decision 19: a size cross-check that disagreed with the engine.
+    if let Some(SizeCheckState::Done(info)) = &task.size_check
+        && let (false, Some(decided)) = (info.agreed, info.decided)
+    {
+        out.push_str(&format!(
+            "Size cross-check: {} by the engine, {} by the decider: {}\n",
+            size_label(info.engine),
+            size_label(decided),
+            plain_text_line(&info.reason)
+        ));
+    }
     if !task.notes.is_empty() {
         out.push_str("Notes:\n");
         for note in &task.notes {

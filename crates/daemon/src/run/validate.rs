@@ -469,6 +469,7 @@ fn new_task(
         pending_classification: None,
         block_source: None,
         decider_usage: Default::default(),
+        size_check: None,
     }
 }
 

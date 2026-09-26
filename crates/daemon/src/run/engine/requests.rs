@@ -10,8 +10,8 @@ use super::dispatch::{finishing_as, history, salvage_ref};
 use super::schedule::deps_done;
 use super::signals::end_round;
 use super::{
-    Effect, EngineState, OpKind, OpResult, ReplyId, emit_op, ladder, next_op, outbox, restore,
-    review,
+    Effect, EngineState, OpKind, OpResult, ReplyId, deciders, emit_op, ladder, next_op, outbox,
+    restore, review,
 };
 use crate::run::edits::{EditConsequence, apply_edits};
 use crate::run::env::profile_env;
@@ -73,6 +73,9 @@ pub(super) fn start(
         env: profile_env(&run.profile, &path),
     };
     emit_op(&mut run, op, None, kind, fx);
+    // M8b decision 19: every task is cross-checked; one waiting is not runnable.
+    let ids: Vec<String> = run.tasks.iter().map(|t| t.id().to_string()).collect();
+    deciders::cross_check(&mut run, &ids, now, fx);
     reply(fx, id, Ok(run.id.clone()));
     state.runs.insert(run.id.clone(), run);
 }
@@ -123,6 +126,11 @@ pub(super) fn approve(
     }
     run.state = RunState::Running;
     run.approved_by = Some("user".to_string());
+    // Task 12 review m7: a decider queued at the gate (a size check) could not start
+    // there; its slot wait counts from now.
+    for q in &mut run.decider_queue {
+        q.queued_at = now;
+    }
     log(run, now, "approved by the user");
     reply(fx, id, Ok(format!("run {run_id} approved")));
 }
@@ -158,6 +166,12 @@ pub(super) fn reject(
         })
         .collect();
     worktrees.push((run.integration_path(), salvage_ref(run, "integration", 1)));
+    // Task 12 review m7: a size check queued at the gate never starts beside the
+    // discard (none can be in flight: deciders start only while the run runs).
+    run.decider_queue.clear();
+    for task in &mut run.tasks {
+        task.drop_pending_size_check();
+    }
     let op = next_op(run);
     let kind = OpKind::Discard {
         root: run.root.clone(),
@@ -227,6 +241,8 @@ pub(super) fn edit(
         })
         .map(|t| t.id().to_string())
         .collect();
+    // M8b decision 19: the unstarted tasks this batch added or amended.
+    let touched = touched_unstarted(&edited, edits);
     *run = edited;
     for consequence in consequences {
         match consequence {
@@ -248,6 +264,7 @@ pub(super) fn edit(
             EditConsequence::Resume => restore::unpause(run, now, fx),
         }
     }
+    deciders::cross_check(run, &touched, now, fx);
     let n = edits.len();
     log(
         run,
@@ -259,6 +276,30 @@ pub(super) fn edit(
         text.push_str(&super::complete::deferred_note(task));
     }
     reply(fx, id, Ok(text));
+}
+
+/// M8b decision 19's edit side: decision 13's touched set (the tasks the batch added,
+/// split into, amended or gave a dependency), those still pending or queued (none
+/// dispatched), in plan order.
+fn touched_unstarted(edited: &Run, edits: &[PlanEdit]) -> Vec<String> {
+    let mut touched: Vec<&str> = Vec::new();
+    for edit in edits {
+        match edit {
+            PlanEdit::AddTask { task } => touched.push(&task.id),
+            PlanEdit::SplitTask { into, .. } => touched.extend(into.iter().map(|t| t.id.as_str())),
+            PlanEdit::AmendTask { task_id, .. } | PlanEdit::AddDep { task_id, .. } => {
+                touched.push(task_id)
+            }
+            _ => {}
+        }
+    }
+    edited
+        .tasks
+        .iter()
+        .filter(|t| touched.contains(&t.id()))
+        .filter(|t| matches!(t.state, TaskState::Pending | TaskState::Queued))
+        .map(|t| t.id().to_string())
+        .collect()
 }
 
 fn kill_sessions(run: &mut Run, task_id: &str, fx: &mut Vec<Effect>) {

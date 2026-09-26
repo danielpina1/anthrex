@@ -42,6 +42,7 @@ use super::validate::EditScope;
 mod clock;
 mod complete;
 pub(crate) mod deciders;
+mod deciders_size;
 mod dispatch;
 mod done;
 mod fallback;

@@ -12,6 +12,7 @@ mod control_retry;
 mod deciders;
 mod deciders_block;
 mod deciders_edges;
+mod deciders_size;
 mod dispatch;
 mod dispatch_edits;
 mod dispatch_slots;

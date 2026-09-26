@@ -132,7 +132,17 @@ impl Fixture {
     }
 
     pub fn start(&mut self, yes: bool) -> Vec<crate::run::engine::Effect> {
-        let run = build(&self.plan, &self.config, yes);
+        self.start_with(yes, |_| {})
+    }
+
+    /// Start, with `edit` applied to the built run first (M8b.13: its evidence).
+    pub fn start_with(
+        &mut self,
+        yes: bool,
+        edit: impl FnOnce(&mut Run),
+    ) -> Vec<crate::run::engine::Effect> {
+        let mut run = build(&self.plan, &self.config, yes);
+        edit(&mut run);
         let reply = self.reply();
         self.next(EventKind::Start {
             reply,

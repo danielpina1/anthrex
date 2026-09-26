@@ -425,6 +425,8 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         decider_calls: 0,
         decider_fallbacks: 0,
         decider_usage: Default::default(),
+        scout_reports: Vec::new(),
+        onboarding_report: None,
     })
 }
 

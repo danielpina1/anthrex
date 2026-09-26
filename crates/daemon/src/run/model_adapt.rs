@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::Run;
+use super::{Run, Task};
 
 impl Run {
     /// M8b decision 7's attention line, while the stored profile is stale: a stale
@@ -15,6 +15,14 @@ impl Run {
                 self.stale_profile.join(", ")
             )
         })
+    }
+}
+
+impl Task {
+    /// Ends a size cross-check the task still waits for (M8b decision 19; a cancel).
+    pub fn drop_pending_size_check(&mut self) {
+        self.size_check
+            .take_if(|s| matches!(s, SizeCheckState::Pending { .. }));
     }
 }
 
@@ -36,6 +44,14 @@ pub struct PendingFailure {
     pub rung: u8,
     pub check_index: usize,
     pub decider_id: u64,
+}
+
+/// A task's size cross-check (M8b decision 19): waiting for the size-check decider
+/// `decider_id` (the task is not runnable meanwhile), or answered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SizeCheckState {
+    Pending { decider_id: u64 },
+    Done(proto::SizeCheckInfo),
 }
 
 /// `RunLimits.decider_mode` of a run recorded before milestone 8b.

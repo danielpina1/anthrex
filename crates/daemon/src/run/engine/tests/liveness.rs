@@ -61,6 +61,27 @@ fn run_alive(run: &Run) {
     assert_working_alive(run);
     gates_alive(run);
     assert_run_alive(run);
+    size_checks_alive(run);
+}
+
+/// M8b.13: a task waiting for its size cross-check (not runnable meanwhile) has that
+/// decider queued or in flight.
+fn size_checks_alive(run: &Run) {
+    for t in &run.tasks {
+        let Some(crate::run::model::SizeCheckState::Pending { decider_id }) = t.size_check else {
+            continue;
+        };
+        let queued = run.decider_queue.iter().any(|q| q.decider_id == decider_id);
+        let in_flight = run
+            .pending_ops
+            .values()
+            .any(|o| matches!(&o.kind, OpKind::Decide { decider_id: d, .. } if *d == decider_id));
+        assert!(
+            queued || in_flight,
+            "{} waits for size check {decider_id}, which is neither queued nor in flight",
+            t.id()
+        );
+    }
 }
 
 /// Ruling T12-I4's invariant, for every working task of `run`.

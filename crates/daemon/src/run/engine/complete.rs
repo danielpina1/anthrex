@@ -58,6 +58,7 @@ pub(super) fn cancel_now(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut 
     let id = run.tasks[i].id().to_string();
     super::deciders::drop_queued(&mut run.decider_queue, &id);
     let task = &mut run.tasks[i];
+    task.drop_pending_size_check();
     task.state = TaskState::Cancelled;
     task.block = None;
     task.awaiting_deps = false;

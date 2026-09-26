@@ -6,9 +6,10 @@
 //! once, with no op. A decider only summarises output or classifies a block: it never
 //! approves, merges or changes what a task must meet.
 //!
-//! Two deciders so far: the check summary (decision 20), for which a failed check's
-//! rung waits ([`summarise`]), and the classification of a `task_blocked` with no kind
-//! (decision 21, [`classify`]). Pure (design decision 2): no `std::fs`,
+//! Three deciders so far: the check summary (decision 20), for which a failed check's
+//! rung waits ([`summarise`]), the classification of a `task_blocked` with no kind
+//! (decision 21, [`classify`]), and the size cross-check (decision 19, [`cross_check`],
+//! in `deciders_size.rs`). Pure (design decision 2): no `std::fs`,
 //! `std::process`, `std::thread`, `tokio` or `std::time::SystemTime`.
 
 use proto::{BlockReason, DeciderMode, DeciderSource, GateKind, RunState, TaskState};
@@ -22,6 +23,8 @@ use crate::decider::{
 };
 use crate::run::contract::{candidate_red_message, check_failed_message};
 use crate::run::model::{PendingFailure, QueuedDecider, Run};
+
+pub(super) use super::deciders_size::cross_check;
 
 /// Queues `request` for `task_ids` (the task the answer is for comes first); its id.
 pub(crate) fn queue(
@@ -157,10 +160,18 @@ fn answers(answer: &DeciderAnswer, request: &DeciderRequest) -> bool {
     )
 }
 
-/// Drops the queued deciders asked about task `id` (review m3: a cancelled task's).
-/// One in flight runs to its end; its answer finds nothing waiting.
+/// Drops the queued deciders asked about task `id` (review m3: a cancelled task's). A
+/// queued size check asked about several tasks only loses `id` (M8b.13), and goes
+/// when no task is left. One in flight runs to its end; its answer finds nothing
+/// waiting.
 pub(crate) fn drop_queued(queue: &mut Vec<QueuedDecider>, id: &str) {
-    queue.retain(|q| q.task_ids.first().map(String::as_str) != Some(id));
+    for q in queue.iter_mut() {
+        if let DeciderRequest::SizeCheck(input) = &mut q.request {
+            input.tasks.retain(|t| t.id != id);
+            q.task_ids.retain(|t| t != id);
+        }
+    }
+    queue.retain(|q| q.task_ids.first().is_some_and(|first| first != id));
 }
 
 /// `Decide`'s result. A `Failed` (the driver always answers `Decided`) is the
@@ -267,6 +278,12 @@ fn apply(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
+    // Decision 19: a size check is for every task it asked about.
+    if let (DeciderAnswer::SizeCheck(verdicts), DeciderRequest::SizeCheck(input)) =
+        (&decision.answer, request)
+    {
+        return super::deciders_size::sized(run, decider_id, input, verdicts, &decision, now);
+    }
     let Some(i) = task_ids
         .first()
         .and_then(|id| run.tasks.iter().position(|t| t.id() == id))
@@ -305,8 +322,8 @@ fn apply(
                 fx,
             );
         }
-        // `on_decided` made the kinds match; triage and the size check are applied by
-        // their own callers (M8b.13, M8b.14).
+        // `on_decided` made the kinds match; the size check is applied above, and
+        // triage by its own caller (M8b.14).
         _ => {}
     }
 }

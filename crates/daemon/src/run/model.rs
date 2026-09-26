@@ -291,6 +291,10 @@ pub struct Task {
     /// M8b decision 18: the usage of the deciders asked about this task alone.
     #[serde(default)]
     pub decider_usage: TokenUsage,
+    /// M8b decision 19: the size cross-check; a pending one keeps the task from
+    /// being dispatched.
+    #[serde(default)]
+    pub size_check: Option<SizeCheckState>,
 }
 
 impl Task {
@@ -430,6 +434,15 @@ pub struct Run {
     pub decider_fallbacks: u32,
     #[serde(default)]
     pub decider_usage: TokenUsage,
+    /// M8b decision 19: the ids of the run's scout reports (stored under
+    /// `<data_dir>/scouts/`), the evidence a task's `scout_refs` may name. Empty until
+    /// milestone 9 starts run scouts.
+    #[serde(default)]
+    pub scout_reports: Vec<String>,
+    /// M8b decision 19: the stored profile's onboarding report id (the `scout_refs`
+    /// alias `onboarding`), when the repository has one.
+    #[serde(default)]
+    pub onboarding_report: Option<String>,
 }
 
 impl Run {

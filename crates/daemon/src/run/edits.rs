@@ -298,6 +298,7 @@ impl Batch {
         self.run.merge_queue.retain(|q| *q != id);
         // Review m3: its queued deciders are dropped.
         super::engine::deciders::drop_queued(&mut self.run.decider_queue, &id);
+        self.run.tasks[i].drop_pending_size_check();
         for j in 0..self.run.tasks.len() {
             let dependent = &mut self.run.tasks[j];
             if j == i || dependent.state.is_finished() || !dependent.spec.deps.contains(&id) {

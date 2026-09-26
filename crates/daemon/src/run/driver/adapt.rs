@@ -11,18 +11,21 @@
 //!
 //! M8b.12: `OpKind::Decide`, executed by [`RunService::decide`] with the adaptation's
 //! [`DeciderContext`], on the op's own task and never under a lock (decision 18).
+//!
+//! M8b.13: a size check's `evidence_refs` are read into `Evidence` first
+//! ([`read_evidence`], on `spawn_blocking`), only from the reports anthrex stored.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use proto::{
     AgentRole, OutputFilter, Plan, ProfileReply, ProfileRequest, ProfileSource, RunReply, ToolCall,
 };
 
-use super::RunService;
+use super::{OpCtx, RunService};
 use crate::decider::call::decide;
 use crate::decider::fallback::fallback_decision;
-use crate::decider::{DeciderContext, DeciderRequest};
+use crate::decider::{DeciderContext, DeciderRequest, Evidence};
 use crate::profile::resolve::{apply_choice as apply_to_plan, run_profile};
 use crate::profile::service::ProfileService;
 use crate::profile::store::{self, PROFILE_FILE, Stored};
@@ -39,6 +42,8 @@ pub(super) struct ProfileChoice {
     repo_dir: PathBuf,
     stale: Vec<String>,
     notes: Vec<String>,
+    /// M8b decision 19: the stored profile's onboarding report (the alias `onboarding`).
+    onboarding_report: Option<String>,
 }
 
 /// Decision 6's refusal for a stored profile that does not parse.
@@ -62,12 +67,44 @@ const NO_DECIDERS: &str = "the decider could not start: the daemon has no decide
 
 impl RunService {
     /// `OpKind::Decide` (decision 18): the call, always answered, a fallback included.
-    pub(super) async fn decide(&self, request: DeciderRequest) -> OpResult {
+    /// A size check's evidence is read first (decision 19); with none readable, the
+    /// check is its fallback.
+    pub(super) async fn decide(&self, ctx: &OpCtx, mut request: DeciderRequest) -> OpResult {
+        if let Err(error) = self.with_evidence(ctx, &mut request).await {
+            let reason = format!("the decider could not start: {error}");
+            return OpResult::Decided(Box::new(fallback_decision(&request, reason)));
+        }
         let decision = match self.adaptation.get() {
             Some(adaptation) => decide(&adaptation.deciders, &request).await,
             None => fallback_decision(&request, NO_DECIDERS.to_string()),
         };
         OpResult::Decided(Box::new(decision))
+    }
+
+    /// Decision 19: fills a size check's `evidence` from its `evidence_refs`, resolved
+    /// against the run's own directories (read under the lock, the files after it, on
+    /// `spawn_blocking`). Any other request is left as it is.
+    pub(super) async fn with_evidence(
+        &self,
+        ctx: &OpCtx,
+        request: &mut DeciderRequest,
+    ) -> Result<(), String> {
+        let DeciderRequest::SizeCheck(input) = request else {
+            return Ok(());
+        };
+        let (repo_dir, onboarding) = crate::lock(&self.state)
+            .runs
+            .get(&ctx.run_id)
+            .map(|run| (run.repo_dir.clone(), run.onboarding_report.clone()))
+            .ok_or_else(|| format!("unknown run {}", ctx.run_id))?;
+        let (refs, run_dir) = (input.evidence_refs.clone(), ctx.data_dir.clone());
+        let evidence = tokio::task::spawn_blocking(move || {
+            read_evidence(&refs, &run_dir, &repo_dir, onboarding.as_deref())
+        })
+        .await
+        .map_err(|error| format!("a blocking step did not finish: {error}"))??;
+        input.evidence = evidence;
+        Ok(())
     }
 
     /// Sets the services once; a second call is ignored.
@@ -133,8 +170,16 @@ impl RunService {
         })
         .await
         .map_err(|error| format!("a blocking step did not finish: {error}"))?;
+        let mut onboarding_report = None;
         let (stored, path) = match stored {
-            Stored::Found { profile, path, .. } => (Some(profile), path),
+            Stored::Found {
+                profile,
+                path,
+                meta,
+            } => {
+                onboarding_report = meta.report;
+                (Some(profile), path)
+            }
             Stored::Unparseable { path, error } => return Err(unparseable(&path, &error)),
             Stored::Absent => (None, repo_dir.join(PROFILE_FILE)),
         };
@@ -156,6 +201,7 @@ impl RunService {
             repo_dir,
             stale,
             notes: chosen.notes,
+            onboarding_report,
         })
     }
 }
@@ -168,6 +214,7 @@ pub(super) fn apply_choice(run: &mut Run, choice: ProfileChoice, now: u64) {
     run.filter_prefixes = choice.filter_prefixes;
     run.repo_dir = choice.repo_dir;
     run.stale_profile = choice.stale;
+    run.onboarding_report = choice.onboarding_report;
     run.log.extend(
         choice
             .notes
@@ -175,6 +222,70 @@ pub(super) fn apply_choice(run: &mut Run, choice: ProfileChoice, now: u64) {
             .map(|text| LogEntry { at: now, text }),
     );
 }
+
+/// The most of one report file [`read_evidence`] reads.
+const EVIDENCE_FILE_MAX: u64 = 1 << 20;
+
+/// Decision 19: the reports `refs` name, as a size check's evidence. Each ref is
+/// resolved only to a report anthrex stored (`scout::report::resolve_ref`): the alias
+/// `onboarding` to the stored profile's under `<repo_dir>/scouts/`, any other to a run
+/// scout's under `<run_dir>/scouts/`. A ref (or report id) that is not a scout id is
+/// never made into a path, and a file that is not a regular file (a link included),
+/// is larger than 1 MiB or is not a report is skipped. An error when none is read.
+/// Blocking.
+pub(super) fn read_evidence(
+    refs: &[String],
+    run_dir: &Path,
+    repo_dir: &Path,
+    onboarding: Option<&str>,
+) -> Result<Vec<Evidence>, String> {
+    use crate::scout::report::{ONBOARDING_ALIAS, resolve_ref};
+    use crate::scout::spec::valid_id;
+    let onboarding = onboarding.filter(|id| valid_id(id) && !repo_dir.as_os_str().is_empty());
+    let mut evidence = Vec::new();
+    let mut problems = Vec::new();
+    for reference in refs {
+        if !valid_id(reference) || (reference == ONBOARDING_ALIAS && onboarding.is_none()) {
+            problems.push(format!("{reference}: not a stored report"));
+            continue;
+        }
+        let path = resolve_ref(reference, run_dir, repo_dir, onboarding);
+        match read_report(&path) {
+            Ok(report) => evidence.push(Evidence {
+                id: report.id,
+                summary: report.summary,
+                files: report.files.into_iter().map(|f| f.path).collect(),
+                modules: report.modules,
+                interfaces: report.interfaces,
+            }),
+            Err(error) => problems.push(format!("{reference}: {error}")),
+        }
+    }
+    if evidence.is_empty() {
+        return Err(format!(
+            "no scout report could be read ({})",
+            problems.join("; ")
+        ));
+    }
+    Ok(evidence)
+}
+
+/// One stored report: a regular file, not through a link, at most 1 MiB.
+fn read_report(path: &Path) -> Result<proto::ScoutReport, String> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    if !meta.file_type().is_file() {
+        return Err("not a regular file".to_string());
+    }
+    if meta.len() > EVIDENCE_FILE_MAX {
+        return Err(format!("larger than {EVIDENCE_FILE_MAX} bytes"));
+    }
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    serde_json::from_slice(&bytes).map_err(|e| format!("not a report: {e}"))
+}
+
+#[cfg(test)]
+#[path = "adapt_evidence_tests.rs"]
+mod evidence_tests;
 
 #[cfg(test)]
 mod tests {
@@ -185,7 +296,7 @@ mod tests {
     use super::{ProfileChoice, apply_choice};
     use crate::run::plan::{BuildContext, Preflight, build_run, parse_plan};
 
-    fn run() -> crate::run::model::Run {
+    pub(super) fn run() -> crate::run::model::Run {
         let plan = parse_plan(
             "goal = \"g\"\n[[task]]\nid = \"t1\"\ntitle = \"One\"\nsize = \"S\"\nowns = [\"a.rs\"]\nbrief = \"b\"\nacceptance = [\"a\"]\n",
         )
@@ -222,6 +333,7 @@ mod tests {
             repo_dir: PathBuf::from("/data/repos/r-00000000"),
             stale: vec!["Cargo.toml".into()],
             notes: vec!["note one".into(), "note two".into()],
+            onboarding_report: Some("onboarding-7".into()),
         };
         apply_choice(&mut run, choice, 42);
         assert_eq!(run.profile_source, Some(ProfileSource::Stored));
@@ -229,6 +341,7 @@ mod tests {
         assert_eq!(run.filter_prefixes, vec!["cargo test".to_string()]);
         assert_eq!(run.repo_dir, PathBuf::from("/data/repos/r-00000000"));
         assert_eq!(run.stale_profile, vec!["Cargo.toml".to_string()]);
+        assert_eq!(run.onboarding_report.as_deref(), Some("onboarding-7"));
         let logged: Vec<(u64, &str)> = run.log.iter().map(|e| (e.at, e.text.as_str())).collect();
         assert_eq!(logged, vec![(42, "note one"), (42, "note two")]);
     }

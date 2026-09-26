@@ -300,8 +300,9 @@ pub(super) fn rung3(run: &mut Run, i: usize, text: String, now: u64, fx: &mut Ve
 /// Ruling T13-minors (m3): what depends on the size is resolved again for the raised
 /// size — the review level, its reviewer and a budget the plan did not set — as an
 /// edit's re-resolution does (`edits.rs`), so a retried task is reviewed and budgeted
-/// as what it now is. The route is the task's own (rung 2 may have escalated it).
-fn reresolve(run: &mut Run, i: usize) {
+/// as what it now is. The route is the task's own (rung 2 may have escalated it); the
+/// route the raised size resolves to is returned (M8b decision 19 takes its effort).
+pub(crate) fn reresolve(run: &mut Run, i: usize) -> proto::Route {
     let mut spec = run.tasks[i].spec.clone();
     spec.size = spec.size.max(run.tasks[i].size);
     let (resolved, _) = resolve_task_lenient(
@@ -317,6 +318,7 @@ fn reresolve(run: &mut Run, i: usize) {
         .review_level
         .map(|level| pick_reviewer(&run.roster, &task.route, level));
     task.budget = resolved.budget;
+    resolved.route
 }
 
 /// Rung 4: `blocked(human)`, the worker killed.

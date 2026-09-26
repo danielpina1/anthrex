@@ -240,7 +240,10 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64) -> TaskInfo 
             .map(|e| format!("{} {}", clock(e.at), e.text))
             .collect(),
         decider_usage: (t.decider_usage != Default::default()).then_some(t.decider_usage),
-        size_check: None,
+        size_check: match &t.size_check {
+            Some(crate::run::model::SizeCheckState::Done(info)) => Some(info.clone()),
+            _ => None,
+        },
         diff: None,
         phases: None,
         block_source: t.block_source,
