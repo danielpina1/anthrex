@@ -1,6 +1,7 @@
 mod forest;
 mod names;
 mod rows;
+mod run_rows;
 mod runs;
 
 pub use forest::{SubagentNode, subagent_forest};
@@ -10,6 +11,7 @@ use proto::{
     TaskInfo, WindowInfo,
 };
 use rows::{SubagentWalk, emit_subagents, guide_prefix, visible_windows};
+pub use run_rows::{RunFilter, display_rounds, round_label, run_rows};
 use runs::{ShownRun, group_projects, run_matches_filter};
 pub use runs::{run_progress, run_status, run_title, shown_runs};
 use std::collections::HashSet;

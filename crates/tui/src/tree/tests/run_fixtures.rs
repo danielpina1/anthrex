@@ -5,8 +5,8 @@
 //! it cares about and every other field takes a neutral value.
 
 use proto::{
-    AgentRole, AgentRoundInfo, ReviewInfo, RunInfo, RunRef, RunState, RunsSnapshot, Runtime, Size,
-    Status, TaskInfo, TaskState, Verdict, WindowInfo, WindowKind,
+    AgentRole, AgentRoundInfo, PlannerInfo, ReviewInfo, RunInfo, RunRef, RunState, RunsSnapshot,
+    Runtime, ScoutInfo, Size, Status, TaskInfo, TaskState, Verdict, WindowInfo, WindowKind,
 };
 
 /// The gate and three-task fixtures' run id, project and goal.
@@ -95,6 +95,35 @@ pub(crate) fn reviewer(
     started: u64,
 ) -> AgentRoundInfo {
     round(AgentRole::Reviewer, round_number, window, runtime, started)
+}
+
+/// An area scout, `working`, with no window.
+pub(crate) fn scout(id: &str, question: &str, runtime: Runtime, started: u64) -> ScoutInfo {
+    serde_json::from_value(serde_json::json!({
+        "id": id, "kind": "area", "question": question, "state": "working", "failure": null,
+        "window_id": null, "route": route_json(runtime), "started_at": started,
+        "ended_at": null, "tool_calls": 0, "report_bytes": null, "files": [],
+        "usage": { "input": 0, "output": 0, "cache_read": 0, "cache_write": 0 },
+    }))
+    .expect("a minimal ScoutInfo")
+}
+
+/// A sub-planner of `epic`, `planning`, Claude-routed, with no window.
+pub(crate) fn planner(epic: &str, title: &str) -> PlannerInfo {
+    PlannerInfo {
+        epic: epic.into(),
+        title: title.into(),
+        area: vec![],
+        route: serde_json::from_value(route_json(Runtime::Claude)).expect("a Route"),
+        window_id: None,
+        state: proto::PlannerState::Planning,
+        started_at: 0,
+        ended_at: None,
+        edits_accepted: 0,
+        edits_rejected: 0,
+        last_rejection: None,
+        replans: vec![],
+    }
 }
 
 /// A plain PTY shell window.

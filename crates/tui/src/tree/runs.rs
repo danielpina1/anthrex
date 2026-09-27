@@ -90,7 +90,10 @@ fn owned_by(window: &WindowInfo, shown: &HashSet<&str>) -> bool {
 }
 
 /// Decision 10: the lowest-id listed window that is `run`'s orchestrator.
-fn orchestrator_of<'a>(run: &RunInfo, windows: &'a [WindowInfo]) -> Option<&'a WindowInfo> {
+pub(super) fn orchestrator_of<'a>(
+    run: &RunInfo,
+    windows: &'a [WindowInfo],
+) -> Option<&'a WindowInfo> {
     windows
         .iter()
         .filter(|window| {
