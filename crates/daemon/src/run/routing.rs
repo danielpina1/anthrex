@@ -286,9 +286,13 @@ fn decision(
 /// A worker session of task `i` is being launched on its route (its session number
 /// already counted): its first session records `initial`, and a session after rung 2
 /// or `run retry` records `escalation` from the route it escalated from. Any other
-/// fresh session (a lost resume, say) keeps the route already recorded.
+/// fresh session (a lost resume, say) keeps the route already recorded. A run without
+/// history (one from milestone 8a) records nothing (whole-branch review m2).
 pub fn record_worker(run: &mut Run, i: usize, now: u64) {
     let from = run.tasks[i].escalated_from.take();
+    if !run.history {
+        return;
+    }
     let task = &run.tasks[i];
     let chosen = task.route.clone();
     let id = (AgentRole::Worker, task.session, None);
@@ -329,7 +333,7 @@ pub fn record_worker(run: &mut Run, i: usize, now: u64) {
 }
 
 /// Review round `round` of task `i` is being launched on `chosen`, which
-/// `pick_reviewer` gave against `author` at `level`.
+/// `pick_reviewer` gave against `author` at `level`. Nothing for a run without history.
 pub fn record_reviewer(
     run: &mut Run,
     i: usize,
@@ -338,6 +342,9 @@ pub fn record_reviewer(
     round: u32,
     now: u64,
 ) {
+    if !run.history {
+        return;
+    }
     let task = &run.tasks[i];
     let decision = decision(
         run,

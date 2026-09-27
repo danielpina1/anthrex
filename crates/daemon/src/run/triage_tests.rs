@@ -363,26 +363,114 @@ fn tracked_files_are_sorted_capped_and_counted() {
 #[test]
 fn fast_refusal_needs_one_task_neither_hub_nor_l() {
     let ok = check_fast(build_fast(&single(Size::S, &["crates/auth/src/link.rs"]))).unwrap();
-    assert_eq!(fast_refusal(&ok.tasks), None);
+    assert_eq!(fast_refusal(&ok), None);
     let hub = build_fast(&single(Size::M, &["crates/proto/src/wire.rs"])).unwrap();
     assert_eq!(
-        fast_refusal(&hub.tasks).as_deref(),
+        fast_refusal(&hub).as_deref(),
         Some("the fast path does not apply: task t1 touches a hub file")
     );
     let mut l = ok.clone();
     l.tasks[0].size = Size::L;
     assert_eq!(
-        fast_refusal(&l.tasks).as_deref(),
+        fast_refusal(&l).as_deref(),
         Some("the fast path does not apply: task t1 is L")
     );
     let mut two = ok.clone();
     two.tasks.push(ok.tasks[0].clone());
     let many = "the fast path does not apply: a fast-path run has exactly one task, not 2";
-    assert_eq!(fast_refusal(&two.tasks).as_deref(), Some(many));
+    assert_eq!(fast_refusal(&two).as_deref(), Some(many));
     assert_eq!(check_fast(Ok(two)).unwrap_err(), many);
+    let mut none = ok.clone();
+    none.tasks.clear();
     assert_eq!(
-        fast_refusal(&[]).as_deref(),
+        fast_refusal(&none).as_deref(),
         Some("the fast path does not apply: a fast-path run has exactly one task, not 0")
+    );
+}
+
+/// Whole-branch review I1: a fast-path task whose `owns` names or covers a protected
+/// agent-config path takes the planned path, where the user sees the grant. Literal
+/// entries match decision 56's patterns as its done gate does (ignoring case, `<dir>/**`
+/// covering `<dir>`); a glob counts when it covers a tracked protected file or a
+/// protected path at the repository's root.
+#[test]
+fn a_fast_task_owning_a_protected_file_takes_the_plan_path() {
+    let ok = check_fast(build_fast(&single(Size::S, &["crates/auth/src/link.rs"]))).unwrap();
+    let why = |path: &str| {
+        format!("the fast path does not apply: task t1 owns a protected file ({path})")
+    };
+    let owning = |owns: &[&str], tracked: &[&str], extra: &[&str]| {
+        let mut run = ok.clone();
+        run.tasks[0].spec.owns = owns.iter().map(|o| o.to_string()).collect();
+        run.protected_files = tracked.iter().map(|t| t.to_string()).collect();
+        run.profile
+            .protected
+            .extend(extra.iter().map(|e| e.to_string()));
+        fast_refusal(&run)
+    };
+    // (owns, tracked protected files, profile extras, the path the reason names)
+    type Case<'a> = (&'a [&'a str], &'a [&'a str], &'a [&'a str], &'a str);
+    let refused: [Case; 14] = [
+        (&["AGENTS.md"], &[], &[], "AGENTS.md"),
+        (&["src/a.rs", "CLAUDE.md"], &[], &[], "CLAUDE.md"),
+        (&["docs/AGENTS.md"], &[], &[], "docs/AGENTS.md"),
+        (&["agents.md"], &[], &[], "agents.md"),
+        (
+            &[".claude/settings.json"],
+            &[],
+            &[],
+            ".claude/settings.json",
+        ),
+        (&[".claude"], &[], &[], ".claude"),
+        (&[".mcp.json"], &[], &[], ".mcp.json"),
+        (&[".codex/config.toml"], &[], &[], ".codex/config.toml"),
+        (&["**"], &[], &[], ".claude/**"),
+        (&[".claude/*"], &[], &[], ".claude/**"),
+        (&["*.md"], &[], &[], "**/CLAUDE.md"),
+        (
+            &["crates/auth/**"],
+            &["crates/auth/AGENTS.md"],
+            &[],
+            "crates/auth/AGENTS.md",
+        ),
+        (
+            &["docs/agents.txt"],
+            &[],
+            &["docs/agents.txt"],
+            "docs/agents.txt",
+        ),
+        (&["docs/**"], &[], &["docs/*.txt"], "docs/*.txt"),
+    ];
+    for (owns, tracked, extra, path) in refused {
+        assert_eq!(
+            owning(owns, tracked, extra),
+            Some(why(path)),
+            "{owns:?} {tracked:?} {extra:?}"
+        );
+    }
+    let allowed: [(&[&str], &[&str], &[&str]); 6] = [
+        (&["crates/auth/src/link.rs"], &["AGENTS.md"], &[]),
+        (
+            &["crates/auth/**"],
+            &["AGENTS.md", ".claude/settings.json"],
+            &[],
+        ),
+        (&["*.rs"], &[], &[]),
+        (&["docs/*.md"], &[], &[]),
+        (&["src/claude/x.rs", "claude.md.bak"], &[], &[]),
+        (&["docs/**"], &[], &["notes/*.txt"]),
+    ];
+    for (owns, tracked, extra) in allowed {
+        assert_eq!(
+            owning(owns, tracked, extra),
+            None,
+            "{owns:?} {tracked:?} {extra:?}"
+        );
+    }
+    // Through `build_run`, as `build_plan` builds it: the run's own protected list.
+    assert_eq!(
+        check_fast(build_fast(&single(Size::S, &["AGENTS.md"]))).unwrap_err(),
+        why("AGENTS.md")
     );
 }
 

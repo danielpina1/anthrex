@@ -91,19 +91,12 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
 /// deciders with triage, run scouts, and the orchestrator from OTLP. Every role is
 /// listed, and every sum saturates: OTLP totals come from any local process.
 pub(crate) fn run_usage(run: &Run) -> RunUsage {
-    fn add(to: &mut TokenUsage, u: TokenUsage) {
-        to.input = to.input.saturating_add(u.input);
-        to.output = to.output.saturating_add(u.output);
-        to.cache_read = to.cache_read.saturating_add(u.cache_read);
-        to.cache_write = to.cache_write.saturating_add(u.cache_write);
-    }
     let mut by_role: BTreeMap<String, TokenUsage> =
         ["worker", "reviewer", "scout", "decider", "orchestrator"]
             .into_iter()
             .map(|role| (role.to_string(), TokenUsage::default()))
             .collect();
-    let mut credit =
-        |role: &str, u: TokenUsage| add(by_role.entry(role.to_string()).or_default(), u);
+    let mut credit = |role: &str, u: TokenUsage| *by_role.entry(role.to_string()).or_default() += u;
     for round in run.tasks.iter().flat_map(|t| &t.rounds) {
         let role = match round.role {
             AgentRole::Worker => "worker",
@@ -119,7 +112,7 @@ pub(crate) fn run_usage(run: &Run) -> RunUsage {
     credit("orchestrator", run.orchestrator_usage);
     let mut total = TokenUsage::default();
     for u in by_role.values() {
-        add(&mut total, *u);
+        total += *u;
     }
     RunUsage {
         total,

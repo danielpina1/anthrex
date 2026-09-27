@@ -170,6 +170,19 @@ fn e2e_goal_touching_a_hub_file_is_refused_without_side_effects() {
     refused_without_side_effects(&h, &out, &message);
 }
 
+/// Whole-branch review I1: a fast-path task that owns a protected agent-config file
+/// would get decision 56's grant with no plan the user approves, so the goal takes the
+/// planned path, which M8b refuses, creating nothing.
+#[test]
+fn e2e_goal_owning_a_protected_file_takes_the_plan_path() {
+    let h = harness("claude", "", &[], &[]);
+    h.decider("triage", 1, triage_single(&["AGENTS.md"]));
+    let out = h.start_goal("rewrite the agent instructions", &[]);
+    let reason = "the fast path does not apply: task t1 owns a protected file (AGENTS.md)";
+    let message = planned(Scale::Single, DeciderSource::Decider, None, reason);
+    refused_without_side_effects(&h, &out, &message);
+}
+
 #[test]
 fn e2e_goal_without_deciders_takes_the_plan_path() {
     let h = harness("off", "", &[], &[]);

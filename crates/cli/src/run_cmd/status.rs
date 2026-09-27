@@ -58,7 +58,19 @@ pub fn run_block(run: &RunInfo) -> String {
     out.push_str(&format!("  goal: {}\n", run.goal));
     if let Some(t) = &run.triage {
         let (triage, source) = (kinds_scale(&t.kinds, t.scale), source_label(t.source));
-        out.push_str(&format!("  triage: {triage} ({source})\n"));
+        // Whole-branch review I1: the fast-path task's test mode, which triage chose.
+        let mode = match run.tasks.first().filter(|_| fast) {
+            Some(task) => format!(
+                "; {} test mode {}{}",
+                task.id,
+                mode_label(task.test_mode),
+                task.test_mode_reason
+                    .as_deref()
+                    .map_or(String::new(), |why| format!(" ({why})"))
+            ),
+            None => String::new(),
+        };
+        out.push_str(&format!("  triage: {triage} ({source}){mode}\n"));
     }
     out.push_str(&format!("  report: {}\n", run.report_path.display()));
     if run.unconfined_checks {

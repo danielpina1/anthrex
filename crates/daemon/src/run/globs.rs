@@ -265,6 +265,69 @@ fn match_patterns(entry: &str) -> Vec<String> {
     }
 }
 
+/// Whole-branch review I1: can the `owns` entry cover a path the `protected` entry
+/// matches at the repository's root? Each side expands as its matcher does (a literal
+/// `owns` entry is itself and everything below it; a protected `<dir>/**` also covers
+/// `<dir>`), and a protected entry's leading `**/` is dropped, so `**/AGENTS.md` counts
+/// as the root's `AGENTS.md`: every directory glob would otherwise cover one. Both are
+/// then compared component by component, ignoring ASCII case as decision 56's matcher
+/// does; two wildcard components meet when their literal heads and tails agree, which
+/// errs towards covering.
+pub fn may_cover_protected(entry: &str, protected: &str) -> bool {
+    let mut guarded = vec![anchored(protected)];
+    if let Some(dir) = protected.strip_suffix("/**")
+        && !dir.is_empty()
+    {
+        guarded.push(anchored(dir));
+    }
+    match_patterns(entry).iter().any(|owned| {
+        let owned: Vec<&str> = owned.split('/').collect();
+        guarded
+            .iter()
+            .any(|g| overlap(&owned, &g.split('/').collect::<Vec<_>>()))
+    })
+}
+
+fn anchored(pattern: &str) -> &str {
+    let mut pattern = pattern;
+    while let Some(rest) = pattern.strip_prefix("**/") {
+        pattern = rest;
+    }
+    pattern
+}
+
+/// Whether some path matches both component lists (`**` is any number of components).
+fn overlap(a: &[&str], b: &[&str]) -> bool {
+    match (a.first(), b.first()) {
+        (None, None) => true,
+        (Some(x), _) if *x == "**" => overlap(&a[1..], b) || (!b.is_empty() && overlap(a, &b[1..])),
+        (_, Some(y)) if *y == "**" => overlap(a, &b[1..]) || (!a.is_empty() && overlap(&a[1..], b)),
+        (Some(x), Some(y)) => components_meet(x, y) && overlap(&a[1..], &b[1..]),
+        _ => false,
+    }
+}
+
+fn components_meet(a: &str, b: &str) -> bool {
+    let matches = |glob: &str, literal: &str| {
+        build_glob(glob, true).map_or(true, |g| g.compile_matcher().is_match(literal))
+    };
+    match (is_literal_component(a), is_literal_component(b)) {
+        (true, true) => a.eq_ignore_ascii_case(b),
+        (true, false) => matches(b, a),
+        (false, true) => matches(a, b),
+        (false, false) => {
+            let (a, b) = (a.to_ascii_lowercase(), b.to_ascii_lowercase());
+            let head = |s: &str| s[..s.find(WILDCARD_CHARS).unwrap_or(s.len())].to_string();
+            let tail = |s: &str| {
+                let cut = s.rfind(['*', '?', '[', ']']).map_or(0, |i| i + 1);
+                s[cut..].to_string()
+            };
+            let (ha, hb, ta, tb) = (head(&a), head(&b), tail(&a), tail(&b));
+            (ha.starts_with(&hb) || hb.starts_with(&ha)) && (ta.ends_with(&tb) || tb.ends_with(&ta))
+        }
+    }
+}
+
 fn build_glob(pattern: &str, case_insensitive: bool) -> Result<Glob, String> {
     GlobBuilder::new(pattern)
         .literal_separator(true)

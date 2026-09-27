@@ -47,6 +47,16 @@ fn header(run: &Run, out: &mut String) {
             kinds_scale(&t.kinds, t.scale),
             source_label(t.source)
         ));
+        // Whole-branch review I1: the test mode triage chose, with its reason.
+        if let Some(task) = run.tasks.first() {
+            let why = task.spec.test_mode_reason.as_deref();
+            out.push_str(&format!(
+                "triage: {} test mode {}{}\n",
+                task.id(),
+                mode_label(task.test_mode),
+                why.map_or(String::new(), |why| format!(" ({})", plain_text_line(why)))
+            ));
+        }
     }
     out.push_str(&format!(
         "Base branch: {} at {}\n",

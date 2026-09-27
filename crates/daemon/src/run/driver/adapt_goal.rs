@@ -42,7 +42,7 @@ impl From<String> for BuildError {
 /// Review m1: on the fast path, [`triage::fast_refusal`] right after `build_run`, so a
 /// hub or L task gets its own reason before the runtime checks' refusals.
 pub(in crate::run::driver) fn fast_barrier(fast: bool, run: &Run) -> Result<(), BuildError> {
-    match fast.then(|| triage::fast_refusal(&run.tasks)).flatten() {
+    match fast.then(|| triage::fast_refusal(run)).flatten() {
         Some(reason) => Err(BuildError::NotFast(reason)),
         None => Ok(()),
     }

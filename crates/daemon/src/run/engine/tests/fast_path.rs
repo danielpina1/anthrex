@@ -2,10 +2,11 @@
 //! cross-check (triage sized its task), and `run promote` recorded once and nothing else.
 
 use proto::{
-    DeciderSource, RunPath, RunState, Scale, Size, SizeCheckInfo, TaskKind, TaskState, TriageInfo,
+    DeciderSource, PlanEdit, RunPath, RunState, Scale, Size, SizeCheckInfo, TaskKind, TaskState,
+    TriageInfo,
 };
 
-use super::dispatch::replies;
+use super::dispatch::{edit, replies};
 use super::fixture::*;
 use crate::run::engine::{Effect, EventKind, OpResult};
 use crate::run::model::{Run, SizeCheckState};
@@ -247,4 +248,89 @@ fn a_fast_path_start_refuses_hub_l_and_many_tasks() {
     // The control: the same one-task run that is neither hub nor L starts.
     let fx = started(true);
     assert_eq!(fx.run().state, RunState::Running);
+}
+
+/// Whole-branch review I1: the engine's barrier also refuses a fast-path task whose
+/// `owns` names a protected agent-config file, against the run's frozen protected list
+/// (built-ins plus the profile's extras); nothing is created.
+#[test]
+fn a_fast_path_start_refuses_a_task_owning_a_protected_file() {
+    for (owns, extra, path) in [
+        ("AGENTS.md", None, "AGENTS.md"),
+        (".claude/settings.json", None, ".claude/settings.json"),
+        ("**", None, ".claude/**"),
+        (
+            "docs/agents.txt",
+            Some("docs/agents.txt"),
+            "docs/agents.txt",
+        ),
+    ] {
+        let mut fx = Fixture::deciding(
+            &plan_with(PROFILE, &[task("t1", "S", "auth", "")]),
+            config::Orchestrator::default(),
+        );
+        let effects = fx.start_with(false, |run: &mut Run| {
+            mark_fast(run, triage(), None);
+            run.tasks[0].spec.owns = vec![owns.to_string()];
+            run.profile.protected.extend(extra.map(str::to_string));
+        });
+        assert_eq!(
+            replies(&effects),
+            vec![Err(format!(
+                "the fast path does not apply: task t1 owns a protected file ({path})"
+            ))]
+        );
+        only_bookkeeping(&effects);
+        assert!(fx.state.runs.is_empty(), "{owns}: a run was created");
+    }
+    // The control: the same run that owns no protected path starts.
+    assert_eq!(started(true).run().state, RunState::Running);
+}
+
+/// Whole-branch review m1: a fast-path run runs one task, so `run edit` refuses to add
+/// or split tasks into it (the whole batch), while other edits still apply. A run from
+/// a plan still accepts the same batch.
+#[test]
+fn a_fast_path_run_refuses_task_additions() {
+    let refused =
+        format!("run {RUN_ID} is on the fast path: it runs one task; start a planned run instead");
+    let add = || PlanEdit::AddTask {
+        task: super::holds::plan_task("t2", "[\"crates/mail/**\"]"),
+    };
+    let split = || PlanEdit::SplitTask {
+        task_id: "t1".into(),
+        into: vec![
+            super::holds::plan_task("t1a", "[\"crates/auth/src/a.rs\"]"),
+            super::holds::plan_task("t1b", "[\"crates/auth/src/b.rs\"]"),
+        ],
+    };
+    let amend = || PlanEdit::AmendTask {
+        task_id: "t1".into(),
+        brief: Some("A sharper brief".into()),
+        acceptance: None,
+        route: None,
+        test_mode: None,
+        test_mode_reason: None,
+        priority: None,
+        size: None,
+    };
+    for batch in [vec![add()], vec![split()], vec![amend(), add()]] {
+        let mut fx = started(true);
+        let before = fx.run().clone();
+        let effects = edit(&mut fx, batch);
+        assert_eq!(replies(&effects), vec![Err(refused.clone())]);
+        assert_eq!(*fx.run(), before, "a refused edit changes nothing");
+    }
+    let mut fx = started(true);
+    assert_eq!(
+        replies(&edit(&mut fx, vec![amend()])),
+        vec![Ok("applied 1 edit".to_string())]
+    );
+    assert_eq!(fx.task("t1").spec.brief, "A sharper brief");
+    // The control: a run from a plan accepts the addition.
+    let mut plan = started(false);
+    assert_eq!(
+        replies(&edit(&mut plan, vec![add()])),
+        vec![Ok("applied 1 edit".to_string())]
+    );
 }

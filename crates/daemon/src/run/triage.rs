@@ -14,6 +14,7 @@ use proto::{
 };
 
 use super::contract::{mode_label, size_label};
+use super::globs;
 use super::model::{Run, Task};
 use super::plan::PlanError;
 use crate::decider::{DeciderAnswer, Decision, TriageAnswer};
@@ -226,7 +227,7 @@ pub fn check_fast(built: Result<Run, Vec<PlanError>>) -> Result<Run, String> {
             return Err(not_applicable(&first));
         }
     };
-    if let Some(reason) = fast_refusal(&run.tasks) {
+    if let Some(reason) = fast_refusal(&run) {
         return Err(reason);
     }
     Ok(run)
@@ -235,8 +236,9 @@ pub fn check_fast(built: Result<Run, Vec<PlanError>>) -> Result<Run, String> {
 /// The fast path's invariant (decision 24, review I1): exactly one task, neither hub nor
 /// L. `None` when `tasks` meet it, else the reason. The driver's `build_plan`,
 /// [`check_fast`] and the engine's `start` all apply it.
-pub fn fast_refusal(tasks: &[Task]) -> Option<String> {
-    let [task] = tasks else {
+pub fn fast_refusal(run: &Run) -> Option<String> {
+    let tasks = &run.tasks;
+    let [task] = tasks.as_slice() else {
         return Some(not_applicable(&format!(
             "a fast-path run has exactly one task, not {}",
             tasks.len()
@@ -251,7 +253,50 @@ pub fn fast_refusal(tasks: &[Task]) -> Option<String> {
     if task.size == Size::L {
         return Some(not_applicable(&format!("task {} is L", task.id())));
     }
+    if let Some(path) = owned_protected(
+        &task.spec.owns,
+        &run.profile.protected,
+        &run.protected_files,
+    ) {
+        return Some(not_applicable(&format!(
+            "task {} owns a protected file ({path})",
+            task.id()
+        )));
+    }
     None
+}
+
+/// Whole-branch review I1: the first protected path `owns` names or covers, else
+/// `None`. A fast-path task has no plan the user approves, so decision 56's grant (a
+/// protected file changes when `owns` names it) must not reach a worker unseen. In
+/// order: a literal entry decision 56's matcher protects (ignoring case, as its done
+/// gate does), then a tracked protected file (`protected_files`) an entry covers, then a
+/// `protected` entry an entry may cover at the repository's root
+/// ([`globs::may_cover_protected`]). `protected` is the run's frozen list: the
+/// built-ins, then the configuration's, the stored profile's and the plan's additions.
+pub fn owned_protected(
+    owns: &[String],
+    protected: &[String],
+    protected_files: &[String],
+) -> Option<String> {
+    let literal = |entry: &&String| !entry.contains(['*', '?', '[']);
+    if let Ok(matcher) = globs::ProtectedMatcher::new(protected)
+        && let Some(entry) = owns
+            .iter()
+            .filter(literal)
+            .find(|entry| matcher.matches(entry.trim_end_matches('/')))
+    {
+        return Some(entry.clone());
+    }
+    if let Ok(matcher) = globs::OwnsMatcher::new(owns)
+        && let Some(path) = protected_files.iter().find(|path| matcher.matches(path))
+    {
+        return Some(path.clone());
+    }
+    protected
+        .iter()
+        .find(|entry| owns.iter().any(|o| globs::may_cover_protected(o, entry)))
+        .cloned()
 }
 
 /// Review m2: a blank goal is refused before triage spends a call, with `build_run`'s

@@ -65,7 +65,7 @@ pub(super) fn start(
     let fast = run.path == Some(RunPath::Fast);
     // Review I1: the engine's own barrier. A fast-path run is one task, neither hub nor
     // L, whatever its caller checked; any other is refused and nothing is created.
-    if let Some(reason) = fast.then(|| fast_refusal(&run.tasks)).flatten() {
+    if let Some(reason) = fast.then(|| fast_refusal(&run)).flatten() {
         return reply(fx, id, Err(reason));
     }
     if fast {
@@ -278,6 +278,15 @@ pub(super) fn edit(
             id,
             Err(format!("run {run_id} is {}", run.state.label())),
         );
+    }
+    // Whole-branch review m1: a fast-path run runs one task; milestone 9's promotion,
+    // not an edit, turns it into a planned run.
+    let adds = |e: &PlanEdit| matches!(e, PlanEdit::AddTask { .. } | PlanEdit::SplitTask { .. });
+    if run.path == Some(RunPath::Fast) && edits.iter().any(adds) {
+        let text = format!(
+            "run {run_id} is on the fast path: it runs one task; start a planned run instead"
+        );
+        return reply(fx, id, Err(text));
     }
     if let Err(text) = pause_or_resume_fits(run, edits) {
         return reply(fx, id, Err(text));

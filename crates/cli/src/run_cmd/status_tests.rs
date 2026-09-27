@@ -379,7 +379,17 @@ fn status_shows_fast_path_and_triage() {
         "{text}"
     );
     assert_eq!(lines[1], "  goal: Add password reset");
-    assert_eq!(lines[2], "  triage: code/single (decider)");
+    // Whole-branch review I1: the test mode triage chose, with its reason.
+    assert_eq!(
+        lines[2],
+        "  triage: code/single (decider); t1 test mode tdd"
+    );
+    run.tasks[0].test_mode = TestMode::Check;
+    run.tasks[0].test_mode_reason = Some("a one-line config fix".into());
+    assert_eq!(
+        run_block(&run).lines().nth(2),
+        Some("  triage: code/single (decider); t1 test mode check (a one-line config fix)")
+    );
     // Paused, the path still follows the state.
     run.state = RunState::Paused;
     run.paused_from = Some(RunState::Running);

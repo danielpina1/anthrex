@@ -432,9 +432,17 @@ fn a_fast_path_run_reports_its_path() {
         at: 1,
     };
     crate::run::triage::mark_fast(&mut run, triage, None);
+    run.tasks.truncate(1);
+    run.tasks[0].test_mode = proto::TestMode::Check;
+    run.tasks[0].spec.test_mode_reason = Some("a one-line config fix".into());
     let out = render(&run, 2_000);
+    // Whole-branch review I1: the test mode triage chose, with its reason.
+    let id = run.tasks[0].id().to_string();
     assert!(
-        out.contains("Approved by: fast path\npath: fast (triage: code,docs/single, decider)\n"),
+        out.contains(&format!(
+            "Approved by: fast path\npath: fast (triage: code,docs/single, decider)\n\
+             triage: {id} test mode check (a one-line config fix)\n"
+        )),
         "{out}"
     );
 }

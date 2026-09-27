@@ -17,6 +17,8 @@ use crate::run::routing::{record_reviewer, record_worker};
 #[path = "history_tests_fixtures.rs"]
 mod fixtures;
 use fixtures::*;
+#[path = "history_tests_routing.rs"]
+mod routing;
 
 #[test]
 fn set_state_accumulates_phase_times() {
