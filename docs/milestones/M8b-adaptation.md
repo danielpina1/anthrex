@@ -1868,7 +1868,7 @@ rg -n '\.state = ' crates/daemon/src/run --glob '!**/tests/**' --glob '!*_tests*
   - `triage.source == Decider`;
   - `run accept --yes` succeeds.
 - `e2e_goal_needing_a_plan_is_refused_without_side_effects`. Triage answers `plan`: exit 1 with `refused_message`, no `refs/heads/anthrex/*`, no `<data>/runs/*`, and no window.
-- `e2e_goal_touching_a_hub_file_is_refused_without_side_effects`. Triage answers `single` with `owns` on a hub glob: exit 1 with the reason `the fast path does not apply: task t1 touches a hub file`, no `refs/heads/anthrex/*`, no `<data>/runs/*`, and no window. It covers the driver's wiring of the fast path's barrier (M8b.14 review I1).
+- `e2e_goal_touching_a_hub_file_is_refused_without_side_effects`. Triage answers `single` with `owns` on a hub glob: exit 1 with `refused_message` naming the reason `the fast path does not apply: task t1 touches a hub file`, no `refs/heads/anthrex/*`, no `<data>/runs/*`, and no window. It covers the driver's wiring of the fast path's barrier (M8b.14 review I1).
 - `e2e_goal_without_deciders_takes_the_plan_path` (mode `off`: the reason names `deciders are off`).
 - `e2e_goal_without_a_profile_starts_detection` (no stored profile, `onboarding.auto`: the exact refusal, and `profile status` shows detection).
 - `e2e_goal_runs_m8a_start_checks` (`ANTHREX_TEST_NO_SETTING_SOURCES=1` and a tracked `.claude/settings.json` with hooks: the fast path is refused with M8a's settings text, and `--trust-project` starts it).
