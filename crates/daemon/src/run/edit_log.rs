@@ -19,24 +19,47 @@ pub struct PlanEditRecord {
 /// Records a run keeps; older ones are dropped.
 pub const PLAN_EDITS_KEPT: usize = 50;
 
+/// The longest record text, in characters, before `…` (review M3).
+pub const DESCRIBE_MAX_CHARS: usize = 300;
+
 /// The batch in a few words, one per edit, joined with `, `: `add t9, dep t4 on t2`.
 /// The match is exhaustive, so an edit a later milestone adds must be described.
+/// Control characters become spaces, and the text is cut to [`DESCRIBE_MAX_CHARS`]
+/// characters plus `…` (review M3: every snapshot push carries these records).
 pub fn describe(edits: &[PlanEdit]) -> String {
-    edits
-        .iter()
-        .map(|edit| match edit {
-            PlanEdit::AddTask { task } => format!("add {}", task.id),
-            PlanEdit::SplitTask { task_id, .. } => format!("split {task_id}"),
-            PlanEdit::CancelTask { task_id } => format!("cancel {task_id}"),
-            PlanEdit::AmendTask { task_id, .. } => format!("amend {task_id}"),
-            PlanEdit::AddDep { task_id, dep } => format!("dep {task_id} on {dep}"),
-            PlanEdit::Answer { task_id, .. } => format!("answer {task_id}"),
-            PlanEdit::Pause => "pause".to_string(),
-            PlanEdit::Resume => "resume".to_string(),
-            PlanEdit::Finish => "finish".to_string(),
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
+    let mut text = String::new();
+    for (n, part) in edits.iter().map(describe_one).enumerate() {
+        if n > 0 {
+            text.push_str(", ");
+        }
+        text.push_str(&part);
+        if text.chars().count() > DESCRIBE_MAX_CHARS {
+            break;
+        }
+    }
+    let mut out: String = text
+        .chars()
+        .take(DESCRIBE_MAX_CHARS)
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    if text.chars().count() > DESCRIBE_MAX_CHARS {
+        out.push('…');
+    }
+    out
+}
+
+fn describe_one(edit: &PlanEdit) -> String {
+    match edit {
+        PlanEdit::AddTask { task } => format!("add {}", task.id),
+        PlanEdit::SplitTask { task_id, .. } => format!("split {task_id}"),
+        PlanEdit::CancelTask { task_id } => format!("cancel {task_id}"),
+        PlanEdit::AmendTask { task_id, .. } => format!("amend {task_id}"),
+        PlanEdit::AddDep { task_id, dep } => format!("dep {task_id} on {dep}"),
+        PlanEdit::Answer { task_id, .. } => format!("answer {task_id}"),
+        PlanEdit::Pause => "pause".to_string(),
+        PlanEdit::Resume => "resume".to_string(),
+        PlanEdit::Finish => "finish".to_string(),
+    }
 }
 
 /// Records an accepted batch at `now`, keeping the last [`PLAN_EDITS_KEPT`], and counts

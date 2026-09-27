@@ -1561,3 +1561,8 @@ scope.
   daemon keeps the window and its screen after exit, so no output is lost. Anything that
   should see the final screen at the moment of exit (an exit summary, a status rule that
   reads the last lines) would need the waiter to wait, bounded, for the reader to drain.
+
+## From M8c.1's review (2026-09-27), for M8c and M9
+
+- **The promotion time in the run view (M8c).** The snapshot's promotion attention line no longer carries a time (M8c.1 review I1; brief R17 had assumed the line carried it). The view's gate or attention rendering should show `local_hhmm(RunInfo.promote_requested_at)` beside it.
+- **`run promote`'s repeat reply is in UTC (M9).** `engine/requests.rs::promote` answers a second request with `was already marked for promotion at <hh:mm>` through `model_adapt::hh_mm`, in UTC. It is a request reply, not the snapshot, so M8c.1 left it; either drop the time or let the CLI format `promote_requested_at` locally.

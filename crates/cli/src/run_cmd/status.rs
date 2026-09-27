@@ -7,20 +7,24 @@ use proto::{BaseMovedInfo, GateCounts, Route, RunInfo, RunState, Size, TaskInfo,
 /// Decision 20: the commits a moved-base prompt lists, at most.
 pub const LISTED_COMMITS: usize = 50;
 
-/// One block per run, newest first.
-pub fn render(runs: &[RunInfo]) -> String {
+/// One block per run, newest first. `utc_offset` is the local zone's, in seconds: the
+/// caller reads it, so this stays pure.
+pub fn render(runs: &[RunInfo], utc_offset: i64) -> String {
     let mut sorted: Vec<&RunInfo> = runs.iter().collect();
     sorted.sort_by(|a, b| {
         b.created_at
             .cmp(&a.created_at)
             .then_with(|| a.run_id.cmp(&b.run_id))
     });
-    sorted.into_iter().map(run_block).collect()
+    sorted
+        .into_iter()
+        .map(|run| run_block(run, utc_offset))
+        .collect()
 }
 
 /// One run's block: the header, a halted run's reason, the goal, the report path, the
-/// task table and the attention lines.
-pub fn run_block(run: &RunInfo) -> String {
+/// task table, when promotion was requested (local time) and the attention lines.
+pub fn run_block(run: &RunInfo, utc_offset: i64) -> String {
     let merged = run
         .tasks
         .iter()
@@ -84,10 +88,21 @@ pub fn run_block(run: &RunInfo) -> String {
     for task in &run.tasks {
         out.push_str(&task_row(task));
     }
+    // Review I1 (M8c.1): the snapshot's promotion line carries no time; this is it, local.
+    if let Some(at) = run.promote_requested_at {
+        let hhmm = local_hhmm(at, utc_offset);
+        out.push_str(&format!("  promotion: requested at {hhmm}\n"));
+    }
     for line in &run.attention {
         out.push_str(&format!("  attention: {line}\n"));
     }
     out
+}
+
+/// `at` (unix seconds) as local `hh:mm`, given the zone's offset from UTC.
+fn local_hhmm(at: u64, utc_offset: i64) -> String {
+    let secs = (at as i64 + utc_offset).rem_euclid(86_400);
+    format!("{:02}:{:02}", secs / 3600, (secs / 60) % 60)
 }
 
 #[allow(clippy::too_many_arguments)]

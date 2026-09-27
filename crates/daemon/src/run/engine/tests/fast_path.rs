@@ -149,7 +149,7 @@ fn promote_records_intent_once() {
     assert_eq!(info.promote_requested_at, Some(at));
     assert!(
         info.attention.contains(
-            &"promotion requested at 13:07; it takes effect when the orchestrator exists (milestone 9)"
+            &"promotion requested; it takes effect when the orchestrator exists (milestone 9)"
                 .to_string()
         ),
         "{:?}",

@@ -17,18 +17,19 @@ impl Run {
         })
     }
 
-    /// M8b decision 25's attention line, once the user asked to promote the run.
+    /// M8b decision 25's attention line, once the user asked to promote the run. It
+    /// carries no time (M8c decision 4: the snapshot formats no time); a client formats
+    /// the raw `promote_requested_at` in local time.
     pub fn promotion_line(&self) -> Option<String> {
-        self.promote_requested_at.map(|at| {
-            format!(
-                "promotion requested at {}; it takes effect when the orchestrator exists (milestone 9)",
-                hh_mm(at)
-            )
+        self.promote_requested_at.map(|_| {
+            "promotion requested; it takes effect when the orchestrator exists (milestone 9)"
+                .to_string()
         })
     }
 }
 
-/// `<hh:mm>` in UTC, as the snapshot's task history shows times.
+/// `<hh:mm>` in UTC, for `run promote`'s reply to a second request. Never used in the
+/// snapshot, which carries raw times only (M8c decision 4).
 pub fn hh_mm(at: u64) -> String {
     format!("{:02}:{:02}", (at / 3600) % 24, (at / 60) % 60)
 }

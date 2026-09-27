@@ -234,17 +234,17 @@ fn status_text_matches_the_layout() {
     // in the brief's M8a.23 notes). With a second task merged it reads `2/4`.
     let mut run = example();
     let expected = EXAMPLE.replacen("2/4 merged", "1/4 merged", 1);
-    assert_eq!(run_block(&run), expected);
+    assert_eq!(run_block(&run, 0), expected);
 
     run.tasks[2].state = TaskState::Merged;
-    let text = run_block(&run);
+    let text = run_block(&run, 0);
     assert_eq!(text.lines().next(), EXAMPLE.lines().next(), "{text}");
 
     // Newest first, one block each.
     let mut older = example();
     older.run_id = "older-0000".into();
     older.created_at = 50;
-    let both = render(&[older.clone(), example()]);
+    let both = render(&[older.clone(), example()], 0);
     assert!(both.starts_with("add-reset-3f9a  "), "{both}");
     assert!(both.contains("\nolder-0000  running"), "{both}");
 }
@@ -254,7 +254,7 @@ fn paused_and_halted_lines() {
     let mut run = example();
     run.state = RunState::Paused;
     run.paused_from = Some(RunState::Running);
-    let text = run_block(&run);
+    let text = run_block(&run, 0);
     assert!(
         text.starts_with("add-reset-3f9a  paused (from running)  1/4 merged  "),
         "{text}"
@@ -264,7 +264,7 @@ fn paused_and_halted_lines() {
     let mut run = example();
     run.state = RunState::Halted;
     run.halted_reason = Some("refs/heads/main was rewritten".into());
-    let text = run_block(&run);
+    let text = run_block(&run, 0);
     let lines: Vec<&str> = text.lines().collect();
     assert!(
         lines[0].starts_with("add-reset-3f9a  halted  1/4 merged  "),
@@ -353,7 +353,7 @@ fn long_cells_keep_a_space() {
     };
     run.tasks[3].route.model = "claude-sonnet-5-with-a-very-long-name".into();
     run.tasks[3].id = "t-long".into();
-    let text = run_block(&run);
+    let text = run_block(&run, 0);
     let row = text.lines().find(|l| l.contains("t-long")).unwrap();
     assert_eq!(
         row,
@@ -361,7 +361,7 @@ fn long_cells_keep_a_space() {
     );
     // Cells that fit keep the spec's columns exactly.
     assert_eq!(
-        run_block(&example()),
+        run_block(&example(), 0),
         EXAMPLE.replacen("2/4 merged", "1/4 merged", 1)
     );
 }
@@ -370,7 +370,7 @@ fn long_cells_keep_a_space() {
 /// decided under its goal; a run from a plan file shows neither.
 #[test]
 fn status_shows_fast_path_and_triage() {
-    let plain = run_block(&example());
+    let plain = run_block(&example(), 0);
     assert!(!plain.contains("fast path"), "{plain}");
     assert!(!plain.contains("triage:"), "{plain}");
     let mut run = example();
@@ -384,7 +384,7 @@ fn status_shows_fast_path_and_triage() {
         fallback_reason: None,
         at: 1,
     });
-    let text = run_block(&run);
+    let text = run_block(&run, 0);
     let lines: Vec<&str> = text.lines().collect();
     assert!(
         lines[0].starts_with("add-reset-3f9a  running fast path  1/4 merged  "),
@@ -399,21 +399,40 @@ fn status_shows_fast_path_and_triage() {
     run.tasks[0].test_mode = TestMode::Check;
     run.tasks[0].test_mode_reason = Some("a one-line config fix".into());
     assert_eq!(
-        run_block(&run).lines().nth(2),
+        run_block(&run, 0).lines().nth(2),
         Some("  triage: code/single (decider); t1 test mode check (a one-line config fix)")
     );
     // Re-review N4: a model-written reason cannot break the line.
     run.tasks[0].test_mode_reason = Some("one\nline\x1b[2Jfix".into());
     assert_eq!(
-        run_block(&run).lines().nth(2),
+        run_block(&run, 0).lines().nth(2),
         Some("  triage: code/single (decider); t1 test mode check (one line [2Jfix)")
     );
     // Paused, the path still follows the state.
     run.state = RunState::Paused;
     run.paused_from = Some(RunState::Running);
-    let text = run_block(&run);
+    let text = run_block(&run, 0);
     assert!(
         text.starts_with("add-reset-3f9a  paused (from running) fast path  1/4 merged  "),
         "{text}"
     );
+}
+
+/// Review I1: the snapshot's promotion line carries no time, so `run status` shows the
+/// raw `promote_requested_at` itself, in local time.
+#[test]
+fn a_promoted_run_shows_its_local_request_time() {
+    let mut run = example();
+    run.promote_requested_at = Some(3_600 * 13 + 60 * 7);
+    let text = run_block(&run, 3_600);
+    assert!(
+        text.contains("\n  promotion: requested at 14:07\n"),
+        "{text}"
+    );
+    let text = run_block(&run, -14 * 3_600);
+    assert!(
+        text.contains("\n  promotion: requested at 23:07\n"),
+        "{text}"
+    );
+    assert!(!run_block(&example(), 3_600).contains("promotion"));
 }

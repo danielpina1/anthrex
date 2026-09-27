@@ -172,7 +172,10 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
             } else if snapshot.runs.is_empty() {
                 eprintln!("no runs");
             } else {
-                print!("{}", status::render(&snapshot.runs));
+                print!(
+                    "{}",
+                    status::render(&snapshot.runs, tui::local_utc_offset_secs())
+                );
             }
             Ok(())
         }
@@ -305,7 +308,7 @@ async fn start(
     } else {
         err.push_str(&format!("approve with: anthrex run approve {run_id}\n"));
         if let Some(run) = &run {
-            err.push_str(&status::run_block(run));
+            err.push_str(&status::run_block(run, tui::local_utc_offset_secs()));
         }
     }
     eprint!("{err}");

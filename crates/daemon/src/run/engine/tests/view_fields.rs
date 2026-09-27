@@ -290,6 +290,12 @@ fn snapshot_carries_the_view_fields() {
     fx.ready(false);
     fx.approve();
     let approved = fx.now;
+    // Review M1: one edit after approval is published as one.
+    edit(&mut fx, amend(1));
+    assert_eq!(
+        snapshot(&fx.state, fx.now).runs[0].plan_edits_since_approval,
+        1
+    );
     let window = fx.launch_all()[0].1;
     let started = fx.now;
     fx.task_mut("t1").rounds[0].set_rate_limited(Some(900), started);
@@ -329,6 +335,11 @@ fn old_run_json_loads() {
         round.rate_limited_until.is_some(),
         "the stored value is kept"
     );
+    // Review M2: a limit restored mid-streak has no start; the next limit fills in
+    // `now` (deviation 3) rather than leaving it unknown for as long as it lasts.
+    let mut restored = round.clone();
+    restored.set_rate_limited(Some(9_999), 5_000);
+    assert_eq!(restored.rate_limited_since, Some(5_000));
     // Everything it stored comes back as it was: only the new keys are added.
     let mut back = serde_json::to_value(&run).unwrap();
     let map = back.as_object_mut().unwrap();
@@ -345,4 +356,45 @@ fn old_run_json_loads() {
     }
     let stored: serde_json::Value = serde_json::from_str(text).unwrap();
     assert_eq!(back, stored);
+}
+
+/// Review I1: a promoted fast-path run's attention line carries no clock time; the view
+/// formats `promote_requested_at` itself, in local time.
+#[test]
+fn a_promoted_run_publishes_no_clock_time() {
+    let mut fx = one_task("");
+    fx.start_with(false, |run: &mut Run| {
+        let triage = TriageInfo {
+            kinds: vec![TaskKind::Code],
+            scale: Scale::Single,
+            path: RunPath::Fast,
+            reason: "one small change".into(),
+            source: DeciderSource::Decider,
+            fallback_reason: None,
+            at: 1_000,
+        };
+        mark_fast(run, triage, None);
+    });
+    fx.now = 3_600 * 13 + 60 * 7 - 1; // the step is one second later: 13:07
+    let reply = fx.reply();
+    fx.next(EventKind::Promote {
+        reply,
+        run_id: RUN_ID.into(),
+    });
+    let at = 3_600 * 13 + 60 * 7;
+    assert_eq!(fx.run().promote_requested_at, Some(at));
+    let snap = snapshot(&fx.state, fx.now);
+    assert_eq!(snap.runs[0].promote_requested_at, Some(at));
+    let mut texts = Vec::new();
+    strings(&serde_json::to_value(&snap).unwrap(), &mut texts);
+    let clocks: Vec<&String> = texts.iter().filter(|s| has_clock(s)).collect();
+    assert!(clocks.is_empty(), "formatted times: {clocks:?}");
+    assert!(
+        snap.runs[0].attention.contains(
+            &"promotion requested; it takes effect when the orchestrator exists (milestone 9)"
+                .to_string()
+        ),
+        "{:?}",
+        snap.runs[0].attention
+    );
 }

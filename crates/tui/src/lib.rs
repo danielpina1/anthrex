@@ -184,11 +184,11 @@ fn draw<B: ratatui::backend::Backend>(
 mod draw_tests;
 
 /// The local zone's offset from UTC now, in seconds, for the conversation view's turn
-/// times (task M6.5.13). Reading the zone is I/O (`/etc/localtime`, `TZ`), so it happens
-/// here, once, and `App` only holds the number. 0 (UTC) if the zone cannot be read.
+/// times (task M6.5.13) and `anthrex run status`'s promotion time. Reading the zone is
+/// I/O (`/etc/localtime`, `TZ`), so it happens here, once, and `App` only holds the number. 0 (UTC) if the zone cannot be read.
 // `tm_gmtoff` is a C `long`: `i64` here, `i32` on a 32-bit target, so the cast stays.
 #[allow(clippy::unnecessary_cast)]
-fn local_utc_offset_secs() -> i64 {
+pub fn local_utc_offset_secs() -> i64 {
     // SAFETY: `time` with a null pointer only returns the time; `localtime_r` writes into
     // the `tm` we own and returns null on failure, which is checked.
     unsafe {

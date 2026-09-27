@@ -78,3 +78,45 @@ fn record_keeps_the_last_fifty() {
         })
     );
 }
+
+/// Review M3: a huge batch cannot make one record (and so every snapshot) huge.
+#[test]
+fn describe_is_capped() {
+    let edits: Vec<PlanEdit> = (0..20_000)
+        .map(|_| PlanEdit::AmendTask {
+            task_id: "t1".into(),
+            brief: None,
+            acceptance: None,
+            route: None,
+            test_mode: None,
+            test_mode_reason: None,
+            priority: Some(1),
+            size: None,
+        })
+        .collect();
+    let text = describe(&edits);
+    assert!(
+        text.chars().count() <= DESCRIBE_MAX_CHARS + 1,
+        "{}",
+        text.len()
+    );
+    assert!(text.starts_with("amend t1, amend t1"), "{text}");
+    assert!(text.ends_with('…'), "{text}");
+    // A short batch is left whole.
+    assert_eq!(describe(&[PlanEdit::Pause]), "pause");
+    // Cut on a char boundary: multi-byte ids never split.
+    let wide = vec![PlanEdit::CancelTask {
+        task_id: "é".repeat(400),
+    }];
+    let text = describe(&wide);
+    assert_eq!(text.chars().count(), DESCRIBE_MAX_CHARS + 1);
+    assert!(text.ends_with('…'), "{text}");
+}
+
+#[test]
+fn describe_replaces_control_characters() {
+    let edits = vec![PlanEdit::CancelTask {
+        task_id: "t\n1\u{1b}[31m\r\t".into(),
+    }];
+    assert_eq!(describe(&edits), "cancel t 1 [31m  ");
+}
