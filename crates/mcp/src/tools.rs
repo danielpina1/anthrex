@@ -19,6 +19,7 @@ pub fn tools_for(role: AgentRole) -> Vec<Tool> {
         AgentRole::Worker => vec![task_done(), task_blocked()],
         AgentRole::Reviewer => vec![submit_review()],
         AgentRole::Orchestrator => Vec::new(),
+        AgentRole::Scout => vec![crate::tools_scout::submit_scout_report()],
     }
 }
 
@@ -34,6 +35,7 @@ pub fn role_name(role: AgentRole) -> &'static str {
         AgentRole::Orchestrator => "orchestrator",
         AgentRole::Worker => "worker",
         AgentRole::Reviewer => "reviewer",
+        AgentRole::Scout => "scout",
     }
 }
 
@@ -93,16 +95,16 @@ fn submit_review() -> Tool {
 }
 
 /// A string of 1 to `max` characters.
-fn text(max: u64) -> Value {
+pub(crate) fn text(max: u64) -> Value {
     json!({"type": "string", "minLength": 1, "maxLength": max})
 }
 
-fn one_of(values: &[&str]) -> Value {
+pub(crate) fn one_of(values: &[&str]) -> Value {
     json!({"type": "string", "enum": values})
 }
 
 /// `{"type":"object","additionalProperties":false,"properties":…,"required":…}`.
-fn closed(properties: Value, required: &[&str]) -> JsonObject {
+pub(crate) fn closed(properties: Value, required: &[&str]) -> JsonObject {
     let mut o = JsonObject::new();
     o.insert("type".into(), json!("object"));
     o.insert("additionalProperties".into(), json!(false));
@@ -150,6 +152,12 @@ mod tests {
         assert_eq!(done["required"], json!(["summary"]));
         let blocked = schema(AgentRole::Worker, "task_blocked");
         assert_eq!(blocked["required"], json!(["reason"]));
+    }
+
+    #[test]
+    fn scout_is_named_scout() {
+        assert_eq!(role_name(AgentRole::Scout), "scout");
+        assert!(!allowed(AgentRole::Scout, TASK_DONE));
     }
 
     #[test]

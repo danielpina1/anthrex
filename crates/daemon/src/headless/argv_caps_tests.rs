@@ -320,3 +320,38 @@ fn test_overrides_follow_decision_53() {
         CodexProjectConfig::NotLoaded
     );
 }
+
+/// M8b decision 15: a repository-level scout's server has no `--run` and names its
+/// scout; a run scout keeps `--run`.
+#[test]
+fn mcp_args_for_a_scout() {
+    let target = McpTarget {
+        role: AgentRole::Scout,
+        run_id: String::new(),
+        task_id: None,
+        scout_id: Some("onboarding-1".into()),
+    };
+    assert_eq!(
+        mcp_args(&target, 7, Path::new("/tmp/a.sock")),
+        [
+            "mcp",
+            "--role",
+            "scout",
+            "--scout",
+            "onboarding-1",
+            "--window",
+            "7",
+            "--socket",
+            "/tmp/a.sock"
+        ]
+    );
+    let run_scout = McpTarget {
+        run_id: "r1".into(),
+        scout_id: Some("api-1".into()),
+        ..target
+    };
+    assert_eq!(
+        mcp_args(&run_scout, 7, Path::new("/tmp/a.sock"))[..7],
+        ["mcp", "--role", "scout", "--run", "r1", "--scout", "api-1"]
+    );
+}

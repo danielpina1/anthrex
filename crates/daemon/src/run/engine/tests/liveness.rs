@@ -61,6 +61,27 @@ fn run_alive(run: &Run) {
     assert_working_alive(run);
     gates_alive(run);
     assert_run_alive(run);
+    size_checks_alive(run);
+}
+
+/// M8b.13: a task waiting for its size cross-check (not runnable meanwhile) has that
+/// decider queued or in flight.
+fn size_checks_alive(run: &Run) {
+    for t in &run.tasks {
+        let Some(crate::run::model::SizeCheckState::Pending { decider_id }) = t.size_check else {
+            continue;
+        };
+        let queued = run.decider_queue.iter().any(|q| q.decider_id == decider_id);
+        let in_flight = run
+            .pending_ops
+            .values()
+            .any(|o| matches!(&o.kind, OpKind::Decide { decider_id: d, .. } if *d == decider_id));
+        assert!(
+            queued || in_flight,
+            "{} waits for size check {decider_id}, which is neither queued nor in flight",
+            t.id()
+        );
+    }
 }
 
 /// Ruling T12-I4's invariant, for every working task of `run`.
@@ -154,56 +175,67 @@ fn gates_alive(run: &Run) {
             .pending_ops
             .values()
             .any(|p| p.task_id.as_deref() == Some(t.id()));
-        let alive = match t.state {
-            // T15-P1 (F4): `start_gates` runs only while the run runs, so a halted
-            // run's gate waits for the resume.
-            TaskState::Proof | TaskState::Check => {
-                op || matches!(run.state, proto::RunState::Halted | proto::RunState::Paused)
-            }
-            // M8a.14: queued (the run-level check wants a merge in flight while the run
-            // runs), or its candidate or hand-back in flight.
-            // Ruling T14-R2 (N3): a due hand-back waits for a halted or paused run.
-            TaskState::MergeQueue => {
-                op || run.merge_queue.iter().any(|q| q == t.id())
-                    || (t.handback_due
-                        && matches!(run.state, proto::RunState::Halted | proto::RunState::Paused))
-            }
-            _ => {
-                let reviewer = t
-                    .rounds
-                    .iter()
-                    .rev()
-                    .find(|r| r.role == AgentRole::Reviewer);
-                let live = |r: &&crate::run::model::AgentRound| {
-                    r.window_id.is_some() && !r.ended && !r.retiring
-                };
-                let watched = reviewer.is_some_and(|r| live(&r) && r.turn_open);
-                let resumable = reviewer.is_some_and(|r| {
-                    live(&r) || (r.ended && !r.retiring && r.session_id.is_some())
-                });
-                let address = format!("{}.review", t.id());
-                let mail = run
-                    .outbox
-                    .iter()
-                    .any(|m| m.task_id == address && (m.delivered_at.is_some() || resumable));
-                // Ruling T13-I1: a failed turn's wait; T13-I2: a given-up reviewer's
-                // exit; m6: every dispatch waits while a hub holds a writer slot.
-                let timer = reviewer.is_some_and(|r| {
-                    matches!(r.failed_turn, FailedTurn::WaitingContinue { .. })
-                        || r.delivery_retry_at.is_some()
-                });
-                let killing = reviewer.is_some_and(|r| r.retiring && !r.ended);
-                let slot_wait = reviewer.is_none_or(|r| r.retiring || r.ended)
-                    && (super::super::schedule::readers_busy(run)
-                        >= usize::from(run.limits.max_readers)
-                        || super::super::schedule::hub_holds_slot(run));
-                // Ruling T14-I2: a halted or paused run starts no reviewer; the task
-                // waits for the user's resume.
-                let stopped =
-                    matches!(run.state, proto::RunState::Halted | proto::RunState::Paused);
-                op || watched || mail || timer || killing || slot_wait || stopped
-            }
-        };
+        // M8b.12 review m5: a failed check waiting for its decider, queued or in flight.
+        let deciding = t.pending_failure.as_ref().is_some_and(|p| {
+            run.decider_queue.iter().any(|q| q.decider_id == p.decider_id)
+                || run.pending_ops.values().any(|o| {
+                    matches!(&o.kind, OpKind::Decide { decider_id, .. } if *decider_id == p.decider_id)
+                })
+        });
+        let alive = deciding
+            || match t.state {
+                // T15-P1 (F4): `start_gates` runs only while the run runs, so a halted
+                // run's gate waits for the resume.
+                TaskState::Proof | TaskState::Check => {
+                    op || matches!(run.state, proto::RunState::Halted | proto::RunState::Paused)
+                }
+                // M8a.14: queued (the run-level check wants a merge in flight while the run
+                // runs), or its candidate or hand-back in flight.
+                // Ruling T14-R2 (N3): a due hand-back waits for a halted or paused run.
+                TaskState::MergeQueue => {
+                    op || run.merge_queue.iter().any(|q| q == t.id())
+                        || (t.handback_due
+                            && matches!(
+                                run.state,
+                                proto::RunState::Halted | proto::RunState::Paused
+                            ))
+                }
+                _ => {
+                    let reviewer = t
+                        .rounds
+                        .iter()
+                        .rev()
+                        .find(|r| r.role == AgentRole::Reviewer);
+                    let live = |r: &&crate::run::model::AgentRound| {
+                        r.window_id.is_some() && !r.ended && !r.retiring
+                    };
+                    let watched = reviewer.is_some_and(|r| live(&r) && r.turn_open);
+                    let resumable = reviewer.is_some_and(|r| {
+                        live(&r) || (r.ended && !r.retiring && r.session_id.is_some())
+                    });
+                    let address = format!("{}.review", t.id());
+                    let mail = run
+                        .outbox
+                        .iter()
+                        .any(|m| m.task_id == address && (m.delivered_at.is_some() || resumable));
+                    // Ruling T13-I1: a failed turn's wait; T13-I2: a given-up reviewer's
+                    // exit; m6: every dispatch waits while a hub holds a writer slot.
+                    let timer = reviewer.is_some_and(|r| {
+                        matches!(r.failed_turn, FailedTurn::WaitingContinue { .. })
+                            || r.delivery_retry_at.is_some()
+                    });
+                    let killing = reviewer.is_some_and(|r| r.retiring && !r.ended);
+                    let slot_wait = reviewer.is_none_or(|r| r.retiring || r.ended)
+                        && (super::super::schedule::readers_busy(run)
+                            >= usize::from(run.limits.max_readers)
+                            || super::super::schedule::hub_holds_slot(run));
+                    // Ruling T14-I2: a halted or paused run starts no reviewer; the task
+                    // waits for the user's resume.
+                    let stopped =
+                        matches!(run.state, proto::RunState::Halted | proto::RunState::Paused);
+                    op || watched || mail || timer || killing || slot_wait || stopped
+                }
+            };
         assert!(
             alive,
             "{} is in {:?} with nothing pending: {:#?}",

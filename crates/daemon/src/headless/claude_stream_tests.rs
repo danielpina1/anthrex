@@ -551,3 +551,33 @@ fn a_failed_api_turns_synthetic_message_is_api_error_text() {
         "{events:#?}"
     );
 }
+
+/// M8b.1 item 1 (ruling R-T5-2): a decider's `result.structured_output` is its answer,
+/// emitted as `StructuredOutput` just before the turn's `TurnEnded`. A result without it
+/// (every M8a recording) gives `TurnEnded` alone.
+#[test]
+fn a_results_structured_output_is_emitted_before_its_turn_ends() {
+    const DECIDER: &str =
+        include_str!("../../tests/fixtures/deciders/claude-2.1.280-decider.jsonl");
+    let result = lines(DECIDER)
+        .into_iter()
+        .find(|line| line_type(line) == "result")
+        .unwrap();
+    let events = ClaudeStream::default().parse_line(result);
+    let [
+        SessionEvent::StructuredOutput { value },
+        SessionEvent::TurnEnded { outcome, .. },
+    ] = events.as_slice()
+    else {
+        panic!("{events:#?}");
+    };
+    assert_eq!(value["kind"], "environment");
+    assert!(value["reason"].as_str().is_some_and(|r| !r.is_empty()));
+    assert_eq!(*outcome, TurnOutcome::Completed);
+    let null = r#"{"type":"result","subtype":"success","is_error":false,"structured_output":null}"#;
+    let events = ClaudeStream::default().parse_line(null);
+    assert!(
+        matches!(events.as_slice(), [SessionEvent::TurnEnded { .. }]),
+        "{events:#?}"
+    );
+}

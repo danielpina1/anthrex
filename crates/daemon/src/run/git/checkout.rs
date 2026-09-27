@@ -270,14 +270,77 @@ pub(crate) fn remove(path: &Path, repo: &Repo) -> Result<(), String> {
             ));
         }
         unready(repo)?;
+        restore_owner_access(path)?;
         std::fs::remove_dir_all(path)
             .map_err(|err| format!("cannot remove {}: {err}", path.display()))?;
     }
     if repo.dir.exists() {
+        restore_owner_access(&repo.dir)?;
         std::fs::remove_dir_all(&repo.dir)
             .map_err(|err| format!("cannot remove {}: {err}", repo.dir.display()))?;
     }
     super::tmp::remove(&repo.dir)?;
     pinned::unpin(path);
     Ok(())
+}
+
+/// M8b.10 review (I2): gives the owner read, write and search access back on `path` and
+/// on every real directory beneath it, so `remove_dir_all` cannot be stopped by a
+/// directory a worker or a confined command locked (`chmod 555`). Nothing is followed:
+/// each entry is examined with `symlink_metadata`, a link is left alone (the removal
+/// unlinks it), and each mode change is `fchmodat(AT_SYMLINK_NOFOLLOW)`, so nothing
+/// outside `path` is touched. A missing `path` is not an error.
+pub(crate) fn restore_owner_access(path: &Path) -> Result<(), String> {
+    let failed = |what: &Path, err: std::io::Error| {
+        format!("cannot restore access to {}: {err}", what.display())
+    };
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(failed(path, err)),
+    };
+    if !meta.file_type().is_dir() {
+        return Ok(());
+    }
+    use std::os::unix::fs::PermissionsExt;
+    let mode = meta.permissions().mode();
+    if mode & 0o700 != 0o700 {
+        chmod_nofollow(path, (mode | 0o700) & 0o7777).map_err(|err| failed(path, err))?;
+    }
+    for entry in std::fs::read_dir(path).map_err(|err| failed(path, err))? {
+        let entry = entry.map_err(|err| failed(path, err))?;
+        restore_owner_access(&entry.path())?;
+    }
+    Ok(())
+}
+
+/// `chmod` on `path` itself, never on what it names if it became a link.
+fn chmod_nofollow(path: &Path, mode: u32) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    // SAFETY: `c_path` is a valid NUL-terminated string that outlives the call.
+    let result = unsafe {
+        libc::fchmodat(
+            libc::AT_FDCWD,
+            c_path.as_ptr(),
+            mode as libc::mode_t,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    if result == 0 {
+        return Ok(());
+    }
+    let err = std::io::Error::last_os_error();
+    // Linux's `fchmodat` may not support the flag; only a real directory, checked
+    // again just now, is then changed through its path.
+    // (`ENOTSUP` and `EOPNOTSUPP` are one value on Linux, two on macOS.)
+    let unsupported = err
+        .raw_os_error()
+        .is_some_and(|code| code == libc::ENOTSUP || code == libc::EOPNOTSUPP);
+    if unsupported && std::fs::symlink_metadata(path)?.file_type().is_dir() {
+        use std::os::unix::fs::PermissionsExt;
+        return std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+    }
+    Err(err)
 }

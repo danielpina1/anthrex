@@ -83,6 +83,9 @@ pub struct ManagerConfig {
     /// test overrides in debug builds (`from_env`); every session's argv is built from it
     /// and the run engine's project-settings check reads it (M8a.22).
     pub cli_caps: crate::headless::argv::CliCaps,
+    /// `ANTHREX_DECIDER_BIN` when set and non-empty, read once at daemon start (M8b
+    /// decision 16): every decider runs it instead of `claude_bin` or `codex_bin`.
+    pub decider_bin: Option<String>,
 }
 
 impl ManagerConfig {
@@ -106,6 +109,7 @@ impl ManagerConfig {
             launch_gate: launch::LaunchGate::open_already(),
             conversation: ::config::Conversation::default(),
             cli_caps: crate::headless::argv::CLI_CAPS,
+            decider_bin: None,
         }
     }
 
@@ -142,6 +146,7 @@ impl ManagerConfig {
             launch_gate: launch::LaunchGate::open_already(),
             conversation: ::config::Conversation::default(),
             cli_caps: crate::headless::argv::CLI_CAPS,
+            decider_bin: nonempty("ANTHREX_DECIDER_BIN"),
         }
     }
 

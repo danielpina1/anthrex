@@ -215,6 +215,20 @@ fn check(
         | OpKind::PrepareReview { .. }
         | OpKind::VerifyRefs { .. }
         | OpKind::Discard { .. } => Ok(Reconciled::NotStarted),
+        // M8b decision 18: a decider only reads its prompt; it is simply asked again.
+        OpKind::Decide { .. } => Ok(Reconciled::NotStarted),
+        // M8b decision 32: a diff is only read, and simply measured again.
+        OpKind::MeasureDiff { .. } => Ok(Reconciled::NotStarted),
+        // M8b decision 33: a history line is appended again unless the file holds its
+        // record already.
+        OpKind::AppendHistory {
+            path, record_id, ..
+        } => super::history_io::contains_record(path, record_id)
+            .map(|found| match found {
+                true => Reconciled::Replay(OpResult::HistoryAppended),
+                false => Reconciled::NotStarted,
+            })
+            .map_err(|error| error.to_string()),
     };
     checked.unwrap_or_else(|err| {
         notes.push(format!(
@@ -224,4 +238,68 @@ fn check(
         ));
         Reconciled::NotStarted
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+    use std::time::Duration;
+
+    use super::{Reconciled, reconcile};
+    use crate::decider::fallback::fallback_decision;
+    use crate::decider::{BlockedReasonInput, DeciderRequest};
+    use crate::run::engine::{OpKind, OpResult};
+    use crate::run::journal::JournalLine;
+    use crate::run::model::PendingOp;
+    use crate::run::test_support::{EXAMPLE_PLAN, run_ok};
+
+    /// M8b decision 18: a decider's intent with no result is `NotStarted` (it is asked
+    /// again), with no note and no git; its journaled result is replayed.
+    #[test]
+    fn decide_is_not_started() {
+        let mut run = run_ok(EXAMPLE_PLAN);
+        // No round, so no recorded pid: reconcile's leftover-session step has nothing.
+        assert!(run.tasks.iter().all(|t| t.rounds.is_empty()));
+        let request = DeciderRequest::BlockedReason(BlockedReasonInput {
+            task_id: "t1".into(),
+            title: "Reset token model".into(),
+            reason: "which port?".into(),
+        });
+        for op in [4, 5] {
+            let kind = OpKind::Decide {
+                decider_id: op,
+                task_ids: vec!["t1".into()],
+                request: request.clone(),
+            };
+            let pending = PendingOp {
+                op,
+                task_id: Some("t1".into()),
+                kind,
+            };
+            run.pending_ops.insert(op, pending);
+        }
+        let decided = OpResult::Decided(Box::new(fallback_decision(&request, "x".into())));
+        let journal: Vec<JournalLine> = run
+            .pending_ops
+            .values()
+            .map(|p| JournalLine::Intent {
+                op: p.op,
+                kind: p.kind.clone(),
+            })
+            .chain([JournalLine::Done {
+                op: 5,
+                result: decided.clone(),
+            }])
+            .collect();
+        let git = OsStr::new("/nonexistent/anthrex-test/git");
+        let out = reconcile(git, &run, &journal, &[], Duration::from_secs(1));
+        assert_eq!(
+            out.ops,
+            vec![
+                (4, Reconciled::NotStarted),
+                (5, Reconciled::Replay(decided))
+            ]
+        );
+        assert!(out.notes.is_empty(), "{:?}", out.notes);
+    }
 }

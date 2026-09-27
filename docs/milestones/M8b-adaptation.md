@@ -1,105 +1,104 @@
 # Milestone 8b: Adaptation plumbing
 
-> Written 2026-09-22 against `docs/superpowers/specs/2026-09-22-adaptive-orchestrator-design.md` ("the spec" below), which binds this milestone, including its same-day amendment of §6 and §22.4: the repository profile lives only in anthrex's data directory, and nothing is ever written into the repository. Built on the milestone 8a brief, `docs/milestones/M8a-orchestration-engine-core.md` ("M8a" below), in its final headless form: only the orchestrator is an interactive PTY window, and every other agent — workers, reviewers, and the scouts and deciders this milestone adds — runs headless on M8a's session layer. Checked against `main` at `2cb7e3c` (milestones 1 to 6 merged, protocol 5) and branch `m6.5-conversation-view` at `89450b0` (milestone 6.5, protocol 6). Every name this brief takes from M8a, which is not yet code, is listed under "Names taken from M8a" (checked against the M8a brief on 2026-09-22); when M8a's merged code differs, use the merged name and record the mapping under "Implementation notes".
+> Written 2026-09-22 against `docs/superpowers/specs/2026-09-22-adaptive-orchestrator-design.md` ("the spec" below), which binds this milestone, including its same-day amendment of §6 and §22.4: the repository profile lives only in anthrex's data directory, and nothing is ever written into the repository. **Refreshed 2026-09-26 against the code milestone 8a shipped** (branch `m8a-engine-core` at `baa04e1`, PR #17, merging unchanged; protocol 7). Every name below that this brief takes from M8a is checked against that code and listed under "M8a names as shipped"; everything else is marked new. Every decision the refresh changed says so inline (*Refreshed:*) and is recorded, with its reason, under "Implementation notes", "Refresh 2026-09-26 (post-M8a)". "M8a" below is `docs/milestones/M8a-orchestration-engine-core.md`, whose "Summary of deviations (read first)" and final-fix-batch notes (F1 to F4) describe what shipped where it differs from M8a's own decisions.
+
+The user's design rules, which bind every decision here:
+
+- Only the orchestrator is an interactive PTY window. Workers, reviewers, scouts and sub-planners run headless (`claude -p` stream-json, `codex exec --json`). The user watches them through the conversation view and can never type to them; the daemon refuses input, kill and terminal subscribe for them.
+- TDD only when the task needs it: `test_mode` `tdd | check | none`, `tdd` the default for code.
+- The engine is deterministic. No model merges, approves a task, or writes to the base branch. Nothing reaches the base branch until the user accepts the run.
+- Headless agents load only the user's own settings, never a repository's; workers run sandboxed; protected agent-config files (`.claude/**`, `.mcp.json`, `.codex/**`, `CLAUDE.md`, `AGENTS.md`) change only when a task's `owns` names them exactly.
+- No repo-level profile file: the repo profile lives in anthrex's data directory.
 
 ## Header
 
 | | |
 |--|--|
-| Status | `blocked` — depends on milestone 8a, which is `blocked` itself. Becomes `ready` when milestone 8a is merged. |
-| Depends on | Milestone 8a (the engine, headless sessions, the MCP crate, `fake-agent`'s headless modes, the run harness). Milestone 8c may run before or after this one, but not at the same time: both raise the protocol (roadmap, "Why this order"). |
-| Spec sections | §4 (roles; the decider row; headless sessions; read-only launch), §4.2, §5.1 (triage, the fast path, `run promote`), §6 (the repo profile and the onboarding scout, as amended, `generated` and `protected` included), §7.1 and §7.2 rule 5 (the size cross-check), §10 (the ≤ 40-line check summary, classifying free-text `task_blocked` reasons), §11.3, §13 item 3 (deciders in reader slots), §14 items 1, 3, 5 and 8 (scout once, filtered output, deciders, OTLP for the orchestrator), §15 (recording only), §16.5 (new snapshot fields), §17 (scrubbed environment, nothing deleted dirty), §19 (scout tool; deciders have no tools), §21 (M8b row, the fast-path scenario), §22.1, §22.4, §23 (deciders are a second model surface; thresholds are placeholders). |
+| Status | `done` — every task and the milestone verification pass; deviations are under "Implementation notes". |
+| Depends on | Milestone 8a (the engine, headless sessions, the MCP crate, `fake-agent`'s headless modes, the run harness, confined checks). Milestone 8c may run before or after this one, but not at the same time: both raise the protocol (roadmap, "Why this order"). |
+| Spec sections | §4 (roles; the decider row; headless sessions; read-only launch; containment), §4.2, §5.1 (triage, the fast path, `run promote`), §6 (the repo profile and the onboarding scout, as amended, `generated` and `protected` included), §7.1 and §7.2 rule 5 (the size cross-check), §10 (the ≤ 40-line check summary, classifying free-text `task_blocked` reasons), §11.3, §13 item 3 (deciders in reader slots), §14 items 1, 3, 5 and 8 (scout once, filtered output, deciders, OTLP for the orchestrator), §15 (recording only), §16.5 (new snapshot fields), §17 (scrubbed environment, nothing deleted dirty), §19 (scout tool; deciders have no tools), §21 (M8b row, the fast-path scenario), §22.1, §22.4, §23 (deciders are a second model surface; thresholds are placeholders). |
 | Branch | `m8b-adaptation` |
-| Protocol version | **One above `PROTO_VERSION` on `main` at the moment M8b starts** (8 if M8a merged at 7). Read `crates/proto/src/lib.rs` on `main` that day, add one, and record the derivation under "Implementation notes". No acceptance criterion greps for a specific number. |
+| Protocol version | **8.** Derivation: `pub const PROTO_VERSION: u32 = 7;` at `crates/proto/src/lib.rs:25` on `baa04e1` (set by M8a task 2), and `docs/ROADMAP.md` says main is 7 after M8a; 7 + 1 = 8. The test `proto_version_is_seven` (`crates/proto/src/lib.rs:69`) becomes `proto_version_is_eight`. If `main` is not at 7 on the day M8b starts, stop and record it under "Implementation notes" before touching the protocol. |
 
 ## Starting point
 
-Existing code this milestone reads or changes, verified on `main` at `2cb7e3c` and on `m6.5-conversation-view` at `89450b0`:
+Existing code this milestone reads or changes, on `baa04e1`. Line counts are `wc -l` on that commit.
 
 | Path | What is there |
 |------|---------------|
-| `crates/daemon/src/launch/claude.rs` (71 lines, both branches) | `HOOK_EVENTS` (10 events) and `settings(exe, window_id) -> serde_json::Value`, which puts **one** matcher group `{"hooks":[{"command":…,"type":"command"}],"matcher":""}` under each event. M8a's `headless::argv::claude_args` passes this object as `--settings`. |
-| `crates/daemon/src/launch/mod.rs` | `pub fn shell_quote(s: &str) -> String` (line 42), `pub fn hook_command(exe, window_id, HookSource) -> String` (line 46). |
-| `crates/daemon/src/worktree.rs` | `hash8(path) -> String` (FNV-1a 32-bit, line 119), `repo_worktrees_dir(worktrees_root, project_root) -> PathBuf` = `<root>/<sanitized basename>-<hash8>` (line 140), `RESERVED_DIR = "runs"` (line 48), `run_git` (line 230). |
-| `crates/daemon/src/project.rs` | `detect_roots(cwd) -> DetectedRoots { project, worktree, detection_failed }`; `project` is shared by every linked worktree of one repository. |
-| `crates/daemon/src/subprocess.rs` | `run_captured(command, max_output_bytes, max_stderr_bytes, timeout) -> Captured`, scrubbing the five `GIT_*` variables, own process group. |
-| `crates/daemon/src/manager/config.rs` | `ManagerConfig::from_vars`: `ANTHREX_CLAUDE_BIN` / `ANTHREX_CODEX_BIN` (non-empty) win over `runtimes.*.command` (lines 90–106). `ANTHREX_DECIDER_BIN` follows the same pattern. |
-| `crates/daemon/src/lib.rs` (59 / 61 lines) | `pub(crate) fn lock`, the module list. |
-| `crates/proto/src/paths.rs` | `data_dir()` honours `ANTHREX_DATA_DIR`. |
-| `crates/cli/src/main.rs` (527 lines, both branches) | `hook` is dispatched from raw `args_os()` **before** clap (line 151), so it starts fast. `filter-hook` and `filter-run` are dispatched the same way. |
-| `crates/cli/src/hook.rs` (138 / 382 lines) | Silent, deadline-bounded forwarding (`HOOK_DEADLINE` = 1 s). `filter-hook` copies its discipline: always exit 0, never block. |
-| `crates/cli/tests/support/mod.rs` (479 lines) | `tempdir()` under `/tmp` with prefix `ax-`, `fake_agent_bin()`, `isolated_command`, `TestDaemon`. Process-level tests of daemon library code that need `fake-agent` live in `crates/cli/tests/`, because `crates/daemon/tests/` has no `fake-agent` helper. |
-| `crates/daemon/tests/support/mod.rs` | `TempRepo` (line 209), `git`, `git_output`. |
-| `crates/fake-agent/src/runtime.rs` (195 lines) | `discover(args)` reads `--settings` and keeps only the **first** matcher group's first command per event (`entries.get(0)`). |
-| `crates/fake-agent/src/script.rs` (190 / 213 lines) | `Step` enum; M6.5 adds `Transcript`. |
-| `crates/config/src/lib.rs` (730 / 1033 lines) | Already over 600 lines. M8b adds nothing to it: M8a delegates `[orchestrator]` to `crates/config/src/orchestrator.rs`. |
-| `docs/timing-budgets.md` | The rules for wall-clock test bounds. Every new bound below names the constants it is derived from. |
+| `crates/proto/src/lib.rs` (79) | `PROTO_VERSION = 7` (line 25); root re-exports **by name, never by glob** (C20 comment): `run::{AgentRole, …, ProfileSpec, …}`, `run_info::{…, TokenUsage}`, `run_wire::{RunReply, RunRequest, ToolCall}`. |
+| `crates/proto/src/run.rs` (451) | `AgentRole { Orchestrator, Worker, Reviewer }` (`snake_case`), `RunRef`, `Strength`, `Effort`, `Size`, `TaskKind`, `TestMode`, `RouteSpec`, `Route`, `Budget`, `ProfileSpec` (`deny_unknown_fields`: `modules`, `hub`, `source`, `check`, `check_timeout_secs`, `single_test`, `test_passed`, `setup`, `generated`, `protected`, `env`; **no** `cache_dirs` or `confined_*`), `PlanTask`, `Plan`, `PlanEdit`, `ModelEntry`, `RunState`, `TaskState`, `BlockReason`, `GateKind`, `GateCounts`, `Finding`, `DoneSignal`, `FinishAction`. |
+| `crates/proto/src/run_info.rs` (222) | `Spend`, `TokenUsage { input, output, cache_read, cache_write }` with `billable()`, `BlockInfo`, `CheckInfo { at, ok, code, timed_out, secs, summary: String, on_candidate }`, `ProofInfo`, `ReviewInfo`, `AgentRoundInfo { …, usage }`, `TaskInfo`, `BaseMovedInfo`, `RunInfo { …, readers_busy, unverified, worker_sandbox, unconfined_checks, trusted_project, rate_limits, … }`, `RunsSnapshot`. Its module doc: an `Option` tolerates absence; any other new field needs `#[serde(default)]`. |
+| `crates/proto/src/run_wire.rs` (118) | `ToolCall { run_id, task_id, role, window_id, tool, args }`; `RunRequest::{Start { plan_toml, dir, yes, trust_project, unconfined_checks }, Approve, Reject, Edit, Retry, Override, Cancel, Resume, Finish, List, Subscribe, Unsubscribe, Tool}`; `RunReply::{Started, Done { request, message }, Refused { request, message }, ConfirmNeeded, Snapshot, ToolResult { ok, text }}`; `pub mod request` (labels; not re-exported). |
+| `crates/config/src/orchestrator.rs` (570) and `orchestrator/{profile,roster,unknown}.rs` (351, 141, 90) | `config::Orchestrator` (every `[orchestrator]` field, including `unconfined_checks`, `cache_dirs`, `confined_network`, `confined_unix_sockets`, `confined_localhost_ports` — each a `BTreeMap` keyed by repository root, **the user's own config only**), `ClaudeHeadless { auth, api_key_helper }`, `read(table, problems)`, `orchestrator::unknown::report_unknown` (the known-key list). `[orchestrator.claude] auth = "api_key"` is refused at load (F2 C-I3, line 544). |
+| `crates/config/src/lib.rs` (605) | Over 600 already (F4 follow-up). `pub use orchestrator::{ClaudeAuth, ClaudeHeadless, Orchestrator, default_roster};` (line 24). |
+| `crates/config/src/reserved_env.rs` (313) | `reserved_env(key) -> Option<&'static str>` (line 176): the one list of variables a profile's `env` may not set (F2 C-I4 and round 2). `API_CREDENTIALS`, `OPENAI_CREDENTIALS`, `TASK_TMPDIR`. |
+| `crates/daemon/src/run/` | The engine. Pure: `engine/**` (reducer), `model.rs` (430) + `model_rounds.rs` (213, re-exported), `plan.rs` (457), `validate.rs` (502), `edits.rs` (571), `role_launch.rs` (552), `contract.rs` (563), `messages.rs`, `env.rs`, `snapshot.rs` (230), `report.rs` (236), `report_task.rs` (216), `globs.rs`, `roster.rs`, `reach.rs`, `seatbelt.rs`. I/O: `driver.rs` (598) + `driver/{cleanup,effects,guard,merge,observe,ops,requests,restore}.rs`, `git/**`, `exec.rs` (555), `confine.rs` (345), `confine_cache.rs` (558), `proof.rs`, `journal.rs`, `reconcile/{mod,git,sessions}.rs`. |
+| `crates/daemon/src/run/git/` | Task, review and proof checkouts are **standalone repositories** (F1c 3a, `git/checkout.rs` module doc): a checkout at `<wt>/runs/<run>/<name>` has its repository at `<data>/runs/<run>/tasks/<name>/` (`checkout_repo_dir`, `Repo { dir }`: `git/`, `engine/`), its objects alternate to the user's store, no refs, a detached `HEAD`. Only the per-run integration checkout is a linked worktree. `prepare_scratch_in(git, root, path, at, repo, timeout)` (worktrees.rs:501) makes a read-only standalone checkout; `remove_checkout(git, root, path, repo, timeout)` (salvage.rs:212) removes checkout and repository; `salvage(git, worktree, reference, message, timeout)` (salvage.rs:30) writes the salvage ref in the user's repository. `GitQueue::write(repo, f: Fn)` serialises writes per repository. `private_dir` and the no-follow `engine_child` spell every grant (F1c I1). |
+| `crates/daemon/src/run/confine.rs`, `seatbelt.rs`, `exec.rs` | Checks, proofs and **`setup`** run confined on macOS under a `(deny default)` seatbelt profile (F1c, F1d): writes only to the checkout, its own object store, its per-task `TMPDIR` and the user's `cache_dirs`; no network unless the user's `confined_network`; no Unix socket or loopback port but the user's `confined_unix_sockets`/`confined_localhost_ports`; never the daemon socket; protected agent-config paths denied (F2 round 2, F4). `ConfineSpec` (public fields; `for_run(run)`, `for_checkout(dir)`), `confined(dir, command, env, timeout, confine)`, `start_refusal(worker_sandbox, available, allowed)`, `available()`, `CONFINEMENT_ENV`. `exec::run_matching` (line 165, `pub(super)`) runs a command and reports whether a line matched a pattern. Linux cannot confine: `run start` refuses unless `--unconfined-checks` or `[orchestrator] unconfined_checks = true`. |
+| `crates/daemon/src/headless/` | `HeadlessSpec` (mod.rs:28: `runtime, model, effort, cwd, instructions, mcp: Option<McpTarget>, allowed_tools, claude_permission_mode, claude_disallowed_tools, claude_sandbox: Option<ClaudeSandbox { writable_roots, deny_write }>, codex_sandbox, codex_writable_roots, env, claude_auth, api_key_helper, run_ref, codex_config_guard`), `McpTarget { role, run_id, task_id }`, `SessionEvent`, `credential_scrub(spec)`; `session.rs`'s `HeadlessHandle::spawn(runtime, program, args, cwd, env, remove, on_event)` (blocking, line 123), `kill(grace)`, `close_stdin`, `wait_finished`; `argv.rs` (446): `CliCaps`, `CLI_CAPS` (`claude_user_settings_only = Some(["--setting-sources","user","--strict-mcp-config"])`, `codex_loads_project_config = true`, `codex_user_config_only = None`), `claude_settings(exe, window_id, sandbox, caps)`, `mcp_args`, `claude_args`, `codex_args`, `CODEX_SANDBOX_PINS`, `caps_with_test_overrides`; `claude_stream::ClaudeStream::parse_line` (stateful struct), `user_message`; `codex_stream::parse_line`; `codex_guard`. |
+| `crates/daemon/src/manager/` | `WindowManager::create_headless(name, spec, session, first_turn, project, worktree)` (headless.rs:255), `headless_send`, `headless_retire`, `headless_kill`, `headless_interrupt`, `remove`, `signals()`, `headless_run`; `WindowSignal { window_id, pid, kind }`, `WindowSignalKind::{Session, Hook, Unprompted}`; `control_refusal(id, run: Option<&RunRef>)` (headless.rs:215, the text decision 49's guard sends); `ManagerConfig { exe, socket_path, claude_bin, codex_bin, cli_caps, worktrees_root, … }`, `from_vars` (config.rs:116). |
+| `crates/daemon/src/server/run_api.rs` (96), `server/headless_guard.rs` (35) | Every run request but subscribe is answered by `RunService::request` on its own task. The guard refuses `Subscribe`, `Input`, `Kill`, `Remove`, `Restart` for any headless window. |
+| `crates/daemon/src/lifecycle.rs` (439) | `RunService::new(manager, run_context)`, `runs.restore().await` (line 294) before `bind_socket` (line 297). |
+| `crates/daemon/src/worktree.rs` (492), `project.rs` (200) | `hash8`, `repo_worktrees_dir(worktrees_root, project_root)` (line 144), `RESERVED_DIR = "runs"`, `run_git` (line 234, `--no-optional-locks`, scrubbed environment); `project::detect_roots_with(git, dir, timeout)`. |
+| `crates/mcp/src/{lib,tools,forward}.rs` (106, 250, 148) | `McpOptions { role, run_id, task_id, window_id, socket }`, `tools_for`, `allowed`, `role_name`, `forward`, `TOOL_REPLY_TIMEOUT` = 100 s. |
+| `crates/cli/src/main.rs` (594) | `hook` dispatched from raw `args_os()` before clap (line 159); `Command::Run`, `Command::Mcp`. |
+| `crates/cli/src/mcp_cmd.rs` (121) | `anthrex mcp` (hidden): `McpArgs { role, run_id: String (--run, required), task_id, window_id, socket }`, `RoleArg { Worker, Reviewer, Orchestrator }`. |
+| `crates/cli/src/run_cmd.rs` (472), `run_cmd/{status,finish}.rs` | `anthrex run …`; `RUN_REQUEST_TIMEOUT` = 180 s; `start --plan <file> [--yes] [--trust-project] [--unconfined-checks]`. |
+| `crates/cli/src/hook.rs` (145) | Silent, deadline-bounded forwarding (`HOOK_DEADLINE` = 1 s). `filter-hook` copies its discipline. |
+| `crates/fake-agent/src/` | `headless.rs` (553), `headless_steps.rs` (291), `roles.rs` (323: scripts `<git common dir>/fake-agent/<role>-<task>-<n>.jsonl`, claimed with `.claimed`; found through the checkout's alternate for standalone checkouts), `runtime.rs` (343: `discover` keeps only the first matcher group per event, `entries.get(0)`; `mcp_server`, `McpServer::flag`), `script.rs` (424: `Step`), `stream_claude.rs`, `stream_codex.rs`, `mcp.rs`, `main.rs` (342). Tests: `tests/headless_{modes,shapes,turns}.rs`, `tests/headless_support/{mod,shape,stub_daemon}.rs`. |
+| `crates/cli/tests/support/` | `run_harness.rs` (525: `RunHarness`, `init_repo`, `git_in`, `script_in`, `RUN_WAIT` = 300 s, `REQUEST_WAIT` = 60 s), `run_plans.rs` (230: `plan`, `task`, `until`, `report_with`, …), `run_watcher.rs`, `run_daemon.rs`, `mod.rs` (`fake_agent_bin`, `tempdir`, `RunningCommand`). The harness writes `[orchestrator.cache_dirs]` for its repository and `unconfined_checks = true` off macOS. CLI tests do not include `crates/daemon/tests/support`; they build repositories with `init_repo`. |
+| `crates/daemon/src/run/engine/tests/fixture.rs` (414) | `Fixture::new(plan_toml)`, `with_config`, `send(now, kind)`, `next`, `start`, `ready`, `approve`, `tick`, `done(op, result)`, `signal`, `op(name)`, `ops(name)`, `task`, `task_mut`, `run_mut`, `tool`, `tool_as`, `turn_ended`, `clean_check`, `merge`, `force`; `op_name`, `ops_in`. |
+| `scripts/pty-smoke.py` (1793), `scripts/pty_smoke_run.py` (165) | Stage 11c is `run_engine_stage(run_cmd, fail)`, called at `pty-smoke.py:1712`; the smoke daemon inherits the script's `ENV` (`ANTHREX_DATA_DIR`, `ANTHREX_CLAUDE_BIN = fake-agent`, `ANTHREX_CONFIG`). |
+| `docs/timing-budgets.md` | The rules for wall-clock bounds. Every new bound below names the constants it is derived from. |
 | `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md` | Where follow-ups go. |
 
-## Names taken from M8a
+## M8a names as shipped
 
-M8a is a brief, not code, when this brief is written. Every M8a name this brief relies on is below. Before starting, check each against the merged code; where one differs, use the merged name everywhere in this milestone and add a row to "Implementation notes" (`M8a name as written → merged name`). Nothing in this brief renames anything M8a defines; everything M8b adds to an M8a type is a new variant or a new `#[serde(default)]` field.
+Checked on `baa04e1`. Nothing in this brief renames anything M8a defines; everything M8b adds to an M8a type is a new variant or a new `#[serde(default)]` field, except the two visibility changes marked **vis**.
 
-| Name | What this brief assumes it is | Taken from (M8a) |
-|------|-------------------------------|------------------|
-| `run::engine::step(state: EngineState, event: Event) -> (EngineState, Vec<Effect>)` | The pure reducer; reads no clock, does no I/O. | Decision 2; Interfaces `run/engine/mod.rs` |
-| `EngineState { runs: BTreeMap<String, Run>, revision, stopped }` | The engine's whole state. | Interfaces `run/engine/mod.rs` |
-| `Event { now, kind }`, `EventKind::{Start, Edit, Tool, OpDone, Signal, Restore, Tick, Resume}` | Reducer inputs; `Start { reply, run }` carries a built `Run`. | Interfaces `run/engine/mod.rs` |
-| `Effect::{Reply, Op, Deliver, Interrupt, KillWindow, RetireWindow, RemoveWindow, Persist, WriteReport, Publish}` | Reducer outputs, executed by `RunService` in decision 43's order. | Interfaces; decision 43; task M8a.22 |
-| `OpKind`, `OpResult`, `OpId`, `PendingOp { op, task_id, kind }` | Journaled side effects; `OpKind::{Check, MergeCandidate, ResumeSession, …}`, `OpResult::{Check, CandidateRed, Merged, Finished, …}`. | Interfaces; decisions 43–44 |
-| `run::model::{Run, Task, Profile, RunLimits, CheckRecord, AgentRound, ReviewLevel, LogEntry}` | The persisted run model with the fields listed in M8a's Interfaces (`Run.project`, `Run.root`, `Run.profile`, `Run.limits`, `Run.log`, `Task.spec: PlanTask`, `Task.size`, `Task.state`, `Task.block`, `Task.rung`, `Task.rounds`, `Task.checks`, `Task.merge_commit`, `Task.start_commit`, `Task.head`, `Task.notes`, `Task.review_level`, `Task.review_route`, `Task.route`, `Task.budget`, `Task.spent_total`). | Interfaces `run/model.rs` |
-| `run::plan::{parse_plan, resolve_profile, build_run, resolve_task, BuildContext, Preflight, PlanError}`, `run::validate::validate_tasks`, `EditScope` | Plan parsing and validation; `resolve_profile(plan, config)` is per key, plan over config. | Decisions 7–13; Interfaces |
-| `run::roster::{find, first_at, peer, pick_reviewer}` | Roster policy by strength. | Decisions 23, 35, 39 |
-| `run::globs::validate_glob(glob) -> Result<(), String>`, `proto::GateKind::{Done, Proof, Check, Review, Merge}`, `RunLimits.worker_sandbox` | Glob validation; gate names; whether Claude workers are sandboxed. | Decision 11; Interfaces `proto`, `run/model.rs`; decision 54 |
-| `run::git::{preflight, salvage, remove_worktree, lock_worktree, read_ref, GitQueue}`, `crate::worktree::run_git` | Blocking git helpers taking `git: &OsStr` first and a timeout last; `GitQueue::write(repo, f)` serialises writes per repository. | Decisions 18, 20; Interfaces `run/git/` |
-| `run::exec::{run_shell, summary, ShellOutcome, CHECK_TAIL_LINES, CHECK_SUMMARY_LINES}` | `/bin/sh -c` with timeout and a 200-line tail; `summary` = last 40 lines. | Decision 34; Interfaces `run/exec.rs` |
-| `run::contract::{check_failed_message, candidate_red_message, worker_prompt, reviewer_prompt}` | Message texts; the first two quote "Last 40 lines:" and the summary. | Interfaces "Contracts and message texts" |
-| `run::env::profile_env(profile, worktree)` | Profile env with `{worktree}` substituted. | Interfaces `run/env.rs` |
-| `run::journal::{JournalLine, append, save_run}`, `run::reconcile::{reconcile, Reconciled::{Replay, NotStarted}}` | The intent journal and reconciliation per op kind. | Decisions 43–44 |
-| `RunService::{new, restore, spawn, stop, snapshots, request}`, `RunContext { data_dir, worktrees_root, exe, socket_path, orchestrator, git_roots, git }` | The driver; `request(Start)` runs preflight and `build_run` before sending `Start`. | Task M8a.22; Interfaces `run/driver.rs` |
-| `ANTHREX_TEST_ABORT_AFTER_INTENT=<op kind>[:<n>]` | Debug-build crash injection after the n-th intent line of a kind. | Decision 48 |
-| `proto::{AgentRole::{Orchestrator, Worker, Reviewer}, RunRef, Strength, Effort, Size, TaskKind, TestMode, Route, RouteSpec, Budget, ProfileSpec, Plan, PlanTask, PlanEdit, ModelEntry, RunState, TaskState, BlockReason, GateCounts, Severity, Finding, DoneSignal::{TaskDone, TurnEndFallback}}` | Run types in `crates/proto/src/run.rs`. | Interfaces `proto` |
-| `proto::{RunsSnapshot, RunInfo, TaskInfo, AgentRoundInfo, CheckInfo, BlockInfo, Spend, TokenUsage { input, output, cache_read, cache_write }}`, `TokenUsage::billable()` | The snapshot in `crates/proto/src/run_info.rs`; `AgentRoundInfo.usage` and `Spend.tokens` already meter stream usage per round and task. | Interfaces `run_info.rs`; decision 40 |
-| `proto::{RunRequest, RunReply, ToolCall, request::*}` in `crates/proto/src/run_wire.rs`, nested in `ClientMsg::Run` / `DaemonMsg::Run` | Run wire messages. | Decision 3; Interfaces `run_wire.rs` |
-| `proto::WindowKind::{Pty, Headless}`, `WindowInfo.kind`, `WindowInfo.run: Option<RunRef>` | Headless windows. | Decision 49 |
-| `config::Orchestrator` with `read(table, problems)`, `config::{ClaudeAuth, ClaudeHeadless}`, `default_roster()` | The `[orchestrator]` table in `crates/config/src/orchestrator.rs`. | Interfaces `config`; decision 50 |
-| `headless::{HeadlessSpec, McpTarget { role, run_id, task_id }, SessionArg::{New { uuid }, Resume { session_id }}, SessionEvent, TurnOutcome, FailureKind, HeadlessHandle, CliCaps, CLI_CAPS, InterruptMode}` | The session layer, "shared with M9's scouts, sub-planners and deciders". `HeadlessSpec.run_ref: Option<RunRef>`, `HeadlessSpec.mcp: Option<McpTarget>`. `HeadlessHandle::spawn(program, args, cwd, env, on_event)` scrubs `CLAUDE_CODE_*` and `CLAUDECODE`. | Decisions 24–28, 51–52; Interfaces `headless/` |
-| `headless::argv::{claude_args, codex_args, mcp_args}`, `headless::claude_stream::{parse_line, user_message}`, `headless::codex_stream::parse_line` | Pure argv builders and stream parsers. | Interfaces `headless/argv.rs`, stream tables |
-| `headless::argv::claude_settings(exe, window_id, sandbox: Option<&ClaudeSandbox>, caps) -> serde_json::Value`, `HeadlessSpec.claude_sandbox: Option<ClaudeSandbox { writable_roots }>`, `[orchestrator] worker_sandbox` | The `--settings` object: M3's hooks plus the sandbox block; `claude_args` calls it. | Decisions 24, 54 |
-| `CLI_CAPS.claude_user_settings_only: Option<&[&str]>`, `run::git::project_settings(root, sha)`, `RunRequest::Start { …, trust_project }`, `Run.trusted_project`, `ANTHREX_TEST_NO_SETTING_SOURCES` | Headless Claude sessions load only the user's settings; when the CLI cannot exclude project settings, a repository that tracks them needs `--trust-project`. | Decision 53 |
-| `ProfileSpec.generated: Option<Vec<String>>`, `generated_files_message(files)`, `GateCounts.done` | Files builds rewrite; outside `owns` they are a rung-1 bounce, not a spill. | Decision 55 |
-| `ProfileSpec.protected: Option<Vec<String>>`, `BUILTIN_PROTECTED` (in `run/plan.rs`), `protected_file_message(files)`, `Preflight.protected_files`, `names_literally(owns, path)` | Files that configure or instruct future agents. The five built-ins always apply; every source only adds. A task may change a protected path only if its `owns` names it literally; otherwise it is a rung-1 gate failure of gate `done`. M8a enforces; M8b stores and proposes the extras. | Decision 56 |
-| `CLI_CAPS.{codex_loads_project_config, codex_project_config_paths, codex_user_config_only}`, `ANTHREX_TEST_CODEX_PROJECT_CONFIG=load\|exclude` | Whether `codex exec` reads a repository's Codex config, which files it reads, and the flags that exclude them. If it loads them and they cannot be excluded, a repository tracking one needs `--trust-project`. | Decision 53 (the Codex paragraph); M8a.1 item 7a |
-| `WindowManager::{create_headless, headless_send, headless_interrupt, headless_kill, signals}`, `WindowSignal { window_id, kind }`, `WindowSignalKind::{Session(SessionEvent), Hook { kind, agent_id }}`, and the removal `RunService` performs for `Effect::RemoveWindow` | Registering and driving headless windows; the event feed. | Decision 49; Interfaces `manager`; task M8a.22 step 3 |
-| Decision 49's refusal helper in `crates/daemon/src/server/headless_guard.rs` and its text `window <id> is a headless session of run <run>; …` | Client control of headless windows is refused. | Decision 49; File sizes row `server.rs` |
-| `crates/mcp`: `McpOptions { role, run_id, task_id, window_id, socket }`, `tools_for(role)`, `forward`, `TOOL_REPLY_TIMEOUT` (100 s); `anthrex mcp --role … --run … [--task …] --window … [--socket …]` | The MCP server crate and its hidden subcommand. | Decisions 4–5; Interfaces "MCP tools" |
-| `fake-agent` headless modes: detection from `-p --input-format stream-json` (Claude) or `exec` (Codex); per-role scripts `<role>-<task>-<n>.jsonl` in `<git common dir>/fake-agent/`, claimed with `<file>.claimed`; steps `mcp_call`, `read_message`, `end_turn`, `sh`, `capture`, `usage`, `hang`; `FAKE_AGENT_ARGS_FILE`, `FAKE_AGENT_STDIN_FILE` | The scripted stand-in for both runtimes. | Task M8a.20 |
-| `RunHarness` in `crates/cli/tests/support/run_harness.rs` (`new(config_toml)`, `script`, `plan`, `anthrex`, `start`, `subscribe`, `wait_run`, `restart_daemon`, `git`), `RUN_WAIT` = 300 s | The end-to-end harness. | Tasks, "Shared test helpers" |
-| `engine/tests/fixture.rs`: `Fixture::new(plan_toml)`, `fx.send`, `fx.op`, `fx.done`, `fx.task`, `fx.signal` | The reducer test fixture. | Tasks, "Shared test helpers" |
-| `crates/cli/src/run_cmd.rs`, `crates/cli/src/run_cmd/status.rs`, `RUN_REQUEST_TIMEOUT` = 180 s | The `anthrex run` subcommands. | Task M8a.23; CLI section |
-| `run::report` (`REPORT.md`) | The run report, rewritten on `WriteReport`. | Task M8a.16 |
-| `RunInfo.approved_by` values `"user"` and `"--yes"` | Who opened the plan gate. | Interfaces `run_info.rs` |
-| Decision 32's `task_blocked { kind?, reason }` with missing `kind` read as `question`, reply `Blocked recorded (<kind>). Stop and wait for an answer.` | What M8b's classification refines. | Decision 32 |
-| Decision 41's reader slots (`max_readers`, `RunInfo.readers_busy`), held by live reviewers | What deciders now also take. | Decision 41 |
-| Decision 45's resume rules (tasks re-issue the op their state needs) | What re-issues a dropped decider op. | Decision 45 |
-| `crates/daemon/tests/fixtures/headless/` and decision 51's shape test | Where recorded CLI fixtures live and how `fake-agent` output is checked against them. | Decision 51; task M8a.1 |
+| Name | What it is |
+|------|-----------|
+| `run::engine::step(state, event) -> (EngineState, Vec<Effect>)`; `EngineState { runs, revision, stopped }`; `Event { now, kind }` | The pure reducer. |
+| `EventKind::{Start { reply, run }, Approve, Reject, Edit { reply, run_id, edits, scope, refusals }, Retry, Override, Cancel, Resume, BaseAdvanced, Finish, Tool { reply, call }, OpDone { run_id, op, result }, Signal { window_id, signal }, Delivered, Restore { runs, replay, held }, Stop, Tick}` | Reducer inputs (`engine/mod.rs:79`). A request's answer is `Effect::Reply { reply, result: Result<String, String> }`. |
+| `Effect::{Reply, Op { run_id, op, kind }, Deliver, Interrupt, KillWindow, RetireWindow, RemoveWindow, WatchWorktree, UnwatchWorktree, WriteReport, Persist, Publish}` | Reducer outputs. |
+| `engine::ops::{OpKind, OpResult}` | `OpKind::{CreateRunBranch, PrepareWorktree, CreateWindow, ResumeSession, VerifyDone, CountCommits, DiffSoFar, Proof, Check, PrepareReview, MergeCandidate, HandBack, AbortMerge, RemoveWorktree, VerifyRefs, Accept, Discard}`; `OpResult::{…, Check { ok, code, timed_out, tail, secs }, CandidateRed { code, timed_out, tail, secs }, Merged { commit }, Finished { outcome, kept_branches }, Failed { message }}`. Both derive `Serialize, Deserialize, Eq`. |
+| `run::model::{Run, Task, Profile, RunLimits, PendingOp, LogEntry, ReviewLevel, OpId}`; `model_rounds::{CheckRecord { at, ok, code, timed_out, tail, secs, on_candidate }, ProofRecord, ReviewRecord, AgentRound, …}` | `Run.{id, root, project, git_common_dir, wt_dir, data_dir, base_branch, base_sha, run_head, state, approved_by, profile, limits, roster, tasks, log, …}`; `Task.{spec, size, raised_size, hub, test_mode, notes, review_level, route, review_route, budget, state, block, rung, failures, bounces, stalls, budget_exceeded, conflicts, session, spent_total, worktree, head, merge_commit, rounds, reviews, checks, proofs, history, …}`. `Profile` has `cache_dirs`, `confined_network`, `confined_unix_sockets`, `confined_localhost_ports`, set **only** by `build_run` from the user's config keyed by root. |
+| `run::plan::{parse_plan, resolve_profile(plan, config) -> Profile, build_run(plan, pre, ctx), BUILTIN_PROTECTED, DEFAULT_CHECK_TIMEOUT_SECS, Preflight { root, project, git_common_dir, base_branch, base_sha, protected_files }, BuildContext { id, wt_dir, data_dir, config, now, yes }, PlanError}` | `resolve_profile` is per key, plan over config; `protected` merges built-ins + config + plan. The private `for_repo(table, root)` (plan.rs ~285) finds a root-keyed config entry. **vis:** M8b makes `for_repo` `pub(crate)`. |
+| `run::validate::{resolve_task, resolve_task_lenient}`, `run::globs::{validate_glob, names_literally}`, `run::roster::{find, first_at, peer, pick_reviewer, escalate}` | Task resolution, globs, roster policy. |
+| `run::engine::ladder::reresolve(run, i)` (private, ladder.rs ~270) | Re-resolves review level, reviewer and budget for a raised size. **vis:** M8b makes it `pub(crate)`. |
+| `run::git::{preflight, prepare_scratch_in, remove_checkout, salvage, read_ref, project_settings(git, root, base_sha, claude, codex_paths, timeout), codex_config_tree, checkout_repo_dir, Repo, task_tmp, private_dir, GitQueue}` | Blocking git helpers, `git: &OsStr` first and a timeout last. |
+| `run::exec::{run_shell, run_confined, run_matching, ShellOutcome { ok, code, timed_out, tail, secs }, CHECK_TAIL_LINES, CHECK_SUMMARY_LINES, summary}` | **vis:** M8b makes `run_matching` `pub(crate)`. |
+| `run::confine::{ConfineSpec, Confinement, confined, start_refusal, available, AVAILABLE}`, `run::proof::{proof_command(single_test, test), proof_pattern(test_passed, test)}`, `run::env::profile_env(&Profile, worktree)` | Confinement, the proof's command and pattern, the profile environment. |
+| `run::role_launch::{worker_spec, reviewer_spec, protected_write_denials(cwd, owns), codex_config_guard(run, runtime), task_tmp_dir(data_dir, task), worker_git_roots, REVIEWER_TOOLS, REVIEWER_PERMISSION_MODE ("dontAsk"), REVIEWER_DISALLOWED_TOOLS, REVIEWER_CODEX_SANDBOX ("read-only")}` | Session specs. A Claude reviewer always runs under a read-only sandbox (`ClaudeSandbox { writable_roots: [], deny_write: … }`, F1c N4). |
+| `run::contract::{check_failed_message(command, &CheckRecord), candidate_red_message(command, &CheckRecord), reviewer_prompt, blocked_recorded(kind)}` | Message texts. |
+| `run::driver::{RunService, RunContext { data_dir, worktrees_root, orchestrator, git_roots, git, cli_caps }, RETIRE_AFTER (30 s), INTERRUPT_GRACE, unix_now}`; `RunService::{new, restore, spawn, stop, pushes, current, request}`; `driver/requests.rs::{request, start, build}`; `driver/ops.rs::run` | The driver. `RunContext` has no `exe` or `socket_path` (removed in F3 B-11): use `manager.config().exe` / `socket_path`. |
+| `run::reconcile::{reconcile, Reconciled::{Replay, NotStarted}}`, `run::journal::{runs_dir, save_run, append, load_all}` | Reconciliation and the journal. Reconcile's leftover-session killer considers only `run.json`'s round pids (F3 B-6). |
+| `ANTHREX_TEST_ABORT_AFTER_INTENT=<op kind>[:<n>]` | Debug-build crash injection. |
+| `headless::…` | As in "Starting point". `SessionEvent::{Init, TurnStarted, UserText, AssistantText { text, parent }, ApiErrorText, ToolUse { id, name, input, parent }, ToolResult, ApiRetry, PermissionDenied, Compacted, Other, TurnEnded { outcome, usage, denials }, Diagnostic, Unknown, StderrLine, ProcessStarted, ProcessExited { code, signal }}`. |
+| `manager::…`, `server::…`, `mcp::…` | As in "Starting point". |
+| `config::Orchestrator` and `orchestrator::read`; `config::reserved_env::reserved_env` | As in "Starting point". |
+| `fake-agent` headless modes; `RunHarness`; `Fixture` | As in "Starting point". |
+| `RunInfo.approved_by` values `"user"` and `"--yes"` | Who opened the plan gate. |
+| Decision 32's `task_blocked { kind?, reason }` (`engine/done.rs:199`, `engine/tools.rs`), missing `kind` read as `question`, reply `blocked_recorded(kind)` | What M8b's classification refines. |
+| Decision 41's reader slots (`schedule::readers_busy`, `RunInfo.readers_busy`) | What deciders now also take. |
 
 ## Goal
 
-The first time anthrex meets a repository, `anthrex profile detect` (or the first `anthrex run start --goal …` there) launches a headless **onboarding scout** in a disposable copy of the repository. It works out the languages, the modules, the hub, the source globs, a setup command, a check command, a single-test command with the regex that proves a test ran, and the per-worktree environment, running each command itself. anthrex runs every proposed command again in a fresh scratch worktree and proposes only those that passed. The user confirms the result once with `anthrex profile confirm`; it is stored in anthrex's data directory keyed by the repository root, never in the repository. It is re-detected when a manifest or convention file changes, and corrected with `anthrex profile edit`. Every run in that repository then uses it, over any profile in a plan file.
+The first time anthrex meets a repository, `anthrex profile detect` (or the first `anthrex run start --goal …` there) launches a headless, **read-only** **onboarding scout** in a disposable copy of the repository. It reads the repository and proposes the languages, the modules, the hub, the source globs, a setup command, a check command, a single-test command with the regex that proves a test ran, a sample test, and the per-checkout environment. anthrex then runs every proposed command itself in a fresh scratch checkout, **confined exactly as a run's `setup` and `check` are**, and proposes only those that passed. The user confirms the result once with `anthrex profile confirm`; it is stored in anthrex's data directory keyed by the repository, never in the repository. It is re-detected when a manifest or convention file changes, and corrected with `anthrex profile edit`. Every run in that repository then uses it, over any profile in a plan file. Nothing a model writes into the profile can widen what a confined command may reach: `cache_dirs` and the `confined_*` tables stay in the user's own config.
 
 `anthrex run start --goal "<text>"` sends the goal to a **triage decider**: a one-shot headless call returning schema-validated JSON. A goal that one S or M task can do, touching no hub file, takes the **fast path**: one task, no plan gate, the normal gates, and the user's accept at the end. Any other goal is refused with the reason, because the planned path needs the orchestrator of milestone 9. `anthrex run promote` records the user's wish to promote a fast-path run, for milestone 9 to act on.
 
 Three more deciders run inside the engine: a **size cross-check** of planned tasks against scout evidence, which can only raise a size; a **≤ 40-line check summary** that replaces M8a's raw 40-line tail in every check bounce; and a **classifier** for `task_blocked` reasons the worker gave no kind for. Every decider has a deterministic fallback, so a failed, slow or disabled decider degrades a decision and never blocks a run. In tests, `ANTHREX_DECIDER_BIN` replaces the decider binary with `fake-agent`.
 
-A `PreToolUse` hook injected into every headless Claude worker rewrites test commands to run through `anthrex filter-run`, which keeps the full log on disk and shows the agent only the failures. The engine meters deciders, scouts and, through an OTLP receiver ready for milestone 9's orchestrator, the one PTY session. It appends one record per finished task to `history.jsonl`, and `anthrex run stats` summarises that history. No test needs a model.
+A `PreToolUse` hook injected into every headless Claude worker rewrites test commands to run through `anthrex filter-run`, which keeps the full log in the task's own temporary directory and shows the agent only the failures. The engine meters deciders, scouts and, through an OTLP receiver ready for milestone 9's orchestrator, the one PTY session. It appends one record per finished task to `history.jsonl`, and `anthrex run stats` summarises that history. No test needs a model.
 
 ## Scope
 
 In:
 
 - The repository profile: its type and file format, storage in the data directory, the precedence over a plan file's `[profile]`, staleness by content fingerprint, and `anthrex profile status|detect|show|confirm|reject|edit`.
-- The onboarding scout: a headless session in a disposable worktree, command verification by the engine, proposals, confirmation, and re-detection.
+- The onboarding scout: a headless, read-only session in a disposable standalone checkout; confined command verification by the engine; proposals, confirmation, and re-detection.
 - Scouts in general: `AgentRole::Scout`, the MCP tool `submit_scout_report`, the scout report type and its storage, `ScoutService`, which milestone 9's area scouts reuse, and the scout snapshot type.
 - Deciders: the call on M8a's headless spawner, `[orchestrator.deciders]`, `ANTHREX_DECIDER_BIN`, four kinds (triage, size cross-check, check summary, blocked reason) with JSON schemas, prompts, validation and fallbacks, and reader-slot accounting.
 - Triage, the fast path, `anthrex run start --goal`, and `anthrex run promote` as a recorded intent.
@@ -119,11 +118,12 @@ Out, each with the milestone that owns it:
 | Drawing scout nodes, the fast-path root node, usage and size-check fields in `C-b T` and the inspector | M8c |
 | Threshold and budget refitting, routing proposals in `anthrex run stats`, adaptive concurrency, racing, the test-writer pattern | M9.5 |
 | The output filter for Codex workers (Codex headless sessions get no hook configuration, M8a decision 25) | Follow-up, recorded under M9.5 |
+| Killing a scout process left over from a daemon that died (process-kill code) | Follow-up, recorded (decision 11) |
 | A learned router | Out of scope (spec §15) |
 
 ## Design decisions
 
-Numbered and final. If one proves wrong or impossible, stop work on it, record the evidence under "Implementation notes", and continue with the tasks that do not depend on it.
+Numbered and final. If one proves wrong or impossible, stop work on it, record the evidence under "Implementation notes", and continue with the tasks that do not depend on it. Decisions the 2026-09-26 refresh changed carry a *Refreshed* line; the full record is under "Implementation notes".
 
 ### Structure
 
@@ -133,15 +133,15 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
    - `decider/`: `mod.rs` (types), `schema.rs`, `prompt.rs`, `parse.rs`, `fallback.rs`, `argv.rs`, `call.rs`.
    - `output_filter.rs`.
    - `metering/`: `mod.rs`, `otlp.rs`, `server.rs`.
-   - In M8a's `run/`: `run/triage.rs`, `run/phases.rs`, `run/history.rs`, `run/stats.rs`, `run/history_io.rs`, and `run/engine/deciders.rs`.
+   - In M8a's `run/`: `run/triage.rs`, `run/phases.rs`, `run/history.rs`, `run/stats.rs`, `run/history_io.rs`, `run/model_adapt.rs` (re-exported by `model.rs`), `run/engine/deciders.rs`, and `run/driver/adapt.rs` (the new op executions and the new requests; `driver/ops.rs` and `driver/requests.rs` only dispatch into it).
 
-   **Pure** (no `std::fs`, `std::process`, `std::thread`, `tokio`, `std::time::SystemTime`): `profile/{resolve,proposal}.rs`, `scout/{contract,spec,report,machine}.rs`, `decider/{mod,schema,prompt,parse,fallback,argv}.rs`, `output_filter.rs`, `metering/otlp.rs`, `run/{triage,phases,history,stats}.rs`, `run/engine/deciders.rs`. **I/O**: `profile/{store,verify,service}.rs`, `scout/service.rs`, `decider/call.rs`, `metering/server.rs`, `run/history_io.rs`. *(M8a decision 2's discipline; AGENTS.md rule 5's spirit on the daemon side.)*
-2. **Protocol.** `PROTO_VERSION` becomes one above `main`'s value at the start (header). Every new request and reply is a new variant of M8a's `RunRequest` or `RunReply`, so `ClientMsg` and `DaemonMsg` gain nothing and the TUI's ignore arm for `DaemonMsg::Run` still covers everything. Every field added to an M8a struct is `#[serde(default)]`, and every new snapshot field is an `Option` or a `Vec`, so a milestone-8a `run.json` and a milestone-8a snapshot still deserialize. `proto::AgentRole` gains `Scout`. New proto modules: `crates/proto/src/profile.rs`, `scout.rs`, `adapt.rs` (triage, deciders, usage, promote), `history.rs`. Every new message gets a MessagePack round-trip test. *(AGENTS.md rule 4; spec §19 last line.)*
-3. **Configuration.** New tables in a new file, `crates/config/src/orchestrator_adapt.rs`, read by one call from M8a's `orchestrator::read`. `crates/config/src/lib.rs` is not touched. Keys, defaults and ranges are in Interfaces. Invalid values are a `Problem` and keep the default, with M8a's message format. *(M8a decision 50's pattern; `lib.rs` is already over 600 lines.)*
+   **Pure** (no `std::fs`, `std::process`, `std::thread`, `tokio`, `std::time::SystemTime`): `profile/{resolve,proposal}.rs`, `scout/{contract,spec,report,machine}.rs`, `decider/{mod,schema,prompt,parse,fallback,argv}.rs`, `output_filter.rs`, `metering/otlp.rs`, `run/{triage,phases,history,stats,model_adapt}.rs`, `run/engine/deciders.rs`. **I/O**: `profile/{store,verify,service}.rs`, `scout/service.rs`, `decider/call.rs`, `metering/server.rs`, `run/history_io.rs`, `run/driver/adapt.rs`. *(M8a decision 2's discipline; AGENTS.md rule 5's spirit on the daemon side.)*
+2. **Protocol.** `PROTO_VERSION` becomes **8** (header). Every new request and reply is a new variant of M8a's `RunRequest` or `RunReply`, so `ClientMsg` and `DaemonMsg` gain nothing and the TUI's `DaemonMsg::Run(_) => vec![]` arm (`crates/tui/src/app/daemon.rs`) still covers everything. Every field added to an M8a struct is `#[serde(default)]`, and every new snapshot field is an `Option` or a `Vec`, so a milestone-8a `run.json` and a milestone-8a snapshot still deserialize. `proto::AgentRole` gains `Scout`. New proto modules: `crates/proto/src/profile.rs`, `scout.rs`, `adapt.rs` (triage, deciders, usage), `history.rs`, re-exported by name in `lib.rs` (never by glob; M8a's C20). Every new message gets a MessagePack round-trip test. *(AGENTS.md rule 4; spec §19 last line.)*
+3. **Configuration.** New tables in a new file, `crates/config/src/orchestrator/adapt.rs`, a submodule of M8a's `orchestrator` beside `profile.rs`, `roster.rs` and `unknown.rs`, read by one call from `orchestrator::read`. `orchestrator/unknown.rs` gains the five new keys. `crates/config/src/lib.rs` changes only in its existing `pub use orchestrator::{…}` line, which gains the four new type names (no line added). Keys, defaults and ranges are in Interfaces. Invalid values are a `Problem` and keep the default, with M8a's message format. *(M8a decision 50's pattern; `lib.rs` is already over 600 lines. Refreshed: the file is `orchestrator/adapt.rs`, not `orchestrator_adapt.rs`, because M8a split `orchestrator` into a directory.)*
 
 ### The repository profile
 
-4. **Storage.** A repository's data directory is `repo_dir(data_dir, project) = worktree::repo_worktrees_dir(&data_dir.join("repos"), project)`, keyed by `project::detect_roots(dir).project`, so every linked worktree of a repository shares one. It holds:
+4. **Storage.** A repository's data directory is `repo_dir(data_dir, project) = worktree::repo_worktrees_dir(&data_dir.join("repos"), project)`, keyed by `Preflight.project`, so every linked worktree of a repository shares one. It holds:
 
    | File | Content |
    |------|---------|
@@ -150,8 +150,9 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
    | `proposal.json` | `ProposalRecord`: the one pending proposal and its state (decision 8). |
    | `scouts/<scout id>.json` | Repository-level scout reports (decision 13). |
    | `history.jsonl` | Run history (decision 33). |
+   | `tasks/.onboarding/`, `tasks/.profile-verify/` | The repositories of the two disposable checkouts (decision 8), as `run::git::checkout_repo_dir(repo_dir, checkout)` names them; removed with their checkouts. |
 
-   Every write goes to a temp file, is `fsync`ed and renamed, and the directory is `fsync`ed. **Nothing is ever written into the repository**: there is no `.anthrex/` directory and no repository-level profile file, because an agent could edit such a file to weaken the checks it is judged by. *(Spec §6 as amended, §22.4.)*
+   Every write goes to a temp file, is `fsync`ed and renamed, and the directory is `fsync`ed. **Nothing is ever written into the repository's files**: there is no `.anthrex/` directory and no repository-level profile file, because an agent could edit such a file to weaken the checks it is judged by. The only writes into the repository's `.git` are M8a's salvage refs (`refs/anthrex/salvage/onboarding/<secs>`), exactly as M8a writes its own. *(Spec §6 as amended, §22.4. Refreshed: the disposable checkouts are M8a's standalone checkouts, so their repositories live here.)*
 5. **The profile type** is `proto::RepoProfile` (Interfaces). It has every key of spec §6, `generated` included (the files builds rewrite on their own, such as `Cargo.lock`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `poetry.lock`, `uv.lock`, `go.sum` and `Gemfile.lock`, filled by the onboarding scout from the lock files it finds and confirmed with the rest; M8a decision 55 bounces a change to one outside `owns` at rung 1).
 
    It also has `protected`, the files that configure or instruct future agents. **The stored list holds only extra entries on top of M8a's `BUILTIN_PROTECTED`** (`.claude/**`, `.mcp.json`, `.codex/**`, `**/CLAUDE.md`, `**/AGENTS.md`), which always apply (M8a decision 56):
@@ -164,125 +165,137 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
    - M8a enforces the union.
 
    It adds four keys of its own:
-   - `sample_test`: the name of one existing passing test, needed to re-verify `single_test`.
+   - `sample_test`: the name of one existing passing test, needed to verify `single_test`.
    - `check_timeout_secs`: M8a's key, so a slow check survives re-detection.
    - `manifests`: the manifest files the scout read, which decision 7 watches. Spec §6 names manifests but gives no key for them.
    - `filter_prefixes`: which commands count as test commands for the output filter (decision 28). Spec §14.3 filters "test output" but no profile key says which commands produce it.
 
-   It parses with `deny_unknown_fields`. `RepoProfile::spec()` gives M8a's `ProfileSpec`: `modules`, `hub`, `source` and `generated` become `Some` only when non-empty, and `env` only when it has entries. `protected` is `Some(extras)` only when there are extras. M8a's resolution always unions `BUILTIN_PROTECTED` into the effective list, so an empty or absent value still protects every built-in. Every glob in `modules`, `hub`, `source`, `generated` and `protected` must pass M8a's `run::globs::validate_glob`.
-6. **Precedence, exact.** `profile::resolve::run_profile(stored, plan, config)` picks one source for the whole profile:
+   **It holds no confinement setting.** `cache_dirs`, `confined_network`, `confined_unix_sockets` and `confined_localhost_ports` are the user's own `[orchestrator.*]` tables keyed by repository root (M8a F1c N3, F1d R4 and round 2 S1), and `RepoProfile` has no such key: it parses with `deny_unknown_fields`, so a `profile.toml` that names one does not parse (decision 6's refusal), and neither the scout's schema (Interfaces, MCP) nor `profile edit` can set one. A model-written profile therefore cannot widen what a confined command may write or reach.
+
+   `env` obeys M8a's reserved list: `proposal::validate` refuses every key `config::reserved_env::reserved_env` names, with M8a's text `key <K> may not be set by a profile: <reason>`, and `build_run`'s own plan check refuses it again.
+
+   `RepoProfile::spec()` gives M8a's `ProfileSpec`: `modules`, `hub`, `source` and `generated` become `Some` only when non-empty, and `env` only when it has entries. `protected` is `Some(extras)` only when there are extras. M8a's `resolve_profile` always unions `BUILTIN_PROTECTED` into the effective list, so an empty or absent value still protects every built-in. Every glob in `modules`, `hub`, `source`, `generated` and `protected` must pass M8a's `run::globs::validate_glob`. *(Refreshed: the confinement paragraph and the reserved-env rule are new, from M8a F1c N3, F1d, F2 C-I4.)*
+6. **Precedence, exact.** `profile::resolve::run_profile(stored, stored_path, plan, config)` picks one source for the whole profile:
    1. **A confirmed stored profile exists** for the run's `project`. It is the profile, in full: every `ProfileSpec` key comes from it, and a key it leaves unset stays unset. The degradations of spec §6 and M8a decisions 10, 34 and 35 then apply to that key. The plan file's `[profile]` table and `[orchestrator.profile]` are ignored entirely. For every key the plan's `[profile]` set, the run log gets `profile.<key> from the plan file is ignored: this repository has a stored profile (<repo_dir>/profile.toml)`. `RunInfo.profile_source = Some(Stored)`.
    2. **Otherwise**, M8a decision 7's rule applies unchanged: per key, the plan's `[profile]`, else `[orchestrator.profile]`, else empty. `profile_source = Some(Plan)` when any key came from either, else `Some(None)` (degraded mode, spec §6).
 
-   **`protected` is the one exception to the whole-source rule**, because adding protection can only tighten. It merges, as M8a decision 56 defines: the effective list is `BUILTIN_PROTECTED` ∪ the stored extras ∪ the plan's `[profile] protected` ∪ `[orchestrator.profile] protected`, de-duplicated in that order. So `run_profile` puts into the chosen `ProfileSpec.protected` the stored extras plus the plan's and config's entries, and M8a adds the built-ins. No source can remove a built-in. A plan's `protected` entries are therefore not ignored, and get no "ignored" log line.
+   **`protected` is the one exception to the whole-source rule**, because adding protection can only tighten. It merges, as M8a decision 56 defines: the effective list is `BUILTIN_PROTECTED` ∪ the stored extras ∪ the plan's `[profile] protected` ∪ `[orchestrator.profile] protected`, de-duplicated in that order. A plan's `protected` entries are therefore not ignored, and get no "ignored" log line.
 
-   The stored profile wins as a whole, not per key, because its gaps are deliberate. A stored profile with no `single_test` records that the repository has no single-test runner, and a plan must not quietly fill that in. A stored profile whose file does not parse **refuses the run**: `run start` answers `the stored profile at <path> does not parse: <error>; fix it with anthrex profile edit or re-detect it with anthrex profile detect`. It never falls back to the plan's profile. `output_filter` and `filter_prefixes` are copied onto the run for decision 28; they are empty when the source is not `Stored`. `RunService::request(Start)` applies this before calling M8a's `build_run`, by replacing `plan.profile` with the chosen `ProfileSpec`, so `build_run` itself is unchanged. `StartGoal` requires source 1 (decision 22). *(Spec §6 as amended; the coordinator's precedence: stored, else the plan's `[profile]`, else none.)*
+   **How it reaches M8a's `build_run`** (*Refreshed:* M8a's `resolve_profile` falls back to `[orchestrator.profile]` per key, so replacing `plan.profile` alone would let the config fill the stored profile's deliberate gaps). In `driver/requests.rs::build`, right after `git::preflight`, the driver calls `adapt::choose_profile(&mut plan, &mut config, &pre)`, which loads the stored profile (on `spawn_blocking`) and, for source 1:
+   - sets `plan.profile = chosen.spec`, whose `protected` already holds the stored extras, the plan's and the config's entries;
+   - sets the **cloned** config's `profile` to `ProfileSpec::default()`, so `resolve_profile` finds nothing else to fill in;
+   - leaves the cloned config's `cache_dirs` and `confined_*` untouched, so `build_run` still takes confinement from the user's config for the repository root, never from the profile.
+
+   The protected-files scan in `build` (decision 17 carry) then resolves the same chosen profile. `build_run` itself is unchanged.
+
+   The stored profile wins as a whole, not per key, because its gaps are deliberate. A stored profile with no `single_test` records that the repository has no single-test runner, and a plan must not quietly fill that in. A stored profile whose file does not parse **refuses the run**: `run start` answers `the stored profile at <path> does not parse: <error>; fix it with anthrex profile edit or re-detect it with anthrex profile detect`. It never falls back to the plan's profile. `output_filter` and `filter_prefixes` are copied onto the run for decision 28; they are empty when the source is not `Stored`. `StartGoal` requires source 1 (decision 22). *(Spec §6 as amended; the coordinator's precedence: stored, else the plan's `[profile]`, else none.)*
 7. **Staleness.** `ProfileMeta.fingerprint` maps each path in `conventions` and `manifests` (relative to the project root) to `fnv1a64(contents)` as 16 hex digits and the byte length, or `"missing"` for a missing file. Only the first 4 MiB of a file is hashed; its full length is still recorded. `profile::store::stale(project, meta) -> Vec<String>` lists every path whose fingerprint differs. It runs on `spawn_blocking` at every `run start`, at `profile status`, and at daemon start for every stored profile. A stale profile **is still used**; a changed file does not make it wrong. The run gets the attention line `the repository profile may be stale: <paths> changed since it was confirmed; run anthrex profile detect`. With `[orchestrator.onboarding] auto = true`, and no proposal pending or failed within the last hour, a re-detection starts (decision 8). *(Spec §6 "re-proposed when any file named in `conventions`, or a manifest, changes hash".)*
 8. **Detection flow and proposal states.** `ProfileService` owns at most one proposal per repository, in `proposal.json`:
    `Preparing` → `Scouting` → `Verifying` → `Ready` → confirmed (the proposal is deleted and `profile.toml` written), or → `Failed { reason }` from any state.
-   1. **Preparing.** A disposable worktree is created: `git worktree add --detach <wt>/runs/.onboarding HEAD` in the project root through `GitQueue::write`, then `git worktree lock`. `<wt>` is `repo_worktrees_dir(worktrees_root, project)`. The name starts with `.`, which a run id cannot, inside M5's reserved `runs` directory, which a user branch cannot claim.
-   2. **Scouting.** The onboarding scout runs there (decisions 9 and 12). Its report arrives through `submit_scout_report`.
-   3. **Verifying.** The scout's worktree is salvaged if dirty (M8a decision 20, ref `refs/anthrex/salvage/onboarding/<unix secs>`) and removed. Then `profile::verify` runs the proposed commands in a **fresh** scratch worktree `<wt>/runs/.profile-verify`, created and removed the same way (decision 9).
+   1. **Preparing.** `run::git::preflight` on the request's `dir` gives `root`, `project`, `git_common_dir` and `base_sha` (the checked-out branch's `HEAD`; a detached `HEAD` or an empty repository is refused with preflight's own text). A disposable **standalone checkout** (M8a F1c 3a) is made at `<wt>/runs/.onboarding`, detached at `base_sha`, with `run::git::prepare_scratch_in(git, root, path, base_sha, repo, timeout)` through `GitQueue::write(project, …)`, `repo = checkout_repo_dir(repo_dir, path)`. `<wt>` is `repo_worktrees_dir(worktrees_root, project)`. The name starts with `.`, which a run id cannot, inside M5's reserved `runs` directory. No `git worktree add` and no lock: the user's `.git` gains no `worktrees/` entry.
+   2. **Scouting.** The onboarding scout runs there (decision 12). Its report arrives through `submit_scout_report`.
+   3. **Verifying.** The scout's checkout is salvaged if dirty (`run::git::salvage`, ref `refs/anthrex/salvage/onboarding/<unix secs>`) and removed (`run::git::remove_checkout(git, root, path, Some(repo), timeout)`). Then `profile::verify` runs the proposed commands in a **fresh** standalone checkout `<wt>/runs/.profile-verify` at the same `base_sha`, made and removed the same way (decision 9).
    4. **Ready.** `proposal.json` holds the proposed profile with only the commands that passed, the verification record, and each dropped command with its reason and output tail.
 
-   Detection starts from `anthrex profile detect`, from decision 7's automatic re-detection, and from `run start --goal` in a repository with no stored profile when `onboarding.auto` is true. A second `detect` while one is in progress is refused: `detection is already running for <project> (state <state>); anthrex profile reject stops it`.
-9. **The scout runs the commands; the engine re-runs them.** Spec §6 requires the onboarding scout to run `check` and `single_test` successfully before proposing them. Spec §4 makes scouts read-only. This brief resolves the conflict as follows (see "Spec defects"):
-   - The **onboarding scout** is the one scout that runs commands, and it stays read-only with respect to the repository:
-     - It works in a disposable detached worktree that is discarded afterwards, never in the user's checkout.
-     - Its `Bash` runs under Claude Code's sandbox (M8a decision 54's block, with that worktree as the only writable place and no extra roots), or Codex's `workspace-write` sandbox.
-     - It has no `Edit` or `Write` tool.
-     - It reports, for each command, whether it ran it successfully (`setup_ran_ok`, `check_ran_ok`, `single_test_ran_ok`). The engine records these claims and does not trust them.
-     - A command the sandbox stops, such as a `setup` that needs the network, can still pass the engine's own run below, which is unsandboxed, as M8a runs `setup`.
-   - The **engine** then runs each proposed command in the fresh scratch worktree, with the proposed `env` (`{worktree}` substituted by `run::env::profile_env`) and M8a decision 26's scrubbed environment, through `run::exec::run_shell`, each bounded by `onboarding.verify_timeout_secs`:
+   Detection starts from `anthrex profile detect`, from decision 7's automatic re-detection, and from `run start --goal` in a repository with no stored profile when `onboarding.auto` is true. A second `detect` while one is in progress is refused: `detection is already running for <project> (state <state>); anthrex profile reject stops it`. *(Refreshed: standalone checkouts and M8a's `salvage`/`remove_checkout` replace `git worktree add --detach`/`lock`.)*
+9. **The scout reads; the engine runs the commands, confined.** Spec §6 requires `check` and `single_test` to have run successfully before they are proposed; spec §4 makes scouts read-only; M8a's follow-up (F1c N4) requires every scout to run under a read-only OS sandbox. *Refreshed:* the old decision let the onboarding scout run the commands in a writable disposable copy and the engine re-run them unsandboxed "as M8a runs `setup`". M8a now confines `setup`, checks and proofs, and requires read-only scouts, so:
+   - The **onboarding scout** is read-only like every scout (decision 12): it reads, and may run commands that write nothing (its `Bash` runs in a sandbox with no writable path and no network). It does **not** claim to have run anything: the old `setup_ran_ok`, `check_ran_ok` and `single_test_ran_ok` claims are gone, since a read-only sandbox cannot build.
+   - The **engine** runs each proposed command in the fresh scratch checkout, through `run::exec::run_matching` (made `pub(crate)`), each bounded by `onboarding.verify_timeout_secs`, with the proposed `env` (`{worktree}` substituted by `run::env::profile_env`) and M8a's engine environment (`engine_env`: agent and git variables and every API credential removed; every `ANTHREX_*` removed when confined), **under the same confinement a run in this repository would get**:
+     - a `ConfineSpec` built by `profile::verify::confine_spec(config, repo_dir, pre, daemon_socket)`: `data_dir = repo_dir` (so `for_checkout` finds the checkout's repository at `<repo_dir>/tasks/.profile-verify` and anthrex's data directory two levels up), `common_dir = pre.git_common_dir`, and `cache_dirs`, `network`, `unix_sockets`, `localhost_ports` from the user's `[orchestrator.*]` tables for `pre.root` via `run::plan::for_repo` — never from the proposal;
+     - present exactly when `worker_sandbox` is true and `confine::available()`. Where the platform cannot confine, detection is refused with `confine::start_refusal`'s text unless the request's `--unconfined-checks` or `[orchestrator] unconfined_checks = true` allows it, and `ProfileStatus.verify_confined` is `false`;
+     - so a proposal that passes here passes in a run, and one that needs the network or a cache fails here as it would in a run.
+   - The order:
      1. `setup`, if proposed. On failure it is dropped, and the check and single test still run.
      2. `check`. It is kept only if it exits 0.
-     3. `single_test`, with `{test}` replaced by `launch::shell_quote(sample_test)`. It is kept, together with `test_passed` and `sample_test`, only if it exits 0 **and** its output matches `test_passed` with `{test}` replaced by `regex::escape(sample_test)`. A missing `sample_test` or `test_passed` drops all three with the reason `single_test needs sample_test and test_passed to be verified`.
-   - **A command that did not pass here is not proposed.** It moves to `ProposalRecord.dropped` with its exit code, timeout flag and last 40 output lines, and `profile show --proposed` prints them. `test_passed` must contain `{test}` and compile as a regex, and `single_test` must contain `{test}`, or they are dropped with M8a decision 7's validation message.
+     3. `single_test`, as `run::proof::proof_command(single_test, sample_test)`. It is kept, together with `test_passed` and `sample_test`, only if it exits 0 **and** a line of its output matches `run::proof::proof_pattern(test_passed, sample_test)`. A missing `sample_test` or `test_passed` drops all three with the reason `single_test needs sample_test and test_passed to be verified`.
+   - **A command that did not pass is not proposed.** It moves to `ProposalRecord.dropped` with its exit code, timeout flag and last 40 output lines, and `profile show --proposed` prints them. When the verification ran confined, a dropped `setup` or `check` also carries the hint `it ran confined, as runs do: if it needs the network, a cache directory, a Unix socket or a localhost port, allow it for <root> in your config ([orchestrator.confined_network], [orchestrator.cache_dirs], [orchestrator.confined_unix_sockets], [orchestrator.confined_localhost_ports]), then run anthrex profile detect`. `test_passed` must contain `{test}` and compile as a regex, and `single_test` must contain `{test}`, or they are dropped with M8a decision 7's validation message (this picks up the M8a.10 follow-up "`test_passed` need not contain `{test}`" for stored profiles; plan validation is unchanged).
    - `generated` and `protected` are glob lists, not commands. They are validated with `validate_glob` and proposed as the scout gave them, with built-in `protected` entries dropped (decision 5). They are never "verified" by running anything.
-   - The scratch worktree is salvaged if dirty and removed. The user's checkout is never written.
-   - Verification runs on `spawn_blocking`, never under a lock. *(Spec §6, §23 "The onboarding scout must prove both commands ran"; §17 "Nothing is deleted dirty".)*
+   - The scratch checkout is salvaged if dirty and removed. The user's checkout is never written.
+   - Verification runs on `spawn_blocking`, never under a lock; its git steps go through `GitQueue::write(project, …)`. *(Spec §6, §23 "The onboarding scout must prove both commands ran"; §17 "Nothing is deleted dirty".)*
 10. **Confirm, reject, edit and show.** The user never writes the profile by hand (spec §6).
     - `anthrex profile confirm [--yes]` prints the `Ready` proposal (the `show` text of Interfaces, CLI) and asks `store this profile for <project>? [y/N]` unless `--yes`. It then writes `profile.toml` and `profile.meta.json` with the fingerprint computed now, and deletes `proposal.json`. It is refused unless the proposal is `Ready`.
-    - `anthrex profile reject` kills a running scout (`headless_kill`), removes any detection worktree (salvaged), and deletes `proposal.json`.
-    - `anthrex profile edit <key> <value>` and `anthrex profile edit --unset <key>` correct one value. The key is one of `RepoProfile`'s fields, or `env.<NAME>` for one environment entry. The value is parsed as a TOML value (`toml::from_str::<toml::Table>("v = <value>")`); if that fails it is taken as a string, so `anthrex profile edit check 'cargo test'` works. The edit is applied to the stored profile (refused when there is none: `no stored profile for <project>; run anthrex profile detect first`) and becomes a new proposal. If it changed `setup`, `check`, `check_timeout_secs`, `single_test`, `test_passed`, `sample_test` or `env`, the proposal goes to `Verifying` with all three commands re-run (decision 9); otherwise it goes straight to `Ready`, carrying the stored verification. `--yes` confirms it automatically once `Ready`, but only if nothing the edit touched was dropped. An edit is refused while another proposal is in progress.
+    - `anthrex profile reject` kills a running scout (`WindowManager::headless_kill`), removes any detection checkout (salvaged first), and deletes `proposal.json`.
+    - `anthrex profile edit <key> <value>` and `anthrex profile edit --unset <key>` correct one value. The key is one of `RepoProfile`'s fields, or `env.<NAME>` for one environment entry. The value is parsed as a TOML value (`toml::from_str::<toml::Table>("v = <value>")`); if that fails it is taken as a string, so `anthrex profile edit check 'cargo test'` works. The edit is applied to the stored profile (refused when there is none: `no stored profile for <project>; run anthrex profile detect first`) and becomes a new proposal. If it changed `setup`, `check`, `check_timeout_secs`, `single_test`, `test_passed`, `sample_test` or `env`, the proposal goes to `Verifying` with all three commands re-run (decision 9); otherwise it goes straight to `Ready`, carrying the stored verification. `--yes` confirms it automatically once `Ready`, but only if nothing the edit touched was dropped. An edit is refused while another proposal is in progress. A key that is not a `RepoProfile` field (`cache_dirs`, `confined_network`, …) is refused as `unknown key <key>; one of <keys>`.
     - `anthrex profile show [--proposed] [--json]` prints the stored profile, or the proposal, as TOML, followed by the verification.
     - `anthrex profile status [--json]` prints `ProfileStatus`.
 
     Every request answers at once. Verification and scouting run in the background, and progress is visible through `status`. *(Spec §6 "correct a value with `anthrex profile edit`", "re-run detection with `anthrex profile detect`".)*
-11. **Detection across a daemon restart.** When the daemon starts, `ProfileService::restore` finds every `proposal.json` in `Preparing`, `Scouting` or `Verifying`. It marks each `Failed { reason: "the daemon restarted during detection; run anthrex profile detect" }`, then salvages and removes `<wt>/runs/.onboarding` and `<wt>/runs/.profile-verify` if present. M8a's reconcile kills a leftover scout process by its session id (M8a decision 28) as for any headless window. The scout is **not** resumed, unlike run sessions (spec §17): detection writes nothing but its own proposal and is cheap to repeat, and resuming it would need a journal for a flow that has no side effects to reconcile. `Ready` and `Failed` survive a restart unchanged.
+11. **Detection across a daemon restart.** When the daemon starts, `ProfileService::restore` runs after `RunService::restore` and before the socket binds:
+    - every `proposal.json` in `Preparing`, `Scouting` or `Verifying` is marked `Failed { reason: "the daemon restarted during detection; run anthrex profile detect" }`;
+    - `<wt>/runs/.onboarding` and `<wt>/runs/.profile-verify`, if present, are salvaged and removed with their repositories;
+    - every restored headless window whose `run` is `None` and whose spec's `mcp.role` is `Scout` is removed with `WindowManager::remove` (M8a's `remove_stale_windows` skips windows with no run, `driver/restore.rs:298`).
+
+    *Refreshed:* the old decision said M8a's reconcile kills a leftover scout process by its session id. It does not: reconcile's killer considers only the pids in a run's `run.json` (F3 B-6), and a scout has none. M8b adds **no** process-kill code (the process-kill safety rule): a leftover scout lost its stdin with the old daemon, so a Claude scout ends with its turn and a Codex scout with its one turn; its sandbox is read-only and its network off, and its tool call reaches no scout (`unknown scout <id>`). Recorded as a follow-up. The scout is **not** resumed, unlike run sessions (spec §17): detection writes nothing but its own proposal and is cheap to repeat. `Ready` and `Failed` survive a restart unchanged.
 
 ### Scouts
 
-12. **Scout sessions are M8a headless sessions.** `scout::spec::headless_spec(scout: &ScoutSpec, ctx: &ScoutContext) -> HeadlessSpec` builds the session, and `ScoutService` registers it with `WindowManager::create_headless`:
+12. **Scout sessions are M8a headless sessions, launched read-only.** `scout::spec::headless_spec(scout: &ScoutSpec, ctx: &ScoutContext) -> HeadlessSpec` builds the session, and `ScoutService` registers it with `WindowManager::create_headless(name, spec, SessionArg::New { uuid }, first_turn, project, worktree)`:
     - **Route.** `scout::spec::route(roster, runtime, strength, effort)`: the first roster entry of `runtime` at the lowest strength at or above `strength`, else the same on the peer runtime, else the first entry of `runtime`. `runtime` is `scouts.runtime`, else `orchestrator.default_runtime`; `strength` and `effort` are `scouts.strength` (`fast`) and `scouts.effort` (`low`). Spec §4 gives scouts the fast tier at low effort.
-    - **Area scout** (`ScoutKind::Area`, M9's) — read-only:
-      - `cwd` is the project root;
+    - **Every scout, both kinds** (*Refreshed:* M8a.1 found `--permission-mode plan` blocks an allowed MCP call in `-p`, so M8a launches reviewers `dontAsk`; M8a F1c N4 requires scouts to run "the same way, a read-only OS sandbox"):
+      - `claude_permission_mode = Some(REVIEWER_PERMISSION_MODE)` (`"dontAsk"`) and `claude_disallowed_tools = REVIEWER_DISALLOWED_TOOLS` (`Edit`, `Write`, `NotebookEdit`);
+      - `claude_sandbox = Some(ClaudeSandbox { writable_roots: vec![], deny_write: protected_write_denials(&cwd, &[]) })` **always**, whatever `[orchestrator] worker_sandbox` says, as for a Claude reviewer: `Bash` can write nothing, and M8a's sandbox pins keep its network, Unix sockets and local binding off;
+      - `codex_sandbox = "read-only"`, `codex_writable_roots` empty; `codex_args` adds `CODEX_SANDBOX_PINS`;
+      - `codex_config_guard`: for a Codex scout when the caps' `codex_project_config()` is `Loaded`, the `.codex` entries of the commit the scout reads (`run::git::codex_config_tree`), else `None`;
+      - `mcp = Some(McpTarget { role: Scout, run_id, task_id: None, scout_id: Some(id) })`, with `run_id` empty for a repository-level scout;
+      - `env` empty (M8a's session scrub and `credential_scrub` apply as for every session);
+      - `claude_auth` from `[orchestrator.claude]` (always `login`: `api_key` is refused at config load, F2 C-I3), `api_key_helper: None`.
+    - **Area scout** (`ScoutKind::Area`, M9's):
+      - `cwd` is `ScoutSpec.cwd` (M9 chooses it);
       - `instructions` is `SCOUT_CONTRACT`;
       - `allowed_tools` is `mcp__anthrex__submit_scout_report`, `Read`, `Glob`, `Grep`, plus `WebFetch` and `WebSearch` when `ScoutSpec.web`;
-      - `claude_permission_mode = Some("plan")`, or M8a decision 24's reviewer fallback when M8a.1 found that plan mode blocks an allowed MCP call;
-      - `codex_sandbox = "read-only"`.
+      - `run_ref = Some(RunRef { run_id, task_id: None, role: Scout, session: 1 })`.
     - **Onboarding scout** (`ScoutKind::Onboarding`):
-      - `cwd` is the disposable worktree;
+      - `cwd` is the disposable checkout;
       - `instructions` is `ONBOARDING_CONTRACT`;
-      - `allowed_tools` is `mcp__anthrex__submit_scout_report`, `Bash`, `Read`, `Glob`, `Grep`, with no `Edit` or `Write`;
-      - `claude_permission_mode = Some("default")`: with `--permission-prompts none` (M8a decision 24), anything not allowed is denied, never prompted;
-      - `claude_sandbox = Some(ClaudeSandbox { writable_roots: vec![] })` when `[orchestrator] worker_sandbox` is true (M8a decision 54), so `Bash` can write only in the disposable worktree. When `worker_sandbox` is false it is `None`, and `ProfileStatus` says `onboarding scout sandbox: off`;
-      - `codex_sandbox = "workspace-write"` with no extra writable roots.
-
-      The scout commits nothing. The engine's own run of each command (decision 9) is the one that counts, so a command either sandbox refused can still pass.
-    - **Both:**
-      - `mcp = Some(McpTarget { role: Scout, run_id, task_id: None, scout_id: Some(id) })`, with `run_id` empty for a repository-level scout;
-      - `run_ref = Some(RunRef { run_id, task_id: None, role: Scout, session: 1 })` for a run scout, and `None` for the onboarding scout;
-      - `env` empty;
-      - `claude_auth` and `api_key_helper` from `[orchestrator.claude]`.
-    - **Only the user's settings load** (M8a decision 53). `claude_args` already passes `CLI_CAPS.claude_user_settings_only` on every launch, so scouts get it without doing anything. When those flags are `None`, the project-settings check of decision 53 runs before a scout starts. It uses `run::git::project_settings(root, <HEAD sha>)` for the onboarding scout, whose worktree is checked out from `HEAD`, and the run's base commit for a run scout. If the check finds project settings, `anthrex profile detect` is refused with `this repository has project settings that headless Claude sessions would run without asking: <paths>; review them, then detect again with --trust-project`, and `--trust-project` accepts them. Automatic detection (decisions 7 and 22) is refused the same way; the message is stored as the proposal's `Failed` reason.
-    - **Codex scouts** follow the same rule with M8a's Codex mechanism. `codex_args` passes `CLI_CAPS.codex_user_config_only` on every turn. When that is `None` and M8a.1 found that Codex loads a repository's config, a repository that tracks `.codex/` config needs `--trust-project` exactly as above, with the paths from M8a's project-settings check.
+      - `allowed_tools` is `mcp__anthrex__submit_scout_report`, `Bash`, `Read`, `Glob`, `Grep`;
+      - `run_ref = None`.
+    - **Only the user's settings load** (M8a decision 53). `claude_args` passes `CLI_CAPS.claude_user_settings_only` on every launch, so scouts get it without doing anything. When the caps give `None` (in tests, `ANTHREX_TEST_NO_SETTING_SOURCES=1`), the project-settings check runs before a scout starts: `run::git::project_settings(git, root, base_sha, claude, codex_paths, timeout)` with `claude` true for a Claude scout and `codex_paths = Some(CLI_CAPS.codex_project_config_paths)` for a Codex scout whose caps say `Loaded`. If it finds paths, `anthrex profile detect` is refused with `this repository has project settings that headless sessions would run without asking: <paths>; review them, then detect again with --trust-project`, and `--trust-project` accepts them (they are recorded in `ProposalRecord.trusted_project`). Automatic detection (decisions 7 and 22) is refused the same way; the message is stored as the proposal's `Failed` reason. With the shipped `CLI_CAPS` a Claude scout never needs it, and a Codex scout does whenever the repository tracks `.codex/config.toml` or `.codex/hooks.json`.
     - **Window name:** `scout/<scout id>`.
-    - **Refusals.** Decision 49's refusals apply to scout windows as to any headless window. For one with `run == None`, the text becomes `window <id> is a headless scout session; only the daemon drives it. Use anthrex profile reject to stop it`. *(Spec §4 table row Scout, read-only launch.)*
+    - **Refusals.** Decision 49's refusals apply to scout windows as to any headless window (`server/headless_guard.rs`). For one with `run == None`, `manager::headless::control_refusal` returns `window <id> is a headless scout session; only the daemon drives it. Use anthrex profile reject to stop it`. *(Spec §4 table row Scout, read-only launch; M8a F1c N4.)*
 13. **`submit_scout_report` and the report.** The tool's schema is in Interfaces. `scout::report::validate(args, kind) -> Result<ScoutReportArgs, String>` checks it again on the daemon side and rejects with `invalid arguments: <field>: <problem>`. `profile` is required for `Onboarding` and refused for `Area`. An accepted report becomes `proto::ScoutReport` and is written atomically:
     - repository-level scouts: `<repo_dir>/scouts/<scout id>.json`;
     - run scouts (M9): `<data_dir>/runs/<run>/scouts/<scout id>.json`.
 
-    Scout ids match `^[a-z0-9][a-z0-9-]{0,47}$`, and an onboarding scout's id is `onboarding-<unix secs>`. `ProfileMeta.report` names the report a confirmed profile came from. In a task's `scout_refs`, the alias `onboarding` resolves to that report. The tool replies `Report recorded. You are done; end your turn now.` A second report is refused: `a report for scout <id> was already recorded`. So are a report from a window that is not that scout's (`this window is not scout <id>`) and a report for a finished scout (`scout <id> is <state>`). A summary of 8000 characters is about the spec's "≤ ~2k tokens". *(Spec §4 table, §14 item 1.)*
-14. **The scout lifecycle** is a pure machine, `scout::machine::step(ScoutState, ScoutEvent) -> (ScoutState, Vec<ScoutEffect>)`, driven by `ScoutService`:
-    - **Starting.** `Start` delivers the first turn: `ONBOARDING_FIRST_TURN`, or the question for an area scout.
-    - **Turn ends.** A `TurnEnded` without an accepted report sends `SCOUT_NUDGE` once. A second one fails the scout: `the scout ended two turns without a report`.
+    Scout ids match `^[a-z0-9][a-z0-9-]{0,47}$`, and an onboarding scout's id is `onboarding-<unix secs>`. `ProfileMeta.report` names the report a confirmed profile came from. In a task's `scout_refs`, the alias `onboarding` resolves to that report. The tool replies `Report recorded. You are done; end your turn now.` A second report is refused: `a report for scout <id> was already recorded`. So are a report from a window that is not that scout's (`this window is not scout <id>`), a report for a finished scout (`scout <id> is <state>`), and one for a scout the daemon does not know (`unknown scout <id>`). A summary of 8000 characters is about the spec's "≤ ~2k tokens". *(Spec §4 table, §14 item 1.)*
+14. **The scout lifecycle** is a pure machine, `scout::machine::step(ScoutMachine, ScoutEvent, &ScoutLimits) -> (ScoutMachine, Vec<ScoutEffect>)`, driven by `ScoutService`:
+    - **Starting.** The first turn is delivered by `create_headless`: `onboarding_first_turn`, or the question for an area scout.
+    - **Turn ends.** A `TurnEnded` without an accepted report sends `SCOUT_NUDGE` once (`headless_send`). A second one fails the scout: `the scout ended two turns without a report`.
     - **Process exit.** `ProcessExited` without a report fails it: `the scout's process exited without a report (code <c>)`.
-    - **Tool budget.** Every `ToolUse` counts. At `scouts.max_tool_calls` the machine sends `SCOUT_WRAP_UP` once; at 1.5 times that it kills the scout and fails it: `the scout used <n> tool calls without a report`.
+    - **Tool budget.** Every `ToolUse` counts. At `scouts.max_tool_calls` the machine sends `scout_wrap_up` once; at 1.5 times that it kills the scout and fails it: `the scout used <n> tool calls without a report`.
     - **Timeout.** `scouts.timeout_secs` after the start, the scout is killed and failed: `the scout ran longer than <n> s`.
-    - **Report accepted.** The machine emits `Finish(Report)`, then `CloseStdin`. `KillAfter(INTERRUPT_GRACE)` and `RemoveAfter(RETIRE_AFTER)` follow, as M8a decision 52 retires a reviewer.
+    - **Report accepted.** The machine emits `Finished(Ok)`, then `CloseStdin` (`headless_retire`). `KillAfter(INTERRUPT_GRACE)` and `RemoveAfter(RETIRE_AFTER)` follow (`headless_kill`, `remove`), as M8a decision 52 retires a reviewer.
 
-    Usage from every `TurnEnded` is summed into the report's `usage`. `ScoutService` subscribes to `WindowManager::signals()` and forwards only its own windows' events. It holds its table under `daemon::lock` and releases the lock before any manager call.
-15. **MCP plumbing, all additive.** `headless::McpTarget`, `mcp::McpOptions` and `proto::ToolCall` each gain `#[serde(default)] scout_id: Option<String>`. `headless::argv::mcp_args` appends `--scout <id>` when it is set. `anthrex mcp` accepts `--role scout` and `--scout <id>`. `--run` becomes optional for role `scout` only (an empty string when absent); for the other roles its absence is still an error. `tools_for(Scout)` is `[submit_scout_report]`. `RunService::request(Tool)` routes a call whose `role == Scout` to `ScoutService::tool`, and every other call to the engine as before.
+    Usage from every `TurnEnded` is summed into the report's `usage`. `ScoutService` subscribes to `WindowManager::signals()` and forwards only its own windows' events (the engine ignores signals of windows no round has). It holds its table under `daemon::lock` and releases the lock before any manager call.
+15. **MCP plumbing, all additive.** `headless::McpTarget`, `mcp::McpOptions` and `proto::ToolCall` each gain `#[serde(default)] scout_id: Option<String>` (a plain field on `McpOptions`). `headless::argv::mcp_args` writes role `scout`, omits `--run` when `run_id` is empty, and appends `--scout <id>` when it is set. `anthrex mcp` (`crates/cli/src/mcp_cmd.rs`) accepts `--role scout` and `--scout <id>`; `--run` becomes optional for role `scout` only (an empty string when absent), and for the other roles its absence is still an error. `mcp::tools::{tools_for, allowed, role_name}` gain the `Scout` arms: `tools_for(Scout)` is `[submit_scout_report]`. `mcp::forward` puts `scout_id` into the `ToolCall`. `RunService::request(Tool)` routes a call whose `role == Scout` to `ScoutService::tool`, and every other call to the engine as before.
 
 ### Deciders
 
-16. **The decider call** is `decider::call::decide(ctx: &DeciderContext, request: &DeciderRequest) -> Decision`, which is async. It uses M8a's `HeadlessHandle::spawn` and stream parsers, so a decider is a one-turn headless session with no window and no session kept.
-    - **Program.** `ANTHREX_DECIDER_BIN`, if set and non-empty, read once at daemon start. Otherwise the resolved `claude_bin` or `codex_bin` from `ManagerConfig`, by `deciders.mode`.
-    - **Working directory.** `<data_dir>/deciders/cwd`, an empty directory created at start. A decider gets everything it needs in its prompt, and running outside the repository keeps the repository's `.claude/settings.json` hooks and `.mcp.json` servers out of it (M8a risk 6).
+16. **The decider call** is `decider::call::decide(ctx: &DeciderContext, request: &DeciderRequest) -> Decision`, which is async. It uses M8a's `HeadlessHandle::spawn` (blocking, so on `spawn_blocking`) with an `on_event` callback that feeds a channel; the parsers are the session layer's own. A decider is a one-turn headless session with no window and no session kept.
+    - **Program.** `ANTHREX_DECIDER_BIN`, if set and non-empty, read once at daemon start by `ManagerConfig::from_vars` into a new `decider_bin: Option<String>`. Otherwise the resolved `claude_bin` or `codex_bin` from `ManagerConfig`, by `deciders.mode`.
+    - **Working directory.** `<data_dir>/deciders/cwd`, an empty directory created at start. A decider gets everything it needs in its prompt, and running outside the repository keeps the repository's `.claude/settings.json` hooks, `.mcp.json` servers and `.codex/` config out of it.
+    - **Environment.** No `env`; `remove` is `headless::credential_scrub_for(runtime, config::ClaudeAuth::Login)` (M8b splits M8a's `credential_scrub(spec)` into this and a one-line wrapper), so every API credential is removed and the user's login is used.
     - **Claude argv** (`decider::argv::claude_decider_args`, pure):
-      - `-p --input-format stream-json --output-format stream-json`, then `--verbose` when `CLI_CAPS.claude_verbose`;
-      - the flags in `CLI_CAPS.claude_user_settings_only`, when `Some`: only the user's settings load (M8a decision 53). The empty working directory already has no project settings, and the flags keep that true if the CLI ever looks further up;
-      - `--permission-prompts none`, or `--permission-mode dontAsk` when the caps say it is absent;
-      - `--permission-mode plan`;
-      - `--disallowedTools Bash,Edit,Write,NotebookEdit,Agent,WebFetch,WebSearch`;
-      - `--max-turns 3`;
-      - `--json-schema <schema JSON>`;
-      - `--no-session-persistence`;
+      - `-p --input-format stream-json --output-format stream-json`, then `--verbose` when `caps.claude_verbose`;
+      - `--permission-prompts none` when `caps.claude_permission_prompts`;
+      - the flags in `caps.claude_user_settings_only`, when `Some`: only the user's settings load, and `--strict-mcp-config` with no `--mcp-config` gives it no MCP server;
+      - `--permission-mode dontAsk` (*Refreshed:* was `plan`; M8a.1 found plan mode misbehaves under `-p`, and every M8a headless role uses `dontAsk`);
+      - `--disallowedTools Bash,Edit,Write,NotebookEdit,Agent,WebFetch,WebSearch,Read,Glob,Grep`;
+      - `--max-turns 3` when `DECIDER_CAPS.claude_max_turns`;
+      - `--json-schema <schema JSON>` when `DECIDER_CAPS.claude_json_schema`;
+      - `--no-session-persistence` when `DECIDER_CAPS.claude_no_session_persistence`;
       - `--model <model>` when the route names one;
-      - `--effort <e>` when `CLI_CAPS.claude_effort_flag`;
-      - M8a decision 50's authentication flag. With `api_key` and a helper, `--settings {"apiKeyHelper":…}`.
+      - `--effort <e>` when `caps.claude_effort_flag`.
 
-      The prompt is one stream-json user message (`claude_stream::user_message(prompt, None)`) written to stdin, which is then closed.
-    - **Codex argv** (`codex_decider_args`, pure): `exec --json --skip-git-repo-check --ephemeral`, then `CLI_CAPS.codex_user_config_only` when `Some` (the empty working directory has no `.codex/` either), then `-s read-only -c approval_policy="never" -c model_reasoning_effort=<toml e> --output-schema <schema file>`, then `-m <model>` when the route names one, then `--`, then the prompt as the last argument. Schema files are written once to `<data_dir>/deciders/schemas/<kind>-<fnv1a64 of the schema, 16 hex>.json`.
+      No `--settings` (no hooks: a decider has no window), no `--bare`, no `apiKeyHelper` (*Refreshed:* `auth = "api_key"` cannot be configured since F2 C-I3). The prompt is one stream-json user message (`claude_stream::user_message(prompt, None)`) written to stdin, which is then closed.
+    - **Codex argv** (`codex_decider_args`, pure): `exec --json --skip-git-repo-check`, `--ephemeral` when `DECIDER_CAPS.codex_ephemeral`, then `caps.codex_user_config_only` when `Some`, then `-s read-only`, `CODEX_SANDBOX_PINS` as `-c` pairs, `-c approval_policy="never" -c model_reasoning_effort=<toml e>`, `--output-schema <schema file>` when `DECIDER_CAPS.codex_output_schema`, then `-m <model>` when the route names one, then `--`, then the prompt as the last argument. Schema files are written once to `<data_dir>/deciders/schemas/<kind>-<fnv1a64 of the schema, 16 hex>.json`.
     - **Route.** `scout::spec::route` with `deciders.strength` (`fast`) and `deciders.effort` (`low`), on runtime `claude` or `codex` by mode.
     - **Answer**, taken from the session's events in this order:
-      1. a `SessionEvent::StructuredOutput { value }`, which M8b adds to `claude_stream::parse_line` if M8b.1 finds the answer in `result.structured_output`, and which M8a's consumers treat as `Other`;
+      1. a `SessionEvent::StructuredOutput { value }`, which M8b adds to `ClaudeStream::parse_line` if M8b.1 finds the answer in `result.structured_output`, and which M8a's consumers treat as `Other`;
       2. otherwise a top-level `ToolUse` named `StructuredOutput`, taking its `input`, if M8b.1 finds that form;
-      3. otherwise the last top-level `AssistantText`, trimmed, with one surrounding fenced code block removed, parsed as JSON.
+      3. otherwise the last top-level `AssistantText` (`parent == None`), trimmed, with one surrounding fenced code block removed, parsed as JSON.
 
       `usage` comes from `TurnEnded`.
-    - **Bounds.** The call waits for `TurnEnded` or `ProcessExited`, bounded by `deciders.timeout_secs`; on timeout it calls `handle.kill(Duration::from_secs(2))`. At most 256 KiB of assistant text is kept.
+    - **Bounds.** The call waits for `TurnEnded` or `ProcessExited`, bounded by `deciders.timeout_secs`; on timeout it calls `handle.kill(Duration::from_secs(2))`, and on every early return it kills the process group the same way. At most 256 KiB of assistant text is kept.
 
       Every failure returns the fallback answer with `source: Fallback` and one of these reasons, exactly:
       - `deciders are off`
@@ -307,32 +320,32 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
 
     Each prompt is capped at 128 KiB. Inputs are cut in a fixed order with the marker `[anthrex] … cut …`, so the same input always gives the same prompt.
 18. **Deciders inside a run are engine ops, and take reader slots.** The reducer never calls a decider. It emits `OpKind::Decide { request }`, and the driver answers `OpResult::Decided(Decision)`.
-    - **Slots.** A decider op holds one of the run's reader slots while in flight, beside live reviewers, and `RunInfo.readers_busy` counts both. Queued deciders are started before queued reviewers whenever a slot frees.
+    - **Slots.** A decider op holds one of the run's reader slots while in flight, beside live reviewers, and `schedule::readers_busy` (so `RunInfo.readers_busy`) counts both. Queued deciders are started before queued reviewers whenever a slot frees.
     - **Slot wait.** A decider still queued `deciders.slot_wait_secs` (default 30) after it was queued is answered on the next `Tick` by its fallback, with reason `no reader slot was free within <n> s`. A bounce can therefore wait at most that long for a slot.
     - **Mode off.** With mode `off`, the reducer applies the fallback inline, with reason `deciders are off`, and emits no op.
-    - **Reconcile and resume.** Reconcile maps `Decide` to `NotStarted`. On resume (M8a decision 45), a task whose `pending_decider` op was dropped queues it again.
+    - **Reconcile and resume.** Reconcile maps `Decide` to `NotStarted`. On restore (M8a decision 45), a task whose `Decide` op was dropped queues it again (`engine/restore.rs`).
     - **Accounting.** Every `Decided` adds to `Run.decider_calls` and, for a fallback, `Run.decider_fallbacks`. Usage goes to the task's and the run's decider usage (decision 29), and a report line records the source.
 
     Triage is the one decider outside a run (decision 22), so it takes no slot. *(Spec §13 item 3 "scouts, reviewers and deciders use `max_readers`".)*
 19. **The size cross-check, §7.2 rule 5.**
     - **When.** It runs on `Start` for every task, and on every accepted `Edit` for the tasks the batch added or amended (M8a decision 13's touched set).
     - **Evidence.** A task's evidence is the scout reports its `scout_refs` name (run scouts first, then the alias `onboarding`). A task with no `scout_refs` uses the onboarding report of the stored profile, if there is one. Tasks with no evidence get the note `size cross-check skipped: no scout evidence` and no call.
-    - **One call per batch.** The evidenced tasks go into one `SizeCheck` request (at most 50 tasks). Each task's `size_check` becomes `Pending`, and a pending task is **not runnable** (M8a decision 41).
+    - **One call per batch.** The evidenced tasks go into one `SizeCheck` request (at most 50 tasks). Each task's `size_check` becomes `Pending`, and a pending task is **not runnable** (`engine/schedule.rs`).
     - **Raises.** When the answer arrives, each task whose answered size is larger than its engine size is raised, since this rule, like the other §7.2 rules, can only raise:
-      - **S → M.** `run::engine::deciders::apply_raise` sets `size = M`. It re-derives effort and budget by M8a decision 8 when the plan did not set them, and the review level and reviewer route by decision 35. It adds the note `size raised from S to M: decider cross-check (rule 7.2.5): <reason>`.
+      - **S → M.** `run::engine::deciders::apply_raise` sets `size = M` and `raised_size = Some(M)` (so an amend never lowers it, as for M8a's rung-3 raise), calls `ladder::reresolve` (made `pub(crate)`) for the review level, reviewer and a budget the plan did not set, and — the task has not been dispatched, since a pending check blocks dispatch — takes the re-resolved route's effort when the plan's `route.effort` is `None`. It adds the note `size raised from S to M: decider cross-check (rule 7.2.5): <reason>`.
       - **To L.** The task becomes `blocked(mis_sized)` with the text `the size cross-check judged this task L: <reason>; split it (rule 7.2.5)`. No rung is counted.
       - **No raise.** A smaller or equal answer changes nothing.
     - **Recording.** Every answered task records `SizeCheckInfo { engine, decided, agreed, reason, source }`, and a disagreement is written to the report.
     - **Missing tasks.** A task missing from the answer keeps its size, with `source: Fallback`.
     - **Fast path.** The single task of a fast-path run is not cross-checked. The triage decider sized it from the same evidence a moment earlier, so asking again would ask the same model the same question. It gets `SizeCheckInfo { source: Fallback, reason: "sized by triage" }`. *(Spec §7.2 rule 5.)*
 20. **The check summary, §10 and §11.3.**
-    - **Task check.** When a task's check fails (`OpResult::Check { ok: false }`, M8a decision 34), the reducer records the `CheckRecord` and counts the failure on the ladder (M8a decision 38) as before. It then **defers the rung's action**: it stores `Task.pending_failure = Some(PendingFailure { gate: Check, rung, check_index })` and emits a `CheckSummary` decider.
-    - **Candidate check.** A red merge candidate (`OpResult::CandidateRed`) does the same with gate `Merge`. The merge queue moves on at once.
-    - **Resuming the action.** On `Decided`, the check record gets `summary` and `summary_source`. The deferred action then runs, with the message built from the summary: `check_failed_message` and `candidate_red_message` take the summary text in place of M8a's tail. While deferred, the task keeps its state (`Check`, or `MergeQueue` after a red candidate, outside the queue).
+    - **Task check.** When a task's check fails (`OpResult::Check { ok: false }`, `engine/gates.rs`), the reducer records the `CheckRecord` and counts the failure on the ladder (M8a decision 38) as before. It then **defers the rung's action**: it stores `Task.pending_failure = Some(PendingFailure { gate: Check, rung, check_index, decider_id })` and queues a `CheckSummary` decider.
+    - **Candidate check.** A red merge candidate (`OpResult::CandidateRed`, `engine/merge.rs`) does the same with gate `Merge`. The merge queue moves on at once.
+    - **Resuming the action.** On `Decided`, the check record gets `summary` and `summary_source`. The deferred action then runs. `check_failed_message` and `candidate_red_message` (`run/contract.rs`) use the summary when the record has one: the line `Last 40 lines:` becomes `Summary of its output:` followed by the summary lines; with a fallback (or no summary) they are M8a's text exactly. While deferred, the task keeps its state (`Check`, or `MergeQueue` after a red candidate, outside the queue).
     - **Reviewers.** The reviewer prompt's `Last check (40 lines):` block uses the latest check's summary when one exists.
     - **Proof failures** keep M8a's command and 40-line tail, because spec §23 requires a proof failure message to show the command and its output. *(Spec §10 rung 1 "the decider's ≤ 40-line check summary", §11.3, §14.3 last sentence.)*
 21. **Classifying a free-text `task_blocked`, §10.**
-    - **Without a kind.** A `task_blocked` whose `kind` is absent makes the task `blocked(question)` at once, as in M8a. It adds `pending_classification = true` and emits a `BlockedReason` decider. The reply becomes `Blocked recorded (classifying). Stop and wait for an answer.`
+    - **Without a kind.** `engine/tools.rs` now reports whether `kind` was given. A `task_blocked` whose `kind` is absent makes the task `blocked(question)` at once, as in M8a. It adds `pending_classification = true` and queues a `BlockedReason` decider. The reply becomes `Blocked recorded (classifying). Stop and wait for an answer.`
     - **On `Decided`:**
       - `question` keeps `blocked(question)`;
       - `environment` changes the block reason to `environment`;
@@ -343,29 +356,30 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
 
 ### Triage and the fast path
 
-22. **`anthrex run start --goal "<text>" [--trust-project]`** sends `RunRequest::StartGoal { goal, dir, yes, trust_project }`. `RunService::request` does everything below before any engine event, with no lock held across an await:
-    1. **Preflight.** M8a's `run::git::preflight` runs on `spawn_blocking`, followed by M8a decision 53's project-settings check with `trust_project`, exactly as for `Start`. It runs only when `claude_user_settings_only` is `None` and the goal's run could have a Claude task, which is always true for a goal run, because triage has not yet chosen a runtime.
+22. **`anthrex run start --goal "<text>" [--yes] [--trust-project] [--unconfined-checks]`** sends `RunRequest::StartGoal { goal, dir, yes, trust_project, unconfined_checks }`. `RunService::request` does everything below before any engine event, with no lock held across an await (`driver/adapt.rs`):
+    1. **Early refusals.** `confine::start_refusal` exactly as `build` applies it, then `run::git::preflight` on `spawn_blocking`.
     2. **Profile.** `ProfileService::effective(project)` must return a stored profile (decision 6, source 1). Otherwise the request is refused with one of these, exactly, and nothing else happens:
-       - `this repository has no stored profile; detection has started (anthrex profile status), then confirm it with anthrex profile confirm and start the goal again` — this also starts detection, when `onboarding.auto` is true and nothing is pending;
+       - `this repository has no stored profile; detection has started (anthrex profile status), then confirm it with anthrex profile confirm and start the goal again` — this also starts detection, when `onboarding.auto` is true and nothing is pending (detection's own refusals, such as decision 12's project-settings check, are then stored as its `Failed` reason);
        - `this repository has no stored profile; run anthrex profile detect, then anthrex profile confirm` — when `onboarding.auto` is false;
        - `this repository has no stored profile; detection is <state> (anthrex profile status)` — while a proposal is in progress;
        - `this repository has no stored profile; a proposal is ready: anthrex profile show --proposed, then anthrex profile confirm` — when one is `Ready`;
        - the stored-profile parse error of decision 6.
-    3. **Triage.** The input is the goal (cut to 4000 characters), `profile::summary(&profile)`, the onboarding report's summary and files if one exists, and the tracked file list from `git ls-files -z` through `run_git` (at most 1500 paths or 48 KiB, sorted, with `(<n> of <total>)`). The call is `decider::call::decide`; mode `off` gives the fallback at once. Triage takes no reader slot, because no run exists yet.
-    4. **Route.** `run::triage::route(&answer, fast_path_enabled) -> TriageRoute` (decision 23).
-    5. **Fast.** The task becomes a one-task `Plan` (`goal`, `tasks: [t1]`, the stored profile's spec) and goes through M8a's `build_run`, with `BuildContext.yes = true`.
-       - If `build_run` fails, or the resolved task is `hub`, or its size is L, the route becomes `Plan` with the reason `the fast path does not apply: <first PlanError or "task t1 touches a hub file" or "task t1 is L">`.
+    3. **Triage.** The input is the goal (cut to 4000 characters), `profile::summary(&profile)`, the onboarding report's summary and files if one exists, and the tracked file list from `git ls-files -z` through `worktree::run_git` in `pre.root` (at most 1500 paths or 48 KiB, sorted, with `(<n> of <total>)`). The call is `decider::call::decide`; mode `off` gives the fallback at once. Triage takes no reader slot, because no run exists yet.
+    4. **Route.** `run::triage::route(&decision, fast_path_enabled) -> TriageRoute` (decision 23).
+    5. **Fast.** The task becomes a one-task `Plan` (`goal`, `tasks: [t1]`, the stored profile's spec) and goes through **exactly M8a's start path**: `driver/requests.rs::build` is split into `build` (parses the TOML) and `build_plan(plan, dir, yes, trust_project, unconfined_checks)`, which runs everything `build` did — preflight, decision 6's choice, the protected files, the id, `build_run` with `BuildContext.yes = true`, `unconfined_checks`, the session nonce, the Codex branch and `.codex` tree, the runtime checks of decisions 50 and 53 with `trust_project`.
+       - If `build_plan` fails with `build_run`'s errors, or the resolved task is `hub`, or its size is L, the route becomes `Plan` with the reason `the fast path does not apply: <first PlanError or "task t1 touches a hub file" or "task t1 is L">`. Any other refusal of `build_plan` (settings, confinement, a ref) is the request's refusal, as for `run start --plan`.
        - Otherwise the run gets `path: Some(Fast)`, `triage: Some(..)` and `approved_by: Some("fast path")`, and `Event::Start` is sent. The reply is `RunReply::Triaged { triage, run_id: Some(id), message }`.
     6. **Plan or Large.** Nothing is created: no branch, no run directory, no window. The reply is `RunReply::Triaged { triage, run_id: None, message }`, with `run::triage::refused_message` (Interfaces).
 
-    The CLI waits `GOAL_REQUEST_TIMEOUT` = 810 s, derived as `RUN_REQUEST_TIMEOUT` (180 s) + the largest configurable `deciders.timeout_secs` (600 s) + 30 s for `git ls-files` (its `run_git` bound). *(Spec §5.1.)*
+    The CLI waits `GOAL_REQUEST_TIMEOUT` = 810 s, derived as `RUN_REQUEST_TIMEOUT` (180 s) + the largest configurable `deciders.timeout_secs` (600 s) + 30 s for `git ls-files` (its bound is `git_timeout_secs`, at most 60 s by M8a's range, of which the default 60 s is covered by the 180 s term's own slack; the implementer records the exact sum in `docs/timing-budgets.md` from the landed call count). *(Spec §5.1. Refreshed: `unconfined_checks` and the shared `build_plan` path, so the fast path runs every M8a start check.)*
 23. **Triage routing** (`run::triage::route`, pure), in order:
-    1. The answer's `source` is `Fallback`: route `Plan`, with reason `triage fell back (<fallback reason>); without a decider the path is plan`.
+    1. The decision's `source` is `Fallback`: route `Plan`, with reason `triage fell back (<fallback reason>); without a decider the path is plan`.
     2. `fast_path` is false in config: `Plan`, `the fast path is disabled ([orchestrator] fast_path = false)`.
     3. Scale `large`: `Large`, with the decider's reason.
     4. Scale `plan`: `Plan`, with the decider's reason.
     5. Scale `single`, but `kinds` is not exactly `[code]` or `[docs]`: `Plan`, `a single-task goal of kinds <k> is not a fast-path goal`. Research and review goals need milestone 9's scouts and reviewer pipelines.
     6. Scale `single`: `Fast(PlanTask)`. The task is `id = "t1"`, the decider's title, brief, acceptance, owns, size, `interface_change`, `test_mode` and `test_mode_reason`, `test_to_write`, `kind` = the single kind, and every other field defaulted. M8a's validation, run next, decides hub, L and the test-mode rules.
+    7. *(Whole-branch review 2026-09-27)* **A protected file keeps a goal off the fast path.** A fast-path task has no plan the user approves, so decision 56's grant (a protected agent-config file changes when `owns` names it) must not reach a worker unseen. When the task's `owns` names or covers a protected path, the route becomes `Plan` with the reason `the fast path does not apply: task t1 owns a protected file (<path>)`. The list is the run's frozen `profile.protected`: the built-ins (`.claude/**`, `.mcp.json`, `.codex/**`, `**/CLAUDE.md`, `**/AGENTS.md`) plus the configuration's, the stored profile's and the plan's extras. An `owns` entry counts when it is a literal path decision 56's matcher protects (ignoring case; `.claude` itself counts), when it covers a tracked protected file (`Run.protected_files`), or when it may cover a protected path at the repository's root (`**`, `.claude/*`, `*.md`; a leading `**/` of a protected entry is dropped, so `src/**` does not count). The barrier is `run::triage::fast_refusal`, which `check_fast`, `build_plan` with `fast`, and the engine's `requests::start` all apply, after the one-task, hub and L checks. Triage's `test_mode` choice is shown with its reason on the triage line of `anthrex run status` and in `REPORT.md` (`triage: t1 test mode <mode> (<reason>)`).
 
     `TriageInfo` records kinds, scale, the chosen `RunPath`, the reason, the source and the fallback reason. *(Spec §5.1 table.)*
 24. **A fast-path run** is an ordinary M8a run with one task and `path = Fast`. Its only differences:
@@ -380,10 +394,10 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
       - adds the log line `promotion to a planned run requested by the user`;
       - adds the attention line `promotion requested at <hh:mm>; it takes effect when the orchestrator exists (milestone 9)`;
       - persists and publishes;
-      - replies `Done` with `recorded: run <id> is marked for promotion to a planned run. Until the orchestrator exists (milestone 9) nothing else changes: the fast-path task continues and the run finishes as a fast-path run.`
-    - Already promoted: `Done` with `run <id> was already marked for promotion at <hh:mm>`.
-    - A run that is not fast-path: `Refused` with `run <id> is not a fast-path run`.
-    - A terminal run: `Refused` with `run <id> is <state>`.
+      - replies `Ok` (`Done`) with `recorded: run <id> is marked for promotion to a planned run. Until the orchestrator exists (milestone 9) nothing else changes: the fast-path task continues and the run finishes as a fast-path run.`
+    - Already promoted: `Ok` with `run <id> was already marked for promotion at <hh:mm>`.
+    - A run that is not fast-path: `Err` (`Refused`) with `run <id> is not a fast-path run`.
+    - A terminal run: `Err` with `run <id> is <state>`.
 
     Nothing else changes: no task, no scheduling, no window. Milestone 9 reads `promote_requested_at` and performs the promotion. *(Spec §5.1 "`anthrex run promote` turns it into a planned run at any time"; the orchestrator it needs is M9's.)*
 
@@ -420,7 +434,9 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
       - the text of `single_test` before `{test}`, cut to its first two words;
       - the first two words of each segment of `check` split on `&&`, `||` and `;`;
       - de-duplicated, in order.
-    - **Injection.** `HeadlessSpec` gains `#[serde(default)] output_filter: Option<FilterHook { mode, prefixes, log_dir }>`. `headless::argv::claude_args`, right after it calls M8a's `claude_settings`, calls `output_filter::add_hook(&mut settings, exe, spec.output_filter.as_ref())`, whose signature is unchanged. That adds a **second** matcher group: `"PreToolUse": [<M3's group unchanged>, {"matcher":"Bash","hooks":[{"type":"command","command":"<filter-hook command>"}]}]`. The sandbox block and the user-settings flags are untouched. `filter-run` executes inside the worker's sandbox, and it writes its log to `log_dir`, which is outside the worktree. So `log_dir` is added to the worker's `ClaudeSandbox.writable_roots` when the hook is set. Logs never go inside the worktree: they would show up as untracked files and fail M8a's clean-tree check in `task_done`. If M8b.1 finds the write refused even with the root added, stop work on the injection (the hook, `filter-run` and their tests still land), and record the evidence under "Implementation notes". M8a's `worker_spec` sets it for Claude workers when the run's profile source is `Stored`, its `output_filter` is not `none`, and there is at least one prefix. `log_dir` is `<data_dir>/runs/<run>/logs/<task>`. Reviewers, scouts, deciders and Codex sessions never get it. *(Spec §14.3 "A `PreToolUse` hook, injected with `--settings` (hooks still run in `-p` mode)".)*
+    - **Injection.** `HeadlessSpec` gains `#[serde(default)] output_filter: Option<FilterHook { mode, prefixes, log_dir }>`. `headless::argv::claude_args`, right after it calls M8a's `claude_settings`, calls `output_filter::add_hook(&mut settings, exe, spec.output_filter.as_ref())`, whose signature is unchanged. That adds a **second** matcher group: `"PreToolUse": [<M3's group unchanged>, {"matcher":"Bash","hooks":[{"type":"command","command":"<filter-hook command>"}]}]`. The sandbox block (its writable roots, `denyWrite` and pins) and the user-settings flags are untouched.
+    - **Where the log goes** (*Refreshed:* the old decision added a new writable root `<data_dir>/runs/<run>/logs/<task>` to the worker's sandbox). `log_dir` is `<task TMPDIR>/anthrex-logs`, where the task `TMPDIR` is `role_launch::task_tmp_dir(&run.data_dir, task_id)` — the short per-task directory M8a F1d already grants the worker and sets as its `TMPDIR`. So the grant is unchanged (no new writable root, and no grant computed from a new path, M8a F1c I1), `filter-run` inside the sandbox can write there, the log is outside the checkout (it never appears as an untracked file or trips the clean-tree check of `task_done`), and it is removed with the task's checkout at accept or discard.
+    - **Who gets it.** M8a's `worker_spec` sets it for Claude workers when the run's profile source is `Stored`, its `output_filter` is not `none`, and there is at least one prefix. Reviewers, scouts, deciders and Codex sessions never get it. *(Spec §14.3 "A `PreToolUse` hook, injected with `--settings` (hooks still run in `-p` mode)".)*
 
 ### Metering
 
@@ -438,15 +454,16 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
     - **Parsing.** `metering::otlp::parse_metrics(body) -> Result<Vec<UsagePoint>, String>` reads every sum data point of the metric `claude_code.token.usage`: the attribute `type` (`input`, `output`, `cacheRead`, `cacheCreation`), `aggregationTemporality` (1 delta, 2 cumulative), `session.id`, `model`, and the resource attributes `anthrex.run` and `anthrex.role`. Points without `anthrex.run` are ignored.
     - **The ledger.** `OtlpLedger` adds delta points. For cumulative ones, per series `(session.id, model, type)`, it adds the increase over the last value, or the value itself when it went down (a reset). It keeps totals per `(run, role)`.
     - **Into the engine.** After each accepted request, the server sends `EventKind::OrchestratorUsage { run_id, usage }` with the ledger's new total for `(run, "orchestrator")`, and the reducer stores it as `Run.orchestrator_usage`. Any other role is kept in the ledger and not shown.
+    - **Who can post.** Any local process can reach a loopback port, but M8a's confinement denies confined checks, proofs and `setup` every loopback port the user did not list (F1d round 2), and M8a's Claude sandbox pins deny sandboxed sessions local networking. Metering is informational and never gates anything; keep it that way.
     - **For milestone 9.** `metering::orchestrator_env(addr, run_id) -> Vec<(String, String)>` gives the variables the orchestrator window needs. Their exact names and values are fixed by M8b.1 (Interfaces lists the documented set). *(Spec §14.8 "The orchestrator, the one PTY session, is metered through Claude Code's OTLP export with `anthrex.run` and `anthrex.role` resource attributes".)*
 
 ### History
 
-31. **Phase times.** `Task` gains `phase_since: u64` and `phases: PhaseSecs { queued, preparing, working, proof, check, review, merge, blocked }`. M8b introduces `run::phases::set_state(task: &mut Task, state: TaskState, now: u64)`. It adds `now - phase_since` to the field of the old state (`Pending` and the finished states count nowhere), sets `phase_since = now`, sets `max_rung = max(max_rung, rung)`, and assigns the state. Every assignment of `Task.state` in `run/engine/**` and `run/edits.rs` is replaced by it. The acceptance criterion greps that no other assignment remains. This extends spec §15's five phases with `preparing`, `proof` and `blocked`, because a task spends real time in each.
-32. **Actual size by diff.** `OpKind::MeasureDiff { root, from, to, three_dot }` runs `git diff --numstat` and `git diff -U0` through `run_git` (reads, no queue), bounded by `git_timeout_secs`. It answers `OpResult::DiffMeasured(DiffStats { files, hunks, added, removed })`, where `hunks` counts the lines starting with `@@` and binary files count as files with 0 lines.
+31. **Phase times.** `Task` gains `phase_since: u64` and `phases: PhaseSecs { queued, preparing, working, proof, check, review, merge, blocked }`. M8b introduces `run::phases::set_state(task: &mut Task, state: TaskState, now: u64)`. It adds `now - phase_since` to the field of the old state (`Pending` and the finished states count nowhere), sets `phase_since = now`, sets `max_rung = max(max_rung, rung)`, and assigns the state. Every assignment of a task's `state` outside tests is replaced by it: on `baa04e1` there are 21, in `run/edits.rs` (4), `engine/complete.rs` (2), `engine/dispatch.rs` (4, one `= next`), `engine/gates.rs` (1, `= state`), `engine/holds.rs` (3), `engine/ladder.rs` (2), `engine/merge.rs` (3) and `engine/requests.rs` (2). The acceptance criterion greps that no other assignment remains. This extends spec §15's five phases with `preparing`, `proof` and `blocked`, because a task spends real time in each.
+32. **Actual size by diff.** `OpKind::MeasureDiff { root, from, to, three_dot }` runs `git diff --numstat` and `git diff -U0` in `root` (the user's checkout, `Run.root`) through `worktree::run_git` (reads, no queue), bounded by `git_timeout_secs`. It answers `OpResult::DiffMeasured(DiffStats { files, hunks, added, removed })`, where `hunks` counts the lines starting with `@@` and binary files count as files with 0 lines. Every commit named is in the user's object store: a merge commit, the run head, or `Task.head`, which M8a sets only from an imported claim (a worker's unimported commits are never named).
     - **A merged task:** `from` is the run head before its merge, `to` its merge commit, `three_dot = false`. That is exactly what the task contributed, and it stays correct after a hand-back.
-    - **Cancelled or unfinished with commits:** `from` = the run head, `to` = the task head, `three_dot = true`.
-    - **No commits:** no op, `diff = None`.
+    - **Cancelled or unfinished with a recorded head:** `from` = the run head, `to` = `Task.head`, `three_dot = true`.
+    - **No recorded head:** no op, `diff = None`.
 
     Reconcile maps it to `NotStarted`. *(Spec §15 "Actual size is measured by diff, not tokens".)*
 33. **`history.jsonl`.** One JSON line per record, at `<repo_dir>/history.jsonl` (decision 4).
@@ -455,15 +472,16 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
     - **Reconcile.** It scans the file for `"record_id":"<id>"` and gives `Replay(HistoryAppended)` if it is found, `NotStarted` otherwise. Readers still keep the last line of each `record_id`, so a duplicate can never be counted twice.
     - **Task records.** A task record is appended when a task becomes `merged` (after `DiffMeasured`) or `cancelled`. When a run reaches `accepted`, `discarded` or `failed`, or completes with unfinished tasks, every task without a record gets one with outcome `unfinished`, `blocked` or `cancelled`. Then one `run` record is appended.
     - **Filled by the driver.** For a `run` record with outcome `accepted`, the driver fills in `accepted_commit` just before appending, by resolving `refs/heads/<base>` with `run::git::read_ref`. That is the one field the pure reducer cannot know.
-    - **Task fields.** `Task.history_written: bool` is set when the op is emitted. *(Spec §15 list of fields.)*
+    - **Task fields.** `Task.history_written: bool` is set when the op is emitted.
+    - **History off.** `Run.repo_dir` empty (a run restored from M8a) means no history ops for that run. *(Spec §15 list of fields.)*
 33a. **Routing decisions and candidate snapshots, spec §15.** `Task.routing_decisions: Vec<RoutingDecision>` is `#[serde(default)]` in the persisted run. The reducer appends one decision when the effective route is fixed for a task-bound agent session, before the journaled session-start side effect. Prelaunch plan drafts that never dispatch an agent add no decision. Use `(role, session, round, lane)` as its identity so reconciliation or a repeated start does not add a second decision. M8b records initial and escalated workers and every reviewer round; M9.5 adds test writers and race lanes. `history::task_record` copies the ordered vector into `TaskRecord` for merged, cancelled and unfinished tasks. Never reconstruct candidates from the final roster or final task size: either can differ from the dispatch-time state.
 
     - **Candidates.** Capture the ordered, resolved routes the selector could use from the run's frozen roster, including any skipped candidate with its reason. Append the chosen route when it is outside that pool, whether from an explicit task route or a fallback. `selected_index` identifies the chosen entry; `candidates[selected_index].route == chosen` is an invariant. M9.5's configured class and role lists replace the default candidate source when present, retaining their order and each candidate's resolved effort. Do not store agent transcripts, credentials or raw check output in a routing decision.
     - **Provenance and training input.** Record the trigger (`initial`, `review`, `escalation`; M9.5 adds `race` and `test_writer`), source (`explicit_task`, `class_default`, `review_policy`, `escalation_policy`; M9.5 adds `configured_list`), and a policy version (`m8a-worker-v1`, `m8a-review-v1` or `m8a-escalate-v1`; M9.5 uses `m9.5-list-v1` for list choices). `pick_policy` is `None` until M9.5's candidate lists apply, then `first`, `spread` or `first_qualifying` for reviewers. Snapshot the task title, brief, acceptance criteria, owned paths, kind, size, hub, interface-change flag and test mode, plus the profile's languages, at dispatch time. This is the input a future router may use; a later plan edit must not rewrite it. The existing task outcome, gate and usage fields and later `revert` records supply results; an unselected candidate has no observed outcome. Routing history remains local; exporting task text for training is a separate, explicit action.
     - **Durability.** Persist the decision with the task before launch. A daemon restart or fresh worker session preserves earlier decisions. Older `run.json` and `history.jsonl` records deserialize with an empty vector. The new field does not alter routing or `run stats` aggregates.
-34. **Revert detection.** `run::history_io::detect_reverts(git, root, base_branch, history_path, timeout)` runs on `spawn_blocking` at every `run start` (both kinds) and every `run stats`. It considers only `run` records with `accepted_commit`, and their tasks' `merge_commit`s, that are at most 90 days old and have no revert record yet. It reads `git log -n 2000 --format=%H%x1f%B%x1e <base_branch>` through `run_git`. Every commit whose message contains `This reverts commit <sha>` for one of those shas gets a `revert` record: `task_id = Some(..)` for a task's merge commit, and `None` for the run's accept merge, which means every task of that run. A failure only logs a warning. *(Spec §15 "whether the user later reverted it", §23 "Reverts after accept … are the only true signal".)*
+34. **Revert detection.** `run::history_io::detect_reverts(git, root, base_branch, history, now, timeout)` runs on `spawn_blocking` at every `run start` (both kinds) and every `run stats`. It considers only `run` records with `accepted_commit`, and their tasks' `merge_commit`s, that are at most 90 days old and have no revert record yet. It reads `git log -n 2000 --format=%H%x1f%B%x1e <base_branch>` through `worktree::run_git`. Every commit whose message contains `This reverts commit <sha>` for one of those shas gets a `revert` record, appended with `append_line`: `task_id = Some(..)` for a task's merge commit, and `None` for the run's accept merge, which means every task of that run. A failure only logs a warning. *(Spec §15 "whether the user later reverted it", §23 "Reverts after accept … are the only true signal".)*
 35. **`anthrex run stats [--json]`** sends `RunRequest::Stats { dir }`.
-    - **The rows.** The daemon reads the history (keeping the last line per `record_id`) and computes `run::stats::aggregate(&lines) -> HistoryStats`, which is pure. It has one row per class: `S`, `M` (non-hub), and `hub`.
+    - **The rows.** The daemon reads the history (keeping the last line per `record_id`) and computes `run::stats::aggregate(&lines, path) -> HistoryStats`, which is pure. It has one row per class: `S`, `M` (non-hub), and `hub`.
     - **Each row:** the task count, merged count, median lines changed (`added + removed`), median tool calls, median billable tokens, median working minutes, total bounces, and reverted count.
     - **Medians** are taken over merged tasks only. With an even count, they are the lower middle value.
     - **The totals line:** decider calls and fallbacks, and how many tasks the size cross-check checked and raised.
@@ -473,8 +491,7 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
 ### Test doubles
 
 36. **`ANTHREX_DECIDER_BIN` and `fake-agent`'s decider mode.**
-    - **Detection.** `fake-agent` is in decider mode when its argv has `--json-schema` (Claude shape) or `--output-schema` (Codex shape). This is checked before its other headless modes.
-    - **Kind.** It reads the prompt: the stdin user message for Claude, the last argument for Codex. The kind is taken from the prompt's first line, `[anthrex decider] <kind> v1`.
+    - **Detection.** `fake-agent` is in decider mode when its prompt's first line is `[anthrex decider] <kind> v1`: for Claude, its first stdin user message (read by the Claude headless mode before anything else); for Codex, its last argument. The prompt, not an argv flag, decides, so the mode works whatever M8b.1 finds about `--json-schema` and `--output-schema`.
     - **Scripts.** From `$FAKE_AGENT_DECIDER_DIR` it claims `<kind>-<n>.json` with the smallest `n` whose `.claimed` does not exist (`OpenOptions::create_new`, as in M8a.20). The file holds one of:
       - `{"answer": …}`: a structured answer in the fixture's form;
       - `{"text": "…"}`: raw assistant text;
@@ -485,14 +502,16 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
       Any of them may also carry `"usage": {input, output, cache_read, cache_write}`.
     - **Records.** Every call appends `{"kind","argv","prompt"}` to `$FAKE_AGENT_DECIDER_DIR/calls.jsonl`.
     - **No script.** With no matching file, or no `FAKE_AGENT_DECIDER_DIR`, it writes `fake-agent: no scripted decider answer for <kind>` to stderr and exits 2. The caller then falls back.
-    - **Shapes.** Its output uses only the shapes of M8b.1's decider fixtures, checked by M8a decision 51's shape test.
-    - **Harness default.** `RunHarness` writes `[orchestrator.deciders] mode = "off"` and `[orchestrator.onboarding] auto = false` unless a test asks otherwise, so every M8a scenario runs exactly as before. *(Spec §21 "Deciders are replaced in tests by `ANTHREX_DECIDER_BIN`".)*
+    - **Shapes.** Its output uses only the shapes of M8b.1's decider fixtures, checked by M8a decision 51's shape test (`crates/fake-agent/tests/headless_shapes.rs`, `headless_support/shape.rs`).
+    - **Harness default.** `RunHarness` writes `[orchestrator.deciders] mode = "off"` and `[orchestrator.onboarding] auto = false` unless the test's `[orchestrator]` lines mention `deciders` or `onboarding`, so every M8a scenario runs exactly as before. *(Spec §21 "Deciders are replaced in tests by `ANTHREX_DECIDER_BIN`".)*
 37. **Other `fake-agent` additions.**
-    - **Scout scripts.** For role `scout`, the task part of a script name is the value after `--scout`, so the onboarding scout claims `scout-onboarding-<secs>-<n>.jsonl`. Because the id carries a timestamp, a script named with the prefix `scout-onboarding-<n>.jsonl` matches any onboarding id.
+    - **Scout scripts.** For role `scout`, the task part of a script name is the value after `--scout` in the MCP server's argv (`McpServer::flag("--scout")`), so the onboarding scout claims `scout-onboarding-<secs>-<n>.jsonl`. Because the id carries a timestamp, a script named `scout-onboarding-<n>.jsonl` matches any onboarding id. Scripts are found as M8a's are: `<git common dir>/fake-agent/`, through the checkout's alternate for a standalone checkout.
     - **The `bash {cmd}` step** simulates a Claude `Bash` tool call. It runs every `PreToolUse` matcher group from `--settings` whose matcher is empty or matches `Bash` as a regex, in order. Each group's command gets the payload `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":…},"session_id":…,"cwd":…}` on stdin, and the last `hookSpecificOutput.updatedInput.command` printed wins. The step then runs the final command with `/bin/sh -c` in the cwd. It emits the `tool_use` (with the final command) and `tool_result` pair, keeps the output as `FAKE_AGENT_RESULT`, and appends `{"original","ran","exit","output_lines"}` to `$FAKE_AGENT_BASH_LOG` when that is set.
     - **Hook discovery.** `runtime::discover` keeps every matcher group per event (`Runtime::groups(event)`). `Runtime::hook(event)` still returns the first group's first command, so milestone 3's behaviour is unchanged.
 
 ## Interfaces
+
+Everything new is marked by its file. "(M8a's)" marks an existing file or type that gains something.
 
 ### `proto`
 
@@ -511,7 +530,7 @@ pub enum AgentRole { Orchestrator, Worker, Reviewer, Scout }   // "scout"; M9 ad
 pub enum OutputFilter { #[default] FailuresOnly, Tail, None }   // "failures-only" | "tail" | "none"
 
 #[serde(deny_unknown_fields)] #[derive(Default, Eq)]
-pub struct RepoProfile {
+pub struct RepoProfile {                                // no cache_dirs, no confined_* (decision 5)
     #[serde(default)] pub languages: Vec<String>,
     #[serde(default)] pub modules: Vec<String>,
     #[serde(default)] pub hub: Vec<String>,
@@ -535,11 +554,10 @@ impl RepoProfile { pub fn spec(&self) -> ProfileSpec; }   // decision 5
 #[derive(Copy, Eq)] pub enum ProfileSource { Stored, Plan, None }
 #[derive(Eq)] pub struct CommandCheck { pub command: String, pub ok: bool, pub code: Option<i32>,
                                         pub timed_out: bool, pub secs: u64, pub tail: String }   // tail: last 40 lines
-#[derive(Eq)] pub struct ProfileVerification { pub at: u64, pub setup: Option<CommandCheck>,
+#[derive(Eq)] pub struct ProfileVerification { pub at: u64, pub confined: bool,
+                                               pub setup: Option<CommandCheck>,
                                                pub check: Option<CommandCheck>, pub single_test: Option<CommandCheck> }
 #[derive(Eq)] pub struct DroppedCommand { pub key: String, pub command: String, pub reason: String, pub tail: String }
-#[derive(Eq)] pub struct ProfileFindings { pub profile: RepoProfile, pub setup_ran_ok: Option<bool>,
-                                           pub check_ran_ok: Option<bool>, pub single_test_ran_ok: Option<bool> }
 #[serde(tag = "state")] #[derive(Eq)]
 pub enum ProposalState { Preparing, Scouting, Verifying, Ready, Failed { reason: String } }
 #[serde(tag = "origin")] #[derive(Eq)]
@@ -547,12 +565,14 @@ pub enum ProposalOrigin { Detect, Auto { stale: Vec<String> }, Goal, Edit { keys
 #[derive(Eq)] pub struct ProposalRecord {
     pub project: PathBuf, pub state: ProposalState, pub origin: ProposalOrigin,
     pub started_at: u64, pub updated_at: u64,
+    pub base_sha: String,                             // the commit the scout read and the commands ran at
     pub scout_id: Option<String>, pub window_id: Option<u32>,
     pub profile: Option<RepoProfile>,                 // after verification: only commands that passed
     pub verification: Option<ProfileVerification>,
     pub dropped: Vec<DroppedCommand>,
-    pub findings: Option<ProfileFindings>,            // the scout's raw proposal and claims
-    pub trusted_project: Vec<String>,                 // M8a decision 53, when --trust-project was given
+    pub proposed: Option<RepoProfile>,                // the scout's raw proposal (or the edited profile)
+    pub trusted_project: Vec<String>,                 // decision 12, when --trust-project was given
+    pub unconfined_checks: bool,                      // decision 9, when --unconfined-checks was given
     pub auto_confirm: bool,                           // profile edit --yes
 }
 #[derive(Eq)] pub struct ProfileMeta {
@@ -564,7 +584,8 @@ pub enum ProposalOrigin { Detect, Auto { stale: Vec<String> }, Goal, Edit { keys
 #[derive(Eq)] pub struct ProfileStatus {
     pub project: PathBuf, pub repo_dir: PathBuf, pub source: ProfileSource,   // Stored or None
     pub confirmed_at: Option<u64>, pub stale: Vec<String>, pub unparseable: Option<String>,
-    pub proposal: Option<ProposalRecord>, pub scout: Option<ScoutInfo>, pub sandbox: bool,
+    pub proposal: Option<ProposalRecord>, pub scout: Option<ScoutInfo>,
+    pub verify_confined: bool,                        // whether verification would run confined here (decision 9)
 }
 ```
 
@@ -578,7 +599,7 @@ pub struct ScoutReport {
     pub id: String, pub kind: ScoutKind, pub run_id: Option<String>, pub question: String,
     pub summary: String, pub files: Vec<ScoutFile>,
     #[serde(default)] pub modules: Vec<String>, #[serde(default)] pub interfaces: Vec<String>,
-    #[serde(default)] pub risks: Vec<String>, #[serde(default)] pub profile: Option<ProfileFindings>,
+    #[serde(default)] pub risks: Vec<String>, #[serde(default)] pub profile: Option<RepoProfile>,
     pub route: Route, pub window_id: Option<u32>, pub started_at: u64, pub finished_at: u64,
     pub tool_calls: u32, pub usage: TokenUsage,
 }
@@ -608,8 +629,9 @@ pub enum DeciderMode { #[default] Claude, Codex, Off }
 #[derive(Eq, Default)] pub struct RunUsage { pub total: TokenUsage,
                                              pub by_role: std::collections::BTreeMap<String, TokenUsage>,  // worker, reviewer, scout, decider, orchestrator
                                              pub decider_calls: u32, pub decider_fallbacks: u32 }
-impl std::ops::AddAssign for TokenUsage;   // field-wise; added here if M8a has not
 ```
+
+`impl std::ops::AddAssign for TokenUsage` (field-wise) goes in `crates/proto/src/run_info.rs`, beside `billable` (M8a has none).
 
 `crates/proto/src/run_info.rs` (M8a's), new fields, each `#[serde(default)]`:
 
@@ -620,8 +642,8 @@ pub profile_source: Option<ProfileSource>, pub usage: Option<RunUsage>, pub scou
 // TaskInfo
 pub decider_usage: Option<TokenUsage>, pub size_check: Option<SizeCheckInfo>, pub diff: Option<DiffStats>,
 pub phases: Option<PhaseSecs>, pub block_source: Option<DeciderSource>,
-// CheckInfo
-pub summary_source: Option<DeciderSource>,
+// CheckInfo (M8a's `summary: String` stays the last-40-lines text; the decider's summary goes in the new field)
+pub decider_summary: Option<String>, pub summary_source: Option<DeciderSource>,
 ```
 
 `crates/proto/src/run_wire.rs` (M8a's), new variants and one field:
@@ -629,15 +651,16 @@ pub summary_source: Option<DeciderSource>,
 ```rust
 pub struct ToolCall { /* M8a's fields */ #[serde(default)] pub scout_id: Option<String> }
 pub enum RunRequest { /* M8a's */
-    StartGoal { goal: String, dir: PathBuf, yes: bool, trust_project: bool },
+    StartGoal { goal: String, dir: PathBuf, yes: bool, trust_project: bool, unconfined_checks: bool },
     Promote { run_id: String },
     Stats { dir: PathBuf },
     Profile(ProfileRequest),
 }
 pub enum ProfileRequest {
-    Status { dir: PathBuf }, Detect { dir: PathBuf, trust_project: bool },
+    Status { dir: PathBuf },
+    Detect { dir: PathBuf, trust_project: bool, unconfined_checks: bool },
     Show { dir: PathBuf, proposed: bool }, Confirm { dir: PathBuf }, Reject { dir: PathBuf },
-    Edit { dir: PathBuf, key: String, value: Option<String>, yes: bool },   // value None: --unset
+    Edit { dir: PathBuf, key: String, value: Option<String>, yes: bool, unconfined_checks: bool },   // value None: --unset
 }
 pub enum RunReply { /* M8a's */
     Triaged { triage: TriageInfo, run_id: Option<String>, message: String },
@@ -651,8 +674,8 @@ pub enum ProfileReply {
     Done { message: String },
     Refused { message: String },
 }
-pub mod request { /* M8a's */ pub const PROMOTE: &str = "run promote"; pub const STATS: &str = "run stats";
-                  pub const PROFILE: &str = "profile"; }   // StartGoal answers with Triaged or M8a's START label
+pub mod request { /* M8a's */ pub const START_GOAL: &str = "run start --goal"; pub const PROMOTE: &str = "run promote";
+                  pub const STATS: &str = "run stats"; pub const PROFILE: &str = "profile"; }
 ```
 
 `crates/proto/src/history.rs` (new). History types never use `deny_unknown_fields`, so M9.5 can add fields:
@@ -710,9 +733,9 @@ pub struct HistoryStats { pub path: PathBuf, pub task_records: u32, pub run_reco
                           pub problems: Vec<String> }
 ```
 
-`lib.rs` re-exports every new public type and bumps `PROTO_VERSION` (header).
+`lib.rs` re-exports every new public type by name and bumps `PROTO_VERSION` to 8 (header). No new root name collides with an existing root re-export (checked name by name when the task lands, as M8a did).
 
-### `config` (`crates/config/src/orchestrator_adapt.rs`, new; one call from `orchestrator::read`)
+### `config` (`crates/config/src/orchestrator/adapt.rs`, new; one call from `orchestrator::read`)
 
 ```rust
 pub struct Deciders { pub mode: proto::DeciderMode,       // [orchestrator.deciders] mode = "claude" | "codex" | "off"; "claude"
@@ -732,10 +755,10 @@ pub struct Metering { pub otlp: bool,                     // [orchestrator.meter
 // config::Orchestrator gains:
 pub fast_path: bool,                                      // [orchestrator] fast_path = true
 pub deciders: Deciders, pub scouts: Scouts, pub onboarding: Onboarding, pub metering: Metering,
-pub(crate) fn read_adapt(table: &toml::Table, problems: &mut Vec<Problem>) -> (bool, Deciders, Scouts, Onboarding, Metering);
+pub(crate) fn read_adapt(table: &toml::Table, o: &mut Orchestrator, problems: &mut Vec<Problem>);
 ```
 
-Messages follow M8a's format: `orchestrator.deciders.timeout_secs: must be between 5 and 600 (using 90)`, `orchestrator.deciders.mode: must be claude, codex or off (using claude)`, and `unknown key, ignored` for anything else under these tables.
+`lib.rs`'s `pub use orchestrator::{…}` line gains `Deciders, Metering, Onboarding, Scouts`. `orchestrator/unknown.rs` accepts `fast_path` and reports unknown keys under `deciders`, `scouts`, `onboarding` and `metering` with `report_unknown_nested`. Messages follow M8a's format: `orchestrator.deciders.timeout_secs: must be between 5 and 600 (using 90)`, `orchestrator.deciders.mode: must be claude, codex or off (using claude)`, and `unknown key, ignored` for anything else under these tables. None of these tables names a path or a confinement setting.
 
 ### `daemon`
 
@@ -743,8 +766,8 @@ Messages follow M8a's format: `orchestrator.deciders.timeout_secs: must be betwe
 // profile/mod.rs
 pub fn repo_dir(data_dir: &Path, project: &Path) -> PathBuf;     // decision 4
 pub fn summary(profile: &RepoProfile) -> String;                  // text below
-pub const ONBOARDING_WORKTREE: &str = ".onboarding";             // under <wt>/runs/
-pub const VERIFY_WORKTREE: &str = ".profile-verify";
+pub const ONBOARDING_CHECKOUT: &str = ".onboarding";             // under <wt>/runs/
+pub const VERIFY_CHECKOUT: &str = ".profile-verify";
 
 // profile/resolve.rs (pure)
 pub struct ChosenProfile { pub spec: ProfileSpec, pub source: ProfileSource, pub output_filter: OutputFilter,
@@ -753,9 +776,9 @@ pub fn run_profile(stored: Option<&RepoProfile>, stored_path: &Path, plan: &Prof
 pub fn derived_prefixes(profile: &RepoProfile) -> Vec<String>;  // decision 28
 
 // profile/proposal.rs (pure)
-pub fn validate(profile: &RepoProfile) -> Vec<String>;          // "<key>: <problem>" each; globs, {test}, regex, env keys
-pub fn from_findings(findings: &ProfileFindings) -> RepoProfile; // the scout's profile, invalid keys removed
-pub fn apply_verification(proposed: &RepoProfile, v: &ProfileVerification) -> (RepoProfile, Vec<DroppedCommand>);
+pub fn validate(profile: &RepoProfile) -> Vec<String>;          // "<key>: <problem>" each; globs, {test}, regex, env keys (reserved_env)
+pub fn from_findings(proposed: &RepoProfile) -> RepoProfile;    // the scout's profile, invalid keys and built-in protected removed
+pub fn apply_verification(proposed: &RepoProfile, v: &ProfileVerification, root: &Path) -> (RepoProfile, Vec<DroppedCommand>);
 pub fn apply_edit(stored: &RepoProfile, key: &str, value: Option<&str>) -> Result<(RepoProfile, bool), String>; // bool: re-verify
 pub const REVERIFY_KEYS: &[&str] = &["setup", "check", "check_timeout_secs", "single_test", "test_passed", "sample_test", "env"];
 pub fn show_text(profile: &RepoProfile, verification: Option<&ProfileVerification>, dropped: &[DroppedCommand]) -> String;
@@ -772,25 +795,31 @@ pub fn stale(project: &Path, meta: &ProfileMeta) -> Vec<String>;
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()>;   // temp, fsync, rename, fsync dir
 pub const FINGERPRINT_MAX_BYTES: u64 = 4 << 20;
 
-// profile/verify.rs (blocking; the worktree writes go through GitQueue::write)
-pub fn prepare_scratch(git: &OsStr, root: &Path, path: &Path, timeout: Duration) -> Result<(), String>;   // add --detach HEAD, lock
-pub fn run_commands(dir: &Path, profile: &RepoProfile, timeout: Duration, now: u64) -> ProfileVerification;
-pub fn discard_scratch(git: &OsStr, root: &Path, path: &Path, salvage_ref: &str, timeout: Duration) -> Result<Option<String>, String>;
+// profile/verify.rs (blocking; its git writes go through GitQueue::write)
+pub fn confine_spec(config: &config::Orchestrator, repo_dir: &Path, pre: &Preflight, daemon_socket: &Path)
+    -> Option<run::confine::ConfineSpec>;                          // decision 9; None: unconfined
+pub fn prepare(git: &OsStr, pre: &Preflight, path: &Path, repo: &Path, timeout: Duration) -> Result<(), String>;
+                                                                   // run::git::prepare_scratch_in at pre.base_sha
+pub fn run_commands(dir: &Path, profile: &RepoProfile, confine: Option<&run::confine::ConfineSpec>,
+                    timeout: Duration, now: u64) -> ProfileVerification;
+pub fn discard(git: &OsStr, root: &Path, path: &Path, repo: &Path, salvage_ref: &str, timeout: Duration)
+    -> Result<Option<String>, String>;                             // run::git::salvage, then remove_checkout
 
 // profile/service.rs
 pub struct ProfileContext { pub data_dir: PathBuf, pub worktrees_root: PathBuf, pub git: OsString,
-                            pub orchestrator: config::Orchestrator, pub git_queue: Arc<GitQueue> }
+                            pub orchestrator: config::Orchestrator, pub git_queue: Arc<GitQueue>,
+                            pub cli_caps: CliCaps, pub daemon_socket: PathBuf }
 pub enum Effective { Stored { profile: RepoProfile, meta: ProfileMeta, path: PathBuf, stale: Vec<String> },
                      Unparseable { path: PathBuf, error: String },
                      Absent { proposal: Option<ProposalState> } }
-pub struct ProfileService { /* per-project proposal table under daemon::lock, the scout service, the context */ }
+pub struct ProfileService { /* per-project proposal table under daemon::lock, the scout service, the manager, the context */ }
 impl ProfileService {
-    pub fn new(scouts: Arc<ScoutService>, ctx: ProfileContext) -> Arc<Self>;
+    pub fn new(scouts: Arc<ScoutService>, manager: Arc<WindowManager>, ctx: ProfileContext) -> Arc<Self>;
     pub async fn restore(self: &Arc<Self>);                                     // decision 11
     pub async fn effective(&self, project: &Path) -> Effective;
     pub async fn request(self: &Arc<Self>, request: ProfileRequest) -> ProfileReply;
-    pub async fn start_detection(self: &Arc<Self>, root: &Path, project: &Path, origin: ProposalOrigin,
-                                 trust_project: bool) -> Result<(), String>;    // Err: the refusal text
+    pub async fn start_detection(self: &Arc<Self>, pre: &Preflight, origin: ProposalOrigin,
+                                 trust_project: bool, unconfined_checks: bool) -> Result<(), String>;   // Err: the refusal text
 }
 
 // scout/contract.rs (pure): SCOUT_CONTRACT, ONBOARDING_CONTRACT, SCOUT_NUDGE (texts below)
@@ -799,17 +828,17 @@ pub fn scout_wrap_up(tool_calls: u32) -> String;
 
 // scout/spec.rs (pure)
 pub struct ScoutSpec { pub id: String, pub kind: ScoutKind, pub run_id: Option<String>, pub question: String,
-                       pub first_turn: String, pub cwd: PathBuf, pub project: PathBuf, pub web: bool }
-pub struct ScoutContext { pub exe: PathBuf, pub socket_path: PathBuf, pub roster: Vec<ModelEntry>,
-                          pub default_runtime: Runtime, pub scouts: config::Scouts, pub claude: config::ClaudeHeadless,
-                          pub worker_sandbox: bool, pub data_dir: PathBuf }
+                       pub first_turn: String, pub cwd: PathBuf, pub project: PathBuf, pub web: bool,
+                       pub codex_config: Vec<headless::codex_guard::GuardEntry>, pub base_sha: String }
+pub struct ScoutContext { pub roster: Vec<ModelEntry>, pub default_runtime: Runtime, pub scouts: config::Scouts,
+                          pub claude: config::ClaudeHeadless, pub caps: CliCaps, pub data_dir: PathBuf }
 pub fn route(roster: &[ModelEntry], runtime: Runtime, strength: Strength, effort: Effort) -> Route;
 pub fn headless_spec(scout: &ScoutSpec, ctx: &ScoutContext) -> HeadlessSpec;   // decision 12
 pub fn valid_id(id: &str) -> bool;                                              // ^[a-z0-9][a-z0-9-]{0,47}$
 
 // scout/report.rs (pure)
 pub struct ScoutReportArgs { pub summary: String, pub files: Vec<ScoutFile>, pub modules: Vec<String>,
-                             pub interfaces: Vec<String>, pub risks: Vec<String>, pub profile: Option<ProfileFindings> }
+                             pub interfaces: Vec<String>, pub risks: Vec<String>, pub profile: Option<RepoProfile> }
 pub fn validate(args: &serde_json::Value, kind: ScoutKind) -> Result<ScoutReportArgs, String>;
 pub fn report_path(repo_dir: &Path, run_dir: Option<&Path>, id: &str) -> PathBuf;
 pub fn resolve_ref(reference: &str, run_dir: &Path, repo_dir: &Path, onboarding_report: Option<&str>) -> PathBuf;
@@ -838,7 +867,7 @@ impl ScoutService {
     pub fn run_scouts(&self, run_id: &str) -> Vec<ScoutInfo>;      // for the snapshot; empty until M9
 }
 
-// decider/mod.rs (pure types; serialized in OpKind::Decide)
+// decider/mod.rs (pure types; serialized in OpKind::Decide, so Serialize, Deserialize, Eq)
 #[derive(Copy)] pub enum DeciderKind { Triage, SizeCheck, CheckSummary, BlockedReason }  // label(): "triage" | "size_check" | "check_summary" | "blocked_reason"
 pub struct TriageInput { pub goal: String, pub profile_summary: String, pub report_summary: Option<String>,
                          pub report_files: Vec<String>, pub files: Vec<String>, pub files_total: u32 }
@@ -861,11 +890,9 @@ pub enum DeciderAnswer { Triage(TriageAnswer), SizeCheck(Vec<SizeVerdict>), Chec
 pub struct Decision { pub kind: DeciderKind, pub answer: DeciderAnswer, pub source: DeciderSource,
                       pub fallback_reason: Option<String>, pub usage: Option<TokenUsage>, pub secs: u64 }
 pub struct DeciderContext { pub mode: DeciderMode, pub program: OsString, pub route: Route, pub timeout: Duration,
-                            pub cwd: PathBuf, pub schema_dir: PathBuf, pub claude_auth: ClaudeAuth,
-                            pub api_key_helper: Option<String>, pub caps: &'static CliCaps }
+                            pub cwd: PathBuf, pub schema_dir: PathBuf, pub caps: CliCaps }
 impl DeciderContext {
-    pub fn new(cfg: &config::Orchestrator, claude_bin: &str, codex_bin: &str, decider_bin: Option<&Path>,
-               data_dir: &Path, roster: &[ModelEntry]) -> Self;
+    pub fn new(cfg: &config::Orchestrator, manager: &ManagerConfig, data_dir: &Path) -> Self;  // program: decider_bin, else claude_bin/codex_bin
 }
 // decider/schema.rs, prompt.rs, parse.rs, fallback.rs, argv.rs (pure)
 pub fn schema(kind: DeciderKind) -> serde_json::Value;
@@ -874,27 +901,37 @@ pub fn parse(kind: DeciderKind, value: &serde_json::Value) -> Result<DeciderAnsw
 pub fn answer_from_events(events: &[SessionEvent]) -> Result<serde_json::Value, String>;   // decision 16's order
 pub fn fallback(request: &DeciderRequest) -> DeciderAnswer;
 pub fn fallback_decision(request: &DeciderRequest, reason: String) -> Decision;
-pub fn claude_decider_args(ctx: &DeciderContext, schema: &serde_json::Value) -> Vec<String>;
-pub fn codex_decider_args(ctx: &DeciderContext, schema_file: &Path, prompt: &str) -> Vec<String>;
+pub struct DeciderCaps { pub claude_json_schema: bool, pub claude_max_turns: bool, pub claude_no_session_persistence: bool,
+                         pub answer_source: AnswerSource, pub strict_schemas: bool, pub codex_output_schema: bool,
+                         pub codex_ephemeral: bool }
+pub enum AnswerSource { ResultField, StructuredOutputTool, Text }
+pub const DECIDER_CAPS: DeciderCaps;                              // from M8b.1
+pub fn claude_decider_args(ctx: &DeciderContext, dcaps: &DeciderCaps, schema: &serde_json::Value) -> Vec<String>;
+pub fn codex_decider_args(ctx: &DeciderContext, dcaps: &DeciderCaps, schema_file: &Path, prompt: &str) -> Vec<String>;
 pub fn schema_file_name(kind: DeciderKind, schema: &serde_json::Value) -> String;   // "<kind>-<16 hex>.json"
 // decider/call.rs (I/O)
 pub async fn decide(ctx: &DeciderContext, request: &DeciderRequest) -> Decision;
 pub const ANSWER_MAX_BYTES: usize = 256 * 1024;
 
+// headless (M8a's) additions
+pub fn credential_scrub_for(runtime: Runtime, auth: config::ClaudeAuth) -> Vec<&'static str>;   // credential_scrub(spec) calls it
+// HeadlessSpec gains  #[serde(default)] pub output_filter: Option<FilterHook>
+// McpTarget gains     #[serde(default)] pub scout_id: Option<String>
+// SessionEvent gains  StructuredOutput { value: serde_json::Value }   only if M8b.1 finds result.structured_output
+// manager::headless::control_refusal(id, None) returns decision 12's scout text
+
 // output_filter.rs (pure)
 pub const FAILURE_RE: &str = r"(?i)\b(fail(ed|ure|ures|s)?|error(s)?|panic(ked|s)?|assert(ion)?|expected|traceback|exception)\b";
 pub const LINE_MAX_CHARS: usize = 500;
+pub const LOG_DIR_NAME: &str = "anthrex-logs";                    // under the task TMPDIR (decision 28)
 pub const HOOK_SETS_ALLOW: bool;                                  // from M8b.1
 #[derive(Serialize, Deserialize)] pub struct FilterHook { pub mode: OutputFilter, pub prefixes: Vec<String>, pub log_dir: PathBuf }
 pub fn apply(mode: OutputFilter, lines: &[String], exit_code: i32) -> Vec<String>;
 pub fn matches(command: &str, prefixes: &[String]) -> bool;
 pub fn wrap(exe: &Path, hook: &FilterHook, command: &str) -> String;
 pub fn rewrite(payload: &serde_json::Value, exe: &Path, hook: &FilterHook) -> Option<serde_json::Value>;
-pub fn hook_command(exe: &Path, hook: &FilterHook) -> String;     // the settings "command" string, shell-quoted
+pub fn hook_command(exe: &Path, hook: &FilterHook) -> String;     // the settings "command" string, shell-quoted (launch::shell_quote)
 pub fn add_hook(settings: &mut serde_json::Value, exe: &Path, hook: Option<&FilterHook>);
-// headless::HeadlessSpec gains  #[serde(default)] pub output_filter: Option<FilterHook>
-// headless::McpTarget gains     #[serde(default)] pub scout_id: Option<String>
-// headless::SessionEvent gains  StructuredOutput { value: serde_json::Value }   only if M8b.1 finds result.structured_output
 
 // metering/otlp.rs (pure)
 #[derive(Copy)] pub enum UsageKind { Input, Output, CacheRead, CacheWrite }
@@ -947,7 +984,7 @@ pub enum OpKind { /* M8a's */
 }
 pub enum OpResult { /* M8a's */ Decided(Decision), DiffMeasured(DiffStats), HistoryAppended }
 pub enum EventKind { /* M8a's */ Promote { reply: ReplyId, run_id: String }, OrchestratorUsage { run_id: String, usage: TokenUsage } }
-// run/model.rs additions
+// run/model_adapt.rs (pure; re-exported by model.rs)
 pub struct QueuedDecider { pub decider_id: u64, pub task_ids: Vec<String>, pub request: DeciderRequest, pub queued_at: u64 }
 pub enum SizeCheckState { Pending { decider_id: u64 }, Done(SizeCheckInfo) }
 pub struct PendingFailure { pub gate: GateKind, pub rung: u8, pub check_index: usize, pub decider_id: u64 }
@@ -960,7 +997,7 @@ pub struct PendingFailure { pub gate: GateKind, pub rung: u8, pub check_index: u
 // Task gains: size_check: Option<SizeCheckState>, pending_failure: Option<PendingFailure>, pending_classification: bool,
 //   block_source: Option<DeciderSource>, decider_usage: TokenUsage, phases: PhaseSecs, phase_since: u64, max_rung: u8,
 //   diff: Option<DiffStats>, history_written: bool
-// CheckRecord gains: summary: Option<String>, summary_source: Option<DeciderSource>
+// CheckRecord (model_rounds.rs) gains: summary: Option<String>, summary_source: Option<DeciderSource>
 // RunLimits gains: decider_mode: DeciderMode, decider_slot_wait_secs: u64
 // run/engine/deciders.rs (pure)
 pub fn queue(run: &mut Run, task_ids: Vec<String>, request: DeciderRequest, now: u64) -> u64;   // decider id
@@ -968,12 +1005,18 @@ pub fn dispatch(run: &mut Run, now: u64) -> Vec<Effect>;           // start queu
 pub fn on_decided(run: &mut Run, decider_id: u64, decision: Decision, now: u64) -> Vec<Effect>;
 pub fn apply_raise(run: &mut Run, task_id: &str, size: Size, reason: &str);   // decision 19
 
-// RunService (additions)
-impl RunService { pub fn orchestrator_usage(&self, run_id: String, usage: TokenUsage); }   // sends EventKind::OrchestratorUsage
-// RunContext gains: decider_bin: Option<PathBuf>, claude_bin: String, codex_bin: String
+// run/driver (additions)
+// driver/requests.rs: build(plan_toml, …) = parse_plan + build_plan(plan, dir, yes, trust_project, unconfined_checks)
+// driver/adapt.rs: choose_profile, start_goal, promote, stats, profile, and the Decide / MeasureDiff / AppendHistory executions
+pub struct Adaptation { pub profiles: Arc<ProfileService>, pub scouts: Arc<ScoutService>, pub deciders: DeciderContext }
+impl RunService {
+    pub fn git_queue(&self) -> Arc<GitQueue>;
+    pub fn set_adaptation(&self, adaptation: Adaptation);         // once, from lifecycle; a OnceLock field
+    pub fn orchestrator_usage(&self, run_id: String, usage: TokenUsage);   // sends EventKind::OrchestratorUsage
+}
 ```
 
-**Reconcile rows** added to M8a's table (`run/reconcile.rs`):
+**Reconcile rows** added to M8a's table (`run/reconcile/mod.rs` and `reconcile/git.rs`):
 
 | `OpKind` | Reality checked | Replay | Otherwise |
 |----------|-----------------|--------|-----------|
@@ -982,15 +1025,17 @@ impl RunService { pub fn orchestrator_usage(&self, run_id: String, usage: TokenU
 
 ### MCP (`crates/mcp`, M8a's)
 
-`McpOptions` gains `scout_id: Option<String>`. `tools_for(AgentRole::Scout)` returns one tool. The schema is a closed object at every level (`additionalProperties: false`):
+`McpOptions` gains `scout_id: Option<String>`. `tools_for(AgentRole::Scout)` returns one tool, built in the new `crates/mcp/src/tools_scout.rs`. The schema is a closed object at every level (`additionalProperties: false`), and it has **no** property for `cache_dirs` or any `confined_*` setting (decision 5):
 
 | Role | Tool | Description | Properties (required in bold) |
 |------|------|-------------|-------------------------------|
-| scout | `submit_scout_report` | `Submit your findings. Call it once, then stop.` | **`summary`** string 1–8000; **`files`** array ≤ 60 of objects {**`path`** string 1–500, **`why`** string 1–300}; `modules` array ≤ 40 of string 1–200; `interfaces` array ≤ 40 of string 1–500; `risks` array ≤ 20 of string 1–500; `profile` object {`languages` array ≤ 10 of string 1–40; `modules`, `hub`, `source`, `generated`, `protected` arrays ≤ 40 of string 1–300; `setup`, `check` string 1–2000; `check_timeout_secs` integer 10–14400; `single_test` string 1–1000; `test_passed`, `sample_test` string 1–300; `output_filter` enum `failures-only`, `tail`, `none`; `filter_prefixes` array ≤ 10 of string 1–100; `conventions` array ≤ 20 and `manifests` array ≤ 50 of string 1–300; `env` object ≤ 20 properties matching `^[A-Za-z_][A-Za-z0-9_]*$` with string values 0–1000; `setup_ran_ok`, `check_ran_ok`, `single_test_ran_ok` boolean} |
+| scout | `submit_scout_report` | `Submit your findings. Call it once, then stop.` | **`summary`** string 1–8000; **`files`** array ≤ 60 of objects {**`path`** string 1–500, **`why`** string 1–300}; `modules` array ≤ 40 of string 1–200; `interfaces` array ≤ 40 of string 1–500; `risks` array ≤ 20 of string 1–500; `profile` object {`languages` array ≤ 10 of string 1–40; `modules`, `hub`, `source`, `generated`, `protected` arrays ≤ 40 of string 1–300; `setup`, `check` string 1–2000; `check_timeout_secs` integer 10–14400; `single_test` string 1–1000; `test_passed`, `sample_test` string 1–300; `output_filter` enum `failures-only`, `tail`, `none`; `filter_prefixes` array ≤ 10 of string 1–100; `conventions` array ≤ 20 and `manifests` array ≤ 50 of string 1–300; `env` object ≤ 20 properties matching `^[A-Za-z_][A-Za-z0-9_]*$` with string values 0–1000} |
 
 Engine-side texts (`ToolResult`):
 - **Refusals:** `unknown scout <id>`; `this window is not scout <id>`; `scout <id> is <state>`; `a report for scout <id> was already recorded`; `invalid arguments: <field>: <problem>`; `invalid arguments: profile: required for the onboarding scout`; `invalid arguments: profile: only the onboarding scout reports a profile`.
 - **Success:** `Report recorded. You are done; end your turn now.`
+
+A reserved `env` key in the scout's profile is not a tool refusal: `proposal::from_findings` drops it and `proposal::validate`'s message lands in `ProposalRecord.dropped` with the reason, so the user sees why.
 
 ### Decider schemas (exact)
 
@@ -1082,7 +1127,7 @@ Interfaces: <interfaces>
 
 ```text
 [anthrex decider] check_summary v1
-A check command failed in a coding task's worktree. Summarise the failure for the agent who must fix it, in at most 40 lines. Keep failing test names, error messages, file:line locations and assertion values exactly as they appear. Leave out passing tests, progress output and anything repeated. Answer with one JSON object that matches the schema, and nothing else.
+A check command failed in a coding task's checkout. Summarise the failure for the agent who must fix it, in at most 40 lines. Keep failing test names, error messages, file:line locations and assertion values exactly as they appear. Leave out passing tests, progress output and anything repeated. Answer with one JSON object that matches the schema, and nothing else.
 
 Command: <command>
 Result: <exit <code> | timed out>
@@ -1112,18 +1157,17 @@ Each cut leaves `[anthrex] … cut …` in its place.
 SCOUT_CONTRACT:
 You are a scout in an anthrex orchestration run. You read and report; you never change anything.
 1. Answer the question in your first message from what is in this directory. Read manifests, CI files, READMEs and agent instruction files before source code.
-2. Do not edit, create or delete files, and do not commit.
+2. Do not edit, create or delete files, and do not commit. Your session cannot write anything.
 3. Call the anthrex tool submit_scout_report exactly once: a summary of at most about 2000 tokens, the files that matter with one line each on why, and the modules, interfaces and risks you found. Then stop.
 4. Report what you found, not what you guess. Say in the summary what you could not determine.
 
 ONBOARDING_CONTRACT:
-You are the onboarding scout of anthrex, a tool that runs coding agents on this repository. You work out how it is set up, built and tested. You never change the repository.
-1. This directory is a disposable copy of the repository at its current commit. It is thrown away when you finish, and the user's checkout is never touched. Your commands run in a sandbox that can write only here.
+You are the onboarding scout of anthrex, a tool that runs coding agents on this repository. You work out how it is set up, built and tested. You never change anything.
+1. This directory is a disposable copy of the repository at its current commit. Your session is read-only: nothing you run can write a file or reach the network. Commands that only read (listing files, printing a Makefile's targets, showing git history) work; builds and tests do not, and you should not try them.
 2. Read manifests, lock files, CI configuration, READMEs and agent instruction files (AGENTS.md, CLAUDE.md and similar) before source code.
 3. Find: the languages; what counts as one module (globs); hub paths that many modules depend on; where behaviour lives (source globs); generated files that builds rewrite on their own, taken from the lock files you find (for example Cargo.lock, package-lock.json, yarn.lock, pnpm-lock.yaml, poetry.lock, uv.lock, go.sum); protected files that configure or instruct coding agents: always .claude/**, .mcp.json, .codex/**, **/CLAUDE.md and **/AGENTS.md, plus any other agent configuration, hook, MCP server or instruction file you find (for example .cursor/**, .github/copilot-instructions.md, GEMINI.md); a setup command to run once in a fresh copy; one check command that builds, tests and lints everything CI checks; a command that runs one named test, with {test} where the name goes; a regular expression, with {test} where the name goes, that matches a line of that command's output only when that test ran and passed; the name of one existing test that passes; the manifests and convention files you relied on; environment variables every copy needs, with {worktree} for the copy's path.
-4. Run the setup, the check and the single-test command with your sample test yourself, and set setup_ran_ok, check_ran_ok and single_test_ran_ok to what happened. If the sandbox stopped a command, for example because it needs the network, propose it anyway with its ran_ok false: anthrex runs every command again outside the sandbox and proposes only the ones that pass.
-5. Do not edit files, commit, or install anything outside this directory.
-6. Call the anthrex tool submit_scout_report exactly once, with a short summary, the files that matter, and the profile. Then stop.
+4. Propose the commands CI would run. anthrex runs each of them itself afterwards, in a fresh copy and under the same restrictions its runs use, and proposes only the ones that pass.
+5. Call the anthrex tool submit_scout_report exactly once, with a short summary, the files that matter, and the profile. Then stop.
 ```
 
 | Name | Text |
@@ -1134,31 +1178,37 @@ You are the onboarding scout of anthrex, a tool that runs coding agents on this 
 | `profile::summary` | Lines `languages: <a, b>`, `modules: <globs>`, `hub: <globs>`, `source: <globs>`, `generated: <globs>`, `protected: built-in <5 globs> + <extras or "no extras">` (always printed), `setup: <command or none>`, `check: <command or "none (runs are unverified)">`, `single test: <command or "none (tdd is impossible; code tasks use check)">`, each list line omitted when empty. |
 | `started_message` | `triage: <kinds joined with ,>/<scale> (<decider \| fallback: <reason>>)` / `fast path: one task, no plan gate` / `  t1  <size>  <mode>  <title>` / `watch with: anthrex run status <id>` |
 | `refused_message` | `triage: <kinds>/<scale> (<decider \| fallback: <reason>>): <reason>` / `this goal needs a planned run, which arrives with the orchestrator (milestone 9). Write a plan file and run: anthrex run start --plan <file>` |
+| `control_refusal` (no run) | `window <id> is a headless scout session; only the daemon drives it. Use anthrex profile reject to stop it` |
+| `blocked_recorded` (unclassified) | `Blocked recorded (classifying). Stop and wait for an answer.` |
+| `check_failed_message` (with a decider summary) | M8a's text with `Last 40 lines:\n<tail>` replaced by `Summary of its output:\n<summary lines>` |
+| `candidate_red_message` (with a decider summary) | The same replacement in M8a's text |
 
 ### CLI
 
 ```
-anthrex run start (--plan <file> | --goal <text>) [--yes] [--trust-project]
+anthrex run start (--plan <file> | --goal <text>) [--yes] [--trust-project] [--unconfined-checks]
 anthrex run promote <run>
 anthrex run stats [--json]
 anthrex profile status [--json]
-anthrex profile detect [--trust-project]
+anthrex profile detect [--trust-project] [--unconfined-checks]
 anthrex profile show [--proposed] [--json]
 anthrex profile confirm [--yes]
 anthrex profile reject
-anthrex profile edit <key> <value> [--yes]
-anthrex profile edit --unset <key> [--yes]
+anthrex profile edit <key> <value> [--yes] [--unconfined-checks]
+anthrex profile edit --unset <key> [--yes] [--unconfined-checks]
 anthrex mcp --role scout --scout <id> [--run <run>] --window <id> [--socket <path>]      (hidden)
 anthrex filter-run --mode <failures-only|tail|none> --log-dir <dir> -c <command>          (hidden, before clap)
 anthrex filter-hook --mode <failures-only|tail|none> --log-dir <dir> [--prefix <p>]...   (hidden, before clap)
 ```
+
+Every command takes M8a's global `--dir` (default: the current directory).
 
 - **`run start`.** `--plan` and `--goal` are a required, mutually exclusive clap group.
   - `--goal` uses `GOAL_REQUEST_TIMEOUT` (decision 22).
   - On the fast path it prints the run id on stdout and `started_message` on stderr, and exits 0.
   - On a refusal it prints the message on stderr and exits 1.
 - **`run promote`** exits 0 on `Done` and 1 on `Refused`.
-- **`run stats`** prints `stats::render` or, with `--json`, `HistoryStats`. `--dir` picks the repository:
+- **`run stats`** prints `stats::render` or, with `--json`, `HistoryStats`:
 
   ```
   history: <path>  (<n> task records, <m> runs)
@@ -1170,7 +1220,7 @@ anthrex filter-hook --mode <failures-only|tail|none> --log-dir <dir> [--prefix <
   ```
 
   Every numeric column except `TASKS`, `MERGED`, `BOUNCES` and `REVERTED` is a median, and `-` when there are no merged tasks. Tokens are shown as `<n>`, `<n>k` (one decimal under 10k) or `<n>.<d>M`. A problem line `history: <n> lines skipped: <first problem>` follows when any line was skipped.
-- **`profile`** requests use `RUN_REQUEST_TIMEOUT`.
+- **`profile`** requests use `RUN_REQUEST_TIMEOUT`. The subcommand lives in `crates/cli/src/profile_cmd.rs`.
   - `status` prints:
 
     ```
@@ -1178,17 +1228,19 @@ anthrex filter-hook --mode <failures-only|tail|none> --log-dir <dir> [--prefix <
       stored: yes, confirmed <yyyy-mm-dd hh:mm> (<repo_dir>/profile.toml)      | stored: no
       stale: <paths> changed since it was confirmed                              (only when stale)
       detection: <state> since <hh:mm> (scout <id>, window <n>)                  | detection: failed: <reason> | detection: none
+      verification: confined, as runs are                                        | verification: unconfined (<why>)
     ```
 
   - `show` prints `show_text`, which is the TOML, then a comment block:
 
     ```
-    # verification <yyyy-mm-dd hh:mm>
+    # verification <yyyy-mm-dd hh:mm> (confined)
     #   setup        ok     3s   cargo fetch
     #   check        ok   214s   cargo build --workspace …
     #   single_test  ok    12s   cargo test --workspace -- --exact {test}  (sample: store::tests::round_trip)
     # dropped
     #   check: exit 101 after 30s: cargo test --all
+    #     <the confinement hint of decision 9, when it applies>
     #     <each of the last 40 lines>
     ```
 
@@ -1197,30 +1249,38 @@ anthrex filter-hook --mode <failures-only|tail|none> --log-dir <dir> [--prefix <
     - `proposed: <key> = <value>; verifying (anthrex profile status), then confirm with anthrex profile confirm`;
     - `proposed: <key> = <value>; confirm with anthrex profile confirm`, when nothing needs re-running;
     - with `--yes`, `proposed: <key> = <value>; it is stored as soon as verification passes (anthrex profile status)`. The daemon confirms it (`ProposalRecord.auto_confirm`).
-- **`run status`** (M8a's) adds ` fast path` after the state for a fast-path run, and a line `  triage: <kinds>/<scale> (<source>)` under `goal:`.
+- **`run status`** (`run_cmd/status.rs`) adds ` fast path` after the state for a fast-path run, and a line `  triage: <kinds>/<scale> (<source>)` under `goal:`.
 
 ### File sizes this milestone must respect
 
-AGENTS.md rule 8 puts the limit at about 600 lines. At the start, run `wc -l` on every file below and record the counts under "Implementation notes". The budgets are growth over those counts.
+AGENTS.md rule 8 puts the limit at about 600 lines. Counts are `wc -l` on `baa04e1`; at the start, run `wc -l` again and record any difference under "Implementation notes". Budgets are growth over those counts. A file whose budget would carry it past 600 is split by responsibility first, in a pure-move commit of its own.
 
-| File | Budget | Note |
-|------|-------:|------|
-| `crates/config/src/lib.rs` | 0 | Already over (1033 after M6.5). Everything goes in `orchestrator_adapt.rs`. |
-| `crates/config/src/orchestrator.rs` (M8a) | +12 | Five fields and one `read_adapt` call. |
-| `crates/proto/src/run.rs`, `run_info.rs`, `run_wire.rs` (M8a) | +2, +20, +45 | New variants and fields only; new types live in `profile.rs`, `scout.rs`, `adapt.rs`, `history.rs`. |
-| `crates/daemon/src/run/model.rs` (M8a) | +45 | New structs go in `run/model_adapt.rs`, which `model.rs` re-exports. |
-| `run/engine/{gates,merge,done,requests,dispatch}.rs` (M8a) | +40 each | Decider logic is `engine/deciders.rs`; these files call into it. |
-| `run/snapshot.rs`, `run/report.rs`, `run/reconcile.rs` (M8a) | +50, +40, +25 | |
-| `run/driver.rs`, `run/driver/ops.rs` (M8a) | +20, +40 | New op execution and `StartGoal` go in `run/driver/adapt.rs`. |
-| `crates/daemon/src/headless/argv.rs`, `claude_stream.rs` (M8a) | +15, +15 | `add_hook` call, `--scout`, `StructuredOutput`. |
-| `crates/daemon/src/server/run_api.rs` (M8a) | +35 | Routing only. |
-| `crates/daemon/src/lifecycle.rs` (419 + M8a) | +30 | Services, OTLP bind, restore order. |
-| `crates/mcp/src/tools.rs` (M8a) | +20 | The scout schema goes in `tools_scout.rs`. |
-| `crates/cli/src/main.rs` (527 + M8a's ≤ 25) | +20 | `Profile` variant, two pre-clap dispatches; bodies in `profile_cmd.rs`, `filter_run.rs`, `filter_hook.rs`. |
-| `crates/cli/src/run_cmd.rs` (M8a) | +25 | `--goal`, `promote`, `stats` bodies in `run_cmd/adapt.rs`. |
-| `crates/fake-agent/src/runtime.rs` (195), `script.rs` (213) | +40, +20 | Decider mode in `decider.rs`; the `bash` step in `bash.rs`. |
-| `crates/cli/tests/support/run_harness.rs` (M8a) | +50 | |
-| `scripts/pty-smoke.py` (1572) | +5 | The stage lives in `scripts/pty_smoke_adapt.py`. |
+| File | Count | Budget | Note |
+|------|------:|-------:|------|
+| `crates/config/src/lib.rs` | 605 | 0 lines | Only the `pub use orchestrator::{…}` line changes. |
+| `crates/config/src/orchestrator.rs` | 570 | +8 | Five fields, their defaults, one `adapt::read_adapt` call; everything else in `orchestrator/adapt.rs`. |
+| `crates/config/src/orchestrator/unknown.rs` | 90 | +25 | |
+| `crates/proto/src/run.rs`, `run_info.rs`, `run_wire.rs` | 451, 222, 118 | +2, +25, +50 | New variants and fields only; new types in `profile.rs`, `scout.rs`, `adapt.rs`, `history.rs`. |
+| `crates/proto/src/lib.rs` | 79 | +25 | |
+| `crates/daemon/src/run/model.rs`, `model_rounds.rs` | 430, 213 | +45, +6 | New structs in `run/model_adapt.rs`. |
+| `run/engine/dispatch.rs` | 578 | +10 | Decider dispatch is `engine/deciders.rs`. |
+| `run/engine/{gates,merge,done,requests,restore,schedule}.rs` | 467, 505, 492, 404, 384, 303 | +40 each | These call into `engine/deciders.rs` and `phases::set_state`. |
+| `run/engine/mod.rs`, `ops.rs`, `ladder.rs` | 524, 395, 511 | +20, +20, +5 | |
+| `run/edits.rs` | 571 | +5 | `set_state` replacements are line-neutral. |
+| `run/snapshot.rs`, `run/report.rs`, `run/reconcile/mod.rs`, `reconcile/git.rs` | 230, 236, 227, 441 | +50, +40, +10, +25 | |
+| `run/driver.rs` | 598 | +3 | `mod adapt;`, the `OnceLock<Adaptation>` field and its init. If that passes 600, move `Book` and `Retiring` into `driver/book.rs` first. |
+| `run/driver/ops.rs`, `driver/requests.rs`, `driver/restore.rs` | 580, 561, 443 | +10, +25, +15 | Dispatch only; bodies in `driver/adapt.rs` (which may itself be split into `driver/adapt/{requests,ops}.rs`). |
+| `run/role_launch.rs`, `run/contract.rs`, `run/exec.rs` | 552, 563, 555 | +15, +20, 0 | |
+| `crates/daemon/src/headless/argv.rs`, `headless/mod.rs`, `claude_stream.rs` | 446, 255, 343 | +15, +20, +15 | `add_hook` call, `--scout`, `credential_scrub_for`, `StructuredOutput`. |
+| `crates/daemon/src/manager/headless.rs` | 521 | +5 | The scout refusal text. |
+| `crates/daemon/src/server/run_api.rs` | 96 | +10 | Routing only. |
+| `crates/daemon/src/lifecycle.rs` | 439 | +35 | Services, OTLP bind, restore order. |
+| `crates/mcp/src/tools.rs`, `lib.rs`, `forward.rs` | 250, 106, 148 | +15, +3, +5 | The scout schema in `tools_scout.rs`. |
+| `crates/cli/src/main.rs` | 594 | +6 | `Profile` variant and arm, `mod` lines; the `hook`, `filter-run` and `filter-hook` pre-clap dispatch moves into a new `pre_clap.rs` (bodies in `filter_run.rs`, `filter_hook.rs`), `profile_cmd.rs`. |
+| `crates/cli/src/mcp_cmd.rs`, `run_cmd.rs`, `run_cmd/status.rs` | 121, 472, 220 | +25, +25, +20 | `--goal`, `promote`, `stats` bodies in `run_cmd/adapt.rs`. |
+| `crates/fake-agent/src/runtime.rs`, `script.rs`, `headless.rs`, `roles.rs`, `main.rs` | 343, 424, 553, 323, 342 | +40, +20, +20, +10, +10 | Decider mode in `decider.rs`; the `bash` step in `bash.rs`. |
+| `crates/cli/tests/support/run_harness.rs` | 525 | +15 | Decision 36's defaults and `pub(super)` fields; the M8b helpers in `support/run_adapt.rs`. |
+| `scripts/pty-smoke.py` | 1793 | +6 | The stage lives in `scripts/pty_smoke_adapt.py`. |
 
 No new file may exceed 600 lines.
 
@@ -1229,19 +1289,18 @@ No new file may exceed 600 lines.
 Exact names milestones 8c, 9 and 9.5 consume. Renaming any of them later is a cross-milestone change and must update those briefs.
 
 | Consumer | Name | What it is |
-|----------|------|------------|
+|----------|------|-----------|
 | M8c | `RunInfo.path: Option<RunPath>` (`proto::RunPath { Fast, Plan, Large }`) | A fast-path run's root node is the run itself (spec §16.1). |
 | M8c | `RunInfo.triage: Option<TriageInfo>`, `RunInfo.promote_requested_at: Option<u64>`, `RunInfo.profile_source: Option<ProfileSource>` | Inspector fields. |
 | M8c | `RunInfo.usage: Option<RunUsage { total, by_role, decider_calls, decider_fallbacks }>` | The orchestrator inspector's `spend` line; `by_role` keys `worker`, `reviewer`, `scout`, `decider`, `orchestrator`. |
 | M8c | `RunInfo.scouts: Vec<ScoutInfo>` (`proto::ScoutInfo`, `ScoutState`, `ScoutKind`) | Scout nodes and the scout inspector (spec §16.3–§16.4); empty until M9 spawns run scouts. |
-| M8c | `TaskInfo.decider_usage`, `TaskInfo.size_check: Option<SizeCheckInfo>`, `TaskInfo.diff: Option<DiffStats>`, `TaskInfo.phases: Option<PhaseSecs>`, `TaskInfo.block_source`, `CheckInfo.summary_source` | Task inspector fields. Round usage is M8a's `AgentRoundInfo.usage`. |
+| M8c | `TaskInfo.decider_usage`, `TaskInfo.size_check: Option<SizeCheckInfo>`, `TaskInfo.diff: Option<DiffStats>`, `TaskInfo.phases: Option<PhaseSecs>`, `TaskInfo.block_source`, `CheckInfo.decider_summary`, `CheckInfo.summary_source` | Task inspector fields. Round usage is M8a's `AgentRoundInfo.usage`. |
 | M8c | `proto::AgentRole::Scout` | A scout's headless window carries it in `WindowInfo.run` for run scouts. |
-| M8a (at M8b's start) | `RepoProfile.protected` (extras only) → `ProfileSpec.protected` through `profile::resolve::run_profile` | The stored extras that M8a unions with `BUILTIN_PROTECTED` and enforces (decision 56). |
 | M9 | `proto::RepoProfile`, `profile::repo_dir(data_dir, project)`, `<repo_dir>/profile.toml`, `ProfileService::effective(project) -> Effective`, `profile::summary(&RepoProfile)` | The profile for `get_context` and plan validation. |
 | M9 | `proto::ScoutReport`, `ScoutFile`, `ScoutKind::Area`; run scout reports at `<data_dir>/runs/<run>/scouts/<id>.json`, repository ones at `<repo_dir>/scouts/<id>.json`; `scout::report::{report_path, resolve_ref}`; the `onboarding` alias in `scout_refs` | Scout output for planners and worker briefs. |
-| M9 | `ScoutService::{start, tool, stop, info, run_scouts}`, `ScoutSpec`, `ScoutContext`, `ScoutOutcome`, `SCOUT_CONTRACT`, `scout::spec::{route, headless_spec}`, `Run.scout_reports`, `Run.scout_usage` | `spawn_scout` builds on these. It must push the report id into `Run.scout_reports` so the size cross-check sees it. |
+| M9 | `ScoutService::{start, tool, stop, info, run_scouts}`, `ScoutSpec`, `ScoutContext`, `ScoutOutcome`, `SCOUT_CONTRACT`, `scout::spec::{route, headless_spec}`, `Run.scout_reports`, `Run.scout_usage` | `spawn_scout` builds on these. Area scouts are launched read-only (decision 12). It must push the report id into `Run.scout_reports` so the size cross-check sees it. |
 | M9 | `decider::call::decide(&DeciderContext, &DeciderRequest) -> Decision`, `DeciderRequest`, `DeciderAnswer`, `Decision`, `DeciderKind`, `decider::fallback::fallback_decision`, `OpKind::Decide`, `run::engine::deciders::{queue, on_decided}` | The decider interface; new kinds are new variants. |
-| M9 | `RunRequest::StartGoal`, `run::triage::{route, TriageRoute}` | M9 replaces the `Plan` and `Large` refusal with the orchestrator path. |
+| M9 | `RunRequest::StartGoal`, `run::triage::{route, TriageRoute}`, `driver/requests.rs::build_plan` | M9 replaces the `Plan` and `Large` refusal with the orchestrator path. |
 | M9 | `Run.promote_requested_at` | M9 performs the promotion the user asked for. |
 | M9 | `metering::orchestrator_env(addr, run_id)`, `<data_dir>/otlp.addr`, `EventKind::OrchestratorUsage` | Metering the orchestrator window. |
 | M9 | `headless::McpTarget.scout_id`, `ToolCall.scout_id`, `anthrex mcp --role scout --scout` | Scout MCP plumbing. |
@@ -1253,24 +1312,28 @@ Exact names milestones 8c, 9 and 9.5 consume. Renaming any of them later is a cr
 
 Shared test conventions:
 
-- **Reducer tests** use M8a's `engine/tests/fixture.rs`. M8b adds `fx.decided(decider_id, Decision)` and `fx.queued_deciders()`.
-- **Process tests** that need `fake-agent` live in `crates/cli/tests/`, use `support::fake_agent_bin()`, and call daemon library code directly. They reuse `crates/daemon/tests/support/mod.rs`'s `TempRepo` through a `#[path]` module include.
-- **End-to-end tests** use M8a's `RunHarness`. M8b adds these methods:
-  - `with_deciders(mode)`, which writes `[orchestrator.deciders] mode`, `timeout_secs = 5` and `slot_wait_secs = 2`, and sets `ANTHREX_DECIDER_BIN = fake_agent_bin()` and `FAKE_AGENT_DECIDER_DIR = <tmp>/deciders`;
+- **Reducer tests** use M8a's `run/engine/tests/fixture.rs` (register each new test file in `engine/tests/mod.rs`). M8b adds `fx.decided(decider_id, Decision)` and `fx.queued_deciders()` to the fixture.
+- **Process tests** that need `fake-agent` live in `crates/cli/tests/`, use `support::fake_agent_bin()`, and call daemon library code directly. They build repositories with `support::run_harness::init_repo` (CLI tests do not include `crates/daemon/tests/support`). Daemon-crate tests that need a repository but no `fake-agent` use `crates/daemon/tests/support/mod.rs`'s `TempRepo`.
+- **End-to-end tests** use M8a's `RunHarness`. M8b adds these methods, in `crates/cli/tests/support/run_adapt.rs`:
+  - `with_deciders(mode)`: returns the `[orchestrator]` lines `deciders.mode = "<mode>"`, `deciders.timeout_secs = 5`, `deciders.slot_wait_secs = 2`, and the environment `ANTHREX_DECIDER_BIN = fake_agent_bin()` and `FAKE_AGENT_DECIDER_DIR = <tmp>/deciders`, for `RunHarness::with_env`;
   - `decider(kind, n, value)`, which writes `<tmp>/deciders/<kind>-<n>.json`;
   - `decider_calls() -> Vec<Value>`;
-  - `stored_profile(toml)`, which writes `<repo_dir>/profile.toml` and a `profile.meta.json` with the fingerprint of the files the TOML names, as `anthrex profile confirm` would;
-  - `onboarding_report(json)`.
-- **`PROFILE_WAIT` = 150 s.** It is derived from the test configuration's bounds: `scouts.timeout_secs = 60`, plus three verification commands at `onboarding.verify_timeout_secs = 10` (30 s), plus at most 8 engine git calls at `git_timeout_secs = 5` (40 s). That is 130 s. Add the row to `docs/timing-budgets.md`, with the decider rows of M8b.7.
+  - `stored_profile(toml)`, which writes `<repo_dir>/profile.toml` and a `profile.meta.json` with the fingerprint of the files the TOML names, as `anthrex profile confirm` would (`repo_dir` from `anthrex profile status --json`);
+  - `onboarding_report(json)`;
+  - `start_goal(goal) -> Output`, waiting `GOAL_WAIT`.
+- **`GOAL_WAIT` = 120 s**: `REQUEST_WAIT` (60 s, which covers `build`'s ten git calls at 5 s) + the harness's `deciders.timeout_secs` (5 s) + the kill grace (2 s) + `StartGoal`'s own preflight and `git ls-files` (seven calls at 5 s, 35 s) = 102 s, rounded up. Add the row to `docs/timing-budgets.md`.
+- **`PROFILE_WAIT` = 300 s**: `scouts.timeout_secs = 60` + three verification commands at `onboarding.verify_timeout_secs = 10` (30 s) + at most 40 engine git calls at `git_timeout_secs = 5` (200 s: preflight, two checkouts made, two salvages, two removals) = 290 s. M8b.11 counts the calls as landed and records the row in `docs/timing-budgets.md`; more than 40 calls raises the bound.
 - **No test sleeps to synchronise.** Every wait is a deadline loop.
+- **Confinement in tests.** Profile verification is confined on macOS like any check, so a test check that must write outside its checkout writes under `RunHarness::cache_dir()`, which the harness grants in `[orchestrator.cache_dirs]`. Off macOS the harness already sets `unconfined_checks = true`.
 
 ### Scenario map (spec §21)
 
 | §21 scenario | Test here |
 |--------------|-----------|
-| A green S task on the fast path | `e2e_green_s_task_on_the_fast_path` (M8b.15) |
-| *(M8b)* a decider that fails never blocks a run | `e2e_check_bounce_falls_back_to_the_tail_when_the_decider_fails`, `a_hanging_decider_falls_back_at_its_timeout_and_leaves_no_process` |
-| *(M8b)* the profile is proposed only from commands that ran | `e2e_detect_proposes_only_verified_commands` |
+| A green S task on the fast path | `e2e_green_s_task_on_the_fast_path` (M8b.18) |
+| *(M8b)* a decider that fails never blocks a run | `e2e_check_bounce_falls_back_to_the_tail_when_the_decider_fails` (M8b.18), `a_hanging_decider_falls_back_at_its_timeout_and_leaves_no_process` (M8b.7) |
+| *(M8b)* the profile is proposed only from commands that ran | `e2e_detect_proposes_only_verified_commands` (M8b.11) |
+| *(M8b)* a model-written profile cannot widen confinement | `a_profile_with_a_confinement_key_does_not_parse` (M8b.4), `verification_uses_the_users_confinement_not_the_proposal` (M8b.10) |
 
 Every other §21 scenario is M8a's, and M8b must keep all of them green, with deciders off in the harness (decision 36).
 
@@ -1279,29 +1342,28 @@ Every other §21 scenario is M8a's, and M8b must keep all of them green, with de
 **Files.** Create:
 - `crates/daemon/tests/fixtures/deciders/claude-<version>-decider.jsonl` and `codex-<version>-decider.jsonl`;
 - `crates/daemon/tests/fixtures/otlp/claude-<version>-metrics.json`;
-- `crates/daemon/tests/fixtures/headless/claude-<version>-filter-hook.jsonl`;
-- a `.meta.json` beside each: CLI version, date, exact command, and what was observed versus only documented.
+- `crates/daemon/tests/fixtures/headless/claude-<version>-filter-hook.jsonl` and `claude-<version>-scout.jsonl`;
+- a `.meta.json` beside each, with M8a's keys (`runtime`, `cli_version`, `captured`, `redactions`, `note`, `command`, `observed`).
 
 Fill "Implementation notes".
 
-**Tests first.** None. This task records facts. It is the only task that runs the real `claude` and `codex`, in `/tmp/anthrex-m8b1/`, on the implementer's own login. Personal paths become `/tmp/fixture`.
+**Tests first.** None. This task records facts. It is the only task that runs the real `claude` and `codex`, in `/tmp/anthrex-m8b1/`, on the implementer's own login, with M8a.1's scrubbed environment (`env -i` with only `HOME`, `PATH`, `USER`, `LOGNAME`, `SHELL`, `TERM`, `LANG`). Personal paths become `/tmp/fixture`. If a probe would write the user's `~/.claude` or `~/.codex` (as a Codex `workspace-write` turn writes a trust entry, M8a F2), do not run it: record the item as outstanding for the user, as M8a's manual check 4e is.
 
 **Change.** Record the command, the version and the relevant output for each item below:
 
-1. **A Claude decider call.** Pipe one stream-json user message into `claude -p --input-format stream-json --output-format stream-json [--verbose] <CLI_CAPS.claude_user_settings_only> --permission-prompts none --permission-mode plan --disallowedTools Bash,Edit,Write,NotebookEdit,Agent,WebFetch,WebSearch --max-turns 3 --json-schema '<the blocked_reason schema>' --no-session-persistence --model claude-haiku-4-5`, then close stdin. Record:
+1. **A Claude decider call.** Pipe one stream-json user message into `claude -p --input-format stream-json --output-format stream-json --verbose --permission-prompts none --setting-sources user --strict-mcp-config --permission-mode dontAsk --disallowedTools Bash,Edit,Write,NotebookEdit,Agent,WebFetch,WebSearch,Read,Glob,Grep --max-turns 3 --json-schema '<the blocked_reason schema>' --no-session-persistence --model claude-haiku-4-5`, then close stdin. Record:
    - which flags exist;
    - where the JSON answer appears: `result.structured_output`, a `StructuredOutput` tool use, or assistant text. This sets `DECIDER_CAPS.answer_source` and whether `SessionEvent::StructuredOutput` is added;
    - whether a schema without every property in `required` is refused (`DECIDER_CAPS.strict_schemas`);
    - the result's `usage`;
    - whether the process exits after `result`.
-2. **A Codex decider call.** `codex exec --json --skip-git-repo-check --ephemeral <CLI_CAPS.codex_user_config_only> -s read-only -c approval_policy="never" -c model_reasoning_effort="low" --output-schema <file> -- "<the blocked_reason prompt>"`. Record which flags exist, that the final `agent_message` text is the JSON, and `turn.completed.usage`.
-3. **The filter hook under `-p`.** Use a scratch repository and decision 28's `--settings` with two `PreToolUse` groups: M3's recording command, and a `Bash` group whose script prints `updatedInput` with the command `echo rewritten`. Add `--allowedTools Bash` and `--permission-prompts none`, M8a decision 54's sandbox block, and a `log_dir` writable root. Ask for `echo original`. Record:
+2. **A Codex decider call.** `codex exec --json --skip-git-repo-check --ephemeral -s read-only -c sandbox_workspace_write.network_access=false -c approval_policy="never" -c model_reasoning_effort="low" --output-schema <file> -- "<the blocked_reason prompt>"` in an empty directory. Record which flags exist, that the final `agent_message` text is the JSON, `turn.completed.usage`, and whether the run wrote anything to `~/.codex/config.toml` (compare its hash before and after).
+3. **The filter hook under `-p`.** Use a scratch repository and decision 28's `--settings` with two `PreToolUse` groups: M3's recording command, and a `Bash` group whose script prints `updatedInput` with the command `echo rewritten > "$TMPDIR/anthrex-logs/probe"`. Add `--allowedTools Bash` and `--permission-prompts none`, M8a's worker sandbox block exactly as `claude_settings` writes it (writable roots and pins), and `TMPDIR` set to a directory in its writable roots. Ask for `echo original`. Record:
    - whether both groups fired;
-   - whether the rewritten command ran (its tool result);
+   - whether the rewritten command ran (its tool result, and the probe file);
    - whether `permissionDecision: "allow"` was needed (`output_filter::HOOK_SETS_ALLOW`);
-   - the payload's `tool_input` keys;
-   - whether a write into `log_dir` from inside the sandboxed command succeeds.
-4. **Scout launch.** Reuse M8a.1's reviewer finding for `--permission-mode plan` with an allowed MCP tool: it applies to area scouts. For the onboarding scout, run `--permission-mode default --allowedTools Bash,Read` with the sandbox block in a detached worktree. Record that `Bash` runs, and that a write outside the worktree is denied.
+   - the payload's `tool_input` keys.
+4. **Scout launch.** In a standalone scratch checkout, run a Claude session with `--permission-mode dontAsk --allowedTools mcp__anthrex__submit_scout_report,Bash,Read,Glob,Grep --disallowedTools Edit,Write,NotebookEdit` and a sandbox block with an empty `allowWrite` and M8a's pins (a stub MCP server that records the call). Record that `Bash` runs `ls` and `git log -1`, that `touch x` and a write under `$TMPDIR` are denied, that `curl https://example.com` fails, and that the MCP call is allowed (M8a.1 recorded the reviewer's; this confirms it with `Bash` allowed too).
 5. **OTLP.** Run `claude -p "reply ok"` with `CLAUDE_CODE_ENABLE_TELEMETRY=1 OTEL_METRICS_EXPORTER=otlp OTEL_EXPORTER_OTLP_PROTOCOL=http/json OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:<port> OTEL_METRIC_EXPORT_INTERVAL=1000 OTEL_RESOURCE_ATTRIBUTES=anthrex.run=r-fix,anthrex.role=orchestrator` against a local listener that writes each request's headers and body. Record:
    - the path;
    - the content type;
@@ -1314,94 +1376,103 @@ Fill "Implementation notes".
 
    This fixes `orchestrator_env`'s exact list: the documented set above, plus `OTEL_EXPORTER_OTLP_COMPRESSION=none` if compression is on by default.
 
-Also cross-reference M8a.1's record of stream usage field names (spec §14.8 asks the metering milestone to verify them, and M8a meters first). Add them here only if M8a.1 did not record them.
+Also cross-reference M8a.1's record of stream usage field names (M8a's implementation notes, "M8a.1 external tools"). Add them here only if M8a.1 did not record them.
 
-In `decider/argv.rs`, add `pub struct DeciderCaps { pub claude_json_schema: bool, pub claude_max_turns: bool, pub claude_no_session_persistence: bool, pub answer_source: AnswerSource, pub strict_schemas: bool, pub codex_output_schema: bool, pub codex_ephemeral: bool }`, `pub enum AnswerSource { ResultField, StructuredOutputTool, Text }` and `pub const DECIDER_CAPS: DeciderCaps`, set from items 1–2. A flag that does not exist is omitted from the argv.
+In `decider/argv.rs`, add `DeciderCaps`, `AnswerSource` and `DECIDER_CAPS` (Interfaces), set from items 1–2. A flag that does not exist is omitted from the argv.
 
 A missing capability stops work on the item that needs it, as AGENTS.md says:
 - `--json-schema` or `--output-schema` absent: that runtime's deciders rely on the prompt alone and `parse`, which still validates everything;
-- the filter hook ignored: record it and skip the injection in M8b.8.
+- the filter hook ignored, or the rewritten command unable to write under `$TMPDIR`: record it and skip the injection in M8b.8 (the hook, `filter-run` and their tests still land);
+- a scout's MCP call refused under `dontAsk`: record it and stop M8b.9's launch until a ruling.
 
-**Acceptance.** "Implementation notes" has a dated "M8b.1 external facts" entry covering all five items and every `DECIDER_CAPS` value. The four fixtures and their meta files exist.
+**Acceptance.** "Implementation notes" has a dated "M8b.1 external facts" entry covering all five items and every `DECIDER_CAPS` value, with any item not run listed as outstanding. The fixtures that could be recorded and their meta files exist.
 
-**Commit.** `test(daemon): record the decider, filter-hook and OTLP fixtures and the verified CLI facts`
+**Commit.** `test(daemon): record the decider, filter-hook, scout and OTLP fixtures and the verified CLI facts`
 
-### M8b.2 Protocol: scout role, profile, scout, adaptation and history types, and the version bump
+### M8b.2 Protocol: scout role, profile, scout, adaptation and history types, and version 8
 
-**Files.** Create `crates/proto/src/profile.rs`, `scout.rs`, `adapt.rs`, `history.rs`, `adapt_tests.rs`. Modify `crates/proto/src/lib.rs`, `run.rs`, `run_info.rs`, `run_wire.rs`, and every exhaustive `match` on `AgentRole`, `RunRequest` or `RunReply` in the workspace (the daemon answers the new requests with `Refused { request, message: "not available yet" }` until their tasks land).
+**Files.** Create `crates/proto/src/profile.rs`, `scout.rs`, `adapt.rs`, `history.rs`, `adapt_tests.rs`. Modify `crates/proto/src/lib.rs`, `run.rs`, `run_info.rs`, `run_wire.rs`, and every exhaustive `match` on `AgentRole`, `RunRequest` or `RunReply` in the workspace: `crates/mcp/src/tools.rs` (`tools_for`, `role_name`), `crates/daemon/src/headless/argv.rs` (`mcp_args`), `crates/cli/src/mcp_cmd.rs`, `crates/daemon/src/run/driver/requests.rs` (`request`), and the CLI's reply handling in `run_cmd.rs`. Until their tasks land, the daemon answers each new request with `Refused { request, message: "not available yet" }`, and `mcp_args` writes role `scout`.
 
 **Tests first**, in `adapt_tests.rs`:
 - `agent_role_scout_serializes_as_scout` (`"scout"`, under M8a's `snake_case`).
-- `repo_profile_parses_the_spec_example`: spec §6's TOML block, plus `sample_test`, `manifests` and `filter_prefixes`, parses. `generated == ["Cargo.lock"]`, `output_filter == FailuresOnly`, and `env["CARGO_TARGET_DIR"] == "{worktree}/target"`.
+- `repo_profile_parses_the_spec_example`: spec §6's TOML block (with `protected` reduced to one extra entry, `.cursor/**`), plus `sample_test`, `manifests` and `filter_prefixes`, parses. `generated == ["Cargo.lock"]`, `output_filter == FailuresOnly`, and `env["CARGO_TARGET_DIR"] == "{worktree}/target"`.
 - `repo_profile_rejects_unknown_keys`: `lint = "x"` fails, naming `lint`.
+- `repo_profile_has_no_confinement_keys`: each of `cache_dirs = ["/tmp/c"]`, `confined_network = true`, `confined_unix_sockets = ["/tmp/s"]`, `confined_localhost_ports = [5432]` fails to parse, naming the key.
 - `repo_profile_protected_defaults_to_no_extras`: a profile without `protected` parses to `protected == []`, and `spec().protected == None`.
 - `repo_profile_spec_maps_every_shared_key`: `spec()` carries `modules`, `hub`, `source`, `generated`, `setup`, `check`, `check_timeout_secs`, `single_test`, `test_passed` and `env`, and an empty list gives `None`.
 - `output_filter_kebab_case` (`"failures-only"`).
-- `scout_report_round_trips_json_and_msgpack`, with a `ProfileFindings`.
+- `scout_report_round_trips_json_and_msgpack`, with a profile.
 - `history_lines_are_tagged`: a `TaskRecord` serialises with `"type":"task"`, and a line with an extra unknown field still deserialises.
-- `new_snapshot_fields_default_when_absent`: M8a's `RunInfo` and `TaskInfo` JSON without the new fields gives `None` and empty values.
+- `new_snapshot_fields_default_when_absent`: M8a's `RunInfo`, `TaskInfo` and `CheckInfo` JSON (taken from M8a's `run_tests_fixtures.rs`) without the new fields gives `None` and empty values.
 - `every_new_request_and_reply_round_trips`: `StartGoal`, `Promote`, `Stats`, each `ProfileRequest`, `Triaged`, each `ProfileReply` and `Stats(HistoryStats)`, wrapped in `ClientMsg::Run` / `DaemonMsg::Run`, survive `rmp_serde::to_vec_named`.
 - `tool_call_scout_id_defaults_to_none`.
-- Update `proto_version_is_*`.
+- `token_usage_add_assign_is_field_wise`.
+- Rename `proto_version_is_seven` to `proto_version_is_eight`.
 
-**Change.** Add the Interfaces types.
+**Change.** Add the Interfaces types. Update `PROTO_VERSION`'s doc comment with the derivation.
 
-**Acceptance.** Tests pass. The workspace builds. `PROTO_VERSION` equals the header's derivation, recorded in "Implementation notes".
+**Acceptance.** Tests pass. The workspace builds. `PROTO_VERSION == 8`, derived in "Implementation notes".
 
-**Commit.** `feat(proto): add the scout role and the profile, scout, triage, usage and history types`
+**Commit.** `feat(proto): add the scout role and the profile, scout, triage, usage and history types (protocol 8)`
 
 ### M8b.3 Configuration
 
-**Files.** Create `crates/config/src/orchestrator_adapt.rs` and `orchestrator_adapt_tests.rs`. Modify `crates/config/src/orchestrator.rs`.
+**Files.** Create `crates/config/src/orchestrator/adapt.rs` and `crates/config/src/orchestrator_tests_adapt.rs` (included from `orchestrator_tests.rs` by `#[path]`, as `orchestrator_tests_confine.rs` is). Modify `crates/config/src/orchestrator.rs`, `orchestrator/unknown.rs`, and the one `pub use orchestrator::{…}` line of `lib.rs`.
 
 **Tests first:**
 - `adapt_defaults_when_absent`: every default in Interfaces.
-- `adapt_keys_are_read`.
-- `adapt_out_of_range_values_fall_back`: `timeout_secs = 4`, `timeout_secs = 601`, `slot_wait_secs = 601`, `scouts.timeout_secs = 59`, `max_tool_calls = 9`, `verify_timeout_secs = 9`, `otlp_port = 70000`. Each gives one problem with the exact message and keeps the default.
+- `adapt_keys_are_read` (every key set to a value different from its default).
+- `adapt_out_of_range_values_fall_back`: `deciders.timeout_secs = 4`, `= 601`, `slot_wait_secs = 601`, `scouts.timeout_secs = 59`, `max_tool_calls = 9`, `verify_timeout_secs = 9`, `otlp_port = 70000`. Each gives one problem with the exact message and keeps the default.
 - `decider_mode_values`: `claude`, `codex` and `off` are accepted; `gpt` is a problem.
 - `scouts_runtime_shell_is_a_problem`.
-- `unknown_adapt_keys_are_reported` (`orchestrator.deciders.model` gives `unknown key, ignored`).
+- `unknown_adapt_keys_are_reported` (`orchestrator.deciders.model` and `orchestrator.onboarding.cache_dirs` each give `unknown key, ignored`).
 - `fast_path_false_is_read`.
+- `the_dotted_and_table_forms_read_alike` (`deciders.mode = "off"` under `[orchestrator]` and `[orchestrator.deciders] mode = "off"`).
 
 **Change.** Decision 3.
 
-**Acceptance.** Tests pass. `crates/config/src/lib.rs` is unchanged (`git diff --stat` shows nothing for it).
+**Acceptance.** Tests pass. `git diff --stat baa04e1 -- crates/config/src/lib.rs` shows one line changed, none added.
 
 **Commit.** `feat(config): add the deciders, scouts, onboarding, metering and fast_path settings`
 
 ### M8b.4 Profile store and precedence
 
-**Files.** Create `crates/daemon/src/profile/mod.rs`, `profile/resolve.rs`, `profile/proposal.rs` (types and `validate` only), `profile/store.rs`, `crates/daemon/tests/profile_store.rs`. Modify `crates/daemon/src/lib.rs` (`pub mod profile;`), `run/driver.rs` or `run/driver/adapt.rs` (decision 6 in `request(Start)`), and `run/model.rs` (`Run.profile_source`, `output_filter`, `filter_prefixes`, `repo_dir`, `stale_profile`).
+**Files.** Create `crates/daemon/src/profile/mod.rs`, `profile/resolve.rs`, `profile/proposal.rs` (types and `validate`, `from_findings`, `apply_edit` only), `profile/store.rs`, `profile/tests.rs`, `crates/daemon/tests/profile_store.rs`. Create `crates/daemon/src/run/driver/adapt.rs` with `choose_profile`. Modify `crates/daemon/src/lib.rs` (`pub mod profile;`), `run/driver.rs` (`mod adapt;`), `run/driver/requests.rs` (split `build` into `build` + `build_plan`; call `adapt::choose_profile` after preflight; the protected-files scan uses the chosen profile), `run/plan.rs` (`for_repo` → `pub(crate)`), and `run/model.rs` + new `run/model_adapt.rs` (`Run.profile_source`, `output_filter`, `filter_prefixes`, `repo_dir`, `stale_profile`).
 
 **Tests first:**
-- In `resolve.rs`:
+- In `profile/tests.rs` (pure):
   - `stored_profile_replaces_the_plan_profile_entirely`. Stored sets `check = "a"` only; the plan sets `check = "b"` and `single_test = "t {test}"`. The chosen spec has `check == Some("a")` and `single_test == None`, source `Stored`, and two notes with the exact text naming `check` and `single_test`.
+  - `a_stored_profile_leaves_no_gap_for_the_config`: stored sets `check` only; `[orchestrator.profile]` sets `single_test` and `setup`. Through `choose_profile`'s config clone and M8a's `resolve_profile`, the resolved `Profile` has `single_test == None` and `setup == None`.
   - `without_a_stored_profile_m8a_rule_holds`: the plan's `check` over the config's `single_test`, source `Plan`.
   - `nothing_anywhere_is_source_none`.
   - `filter_fields_only_come_from_a_stored_profile`.
-  - `builtins_always_apply_whatever_the_stored_list`. The stored `protected` is `[]` in one case and `[".cursor/**"]` in another, and a plan `[profile] protected = ["docs/agents/**"]` is present. Run the chosen spec through M8a's profile resolution (`build_run`'s resolved `Profile.protected`). In both cases the result contains every entry of `BUILTIN_PROTECTED`, plus `.cursor/**` when stored, plus `docs/agents/**`. There is no "ignored" note for `protected`.
+  - `builtins_always_apply_whatever_the_stored_list`. The stored `protected` is `[]` in one case and `[".cursor/**"]` in another, the plan has `[profile] protected = ["docs/agents/**"]` and the config `[orchestrator.profile] protected = ["GEMINI.md"]`. Through `run_profile`, `choose_profile`'s config clone and M8a's `resolve_profile`, the resolved `Profile.protected` contains every entry of `BUILTIN_PROTECTED`, plus `.cursor/**` when stored, plus `docs/agents/**` and `GEMINI.md`. There is no "ignored" note for `protected`.
+  - `confinement_still_comes_from_the_users_config`: with a stored profile, `build_run` (through `choose_profile`) gives the run the config's `cache_dirs` and `confined_network` entry for its root, and a different root's entry is not taken.
   - `derived_prefixes_from_check_and_single_test`: check `cargo build --all && cargo test -q; cargo fmt --check` and `single_test` `cargo test -- --exact {test}` give `["cargo build", "cargo test", "cargo fmt"]`.
-- In `proposal.rs`: `from_findings_keeps_only_extra_protected_entries`. A scout reporting `[".claude/**", "**/AGENTS.md", ".cursor/**", ".cursor/**"]` gives `[".cursor/**"]`.
-- In `proposal.rs`: `edit_of_protected_refuses_builtins`. `edit protected '[".mcp.json"]'` is refused with the exact message. `edit protected '[".cursor/**", "GEMINI.md"]'` stores exactly those two, and `--unset protected` leaves no extras, with every built-in still in force (checked through `run_profile` plus M8a's resolution).
-- In `proposal.rs`: `validate_reports_each_bad_key` (a glob with `..`, an absolute `protected` entry, `single_test` without `{test}`, `test_passed` `(` that does not compile, env key `1X`, `generated` absolute), each with its exact message.
-- In `profile_store.rs`, on a `TempRepo`:
+  - `from_findings_keeps_only_extra_protected_entries`: a scout reporting `[".claude/**", "**/AGENTS.md", ".cursor/**", ".cursor/**"]` gives `[".cursor/**"]`.
+  - `from_findings_drops_reserved_env_keys`: `PATH`, `HOME`, `BASH_ENV`, `PYTHONPATH` and `ANTHREX_X` are dropped, `PYTHONUNBUFFERED` and `RUST_LOG` kept (M8a's `reserved_env`).
+  - `edit_of_protected_refuses_builtins`. `edit protected '[".mcp.json"]'` is refused with the exact message. `edit protected '[".cursor/**", "GEMINI.md"]'` stores exactly those two, and `--unset protected` leaves no extras, with every built-in still in force (checked through `run_profile` plus M8a's resolution).
+  - `edit_refuses_confinement_keys`: `edit cache_dirs '["/tmp"]'` and `edit confined_network true` are refused as `unknown key <key>; one of <keys>`.
+  - `validate_reports_each_bad_key` (a glob with `..`, an absolute `protected` entry, `single_test` without `{test}`, `test_passed` without `{test}`, `test_passed` `(` that does not compile, env key `1X`, env key `PATH`, `generated` absolute), each with its exact message.
+- In `crates/daemon/tests/profile_store.rs`, on a `TempRepo`:
   - `repo_dir_is_shared_by_linked_worktrees` (the main checkout and a linked worktree give one `repo_dir`, `<data>/repos/<basename>-<hash8>`).
   - `save_and_load_round_trip_atomically`: a leftover `profile.toml.tmp` is ignored and removed.
   - `an_unparseable_profile_is_reported_with_its_path`.
+  - `a_profile_with_a_confinement_key_does_not_parse`: a hand-written `profile.toml` with `cache_dirs = ["/"]` loads as `Unparseable`, naming `cache_dirs`.
   - `fingerprint_changes_with_content_length_and_absence`.
   - `stale_lists_exactly_the_changed_files`.
   - `nothing_is_written_inside_the_repository`: after save, `git status --porcelain --ignored` in the repo is empty.
-- The decision 6 driver path is tested end to end in M8b.15 (`e2e_stored_profile_wins_over_the_plan_profile`, `e2e_a_corrupt_stored_profile_refuses_the_run`).
+- The decision-6 driver path is tested end to end in M8b.19 (`e2e_stored_profile_wins_over_the_plan_profile`, `e2e_a_corrupt_stored_profile_refuses_the_run`).
 
-**Change.** Decisions 4–7 (the pure and store parts), and decision 6 in `request(Start)`. `Run.repo_dir` is set for every run. The stale attention line is added at start when `stale` is non-empty.
+**Change.** Decisions 4–7 (the pure and store parts), and decision 6 in `build`. `Run.repo_dir` is set for every run. The stale attention line is added at start when `stale` is non-empty.
 
-**Acceptance.** Tests pass. `profile/resolve.rs` and `profile/proposal.rs` are pure (the Verification grep).
+**Acceptance.** Tests pass. `profile/resolve.rs` and `profile/proposal.rs` are pure (the Verification grep). Every M8a test still passes.
 
 **Commit.** `feat(daemon): store the repository profile in the data directory and let it supersede a plan's profile`
 
 ### M8b.5 Deciders I: schemas, prompts, parsing, fallbacks and argv
 
-**Files.** Create `crates/daemon/src/decider/{mod,schema,prompt,parse,fallback,argv}.rs` and `decider/tests.rs`. Modify `crates/daemon/src/lib.rs`.
+**Files.** Create `crates/daemon/src/decider/{mod,schema,prompt,parse,fallback,argv}.rs` and `decider/tests.rs`. Modify `crates/daemon/src/lib.rs`, and `crates/daemon/src/headless/mod.rs` (`credential_scrub_for`).
 
 **Tests first:**
 - `every_schema_is_closed_and_strict`: every object has `additionalProperties: false`, and every property is listed in `required`.
@@ -1417,21 +1488,22 @@ A missing capability stops work on the item that needs it, as AGENTS.md says:
   - `triage_single_without_task_is_an_error`;
   - `triage_task_size_l_is_an_error`;
   - `size_check_ignores_unknown_ids_and_reports_bad_sizes` (the exact path message);
-  - `check_summary_over_40_lines_or_300_chars_is_an_error`;
+  - `check_summary_over_40_lines_or_300_chars_is_an_error` (300 characters of the 3-byte `世` accepted, 301 refused);
   - `blocked_reason_unknown_kind_is_an_error`.
 - Answer extraction (`answer_from_events`):
   - `structured_output_event_wins`;
   - `structured_output_tool_use_is_read`;
   - `assistant_text_in_a_fence_is_parsed`;
-  - `subagent_text_is_ignored`;
+  - `subagent_text_is_ignored` (`parent: Some(..)`);
   - `no_answer_is_an_error`.
 - Fallbacks:
   - `fallback_table`: each kind's deterministic answer, with `check_summary` equal to `run::exec::summary(tail)`;
   - `fallback_decision_carries_the_reason`.
 - Argv:
-  - `claude_decider_args_exact`, for two `DeciderCaps` variants, with the user-settings flags present and absent;
-  - `codex_decider_args_exact`;
-  - `schema_file_name_is_stable`.
+  - `claude_decider_args_exact`, for two `DeciderCaps` variants, with the caps' user-settings flags present and absent, and no `--settings`, `--bare` or `--mcp-config` in either;
+  - `codex_decider_args_exact` (`-s read-only` and every `CODEX_SANDBOX_PINS` entry present);
+  - `schema_file_name_is_stable`;
+  - `decider_credential_scrub_removes_every_api_credential` (`credential_scrub_for(Claude, Login)` and `(Codex, Login)` each include `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`; `credential_scrub(spec)` gives the same as before for M8a's specs).
 
 **Change.** Decisions 16 and 17, the pure parts.
 
@@ -1441,16 +1513,17 @@ A missing capability stops work on the item that needs it, as AGENTS.md says:
 
 ### M8b.6 `fake-agent`: decider mode, scout scripts, the `bash` step, every hook group
 
-**Files.** Create `crates/fake-agent/src/decider.rs`, `src/bash.rs`, `crates/fake-agent/tests/adapt_modes.rs`. Modify `crates/fake-agent/src/main.rs` (dispatch), `runtime.rs`, `script.rs`, `roles.rs` (M8a's).
+**Files.** Create `crates/fake-agent/src/decider.rs`, `src/bash.rs`, `crates/fake-agent/tests/adapt_modes.rs`. Modify `crates/fake-agent/src/main.rs` (dispatch), `headless.rs` (the Claude first-message check), `runtime.rs`, `script.rs`, `roles.rs`, `headless_steps.rs`.
 
 **Tests first**, in `adapt_modes.rs`:
-- `decider_mode_answers_in_the_claude_shape` and `decider_mode_answers_in_the_codex_shape`: the scripted answer is found by M8b.5's `answer_from_events` over the parsed output, with usage.
-- `decider_output_conforms_to_the_fixtures` (M8a decision 51's key-set test against M8b.1's decider fixtures).
+- `decider_mode_answers_in_the_claude_shape` and `decider_mode_answers_in_the_codex_shape`: the scripted answer is found by M8b.5's `answer_from_events` over the output parsed with M8a's parsers, with usage.
+- `decider_output_conforms_to_the_fixtures` (M8a decision 51's key-set test, `headless_support/shape.rs`, against M8b.1's decider fixtures; a fixture M8b.1 could not record is skipped with a printed reason).
+- `decider_mode_is_chosen_by_the_prompt_not_the_flags` (no `--json-schema` in argv, prompt `[anthrex decider] triage v1`).
 - `decider_calls_are_recorded` (kind, argv, prompt in `calls.jsonl`).
 - `decider_without_a_script_exits_2`.
 - `decider_hang_blocks_until_killed`.
 - `decider_scripts_are_claimed_in_order`.
-- `scout_scripts_are_claimed_by_scout_id`: `scout-onboarding-1.jsonl` serves `--scout onboarding-1695000000`.
+- `scout_scripts_are_claimed_by_scout_id`: `scout-onboarding-1.jsonl` serves `--scout onboarding-1695000000`, found from a standalone checkout through its alternate.
 - `bash_step_applies_updated_input`: a settings JSON with two `PreToolUse` groups, the second a script printing `updatedInput` with `echo rewritten`. `FAKE_AGENT_BASH_LOG` shows `original == "echo original"` and `ran == "echo rewritten"`, and the emitted `tool_use` input is the rewritten command.
 - `bash_step_without_hooks_runs_the_command`.
 - `every_hook_group_is_discovered_and_hook_keeps_the_first`.
@@ -1464,7 +1537,7 @@ A missing capability stops work on the item that needs it, as AGENTS.md says:
 
 ### M8b.7 Deciders II: the call
 
-**Files.** Create `crates/daemon/src/decider/call.rs`, `crates/cli/tests/decider_call.rs`. Modify `crates/daemon/src/manager/config.rs` (read `ANTHREX_DECIDER_BIN` in `from_vars`, a new field `decider_bin: Option<String>`), `run/driver.rs` (`RunContext.decider_bin`), and `crates/daemon/src/headless/claude_stream.rs` (only if M8b.1 found `result.structured_output`).
+**Files.** Create `crates/daemon/src/decider/call.rs`, `crates/cli/tests/decider_call.rs`. Modify `crates/daemon/src/manager/config.rs` (`decider_bin: Option<String>` from `ANTHREX_DECIDER_BIN` in `from_vars`), and `crates/daemon/src/headless/claude_stream.rs` + `headless/mod.rs` (only if M8b.1 found `result.structured_output`).
 
 **Tests first**, in `decider_call.rs`, with real `fake-agent` processes. `DeciderContext.program` is `fake_agent_bin()` and the timeout is 5 s.
 - `claude_mode_returns_the_scripted_answer_and_usage`.
@@ -1472,12 +1545,13 @@ A missing capability stops work on the item that needs it, as AGENTS.md says:
 - `the_prompt_goes_on_stdin_for_claude_and_last_for_codex`, from `calls.jsonl`.
 - `decider_bin_wins_over_the_runtime_command` (`ManagerConfig::from_vars` with both set).
 - `mode_off_never_spawns`: the program is a script that creates a marker file, and no marker appears.
-- `a_hanging_decider_falls_back_at_its_timeout_and_leaves_no_process`. The call returns after at least 5 s and within `5 + 2 (kill grace) + 5 (slack) = 12 s`, with reason `the decider timed out after 5 s`. `pgrep -f <unique marker in the prompt>` then finds nothing within a 5 s deadline loop.
+- `a_hanging_decider_falls_back_at_its_timeout_and_leaves_no_process`. The call returns after at least 5 s and within `5 + 2 (kill grace) + 5 (slack) = 12 s`, with reason `the decider timed out after 5 s`. `pgrep -f <unique marker in the prompt>` then finds nothing within a 5 s deadline loop (the test signals nothing; it only looks).
 - `garbage_empty_and_oversized_answers_fall_back`: text `not json`, text `{}` (a schema error naming `kinds`), and 300 KiB of text (cut to `ANSWER_MAX_BYTES`, then not JSON). Each gives its exact reason.
 - `a_failed_turn_and_an_early_exit_fall_back`: `fail_turn` and `exit 3`, each with its reason.
 - `a_missing_program_falls_back_with_could_not_start`.
+- `the_decider_sees_no_api_credentials`: with `ANTHROPIC_API_KEY` set in the test process's command for the spawn (never in the test's own environment), the decider's recorded environment lacks it (`fake-agent` records its env keys when `FAKE_AGENT_ENV_FILE` is set; add that to M8b.6 if absent).
 
-**Change.** Decision 16's I/O. The call never holds a lock, writes the schema file on `spawn_blocking`, and kills the process group on every early return.
+**Change.** Decision 16's I/O. The call never holds a lock, spawns on `spawn_blocking`, writes the schema file on `spawn_blocking`, and kills the process group (`HeadlessHandle::kill`) on every early return.
 
 **Acceptance.** Tests pass. Add rows to `docs/timing-budgets.md` for the 12 s bound (`timeout 5 s + kill grace 2 s + spawn slack 5 s`) and for `GOAL_REQUEST_TIMEOUT`.
 
@@ -1485,22 +1559,22 @@ A missing capability stops work on the item that needs it, as AGENTS.md says:
 
 ### M8b.8 The output filter
 
-**Files.** Create `crates/daemon/src/output_filter.rs`, `crates/cli/src/filter_run.rs`, `crates/cli/src/filter_hook.rs`, `crates/cli/tests/filter_run.rs`, `crates/cli/tests/filter_hook.rs`. Modify `crates/cli/src/main.rs` (two pre-clap dispatches), `crates/daemon/src/headless/{mod.rs,argv.rs}` (`HeadlessSpec.output_filter`, the `add_hook` call), and `run/role_launch.rs` (M8a's `worker_spec` sets `output_filter` and, for Claude, adds `log_dir` to `ClaudeSandbox.writable_roots`).
+**Files.** Create `crates/daemon/src/output_filter.rs`, `crates/cli/src/pre_clap.rs`, `crates/cli/src/filter_run.rs`, `crates/cli/src/filter_hook.rs`, `crates/cli/tests/filter_run.rs`, `crates/cli/tests/filter_hook.rs`. Modify `crates/cli/src/main.rs` (the pre-clap dispatch moves to `pre_clap::dispatch`, which handles `hook`, `filter-run` and `filter-hook`), `crates/daemon/src/headless/{mod.rs,argv.rs}` (`HeadlessSpec.output_filter`, the `add_hook` call), and `run/role_launch.rs` (`worker_spec` sets `output_filter` with `log_dir = task_tmp_dir(..).join(LOG_DIR_NAME)`).
 
 **Tests first:**
 - In `output_filter.rs`:
-  - `failures_only_keeps_matches_with_context_and_the_tail`: 5000 lines with one `test foo ... FAILED` at line 2500 and the summary at the end give that line, its 5 followers, the last 20 lines and one omission marker per gap, 30 lines at most.
+  - `failures_only_keeps_matches_with_context_and_the_tail`: 5000 lines with one `test foo ... FAILED` at line 2500 and the summary at the end give that line, its 5 followers, the last 20 lines and one omission marker per gap, 28 lines exactly.
   - `failures_only_on_success_is_the_last_10_lines`.
   - `failures_only_without_matches_is_the_last_60`.
   - `at_most_100_matched_lines`.
   - `tail_is_60_lines`.
-  - `long_lines_are_cut_to_500_chars`.
+  - `long_lines_are_cut_to_500_chars` (with the 3-byte `世`).
   - `matches_strips_cd_and_env_prefixes_and_respects_word_boundaries` (`cargo testing` does not match `cargo test`).
   - `rewrite_keeps_every_tool_input_key`.
   - `rewrite_never_double_wraps`.
-  - `add_hook_appends_a_second_group` (the exact settings JSON; M3's group unchanged).
+  - `add_hook_appends_a_second_group` (the exact settings JSON; M3's group, the sandbox block and its pins unchanged).
 - In `filter_run.rs`, running the built binary:
-  - `filter_run_preserves_exit_status_and_signals`: exit 3 gives 3; a child killed by `SIGTERM` gives 143.
+  - `filter_run_preserves_exit_status_and_signals`: exit 3 gives 3; a child killed by `SIGTERM` gives 143 (the test kills only the child pid it spawned).
   - `filter_run_writes_the_full_log_and_prints_the_filtered_view`: 5000 lines logged, at most 32 printed, and the last line names the log path and `5000 lines, exit 1`.
   - `filter_run_passes_stdin_through`.
   - `filter_run_still_runs_when_the_log_cannot_be_written` (log dir under a read-only directory).
@@ -1510,14 +1584,15 @@ A missing capability stops work on the item that needs it, as AGENTS.md says:
   - `wrapped_commands_behave_exactly_like_the_original`. For each of these commands, running the wrapped command through `/bin/sh -c` prints the same `filter-run` log contents and exit code as the original: `printf 'a b\n'`; `echo "it's"`; a two-line command with a heredoc; `false || echo ok`; `FOO=1 sh -c 'echo $FOO'`; `cd sub && ls`; a command with `ü` and a tab.
   - `hook_exits_zero_silently_on_garbage_and_oversized_input`.
   - `hook_finishes_within_its_deadline`: stdin held open, it exits within `FILTER_HOOK_DEADLINE + 2 s`. Add the row to `docs/timing-budgets.md`.
-- In `headless/argv.rs` tests:
+- In `headless/argv_tests.rs` and `run/role_launch.rs`'s tests:
   - `claude_worker_settings_include_the_filter_hook`;
   - `reviewers_scouts_and_codex_get_no_filter_hook`;
-  - `worker_spec_sets_the_hook_only_for_a_stored_profile_with_prefixes`.
+  - `worker_spec_sets_the_hook_only_for_a_stored_profile_with_prefixes`;
+  - `the_filter_hook_adds_no_writable_root`: the worker's `ClaudeSandbox.writable_roots` equal M8a's `worker_git_roots`, and `log_dir` is under the task's `TMPDIR`.
 
 **Change.** Decisions 26–28.
 
-**Acceptance.** Tests pass. `anthrex --help` lists neither `filter-run` nor `filter-hook`.
+**Acceptance.** Tests pass. `anthrex --help` lists neither `filter-run` nor `filter-hook`. `crates/cli/src/main.rs` is at most 600 lines.
 
 **Commit.** `feat: filter test output for headless Claude workers through a PreToolUse hook and anthrex filter-run`
 
@@ -1525,88 +1600,109 @@ A missing capability stops work on the item that needs it, as AGENTS.md says:
 
 **Files.** Create `crates/daemon/src/scout/{mod,contract,spec,report,machine,service}.rs`, `scout/tests.rs`, `crates/mcp/src/tools_scout.rs`, `crates/cli/tests/scout_service.rs`. Modify:
 - `crates/mcp/src/{lib.rs,tools.rs,forward.rs}` (`scout_id`, the scout role);
-- `crates/cli/src/main.rs` (`anthrex mcp` flags);
-- `crates/daemon/src/headless/{mod.rs,argv.rs}` (`McpTarget.scout_id`, `--scout`);
-- `server/run_api.rs` (route scout tool calls) and M8a's `server/headless_guard.rs` (decision 12's refusal text for a run-less headless window).
+- `crates/cli/src/mcp_cmd.rs` (`--role scout`, `--scout`, `--run` optional for scouts);
+- `crates/daemon/src/headless/{mod.rs,argv.rs}` (`McpTarget.scout_id`, `mcp_args`);
+- `crates/daemon/src/manager/headless.rs` (`control_refusal` for `run == None`);
+- `run/driver/requests.rs` (route `Tool` calls with role `Scout` to `ScoutService::tool` through the adaptation handle).
 
 **Tests first:**
 - In `scout/tests.rs` (pure):
-  - `area_scout_spec_is_read_only` (the exact `HeadlessSpec`: plan mode, read-only Codex sandbox, the four tools, no `claude_sandbox`);
-  - `onboarding_scout_spec_is_sandboxed_in_its_worktree` (`Bash` allowed, no `Edit`/`Write`, `claude_sandbox` with no roots, `run_ref == None`, `workspace-write`);
-  - `onboarding_scout_without_worker_sandbox_has_none`;
-  - `codex_scouts_and_deciders_pass_the_user_config_only_flags`. With a test `CliCaps` whose `codex_user_config_only` is `Some(["--flag"])`, both the Codex scout argv (`codex_args`) and `codex_decider_args` contain it. With `None`, neither does;
+  - `area_scout_spec_is_read_only` (the exact `HeadlessSpec`: `dontAsk`, the reviewer's disallowed tools, a `ClaudeSandbox` with no writable roots and the five protected denials, read-only Codex sandbox, the four tools, `run_ref` set);
+  - `onboarding_scout_spec_is_read_only_too` (`Bash` allowed, no `Edit`/`Write`, the same empty-root `ClaudeSandbox`, `run_ref == None`, Codex `read-only`);
+  - `the_scout_sandbox_does_not_depend_on_worker_sandbox` (the same spec with `worker_sandbox` false);
+  - `scouts_pass_the_user_settings_flags_and_codex_pins`: through `claude_args` the argv has the caps' user-settings flags and the sandbox pins; through `codex_args` every `CODEX_SANDBOX_PINS` entry and `-s read-only`. With a test `CliCaps` whose `codex_user_config_only` is `Some(["--flag"])`, both the Codex scout argv and `codex_decider_args` contain it; with `None`, neither does;
+  - `a_codex_scout_carries_the_codex_config_guard_when_codex_loads_project_config`;
   - `route_picks_the_lowest_strength_at_or_above` (default roster: Claude `fast` gives `claude-haiku-4-5`; Codex `fast` gives Codex `""`);
   - `valid_ids`;
-  - `report_validation_cases`: a missing summary, 61 files, a profile on an area scout, a missing profile on onboarding, a bad env key, each with the exact message;
+  - `report_validation_cases`: a missing summary, 61 files, a profile on an area scout, a missing profile on onboarding, a bad env key, a `cache_dirs` key inside `profile` (refused: unknown property), each with the exact message;
   - `machine_nudges_once_then_fails`;
-  - `machine_wraps_up_then_kills_at_1_5x_the_tool_budget`;
+  - `machine_wraps_up_then_kills_at_1_5x_the_tool_budget` (budget 11: wrap-up at the 11th, kill at the 17th);
   - `machine_times_out`;
   - `machine_exit_without_report_fails`;
   - `machine_report_closes_stdin_then_kills_and_removes`;
   - `machine_sums_usage`.
 - In `crates/mcp`:
   - `scout_tool_is_submit_scout_report`;
-  - `scout_schema_limits`;
+  - `scout_schema_limits` (and no property named `cache_dirs` or starting with `confined_` at any level);
   - `mcp_args_for_a_scout` (the exact vector `["mcp","--role","scout","--scout","onboarding-1","--window","7","--socket","/tmp/a.sock"]`);
-  - `run_is_required_except_for_scouts`.
-- In `scout_service.rs`, with a real `WindowManager` whose `claude_bin` is `fake-agent`, and a stub `submit_scout_report` routed through `ScoutService::tool`:
+  - `run_is_required_except_for_scouts` (in `mcp_cmd.rs`'s tests, with the daemon's argv round trip extended to a scout).
+- In `crates/cli/tests/scout_service.rs`, with a real `WindowManager` whose `claude_bin` is `fake-agent`, and `submit_scout_report` routed through `ScoutService::tool`:
   - `scout_report_is_stored_and_the_session_retired`: the report file exists with the fields, the window is `Exited`, then removed after `RETIRE_AFTER`, within a deadline of `RETIRE_AFTER + INTERRUPT_GRACE + 5 s`;
   - `scout_without_a_report_is_nudged_then_failed`: the second turn's stdin line is `SCOUT_NUDGE`;
   - `a_report_from_another_window_is_refused`;
   - `a_second_report_is_refused`;
-  - `a_run_less_scout_window_refuses_client_input_with_the_profile_hint` (a real socket `Input`).
+  - `the_scout_argv_is_read_only`: the recorded argv (`FAKE_AGENT_ARGS_FILE`) has `--permission-mode dontAsk`, `--disallowedTools Edit,Write,NotebookEdit` and a `--settings` sandbox block with an empty `allowWrite`;
+  - `a_run_less_scout_window_refuses_client_input_with_the_profile_hint` (a real socket `Input`, `Kill` and `Subscribe`).
 
 **Change.** Decisions 12–15.
 
 **Acceptance.** Tests pass. `ScoutService` never holds `daemon::lock` across a manager call or an await (state it in the pull request).
 
-**Commit.** `feat: add headless scouts with submit_scout_report, stored reports and a pure lifecycle machine`
+**Commit.** `feat: add read-only headless scouts with submit_scout_report, stored reports and a pure lifecycle machine`
 
-### M8b.10 Onboarding: detection, verification, confirmation and `anthrex profile`
+### M8b.10 Onboarding I: proposal rules and confined verification
 
-**Files.** Create `crates/daemon/src/profile/{verify,service}.rs`, and complete `profile/proposal.rs`. Create `crates/cli/src/profile_cmd.rs`, `crates/cli/tests/profile_verify.rs`, `crates/cli/tests/profile_cli.rs`. Modify:
-- `run/driver.rs` (construct `ScoutService` and `ProfileService`, and share the `GitQueue` as `Arc`);
-- `server/run_api.rs` (`RunRequest::Profile`);
-- `lifecycle.rs` (`ProfileService::restore` after `RunService::restore`, before the socket binds);
-- `crates/cli/src/main.rs`.
+**Files.** Create `crates/daemon/src/profile/verify.rs`, `crates/cli/tests/profile_verify.rs`; complete `profile/proposal.rs`. Modify `run/exec.rs` (`run_matching` → `pub(crate)`).
 
 **Tests first:**
-- In `proposal.rs`:
+- In `profile/tests.rs`:
   - `verification_drops_commands_that_did_not_pass`: setup failing, check passing, single test passing, gives setup dropped and the others kept;
   - `single_test_needs_sample_and_a_matching_line`: exit 0 without the line drops `single_test`, `test_passed` and `sample_test` with the reason;
+  - `a_confined_drop_carries_the_confinement_hint` (exact text, naming the root), and an unconfined one does not;
   - `edit_value_parsing`: `check 'cargo test'` as a string, `modules '["crates/*"]'` as an array, `check_timeout_secs 600` as an integer, `env.RUST_LOG debug` as an env entry, `--unset single_test`, and `lint x` refused as `unknown key lint; one of <keys>`;
   - `edit_rejects_invalid_values_with_the_rule` (M8b.4's `validate` messages);
   - `edit_of_a_command_key_needs_reverification_and_of_modules_does_not`;
-  - `show_text_is_exact` (golden).
-- In `profile_verify.rs`, on a `TempRepo`:
-  - `verification_never_touches_the_checkout_and_salvages_dirt`. `check` modifies a tracked file, creates an untracked one and exits 0. Afterwards the user's checkout is clean and unchanged (`git status --porcelain` empty, same `HEAD`), `<wt>/runs/.profile-verify` is gone, and a salvage ref under `refs/anthrex/salvage/onboarding/` holds the change.
+  - `show_text_is_exact` (golden, confined and unconfined headers).
+  - `confine_spec_takes_the_users_tables_for_the_root`: `confine_spec` with `worker_sandbox` true on a confining platform gives the config's `cache_dirs`, `confined_network`, `confined_unix_sockets` and `confined_localhost_ports` for `pre.root`, `data_dir == repo_dir`, and `None` with `worker_sandbox` false.
+- In `crates/cli/tests/profile_verify.rs`, on a repository from `init_repo`, driving `profile::verify` directly:
+  - `verification_never_touches_the_checkout_and_salvages_dirt`. `check` modifies a tracked file, creates an untracked one and exits 0. Afterwards the user's checkout is clean and unchanged (`git status --porcelain` empty, same `HEAD`), the user's `.git/worktrees` has no entry, `<wt>/runs/.profile-verify` and `<repo_dir>/tasks/.profile-verify` are gone, and a salvage ref under `refs/anthrex/salvage/onboarding/` holds the change.
   - `a_hanging_verification_command_times_out_and_is_dropped` (`sleep 60` with a 2 s timeout; `timed_out`, dropped).
   - `env_and_worktree_are_substituted` (`check` prints `$CARGO_TARGET_DIR`, which is under the scratch path).
-  - `the_scrubbed_environment_applies` (`CLAUDE_CODE_X` set in the test process under the shared env lock is absent).
-- In `profile_cli.rs`, with `RunHarness`, `onboarding.auto` true, `verify_timeout_secs = 10`, and a repository with `check.sh`, `tests/t_ok.sh` (prints `PASS t_ok`) and `Cargo.lock`:
-  - `e2e_detect_proposes_only_verified_commands`. The scout script reports `check = "sh check.sh"`, `single_test = "sh tests/{test}.sh"`, `test_passed = "PASS {test}"`, `sample_test = "t_ok"`, `setup = "sh missing.sh"`, `generated = ["Cargo.lock"]` and `protected = [".cursor/**"]`. Within `PROFILE_WAIT` the status is `Ready`. `profile show --proposed` has `check`, `single_test`, `generated`, and `protected: built-in … + .cursor/**` (the stored file's `protected == [".cursor/**"]`), and lists `setup` under dropped with its exit code.
-  - `e2e_confirm_stores_the_profile_outside_the_repository`: `profile.toml` is under `<data>/repos/`, `git status --porcelain --ignored` in the repo is empty, and there is no `.anthrex` path.
+  - `the_engine_environment_applies` (`check` prints `env`; no `CLAUDE_CODE_*`, `ANTHROPIC_API_KEY` or `ANTHREX_SOCKET` — each set on the test's `Command` for the daemon library call's process, which runs alone in its own test binary as M8a's env tests do).
+  - `verification_uses_the_users_confinement_not_the_proposal` (macOS only; skipped elsewhere with a printed reason): a `check` that writes `$HOME/pwned-<pid>` and one that writes under a directory the test lists in `[orchestrator.cache_dirs]` for the root. The first is dropped and `$HOME/pwned-<pid>` does not exist; the second is kept. A proposed `env` cannot change this (there is no key for it).
+  - `a_confined_setup_without_network_is_dropped_with_the_hint` (macOS only): `setup = "curl -s https://example.com"`; dropped, with the hint.
+
+**Change.** Decision 9, and the pure parts of decision 10.
+
+**Acceptance.** Tests pass. `profile/proposal.rs` is pure. No code path writes under the repository root (review every `write_atomic`, `run_matching` and git write caller, and state it in the pull request).
+
+**Commit.** `feat(daemon): verify proposed profile commands in a fresh confined checkout and keep only those that pass`
+
+### M8b.11 Onboarding II: the profile service, detection, restart and `anthrex profile`
+
+**Files.** Create `crates/daemon/src/profile/service.rs`, `crates/cli/src/profile_cmd.rs`, `crates/cli/tests/profile_cli.rs`, `crates/cli/tests/support/run_adapt.rs` (the helpers of "Shared test conventions" this task needs). Modify:
+- `run/driver.rs` and `run/driver/adapt.rs` (`Adaptation`, `set_adaptation`, `git_queue`; `RunRequest::Profile` → `ProfileService::request`);
+- `run/driver/requests.rs` (the `Profile` arm);
+- `lifecycle.rs` (construct `ScoutService` and `ProfileService` after `RunService::new`, `set_adaptation`, `ProfileService::restore` after `RunService::restore` and before the socket binds);
+- `crates/cli/src/main.rs` (`Command::Profile`);
+- `crates/cli/tests/support/run_harness.rs` (decision 36's defaults, `pub(super)` fields).
+
+**Tests first:**
+- In `profile_cli.rs`, with `RunHarness`, `onboarding.auto` true, `onboarding.verify_timeout_secs = 10`, and a repository with `check.sh`, `tests/t_ok.sh` (prints `PASS t_ok`) and `Cargo.lock`:
+  - `e2e_detect_proposes_only_verified_commands`. The scout script reports `check = "sh check.sh"`, `single_test = "sh tests/{test}.sh"`, `test_passed = "PASS {test}"`, `sample_test = "t_ok"`, `setup = "sh missing.sh"`, `generated = ["Cargo.lock"]` and `protected = [".cursor/**"]`. Within `PROFILE_WAIT` the status is `Ready`. `profile show --proposed` has `check`, `single_test`, `generated`, and `protected: built-in … + .cursor/**`, lists `setup` under dropped with its exit code, and its verification header says `confined` on macOS.
+  - `e2e_confirm_stores_the_profile_outside_the_repository`: `profile.toml` is under `<data>/repos/`, `git status --porcelain --ignored` in the repo is empty, there is no `.anthrex` path, and `git worktree list` shows only the user's checkout.
   - `e2e_reject_stops_a_running_scout` (a scout script that hangs; reject; the window is gone and the proposal is deleted).
   - `e2e_edit_goes_through_verification` (`edit check 'sh broken.sh' --yes`: the proposal ends `Ready` with `check` dropped and is **not** auto-confirmed; the stored `check` is unchanged).
   - `e2e_status_reports_stale_files_and_auto_detects` (change `Cargo.lock` after confirm: `stale == ["Cargo.lock"]`, and a new proposal starts).
-  - `e2e_detection_in_progress_at_restart_is_failed_and_cleaned`.
-  - `e2e_detect_refuses_codex_project_config_without_trust_project`: `scouts.runtime = "codex"`, `ANTHREX_TEST_CODEX_PROJECT_CONFIG=load` makes the daemon act as if Codex loads repository config and cannot exclude it (`codex_user_config_only = None`), and the repo tracks `.codex/config.toml`. Detect is refused naming it, and `--trust-project` starts detection.
+  - `e2e_detection_in_progress_at_restart_is_failed_and_cleaned` (a scout that hangs; `restart_daemon`; the proposal is `Failed` with the exact reason, both checkouts and their repositories are gone, and no `scout/…` window is listed).
+  - `e2e_detect_refuses_codex_project_config_without_trust_project`: `scouts.runtime = "codex"`, `ANTHREX_TEST_CODEX_PROJECT_CONFIG=load`, and the repo tracks `.codex/config.toml`. Detect is refused naming it, and `--trust-project` starts detection.
   - `e2e_detect_refuses_project_settings_without_trust_project`: the daemon runs with `ANTHREX_TEST_NO_SETTING_SOURCES=1` and the repo tracks `.claude/settings.json` with `hooks`. Detect is refused with the exact text, and `--trust-project` starts detection.
   - `e2e_a_second_detect_is_refused_while_one_runs`.
+  - `e2e_detect_refuses_an_unconfinable_platform_without_the_flag`: the daemon runs with `ANTHREX_CHECK_CONFINEMENT=unavailable` and the test's config has no `unconfined_checks` (the harness adds it only off macOS; this test runs on macOS only). Detect is refused with `start_refusal`'s text; `--unconfined-checks` starts it, and `status` says `verification: unconfined`.
 
-**Change.** Decisions 8–11.
+**Change.** Decisions 8, 10 and 11.
 
-**Acceptance.** Tests pass. No code path writes under the repository root (review this by reading every `write_atomic` and `run_shell` caller, and state it in the pull request).
+**Acceptance.** Tests pass. Record `PROFILE_WAIT`'s landed git-call count in `docs/timing-budgets.md`. `ProfileService` never holds `daemon::lock` across an await or a manager call.
 
-**Commit.** `feat: detect, verify and confirm the repository profile with a headless onboarding scout`
+**Commit.** `feat: detect, verify and confirm the repository profile with a read-only onboarding scout`
 
-### M8b.11 Engine: deciders inside a run
+### M8b.12 Engine deciders I: the queue, reader slots, check summaries and block classification
 
-**Files.** Create `run/engine/deciders.rs`, `run/model_adapt.rs`, `run/engine/tests/deciders.rs`. Modify `run/engine/{gates,merge,done,requests,dispatch,restore}.rs`, `run/model.rs`, `run/snapshot.rs`, `run/reconcile.rs`, `run/contract.rs` (`check_failed_message` and `candidate_red_message` take the summary text), `run/report.rs`, and `run/driver/adapt.rs` (execute `Decide`: resolve `evidence_refs` into `Evidence` by reading report files on `spawn_blocking`, then `decide`).
+**Files.** Create `run/engine/deciders.rs`, `run/engine/tests/deciders.rs`. Modify `run/engine/{mod,ops,gates,merge,done,tools,schedule,restore}.rs`, `run/model_adapt.rs`, `run/model_rounds.rs` (`CheckRecord.summary`, `summary_source`), `run/snapshot.rs`, `run/reconcile/mod.rs`, `run/contract.rs` (`check_failed_message`, `candidate_red_message`, `reviewer_prompt`, the classifying reply), `run/report.rs`, `run/plan.rs` (`RunLimits.decider_mode`, `decider_slot_wait_secs`), `run/driver/ops.rs` + `run/driver/adapt.rs` (execute `Decide`: `decide` with the adaptation's `DeciderContext`), and the fixture (`fx.decided`, `fx.queued_deciders`).
 
 **Tests first**, in `engine/tests/deciders.rs`:
-- `failed_check_defers_the_bounce_until_the_summary`: `Check { ok: false }` gives `failures == 1` and one `Decide` op, and no `Deliver`. `Decided` gives a `Deliver` whose text contains the summary lines and not the raw tail, with `summary_source == Decider`.
-- `summary_fallback_uses_the_tail_and_is_marked`.
+- `failed_check_defers_the_bounce_until_the_summary`: `Check { ok: false }` gives `failures == 1` and one `Decide` op, and no `Deliver`. `Decided` gives a `Deliver` whose text contains `Summary of its output:` and the summary lines and not the raw tail, with `summary_source == Decider`.
+- `summary_fallback_uses_the_tail_and_is_marked` (M8a's exact text).
 - `candidate_red_uses_the_summary_and_the_queue_moves_on`: the next queued task's `MergeCandidate` is emitted before `Decided`.
 - `deciders_take_a_reader_slot_before_reviewers`: `max_readers = 1`, a review pending and a decider queued; the decider starts first and `readers_busy == 1`.
 - `a_decider_waiting_past_slot_wait_falls_back_on_tick`.
@@ -1614,29 +1710,43 @@ A missing capability stops work on the item that needs it, as AGENTS.md says:
 - `an_unclassified_block_is_classified`: three cases (`question` stays, `environment` changes the reason, `mis_sized` gives rung 3 with the size raised), plus the reply text `Blocked recorded (classifying). …`.
 - `a_typed_kind_is_never_reclassified`.
 - `an_answer_before_classification_wins`.
-- `size_check_raises_s_to_m_and_rederives_route_budget_and_review` (effort `low` → `medium` when the plan set none; the budget M's; the review level `medium`; the note text).
+- `a_restart_requeues_a_dropped_decider_op` (`Restore` with the `Decide` op answered `NotStarted`, then the resume: queued again).
+- `decider_usage_is_counted_on_task_and_run`.
+- `reviewer_prompt_uses_the_latest_summary`.
+
+In `reconcile` tests: `decide_is_not_started`.
+
+**Change.** Decisions 18, 20 and 21.
+
+**Acceptance.** Tests pass. `run/engine/deciders.rs` is pure. Every M8a engine test still passes (with `decider_mode` off in `Fixture::new`'s default config, so no M8a test sees a `Decide` op).
+
+**Commit.** `feat(daemon): run check summaries and block classification as decider ops in reader slots`
+
+### M8b.13 Engine deciders II: the size cross-check
+
+**Files.** Modify `run/engine/deciders.rs`, `run/engine/{requests,dispatch,schedule}.rs` (Start and Edit issue the check; pending tasks are not runnable), `run/engine/ladder.rs` (`reresolve` → `pub(crate)`), `run/driver/adapt.rs` (resolve `evidence_refs` into `Evidence` by reading report files on `spawn_blocking` before `decide`), `run/report.rs`, `run/snapshot.rs`. Tests in `run/engine/tests/deciders_size.rs`.
+
+**Tests first:**
+- `size_check_raises_s_to_m_and_rederives_route_budget_and_review` (effort `low` → `medium` when the plan set none; the budget M's; the review level `medium`; `raised_size == Some(M)`; the note text).
 - `a_planner_set_effort_survives_a_raise`.
+- `an_amend_never_lowers_a_cross_check_raise`.
 - `size_check_l_blocks_as_mis_sized_without_a_rung`.
 - `size_check_never_lowers_and_records_agreement`.
 - `missing_ids_keep_their_size_as_fallback`.
 - `a_pending_size_check_blocks_dispatch`.
 - `tasks_without_evidence_skip_the_cross_check` (note text; no op).
 - `an_edit_cross_checks_only_the_touched_tasks`.
-- `a_restart_requeues_a_dropped_decider_op` (`Restore` with the `Decide` op `NotStarted`, then `Resume`: queued again).
-- `decider_usage_is_counted_on_task_and_run`.
-- `reviewer_prompt_uses_the_latest_summary`.
+- `the_driver_resolves_evidence_from_report_files` (a driver-level test with two report files, one named by `scout_refs` and the `onboarding` alias).
 
-In `reconcile.rs` tests: `decide_and_measure_diff_are_not_started`.
+**Change.** Decision 19.
 
-**Change.** Decisions 18–21.
+**Acceptance.** Tests pass. Every M8a engine test still passes.
 
-**Acceptance.** Tests pass. `run/engine/deciders.rs` is pure. Every M8a engine test still passes.
+**Commit.** `feat(daemon): cross-check planned task sizes against scout evidence with a decider that can only raise`
 
-**Commit.** `feat(daemon): run size cross-checks, check summaries and block classification as decider ops in reader slots`
+### M8b.14 Triage, the fast path and `run promote`
 
-### M8b.12 Triage, the fast path and `run promote`
-
-**Files.** Create `run/triage.rs`, `run/triage_tests.rs`, `crates/cli/src/run_cmd/adapt.rs`. Modify `run/driver/adapt.rs` (`StartGoal`), `run/engine/requests.rs` (`Promote`), `run/report.rs` (path line), `crates/cli/src/run_cmd.rs`, `run_cmd/status.rs`, and `server/run_api.rs`.
+**Files.** Create `run/triage.rs`, `run/triage_tests.rs`, `crates/cli/src/run_cmd/adapt.rs`. Modify `run/driver/adapt.rs` (`StartGoal`), `run/driver/requests.rs` (the arms), `run/engine/{mod,requests}.rs` (`Promote`), `run/report.rs` (path line), `run/snapshot.rs`, `crates/cli/src/run_cmd.rs`, `run_cmd/status.rs`.
 
 **Tests first:**
 - In `triage_tests.rs`:
@@ -1655,6 +1765,7 @@ In `reconcile.rs` tests: `decide_and_measure_diff_are_not_started`.
   - `a_fast_path_task_skips_the_cross_check`.
 - In `run_cmd` unit tests:
   - `goal_and_plan_are_mutually_exclusive_and_one_is_required`;
+  - `goal_uses_the_goal_request_timeout`;
   - `status_shows_fast_path_and_triage`.
 
 **Change.** Decisions 22–25.
@@ -1663,13 +1774,13 @@ In `reconcile.rs` tests: `decide_and_measure_diff_are_not_started`.
 
 **Commit.** `feat: triage goals with a decider and run single-task goals on the fast path`
 
-### M8b.13 Metering: usage by role and the OTLP receiver
+### M8b.15 Metering: usage by role and the OTLP receiver
 
-**Files.** Create `crates/daemon/src/metering/{mod,otlp,server}.rs`, `metering/otlp_tests.rs`, `crates/daemon/tests/otlp_server.rs`. Modify `run/snapshot.rs` (`RunInfo.usage`), `run/engine/mod.rs` (`OrchestratorUsage`), `run/driver.rs` (`orchestrator_usage`), and `lifecycle.rs` (bind, `otlp.addr`, shutdown removal).
+**Files.** Create `crates/daemon/src/metering/{mod,otlp,server}.rs`, `metering/otlp_tests.rs`, `crates/daemon/tests/otlp_server.rs`. Modify `run/snapshot.rs` (`RunInfo.usage`), `run/engine/mod.rs` (`OrchestratorUsage`), `run/driver/adapt.rs` (`orchestrator_usage`), and `lifecycle.rs` (bind, `otlp.addr`, shutdown removal).
 
 **Tests first:**
 - In `otlp_tests.rs`:
-  - `parses_the_recorded_fixture`: M8b.1's body gives points for `r-fix`/`orchestrator`, with the recorded values;
+  - `parses_the_recorded_fixture`: M8b.1's body gives points for `r-fix`/`orchestrator`, with the recorded values (skipped with a printed reason if M8b.1 could not record it; then `parses_the_documented_shape` on a hand-written body with `"observed": false` in its meta covers the parser);
   - `delta_points_add`;
   - `cumulative_series_add_only_their_increase`;
   - `a_cumulative_reset_restarts_the_series`;
@@ -1688,13 +1799,13 @@ In `reconcile.rs` tests: `decide_and_measure_diff_are_not_started`.
 
 **Change.** Decisions 29 and 30.
 
-**Acceptance.** Tests pass. `metering/otlp.rs` is pure. No `hyper` or other HTTP crate is added (`cargo tree -p anthrex-daemon` shows none).
+**Acceptance.** Tests pass. `metering/otlp.rs` is pure. No `hyper` or other HTTP crate is added (`cargo tree -p daemon` shows none).
 
 **Commit.** `feat(daemon): meter deciders, scouts and the orchestrator's OTLP export into run usage by role`
 
-### M8b.14 History: phases, diff measurement, `history.jsonl`, reverts and `run stats`
+### M8b.16 History I: phases, diff measurement and `history.jsonl`
 
-**Files.** Create `run/phases.rs`, `run/history.rs`, `run/stats.rs`, `run/history_io.rs`, `run/history_tests.rs`, `crates/daemon/tests/history_io.rs`. Modify every file under `run/engine/` and `run/edits.rs` that assigns `Task.state` (through `set_state`); add decision capture at task-bound worker and reviewer launches. Also modify `run/engine/merge.rs` and `requests.rs` (emit `MeasureDiff` and `AppendHistory`), `run/driver/adapt.rs`, `run/reconcile.rs`, `server/run_api.rs` (`Stats`), and `run_cmd/adapt.rs`.
+**Files.** Create `run/phases.rs`, `run/history.rs`, `run/history_io.rs`, `run/history_tests.rs`, `crates/daemon/tests/history_io.rs`. Modify every file that assigns a task's state (decision 31's list, through `set_state`), `run/engine/{merge,complete,requests}.rs` (emit `MeasureDiff` and `AppendHistory`; add decision 33a's capture at task-bound worker and reviewer launches), `run/engine/ops.rs`, `run/driver/adapt.rs` (execute both; fill `accepted_commit`), `run/reconcile/{mod,git}.rs`.
 
 **Tests first:**
 - In `history_tests.rs`:
@@ -1705,71 +1816,109 @@ In `reconcile.rs` tests: `decide_and_measure_diff_are_not_started`.
   - `old_task_record_has_no_routing_decisions`: a history line without the field deserializes with an empty vector;
   - `unfinished_tasks_get_records_when_the_run_ends`;
   - `run_record_fields`;
-  - `stats_medians_by_class_over_merged_tasks` (the lower middle value for an even count; `-` without merged tasks; the exact `render` output);
-  - `reverted_counts_join_task_and_run_reverts`.
-- In `history_io.rs`, on a `TempRepo`:
+  - `a_run_restored_from_m8a_writes_no_history` (`repo_dir` empty).
+- In `crates/daemon/tests/history_io.rs`, on a `TempRepo`:
   - `measure_diff_counts_files_hunks_and_lines` (two files, three hunks, a binary file);
   - `measure_diff_of_a_merge_commit_is_the_tasks_contribution_after_a_hand_back`;
   - `append_is_one_line_and_fsynced` (the code is checked in review; the test checks content);
   - `read_history_keeps_the_last_line_per_record_id_and_skips_a_torn_line`;
-  - `history_append_is_reconciled_exactly_once`: a `Replay` when the line is present, `NotStarted` when absent, and after the replayed path exactly one line;
-  - `detect_reverts_matches_merge_and_accept_commits` (`git revert --no-edit <task merge>` and `git revert -m 1 --no-edit <accept merge>` give two revert records, the second with `task_id == None`; running again adds none).
+  - `history_append_is_reconciled_exactly_once`: a `Replay` when the line is present, `NotStarted` when absent, and after the replayed path exactly one line.
 - In the engine tests:
   - `routing_decision_precedes_launch_and_survives_reconcile`: one candidate snapshot is persisted before each worker or reviewer session starts, and replaying a session start does not duplicate it;
   - `merged_task_measures_then_appends_once`;
-  - `cancel_without_commits_appends_without_a_diff`;
+  - `cancel_without_a_recorded_head_appends_without_a_diff`;
   - `accept_appends_the_run_record_after_the_tasks`.
 
-**Change.** Decisions 31–35 and 33a.
+**Change.** Decisions 31–33 and 33a.
 
-**Acceptance.** Tests pass. `rg -n "\.state = TaskState::" crates/daemon/src/run` prints only `run/phases.rs`.
+**Acceptance.** Tests pass. This prints only `crates/daemon/src/run/phases.rs` lines:
 
-**Commit.** `feat: record every finished task to history.jsonl with phases, diff size, gates and reverts, and add anthrex run stats`
+```bash
+rg -n '\.state = ' crates/daemon/src/run --glob '!**/tests/**' --glob '!*_tests*.rs' --glob '!**/driver/tests.rs' | rg -v '\brun\.state = '
+```
 
-### M8b.15 End-to-end scenarios and the smoke stage
+**Commit.** `feat(daemon): record every finished task to history.jsonl with phases, diff size and gate tallies`
 
-**Files.** Create `crates/cli/tests/run_e2e_adapt.rs`, `crates/cli/tests/run_e2e_adapt_profile.rs`, `scripts/pty_smoke_adapt.py`. Modify `scripts/pty-smoke.py` (≤ 5 lines) and `crates/cli/tests/support/run_harness.rs` (decision 36's defaults and the M8b helpers).
+### M8b.17 History II: reverts and `anthrex run stats`
 
-**Tests first.** All use `RunHarness`. A stored profile is written with `stored_profile` unless the test detects one: `check = "sh check.sh"`, `single_test = "sh tests/{test}.sh"`, `test_passed = "PASS {test}"`, `filter_prefixes = ["sh tests/"]`, `generated = ["Cargo.lock"]`, and the default `protected`.
+**Files.** Create `run/stats.rs`, `run/stats_tests.rs`. Modify `run/history_io.rs` (`detect_reverts`), `run/driver/adapt.rs` (`Stats`; revert detection at both starts), `run/driver/requests.rs` (the arm), `crates/cli/src/run_cmd/adapt.rs`, `crates/daemon/tests/history_io.rs`.
 
-- `e2e_green_s_task_on_the_fast_path`. `with_deciders(claude)`; `triage-1.json` answers `single` with one S `check`-mode task owning `a.txt`. The worker commits `a.txt` and calls `DONE`; the reviewer approves. Assert:
+**Tests first:**
+- In `stats_tests.rs`:
+  - `stats_medians_by_class_over_merged_tasks` (the lower middle value for an even count; `-` without merged tasks; the exact `render` output);
+  - `reverted_counts_join_task_and_run_reverts`;
+  - `a_skipped_line_is_reported_once`.
+- In `history_io.rs`: `detect_reverts_matches_merge_and_accept_commits` (`git revert -m 1 --no-edit <task merge>` and `git revert -m 1 --no-edit <accept merge>` give two revert records (both need `-m 1`: a task merge is a two-parent `commit-tree` merge, like the `--no-ff` accept merge, so a plain `git revert --no-edit` fails on it), the second with `task_id == None`; running again adds none; a commit older than 90 days is not considered).
+
+**Change.** Decisions 34 and 35.
+
+**Controller ruling (M8b.16 review, Q2).** A plan rejected at the gate is `discarded`, so its never-dispatched tasks keep their `unfinished` records (decision 33 read literally). `stats` leaves every task record with `sessions == 0` out of its task counts and medians: such a task never ran a session, so it says nothing about how tasks of its class perform. Add a case for it to `stats_medians_by_class_over_merged_tasks` or a test of its own.
+
+**Acceptance.** Tests pass. `anthrex run --help` lists `stats`.
+
+**Commit.** `feat: detect reverts after accept and summarise run history with anthrex run stats`
+
+### M8b.18 End-to-end scenarios I: the fast path, deciders, the output filter and metering
+
+**Files.** Create `crates/cli/tests/run_e2e_adapt.rs`. Complete `crates/cli/tests/support/run_adapt.rs`.
+
+**Tests first.** All use `RunHarness`. A stored profile is written with `stored_profile`: `check = "sh check.sh"`, `single_test = "sh tests/{test}.sh"`, `test_passed = "PASS {test}"`, `sample_test = "t_ok"`, `filter_prefixes = ["sh tests/"]`, `generated = ["Cargo.lock"]`, and the default `protected`.
+
+- `e2e_green_s_task_on_the_fast_path`. `with_deciders(claude)`; `triage-1.json` answers `single` with one S `check`-mode task owning `a.txt`. The worker commits `a.txt` and calls `task_done`; the reviewer approves. Assert:
   - `run start --goal` prints the id and `fast path: one task, no plan gate`;
   - no snapshot ever shows `awaiting_approval`;
   - `path == Some(Fast)`, `approved_by == "fast path"`, and the run is complete;
   - `triage.source == Decider`;
-  - `run accept --yes` succeeds;
-  - `history.jsonl` has one task record with `path == fast` and `diff.files == 1`, and one run record `accepted` with `accepted_commit` equal to `main`'s head.
+  - `run accept --yes` succeeds.
 - `e2e_goal_needing_a_plan_is_refused_without_side_effects`. Triage answers `plan`: exit 1 with `refused_message`, no `refs/heads/anthrex/*`, no `<data>/runs/*`, and no window.
+- `e2e_goal_touching_a_hub_file_is_refused_without_side_effects`. Triage answers `single` with `owns` on a hub glob: exit 1 with `refused_message` naming the reason `the fast path does not apply: task t1 touches a hub file`, no `refs/heads/anthrex/*`, no `<data>/runs/*`, and no window. It covers the driver's wiring of the fast path's barrier (M8b.14 review I1).
 - `e2e_goal_without_deciders_takes_the_plan_path` (mode `off`: the reason names `deciders are off`).
 - `e2e_goal_without_a_profile_starts_detection` (no stored profile, `onboarding.auto`: the exact refusal, and `profile status` shows detection).
+- `e2e_goal_runs_m8a_start_checks` (`ANTHREX_TEST_NO_SETTING_SOURCES=1` and a tracked `.claude/settings.json` with hooks: the fast path is refused with M8a's settings text, and `--trust-project` starts it).
 - `e2e_promote_records_intent_and_the_task_continues`.
 - `e2e_check_bounce_carries_the_decider_summary`. The worker's first commit breaks `check.sh`, and `check_summary-1.json` answers two lines. The worker's `read_message` expects the first summary line and does not see line 150 of the raw output. The task merges with `summary_source == Decider`.
 - `e2e_check_bounce_falls_back_to_the_tail_when_the_decider_fails` (no `check_summary` script: the message has M8a's 40-line tail, `summary_source == Fallback`, and the run completes).
 - `e2e_unclassified_block_is_classified_as_environment`.
 - `e2e_size_cross_check_raises_a_task_and_reports_it`. `onboarding_report(..)` is written, and the plan has one S task and one without evidence. `size_check-1.json` answers M for the first. Assert its size is M, `size_check.agreed == false`, `REPORT.md` has the note, and the second task is skipped with the note.
+- `e2e_filter_hook_shrinks_test_output_for_a_claude_worker`. The worker script runs `bash {"cmd":"sh tests/noisy.sh"}`, where `noisy.sh` prints 5000 lines with one `FAILED` and exits 1. `FAKE_AGENT_BASH_LOG` shows the command wrapped, at most 32 output lines, the `FAILED` line, and exit 1. The log file has 5000 lines and lies under the task's `TMPDIR` (`<tmp root>/…/anthrex-logs/`), not in the checkout, and the task's `task_done` is accepted (the checkout is clean).
+- `e2e_otlp_usage_reaches_the_run_snapshot`. Read `<data>/otlp.addr`, POST M8b.1's fixture (or the documented body) with `anthrex.run` rewritten to the test's run id, once with `Content-Length` and once chunked. Within a deadline, `usage.by_role["orchestrator"]` equals the fixture's totals.
+
+**Change.** Only tests and the fixes they uncover.
+
+**Acceptance.** Tests pass.
+
+**Commit.** `test: cover the fast path, deciders, the output filter and metering end to end`
+
+### M8b.19 End-to-end scenarios II: the profile, history, and smoke stage 11d
+
+**Files.** Create `crates/cli/tests/run_e2e_adapt_profile.rs`, `scripts/pty_smoke_adapt.py`. Modify `scripts/pty-smoke.py` (at most 6 lines: the import, `ENV["ANTHREX_DECIDER_BIN"] = FAKE_AGENT_BIN`, `ENV["FAKE_AGENT_DECIDER_DIR"]`, and the call).
+
+**Tests first.** All use `RunHarness`, with the stored profile of M8b.18 unless the test says otherwise.
+
 - `e2e_stored_profile_wins_over_the_plan_profile` (a plan `[profile] check = "false"` is ignored, the log line is present, and the run completes).
 - `e2e_a_corrupt_stored_profile_refuses_the_run` (the exact message with the path; no branch).
-- `e2e_filter_hook_shrinks_test_output_for_a_claude_worker`. The worker script runs `bash {"cmd":"sh tests/noisy.sh"}`, where `noisy.sh` prints 5000 lines with one `FAILED` and exits 1. `FAKE_AGENT_BASH_LOG` shows the command wrapped, at most 32 output lines, the `FAILED` line, and exit 1. The log file has 5000 lines and lies under `<data>/runs/<id>/logs/t1/`.
-- `e2e_generated_lock_file_bounces_at_rung_1` (a stored profile with `generated = ["Cargo.lock"]`; the worker changes `Cargo.lock` outside `owns`; M8a decision 55's rung-1 bounce, not rung 3; the task merges after reverting it).
-- `e2e_protected_file_from_the_stored_profile_bounces_at_rung_1`. The worker edits `AGENTS.md` while its `owns` is `**`. M8a's protected-path rule fires from the **stored** profile's list, as a rung-1 bounce naming `AGENTS.md`. After the worker reverts the file, the task merges.
-- `e2e_otlp_usage_reaches_the_run_snapshot`. Read `<data>/otlp.addr`, POST M8b.1's fixture with `anthrex.run` rewritten to the test's run id, once with `Content-Length` and once chunked. Within a deadline, `usage.by_role["orchestrator"]` equals the fixture's totals.
-- `e2e_history_survives_a_crash_after_the_append_intent` (`ANTHREX_TEST_ABORT_AFTER_INTENT=AppendHistory`: restart, `run resume` if paused, complete; `read_history` gives exactly one task record per task, and the raw file has at most one line per `record_id` plus nothing torn).
+- `e2e_a_stored_profile_cannot_widen_confinement`: a hand-written `profile.toml` adds `cache_dirs = ["/"]`; `run start` is refused with the parse message naming `cache_dirs`.
+- `e2e_generated_lock_file_bounces_at_rung_1` (the worker changes `Cargo.lock` outside `owns`; M8a decision 55's rung-1 bounce, not rung 3; the task merges after reverting it).
+- `e2e_protected_file_from_the_stored_profile_bounces_at_rung_1`. The stored profile's `protected = ["docs/agents.txt"]`; the worker, whose `owns` is `**`, edits `docs/agents.txt`. M8a's protected-path rule fires from the **stored** list, as a rung-1 bounce naming it. After the worker reverts the file, the task merges.
+- `e2e_history_records_the_fast_path_run`: after `e2e_green_s_task_on_the_fast_path`'s flow and accept, `history.jsonl` has one task record with `path == fast` and `diff.files == 1`, and one run record `accepted` with `accepted_commit` equal to `main`'s head.
+- `e2e_history_survives_a_crash_after_the_append_intent` (`ANTHREX_TEST_ABORT_AFTER_INTENT=AppendHistory`: restart with `unset_env`, `run resume` if paused, complete; `read_history` gives exactly one task record per task, and the raw file has at most one line per `record_id` plus nothing torn).
 - `e2e_revert_after_accept_is_recorded_and_counted` (accept, `git revert -m 1` on `main`, `run stats --json`: `reverted == 1` in the S row).
 
-In `scripts/pty_smoke_adapt.py`, the function `adapt_stage(env, bin_path)` is called from `pty-smoke.py` after stage 11c (and before M8c's stage 11e when that has landed first) and prints `== stage 11d: a goal takes the fast path ==`. The run milestones' stage letters are fixed: M8a `11c`, M8b `11d`, M8c `11e`, M9 `11f`, M9.5 `11g`, called in that order whichever merges first. It:
+In `scripts/pty_smoke_adapt.py`, the function `adapt_stage(run_cmd, fail)` follows `pty_smoke_run.py`'s injection pattern (it uses the caller's `run_cmd`, `fail` and isolated `ENV`, starts no daemon of its own, and has no `__main__`). `pty-smoke.py` calls it right after `run_engine_stage(run_cmd, fail)` (stage 11c), and before M8c's stage 11e when that has landed first. It prints `== stage 11d: a goal takes the fast path ==`. The run milestones' stage letters are fixed: M8a `11c`, M8b `11d`, M8c `11e`, M9 `11f`, M9.5 `11g`, called in that order whichever merges first. `ANTHREX_DECIDER_BIN` and `FAKE_AGENT_DECIDER_DIR` are set in the script's `ENV` at the top, beside `ANTHREX_CLAUDE_BIN`, so the smoke daemon inherits them from its start (they change nothing for earlier stages: stage 11c's check passes, so no decider runs; a decider with no script falls back). The stage:
 1. creates `/tmp/anthrex-smoke-adapt-<pid>`, a repo with identity, `check.sh` and one commit;
-2. writes the stored profile and the decider script under the smoke data dir, with `ANTHREX_DECIDER_BIN` set to `fake-agent`, plus the worker and reviewer scripts of `e2e_green_s_task_on_the_fast_path`;
-3. runs `anthrex run start --goal "add a" --dir <repo>`;
-4. polls `anthrex run status <id> --json` every 0.5 s up to `RUN_WAIT` until `complete`;
-5. runs `anthrex run accept <id> --yes`;
-6. asserts `a.txt` exists on `main`;
-7. removes the paths in `finally`.
+2. runs `anthrex profile status --json --dir <repo>` to learn `repo_dir`, and writes the stored profile and an empty-fingerprint `profile.meta.json` there;
+3. writes `triage-1.json` under `FAKE_AGENT_DECIDER_DIR`, and the worker and reviewer scripts of `e2e_green_s_task_on_the_fast_path` under `<repo>/.git/fake-agent/`;
+4. runs `anthrex run start --goal "add a" --dir <repo>` with a timeout derived from `GOAL_REQUEST_TIMEOUT` as `pty_smoke_run.py` derives `RUN_CMD_TIMEOUT` (`ensure_daemon` 3.25 s + `HANDSHAKE_TIMEOUT` 5 s + 810 s, rounded up to 900 s), and checks stderr says `fast path`;
+5. polls `anthrex run status <id> --json` every 0.5 s up to `RUN_WAIT` (300 s) until `complete`;
+6. runs `anthrex run accept <id> --yes` with `ACCEPT_CMD_TIMEOUT`;
+7. asserts `a.txt` exists on `main`;
+8. removes the paths (the repo, the decider directory's files) in `finally`.
 
 **Change.** Only tests, scripts and the fixes they uncover.
 
 **Acceptance.** All five AGENTS.md commands pass.
 
-**Commit.** `test: cover the fast path, onboarding, deciders, the output filter, metering and history end to end, and add a smoke stage`
+**Commit.** `test: cover the profile and history end to end, and add smoke stage 11d for the fast path`
 
 ## Verification
 
@@ -1783,7 +1932,7 @@ python3 scripts/pty-smoke.py
 
 Milestone-specific checks:
 
-- `PROTO_VERSION` equals the header's derivation, recorded under "Implementation notes".
+- `PROTO_VERSION == 8`, derived under "Implementation notes".
 - This prints nothing:
 
   ```bash
@@ -1792,14 +1941,16 @@ Milestone-specific checks:
     crates/daemon/src/scout/{contract,spec,report,machine}.rs \
     crates/daemon/src/decider/{mod,schema,prompt,parse,fallback,argv}.rs \
     crates/daemon/src/output_filter.rs crates/daemon/src/metering/otlp.rs \
-    crates/daemon/src/run/{triage,phases,history,stats}.rs crates/daemon/src/run/engine/deciders.rs
+    crates/daemon/src/run/{triage,phases,history,stats,model_adapt}.rs crates/daemon/src/run/engine/deciders.rs
   ```
 
-- `rg -n "\.state = TaskState::" crates/daemon/src/run` prints only `run/phases.rs`.
-- `rg -n "\.anthrex" crates/ scripts/` finds no path written into a repository.
-- `git diff --stat main -- crates/config/src/lib.rs` is empty.
+- M8b.16's `rg` prints only `run/phases.rs`.
+- `rg -n "\.anthrex" crates/ scripts/` finds no path written into a repository (M8a's `checkout::default_repo_dir` is a test-only default; the daemon always names a repository in its data directory).
+- `rg -n "\bcache_dirs\b|\bconfined_(network|unix_sockets|localhost_ports)\b" crates/proto/src/profile.rs crates/mcp/src/tools_scout.rs crates/daemon/src/profile/proposal.rs` finds only comments: no model-writable surface names a confinement setting.
+- `git diff --stat baa04e1 -- crates/config/src/lib.rs` shows one changed line.
 - `wc -l` on every file in the file-size table and every new file: nothing new above 600, and nothing existing grown past its budget.
-- Every git call added by this milestone goes through `worktree::run_git` (`--no-optional-locks`, scrubbed environment; AGENTS.md rules 10–11), and none runs under `daemon::lock`.
+- Every git call added by this milestone goes through `worktree::run_git` or `run::git`'s helpers (`--no-optional-locks`, scrubbed environment; AGENTS.md rules 10–11), every write through `GitQueue::write`, and none runs under `daemon::lock`.
+- No process-kill code is added or changed outside `decider::call`'s use of `HeadlessHandle::kill` and `ScoutService`'s use of `headless_kill`, both on handles the daemon itself spawned.
 - After the tests and the smoke script, nothing of yours shows in `pgrep -fl "anthrex daemon"` or `pgrep -fl fake-agent`, and `/tmp/ax-*`, `/tmp/anthrex-smoke-adapt-*` are gone.
 
 ## Manual check
@@ -1816,45 +1967,50 @@ printf '[orchestrator.deciders]\nmode = "claude"\n' > /tmp/anthrex-m8b/config.to
 ```
 
 1. Run `anthrex profile detect --dir /tmp/anthrex-m8b/demo`, then `anthrex profile status` until `Ready`. Check:
-   - `anthrex profile show --proposed` shows `check = "make check"` or equivalent, a `single_test` with `{test}`, a `test_passed` regex, and a verification block with `ok` for each command;
-   - `ls -a demo` shows no `.anthrex`, and `git -C demo status --porcelain --ignored` is empty.
+   - `anthrex profile show --proposed` shows `check = "make check"` or equivalent, a `single_test` with `{test}`, a `test_passed` regex, and a verification block marked `confined` with `ok` for each command;
+   - `ls -a demo` shows no `.anthrex`, `git -C demo status --porcelain --ignored` is empty, and `git -C demo worktree list` lists only `demo`;
+   - the scout's conversation (attach with `anthrex`, open the `scout/onboarding-…` window's conversation) shows no write attempt succeeding.
 2. Run `anthrex profile confirm` and answer `y`. `/tmp/anthrex-m8b/data/repos/demo-*/profile.toml` exists.
 3. Run `anthrex run start --goal "Make hello.sh print hello" --dir /tmp/anthrex-m8b/demo`. Check:
    - the triage line says `code/single (decider)` and `fast path`;
-   - attaching with `anthrex` and opening the worker's conversation (`C-b m`) shows, for its test run, the filtered view ending in `[anthrex] full output: …`;
+   - opening the worker's conversation (`C-b m`) shows, for its test run, the filtered view ending in `[anthrex] full output: …`, a path under `/private/tmp/ax-<uid>/`;
    - the run completes. Then run `anthrex run accept <id> --yes`.
 4. Run `anthrex run start --goal "Rewrite this project as a Rust workspace with a CLI crate, a library crate and a test suite" --dir …`. It exits 1 with the plan-path message, and `git -C demo branch --list 'anthrex/*'` is empty.
 5. `anthrex run stats --dir …` shows one S task, merged.
 6. Edit `Makefile` and commit. `anthrex profile status` shows `stale: Makefile`, and detection starts again. Run `anthrex profile reject`.
 7. Run `anthrex profile edit check 'sh tests/run.sh all' --yes`. Status goes to `Verifying`, then the value is stored.
-8. `curl -s -X POST -H 'Content-Type: application/json' --data @<M8b.1 fixture, anthrex.run replaced by a run id> "$(cat /tmp/anthrex-m8b/data/otlp.addr)/v1/metrics"`, then `anthrex run status <id> --json` shows `usage.by_role.orchestrator`.
-9. Run `anthrex daemon stop`. `pgrep -fl "anthrex daemon"` shows nothing of yours. Remove `/tmp/anthrex-m8b`.
+8. Run `anthrex profile edit setup 'curl -s https://example.com' --yes`. The proposal ends `Ready` with `setup` dropped and the confinement hint naming `[orchestrator.confined_network]`; nothing is stored. Run `anthrex profile reject`.
+9. `curl -s -X POST -H 'Content-Type: application/json' --data @<M8b.1 fixture, anthrex.run replaced by a run id> "$(cat /tmp/anthrex-m8b/data/otlp.addr)/v1/metrics"`, then `anthrex run status <id> --json` shows `usage.by_role.orchestrator`.
+10. Run `anthrex daemon stop`. `pgrep -fl "anthrex daemon"` shows nothing of yours. Remove `/tmp/anthrex-m8b`.
 
 ## Review focus
 
-These are the five input classes or failure modes most likely to bite a user that the task tests above would not exercise without being told to. Each has a test in its owning task; the reviewer checks those tests exist and fail without the fix.
+These are the input classes or failure modes most likely to bite a user that the task tests above would not exercise without being told to. Each has a test in its owning task; the reviewer checks those tests exist and fail without the fix.
 
 1. **A decider that hangs, crashes, or answers garbage, nothing or megabytes.** A decider is a second model surface on every bounce. Without a hard bound it stalls runs; without process-group kills it leaks processes. Tests: `a_hanging_decider_falls_back_at_its_timeout_and_leaves_no_process` and `garbage_empty_and_oversized_answers_fall_back` (M8b.7).
 2. **Test commands with shell syntax.** Quotes, heredocs, `&&`/`||`, env prefixes, `cd` prefixes, non-ASCII and non-zero exits all pass through the filter hook. A wrapper that re-quotes wrongly silently runs a different command, and one that loses the exit status makes a failing test look green to the worker. Tests: `wrapped_commands_behave_exactly_like_the_original` and `filter_run_preserves_exit_status_and_signals` (M8b.8).
-3. **Verification commands with side effects.** A `check` that rewrites tracked files, creates untracked ones, or hangs. Verification must never touch the user's checkout, must never delete dirt unsalvaged, and must end. Tests: `verification_never_touches_the_checkout_and_salvages_dirt` and `a_hanging_verification_command_times_out_and_is_dropped` (M8b.10).
-4. **A hand-edited or corrupt stored profile.** `profile.toml` is a plain file a user may edit. A parse error must refuse the run by path and never fall back to a plan's weaker profile, and `profile edit` must refuse a glob with `..`, a `single_test` without `{test}` and a regex that does not compile. Tests: `an_unparseable_profile_is_reported_with_its_path` (M8b.4), `e2e_a_corrupt_stored_profile_refuses_the_run` (M8b.15), and `edit_rejects_invalid_values_with_the_rule` (M8b.10).
-5. **A crash around a history append.** Between an append and its `done` line, a replayed op must not double-count a task in `stats`, and a torn last line must not poison the file. Tests: `history_append_is_reconciled_exactly_once` (M8b.14) and `e2e_history_survives_a_crash_after_the_append_intent` (M8b.15).
+3. **Verification commands with side effects.** A `check` that rewrites tracked files, creates untracked ones, writes outside its checkout, or hangs. Verification must never touch the user's checkout, must stay inside the user's confinement, must never delete dirt unsalvaged, and must end. Tests: `verification_never_touches_the_checkout_and_salvages_dirt`, `verification_uses_the_users_confinement_not_the_proposal` and `a_hanging_verification_command_times_out_and_is_dropped` (M8b.10).
+4. **A hand-edited or model-written profile.** `profile.toml` is a plain file a user may edit, and the scout writes a proposal. A parse error must refuse the run by path and never fall back to a plan's weaker profile; a confinement key or a reserved env key must never reach a run; and `profile edit` must refuse a glob with `..`, a `single_test` without `{test}` and a regex that does not compile. Tests: `an_unparseable_profile_is_reported_with_its_path`, `a_profile_with_a_confinement_key_does_not_parse`, `from_findings_drops_reserved_env_keys` (M8b.4), `e2e_a_corrupt_stored_profile_refuses_the_run`, `e2e_a_stored_profile_cannot_widen_confinement` (M8b.19), and `edit_rejects_invalid_values_with_the_rule` (M8b.10).
+5. **A crash around a history append.** Between an append and its `done` line, a replayed op must not double-count a task in `stats`, and a torn last line must not poison the file. Tests: `history_append_is_reconciled_exactly_once` (M8b.16) and `e2e_history_survives_a_crash_after_the_append_intent` (M8b.19).
+6. **A scout that is not read-only.** Every scout's `HeadlessSpec` must carry the empty-root sandbox and `dontAsk` with the write tools disallowed, whatever `worker_sandbox` says. Tests: `area_scout_spec_is_read_only`, `the_scout_sandbox_does_not_depend_on_worker_sandbox` (M8b.9) and `the_scout_argv_is_read_only` (M8b.9).
 
 ## Risks and gotchas
 
 1. **Deciders cost tokens on every bounce.** A check summary per failed check, a size check per plan edit, and a triage per goal. They run at the fast tier and low effort, one call each, and `mode = "off"` removes them. Meter them (decision 29) before judging their worth.
 2. **Strict schemas.** Structured-output modes may reject a schema with optional properties; decision 17's schemas already make every property required and nullable. If M8b.1 finds a CLI rejects `anyOf` or `["string","null"]`, simplify that runtime's schema and let `parse` enforce the rest.
 3. **Codex prompts are on the argv.** `ps` shows them, and the size is bounded by `ARG_MAX` (1 MiB on macOS), which `PROMPT_MAX_BYTES` (128 KiB) stays well inside. Claude prompts go on stdin.
-4. **Onboarding runs the check twice**, once by the scout and once by the engine. On a large repository that doubles a long build. It is the price of "a command that did not run is not proposed" without trusting the scout's claim.
-5. **The sandbox blocks the scout's network.** A `setup` like `cargo fetch` fails inside the scout's sandbox. The contract tells it to propose the command anyway, and the engine's unsandboxed run decides.
+4. **Confined verification fails where the network or a cache is needed.** A `setup` like `cargo fetch` or `npm ci` fails confined unless the user's config enables `confined_network` (and a cache directory) for the repository. That is deliberate: it fails the same way in every run, so a profile that verifies here works in runs. The dropped command's hint names the tables. Enabling `confined_network` is close to trusting the repository's checks with the user's readable credentials (M8a F1d round 2, S1); the hint must not encourage it beyond naming it.
+5. **The onboarding scout cannot run a build.** It is read-only, so its proposal is a reading of manifests and CI files. The engine's run is the proof; a wrong proposal is dropped, not stored.
 6. **Fingerprint false positives.** Any change to `Cargo.toml` makes the profile stale, even a version bump. That is cheap: the stale profile stays in use, and detection only proposes.
-7. **The OTLP port is unauthenticated on loopback.** Any local process can post usage for a run id. Metering is informational and never gates anything; keep it that way.
+7. **The OTLP port is unauthenticated on loopback.** An unconfined local process can post usage for a run id; confined checks and sandboxed sessions cannot (decision 30). Metering is informational and never gates anything.
 8. **Wrapped commands and allow rules.** If `HOOK_SETS_ALLOW` must be true, the hook approves the rewritten `Bash` call. It rewrites only calls that start with a profile prefix, which the worker's `--allowedTools Bash` already allows, and the sandbox still confines them.
-9. **The history file grows forever.** At a few KiB per task this is harmless for years; pruning is a follow-up.
+9. **The history file grows forever.** At a few KiB per task this is harmless for years; pruning is a follow-up. Filter logs live in the task `TMPDIR` and go with the checkout.
 10. **Revert detection sees only the base branch's first 2000 commits** and only `git revert`'s standard message. A manual revert goes unseen, and the stats undercount reverts.
 11. **Stale M8a tests.** The harness defaults deciders to `off` and onboarding to manual (decision 36). If an M8a test starts failing with decider calls in its log, a harness default was lost.
 12. **Built-in `protected` entries cannot be switched off from M8b.** The stored list holds extras only, `profile edit` refuses built-ins, and M8a always unions `BUILTIN_PROTECTED`. A user who truly needs a task to change `AGENTS.md` names it exactly in that task's `owns` (M8a decision 56).
 13. **Socket and temp paths.** Every new test directory is under `/tmp` (`tempfile::Builder::new().prefix("ax-…").tempdir_in("/tmp")`), never `std::env::temp_dir()`.
+14. **Leftover scouts after a daemon crash** are not killed (decision 11). They are read-only and end with their turn. Do not add a pattern-based kill to "clean them up".
+15. **Environment-changing tests** run alone in their own test binary (M8a's practice, ruling Q11), not under a shared lock.
 
 ## Follow-ups handled
 
@@ -1864,21 +2020,1014 @@ M8a's "Out" table assigned these to M8b; each is handled here:
 - The repo profile file, the onboarding scout, and profile re-proposal: decisions 4–11. There is no `.anthrex/profile.toml`, per the amended spec §6.
 - The output-filter `PreToolUse` hook, OTLP metering of the orchestrator, `history.jsonl` and `anthrex run stats`: decisions 26–35.
 
-New follow-ups to record in `docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md` during implementation:
+From M8a's follow-up ledger (`docs/superpowers/plans/2026-09-17-anthrex-foundation-followups.md`, the "for M8a/M8b" sections):
+
+- **F1c N4, "Scouts … must be launched the same way, a read-only OS sandbox":** decision 12; every scout gets the reviewer's empty-root sandbox and `dontAsk`, and Codex `read-only`.
+- **F1c I2 cost, "confined `setup` needs `cache_dirs`":** verification runs confined like a run (decision 9), so a profile never verifies what a run cannot run, and a dropped command names the user-config tables.
+- **F1c N3, F1d R4 and round 2 S1 (confinement settings are the user's own):** the profile has no such key, the scout's schema and `profile edit` cannot set one, and verification reads them only from the user's config (decisions 5 and 9).
+- **F2 C-I4 and round 2 (the reserved environment list):** the stored profile's `env` is checked against `config::reserved_env` at proposal, at edit, and again by `build_run`.
+- **M8a.10 review, "`test_passed` need not contain `{test}`":** required for stored profiles (decision 9). Plan-file validation is unchanged; the follow-up stays open for plan files.
+- **F2, Codex trust entries in `~/.codex/config.toml`:** scouts and deciders run Codex `read-only`, which M8b.1 item 2 checks writes no trust entry.
+
+Not handled here, and left open: F4's `crates/config/src/lib.rs` split (M8b adds no line to it), F3 B-10's late `TurnEnded` usage (engine signal code, not metering), and every process-kill item.
+
+New follow-ups to record in the ledger during implementation:
 - a TUI form for the profile (M9);
 - the output filter for Codex workers (under M9.5);
-- pruning `history.jsonl` and `<data_dir>/runs/*/logs/`;
-- routing and threshold proposals in `run stats` (M9.5).
+- pruning `history.jsonl`;
+- routing and threshold proposals in `run stats` (M9.5);
+- a leftover scout process after a daemon crash is not killed (decision 11), to weigh under the process-kill safety rule;
+- `run::git::checkout::default_repo_dir`'s `<parent>/.anthrex/<name>` default, used only by tests' convenience wrappers, should not be reachable from daemon code (a guard or a rename).
 
 ## Spec defects found while writing this brief
 
-1. **§6 against §4, read-only scouts.** §6 says the onboarding scout "must run `check` and `single_test` once successfully before proposing them". §4's table gives scouts `Writes? no`, and "Read-only roles are launched read-only by the runtime … Claude with `--permission-mode plan` (which also closes the `Bash` loophole)" — a plan-mode scout cannot run a command. Decision 9 resolves it: only the onboarding scout runs commands, sandboxed in a disposable copy, and the engine re-runs them.
-2. **§21 against §14.8, OTLP in M8b.** §21 gives "OTLP metering" to M8b, but §14.8 meters only "the orchestrator, the one PTY session", which milestone 9 creates. Decision 30 builds the receiver and the environment, tested by direct POSTs; wiring it into a window is M9's.
-3. **§7.2 rule 5 against §5.1.** Rule 5 cross-checks "each task's size against its scout evidence", but the fast path has no scouts (§5.1: "a scout for a one-line fix is pure overhead"), and its single task is sized by the triage decider. Decision 19 skips the cross-check there.
-4. **§13 item 3 against §5.1.** Item 3 puts deciders in `max_readers` slots, which are per run, but triage runs before any run exists. Decision 18 exempts triage.
-5. **§4, the decider row.** "Deciders are one-shot headless calls … `claude -p --output-format json`" predates the headless amendment. Every other headless surface uses stream-json, and decision 16 uses stream-json on M8a's spawner so one parser serves all.
-6. **§15, "whether the user later reverted it".** A record appended when the task finishes cannot know this. Decision 33 adds an append-only `revert` record, joined by readers.
-7. **§6, "manifests" and "test output".** §6 re-proposes "when … a manifest … changes hash" but defines no manifest list. §14.3 filters "test output", but no profile key says which commands produce it. Decision 5 adds `manifests` and `filter_prefixes`.
-8. **§14.8 against M8a decision 40.** §14.8 says usage field names "are verified in the first task of the milestone that implements metering". M8a meters stream usage and pins them in M8a.1; M8b.1 only cross-references them.
+1. **§6 against §4, read-only scouts.** §6 says the onboarding scout "must run `check` and `single_test` once successfully before proposing them" and that it "may run commands … sandboxed, with shell access". §4's table gives scouts `Writes? no`, and M8a's follow-up requires a read-only OS sandbox for every scout. Decision 9 resolves it: the onboarding scout reads (its shell writes nothing), and the engine runs every proposed command, confined, in a fresh copy; only commands that pass are proposed. *(Refreshed 2026-09-26; the 2026-09-22 resolution let the scout write its copy.)*
+2. **§4, "Claude with `--permission-mode plan`" for read-only roles.** M8a.1 found plan mode blocks an allowed MCP call under `-p`; M8a launches reviewers with `dontAsk` and the write tools disallowed, plus a read-only sandbox. Decisions 12 and 16 do the same for scouts and deciders.
+3. **§21 against §14.8, OTLP in M8b.** §21 gives "OTLP metering" to M8b, but §14.8 meters only "the orchestrator, the one PTY session", which milestone 9 creates. Decision 30 builds the receiver and the environment, tested by direct POSTs; wiring it into a window is M9's.
+4. **§7.2 rule 5 against §5.1.** Rule 5 cross-checks "each task's size against its scout evidence", but the fast path has no scouts (§5.1: "a scout for a one-line fix is pure overhead"), and its single task is sized by the triage decider. Decision 19 skips the cross-check there.
+5. **§13 item 3 against §5.1.** Item 3 puts deciders in `max_readers` slots, which are per run, but triage runs before any run exists. Decision 18 exempts triage.
+6. **§4, the decider row.** "Deciders are one-shot headless calls … `claude -p --output-format json`" predates the headless amendment. Every other headless surface uses stream-json, and decision 16 uses stream-json on M8a's spawner so one parser serves all.
+7. **§15, "whether the user later reverted it".** A record appended when the task finishes cannot know this. Decision 33 adds an append-only `revert` record, joined by readers.
+8. **§6, "manifests" and "test output".** §6 re-proposes "when … a manifest … changes hash" but defines no manifest list. §14.3 filters "test output", but no profile key says which commands produce it. Decision 5 adds `manifests` and `filter_prefixes`.
+9. **§14.8 against M8a decision 40.** §14.8 says usage field names "are verified in the first task of the milestone that implements metering". M8a meters stream usage and pins them in M8a.1; M8b.1 only cross-references them.
+10. **§6's example `protected` list and `env`.** The example lists the five built-ins in `protected` (M8b stores extras only, decision 5), and §17's "per-worktree variables from the profile" is narrowed by M8a's reserved list (F2 C-I4).
 
 ## Implementation notes
+
+### Refresh 2026-09-26 (post-M8a)
+
+Refreshed against branch `m8a-engine-core` at `baa04e1` (PR #17, merging unchanged). Paths and line numbers are on that commit. Every changed decision keeps its number; the reason for each change is M8a's shipped code or its recorded deviations.
+
+**Status and protocol**
+
+- Status `blocked` → `ready`, and `docs/ROADMAP.md` row 8b → `ready`: M8a is `done` (ROADMAP row 8a).
+- Protocol "one above main when M8b starts (8 if M8a merged at 7)" → **8**: `PROTO_VERSION = 7` at `crates/proto/src/lib.rs:25`; test `proto_version_is_seven` (`lib.rs:69`) becomes `proto_version_is_eight`. Re-derived in the header and M8b.2.
+
+**Decisions changed, and why**
+
+- R1 (decision 3). The config file is `crates/config/src/orchestrator/adapt.rs`, not `orchestrator_adapt.rs`: M8a split `orchestrator` into a directory (`orchestrator/{profile,roster,unknown}.rs`), and `orchestrator.rs` is 570 lines. `lib.rs` (605) changes only in its `pub use` line, since `ScoutContext` names `config::Scouts`. `orchestrator/unknown.rs` owns the known-key list.
+- R2 (decisions 4 and 8). The disposable onboarding and verification copies are M8a's **standalone checkouts** (`prepare_scratch_in`, `remove_checkout`, `salvage`; F1c 3a), not `git worktree add --detach` + `git worktree lock`. Reason: since F1c no task-like checkout is a linked worktree, so the user's `git gc`/`fsck`/`log --all` never walk it, and M8a's removal and salvage work on exactly this shape. Their repositories live at `<repo_dir>/tasks/.onboarding` and `.profile-verify` (`checkout_repo_dir`).
+- R3 (decision 5). `RepoProfile` holds no `cache_dirs` or `confined_*` key, and its `env` obeys `config::reserved_env`. Reason: M8a F1c N3, F1d R4 and round 2 S1 make those settings the user's own config only, keyed by repository root, precisely so that nothing a model or a repository writes can widen a confined command; F2 C-I4 made the reserved-env list the single rule for profile env. With `deny_unknown_fields`, a profile naming one does not parse, so the run is refused (decision 6).
+- R4 (decision 6). "Replace `plan.profile` with the chosen spec" was not enough: `resolve_profile` (`run/plan.rs:119`) falls back to `[orchestrator.profile]` per key, so the config would fill a stored profile's deliberate gaps. The driver now also clears the cloned config's `profile` for source 1 (`adapt::choose_profile`), and the protected-files scan in `build` uses the chosen profile. Confinement still comes from the config tables through `build_run`'s `for_repo`.
+- R5 (decision 9). The old decision had the onboarding scout run the commands in a writable sandboxed copy, and the engine re-run them "unsandboxed, as M8a runs `setup`". Both premises changed: M8a F1c round 2 runs `setup` confined like checks and proofs, and F1c N4 requires every scout to run under a read-only OS sandbox. Now the scout only reads (its `*_ran_ok` claims are removed, so `ProfileFindings` is gone and the report carries a plain `RepoProfile`), and the engine verifies each command through `run_matching` under a `ConfineSpec` built from the user's config for the repository root — the confinement a run would get — with M8a's `start_refusal` where the platform cannot confine. `single_test` verification uses M8a's `proof_command`/`proof_pattern`. A dropped command carries a hint naming the user-config tables (picks up F1c I2's cost). `run::exec::run_matching` becomes `pub(crate)`; `run::plan::for_repo` becomes `pub(crate)`.
+- R6 (decision 11). The old decision said M8a's reconcile kills a leftover scout by session id. It does not: `kill_leftovers` examines only `run.json` round pids (F3 B-6), and `remove_stale_windows` skips windows with no run (`driver/restore.rs:298`). `ProfileService::restore` now removes restored scout windows itself, and M8b adds no process-kill code (the process-kill safety rule); the leftover is read-only and ends with its turn. Recorded as a follow-up.
+- R7 (decision 12). Scouts launch with `dontAsk` and the reviewer's disallowed tools, not `--permission-mode plan` (M8a.1: plan mode blocks an allowed MCP call under `-p`; `REVIEWER_PERMISSION_MODE`, `role_launch.rs:34`), and **every** scout gets the empty-root `ClaudeSandbox` with the protected denials, as a Claude reviewer does (F1c N4, `role_launch.rs` `reviewer_spec`), whatever `worker_sandbox` says; `ProfileStatus.sandbox` ("onboarding scout sandbox: off") is gone, replaced by `verify_confined`. Codex scouts get `read-only`, the F1d pins through `codex_args`, and `codex_config_guard` when Codex loads project config (F2 C-I1). The project-settings check takes M8a's real signature (`project_settings(git, root, base_sha, claude, codex_paths, timeout)`).
+- R8 (decision 15). `anthrex mcp`'s flags live in `crates/cli/src/mcp_cmd.rs`, not `main.rs`; `mcp_args` omits `--run` for a run-less scout.
+- R9 (decision 16). Deciders use `--permission-mode dontAsk` (not `plan`, R7's reason), take no `--settings` (no window, so no hooks), and never use `--bare` or `apiKeyHelper`: `auth = "api_key"` is refused at config load since F2 C-I3 (`orchestrator.rs:544`). `HeadlessHandle::spawn` is blocking and takes `remove` (F2's credential scrub), so the call runs it on `spawn_blocking` with `credential_scrub_for(runtime, Login)`. `DeciderContext` takes the manager's `CliCaps` value (test overrides included) instead of `&'static CliCaps`, and no `claude_auth`/`api_key_helper`. Codex deciders add `CODEX_SANDBOX_PINS`. `claude_stream` is the stateful `ClaudeStream::parse_line`, not a free function.
+- R10 (decision 22). `StartGoal` gains `unconfined_checks`, and the fast path goes through the same `build_plan` M8a's `run start` uses (split out of `driver/requests.rs::build`), so it runs every M8a start check: confinement refusal, protected files, the runtime checks of decisions 50 and 53 for every reachable runtime (M8a.22 fix round 2 made them per runtime, not only Claude), the Codex branch and `.codex` tree.
+- R11 (decision 28). The filter log goes to `<task TMPDIR>/anthrex-logs`, not a new writable root `<data_dir>/runs/<run>/logs/<task>`. Reason: M8a F1c I1 computes every grant from engine-made paths, and F1d gives each worker a short per-task `TMPDIR` (`role_launch::task_tmp_dir`) that is already in its grant and outside the checkout; adding a root would widen the worker's sandbox for no need. The log is removed with the checkout, so the "prune logs" follow-up is dropped. M8b.1 item 3 probes the write under `$TMPDIR` instead of a separate root.
+- R12 (decision 32). `MeasureDiff` names only commits in the user's store (merge commits, the run head, `Task.head`, which M8a sets from imported claims); a worker's unimported commits live in its private store (F1b/F1c) and are never named. "Cancelled with commits" became "with a recorded head".
+- R13 (decision 36). `fake-agent` detects decider mode from the prompt's first line rather than from `--json-schema`/`--output-schema`, so it works whichever flags M8b.1 finds. The harness helpers go in a new `support/run_adapt.rs`, because `run_harness.rs` is 525 lines.
+- R14 (decision 31). The `set_state` sweep is sized from the code: 21 task-state assignments in 8 files (`= next` and `= state` included, which the old grep `\.state = TaskState::` missed); the acceptance grep now catches all of them.
+
+**Stale names fixed** (old → shipped)
+
+- `RunContext { …, exe, socket_path, … }` → no such fields (F3 B-11); `exe`/`socket_path` come from `ManagerConfig` through the manager.
+- `RunService::snapshots` → `pushes()`/`current()` (F3 B-11).
+- `run::git::{remove_worktree, lock_worktree}` for the onboarding copies → `remove_checkout` with the repository named; no lock.
+- `profile/verify.rs::{prepare_scratch, discard_scratch}` (`worktree add --detach HEAD, lock`) → `prepare` (`prepare_scratch_in` at `pre.base_sha`) and `discard` (`salvage` + `remove_checkout`).
+- `run::exec::run_shell` for verification → `run_matching` with a `Confinement`.
+- `run/driver.rs` or `run/driver/ops.rs` as the home of new ops → `run/driver/adapt.rs` (driver.rs is 598 lines, ops.rs 580, requests.rs 561).
+- `server/run_api.rs` routing new requests → `RunService::request` in `driver/requests.rs` (run_api hands every non-subscribe request to it).
+- `crates/cli/tests/support/mod.rs`'s `TempRepo` via `#[path]` → `run_harness::init_repo` (CLI tests never included the daemon support module).
+- `crates/daemon/src/launch/claude.rs` / `launch/mod.rs::hook_command` as the settings source → `headless::argv::claude_settings(exe, window_id, sandbox, caps)`, which builds on `launch::claude::settings`.
+- `ClaudeSandbox { writable_roots }` → `{ writable_roots, deny_write }` (F2 round 2).
+- `CheckInfo.summary_source` beside a new `summary` → `CheckInfo.summary: String` already exists (M8a's last-40 text), so the decider's text is the new `CheckInfo.decider_summary`.
+- `anthrex run start` flags → also `--unconfined-checks` (F1c round 2).
+- `scripts/pty_smoke_adapt.py::adapt_stage(env, bin_path)` → `adapt_stage(run_cmd, fail)`, M8a's injection pattern (`pty_smoke_run.py::run_engine_stage(run_cmd, fail)`, called at `pty-smoke.py:1712`).
+- The file-size table: every count taken on `baa04e1`, with budgets that keep every file under 600 (`main.rs` 594 forces the new `pre_clap.rs`; `driver.rs` 598 allows only `mod adapt;` and one field).
+
+**Tasks re-cut.** The old 15 tasks became 19, so each is one implementer's job: onboarding split into proposal/verification (M8b.10) and service/CLI (M8b.11); engine deciders into summaries/classification (M8b.12) and the size cross-check (M8b.13); history into records (M8b.16) and reverts/stats (M8b.17); the end-to-end task into two (M8b.18, M8b.19, which carries smoke stage 11d).
+
+### M8b.1 external facts (2026-09-25)
+
+Verified on macOS (Darwin 25.2, arm64) against `claude` 2.1.280 and `codex-cli` 0.156.1. Every probe used M8a.1's scrubbed environment (`env -i` with only `HOME`, `PATH`, `USER`, `LOGNAME`, `SHELL`, `TERM`, `LANG`), no `ANTHROPIC_API_KEY` (the subscription login), scratch directories under `/tmp/anthrex-m8b1/`, `--no-session-persistence` and `claude-haiku-4-5`. Fixtures, each with a `.meta.json` holding the exact command (paths redacted to `/tmp/fixture`; ids, thinking signatures, account identity and the user's own hook and command payloads redacted):
+- `crates/daemon/tests/fixtures/deciders/claude-2.1.280-decider.jsonl` (item 1, `blocked_reason`) and `claude-2.1.280-decider-triage.jsonl` (item 1, `triage`);
+- `crates/daemon/tests/fixtures/headless/claude-2.1.280-filter-hook.jsonl` (item 3);
+- `crates/daemon/tests/fixtures/headless/claude-2.1.280-scout.jsonl` and `claude-2.1.280-scout-deny-cwd.jsonl` (item 4);
+- `crates/daemon/tests/fixtures/otlp/claude-2.1.280-metrics.json` (item 5).
+
+**Controller rulings for this task.** Real `claude` only for items 1, 3, 4 and 5, one short prompt per probe; real `codex` not at all (a Codex exec can write trust entries into `~/.codex/config.toml`), so item 2 comes from `codex exec --help` and `codex --version` only. The sha256 of `~/.claude/settings.json` and `~/.codex/config.toml` was taken before the first probe and after each, and of `~/.claude/settings.local.json` too from the resumed probes on; none changed. The first run also watched `~/.claude.json` and stopped after item 1 when its hash changed; the controller then ruled that `~/.claude.json` is Claude Code's shared state file, rewritten continually by every running Claude Code session (the controller's and the user's own included), so a change to it is not evidence of a probe writing user configuration, and a headless `claude -p` touching it is normal Claude Code behaviour, not an anthrex concern. The probes resumed without it.
+
+**Item 1, a Claude decider call: run** (three calls with decision 16's argv exactly, plus two for the tools question below). One stream-json user message on stdin, stdin then closed.
+- **Flags.** All exist and were accepted (exit 0): `--json-schema`, `--no-session-persistence`, `--permission-prompts none`, `--setting-sources user`, `--strict-mcp-config`, `--permission-mode dontAsk`, `--disallowedTools`, `--model`, and `--max-turns`, which `claude --help` does not list (hidden) but the CLI accepts.
+- **Where the answer appears: three places at once.**
+  1. A top-level assistant `tool_use` named `StructuredOutput` (`parent_tool_use_id: null`) whose `input` is the answer object, followed by a `user` `tool_result` "Structured output provided successfully".
+  2. `result.structured_output`, the same object.
+  3. `result.result`, the same object as JSON text.
+
+  So `DECIDER_CAPS.answer_source = ResultField`, and M8b.7 adds `SessionEvent::StructuredOutput { value }` from `result.structured_output` (decision 16's source 1). Source 2 (the `StructuredOutput` tool use) also matches both streams and stays as the fallback.
+- **The triage call answered in text first.** With the exact triage schema and prompt, the model first wrote the answer as fenced JSON in an assistant text block; the CLI then injected a user text message, `[structured-output-enforce] You MUST call the StructuredOutput tool to complete this request. Call this tool now.`, and the model called `StructuredOutput`. `num_turns` was **3**, exactly `--max-turns 3` (the `blocked_reason` calls used 2). So the margin decision 16 leaves is zero for a model that answers in text first. What the CLI does when it hits `--max-turns` before `StructuredOutput` was not probed; decision 16's source 3 (the last top-level assistant text, fence removed) would still find the fenced answer in the stream, provided M8b.7 reads the events before treating a failed turn as final. Ruling R-T1-4: M8b.7 parses that fenced text even when the turn limit is hit; `--max-turns 3` is unchanged.
+- **Strict schemas: not required.** A `blocked_reason` schema whose `required` lists only `kind` was accepted and answered (exit 0, `structured_output` present). The triage schema's `anyOf` with `{"type":"null"}` and its `["string","null"]` types were accepted too, so the risk note "Strict schemas" needs no simplification. `DECIDER_CAPS.strict_schemas = false`.
+- **Usage** (`result.usage`, the same names M8a.1 recorded, plus `output_tokens_details.thinking_tokens` and `iterations[]`): for `blocked_reason`, input 10, output 357 (257 thinking), `cache_read_input_tokens` 0, `cache_creation_input_tokens` 17 688, `total_cost_usd` 0.0372. `modelUsage` is keyed by `claude-haiku-4-5`. No new usage field needs adding to M8a.1's list.
+- **Exit.** Every call exited 0, 0.37 to 0.80 s after the `result` line, with stdin already closed.
+- **What else loads into a decider.** Under `--setting-sources user` the user's own `SessionStart` hooks run (`system/hook_started`/`hook_response`) and `system/commands_changed` lines list the user's skills (the fixtures empty those arrays; see each meta's `redactions`); that context is why a one-line classification cost 17 688 cache-creation tokens. `system/init.tools` lists built-in tools `--disallowedTools` does not name (`CronCreate`, `SendMessage`, `RemoteTrigger`, `PushNotification`, `Workflow`, `Skill`, `ToolSearch`, `Task*` and others) beside `StructuredOutput`. Two cheap extra calls, same argv plus one flag:
+  - `--tools ""`: `init.tools` is exactly `["StructuredOutput"]`, the answer arrives as before, and cache creation fell to 10 763 tokens. The user's `SessionStart` hooks still ran.
+  - `--restricted`: no `SessionStart` hooks ran (it ignores user settings files), cache creation 9 313 tokens, but `init.tools` still listed 18 tools.
+
+  Ruling R-T1-6: Claude deciders pass `--tools ""` (M8b.5); this task leaves decision 16's argv as it is.
+
+**Item 2, a Codex decider call: not run (controller ruling).** From `codex --version` (`codex-cli 0.156.1`) and `codex exec --help`: `--json`, `--skip-git-repo-check`, `--ephemeral` ("Run without persisting session files to disk"), `-s/--sandbox read-only|workspace-write|danger-full-access`, `-c/--config <key=value>`, `--output-schema <FILE>` ("Path to a JSON Schema file describing the model's final response shape") and `-m/--model` all exist; `--ignore-user-config` also exists (M8a.1). OUTSTANDING for the user: that the final `agent_message` text is the JSON, `turn.completed.usage`, whether `--output-schema` is honoured at run time, and whether the run writes `~/.codex/config.toml`. The command below is copy-pasteable: it makes an empty directory, writes the `blocked_reason` schema and prompt exactly as the Claude probe used them (the schema and prompt in `claude-2.1.280-decider.meta.json`'s `command`), and hashes the config before and after.
+
+```sh
+mkdir -p /tmp/anthrex-m8b1-codex && cd /tmp/anthrex-m8b1-codex
+cat > schema.json <<'SCHEMA'
+{"type":"object","additionalProperties":false,"required":["kind","reason"],"properties":{"kind":{"enum":["question","mis_sized","environment"]},"reason":{"type":"string","minLength":1,"maxLength":300}}}
+SCHEMA
+cat > prompt.txt <<'PROMPT'
+[anthrex decider] blocked_reason v1
+A coding agent stopped its task and gave the reason below without saying what kind of block it is. Classify it. question: it needs an answer or a decision about the task. mis_sized: the task is bigger than one task, or needs changes outside the paths it owns. environment: a tool, command, permission, dependency or setup is broken or missing. Answer with one JSON object that matches the schema, and nothing else.
+
+Task t1: Add a retry to the fetch helper
+Reason:
+cargo test fails before my change: the linker `cc` is not installed in this checkout's environment.
+PROMPT
+shasum -a 256 ~/.codex/config.toml
+env -i HOME="$HOME" PATH="$PATH" USER="$USER" LOGNAME="$LOGNAME" SHELL="$SHELL" TERM="$TERM" LANG="$LANG" \
+  codex exec --json --skip-git-repo-check --ephemeral -s read-only \
+  -c sandbox_workspace_write.network_access=false -c approval_policy="never" -c model_reasoning_effort="low" \
+  --output-schema schema.json -- "$(cat prompt.txt)" > codex-decider.jsonl 2> codex-decider.stderr
+shasum -a 256 ~/.codex/config.toml
+```
+
+Codex's caps follow the controller's ruling that a flag `codex exec --help` lists is passed: `codex_output_schema = true` and `codex_ephemeral = true`. Their runtime behaviour is **unverified** (outstanding for the user, above); `parse` validates every answer whatever `--output-schema` does, and a refused schema only makes a Codex decider fall back, which never blocks a run. No `codex-<version>-decider.jsonl` fixture exists; M8b.6's shape test skips it with a printed reason.
+
+**Item 3, the filter hook under `-p`: run.** A worker-shaped session: `--permission-mode acceptEdits` (M8a's default worker mode), `--allowedTools Bash`, `--permission-prompts none`, `--setting-sources user --strict-mcp-config`, M8a's sandbox block as `claude_settings` writes it (`enabled`, `allowUnsandboxedCommands false`, `failIfUnavailable true`, `filesystem.allowWrite [repo, task TMPDIR]`, `denyWrite` of the protected paths, every pin), and `TMPDIR` set to the task directory. `--settings` had two `PreToolUse` groups: a recording group in M3's place (matcher `""`, M8a.1's recording command; see the deviations below) and a `Bash` group whose script printed `{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{…every tool_input key…,"command":<rewritten>}}}` **without** `permissionDecision`. The prompt asked for `echo original`.
+- **Where the hook facts come from.** "Both groups fired" and the payload keys are not in the stream (it has only `SessionStart` hook lines); they come from the probe's recording files. The recording group's file is committed as `claude-2.1.280-filter-hook-hooks.jsonl` (hook payloads, one per line: its `PreToolUse` has the original command, its `PostToolUse` the rewritten one). The rewrite group's own recording (one `PreToolUse` payload, identical to the recording group's before redaction) was not committed.
+- **The rewrite hook**, `/tmp/fixture/bin/rewrite-hook.py` (scratch paths as run; `rewrite-cmd` held the rewritten command, and no `allow-flag` file or `M8B1_ALLOW` existed, so no `permissionDecision` was printed):
+
+  ```python
+  #!/usr/bin/env python3
+  import json, sys, os
+  payload = json.load(sys.stdin)
+  open("/tmp/anthrex-m8b1/out/filter-hook-payloads.jsonl","a").write(json.dumps(payload)+"\n")
+  if payload.get("tool_name") != "Bash": sys.exit(0)
+  ti = dict(payload.get("tool_input", {}))
+  ti["command"] = open("/tmp/anthrex-m8b1/rewrite-cmd").read().strip() if os.path.exists("/tmp/anthrex-m8b1/rewrite-cmd") else 'echo rewritten > "$TMPDIR/anthrex-logs/probe"'
+  out = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "updatedInput": ti}}
+  if os.environ.get("M8B1_ALLOW") == "1" or os.path.exists("/tmp/anthrex-m8b1/allow-flag"):
+      out["hookSpecificOutput"]["permissionDecision"] = "allow"
+  print(json.dumps(out))
+  ```
+
+  The recorded run's rewritten command: `echo rewritten > /tmp/fixture/s3/tmp/anthrex-logs/probe; echo "tmpdir=$TMPDIR"`. The first run (no `rewrite-cmd`) used the brief's `echo rewritten > "$TMPDIR/anthrex-logs/probe"`.
+- **Both groups fired**, in order, once per Bash call.
+- **The rewritten command ran.** The tool result is the rewritten command's output, and the probe file was written. So `updatedInput` applies without `"permissionDecision":"allow"`: **`output_filter::HOOK_SETS_ALLOW = false`**.
+- **The assistant `tool_use` keeps the original command.** The stream's `tool_use.input.command` is `echo original`; only the `tool_result` shows that the rewrite ran. Decision 37's `bash` step emits "the `tool_use` (with the final command)", which differs from the real CLI: Ruling R-T1-3: M8b.6's `bash` step emits the original command in `tool_use`.
+- **`$TMPDIR` inside the Bash tool is not the process's `TMPDIR`.** The brief's command, `echo rewritten > "$TMPDIR/anthrex-logs/probe"`, failed with `no such file or directory: /tmp/claude-<uid>/anthrex-logs/probe`: Claude Code's sandbox sets `TMPDIR` to its own `/tmp/claude-<uid>` for Bash. A second run whose rewrite wrote to the task directory **by absolute path** (`<task TMPDIR>/anthrex-logs/probe`) succeeded, and printed `tmpdir=/tmp/claude-<uid>`. Decision 28 is unaffected, because `filter-hook` bakes the absolute `--log-dir` into the command and the task directory is in the worker's `allowWrite`; but anything that relies on a worker's Bash commands seeing M8a's per-task `TMPDIR` does not hold (follow-up).
+- **Payload.** Keys: `cwd`, `hook_event_name`, `permission_mode`, `prompt_id`, `session_id`, `tool_input`, `tool_name`, `tool_use_id`, `transcript_path`; `tool_input` keys: `command`, `description`. `updatedInput` carrying every original key worked.
+- Claude Code created an empty `.claude/.cc-writes/` directory in the working directory (items 3 and 4, not the deciders). git ignores empty directories, so `git status` stays clean.
+
+**Item 4, the scout launch: run, and decision 12's read-only premise does not hold as specified.** A standalone checkout (`git clone --shared`), `--permission-mode dontAsk --allowedTools mcp__anthrex__submit_scout_report,Bash,Read,Glob,Grep --disallowedTools Edit,Write,NotebookEdit`, `--setting-sources user --strict-mcp-config`, a stub MCP server recording the call, `TMPDIR` set to a scratch directory, and the sandbox block with an **empty `allowWrite`**, the protected `denyWrite` entries and M8a's pins.
+- `ls` and `git log -1` ran.
+- **`touch x` in the working directory succeeded.** With an empty `allowWrite`, Claude Code's sandbox still lets Bash write its working directory.
+- `touch "$TMPDIR/…"` succeeded, because `$TMPDIR` is Claude Code's own `/tmp/claude-<uid>` (item 3). A write to the process's `TMPDIR` by absolute path was denied (`Operation not permitted`).
+- `curl https://example.com` failed: exit 56, `CONNECT tunnel failed, response 403` with `<sandbox_violations> deny network-outbound example.com:443 (host is not on the allow list)`.
+- **The MCP call was allowed** under `dontAsk` with unscoped `Bash` allowed: the model loaded it through `ToolSearch` and the stub recorded `submit_scout_report` with its arguments. So M8b.9's launch is not stopped on that account.
+- **A second run with the checkout root itself added to `denyWrite`** (`claude-2.1.280-scout-deny-cwd.jsonl`): `touch x` was denied, `ls`, `git log -1` and the MCP call still worked, the absolute-`TMPDIR` write and `curl` were still denied. `/tmp/claude-<uid>` stayed writable.
+
+So the "empty-root `ClaudeSandbox`" M8a gives reviewers (F1c N4) and decision 12 gives scouts is **not read-only for Bash**: the working directory stays writable. A reviewer is covered by `dontAsk` and its scoped `Bash(git …)` allow rules (M8a.1 recorded `touch reviewer.txt` denied by mode), but a scout allows unscoped `Bash`, so the sandbox is its only barrier. Per AGENTS.md this was recorded, not worked around; the controller's ruling R-T1-1 takes the fix the probe shows works: add the checkout root to the scout's `denyWrite` (Claude Code's own `/tmp/claude-<uid>` stays writable either way; the scout's checkout is disposable and removed after salvage, decision 8).
+
+**Item 5, OTLP: run.** `claude -p --no-session-persistence --model claude-haiku-4-5 "reply ok"` with the brief's six variables, against a listener in the probe's own process that wrote each request's headers and body and answered `200 {}`.
+- **Two requests**, both `POST /v1/metrics`, `Content-Type: application/json`, a **`Content-Length`** body (1 601 and 6 798 bytes; not chunked), **no `Content-Encoding`** (no compression by default), `User-Agent: OTel-OTLP-Exporter-JavaScript/0.208.0`, `Connection: keep-alive`. The first carried only `claude_code.session.count`; the second `claude_code.cost.usage`, `claude_code.token.usage` and `claude_code.active_time.total`.
+- **`claude_code.token.usage`**: a monotonic sum, `aggregationTemporality` **1 (delta)**, one data point per `type`: `input` (10), `output` (170), `cacheRead` (13 689), `cacheCreation` (12 503). Values are in **`asDouble`**, not `asInt`: M8b.15's `parse_metrics` must read `asDouble` (and should accept `asInt`).
+- **Data-point attributes**: `type`, `model` (`claude-haiku-4-5`), `session.id`, `query_source` (`main`), `terminal.type` (`non-interactive`), the account identity (`user.id`, `user.email`, `user.account_uuid`, `user.account_id`, `organization.id`; redacted in the fixture), and **`anthrex.run` and `anthrex.role` copied from the resource**.
+- **Resource attributes arrive**: `anthrex.run = r-fix`, `anthrex.role = orchestrator`, beside `host.arch`, `os.type`, `os.version`, `service.name = claude-code`, `service.version = 2.1.280`.
+- **So `orchestrator_env`'s list is the documented set exactly**, without `OTEL_EXPORTER_OTLP_COMPRESSION`: `CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_METRICS_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`, `OTEL_EXPORTER_OTLP_ENDPOINT=<addr>`, `OTEL_METRIC_EXPORT_INTERVAL=1000`, `OTEL_RESOURCE_ATTRIBUTES=anthrex.run=<run>,anthrex.role=orchestrator`.
+- The export carries the user's account identity in every data point. anthrex's receiver is on loopback and M8b.15 keeps only the usage numbers; nothing should log a body.
+
+**Stream usage names** (M8a.1 cross-reference). M8a.1 recorded `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` and the rest for Claude; the decider calls show the same names. Codex's `turn.completed.usage` was recorded by M8a.1's Codex fixtures. Nothing to add.
+
+**`DECIDER_CAPS`** (`crates/daemon/src/decider/argv.rs`)
+
+| Field | Value | Set by |
+|-------|-------|--------|
+| `claude_json_schema` | `true` | item 1: accepted, and the answer arrived as structured output |
+| `claude_max_turns` | `true` | item 1: hidden from `--help`, accepted; 2 turns (`blocked_reason`) or 3 (`triage`) used |
+| `claude_no_session_persistence` | `true` | item 1: accepted |
+| `answer_source` | `AnswerSource::ResultField` | item 1: `result.structured_output` (also a top-level `StructuredOutput` tool use and `result.result` text) |
+| `strict_schemas` | `false` | item 1: a schema without every property in `required` was accepted; `anyOf`/nullable types too |
+| `codex_output_schema` | `true` | item 2: the flag exists in `codex exec --help` (controller ruling); runtime behaviour unverified, outstanding |
+| `codex_ephemeral` | `true` | item 2: the flag exists in `codex exec --help` |
+
+`output_filter::HOOK_SETS_ALLOW` (M8b.8) is **`false`** (item 3).
+
+**Deviations from the task text** (all in the meta files' `command`):
+- Items 3 and 4 added `--effort low` (M8a's headless sessions pass `--effort` when `claude_effort_flag`; the cheapest setting).
+- The recording group in items 3 and 4 was `sh -c '{ cat; echo; } >> <file>'`, M8a.1's recording command, not M3's `anthrex hook --window <n> --source claude` (no daemon ran). It sits in the same place (the first `PreToolUse` group, matcher `""`) and fires for the same events.
+- Item 4's standalone checkout was `git clone --shared` (objects by alternate, like M8a's `prepare_scratch_in`), and its MCP server a stub that records `tools/call`, not `anthrex mcp`.
+- Item 5's listener ran inside the probe's own Python process, so no background process existed to stop.
+- Item 1 added two calls beyond the task (`--tools ""` and `--restricted`), at the controller's request.
+
+**OUTSTANDING, for the user:** item 2 (the Codex call and the runtime behaviour of `--output-schema` and `--ephemeral`, the command above).
+
+**Rulings on these findings** (the controller's R-T1-1 to R-T1-6, restated):
+- R-T1-1 (M8b.9): a scout's Claude sandbox adds the checkout root, and every repository path it can see, to `denyWrite`, and a test asserts it. Reviewers are unchanged.
+- R-T1-2: Claude's Bash sets `TMPDIR=/tmp/claude-<uid>`, shared by every sandboxed Claude session: a follow-up, not fixed in M8b.
+- R-T1-3 (M8b.6): `fake-agent`'s `bash` step matches the real stream: `tool_use` shows the original command, `tool_result` the rewritten run.
+- R-T1-4 (M8b.7): the fenced JSON in assistant or result text is parsed even when the turn limit is hit.
+- R-T1-5 (M8b.15): the OTLP receiver never logs request bodies.
+- R-T1-6 (M8b.5): Claude deciders pass `--tools ""`, keeping `--setting-sources user`.
+
+### M8b.2 protocol (2026-09-25)
+
+**`PROTO_VERSION` = 8.** `pub const PROTO_VERSION: u32 = 7;` stood at `crates/proto/src/lib.rs:25` before the change (set by M8a task 2), so main was at 7 as the header requires; 7 + 1 = 8. `proto_version_is_seven` became `proto_version_is_eight`. Every client reads the one constant (`tui::connection`, `anthrex hook`, `mcp::forward`, the CLI's run client), so none hard-codes a version.
+
+**Deviations:**
+- `RunReply::Profile` carries `Box<ProfileReply>`, not `ProfileReply`. Reason: `ProfileStatus` holds a `ProposalRecord` with two inline `RepoProfile`s (≥ 1536 bytes), which made `RunReply`, and `DaemonMsg` that every broadcast slot holds, trip `clippy::large_enum_variant`. A `Box` is invisible on the wire; the daemon writes `RunReply::Profile(Box::new(reply))`. `ProfileReply` itself carries `#[allow(clippy::large_enum_variant)]` (built once per request, and boxed where it is carried).
+- `ScoutReport` and `ScoutInfo` also derive `Eq`: `RunInfo` (which derives `Eq`) holds `Vec<ScoutInfo>`, and `ProfileStatus` (`Eq`) holds `Option<ScoutInfo>`.
+- The tests are split into `adapt_tests.rs` (494 lines) and its builders `adapt_tests_fixtures.rs`, to stay under 600 lines. `adapt_tests.rs` also loads M8a's `run_tests_fixtures.rs` a second time, as a private module, under `#[allow(clippy::duplicate_mod)]`; the M8a fixtures gained the new fields, unset.
+- Budgets: `run_info.rs` grew +44 (222 → 266; budget +25) and `run_wire.rs` +89 (118 → 207; budget +50), because Interfaces puts every new field `#[serde(default)]` (one attribute line each) and places `ProfileRequest`/`ProfileReply` in `run_wire.rs`. Both files stay far under 600.
+- Beyond the listed files, every constructor of `RunInfo`, `TaskInfo`, `CheckInfo` and `ToolCall` gained the new fields as `None`/empty: `run/snapshot.rs` (M8b's later tasks fill them), `cli/src/run_cmd/status_tests.rs`, `mcp/src/forward.rs` (`scout_id: None` until M8b.9), and the tests `engine/tests/{fixture,done_tools}.rs`, `mcp/tests/stdio.rs`, `fake-agent/tests/headless_modes.rs`.
+- `crates/cli/src/run_cmd.rs` needed no change: its reply handling has no exhaustive `match` on `RunReply` (each site ends in `other => …`). The TUI's `DaemonMsg::Run(_)` arm and `anthrex hook` needed none either.
+- `mcp::tools_for(Scout)` is empty and `role_name(Scout)` is `"scout"` until M8b.9 adds `submit_scout_report`; `anthrex mcp --role scout` parses. The daemon refuses `StartGoal`, `Promote`, `Stats` and `Profile(_)` with `Refused { request: <its label>, message: "not available yet" }` (test `every_milestone_8b_request_is_refused_until_its_task_lands`, `crates/daemon/tests/server_runs.rs`).
+- `ProfileRequest` and `ProfileReply` carry no `#[serde(rename_all)]`, so their variants are PascalCase on the wire (`"Status"`, `"Confirm"`, …). This is by design: it matches M8a's `RunRequest` and `RunReply`, which carry them. (Task 2 review.)
+- `proto::HISTORY_VERSION` is re-exported at the crate root with the other `history` names (added after the task 2 review; `adapt_tests.rs` imports it from the root).
+
+### M8b.3 configuration (2026-09-26)
+
+**Deviations:**
+- `lib.rs`'s `pub use orchestrator::{…}` line is the only statement changed, but `git diff --stat baa04e1 -- crates/config/src/lib.rs` shows 4 insertions and 1 deletion, not one changed line: with the four new names the statement is 118 columns, and `cargo fmt --all --check` (required) wraps it over four lines. No item, `use` or `mod` was added; `lib.rs` goes 605 → 608 lines.
+- Messages the brief does not spell out follow M8a's format: `orchestrator.scouts.runtime: must be claude or codex (using orchestrator.default_runtime)` (`None` means the default runtime), `…strength: must be fast, standard or frontier (using fast)`, `…effort: must be low, medium or high (using low)`, `orchestrator.metering.otlp_port: must be between 0 and 65535 (using 0)`, the M8a `expected a boolean` / `expected a table` messages for a wrong type. One extra test, `adapt_wrong_types_are_problems`, pins these.
+- The four table readers and their known-key lists live in `orchestrator/adapt.rs`; `unknown.rs` imports the lists, so a key is known in one place. The types are defined in `adapt.rs` and re-exported by `orchestrator.rs` (`pub use adapt::{…}`), so `lib.rs` names them from `orchestrator` as the brief's line requires.
+- No decider `tools` setting was added: R-T1-6 (Claude deciders pass `--tools ""`) is fixed argv in M8b.5, not configuration.
+
+### M8b.4 profile store and precedence (2026-09-26)
+
+**Deviations and choices the brief leaves open:**
+- `derived_prefixes` takes `check`'s segments first, then `single_test`'s head. Decision 28 lists `single_test` first, but the task's exact expectation (`["cargo build", "cargo test", "cargo fmt"]` for `check = "cargo build --all && cargo test -q; cargo fmt --check"`, `single_test = "cargo test -- --exact {test}"`) holds only in that order; the test wins.
+- `choose_profile`'s change to the plan and the cloned config is the pure `profile::resolve::apply_choice(&ChosenProfile, &mut ProfileSpec, &mut ProfileSpec)`, which `driver/adapt.rs::choose_profile` calls after loading. The pure tests "through `choose_profile`'s config clone" go through it and M8a's `resolve_profile`/`build_run`; `choose_profile` itself (I/O) is exercised end to end by M8b.19 as the brief says.
+- `ProfileSource::Plan` when any `ProfileSpec` key, `protected` included, is set in the plan or `[orchestrator.profile]`; `None` only when both are empty.
+- `from_findings` removes: list entries (`modules`, `hub`, `source`, `generated`, `protected`, `conventions`, `manifests`) that fail `validate_glob`; built-in and repeated `protected` entries; malformed or reserved `env` keys; an out-of-range `check_timeout_secs`. It leaves `single_test`/`test_passed` without `{test}` to verification, which drops them with M8a's message (decision 9).
+- `validate` also holds `conventions` and `manifests` to `validate_glob`, and checks `check_timeout_secs` against M8a's 10–14400. Messages: `<key>: <entry> <validate_glob error>`, `check_timeout_secs: must be between 10 and 14400`, `single_test: must contain {test}`, `test_passed: must contain {test}`, `test_passed: is not a valid regular expression: <e>`, `env: key <K> must match [A-Za-z_][A-Za-z0-9_]*`, `env: key <K> may not be set by a profile: <reason>`.
+- `fingerprint` never follows a symlink (review finding 2 fixed an earlier version that did, through `metadata` and `File::open`). A path with only plain relative components whose every directory is a real directory (`symlink_metadata`), naming a regular file opened with `O_NOFOLLOW`, is `"<16 hex>:<len>"` of its contents. A symlink is `"link:<16 hex>:<len>"` of its target's *name*, never its target's contents, so retargeting it still shows as stale. Anything else (absolute, `..`, under a symlinked directory, missing, a FIFO or device, unreadable) is `"missing"`. So a model-written `manifests` entry can neither read outside the repository nor block on a FIFO. The hash is plain FNV-1a 64 (not `role_launch::fnv1a`, which appends a separator).
+- `store::load`: a missing `profile.meta.json` beside a `profile.toml` reads as a profile confirmed at 0 with no fingerprint (never stale); a meta file that does not parse is `Unparseable` naming the meta path, so `run start`'s refusal reads `the stored profile at <repo_dir>/profile.meta.json does not parse: …` (tests `a_missing_meta_reads_as_confirmed_at_zero_and_never_stale`, `a_corrupt_meta_is_unparseable_naming_the_meta_file`). `save` writes the meta first and `profile.toml` last (its rename is the commit point); two concurrent saves may pair one's meta with the other's profile, which at worst misstates `confirmed_at` or the fingerprint.
+- Temp files (review finding 1): every `write_atomic` uses its own temp name, `<file>.<pid>.<counter>.tmp`, opened `create_new` with mode 0600, and removes it on failure; concurrent writes of one path therefore never share a temp file, and each rename installs one whole write. **Reads never unlink anything**: the first version's `load`/`load_proposal` removed `<file>.tmp` on every read and so failed a concurrent save's rename (the reviewer's probe: 750 of 750 saves failed). Leftovers of crashed writes are ignored by readers and removed only by `store::sweep_leftovers(repo_dir)`, which must run where no writer can: `ProfileService::restore` calls it at daemon start (M8b.11). Test `saves_succeed_while_other_threads_load` (two writers of the profile and the proposal, two readers) failed before the fix.
+- `Stored` carries `#[allow(clippy::large_enum_variant)]` to keep the Interfaces' unboxed shape (as M8b.2 did for `ProfileReply`).
+- `apply_edit`: the value is typed by `RepoProfile`'s deserializer (an error is `<key>: <toml message>`); `env.<NAME>` values are always strings; only problems of the edited key refuse the edit; the bool is true only when the key is in `REVERIFY_KEYS` and the profile changed. The unknown-key list is `proposal::EDIT_KEYS` (the fields, then `env.<NAME>`).
+- `build` now parses the plan and calls `build_plan`, which starts with the confinement refusal; so a malformed plan on a host that cannot confine gets the parse error first (before, the refusal came first).
+- The ignored-key notes go into `run.log` at build time (at the start's `now`), before the engine's `started` line. The stale attention line is `Run::stale_profile_line()` in `run/model_adapt.rs`, appended by `snapshot::attention`; `RunInfo.profile_source` is now filled.
+- `run/model_adapt.rs` holds only that `impl Run` item for now, so `model.rs` declares the module without `pub use adapt::*` (an unused glob import fails clippy); the task that adds its first struct adds the re-export. Run's five new fields are on `Run` in `model.rs`, `#[serde(default)]` (430 → 449 lines); `build_run` sets them empty and the driver fills them.
+- Also added now because Interfaces places them in `profile/mod.rs`: `profile::summary` (with a test) and `ONBOARDING_CHECKOUT`/`VERIFY_CHECKOUT`.
+- Extra tests beyond the list: `edit_takes_a_bare_word_as_a_string_and_reports_reverification`, `summary_prints_the_built_ins_and_the_degradations`, `repo_dir_is_keyed_by_project`, `a_proposal_round_trips_and_is_deleted`, and `a_stale_profile_gets_the_attention_line` (written after `model_adapt.rs`, so it did not fail first). After review (finding 3), that test also checks the snapshot: `RunInfo.profile_source` and the stale line in `attention` (verified by mutation: dropping either wiring line fails it); `run/driver/adapt.rs` has `apply_choice_copies_every_field_and_logs_each_note`. After review, `saves_succeed_while_other_threads_load`, `fingerprint_never_follows_a_symlink_out_of_the_project` and the reworked `save_and_load_round_trip_atomically` failed before their fixes; the two meta tests pin behaviour that was already there.
+- Pure-module doc comments are worded without the literal `std::fs`/`tokio`/… tokens, so the Verification purity grep prints nothing for these files.
+- The Verification grep was `rg -n "cache_dirs|confined_" …`, which also matched `ProposalRecord.unconfined_checks` (M8b.2), a user flag and not a confinement setting. It is narrowed (controller ruling after review) to `\bcache_dirs\b|\bconfined_(network|unix_sockets|localhost_ports)\b`.
+
+### M8b.5 deciders I: schemas, prompts, parsing, fallbacks and argv (2026-09-26)
+
+**Deviations and choices the brief leaves open:**
+- **`SessionEvent::StructuredOutput { value }` is added now**, in `headless/mod.rs`, because `structured_output_event_wins` needs it. M8a's two exhaustive consumers treat it as `Other` (`headless/status.rs::next` and `run/driver/observe.rs`, one line each). `ClaudeStream::parse_line` does not emit it yet: M8b.7 owns `claude_stream.rs` and makes `result.structured_output` produce it.
+- **`parse_for(request, value)`** (in `parse.rs`, beside `parse`): `parse(kind, value)` cannot know which task ids were asked, so `parse_for` calls it and then keeps only the size-check verdicts for asked ids, the first one per id. M8b.7's call should use `parse_for`. The whole answer is validated against the schema first, so a bad entry is an error even when its id was not asked for.
+- **`json_from_text(text)`** is public. Per R-T1-4, M8b.7 can parse the fenced JSON in a `result`'s text as well as in assistant text. `answer_from_events` gives `the session gave no answer` when it finds no source, and otherwise serde's message for text that is not JSON.
+- **`DeciderContext::new` is not written yet.** It needs `ManagerConfig.decider_bin` (M8b.7) and `scout::spec::route` (M8b.9, which does not exist yet). The struct is defined, and its fields are the ones Interfaces gives.
+- **Argv.** Per R-T1-6, `--tools ""` comes right after the caps' user-settings flags (`--setting-sources user --strict-mcp-config`) and before `--permission-mode dontAsk`. `--disallowedTools` stays as a second barrier. `claude_decider_args_exact` asserts both. The effort word comes from a private `effort()` in `decider/argv.rs`, so `headless/argv.rs` is unchanged.
+- **Parse error texts** (the brief gives only `tasks[2].size: expected S, M or L`):
+  - `<path>: missing`, `<path>: not in the schema` (an extra property; `additionalProperties: false` is enforced), `expected an object` (at the root);
+  - `<path>: expected an array | a string | a boolean | a string or null`;
+  - `<path>: must have at least|at most <n> item(s)`, `<path>: must not be empty`, `<path>: must be at most <n> characters` (limits count characters, as JSON Schema does);
+  - `<path>: expected a, b or c`, `task: required when scale is single`, `task.size: expected S or M`.
+- **Triage `task` when the scale is not single.** The key must be present, but its value is not read and the answer's `task` is `None`.
+- **Fallback reasons inside the answers** (these are the answers' own `reason` fields, not decision 16's fallback reasons):
+  - triage: `without a decider, the path is plan`;
+  - size check: `the engine's size is kept`;
+  - blocked reason: `an unclassified block is a question`.
+
+  The check-summary fallback is `run::exec::summary(tail)` split on `\n`.
+- **Prompt details the template leaves open:**
+  - A prompt has no trailing newline (the triage golden is M8b.1's recorded probe prompt, byte for byte; `blocked_reason_prompt_is_exact` is the other probe's).
+  - The onboarding-report section is printed when there is a summary or a file list. `Files it named:` is left out when the list is empty.
+  - Size-check task blocks are separated by a newline. Their `owns`, `depends on`, `acceptance` and `brief` lines are left out when empty. Evidence reports are separated by a blank line, and a report's `Files`, `Modules` and `Interfaces` lines are left out when empty.
+  - The check summary's `Result:` is `exit <code>`, `timed out`, or `killed by a signal` when there is no code and no timeout. `Output (last <n> lines):` counts only the tail lines shown, not the marker.
+- **Cutting.**
+  - The marker is the literal `[anthrex] … cut …` (`prompt::CUT_MARKER`). It goes on its own line after cut paths or cut tail lines, as the last item of a cut `Files it named:` list, and straight after a cut summary or brief.
+  - Triage keeps the most tracked paths that fit; only when none fit does it cut the report's list, and only when none of that fits does it cut the summary. The size check does the same with its steps: summaries to 4000 characters, whole reports from the last, then briefs to 2000 characters.
+  - The check summary drops whole lines from the tail's start. When even the last line alone does not fit, it keeps that line's end.
+  - **The refill (controller ruling M2 after review, a deviation from the literal cut order).** The brief's cut order is kept. After the last cut, the items that were dropped are re-added in reverse cut order (the item cut last comes back first), each one whole, while the prompt still fits. For triage that means the report's files first, then tracked paths (a 200 KB report summary no longer costs every path). For the size check it means whole evidence reports, in order (briefs that overflow on their own no longer cost the decider its evidence). Items that were only shortened (summaries, briefs) are not restored. The refill is as deterministic as the cuts.
+  - As a last resort, a prompt still over `PROMPT_MAX_BYTES` after the ordered cuts (possible only with a very large goal, command, title or reason) keeps its head and ends with the marker. This makes the 128 KiB bound hold for every input.
+- **Files.** The tests are split three ways to stay under 600 lines: `decider/tests.rs` (schemas, parsing, extraction, fallbacks), `tests_prompt.rs` and `tests_argv.rs`. `crates/daemon/src/lib.rs` needed no change, since `pub mod decider;` has been there since M8b.1. `headless/mod.rs` grew by 12 lines, from 255 to 267, within its +20 budget.
+- **Review fixes:**
+  - **I1:** a check-summary tail made of one oversized line lost its end. The room left for it did not count the `\n` after the marker, so the prompt came out 1 byte over and `clamp` cut it again. The room now counts that byte. The fix is tested with ASCII, `世` and `é` single-line tails, under three command lengths so the cut lands inside a character.
+  - **M1:**
+    - a sub-agent `StructuredOutput` placed after the top-level one;
+    - `an_enormous_fixed_input_is_clamped_with_the_marker` (a huge goal, command, title or reason);
+    - the character-boundary cut.
+
+    Each of these was checked by mutation: without its safeguard, its test fails.
+  - **M3:** `DeciderContext::new` moves to M8b.7 (controller ruling).
+- **Extra tests beyond the list:** `parse_errors_name_the_path` and `blocked_reason_prompt_is_exact`. `schemas_match_the_brief` reads this brief's own JSON block through `include_str!`, so the schema and the brief cannot drift apart. Two tests parse M8b.1's recorded decider streams through `ClaudeStream`:
+  - both recorded answers pass `parse`;
+  - the triage stream's fenced text answer, with its tool use removed, is found by `answer_from_events` (R-T1-4's case).
+
+### M8b.6 `fake-agent`: decider mode, scout scripts, the `bash` step, every hook group (2026-09-26)
+
+**Deviations and choices the brief leaves open:**
+- **R-T1-3 overrides decision 37 and the test text.** The `bash` step's `tool_use` carries the **original** command, not the final one, because M8b.1 item 3 recorded the real CLI doing so; only the `tool_result` shows the rewritten run's output. `bash_step_applies_updated_input` asserts exactly that: `FAKE_AGENT_BASH_LOG` has `original == "echo original"` and `ran == "echo rewritten"`, the `tool_use` input is `{"command":"echo original"}`, and the `tool_result` is `rewritten\n`. For Codex (where a `bash` step also runs, with Codex's `-c hooks.*` as one empty-matcher group) the `command_execution` item names the original command too.
+- **When a Claude session reads its first message first.** Decision 36 says the Claude headless mode reads the first stdin message "before anything else". It does so only for a session with no anthrex MCP server that is not resumed, which every decider is (decision 16: no `--mcp-config`, no session). Every M8a role session keeps its start unchanged: it claims its script and records its argv before its first message arrives. The line read is then handed to the ordinary stdin reader, which records and checks it as before (`read_stdin(name, first)`).
+- **The Codex decider** reads its piped stdin to EOF first, as M8a's Codex mode does (carry T17-C1). A Claude decider reads stdin to EOF after its answer (the daemon has closed it), then exits 0; `{"exit": n}` exits at once with no output. `{"hang": true}` ignores stdin's EOF, unlike M8a's `hang` step, since the daemon closes a decider's stdin straight after the prompt.
+- **Output shapes.** A Claude structured answer is a top-level `StructuredOutput` `tool_use` (with `wire_tool_inputs`), its `tool_result` (`"Structured output provided successfully"`, with `tool_use_result`, without `is_error`, as recorded), and a `result/success` with `structured_output`, the answer as JSON text in `result`, and the timing keys the decider recordings add. Decider lines carry `request_id` and `message.input_transformations`. A Codex answer is the final `agent_message` whose text is the answer's JSON. `{"text"}` is an assistant text block (Claude) or `agent_message` (Codex); `{"fail_turn"}` is M8a's failed turn, and a Codex one exits 1.
+- **The shape test.** `headless_support/shape.rs` gains `assert_conforms_in(dirs, runtime, events)`; `assert_conforms` is it with `["headless"]`. `wire_tool_inputs` joins the opaque keys, since it is a map keyed by a tool use's id. The structured answer is checked against `fixtures/deciders` alone. M8b.1 recorded no decider that answered only in text or failed its turn, so those two are checked against the decider and M8a.1's headless recordings merged. The Codex half is skipped with the printed reason `no codex-<version>-decider.jsonl fixture (M8b.1 item 2 was not run, controller ruling)`.
+- **Scout ids.** A scout first claims `scout-<id>-<n>.jsonl`, then, when the id ends in a timestamp (`-` and 9 or more digits, review minor 5), `scout-<id without it>-<n>.jsonl`. So `scout-onboarding-1.jsonl` serves `onboarding-1695000000`, `scout-onboarding-1695000000-1.jsonl` still wins for that exact id, and the area scout `api-2` never takes `api`'s script.
+- **Matchers.** An empty or `*` matcher runs for every tool; any other is a regular expression that must match the whole tool name (`^(?:…)$`), so `Edit|Write` does not run for `Bash`. An invalid expression matches nothing. `regex` (a workspace dependency already) is added to `fake-agent`'s `Cargo.toml`.
+- **Hooks in the `bash` step.** Each command gets the original command's payload, filled like the `hook` step's (`cwd`, `transcript_path` when set). A hook's stdout is captured (new `run_hook_output`), never written into the JSON stream; the whole output, or else its last JSON line, is read for `updatedInput`. A hook that exits non-zero or outlives `STEP_TIMEOUT` is a non-blocking error, as in the real CLI (review minor 3): a line goes to stderr and the command runs as it was. The terminal `hook` step still fails on one, as in milestone 3. `output_lines` is the output split into lines (M8b.18 checks a `FAILED` line in it).
+- **`Runtime::hook`** is the first group's first command. A first group whose first entry has no `command` now yields that group's next command, where milestone 3's `entries.get(0)…get(0)` yielded none; anthrex never writes such a group.
+- **File budgets.** `runtime.rs` 343 → 416 (budget +40; +30 of it is the unit test `keeps_every_claude_matcher_group_in_order`), `headless.rs` 553 → 576 (+20), `roles.rs` 323 → 339 (+10), `main.rs` 342 → 382 (+10; the capturing hook runner), `script.rs` 424 → 432. `stream_claude.rs` (no budget) 494 → 574: the decider-shaped answer and keys. `headless_steps.rs` 291 → 315. Every file stays under 600.
+- **A `FAKE_AGENT_DECIDER_DIR` that does not exist** is treated like an unset one (review minor 4): nothing is recorded, and the call exits 2 with `no scripted decider answer for <kind>`.
+- **Review minors (fix after approval).** `crates/fake-agent/tests/adapt_edges.rs` adds `the_last_updated_input_wins`, `a_failing_pre_tool_use_hook_runs_the_original_command`, `a_missing_decider_directory_exits_2`, `an_exact_scout_id_beats_the_base_name`, `only_a_timestamp_suffix_falls_back_to_the_base_name` and `role_and_resumed_sessions_do_not_read_stdin_before_starting`. The three that change behaviour (hook failure, missing directory, timestamp suffix) failed before the fix. The other three pin behaviour that already held, and each was checked by mutation (first rewrite wins; the base name tried before the exact id; every Claude session reads stdin first): each mutant fails its test. The shared helpers (`scout_argv`, `claude_with_settings`, `group`, `run_bash`, `bash_pairs`) moved to `tests/headless_support/adapt.rs`, so `adapt_modes.rs` stays under 600 lines.
+- **Tests beyond the list:** unit tests `keeps_every_claude_matcher_group_in_order` (`runtime.rs`), `the_kind_is_read_from_the_prompts_first_line` and `parses_every_reply_with_its_usage` (`decider.rs`), `finds_the_updated_command_in_a_hooks_output` (`bash.rs`), and the `bash` step in `parses_every_headless_step`. They were written with the code, not before it; the twelve `adapt_modes.rs` tests were written first and all failed before the change.
+
+### M8b.7 deciders II: the call (2026-09-26)
+
+**Deviations and choices the brief leaves open:**
+- **`DeciderContext::new` (ruling R-T5-3)** lives in `decider/mod.rs` and is pure; the call creates `<data_dir>/deciders/cwd` (on every call, `create_dir_all`) and the schema directory itself, on `spawn_blocking`. Its route is not `scout::spec::route`, which M8b.9 has not written yet: on the mode's runtime, the first roster entry at the lowest strength at or above `deciders.strength` (`run::roster::lowest_at_or_above`, made `pub(crate)`), else that runtime's first entry, else no model (the CLI's default), at `deciders.effort`. It has no peer-runtime step, since a decider's program is the mode's own CLI. With mode `off`, `program` is `claude_bin` and is never run. M8b.9 may switch it to `scout::spec::route`.
+- **`SessionEvent::StructuredOutput` (ruling R-T5-2)** is emitted by `ClaudeStream::parse_line` for a `result` whose `structured_output` is present and not `null`, immediately before that result's `TurnEnded`. `claude_stream.rs` grew by exactly its +15 budget (343 → 358). Two M8b.5 tests (`structured_output_tool_use_is_read`, `assistant_text_in_a_fence_is_parsed`) now filter the `StructuredOutput` event out of the recorded triage stream, so they still test the tool-use and text sources they name.
+- **What the call keeps.** Only the last event of each answer source: the last `StructuredOutput`, the last top-level `StructuredOutput` tool use, and the last top-level assistant text, cut to `ANSWER_MAX_BYTES` on a character boundary. So a call's memory is bounded whatever the decider prints.
+- **A failed turn (ruling R-T1-4).** The answer is taken from the kept events first, then from the failure's text (the `result`'s text, `json_from_text`); only when neither is JSON is the reason `the decider's turn failed: <error>`. JSON found there is validated like any answer (`parse_for`, ruling R-T5-1). An interrupted turn is `the decider's turn failed: interrupted`.
+- **An exit with no code** is `(code signal <n>)`, or `(code unknown)` if the event carries neither; the brief gives only the code form.
+- **After an answer**, the call waits for the process to exit by itself for at most `EXIT_WAIT` (2 s; M8b.1 measured 0.4 to 0.8 s), never past the call's own deadline, and then calls `HeadlessHandle::kill(KILL_GRACE)` anyway (a no-op once reaped). Every other return after the spawn kills first. No process-scan, signal or kill code was written or changed.
+- **`usage`** is the turn's whenever a turn ended, also when its answer was then refused (the tokens were spent; decision 29 counts them). `secs` is the whole call's duration, fallbacks included (0 when off).
+- **Error texts.** `the decider could not start: <anyhow chain>`, for example `could not start <program>: No such file or directory (os error 2)`; a prompt that could not be queued is `could not send the prompt: …` (the process is killed). The schema file is written once, with `profile::store::write_atomic` (a file already there is kept: its name carries the schema's hash).
+- **`FAKE_AGENT_ENV_FILE`** was absent from M8b.6 and is added to `fake-agent`'s decider mode only (`decider.rs`): the names of the decider's environment variables, sorted, one per line, never their values. `main.rs` is unchanged.
+- **Test shapes.** Every test's program is a wrapper script that exports `FAKE_AGENT_DECIDER_DIR` and `FAKE_AGENT_ENV_FILE` and `exec`s `fake-agent` through a symlink in the test's temporary directory, so no test changes its own environment. The hang test runs a Claude and a Codex decider at once; the `pgrep -f` marker is the temporary directory's name (in the program's path, so in both runtimes' command lines, and in the prompt), with a positive control that finds them while they hang, then a 5 s look that only looks. The credential test re-runs its own test binary (an ignored `decider_call_child`) with `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` on that command only; checked by mutation (with an empty scrub list the test fails, naming `ANTHROPIC_API_KEY`). The oversized answer is a 300 KiB JSON *string*: whole it would be a schema error, so the exact JSON (end-of-input) error proves the cut. `fail_turn` uses `overloaded`, giving `API Error: overloaded` (Claude) and `overloaded` (Codex). `mode_off_never_spawns` pairs its absence with a control call (mode `claude`) whose one marker line proves the program runs.
+- **Extra test:** `a_results_structured_output_is_emitted_before_its_turn_ends` (`claude_stream_tests.rs`), from the recorded `blocked_reason` fixture.
+- **Found, not fixed:** an inherited `ANTHROPIC_BASE_URL` reaches every headless session (followups, "From M8b.7").
+- **Review fixes (task 7 review):**
+  - **I1, a dropped or panicking call leaked its decider.** `HeadlessHandle` has no `Drop`, so a call whose future was dropped (a caller's `timeout` or `select!`, an aborted task, runtime shutdown) left its process running. The red run of `a_dropped_call_leaves_no_process` leaked both deciders; the implementer then killed those two test processes by their exact pids, after checking each one's command line was its own temporary directory's `fake-agent`. Now `start` wraps the handle in a `KillOnDrop` guard straight after the spawn. The guard is returned through the `spawn_blocking`: if the future is dropped while that is awaited, tokio drops the task's output, and with it the guard. Its `Drop` calls the existing `HeadlessHandle::kill(KILL_GRACE)`; each explicit path calls `kill` itself and disarms the guard. No kill, signal or scan code changed. `kill` never blocks (it sends `SIGTERM` and waits out its grace on a thread of its own), so the drop runs `kill` directly on whatever thread drops it. It does not hop through `spawn_blocking`, since a blocking task started during runtime shutdown may never run, which would bring the leak back. A panic after the spawn unwinds through the same guard. No panic path is reachable from a test without a test-only hook, so none was added.
+  - **I2:** `a_failed_turn_that_holds_the_answer_still_answers` (R-T1-4: a Codex `fail_turn` whose failure text is the JSON answer) and `size_check_answers_are_filtered_to_the_asked_ids` (R-T5-1: `t1`, `t9`, `t1` gives one verdict, the first `t1`).
+  - **M1:** `decider/tests_context.rs` covers `DeciderContext::new`: route and strength selection (not the first entry; nothing at or above; nothing on the mode's runtime), effort, timeout, `cwd`, schema directory, program, and the defaults.
+  - **M2:** the not-JSON case in `garbage_empty_and_oversized_answers_fall_back` asserts that the fallback keeps the turn's usage.
+  - **M3:** `fake-agent` already put `structured_output` on a Claude decider's `result` line (the reviewer's premise), but always the same object as the tool use. A script can now add `result_output` (with `answer` only) to make the two differ, and `the_results_structured_output_wins` shows the result's object is read first.
+  - **M4:** the hang test's control now waits until `pgrep` lists both deciders.
+  - **Files:** the fixtures moved to `crates/cli/tests/support/decider.rs`, and the new tests are in `decider_call_edges.rs`, so every file stays under 600 lines.
+  - **Proof:** each new test was proved with a mutation of non-kill code, then reverted: R-T1-4 removed; `parse` instead of `parse_for`; `StructuredOutput` dropped; usage kept only when the source is the decider; the roster's first entry; effort `High`. Each mutant fails its test. `a_dropped_call_leaves_no_process` was proved by its red run.
+- **Hardening after approval (the controller's incident rule).**
+  - A reviewer's mutation made the fixtures fall back to the real `claude` and `codex` on `PATH`, because they set only `ANTHREX_DECIDER_BIN`.
+  - `support/decider.rs`'s `context_with` now always sets `ANTHREX_CLAUDE_BIN` and `ANTHREX_CODEX_BIN` to `NO_CLAUDE_BIN` and `NO_CODEX_BIN`. Both are paths under `/nonexistent/anthrex-test/`, whatever the caller's variables say. `decider/tests_context.rs` builds its manager with the same kind of paths.
+  - `the_fixture_never_resolves_to_a_real_agent_binary` covers both modes with no `ANTHREX_DECIDER_BIN`. It asserts the program is the nonexistent path before any call. The call then falls back with `could not start … No such file or directory` and records no call.
+  - Its red run failed on that first assert (`"claude"`), so nothing was spawned.
+
+### M8b.8 the output filter (2026-09-26)
+
+- **`HOOK_SETS_ALLOW = false`** (M8b.1 item 3): the hook prints `updatedInput` only. Per ruling R-T1-3 nothing in the daemon reads a `tool_use` expecting the wrapped command.
+- **Additions to the interface.** `output_filter` also exports `FILTER_HOOK_DEADLINE` (1 s) and `FILTER_HOOK_PAYLOAD_MAX` (1 MiB), so `crates/cli/tests/filter_hook.rs` derives its bound from the constant instead of copying it (`anthrex` has no `lib.rs`), and `mode_label` / `parse_mode`, the `--mode` spelling shared by `wrap`, `hook_command` and both commands' argument parsers.
+- **Omission markers only in `failures-only`'s matched view.** Decision 26 names the markers only there; `tail`, `none`, the success view and the no-match fallback print no marker. A gap before the first kept range counts as a gap (the task's "28 lines exactly" needs it: one marker before the failing line, one before the last 20).
+- **"At most the first 100 lines kept that way"** is read as 100 lines of matches and their context in total, the last range cut short at the cap.
+- **"Keeps every line up to 20 000 and then the last 5 000"** is read as: every line while there are at most 20 000; past that, only the last 5 000 (memory bound; the count printed stays the true total). So past 20 000 lines, `failures-only` sees only the last 5 000: a failure at line 100 of 30 000 is not in the view, only in the log whose path is printed (review M7). Each kept line keeps only its first 2 048 bytes, enough for `LINE_MAX_CHARS` characters. A trailing `\r` is dropped from each line of the view (the log keeps every byte).
+- **Log naming.** `<unix ms>-<pid>.log` uses filter-run's own pid. The log is opened with `create_new`, so an existing file or a link at its path is refused, never reused (`create_log_never_replaces_a_file`, review M1). A write error after the log opened only stops the logging.
+- **A log that cannot be created** runs the command with stdout and stderr inherited, so it is unfiltered and unlogged, with the same exit code.
+- **The SIGTERM case sends no signal from the test.** `filter_run_preserves_exit_status_and_signals` runs `kill -TERM $$`: `$$` is the exact `/bin/sh` that filter-run spawned, so the child kills itself and the test signals nothing (the controller's safety rule).
+- **`matches`**: `cd <dir> && ` is stripped only when `<dir>` is one whitespace-free word, quotes and `$(…)` included (so `cd 'a' && cargo test` is wrapped, `cd 'a b' && cargo test` is not; review M5), and `NAME=value` only when `NAME` is a shell name. The ` filter-run ` check comes first, so a wrapped command is never wrapped again, whatever the prefixes.
+- **Where the tests live** (file sizes). `argv_tests.rs` (581) cannot take two more tests, so they are in `headless/argv_filter_tests.rs`, a submodule of it like `argv_caps_tests.rs`. `role_launch.rs`'s two are in `run/role_launch_filter_tests.rs`, included with `#[path]`; `role_launch.rs` grew by 21 lines (552 → 573) against its +15 budget: the helper `output_filter(run, task)` and the test module's include. `output_filter.rs`'s tests are in `output_filter_tests.rs`. `crates/cli/src/main.rs` is 593 lines.
+- **`reviewers_scouts_and_codex_get_no_filter_hook`** was green before the change: nothing it checks could carry a hook yet. Scouts have no spec builder until M8b.9; the test checks that a spec without a hook has only M3's group and that Codex's argv never carries one even from a spec that has it. M8b.9 must keep `output_filter: None` in the scout spec.
+- **Extra tests.** `wrap_quotes_every_part` (the exact wrapped and hook command strings), `help_lists_neither_filter_command` (the acceptance check), and three unit tests in `filter_run.rs` (the line store, the byte cut, and the 64 MiB cut and its last line).
+- **Deviation (review I1, controller ruling): the command runs under the Bash tool's shell, not always `/bin/sh`.** Decision 27 says `/bin/sh -c`, but Claude's Bash tool runs commands in the user's shell (zsh by default on macOS), and the review reproduced a divergence: in a tree with `a/test_y.py` and `a/b/test_x.py`, `zsh -c 'ls **/test_*.py'` lists both, while the `/bin/sh`-wrapped form lists only `a/test_y.py`, so a wrapped `pytest tests/**/test_*.py` would collect fewer tests. That breaks decision 27's "filter-run never changes what the command does". filter-run now runs `$SHELL -c` when `$SHELL` is an absolute path whose file name is `bash` or `zsh` (Claude Code's own rule) and names an existing file, else `/bin/sh` (`shell`, unit test `the_command_runs_under_bash_or_zsh_from_shell_else_bin_sh`). `wrapped_commands_behave_exactly_like_the_original` now runs every case, plus an `ls **/test_*.py` case, under `/bin/sh`, `/bin/bash` and `/bin/zsh` (each when present; a missing zsh prints the skip), with `SHELL` set to that shell and `ZDOTDIR` pointed at the test's directory so no user startup file is read. Its red run failed on exactly the zsh `**` case. Residue (follow-up): Claude's shell snapshot (aliases, functions, options) is not loaded by a plain `$SHELL -c`.
+- **Deviation (review I2, controller ruling): leading `cd <dir> && ` segments stay outside the wrapper.** Decision 28's output wraps the whole command, but the Bash tool keeps its working directory between calls, and the review reproduced that a wrapped `cd a && ls` no longer moves it: a worker's next `cargo test -q foo` would run from the repository root. `wrap` now keeps the leading `cd` segments, unchanged and unquoted, in front: `cd <dir> && '<exe>' filter-run … -c '<rest>'`. They are the original command's own text, run by the same shell, so nothing new is executed. `NAME=value` assignments stay inside (they are per-command), and a `cd` after an assignment stays inside too. Tests: `wrap_keeps_leading_cd_segments_outside`, the updated exact JSON in `hook_wraps_a_matching_command`, and `a_wrapped_cd_still_moves_the_agents_shell` (the exact wrapped string, and `<wrapped>; pwd` prints `sub`).
+- **Size guard (review M2).** `shell_quote` turns every `'` into four bytes, so a command that runs can wrap into one `exec` refuses (`E2BIG`). `rewrite` leaves a command alone (the hook prints nothing) when its wrapped form would exceed `WRAPPED_MAX` = 128 KiB (`rewrite_leaves_an_oversized_command_alone`).
+- **Hook argument and payload tests (review M1).** `hook_exits_zero_silently_on_garbage_and_oversized_input` now also sends a valid matching payload followed by more than 1 MiB of whitespace (which JSON accepts; a control with a little whitespace is wrapped) and `--mode bogus` with a `--prefix`. Each was checked by removing the guard it covers: both mutants now fail the test.
+- **Concern (not fixed, review M3): on a Bash-tool timeout the agent sees nothing.** filter-run prints the view and the log path only after the command exits; a command the tool kills at its timeout would have streamed partial output unwrapped, and wrapped it leaves no output and no log path. Follow-up.
+- **Concern (not fixed, review M6): a background child that keeps the pipe open** holds filter-run until it closes (reproduced: `(sleep 3 &); echo done` returns after 3.1 s), as it would hold the Bash tool. Follow-up.
+
+### M8b.9 scout sessions and `submit_scout_report` (2026-09-26)
+
+**Deviations and choices the brief leaves open:**
+- **Ruling R-T1-1: `ScoutSpec` gains `repo_paths: Vec<PathBuf>`.** A scout's Claude sandbox `denyWrite` is M8a's five protected paths of its checkout, then the checkout root itself, the project root, and every `repo_paths` entry, each once (`scout::spec`'s `scout_denials`). `repo_paths` is how the caller names the other repository paths the scout can see; M8b.11 fills it for the onboarding scout with the checkout's repository (`<repo_dir>/tasks/.onboarding`) and the object directory it borrows (the user's git common directory's `objects`). Tested in `area_scout_spec_is_read_only`, `onboarding_scout_spec_is_read_only_too`, `scouts_pass_the_user_settings_flags_and_codex_pins` (through `claude_args`), and end to end in `the_scout_argv_is_read_only`. Reviewers are unchanged.
+- **Ruling R-T8-1:** every scout spec has `output_filter: None`; the spec tests assert it, and the argv test asserts one `PreToolUse` group (M3's).
+- **The Claude-only fields** (`claude_permission_mode`, `claude_disallowed_tools`, `claude_sandbox`) are set for a Claude scout only, as `reviewer_spec` does; a Codex scout gets `read-only`, no writable roots and `CODEX_SANDBOX_PINS` (through `codex_args`).
+- **`scout::spec::route`** is decision 12's, with a last step the brief leaves open: an empty roster gives the runtime with no model. `scout_route(ctx)` applies it to `[orchestrator.scouts]`. Per the task 7 review, `DeciderContext::new` is unchanged: a decider's program is fixed by its mode, so it keeps its same-runtime route.
+- **`ScoutEvent::Stop`** is added (the Interfaces list has none), so `ScoutService::stop` goes through the machine.
+- **Failure effects.** Every failure emits `Finished(Err)` and `RemoveAfter(RETIRE_AFTER)`, so a failed scout's window goes the way a retired one does; the timeout, the tool budget, two turns without a report and `stop` also emit `Kill` first (`headless_kill`). An exit has no `Kill`. The exit reason with no code is `(code unknown)`, as M8b.7 words it.
+- **Usage** is summed from every `TurnEnded`, also after the report, so `ScoutInfo.usage` is the whole session's. The stored report's `usage` is what was known when it was accepted: the turn that carried it ends afterwards.
+- **Which events drive the machine.** Only `WindowSignalKind::Session` events of the service's own windows: `TurnEnded`, `ToolUse` (every one counts) and `ProcessExited`. For a Codex scout, an exit of a process in which a turn ended is the end of that turn, not of the session (M8a's T17-I1). A scout window's first events can arrive before `create_headless` returns, so a window the table does not know yet is looked up once through `WindowManager::headless_spec` (its `mcp.scout_id`) and bound; any other window is remembered as not a scout.
+- **`Adaptation` holds only `scouts` for now.** `profiles` (M8b.11) and `deciders` (M8b.12) are added by the tasks that first use them. `lifecycle.rs` does not create the service yet (M8b.11 wires the services), so until `set_adaptation` is called a scout's tool call is answered `unknown scout <id>`.
+- **Routing.** `requests.rs`'s `Tool` arm is now `self.tool(call).await`; `driver/adapt.rs::tool` routes `role == Scout` to `ScoutService::tool` and every other call to the engine as before (`requests.rs` 586 → 579).
+- **`driver.rs`** was 599 lines; `Book` and `Retiring` moved unchanged into `driver/book.rs` first, in a pure-move commit, as the file-size table says (599 → 577, then 581 with the `OnceLock<Adaptation>` field).
+- **Refusal texts the brief leaves open:** a call with no scout id is `unknown scout ` (empty id); a second report while the first is still being written is refused as already recorded; a report that cannot be written is `could not store the report: <error>`; a scout that fails while its report is written loses the file and the call is refused `scout <id> is failed`. States are spelled `starting`, `working`, `reported`, `failed`.
+- **Validation messages** (`scout::report::validate`, all prefixed `invalid arguments: `): `<path>: missing`, `<path>: not in the schema` (so `profile.cache_dirs` and every `profile.confined_*` key), `<path>: expected an object | an array | a string | an integer`, `<path>: must not be empty`, `<path>: must be at most <n> characters`, `<path>: must have at most <n> items`, `profile.env: must have at most 20 properties`, `profile.env: key <K> must match ^[A-Za-z_][A-Za-z0-9_]*$`, `profile.check_timeout_secs: must be between 10 and 14400`, `profile.output_filter: expected failures-only, tail or none`, and decision 13's two `profile` texts. A reserved `env` key is not refused here (Interfaces: `from_findings` drops it).
+- **The `env` schema** is closed as every object is: `"properties": {}`, `"additionalProperties": false`, `"maxProperties": 20` and one `patternProperties` entry for the key pattern with string values of 0 to 1000 characters.
+- **Where the tests are.** `mcp_args_for_a_scout` is in the daemon's `headless/argv_caps_tests.rs`, since `crates/mcp` cannot depend on the daemon; `crates/mcp/tests/stdio.rs` gains `a_scout_call_carries_its_scout_id` for `forward`. The scout schema tests are in `crates/mcp/src/tools_scout_tests.rs`, so Verification's confinement-name grep over `tools_scout.rs` finds nothing. `mcp_cmd.rs`'s tests moved to `mcp_cmd_tests.rs` (121 → 65 lines) to stay within its budget. The machine tests are in `scout/tests_machine.rs`. `tools.rs`'s `text`, `one_of` and `closed` became `pub(crate)`.
+- **`anthrex mcp --run`** stays a parse error for worker, reviewer and orchestrator through clap's `required_if_eq_any`; for a scout it defaults to the empty string.
+- **Also added:** `ScoutService::report_path(spec)`; `report::build_report` and `report::state_label` (pure helpers of the service); `contract::TOP_LEVEL_NAMES_MAX` (60); the window's session uuid is `role_launch::session_uuid("scout/<id>", <unix nanos>)`. `ScoutOutcome` carries `#[allow(clippy::large_enum_variant)]` to keep the Interfaces' unboxed shape (sent once per scout). `crates/cli` gains the dev-dependency `tokio-util` (the test's `CancellationToken`).
+- **File sizes:** `headless/mod.rs` 255 → 274 (+19 of +20, with M8b.5 and M8b.8), `headless/argv.rs` 446 → 450, `manager/headless.rs` 521 → 526 (+5), `mcp/src/tools.rs` 250 → 258, `lib.rs` 106 → 109, `forward.rs` unchanged. New files: `scout/service.rs` 573, `scout/tests.rs` 534, the rest under 330.
+
+**Acceptance: `ScoutService` never holds `daemon::lock` across a manager call or an await.** Every `crate::lock(&self.table)` in `scout/service.rs` is a guard in its own block (or a one-expression temporary) that ends before the next manager call, `.await` or `spawn_blocking`: `start` inserts the scout, drops the guard, then awaits `create_headless`, then locks again to bind the window; `scout_of` drops its guard before `headless_spec`; `drive` and `submit` step the machine under the lock via `step_locked`, which only returns a `Pending` (effects, window, outcome), and `execute` runs `headless_send` (on its own task), `headless_kill` and `headless_retire` after the guard is gone; `tick` collects due kills and removals under the lock and calls `child_pid`, `headless_kill` and `remove` after; `submit` writes the report with `spawn_blocking` between two locked blocks. The service holds no other lock.
+
+**Review fixes (task 9 review, controller rulings):**
+- **I1, deviation: the Codex wrap-up comes at the turn's end.** Codex's `headless_send` refuses a message while a turn runs, so a mid-turn wrap-up would be lost. `ScoutLimits` gains `send_mid_turn` (`ScoutLimits::new(scouts, runtime)`: true for Claude only) and `ScoutMachine` gains `wrap_up_pending`. Without mid-turn sends, reaching `max_tool_calls` sets the wrap-up pending (it still counts as the one wrap-up), and the next turn end sends `scout_wrap_up(<calls so far>)` in the nudge's place. It is sent exactly once, and a second turn end without a report still fails the scout. Claude's behaviour is unchanged. Tests: `machine_owes_the_wrap_up_to_the_turn_end_without_mid_turn_sends`, `limits_send_mid_turn_only_on_claude`, and the Codex e2e `a_codex_scout_gets_its_wrap_up_at_the_turn_end` (budget 2; the resumed process's last argument is the wrap-up).
+- **I2: the event translation is the pure `machine::scout_event(event, pid, runtime, &mut turn_ended)`**, unit-tested in `session_events_become_machine_events`. It is also tested end to end with a Codex scout: `a_codex_scout_is_nudged_then_reports` runs `codex_bin` as a fake-agent wrapper, with `claude_bin` still pinned to fake-agent, and the rig asserts both. The first process's exit after its turn does not fail the scout, and the resume carries the nudge.
+- **M1:** `ScoutService::submit` is split into `claim` (the checks and the in-flight mark) and `commit` (the post-write recheck). The unit tests `a_report_in_flight_refuses_another` and `a_scout_that_failed_during_the_write_refuses_its_report` are in `scout/tests_service.rs`, on a manager whose runtime commands do not exist.
+- **M2 (ruling):** the `mcp__anthrex__submit_scout_report` tool use is not counted toward the tool budget (`scout_event` drops it; both runtimes name it so). `ScoutReport.tool_calls` counts the other calls only; the e2e report of a scout that only reports has 0.
+- **M3:** `machine_kills_at_1_5x_an_even_budget` (budget 10: wrap-up at 10, kill at 15).
+- **M4:** a `Kill` the machine asks for before the window is bound sets `kill_on_bind`. The bind that follows `create_headless` then calls `headless_kill`, and only that bind: an early bind from the session feed may come before the process is installed. Tests: `a_stop_before_the_bind_is_remembered` (unit) and `a_scout_stopped_before_its_window_exists_is_killed_when_it_does` (e2e, with a closed launch gate).
+- **M5:** a call whose `tool` is not `submit_scout_report` is refused with `tool <tool> is not available to the scout role` (the MCP server's own wording). Test: `another_tool_is_refused`.
+- **M6: limits on `profile.env`.** The brief gives at most 20 entries and values of 0 to 1000 characters, and those are kept. It gives no key length, so a key is at most 64 characters (`ENV_KEY_MAX`, `propertyNames.maxLength` in the schema). In `validate` the length is checked before the key pattern, so an oversized key is never echoed. The exact message is `invalid arguments: profile.env: a key is longer than 64 characters`; the count and value messages are unchanged. Tests are in `report_validation_cases` and `scout_schema_limits`.
+- **M7: there is no run-id validator in the code.** M8a validates task ids at 16 characters (`validate::is_valid_id`), too short for decision 15's slugs of up to 37. `start` therefore checks a `run_id` with the scout id's `valid_id`, `^[a-z0-9][a-z0-9-]{0,47}$`, which every slug matches, before it can be joined into a path. The error is `invalid run id "<id>"`. Test: `a_bad_run_id_is_refused_at_start`.
+- **M8** (scouts never leave the table; two detections in one second collide) goes to M8b.11, with the restore clean-up.
+- **Files:** the table types, `step_locked` and `info` moved to `scout/service_table.rs` (110 lines), which keeps `service.rs` at 510. Sizes: `scout_service.rs` 564, `scout/tests.rs` 551, `tests_machine.rs` 305, `tests_service.rs` 176.
+- **Proof:** each fix was checked by a mutation of non-kill, non-selection code, reverted afterwards, and each mutant failed its test:
+  - I1: the mid-turn gate forced on (unit and e2e);
+  - I2: the Codex exit rule disabled (unit and both Codex e2e tests);
+  - M1: the storing check, and the recheck;
+  - M2: the submit exemption;
+  - M3: `>=` changed to `>`;
+  - M4: the flag never set (unit only);
+  - M5, M6 and M7: each check removed.
+
+  `scout_report_is_stored_and_the_session_retired` failed on `tool_calls` before the M2 change.
+
+### M8b.10 onboarding I: proposal rules and confined verification (2026-09-26)
+
+**Deviations and choices the brief leaves open:**
+- **The unit tests are in `profile/tests_verify.rs`**, not `profile/tests.rs`, which is at 506 lines and would pass 600 with them (AGENTS.md rule 8).
+- **`verify::verify(&GitQueue, VerifyJob) -> Result<Verified, String>`** is added beside the Interfaces' four blocking functions. It is decision 9 end to end: a leftover `.profile-verify` checkout is discarded (salvaged) first so every verification starts fresh; `prepare` and `discard` run through `GitQueue::write(pre.project, …)`; `run_commands` runs on `spawn_blocking`; the checkout is discarded whatever the commands did. `Verified` carries the verification and every salvage ref written. `crates/cli/tests/profile_verify.rs` drives it directly, and M8b.11's service calls it. `verify::checkout_path(worktrees_root, project)` names `<wt>/runs/.profile-verify`; `SALVAGE_PREFIX` is `refs/anthrex/salvage/onboarding/` and `SALVAGE_MESSAGE` `anthrex salvage onboarding`.
+- **Salvage names.** `<prefix><unix secs>`. If that ref already holds other work (two salvages in one second), `<secs>-1` to `<secs>-9` are tried in the same queued write: M8a's `salvage` refuses an existing ref before `add -A`, so a refused name changes nothing.
+- **`discard` pins a leftover checkout** (one an earlier daemon made, so not in this daemon's in-memory pins) as the standalone checkout of `repo` before salvaging it, as M8a's `remove_checkout` already does before removing. Without the pin, `salvage` would write its ref into the checkout's own git directory, which the removal then deletes. For this, `run::git` re-exports `worktrees::common_dir` as `pub(crate)` (one existing `use` line).
+- **`run_commands`** takes the command timeout (`onboarding.verify_timeout_secs`, decision 9), not the profile's `check_timeout_secs`. The `{worktree}` substitution goes through `run::env::profile_env`, on the `run::model::Profile` that `resolve_profile` makes from the proposed `env` alone. Each command gets its own `ConfineSpec::for_checkout`, and a checkout that cannot be confined fails the command unrun (`ShellOutcome::refused`), as `run::confine::confined` does. A `single_test` without `{test}`, without both companions, or whose pattern does not compile is not run at all. `CommandCheck.command` is the `single_test` template, not the expanded proof command, so `show` prints the template with `(sample: …)`. `CommandCheck.ok` for `single_test` means exit 0 **and** a matched line. `CommandCheck.tail` is `run::messages::summary` (the last 40 lines).
+- **`apply_verification`**:
+  - A `setup` or `check` whose record is missing, or is a record of a different command, is dropped with `it was not verified`.
+  - A failure's reason is `exit <n> after <s>s`, `timed out after <s>s` or `no exit code after <s>s`.
+  - When the verification ran confined, a dropped `setup` or `check` has the hint as the reason's second line, so the reason is `<first line>\n<hint>`. `show_text` prints the first line in the `#   <key>: <reason>: <command>` header and every further line indented. `DroppedCommand` has no hint field.
+  - A dropped `single_test` is one entry, key `single_test`. Its reason ends `; test_passed and sample_test are dropped with it`, and all three keys are cleared. The reasons are: M8a's `single_test: must contain {test}` or `test_passed: <problem>`; `SINGLE_TEST_NEEDS`; `exit 0 after <s>s, but no output line matched test_passed for sample_test <name>`; or the failure text.
+  - Without a `single_test`, `test_passed` and `sample_test` are cleared silently.
+  - The glob lists are left as `from_findings` made them.
+- **`confined_hint(root)` lives in `profile/mod.rs`**, not `proposal.rs`. Its exact text names the four `[orchestrator.*]` tables, and the Verification grep `rg -n "\bcache_dirs\b|\bconfined_(network|unix_sockets|localhost_ports)\b" … crates/daemon/src/profile/proposal.rs` must find only comments. The grep now prints nothing for `proposal.rs`.
+- **`show_text`.** The profile is printed as TOML in field order, each top-level key `key = <value>`, with empty lists left out. `env` is printed last as its own `[env]` table, and only when it has entries. The `toml` crate here has no `preserve_order`, so a serialized `toml::Table` would come out sorted; the order comes from `EDIT_KEYS` instead. After a blank line comes the comment block:
+  - `# protected: built-in … + <extras | no extras>`. This is `proposal::protected_line`, which `profile::summary` now uses too.
+  - Then, when there is a verification, `# verification <yyyy-mm-dd hh:mm> (confined|unconfined)`, in UTC through `run::report::format_utc`.
+  - Then one row per command run: `#   {key:<13}{ok|fail:<4}{secs:>4}s   {command}`.
+  - Then `# dropped` and the entries.
+  - With no verification, the block has only the protected line.
+- **Already implemented by M8b.4:** `apply_edit` (value parsing, `unknown key`, M8a's messages, the re-verify flag), so `edit_value_parsing`, `edit_rejects_invalid_values_with_the_rule` and `edit_of_a_command_key_needs_reverification_and_of_modules_does_not` passed when first written. They pin behaviour the brief lists here.
+- **Red evidence:**
+  - The five other unit tests failed against stubs.
+  - `profile_verify.rs` did not compile before `profile::verify` existed.
+  - Three of its tests were also shown red by mutations of `verify.rs`, each reverted: salvage skipped, the profile `env` dropped, and `cache_dirs` not taken from the user's table.
+  - The environment test passes through M8a's `engine_env` unchanged. Its child process gets `CLAUDE_CODE_*`, `ANTHROPIC_API_KEY`, `ANTHREX_SOCKET` and a marker on its own `Command` only, and every `*_BIN` is set to a nonexistent path. `ANTHREX_*` is asserted absent only when the verification ran confined, since M8a keeps it unconfined.
+- **`run/exec.rs`:** `run_matching` is `pub(super)` → `pub(crate)`, which adds no lines (budget 0).
+
+**Acceptance: nothing M8b.10 adds or calls writes under the repository root.**
+- *`write_atomic`*: `profile::verify` calls none. The existing callers write only in anthrex's data directory:
+  - `store::save` and `save_proposal`: `<repo_dir>/…`;
+  - `decider::call`: its schema file under anthrex's data directory (`DeciderContext.schema_dir`, `<data>/deciders/schemas`);
+  - `scout::service`: the report under `<repo_dir>/scouts` or the run's directory.
+- *`run_matching`*: M8a's `run_shell`, `run_confined` and `proof.rs` (checkout directories), and the new `verify::run_one`. Its working directory is `<wt>/runs/.profile-verify`, never the root.
+  - Where the platform can confine (the default with sandboxed workers), each command runs under M8a's `(deny default)` profile. It may write only the checkout, the checkout repository's object store, its short `TMPDIR` under `/private/tmp/ax-<uid>`, and the user's own `cache_dirs` for the root, which `confine_cache` refuses when they overlap the repository, its git common directory or anthrex's data.
+  - `profile_verify.rs` shows a `$HOME` write denied and a listed cache directory allowed.
+  - Unconfined verification happens only where the user allowed it (`--unconfined-checks` / `unconfined_checks`, M8b.11's refusal), as M8a's unconfined checks do.
+- *Git writes* (all through `GitQueue::write` in `verify::verify`):
+  - `prepare_scratch_in` → `checkout::ensure`. It writes `<repo_dir>/tasks/.profile-verify/{git,engine}` and the checkout's files (`read-tree -u --reset` in `<wt>/runs/.profile-verify`), and only reads the user's `config`, `hooks` and `info/exclude`.
+  - `salvage`, in the pinned standalone checkout. It runs `add -A` against the checkout's own index, then `write-tree`/`commit-tree` into the user's object store (the pin's object directory, as every M8a salvage does), then one `update-ref refs/anthrex/salvage/onboarding/<secs>` in the user's repository. Decision 4 allows exactly these writes into `.git`.
+  - `remove_checkout`. It runs `git worktree list`, a read, in the root; the checkout is never listed, so the `worktree unlock`/`remove`/`prune` branches never run. It deletes the checkout, its repository and its `TMPDIR` (`checkout::remove`, only for a checkout pinned as this repository's).
+  - No `git worktree add` and no lock, so `.git/worktrees` gains no entry, as `verification_never_touches_the_checkout_and_salvages_dirt` asserts. The same test asserts `git status --porcelain --ignored` is empty and `HEAD` is unchanged.
+
+**Review fixes (task 10 review, controller rulings):**
+- **I1: git runs in a leftover only when it is pinned as ours.** `discard` pins a leftover (`pin_leftover`, unchanged: only when `<repo>/git/HEAD` exists). It then salvages only when `pinned(path)` is a standalone, unbroken pin whose git directory is `<repo>/git` (`pinned_as_ours`). Every such git call carries the pin's explicit `--git-dir`/`--work-tree`, never discovery.
+  - A leftover that cannot be pinned so (no repository `HEAD`, as a daemon that died inside `prepare` leaves it, or a broken pin) is removed without salvage and without any git command run in it. That covers the checkout, its repository and its `TMPDIR` (`remove_plain`: a directory after its access is restored, a link or file unlinked, never followed); the pin is then dropped.
+  - Test `a_leftover_without_a_repository_is_removed_without_running_git_in_it`: an enclosing repository stands in for a dotfiles `$HOME`. Its refs and every file under its `.git` (index, objects) are unchanged.
+- **I2: the fix is in M8a's `checkout::remove`** (and `tmp::remove`). `run::git::restore_owner_access(path)` gives the owner `rwx` back on `path` and on every real directory beneath it before `remove_dir_all`. Each entry is read with `symlink_metadata`, links are never followed, and each change is `fchmodat(AT_SYMLINK_NOFOLLOW)`, with a re-checked `set_permissions` fallback where Linux lacks the flag. Nothing outside the path is touched. It protects M8a's task, review and proof checkouts too. No kill, signal or scan code changed.
+  - M8a's `run_git_finish.rs::remove_refuses_nothing_after_salvage` gains `chmod 555`/`500` directories in the checkout and in its repository's object store, plus a link to a locked directory outside, whose mode stays `555`.
+  - `a_command_that_locks_a_directory_cannot_block_removal` has a confined check lock directories in the checkout and in its object store. The checkout goes, and the next verification salvages nothing again.
+- **I3: tests that kill each surviving mutant:**
+  - `single_test_exit_zero_without_its_line_is_not_ok` (exit 0, no match);
+  - `a_leftover_checkout_is_pinned_salvaged_and_replaced_by_a_fresh_one` (a prepared checkout, dirtied and unpinned as after a restart);
+  - `a_taken_salvage_name_moves_to_the_next_and_ten_give_a_clear_error`.
+
+  For the last test, the name loop is `verify::discard_named(git, root, path, repo, secs, timeout)` (public), so a test can pin `secs`. When all ten names hold other work, the error is `every salvage name from <prefix><secs> to <prefix><secs>-9 already holds other work; the checkout <path> is kept`, and the checkout is kept.
+- **M1:** `run_commands` drops every key `proposal::env_problem` refuses (M8a's reserved list, malformed names) from the proposed `env` before use. Test: `reserved_env_keys_of_a_proposal_never_reach_a_command` (`TMPDIR`, `HOME`, `GIT_DIR`, `ANTHREX_SOCKET` never reach it; an ordinary key does). `env_problem` is now `pub(crate)`.
+- **M2:** test `a_record_of_another_command_does_not_verify_the_proposed_one`.
+- **M3:** a removal that fails after a salvage ends its error with `; its work was salvaged to <ref>`. Test: `a_removal_that_fails_after_a_salvage_names_the_ref`, macOS only. It sets `chflags uchg` itself, and clears it on drop.
+- **M4:** the leftover discard's error is `could not discard the leftover verification checkout <path>: <error>` (same test).
+- **M5:** the confinement test's proposal sets `HOME` and `TMPDIR` to the home directory. The writes to `$HOME`, `$TMPDIR` and the literal home path are all denied, and the check fails.
+- **Mutation proof:** each mutant was applied alone and reverted. None touched kill, program-selection or confinement code.
+  - salvage without the ours check → the enclosing-repository test fails;
+  - `ok = outcome.ok` → the single-test test fails;
+  - `pin_leftover` disabled → the leftover test fails;
+  - the leftover discard skipped → three tests fail;
+  - the name loop returning at the first taken name → the suffix test fails;
+  - the env filter disabled → the reserved-env test fails;
+  - the identity check removed → the M2 unit test fails;
+  - `restore_owner_access` as a no-op → both the M8a removal test and the lock test fail.
+- **Files:** the process tests were split for rule 8. `profile_verify.rs` (337 lines) holds the verification behaviour, and the new `profile_verify_leftovers.rs` (276) holds how checkouts end. Both share the new `crates/cli/tests/support/profile_rig.rs` (131). Other sizes: `verify.rs` 473, `checkout.rs` 283 → 346, `tmp.rs` 125, `tests_verify.rs` 508.
+- **Follow-ups** (recorded under "From M8b.10's review"): a `chflags uchg` set by a command would still block removal; `restore_owner_access` walks by path, not by `openat`.
+
+### M8b.11 onboarding II: the profile service, detection, restart and `anthrex profile` (2026-09-26)
+
+**Deviations and choices the brief leaves open:**
+- **Files (rule 8).** `profile/service.rs` (506 lines) holds the service, its table, `restore`, `effective`, the request dispatch and `wire`. Three more files hold the rest:
+  - `profile/service_start.rs` (167): the refusals, the registration and `start_detection`/`auto_detect`;
+  - `profile/service_run.rs` (412): the background work, the checkouts and `confirm_record`;
+  - `profile/service_requests.rs` (388): the six requests.
+
+  The process tests are split the same way: `crates/cli/tests/profile_cli.rs` (354) holds the flows and `profile_cli_refusals.rs` (162) the refusals. `ProfileService::wire` (in `service.rs`) builds both services and calls `set_adaptation`, so `lifecycle.rs` grows by 11 lines (439 → 450), not 46.
+- **Onboarding scout ids (ruling R-T9-2)** stay `onboarding-<n>`. `n` is the current unix second, or one more than the last number handed out, whichever is larger (`service::next_scout_secs`). A number whose report file already exists is skipped. So two detections in one second never share an id, and fake-agent's "a trailing number of 9 or more digits" script rule still matches.
+- **`restore`** (in `profile/service_restore.rs` since the review) does, in this order:
+  1. It removes every run-less scout window.
+  2. For each `<data>/repos/*`, it calls `sweep_leftovers` (R-T4-1) and fails any in-progress proposal with `RESTART_REASON`.
+  3. It finds every detection checkout under `<worktrees_root>/*/runs/` or `<data>/repos/*/tasks/`, whether a proposal names it or not (review m1). It salvages and removes a checkout only when a **trusted record** names its project (re-review C1). The trusted records are:
+     - the daemon-owned detection marker `<repo_dir>/detection.json`;
+     - `proposal.json`;
+     - the stored meta's `project`.
+
+     Each counts only when `repo_dir(data, project)` is that very data directory. Without a trusted project no git runs at all: the leftover is kept (spec §17) and logged with its path and its repository's path (`… with no trusted project is kept; no git runs for it`). The marker is removed once no checkout is left.
+
+     The first review round took the git root from the leftover repository's `objects/info/alternates`. Confined commands can write that file, so it could name any repository, and that is withdrawn.
+  4. Decision 7 (review I4): it queues every stored profile whose meta records its project. `ProfileService::spawn` is called by `lifecycle` in place of `scouts().spawn`. It starts the scout service's listener first and then the queued staleness checks (re-review r1). A check that finds the profile stale runs `auto_on_stale` after a preflight of the project.
+- **Staleness at start (review I4).** `ProfileMeta` gains `#[serde(default)] project: Option<PathBuf>`, set by `confirm_record`. A meta written before this has no `project`: it is not checkable at start, and is checked at the next `profile status`. The first commit's deviation, "staleness is not checked at daemon start", is withdrawn.
+- **Automatic re-detection** (decision 7, `ProfileService::auto_on_stale`) starts from `profile status`, from `run start` (`choose_profile`, in the background, after the run's own preflight passed) and from the daemon's start, when all of the following hold: `onboarding.auto` is on, the stored profile is stale, no work runs for the project, and `service::auto_allowed` holds (no proposal, or one that failed at least `AUTO_RETRY_AFTER_SECS` = 3600 s ago; a `Ready` proposal counts as pending). It also needs a preflight: a dirty tree logs `no automatic re-detection` and starts nothing. A refusal (project settings, confinement) is stored as the proposal's `Failed` reason.
+- **The detection marker (re-review C1).** Each detection's or edit's background work writes `<repo_dir>/detection.json` (`{"project": …}`, `store::save_detection`) before it makes any checkout. It removes the marker after its own discard, and only if no checkout is left. The marker is the tombstone `reject` needs: `reject` still deletes `proposal.json` at once (decision 10), and the marker keeps the project known until the work's clean-up ends, including across a daemon stop. `reject` with no work running removes it after its discards. `sweep_leftovers` also sweeps its temp files. The review's alternative, keeping `proposal.json` as a rejected tombstone, was not taken: it would have needed a new proposal state or a flag on the wire type.
+- **Reject while work runs.** `reject` cancels the work's token, stops its scout through `ScoutService::stop` (the existing kill path, unchanged), deletes `proposal.json` and answers at once. The work then discards its own checkouts; verification commands already running end at their own timeout. Two things keep this safe:
+  - Every `proposal.json` write of the work goes through `save_if_current` under the `writes` mutex (a tokio mutex, not `daemon::lock`), so a rejected proposal is never written back.
+  - The table entry stays until the work ends, so a new detection cannot race the old one's clean-up. Meanwhile `detect`, `edit` and `confirm` are refused with `detection for <project> is stopping after anthrex profile reject; try again in a moment`.
+
+  With no work running, `reject` discards any leftover checkouts itself. It is refused with `no proposal for <project>` when there was nothing to reject.
+- **Texts the brief leaves open:**
+  - `detect`: `detection started for <project>; follow it with anthrex profile status`.
+  - `confirm`: `stored the profile for <project> at <repo_dir>/profile.toml`.
+  - `reject`: `rejected the proposal for <project>`.
+  - `show --proposed` of a proposal that is not ready: `the proposal for <project> is not ready yet (state <s>); see anthrex profile status`, or `… failed: <reason>; run anthrex profile detect`.
+  - A missing proposal: `no proposal for <project>; run anthrex profile detect` (show) or `no proposal to confirm for <project>; run anthrex profile detect` (confirm).
+  - `--unset` prints `proposed: <key> = (unset); …`.
+  - An edit with `--yes` that needs no re-verification is stored at once, and prints `proposed: <key> = <value>; stored (it needed no verification)` (review m2).
+  - `confirm` of a proposal that changed since it was shown: `the proposal for <project> changed since it was shown; run anthrex profile confirm again` (review m3).
+  - The status line `verification: unconfined (<why>)` reads `(this platform cannot confine it, or worker_sandbox is off)`, since `ProfileStatus` carries only `verify_confined`.
+  - The state labels are `preparing`, `scouting`, `verifying`, `ready`, `failed` (`service::state_label`).
+- **`profile confirm` stores exactly what it showed (review m3).** `ProfileRequest::Confirm` gains `#[serde(default)] shown: Option<String>`, within protocol 8, with a round-trip test and a default test. The CLI sends the `show_text` it printed. The daemon recomputes `show_text` of the current proposal and refuses a mismatch. `None` (a raw client) skips the check.
+- **Review m5.** `auto_detect` re-checks `running()` after taking `writes`, so a detection that registered meanwhile keeps its proposal.
+- **Review m4, recorded and not changed.** `writes` is one mutex for every project, and `reject` holds it across `discard_checkout`, which waits on that project's `GitQueue`. A reject behind a long git write in one project delays proposal saves in every project. It is not a deadlock: the queue's closures never take `writes`. Per-project mutexes would remove the contention.
+- **`ProfileReply::Shown`.** `toml` is the whole `proposal::show_text` (the CLI prints it as it is), and `source` is where the stored profile stands (`Stored` or `None`), also for `--proposed`.
+- **`profile edit --yes` confirms only when verification dropped nothing** (review I2, controller ruling). This is stricter than decision 10's "only if nothing the edit touched was dropped", which it implies: a command the user did not touch that fails now is never lost without a human's confirmation, and the proposal stays `Ready`. The first commit's `touched_commands` mapping is gone.
+
+  Other rules for an edit:
+  - A confirmed edit's `ProfileMeta.report` is `None`, as Interfaces says, and `edited_keys` accumulates the stored meta's keys plus the new one.
+  - A re-verified edit uses `start_refusal` with the request's `--unconfined-checks`, like detection does.
+  - An edit that needs no re-verification needs no preflight, so it works in a dirty checkout. Its proposal's `base_sha` is empty.
+- **Ruling R-T10-1.** The proposal's `proposed` is the scout's raw profile. Verification and `apply_verification` run on `from_findings(proposed)`. If `verify` returns `Err`, the proposal is `Failed` with that text. The confinement refusal is the task's last test. The extra test `e2e_a_verification_that_cannot_run_fails_the_proposal` puts a file where the checkouts' directory goes, so an edit's verification cannot prepare its checkout, and it checks the reason.
+- **Ruling R-T9-1.** The onboarding scout's `repo_paths` are `<repo_dir>/tasks/.onboarding` and `<git common dir>/objects`. `e2e_detect_proposes_only_verified_commands` finds both in the recorded `--settings` `denyWrite`.
+- **Ruling R-T9-3.** `Scout.installed` is set only by the bind that follows `create_headless`. A kill the machine asks for before that bind sets `kill_on_bind`, whether or not the session feed bound the window early (`step_locked`). The unit test is `a_stop_after_an_early_bind_is_still_owed_to_the_install`.
+- **Ruling R-T9-2.** When the ticker removes a scout's window, the scout leaves the table too. Tests:
+  - the unit test `a_finished_scout_leaves_the_table_with_its_window`;
+  - `scout_report_is_stored_and_the_session_retired`, which now asserts `info(id)` is `None` after the removal.
+- **Ruling R-T4-2.** `write_atomic` tries up to 64 temp names. A name some other file holds (`AlreadyExists`) is skipped, never opened or removed. Only a temp file this call created is removed on failure. Tests:
+  - `a_taken_temp_name_is_skipped_and_left_alone` failed before the change: the write failed and removed the other file.
+  - `a_failed_write_leaves_no_temp_file` pins behaviour that was already there.
+- **Task 10 re-review m2.** `pinned_as_ours` is `pub(super)`. The unit test `pinned_as_ours_requires_the_pins_git_dir_to_be_the_repositorys` pins a checkout as another repository's standalone checkout. It passes on the current code; dropping the `git_dir` comparison makes it fail.
+- **The harness (decision 36)** puts `deciders.mode = "off"` and `onboarding.auto = false` first among the test's `[orchestrator]` lines, unless those lines mention `deciders` or `onboarding`. `RunHarness.env` is `pub(super)`, for `support/run_adapt.rs`.
+- **The first message's inputs** are two reads in the root: `ls-tree -r -z --name-only <base>` for the count, and `ls-tree -z --name-only <base>` for the top-level names.
+- **Red evidence.** The unit tests for R-T4-2, R-T9-2 and R-T9-3 failed before their changes. The e2e tests were written after the service, so each was shown red by a mutation of non-kill, non-selection code, reverted afterwards:
+  - A: `RunRequest::Profile` answered `not available yet` → all seven `profile_cli` tests fail;
+  - B: no `sweep_leftovers` → the restart test fails;
+  - C: no `start_refusal` → the unconfinable-platform test fails;
+  - D: no restart failing → the restart test fails;
+  - E: no scout-window removal → the restart test fails;
+  - F: no checkout discard → the restart test fails;
+  - G: the verify error's text lost → the verification-failure test fails;
+  - H: the raw proposal verified instead of `from_findings`' → the detect test fails;
+  - J: no automatic re-detection → the stale test fails;
+  - K: empty `repo_paths` → the detect test fails.
+- **`PROFILE_WAIT`'s git calls as landed:** 18 on a clean detection, 28 with both checkouts salvaged. Recorded in `docs/timing-budgets.md` (M8b.11), with `WINDOW_GONE`.
+
+**Acceptance: `ProfileService` never holds `daemon::lock` across an await or a manager call.** Every `crate::lock(&self.table)` in `profile/service*.rs` is one expression or a block that ends before the next `.await`, manager call, scout-service call, git call or file access:
+- `running` reads `contains_key`, drops the guard, then awaits the proposal load.
+- `register`, `unregister` and `current` are synchronous and call nothing.
+- `scout_id` takes a number under the guard, then checks the report file on `spawn_blocking` after it.
+- `note_scout` only writes the table.
+- `reject` cancels the token and clones the scout id in a block, then calls `ScoutService::stop` and the file work after the block.
+- `status`, `confirm`, `edit` and `refuse_if_running` bind the lookup to a `let` before any await.
+
+The only lock held across an await is `writes` (a `tokio::sync::Mutex`), which orders `proposal.json` writes against `reject`. It is always taken before the table lock, never inside it.
+
+**Review fixes (task 11 review, controller rulings):**
+- **I1:** the three M8b.9 fixtures in `scout_service.rs` now script `{"hang": {}}`. The input-refusal test first takes the first turn (`read_message`) and waits until the window is `Working`. It then asserts `Status::Working` after every refusal. With the old `{"hang": true}` the scout exits at once and the new assertion fails.
+- **I2:** `may_auto_confirm` requires `dropped` to be empty. Test: `e2e_edit_yes_does_not_store_when_an_untouched_command_is_dropped`.
+- **I3:**
+  - M5: `e2e_edit_yes_stores_once_verification_drops_nothing` and `e2e_edit_yes_without_reverification_is_stored_at_once`, the second also pinning m2's text;
+  - M12: `e2e_an_edits_verification_refuses_an_unconfinable_platform_without_the_flag` (macOS);
+  - M20: `e2e_reject_with_no_work_running_discards_leftover_checkouts`.
+- **I4:** tests `e2e_a_restart_with_a_stale_profile_starts_an_automatic_proposal` and `e2e_run_start_with_a_stale_profile_starts_an_automatic_proposal`. Both read `proposal.json` directly, never through `profile status`, which would start the detection itself.
+- **m1:** `e2e_a_leftover_checkout_without_a_proposal_is_cleaned_at_restart`. It makes a real, dirty standalone checkout of another repository with `profile::verify::prepare`, restarts the daemon, and finds the checkout and its repository gone and the work in a salvage ref.
+- **m3:** `e2e_confirm_refuses_a_proposal_that_changed_since_it_was_shown`.
+- **m6:** `e2e_running_and_stopping_work_refuse_with_their_texts` pins both texts. It also covers a reject during `Verifying`: nothing is written back.
+- **New files:** `profile/service_restore.rs`, and the process tests `profile_cli_edits.rs` and `profile_cli_restart.rs`. `service.rs` shrinks to 422 lines; `service_restore.rs` is 247.
+- **Red:** the new tests were written after the fixes. Each was shown red by reverting its fix alone, then restoring it (task-11-report.md).
+
+**Re-review fixes (C1, r1, controller ruling):**
+- `borrowed_common_dir` is deleted. No git root, common directory or repository is ever derived from a file under a checkout or its repository.
+- Trusted projects only, each checked against its data directory's key. Otherwise no git runs, and the leftover is kept and logged. `profile status` does not mention a kept leftover; that was judged not cheap, and it is recorded as a follow-up.
+- Tests:
+  - `e2e_a_leftover_without_a_trusted_project_is_kept_and_no_git_runs` replaces the m1 positive test. Its leftover's alternates and its data directory's marker both name a second temporary repository. After the restart, both repositories' refs, index and every objects file are unchanged, and the dirty leftover is kept and logged. It failed on `e9589fa`, and fails again with the marker trusted without the key check.
+  - `e2e_a_rejected_verification_interrupted_by_a_stop_is_cleaned_in_its_project` rejects during `Verifying`, then stops the daemon. After the start, the checkout is gone and its dirt is in a salvage ref of the right project. It fails with the marker ignored.
+- r1: `ProfileService::spawn` orders the listener before the automatic scouts. There is no dedicated test, since the race is not reproducible on demand. The stale-at-restart test covers the path.
+
+### M8b.12 engine deciders I: the queue, reader slots, check summaries and block classification (2026-09-26)
+
+**Deviations and choices the brief leaves open:**
+- **`on_decided` takes the request.** The Interfaces give `on_decided(run, decider_id, decision, now)`. It is `on_decided(run, decider_id, task_ids, request, decision, now)`: the check summary's bounce names the command the decider was asked about (`CheckSummaryInput.command`), and a classification applies only to the block it was asked about (the request's reason must still be the block's text). The `Decide` op, and a queued decider, carry both.
+- **`summarise` and `classify`** (in `engine/deciders.rs`) are the two callers' entry points: `gates::check_done` and `merge::candidate_done` call `summarise`, `done::task_blocked` calls `classify`. Each queues, sets the task's wait (`pending_failure` or `pending_classification`), then calls `dispatch` at once, so with the deciders off the fallback is applied in the same step, at the point M8a applied its rung, and M8a's effects keep their order.
+- **The ladder split.** `ladder::gate_failure` is now `count_failure` (bounces and failures, returns the rung) plus `take_rung` (the failure record and the rung's action, from the counts as they stand). `gate_failure` calls both, so every other gate is unchanged.
+- **Mode off** is no call: `decider_calls` and `decider_fallbacks` are not counted, no history line is written, and no op is emitted. The check record still gets `summary_source: Fallback`, and a classified block `block_source: Fallback`, because decision 18 applies the fallback. The reply to an untyped `task_blocked` is then M8a's `Blocked recorded (question). …`, since nothing is classifying.
+- **`RunLimits.decider_mode`** defaults to `off` for a run recorded before M8b (`#[serde(default)]` with a function), so a restored M8a run gains no decider; `decider_slot_wait_secs` defaults to 30.
+- **Where deciders dispatch.** `deciders::dispatch` runs in the running pass just before `review::dispatch_reviewers` (decision 18's "before queued reviewers"). Queued deciders start only while the run is `running`, like every session (ruling T14-I2). The slot wait is checked in the same pass, so on any step (a `Tick` included) once `queued_at + slot_wait_secs` is reached, and only while running. Free slots are filled first, so a slot that frees at the deadline is used rather than the fallback. A decider re-queued by a restore gets `queued_at` = the restore's time.
+- **A deferred rung is dropped** when its task has left the wait before the answer (cancelled, say): the record still gets its summary, the counted failure stays. A `Decided` for a decider nothing waits for any more (an answer edit came first) is counted and otherwise ignored.
+- **`OpResult::Decided(Box<Decision>)`**, boxed: an unboxed triage answer made `OpResult` 288 bytes, which clippy 1.98's `large_enum_variant` refuses in `Reconciled` and the driver's `Msg`.
+- **`CheckRecord.summary`** holds the decider's lines joined with `\n` only when the source is `Decider`; a fallback leaves it `None` (the fallback is the tail's last 40 lines, which `tail` already holds). `CheckInfo.decider_summary` follows it. `contract::check_failed_message`, `candidate_red_message` and `reviewer_prompt` use the summary only when its source is `Decider`. The reviewer prompt keeps its `Last check (40 lines):` header over a summary (a summary is at most 40 lines).
+- **Report.** A check line ends with `, summary by the decider` or `, summary by its fallback`, and a decider's summary follows its tail as `Summary:` in a fence (`report_task.rs`, where check lines are rendered). The task history gets `check summary: decider` or `check summary: fallback (<reason>)`, and `block classified as <kind>: decider` or `…: fallback (<reason>)`.
+- **Usage.** A decision's usage goes to `Run.decider_usage`, and to `Task.decider_usage` when it was asked about one task. `TaskInfo.decider_usage` is `Some` when it is not zero. `RunInfo.usage` stays `None`: M8b.15 fills it.
+- **Driver.** `Adaptation` gains `deciders: DeciderContext`, built in `profile::service::wire` with `DeciderContext::new`. A service with no adaptation answers `Decide` with the fallback `the decider could not start: the daemon has no decider context`. `cli/tests/scout_service.rs` builds its context with mode `off`. A `Decide` op holds the run's shared op-order lock like every op. No `Accept` or `Discard` can wait for it: `finish` needs a `complete` run, which `complete_pass` reaches only with no pending op, `reject` needs `awaiting_approval`, and deciders start only while the run runs (review m7). M8b.13 re-checks this if its size check can be emitted before `running`.
+- **`decider::fallback::OFF_REASON`** (`deciders are off`) is shared by the call and the engine.
+- **The fixture.** `Fixture::with_config` now forces the deciders off, like `Fixture::new` (the merge tests' `config()` would otherwise have seen `Decide` ops); `Fixture::deciding` keeps the config's mode. `fx.decided(op, decision)` and `fx.queued_deciders()` as named.
+- **M8a tests edited only where the new fields forced it.** Seven `CheckRecord` literals gained `summary` and `summary_source` (`engine/tests/gates.rs` twice, `engine/tests/merge.rs`, three report tests, the journal fixture). The two engine records produced with the deciders off now expect `summary_source: Some(Fallback)`; the journal fixture's record carries a decider summary, so its round trip covers the new fields. No assertion was otherwise changed.
+- **Tests.** `engine/tests/deciders.rs` (the check summary, the candidate, slots, slot wait, mode off) and `engine/tests/deciders_block.rs` (classification, the restart, usage, the reviewer prompt), split for size. `a_restart_requeues_a_dropped_decider_op` runs M8a's `reconcile` on the run with the `Decide` op's intent line (git is a nonexistent path; the run records no session pid, which the test asserts before calling it). `decide_is_not_started` is in `reconcile/mod.rs`. Extra: `a_check_summary_names_its_source` (`report_tests.rs`).
+
+**Review fixes (task 12 review, controller rulings):**
+- **I1:** `Task.pending_classification` is `Option<u64>`, the classifying decider's id (a deviation from the Interfaces' `bool`, as `pending_failure` is keyed). A classification applies only when its decider is the one the task waits for, and the block is still the question it asked about. The wait is also cleared by `run retry`, by `run override` (`send_to_queue`), and by any new `task_blocked` (which also clears `block_source`). Tests: `a_late_classification_never_touches_a_typed_block` (the reviewer's four steps; the typed `question` stays a `question`, rung 2, no kill), `an_earlier_classification_does_not_apply_to_a_later_block`, `an_override_ends_the_classification`.
+- **m1:** `a_failed_decide_applies_the_fallback` (the driver's `Failed` gives the fallback with reason `the decider could not start: <message>`).
+- **m2:** `no_decider_starts_while_paused` (a check that fails red during a pause queues its decider; the `resume` edit starts it).
+- **m3:** `complete::cancel_now` (so `run cancel`) and the `cancel_task` edit drop the task's queued deciders (`deciders::drop_queued`). One already in flight runs to its end; its answer finds nothing waiting. Test: `a_cancelled_task_drops_its_queued_decider` (both paths; the freed reader slot goes to no decider).
+- **m4:** `on_decided` turns an answer of another kind than its request into the request's fallback, with reason `the decider's answer does not match its request` and the turn's usage kept; it is counted as a fallback. Test: `an_answer_of_the_wrong_kind_is_the_fallback` (a unit call of `on_decided`).
+- **m5:** the liveness check counts a task whose `pending_failure` decider is queued or in flight as alive; `slot_taken` (a check waiting for a queued decider) and the new tests check liveness mid-wait.
+- **m6:** `a_deferred_rung_is_taken_only_by_its_own_answer` covers the `decider_id` guard (a unit call with another id) and the merge-queue guard (the red candidate put back in the queue by hand).
+- **m7:** the note above is corrected.
+- **m8 (no change):** the slot wait follows decision 18 literally: an entry queued before a pause keeps its `queued_at`, so if every reader slot is still held at the resume it falls back at once.
+- **Proof:** the new tests that passed from the start (m1, m2, m6) were proved by non-kill mutations, each reverted: `Failed` ignored; the running guard weakened; the id guard widened; the merge-queue guard removed. Each fails its test. The fixes were also mutated one at a time (the keyed id, the retry clear, the override clear, each cancel path's drop, the mismatch fallback), and each mutant fails a test. The typed-block clear is not reachable on its own (a task is working again only through an answer, a retry or an override, which clear the wait first); it is kept as a second barrier.
+- New test file `engine/tests/deciders_edges.rs` (276 lines).
+
+### M8b.13 engine deciders II: the size cross-check (2026-09-27)
+
+**Deviations and choices the brief leaves open:**
+- **Where the code lives.** The size check is in a new `run/engine/deciders_size.rs` (223 lines), so `deciders.rs` stays at 419. `deciders::cross_check` is re-exported from it; `apply_raise` is `run::engine::deciders_size::apply_raise` (the Interfaces name `deciders::apply_raise`; nothing outside the engine calls it yet). `deciders::apply` hands a size-check answer to `deciders_size::sized` before its first-task lookup, since the answer is for every task it asked about.
+- **`Run.scout_reports` and `Run.onboarding_report`** are added as the Interfaces list them (`#[serde(default)]`). `onboarding_report` is the stored profile's `ProfileMeta.report`, set by `choose_profile` whenever a stored profile is found (whatever the profile's source). `scout_reports` stays empty until M9.
+- **Which refs are evidence.** A `scout_refs` entry counts only when it names a report the run has: an id in `run.scout_reports`, or the alias `onboarding` when there is an onboarding report. Anything else a plan names is ignored, so no plan text ever becomes a path. A task whose `scout_refs` name only unknown reports has no evidence (it does not fall back to the onboarding report: decision 19 gives that only to a task with no `scout_refs`). The request's `evidence_refs` are the batch's run-scout refs in order of first appearance, then `onboarding`.
+- **The edit side.** Decision 13's touched set is taken from the batch itself (the `add_task` ids, a split's `into` ids, `amend_task` and `add_dep` targets), because `apply_edits` does not return it and adding an `EditConsequence` would change M8a's consequence tests. Only touched tasks still `pending` or `queued` are checked: a dispatched task is never raised mid-work (decision 19's `apply_raise` assumes an undispatched task).
+- **Deciders off.** Evidenced tasks record `SizeCheckInfo { decided: None, agreed: true, reason: "deciders are off", source: Fallback }` inline, with no op, no history line and no note; tasks without evidence get no `size cross-check skipped` note either, so a run without deciders keeps M8a's notes (as M8b.12 does for its history).
+- **Recording.** A decider verdict records `decided: Some(size)` and `agreed: decided == engine`. A missing id, or every task of a fallback decision, records `decided: None`, `agreed: true`, `source: Fallback`, and the reason: the decision's fallback reason, or `the engine's size is kept` (`decider::fallback::SIZE_FALLBACK_REASON`) for an id the decider left out. The task history gets `size cross-check: <M> by the decider, <S> by the engine` or `size cross-check: fallback (<reason>)`. The report shows a disagreement under the task's state line as `Size cross-check: <engine> by the engine, <decided> by the decider: <reason>`. `TaskInfo.size_check` is the recorded info (none while pending).
+- **L.** The task's size is left as it is; it is blocked (`mis_sized`) with decision 19's text, rung and failures untouched. Only a task still `pending` or `queued` is blocked (review I1): a task in any other state, such as one already blocked `dep_cancelled` or `environment` while its check was in flight, keeps its state and its block, and the verdict is only recorded in `size_check` and the history. An L answer is never a raise.
+- **The raise.** `ladder::reresolve` is `pub(crate)` and now returns the route the raised size resolves to; `apply_raise` takes its effort when the plan's `route.effort` is `None`, and then picks the reviewer again for the new route.
+- **Start.** The check is queued in `requests::start` right after `CreateRunBranch`, and `deciders::dispatch` is called at once: with `--yes` the `Decide` op goes out before the integration worktree exists (a decider runs outside the repository); at the gate it waits.
+- **Evidence in the driver.** `RunService::with_evidence` reads the run's `repo_dir` and `onboarding_report` under the state lock (a clone), then `read_evidence` runs on `spawn_blocking`. Each ref must pass `scout::spec::valid_id`, and so must the onboarding id; paths come only from `scout::report::resolve_ref` (`<run_dir>/scouts/<id>.json`, or `<repo_dir>/scouts/<onboarding id>.json` for the alias, never with an empty `repo_dir`). A file is opened once with `O_NOFOLLOW | O_NONBLOCK` (a link is refused, a FIFO does not block), must be a regular file by the opened handle's metadata, is read through `take(1 MiB + 1)` so a file over 1 MiB is refused without being read whole (review m3), and must parse as a `ScoutReport`; the evidence id is the report's own id. Unreadable refs are skipped. When none is read, the size check is its fallback with `the decider could not start: no scout report could be read (<ref>: <problem>; …)`, one of decision 16's reasons.
+- **Task 12 review m7, re-checked.** A size check can now be queued before the run is `running` (at the plan gate), but it can never be in flight then: `deciders::dispatch` starts ops only while running. So no `Accept` or `Discard` can overlap one: `finish` still needs a complete run (no pending op), and the halted-cancelled discard needs no pending op. Made safe anyway:
+  - `reject` clears the decider queue and every pending size check before its `Discard`;
+  - `approve` restarts every queued decider's slot wait (`queued_at = now`), since a check queued at the gate could not have started there;
+  - a cancelled task (`run cancel`, the `cancel_task` edit) leaves a queued multi-task size check (its id is removed from the request and `task_ids`; the entry goes only when no task is left), and its own pending check is dropped (`Task::drop_pending_size_check`), so its batch-mates are still checked.
+- **Fast path.** Not done here: `Run.path` does not exist until M8b.14, which gives the fast-path task `SizeCheckInfo { source: Fallback, reason: "sized by triage" }` and must skip `cross_check` for it.
+- **Tests.** `engine/tests/deciders_size.rs` has the brief's nine engine tests plus `a_run_scout_ref_comes_before_the_onboarding_alias`, `deciders_off_keep_every_size_with_no_op_and_no_note`, `a_size_check_at_the_gate_starts_on_approval_and_goes_with_a_reject` and `a_cancelled_task_leaves_the_batch_and_the_rest_is_still_checked`. The liveness check gains `size_checks_alive` (a pending task's decider is queued or in flight). `Fixture::start_with` edits the built run before `Start`. The driver tests are `run/driver/adapt_evidence_tests.rs`: `the_driver_resolves_evidence_from_report_files` (a run scout's report and the onboarding alias's, through a real `RunService`) and `evidence_is_read_only_from_stored_reports` (a traversal ref, a link, the alias with no onboarding report, an onboarding id that is not a scout id, and the resulting fallback).
+- **Proof.** The engine tests failed before the change (13 of 13). The driver tests were written after `read_evidence`, and were proved by four non-kill mutations, each reverted: `with_evidence` a no-op; the `valid_id` check removed; `metadata` for `symlink_metadata`; the alias guard removed. The m7 fixes and the dispatch guard were mutated too (no `queued_at` reset, no queue clear on reject, no per-task removal from a queued batch, no pending check in `dispatch_writers`); each mutant fails a test.
+- **Review fixes (2026-09-27).**
+  - *I1.* The L block applies only to a `pending` or `queued` task, as above. Tests: `an_l_answer_keeps_a_dep_cancelled_block_and_retry_stays_refused` (after the L answer `run retry` still refuses the cancelled dependency) and `an_l_answer_keeps_an_environment_block_and_its_setup_output`; both failed before the fix.
+  - *Retry is the user's override.* `run retry`, and an amend of a blocked task, queue no new size check. A task the check judged L therefore still runs on retry, and its size stays as planned (S or M; the L verdict is only recorded). Test: `amending_a_blocked_task_queues_no_size_check`.
+  - *I2.* `a_stale_answer_after_an_amend_is_ignored` pins the current-check match in `deciders_size::sized`; `amending_a_working_task_queues_no_size_check` pins the pending-or-queued filter on an edit's touched tasks. `touched_unstarted` carries a comment pointing at `run::edits::Batch.touched`, so the two sets stay in sync.
+  - *m1, m2, m4.* `oversized_non_report_and_rootless_evidence_is_skipped` covers a valid report over 1 MiB, a JSON file that is not a report, a directory, and the alias with an empty `repo_dir`. `a_size_check_is_split_into_batches_of_fifty` (51 tasks make requests of 50 and 1). `deciders_off_write_no_size_check_history` (no history line and no note with the deciders off).
+  - *m3.* `read_report` hardened as described under "Evidence in the driver"; it still runs inside `read_evidence` on `spawn_blocking`. The separate length check from metadata was dropped: the capped read is the only size guard, so a file grown after `open` is caught too.
+  - *m5.* The reviewer re-pick in `apply_raise` is redundant (`pick_reviewer` does not read the effort, and `reresolve` already re-picked). It is left as it is, as a defensive re-pick.
+  - *m6.* Pre-warm still runs `setup` for a task whose check is pending, since that is M8a behaviour. With I1 fixed, a setup failure's `environment` block and its output survive the check's answer, so nothing is lost beyond the wasted setup work.
+  - Every new guard test was proved by loosening its guard (current-check match to `is_none()`, the touched filter to `!is_finished()`, `BATCH_MAX` to 500, the history write made unconditional, the capped-read check off, the empty-`repo_dir` guard off, `O_NOFOLLOW` off, the handle's regular-file check off); each mutant failed a test and was reverted.
+
+### M8b.14 triage, the fast path and `run promote` (2026-09-27)
+
+**Deviations and choices the brief leaves open:**
+- **`anthrex run stats` is not listed by `anthrex run --help` yet.** The acceptance line asks for it, but `stats` is M8b.17's; no working command was stubbed. `promote` is listed. `RunRequest::Stats` is still answered `not available yet`.
+- **`TriageRoute::Fast(Box<PlanTask>)`**, boxed: a `PlanTask` beside two `String` variants trips clippy's `large_enum_variant`.
+- **Pure helpers beside the Interfaces' five** (`run/triage.rs`): `check_fast(Result<Run, Vec<PlanError>>) -> Result<Run, String>` (decision 22 step 5's first `PlanError`, hub and L checks, each as `the fast path does not apply: …`), `not_fast(info, reason)` (the info with path `Plan`), `mark_fast(run, info, usage)` (path, triage, `approved_by = "fast path"`), `tracked_files(listing)` (sorted, deduplicated, at most 1500 paths or 48 KiB counting each path's newline, and the total), `goal_input` (the first 4000 characters), and the labels `kind_label`, `scale_label`, `source_label`, `kinds_scale`, which the report and the CLI's status share. `PLAN_SCALE_MAX` is defined as the Interfaces list it and not used yet.
+- **An L task never reaches the `task t1 is L` check today:** M8a's `build_run` refuses an L task (rule 7.2.4), and triage's schema allows only S or M. A two-module `interface_change` task that rule 7.2.2 raises to L therefore takes the first-`PlanError` reason. `check_fast` keeps the L check as a second barrier; `an_l_task_falls_back_to_plan` covers both.
+- **`build_plan`'s error is `BuildError { Plan(Vec<PlanError>), Refused(String) }`** (in `driver/adapt_goal.rs`, with `From<String>`), so the fast path can tell `build_run`'s errors (the planned path) from every other refusal (the request's refusal). `run start --plan` joins the plan errors exactly as before (`BuildError::text`).
+- **Where the driver code lives.** `StartGoal` is `driver/adapt_goal.rs` (262 lines), declared by `driver/adapt.rs` with `#[path]`, so `driver/requests.rs` stays at 587 (561 + 26: the new arms and the `BuildError` plumbing, one over its +25 budget) and `driver.rs` is unchanged.
+- **The goal's `yes` is ignored:** the fast path has no plan gate, and `build_plan` is called with `yes = true` (decision 22). The flag stays on the wire for milestone 9's planned path.
+- **Detection started by a goal** (decision 22 step 2) uses the goal's own `--trust-project` and `--unconfined-checks`, through the new `ProfileService::detect_or_record(pre, ProposalOrigin::Goal, trust_project, unconfined_checks)`; `auto_detect` is now that call with both `false`. A `Failed` proposal counts as nothing pending, so a goal starts detection again. `ProfileService::onboarding_auto()` reads `[orchestrator.onboarding] auto`.
+- **A plan whose profile equals the stored profile ignores nothing** (`profile::resolve::run_profile`): the fast plan carries the stored spec (`fast_plan(goal, task, profile.spec())`), and `choose_profile` would otherwise log `profile.<key> from the plan file is ignored` for every key. Test: `a_plan_profile_equal_to_the_stored_one_ignores_nothing`.
+- **Triage's inputs.** `git ls-files -z` goes through `run::git::Git::ok` (the same `worktree::run_git_with_cap` code, `--no-optional-locks`, the scrubbed environment, the NO_HOOKS flags, the 64 MiB listing cap) in `pre.root`, on `spawn_blocking`. The onboarding report is read with M8b.13's `read_evidence` (the alias only, from `<repo_dir>/scouts/`); an unreadable report is left out. With the deciders off nothing is read and the fallback is `deciders are off`. A failed listing is the fallback `the decider could not start: could not list tracked files: <error>`.
+- **The fast path's size check (ruling R-T13-1).** `engine/requests.rs::start` gives every task of a `path == Some(Fast)` run `SizeCheckState::Done(SizeCheckInfo { engine: <size>, decided: None, agreed: true, reason: "sized by triage", source: Fallback })` and never calls `cross_check`. The reason is `decider::fallback::SIZED_BY_TRIAGE`.
+- **Start.** A fast-path run is `running` from `Start` whatever `approved_by` says, with the log line `started on the fast path; no plan gate`.
+- **Promote order.** Unknown run, then not fast-path (`run <id> is not a fast-path run`), then terminal (`run <id> is <state>`), then already marked. A second request changes nothing, so nothing is persisted. `<hh:mm>` is UTC, as the snapshot's history shows times (`model::hh_mm`); the attention line is `Run::promotion_line`. `EventKind::Promote` is answered by the step-panic guard like every request (`driver/guard.rs`).
+- **`Run.triage_usage`** is added now (decision 29 lists it), set from the triage decision's usage by `mark_fast`; M8b.15 puts it into `by_role["decider"]`. Triage does not count in `Run.decider_calls` (decision 18 counts `Decided` ops).
+- **The report's path line** follows `Approved by:`. The report is written when the run completes (M8a), as before.
+- **`run status`**: ` fast path` follows the state, also after `paused (from …)`.
+- **File budgets.** `run/model.rs` is 508 (the M8b budget was +45 over 430; M8b.12/13 had already taken it to 496; +12 here). `run/engine/requests.rs` is 510 (404 + 40 was the budget; M8b.12/13 had it at 448; +62 here, the promote handler and the fast start). Both stay under 600.
+- **Timing budget.** `GOAL_REQUEST_TIMEOUT` = 810 s lives in `crates/cli/src/run_cmd/adapt.rs`; `docs/timing-budgets.md`'s row records the landed call count (9 git calls before triage, then `run start`'s own).
+- **Tests.** `run/triage_tests.rs` has the brief's nine plus `tracked_files_are_sorted_capped_and_counted`; `engine/tests/fast_path.rs` the brief's four; `run_cmd/adapt.rs` and `status_tests.rs` the brief's three. Extra: `a_fast_path_run_reports_its_path` (`report_tests.rs`) and `a_plan_profile_equal_to_the_stored_one_ignores_nothing` (`profile/tests.rs`). The driver's `StartGoal` has no process test here: M8b.18's `e2e_goal_*` tests cover it. It was checked by hand against an isolated daemon (socket and data under `/tmp`, `ANTHREX_CLAUDE_BIN`/`ANTHREX_CODEX_BIN` nonexistent, `ANTHREX_DECIDER_BIN` = `fake-agent`): the no-profile refusal, a fast-path start, `promote` twice, `plan`-scale and hub refusals with no branch or run directory created, the report's path line, then cancel, discard and `daemon stop`.
+
+**Review fixes (M8b.14 review, 2026-09-27):**
+- **I1, the fast path's invariant is enforced in three places.** `run::triage::fast_refusal(tasks)` is the one check: exactly one task, neither `hub` nor L, else `the fast path does not apply: <a fast-path run has exactly one task, not <n> | task t1 touches a hub file | task t1 is L>`. `check_fast` applies it; `build_plan` applies it on the fast path right after `build_run` (m1 below); and the engine's `requests::start` applies it to every `path == Some(Fast)` run. The engine **refuses** such a start (`Err` with that reason, and no run, op or window is created) rather than falling back to the plan gate: decision 22 step 5 routes such a goal to the planned path, which in M8b creates nothing (step 6), so a run on the plan gate would be a state the brief never produces. The driver's reply is then the request's refusal. Tests: `a_fast_path_start_refuses_hub_l_and_many_tasks` (engine; a mutation that disables the check fails it), `fast_refusal_needs_one_task_neither_hub_nor_l` (triage). M8b.18 gains `e2e_goal_touching_a_hub_file_is_refused_without_side_effects`.
+- **m1, the hub and L reason comes before the runtime checks.** `build_plan` takes a `fast` flag (false for `run start --plan`); with it set, `driver/adapt_goal.rs::fast_barrier` runs `fast_refusal` right after `build_run`, before the `.codex` tree and the runtime checks of decisions 50 and 53, and returns `BuildError::NotFast(reason)`, which `start_goal` turns into the planned path with that reason. A hub goal in a repository with untrusted project settings therefore reports the hub reason, not the settings text that suggests `--trust-project`. Test: `a_hub_goal_reports_the_hub_reason_before_the_runtime_checks` (`driver/adapt_goal_tests.rs`, a temporary repository tracking `.mcp.json`; the control shows the `--plan` path refuses with the settings text). The logic lives in `adapt_goal.rs`; `driver/requests.rs` is 590 lines.
+- **m2, a blank goal is refused before anything else.** `start_goal` first checks `run::triage::blank_goal`, which refuses an empty or whitespace-only goal with `build_run`'s own wording, `goal: must not be blank`, before the profile service, preflight or triage. Tests: `a_blank_goal_is_refused_with_build_runs_wording`, and `a_blank_goal_is_refused_before_anything_else` (a service with no profile service and a directory that is not a repository still answers the blank-goal refusal, so nothing before it ran and no decider was spawned).
+- **m3, `run promote` refuses a `complete` run.** A `complete` run only waits for `run accept` or `run discard`, so nothing is left to promote. It is refused like a terminal run: `run <id> is complete`. This deviates from decision 25's letter ("not terminal"), by the controller's ruling. Test: `promote_refuses_plan_runs_and_terminal_runs` now includes `complete`.
+- **m4:** M8b.17's acceptance now names `anthrex run --help` listing `stats`.
+- **m5:** recorded in the follow-ups file under M8b.14's review.
+- **Open questions accepted by the review:** (1) goal-started detection uses the goal's `--trust-project` and `--unconfined-checks`; (2) a `Failed` proposal counts as nothing pending, with no backoff, because every restart needs a `run start --goal` the user typed; (3) `GOAL_REQUEST_TIMEOUT` stays 810 s, its terms covering calls that answer normally, as M8a's do; (5) `check_fast`'s L check is kept as defence in depth, now beside the driver's and the engine's.
+
+### M8b.15 metering: usage by role and the OTLP receiver (2026-09-27)
+
+**Deviations and choices the brief leaves open:**
+- **No protocol change.** `RunUsage`, `RunInfo.usage` and `TaskInfo.decider_usage` landed in M8b.2, with their round trips (`crates/proto/src/adapt_tests.rs`). `PROTO_VERSION` stays 8, and no wire message is new or changed.
+- **`Run.scout_usage` and `Run.orchestrator_usage`** are added (`#[serde(default)]`), as the Interfaces list them. Nothing sets `scout_usage` until milestone 9's run scouts. Both are counters: `engine::without_counters` clears them, so an OTLP total is persisted lazily and published as a counter update (decision 47), like a round's usage.
+- **`EventKind::OrchestratorUsage`** replaces `Run.orchestrator_usage` with the ledger's total (the ledger sends its whole total, never an increment). A run the engine does not know is ignored, with no revision or persist.
+- **`RunInfo.usage`** is always `Some`, and `by_role` always lists all five roles (zero when unused), so a client never has to tell "no usage" from "role unknown". `worker` and `reviewer` sum every round of every task by its role (`Scout` and `Orchestrator` rounds, which no run has yet, map to their own keys); `decider` is `Run.decider_usage` + `Run.triage_usage`. `Task.decider_usage` is not added again: M8b.12 already puts it in `Run.decider_usage`. Every sum saturates, because OTLP totals come from any local process. `decider_calls` and `decider_fallbacks` are the run's (ruling R-T12-1).
+- **Where run and role come from.** Only the resource attributes `anthrex.run` and `anthrex.role`, as decision 30 says. M8b.1 found Claude Code also copies them onto every data point; those copies are ignored. A missing `anthrex.role` is the role `""`, kept in the ledger and not shown.
+- **Untrusted input, in `metering/otlp.rs`:**
+  - The body must be a JSON object; serde's own recursion limit refuses deep nesting.
+  - Only the fields read are kept (typed `Deserialize` structs; unknown fields are skipped).
+  - Values come from `asDouble` or `asInt`, each a number or protobuf-JSON's decimal string.
+  - A point is dropped when its value is negative, not finite or not a number; when its `type` is unknown; when its temporality is unspecified; or when its run id, role, session id or model is over `MAX_ID_BYTES` (256).
+  - `as u64` saturates huge values.
+  - The ledger keeps at most `MAX_TOTALS` (1024) `(run, role)` pairs and `MAX_SERIES` (4096) cumulative series. A point for a new pair or series beyond the cap is dropped. Every total saturates.
+- **The cumulative series key is `(run, role, session.id, model, type)`**, a superset of decision 30's `(session.id, model, type)`. Two runs or roles never share a series. A series seen for the first time adds its whole value.
+- **The server, beyond decision 30's answers:**
+  - `400` for a malformed request line, header, chunk or JSON body.
+  - `405` for another method on `/v1/metrics`.
+  - `413` for headers over `OTLP_MAX_HEADERS`, as for a body.
+  - A request that runs out of `OTLP_READ_TIMEOUT` is closed with no answer.
+  - Every answer but `200` closes the connection. First the write side is shut, and what the client still sends is drained for at most 500 ms, so the client reads the answer rather than a reset.
+  - A `200` keeps the connection when the request asked for it (Claude Code's exporter sends `Connection: keep-alive`).
+  - At most `OTLP_MAX_CONNECTIONS` (8) connections are served at once, and a connection beyond that is closed at once. With the 4 MiB body cap, memory stays bounded.
+  - Parsing runs on `spawn_blocking`. The ledger's `std::sync::Mutex` (taken with `daemon::lock`) is held only for `apply` and `total`.
+  - Nothing is logged but the bind, accept errors and the once-per-daemon `415` line (its content type cut to 64 characters). No body is ever logged (ruling R-T1-5).
+  - It makes no outbound connection.
+- **Names beyond the Interfaces** (`metering/server.rs`):
+  - `ADDR_FILE` (`"otlp.addr"`, written through a temporary file and a rename) and `OTLP_MAX_CONNECTIONS`.
+  - `OtlpServer` gains a private task handle and `stopped()`, which waits for the accept loop to stop and the address file to be removed.
+  - `start(&config::Metering, data_dir, Arc<RunService>, shutdown) -> Option<OtlpServer>` is `lifecycle::run`'s one call, re-exported as `metering::start`. With `otlp = true`, it binds and forwards every orchestrator total to `RunService::orchestrator_usage`. A bind failure is logged at `error`, and the daemon runs without metering. With `otlp = false`, it removes a stale `otlp.addr` left by an earlier daemon.
+  - `metering/otlp.rs` adds `TOKEN_METRIC`, `MAX_SERIES`, `MAX_TOTALS` and `MAX_ID_BYTES`.
+- **Lifecycle order.** The receiver starts right after `runs.spawn` and `profiles.spawn`, so after the socket is bound and the engine runs. At shutdown, once `serve` returns, its stop is awaited, bounded by 5 s, before `runs.stop()`.
+- **File budgets.** `lifecycle.rs` 450 → 464 (+14, within +35 of 439). `run/snapshot.rs` 252 → 296 (230 + 50 was the budget; 66 over 230). `run/engine/mod.rs` 539 → 552 (524 + 20 was the budget; M8b.12–14 had it at 539). All stay under 600. `driver/requests.rs` is untouched (590); `RunService::orchestrator_usage` is in `driver/adapt.rs`.
+- **Tests beyond the list.**
+  - `huge_values_saturate_and_the_ledger_is_bounded` (`otlp_tests.rs`).
+  - `a_new_run_shows_every_role_at_zero`, `usage_totals_saturate` and `orchestrator_usage_is_stored_as_a_counter`, in `engine/tests/usage.rs` with `run_usage_sums_roles` ("the snapshot tests").
+  - `parses_the_recorded_fixture` runs on the observed fixture (`"observed": true`), so `parses_the_documented_shape` is not needed.
+  - `otlp_server.rs` also covers keep-alive, a body with no run, `400`, `405`, a chunk size that overflows, and oversized headers.
+- **Red and green.**
+  - Every new test failed before the change except `other_metrics_are_ignored`, which passed against a stub that returned no points.
+  - That test was proved by a mutation: the metric-name check was removed, and the test fails.
+  - Every server test failed at the stub's `bind`.
+  - `a_slow_client_does_not_block_another` was also proved by serving each connection inline in the accept loop. The test fails at 2.0 s.
+  - `orchestrator_usage_is_stored_as_a_counter` was proved by removing `orchestrator_usage` from `without_counters`. The test fails with an urgent persist.
+  - Every mutant was reverted.
+- **Timing budget.** The 2 s bound is recorded in `docs/timing-budgets.md`. Measured: 0.6–1.5 ms. The test asserts at compile time that the bound stays under `OTLP_READ_TIMEOUT`.
+- **Manual check.** An isolated daemon was run with its socket, data directory and config under `/tmp`, and `ANTHREX_CLAUDE_BIN`, `ANTHREX_CODEX_BIN` and `ANTHREX_DECIDER_BIN` pointing to nonexistent paths.
+  - It wrote `otlp.addr`.
+  - `curl` posting M8b.1's fixture got `200`, and posting `application/x-protobuf` got `415`, logged once without the body.
+  - After `daemon stop`, `otlp.addr` was gone.
+- **Follow-ups** (recorded under "From M8b.15"): `TokenUsage`'s `+=` does not saturate for stream usage, and there is no `Expect: 100-continue` support.
+
+### M8b.15 fix round 1: the review's findings (2026-09-27)
+
+This round supersedes the notes above where they differ: the connection cap, the forwarding to the engine, and the `+=` follow-up.
+
+- **Decision 30 clarified (I5): a restart never lowers the orchestrator's usage.** Decision 30 has the reducer store the ledger's total. The ledger lives in the daemon's memory, so after a restart its first total for a run, maybe a zero-valued point from any local process, replaced the persisted usage. Replace semantics hold within one daemon. Across a restart:
+  - `engine::restore` copies each run's stored `orchestrator_usage` into `Run.orchestrator_base` (`#[serde(skip)]`, never stored). `OrchestratorUsage` then sets `orchestrator_usage = base + total`, saturating.
+  - The orchestrator's PTY does not survive a restart, so the new session's counters start from zero, and base + new total is its whole usage.
+  - The next restart takes the stored usage as its base again.
+  - Tests: `a_restart_never_lowers_the_orchestrator_usage` (a zero-valued post after a restart leaves 999 unchanged; later totals add to it and replace one another; a second restart), `the_base_and_the_new_total_saturate`, and the driver's `a_restored_run_is_live_and_its_usage_adds_to_what_was_stored`.
+- **Only live runs are metered (I3).** A live run is one in the engine's state that is not terminal (`Accepted`, `Discarded` or `Failed`); `Complete` stays live, since its orchestrator may still run.
+  - The run service keeps the live ids in their own small mutex (`driver/usage.rs`, `Metered`), refreshed under the engine lock after every step and after the restore. A generation moves when they change.
+  - The receiver reads them through the new `metering::UsageSink` trait (`is_live`, `live_generation`, `post`), which `RunService` implements. It never takes the engine lock or the manager lock.
+  - On its blocking thread, the receiver drops every point whose run is not live, before the ledger. When the generation moved, it first evicts the totals and series of every run no longer live (`OtlpLedger::retain_runs`). Eviction happens at the next request, not at the moment a run ends.
+  - An `orchestrator` pair is exempt from `MAX_TOTALS`: orchestrator pairs are bounded by the live runs, and no other role of a live run can crowd a run's orchestrator out.
+  - Tests: `junk_run_ids_never_crowd_out_a_live_run` (1100 junk run ids as workers, then 1100 as orchestrators; neither reaches the sink, and `r-fix` is still metered), `a_run_that_ends_is_evicted`, `an_ended_run_is_evicted_from_the_ledger`, `past_the_totals_cap_an_orchestrator_is_still_metered`, `only_runs_the_daemon_has_and_that_have_not_ended_are_live`.
+- **Orchestrator events are coalesced (I4).** The unbounded channel between the receiver and the engine is gone.
+  - `UsageSink::post` keeps the latest total per run in a pending map. It sends one `Msg::Usage` to the event loop only when the map goes from empty to not empty. The loop drains the map into one `OrchestratorUsage` step per run.
+  - A flood of posts therefore adds at most one message to the engine's queue, and the map holds at most one total per live run.
+  - The receiver already posts one total per touched run per request.
+  - Tests: `one_post_with_many_points_posts_one_total_per_run` (500 points, one post) and `a_flood_of_posts_queues_one_drain_with_the_latest_totals` (2000 posts for two runs, one queued drain, the latest totals).
+- **A chunk's CRLF split across reads (I1).** `line(max)` now waits while the buffer holds at most `max + 1` bytes, so a CR whose LF has not arrived yet is not refused. Test: `a_chunk_whose_crlf_is_split_across_reads_is_accepted` (raw TCP: `2\r\n{}\r`, a pause, then `\n0\r\n\r\n`).
+- **The oversize tests are strict (I2).** Oversized headers and a chunked body past the cap must each be answered `413`, not merely closed.
+- **The 9th connection.** A connection beyond `OTLP_MAX_CONNECTIONS` now waits up to `OTLP_SLOT_WAIT` (1 s) for a slot, in the accept loop, before it is closed unanswered. New connections wait in the listen backlog meanwhile. Tests: `past_the_connection_cap_a_connection_is_closed_after_the_slot_wait` and `a_connection_waiting_for_a_slot_is_served_when_one_frees`. The follow-up to size the cap from the concurrent runs is under "From M8b.15's review".
+- **Minor fixes:**
+  - The run id and role are checked against `MAX_ID_BYTES` once per resource, and the session id and model before a point is built, so an oversized id is never copied per point (`a_point_with_any_id_over_the_cap_is_dropped`).
+  - The deep-nesting test is real: 200 000 levels inside an unknown field (`Ok`) and inside `resourceMetrics` (`Err`), each parsed on a thread with a 2 MiB stack (`deep_nesting_inside_a_field_never_overflows_the_stack`). The old one began with `[`, which the object check refused before serde ran.
+  - Parsing, the live filter, eviction, `apply` and `total` all run in one `spawn_blocking` closure. The tokio worker only posts the totals.
+  - HTTP reading moved to `metering/http.rs`. Its `ReadBuf` consumes by advancing an offset and drops the consumed prefix only once it is at least half the buffer, so chunked decoding is linear. Between kept-alive requests, `settle` drops the consumed bytes and shrinks the buffer back to `KEEP_CAPACITY` (64 KiB).
+  - `otlp.addr` is written with mode 0600.
+  - New tests kill the surviving mutants: `past_the_series_cap_only_known_series_count` (`MAX_SERIES`), `another_role_reaches_no_sink` (the orchestrator-role filter), and the two connection-cap tests.
+- **`TokenUsage +=` saturates** (`crates/proto`, its own commit). It is a behaviour change, not a wire change, so `PROTO_VERSION` stays 8. Test: `token_usage_add_assign_saturates`.
+- **Names beyond the Interfaces:** `metering::UsageSink`, `metering::otlp::ORCHESTRATOR`, `OtlpLedger::retain_runs`, `server::OTLP_SLOT_WAIT`, `Run.orchestrator_base`. `bind` takes an `Arc<dyn UsageSink>` instead of a channel, and `RunService::orchestrator_usage` is replaced by `UsageSink::post`.
+- **File budgets.** `run/driver.rs` 581 → 591. `run/engine/mod.rs` 552 → 554. `metering/server.rs` 452 → 293, with `metering/http.rs` new at 340. `tests/otlp_server.rs` 307 → 551. All stay under 600. `driver/requests.rs` is untouched.
+
+### M8b.15 fix round 2: the re-review's findings (2026-09-27)
+
+- **Metering runs under the ledger lock (Important 1).** `metering::server::meter` (renamed `record` by the second commit, below) now takes the ledger lock first. The generation read, the eviction and the `is_live` filter all happen while holding it, and then the apply.
+  - No other request can evict a run between this request's live check and its apply.
+  - A run evicted as not live can never pass the filter again, because a terminal state is final. So its total can no longer be rebuilt from one request's points, which is how the re-review lowered it from 100 to 5.
+  - Lock order is unchanged: `ledger` → `live`.
+  - Test: `a_run_that_ends_while_a_request_is_metered_is_never_rebuilt_lower` (`metering/server_tests.rs`). A fake sink's `is_live("r")` ends `r` and meters request B on another thread, between A's check and A's apply. At b4f24ce, `r`'s total is 5; now it is 105.
+- **An ended run ignores `OrchestratorUsage` (defence in depth).** In the reducer, a run that is `Accepted`, `Discarded` or `Failed` keeps the usage it ended with. `Complete` still takes totals. Test: `a_run_that_ended_ignores_orchestrator_usage`.
+- **A restart no longer rewrites `run.json` because of the base (minor 1).**
+  - The restore's "left exactly as loaded" check now uses the new `Run::same_on_disk`, which ignores the never-stored `orchestrator_base`. It clones only when the two bases differ.
+  - Test: `restoring_a_run_with_orchestrator_usage_writes_nothing` (the inode is unchanged).
+- **The head and trailer scans are linear (minor 3).**
+  - The scans are now `ReadBuf::head_end` and `ReadBuf::line_end`. Each resumes from where the last read stopped (`find_from`, which backs up by the needle's length minus 1).
+  - Test: `a_head_or_a_trailer_arriving_a_byte_at_a_time_is_scanned_in_linear_time`. It feeds a 16 KiB head and a 16 KiB trailer line one byte per call. It takes 6 ms, against 4.0 s before the fix. The bound is 500 ms, and a row in `docs/timing-budgets.md` records it.
+  - Also `a_resumed_scan_finds_a_split_terminator_and_keeps_the_caps`.
+- **The surviving mutants are covered (minor 2).** Each test below failed with its mutant applied.
+
+  | Mutant | Test |
+  |---|---|
+  | B (`usage.rs`, the id comparison) | `live_runs_that_change_but_keep_their_count_are_refreshed` |
+  | D (`drain_usage` drains one run) | `one_drain_gives_every_pending_run_its_total` |
+  | O (no live refresh after the one-at-a-time restore) | `a_run_whose_restore_panics_does_not_stop_the_others`, which now also asserts `is_live("good")` |
+  | G (a stale `otlp.addr.tmp`) | `a_stale_temporary_address_file_is_replaced` |
+  | H (two different `Content-Length` values) | `two_different_content_lengths_are_refused` |
+  | I (a length together with chunked) | `a_length_together_with_chunked_is_refused` |
+  | J (the cumulative trailer cap) | `trailers_past_the_header_cap_in_total_are_refused` |
+  | P (the `HTTP/1.` check) | `another_protocol_version_is_refused` |
+  | F (`settle`) | `a_kept_alive_answer_settles_the_buffer` |
+
+  For F, the kept-alive answer and `settle` moved together into `Conn::keep`, so the test can drive them on a real socket. `Conn::respond` and `Conn::buf` are now private.
+- **HTTP unit tests moved to `metering/http_tests.rs`.**
+- **Names beyond the Interfaces:** `Run::same_on_disk`, `ReadBuf::head_end`, `ReadBuf::line_end`, `Conn::keep`, and `server::record` (private, formerly `meter`).
+- **Totals are posted under the ledger lock (controller ruling, fix round 2's second commit).**
+  - Before this, `answer` posted a request's totals after the lock was released. Two concurrent requests for one run could post out of order, and the sink's latest-wins pending map could keep the lower total.
+  - `server::record` (formerly `meter`) now posts each total to `UsageSink::post` inside the locked section, so totals reach the sink in the order the ledger computed them.
+  - `post` is one short lock of the pending map plus at most one non-blocking unbounded send. It never takes the engine, manager or ledger lock.
+  - Lock order: `ledger` → `live` and `ledger` → `pending`. `pending` is otherwise taken alone (`offer`, `take`), so there is no cycle.
+  - Test: `two_requests_for_one_run_post_their_totals_in_order`. A recording sink's first post for `r` runs request B on another thread. Before the change, the posts were `[105, 100]`; now they are `[100, 105]`.
+
+### Main's decision 33a (merged 2026-09-27)
+
+Main's `6928fce` ("docs: record model routing choices and candidates") added decision 33a: routing decisions and candidate snapshots, stored in `Task.routing_decisions` and copied into `TaskRecord`. It was written against main's older numbering, where one task, "M8b.14 History", covered all of history. In this refreshed brief:
+- decision 33a sits between decisions 33 and 34, and M8b.16 (History I) implements it;
+- its tests `routing_history_keeps_choice_time_candidates` and `old_task_record_has_no_routing_decisions` go in M8b.16's `history_tests.rs`;
+- `routing_decision_precedes_launch_and_survives_reconcile` goes in M8b.16's engine tests.
+
+M8b records the initial and escalated workers and every reviewer round. Configured lists, race lanes and test writers remain M9.5's work.
+
+### M8b.16 history I: phases, diff measurement, `history.jsonl` and routing decisions (2026-09-27)
+
+**Pre-commit from the M8b.15 review.** `restoring_a_run_the_restore_changes_saves_it` (`driver/usage_tests.rs`: a `running` run with orchestrator usage is paused by the restore, and `run.json` on disk says `paused`) fails when `Run::same_on_disk` always answers "same". `an_over_long_line_arriving_whole_in_one_read_is_refused` (`metering/http_tests.rs`: a whole over-long line in the buffer, and an 1100-byte chunk-size line sent with its request in one write) fails without `line_end`'s `max + 2` window.
+
+**Deviations and choices the brief leaves open:**
+- **Commit subject.** The controller's (`feat(daemon): record task phases, measure merged diffs, append history.jsonl and capture routing decisions`), not the brief's, since 33a is part of the task.
+- **Where the code lives.** Beside the brief's files: `run/routing.rs` (pure, decision 33a's capture: the candidate pools and `record_worker`/`record_reviewer`), `run/engine/history.rs` (pure, the engine side of decisions 32 and 33), `run/driver/adapt_history.rs` (the two executions, declared by `driver/adapt.rs` with `#[path]`), and `run/history_tests_fixtures.rs` (test builders, to keep `history_tests.rs` under 600 lines). `driver/requests.rs` is untouched (590). `reconcile/git.rs` is untouched: `AppendHistory`'s row reads a file, not git, so it is in `reconcile/mod.rs`.
+- **Emission.** Instead of emitting from `complete.rs` and `requests.rs`, one pass, `engine::history::pass`, runs after `schedule` for every run in every step, terminal runs included (they skip `schedule`). `merge.rs::merged` emits the `MeasureDiff` itself, because only `candidate_done` knows the run head before the merge (it now keeps it before moving `run_head`). The pass then covers every cancel path (`run cancel`, the `cancel_task` edit, the `finish` edit, a deferred cancel) and every end state without touching them.
+  - A merged task's record waits for its `MeasureDiff`; its answer (`DiffMeasured`, or `Failed`, which leaves `diff = None`) appends the record at once, and a task is never measured twice (`history_written` is set when the record is emitted, and the pass skips a task with a diff op in flight).
+  - A cancelled task, or an unfinished one at the run's end, with a `Task.head` has it measured from the run head at that pass (three dots); without one its record is appended at once.
+  - When the run is `accepted`, `discarded`, `failed`, or `complete` with a task neither merged nor cancelled (`history::run_outcome`), every task without a record gets one (`unfinished`, `blocked`, `cancelled`, or its merged outcome). A `complete` run whose tasks all finished waits for `run accept` or `run discard`.
+  - The run record is emitted only once every task's record was emitted **and** no task `AppendHistory` is in flight, so its line follows theirs in the file whatever order the driver runs ops in.
+  - `AppendHistory` failing logs `history record <id> was not written: <error>` in the run's log; it is not retried (history never gates anything).
+  - History ops are ordinary pending ops, so `complete_pass` waits for them (a moment) before the ref guard.
+- **Restore.** `lost()` re-emits a dropped `MeasureDiff` or `AppendHistory` under a new id, like the other idempotent ops. A terminal run's `prepare` used to return before its pending ops were looked at; it now re-emits its lost history ops first, so an accepted run's record lost to a crash is still written. Reconcile: `MeasureDiff` → `NotStarted`; `AppendHistory` → `contains_record` (`Replay(HistoryAppended)` when found; a read error is a note and `NotStarted`).
+- **`OpKind::AppendHistory.line` is `Box<HistoryLine>`**, boxed like `Decided`: an inline task record trips clippy 1.98's `large_enum_variant` on `OpKind` and `JournalLine`. Invisible in the journal.
+- **`set_state` (decision 31).** Setting the state a task is already in only tracks `max_rung`, so the scheduler's `requeue`, which re-asserts `queued`/`pending` every pass, changes nothing and bumps no revision. A `phase_since` of 0 (a task from before M8b.16) counts nothing for the state it leaves. `gates::enter`, `dispatch::requeue` and `edits::requeue_waiting` gain `now`. Phase times are wall-clock: a daemon's downtime counts in the state the task was in. The acceptance `rg` prints only `run/phases.rs:41`.
+- **Record fields the brief leaves open** (`history::task_record`): `tool_calls` sums the worker rounds; `worker_usage`/`reviewer_usage` sum the rounds by role; `phases` include the current state's time up to the record's `at`, and `wall_secs` is their sum; `gates.checks`/`checks_failed` count the task's own checks, `candidates_red` the failed checks on a merge candidate, `proofs_failed` the proofs not `red_failed && head_passed && matched`, `reviews_rejected` the `changes` verdicts, and `generated_bounces` the failure-log entries that begin with decision 55's generated-files message; `max_rung` is `max(max_rung, rung)`; `sessions` is `Task.session`; `block` is the current block's reason. `run_record.usage` is the snapshot's `RunUsage` (`snapshot::run_usage`, now `pub(crate)`).
+- **`history_io`.** `measure_diff` runs `git diff --no-renames <DIFF_FLAGS> --numstat` and `-U0` through `run::git::Git` (`run_git_with_cap`: `--no-optional-locks`, the scrubbed environment, hooks off, the per-command deadline), `from..to` or `from...to`. A patch over the 64 MiB listing cap fails the measure (the record is written without a diff). `append_line` creates the directory, writes the whole line with one `write_all`, then `sync_all`. `contains_record` matches `"record_id":<the id as JSON>` whole, never as a prefix. Names beyond the Interfaces: `record_id(line)` and `fill_accepted_commit(git, root, line, timeout)` (the driver's "fill before appending", `read_ref` of `refs/heads/<base>`; a failed read logs a warning and leaves it unset), both public for the process tests.
+- **Snapshot.** `TaskInfo.diff` is the measured diff and `TaskInfo.phases` is `Some` once any phase has time (M8c draws them).
+
+**Decision 33a, as landed:**
+- **When.** `routing::record_worker` runs in `dispatch::launch` right after the session number is counted (after the window-limit check, so a launch the limit blocks decides nothing), and `routing::record_reviewer` in `review::review_ready` before the round is pushed; both before `emit_op` of the `CreateWindow`, so the step's urgent `Persist` (always first) stores the decision before the session-start op is journaled.
+- **Identity** `(role, session, round, lane)`: a worker is `(worker, <session>, None, None)`, a reviewer `(reviewer, <round>, Some(<round>), None)`. `routing::push` skips a decision whose identity is recorded and numbers `seq` from 1. A restored launch (`restore::relaunch`) re-issues the op without deciding again.
+- **Triggers.** The first worker decision is `initial` (`explicit_task` when the plan names a model, else `class_default`; `m8a-worker-v1`). **New field `Task.escalated_from: Option<Route>`** (`#[serde(default)]`): rung 2 and `run retry` store the route they escalated from (`std::mem::replace`), and the next worker launch takes it and records `escalation` (`escalation_policy`, `m8a-escalate-v1`). A fresh session with no escalation (a lost resume, a session that ended with no id) chose no new route and records nothing. Every reviewer round records `review` (`review_policy`, `m8a-review-v1`). `pick_policy` is `None`.
+- **Candidate pools** (`routing.rs`), each from `Run.roster` (frozen at start) in the selector's own order, the chosen route appended when absent, `candidates[selected_index].route == chosen`, `selected_index` the first candidate equal to it:
+  - *initial:* every roster entry in roster order at the chosen effort; skipped: `runtime <r>, the task runs on <r>`, `the task names the model <m>` (explicit), `strength <s>, the task needs <s>` (class default);
+  - *escalation* (`roster::escalate`'s order from `escalated_from`): the same route one effort up, the peer runtime's entries at the same strength, the same runtime's entries one strength up (both `high`), the route unchanged, then every other entry with `not an escalation step from <model>`;
+  - *review* (`roster::pick_reviewer`'s order against the author route and level it was called with): the peer runtime at or above the required strength, weakest first; the author's runtime, other models, weakest first; the author runtime's rest, strongest first (`the author's own model` or `below the required <s> strength` unless nothing above was selectable); the author's own route when the roster has no entry on its runtime; the peer runtime's weaker entries (`below the required …`).
+  - A selectable candidate after the chosen one says `ranked after the selected route`; before it, `passed over for the selected route`.
+- **Input.** `routing::input` snapshots the plan task's title, brief, acceptance, owns, kind and interface-change flag, the task's current size, hub flag and test mode, and **new `Run.profile_languages`** (`#[serde(default)]`): the stored profile's `languages`, carried by `ProfileChoice.languages` onto the run at start (empty without a stored profile). No transcript, credential or check output is stored.
+- **Format.** `proto::history::{RoutingCandidate, RoutingInput, RoutingDecision}` are new and re-exported by name; `TaskRecord.routing_decisions`, `Task.routing_decisions`, `Task.escalated_from`, `Run.profile_languages` and `Run.run_record_written` are `#[serde(default)]`. `PROTO_VERSION` stays 8: `TaskRecord` is not a wire message; its MessagePack and JSON round trip is `routing_decisions_round_trip_and_default_to_none` (proto). Loading an old task line, an old task and a whole old `run.json` is `old_task_record_has_no_routing_decisions`.
+- The field changes no route and no stats aggregate: every route is still chosen by M8a's selectors; `routing.rs` only records.
+
+**Tests.** The brief's list, plus: `an_explicit_route_outside_the_roster_is_appended` (`history_tests.rs`); `a_reviewer_round_is_decided_before_its_launch`, `a_rung_two_worker_records_its_escalation`, `a_failed_measure_appends_without_a_diff_and_history_off_emits_nothing`, `a_failed_run_records_its_unfinished_tasks_then_itself` (`engine/tests/history.rs`); `an_accepted_run_record_gets_the_base_head` (`tests/history_io.rs`); `apply_choice_copies_every_field_and_logs_each_note` now checks `profile_languages`.
+
+**Red and green.** Every new test failed first against stubs (`set_state` assigning only; `task_record`/`run_record` `unimplemented!`; `due` empty; `history_io` returning errors; the reconcile row `NotStarted`; no engine wiring), except `an_explicit_route_outside_the_roster_is_appended` and `a_run_restored_from_m8a_writes_no_history`, proved by mutation. Mutations, each reverted, each failing a test: `select` never appending the chosen route; `enabled` always true; `push` without the identity check; `set_state` without its same-state return; `phase_since == 0` counted; the run record not waiting for task lines in flight; a terminal restore re-sending nothing; `lost()` dropping history ops; rung 2 without the escalation marker; the proto field without `#[serde(default)]`.
+
+**File budgets.** `run/model.rs` 530 → 559, `engine/dispatch.rs` 584 → 587, `engine/review.rs` 541 → 544, `engine/ladder.rs` 547 → 549, `engine/mod.rs` 560 → 568, `engine/restore.rs` 401 → 422, `engine/ops.rs` 409 → 436, `edits.rs` 576 → 577, `driver/adapt.rs` 373 → 384, `driver/ops.rs` 581 → 584, `proto/adapt_tests.rs` 549 → 576; every file under 600.
+
+**Open questions** (both answered by the controller in the review fix round, below).
+1. A run from M8b.4–M8b.15 (it has a `repo_dir`) that is already accepted or discarded gets its task and run records on the first restore after this change, stamped with that time. Keep, or skip runs that ended before M8b.16 (they have no phases or diff)?
+2. A plan rejected at the gate is `discarded`, so its never-dispatched tasks get `unfinished` records, as decision 33 reads. M8b.17's stats count them as tasks; they could be left out there if that skews the rows.
+
+**Review fix round (2026-09-27).** Controller rulings on the M8b.16 review:
+- **I1: `run retry` records `escalation`.** A retry re-enters the task at rung 2 on `roster::escalate`'s route, so its next worker launch records trigger `escalation`, source `escalation_policy`, `m8a-escalate-v1`, with the pool stepping from the route the blocked session ran. The trigger stays `escalation` (the reviewer's recommendation): `initial` would claim a class-default or explicit pick that did not choose the route. Pinned by `a_retried_started_task_records_its_escalation` (a started task: its second decision) and `a_twice_retried_unstarted_task_escalates_from_its_planned_route` (a task whose setup failed before it started: its first decision is `escalation`); both fail when `run retry` assigns the route without `escalated_from`.
+- **m1.** `set_state_accumulates_phase_times` now spends 7 s in `proof`, so `Proof` counted as `check` fails it.
+- **m2.** `a_merged_task_without_a_measure_is_recorded_without_one` (engine): a merged task with a head, no diff and no measure in flight is recorded without a diff and never measured three-dot from the run head it is already part of; it fails without the `state != Merged` head filter in `engine/history.rs::pass`.
+- **m3: runs started before M8b.16 write no history.** **New field `Run.history: bool`** (`#[serde(default)]`): `build_run` sets it, and `history::enabled` requires it as well as a `repo_dir`. A `run.json` without the field loads with `false`, so a run that ended before this change, or one still in flight across it (half its data missing), writes no task or run record and measures nothing. Pinned by `a_run_started_before_history_writes_none` (engine: a new run has `history == true`; the same run loaded without the field merges and emits no `MeasureDiff` or `AppendHistory`) and `old_task_record_has_no_routing_decisions` (an old `run.json` loads with `history == false`).
+- **m4: the overwrite is kept** (controller ruling after the re-review; the fix round's keep-earliest change was reverted). At a second escalation before the launch, the selector steps from the intermediate `task.route` the first one set, so `escalated_from` must hold that route for the recorded pool to describe the selection that actually happened. Keeping the earliest origin recorded a pool for a selector call that never ran: the re-review's exhaustive run broke the "pick first, nothing passed over" invariant in 183,960 of 281,934 cases, and in 78,660 the chosen route was outside the pool. The intermediate route never ran a session, so overwriting it loses no outcome; the last launched route is still the previous worker decision's `chosen`. Rung 2 and `run retry` both use `escalated_from = Some(mem::replace(..))`. Pinned by `a_twice_retried_unstarted_task_escalates_from_its_intermediate_route` (retry's site) and `a_rung_two_escalation_steps_from_the_route_it_replaced` (rung 2's site, with an unspent marker constructed while the session works); both retry tests and the rung-2 test assert `selected_index == 0` and no candidate `passed over`. Each keep-earliest mutant, one per site, fails its test.
+- **m5.** Phase times stay wall-clock (spec §15). The follow-up (close open phases at the task clock's stop time on restore; leave pauses and the plan-gate wait out) is in the follow-ups file under "From M8b.16's review".
+- **Q2.** Rejected plans keep their `unfinished` records; M8b.17's section carries the controller ruling that `stats` leaves out tasks with `sessions == 0`.
+- **File budgets.** `engine/tests/history.rs` 405 → 586, `history_tests.rs` 585 → 590, `run/model.rs` 559 → 563, `engine/ladder.rs` 549 → 551, `engine/requests.rs` 520 → 522.
+
+### M8b.17 history II: reverts and `anthrex run stats` (2026-09-27)
+
+**Deviations and choices the brief leaves open:**
+- **Where the code lives.** `run/stats.rs` (pure: `aggregate`, `render`, and `tokens`, the token column's format) and `run/stats_tests.rs`. `run/history_io.rs` gains `detect_reverts` and two blocking helpers beyond the Interfaces: `record_reverts(git, root, path, now, timeout) -> Vec<String>` (the read, one `detect_reverts` per base branch, each record appended with `append_line`; every failure a returned warning) and `summarise(git, root, path, now, timeout) -> HistoryStats` (`record_reverts`, then the file read once more and aggregated, that read's skipped lines as `problems`). The driver side (`stats`, `detect_reverts_later`) is in `driver/adapt_history.rs`. `driver/requests.rs` changed only in the `Stats` arm (one line), the removed `NOT_YET` constant, and the stale comment above the milestone-8b arms (ruling R-T14-1). It is now 588 lines. `engine/mod.rs` re-exports `HISTORY_FILE`.
+- **Revert detection at `run start`.** Both kinds reach `choose_profile` (through `build_plan`), which spawns `record_reverts` on `spawn_blocking` in the background. A start never waits for it. A goal refused before `build_plan` looks for nothing. With no history file, no git runs. Two detections at once (a start and a `stats`) can append the same revert twice. That is harmless, because readers keep the last line per `record_id`, so there is no lock.
+- **Which branch.** `detect_reverts` looks only for runs accepted into `base_branch` (a run record's `base_branch`), and their tasks' merge commits. `record_reverts` calls it once for each base branch an accepted run names, so no revert is found twice in one pass. The log reads `refs/heads/<branch>` (a name from the file can never read as an option) with `--no-show-signature` (a `log.showSignature` config would otherwise run gpg), through `run::git::Git::ok` (rule 11, hooks off, the deadline). A missing branch is an error, logged as a warning.
+- **Candidates.** Only `run` records with `accepted_commit` and `at` at most 90 days before `now`, plus their tasks' `merge_commit`s. A sha that a revert record already names, or a revert commit already recorded, is skipped. One record per revert commit (`revert/<commit>`): a commit that reverts several candidates records the first one it names. Records come oldest first.
+- **Test deviation: `git revert -m 1` for the task merge.** The engine's task merges are two-parent `commit-tree` merges, so `git revert --no-edit <task merge>` as the brief writes it fails. The test reverts both merges with `-m 1`, and a single-parent commit (the 91-day-old run's accept) with plain `--no-edit`.
+- **Stats rows.** Class is `hub` for any hub task, otherwise the task's `final_size`. A non-hub `L` task (blocked for a split, never merged) is in no row but still counts as a task record (open question 1). Rows always list `S`, `M`, `hub`, including empty ones. Task records with `sessions == 0` are left out of every row (ruling R-T16-1); they still count in `task_records` and in the size cross-check totals, because the check ran on them (open question 2). `bounces` sums every gate's count over the row's tasks, merged or not. Medians use the lower middle value and cover merged tasks only (`merged` and `merged_without_approval`); lines use the merged tasks with a measured diff. Tokens are the billable sum of worker, reviewer and decider usage (cache reads excluded, decision 40). `reverted` counts merged tasks named by a task revert or whose run's accept merge was reverted, each task once.
+- **Totals.** `decider_calls`/`decider_fallbacks` sum the run records' `usage`. `size_checked` counts task records whose `size_check.source` is `decider`. `size_raised` counts those whose `decided` is above `engine`.
+- **Text.** Columns are left-aligned, each as wide as its header or its widest cell, two spaces apart (this reproduces the brief's example exactly). Work minutes round to the nearest minute. Tokens round down: `<n>` up to 999, `<n>.<d>k` up to 9.9k, `<n>k` up to 999k, then `<n>.<d>M`. Counts are singular for 1 (`1 task record, 1 run`, `1 call, 1 fallback`, `1 line skipped`), a small departure from the brief's plural-only layout. The skipped-line text is `read_history`'s own problem, so it reads `history: 1 line skipped: <path> line 4: skipped: <error>`.
+- **`run stats` outside a repository** is refused as `not a git repository: <dir>`, with the profile service's wording. It works in a dirty checkout: `detect_roots_with`, not preflight. An empty history creates no file or directory.
+- **`server_runs.rs`.** `every_milestone_8b_request_is_refused_until_its_task_lands` had failed since M8b.11/M8b.14 answered their requests (`the profile service is not running`). It is now `every_milestone_8b_request_is_answered_by_its_task`: no reply says `not available yet`, and `run stats` in a non-repository is refused with the reason. `run promote` was dropped from it: it is an engine event, and that service's loop is not spawned, so the request would wait forever.
+
+**Tests.**
+- `stats_tests.rs` holds the brief's three plus `tokens_are_shown_as_n_k_or_m`. `stats_medians_by_class_over_merged_tasks` has an even-count and an odd-count median, a `-` row, `sessions == 0` tasks in S and hub, a non-hub L task, the exact render, the empty render and the singular words. `a_skipped_line_is_reported_once` also runs `summarise` over a file holding one bad line.
+- `tests/history_io.rs` holds `detect_reverts_matches_merge_and_accept_commits` (with a no-write check on every ref and `HEAD`, a run on another branch, and a missing branch as an error) and `summarise_appends_each_revert_once_and_counts_it`.
+- The CLI has `run_help_lists_stats_and_stats_takes_json`.
+
+**Red and green.** All seven new tests failed against stubs: 4 in stats, 2 in history_io, 1 in the CLI. Each of these mutations, reverted from a backup afterwards, fails a test:
+- the `sessions > 0` filter removed;
+- run reverts ignored;
+- the 90-day window removed;
+- recorded reverts not skipped;
+- the base-branch filter removed.
+
+**Manual check** (isolated daemon under `/tmp`, every `*_BIN` nonexistent). `anthrex run --help` lists `stats`. `run stats` on an empty history printed empty rows, and `--json` printed `HistoryStats`. On a seeded file (one S merged, one S never dispatched, one M merged, one bad line) it showed S 1/1 and M 1/1, the never-dispatched task left out, and one skipped line. Outside a repository it exited 1. The check ended with `daemon stop`.
+
+**Open questions.**
+1. Should a non-hub `L` task join the `M` row instead of no row?
+2. Should the size cross-check totals also leave out `sessions == 0` tasks?
+
+### M8b.17 fix round 1: the review's findings (2026-09-27)
+
+Controller rulings on the M8b.17 review:
+- **I1: detection at `run start` is tested.** `crates/cli/tests/run_reverts.rs` (`run_start_records_a_revert_of_an_accepted_run`, a new process-test binary): a repository whose `main` holds an accepted run's `--no-ff` merge and its `-m 1` revert, and a `history.jsonl` naming that run, gets its `revert/<commit>` line from a plain `run start` (stopped at its plan gate, so no session starts), waited for in a deadline loop of `RUN_WAIT`; `run stats` is never asked. Both runtime commands are the harness's `fake-agent` and `ANTHREX_DECIDER_BIN` a nonexistent path. With the `detect_reverts_later` call removed from `choose_profile` it times out (red, 302 s); with it, it passes in about 4 s.
+- **m1: `git log` records split on NUL.** `detect_reverts` reads `--format=%H%x1f%B%x00` and splits on `\0`, which a commit message cannot hold, and takes a commit id only when it is 40 or 64 lowercase hex digits. `a_commit_message_cannot_forge_a_revert_commit`: a message holding `\x1e<fake id>\x1f` before the marker recorded the fake id before the change and records the real commit after it. The hex check is defence in depth: git never prints anything else for `%H`, so no test reaches it.
+- **m2: abbreviated shas.** `candidate_of`: a sha that is a candidate matches as before; otherwise one of at least 7 hex digits (git's default abbreviation) matches when it is a prefix of exactly one candidate, case-insensitively. An ambiguous prefix, a shorter one, or one matching nothing is ignored. `a_reference_style_revert_is_matched` (a real `git -c revert.reference=true revert -m 1`) and `an_abbreviated_sha_is_matched_only_when_it_is_unique` (an ambiguous 7-digit prefix, a 6-digit one, an unknown one, then two unique ones) both failed before; mutant "first prefix hit, no uniqueness check" fails the second. Risks item 10 still holds for manual reverts; the `revert.reference` style is now seen. An abbreviation is checked for uniqueness only against the live candidates, not against every sha in the repository; a false match needs another candidate-era commit sharing a 7-digit prefix with a reverted one (about N/2^28), accepted as negligible (re-review M2). The start-time test waits `REQUEST_WAIT` (60s), not `RUN_WAIT` (re-review M1).
+- **m3.** A revert of a revert does not clear the reverted count: in the follow-ups file under "From M8b.17's review".
+- **m4.** No change: "one record per revert commit" above already says a commit reverting several candidates records the first it names.
+- **m5.** `the_window_includes_its_last_day_and_a_recorded_revert_commit_is_skipped` (`tests/history_reverts.rs`): a run accepted exactly 90 days before `now` is looked for, one a second older is not, and a revert commit already recorded under a record naming another sha is not recorded again. Mutants `<=` → `<` and "recorded commit not skipped" each fail it.
+- **m6.** `read_history`'s line problem is `<path> line <n>: <error>` (no second "skipped"), so `run stats` prints `history: 1 line skipped: <path> line 4: <error>`. A file it cannot read is the problem `could not read <path>: <error>` (`history_io::UNREADABLE`), printed as `history: could not read <path>: <error>`, never as a skipped line. Tests: `a_skipped_line_is_reported_once` (now "skipped" once) and `an_unreadable_history_is_not_a_skipped_line` (stats), `an_unreadable_history_is_one_problem_of_its_own` (`tests/history_io.rs`); all three failed before.
+- **m7.** `append_line` opens the file for reading too; when it is non-empty and its last byte is not `\n`, the line is written with a `\n` in front, in the same single `write_all`. `an_append_after_a_torn_last_line_starts_a_new_line`: a torn last line is one skipped problem and the appended record is kept (before: both lost as one line); a file ending in `\n` and an empty file get no extra newline.
+- **m8.** `every_milestone_8b_request_is_answered_by_its_task` now asserts each reply exactly: `run start --goal` and `profile status` are refused `the profile service is not running` (this test wires no profile service), `run stats` outside a repository `not a git repository: <dir>`.
+- **Lifecycle test.** `restart_resumes_claude_and_codex_sessions` moved out of `tests/lifecycle/restart_persistence.rs` into its own binary, `tests/lifecycle_resume.rs`: it sets `ANTHREX_CLAUDE_BIN` and `ANTHREX_CODEX_BIN` to its own `argv.sh` (which `config.toml` also names) before starting `daemon::run`, and restores them after, so an inherited value (the safety policy's nonexistent paths) no longer makes it launch nothing. Setting variables needs a binary of its own (Risks item 15). `lifecycle.rs`'s fixtures (`opts`, `shell_spec`, `wait_for_path`, `Client`) moved to `tests/lifecycle/common.rs`, included by both binaries with `#[path]`. `manager/config.rs` and program selection are unchanged. Under nonexistent `*_BIN`s it failed before (`timed out waiting for a frame`) and passes after.
+- **Test layout.** The revert-detection tests moved from `tests/history_io.rs` to a new `tests/history_reverts.rs`, and their shared builders (`revert`, `run_line`, `merged_task`, `accepted_run`, `accepted`, `refs`, `file_lines`) to `tests/support/history.rs`, keeping every file under 600 lines.
+- **Open questions, decided.** (1) A non-hub `L` task stays out of the `M` row: it was never merged under that size, so it would add an unmerged task to `M`'s count and skew M9.5's per-class refit; the size cross-check totals already report it as raised. (2) The size cross-check totals keep counting `sessions == 0` tasks: the check ran at `Start`, before the plan gate, and spent the decider calls the same totals line sums, so leaving them out would make that line disagree with itself. R-T16-1's reason applies to the class rows only.
+
+### M8b.18 end-to-end scenarios I: the fast path, deciders, the output filter and metering (2026-09-27)
+
+**Bug found and fixed (its own commit, `fix(daemon): let a filter prefix that ends in a separator match the path after it`).**
+- *Evidence.* `e2e_filter_hook_shrinks_test_output_for_a_claude_worker` failed on its first run: `FAKE_AGENT_BASH_LOG` recorded `"ran": "sh tests/noisy.sh"`, unwrapped, although the worker's `--settings` carried the second `PreToolUse` group (`… filter-hook --mode failures-only --log-dir '/private/tmp/ax-501/<hash>/anthrex-logs' --prefix 'sh tests/'`, matcher `Bash`). Piping the payload `{"tool_name":"Bash","tool_input":{"command":"sh tests/noisy.sh"},…}` into that exact `anthrex filter-hook` command by hand printed nothing, exit 0.
+- *Cause.* `output_filter::matches` required the end or whitespace right after every prefix. After `sh tests/` comes `noisy.sh`, so a prefix ending in a separator could never match the path it names. That is the brief's own stored profile (`filter_prefixes = ["sh tests/"]`), and also what `derived_prefixes` makes of `single_test = "sh tests/{test}.sh"` (decision 28: the text before `{test}`, cut to two words), so a derived prefix could never match the profile's own single-test command either.
+- *Fix (minimal).* Decision 28's "followed by the end or whitespace" is read as a word boundary: it is required only after a prefix whose last character is a word character (alphanumeric or `_`). A prefix ending in anything else already ends at one. `cargo testing` still does not match `cargo test`. Unit test `a_prefix_ending_in_a_separator_matches_the_path_after_it` (`output_filter_tests.rs`) failed before the fix and passes after; every other `output_filter`, `profile`, `filter_hook` and `filter_run` test is unchanged and green. **For the controller:** this is a reading of decision 28's text, not a change to what it wraps for word-ending prefixes. If the literal rule is wanted, the brief's stored profile and `derived_prefixes` would have to change instead.
+
+**Deviations and choices the brief leaves open:**
+- **Two binaries (rule 8).** `crates/cli/tests/run_e2e_adapt.rs` (the goal scenarios: the fast path, the four refusals, the start checks, promote; 7 tests) and `crates/cli/tests/run_e2e_adapt_engine.rs` (the check summary and its fallback, classification, the size cross-check, the output filter, OTLP; 6 tests).
+- **Harness helpers** (`support/run_adapt.rs`):
+  - `with_deciders(mode, dir)` takes the decider directory, since its environment names it. The directory is `<tmp>/deciders` inside the harness's own temporary directory, so the new constructor `RunHarness::adapt(mode, orchestrator, env, files)` builds the harness unstarted, adds the decider lines, the environment and `FAKE_AGENT_BASH_LOG = <tmp>/bash.jsonl`, and then starts the daemon. `run_harness.rs`'s `unstarted`, `command` and `start_daemon` became `pub(super)` for it.
+  - **Every harness now pins `ANTHREX_DECIDER_BIN`** to `/nonexistent/anthrex-test/decider` (`run_harness::NO_DECIDER_BIN`), which a test's own environment overrides (the implementer-common safety rule: never unset). With the deciders off, as in every M8a test, nothing reads it.
+  - `onboarding_report(json)` is `stored_onboarding_report(fields)`: M8b.11 already named its scout-script helper `onboarding_report(n, profile)`. It writes `<repo_dir>/scouts/onboarding-1.json` (a whole `ScoutReport`, `fields` over a minimal one) and names it in the stored meta's `report`.
+  - `stored_profile(toml)` learns `repo_dir` from a raw `profile status` request (the same reply `anthrex profile status --json` prints), writes the TOML as given, and the meta with `daemon::profile::store::fingerprint` of the profile's `conventions` and `manifests`.
+  - `start_goal(goal, flags)` takes extra flags (`--trust-project`). Also added: `decider_dir`, `bash_log`, `repo_dir`, `STORED_PROFILE`, `ADAPT_FILES` and `triage_single(owns)`.
+- **The stored profile adds `check_timeout_secs = 10`.** A stored profile replaces the harness's `[orchestrator.profile]` (decision 6, R4), whose 10 s check timeout `RUN_WAIT`'s derivation counts on.
+- **Refusals** are asserted exactly: `anthrex` prints an error as the bare message on stderr (no `Error:` prefix), exit 1, nothing on stdout. The planned-path refusals are compared with `daemon::run::triage::refused_message` of the expected `TriageInfo` (kinds, scale, source, fallback reason, reason), so the hub test checks the reason `the fast path does not apply: task t1 touches a hub file` inside `refused_message`. "No side effects" is: no `refs/heads/anthrex/*`, `<data>/runs` absent or empty, and no window.
+- **The hub test** adds `hub = ["core/**"]` to the stored profile and triage answers `owns = ["core/x.txt"]`.
+- **The size cross-check test's second task** names `scout_refs = ["nope"]`, a report the run does not have, so it has no evidence while the first uses the stored onboarding report (decision 19). The raise is checked in the snapshot (`size == M`, `size_check { engine: S, decided: M, agreed: false, source: Decider }`) and in `REPORT.md`; the second task's note is in `TaskInfo.notes`, and the run completes.
+- **The check-bounce tests** use a `check.sh` that prints 200 numbered lines while `broken` exists. With the decider, the bounce holds `Summary of its output:` and the two lines, and neither line 150 nor line 200 of the raw output (line 200 is the one M8a's tail would show). With no `check_summary` script the decider exits 2 and the bounce holds M8a's `Last 40 lines:` with lines 161 to 200 and not 160. Each also checks `summary_source` of the failed check in `run.json` and the run's `decider_calls`/`decider_fallbacks`.
+- **The classification test** ends when the block is classified (`blocked(environment)`, `block_source == Decider`, and the decider's prompt names the worker's reason); it does not retry the task.
+- **The filter test** sets `SHELL=/bin/sh` for the daemon, so filter-run reads no user shell startup file (M8b.8's `$SHELL` rule). The worker's own `sh` step records `$TMPDIR` and, for each file under `$TMPDIR/anthrex-logs`, its path and line count, before the checkout goes: one log, 5000 lines, at the path the filtered output names, equal to `role_launch::task_tmp_dir(<run dir>, "t1")/anthrex-logs`, outside the checkout and the repository.
+- **OTLP.** The run is held at its plan gate (live, so metered). The fixture's temporality is delta, so the first POST (`Content-Length`) makes `by_role["orchestrator"]` equal the fixture's totals, and the second (chunked) makes it twice them; the test waits for each.
+- **Detection by a goal** is left to finish (`PROFILE_WAIT`, the scout reports `check = "sh check.sh"`), so no scout outlives the test; the proposal's origin is `goal` and it ends `ready`.
+
+**Verification.** `run_e2e_adapt` (7 tests) and `run_e2e_adapt_engine` (6) pass, each run twice alone (9–11 s each) and once both at once (17 s each); `cargo test -p anthrex-daemon --lib` (1263), `filter_hook`, `filter_run`, and the harness users `run_e2e_settings`, `run_cli` and `profile_cli_edits` pass. No `anthrex daemon` or `fake-agent` process was left.
+
+### M8b.19 end-to-end scenarios II: the profile, history, and smoke stage 11d (2026-09-27)
+
+**Carry-over from M8b.18's review (its own commit, `fix(daemon): derive filter prefixes that match their own single-test command`).**
+- *I1, evidence.* `derived_prefixes` took the text of `single_test` before `{test}`, cut to two words, so `pytest tests/test_{test}.py` derived `pytest tests/test_`. That prefix ends in a word character, so `output_filter::matches` requires the end or whitespace after it, and `pytest tests/test_foo.py` has `foo.py`: the profile's own single-test command was never wrapped. Unit test `a_prefix_derived_from_a_glued_placeholder_matches_its_own_single_test` (`profile/tests.rs`) failed before the fix (`left: ["pytest tests/test_"]`).
+- *Fix, and why this one.* Of the two options, the derivation changed, not `matches`: `derived_prefixes` now trims the word characters glued to `{test}` before taking two words (`pytest tests/`, which already matches under M8b.18's separator rule), and derives nothing when what is left has no alphanumeric character (`./run_{test}` would otherwise derive `./`, which matches every `./` command). Treating derived prefixes as raw prefixes in `matches` would need `matches` to know where a prefix came from (a new argument through the hook's `--prefix` flags), and would make `cargo test` derived from `cargo test {test}` match `cargo testing`. The change is confined to the one pure function; `matches` is untouched.
+- *m1.* `e2e_green_s_task_on_the_fast_path`'s snapshot wait uses `REQUEST_WAIT`, with its row in `docs/timing-budgets.md`.
+- *m3, m5.* Recorded in the follow-ups under "From M8b.18's review".
+
+**The task.** No bug surfaced: every scenario passed on its first green run, so there is no `fix(...)` commit beyond the carry-over above.
+
+**Deviations and choices the brief leaves open:**
+- **One binary.** `crates/cli/tests/run_e2e_adapt_profile.rs` holds all eight scenarios (387 lines), so no split.
+- **Deciders.** Only `e2e_history_records_the_fast_path_run` runs them (`claude`, its triage scripted); the plan-path scenarios use mode `off`, which changes nothing for a plan start.
+- **Refusals** (corrupt profile, confinement key) are compared exactly with decision 6's text, built from the path and the parse error that `profile::store::load` itself reports for the broken file; the confinement test also checks that error names `cache_dirs`. "No branch" is no `refs/heads/anthrex/*` and no run listed.
+- **The stored profile winning** is checked three ways: `run.json`'s `profile.check` is `sh check.sh`, its log holds `profile.check from the plan file is ignored: this repository has a stored profile (<repo_dir>/profile.toml)`, and every check the task ran exited 0 (the plan's `false` never ran); the snapshot's `profile_source` is `Stored`.
+- **Rung-1 bounces** (generated lock file, protected file) assert `bounces.done == 1` and `rung == 1`, and that the task's `failure_log` in `run.json` holds decision 55's or 56's message exactly (`contract::generated_files_message`, `contract::protected_file_message`). The protected test also checks `run.json`'s `protected_files` names `docs/agents.txt`, which only the stored list does, and that the integration branch keeps the base text.
+- **History after accept** is waited for (`REQUEST_WAIT`): `run accept` answers before the run record's `AppendHistory` is written.
+- **The crash test** runs the plan path (the brief's M8a pattern, `run_e2e_crash.rs`): `ANTHREX_TEST_ABORT_AFTER_INTENT=AppendHistory` aborts at t1's record, right after its merge; the test checks the file has no task record at that point, restarts without the variable, resumes if paused, waits for `complete`, then accepts so the run record is written too. It then checks `read_history` gives exactly `<run>/t1` as task records and one run record, and the raw file ends in a newline, every line parses, and each `record_id` appears once. The history path is read from `profile status` before the crash (the dead daemon cannot answer it).
+- **The revert test** runs the plan path, accepts, waits for the run record, then `git revert -m 1 --no-edit HEAD` on `main` (the accept's merge: the worktree is clean after the accept), and `run stats --json` gives the S row `tasks 1, merged 1, reverted 1`; the history then holds one revert record for the run.
+- **Mutation checks** (each reverted from a backup): the reconcile row for `AppendHistory` answering `Replay` when the record is absent fails the crash test (no task record); the stored `protected` left out of `run_profile`'s merge fails the protected test.
+- **Smoke stage 11d.** `scripts/pty_smoke_adapt.py` reuses `pty_smoke_run.py`'s `_git`, `_write_script`, `_run_state`, `REVIEWER`, `RUN_WAIT`, `POLL`, `RUN_CMD_TIMEOUT` and `ACCEPT_CMD_TIMEOUT`. `FAKE_AGENT_DECIDER_DIR` is the module's `DECIDER_DIR` (`/tmp/anthrex-smoke-adapt-deciders-<pid>`), imported by `pty-smoke.py`, since `adapt_stage(run_cmd, fail)` has no other way to learn it; `fake-agent` never creates a missing decider directory, so a decider an earlier stage causes falls back (exit 2). The stage creates the directory and removes it (not just its files) in `finally`. `pty-smoke.py` changes by 4 lines (the import, the two `ENV` lines, the call). Off macOS the goal start passes `--unconfined-checks`, as stage 11c does. The meta's `project` is `profile status`'s own (the canonical path, `/private/tmp/…` on macOS). Beyond the brief, the stage also checks the completed run's `path` is `fast`.
+
+**Verification.** `run_e2e_adapt_profile` (8 tests) passed 3 times in a row, 13.0–13.2 s each; `run_e2e_adapt` (7) passed after m1; `cargo test -p anthrex-daemon --lib -- profile:: output_filter` (47) passed after I1. `python3 scripts/pty-smoke.py` passed (85 s), printing `== stage 11d: a goal takes the fast path ==` and `ok: goal run add-a-54ac took the fast path, merged t1 and was accepted onto main`. `cargo +1.98 clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all --check` are clean. No `anthrex daemon` or `fake-agent` process was left, and `/tmp/anthrex-smoke-adapt-*` is gone. The full workspace suite is left to the controller.
+
+### Whole-branch review (2026-09-27)
+
+The controller's rulings on `.superpowers/sdd/M8b-adaptation/whole-branch-review.md` (I2 and I3 were fixed in the docs commit before this one).
+
+- **I1, a protected file keeps a goal off the fast path (decision 23.7).** `run::triage::fast_refusal` now takes the `Run` and adds a fourth barrier after the one-task, hub and L checks: `the fast path does not apply: task t1 owns a protected file (<path>)`. So `check_fast`, `build_plan` with `fast` (`driver/adapt_goal.rs::fast_barrier`) and the engine's `requests::start` all apply it. The check is `run::triage::owned_protected(owns, protected, protected_files)`, in order:
+  - a literal `owns` entry that decision 56's `ProtectedMatcher` matches (ignoring case, `<dir>/**` covering `<dir>`, exactly as the done gate matches); this is the grant itself;
+  - a tracked protected file (`Run.protected_files`) that the `owns` matcher covers (`**`, `crates/auth/**` with a tracked `crates/auth/AGENTS.md`);
+  - a protected entry an `owns` entry may cover at the repository's root: `run::globs::may_cover_protected`, a component-wise glob overlap with `**` and case-insensitive component matching. A protected entry's leading `**/` is dropped, because `**/AGENTS.md` would otherwise make every directory glob (`src/**`) protected-owning and remove the fast path for nearly every goal. Two wildcard components meet when their literal heads and tails agree, which errs towards the plan path. `**` reports `.claude/**`, `.claude/*` reports `.claude/**`, `*.md` reports `**/CLAUDE.md`.
+  - **Which list the engine uses:** the run's frozen `profile.protected`, which `resolve_profile`/`run_profile` already made from the built-ins plus the configuration's, the stored profile's and the plan's extras, and `Run.protected_files`. So all three barriers use the same full list; nothing new is read.
+  - Tests: `a_fast_task_owning_a_protected_file_takes_the_plan_path` (`triage_tests.rs`, 14 refused and 6 allowed shapes, and one through `build_run`), `a_fast_path_start_refuses_a_task_owning_a_protected_file` (`engine/tests/fast_path.rs`; a mutation that lets the engine's barrier ignore the protected reason fails it), and `e2e_goal_owning_a_protected_file_takes_the_plan_path` (`run_e2e_adapt.rs`: triage answers `single` with `owns = ["AGENTS.md"]`, and the start is refused with `refused_message` and the reason, creating nothing; with the check disabled the run started, exit 0).
+  - **Triage's `test_mode`.** The snapshot already carried it (`TaskInfo.test_mode`, `test_mode_reason`), and the task row shows the mode, but the reason was nowhere a user looks. The triage line of `anthrex run status` gains `; t1 test mode <mode> (<reason>)` on a fast-path run, and `REPORT.md` gains the line `triage: t1 test mode <mode> (<reason>)` after its `path: fast (…)` line (the reason is left out when triage gave none). Tests: `status_shows_fast_path_and_triage`, `a_fast_path_run_reports_its_path`.
+- **m1, `run edit` refuses task additions on a fast-path run.** A batch with `add_task` or `split_task` on a `path == Fast` run is refused whole with `run <id> is on the fast path: it runs one task; start a planned run instead` (`engine/requests.rs::edit`, before `apply_edits`). Other edits still apply. Test: `a_fast_path_run_refuses_task_additions` (the plan-run control accepts the same addition).
+- **m2, routing decisions follow `Run.history`.** `routing::record_worker` and `record_reviewer` record nothing for a run without history, the flag that gates its records, so a restored M8a run gains no misleading `initial` decision. `record_worker` still consumes `escalated_from`. Test: `a_run_without_history_records_no_routing_decisions` (`history_tests_routing.rs`, a new child module of `history_tests.rs`, which is at 592 lines).
+- **m4.** `snapshot::run_usage` uses `TokenUsage`'s saturating `+=` instead of its own copy.
+- **m3, file budgets exceeded without a note until now.** Recorded here, against the brief's "nothing existing grown past its budget". None is over 600 lines.
+
+  | File | Grew | Budget |
+  |---|---:|---:|
+  | `crates/daemon/src/run/reconcile/mod.rs` (227 → 305) | +78 | +10 |
+  | `crates/daemon/src/run/engine/ladder.rs` (511 → 551) | +40 | +5 |
+  | `crates/config/src/orchestrator.rs` (570 → 585) | +15 | +8 |
+  | `crates/proto/src/lib.rs` (79 → 107) | +28 | +25 |
+  | `crates/daemon/src/run/contract.rs` (563 → 584) | +21 | +20 |
+  | `crates/cli/src/run_cmd.rs` (472 → 498) | +26 | +25 |
+  | `crates/cli/tests/support/run_harness.rs` (525 → 542) | +17 | +15 |
+
+  This round adds: `engine/requests.rs` 522 → 531 (m1), `run/triage.rs` 316 → 361, `run/globs.rs` 278 → 341, `run/routing.rs` 352 → 359, `run/report.rs` 245 → 255, `cli/src/run_cmd/status.rs` 232 → 244.
+- **m5, `choose_profile` starts side effects before a start that may still be refused.** `driver/adapt.rs::choose_profile` spawns the stale-profile re-detection and `detect_reverts_later` before `build_run` and the runtime checks. A `run start` that is then refused (a settings refusal, a `PlanError`, the fast-path barrier inside `build_plan`) may still have started a detection scout (with `onboarding.auto` on and a stale profile) and appended revert records. Decisions 7 and 34 say "at every `run start`", so this is within their letter; decision 22.6's "nothing is created" holds for triage's `Plan`/`Large` routes, which never reach `build_plan`, but not for a fast-path candidate refused inside it. Left as is.
+
+### Whole-branch re-review (2026-09-27)
+
+READY. Two minors were fixed by the controller: a fast-path task whose `owns` holds a non-ASCII entry takes the plan path (`owned_protected`; `ſ` opens as `s` on a case-insensitive volume, which the ASCII-folding matcher cannot see), and `run status` shows triage's test-mode reason with control characters as spaces. Each test failed with its fix removed. The general non-ASCII folding gap in M8a's done gate, and three other minors, are in the follow-ups ledger.

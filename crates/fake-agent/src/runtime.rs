@@ -5,13 +5,40 @@ use serde_json::Value;
 
 #[derive(Debug, Default, PartialEq)]
 pub struct Runtime {
-    hooks: HashMap<String, String>,
+    hooks: HashMap<String, Vec<Group>>,
     notify: Option<Vec<String>>,
 }
 
+/// One matcher group of an event (M8b decision 37): its matcher and its commands, in
+/// order. A Codex hook is one group with an empty matcher.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Group {
+    pub matcher: String,
+    pub commands: Vec<String>,
+}
+
+impl Group {
+    /// Whether this group runs for `tool`: an empty or `*` matcher runs for every
+    /// tool; otherwise the matcher is a regular expression the whole name must match.
+    pub fn matches(&self, tool: &str) -> bool {
+        match self.matcher.as_str() {
+            "" | "*" => true,
+            matcher => regex::Regex::new(&format!("^(?:{matcher})$"))
+                .is_ok_and(|regex| regex.is_match(tool)),
+        }
+    }
+}
+
 impl Runtime {
+    /// The first group's first command, as milestone 3's `hook` step has always run.
     pub fn hook(&self, event: &str) -> Option<&str> {
-        self.hooks.get(event).map(String::as_str)
+        let group = self.hooks.get(event)?.first()?;
+        group.commands.first().map(String::as_str)
+    }
+
+    /// Every matcher group of `event`, in the order the settings list them.
+    pub fn groups(&self, event: &str) -> &[Group] {
+        self.hooks.get(event).map(Vec::as_slice).unwrap_or_default()
     }
 
     pub fn notify(&self) -> Option<&[String]> {
@@ -111,15 +138,29 @@ fn claude(settings: &str) -> Result<Runtime> {
     };
 
     for (event, entries) in hooks {
-        let command = entries
-            .get(0)
-            .and_then(|entry| entry.get("hooks"))
-            .and_then(|commands| commands.get(0))
-            .and_then(|hook| hook.get("command"))
-            .and_then(Value::as_str);
-        if let Some(command) = command {
-            runtime.hooks.insert(event.clone(), command.to_owned());
-        }
+        let groups: Vec<Group> = entries
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .map(|entry| Group {
+                matcher: entry
+                    .get("matcher")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                commands: entry
+                    .get("hooks")
+                    .and_then(Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|hook| hook.get("command").and_then(Value::as_str))
+                    .map(str::to_owned)
+                    .collect(),
+            })
+            .collect();
+        runtime.hooks.insert(event.clone(), groups);
     }
     Ok(runtime)
 }
@@ -161,7 +202,11 @@ fn parse_codex_hook(config: &str, runtime: &mut Runtime) -> Result<()> {
         .next()
         .context("Codex hook command is missing")?
         .context("invalid Codex hook command string")?;
-    runtime.hooks.insert(event.to_owned(), command);
+    let group = Group {
+        matcher: String::new(),
+        commands: vec![command],
+    };
+    runtime.hooks.insert(event.to_owned(), vec![group]);
     Ok(())
 }
 
@@ -197,6 +242,34 @@ mod tests {
             runtime.hook("PreToolUse"),
             Some("'/opt/anthrex/bin/anthrex' hook --window 4 --source claude")
         );
+    }
+
+    /// M8b decision 37: every matcher group is kept, in order; `hook` still returns the
+    /// first group's first command.
+    #[test]
+    fn keeps_every_claude_matcher_group_in_order() {
+        let settings = json!({"hooks": {"PreToolUse": [
+            {"matcher": "", "hooks": [
+                {"type": "command", "command": "a"},
+                {"type": "command", "command": "b"},
+            ]},
+            {"matcher": "Bash", "hooks": [{"type": "command", "command": "c"}]},
+            {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "d"}]},
+        ]}})
+        .to_string();
+        let runtime = discover(&strings(&["--settings", &settings])).unwrap();
+
+        assert_eq!(runtime.hook("PreToolUse"), Some("a"));
+        let groups = runtime.groups("PreToolUse");
+        let commands: Vec<&[String]> = groups.iter().map(|g| g.commands.as_slice()).collect();
+        assert_eq!(
+            commands,
+            [strings(&["a", "b"]), strings(&["c"]), strings(&["d"])]
+        );
+        let matching: Vec<bool> = groups.iter().map(|g| g.matches("Bash")).collect();
+        assert_eq!(matching, [true, true, false]);
+        assert!(groups[2].matches("Write") && !groups[2].matches("WriteX"));
+        assert!(runtime.groups("Stop").is_empty());
     }
 
     #[test]

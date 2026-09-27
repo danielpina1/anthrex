@@ -1,6 +1,10 @@
 mod client;
+mod filter_hook;
+mod filter_run;
 mod hook;
 mod mcp_cmd;
+mod pre_clap;
+mod profile_cmd;
 mod run_cmd;
 mod tree_cmd;
 
@@ -86,6 +90,8 @@ enum Command {
     Restart { target: String },
     /// Start, watch and finish orchestrated runs of a plan
     Run(run_cmd::RunArgs),
+    /// Detect, show, confirm and correct this repository's profile
+    Profile(profile_cmd::ProfileArgs),
     /// Serve the anthrex MCP tools on stdin/stdout for one headless run agent
     /// (decision 4). Started by the daemon, never by hand; stdout is JSON-RPC only.
     #[command(hide = true)]
@@ -155,11 +161,7 @@ enum DaemonAction {
 }
 
 fn main() -> anyhow::Result<()> {
-    let started = std::time::Instant::now();
-    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("hook")) {
-        hook::run(std::env::args_os().skip(2).collect(), started);
-        std::process::exit(0);
-    }
+    pre_clap::dispatch(std::time::Instant::now());
     run_cli()
 }
 
@@ -173,6 +175,7 @@ async fn run_cli() -> anyhow::Result<()> {
         Some(Command::Mcp(args)) => mcp::serve_stdio(args.into_options(socket)).await,
         None => attach(socket, resolve_dir(cli.dir)?, None).await,
         Some(Command::Run(args)) => run_cmd::main(args, socket, cli.dir).await,
+        Some(Command::Profile(args)) => profile_cmd::main(args, socket, cli.dir).await,
         Some(Command::Attach { target }) => attach(socket, resolve_dir(cli.dir)?, target).await,
         Some(Command::Daemon { action }) => daemon_command(action, socket).await,
         Some(Command::New {

@@ -18,6 +18,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use serde_json::Value;
 
+use crate::decider;
 use crate::mcp::Reply;
 use crate::roles::{self, Script, Vars};
 use crate::runtime::{self, McpServer, Runtime};
@@ -155,12 +156,33 @@ pub fn run(args: &[String], invocation: Invocation) -> Result<i32> {
     let hooks = runtime::discover(args)?;
     let server = runtime::mcp_server(args)?;
     let flag = |name| server.as_ref().and_then(|s| s.flag(name)).map(String::from);
-    let (role, task) = (flag("--role"), flag("--task"));
+    let role = flag("--role");
+    // A scout's script is named by its scout id (M8b decision 37).
+    let task = match role.as_deref() {
+        Some("scout") => flag("--scout"),
+        _ => flag("--task"),
+    };
     let session = invocation
         .resume
         .clone()
         .or(invocation.session_id.clone())
         .unwrap_or_else(fresh_id);
+    // M8b decision 36: a decider is known by its prompt, not its flags. It has no MCP
+    // server and is never resumed; every other Claude session keeps M8a's start, which
+    // claims its script before its first message.
+    let mut first_line = None;
+    if invocation.kind == Kind::Codex
+        && let Some(code) = decider::codex(args, &session)?
+    {
+        return Ok(code);
+    }
+    if invocation.kind == Kind::Claude && server.is_none() && invocation.resume.is_none() {
+        let (model, mode) = (&invocation.model, &invocation.permission_mode);
+        match decider::claude(args, &session, model.as_deref(), mode.as_deref())? {
+            decider::Start::Answered(code) => return Ok(code),
+            decider::Start::Session(line) => first_line = line,
+        }
+    }
     let script = roles::find(
         role.as_deref(),
         task.as_deref(),
@@ -191,7 +213,8 @@ pub fn run(args: &[String], invocation: Invocation) -> Result<i32> {
                 invocation.permission_mode.as_deref(),
                 server.is_some(),
             );
-            let input = Input::new(stream_claude::read_stdin(script.name.clone()));
+            let lines = stream_claude::read_stdin(script.name.clone(), first_line);
+            let input = Input::new(lines);
             (Box::new(claude), Some(input), None)
         }
         Kind::Codex => {

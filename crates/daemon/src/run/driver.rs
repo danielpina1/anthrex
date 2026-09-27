@@ -17,6 +17,8 @@
 //! `driver/requests.rs` answers client requests (reading git first for start, finish and
 //! resume), and `driver/restore.rs` restores the runs of an earlier daemon (decision 44).
 
+mod adapt;
+mod book;
 mod cleanup;
 mod effects;
 mod guard;
@@ -25,6 +27,7 @@ mod observe;
 mod ops;
 mod requests;
 mod restore;
+mod usage;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ffi::OsString;
@@ -42,7 +45,9 @@ use super::git::GitQueue;
 use super::snapshot::snapshot;
 use crate::headless::argv::CliCaps;
 use crate::manager::{GitRoots, ManagerConfig, WindowManager, WindowSignal};
+use book::{Book, Retiring};
 
+pub use adapt::Adaptation;
 pub use observe::{ACTIVITY_EVERY, translate};
 
 /// Decision 52: a retired window stays listed, `Exited`, this long.
@@ -90,31 +95,9 @@ impl RunContext {
 
 enum Msg {
     Event(EventKind),
+    /// Orchestrator totals are pending (`driver/usage.rs`).
+    Usage,
     Stop(oneshot::Sender<()>),
-}
-
-/// A window the engine retired (decision 52): its group is killed at `kill_at` if it
-/// still runs, and the window removed at `remove_at`.
-struct Retiring {
-    kill_at: Instant,
-    remove_at: Instant,
-}
-
-/// The event loop's bookkeeping.
-struct Book {
-    retiring: HashMap<u32, Retiring>,
-    /// The process of each window the engine killed: its exit is `killed_by_engine`.
-    killed: HashMap<u32, u32>,
-    /// The roots registered with `GitRoots`, so a watch or unwatch is never doubled.
-    watched: HashSet<PathBuf>,
-    /// Runs with a counter-only change not yet persisted (decision 43).
-    dirty: BTreeSet<String>,
-    last_counter_save: Instant,
-    reports_written: HashMap<String, Instant>,
-    reports_due: BTreeSet<String>,
-    publish_due: bool,
-    /// Decision 48: the intents of each kind appended so far.
-    intents: HashMap<&'static str, u32>,
 }
 
 /// Where an op's work goes: captured under the engine lock at the step that emitted it.
@@ -178,6 +161,10 @@ pub struct RunService {
     writes: effects::RunWrites,
     /// Replayed accepts whose clean-up waits for the event loop (ruling T22-N3).
     held_accepts: Mutex<Vec<restore::AcceptCleanUp>>,
+    /// Milestone 8b's services, set once by the daemon (`set_adaptation`).
+    adaptation: std::sync::OnceLock<Adaptation>,
+    /// The OTLP receiver's live runs and pending totals (`driver/usage.rs`).
+    metered: usage::Metered,
 }
 
 /// Unix seconds, the reducer's clock.
@@ -254,6 +241,8 @@ impl RunService {
             done_holds: effects::DoneHolds::from_env(),
             writes: effects::RunWrites::default(),
             held_accepts: Mutex::new(Vec::new()),
+            adaptation: std::sync::OnceLock::new(),
+            metered: Default::default(),
         })
     }
 
@@ -284,6 +273,7 @@ impl RunService {
             while let Some(msg) = rx.recv().await {
                 match msg {
                     Msg::Event(kind) => service.handle(kind).await,
+                    Msg::Usage => service.drain_usage().await,
                     Msg::Stop(ack) => {
                         service.stop_now().await;
                         let _ = ack.send(());
@@ -395,7 +385,10 @@ impl RunService {
         let prepared = {
             let mut state = crate::lock(&self.state);
             match guard::guarded_step(&mut state, Event { now, kind }) {
-                Ok(fx) => Some(guard::prepare_guarded(&state, fx, now)),
+                Ok(fx) => {
+                    self.metered.refresh_live(&state);
+                    Some(guard::prepare_guarded(&state, fx, now))
+                }
                 Err(panic) => {
                     tracing::error!(%panic, "the run engine panicked on an event; the event is dropped");
                     None

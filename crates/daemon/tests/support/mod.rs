@@ -8,6 +8,7 @@
 #[cfg(target_os = "macos")]
 pub mod confine;
 pub mod headless;
+pub mod history;
 pub mod run_git;
 
 use daemon::manager::{ManagerConfig, WindowManager};

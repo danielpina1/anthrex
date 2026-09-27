@@ -1,3 +1,5 @@
+mod bash;
+mod decider;
 mod headless;
 mod mcp;
 mod roles;
@@ -205,10 +207,23 @@ pub(crate) fn fill_notify_payload(payload: &mut Value) -> Result<()> {
 }
 
 pub(crate) fn run_hook(command: &str, payload: &Value) -> Result<()> {
+    hook_process(command, payload, false).map(drop)
+}
+
+/// [`run_hook`], returning what the command printed on stdout instead of passing it
+/// through (the `bash` step reads `hookSpecificOutput` from it, M8b decision 37).
+pub(crate) fn run_hook_output(command: &str, payload: &Value) -> Result<String> {
+    hook_process(command, payload, true)
+}
+
+fn hook_process(command: &str, payload: &Value, capture: bool) -> Result<String> {
     let deadline = Instant::now() + STEP_TIMEOUT;
     let bytes = serde_json::to_vec(payload).context("encode hook payload")?;
     let mut child_command = Command::new("/bin/sh");
     child_command.args(["-c", command]).stdin(Stdio::piped());
+    if capture {
+        child_command.stdout(Stdio::piped());
+    }
     isolate_process_group(&mut child_command);
     let mut child = child_command.spawn().context("spawn hook command")?;
     let process_group = child.id() as libc::pid_t;
@@ -218,12 +233,37 @@ pub(crate) fn run_hook(command: &str, payload: &Value) -> Result<()> {
         let result = stdin.write_all(&bytes).context("write hook payload");
         let _ = writer_tx.send(result);
     });
+    let reader = child.stdout.take().map(|mut stdout| {
+        thread::spawn(move || {
+            let mut out = Vec::new();
+            let _ = io::Read::read_to_end(&mut stdout, &mut out);
+            String::from_utf8_lossy(&out).into_owned()
+        })
+    });
     wait_for_child(
         &mut child,
         process_group,
         deadline,
         Some((writer_rx, writer)),
-    )
+    )?;
+    // The command has exited; a background job of it that kept stdout open is not
+    // waited for past the step's deadline.
+    Ok(match reader {
+        Some(reader) => join_by(reader, deadline),
+        None => String::new(),
+    })
+}
+
+/// The reader's text, or nothing if it has not finished by `deadline`.
+fn join_by(reader: JoinHandle<String>, deadline: Instant) -> String {
+    while !reader.is_finished() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    if reader.is_finished() {
+        reader.join().unwrap_or_default()
+    } else {
+        String::new()
+    }
 }
 
 pub(crate) fn run_notify(command: &[String], payload: &Value) -> Result<()> {

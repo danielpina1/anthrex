@@ -2,6 +2,7 @@
 //! started task that gains an unfinished dependency, the one hand-back that ends it, and
 //! the hand-back's result. Pure (design decision 2).
 
+use crate::run::phases::set_state;
 use proto::{BlockInfo, BlockReason, TaskState};
 
 use super::dispatch::{block, history};
@@ -49,7 +50,7 @@ pub(super) fn enforce_holds(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             };
             let task = &mut run.tasks[i];
             task.held_answered = true;
-            task.state = TaskState::Blocked;
+            set_state(task, TaskState::Blocked, now);
             task.block = Some(BlockInfo {
                 reason: BlockReason::Question,
                 text,
@@ -142,7 +143,7 @@ fn relax(run: &mut Run, i: usize, now: u64) {
     task.awaiting_deps = false;
     task.handback_due = true;
     if std::mem::take(&mut task.held_answered) {
-        task.state = TaskState::Working;
+        set_state(task, TaskState::Working, now);
         task.block = None;
         history(
             run,
@@ -210,7 +211,7 @@ pub(super) fn handed_back(
             let task = &mut run.tasks[i];
             task.awaiting_deps = false;
             if std::mem::take(&mut task.held_answered) {
-                task.state = TaskState::Working;
+                set_state(task, TaskState::Working, now);
                 task.block = None;
                 history(run, i, now, "dependencies merged; resuming");
             } else {

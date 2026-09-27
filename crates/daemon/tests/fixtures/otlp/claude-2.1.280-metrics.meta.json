@@ -1,0 +1,12 @@
+{
+  "runtime": "claude",
+  "cli_version": "2.1.280",
+  "captured": "2026-09-25",
+  "redactions": [
+    "ids",
+    "account-identity (user.id, user.email, user.account_uuid, user.account_id, organization.id)"
+  ],
+  "note": "The second of two OTLP/HTTP-JSON requests a `claude -p \"reply ok\"` run sent to a local listener (the first carried only claude_code.session.count). Both: POST /v1/metrics, Content-Type application/json, a Content-Length body (1601 and 6798 bytes; not chunked), no Content-Encoding (no compression by default), User-Agent OTel-OTLP-Exporter-JavaScript/0.208.0, Connection keep-alive. Metrics in this body: claude_code.cost.usage, claude_code.token.usage (one data point per type: input, output, cacheRead, cacheCreation), claude_code.active_time.total; every one a monotonic sum with aggregationTemporality 1 (delta) and values in asDouble, not asInt. The OTEL_RESOURCE_ATTRIBUTES pairs anthrex.run and anthrex.role arrive as resource attributes and are also copied onto every data point's attributes, beside session.id, model, query_source and the account identity (redacted). Captured with a scrubbed environment (env -i with only HOME, PATH, USER, LOGNAME, SHELL, TERM, LANG) plus the OTEL variables in `command`; no ANTHROPIC_API_KEY.",
+  "command": "cd /tmp/fixture/decider-cwd && env -i HOME PATH USER LOGNAME SHELL TERM LANG CLAUDE_CODE_ENABLE_TELEMETRY=1 OTEL_METRICS_EXPORTER=otlp OTEL_EXPORTER_OTLP_PROTOCOL=http/json OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:<port> OTEL_METRIC_EXPORT_INTERVAL=1000 OTEL_RESOURCE_ATTRIBUTES=anthrex.run=r-fix,anthrex.role=orchestrator claude -p --no-session-persistence --model claude-haiku-4-5 'reply ok' < /dev/null",
+  "observed": true
+}

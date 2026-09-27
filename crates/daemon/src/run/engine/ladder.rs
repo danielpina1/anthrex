@@ -3,6 +3,7 @@
 //! once the old session is gone (`DiffSoFar`, then decision 30's hand-over prompt).
 //! Pure (design decision 2).
 
+use crate::run::phases::set_state;
 use proto::{AgentRole, BlockReason, Budget, GateKind, Size, Spend, TaskState};
 
 use super::dispatch::{block, history, launch_fresh};
@@ -134,35 +135,70 @@ pub(super) fn gate_failure(
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> u8 {
+    let rung = count_failure(run, i, gate);
+    take_rung(run, i, gate, rung, text, told, now, fx);
+    rung
+}
+
+/// The counting half of [`gate_failure`]: the bounce and the failure are counted, and
+/// the rung they call for returned. M8b decision 20 takes it later ([`take_rung`]),
+/// once a failed check's summary is decided.
+pub(super) fn count_failure(run: &mut Run, i: usize, gate: GateKind) -> u8 {
     let task = &mut run.tasks[i];
-    let bounces = match gate {
+    let bounces = bounces_mut(task, gate);
+    *bounces = bounces.saturating_add(1);
+    let bounced = *bounces;
+    task.failures = task.failures.saturating_add(1);
+    if bounced > run.limits.max_bounces || task.failures >= 3 {
+        3
+    } else if task.failures == 2 {
+        2
+    } else {
+        1
+    }
+}
+
+fn bounces_mut(task: &mut Task, gate: GateKind) -> &mut u8 {
+    match gate {
         GateKind::Done => &mut task.bounces.done,
         GateKind::Proof => &mut task.bounces.proof,
         GateKind::Check => &mut task.bounces.check,
         GateKind::Review => &mut task.bounces.review,
         GateKind::Merge => &mut task.bounces.merge,
-    };
-    *bounces = bounces.saturating_add(1);
-    let bounced = *bounces;
-    task.failures = task.failures.saturating_add(1);
+    }
+}
+
+/// The acting half of [`gate_failure`]: `rung`, as [`count_failure`] returned it,
+/// with the counts as they stand.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn take_rung(
+    run: &mut Run,
+    i: usize,
+    gate: GateKind,
+    rung: u8,
+    text: String,
+    told: bool,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
+    let task = &mut run.tasks[i];
+    let bounced = *bounces_mut(task, gate);
     task.failure_log.push(text.clone());
     let failures = task.failures;
     let label = gate_label(gate);
-    if bounced > run.limits.max_bounces || failures >= 3 {
+    if rung >= 3 {
         let cause = format!(
             "the {label} gate failed {bounced} times ({failures} failures in all); last: {}",
             first_line(&text)
         );
         rung3(run, i, cause, now, fx);
-        3
-    } else if failures == 2 {
+    } else if rung == 2 {
         let reason = format!("the {label} gate failed again: {}", first_line(&text));
         rung2(run, i, reason, now, fx);
-        2
     } else {
         let task = &mut run.tasks[i];
         task.rung = 1;
-        task.state = TaskState::Working;
+        set_state(task, TaskState::Working, now);
         // M8a.13: the time the gates took is not the worker's silence; a turn still
         // open is watched from here.
         if let Some(r) = worker_round(task) {
@@ -173,7 +209,6 @@ pub(super) fn gate_failure(
             let id = run.tasks[i].id().to_string();
             outbox::queue(run, &id, text, now);
         }
-        1
     }
 }
 
@@ -236,8 +271,11 @@ pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut 
     let route = escalate(&run.roster, &run.tasks[i].route);
     let task = &mut run.tasks[i];
     task.rung = 2;
-    task.state = TaskState::Working;
-    task.route = route;
+    set_state(task, TaskState::Working, now);
+    // M8b decision 33a: the next worker launch records this escalation, its pool
+    // stepping from the route the selector stepped from (a second escalation before
+    // the launch overwrites the first: the intermediate route never ran).
+    task.escalated_from = Some(std::mem::replace(&mut task.route, route));
     task.fresh_session = Some(FreshSession {
         reason: reason.clone(),
         append: None,
@@ -266,8 +304,9 @@ pub(super) fn rung3(run: &mut Run, i: usize, text: String, now: u64, fx: &mut Ve
 /// Ruling T13-minors (m3): what depends on the size is resolved again for the raised
 /// size — the review level, its reviewer and a budget the plan did not set — as an
 /// edit's re-resolution does (`edits.rs`), so a retried task is reviewed and budgeted
-/// as what it now is. The route is the task's own (rung 2 may have escalated it).
-fn reresolve(run: &mut Run, i: usize) {
+/// as what it now is. The route is the task's own (rung 2 may have escalated it); the
+/// route the raised size resolves to is returned (M8b decision 19 takes its effort).
+pub(crate) fn reresolve(run: &mut Run, i: usize) -> proto::Route {
     let mut spec = run.tasks[i].spec.clone();
     spec.size = spec.size.max(run.tasks[i].size);
     let (resolved, _) = resolve_task_lenient(
@@ -283,6 +322,7 @@ fn reresolve(run: &mut Run, i: usize) {
         .review_level
         .map(|level| pick_reviewer(&run.roster, &task.route, level));
     task.budget = resolved.budget;
+    resolved.route
 }
 
 /// Rung 4: `blocked(human)`, the worker killed.

@@ -465,6 +465,18 @@ fn new_task(
         salvage_refs: Vec::new(),
         failure_log: Vec::new(),
         history: Vec::new(),
+        pending_failure: None,
+        pending_classification: None,
+        block_source: None,
+        decider_usage: Default::default(),
+        size_check: None,
+        phases: Default::default(),
+        phase_since: 0,
+        max_rung: 0,
+        diff: None,
+        history_written: false,
+        routing_decisions: Vec::new(),
+        escalated_from: None,
     }
 }
 

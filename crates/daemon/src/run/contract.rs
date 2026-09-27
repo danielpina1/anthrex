@@ -9,7 +9,7 @@
 //! the nudges, the stall, budget, rate-limit and denial texts, and decisions 54–56's.
 //! M8a.13 and M8a.14 add the rest.
 
-use proto::{Budget, Finding, Severity, Size, Spend, TestMode};
+use proto::{Budget, DeciderSource, Finding, Severity, Size, Spend, TestMode};
 
 use super::messages::summary;
 use super::model::{CheckRecord, ProofRecord, ReviewLevel, ReviewRecord, Run, Task};
@@ -180,7 +180,7 @@ pub fn reviewer_prompt(
     }
     if let Some(check) = task.checks.last() {
         lines.push("Last check (40 lines):".into());
-        lines.push(summary(&check.tail));
+        lines.push(decider_summary(check).map_or_else(|| summary(&check.tail), str::to_string));
     }
     let earlier: Vec<String> = task
         .reviews
@@ -257,6 +257,11 @@ pub const DONE_ACCEPTED: &str = "Done recorded. The engine is running the gates 
 pub fn blocked_recorded(kind: &str) -> String {
     format!("Blocked recorded ({kind}). Stop and wait for an answer.")
 }
+
+/// M8b decision 21: the reply to a `task_blocked` with no kind, while a decider
+/// classifies it (exact).
+pub const BLOCKED_CLASSIFYING: &str =
+    "Blocked recorded (classifying). Stop and wait for an answer.";
 
 /// Decision 32's turn-end fallback, with commits (exact).
 pub const DONE_NUDGE: &str = "[anthrex] Your turn ended with commits in your worktree and no task_done. If the task is complete, call task_done now (for a tdd task, with test and red). If you are stuck, call task_blocked.";
@@ -360,10 +365,26 @@ fn ended_how(code: Option<i32>, timed_out: bool, secs: u64) -> String {
 /// how it ended, and the last `CHECK_SUMMARY_LINES` lines of its output.
 pub fn check_failed_message(command: &str, c: &CheckRecord) -> String {
     format!(
-        "[anthrex] The check failed ({}): {command}\nLast 40 lines:\n{}\n{FIX_IT}",
+        "[anthrex] The check failed ({}): {command}\n{}\n{FIX_IT}",
         ended_how(c.code, c.timed_out, c.secs),
-        summary(&c.tail)
+        check_output(c)
     )
+}
+
+/// M8b decision 20: the decider's summary of a failed check, when it wrote one.
+fn decider_summary(c: &CheckRecord) -> Option<&str> {
+    c.summary
+        .as_deref()
+        .filter(|_| c.summary_source == Some(DeciderSource::Decider))
+}
+
+/// A failed check's output in a bounce: `Summary of its output:` and the decider's
+/// lines (M8b decision 20), else M8a's `Last 40 lines:` and the tail's last 40.
+fn check_output(c: &CheckRecord) -> String {
+    match decider_summary(c) {
+        Some(lines) => format!("Summary of its output:\n{lines}"),
+        None => format!("Last 40 lines:\n{}", summary(&c.tail)),
+    }
 }
 
 /// Decision 36's rung-1 message for a merge candidate whose check failed (Interfaces,
@@ -371,9 +392,9 @@ pub fn check_failed_message(command: &str, c: &CheckRecord) -> String {
 /// lines. M8a.14.
 pub fn candidate_red_message(command: &str, c: &CheckRecord) -> String {
     format!(
-        "[anthrex] Your work merged cleanly into the run branch, but the check failed on the merged result ({}): {command}\nLast 40 lines:\n{}\nFix it in your worktree, commit, then call task_done again.",
+        "[anthrex] Your work merged cleanly into the run branch, but the check failed on the merged result ({}): {command}\n{}\nFix it in your worktree, commit, then call task_done again.",
         ended_how(c.code, c.timed_out, c.secs),
-        summary(&c.tail)
+        check_output(c)
     )
 }
 

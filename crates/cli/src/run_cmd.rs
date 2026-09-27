@@ -2,6 +2,7 @@
 //! (`RunRequest`/`RunReply`, decisions 20 and 53, the brief's CLI section). Every request
 //! waits [`RUN_REQUEST_TIMEOUT`] ([`FINISH_REQUEST_TIMEOUT`] for accept and discard); every `Refused` prints the daemon's message and exits 1.
 
+mod adapt;
 mod finish;
 mod status;
 
@@ -32,6 +33,7 @@ pub const FINISH_REQUEST_TIMEOUT: Duration =
 fn request_timeout(request: &RunRequest) -> Duration {
     match request {
         RunRequest::Finish { .. } => FINISH_REQUEST_TIMEOUT,
+        RunRequest::StartGoal { .. } => adapt::GOAL_REQUEST_TIMEOUT,
         _ => RUN_REQUEST_TIMEOUT,
     }
 }
@@ -44,10 +46,14 @@ pub struct RunArgs {
 
 #[derive(Subcommand, Debug)]
 enum RunCommand {
-    /// Start a run from a plan file and print its id
+    /// Start a run from a plan file, or a goal triage may put on the fast path, and print its id
+    #[command(group(clap::ArgGroup::new("source").required(true).args(["plan", "goal"])))]
     Start {
         #[arg(long)]
-        plan: PathBuf,
+        plan: Option<PathBuf>,
+        /// A goal for the triage decider; one small task runs at once, with no plan gate
+        #[arg(long)]
+        goal: Option<String>,
         /// Approve the plan at once
         #[arg(long)]
         yes: bool,
@@ -92,6 +98,14 @@ enum RunCommand {
     },
     /// Cancel a run
     Cancel { run: String },
+    /// Mark a fast-path run for promotion to a planned run (acted on from milestone 9)
+    Promote { run: String },
+    /// Summarise this repository's run history, by task class
+    Stats {
+        /// Print the summary as pretty JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Resume a paused or halted run
     Resume {
         run: String,
@@ -130,12 +144,19 @@ pub async fn main(args: RunArgs, socket: PathBuf, dir: Option<PathBuf>) -> anyho
 async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> anyhow::Result<()> {
     if let RunCommand::Start {
         plan,
+        goal,
         yes,
         trust_project,
         unconfined_checks,
     } = command
     {
-        return start(socket, dir, &plan, yes, trust_project, unconfined_checks).await;
+        let flags = (yes, trust_project, unconfined_checks);
+        return match (plan, goal) {
+            (Some(plan), _) => {
+                start(socket, dir, &plan, yes, trust_project, unconfined_checks).await
+            }
+            (None, goal) => adapt::start_goal(socket, dir, goal.unwrap_or_default(), flags).await,
+        };
     }
     let mut runs = Runs::connect(socket).await?;
     match command {
@@ -199,6 +220,11 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
             let run_id = runs.resolve(&run).await?;
             runs.done(RunRequest::Cancel { run_id }).await
         }
+        RunCommand::Promote { run } => {
+            let run_id = runs.resolve(&run).await?;
+            runs.done(RunRequest::Promote { run_id }).await
+        }
+        RunCommand::Stats { json } => adapt::stats(&mut runs, dir, json).await,
         RunCommand::Resume { run, rebaseline } => {
             let run_id = runs.resolve(&run).await?;
             runs.done(RunRequest::Resume { run_id, rebaseline }).await

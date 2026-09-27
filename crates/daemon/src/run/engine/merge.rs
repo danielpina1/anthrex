@@ -8,6 +8,7 @@
 //! is only recorded. Results are taken by op id (`Task.merge_op`, ruling T12-N's
 //! correlation). Pure (design decision 2).
 
+use crate::run::phases::set_state;
 use proto::{AgentRole, BlockReason, GateKind, RunState, Runtime, TaskState};
 
 use super::ResolutionAt;
@@ -17,7 +18,7 @@ use super::signals::end_round;
 use super::{
     Effect, EngineState, OpId, OpKind, OpResult, ReplyId, complete, emit_op, gates, ladder, next_op,
 };
-use crate::run::contract::{UNCLAIMED_COMMITS, candidate_red_message, conflict_message, sha7};
+use crate::run::contract::{UNCLAIMED_COMMITS, conflict_message, sha7};
 use crate::run::env::profile_env;
 use crate::run::model::{BaseMoved, CheckRecord, Run, Task};
 
@@ -98,6 +99,9 @@ pub(super) fn candidate_done(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
+    // M8b decision 32: the run head before the merge, what a merged task is measured
+    // from.
+    let before = run.run_head.clone();
     if let OpResult::Merged { commit } = &result {
         run.run_head = commit.clone();
         run.last_green_candidate = Some(commit.clone());
@@ -139,12 +143,12 @@ pub(super) fn candidate_done(
                 now,
                 format!("the cancel of {id} arrived too late: it merged"),
             );
-            return merged(run, i, commit, now, fx);
+            return merged(run, i, (before, commit), now, fx);
         }
         return complete::cancel_now(run, i, "its cancel, after its merge did not land", now, fx);
     }
     match result {
-        OpResult::Merged { commit } => merged(run, i, commit, now, fx),
+        OpResult::Merged { commit } => merged(run, i, (before, commit), now, fx),
         OpResult::Conflict { files } => conflict(run, i, files, now, fx),
         OpResult::CandidateRed {
             code,
@@ -160,12 +164,14 @@ pub(super) fn candidate_done(
                 tail,
                 secs,
                 on_candidate: true,
+                summary: None,
+                summary_source: None,
             };
             let command = run.profile.check.clone().unwrap_or_default();
-            let text = candidate_red_message(&command, &record);
             run.tasks[i].checks.push(record);
             history(run, i, now, "the check failed on the merge candidate");
-            ladder::gate_failure(run, i, GateKind::Merge, text, false, now, fx);
+            // M8b decision 20: the rung waits for the summary; the queue moves on.
+            super::deciders::summarise(run, i, GateKind::Merge, &command, now, fx);
         }
         OpResult::Failed { message } => {
             let text = format!("could not merge: {message}");
@@ -178,10 +184,17 @@ pub(super) fn candidate_done(
 /// Decision 36 step 4 and decision 20's clean-up: the task is `merged`; its task, review
 /// and proof worktrees are salvaged and removed (the task worktree unwatched first);
 /// its worker is retired, and whatever still waits for it in the outbox is dropped.
-fn merged(run: &mut Run, i: usize, commit: String, now: u64, fx: &mut Vec<Effect>) {
+fn merged(
+    run: &mut Run,
+    i: usize,
+    (from, commit): (String, String),
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
     let id = run.tasks[i].id().to_string();
+    super::history::merged(run, i, from, commit.clone(), fx);
     let task = &mut run.tasks[i];
-    task.state = TaskState::Merged;
+    set_state(task, TaskState::Merged, now);
     task.block = None;
     task.merge_commit = Some(commit.clone());
     for round in task
@@ -304,11 +317,11 @@ pub(super) fn handed_back(
         }
         if gates_after {
             let next = gates::next_gate(run, i, None);
-            gates::enter(run, i, next);
+            gates::enter(run, i, next, now);
             let text = format!("the run head merged cleanly; next: {}", next.label());
             return history(run, i, now, text);
         }
-        gates::enter(run, i, TaskState::MergeQueue);
+        gates::enter(run, i, TaskState::MergeQueue, now);
         return history(
             run,
             i,
@@ -317,7 +330,7 @@ pub(super) fn handed_back(
         );
     }
     let task = &mut run.tasks[i];
-    task.state = TaskState::Working;
+    set_state(task, TaskState::Working, now);
     ladder::reopen_stopped(task);
     task.handed_back = claimed && !gates_after;
     // Ruling T14-R2: the claim that resolves this conflict is checked against it.
@@ -348,7 +361,7 @@ pub(super) fn hand_back_due(run: &mut Run, i: usize, now: u64) {
     task.handed_back = false;
     task.resolution = None;
     task.gates_after_handback = true;
-    task.state = TaskState::MergeQueue;
+    set_state(task, TaskState::MergeQueue, now);
     task.gate_op = None;
     history(
         run,

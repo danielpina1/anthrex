@@ -93,6 +93,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
  "toml",
 ]
 
@@ -145,6 +146,7 @@ dependencies = [
  "anthrex-proto",
  "anyhow",
  "libc",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

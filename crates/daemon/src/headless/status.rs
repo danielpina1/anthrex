@@ -47,6 +47,7 @@ pub fn next(current: &HeadlessStatus, event: &SessionEvent) -> HeadlessStatus {
     if matches!(
         event,
         SessionEvent::Other { .. }
+            | SessionEvent::StructuredOutput { .. }
             | SessionEvent::Unknown { .. }
             | SessionEvent::StderrLine { .. }
             | SessionEvent::Diagnostic { .. }

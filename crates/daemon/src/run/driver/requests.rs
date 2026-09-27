@@ -11,8 +11,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use proto::run_wire::request;
-use proto::{BaseMovedInfo, FinishAction, RunReply, RunRequest, Runtime};
+use proto::{BaseMovedInfo, FinishAction, Plan, RunReply, RunRequest, Runtime};
 
+use super::adapt::BuildError;
 use super::{RunService, unix_now};
 use crate::run::confine;
 use crate::run::engine::EventKind;
@@ -157,14 +158,25 @@ impl RunService {
                 confirm,
             } => self.finish(run_id, action, confirm).await,
             RunRequest::List => RunReply::Snapshot(self.current()),
-            RunRequest::Tool(call) => {
-                // Every text here reaches an agent verbatim (M8a.19): the engine's own
-                // tool answers, worded for an agent.
-                match self.ask(|reply| EventKind::Tool { reply, call }).await {
-                    Ok(text) => RunReply::ToolResult { ok: true, text },
-                    Err(text) => RunReply::ToolResult { ok: false, text },
-                }
+            RunRequest::Tool(call) => self.tool(call).await,
+            // Milestone 8b: `run start --goal` (decision 22), `run promote` (25), `run
+            // stats` (35) and `anthrex profile` (10); the logic is in `driver/adapt.rs`.
+            RunRequest::StartGoal {
+                goal,
+                dir,
+                yes: _,
+                trust_project,
+                unconfined_checks,
+            } => {
+                self.start_goal(goal, dir, trust_project, unconfined_checks)
+                    .await
             }
+            RunRequest::Promote { run_id } => answer(
+                request::PROMOTE,
+                self.ask(|reply| EventKind::Promote { reply, run_id }).await,
+            ),
+            RunRequest::Stats { dir } => self.stats(dir).await,
+            RunRequest::Profile(profile) => self.profile(profile).await,
             RunRequest::Subscribe | RunRequest::Unsubscribe => RunReply::Refused {
                 request: "run".to_string(),
                 message: "subscriptions are answered by the connection".to_string(),
@@ -221,21 +233,39 @@ impl RunService {
         trust_project: bool,
         unconfined_checks: bool,
     ) -> Result<Run, String> {
-        let config = self.ctx.orchestrator.clone();
+        let plan = parse_plan(&plan_toml)?;
+        self.build_plan(plan, dir, yes, trust_project, unconfined_checks, false)
+            .await
+            .map_err(BuildError::text)
+    }
+
+    /// Everything `run start` checks and builds for a parsed plan (M8b decision 22 shares
+    /// it with the fast path, `fast`: its barrier before the runtime checks, review m1);
+    /// decision 6's profile choice right after preflight.
+    pub(super) async fn build_plan(
+        &self,
+        mut plan: Plan,
+        dir: PathBuf,
+        yes: bool,
+        trust_project: bool,
+        unconfined_checks: bool,
+        fast: bool,
+    ) -> Result<Run, BuildError> {
+        let mut config = self.ctx.orchestrator.clone();
         // Final fix batch F1c round 2: never run worker-written code unconfined unless
         // the user said so, on the command line or in their own config.
         let available = confine::available();
         let allowed = unconfined_checks || config.unconfined_checks;
         if let Some(refusal) = confine::start_refusal(config.worker_sandbox, available, allowed) {
-            return Err(refusal);
+            return Err(refusal.into());
         }
-        let plan = parse_plan(&plan_toml)?;
         let timeout = Duration::from_secs(config.git_timeout_secs);
         let git = self.ctx.git.clone();
         let g = git.clone();
         let mut pre = blocking(move || git::preflight(&g, &dir, timeout)).await?;
+        let choice = self.choose_profile(&mut plan, &mut config, &pre).await?;
 
-        // Decision 17 (carry): the protected files, by the resolved profile's matcher,
+        // Decision 17 (carry): the protected files, by the chosen profile's matcher,
         // before `build_run` turns them into the plan's warnings (decision 56).
         let profile = resolve_profile(&plan.profile, &config.profile);
         let matcher = ProtectedMatcher::new(&profile.protected)?;
@@ -247,21 +277,18 @@ impl RunService {
         let refs = blocking(move || run_refs(&g, &root, timeout)).await?;
         let id = self.pick_id(&plan.goal, &refs)?;
         let wt_dir = repo_worktrees_dir(&self.ctx.worktrees_root, &pre.project);
+        let now = unix_now();
         let ctx = BuildContext {
             id: id.clone(),
             wt_dir,
             data_dir: runs_dir(&self.ctx.data_dir).join(&id),
             config: &config,
-            now: unix_now(),
+            now,
             yes,
         };
-        let mut run = crate::run::plan::build_run(plan, pre, ctx).map_err(|errors| {
-            errors
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("\n")
-        })?;
+        let mut run = crate::run::plan::build_run(plan, pre, ctx).map_err(BuildError::Plan)?;
+        super::adapt::fast_barrier(fast, &run)?;
+        super::adapt::apply_choice(&mut run, choice, now);
         run.limits.unconfined_checks = run.limits.worker_sandbox && !available;
         run.session_nonce = random_nonce();
         run.codex_project_config = Some(self.ctx.cli_caps.codex_project_config());
@@ -274,7 +301,7 @@ impl RunService {
         let runtimes = reachable_runtimes(&run);
         let checks = self.check_runtimes(&run, &runtimes, timeout).await?;
         if let Some((_, text)) = checks.api_key.first() {
-            return Err(text.clone());
+            return Err(text.clone().into());
         }
         if !trust_project {
             let refusals: Vec<String> = checks
@@ -284,7 +311,7 @@ impl RunService {
                 .map(|(_, who, paths)| settings_refusal(who, paths))
                 .collect();
             if !refusals.is_empty() {
-                return Err(refusals.join("\n"));
+                return Err(refusals.join("\n").into());
             }
         }
         run.trusted_project = checks

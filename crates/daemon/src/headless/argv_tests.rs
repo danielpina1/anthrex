@@ -25,6 +25,7 @@ pub(super) fn worker(runtime: Runtime) -> HeadlessSpec {
             role: AgentRole::Worker,
             run_id: "r-3f9a".into(),
             task_id: Some("t1".into()),
+            scout_id: None,
         }),
         allowed_tools: [
             "mcp__anthrex__task_done",
@@ -52,6 +53,7 @@ pub(super) fn worker(runtime: Runtime) -> HeadlessSpec {
             session: 1,
         }),
         codex_config_guard: None,
+        output_filter: None,
     }
 }
 
@@ -67,6 +69,7 @@ pub(super) fn reviewer(runtime: Runtime) -> HeadlessSpec {
             role: AgentRole::Reviewer,
             run_id: "r-3f9a".into(),
             task_id: Some("t2".into()),
+            scout_id: None,
         }),
         allowed_tools: [
             "mcp__anthrex__submit_review",
@@ -200,6 +203,7 @@ fn mcp_args_for_a_worker() {
         role: AgentRole::Worker,
         run_id: "r-3f9a".into(),
         task_id: Some("t1".into()),
+        scout_id: None,
     };
     assert_eq!(
         mcp_args(&target, 7, Path::new("/tmp/a.sock")),
@@ -548,6 +552,8 @@ fn worker_settings_json_enables_the_sandbox() {
 
 #[path = "argv_caps_tests.rs"]
 mod caps;
+#[path = "argv_filter_tests.rs"]
+mod filter;
 
 /// F2 round 2 (item 2): a sandbox's `deny_write` becomes `filesystem.denyWrite`, beside
 /// `allowWrite`; an empty one is omitted.

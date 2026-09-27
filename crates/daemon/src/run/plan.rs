@@ -184,6 +184,8 @@ pub fn run_limits(
         unconfined_checks: false,
         claude_auth: config.claude.auth.into(),
         api_key_helper: config.claude.api_key_helper.clone(),
+        decider_mode: config.deciders.mode,
+        decider_slot_wait_secs: config.deciders.slot_wait_secs,
     }
 }
 
@@ -283,7 +285,7 @@ fn check_plan(plan: &Plan, profile: &Profile, errors: &mut Vec<PlanError>) {
 /// F1c round 3, N3; `[orchestrator.confined_network]`, F1d) for the repository at
 /// `root`. The key is matched both as written and canonicalised, so a config that names
 /// the repository by a path with a symlink or a trailing slash still applies.
-fn for_repo<'a, T>(
+pub(crate) fn for_repo<'a, T>(
     table: &'a std::collections::BTreeMap<String, T>,
     root: &std::path::Path,
 ) -> Option<&'a T> {
@@ -412,6 +414,29 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         session_nonce: 0,
         codex_project_config: None,
         codex_config_base: Vec::new(),
+        // Milestone 8b: set by the driver from decision 6's choice.
+        profile_source: None,
+        output_filter: Default::default(),
+        filter_prefixes: Vec::new(),
+        repo_dir: PathBuf::new(),
+        stale_profile: Vec::new(),
+        decider_queue: Vec::new(),
+        next_decider: 0,
+        decider_calls: 0,
+        decider_fallbacks: 0,
+        decider_usage: Default::default(),
+        scout_reports: Vec::new(),
+        onboarding_report: None,
+        path: None,
+        triage: None,
+        triage_usage: Default::default(),
+        scout_usage: Default::default(),
+        orchestrator_usage: Default::default(),
+        orchestrator_base: Default::default(),
+        promote_requested_at: None,
+        run_record_written: false,
+        profile_languages: Vec::new(),
+        history: true,
     })
 }
 

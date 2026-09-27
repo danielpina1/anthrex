@@ -103,6 +103,8 @@ const FIELDS: &[Field] = &[
                 tail: format!("{v}\n```\nend"),
                 secs: 5,
                 on_candidate: false,
+                summary: None,
+                summary_source: None,
             })
         },
         new_lists: 0,

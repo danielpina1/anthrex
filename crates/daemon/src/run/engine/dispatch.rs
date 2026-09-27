@@ -5,16 +5,19 @@
 //! for new dependencies (M8a.6 ruling N5), and the clean-up of a cancelled task's
 //! worktree when no session is left (M8a.6's F5). Pure (design decision 2).
 
+use crate::run::phases::set_state;
 use std::path::Path;
 
 use proto::{AgentRole, BlockInfo, BlockReason, RunState, Runtime, TaskState};
 
 use super::schedule::{
     deps_done, dispatch_order, held_hub_waits_for, hub_started, may_return_to_working,
-    op_in_flight, writers_busy,
+    op_in_flight, size_check_pending, writers_busy,
 };
 use super::{Effect, OpKind, OpResult, emit_op, next_op};
-use super::{clock, complete, done, gates, holds, ladder, merge, outbox, restore, review, signals};
+use super::{
+    clock, complete, deciders, done, gates, holds, ladder, merge, outbox, restore, review, signals,
+};
 use crate::run::contract::{handover_prompt, is_stall_nudge, worker_prompt};
 use crate::run::env::profile_env;
 use crate::run::model::{AgentRound, FreshSession, OpId, Run, StallState, Task, TaskEvent};
@@ -28,7 +31,7 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     }
     clock::watch_open_turns(run, now, fx);
     holds::enforce_holds(run, now, fx);
-    requeue(run);
+    requeue(run, now);
     if integration_ready(run) {
         match run.state {
             RunState::AwaitingApproval => prewarm(run, now, fx),
@@ -45,6 +48,8 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 review::watch(run, now, fx);
                 launch_ready(run, now, fx);
                 dispatch_writers(run, now, fx);
+                // M8b decision 18: queued deciders take free reader slots first.
+                fx.extend(deciders::dispatch(run, now));
                 review::dispatch_reviewers(run, fx);
             }
             _ => {}
@@ -82,7 +87,7 @@ fn integration_ready(run: &Run) -> bool {
 }
 
 /// Decision 31: `queued` is runnable, `pending` waits for dependencies.
-fn requeue(run: &mut Run) {
+fn requeue(run: &mut Run, now: u64) {
     for i in 0..run.tasks.len() {
         let state = run.tasks[i].state;
         if !matches!(state, TaskState::Pending | TaskState::Queued) {
@@ -93,7 +98,7 @@ fn requeue(run: &mut Run) {
         } else {
             TaskState::Pending
         };
-        run.tasks[i].state = next;
+        set_state(&mut run.tasks[i], next, now);
     }
 }
 
@@ -111,7 +116,7 @@ pub(super) fn block(run: &mut Run, i: usize, reason: BlockReason, text: String, 
         .unwrap_or_default();
     history(run, i, now, format!("blocked ({label}): {text}"));
     let task = &mut run.tasks[i];
-    task.state = TaskState::Blocked;
+    set_state(task, TaskState::Blocked, now);
     task.block = Some(BlockInfo { reason, text });
     // Ruling T12-I4b: a pending interrupt no longer applies to a blocked task; its
     // stale nudge is dropped, so whatever unblocks the task is delivered.
@@ -192,7 +197,9 @@ fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     // F3 review N1: a held hub task lets only what it waits for start.
     let only = held_hub_waits_for(run);
     for i in dispatch_order(run) {
+        // M8b decision 19: a task waiting for its size cross-check is not runnable.
         if run.tasks[i].state != TaskState::Queued
+            || size_check_pending(&run.tasks[i])
             || only
                 .as_ref()
                 .is_some_and(|waits| !waits.iter().any(|id| id == run.tasks[i].id()))
@@ -208,7 +215,7 @@ fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         {
             continue;
         }
-        run.tasks[i].state = TaskState::Preparing;
+        set_state(&mut run.tasks[i], TaskState::Preparing, now);
         history(run, i, now, "dispatched");
         if prepare_in_flight(run, i) {
             // A pre-warm still running: its result continues the dispatch.
@@ -301,6 +308,8 @@ fn launch(
         run.tasks[i].start_commit = Some(start);
     }
     run.tasks[i].session += 1;
+    // M8b decision 33a: the route is fixed; decided before the session-start op.
+    crate::run::routing::record_worker(run, i, now);
     let task = &run.tasks[i];
     let spec = worker_spec(run, task);
     let first_turn = first_turn(run, task);
@@ -526,7 +535,7 @@ pub(super) fn window_done(
                 round.retiring = true;
                 fx.push(Effect::KillWindow { window_id });
             } else if state == TaskState::Preparing && round.role == AgentRole::Worker {
-                run.tasks[i].state = TaskState::Working;
+                set_state(&mut run.tasks[i], TaskState::Working, now);
             }
         }
         OpResult::Failed { message } => {

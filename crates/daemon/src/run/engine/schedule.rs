@@ -127,8 +127,14 @@ fn resumable_reviewer(task: &Task) -> bool {
         })
 }
 
+/// Live reviewers and, since M8b decision 18, deciders in flight.
 pub fn readers_busy(run: &Run) -> usize {
-    run.tasks.iter().filter(|t| holds_reader(run, t)).count()
+    let deciders = run
+        .pending_ops
+        .values()
+        .filter(|p| matches!(p.kind, OpKind::Decide { .. }))
+        .count();
+    run.tasks.iter().filter(|t| holds_reader(run, t)).count() + deciders
 }
 
 /// A task in `review` with no reviewer yet.
@@ -163,6 +169,14 @@ pub fn unfinished_deps(run: &Run, task: &Task) -> Vec<String> {
 
 pub fn deps_done(run: &Run, task: &Task) -> bool {
     unfinished_deps(run, task).is_empty()
+}
+
+/// M8b decision 19: the task waits for its size cross-check, so it is not runnable.
+pub fn size_check_pending(task: &Task) -> bool {
+    matches!(
+        task.size_check,
+        Some(crate::run::model::SizeCheckState::Pending { .. })
+    )
 }
 
 /// Decision 41's weights until M9.5's history exists: S = 1, M = 3. An L task never

@@ -124,6 +124,8 @@ fn check_tail_with_a_backtick_fence_uses_a_longer_fence() {
         tail: "some output\n```\nnot really the end\n```\nmore text".to_string(),
         secs: 5,
         on_candidate: false,
+        summary: None,
+        summary_source: None,
     });
     let out = render(&run, 2_000);
 

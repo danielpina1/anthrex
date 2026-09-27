@@ -7,14 +7,15 @@
 //! run at all (setup or git failed, the command could not start) blocks the task on
 //! its environment and counts nothing. Pure (design decision 2).
 
+use crate::run::phases::set_state;
 use proto::{BlockReason, GateKind, RunState, TaskState, TestMode};
 
 use super::dispatch::{block, history};
 use super::{
-    Effect, EngineState, OpId, OpKind, OpResult, OverrideCount, ReplyId, ScratchAt, emit_op,
-    ladder, next_op, review,
+    Effect, EngineState, OpId, OpKind, OpResult, OverrideCount, ReplyId, ScratchAt, deciders,
+    emit_op, ladder, next_op, review,
 };
-use crate::run::contract::{check_failed_message, proof_failed_message};
+use crate::run::contract::proof_failed_message;
 use crate::run::env::profile_env;
 use crate::run::model::{CheckRecord, ProofRecord, Run};
 use crate::run::proof::{proof_command, proof_pattern};
@@ -51,8 +52,8 @@ pub(super) fn next_gate(run: &Run, i: usize, passed: Option<TaskState>) -> TaskS
 }
 
 /// Task `i` enters `state`; the merge queue is FIFO in arrival order (decision 36).
-pub(super) fn enter(run: &mut Run, i: usize, state: TaskState) {
-    run.tasks[i].state = state;
+pub(super) fn enter(run: &mut Run, i: usize, state: TaskState, now: u64) {
+    set_state(&mut run.tasks[i], state, now);
     run.tasks[i].gate_op = None;
     let id = run.tasks[i].id().to_string();
     if state == TaskState::MergeQueue && !run.merge_queue.contains(&id) {
@@ -63,7 +64,7 @@ pub(super) fn enter(run: &mut Run, i: usize, state: TaskState) {
 /// Task `i` passed `gate`: on to the next one.
 fn passed(run: &mut Run, i: usize, gate: TaskState, now: u64) {
     let next = next_gate(run, i, Some(gate));
-    enter(run, i, next);
+    enter(run, i, next, now);
     history(
         run,
         i,
@@ -89,7 +90,8 @@ pub(super) fn start_gates(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             run.tasks[i].gate_op = None;
             continue;
         }
-        if run.tasks[i].gate_op.is_some() {
+        // M8b decision 20: a failed check waiting for its summary runs no other.
+        if run.tasks[i].gate_op.is_some() || run.tasks[i].pending_failure.is_some() {
             continue;
         }
         match state {
@@ -254,7 +256,8 @@ pub(super) fn proof_done(
 }
 
 /// `Check`'s result (decision 34): green passes the gate; red is a gate failure of
-/// `check` with `check_failed_message` (the last 40 lines, deterministically).
+/// `check` with `check_failed_message`, whose rung waits for the check summary (M8b
+/// decision 20, `deciders::summarise`).
 pub(super) fn check_done(
     run: &mut Run,
     i: usize,
@@ -286,13 +289,14 @@ pub(super) fn check_done(
                 tail,
                 secs,
                 on_candidate: false,
+                summary: None,
+                summary_source: None,
             };
-            let text = check_failed_message(command, &record);
             run.tasks[i].checks.push(record);
             if ok {
                 passed(run, i, TaskState::Check, now);
             } else {
-                ladder::gate_failure(run, i, GateKind::Check, text, false, now, fx);
+                deciders::summarise(run, i, GateKind::Check, command, now, fx);
             }
         }
         OpResult::SetupFailed { output } => {
@@ -403,8 +407,10 @@ fn send_to_queue(run: &mut Run, i: usize, reason: &str, now: u64, fx: &mut Vec<E
     review::stop_reviewers(run, i, now, fx);
     let task = &mut run.tasks[i];
     task.merged_without_approval = Some(reason.to_string());
+    // Review I1: a block's classification no longer applies.
+    task.pending_classification = None;
     task.block = None;
-    enter(run, i, TaskState::MergeQueue);
+    enter(run, i, TaskState::MergeQueue, now);
     history(
         run,
         i,

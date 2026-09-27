@@ -83,7 +83,10 @@ pub(crate) fn ensure_root() -> Result<PathBuf, String> {
 pub(crate) fn remove(repo_dir: &Path) -> Result<(), String> {
     let tmp = task_tmp(repo_dir);
     let result = match std::fs::symlink_metadata(&tmp) {
-        Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(&tmp),
+        Ok(meta) if meta.is_dir() => {
+            super::checkout::restore_owner_access(&tmp)?;
+            std::fs::remove_dir_all(&tmp)
+        }
         Ok(_) => std::fs::remove_file(&tmp),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(err),

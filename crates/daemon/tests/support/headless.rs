@@ -48,6 +48,7 @@ pub fn spec(runtime: Runtime, cwd: &Path) -> HeadlessSpec {
         api_key_helper: None,
         run_ref: Some(run_ref()),
         codex_config_guard: None,
+        output_filter: None,
     }
 }
 

@@ -16,7 +16,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 mod shape;
-pub use shape::assert_conforms;
+#[allow(unused_imports)] // Not every test binary checks shapes.
+pub use shape::{assert_conforms, assert_conforms_in, fixture_files};
+mod adapt;
+#[allow(unused_imports)] // Only the M8b.6 tests use these.
+pub use adapt::*;
 mod stub_daemon;
 #[allow(unused_imports)] // Not every test binary uses the stub daemon.
 pub use stub_daemon::StubDaemon;
@@ -160,6 +164,7 @@ impl Mcp {
             },
             run_id: "r1".into(),
             task_id: self.task.map(String::from),
+            scout_id: None,
         }
     }
 }
@@ -193,6 +198,7 @@ fn spec(runtime: Runtime, mcp: Option<&Mcp>) -> HeadlessSpec {
         api_key_helper: None,
         run_ref: None,
         codex_config_guard: None,
+        output_filter: None,
     }
 }
 
@@ -279,6 +285,8 @@ impl Agent {
             .env_remove("FAKE_AGENT_SCRIPT")
             .env_remove("FAKE_AGENT_ARGS_FILE")
             .env_remove("FAKE_AGENT_STDIN_FILE")
+            .env_remove("FAKE_AGENT_DECIDER_DIR")
+            .env_remove("FAKE_AGENT_BASH_LOG")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("ANTHREX_SOCKET", cwd.join("never.sock"))

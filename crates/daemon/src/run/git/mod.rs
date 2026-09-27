@@ -35,6 +35,7 @@ mod tmp;
 mod worktrees;
 
 pub use accept::{ACCEPT_MERGE_TIMEOUT, accept, accept_with_merge_timeout};
+pub(crate) use checkout::restore_owner_access;
 pub use checkout::{Repo, checkout_repo_dir, default_repo_dir};
 pub use done::{DoneChecked, count_commits, diff_so_far, verify_done};
 pub use handback::{HandBack, hand_back};
@@ -54,7 +55,7 @@ pub(crate) use merge::{read, reattach_in, short};
 pub(crate) use merge_state::{
     Leftover, clear as clear_merge_state, leftover, undo_clean_merge, unmerged,
 };
-pub(crate) use worktrees::{forget_missing, is_ancestor, listed as listed_worktree_in};
+pub(crate) use worktrees::{common_dir, forget_missing, is_ancestor, listed as listed_worktree_in};
 
 pub use queue::{GitQueue, LOCK_RETRY_DELAYS_MS};
 pub use resolution::resolution_only;

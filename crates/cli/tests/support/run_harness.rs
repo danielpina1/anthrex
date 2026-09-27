@@ -25,13 +25,17 @@ use super::{ANTHREX, RunningCommand, fake_agent_bin, runtime};
 /// task paths waits `k * RUN_WAIT` (`docs/timing-budgets.md`).
 pub const RUN_WAIT: Duration = Duration::from_secs(300);
 
+/// The harness's decider command: a path that does not exist, so a decider a test did
+/// not ask for falls back instead of running anything.
+pub const NO_DECIDER_BIN: &str = "/nonexistent/anthrex-test/decider";
+
 /// How long one raw request may take, `run accept` and `run discard` aside: `run
 /// start`'s legal worst case is its preflight's git calls at the harness's 5 s
 /// `git_timeout_secs` (six calls, 30 s) plus the id draw's and the settings scan's
 /// (three more, 15 s) and the base's `.codex` listing (final fix batch F2, 5 s), 50 s;
 /// every other request is one engine step. Recorded in
 /// `docs/timing-budgets.md`.
-const REQUEST_WAIT: Duration = Duration::from_secs(60);
+pub const REQUEST_WAIT: Duration = Duration::from_secs(60);
 
 /// How long `Finish` may take: its own reads (three git calls, 15 s), then the op.
 /// Accept's merge runs under `ACCEPT_MERGE_TIMEOUT` (600 s, never shortened); its other
@@ -53,7 +57,7 @@ pub struct RunHarness {
     pub repo: PathBuf,
     /// `FAKE_AGENT_ARGS_FILE` and `FAKE_AGENT_STDIN_FILE`: `<name>.args`, `<name>.stdin`.
     pub io: PathBuf,
-    env: Vec<(String, String)>,
+    pub(super) env: Vec<(String, String)>,
     /// The daemon this harness started and must stop (`run_daemon.rs`).
     daemon: Mutex<Option<DaemonProcess>>,
 }
@@ -127,7 +131,7 @@ impl RunHarness {
         (harness, started)
     }
 
-    fn unstarted(
+    pub(super) fn unstarted(
         orchestrator: &str,
         env: &[(&str, &str)],
         git_off: bool,
@@ -144,12 +148,22 @@ impl RunHarness {
         let config = dir.path().join("config.toml");
         // Final fix batch F1c round 2: where the platform cannot confine checks (Linux
         // CI), the e2e runs allow it, as a user must; a test that says otherwise wins.
-        let orchestrator =
+        let mut orchestrator =
             if cfg!(target_os = "macos") || orchestrator.contains("unconfined_checks") {
                 orchestrator.to_string()
             } else {
                 format!("unconfined_checks = true\n{orchestrator}")
             };
+        // M8b decision 36: deciders off and no automatic onboarding, unless the test's
+        // lines say otherwise, so every M8a scenario runs exactly as before.
+        for (table, line) in [
+            ("deciders", "deciders.mode = \"off\""),
+            ("onboarding", "onboarding.auto = false"),
+        ] {
+            if !orchestrator.contains(table) {
+                orchestrator = format!("{line}\n{orchestrator}");
+            }
+        }
         // F1c round 3 (N3): `cache_dirs` is the user's config only, keyed by repository
         // root. Every harness gets one writable cache directory for its repository, so a
         // confined check that must log outside its checkout can (see `cache_dir`).
@@ -172,6 +186,9 @@ impl RunHarness {
             ("ANTHREX_CONFIG".into(), path(&config)),
             ("ANTHREX_CLAUDE_BIN".into(), path(&fake)),
             ("ANTHREX_CODEX_BIN".into(), path(&fake)),
+            // M8b's safety rule: no decider can ever reach a real agent binary. A test
+            // that runs deciders overrides this with `fake-agent` (`run_adapt.rs`).
+            ("ANTHREX_DECIDER_BIN".into(), NO_DECIDER_BIN.into()),
             ("FAKE_AGENT_ARGS_FILE".into(), path(&io)),
             ("FAKE_AGENT_STDIN_FILE".into(), path(&io)),
             ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
@@ -204,7 +221,7 @@ impl RunHarness {
         self.dir.path().join("data")
     }
 
-    fn command(&self, args: &[&str]) -> Command {
+    pub(super) fn command(&self, args: &[&str]) -> Command {
         let mut command = Command::new(ANTHREX);
         // Decision 50's check reads the daemon's own `ANTHROPIC_API_KEY`: never the
         // developer's.
@@ -235,7 +252,7 @@ impl RunHarness {
     /// Starts `anthrex daemon start --foreground` as this harness's own child and waits
     /// at most `wait` for its socket. On `Err` the daemon is still owned, and stopped
     /// with the harness.
-    fn start_daemon(&self, wait: Duration) -> Result<(), String> {
+    pub(super) fn start_daemon(&self, wait: Duration) -> Result<(), String> {
         let mut command = self.command(&["daemon", "start", "--foreground"]);
         let mut daemon = DaemonProcess::spawn(&mut command, &self.dir.path().join("daemon.out"));
         let up = daemon.wait_up(&self.socket(), wait);

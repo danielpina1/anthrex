@@ -108,6 +108,8 @@ fn report_has_every_section() {
             tail: "running 3 tests\ntest result: ok".to_string(),
             secs: 12,
             on_candidate: false,
+            summary: None,
+            summary_source: None,
         });
         t.reviews.push(ReviewRecord {
             round: 1,
@@ -377,3 +379,70 @@ fn task_lookup_helper_finds_t1() {
 
 #[path = "report_tests_escaping.rs"]
 mod escaping;
+
+/// M8b decision 18: a check's summary records its source, and the decider's lines.
+#[test]
+fn a_check_summary_names_its_source() {
+    let mut run = base_run();
+    let record = |summary: Option<&str>, source| CheckRecord {
+        at: 1_700,
+        ok: false,
+        code: Some(1),
+        timed_out: false,
+        tail: "the raw tail".to_string(),
+        secs: 5,
+        on_candidate: false,
+        summary: summary.map(str::to_string),
+        summary_source: source,
+    };
+    run.tasks[0].checks = vec![
+        record(Some("error: a failed"), Some(proto::DeciderSource::Decider)),
+        record(None, Some(proto::DeciderSource::Fallback)),
+        record(None, None),
+    ];
+    let out = render(&run, 2_000);
+    assert!(
+        out.contains(&format!(
+            "Check 1: ok=false code=Some(1) timed_out=false 5s ({}), summary by the decider\n",
+            format_utc(1_700)
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains("Summary:\n```\nerror: a failed\n```\n"),
+        "{out}"
+    );
+    assert!(out.contains(", summary by its fallback\n"), "{out}");
+    assert_eq!(out.matches("summary by").count(), 2, "{out}");
+}
+
+/// M8b decision 24: a fast-path run's header names its path and what triage decided; a
+/// run from a plan file has no path line.
+#[test]
+fn a_fast_path_run_reports_its_path() {
+    let mut run = base_run();
+    assert!(!render(&run, 2_000).contains("path: "));
+    let triage = proto::TriageInfo {
+        kinds: vec![proto::TaskKind::Code, proto::TaskKind::Docs],
+        scale: proto::Scale::Single,
+        path: proto::RunPath::Fast,
+        reason: "small".into(),
+        source: proto::DeciderSource::Decider,
+        fallback_reason: None,
+        at: 1,
+    };
+    crate::run::triage::mark_fast(&mut run, triage, None);
+    run.tasks.truncate(1);
+    run.tasks[0].test_mode = proto::TestMode::Check;
+    run.tasks[0].spec.test_mode_reason = Some("a one-line config fix".into());
+    let out = render(&run, 2_000);
+    // Whole-branch review I1: the test mode triage chose, with its reason.
+    let id = run.tasks[0].id().to_string();
+    assert!(
+        out.contains(&format!(
+            "Approved by: fast path\npath: fast (triage: code,docs/single, decider)\n\
+             triage: {id} test mode check (a one-line config fix)\n"
+        )),
+        "{out}"
+    );
+}

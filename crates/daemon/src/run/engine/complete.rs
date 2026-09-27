@@ -4,6 +4,7 @@
 //! and `run discard` on a complete run (decision 20), answered with their op's result.
 //! Pure (design decision 2).
 
+use crate::run::phases::set_state;
 use proto::{BlockInfo, BlockReason, FinishAction, RunState, TaskState};
 
 use super::dispatch::{finishing_as, history, salvage_ref};
@@ -54,8 +55,12 @@ fn cancel_task(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut Vec<Effect
 pub(super) fn cancel_now(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut Vec<Effect>) {
     ladder::kill_worker(run, i, fx);
     review::stop_reviewers(run, i, now, fx);
+    // Review m3: its queued deciders are dropped.
+    let id = run.tasks[i].id().to_string();
+    super::deciders::drop_queued(&mut run.decider_queue, &id);
     let task = &mut run.tasks[i];
-    task.state = TaskState::Cancelled;
+    task.drop_pending_size_check();
+    set_state(task, TaskState::Cancelled, now);
     task.block = None;
     task.awaiting_deps = false;
     task.held_answered = false;
@@ -77,7 +82,7 @@ pub(super) fn cancel_now(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut 
         let text = format!("dependency {id} was cancelled");
         history(run, j, now, format!("blocked: {text}"));
         let dependent = &mut run.tasks[j];
-        dependent.state = TaskState::Blocked;
+        set_state(dependent, TaskState::Blocked, now);
         dependent.awaiting_deps = false;
         dependent.held_answered = false;
         dependent.block = Some(BlockInfo {

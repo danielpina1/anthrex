@@ -188,6 +188,7 @@ fn mcp_call_talks_to_a_real_mcp_server() {
             window_id: 7,
             tool: "task_done".into(),
             args: json!({"summary": "did it"}),
+            scout_id: None,
         }]
     );
     let results: Vec<Value> = agent

@@ -26,6 +26,13 @@
 //! M8a.15 adds `restore.rs` (restore after a daemon restart, `run resume` and the
 //! launches a restart lost), `run retry` in `requests.rs`, and the rest of `run
 //! override` in `gates.rs`.
+//!
+//! M8b.12 adds `deciders.rs` (M8b decisions 18, 20 and 21: decider ops in reader
+//! slots, the check summary a failed check's rung waits for, and the classification of
+//! a `task_blocked` with no kind).
+//!
+//! M8b.16 adds `history.rs` (M8b decisions 32 and 33: a task's diff and the records of
+//! `history.jsonl`, as journaled ops).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -37,10 +44,13 @@ use super::validate::EditScope;
 
 mod clock;
 mod complete;
+pub(crate) mod deciders;
+mod deciders_size;
 mod dispatch;
 mod done;
 mod fallback;
 mod gates;
+mod history;
 mod holds;
 pub(crate) mod ladder;
 mod merge;
@@ -56,6 +66,7 @@ mod tools;
 pub use crate::headless::TurnOutcome;
 pub(crate) use clock::epoch_spend;
 pub use clock::{BudgetEpoch, TaskClock};
+pub use history::HISTORY_FILE;
 pub use ops::{OpKind, OpResult, OverrideCount, ResolutionAt, ScratchAt};
 pub use signals::INTERRUPT_GRACE_SECS;
 
@@ -138,6 +149,17 @@ pub enum EventKind {
     Tool {
         reply: ReplyId,
         call: ToolCall,
+    },
+    /// M8b decision 25: `run promote`, recorded for milestone 9 to act on.
+    Promote {
+        reply: ReplyId,
+        run_id: String,
+    },
+    /// M8b decision 30: the OTLP ledger's new total for `(run, "orchestrator")`. It
+    /// replaces the one before, on top of the usage restored at the daemon's start.
+    OrchestratorUsage {
+        run_id: String,
+        usage: TokenUsage,
     },
     OpDone {
         run_id: String,
@@ -338,11 +360,26 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             action,
         } => complete::finish(&mut state, reply, &run_id, action, now, &mut fx),
         EventKind::Tool { reply, call } => done::tool(&mut state, reply, call, now, &mut fx),
+        EventKind::Promote { reply, run_id } => {
+            requests::promote(&mut state, reply, &run_id, now, &mut fx)
+        }
         EventKind::BaseAdvanced {
             run_id,
             to,
             commits,
         } => merge::base_advanced(&mut state, &run_id, to, commits, now),
+        EventKind::OrchestratorUsage { run_id, usage } => {
+            // A run that ended keeps the usage it ended with (M8b.15 re-review): a
+            // total that raced its end is dropped.
+            let open = state
+                .runs
+                .get_mut(&run_id)
+                .filter(|r| !r.state.is_terminal());
+            if let Some(run) = open {
+                run.orchestrator_usage = run.orchestrator_base;
+                run.orchestrator_usage += usage;
+            }
+        }
         EventKind::OpDone { run_id, op, result } => {
             op_done(&mut state, &run_id, op, result, now, &mut fx)
         }
@@ -370,6 +407,8 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
     }
     for run in state.runs.values_mut() {
         dispatch::schedule(run, now, &mut fx);
+        // M8b decision 33: the history records that are due, whatever the run's state.
+        history::pass(run, now, &mut fx);
     }
     finish(&mut state, &before, before_revision, fx)
 }
@@ -417,6 +456,9 @@ fn finish(
 fn without_counters(run: &Run) -> Run {
     let mut run = run.clone();
     run.revision = 0;
+    // M8b decision 29: usage from OTLP and run scouts is a counter too.
+    run.orchestrator_usage = Default::default();
+    run.scout_usage = Default::default();
     for task in run.tasks.iter_mut() {
         task.spent_total = Default::default();
     }
@@ -486,6 +528,9 @@ fn op_done(
         (OpKind::CountCommits { .. }, Some(i)) => fallback::counted(run, i, op, result, now, fx),
         (OpKind::DiffSoFar { .. }, Some(i)) => ladder::fresh_diff(run, i, result, now, fx),
         (OpKind::ResumeSession { .. }, Some(i)) => outbox::resumed(run, i, op, result, now, fx),
+        (kind @ OpKind::Decide { .. }, _) => deciders::op_done(run, &kind, result, now, fx),
+        (OpKind::MeasureDiff { .. }, Some(i)) => history::measured(run, i, result, now, fx),
+        (kind @ OpKind::AppendHistory { .. }, _) => history::appended(run, &kind, result, now),
         _ => {}
     }
 }

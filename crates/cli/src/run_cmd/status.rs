@@ -1,6 +1,7 @@
 //! `anthrex run status`'s text (the brief's CLI section) and `run accept`'s moved-base
 //! listing (decision 20). Pure: every function takes the snapshot and returns text.
 
+use daemon::run::triage::{kinds_scale, source_label};
 use proto::{BaseMovedInfo, GateCounts, Route, RunInfo, RunState, Size, TaskInfo, TestMode};
 
 /// Decision 20: the commits a moved-base prompt lists, at most.
@@ -29,6 +30,13 @@ pub fn run_block(run: &RunInfo) -> String {
         (RunState::Paused, Some(from)) => format!("paused (from {})", from.label()),
         (state, _) => state.label().to_string(),
     };
+    // M8b decision 24: ` fast path` after the state.
+    let fast = run.path == Some(proto::RunPath::Fast);
+    let state = if fast {
+        format!("{state} fast path")
+    } else {
+        state
+    };
     let mut out = format!(
         "{}  {}  {}/{} merged  base {}@{}  writers {}/{}  readers {}/{}  rev {}\n",
         run.run_id,
@@ -48,6 +56,22 @@ pub fn run_block(run: &RunInfo) -> String {
         out.push_str(&format!("  halted: {reason}\n"));
     }
     out.push_str(&format!("  goal: {}\n", run.goal));
+    if let Some(t) = &run.triage {
+        let (triage, source) = (kinds_scale(&t.kinds, t.scale), source_label(t.source));
+        // Whole-branch review I1: the fast-path task's test mode, which triage chose.
+        let mode = match run.tasks.first().filter(|_| fast) {
+            Some(task) => format!(
+                "; {} test mode {}{}",
+                task.id,
+                mode_label(task.test_mode),
+                task.test_mode_reason
+                    .as_deref()
+                    .map_or(String::new(), |why| format!(" ({})", one_line(why)))
+            ),
+            None => String::new(),
+        };
+        out.push_str(&format!("  triage: {triage} ({source}){mode}\n"));
+    }
     out.push_str(&format!("  report: {}\n", run.report_path.display()));
     if run.unconfined_checks {
         out.push_str(
@@ -218,3 +242,11 @@ pub fn base_moved_question(base: &str, info: &BaseMovedInfo) -> String {
 #[cfg(test)]
 #[path = "status_tests.rs"]
 pub(super) mod tests;
+
+/// Whole-branch re-review N4: a model-written reason on one status line, with every
+/// control character (a newline, an escape) shown as a space.
+fn one_line(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}

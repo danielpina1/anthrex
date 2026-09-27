@@ -52,6 +52,8 @@ pub enum Step {
     },
     Usage(Usage),
     Hang,
+    /// A Claude `Bash` tool call that honours `PreToolUse` hooks (M8b decision 37).
+    Bash(String),
 }
 
 /// The token usage a turn end reports (the `usage` step).
@@ -209,6 +211,10 @@ fn parse_step(value: Value) -> Result<Step> {
             let ShStep { cmd } = field(object, "sh")?;
             Ok(Step::Sh(cmd))
         }
+        Some("bash") if has_keys(object, &["bash"]) => {
+            let ShStep { cmd } = field(object, "bash")?;
+            Ok(Step::Bash(cmd))
+        }
         Some("capture") if has_keys(object, &["capture"]) => {
             let CaptureStep { name, sh } = field(object, "capture")?;
             Ok(Step::Capture { name, sh })
@@ -319,6 +325,7 @@ mod tests {
             "{\"deny\":{\"tool\":\"Write\",\"reason\":\"no\"}}\n",
             "{\"usage\":{\"input\":1,\"output\":2,\"cache_read\":3,\"cache_write\":4}}\n",
             "{\"hang\":{}}\n",
+            "{\"bash\":{\"cmd\":\"echo hi\"}}\n",
         );
 
         let steps = parse_script(Cursor::new(input)).unwrap();
@@ -362,6 +369,7 @@ mod tests {
                     cache_write: 4,
                 }),
                 Step::Hang,
+                Step::Bash("echo hi".into()),
             ]
         );
     }

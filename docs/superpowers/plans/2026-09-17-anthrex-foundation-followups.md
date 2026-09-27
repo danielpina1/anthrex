@@ -1317,6 +1317,216 @@ scope.
   `orchestrator` hooks) and `lib_tests.rs` 742 (741 on `main`). Left for a config
   change that has a reason to split them.
 
+## From M8b.1 (2026-09-25), for the user and for M8b
+
+- **Scouts' Bash can write their working directory (M8b.9; ruled R-T1-1: the checkout root goes in the scout's `denyWrite`).** With
+  an empty `sandbox.filesystem.allowWrite`, Claude Code 2.1.280 still lets sandboxed
+  Bash write the session's working directory (`touch x` succeeded). Adding the checkout
+  root to `denyWrite` denies it while `ls`, `git log` and the MCP call keep working
+  (fixtures `claude-2.1.280-scout*.jsonl`). M8a's reviewers are covered by `dontAsk`
+  and their scoped `Bash(git …)` rules, not by the sandbox; worth confirming for any
+  future role that allows unscoped Bash.
+- **A worker's Bash does not see M8a's per-task `TMPDIR` (M8a, recorded).** Claude
+  Code's sandbox sets `TMPDIR` to its own `/tmp/claude-<uid>` inside the Bash tool,
+  and that directory is writable to every sandboxed session, scouts and reviewers
+  included. Decision 28's filter log is unaffected (absolute `--log-dir`); anything
+  that relies on `$TMPDIR` inside a worker's commands, or on it being private per task,
+  is not.
+- **A rewritten Bash call shows its original command in the stream (M8b.6).** The
+  assistant `tool_use` keeps the model's command; only the `tool_result` reflects the
+  `PreToolUse` rewrite. Decision 37's `bash` step emits the final command.
+- **Deciders could run with `--tools ""` (M8b.5, optional).** It leaves only
+  `StructuredOutput` in `init.tools` (the decider otherwise sees `SendMessage`,
+  `RemoteTrigger`, `Workflow`, `Skill` and more) and cut cache creation from 17 688 to
+  10 763 tokens; the answer arrived unchanged. The user's `SessionStart` hooks still
+  run. `--restricted` skips them but leaves 18 tools.
+- **The triage decider can use all of `--max-turns 3`.** The model answered in text
+  first, the CLI forced a `StructuredOutput` call, and `num_turns` was 3. M8b.7 should
+  read the fenced text (decision 16's source 3) even when a turn ends early.
+
+## From M8b.7 (2026-09-26), for the user and for M8b
+
+- **An inherited `ANTHROPIC_BASE_URL` reaches every headless session, deciders
+  included (not fixed).** `credential_scrub_for` removes `ANTHROPIC_API_KEY` and
+  `ANTHROPIC_AUTH_TOKEN`, but not `ANTHROPIC_BASE_URL` (or any other `ANTHROPIC_*`
+  endpoint variable). M8b.7's credential test recorded it in a decider's environment,
+  inherited from the shell that ran the tests. A daemon started from such a shell sends
+  every `claude -p` session, with the user's login, to that endpoint. Whether it should
+  be scrubbed (like the keys) or kept (a proxy the user chose) is a policy question for
+  the user; M8a's scrub list is the place.
+
+## From M8b.8's review (2026-09-26), for the user and for M8b
+
+- **filter-run's shell is not quite the Bash tool's shell (residue of review I1).**
+  filter-run now runs `$SHELL -c` for bash and zsh, else `/bin/sh`, but Claude Code's
+  Bash tool also sources its shell snapshot (the user's aliases, functions and options)
+  before each command; a plain `$SHELL -c` does not, and zsh still reads `~/.zshenv`.
+  A test command that relies on an alias or a snapshot-only option behaves differently
+  once wrapped. On Linux, `/bin/sh` (dash) is used whenever `$SHELL` is another shell.
+- **On a Bash-tool timeout a wrapped command shows nothing (review M3).** filter-run
+  prints the view and the log path only after the command exits. A command the tool
+  kills at its timeout (2 minutes by default) would have streamed partial output
+  unwrapped; wrapped, the agent gets no output and no log path. A fix could print the
+  log path first (to stderr) or stream a bounded head.
+- **A background child that keeps the pipe open keeps filter-run waiting (review M6).**
+  `(sleep 3 &); echo done` returns after 3.1 s. Same as the Bash tool itself; recorded.
+- **A scoped `Bash(...)` allowlist entry and the rewrite are unverified (review M4).**
+  Decision 28's safety premise is that the worker's `--allowedTools` already allows the
+  rewritten command. That holds for M8a's default unscoped `Bash`, which M8b.1 probed.
+  A user's scoped `worker_allowed_tools` entry such as `Bash(cargo test:*)` may not
+  match `'<exe>' filter-run …` (or `cd <dir> && '<exe>' filter-run …`), so under
+  `--permission-prompts none` the rewritten call could be denied. Probe it when real-CLI
+  probes are next allowed, or skip the hook when the worker's Bash is scoped.
+
+## From M8b.10's review (2026-09-26), for M8b and M8a
+
+- **A user-immutable flag can still block a removal.** `checkout::remove` now gives the
+  owner read, write and search access back on every real directory inside a checkout
+  before removing it (review I2). It does not clear BSD file flags. A command that sets
+  `chflags uchg` on a file in its checkout would make the removal fail each time. The
+  failure is reported (the error names the salvage ref), not silent. Whether macOS's
+  `(deny default)` profile lets a confined command set the flag is unverified: the
+  grant is a `file-write*` subpath, which may include `file-write-flags`.
+  `profile_verify_leftovers.rs`'s `a_removal_that_fails_after_a_salvage_names_the_ref`
+  shows the failure path with a flag the test sets itself. A fix would clear `uchg`
+  (`chflags(0)` on owner-owned entries, without following links) in
+  `restore_owner_access`, or deny `file-write-flags` in the seatbelt profile.
+- **`restore_owner_access` walks by path.** Each mode change is
+  `fchmodat(AT_SYMLINK_NOFOLLOW)` after an `lstat`, so a link at the leaf is never
+  followed. An intermediate directory swapped for a link between the walk's steps (by a
+  process that escaped the killed group with `setsid`) could still redirect a later
+  step, which would at most add owner `rwx` to a directory the user owns. An
+  `openat`/`fchmodat`-relative walk would close it.
+
+## From M8b.11 (2026-09-26), for M8b
+
+- **Both M8b.11 findings first recorded here were fixed in M8b.11's review round:**
+  the M8b.9 `{"hang": true}` fixtures, and the staleness check at daemon start.
+- **A leftover detection checkout with no trusted project is kept, and only logged (M8b.11
+  re-review C1).** Restore runs no git for it, so it is neither salvaged nor removed.
+  `anthrex profile status` could list such leftovers, and a command could let the user
+  name the project to salvage into, or discard them.
+- **`ProfileService.writes` is one mutex for every project (review m4).** `reject` holds
+  it across `discard_checkout`, which waits on the project's git write queue, so a reject
+  behind a long write in one project delays proposal saves in every project. It is not
+  a deadlock. Per-project mutexes, or dropping the guard before the discard, would fix it.
+
+## From M8b.14's review (2026-09-27), for M8b
+
+- **`run start --goal` replies "detection has started" even when detection failed at once
+  (review m5).** When `ProfileService::detect_or_record`'s start fails immediately, for
+  example on the project-settings refusal or the confinement refusal, the goal still
+  answers `DETECTION_STARTED` (`crates/daemon/src/run/driver/adapt_goal.rs`, `no_profile`).
+  The failure is visible only in `anthrex profile status`. The text is the brief's exact
+  wording (decision 22 step 2), so it is not a defect. A follow-up could append the
+  proposal's `Failed` reason when the restart failed.
+
+## From M8b.15 (2026-09-27), for M8b and M9
+
+- **`TokenUsage`'s `+=` saturates now; `engine/signals.rs`'s field sums do not.** The
+  M8b.15 fix made `proto::TokenUsage`'s `AddAssign` saturate (`fix(proto): saturate
+  TokenUsage addition`). `engine/signals.rs` still adds each field with a plain `u64 +=`
+  (`total.input += usage.input`), which panics on overflow in a debug build and wraps in a
+  release build. The numbers come from a session's own stream, so an overflow needs a
+  session to report tokens near `u64::MAX`. Summing with `TokenUsage`'s `+=` there would
+  cover it. M8b.16's history records should sum with `+=` too.
+- **The OTLP receiver is a small HTTP/1.1 server with no `Expect: 100-continue` support.**
+  Claude Code's exporter (OTel JS 0.208) does not send it (M8b.1 item 5). A client that
+  does would wait `OTLP_READ_TIMEOUT` and be closed. M9 should check this when it
+  launches the orchestrator window with `orchestrator_env`.
+
+## From M8b.15's review (2026-09-27), for M9
+
+- **Orchestrator usage is not authenticated.** The OTLP receiver listens on loopback with
+  no credential, so any local process can post points for a live run and inflate its
+  `orchestrator_usage` (a run id is visible to anyone who can read the run's files or
+  guess it). The M8b.15 fix bounds the damage: only live runs are metered, the engine
+  gets one coalesced total per run per drain, and a restart never lowers the stored
+  usage. Nothing gates on usage, so inflation only makes the numbers shown untrue. M9
+  could give each orchestrator window a per-run token (an `OTEL_EXPORTER_OTLP_HEADERS`
+  bearer value) and drop points whose header does not match the run.
+- **Size the OTLP connection cap from the number of concurrent runs.**
+  `OTLP_MAX_CONNECTIONS` is 8. Each M9 orchestrator keeps one keep-alive connection and
+  exports every second, so it never reaches the 10 s idle close. With 9 or more
+  concurrent runs, the 9th orchestrator waits `OTLP_SLOT_WAIT` (1 s) for a slot and is
+  closed, on every attempt. M9 should derive the cap from the maximum number of
+  concurrent runs, with a margin, when it starts orchestrator windows. Any local process
+  can also hold every slot by reconnecting every 10 s; a per-run token (above) would let
+  the receiver close unauthenticated connections first.
+- **The ledger's series cap is global.** `MAX_SERIES` (4096) bounds every cumulative
+  series across live runs, so a local process posting many cumulative series for one live
+  run can stop new cumulative series of another live run from counting until that run
+  ends and is evicted. Claude Code exports deltas (M8b.1 item 5), which keep no series,
+  so the orchestrator is not affected today. A per-run series cap would close it if M9
+  meets a cumulative exporter.
+
+## From M8b.16's review (2026-09-27), for M8b
+
+- **Phase times are wall-clock, so they include daemon downtime, pauses and the plan-gate
+  wait.** `run/phases.rs::set_state` adds `now - phase_since` to the phase of the state a
+  task leaves. A daemon that is down, a paused run, and the `queued` time of a task
+  re-asserted by `requeue` while the plan awaits approval (`engine/dispatch.rs`) all count.
+  Spec §15 asks for wall-clock per phase, and the inflation only loosens M8b.17's budget
+  refits, so M8b.16 keeps it (controller ruling m5). The fix: at restore
+  (`engine/restore.rs`, next to `clock::stop_at_restore`), close each task's open phase
+  at the task clock's `stopped` time and restart it at `now`; and leave the time a run
+  spends paused, and a task's time before the plan is approved, out of its phases.
+
+## From M8b.17's review (2026-09-27), for M8b and M9.5
+
+- **A revert of a revert does not clear the reverted count.** If the user reverts a task
+  merge (or a run's accept merge) and later reverts that revert, the re-apply's message
+  names the first revert commit, which is no candidate, so `detect_reverts`
+  (`run/history_io.rs`) records nothing and `run/stats.rs` keeps counting the task as
+  reverted. Recording only, so M8b keeps it (controller ruling m3). It matters to M9.5,
+  whose refit uses "merged, unreverted" tasks per class. The fix: treat a revert commit
+  already recorded as a candidate too, and on a revert of it record a `reinstated` line
+  (or drop the revert record's effect) keyed by the original `reverted` sha.
+
+## From M8b.18's review (2026-09-27), for M8b
+
+- **Wider prefix matching wraps more compound commands (review m3).** Since M8b.18 a
+  filter prefix ending in a separator (`sh tests/`) matches the path after it, and
+  M8b.19 cuts a derived prefix back to its last separator when `{test}` is glued to a
+  word (`pytest tests/test_{test}.py` derives `pytest tests/`). Both widen what the
+  hook wraps. A wrapped command runs in filter-run's own `$SHELL -c`, so a compound
+  command that sets Bash-session state (`export X=1; pytest tests/…`, `cd sub && …`
+  beyond the leading `cd` the matcher strips, `source venv/bin/activate && …`) loses
+  that state for the agent's next call, and a trailing `&` leaves a background child
+  holding filter-run's pipe (see M8b.8's review M6), so the call returns only when the
+  child exits. A fix could skip the rewrite when the command contains `;`, `&&` after
+  the matched part, `export`, `source` or a trailing `&`.
+- **Empty per-task TMPDIRs pile up under `/tmp/ax-<uid>/` (review m5).** About 3000
+  empty directories (`/tmp/ax-501/<16 hex>/`, from September 25 to 27) were left by e2e
+  runs on this machine. Each is a task's short `TMPDIR` (`run/git/tmp.rs`'s `task_tmp`, via
+  `role_launch::task_tmp_dir`); the task's checkout and repository directory are removed,
+  but the empty short directory is not. The engine's task cleanup (or the harness's
+  teardown) should remove it once the task's checkout is gone.
+
+## From M8b's whole-branch review (2026-09-27), for M8b, M9 and M9.5
+
+- **A TUI form for the profile (M9).** `anthrex profile edit` is the only editor.
+- **The output filter for Codex workers (M9.5).** Decision 28 wraps Claude workers' Bash through the PreToolUse hook; Codex has no equivalent hook yet.
+- **Pruning `history.jsonl`.** It only grows; readers keep the last line per `record_id`.
+- **Routing and threshold proposals in `run stats` (M9.5).** Stats only reports today.
+- **A leftover scout process after a daemon crash is not killed (decision 11).** Weigh it under the process-kill safety rule: kill only by an exact recorded pid, never by pattern.
+- **`run::git::checkout::default_repo_dir`** (`<parent>/.anthrex/<name>`) is used only by tests' convenience wrappers and should not be reachable from daemon code (a guard or a rename).
+- **The profile fingerprint walk checks a path and then opens it** (M8b.4), a check-then-open race; open with `O_NOFOLLOW` and check the opened handle instead.
+- **Smoke stage 11d's `profile status` timeout** (`scripts/pty_smoke_adapt.py`) uses `RUN_REQUEST_TIMEOUT` (`crates/cli/src/profile_cmd.rs`) without a derivation row in `docs/timing-budgets.md`.
+- **Derived filter prefixes.** `check` can still derive a prefix made only of punctuation (the alphanumeric guard covers only `single_test`), and a `single_test` whose `{test}` is glued inside its first word (`./run_{test}`) derives no prefix, so that command is never filtered.
+
+## From M8b's whole-branch re-review (2026-09-27), for M8a's protected-file gate and M8b
+
+- **Non-ASCII case folding in `ProtectedMatcher` (security, predates M8b).** `run/globs.rs`'s matcher folds case only for ASCII, but the default case-insensitive macOS volume also folds letters such as `ſ` (U+017F) onto `s`. So `owns = ["AGENTſ.md"]` passes the done gate and the file opens as `AGENTS.md` (`.mcp.jſon` likewise). Nothing reaches the base branch before accept, where the change shows, but under a lookalike name. M8b closes it for the fast path only (a non-ASCII `owns` entry leaves the fast path); the gate itself should compare Unicode-case-folded, normalised paths, or refuse non-ASCII protected-lookalike paths, for planned runs too.
+- **`owned_protected` skips its checks when the protected list fails to compile** (`run/triage.rs`), where the done gate refuses. Unreachable today (the list is validated when the run is built); make it refuse.
+- **`{` is not a glob character** in `run/globs.rs`, so `owns = ["{AGENTS.md,x}"]` is not routed to the plan path; the done gate still bounces the change, so the only effect is a failed fast run.
+- **`AmendTask { size: L }` still applies to a fast-path run.** User-initiated, so not a bypass; consider refusing it like `add_task`.
+
+## From M8b's Linux CI audit (2026-09-27), watch items
+
+- **`profile_cli_refusals` "stopping" refusal is timing-dependent.** `crates/cli/tests/profile_cli_refusals.rs:~196` expects the "stopping" refusal right after `reject`, but `detect` runs preflight's git calls before it checks the job. If cleanup wins, the reply differs. It has passed on both CI platforms; if it ever flakes, hold the stopping state deterministically (for example a verification command that hangs until released).
+- **ETXTBSY on freshly written stand-in scripts (Linux).** Tests write a script and the daemon executes it directly (`ANTHREX_DECIDER_BIN`, scout and hook stand-ins). A concurrent fork in another test thread can briefly inherit the write fd. A rename does not help, because ETXTBSY is per inode. If it appears, retry the spawn on ETXTBSY in the test harness, or exec through `/bin/sh <script>`.
+
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
 - **The main pane can switch to a new window while the new-agent form is still open and

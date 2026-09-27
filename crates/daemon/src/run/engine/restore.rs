@@ -56,6 +56,8 @@ pub(super) fn restore(
 ) {
     let mut restored = Vec::new();
     for mut run in runs {
+        // M8b.15 review (I5): the new daemon's OTLP totals add to what was stored.
+        run.orchestrator_base = run.orchestrator_usage;
         let original = run.clone();
         let kept: BTreeSet<OpId> = replay
             .iter()
@@ -90,6 +92,17 @@ fn prepare(run: &mut Run, kept: &BTreeSet<OpId>, now: u64, fx: &mut Vec<Effect>)
     // M8a.14: an accept's or discard's reply belonged to the old daemon.
     run.finish_reply = None;
     if run.state.is_terminal() {
+        // M8b decision 33: an ended run still owes the history lines it had in flight.
+        let history: Vec<PendingOp> = run
+            .pending_ops
+            .values()
+            .filter(|p| !kept.contains(&p.op) && is_history(&p.kind))
+            .cloned()
+            .collect();
+        for pending in history {
+            run.pending_ops.remove(&pending.op);
+            lost(run, pending, now, fx);
+        }
         return;
     }
     // Rulings T15-I2, T15-I3: the downtime is no session time.
@@ -131,6 +144,14 @@ fn prepare(run: &mut Run, kept: &BTreeSet<OpId>, now: u64, fx: &mut Vec<Effect>)
     }
 }
 
+/// M8b decisions 32 and 33: a diff measurement or a history line.
+fn is_history(kind: &OpKind) -> bool {
+    matches!(
+        kind,
+        OpKind::MeasureDiff { .. } | OpKind::AppendHistory { .. }
+    )
+}
+
 /// Decision 44: an op dropped as `NotStarted`, and what its task needs instead.
 fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
     let PendingOp { op, task_id, kind } = pending;
@@ -143,7 +164,9 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
             OpKind::CreateRunBranch { .. }
             | OpKind::PrepareWorktree { .. }
             | OpKind::AbortMerge { .. }
-            | OpKind::RemoveWorktree { .. },
+            | OpKind::RemoveWorktree { .. }
+            | OpKind::MeasureDiff { .. }
+            | OpKind::AppendHistory { .. },
             _,
         ) => {
             let again = next_op(run);
@@ -170,6 +193,21 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
         {
             run.tasks[i].gate_op = None;
         }
+        // M8b decision 18: a dropped decider is queued again under its own id, so the
+        // task waiting for it still names it.
+        (
+            OpKind::Decide {
+                decider_id,
+                task_ids,
+                request,
+            },
+            _,
+        ) => run.decider_queue.push(crate::run::model::QueuedDecider {
+            decider_id: *decider_id,
+            task_ids: task_ids.clone(),
+            request: request.clone(),
+            queued_at: now,
+        }),
         (OpKind::Accept { .. } | OpKind::Discard { .. }, _) => {
             let text = "an accept or discard did not finish before the restart; request it again";
             log(run, now, text);

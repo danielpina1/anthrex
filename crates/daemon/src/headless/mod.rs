@@ -55,6 +55,9 @@ pub struct HeadlessSpec {
     /// checked (Claude, or a Codex CLI that does not load project config).
     #[serde(default)]
     pub codex_config_guard: Option<codex_guard::CodexConfigGuard>,
+    /// Milestone 8b decision 28: a Claude worker's `PreToolUse` output-filter hook.
+    #[serde(default)]
+    pub output_filter: Option<crate::output_filter::FilterHook>,
 }
 
 /// Decision 54's sandbox block. The worktree (the session's cwd) is writable by default;
@@ -74,8 +77,12 @@ pub struct ClaudeSandbox {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpTarget {
     pub role: AgentRole,
+    /// Empty for a repository-level scout (M8b decision 15).
     pub run_id: String,
     pub task_id: Option<String>,
+    /// A scout's id (`--scout`), M8b decision 15.
+    #[serde(default)]
+    pub scout_id: Option<String>,
 }
 
 /// Which session a launch starts or continues.
@@ -139,6 +146,12 @@ pub enum SessionEvent {
         reason: String,
     },
     Compacted,
+    /// A Claude `result` line's `structured_output`: a decider's answer under
+    /// `--json-schema` (M8b decision 16; M8b.1 item 1). Consumers other than the decider
+    /// treat it as `Other`.
+    StructuredOutput {
+        value: serde_json::Value,
+    },
     /// Recognised, nothing to act on (reasoning, thinking, rate-limit info, hook progress).
     Other {
         kind: String,
@@ -215,9 +228,15 @@ pub(crate) fn bounded_text(text: &str) -> String {
 /// (decision 50); `claude -p` would otherwise prefer a key the daemon inherited over the
 /// user's login.
 pub fn credential_scrub(spec: &HeadlessSpec) -> Vec<&'static str> {
+    credential_scrub_for(spec.runtime, spec.claude_auth)
+}
+
+/// [`credential_scrub`] for a runtime and auth without a spec: a decider (M8b decision
+/// 16) passes `(runtime, ClaudeAuth::Login)`, so every API credential is removed.
+pub fn credential_scrub_for(runtime: Runtime, auth: config::ClaudeAuth) -> Vec<&'static str> {
     use config::reserved_env::{API_CREDENTIALS, OPENAI_CREDENTIALS};
     let mut names = OPENAI_CREDENTIALS.to_vec();
-    if !(spec.runtime == Runtime::Claude && spec.claude_auth == config::ClaudeAuth::ApiKey) {
+    if !(runtime == Runtime::Claude && auth == config::ClaudeAuth::ApiKey) {
         names.extend(API_CREDENTIALS);
     }
     names

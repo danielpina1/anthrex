@@ -59,14 +59,15 @@ pub(super) fn parse_done(args: &Value) -> Result<DoneArgs, String> {
     Ok(DoneArgs { summary, test, red })
 }
 
-/// `task_blocked { kind?, reason }`: the kind (default `question`) and the reason.
-pub(super) fn parse_blocked(args: &Value) -> Result<(&'static str, String), String> {
+/// `task_blocked { kind?, reason }`: the kind, `None` when the worker gave none (M8b
+/// decision 21 classifies it; M8a read it as `question`), and the reason.
+pub(super) fn parse_blocked(args: &Value) -> Result<(Option<&'static str>, String), String> {
     let map = object(args, &["kind", "reason"])?;
     let kind = match map.get("kind") {
-        None => "question",
-        Some(Value::String(s)) if s == "question" => "question",
-        Some(Value::String(s)) if s == "mis_sized" => "mis_sized",
-        Some(Value::String(s)) if s == "environment" => "environment",
+        None => None,
+        Some(Value::String(s)) if s == "question" => Some("question"),
+        Some(Value::String(s)) if s == "mis_sized" => Some("mis_sized"),
+        Some(Value::String(s)) if s == "environment" => Some("environment"),
         Some(_) => return Err("kind: must be one of question, mis_sized, environment".into()),
     };
     let reason = text(map, "reason", 4000, true)?.unwrap_or_default();

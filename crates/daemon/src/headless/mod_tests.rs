@@ -111,6 +111,7 @@ fn a_headless_spec_round_trips_through_json() {
             role: AgentRole::Worker,
             run_id: "r-3f9a".into(),
             task_id: Some("t1".into()),
+            scout_id: None,
         }),
         allowed_tools: vec!["Bash".into()],
         claude_permission_mode: Some("acceptEdits".into()),
@@ -126,6 +127,7 @@ fn a_headless_spec_round_trips_through_json() {
         api_key_helper: Some("/bin/key".into()),
         run_ref: None,
         codex_config_guard: None,
+        output_filter: None,
     };
     let json = serde_json::to_value(&spec).unwrap();
     assert_eq!(json["claude_auth"], "api_key");
@@ -154,6 +156,7 @@ fn only_a_claude_api_key_session_keeps_the_api_credentials() {
         api_key_helper: None,
         run_ref: None,
         codex_config_guard: None,
+        output_filter: None,
     };
     let scrub = |runtime, auth| {
         let spec = HeadlessSpec {

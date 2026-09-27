@@ -4,20 +4,26 @@
 //! `complete.rs` and `merge.rs` answer cancel, finish and a halted run's resume;
 //! `restore.rs` (M8a.15) answers restore and a paused run's resume.
 
-use proto::{BlockReason, PlanEdit, RunState, Runtime, Size, TaskState};
+use crate::run::phases::set_state;
+use proto::{
+    BlockReason, DeciderSource, PlanEdit, RunPath, RunState, Runtime, Size, SizeCheckInfo,
+    TaskState,
+};
 
 use super::dispatch::{finishing_as, history, salvage_ref};
 use super::schedule::deps_done;
 use super::signals::end_round;
 use super::{
-    Effect, EngineState, OpKind, OpResult, ReplyId, emit_op, ladder, next_op, outbox, restore,
-    review,
+    Effect, EngineState, OpKind, OpResult, ReplyId, deciders, emit_op, ladder, next_op, outbox,
+    restore, review,
 };
+use crate::decider::fallback::SIZED_BY_TRIAGE;
 use crate::run::edits::{EditConsequence, apply_edits};
 use crate::run::env::profile_env;
-use crate::run::model::{FreshSession, LogEntry, Run};
+use crate::run::model::{FreshSession, LogEntry, Run, SizeCheckState, hh_mm};
 use crate::run::reach::reachable_runtimes;
 use crate::run::roster::escalate;
+use crate::run::triage::fast_refusal;
 use crate::run::validate::EditScope;
 
 /// At most this many log entries per run (Interfaces, `LogEntry`).
@@ -56,7 +62,17 @@ pub(super) fn start(
     if state.runs.contains_key(&run.id) {
         return reply(fx, id, Err(format!("run {} already exists", run.id)));
     }
-    if run.approved_by.as_deref() == Some("--yes") {
+    let fast = run.path == Some(RunPath::Fast);
+    // Review I1: the engine's own barrier. A fast-path run is one task, neither hub nor
+    // L, whatever its caller checked; any other is refused and nothing is created.
+    if let Some(reason) = fast.then(|| fast_refusal(&run)).flatten() {
+        return reply(fx, id, Err(reason));
+    }
+    if fast {
+        // M8b decision 24: a fast-path run has no plan gate.
+        run.state = RunState::Running;
+        log(&mut run, now, "started on the fast path; no plan gate");
+    } else if run.approved_by.as_deref() == Some("--yes") {
         run.state = RunState::Running;
         log(&mut run, now, "started; approved by --yes");
     } else {
@@ -73,6 +89,22 @@ pub(super) fn start(
         env: profile_env(&run.profile, &path),
     };
     emit_op(&mut run, op, None, kind, fx);
+    // M8b decision 19: every task is cross-checked; one waiting is not runnable. The
+    // fast path's task is not: triage sized it a moment earlier (ruling R-T13-1).
+    if fast {
+        for task in &mut run.tasks {
+            task.size_check = Some(SizeCheckState::Done(SizeCheckInfo {
+                engine: task.size,
+                decided: None,
+                agreed: true,
+                reason: SIZED_BY_TRIAGE.into(),
+                source: DeciderSource::Fallback,
+            }));
+        }
+    } else {
+        let ids: Vec<String> = run.tasks.iter().map(|t| t.id().to_string()).collect();
+        deciders::cross_check(&mut run, &ids, now, fx);
+    }
     reply(fx, id, Ok(run.id.clone()));
     state.runs.insert(run.id.clone(), run);
 }
@@ -123,8 +155,55 @@ pub(super) fn approve(
     }
     run.state = RunState::Running;
     run.approved_by = Some("user".to_string());
+    // Task 12 review m7: a decider queued at the gate (a size check) could not start
+    // there; its slot wait counts from now.
+    for q in &mut run.decider_queue {
+        q.queued_at = now;
+    }
     log(run, now, "approved by the user");
     reply(fx, id, Ok(format!("run {run_id} approved")));
+}
+
+/// M8b decision 25: `run promote` records the user's wish on a live fast-path run (not
+/// terminal and not `complete`, review m3).
+/// Nothing else changes: no task, op or window. Milestone 9 performs the promotion.
+pub(super) fn promote(
+    state: &mut EngineState,
+    id: ReplyId,
+    run_id: &str,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
+    let Some(run) = state.runs.get_mut(run_id) else {
+        return reply(fx, id, Err(unknown(run_id)));
+    };
+    if run.path != Some(RunPath::Fast) {
+        return reply(fx, id, Err(format!("run {run_id} is not a fast-path run")));
+    }
+    // Review m3: a `complete` run only waits for accept; nothing is left to promote.
+    if run.state.is_terminal() || run.state == RunState::Complete {
+        return reply(
+            fx,
+            id,
+            Err(format!("run {run_id} is {}", run.state.label())),
+        );
+    }
+    if let Some(at) = run.promote_requested_at {
+        let text = format!(
+            "run {run_id} was already marked for promotion at {}",
+            hh_mm(at)
+        );
+        return reply(fx, id, Ok(text));
+    }
+    run.promote_requested_at = Some(now);
+    log(run, now, "promotion to a planned run requested by the user");
+    reply(
+        fx,
+        id,
+        Ok(format!(
+            "recorded: run {run_id} is marked for promotion to a planned run. Until the orchestrator exists (milestone 9) nothing else changes: the fast-path task continues and the run finishes as a fast-path run."
+        )),
+    );
 }
 
 /// Decision 14: `run reject` discards the run (decision 20): every worktree salvaged and
@@ -158,6 +237,12 @@ pub(super) fn reject(
         })
         .collect();
     worktrees.push((run.integration_path(), salvage_ref(run, "integration", 1)));
+    // Task 12 review m7: a size check queued at the gate never starts beside the
+    // discard (none can be in flight: deciders start only while the run runs).
+    run.decider_queue.clear();
+    for task in &mut run.tasks {
+        task.drop_pending_size_check();
+    }
     let op = next_op(run);
     let kind = OpKind::Discard {
         root: run.root.clone(),
@@ -194,6 +279,15 @@ pub(super) fn edit(
             Err(format!("run {run_id} is {}", run.state.label())),
         );
     }
+    // Whole-branch review m1: a fast-path run runs one task; milestone 9's promotion,
+    // not an edit, turns it into a planned run.
+    let adds = |e: &PlanEdit| matches!(e, PlanEdit::AddTask { .. } | PlanEdit::SplitTask { .. });
+    if run.path == Some(RunPath::Fast) && edits.iter().any(adds) {
+        let text = format!(
+            "run {run_id} is on the fast path: it runs one task; start a planned run instead"
+        );
+        return reply(fx, id, Err(text));
+    }
     if let Err(text) = pause_or_resume_fits(run, edits) {
         return reply(fx, id, Err(text));
     }
@@ -227,6 +321,8 @@ pub(super) fn edit(
         })
         .map(|t| t.id().to_string())
         .collect();
+    // M8b decision 19: the unstarted tasks this batch added or amended.
+    let touched = touched_unstarted(&edited, edits);
     *run = edited;
     for consequence in consequences {
         match consequence {
@@ -248,6 +344,7 @@ pub(super) fn edit(
             EditConsequence::Resume => restore::unpause(run, now, fx),
         }
     }
+    deciders::cross_check(run, &touched, now, fx);
     let n = edits.len();
     log(
         run,
@@ -259,6 +356,31 @@ pub(super) fn edit(
         text.push_str(&super::complete::deferred_note(task));
     }
     reply(fx, id, Ok(text));
+}
+
+/// M8b decision 19's edit side: decision 13's touched set (the tasks the batch added,
+/// split into, amended or gave a dependency), those still pending or queued (none
+/// dispatched), in plan order.
+fn touched_unstarted(edited: &Run, edits: &[PlanEdit]) -> Vec<String> {
+    // Keep in sync with `run::edits::Batch.touched`, which records the same set.
+    let mut touched: Vec<&str> = Vec::new();
+    for edit in edits {
+        match edit {
+            PlanEdit::AddTask { task } => touched.push(&task.id),
+            PlanEdit::SplitTask { into, .. } => touched.extend(into.iter().map(|t| t.id.as_str())),
+            PlanEdit::AmendTask { task_id, .. } | PlanEdit::AddDep { task_id, .. } => {
+                touched.push(task_id)
+            }
+            _ => {}
+        }
+    }
+    edited
+        .tasks
+        .iter()
+        .filter(|t| touched.contains(&t.id()))
+        .filter(|t| matches!(t.state, TaskState::Pending | TaskState::Queued))
+        .map(|t| t.id().to_string())
+        .collect()
 }
 
 fn kill_sessions(run: &mut Run, task_id: &str, fx: &mut Vec<Effect>) {
@@ -358,11 +480,16 @@ pub(super) fn retry(
         end_round(round, now);
     }
     task.failures = 1;
+    // Review I1: an earlier block's classification no longer applies.
+    task.pending_classification = None;
     task.bounces = Default::default();
     task.budget_exceeded = 0;
     task.conflicts = 0;
     task.rung = 2;
-    task.route = route;
+    // M8b decision 33a: the next worker launch records this escalation, its pool
+    // stepping from the route the selector stepped from (a second escalation before
+    // the launch overwrites the first: the intermediate route never ran).
+    task.escalated_from = Some(std::mem::replace(&mut task.route, route));
     // Ruling T15-C1: a new budget epoch; rung 4 counts from the fresh session.
     super::clock::new_epoch(task);
     // `kill_worker`'s `supersede` ended the hand-back context (`handed_back`,
@@ -376,7 +503,7 @@ pub(super) fn retry(
         format!(" (it was blocked({label}): {})", b.text)
     });
     let how = if task.start_commit.is_none() {
-        task.state = TaskState::Queued;
+        set_state(task, TaskState::Queued, now);
         task.block = None;
         task.fresh_session = None;
         "it is dispatched again"
@@ -389,7 +516,7 @@ pub(super) fn retry(
             task.held_answered = true;
             "the run head is merged into its worktree first"
         } else {
-            task.state = TaskState::Working;
+            set_state(task, TaskState::Working, now);
             task.block = None;
             "a fresh session starts"
         }

@@ -93,7 +93,14 @@ impl Fixture {
         Self::with_config(plan_toml, config::Orchestrator::default())
     }
 
-    pub fn with_config(plan_toml: &str, config: config::Orchestrator) -> Self {
+    /// `config` with its deciders off (M8b.12): no M8a test sees a `Decide` op.
+    pub fn with_config(plan_toml: &str, mut config: config::Orchestrator) -> Self {
+        config.deciders.mode = proto::DeciderMode::Off;
+        Self::deciding(plan_toml, config)
+    }
+
+    /// `config` as it is, its deciders included (M8b.12's tests).
+    pub fn deciding(plan_toml: &str, config: config::Orchestrator) -> Self {
         Fixture {
             state: EngineState::default(),
             plan: plan_toml.to_string(),
@@ -125,7 +132,17 @@ impl Fixture {
     }
 
     pub fn start(&mut self, yes: bool) -> Vec<crate::run::engine::Effect> {
-        let run = build(&self.plan, &self.config, yes);
+        self.start_with(yes, |_| {})
+    }
+
+    /// Start, with `edit` applied to the built run first (M8b.13: its evidence).
+    pub fn start_with(
+        &mut self,
+        yes: bool,
+        edit: impl FnOnce(&mut Run),
+    ) -> Vec<crate::run::engine::Effect> {
+        let mut run = build(&self.plan, &self.config, yes);
+        edit(&mut run);
         let reply = self.reply();
         self.next(EventKind::Start {
             reply,
@@ -158,6 +175,20 @@ impl Fixture {
             op,
             result,
         })
+    }
+
+    /// `Decide` op `op` answered with `decision` (M8b.12).
+    pub fn decided(
+        &mut self,
+        op: OpId,
+        decision: crate::decider::Decision,
+    ) -> Vec<crate::run::engine::Effect> {
+        self.done(op, OpResult::Decided(Box::new(decision)))
+    }
+
+    /// The deciders waiting for a reader slot (M8b.12).
+    pub fn queued_deciders(&self) -> Vec<crate::run::model::QueuedDecider> {
+        self.run().decider_queue.clone()
     }
 
     pub fn signal(&mut self, window: u32, signal: AgentSignal) -> Vec<crate::run::engine::Effect> {
@@ -282,6 +313,7 @@ impl Fixture {
                 window_id: window,
                 tool: tool.into(),
                 args,
+                scout_id: None,
             },
         })
     }
@@ -378,6 +410,9 @@ pub fn op_name(kind: &OpKind) -> &'static str {
         OpKind::VerifyRefs { .. } => "VerifyRefs",
         OpKind::Accept { .. } => "Accept",
         OpKind::Discard { .. } => "Discard",
+        OpKind::Decide { .. } => "Decide",
+        OpKind::MeasureDiff { .. } => "MeasureDiff",
+        OpKind::AppendHistory { .. } => "AppendHistory",
     }
 }
 

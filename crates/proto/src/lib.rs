@@ -22,7 +22,14 @@
 /// never seen and cannot decode, plus `HookSource::Stream`, a new variant of an existing
 /// enum a milestone-6.5 peer would also fail to decode. Derivation: `PROTO_VERSION` was 6
 /// at `crates/proto/src/lib.rs:19` before this change (set by M6.5); 6 + 1 = 7.
-pub const PROTO_VERSION: u32 = 7;
+///
+/// Milestone 8b task 2 bumps this to 8: it adds `AgentRole::Scout`, the `RunRequest`
+/// variants `StartGoal`, `Promote`, `Stats` and `Profile`, the `RunReply` variants
+/// `Triaged`, `Profile` and `Stats`, and `ToolCall.scout_id` — new variants a
+/// milestone-8a peer cannot decode. The new snapshot fields are `#[serde(default)]`, so a
+/// milestone-8a `run.json` still loads. Derivation: `PROTO_VERSION` was 7 at
+/// `crates/proto/src/lib.rs:25` before this change (set by M8a task 2); 7 + 1 = 8.
+pub const PROTO_VERSION: u32 = 8;
 
 /// How long the daemon waits for a freshly connected client's `Hello`, and how long a
 /// client waits for the daemon's `Welcome`, before giving up on the handshake. Design
@@ -31,25 +38,41 @@ pub const PROTO_VERSION: u32 = 7;
 /// indefinitely either.
 pub const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+pub mod adapt;
 pub mod codec;
 pub mod conversation;
+pub mod history;
 pub mod messages;
 pub mod paths;
+pub mod profile;
 pub mod run;
 pub mod run_info;
 pub mod run_wire;
+pub mod scout;
 pub mod types;
 
+pub use adapt::{
+    DeciderMode, DeciderSource, DiffStats, PhaseSecs, RunPath, RunUsage, Scale, SizeCheckInfo,
+    TriageInfo,
+};
 pub use codec::{CodecError, MAX_FRAME, decode, encode, read_frame, write_frame};
 pub use conversation::{
     Block, Conversation, DegradeReason, DropCause, NoticeKind, Role, ToolResult, ToolState, Turn,
     TurnPatch, TurnState,
+};
+pub use history::{
+    GateTally, HISTORY_VERSION, HistoryLine, HistoryStats, RevertRecord, RoutingCandidate,
+    RoutingDecision, RoutingInput, RunRecord, SeverityTally, StatsRow, TaskOutcome, TaskRecord,
 };
 pub use messages::{ClientMsg, DaemonMsg, HookSource};
 // Re-exported by name, never by glob (C20): a glob re-export of `run` or `run_wire`
 // could silently shadow an existing root name (for instance `run_wire::request` beside
 // `messages::request`) the next time either module gains a public item, with no
 // compile error to catch it.
+pub use profile::{
+    CommandCheck, DroppedCommand, OutputFilter, ProfileMeta, ProfileSource, ProfileStatus,
+    ProfileVerification, ProposalOrigin, ProposalRecord, ProposalState, RepoProfile,
+};
 pub use run::{
     AgentRole, BlockReason, Budget, DoneSignal, EditFile, Effort, Finding, FinishAction,
     GateCounts, GateKind, ModelEntry, Plan, PlanEdit, PlanTask, ProfileSpec, Route, RouteSpec,
@@ -59,17 +82,22 @@ pub use run_info::{
     AgentRoundInfo, BaseMovedInfo, BlockInfo, CheckInfo, ProofInfo, ReviewInfo, RunInfo,
     RunsSnapshot, Spend, TaskInfo, TokenUsage,
 };
-pub use run_wire::{RunReply, RunRequest, ToolCall};
+pub use run_wire::{ProfileReply, ProfileRequest, RunReply, RunRequest, ToolCall};
+pub use scout::{ScoutFile, ScoutInfo, ScoutKind, ScoutReport, ScoutState};
 pub use types::{
     ClientKind, ExitInfo, GitOperation, GitState, Head, Runtime, Status, SubagentInfo,
     SubagentState, WindowInfo, WindowKind, WindowSpec,
 };
 
 #[cfg(test)]
+#[path = "adapt_tests.rs"]
+mod adapt_tests;
+
+#[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_seven() {
-        assert_eq!(super::PROTO_VERSION, 7);
+    fn proto_version_is_eight() {
+        assert_eq!(super::PROTO_VERSION, 8);
     }
 
     #[test]

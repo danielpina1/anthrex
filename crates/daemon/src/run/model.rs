@@ -24,6 +24,12 @@ use super::engine::OpKind;
 mod rounds;
 pub use rounds::*;
 
+// Milestone 8b's additions (M8b decision 1). M8b.4 adds only `impl Run` items; the
+// structs its later tasks add there are re-exported here with `pub use adapt::*`.
+#[path = "model_adapt.rs"]
+mod adapt;
+pub use adapt::*;
+
 /// How thoroughly a task is reviewed, decision 35: `S` tasks get `Small`, `M` tasks
 /// `Medium`, hub tasks `Frontier`, each possibly raised by the level rule (no `check` in
 /// the profile, or a non-`tdd` task whose `owns` touch `source`).
@@ -146,6 +152,13 @@ pub struct RunLimits {
     /// the run alone.
     #[serde(default)]
     pub api_key_helper: Option<String>,
+    /// M8b decision 18: `[orchestrator.deciders] mode`. Absent from a run recorded
+    /// before milestone 8b: `off`, so a restored run gains no decider.
+    #[serde(default = "adapt::decider_mode_absent")]
+    pub decider_mode: proto::DeciderMode,
+    /// M8b decision 18: `[orchestrator.deciders] slot_wait_secs`.
+    #[serde(default = "adapt::slot_wait_absent")]
+    pub decider_slot_wait_secs: u64,
 }
 
 /// A resolved task: the planner's spec plus everything decisions 8–10 and 35 derive
@@ -264,6 +277,46 @@ pub struct Task {
     pub salvage_refs: Vec<String>,
     pub failure_log: Vec<String>,
     pub history: Vec<TaskEvent>,
+    /// M8b decision 20: a failed check's rung, deferred until its summary is decided.
+    #[serde(default)]
+    pub pending_failure: Option<PendingFailure>,
+    /// M8b decision 21: a free-text `task_blocked` waits for the classification of this
+    /// decider; any other decider's answer, or one after a retry, an override or a
+    /// typed block, is not applied.
+    #[serde(default)]
+    pub pending_classification: Option<u64>,
+    /// M8b decision 21: who classified the block (`None`: the worker typed its kind).
+    #[serde(default)]
+    pub block_source: Option<proto::DeciderSource>,
+    /// M8b decision 18: the usage of the deciders asked about this task alone.
+    #[serde(default)]
+    pub decider_usage: TokenUsage,
+    /// M8b decision 19: the size cross-check; a pending one keeps the task from
+    /// being dispatched.
+    #[serde(default)]
+    pub size_check: Option<SizeCheckState>,
+    /// M8b decision 31: seconds in each state, and when the current one began (0: a
+    /// task from before milestone 8b, whose open state counts nowhere).
+    #[serde(default)]
+    pub phases: proto::PhaseSecs,
+    #[serde(default)]
+    pub phase_since: u64,
+    /// M8b decision 31: the highest rung the task reached.
+    #[serde(default)]
+    pub max_rung: u8,
+    /// M8b decision 32: what the task changed, measured by diff.
+    #[serde(default)]
+    pub diff: Option<proto::DiffStats>,
+    /// M8b decision 33: its `history.jsonl` record was emitted.
+    #[serde(default)]
+    pub history_written: bool,
+    /// M8b decision 33a: every route chosen for a session of this task, in order.
+    #[serde(default)]
+    pub routing_decisions: Vec<proto::RoutingDecision>,
+    /// M8b decision 33a: the route rung 2 or `run retry` escalated from; the next
+    /// worker launch records that escalation and clears it.
+    #[serde(default)]
+    pub escalated_from: Option<Route>,
 }
 
 impl Task {
@@ -377,9 +430,89 @@ pub struct Run {
     /// every Codex session's checkout must match them (`headless::codex_guard`).
     #[serde(default)]
     pub codex_config_base: Vec<crate::headless::codex_guard::GuardEntry>,
+    /// M8b decision 6: where the profile came from; `None` for a run from milestone 8a.
+    #[serde(default)]
+    pub profile_source: Option<proto::ProfileSource>,
+    /// M8b decision 28: a stored profile's filter settings, else the defaults.
+    #[serde(default)]
+    pub output_filter: proto::OutputFilter,
+    #[serde(default)]
+    pub filter_prefixes: Vec<String>,
+    /// M8b decision 4: the repository's data directory (empty: a run from milestone 8a).
+    #[serde(default)]
+    pub repo_dir: PathBuf,
+    /// M8b decision 7: files changed since the stored profile was confirmed.
+    #[serde(default)]
+    pub stale_profile: Vec<String>,
+    /// M8b decision 18: deciders waiting for a reader slot, oldest first.
+    #[serde(default)]
+    pub decider_queue: Vec<QueuedDecider>,
+    #[serde(default)]
+    pub next_decider: u64,
+    /// M8b decision 18: every `Decided`, and those that were fallbacks.
+    #[serde(default)]
+    pub decider_calls: u32,
+    #[serde(default)]
+    pub decider_fallbacks: u32,
+    #[serde(default)]
+    pub decider_usage: TokenUsage,
+    /// M8b decision 19: the ids of the run's scout reports (stored under
+    /// `<data_dir>/scouts/`), the evidence a task's `scout_refs` may name. Empty until
+    /// milestone 9 starts run scouts.
+    #[serde(default)]
+    pub scout_reports: Vec<String>,
+    /// M8b decision 19: the stored profile's onboarding report id (the `scout_refs`
+    /// alias `onboarding`), when the repository has one.
+    #[serde(default)]
+    pub onboarding_report: Option<String>,
+    /// M8b decision 22: `Some(Fast)` for a fast-path run, with what triage decided and
+    /// its usage (decision 29); `None` for a run from a plan file.
+    #[serde(default)]
+    pub path: Option<proto::RunPath>,
+    #[serde(default)]
+    pub triage: Option<proto::TriageInfo>,
+    #[serde(default)]
+    pub triage_usage: TokenUsage,
+    /// M8b decision 29: run scouts' usage (milestone 9 starts them), and the
+    /// orchestrator's, the OTLP ledger's latest total (decision 30).
+    #[serde(default)]
+    pub scout_usage: TokenUsage,
+    #[serde(default)]
+    pub orchestrator_usage: TokenUsage,
+    /// M8b.15 review (I5): the `orchestrator_usage` this daemon restored, which the
+    /// OTLP ledger's totals add to, so a restart never lowers it. Set at restore, never
+    /// stored: the next restore takes the stored usage again.
+    #[serde(skip)]
+    pub orchestrator_base: TokenUsage,
+    /// M8b decision 25: when the user asked to promote this fast-path run (milestone 9
+    /// performs it).
+    #[serde(default)]
+    pub promote_requested_at: Option<u64>,
+    /// M8b decision 33: the run's `run` record of `history.jsonl` was emitted.
+    #[serde(default)]
+    pub run_record_written: bool,
+    /// M8b decision 33a: the stored profile's languages, frozen at start (empty with no
+    /// stored profile), for every routing decision's input.
+    #[serde(default)]
+    pub profile_languages: Vec<String>,
+    /// M8b decision 33: the run was started with history (milestone 8b.16 on). A run
+    /// started before has no phases, diffs or routing decisions, and writes none.
+    #[serde(default)]
+    pub history: bool,
 }
 
 impl Run {
+    /// Whether `self` and `other` store the same `run.json`: equal in everything but
+    /// the fields never stored (`orchestrator_base`, M8b.15 re-review minor 1).
+    pub fn same_on_disk(&self, other: &Run) -> bool {
+        if self.orchestrator_base == other.orchestrator_base {
+            return self == other;
+        }
+        let mut rebased = self.clone();
+        rebased.orchestrator_base = other.orchestrator_base;
+        rebased == *other
+    }
+
     /// `anthrex/<id>/integration`.
     pub fn run_branch(&self) -> String {
         format!("anthrex/{}/integration", self.id)

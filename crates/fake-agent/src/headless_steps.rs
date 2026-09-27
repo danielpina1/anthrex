@@ -60,6 +60,7 @@ impl Runner {
                 Err(id) => return Ok(Outcome::Interrupted(id)),
                 Ok((out, code)) => self.events.command_finished(&cmd, &out.combined, code)?,
             },
+            Step::Bash(cmd) => return self.bash(&cmd),
             Step::Capture { name, sh } => match self.shell(&sh)? {
                 Err(id) => return Ok(Outcome::Interrupted(id)),
                 Ok((out, code)) => {
@@ -129,15 +130,38 @@ impl Runner {
         Ok(Outcome::Done)
     }
 
+    /// The `bash {cmd}` step (M8b decision 37): every `PreToolUse` group for `Bash` may
+    /// rewrite the command, and the final one runs. Ruling R-T1-3: the `tool_use` shows
+    /// the original command, as the real CLI's stream does (M8b.1 item 3); only the
+    /// `tool_result` carries the rewritten run's output.
+    fn bash(&mut self, cmd: &str) -> Result<Outcome> {
+        let ran = crate::bash::rewrite(&self.hooks, cmd, &self.session)?;
+        self.events.command_started(cmd)?;
+        let (out, code) = match self.run_sh(&ran)? {
+            Err(id) => return Ok(Outcome::Interrupted(id)),
+            Ok(done) => done,
+        };
+        self.events.command_finished(cmd, &out.combined, code)?;
+        self.vars.result = out.combined.clone();
+        self.script.save_vars(&self.vars)?;
+        crate::bash::log(cmd, &ran, code, &out.combined)?;
+        Ok(Outcome::Done)
+    }
+
+    /// `/bin/sh -c cmd`, announced as a tool before it runs: see [`Self::run_sh`].
+    fn shell(&mut self, cmd: &str) -> Result<std::result::Result<(ShOutput, i32), String>> {
+        self.events.command_started(cmd)?;
+        self.run_sh(cmd)
+    }
+
     /// `/bin/sh -c cmd` in the cwd with the message and the last result in its
-    /// environment, announced as a tool before it runs. `Err` holds an interrupt's
-    /// request id; the command's process tree is then killed.
+    /// environment. `Err` holds an interrupt's request id; the command's process tree
+    /// is then killed.
     ///
     /// The command stays in the agent's process group (ruling T20-I1), so the daemon's
     /// group kill reaches it. An interrupt, the timeout, or a signal to the agent alone
     /// kills its tree before the agent goes on or dies.
-    fn shell(&mut self, cmd: &str) -> Result<std::result::Result<(ShOutput, i32), String>> {
-        self.events.command_started(cmd)?;
+    fn run_sh(&mut self, cmd: &str) -> Result<std::result::Result<(ShOutput, i32), String>> {
         let mut command = Command::new("/bin/sh");
         command
             .args(["-c", cmd])

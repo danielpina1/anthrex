@@ -168,6 +168,7 @@ pub fn spec(cwd: &Path, run_ref: RunRef) -> HeadlessSpec {
         api_key_helper: None,
         run_ref: Some(run_ref),
         codex_config_guard: None,
+        output_filter: None,
     }
 }
 
@@ -371,6 +372,8 @@ pub fn full_run(data_dir: &Path) -> Run {
         tail: "FAILED".into(),
         secs: 4,
         on_candidate: true,
+        summary: Some("the decider's summary".into()),
+        summary_source: Some(proto::DeciderSource::Decider),
     });
     task.proofs.push(ProofRecord {
         at: 1_260,

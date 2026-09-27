@@ -96,6 +96,11 @@ fn task(
         on_critical_path: false,
         wave: 0,
         history: vec![],
+        decider_usage: None,
+        size_check: None,
+        diff: None,
+        phases: None,
+        block_source: None,
     }
 }
 
@@ -189,6 +194,12 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
         ),
         outcome: None,
         created_at: 100,
+        path: None,
+        triage: None,
+        promote_requested_at: None,
+        profile_source: None,
+        usage: None,
+        scouts: vec![],
     }
 }
 
@@ -340,5 +351,57 @@ fn long_cells_keep_a_space() {
     assert_eq!(
         run_block(&example()),
         EXAMPLE.replacen("2/4 merged", "1/4 merged", 1)
+    );
+}
+
+/// M8b decision 24: a fast-path run shows `fast path` after its state and what triage
+/// decided under its goal; a run from a plan file shows neither.
+#[test]
+fn status_shows_fast_path_and_triage() {
+    let plain = run_block(&example());
+    assert!(!plain.contains("fast path"), "{plain}");
+    assert!(!plain.contains("triage:"), "{plain}");
+    let mut run = example();
+    run.path = Some(proto::RunPath::Fast);
+    run.triage = Some(proto::TriageInfo {
+        kinds: vec![TaskKind::Code],
+        scale: proto::Scale::Single,
+        path: proto::RunPath::Fast,
+        reason: "small".into(),
+        source: proto::DeciderSource::Decider,
+        fallback_reason: None,
+        at: 1,
+    });
+    let text = run_block(&run);
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(
+        lines[0].starts_with("add-reset-3f9a  running fast path  1/4 merged  "),
+        "{text}"
+    );
+    assert_eq!(lines[1], "  goal: Add password reset");
+    // Whole-branch review I1: the test mode triage chose, with its reason.
+    assert_eq!(
+        lines[2],
+        "  triage: code/single (decider); t1 test mode tdd"
+    );
+    run.tasks[0].test_mode = TestMode::Check;
+    run.tasks[0].test_mode_reason = Some("a one-line config fix".into());
+    assert_eq!(
+        run_block(&run).lines().nth(2),
+        Some("  triage: code/single (decider); t1 test mode check (a one-line config fix)")
+    );
+    // Re-review N4: a model-written reason cannot break the line.
+    run.tasks[0].test_mode_reason = Some("one\nline\x1b[2Jfix".into());
+    assert_eq!(
+        run_block(&run).lines().nth(2),
+        Some("  triage: code/single (decider); t1 test mode check (one line [2Jfix)")
+    );
+    // Paused, the path still follows the state.
+    run.state = RunState::Paused;
+    run.paused_from = Some(RunState::Running);
+    let text = run_block(&run);
+    assert!(
+        text.starts_with("add-reset-3f9a  paused (from running) fast path  1/4 merged  "),
+        "{text}"
     );
 }

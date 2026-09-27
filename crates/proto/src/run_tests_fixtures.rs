@@ -153,6 +153,13 @@ pub(super) fn a_task_info() -> TaskInfo {
         on_critical_path: true,
         wave: 2,
         history: vec!["09:14 review round 1 requested changes".into()],
+        // Milestone 8b's fields, unset as in a milestone-8a snapshot; `adapt_tests.rs`
+        // sets each.
+        decider_usage: None,
+        size_check: None,
+        diff: None,
+        phases: None,
+        block_source: None,
     }
 }
 
@@ -198,6 +205,12 @@ pub(super) fn a_run_info() -> RunInfo {
         report_path: PathBuf::from("/tmp/data/runs/run-a1b2/REPORT.md"),
         outcome: None,
         created_at: 1_700_000_000,
+        path: None,
+        triage: None,
+        promote_requested_at: None,
+        profile_source: None,
+        usage: None,
+        scouts: Vec::new(),
     }
 }
 
@@ -209,5 +222,6 @@ pub(super) fn a_tool_call() -> ToolCall {
         window_id: 9,
         tool: "task_done".into(),
         args: serde_json::json!({"summary": "ok"}),
+        scout_id: None,
     }
 }
