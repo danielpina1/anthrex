@@ -41,6 +41,12 @@ mod conversation_follow;
 #[path = "../app_tests/headless.rs"]
 mod headless;
 
+#[path = "../app_tests/runs.rs"]
+mod runs;
+
+#[path = "../app_tests/gate.rs"]
+mod gate;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,
@@ -385,7 +391,7 @@ fn removing_the_focused_window_focuses_the_same_position() {
     let mut app = app_with(project_windows());
     app.focus(1);
     assert!(app.tree.toggle(&tree::NodeKey::Window(1)));
-    let rows = tree::build(&app.windows, &app.tree);
+    let rows = tree::build_with_runs(&app.windows, &app.runs.runs, &app.tree);
     app.tree.select(&rows, tree::NodeKey::Window(1));
 
     let effects = app.on_daemon(DaemonMsg::WindowsChanged {

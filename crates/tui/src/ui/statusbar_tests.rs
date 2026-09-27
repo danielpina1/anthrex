@@ -311,6 +311,22 @@ fn the_toast_is_never_overwritten_by_git() {
     );
 }
 
+/// Review M8c.2 M1: a toast at least `u16::MAX` columns wide renders clipped to the bar
+/// instead of overflowing the width sum.
+#[test]
+fn a_toast_wider_than_u16_renders_clipped() {
+    let mut app = App::new(
+        vec![window(1, Some("/repo".into()))],
+        "/tmp".into(),
+        UiSettings::default(),
+    );
+    app.set_terminal_size(80, 24);
+    app.toast("x".repeat(usize::from(u16::MAX)));
+    let buffer = render_row(&app, 60);
+    let rendered: String = (0..60).map(|x| buffer[(x, 0)].symbol()).collect();
+    assert!(rendered.contains("xxxx"), "{rendered:?}");
+}
+
 /// Task M6.11, decision 34: the persistent `DISCONNECTED` badge and its status text,
 /// for both `Link::Reconnecting` and `Link::Lost`.
 #[test]
@@ -330,4 +346,50 @@ fn statusbar_shows_reconnect_state() {
     let text = row_text(&render_row(&app, 80));
     assert!(text.contains("DISCONNECTED"), "{text:?}");
     assert!(text.contains("C-b r to reconnect"), "{text:?}");
+}
+
+/// M8c.6: the run view's two navigate hints, exact (Interfaces "Status bar and overview
+/// title"), and the overview's block title.
+#[test]
+fn statusbar_shows_the_run_view_hints() {
+    use crate::tree::run_fixtures::{RUN_ID, gate_fixture, three_task_fixture};
+    let open = |(snapshot, windows): (proto::RunsSnapshot, Vec<WindowInfo>)| {
+        let mut app = App::new(windows, "/tmp".into(), UiSettings::default());
+        app.set_terminal_size(80, 24);
+        app.on_daemon(proto::DaemonMsg::Run(proto::RunReply::Snapshot(snapshot)));
+        app.open_run_view(RUN_ID.into());
+        assert!(app.run_view.is_some());
+        app
+    };
+
+    let gate = open(gate_fixture());
+    let text = row_text(&render_row(&gate, 160));
+    assert!(
+        text.contains("a approve  x reject  e edit  d remove  ⏎ open  f filter: all  esc back"),
+        "{text:?}"
+    );
+    assert!(!text.contains("j/k move"), "{text:?}");
+
+    let mut running = open(three_task_fixture());
+    running.on_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('f'),
+        crossterm::event::KeyModifiers::NONE,
+    ));
+    let text = row_text(&render_row(&running, 160));
+    assert!(
+        text.contains(
+            "j/k move  h/l tier  ⏎ open  space fold  f filter: running  / find  esc back"
+        ),
+        "{text:?}"
+    );
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    terminal
+        .draw(|f| {
+            crate::ui::draw(f, &running);
+        })
+        .unwrap();
+    let screen = terminal.backend().to_string();
+    assert!(screen.contains(" run add-reset-3f9a "), "{screen}");
+    assert!(!screen.contains(" tree overview "), "{screen}");
 }

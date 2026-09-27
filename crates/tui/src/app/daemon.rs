@@ -136,8 +136,7 @@ impl App {
                 agent_id,
                 reason,
             } => self.on_conversation_gone(window_id, agent_id, reason),
-            // M8a.2 adds `DaemonMsg::Run`, no run view exists yet to show it to.
-            DaemonMsg::Run(_) => vec![],
+            DaemonMsg::Run(reply) => self.on_run_reply(reply),
         }
     }
 }

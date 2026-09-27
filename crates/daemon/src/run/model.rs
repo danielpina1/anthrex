@@ -499,6 +499,15 @@ pub struct Run {
     /// started before has no phases, diffs or routing decisions, and writes none.
     #[serde(default)]
     pub history: bool,
+    /// M8c: when the plan was approved (the user, `--yes` or the fast path).
+    #[serde(default)]
+    pub approved_at: Option<u64>,
+    /// M8c: accepted plan-edit batches, oldest first, at most `edit_log::PLAN_EDITS_KEPT`.
+    #[serde(default)]
+    pub plan_edits: Vec<super::edit_log::PlanEditRecord>,
+    /// M8c: accepted plan-edit batches since the plan was approved.
+    #[serde(default)]
+    pub plan_edits_since_approval: u32,
 }
 
 impl Run {

@@ -118,7 +118,7 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
     if !matches!(signal, AgentSignal::ApiRetry { .. }) {
         round.in_retry_streak = false;
         if !matches!(round.failed_turn, FailedTurn::WaitingContinue { .. }) {
-            round.rate_limited_until = None;
+            round.set_rate_limited(None, now);
         }
     }
     let worker = round.role == AgentRole::Worker;
@@ -142,7 +142,7 @@ fn apply(run: &mut Run, i: usize, r: usize, signal: AgentSignal, now: u64, fx: &
             }
         }
         AgentSignal::ApiRetry { error, delay_ms } => {
-            round.rate_limited_until = Some(not_before(now, delay_ms.div_ceil(1000)));
+            round.set_rate_limited(Some(not_before(now, delay_ms.div_ceil(1000))), now);
             if error == RATE_LIMIT {
                 round.in_retry_streak = true;
                 if !streak {
@@ -338,7 +338,7 @@ fn failed_turn(
                 at: not_before(now, wait),
                 rate_limit: true,
             };
-            round.rate_limited_until = Some(not_before(now, wait));
+            round.set_rate_limited(Some(not_before(now, wait)), now);
             round.failed_error = Some(error);
         }
         FailureKind::Other => {
@@ -504,7 +504,7 @@ pub(super) fn watch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         {
             let round = &mut run.tasks[i].rounds[r];
             round.failed_turn = FailedTurn::ContinueSent { rate_limit };
-            round.rate_limited_until = None;
+            round.set_rate_limited(None, now);
             let reason = round.failed_error.clone().unwrap_or_default();
             let id = run.tasks[i].id().to_string();
             outbox::queue(run, &id, rate_limit_continue(&reason), now);

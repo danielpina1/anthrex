@@ -18,6 +18,7 @@ use super::{
     restore, review,
 };
 use crate::decider::fallback::SIZED_BY_TRIAGE;
+use crate::run::edit_log;
 use crate::run::edits::{EditConsequence, apply_edits};
 use crate::run::env::profile_env;
 use crate::run::model::{FreshSession, LogEntry, Run, SizeCheckState, hh_mm};
@@ -71,9 +72,11 @@ pub(super) fn start(
     if fast {
         // M8b decision 24: a fast-path run has no plan gate.
         run.state = RunState::Running;
+        run.approved_at = Some(now);
         log(&mut run, now, "started on the fast path; no plan gate");
     } else if run.approved_by.as_deref() == Some("--yes") {
         run.state = RunState::Running;
+        run.approved_at = Some(now);
         log(&mut run, now, "started; approved by --yes");
     } else {
         log(&mut run, now, "started; awaiting approval");
@@ -155,6 +158,7 @@ pub(super) fn approve(
     }
     run.state = RunState::Running;
     run.approved_by = Some("user".to_string());
+    run.approved_at = Some(now);
     // Task 12 review m7: a decider queued at the gate (a size check) could not start
     // there; its slot wait counts from now.
     for q in &mut run.decider_queue {
@@ -345,6 +349,7 @@ pub(super) fn edit(
         }
     }
     deciders::cross_check(run, &touched, now, fx);
+    edit_log::record(run, edits, now);
     let n = edits.len();
     log(
         run,

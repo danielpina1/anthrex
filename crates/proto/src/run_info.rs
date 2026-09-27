@@ -13,10 +13,11 @@ use serde::{Deserialize, Serialize};
 use crate::adapt::{
     DeciderSource, DiffStats, PhaseSecs, RunPath, RunUsage, SizeCheckInfo, TriageInfo,
 };
+use crate::planner::PlannerInfo;
 use crate::profile::ProfileSource;
 use crate::run::{
-    AgentRole, BlockReason, Budget, DoneSignal, GateCounts, Route, RunState, Size, TaskKind,
-    TaskState, TestMode, Verdict,
+    AgentRole, BlockReason, Budget, DoneSignal, GateCounts, Route, RouteSpec, RunState, Size,
+    TaskKind, TaskState, TestMode, Verdict,
 };
 pub use crate::run::{Finding, Severity};
 use crate::scout::ScoutInfo;
@@ -127,6 +128,16 @@ pub struct AgentRoundInfo {
     pub open_subagents: u32,
     pub denials: u32,
     pub usage: TokenUsage,
+    // Milestone 8c: unix seconds, formatted by the client.
+    /// When the current rate limit began; `None` while not rate-limited.
+    #[serde(default)]
+    pub rate_limited_since: Option<u64>,
+    /// The model's value: the round counts as rate-limited while it is in the future.
+    #[serde(default)]
+    pub rate_limited_until: Option<u64>,
+    /// When a failed gate sent this worker session back (rung 1), oldest first.
+    #[serde(default)]
+    pub sent_back_at: Vec<u64>,
 }
 
 /// One task's full state, as shown to a client.
@@ -175,8 +186,9 @@ pub struct TaskInfo {
     pub salvage_refs: Vec<String>,
     pub on_critical_path: bool,
     pub wave: u32,
-    /// The last 10 events, newest first, each `"<hh:mm> <text>"`.
-    pub history: Vec<String>,
+    /// The last 10 events, newest first (milestone 8c: raw times, was `"<hh:mm> <text>"`).
+    #[serde(default)]
+    pub history: Vec<TaskEventInfo>,
     // Milestone 8b.
     #[serde(default)]
     pub decider_usage: Option<TokenUsage>,
@@ -188,6 +200,28 @@ pub struct TaskInfo {
     pub phases: Option<PhaseSecs>,
     #[serde(default)]
     pub block_source: Option<DeciderSource>,
+    // Milestone 8c: the plan's own brief, acceptance and unresolved route (its `None`s
+    // mean "policy"), for the plan gate's edit form.
+    #[serde(default)]
+    pub brief: String,
+    #[serde(default)]
+    pub acceptance: Vec<String>,
+    #[serde(default)]
+    pub route_spec: RouteSpec,
+}
+
+/// One task event (milestone 8c): its unix time and text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskEventInfo {
+    pub at: u64,
+    pub text: String,
+}
+
+/// One accepted plan-edit batch (milestone 8c): its unix time and what it did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanEditInfo {
+    pub at: u64,
+    pub text: String,
 }
 
 /// The base branch has moved under a run (decision 21): not a halt on its own, but
@@ -213,7 +247,7 @@ pub struct RunInfo {
     pub state: RunState,
     pub paused_from: Option<RunState>,
     pub halted_reason: Option<String>,
-    /// `"user"` or `"--yes"`.
+    /// `"user"`, `"--yes"` or `"fast path"`.
     pub approved_by: Option<String>,
     pub base_branch: String,
     pub base_sha: String,
@@ -257,6 +291,22 @@ pub struct RunInfo {
     pub usage: Option<RunUsage>,
     #[serde(default)]
     pub scouts: Vec<ScoutInfo>,
+    // Milestone 8c.
+    /// Unix seconds; when the plan was approved (by the user, `--yes` or the fast path).
+    #[serde(default)]
+    pub approved_at: Option<u64>,
+    /// Accepted plan edits, newest first, at most 10.
+    #[serde(default)]
+    pub plan_edits: Vec<PlanEditInfo>,
+    #[serde(default)]
+    pub plan_edits_since_approval: u32,
+    // Placeholders: milestone 9 fills `planners`, milestone 9.5 the two estimates.
+    #[serde(default)]
+    pub planners: Vec<PlannerInfo>,
+    #[serde(default)]
+    pub estimate_left_secs: Option<u64>,
+    #[serde(default)]
+    pub bound_ratio_permille: Option<u32>,
 }
 
 /// Every run the daemon knows about, at one revision.
@@ -264,4 +314,7 @@ pub struct RunInfo {
 pub struct RunsSnapshot {
     pub revision: u64,
     pub runs: Vec<RunInfo>,
+    /// Milestone 8c: the daemon's unix seconds at publication, the clients' time base.
+    #[serde(default)]
+    pub now: u64,
 }

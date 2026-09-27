@@ -14,6 +14,7 @@ use ratatui::text::Line;
 
 #[path = "tests/edges.rs"]
 mod edges;
+mod runs;
 
 fn window(id: u32, project: &str, name: &str, status: Status) -> WindowInfo {
     WindowInfo {

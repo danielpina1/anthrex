@@ -16,6 +16,18 @@ mod mouse;
 #[path = "overview/inspector.rs"]
 mod inspector;
 
+#[path = "overview/runs.rs"]
+mod run_view;
+
+#[path = "overview/run_enter.rs"]
+mod run_enter;
+
+#[path = "overview/run_view_rows.rs"]
+mod run_view_rows;
+
+#[path = "overview/run_inspector.rs"]
+mod run_inspector;
+
 fn toggle(app: &mut App) -> Vec<Effect> {
     prefix(app);
     press(app, KeyCode::Char('T'), KeyModifiers::NONE)
@@ -59,7 +71,7 @@ fn assert_closed(app: &App) {
 }
 
 fn select(app: &mut App, key: NodeKey) {
-    let rows = tree::build(&app.windows, &app.tree);
+    let rows = tree::build_with_runs(&app.windows, &app.runs.runs, &app.tree);
     app.tree.select(&rows, key);
     app.reveal_tree_anchor();
 }

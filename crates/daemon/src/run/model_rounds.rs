@@ -130,6 +130,26 @@ pub struct AgentRound {
     /// process starts.
     #[serde(default)]
     pub exited_pid: Option<u32>,
+    /// M8c: when the current rate limit began; kept by [`AgentRound::set_rate_limited`].
+    #[serde(default)]
+    pub rate_limited_since: Option<u64>,
+    /// M8c: when a failed gate sent this session back (rung 1), oldest first.
+    #[serde(default)]
+    pub sent_back_at: Vec<u64>,
+}
+
+impl AgentRound {
+    /// Sets `rate_limited_until` and keeps `rate_limited_since` with it (M8c decision
+    /// 4): `now` when a limit begins, unchanged while one lasts, `None` once cleared.
+    /// Every assignment to `rate_limited_until` in the engine goes through here.
+    pub fn set_rate_limited(&mut self, until: Option<u64>, now: u64) {
+        self.rate_limited_since = match (until, self.rate_limited_until) {
+            (None, _) => None,
+            (Some(_), None) => Some(now),
+            (Some(_), Some(_)) => self.rate_limited_since.or(Some(now)),
+        };
+        self.rate_limited_until = until;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

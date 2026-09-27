@@ -33,11 +33,11 @@ mod tests;
 
 /// The label column's width, the milestone brief's `### Rendering:` section's "labels 11
 /// columns" — prose, not a numbered design decision.
-const LABEL_WIDTH: usize = 11;
+pub(crate) const LABEL_WIDTH: usize = 11;
 /// `"› "` or `"  "` ahead of the label.
-const MARKER_WIDTH: usize = 2;
+pub(crate) const MARKER_WIDTH: usize = 2;
 
-fn centered(area: Rect, width: u16, height: u16) -> Rect {
+pub(crate) fn centered(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(area.width);
     let height = height.min(area.height);
     Rect {

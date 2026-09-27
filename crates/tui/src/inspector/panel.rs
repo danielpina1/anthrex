@@ -5,7 +5,7 @@
 //! draws it was handed, which is what lets it be asserted by exact rendered
 //! strings the way the graph's painter is (decision 13).
 
-use super::{Field, Inspection};
+use super::{Field, FieldLayout, Inspection};
 use crate::theme;
 use crate::ui::tree_view::{cut, truncate};
 use ratatui::Frame;
@@ -22,7 +22,7 @@ const LABEL_GAP: usize = 2;
 const GUTTER: usize = 2;
 
 /// Lays an `Inspection` into a rounded panel: the title row, then the fields in
-/// columns below it.
+/// columns below it, or one per row for a run-view node (`inspection.layout`).
 pub fn render(frame: &mut Frame, inspection: &Inspection, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
@@ -36,11 +36,13 @@ pub fn render(frame: &mut Frame, inspection: &Inspection, area: Rect) {
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    let lines = lines(
-        inspection,
-        usize::from(inner.width),
-        usize::from(inner.height),
-    );
+    let (width, height) = (usize::from(inner.width), usize::from(inner.height));
+    // Milestone 8c decision 29: a run-view node is one field per row; every other
+    // node keeps milestone 4.7's columns.
+    let lines = match inspection.layout {
+        FieldLayout::Columns => lines(inspection, width, height),
+        FieldLayout::Rows => rows::lines(inspection, width, height),
+    };
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -339,6 +341,8 @@ fn pad(text: &str, width: usize) -> String {
     let used = UnicodeWidthStr::width(text);
     format!("{text}{}", " ".repeat(width.saturating_sub(used)))
 }
+
+mod rows;
 
 #[cfg(test)]
 mod tests;

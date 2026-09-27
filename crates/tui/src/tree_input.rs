@@ -1,6 +1,6 @@
 //! Pure tree-mode state transitions and input handling.
 
-use crate::app::{App, Effect, TreeInput};
+use crate::app::{App, Effect, TreeInput, nav_rows_of};
 use crate::keymap::Command;
 use crate::tree::{self, NodeKey};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -9,7 +9,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 impl App {
     pub fn rows(&self) -> Vec<tree::Row<'_>> {
-        tree::build(&self.windows, &self.tree)
+        tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree)
     }
 
     pub fn set_tree_viewports(&mut self, sidebar_rows: u16, overview_rows: u16) {
@@ -25,7 +25,20 @@ impl App {
     /// The renderer calls this with the overview's own area after every draw,
     /// the way `set_tree_viewports` reports the list heights.
     pub fn set_graph_viewport(&mut self, main: Rect) {
-        let (canvas, _) = crate::ui::overview::areas(main, self.inspector_visible);
+        self.graph_main = Some(main);
+        self.settle_graph_viewport();
+    }
+
+    /// Re-splits the last frame's overview area. The split is the frame's own, the run
+    /// view's tall panel included, or the reveal would aim at a viewport the frame
+    /// does not have; opening and leaving the run view call it at once, so the keys
+    /// that follow before the next frame reveal into the right canvas.
+    pub(crate) fn settle_graph_viewport(&mut self) {
+        let Some(main) = self.graph_main else {
+            return;
+        };
+        let (canvas, _) =
+            crate::ui::overview::areas(main, self.inspector_visible, self.run_view.is_some());
         if self.graph_area != canvas {
             self.graph_area = canvas;
             self.reveal_graph_selection();
@@ -72,7 +85,7 @@ impl App {
         if !self.overview || self.graph_area.is_empty() {
             return;
         }
-        let layout = crate::graph::layout(&self.rows());
+        let layout = crate::graph::layout(&self.nav_rows());
         let selected = self
             .tree
             .selected
@@ -90,7 +103,7 @@ impl App {
         self.enter_tree_navigation();
     }
 
-    fn enter_overview(&mut self) {
+    pub(crate) fn enter_overview(&mut self) {
         self.overview = true;
         self.enter_tree_navigation();
     }
@@ -99,7 +112,7 @@ impl App {
         self.tree_input = Some(TreeInput::Navigate);
         self.keymap.set_tree_mode(true);
 
-        let rows = tree::build(&self.windows, &self.tree);
+        let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
         let selected = self
             .focused
             .map(NodeKey::Window)
@@ -114,6 +127,7 @@ impl App {
 
     pub fn exit_tree(&mut self) {
         self.tree_input = None;
+        self.run_view = None;
         self.keymap.set_tree_mode(false);
         self.tree.selected = None;
         self.tree.filter.clear();
@@ -161,16 +175,27 @@ impl App {
             self.on_filter_key(key);
             return vec![];
         }
+        if let Some(effects) = self.on_run_view_key(key) {
+            return effects;
+        }
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => self.move_tree_selection(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_tree_selection(-1),
             KeyCode::Char('h') | KeyCode::Left => self.select_tree_parent(),
-            KeyCode::Char('l') | KeyCode::Right => self.select_first_visible_child(),
+            // Milestone 8c decision 22: `l` on a run's node in the project overview
+            // opens the run view, the same as Enter.
+            KeyCode::Char('l') | KeyCode::Right => match self.project_run_selected() {
+                Some(id) if self.overview => self.open_run_view(id),
+                _ => self.select_first_visible_child(),
+            },
             KeyCode::Enter => {
                 if let Some(selected) = self.tree.selected.clone() {
                     return self.activate_tree_node(selected);
                 }
             }
+            // Decision 22 (Risks 2): a run's node in the project tree is a leaf, and it
+            // shares its key with the run view's root, which never folds (review m1).
+            KeyCode::Char(' ') if matches!(self.tree.selected, Some(NodeKey::Run(_))) => {}
             KeyCode::Char(' ') => {
                 if let Some(selected) = self.tree.selected.clone() {
                     self.toggle_tree_node(&selected);
@@ -197,16 +222,44 @@ impl App {
                 self.toggle_tree_node(&key);
                 vec![]
             }
+            // Milestone 8c decisions 24 and 26: a headless window, and any sub-agent in
+            // the run view (whose rows hold no `Window`), open the owning window's
+            // conversation; only a PTY window is focused.
+            NodeKey::Window(id) if self.is_headless(id) => self.open_conversation(id),
+            NodeKey::Subagent { window_id: id, .. }
+                if self.is_headless(id) || self.run_view.is_some() =>
+            {
+                self.open_conversation(id)
+            }
             NodeKey::Window(id) | NodeKey::Subagent { window_id: id, .. } => {
                 let effects = self.focus(id);
                 self.exit_tree();
                 effects
             }
+            key @ (NodeKey::Run(_)
+            | NodeKey::Planner { .. }
+            | NodeKey::Scout { .. }
+            | NodeKey::Task { .. }
+            | NodeKey::AgentRound { .. }) => self.activate_run_node(key),
+        }
+    }
+
+    /// The selected run's id while the selection is a project tree's `Run` node (not
+    /// the run view's root, which has the same key).
+    fn project_run_selected(&self) -> Option<String> {
+        match &self.tree.selected {
+            Some(NodeKey::Run(id)) if self.run_view.is_none() => Some(id.clone()),
+            _ => None,
         }
     }
 
     fn move_tree_selection(&mut self, delta: isize) {
-        let rows = tree::build(&self.windows, &self.tree);
+        let rows = nav_rows_of(
+            &self.windows,
+            &self.runs.runs,
+            &self.tree,
+            self.run_view.as_ref(),
+        );
         self.tree.move_selection(&rows, delta);
         self.reveal_tree_anchor();
     }
@@ -215,7 +268,12 @@ impl App {
     /// in the visible pre-order list. A no-op at a root, which has no
     /// shallower row before it (decision 17).
     fn select_tree_parent(&mut self) {
-        let rows = tree::build(&self.windows, &self.tree);
+        let rows = nav_rows_of(
+            &self.windows,
+            &self.runs.runs,
+            &self.tree,
+            self.run_view.as_ref(),
+        );
         let Some(index) = self.tree.selected_index(&rows) else {
             return;
         };
@@ -234,7 +292,12 @@ impl App {
     /// leaf, whether it has no children or is collapsed — either way the next
     /// row is not a child (decision 17, decision 7).
     fn select_first_visible_child(&mut self) {
-        let rows = tree::build(&self.windows, &self.tree);
+        let rows = nav_rows_of(
+            &self.windows,
+            &self.runs.runs,
+            &self.tree,
+            self.run_view.as_ref(),
+        );
         let Some(index) = self.tree.selected_index(&rows) else {
             return;
         };
@@ -249,7 +312,12 @@ impl App {
 
     pub(crate) fn toggle_tree_node(&mut self, key: &NodeKey) {
         if self.tree.toggle(key) {
-            let rows = tree::build(&self.windows, &self.tree);
+            let rows = nav_rows_of(
+                &self.windows,
+                &self.runs.runs,
+                &self.tree,
+                self.run_view.as_ref(),
+            );
             self.tree.repair_selection(&rows);
             self.reveal_tree_anchor();
         }
@@ -284,7 +352,12 @@ impl App {
     }
 
     fn repair_filtered_selection(&mut self) {
-        let rows = tree::build(&self.windows, &self.tree);
+        let rows = nav_rows_of(
+            &self.windows,
+            &self.runs.runs,
+            &self.tree,
+            self.run_view.as_ref(),
+        );
         if self.tree.selected_index(&rows).is_none() {
             let first = rows
                 .iter()

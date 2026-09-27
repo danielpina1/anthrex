@@ -23,6 +23,21 @@ impl App {
         effects
     }
 
+    /// Milestone 8c decision 25: opens the view on a listed window without focusing it,
+    /// so `focused`, the overview and the run view stay as they were and closing the
+    /// view lands back on the same node. M6.5's `follow_focus` still moves it when focus
+    /// changes, as it does any conversation.
+    pub(crate) fn open_conversation(&mut self, window_id: u32) -> Vec<Effect> {
+        if !self.windows.iter().any(|w| w.id == window_id) {
+            self.toast(format!("window #{window_id} is not listed yet"));
+            return vec![];
+        }
+        self.conversation_follow = None;
+        let effects = self.conversation.open(window_id);
+        self.sync_conversation_mode();
+        effects
+    }
+
     pub(super) fn on_conversation_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         let effects = self.conversation.on_key(key);
         self.sync_conversation_mode();

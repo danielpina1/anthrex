@@ -426,6 +426,7 @@ fn every_new_request_and_reply_round_trips() {
     let msg = DaemonMsg::Run(RunReply::Snapshot(RunsSnapshot {
         revision: 1,
         runs: vec![run],
+        now: 0,
     }));
     let packed = rmp_serde::to_vec_named(&msg).unwrap();
     assert_eq!(rmp_serde::from_slice::<DaemonMsg>(&packed).unwrap(), msg);

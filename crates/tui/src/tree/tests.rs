@@ -258,7 +258,7 @@ fn positions_follow_visible_order() {
         .iter()
         .filter_map(|row| match &row.kind {
             RowKind::Window { position, .. } => Some(*position),
-            RowKind::Project { .. } | RowKind::Subagent { .. } => None,
+            _ => None,
         })
         .collect();
 
@@ -307,7 +307,7 @@ fn projects_sort_by_urgency_then_name() {
         .iter()
         .filter_map(|row| match &row.kind {
             RowKind::Project { name, .. } => Some(name.as_str()),
-            RowKind::Window { .. } | RowKind::Subagent { .. } => None,
+            _ => None,
         })
         .collect();
 
@@ -560,3 +560,7 @@ fn node_keys_are_hashable_path_owners() {
     assert!(set.contains(&key));
 }
 mod state;
+
+pub(crate) mod run_fixtures;
+mod run_rows;
+mod runs;
