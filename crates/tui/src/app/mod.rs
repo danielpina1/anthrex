@@ -180,6 +180,10 @@ pub struct App {
     /// `Subscribe` is retried (by `on_tick`, or by a later `focus` call) instead of
     /// being masked forever by "we're already focused there."
     subscribed: Option<u32>,
+    pub runs: proto::RunsSnapshot,
+    runs_received_at: Instant,
+    /// Decision 1: `false` only while a refused `Run(Subscribe)` waits for `on_tick`.
+    run_subscribed: bool,
 }
 
 impl App {
@@ -223,6 +227,9 @@ impl App {
             pending_resize: None,
             pending_focus: None,
             subscribed: None,
+            runs: runs::no_runs(),
+            runs_received_at: Instant::now(),
+            run_subscribed: true,
             settings,
         }
     }
@@ -504,8 +511,9 @@ impl App {
         // Decision 36: the third of the three ways `C-b Q`'s wait can end — nothing
         // arrived at all within `link::STOPPING_TIMEOUT`.
         self.check_stopping_timeout();
-        if let Some(effect) = self.retry_dropped_subscribe() {
-            return vec![effect];
+        let retries = self.retry_dropped_subscribes();
+        if !retries.is_empty() {
+            return retries;
         }
         if self
             .pending_resize
@@ -531,6 +539,7 @@ mod lifecycle;
 mod link;
 mod modal_keys;
 pub(crate) mod prompt;
+mod runs;
 mod windows;
 
 #[cfg(test)]

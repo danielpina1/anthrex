@@ -24,7 +24,7 @@
 //! already ends here, not split across two files.
 
 use super::{App, Effect, Modal, PendingAction};
-use proto::{ClientMsg, WindowInfo};
+use proto::{ClientMsg, RunRequest, WindowInfo};
 use std::time::{Duration, Instant};
 
 /// Decision 36's timeout, moved here from `app/lifecycle.rs` alongside
@@ -214,6 +214,8 @@ impl App {
         // again. After `replace_windows`, so a view that followed focus to another window
         // (review M3) subscribes that window, once.
         effects.extend(self.conversation.relink());
+        // Decision 1: the new connection has no run subscription yet.
+        effects.push(self.run_subscription());
         effects
     }
 
@@ -238,6 +240,8 @@ impl App {
                     self.subscribed = None;
                 }
             }
+            // Decision 1: quiet, like `Subscribe`; `on_tick` sends it again.
+            ClientMsg::Run(RunRequest::Subscribe) => self.run_subscribed = false,
             // A dropped keystroke is not worth a toast; the next one will try again.
             ClientMsg::Input { .. } => {}
             _ => {

@@ -41,6 +41,9 @@ mod conversation_follow;
 #[path = "../app_tests/headless.rs"]
 mod headless;
 
+#[path = "../app_tests/runs.rs"]
+mod runs;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,
