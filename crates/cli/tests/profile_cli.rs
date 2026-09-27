@@ -158,8 +158,10 @@ fn e2e_detect_proposes_only_verified_commands() {
         shown.contains("# protected: built-in ") && shown.contains(" + .cursor/**\n"),
         "{shown}"
     );
+    // `sh missing.sh` exits 127 under bash (macOS's `sh`) and 2 under dash (Linux's).
     assert!(
-        shown.contains("# dropped\n#   setup: exit 127 after "),
+        shown.contains("# dropped\n#   setup: exit 127 after ")
+            || shown.contains("# dropped\n#   setup: exit 2 after "),
         "{shown}"
     );
     assert!(shown.contains(": sh missing.sh\n"), "{shown}");

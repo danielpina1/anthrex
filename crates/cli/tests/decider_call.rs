@@ -164,7 +164,12 @@ fn mode_off_never_spawns() {
     let program = fx.root().join("marker.sh");
     write_executable(
         &program,
-        &format!("#!/bin/sh\necho spawned >> '{}'\n", marker.display()),
+        // It reads its whole prompt before exiting, so the call always sees a program
+        // that exited without answering, never one that closed stdin mid-prompt.
+        &format!(
+            "#!/bin/sh\ncat > /dev/null\necho spawned >> '{}'\n",
+            marker.display()
+        ),
     );
     let program_text = program.to_string_lossy().into_owned();
     let var = |key: &str| (key == "ANTHREX_DECIDER_BIN").then(|| program_text.clone());
