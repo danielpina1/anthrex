@@ -273,3 +273,75 @@ fn multi_edit_counts_hunks_not_edits_of_one() {
         "only.rs — 1 hunk"
     );
 }
+
+/// M8c.11: a tool's object response whose one text field says what happened (Codex's
+/// synthesised `{"output": …}` or `{"error": …}`, Claude's own `{"stdout": …}`) is
+/// summarised by that text; anything else falls back to the compact JSON.
+#[test]
+fn an_object_response_summarises_its_text_field() {
+    let commit = "[task-b 9d0ec2a] add a\nmore";
+    assert_eq!(response_text(&json!({"output": commit})), Some(commit));
+    assert_eq!(
+        response_text(&json!({"error": "exit 1: no such file"})),
+        Some("exit 1: no such file")
+    );
+    assert_eq!(
+        response_text(&json!({"stdout": "README.md", "stderr": ""})),
+        Some("README.md")
+    );
+    // Claude's real Bash response carries more than text; only the text fields count.
+    assert_eq!(
+        response_text(&json!({
+            "stdout": "README.md", "stderr": "", "interrupted": false, "isImage": false
+        })),
+        Some("README.md")
+    );
+    // An empty text field beside the one that is not empty does not count.
+    assert_eq!(
+        response_text(&json!({"output": "", "error": "boom"})),
+        Some("boom")
+    );
+
+    // Two non-empty text fields: which one is the summary is not clear.
+    for two in [
+        json!({"output": "a", "error": "b"}),
+        json!({"output": "a", "stdout": "b"}),
+        json!({"error": "a", "stdout": "b"}),
+    ] {
+        assert_eq!(response_text(&two), None, "{two}");
+    }
+    // None at all, or only empty ones.
+    for none in [
+        json!({}),
+        json!({"stderr": "only stderr"}),
+        json!({"output": ""}),
+        json!({"stdout": "", "stderr": "warning"}),
+    ] {
+        assert_eq!(response_text(&none), None, "{none}");
+    }
+    // A text field that is not a string.
+    for not_string in [
+        json!({"output": 5}),
+        json!({"error": {"message": "boom"}}),
+        json!({"stdout": ["a"]}),
+        json!({"output": true}),
+        json!({"output": "fine", "error": {"code": 2}}),
+    ] {
+        assert_eq!(response_text(&not_string), None, "{not_string}");
+    }
+    // Not an object.
+    for other in [json!("text"), json!(["a"]), json!(null), json!(3)] {
+        assert_eq!(response_text(&other), None, "{other}");
+    }
+}
+
+/// A `null` field is an absent one: Claude's hooks may carry `"error": null` beside the
+/// text, which `build::response_is_ok` already reads as no error.
+#[test]
+fn a_null_text_field_is_absent() {
+    assert_eq!(
+        response_text(&json!({"stdout": "ok", "error": null})),
+        Some("ok")
+    );
+    assert_eq!(response_text(&json!({"output": null})), None);
+}

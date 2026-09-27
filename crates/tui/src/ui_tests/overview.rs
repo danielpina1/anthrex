@@ -132,3 +132,57 @@ fn overview_handles_zero_and_one_cell_areas() {
         }
     }
 }
+
+/// The run view's single line (M8c.5, replaced in M8c.8): the canvas's own live glyph,
+/// in its colour, then the inspector's name and, after two spaces, its right-hand text,
+/// for a task and for one of its rounds. M8c.5's version showed the canvas text and
+/// no right-hand text; M8c.8's `the_single_line_for_a_task` pins the Gemini task.
+#[test]
+fn the_run_views_single_line_is_the_live_glyph_the_name_and_the_right_text() {
+    use crate::tree::run_fixtures::{RUN_ID, three_task_fixture};
+    use crate::tree::{NodeKey, RunFilter, run_rows};
+    let (snapshot, windows) = three_task_fixture();
+    let mut app = App::new(windows, "/tmp".into(), UiSettings::default());
+    app.on_daemon(proto::DaemonMsg::Run(proto::RunReply::Snapshot(snapshot)));
+    let rows = run_rows(&app.runs.runs[0], &app.windows, &app.tree, RunFilter::All);
+    let line = |key: NodeKey| {
+        let row = rows
+            .iter()
+            .find(|row| row.key == key)
+            .unwrap_or_else(|| panic!("{key:?} is a row"));
+        let (glyph, label, right) = super::overview::footer_parts(row, &app);
+        let canvas = crate::graph::paint::style::node_glyph(row, &app);
+        assert_eq!(
+            (glyph.content.as_ref(), glyph.style.fg),
+            (canvas.0, Some(canvas.1)),
+            "the canvas's own glyph and colour"
+        );
+        (glyph.content.into_owned(), glyph.style.fg, label, right)
+    };
+    let live = Some(crate::theme::status_color(Status::Working));
+    let task = NodeKey::Task {
+        run: RUN_ID.into(),
+        id: "t1".into(),
+    };
+    assert_eq!(
+        line(task),
+        (
+            "●".into(),
+            live,
+            "t1  spawn".into(),
+            "  M · tdd · working".into()
+        )
+    );
+    let round = NodeKey::AgentRound {
+        run: RUN_ID.into(),
+        task: "t1".into(),
+        role: proto::AgentRole::Worker,
+        session: 1,
+        round: 1,
+    };
+    let (glyph, color, label, right) = line(round);
+    assert_eq!((glyph.as_str(), color), ("●", live));
+    assert!(label.starts_with("worker #1  claude"), "{label}");
+    assert!(right.starts_with("  idle · "), "{right}");
+    assert!(right.ends_with(" · t1"), "{right}");
+}

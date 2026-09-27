@@ -12,19 +12,6 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 impl App {
-    /// Decision 49: a headless run session's window has no terminal. No `Subscribe`,
-    /// `Input` or mouse report is ever sent for it; its pane points at `C-b m`.
-    pub(crate) fn is_headless(&self, id: u32) -> bool {
-        self.windows
-            .iter()
-            .any(|w| w.id == id && w.kind == proto::WindowKind::Headless)
-    }
-
-    /// The focused window, when it is an ordinary PTY window that input may reach.
-    pub(crate) fn focused_pty(&self) -> Option<u32> {
-        self.focused.filter(|&id| !self.is_headless(id))
-    }
-
     /// `C-b j`/`C-b k`: focus the next or previous window in tree (agent) order,
     /// wrapping around. Moved here from `app/mod.rs` (task M6.10's file-size finding
     /// B) — it is about picking a window from the current list, the same concern
@@ -41,8 +28,11 @@ impl App {
         {
             visible[(current as isize + delta).rem_euclid(len) as usize]
         } else {
-            let expanded = tree::agent_order(&tree::build(
+            // Every fold open (milestone 8c decision 10): the orchestrator's place in
+            // the order holds even while its project is folded.
+            let expanded = tree::agent_order(&tree::build_with_runs(
                 &self.windows,
+                &self.runs.runs,
                 &crate::tree::TreeState::default(),
             ));
             let current = self
@@ -118,7 +108,8 @@ impl App {
         // compares against.
         let previous_rows = self.rows();
         let previous_order = tree::agent_order(&previous_rows);
-        let previous_keys: Vec<_> = previous_rows.iter().map(|row| row.key.clone()).collect();
+        // The canvas's keys: the run view's while it is open (milestone 8c decision 11).
+        let previous_keys: Vec<_> = self.nav_rows().into_iter().map(|row| row.key).collect();
         let previous_index = self
             .focused
             .and_then(|id| previous_order.iter().position(|candidate| *candidate == id));
@@ -126,8 +117,14 @@ impl App {
         self.windows = windows;
         self.prune_git();
         self.windows_received_at = Instant::now();
+        self.tree.prune_runs(&self.runs.runs);
         self.tree.prune(&self.windows);
-        let rows = tree::build(&self.windows, &self.tree);
+        let rows = super::nav_rows_of(
+            &self.windows,
+            &self.runs.runs,
+            &self.tree,
+            self.run_view.as_ref(),
+        );
         self.tree.repair_selection(&rows);
         // Only on the edges decision 15 names, never on every list. The daemon
         // republishes on every status flip and every output event — several

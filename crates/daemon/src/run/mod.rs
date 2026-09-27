@@ -9,7 +9,8 @@
 //!   and rounds), `plan.rs`
 //!   (parsing, profile and limit resolution, `build_run`, the run-id slug), `validate.rs`
 //!   with `validate_graph.rs` (task resolution and the cross-task rules, decisions
-//!   8–13), `edits.rs` (plan edits, decision 13), `globs.rs` (`owns` globs, decisions 11
+//!   8–13), `edits.rs` (plan edits, decision 13) with `edit_log.rs` (M8c's log of
+//!   them), `globs.rs` (`owns` globs, decisions 11
 //!   and 56), `roster.rs` (reviewer and escalation policy, decisions 23, 35 and 39),
 //!   `contract.rs` and `messages.rs` (contracts, prompts and message texts), `env.rs`
 //!   (the profile environment), `role_launch.rs` (session specs and ids), `reach.rs`
@@ -27,6 +28,7 @@ pub mod confine;
 mod confine_cache;
 pub mod contract;
 pub mod driver;
+pub mod edit_log;
 pub mod edits;
 pub mod engine;
 pub mod env;

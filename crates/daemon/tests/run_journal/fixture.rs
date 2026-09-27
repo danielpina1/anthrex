@@ -108,6 +108,8 @@ pub fn round(
         last_event: 1_010,
         tool_calls: 3,
         rate_limited_until: None,
+        rate_limited_since: None,
+        sent_back_at: Vec::new(),
         in_retry_streak: false,
         open_subagents: BTreeSet::new(),
         denials: 0,

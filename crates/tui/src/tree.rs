@@ -1,12 +1,20 @@
 mod forest;
 mod names;
 mod rows;
+mod run_rows;
+mod runs;
 
 pub use forest::{SubagentNode, subagent_forest};
 pub use names::display_names;
-use proto::{Runtime, Status, SubagentInfo, WindowInfo};
+use proto::{
+    AgentRole, AgentRoundInfo, PlannerInfo, RunInfo, Runtime, ScoutInfo, Status, SubagentInfo,
+    TaskInfo, WindowInfo,
+};
 use rows::{SubagentWalk, emit_subagents, guide_prefix, visible_windows};
-use std::collections::{HashMap, HashSet};
+pub use run_rows::{RunFilter, display_rounds, round_label, run_rows};
+use runs::{ShownRun, group_projects, run_matches_filter};
+pub use runs::{run_progress, run_status, run_title, shown_runs};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -15,8 +23,32 @@ use unicode_width::UnicodeWidthStr;
 pub enum NodeKey {
     Project(PathBuf),
     Window(u32),
-    Subagent { window_id: u32, id: String },
-    // Milestone 8 adds Run(..): see decision 26.
+    Subagent {
+        window_id: u32,
+        id: String,
+    },
+    /// Milestone 8c: a run, both its project-tree node and its run view's root.
+    Run(String),
+    Planner {
+        run: String,
+        epic: String,
+    },
+    Scout {
+        run: String,
+        id: String,
+    },
+    Task {
+        run: String,
+        id: String,
+    },
+    /// `round` is the display round (milestone 8c decision 14), not `AgentRoundInfo.round`.
+    AgentRound {
+        run: String,
+        task: String,
+        role: AgentRole,
+        session: u32,
+        round: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -26,9 +58,11 @@ pub struct RuntimeCounts {
     pub shell: usize,
 }
 
+/// A plain window of a project. A project's shown runs are held apart, in
+/// `ProjectGroup::runs`: their rows sit above the plain windows, and the windows they
+/// own are not members at all (milestone 8c decisions 7 and 8).
 pub enum ProjectChild<'a> {
     Window(&'a WindowInfo),
-    // Milestone 8 adds Run { .. }: run rows sit above plain windows and own their windows (spec 5.1 item 4).
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -49,7 +83,44 @@ pub enum RowKind<'a> {
     Subagent {
         info: &'a SubagentInfo,
     },
-    // Milestone 8 adds Run { .. }.
+    /// Milestone 8c: a run, a leaf of the project tree and the run view's root. The
+    /// orchestrator's window, when listed, takes `position` (decision 10).
+    Run {
+        run: &'a RunInfo,
+        orchestrator: Option<&'a WindowInfo>,
+        position: Option<usize>,
+    },
+    // The run view's rows (built from task M8c.4 on).
+    Planner {
+        run: &'a RunInfo,
+        planner: &'a PlannerInfo,
+    },
+    Scout {
+        run: &'a RunInfo,
+        scout: &'a ScoutInfo,
+        window: Option<&'a WindowInfo>,
+    },
+    Task {
+        run: &'a RunInfo,
+        task: &'a TaskInfo,
+    },
+    AgentRound {
+        run: &'a RunInfo,
+        task: &'a TaskInfo,
+        round: DisplayRound<'a>,
+    },
+}
+
+/// One agent-round node of the run view (milestone 8c decision 14).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DisplayRound<'a> {
+    pub info: &'a AgentRoundInfo,
+    pub number: u32,
+    pub started_at: u64,
+    pub ended_at: Option<u64>,
+    /// The session's last display round: its counters and sub-agents hang here.
+    pub last: bool,
+    pub window: Option<&'a WindowInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -115,6 +186,10 @@ pub struct TreeState {
     /// `config.toml`'s `ui.tree_keep_finished_secs`.
     pub keep_finished_secs: u64,
     selected_index: usize,
+    /// The projects the shown runs name, as `prune_runs` last saw them, so `prune`
+    /// keeps a `Project` key whose root has a run but no window (milestone 8c
+    /// decision 7).
+    run_roots: HashSet<PathBuf>,
 }
 
 impl Default for TreeState {
@@ -127,6 +202,7 @@ impl Default for TreeState {
             overview: Viewport::default(),
             keep_finished_secs: DEFAULT_KEEP_FINISHED_SECS,
             selected_index: 0,
+            run_roots: HashSet::new(),
         }
     }
 }
@@ -138,7 +214,13 @@ impl TreeState {
 
     pub fn toggle(&mut self, key: &NodeKey) -> bool {
         match key {
-            NodeKey::Project(_) | NodeKey::Window(_) => {
+            NodeKey::Project(_)
+            | NodeKey::Window(_)
+            | NodeKey::Run(_)
+            | NodeKey::Planner { .. }
+            | NodeKey::Scout { .. }
+            | NodeKey::Task { .. }
+            | NodeKey::AgentRound { .. } => {
                 if !self.collapsed.remove(key) {
                     self.collapsed.insert(key.clone());
                 }
@@ -193,11 +275,21 @@ impl TreeState {
         self.selected.as_ref().and_then(|key| row_index(rows, key))
     }
 
+    /// Drops the fold state of windows and projects that left. A project survives while
+    /// a window or a shown run names it; the run view's keys are `prune_runs`'s.
     pub fn prune(&mut self, windows: &[WindowInfo]) {
+        let run_roots = &self.run_roots;
         self.collapsed.retain(|key| match key {
-            NodeKey::Project(root) => windows.iter().any(|window| window.project == *root),
+            NodeKey::Project(root) => {
+                run_roots.contains(root) || windows.iter().any(|window| window.project == *root)
+            }
             NodeKey::Window(id) => windows.iter().any(|window| window.id == *id),
             NodeKey::Subagent { .. } => false,
+            NodeKey::Run(_)
+            | NodeKey::Planner { .. }
+            | NodeKey::Scout { .. }
+            | NodeKey::Task { .. }
+            | NodeKey::AgentRound { .. } => true,
         });
     }
 }
@@ -207,55 +299,23 @@ struct ProjectGroup<'a> {
     name: String,
     status: Status,
     counts: RuntimeCounts,
+    runs: Vec<ShownRun<'a>>,
     members: Vec<ProjectChild<'a>>,
 }
 
+/// The project tree of plain windows alone: `build_with_runs` with no runs.
 pub fn build<'a>(windows: &'a [WindowInfo], state: &TreeState) -> Vec<Row<'a>> {
-    let mut by_root: HashMap<&'a Path, Vec<&'a WindowInfo>> = HashMap::new();
-    for window in windows {
-        by_root
-            .entry(window.project.as_path())
-            .or_default()
-            .push(window);
-    }
+    build_with_runs(windows, &[], state)
+}
 
-    let names = display_names(by_root.keys().copied());
-    let mut projects: Vec<_> = by_root
-        .into_iter()
-        .map(|(root, mut windows)| {
-            windows.sort_by_key(|window| window.id);
-            let status = windows
-                .iter()
-                .map(|window| window.status)
-                .min_by_key(|status| urgency(*status))
-                .expect("a project is created from at least one window");
-            let mut counts = RuntimeCounts::default();
-            for window in &windows {
-                match window.runtime {
-                    Runtime::Claude => counts.claude += 1,
-                    Runtime::Codex => counts.codex += 1,
-                    Runtime::Shell => counts.shell += 1,
-                }
-            }
-            let members = windows.into_iter().map(ProjectChild::Window).collect();
-            ProjectGroup {
-                root,
-                name: names
-                    .get(root)
-                    .expect("every grouped root has a display name")
-                    .clone(),
-                status,
-                counts,
-                members,
-            }
-        })
-        .collect();
-    projects.sort_by(|left, right| {
-        urgency(left.status)
-            .cmp(&urgency(right.status))
-            .then_with(|| left.name.cmp(&right.name))
-            .then_with(|| left.root.cmp(right.root))
-    });
+/// The project tree: every project with its shown runs, then its plain windows
+/// (milestone 8c decisions 6–10).
+pub fn build_with_runs<'a>(
+    windows: &'a [WindowInfo],
+    runs: &'a [RunInfo],
+    state: &TreeState,
+) -> Vec<Row<'a>> {
+    let projects = group_projects(windows, runs);
 
     let filter = state.filter.to_lowercase();
     let filtering = !filter.is_empty();
@@ -264,6 +324,10 @@ pub fn build<'a>(windows: &'a [WindowInfo], state: &TreeState) -> Vec<Row<'a>> {
     for project in projects {
         let project_matches = filtering && matches_filter(&project.name, &filter);
         let project_has_match = project_matches
+            || project
+                .runs
+                .iter()
+                .any(|shown| run_matches_filter(shown.run, &filter))
             || project.members.iter().any(|member| match member {
                 ProjectChild::Window(window) => window_matches_filter(window, &filter),
             });
@@ -287,6 +351,11 @@ pub fn build<'a>(windows: &'a [WindowInfo], state: &TreeState) -> Vec<Row<'a>> {
         if project_collapsed {
             continue;
         }
+        let shown_runs: Vec<&ShownRun<'a>> = project
+            .runs
+            .iter()
+            .filter(|shown| !filtering || project_matches || run_matches_filter(shown.run, &filter))
+            .collect();
         let visible = visible_windows(
             project.members,
             filtering,
@@ -294,9 +363,26 @@ pub fn build<'a>(windows: &'a [WindowInfo], state: &TreeState) -> Vec<Row<'a>> {
             &filter,
             state.keep_finished_secs,
         );
-        let count = visible.len();
+        let count = shown_runs.len() + visible.len();
+        for (index, shown) in shown_runs.into_iter().enumerate() {
+            let position = shown.orchestrator.map(|_| {
+                position += 1;
+                position
+            });
+            rows.push(Row {
+                key: NodeKey::Run(shown.run.run_id.clone()),
+                guides: guide_prefix(&[], index + 1 < count),
+                depth: 1,
+                kind: RowKind::Run {
+                    run: shown.run,
+                    orchestrator: shown.orchestrator,
+                    position,
+                },
+            });
+        }
+        let first_window = count - visible.len();
         for (index, member) in visible.into_iter().enumerate() {
-            let has_later_sibling = index + 1 < count;
+            let has_later_sibling = first_window + index + 1 < count;
             let window = member.window;
             let window_key = NodeKey::Window(window.id);
             let window_collapsed = !filtering && state.is_collapsed(&window_key);
@@ -368,7 +454,13 @@ pub fn agent_order(rows: &[Row<'_>]) -> Vec<u32> {
     rows.iter()
         .filter_map(|row| match &row.kind {
             RowKind::Window { info, .. } => Some(info.id),
-            RowKind::Project { .. } | RowKind::Subagent { .. } => None,
+            RowKind::Run { orchestrator, .. } => orchestrator.map(|window| window.id),
+            RowKind::Project { .. }
+            | RowKind::Subagent { .. }
+            | RowKind::Planner { .. }
+            | RowKind::Scout { .. }
+            | RowKind::Task { .. }
+            | RowKind::AgentRound { .. } => None,
         })
         .collect()
 }
@@ -457,3 +549,6 @@ mod tests;
 pub(crate) fn example_windows() -> Vec<WindowInfo> {
     tests::example()
 }
+
+#[cfg(test)]
+pub(crate) use tests::run_fixtures;

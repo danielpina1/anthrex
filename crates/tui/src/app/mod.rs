@@ -8,43 +8,14 @@ use crossterm::event::KeyEvent;
 pub use link::Link;
 use prompt::RenamePrompt;
 use proto::{ClientMsg, GitState, WindowInfo};
+pub(crate) use runs::state_text;
+pub use runs::{RunView, filter_label, nav_rows_of};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 pub const TOAST_TTL: Duration = Duration::from_secs(4);
 pub const RESIZE_DEBOUNCE: Duration = Duration::from_millis(30);
-const BRACKETED_PASTE_START: &[u8] = b"\x1b[200~";
-const BRACKETED_PASTE_END: &[u8] = b"\x1b[201~";
-
-fn push_sanitized_paste_byte(bytes: &mut Vec<u8>, byte: u8) {
-    bytes.push(byte);
-    while bytes.ends_with(BRACKETED_PASTE_START) || bytes.ends_with(BRACKETED_PASTE_END) {
-        bytes.truncate(bytes.len() - BRACKETED_PASTE_START.len());
-    }
-}
-
-fn sanitize_paste(text: &str) -> Vec<u8> {
-    let source = text.as_bytes();
-    let mut bytes = Vec::with_capacity(source.len());
-    let mut index = 0;
-    while index < source.len() {
-        if source[index] == b'\r' && source.get(index + 1) == Some(&b'\n') {
-            push_sanitized_paste_byte(&mut bytes, b'\r');
-            index += 2;
-        } else {
-            let byte = if source[index] == b'\n' {
-                b'\r'
-            } else {
-                source[index]
-            };
-            push_sanitized_paste_byte(&mut bytes, byte);
-            index += 1;
-        }
-    }
-    bytes
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
     Send(ClientMsg),
@@ -66,6 +37,13 @@ pub enum PendingAction {
     /// `open_force_remove` doc comment for the sibling case this mirrors).
     Restart(u32),
     StopDaemon,
+    /// Milestone 8c decision 32: the plan gate's requests, each carrying its run.
+    ApproveRun(String),
+    RejectRun(String),
+    RemoveTask {
+        run_id: String,
+        task_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,6 +73,8 @@ pub enum Modal {
     /// the client-side name check; key handling is `app/modal_keys.rs`'s
     /// `on_rename_key`, and rendering is `ui/modal.rs`.
     Rename(RenamePrompt),
+    /// Milestone 8c decision 33: the plan gate's task edit form (`crate::run_edit`).
+    EditTask(crate::run_edit::TaskEditForm),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,6 +101,9 @@ pub struct App {
     /// The overview's canvas viewport on screen; `set_graph_viewport` keeps it
     /// current, and it stays empty until the first frame that draws one.
     pub(crate) graph_area: ratatui::layout::Rect,
+    /// The overview's own area as the last frame gave it, so opening or leaving the
+    /// run view can re-split it at once (milestone 8c decision 28).
+    pub(crate) graph_main: Option<ratatui::layout::Rect>,
     pub(crate) graph_mouse: crate::mouse::MouseState,
     pub keymap: Keymap,
     /// The conversation view (task M6.5.12); `app/conversation.rs` keeps the keymap's
@@ -180,6 +163,12 @@ pub struct App {
     /// `Subscribe` is retried (by `on_tick`, or by a later `focus` call) instead of
     /// being masked forever by "we're already focused there."
     subscribed: Option<u32>,
+    pub runs: proto::RunsSnapshot,
+    /// Milestone 8c decision 11: the overview rooted at a run; `None` is the project tree.
+    pub run_view: Option<RunView>,
+    runs_received_at: Instant,
+    /// Decision 1: `false` only while a refused `Run(Subscribe)` waits for `on_tick`.
+    run_subscribed: bool,
 }
 
 impl App {
@@ -198,6 +187,7 @@ impl App {
             inspector_visible: true,
             graph_pan: crate::graph::Pan::default(),
             graph_area: ratatui::layout::Rect::default(),
+            graph_main: None,
             graph_mouse: crate::mouse::MouseState::default(),
             keymap: Keymap::new(settings.prefix),
             conversation: Default::default(),
@@ -223,6 +213,10 @@ impl App {
             pending_resize: None,
             pending_focus: None,
             subscribed: None,
+            runs: runs::no_runs(),
+            run_view: None,
+            runs_received_at: Instant::now(),
+            run_subscribed: true,
             settings,
         }
     }
@@ -446,43 +440,6 @@ impl App {
         }
     }
 
-    pub fn on_paste(&mut self, text: String) -> Vec<Effect> {
-        // Decision 30: a paste goes to the open form's focused field, or is dropped for
-        // any other modal — both checked before tree mode and the PTY (risk 10).
-        if let Some(modal) = &mut self.modal {
-            if let Modal::NewAgent(form) = modal {
-                form.on_paste(&text);
-            }
-            return vec![];
-        }
-        // Decision 11: the conversation view is read-only, so a paste while it is open
-        // goes to its search query or nowhere — never to the PTY underneath.
-        if self.conversation.is_open() {
-            self.conversation.on_paste(&text);
-            return vec![];
-        }
-        if self.tree_input.is_some() {
-            return self.on_tree_paste(text);
-        }
-        let Some(id) = self.focused_pty() else {
-            return vec![];
-        };
-        self.scroll_to_live();
-        let bracketed = self.parser.screen().bracketed_paste();
-        let mut bytes = Vec::with_capacity(text.len() + 12);
-        if bracketed {
-            bytes.extend_from_slice(BRACKETED_PASTE_START);
-        }
-        bytes.extend_from_slice(&sanitize_paste(&text));
-        if bracketed {
-            bytes.extend_from_slice(BRACKETED_PASTE_END);
-        }
-        vec![Effect::Send(ClientMsg::Input {
-            window_id: id,
-            bytes,
-        })]
-    }
-
     pub(crate) fn scroll_to_live(&mut self) {
         if self.scroll_offset != 0 {
             self.parser.screen_mut().set_scrollback(0);
@@ -504,8 +461,9 @@ impl App {
         // Decision 36: the third of the three ways `C-b Q`'s wait can end — nothing
         // arrived at all within `link::STOPPING_TIMEOUT`.
         self.check_stopping_timeout();
-        if let Some(effect) = self.retry_dropped_subscribe() {
-            return vec![effect];
+        let retries = self.retry_dropped_subscribes();
+        if !retries.is_empty() {
+            return retries;
         }
         if self
             .pending_resize
@@ -527,10 +485,14 @@ impl App {
 
 mod conversation;
 mod daemon;
+mod headless;
 mod lifecycle;
 mod link;
 mod modal_keys;
+mod paste;
 pub(crate) mod prompt;
+mod run_enter;
+mod runs;
 mod windows;
 
 #[cfg(test)]

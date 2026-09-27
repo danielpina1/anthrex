@@ -379,6 +379,8 @@ pub(super) fn new_round(
         last_event: now,
         tool_calls: 0,
         rate_limited_until: None,
+        rate_limited_since: None,
+        sent_back_at: Vec::new(),
         in_retry_streak: false,
         open_subagents: Default::default(),
         denials: 0,

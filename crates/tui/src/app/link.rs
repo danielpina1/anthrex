@@ -24,7 +24,7 @@
 //! already ends here, not split across two files.
 
 use super::{App, Effect, Modal, PendingAction};
-use proto::{ClientMsg, WindowInfo};
+use proto::{ClientMsg, RunRequest, WindowInfo};
 use std::time::{Duration, Instant};
 
 /// Decision 36's timeout, moved here from `app/lifecycle.rs` alongside
@@ -157,6 +157,8 @@ impl App {
         };
         // Review I1: the daemon dropped the view's subscriptions with the connection.
         self.conversation.link_lost();
+        // Whole-branch review M2: a submitting edit form's reply went with the link.
+        self.edit_not_sent();
         self.toast("connection to the daemon lost");
         vec![]
     }
@@ -191,6 +193,8 @@ impl App {
     pub fn on_reconnected(&mut self, windows: Vec<WindowInfo>) -> Vec<Effect> {
         self.link = Link::Connected;
         self.toast("reconnected");
+        // Whole-branch review M2: nor does the new connection carry an old reply.
+        self.edit_not_sent();
         let mut effects = self.replace_windows(windows);
         let already_resubscribed = effects.iter().any(|effect| {
             matches!(
@@ -214,6 +218,8 @@ impl App {
         // again. After `replace_windows`, so a view that followed focus to another window
         // (review M3) subscribes that window, once.
         effects.extend(self.conversation.relink());
+        // Decision 1: the new connection has no run subscription yet.
+        effects.push(self.run_subscription());
         effects
     }
 
@@ -238,9 +244,15 @@ impl App {
                     self.subscribed = None;
                 }
             }
+            // Decision 1: quiet, like `Subscribe`; `on_tick` sends it again.
+            ClientMsg::Run(RunRequest::Subscribe) => self.run_subscribed = false,
             // A dropped keystroke is not worth a toast; the next one will try again.
             ClientMsg::Input { .. } => {}
             _ => {
+                // Whole-branch review M2: a refused `Edit` frees its submitting form.
+                if let ClientMsg::Run(RunRequest::Edit { .. }) = msg {
+                    self.edit_not_sent();
+                }
                 if self.connected() {
                     self.toast("daemon is not responding");
                 } else {

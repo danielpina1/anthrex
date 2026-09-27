@@ -437,6 +437,10 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         run_record_written: false,
         profile_languages: Vec::new(),
         history: true,
+        // Milestone 8c: set by the engine at approval and on each accepted edit.
+        approved_at: None,
+        plan_edits: Vec::new(),
+        plan_edits_since_approval: 0,
     })
 }
 

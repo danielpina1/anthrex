@@ -5,7 +5,7 @@
 use super::*;
 use crate::app::Link;
 
-fn headless(id: u32, name: &str, status: Status) -> WindowInfo {
+pub(super) fn headless(id: u32, name: &str, status: Status) -> WindowInfo {
     let mut window = win(id, name, status);
     window.runtime = Runtime::Codex;
     window.kind = proto::WindowKind::Headless;
@@ -18,13 +18,13 @@ fn headless(id: u32, name: &str, status: Status) -> WindowInfo {
     window
 }
 
-fn subscribes(effects: &[Effect], id: u32) -> bool {
+pub(super) fn subscribes(effects: &[Effect], id: u32) -> bool {
     effects.iter().any(|effect| {
         matches!(effect, Effect::Send(ClientMsg::Subscribe { window_id, .. }) if *window_id == id)
     })
 }
 
-fn inputs(effects: &[Effect]) -> bool {
+pub(super) fn inputs(effects: &[Effect]) -> bool {
     effects
         .iter()
         .any(|effect| matches!(effect, Effect::Send(ClientMsg::Input { .. })))
@@ -147,4 +147,123 @@ fn the_headless_placeholder_names_the_conversation_key() {
         screen.contains("headless session · codex · working · C-b m shows its conversation"),
         "{screen}"
     );
+}
+
+/// M8c.6, decision 26: `C-b x`, `C-b X` and `C-b R` on a focused headless window open no
+/// dialog and send nothing; they toast the daemon's own refusal.
+#[test]
+fn control_commands_on_a_headless_window_open_nothing() {
+    use crate::tree::run_fixtures::three_task_fixture;
+    let (_, windows) = three_task_fixture();
+    // No snapshot: window 6 is a plain row, reachable by `C-b <n>`.
+    let mut app = app_with(windows);
+    let index = tree::agent_order(&app.rows())
+        .iter()
+        .position(|id| *id == 6)
+        .expect("window 6 has a position");
+    prefix(&mut app);
+    let digit = char::from_digit(index as u32 + 1, 10).expect("a digit");
+    press(&mut app, KeyCode::Char(digit), KeyModifiers::NONE);
+    assert_eq!(app.focused, Some(6));
+
+    let refusal = "window 6 is a headless session of run add-reset-3f9a; only the engine drives it. Use anthrex run cancel to stop it";
+    let control = |app: &mut App, c: char, what: &str| {
+        app.toast = None;
+        prefix(app);
+        let effects = press(app, KeyCode::Char(c), KeyModifiers::NONE);
+        assert!(effects.is_empty(), "{what}: {effects:?}");
+        assert_eq!(app.modal, None, "{what}");
+        app.toast_text().map(str::to_owned)
+    };
+    for (c, what) in [('x', "kill"), ('X', "remove"), ('R', "restart")] {
+        assert_eq!(
+            control(&mut app, c, what).as_deref(),
+            Some(refusal),
+            "{what}"
+        );
+    }
+    let mut exited = app.windows.clone();
+    exited
+        .iter_mut()
+        .filter(|w| w.id == 6)
+        .for_each(|w| w.status = Status::Exited);
+    let _ = app.on_daemon(DaemonMsg::WindowsChanged { windows: exited });
+    assert_eq!(app.focused, Some(6));
+    assert_eq!(
+        control(&mut app, 'R', "restart, exited").as_deref(),
+        Some(refusal)
+    );
+
+    // A run-less headless window (M8b's onboarding scout) gets the scout variant.
+    let mut scout = headless(7, "scout", Status::Working);
+    scout.run = None;
+    let mut app = app_with(vec![scout]);
+    assert_eq!(app.focused, Some(7));
+    let scout_refusal = "window 7 is a headless scout session; only the daemon drives it. Use anthrex profile reject to stop it";
+    for (c, what) in [('x', "kill"), ('X', "remove"), ('R', "restart")] {
+        assert_eq!(
+            control(&mut app, c, what).as_deref(),
+            Some(scout_refusal),
+            "{what}"
+        );
+    }
+
+    // A PTY window still gets its dialogs.
+    let mut app = app_with(vec![win(1, "pty", Status::Idle)]);
+    prefix(&mut app);
+    press(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
+    assert!(matches!(app.modal, Some(Modal::Confirm { .. })));
+    app.modal = None;
+    prefix(&mut app);
+    press(&mut app, KeyCode::Char('X'), KeyModifiers::NONE);
+    assert!(matches!(app.modal, Some(Modal::Remove(_))));
+    app.modal = None;
+    prefix(&mut app);
+    press(&mut app, KeyCode::Char('R'), KeyModifiers::NONE);
+    assert!(matches!(app.modal, Some(Modal::Confirm { .. })));
+}
+
+/// Whole-branch review M1: a sub-agent of a headless window listed as a plain window
+/// (no run in the snapshot names it) opens that window's conversation on Enter. It
+/// never focuses the window or leaves tree mode.
+#[test]
+fn enter_on_a_plain_listed_headless_windows_sub_agent_opens_its_conversation() {
+    let mut worker = headless(2, "worker", Status::Working);
+    worker.subagents = vec![proto::SubagentInfo {
+        id: "a1".into(),
+        parent_id: None,
+        kind: "general-purpose".into(),
+        label: Some("explore".into()),
+        model: None,
+        state: proto::SubagentState::Running,
+        tool: None,
+        started_secs: 5,
+        ended_secs: None,
+        needs_permission: false,
+    }];
+    let mut app = app_with(vec![win(1, "pty", Status::Idle), worker]);
+    assert_eq!(app.focused, Some(1));
+    assert_eq!(app.run_view, None);
+    app.enter_tree();
+    let key = crate::tree::NodeKey::Subagent {
+        window_id: 2,
+        id: "a1".into(),
+    };
+    let rows = tree::build_with_runs(&app.windows, &app.runs.runs, &app.tree);
+    app.tree.select(&rows, key.clone());
+    assert_eq!(app.tree.selected, Some(key));
+
+    let effects = press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(
+        effects,
+        vec![Effect::Send(ClientMsg::SubscribeConversation {
+            window_id: 2,
+            agent_id: None,
+            from_rev: None,
+        })]
+    );
+    assert_eq!(app.focused, Some(1), "Enter focused the headless window");
+    assert!(app.conversation.is_open());
+    assert!(!subscribes(&effects, 2));
+    assert!(!inputs(&effects));
 }

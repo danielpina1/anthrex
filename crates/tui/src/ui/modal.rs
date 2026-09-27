@@ -9,6 +9,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 /// The help overlay's rows. Every hint that names the prefix key takes it from
 /// `prefix_label` instead of a hard-coded `C-b` (decision 38).
@@ -77,6 +78,27 @@ fn text_with_cursor_block(input: &TextInput) -> String {
     out
 }
 
+/// `text` as it fits `width` columns: one line when it fits, else broken at spaces
+/// (a word wider than `width` keeps its own line, and the box cuts it).
+fn wrapped(text: &str, width: usize) -> Vec<Line<'static>> {
+    if text.width() <= width {
+        return vec![Line::raw(text.to_string())];
+    }
+    let mut lines = vec![];
+    let mut line = String::new();
+    for word in text.split(' ') {
+        if !line.is_empty() && line.width() + 1 + word.width() > width {
+            lines.push(Line::raw(std::mem::take(&mut line)));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    lines.push(Line::raw(line));
+    lines
+}
+
 fn centered(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(area.width);
     let height = height.min(area.height);
@@ -101,17 +123,20 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         Modal::ForceRemove { name, message, .. } => {
             return dialog::render_force_remove(frame, name, message, area, accent);
         }
+        Modal::EditTask(form) => return crate::ui::run_edit::render(frame, form, area, accent),
         Modal::Confirm { .. } | Modal::Help | Modal::Notice { .. } | Modal::Rename(_) => {}
     }
     let (title, body): (String, Vec<Line>) = match modal {
-        Modal::Confirm { message, .. } => (
-            " confirm ".to_string(),
-            vec![
-                Line::raw(message.clone()),
-                Line::raw(""),
-                Line::styled("y / Enter = yes    n / Esc = no", theme::muted()),
-            ],
-        ),
+        // Review M5: a message wider than the screen wraps inside the box.
+        Modal::Confirm { message, .. } => (" confirm ".to_string(), {
+            let mut lines = wrapped(message, usize::from(area.width.saturating_sub(4)));
+            lines.push(Line::raw(""));
+            lines.push(Line::styled(
+                "y / Enter = yes    n / Esc = no",
+                theme::muted(),
+            ));
+            lines
+        }),
         Modal::Help => (
             " keys ".to_string(),
             help_lines(&app.settings.prefix_label)
@@ -145,7 +170,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 Line::styled("Enter = rename    Esc = cancel", theme::muted()),
             ],
         ),
-        Modal::NewAgent(_) | Modal::Remove(_) | Modal::ForceRemove { .. } => {
+        Modal::NewAgent(_) | Modal::Remove(_) | Modal::ForceRemove { .. } | Modal::EditTask(_) => {
             unreachable!("handled and returned from above")
         }
     };
@@ -159,4 +184,64 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .border_style(theme::border_focused(accent))
         .title(Line::from(Span::styled(title, theme::title(accent))));
     frame.render_widget(Paragraph::new(body).block(block), rect);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::PendingAction;
+    use crate::settings::UiSettings;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn confirm_lines(message: &str, width: u16, height: u16) -> Vec<String> {
+        let mut app = App::new(vec![], "/tmp".into(), UiSettings::default());
+        app.modal = Some(Modal::Confirm {
+            message: message.into(),
+            action: PendingAction::RejectRun("add-reset-3f9a".into()),
+        });
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| render(frame, &app, frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (0..height)
+            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    /// The box's inner text, one line per row, borders and padding trimmed.
+    fn inner(lines: &[String]) -> Vec<String> {
+        lines
+            .iter()
+            .filter(|l| l.contains('│'))
+            .map(|l| l.trim().trim_matches('│').trim().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_long_confirm_wraps_inside_its_box_at_80_columns() {
+        let message = "Reject run add-reset-3f9a? Its branches and worktrees are removed; \
+                       salvage refs are kept.";
+        let lines = confirm_lines(message, 80, 24);
+        let inner = inner(&lines);
+        let text = inner.iter().filter(|l| !l.is_empty()).cloned();
+        let joined = text.collect::<Vec<_>>().join(" ");
+        assert!(joined.starts_with(message), "{lines:#?}");
+        assert!(joined.ends_with("y / Enter = yes    n / Esc = no"));
+        let box_rows: Vec<_> = lines.iter().filter(|l| l.contains('│')).collect();
+        assert!(
+            box_rows.iter().all(|l| l.trim_end().ends_with('│')),
+            "{lines:#?}"
+        );
+    }
+
+    #[test]
+    fn a_short_confirm_stays_on_one_line() {
+        let lines = confirm_lines("Kill 'a'?", 80, 24);
+        assert_eq!(
+            inner(&lines),
+            vec!["Kill 'a'?", "", "y / Enter = yes    n / Esc = no"]
+        );
+    }
 }

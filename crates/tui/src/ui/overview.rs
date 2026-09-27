@@ -10,7 +10,10 @@
 
 use super::tree_view;
 use crate::graph::{self, Pan, paint::paint, viewport::GraphGeometry};
-use crate::inspector::{self, INSPECTOR_HEIGHT, MIN_INTERIOR_FOR_PANEL};
+use crate::inspector::{
+    self, INSPECTOR_HEIGHT, MIN_INTERIOR_FOR_PANEL, MIN_INTERIOR_FOR_RUN_PANEL,
+    RUN_INSPECTOR_HEIGHT,
+};
 use crate::tree::{self, Row, RowKind};
 use crate::{app::App, theme};
 use ratatui::{
@@ -27,9 +30,18 @@ use ratatui::{
 ///
 /// A short terminal loses the panel, never the canvas: the panel is only ever
 /// carved out of an interior with six rows of canvas left above it.
-pub fn areas(main: Rect, inspector_visible: bool) -> (Rect, Rect) {
+///
+/// While the run view is open the panel is milestone 8c's tall one when the interior
+/// has room for it, and steps down to milestone 4.7's eight rows, then to the single
+/// line (milestone 8c decision 28). The height follows the view, never the node, so
+/// the canvas does not jump as the selection moves.
+pub fn areas(main: Rect, inspector_visible: bool, run_view: bool) -> (Rect, Rect) {
     let inner = super::inset(main);
-    let footer_height = if inspector_visible && inner.height >= MIN_INTERIOR_FOR_PANEL {
+    let footer_height = if !inspector_visible {
+        inner.height.min(1)
+    } else if run_view && inner.height >= MIN_INTERIOR_FOR_RUN_PANEL {
+        RUN_INSPECTOR_HEIGHT
+    } else if inner.height >= MIN_INTERIOR_FOR_PANEL {
         INSPECTOR_HEIGHT
     } else {
         inner.height.min(1)
@@ -68,21 +80,22 @@ impl View {
     }
 
     /// Whether the rect below the canvas is the panel. It is the panel exactly
-    /// when `areas` gave it the panel's height, so what is drawn there can
-    /// never disagree with the height it was drawn into.
+    /// when `areas` gave it one of the panel's heights — milestone 4.7's, or the
+    /// run view's tall one — so what is drawn there can never disagree with the
+    /// height it was drawn into.
     fn shows_panel(&self) -> bool {
-        self.footer.height >= INSPECTOR_HEIGHT
+        matches!(self.footer.height, INSPECTOR_HEIGHT | RUN_INSPECTOR_HEIGHT)
     }
 }
 
 pub fn view(app: &App, main: Rect) -> View {
-    view_of(app, main, &app.rows())
+    view_of(app, main, &app.nav_rows())
 }
 
 /// `view` for a caller that has the visible rows in hand already, so one frame
 /// or one gesture builds that list once instead of once per reader.
 pub fn view_of(app: &App, main: Rect, rows: &[Row<'_>]) -> View {
-    let (canvas, footer) = areas(main, app.inspector_visible);
+    let (canvas, footer) = areas(main, app.inspector_visible, app.run_view.is_some());
     let layout = graph::layout(rows);
     // The stored pan can outlive the canvas it was clamped against — a
     // narrowed terminal, or rows that vanished — so it is clamped on the way
@@ -106,15 +119,18 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             theme::border()
         })
         .title(Line::from(Span::styled(
-            " tree overview ",
+            match &app.run_view {
+                Some(view) => format!(" run {} ", view.run_id),
+                None => " tree overview ".to_string(),
+            },
             theme::title(app.settings.accent),
         )));
     frame.render_widget(block, area);
 
     // One row build for the whole frame: the layout, the painter and the
     // footer all read this list, and a frame is drawn at least ten times a
-    // second.
-    let rows = app.rows();
+    // second. The run view's rows while it is open (milestone 8c decision 11).
+    let rows = app.nav_rows();
     let view = view_of(app, area, &rows);
     let lines = paint(&view.layout, view.canvas, view.pan, &rows, app);
     frame.render_widget(Paragraph::new(lines), view.canvas);
@@ -160,7 +176,7 @@ fn footer_line(row: &Row<'_>, app: &App) -> Line<'static> {
 
 /// One node's footer: its status glyph in its status colour, the text it is
 /// known by, and the fields that follow it.
-fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, String, String) {
+pub(super) fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, String, String) {
     match &row.kind {
         RowKind::Project {
             root,
@@ -224,6 +240,21 @@ fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, String, String) {
                         .unwrap_or_default()
                 ),
             )
+        }
+        // Every run kind's single line is its inspection's title: the glyph, the
+        // name, then two spaces and the right-hand text (milestone 8c, Interfaces
+        // "The single line"). The glyph is the canvas's own, by construction.
+        RowKind::Run { .. }
+        | RowKind::Planner { .. }
+        | RowKind::Scout { .. }
+        | RowKind::Task { .. }
+        | RowKind::AgentRound { .. } => {
+            let inspection = inspector::inspect(row, app);
+            let right = inspection
+                .right
+                .map(|right| format!("  {right}"))
+                .unwrap_or_default();
+            (inspection.glyph, inspection.name, right)
         }
     }
 }

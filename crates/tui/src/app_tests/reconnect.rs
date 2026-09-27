@@ -34,11 +34,15 @@ fn link_lost_then_reconnected_resubscribes_the_focused_window() {
     let effects = app.on_reconnected(vec![win(1, "a", Status::Idle), win(2, "b", Status::Idle)]);
     assert_eq!(
         effects,
-        vec![Effect::Send(ClientMsg::Subscribe {
-            window_id: 2,
-            cols: 80,
-            rows: 24,
-        })]
+        vec![
+            Effect::Send(ClientMsg::Subscribe {
+                window_id: 2,
+                cols: 80,
+                rows: 24,
+            }),
+            // M8c decision 1: the new connection's run subscription.
+            Effect::Send(ClientMsg::Run(proto::RunRequest::Subscribe)),
+        ]
     );
     assert!(matches!(app.link, Link::Connected));
     assert_eq!(app.toast_text(), Some("reconnected"));
@@ -64,12 +68,16 @@ fn reconnect_when_the_focused_window_is_gone_focuses_a_neighbour() {
     let effects = app.on_reconnected(vec![win(1, "a", Status::Idle), win(3, "c", Status::Idle)]);
     assert_eq!(
         effects,
-        vec![Effect::Send(ClientMsg::Subscribe {
-            window_id: 3,
-            cols: 80,
-            rows: 24,
-        })],
-        "exactly one Subscribe, for the neighbour that took over focus"
+        vec![
+            Effect::Send(ClientMsg::Subscribe {
+                window_id: 3,
+                cols: 80,
+                rows: 24,
+            }),
+            // M8c decision 1: the new connection's run subscription.
+            Effect::Send(ClientMsg::Run(proto::RunRequest::Subscribe)),
+        ],
+        "exactly one Subscribe, for the neighbour that took over focus, and the runs'"
     );
     assert_eq!(app.focused, Some(3));
 }

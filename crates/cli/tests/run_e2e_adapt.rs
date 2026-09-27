@@ -295,7 +295,7 @@ fn e2e_promote_records_intent_and_the_task_continues() {
     assert!(
         run.attention
             .iter()
-            .any(|a| a.starts_with("promotion requested at")
+            .any(|a| a.starts_with("promotion requested;")
                 && a.ends_with("it takes effect when the orchestrator exists (milestone 9)")),
         "{:?}",
         run.attention

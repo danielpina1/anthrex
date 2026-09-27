@@ -120,16 +120,10 @@ fn a_codex_session_builds_a_real_conversation() {
         .as_ref()
         .expect("the synthesised PostToolUse gave it a result");
     assert!(result.ok);
-    // M6.5 renders an object `tool_response` as its compact JSON (as it does for Claude's
-    // own `{"stdout": …}`), so the one-line summary shows the table's `{"output": …}`;
-    // the full text is the enriched `detail`.
-    assert!(
-        result
-            .summary
-            .starts_with(r#"{"output":"[task-b 9d0ec2a] add a\n"#),
-        "{}",
-        result.summary
-    );
+    // M8c.11: the one-line summary is the first line of the response's one text field,
+    // not the table's `{"output": …}` as compact JSON; the full text is the enriched
+    // `detail`.
+    assert_eq!(result.summary, "[task-b 9d0ec2a] add a");
     assert_eq!(
         result.detail.as_deref(),
         Some(
@@ -193,6 +187,7 @@ fn a_claude_session_enriches_hook_built_turns() {
     assert_eq!(turns.len(), 4, "three recorded turns and nothing after");
     let mut parser = ClaudeStream::default();
     let mut cursor = StreamCursor::default();
+    let mut interrupted_stops = 0;
     for (prompt, turn) in prompts.iter().zip(&turns) {
         let input = sent_turn(Runtime::Claude, true, prompt, &mut cursor);
         assert!(input.hooks.is_empty());
@@ -200,11 +195,29 @@ fn a_claude_session_enriches_hook_built_turns() {
         for line in turn {
             for event in parser.parse_line(line) {
                 let input = map(Runtime::Claude, true, &event, &mut cursor);
-                assert!(input.hooks.is_empty(), "hooks_fire: the real ones are used");
+                // hooks_fire: the real ones are used, except the `Stop` of the third
+                // turn's interrupted `result`, for which Claude fired none (M8c.11; the
+                // recording's hooks end that turn with `SessionEnd` instead).
+                let interrupted = matches!(
+                    event,
+                    SessionEvent::TurnEnded {
+                        outcome: crate::headless::TurnOutcome::Interrupted,
+                        ..
+                    }
+                );
+                let kinds: Vec<_> = input.hooks.iter().map(|h| h.kind).collect();
+                if interrupted {
+                    interrupted_stops += 1;
+                    assert_eq!(kinds, [crate::hooks::HookKind::Stop]);
+                } else {
+                    assert!(kinds.is_empty(), "hooks_fire: the real ones are used");
+                }
                 apply(&mut set, Runtime::Claude, input);
             }
         }
     }
+
+    assert_eq!(interrupted_stops, 1);
 
     let conversation = set.snapshot(None).unwrap();
     assert_eq!(conversation.degraded, None);

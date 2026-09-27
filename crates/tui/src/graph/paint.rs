@@ -10,12 +10,15 @@
 use super::{Edge, Layout, Pan};
 use crate::app::App;
 use crate::theme;
-use crate::tree::{NodeKey, Row, RowKind};
+use crate::tree::{NodeKey, Row};
 use crate::ui::tree_view::truncate;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use std::collections::HashMap;
+use style::Highlight;
+
+pub(crate) mod style;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -30,7 +33,10 @@ use unicode_width::UnicodeWidthStr;
 /// `rows` is the very list `layout` was built from, and the caller passes it in
 /// rather than rebuilding it: painting runs at least ten times a second in a
 /// process meant to run for days. `layout` pushes one `PlacedNode` per row in
-/// row order, so the two zip and no node has to be looked up by key.
+/// row order, so the two zip and no node has to be looked up by key. A row
+/// whose key disagrees with its node's is skipped — neither its box nor any
+/// edge that starts or ends on it is painted — rather than drawn in the wrong
+/// place.
 pub fn paint(
     layout: &Layout,
     area: Rect,
@@ -39,21 +45,18 @@ pub fn paint(
     app: &App,
 ) -> Vec<Line<'static>> {
     let mut grid = Grid::new(area, pan);
-    for (node, row) in layout.nodes.iter().zip(rows) {
-        debug_assert_eq!(
-            node.key, row.key,
-            "layout places one node per row, in order"
-        );
-        paint_node(&mut grid, node.rect, row, app);
-    }
+    let highlight = Highlight::of(rows, app);
     // One pass over the nodes instead of one scan per edge endpoint: an edge
     // names its parent and children by key, and there are as many edges as
     // there are nodes with children.
-    let placed: HashMap<&NodeKey, Rect> = layout
-        .nodes
-        .iter()
-        .map(|node| (&node.key, node.rect))
-        .collect();
+    let mut placed: HashMap<&NodeKey, Rect> = HashMap::with_capacity(layout.nodes.len());
+    for (node, row) in layout.nodes.iter().zip(rows) {
+        if node.key != row.key {
+            continue;
+        }
+        paint_node(&mut grid, node.rect, row, app, &highlight);
+        placed.insert(&node.key, node.rect);
+    }
     for edge in &layout.edges {
         paint_edge(&mut grid, &placed, edge);
     }
@@ -204,9 +207,9 @@ fn edge_text(cell: &Cell, first: bool, last: bool) -> &str {
 }
 
 /// Paints one node's three rows into `grid`, at its placed rectangle.
-fn paint_node(grid: &mut Grid, rect: Rect, row: &Row<'_>, app: &App) {
+fn paint_node(grid: &mut Grid, rect: Rect, row: &Row<'_>, app: &App, highlight: &Highlight) {
     let selected = is_selected(row, app);
-    let [top, content, bottom] = node_rows(row, app, rect.width);
+    let [top, content, bottom] = node_rows(row, app, highlight, rect.width);
     grid.place_row(rect.x, rect.y, top, selected);
     grid.place_row(rect.x, rect.y.saturating_add(1), content, selected);
     grid.place_row(rect.x, rect.y.saturating_add(2), bottom, selected);
@@ -215,11 +218,17 @@ fn paint_node(grid: &mut Grid, rect: Rect, row: &Row<'_>, app: &App) {
 /// The three rows of one box: rounded borders top and bottom, and one
 /// content row in between — the status glyph in its status colour, then the
 /// tree position for window nodes, then the name or label, truncated with
-/// `…` (decision 11).
-fn node_rows(row: &Row<'_>, app: &App, width: u16) -> [Vec<(String, Style)>; 3] {
+/// `…` (decision 11). A dimmed node has every cell dimmed.
+fn node_rows(
+    row: &Row<'_>,
+    app: &App,
+    highlight: &Highlight,
+    width: u16,
+) -> [Vec<(String, Style)>; 3] {
     let width = usize::from(width);
-    let border = border_style(row, app);
-    let (glyph, glyph_color) = glyph_and_color(&row.kind, app);
+    let node = style::node_style(row, app, highlight);
+    let border = node.border;
+    let (glyph, glyph_color) = style::node_glyph(row, app);
     let text = super::content_text(row);
 
     let mut top = vec![(String::from("─"), border); width];
@@ -234,7 +243,13 @@ fn node_rows(row: &Row<'_>, app: &App, width: u16) -> [Vec<(String, Style)>; 3] 
     content.insert(0, (String::from("│"), border));
     content.push((String::from("│"), border));
 
-    [top, content, bottom]
+    let mut rows = [top, content, bottom];
+    if node.dim {
+        for (_, style) in rows.iter_mut().flatten() {
+            *style = style.add_modifier(Modifier::DIM);
+        }
+    }
+    rows
 }
 
 /// The content row between a box's two borders: one space, the glyph, one
@@ -268,34 +283,6 @@ fn interior_slots(
         slots.push((" ".to_owned(), plain));
     }
     slots
-}
-
-fn glyph_and_color(kind: &RowKind<'_>, app: &App) -> (&'static str, Color) {
-    match kind {
-        RowKind::Project { status, .. } => (
-            theme::status_glyph(*status, app.spinner_frame),
-            theme::status_color(*status),
-        ),
-        RowKind::Window { info, .. } => (
-            theme::status_glyph(info.status, app.spinner_frame),
-            theme::status_color(info.status),
-        ),
-        RowKind::Subagent { info } => (
-            theme::subagent_glyph(info, app.spinner_frame),
-            theme::subagent_color(info),
-        ),
-    }
-}
-
-/// The focused window's box uses the focused border style; every other box
-/// uses the plain one (decision 12).
-fn border_style(row: &Row<'_>, app: &App) -> Style {
-    match &row.kind {
-        RowKind::Window { info, .. } if app.focused == Some(info.id) => {
-            theme::border_focused(app.settings.accent)
-        }
-        _ => theme::border(),
-    }
 }
 
 /// The selected node is highlighted the way the selected row is today: only
@@ -361,15 +348,22 @@ enum BusCell {
 
 /// Draws one parent-to-children connection in the `TIER_GAP` columns
 /// (decision 13).
+///
+/// An edge whose parent or any child was skipped is not drawn at all: the parent
+/// is centred on all of its children, so a partial fan-out could run its bus
+/// short of the parent or put a junction on the parent's corner.
 fn paint_edge(grid: &mut Grid, placed: &HashMap<&NodeKey, Rect>, edge: &Edge) {
     let Some(parent) = placed.get(&edge.parent).copied() else {
         return;
     };
-    let children: Vec<Rect> = edge
+    let Some(children) = edge
         .children
         .iter()
-        .filter_map(|child| placed.get(child).copied())
-        .collect();
+        .map(|child| placed.get(child).copied())
+        .collect::<Option<Vec<Rect>>>()
+    else {
+        return;
+    };
     let Some(geometry) = EdgeGeometry::new(parent, &children) else {
         return;
     };

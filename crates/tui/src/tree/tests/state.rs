@@ -380,7 +380,7 @@ fn collapsed_window_hides_its_subagents() {
         rows.iter()
             .filter_map(|row| match &row.kind {
                 RowKind::Window { position, .. } => Some(*position),
-                RowKind::Project { .. } | RowKind::Subagent { .. } => None,
+                _ => None,
             })
             .collect::<Vec<_>>(),
         (1..=8).collect::<Vec<_>>()

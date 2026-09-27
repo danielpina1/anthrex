@@ -29,6 +29,9 @@ impl App {
         verb: &str,
         make: fn(u32) -> PendingAction,
     ) -> Vec<Effect> {
+        if self.refuse_headless_control() {
+            return vec![];
+        }
         if let Some((id, name)) = self.focused_window().map(|w| (w.id, w.name.clone())) {
             self.modal = Some(Modal::Confirm {
                 message: format!("{verb} '{name}'?"),
@@ -62,6 +65,9 @@ impl App {
     /// generic yes/no `Confirm` modal, because it carries its own checkbox. Does
     /// nothing without a focused window, the same guard `confirm_focused` uses.
     pub(super) fn open_remove_confirm(&mut self) -> Vec<Effect> {
+        if self.refuse_headless_control() {
+            return vec![];
+        }
         if let Some(w) = self.focused_window() {
             self.modal = Some(Modal::Remove(RemoveConfirm {
                 window_id: w.id,
@@ -139,6 +145,10 @@ impl App {
                 message,
             } => self.on_force_remove_key(window_id, name, message, key),
             Modal::Rename(prompt) => self.on_rename_key(prompt, key),
+            Modal::EditTask(form) => {
+                self.modal = Some(Modal::EditTask(form));
+                self.on_edit_task_key(key)
+            }
         }
     }
 

@@ -413,3 +413,28 @@ fn every_status_glyph_is_one_column() {
         }
     }
 }
+
+/// Review M2 (M8c.3's brought-forward canvas text, Interfaces): a run with its
+/// orchestrator listed reads `orchestrator  {merged}/{total}`, with two spaces; one
+/// without reads `run {last four of the id}  {merged}/{total}`.
+#[test]
+fn a_run_nodes_text_is_the_interfaces_text() {
+    use crate::tree::run_fixtures::{gate_fixture, three_task_fixture};
+    use crate::tree::{TreeState, build_with_runs};
+    let text = |snap: &proto::RunsSnapshot, windows: &[WindowInfo]| {
+        let rows = build_with_runs(windows, &snap.runs, &TreeState::default());
+        let row = rows
+            .iter()
+            .find(|row| matches!(row.kind, RowKind::Run { .. }))
+            .expect("a run row");
+        content_text(row)
+    };
+    let (snap, windows) = three_task_fixture();
+    assert_eq!(text(&snap, &windows), "orchestrator  1/3");
+    let (snap, windows) = gate_fixture();
+    assert_eq!(text(&snap, &windows), "run 3f9a  0/2");
+    // The last four characters, not the first four, of a multi-byte id.
+    let (mut snap, windows) = gate_fixture();
+    snap.runs[0].run_id = "réinit-ünïç".into();
+    assert_eq!(text(&snap, &windows), "run ünïç  0/2");
+}

@@ -12,7 +12,7 @@ fn tap(app: &mut App, code: KeyCode) -> Vec<Effect> {
 }
 
 fn select(app: &mut App, key: NodeKey) {
-    let rows = tree::build(&app.windows, &app.tree);
+    let rows = tree::build_with_runs(&app.windows, &app.runs.runs, &app.tree);
     app.tree.select(&rows, key);
 }
 
@@ -399,4 +399,16 @@ fn prefix_still_has_priority_over_filter_input() {
     prefix(&mut app);
     assert!(tap(&mut app, KeyCode::Esc).is_empty());
     assert_eq!(app.tree_input, Some(TreeInput::Filter));
+}
+
+/// Review M3: the test `select` helper builds the rows with runs, so it can select a
+/// `Run` row; built without runs, selecting one was a silent no-op.
+#[test]
+fn the_select_helper_reaches_a_run_row() {
+    use crate::tree::run_fixtures::{RUN_ID, gate_fixture};
+    let (snap, windows) = gate_fixture();
+    let mut app = super::runs::app_with_runs(windows, snap);
+    app.enter_tree();
+    select(&mut app, NodeKey::Run(RUN_ID.into()));
+    assert_eq!(app.tree.selected, Some(NodeKey::Run(RUN_ID.into())));
 }

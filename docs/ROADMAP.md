@@ -13,7 +13,7 @@ The design is layered, newest first:
 6. `docs/superpowers/specs/2026-09-18-anthrex-product-design.md` — milestones 2 to 9.
 7. `docs/superpowers/specs/2026-09-17-anthrex-design.md` — milestone 1 and the parts of the core it still governs.
 
-The protocol version currently on `main` is **8**, raised from 7 by milestone 8b (`crates/proto/src/lib.rs`). Protocol numbers written in the milestone 8c to 9.5 briefs predate this and are re-derived from this line when each milestone is implemented: milestone 8c will use 9.
+The protocol version is **9** once milestone 8c merges, raised from 8 (milestone 8b's) by milestone 8c (`crates/proto/src/lib.rs`). Protocol numbers written in the milestone 9 to 9.5 briefs predate this and are re-derived from this line when each milestone is implemented.
 
 ## What anthrex does when all milestones are done
 
@@ -42,7 +42,7 @@ The protocol version currently on `main` is **8**, raised from 7 by milestone 8b
 | 8 | ~~Orchestration engine~~ — superseded by 8a, 8b, 8c | `docs/milestones/M8-orchestration-engine.md` | — | `superseded` |
 | 8a | Orchestration engine core: task graph, headless sessions, gates, merge queue, escalation, journal | `docs/milestones/M8a-orchestration-engine-core.md` | 5, 6, 6.5 | `done` |
 | 8b | Adaptation: repo profile, scouts, deciders, fast path, output filter, metering, run history | `docs/milestones/M8b-adaptation.md` | 8a | `done` |
-| 8c | The live run view in `C-b T` and the run inspector | `docs/milestones/M8c-live-run-view.md` | 8a | `blocked` |
+| 8c | The live run view in `C-b T` and the run inspector | `docs/milestones/M8c-live-run-view.md` | 8a | `done` |
 | 9 | ~~Orchestrator agent~~ — superseded by the new 9 brief below | `docs/milestones/M9-orchestrator-agent.md` | — | `superseded` |
 | 9 | Orchestrator and sub-planners: planning, steering, plan gate, worker messaging and refresh, role-routing history, TUI goal start | `docs/milestones/M9-orchestrator-and-subplanners.md` | 8a, 8b, 8c | `blocked` |
 | 9.1 | Tiered testing: affected-set tiers, test scheduler, result cache, flake handling, bisect, stages | `docs/milestones/M9.1-tiered-testing.md` | 9 | `blocked` |

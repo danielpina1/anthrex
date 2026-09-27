@@ -139,14 +139,20 @@ impl App {
         if !self.sidebar_visible {
             return vec![];
         }
-        let rows = tree::build(&self.windows, &self.tree);
+        let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
         let geometry =
             ui::tree_view::geometry(layout.sidebar_list, rows.len(), self.tree.sidebar.top);
         let Some(index) = geometry.index_at(column, row) else {
             return vec![];
         };
         let key = rows[index].key.clone();
+        // Review I1: the sidebar is the project tree. A click on any of its rows but a
+        // run's leaves the run view first, so the selection it makes is a canvas row.
+        if self.run_view.is_some() && !matches!(key, NodeKey::Run(_)) {
+            self.close_run_view();
+        }
         if self.tree_input.is_some() {
+            let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
             self.tree.select(&rows, key.clone());
         }
         let effects = match key {
@@ -154,7 +160,27 @@ impl App {
                 self.toggle_tree_node(&key);
                 vec![]
             }
-            NodeKey::Window(id) | NodeKey::Subagent { window_id: id, .. } => self.focus(id),
+            // Milestone 8c decision 26: a headless window's row opens its conversation,
+            // as Enter on it does. A PTY window is focused without leaving tree mode,
+            // as ever (`activate_tree_node` would leave it).
+            NodeKey::Window(id) | NodeKey::Subagent { window_id: id, .. } => {
+                if self.is_headless(id) {
+                    self.activate_tree_node(key)
+                } else {
+                    self.focus(id)
+                }
+            }
+            // Decision 22: a click on a run's row opens the run view on it, turning
+            // the overview on when it is off — also when the view is already open on
+            // that run, where Enter on the shared key would mean its root.
+            NodeKey::Run(id) => {
+                self.open_run_view(id);
+                vec![]
+            }
+            key @ (NodeKey::Planner { .. }
+            | NodeKey::Scout { .. }
+            | NodeKey::Task { .. }
+            | NodeKey::AgentRound { .. }) => self.activate_tree_node(key),
         };
         self.reveal_tree_anchor();
         effects
@@ -175,8 +201,14 @@ impl App {
         main: ratatui::layout::Rect,
     ) -> Option<Vec<Effect>> {
         // One row build for the gesture: `overview::view` would otherwise
-        // build its own, and the selection below needs the same list.
-        let rows = tree::build(&self.windows, &self.tree);
+        // build its own, and the selection below needs the same list — the run
+        // view's while it is open (milestone 8c decision 11).
+        let rows = crate::app::nav_rows_of(
+            &self.windows,
+            &self.runs.runs,
+            &self.tree,
+            self.run_view.as_ref(),
+        );
         let view = overview::view_of(self, main, &rows);
         if !view.canvas.contains((column, row).into()) {
             return None;

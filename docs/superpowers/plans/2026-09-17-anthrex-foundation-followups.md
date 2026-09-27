@@ -121,10 +121,14 @@ Each open item above is closed by exactly one milestone. Its brief lists the ite
   takes the `TreeState::overview` follow-up.
 - **`crates/tui/src/ui/mod.rs` is 599 lines against the 600 rule**, about 470 of them its
   test module. The next `ui` change has nowhere to land. Milestone 7 removes `main_inner`
-  and restructures the layout, so it splits the file there.
+  and restructures the layout, so it splits the file there. *Resolved before M8c (recorded
+  by M8c.10):* `ui/mod.rs` was 99 lines on `a910e18` and is 100 at M8c.10.
 - **The painter's zip invariant is only `debug_assert`ed.** `paint` pairs `layout.nodes`
   with the row list positionally. The invariant holds by construction today; in release a
   future divergence would paint labels onto the wrong boxes rather than dropping a node.
+  *Handled in M8c.5:* the painter compares each row's key with its node's and skips a
+  mismatched node, with every edge touching it
+  (`graph/paint/tests/runs.rs::a_row_that_disagrees_with_its_node_is_skipped`).
 
 ## From milestone 5's whole-branch review (2026-09-21)
 
@@ -728,7 +732,9 @@ scope.
   `{"stdout": …}` object already renders the same way on `main`, so this is not new to
   M8a. The full text is the enriched `detail`, which is right. M8c, which puts headless
   conversations in front of the user, should decide whether the summary should read an
-  object's single text field (`output`, `error`, `stdout`) instead.
+  object's single text field (`output`, `error`, `stdout`) instead. *Handled in M8c.11:*
+  `conversation/summary.rs::response_text` reads an object response's single non-empty
+  text field (its first non-blank line) for the summary; the detail is unchanged.
 
 ## From M8a.7's fix round 1 (2026-09-23), for M8a.12, M8a.18, M9.5 and M8c
 
@@ -755,7 +761,12 @@ scope.
   synthesised `Stop` is dropped. The Assistant turn therefore stays `Running` with its
   call `Pending`, and the next prompt closes that call as `Denied`. The daemon knows the
   turn ended. `TurnEnded { Interrupted }`, and a Codex `ProcessExited` while a sent turn is
-  open, could synthesise `Stop` even when `hooks_fire` is true.
+  open, could synthesise `Stop` even when `hooks_fire` is true. *Handled in M8c.11 and its
+  review fixes:* a Claude `TurnEnded { Interrupted }` keeps its synthesised `Stop` under
+  `hooks_fire` unless the turn's own `Stop` hook already came or a later prompt is open; a
+  Codex `ProcessExited` with a sent turn open, and a Claude `ProcessExited` with a turn
+  open (an engine kill: stall, cancel, `CancelLive`, give-up), synthesise `Stop` and close
+  the turn (`headless/conversation_turn_end_tests.rs`).
 - **`server_git`'s `two_windows_in_one_worktree_register_once` fails when built into
   `.worktrees/m8a-engine-core/target`** (found during M8a.7's fix round 1, not caused by
   it). Load average was about 20. In that target dir the binary takes 5.5–6.8 s and fails
@@ -1561,3 +1572,67 @@ scope.
   daemon keeps the window and its screen after exit, so no output is lost. Anything that
   should see the final screen at the moment of exit (an exit summary, a status rule that
   reads the last lines) would need the waiter to wait, bounded, for the reader to drain.
+
+## From M8c.1's review (2026-09-27), for M8c and M9
+
+- **The promotion time in the run view (M8c).** The snapshot's promotion attention line no longer carries a time (M8c.1 review I1; brief R17 had assumed the line carried it). The view's gate or attention rendering should show `local_hhmm(RunInfo.promote_requested_at)` beside it. *Handled in M8c.7:* the `attention` row shows the line as `promotion requested at <local hh:mm>; …`.
+- **`run promote`'s repeat reply is in UTC (M9).** `engine/requests.rs::promote` answers a second request with `was already marked for promotion at <hh:mm>` through `model_adapt::hh_mm`, in UTC. It is a request reply, not the snapshot, so M8c.1 left it; either drop the time or let the CLI format `promote_requested_at` locally.
+
+## From M8c.7 (2026-09-27), for proto
+
+- **`TokenUsage::billable()` can overflow.** `proto/src/run_info.rs` adds `input + cache_write + output` with plain `+`, so a hostile or corrupt usage report (any field near `u64::MAX`) panics a debug build and wraps in release. `AddAssign` for the same type already saturates. The run inspector computes the same sum with `saturating_add` (`inspector/run_format.rs::billable`) rather than touch `proto`; `billable()` itself should saturate. Its other callers are all in the daemon, none in the CLI: `run/engine/signals.rs:181, 240` (a round's reported spend added to `spent_total.tokens`, the budget `check_budget` enforces; a hostile stream report reaches this first, so it is the most exposed), `run/engine/ladder.rs:351` (a round's `Spend`), `run/report_task.rs:162` (the report's per-round tokens) and `run/stats.rs:50-52` (the per-task totals). *(Corrected by M8c.7's review m5: this entry had named `run status`, which does not call it.)*
+
+## From M8c.7's review (2026-09-27), for M8c
+
+- **The TUI's text scrubbing lets bidi and format characters through.** `inspector/run_format.rs::clean` maps only `char::is_control` (Unicode category Cc) to a space. Format characters (Cf) such as U+202E RIGHT-TO-LEFT OVERRIDE, U+2066–U+2069 isolates and zero-width characters reach the terminal from daemon-supplied text (goals, titles, branches, findings, scout questions, history). There is no escape injection, but a terminal may reorder or hide the text around them. The fix belongs in one shared sanitiser used by the whole TUI (the inspector, the canvas, the conversation view), not in the inspector's `clean` alone.
+
+## From milestone 8c (2026-09-27), recorded by M8c.10
+
+- **The run inspector's `doing` field has no tool target** (brief Risks 6, for M9 or a
+  later snapshot change). The spec's mockup shows `editing crates/daemon/src/status.rs
+  (last tool: apply_patch)`; neither `AgentRoundInfo` nor `WindowInfo` carries a tool's
+  target, only its name. The view does not read M6.5's conversation state for it, which
+  would make the inspector depend on a subscription the user may not have open. Publishing
+  the last tool call's target (a path, or a short argument) on the round or the window
+  would fill it.
+- **Fields of "Consumes from later milestones" still unfilled** (the view renders their
+  absence as the brief states):
+  - `RunInfo.estimate_left_secs` and `RunInfo.bound_ratio_permille`: **M9.5** (history
+    medians). Until then the view shows no `est. left` and no `× the bound`.
+  - `RunInfo.planners` (`PlannerInfo`, `PlannerState`): **M9**. Until then every task
+    hangs from the run's root.
+  - The orchestrator's PTY window (`WindowInfo.run == Some(RunRef { role: Orchestrator,
+    task_id: None, .. })`) and `AgentRole::Planner`: **M9**. Until then the root reads
+    `run <h4>` and Enter on it toasts that the run has no orchestrator window.
+  - `RunInfo.scouts` for a run's area scouts: **M9** (M8b declared the type and fills
+    only the onboarding scout, which has no run).
+  - Racer and test-writer rounds: **M9.5**. Not drawn until then.
+- **`run promote`'s repeat reply is in UTC** (M9): already filed under "From M8c.1's
+  review" above; not repeated here.
+- **`TokenUsage::billable()` can overflow** (proto): already filed under "From M8c.7"
+  above.
+- **Bidi and format characters pass the TUI's text scrubbing** (the client): already
+  filed under "From M8c.7's review" above; still open, M8c did not take it.
+- **Replies are matched by request name only** (M8c.9 review M7, for the milestone that
+  next changes the run protocol). The protocol has no request id, so a `Refused { request:
+  "run edit" }` for an earlier `d` (a `CancelTask`) that arrives while a later edit form
+  is submitting fills that form's error and clears `submitting`; the form's own `Done`
+  then only toasts, and the form stays open with the wrong error until Esc. It needs two
+  replies to race at human speed. A request id echoed in `Done`/`Refused` would fix it and
+  is a protocol change (a `PROTO_VERSION` bump).
+- **`crates/daemon/src/headless/conversation.rs` is 452 lines**, over the 430 the M8c
+  brief budgeted for M8c.11 (still under the 600 rule). The turn-end handling added by
+  M8c.11's review fixes (the Claude `ProcessExited` arm, `hook_stopped`, `keep_stop`) is
+  the natural piece to move into its own module the next time the file grows.
+- **Every run's task briefs ride on every snapshot push** (whole-branch review M3, for
+  **M9**). `crates/daemon/src/run/snapshot.rs:311-313` copies each task's `brief`,
+  `acceptance` and `route_spec` into the snapshot for every run `EngineState.runs` holds,
+  terminal runs included, and terminal runs are never removed from it. `snapshot()`
+  publishes all of them on every structural change to every subscriber, though only the
+  plan gate's edit form reads these fields. A push therefore grows without bound as run
+  history accumulates, against `proto::MAX_FRAME` (16 MB); an oversized push fails
+  `encode`. Not urgent at today's sizes. Suggested fix: publish `brief`, `acceptance` and
+  `route_spec` only while the run is `awaiting_approval`, or prune terminal runs' task
+  detail (or the runs themselves) from pushes.
+
+- **A real Claude worker cannot see `mcp__anthrex__task_done` (found by Daniel's first real run, 2026-09-27; owner: next milestone, M9, before its e2e with real agents).** In a four-task run with real `claude` and `codex`, t1's Claude worker reported that no `task_done` tool was exposed ("confirmed via ToolSearch"), on its first session and again after the review bounce. The engine's turn-end fallback moved the task on (history `done (the turn-end fallback)`), so the run did not stall. In the same run the Codex workers' `task_done` and the Claude reviewer's `submit_review` both reached the engine. The worker's argv carries `--strict-mcp-config --mcp-config {anthrex: anthrex mcp --role worker …}` and `--allowedTools mcp__anthrex__task_done,…`, and its `anthrex mcp` process was running. The one difference from the working Claude reviewer is the worker sandbox (`sandbox.enabled`, `network.allowUnixSockets = []`, `allowAllUnixSockets = false`, `headless/argv.rs` `CLAUDE_SANDBOX_PINS`). The hypothesis to test first: the installed Claude Code runs stdio MCP servers inside the session sandbox, or defers MCP tools behind ToolSearch in a way `--allowedTools` does not surface. `forward.rs` connects to the daemon only per call, so `tools/list` needs no socket. Needs a probe with the real CLI (`claude --debug`, the M8a.1 way), never in tests; the fake agent cannot show it.

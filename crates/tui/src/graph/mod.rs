@@ -14,6 +14,7 @@ use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
 pub mod paint;
+mod run_text;
 pub mod viewport;
 
 pub use viewport::Pan;
@@ -219,6 +220,13 @@ pub(crate) fn content_text(row: &Row<'_>) -> String {
         RowKind::Project { name, .. } => name.clone(),
         RowKind::Window { info, position, .. } => format!("{position} {}", info.name),
         RowKind::Subagent { info } => crate::tree::subagent_label(info),
+        RowKind::Run {
+            run, orchestrator, ..
+        } => run_text::run_text(run, orchestrator.is_some()),
+        RowKind::Planner { run, planner } => run_text::planner_text(run, planner),
+        RowKind::Scout { scout, .. } => scout.question.clone(),
+        RowKind::Task { task, .. } => run_text::task_text(task),
+        RowKind::AgentRound { round, .. } => run_text::round_text(round),
     }
 }
 
