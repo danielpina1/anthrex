@@ -46,6 +46,13 @@ pub const SESSION_IDENTITY: &[&str] = &["ANTHREX_WINDOW_ID", "ANTHREX_SOCKET"];
 /// temporary directory (final fix batch F1d, R5).
 pub const TASK_TMPDIR: &str = "TMPDIR";
 
+/// Set last on every headless Claude session anthrex starts (workers, reviewers,
+/// scouts, deciders), never on the user's own PTY windows, so Claude Code loads
+/// anthrex's MCP tools up front instead of behind `ToolSearch`. Claude Code 2.1.280
+/// defers MCP tools behind ToolSearch; a worker whose search missed the tool never
+/// called task_done (2026-09-27, the user's first real run).
+pub const CLAUDE_TOOL_SEARCH: (&str, &str) = ("ENABLE_TOOL_SEARCH", "false");
+
 /// Anthropic API credentials, removed from every session that does not authenticate
 /// with them (final fix batch F2, review C minor M2): with `auth = "login"`, `claude -p`
 /// would otherwise prefer a key the daemon happened to inherit over the user's login.
@@ -130,6 +137,10 @@ const RESERVED_NAMES: &[(&str, &str)] = &[
     ),
     ("TMPDIR", "anthrex gives each task its own"),
     (
+        "ENABLE_TOOL_SEARCH",
+        "anthrex turns it off so a headless Claude session sees its tools up front",
+    ),
+    (
         "HTTP_PROXY",
         "it routes the agent's traffic, credentials included",
     ),
@@ -201,7 +212,7 @@ mod tests {
             .iter()
             .chain(SCRUBBED_NAMES)
             .chain(SESSION_IDENTITY)
-            .chain(&[TASK_TMPDIR])
+            .chain(&[TASK_TMPDIR, CLAUDE_TOOL_SEARCH.0])
             .chain(API_CREDENTIALS)
             .chain(OPENAI_CREDENTIALS);
         for name in names {
@@ -261,6 +272,10 @@ mod tests {
             "JAVA_TOOL_OPTIONS",
             "npm_config_script_shell",
             "SSH_ASKPASS",
+            // The Claude tool-search fix (2026-09-27): pinned on every headless Claude
+            // session, so a profile cannot turn ToolSearch back on.
+            "ENABLE_TOOL_SEARCH",
+            "enable_tool_search",
         ] {
             assert!(reserved_env(key).is_some(), "{key} is not reserved");
         }

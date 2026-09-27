@@ -3,7 +3,9 @@
 //! `ANTHREX_SOCKET` set to its own window and socket, and gets the profile's `env`.
 //! Since final fix batch F2 a login session also loses `ANTHROPIC_API_KEY` and
 //! `ANTHROPIC_AUTH_TOKEN`; since its round 2, every session loses the OpenAI and Codex
-//! env credentials and the inherited shell start-up variables.
+//! env credentials and the inherited shell start-up variables. Since the Claude
+//! tool-search fix (2026-09-27), a Claude session has `ENABLE_TOOL_SEARCH=false`
+//! whatever it inherited or its `env` said.
 //!
 //! Alone in its own test binary, because it sets variables in this process's
 //! environment, and in edition 2024 that races any process spawn on another libtest
@@ -38,6 +40,9 @@ fn the_environment_is_scrubbed() {
         std::env::set_var("BASH_ENV", "/nonexistent/env.sh");
         std::env::set_var("SHELLOPTS", "xtrace");
         std::env::set_var("BASH_FUNC_anthrexprobe%%", "() { true; }");
+        // The Claude tool-search fix (2026-09-27): an inherited value never turns
+        // ToolSearch back on in a Claude session.
+        std::env::set_var("ENABLE_TOOL_SEARCH", "true");
     }
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -88,6 +93,9 @@ fn the_environment_is_scrubbed() {
         };
         let mut spec = spec(Runtime::Claude, &worktree);
         spec.env = profile_env(&profile, &worktree);
+        // Nor does a spec's own `env` (a profile cannot set it: it is reserved).
+        spec.env
+            .push(("ENABLE_TOOL_SEARCH".to_string(), "true".to_string()));
         let info = create(&m, "env", spec, "hi").await;
         assert_ne!(
             info.id, 9,
@@ -122,6 +130,12 @@ fn the_environment_is_scrubbed() {
             lines.contains(&format!("CARGO_TARGET_DIR={}/target", worktree.display()).as_str()),
             "{env}"
         );
+        // Exactly once, and off: Claude Code loads anthrex's MCP tools up front.
+        let pins: Vec<&&str> = lines
+            .iter()
+            .filter(|l| l.starts_with("ENABLE_TOOL_SEARCH="))
+            .collect();
+        assert_eq!(pins, [&"ENABLE_TOOL_SEARCH=false"], "{env}");
         m.remove(info.id).unwrap();
 
         // Final fix batch F2 (review C, M5): a Codex session gets neither the window id
@@ -142,6 +156,11 @@ fn the_environment_is_scrubbed() {
         assert!(
             env.lines()
                 .any(|l| l == format!("CARGO_TARGET_DIR={}/target", worktree.display())),
+            "{env}"
+        );
+        // The pin is Claude's only: a Codex session keeps what it inherited.
+        assert!(
+            !env.lines().any(|l| l == "ENABLE_TOOL_SEARCH=false"),
             "{env}"
         );
         m.remove(info.id).unwrap();

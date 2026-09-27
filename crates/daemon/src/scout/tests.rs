@@ -549,3 +549,36 @@ fn contract_texts() {
         "[anthrex] Your turn ended without a report. Call submit_scout_report now with what you found, then stop."
     );
 }
+
+/// The Claude tool-search fix (2026-09-27): a run's area scout and the onboarding scout
+/// get `ENABLE_TOOL_SEARCH=false` exactly once on Claude, on top of their spec's `env`
+/// (the variables `HeadlessHandle::spawn` sets), and not on Codex.
+#[test]
+fn claude_scouts_get_tool_search_off_exactly_once() {
+    for kind in [ScoutKind::Area, ScoutKind::Onboarding] {
+        for (runtime, expected) in [(Runtime::Claude, 1), (Runtime::Codex, 0)] {
+            let spec = headless_spec(&scout(kind), &ctx(runtime));
+            assert_eq!(spec.runtime, runtime);
+            let vars = crate::headless::session_vars(spec.runtime, &spec.env);
+            let pins: Vec<_> = vars
+                .iter()
+                .filter(|(key, _)| key == "ENABLE_TOOL_SEARCH")
+                .collect();
+            assert_eq!(pins.len(), expected, "{kind:?} on {runtime:?}: {vars:?}");
+            assert!(pins.iter().all(|(_, value)| value == "false"), "{vars:?}");
+        }
+    }
+}
+
+/// The Claude tool-search fix (2026-09-27): both scout contracts name the report tool by
+/// the full id a Claude session sees, marked as Claude's (Codex names it differently).
+#[test]
+fn scout_contracts_name_the_report_tool_by_its_claude_id() {
+    let named = "submit_scout_report (in Claude: mcp__anthrex__submit_scout_report)";
+    for contract in [
+        super::contract::SCOUT_CONTRACT,
+        super::contract::ONBOARDING_CONTRACT,
+    ] {
+        assert!(contract.contains(named), "{contract}");
+    }
+}
