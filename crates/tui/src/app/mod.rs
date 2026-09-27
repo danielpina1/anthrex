@@ -37,6 +37,13 @@ pub enum PendingAction {
     /// `open_force_remove` doc comment for the sibling case this mirrors).
     Restart(u32),
     StopDaemon,
+    /// Milestone 8c decision 32: the plan gate's requests, each carrying its run.
+    ApproveRun(String),
+    RejectRun(String),
+    RemoveTask {
+        run_id: String,
+        task_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +73,8 @@ pub enum Modal {
     /// the client-side name check; key handling is `app/modal_keys.rs`'s
     /// `on_rename_key`, and rendering is `ui/modal.rs`.
     Rename(RenamePrompt),
+    /// Milestone 8c decision 33: the plan gate's task edit form (`crate::run_edit`).
+    EditTask(crate::run_edit::TaskEditForm),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

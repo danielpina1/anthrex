@@ -9,7 +9,11 @@
 //! file's `perform` arm for `PendingAction::StopDaemon` only dispatches to it.
 
 use super::{App, Effect, Modal, PendingAction};
-use proto::{ClientMsg, Status};
+use proto::{ClientMsg, PlanEdit, RunRequest, Status};
+
+fn run(request: RunRequest) -> Vec<Effect> {
+    vec![Effect::Send(ClientMsg::Run(request))]
+}
 
 impl App {
     pub(super) fn perform(&mut self, action: PendingAction) -> Vec<Effect> {
@@ -23,6 +27,13 @@ impl App {
             // `check_stopping_timeout` for the three ways that wait can end.
             // `start_stopping` lives there too (decision 39): this arm only dispatches.
             PendingAction::StopDaemon => self.start_stopping(),
+            // Milestone 8c decision 32: the user's own gate requests, after a `y`.
+            PendingAction::ApproveRun(run_id) => run(RunRequest::Approve { run_id }),
+            PendingAction::RejectRun(run_id) => run(RunRequest::Reject { run_id }),
+            PendingAction::RemoveTask { run_id, task_id } => run(RunRequest::Edit {
+                run_id,
+                edits: vec![PlanEdit::CancelTask { task_id }],
+            }),
         }
     }
 

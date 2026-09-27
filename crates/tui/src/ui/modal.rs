@@ -101,6 +101,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         Modal::ForceRemove { name, message, .. } => {
             return dialog::render_force_remove(frame, name, message, area, accent);
         }
+        Modal::EditTask(form) => return crate::ui::run_edit::render(frame, form, area, accent),
         Modal::Confirm { .. } | Modal::Help | Modal::Notice { .. } | Modal::Rename(_) => {}
     }
     let (title, body): (String, Vec<Line>) = match modal {
@@ -145,7 +146,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 Line::styled("Enter = rename    Esc = cancel", theme::muted()),
             ],
         ),
-        Modal::NewAgent(_) | Modal::Remove(_) | Modal::ForceRemove { .. } => {
+        Modal::NewAgent(_) | Modal::Remove(_) | Modal::ForceRemove { .. } | Modal::EditTask(_) => {
             unreachable!("handled and returned from above")
         }
     };

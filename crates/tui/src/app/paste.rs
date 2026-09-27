@@ -41,8 +41,10 @@ impl App {
         // Decision 30: a paste goes to the open form's focused field, or is dropped for
         // any other modal — both checked before tree mode and the PTY (risk 10).
         if let Some(modal) = &mut self.modal {
-            if let Modal::NewAgent(form) = modal {
-                form.on_paste(&text);
+            match modal {
+                Modal::NewAgent(form) => form.on_paste(&text),
+                Modal::EditTask(form) => form.on_paste(&text),
+                _ => {}
             }
             return vec![];
         }

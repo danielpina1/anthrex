@@ -44,6 +44,9 @@ mod headless;
 #[path = "../app_tests/runs.rs"]
 mod runs;
 
+#[path = "../app_tests/gate.rs"]
+mod gate;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

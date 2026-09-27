@@ -2,14 +2,19 @@
 //! 34). One pushed `RunsSnapshot`, subscribed once per connection, replaced whole by
 //! every push; the daemon's clock as the client sees it; and the toasts for the run
 //! replies this client asked for. Task M8c.6 adds the run view's state (decision 11):
-//! opening, leaving and the keys only it has; Enter inside it is `run_enter.rs`.
+//! opening, leaving and the keys only it has; Enter inside it is `run_enter.rs`. Task
+//! M8c.9 adds the plan gate (decisions 32–34): `a`, `x`, `e` and `d`, the edit form's
+//! keys and its replies. The client only ever sends the user's own requests, each after
+//! a confirm (the `y` of a `Confirm`, or the form's `Enter`).
 
-use super::{App, Effect, TreeInput};
+use super::{App, Effect, Modal, PendingAction, TreeInput};
+use crate::run_edit::{EditOutcome, TaskEditForm};
 use crate::tree::{self, NodeKey, Row, RunFilter, TreeState};
 use crossterm::event::{KeyCode, KeyEvent};
+use proto::run_wire::request::EDIT;
 use proto::{
-    AgentRoundInfo, ClientMsg, RunInfo, RunReply, RunRequest, RunState, RunsSnapshot, Runtime,
-    WindowInfo,
+    AgentRoundInfo, ClientMsg, RunInfo, RunPath, RunReply, RunRequest, RunState, RunsSnapshot,
+    Runtime, TaskState, WindowInfo,
 };
 use std::time::Instant;
 
@@ -76,6 +81,10 @@ pub(crate) fn state_text(state: RunState) -> &'static str {
         RunState::Discarded => "discarded",
         RunState::Failed => "failed",
     }
+}
+
+fn confirm(message: String, action: PendingAction) -> Modal {
+    Modal::Confirm { message, action }
 }
 
 /// `App.runs` before the first snapshot arrives: revision 0, no runs.
@@ -149,10 +158,24 @@ impl App {
                 self.runs_received_at = Instant::now();
                 self.run_subscribed = true;
             }
-            RunReply::Done { message, .. } => self.toast(capped(&message)),
+            // Decision 34: an edit's reply ends a submitting form — closed on `Done`,
+            // its error row filled on `Refused`. Every other reply is a toast.
+            RunReply::Done { request, message } => {
+                if request == EDIT && self.submitting_form().is_some() {
+                    self.modal = None;
+                }
+                self.toast(capped(&message));
+            }
             RunReply::Refused { request, message } => {
-                let text = first_line_and_more(&message);
-                self.toast(text.unwrap_or_else(|| format!("{request} refused")));
+                let text =
+                    first_line_and_more(&message).unwrap_or_else(|| format!("{request} refused"));
+                match self.submitting_form().filter(|_| request == EDIT) {
+                    Some(form) => {
+                        form.error = Some(text);
+                        form.submitting = false;
+                    }
+                    None => self.toast(text),
+                }
             }
             RunReply::Started { .. }
             | RunReply::ConfirmNeeded { .. }
@@ -178,6 +201,7 @@ impl App {
         self.tree.prune_runs(&self.runs.runs);
         self.tree.prune(&self.windows);
         self.close_run_view_if_gone(run_row);
+        self.close_edit_form_if_stale();
         let rows = nav_rows_of(
             &self.windows,
             &self.runs.runs,
@@ -300,7 +324,7 @@ impl App {
     /// The keys only the run view has (decisions 21 and 23): `f` cycles the filter, `h`
     /// at the root and `Esc` leave. `None`: not one of them, so the project tree's rule
     /// applies (`h` below the root selects the parent). `a`, `x`, `e` and `d` are the
-    /// plan gate's, task M8c.9's.
+    /// plan gate's (decision 32).
     pub(crate) fn on_run_view_key(&mut self, key: KeyEvent) -> Option<Vec<Effect>> {
         let view = self.run_view.as_mut()?;
         match key.code {
@@ -321,9 +345,120 @@ impl App {
                 self.close_run_view();
             }
             KeyCode::Esc => self.close_run_view(),
+            KeyCode::Char(c @ ('a' | 'x' | 'e' | 'd')) => {
+                let run_id = view.run_id.clone();
+                self.on_gate_key(run_id, c);
+            }
             _ => return None,
         }
         Some(vec![])
+    }
+
+    /// Decision 32: `Ok` with the run while it awaits approval — the gate is open —
+    /// else the toast saying why it is closed.
+    fn gate_run(&self, run_id: &str) -> Result<&RunInfo, String> {
+        let closed = |why: &str| format!("the plan gate is closed: run {run_id} is {why}");
+        match self.runs.runs.iter().find(|run| run.run_id == run_id) {
+            Some(run) if run.state == RunState::AwaitingApproval => Ok(run),
+            Some(run) if run.path == Some(RunPath::Fast) => Err(closed("on the fast path")),
+            Some(run) => Err(closed(state_text(run.state))),
+            None => Err(closed("gone")),
+        }
+    }
+
+    /// Decision 32's four keys: `a` and `x` ask to approve or reject the run, `d` to
+    /// remove the selected task, `e` opens the edit form on it. Nothing is sent here.
+    fn on_gate_key(&mut self, run_id: String, key: char) {
+        let run = match self.gate_run(&run_id) {
+            Ok(run) => run,
+            Err(text) => return self.toast(text),
+        };
+        let task = match &self.tree.selected {
+            Some(NodeKey::Task { run: r, id }) if *r == run_id => {
+                run.tasks.iter().find(|task| task.id == *id)
+            }
+            _ => None,
+        };
+        let modal = match (key, task) {
+            ('a', _) => {
+                let starting = run.tasks.iter().filter(|t| t.state != TaskState::Cancelled);
+                let message = match starting.count() {
+                    1 => format!("Approve run {run_id}? 1 task starts."),
+                    n => format!("Approve run {run_id}? {n} tasks start."),
+                };
+                confirm(message, PendingAction::ApproveRun(run_id))
+            }
+            ('x', _) => confirm(
+                format!(
+                    "Reject run {run_id}? Its branches and worktrees are removed; \
+                     salvage refs are kept."
+                ),
+                PendingAction::RejectRun(run_id),
+            ),
+            ('e', Some(task)) => Modal::EditTask(TaskEditForm::new(&run_id, task)),
+            (_, Some(task)) => confirm(
+                format!("Remove {} from run {run_id}'s plan?", task.id),
+                PendingAction::RemoveTask {
+                    task_id: task.id.clone(),
+                    run_id,
+                },
+            ),
+            (_, None) => return self.toast("select a task to edit or remove"),
+        };
+        self.modal = Some(modal);
+    }
+
+    /// Decision 33: the open edit form's keys. `Enter` sends the one `Edit` and leaves
+    /// the form open, submitting, until its reply (decision 34).
+    pub(crate) fn on_edit_task_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        let Some(Modal::EditTask(form)) = &mut self.modal else {
+            return vec![];
+        };
+        match form.on_key(key) {
+            EditOutcome::Stay => vec![],
+            EditOutcome::Cancel => {
+                self.modal = None;
+                vec![]
+            }
+            EditOutcome::Unchanged => {
+                self.modal = None;
+                self.toast("nothing changed");
+                vec![]
+            }
+            EditOutcome::Submit(edits) => {
+                let run_id = form.run_id.clone();
+                vec![Effect::Send(ClientMsg::Run(RunRequest::Edit {
+                    run_id,
+                    edits,
+                }))]
+            }
+        }
+    }
+
+    /// The edit form while it waits for its `run edit` reply.
+    fn submitting_form(&mut self) -> Option<&mut TaskEditForm> {
+        match &mut self.modal {
+            Some(Modal::EditTask(form)) if form.submitting => Some(form),
+            _ => None,
+        }
+    }
+
+    /// A snapshot that closes the gate, or drops the form's task, closes the form with
+    /// a toast saying which: its edit could only be refused now.
+    fn close_edit_form_if_stale(&mut self) {
+        let Some(Modal::EditTask(form)) = &self.modal else {
+            return;
+        };
+        let (run_id, task_id) = (form.run_id.clone(), form.task_id.clone());
+        let text = match self.gate_run(&run_id) {
+            Err(text) => text,
+            Ok(run) if !run.tasks.iter().any(|task| task.id == task_id) => {
+                format!("{task_id} is no longer in run {run_id}'s plan")
+            }
+            Ok(_) => return,
+        };
+        self.modal = None;
+        self.toast(text);
     }
 
     /// Tests move the snapshot's arrival into the past instead of sleeping.

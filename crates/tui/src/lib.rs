@@ -9,6 +9,7 @@ pub mod inspector;
 pub mod keymap;
 mod mouse;
 pub mod reconnect;
+pub mod run_edit;
 pub mod settings;
 pub mod spawn;
 pub mod theme;

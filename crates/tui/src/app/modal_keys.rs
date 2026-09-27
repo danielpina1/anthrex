@@ -145,6 +145,10 @@ impl App {
                 message,
             } => self.on_force_remove_key(window_id, name, message, key),
             Modal::Rename(prompt) => self.on_rename_key(prompt, key),
+            Modal::EditTask(form) => {
+                self.modal = Some(Modal::EditTask(form));
+                self.on_edit_task_key(key)
+            }
         }
     }
 
