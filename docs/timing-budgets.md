@@ -209,6 +209,13 @@ or one push, far under its bound; each absence window is paired with a positive 
 | Stage 11d's `run start --goal` (`GOAL_CMD_TIMEOUT`), its completion poll and its accept | `scripts/pty_smoke_adapt.py` | `900s`; `RUN_WAIT` (`300s`); `ACCEPT_CMD_TIMEOUT` (`900s`) | Goal: `ensure_daemon` (3.25 s) + `HANDSHAKE_TIMEOUT` (5 s) + `GOAL_REQUEST_TIMEOUT` (810 s, `crates/cli/src/run_cmd/adapt.rs`) = 818.25 s, rounded up (about 10% over), derived as `pty_smoke_run.py` derives `RUN_CMD_TIMEOUT`. The poll and the accept are stage 11c's constants, imported: one task path, and `run accept`'s 668.25 s. | **Recorded.** Measured: the whole smoke suite took 85 s with stage 11d in it. |
 | `e2e_goal_without_a_profile_starts_detection`: detection's end | `run_e2e_adapt.rs` | `PROFILE_WAIT` (300 s) | M8b.11's row: one detection to `Ready`. | **Recorded** (the M8b.11 row's bound, reused). Measured about 3 s. |
 
+### Recorded, from M8c.10 (2026-09-27)
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| Stage 11e: the worker's conversation header after Enter on its round (`RUN_VIEW_CONVERSATION_TIMEOUT`) | `scripts/pty_smoke_run_view.py` | `45s`; Enter re-sent every 3 s while the header is absent | `CONVERSATION_VIEW_TIMEOUT`'s derivation (`scripts/pty-smoke.py`), repeated in the module because a hyphenated script cannot be imported: five fake-agent hook steps at `STEP_TIMEOUT` (25 s) + `TRANSCRIPT_POLL` (0.25 s) + `TRANSCRIPT_READ_TIMEOUT` (2 s) + the client's 100 ms tick = 27.35 s, about 60% margin. What the stage waits on is smaller: the header names the window once the client lists it and draws a frame (Enter on a round whose window is not listed yet only toasts, M8c.6, hence the re-send), and a headless conversation has no transcript to poll. | **Recorded.** The coupling is a comment: change `CONVERSATION_VIEW_TIMEOUT`'s derivation, change this value. |
+| Stage 11e's `run start`, `run cancel` and `run status` (`RUN_CMD_TIMEOUT`), the wait for `worker #1 claude` and for the cancelled run to complete (`RUN_WAIT`), and its `run discard` (`ACCEPT_CMD_TIMEOUT`) | `scripts/pty_smoke_run_view.py` | `240s`; `300s`; `900s` | Stage 11c's constants, imported from `pty_smoke_run.py`: 188.25 s per run request, one task path, and `FINISH_REQUEST_TIMEOUT`'s 668.25 s (discard waits the same bound as accept). The worker's wait is one task path's start (the preparing gates before the first session); the cancel's is the killed session's end and its salvage. | **Recorded.** Measured: a smoke run that reached the end of stage 11e took 96 s in all. |
+
 ### Fixed, from the main-branch CI failures (2026-09-23)
 
 | Test | Site | Bound (as found) | The code's own legal worst case | Status |
