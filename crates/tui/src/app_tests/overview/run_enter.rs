@@ -327,11 +327,12 @@ fn reopen(app: &mut App, log: &mut Vec<Effect>) {
     if app.tree_input == Some(TreeInput::Filter) {
         log.extend(tap(app, KeyCode::Esc));
     }
+    // Keep every node reachable for the next key: no fold, no filter. Cleared first,
+    // since a sidebar click on the project leaves the view and folds it (review I1).
+    app.tree.collapsed.clear();
     if app.run_view.is_none() {
         open_run_view(app, RUN_ID);
     }
-    // Keep every node reachable for the next key: no fold, no filter.
-    app.tree.collapsed.clear();
     if let Some(view) = app.run_view.as_mut() {
         view.filter = crate::tree::RunFilter::All;
     }
@@ -426,4 +427,118 @@ fn no_run_view_path_sends_input() {
         assert_watch_only(&app, &effects, &format!("sidebar row {index}"));
     }
     assert_watch_only(&app, &log, "the whole session");
+}
+
+/// Review m3 (M33, M34, M37): a planner has ended once it leaves `planning`, a scout
+/// once it has reported or failed, whatever `ended_at` says; either with no window id
+/// yet says so.
+#[test]
+fn planner_and_scout_enter_rules() {
+    use crate::tree::run_fixtures::{planner, scout};
+    use proto::{PlannerState, Runtime, ScoutState};
+    let planner_key = NodeKey::Planner {
+        run: RUN_ID.into(),
+        epic: "A".into(),
+    };
+    let scout_key = NodeKey::Scout {
+        run: RUN_ID.into(),
+        id: "s1".into(),
+    };
+    let cases = [
+        (PlannerState::Planning, ScoutState::Working, Some(98)),
+        (PlannerState::Finished, ScoutState::Reported, Some(98)),
+        (PlannerState::Failed, ScoutState::Failed, Some(98)),
+        (PlannerState::Planning, ScoutState::Starting, None),
+    ];
+    for (planner_state, scout_state, window) in cases {
+        let (mut snapshot, windows) = three_task_fixture();
+        let mut a = planner("A", "daemon");
+        a.state = planner_state;
+        a.window_id = window;
+        let mut s1 = scout("s1", "where is auth?", Runtime::Claude, 9_000);
+        s1.state = scout_state;
+        s1.window_id = window.map(|id| id - 1);
+        snapshot.runs[0].planners = vec![a];
+        snapshot.runs[0].scouts = vec![s1];
+        let mut app = app_with_runs(windows, snapshot);
+        let _ = app.focus(1);
+        open_run_view(&mut app, RUN_ID);
+
+        let ended = planner_state != PlannerState::Planning;
+        select_nav(&mut app, planner_key.clone());
+        assert!(tap(&mut app, KeyCode::Enter).is_empty());
+        let expected = match window {
+            None => "planner A has no window yet".to_owned(),
+            Some(_) if ended => "planner A has finished and its window is gone".to_owned(),
+            Some(id) => format!("window #{id} is not listed yet"),
+        };
+        assert_eq!(
+            app.toast_text(),
+            Some(expected.as_str()),
+            "{planner_state:?}"
+        );
+
+        let ended = matches!(scout_state, ScoutState::Reported | ScoutState::Failed);
+        select_nav(&mut app, scout_key.clone());
+        assert!(tap(&mut app, KeyCode::Enter).is_empty());
+        let expected = match window {
+            None => "scout s1 has no window yet".to_owned(),
+            Some(_) if ended => "scout s1 has finished and its window is gone".to_owned(),
+            Some(id) => format!("window #{} is not listed yet", id - 1),
+        };
+        assert_eq!(app.toast_text(), Some(expected.as_str()), "{scout_state:?}");
+        assert!(!app.conversation.is_open());
+        assert_eq!(app.focused, Some(1));
+    }
+
+    // A round with no window id yet (the 200-task run has none).
+    let mut app = app_with_runs(
+        vec![],
+        crate::tree::run_fixtures::snapshot(
+            10_000,
+            vec![crate::tree::run_fixtures::two_hundred_task_run()],
+        ),
+    );
+    open_run_view(&mut app, RUN_ID);
+    select_nav(&mut app, round_key("t0", AgentRole::Worker, 1, 1));
+    assert!(tap(&mut app, KeyCode::Enter).is_empty());
+    assert_eq!(app.toast_text(), Some("worker #1 has no window yet"));
+}
+
+/// Review m3 (M2): a sub-agent in the run view opens its owning window's conversation,
+/// whatever kind of window that is; it never focuses it.
+#[test]
+fn enter_on_a_sub_agent_in_the_run_view_opens_its_windows_conversation() {
+    for kind in [proto::WindowKind::Headless, proto::WindowKind::Pty] {
+        let (snapshot, mut windows) = three_task_fixture();
+        let worker = windows.iter_mut().find(|w| w.id == 6).expect("window 6");
+        worker.kind = kind;
+        worker.subagents = vec![proto::SubagentInfo {
+            id: "a1".into(),
+            parent_id: None,
+            kind: "general-purpose".into(),
+            label: Some("explore".into()),
+            model: None,
+            state: proto::SubagentState::Running,
+            tool: None,
+            started_secs: 5,
+            ended_secs: None,
+            needs_permission: false,
+        }];
+        let mut app = app_with_runs(windows, snapshot);
+        let _ = app.focus(1);
+        open_run_view(&mut app, RUN_ID);
+        select_nav(
+            &mut app,
+            NodeKey::Subagent {
+                window_id: 6,
+                id: "a1".into(),
+            },
+        );
+        let effects = tap(&mut app, KeyCode::Enter);
+        assert_eq!(effects, conversation_of(6), "{kind:?}");
+        assert_eq!(app.focused, Some(1), "{kind:?}");
+        assert!(app.run_view.is_some());
+        assert!(!inputs(&effects));
+    }
 }

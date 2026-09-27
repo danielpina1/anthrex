@@ -146,7 +146,13 @@ impl App {
             return vec![];
         };
         let key = rows[index].key.clone();
+        // Review I1: the sidebar is the project tree. A click on any of its rows but a
+        // run's leaves the run view first, so the selection it makes is a canvas row.
+        if self.run_view.is_some() && !matches!(key, NodeKey::Run(_)) {
+            self.close_run_view();
+        }
         if self.tree_input.is_some() {
+            let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
             self.tree.select(&rows, key.clone());
         }
         let effects = match key {

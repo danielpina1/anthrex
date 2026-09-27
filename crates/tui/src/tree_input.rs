@@ -181,8 +181,8 @@ impl App {
                 }
             }
             // Decision 22 (Risks 2): a run's node in the project tree is a leaf, and it
-            // shares its key with the run view's root, which a fold would collapse.
-            KeyCode::Char(' ') if self.project_run_selected().is_some() => {}
+            // shares its key with the run view's root, which never folds (review m1).
+            KeyCode::Char(' ') if matches!(self.tree.selected, Some(NodeKey::Run(_))) => {}
             KeyCode::Char(' ') => {
                 if let Some(selected) = self.tree.selected.clone() {
                     self.toggle_tree_node(&selected);
@@ -209,10 +209,11 @@ impl App {
                 self.toggle_tree_node(&key);
                 vec![]
             }
-            // Milestone 8c decisions 24 and 26: a headless window, and a sub-agent in
-            // the run view, open the owning window's conversation; only a PTY window
-            // is focused.
-            NodeKey::Window(id) | NodeKey::Subagent { window_id: id, .. }
+            // Milestone 8c decisions 24 and 26: a headless window, and any sub-agent in
+            // the run view (whose rows hold no `Window`), open the owning window's
+            // conversation; only a PTY window is focused.
+            NodeKey::Window(id) if self.is_headless(id) => self.open_conversation(id),
+            NodeKey::Subagent { window_id: id, .. }
                 if self.is_headless(id) || self.run_view.is_some() =>
             {
                 self.open_conversation(id)

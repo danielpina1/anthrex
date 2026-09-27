@@ -170,10 +170,14 @@ impl App {
     fn replace_runs(&mut self, snapshot: RunsSnapshot) {
         let previous_keys: Vec<_> = self.nav_rows().into_iter().map(|row| row.key).collect();
         let previous_selection = self.tree.selected.clone();
+        let run_row = self
+            .run_view
+            .as_ref()
+            .and_then(|view| tree::row_index(&self.rows(), &NodeKey::Run(view.run_id.clone())));
         self.runs = snapshot;
         self.tree.prune_runs(&self.runs.runs);
         self.tree.prune(&self.windows);
-        self.close_run_view_if_gone();
+        self.close_run_view_if_gone(run_row);
         let rows = nav_rows_of(
             &self.windows,
             &self.runs.runs,
@@ -229,6 +233,8 @@ impl App {
         }
         self.tree_input = Some(TreeInput::Navigate);
         self.tree.filter.clear();
+        // Review m1: an old fold of the root never hides the view.
+        self.tree.collapsed.remove(&NodeKey::Run(run_id.clone()));
         self.run_view = Some(RunView {
             run_id: run_id.clone(),
             filter: RunFilter::All,
@@ -244,9 +250,15 @@ impl App {
         self.reveal_tree_anchor();
     }
 
-    /// Decision 23: back to the project overview with the run's node selected (or, when
-    /// the run has left the tree, its neighbour), both filters reset.
+    /// Decision 23: back to the project overview with the run's node selected, both
+    /// filters reset.
     pub(crate) fn close_run_view(&mut self) {
+        self.close_run_view_at(None);
+    }
+
+    /// `close_run_view`; when the run has left the tree, the project row now at
+    /// `run_row`, where its node was, clamped (review m2).
+    fn close_run_view_at(&mut self, run_row: Option<usize>) {
         let Some(view) = self.run_view.take() else {
             return;
         };
@@ -255,14 +267,20 @@ impl App {
             self.tree_input = Some(TreeInput::Navigate);
         }
         let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
-        self.tree.select(&rows, NodeKey::Run(view.run_id));
+        let run = NodeKey::Run(view.run_id);
+        let key = match (tree::row_index(&rows, &run), run_row) {
+            (None, Some(at)) if !rows.is_empty() => rows[at.min(rows.len() - 1)].key.clone(),
+            _ => run,
+        };
+        self.tree.select(&rows, key);
         self.tree.repair_selection(&rows);
         self.reveal_tree_anchor();
     }
 
     /// Decision 23: a snapshot that no longer names the open run, or names it in a
-    /// terminal state, closes the view with a toast saying which.
-    fn close_run_view_if_gone(&mut self) {
+    /// terminal state, closes the view with a toast saying which. `run_row`: the run's
+    /// project row before the snapshot.
+    fn close_run_view_if_gone(&mut self, run_row: Option<usize>) {
         let Some(id) = self.run_view.as_ref().map(|view| view.run_id.clone()) else {
             return;
         };
@@ -273,7 +291,7 @@ impl App {
             }
             Some(_) => return,
         };
-        self.close_run_view();
+        self.close_run_view_at(run_row);
         self.toast(text);
     }
 
