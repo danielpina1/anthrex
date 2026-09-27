@@ -63,6 +63,9 @@ fn repo_with_project_settings(root: &Path) {
     std::fs::write(root.join("crates/proto/src/wire.rs"), "// wire\n").unwrap();
     std::fs::write(root.join(".mcp.json"), "{\"mcpServers\": {}}\n").unwrap();
     git(root, &["init", "-q", "-b", "main"]);
+    // Preflight reads the repository's own identity (CI has no global one).
+    git(root, &["config", "user.name", "t"]);
+    git(root, &["config", "user.email", "t@t"]);
     git(root, &["add", "-A"]);
     git(root, &["commit", "-q", "-m", "base"]);
 }

@@ -13,7 +13,8 @@ use daemon::profile::store::{
     save_proposal, stale,
 };
 use proto::{ProfileMeta, ProposalOrigin, ProposalRecord, ProposalState, RepoProfile};
-use support::{TempRepo, git_output};
+use support::git_output;
+use support::run_git::repo as identified_repo;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -48,7 +49,7 @@ fn meta(fingerprint: BTreeMap<String, String>) -> ProfileMeta {
 
 #[test]
 fn repo_dir_is_shared_by_linked_worktrees() {
-    let repo = TempRepo::new();
+    let repo = identified_repo();
     let linked = tempfile::tempdir().unwrap();
     let linked_path = linked.path().join("wt");
     repo.git(&[
@@ -399,7 +400,7 @@ fn a_proposal_round_trips_and_is_deleted() {
 
 #[test]
 fn nothing_is_written_inside_the_repository() {
-    let repo = TempRepo::new();
+    let repo = identified_repo();
     let data = tempfile::tempdir().unwrap();
     let git = OsStr::new("git");
     let pre = daemon::run::git::preflight(git, &repo.root, TIMEOUT).unwrap();
