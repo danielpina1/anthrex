@@ -1,15 +1,21 @@
 //! M8b.15: the OTLP/HTTP-JSON receiver over real TCP on `127.0.0.1:0` (decision 30).
 
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use daemon::metering::server::{ADDR_FILE, OTLP_MAX_BODY, OTLP_MAX_HEADERS, OTLP_READ_TIMEOUT};
-use daemon::metering::{OtlpServer, bind};
+use daemon::metering::server::{
+    ADDR_FILE, OTLP_MAX_BODY, OTLP_MAX_CONNECTIONS, OTLP_MAX_HEADERS, OTLP_READ_TIMEOUT,
+    OTLP_SLOT_WAIT,
+};
+use daemon::metering::{OtlpServer, UsageSink, bind};
 use proto::TokenUsage;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio_util::sync::CancellationToken;
 
 /// M8b.1 item 5's recorded body: run `r-fix`, role `orchestrator`.
@@ -37,23 +43,59 @@ fn fixture_usage() -> TokenUsage {
     }
 }
 
+/// The run service's stand-in: a settable set of live runs, and every post recorded.
+struct TestSink {
+    live: Mutex<HashSet<String>>,
+    generation: AtomicU64,
+    posts: UnboundedSender<(String, TokenUsage)>,
+}
+
+impl TestSink {
+    fn set_live(&self, runs: &[&str]) {
+        *self.live.lock().unwrap() = runs.iter().map(|r| r.to_string()).collect();
+        self.generation.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl UsageSink for TestSink {
+    fn is_live(&self, run_id: &str) -> bool {
+        self.live.lock().unwrap().contains(run_id)
+    }
+
+    fn live_generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+
+    fn post(&self, run_id: String, usage: TokenUsage) {
+        let _ = self.posts.send((run_id, usage));
+    }
+}
+
 struct Receiver {
     _dir: tempfile::TempDir,
     server: OtlpServer,
+    control: Arc<TestSink>,
     sink: UnboundedReceiver<(String, TokenUsage)>,
     shutdown: CancellationToken,
 }
 
+/// A receiver whose only live run is the fixture's, `r-fix`.
 async fn start() -> Receiver {
     let dir = tempfile::tempdir().unwrap();
-    let (tx, sink) = unbounded_channel();
+    let (posts, sink) = unbounded_channel();
+    let control = Arc::new(TestSink {
+        live: Mutex::new(HashSet::from(["r-fix".to_string()])),
+        generation: AtomicU64::new(0),
+        posts,
+    });
     let shutdown = CancellationToken::new();
-    let server = bind(0, dir.path(), tx, shutdown.clone())
+    let server = bind(0, dir.path(), control.clone(), shutdown.clone())
         .await
         .expect("the receiver binds");
     Receiver {
         _dir: dir,
         server,
+        control,
         sink,
         shutdown,
     }
@@ -221,7 +263,7 @@ async fn wrong_path_is_404_and_protobuf_is_415() {
 async fn an_oversized_body_is_refused() {
     let mut rx = start().await;
     let addr = rx.server.addr;
-    let refused = |answer: Option<(u16, String)>| matches!(answer.map(|a| a.0), None | Some(413));
+    // Review I2: each oversize case is answered `413`, never left to the read timeout.
     // A declared length over the cap is refused before any of it is read.
     let head = format!(
         "POST /v1/metrics HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
@@ -232,7 +274,7 @@ async fn an_oversized_body_is_refused() {
     // A chunked body that grows past the cap.
     let big = vec![b' '; OTLP_MAX_BODY + 1];
     let (_, answer) = send(addr, &chunked(&big, 1 << 20)).await;
-    assert!(refused(answer.clone()), "{answer:?}");
+    assert_eq!(answer.map(|a| a.0), Some(413));
     // A chunk size that does not fit a number.
     let huge_chunk = b"POST /v1/metrics HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffffffffffff\r\n";
     let (_, answer) = send(addr, huge_chunk).await;
@@ -241,7 +283,7 @@ async fn an_oversized_body_is_refused() {
     let mut long = b"POST /v1/metrics HTTP/1.1\r\nX-Pad: ".to_vec();
     long.extend(std::iter::repeat_n(b'a', OTLP_MAX_HEADERS + 1));
     let (_, answer) = send(addr, &long).await;
-    assert!(refused(answer.clone()), "{answer:?}");
+    assert_eq!(answer.map(|a| a.0), Some(413));
     // The receiver still serves.
     let (_, answer) = send(addr, &request("/v1/metrics", "application/json", FIXTURE)).await;
     assert_eq!(answer, Some((200, "{}".to_string())));
@@ -295,6 +337,10 @@ async fn the_address_file_is_written_and_removed_at_shutdown() {
         std::fs::read_to_string(&path).unwrap(),
         format!("http://127.0.0.1:{}", addr.port())
     );
+    // Review minor 6: readable by the user only.
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600, "{mode:o}");
     rx.shutdown.cancel();
     tokio::time::timeout(wait(), rx.server.stopped())
         .await
@@ -304,4 +350,202 @@ async fn the_address_file_is_written_and_removed_at_shutdown() {
         TcpStream::connect(addr).await.is_err(),
         "the port is closed"
     );
+}
+
+/// An export with one resource per `(run, role)`, each with `points` delta `input`
+/// points of 1 token.
+fn export(resources: &[(String, &str)], points: usize) -> Vec<u8> {
+    let attr = |k: &str, v: &str| serde_json::json!({"key": k, "value": {"stringValue": v}});
+    let data: Vec<_> = (0..points)
+        .map(|i| {
+            serde_json::json!({
+                "attributes": [attr("type", "input"), attr("session.id", &format!("s{i}"))],
+                "asDouble": 1,
+            })
+        })
+        .collect();
+    let resources: Vec<_> = resources
+        .iter()
+        .map(|(run, role)| {
+            serde_json::json!({
+                "resource": {"attributes": [attr("anthrex.run", run), attr("anthrex.role", role)]},
+                "scopeMetrics": [{"metrics": [{"name": "claude_code.token.usage",
+                    "sum": {"aggregationTemporality": 1, "dataPoints": data}}]}],
+            })
+        })
+        .collect();
+    serde_json::to_vec(&serde_json::json!({ "resourceMetrics": resources })).unwrap()
+}
+
+fn input(n: u64) -> TokenUsage {
+    TokenUsage {
+        input: n,
+        ..TokenUsage::default()
+    }
+}
+
+/// Review I1: the CRLF after a chunk's data may arrive split across two reads.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_chunk_whose_crlf_is_split_across_reads_is_accepted() {
+    let rx = start().await;
+    let mut stream = TcpStream::connect(rx.server.addr).await.unwrap();
+    stream.set_nodelay(true).unwrap();
+    stream
+        .write_all(b"POST /v1/metrics HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r")
+        .await
+        .unwrap();
+    stream.flush().await.unwrap();
+    // Only so the two writes reach the server as two reads; the answer is the check.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    stream.write_all(b"\n0\r\n\r\n").await.unwrap();
+    let answer = tokio::time::timeout(wait(), response(&mut stream))
+        .await
+        .unwrap();
+    assert_eq!(answer, Some((200, "{}".to_string())));
+    rx.shutdown.cancel();
+}
+
+/// Review I3: only runs the daemon has are metered. 1100 junk run ids, as workers and
+/// as orchestrators, reach neither the sink nor the ledger's caps, and a real run is
+/// still metered after them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn junk_run_ids_never_crowd_out_a_live_run() {
+    let mut rx = start().await;
+    let addr = rx.server.addr;
+    for role in ["worker", "orchestrator"] {
+        let junk: Vec<(String, &str)> = (0..1100).map(|i| (format!("r-junk-{i}"), role)).collect();
+        let (_, answer) = send(
+            addr,
+            &request("/v1/metrics", "application/json", &export(&junk, 1)),
+        )
+        .await;
+        assert_eq!(answer.map(|a| a.0), Some(200));
+    }
+    let (_, answer) = send(addr, &request("/v1/metrics", "application/json", FIXTURE)).await;
+    assert_eq!(answer.map(|a| a.0), Some(200));
+    assert_eq!(
+        next_total(&mut rx.sink).await,
+        ("r-fix".into(), fixture_usage()),
+        "no junk total reached the sink, and the live run was metered"
+    );
+    assert!(rx.sink.try_recv().is_err());
+    rx.shutdown.cancel();
+}
+
+/// Review I3: a run that is no longer live is evicted; its points are dropped, and its
+/// totals are gone if it ever came back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_run_that_ends_is_evicted() {
+    let mut rx = start().await;
+    let addr = rx.server.addr;
+    let body = export(&[("r-fix".to_string(), "orchestrator")], 1);
+    send(addr, &request("/v1/metrics", "application/json", &body)).await;
+    send(addr, &request("/v1/metrics", "application/json", &body)).await;
+    assert_eq!(next_total(&mut rx.sink).await.1, input(1));
+    assert_eq!(next_total(&mut rx.sink).await.1, input(2));
+    rx.control.set_live(&[]);
+    let (_, answer) = send(addr, &request("/v1/metrics", "application/json", &body)).await;
+    assert_eq!(answer.map(|a| a.0), Some(200));
+    assert!(rx.sink.try_recv().is_err(), "an ended run reaches no sink");
+    rx.control.set_live(&["r-fix"]);
+    send(addr, &request("/v1/metrics", "application/json", &body)).await;
+    assert_eq!(
+        next_total(&mut rx.sink).await.1,
+        input(1),
+        "evicted, so it starts over"
+    );
+    rx.shutdown.cancel();
+}
+
+/// Review I4: one POST touching one run with many points posts one total.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn one_post_with_many_points_posts_one_total_per_run() {
+    let mut rx = start().await;
+    let body = export(&[("r-fix".to_string(), "orchestrator")], 500);
+    let (_, answer) = send(
+        rx.server.addr,
+        &request("/v1/metrics", "application/json", &body),
+    )
+    .await;
+    assert_eq!(answer.map(|a| a.0), Some(200));
+    assert_eq!(next_total(&mut rx.sink).await, ("r-fix".into(), input(500)));
+    assert!(rx.sink.try_recv().is_err(), "one total, not one per point");
+    rx.shutdown.cancel();
+}
+
+/// Review minor 3: another role of a live run is kept in the ledger, never posted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn another_role_reaches_no_sink() {
+    let mut rx = start().await;
+    let body = export(&[("r-fix".to_string(), "worker")], 3);
+    let (_, answer) = send(
+        rx.server.addr,
+        &request("/v1/metrics", "application/json", &body),
+    )
+    .await;
+    assert_eq!(answer.map(|a| a.0), Some(200));
+    let (_, answer) = send(
+        rx.server.addr,
+        &request("/v1/metrics", "application/json", b"{}"),
+    )
+    .await;
+    assert_eq!(answer.map(|a| a.0), Some(200));
+    assert!(rx.sink.try_recv().is_err());
+    rx.shutdown.cancel();
+}
+
+/// Opens `OTLP_MAX_CONNECTIONS` connections that send nothing, each holding a slot.
+/// Never more than 64, so a cap raised far past its value fails the test rather than
+/// the machine's descriptor limit.
+async fn hold_every_slot(addr: SocketAddr) -> Vec<TcpStream> {
+    let mut held = Vec::new();
+    for _ in 0..OTLP_MAX_CONNECTIONS.min(64) {
+        held.push(TcpStream::connect(addr).await.unwrap());
+    }
+    held
+}
+
+/// Review minor 3 and the 9th-connection ruling: with every slot held, a further
+/// connection waits `OTLP_SLOT_WAIT` for one, then is closed unanswered.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn past_the_connection_cap_a_connection_is_closed_after_the_slot_wait() {
+    const { assert!(OTLP_SLOT_WAIT.as_secs() < OTLP_READ_TIMEOUT.as_secs()) };
+    let rx = start().await;
+    let _held = hold_every_slot(rx.server.addr).await;
+    let started = Instant::now();
+    let (_, answer) = send(
+        rx.server.addr,
+        &request("/v1/metrics", "application/json", FIXTURE),
+    )
+    .await;
+    assert_eq!(answer, None, "closed, not served");
+    // Closed by the slot wait, well before any held connection's read timeout frees one.
+    assert!(
+        started.elapsed() < OTLP_READ_TIMEOUT,
+        "{:?}",
+        started.elapsed()
+    );
+    rx.shutdown.cancel();
+}
+
+/// The 9th-connection ruling: a slot freed during the wait serves the waiting one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_connection_waiting_for_a_slot_is_served_when_one_frees() {
+    let mut rx = start().await;
+    let mut held = hold_every_slot(rx.server.addr).await;
+    let mut waiting = TcpStream::connect(rx.server.addr).await.unwrap();
+    waiting
+        .write_all(&request("/v1/metrics", "application/json", FIXTURE))
+        .await
+        .unwrap();
+    // Well inside the slot wait, so the connection is waiting when a slot frees; the
+    // answer is the check (`docs/timing-budgets.md`, from M8b.15's fix round).
+    tokio::time::sleep(OTLP_SLOT_WAIT / 10).await;
+    drop(held.pop());
+    let answer = tokio::time::timeout(wait(), response(&mut waiting))
+        .await
+        .unwrap();
+    assert_eq!(answer, Some((200, "{}".to_string())));
+    assert_eq!(next_total(&mut rx.sink).await.1, fixture_usage());
+    rx.shutdown.cancel();
 }

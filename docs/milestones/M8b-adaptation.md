@@ -2761,6 +2761,40 @@ The only lock held across an await is `writes` (a `tokio::sync::Mutex`), which o
   - After `daemon stop`, `otlp.addr` was gone.
 - **Follow-ups** (recorded under "From M8b.15"): `TokenUsage`'s `+=` does not saturate for stream usage, and there is no `Expect: 100-continue` support.
 
+### M8b.15 fix round 1: the review's findings (2026-09-27)
+
+This round supersedes the notes above where they differ: the connection cap, the forwarding to the engine, and the `+=` follow-up.
+
+- **Decision 30 clarified (I5): a restart never lowers the orchestrator's usage.** Decision 30 has the reducer store the ledger's total. The ledger lives in the daemon's memory, so after a restart its first total for a run, maybe a zero-valued point from any local process, replaced the persisted usage. Replace semantics hold within one daemon. Across a restart:
+  - `engine::restore` copies each run's stored `orchestrator_usage` into `Run.orchestrator_base` (`#[serde(skip)]`, never stored). `OrchestratorUsage` then sets `orchestrator_usage = base + total`, saturating.
+  - The orchestrator's PTY does not survive a restart, so the new session's counters start from zero, and base + new total is its whole usage.
+  - The next restart takes the stored usage as its base again.
+  - Tests: `a_restart_never_lowers_the_orchestrator_usage` (a zero-valued post after a restart leaves 999 unchanged; later totals add to it and replace one another; a second restart), `the_base_and_the_new_total_saturate`, and the driver's `a_restored_run_is_live_and_its_usage_adds_to_what_was_stored`.
+- **Only live runs are metered (I3).** A live run is one in the engine's state that is not terminal (`Accepted`, `Discarded` or `Failed`); `Complete` stays live, since its orchestrator may still run.
+  - The run service keeps the live ids in their own small mutex (`driver/usage.rs`, `Metered`), refreshed under the engine lock after every step and after the restore. A generation moves when they change.
+  - The receiver reads them through the new `metering::UsageSink` trait (`is_live`, `live_generation`, `post`), which `RunService` implements. It never takes the engine lock or the manager lock.
+  - On its blocking thread, the receiver drops every point whose run is not live, before the ledger. When the generation moved, it first evicts the totals and series of every run no longer live (`OtlpLedger::retain_runs`). Eviction happens at the next request, not at the moment a run ends.
+  - An `orchestrator` pair is exempt from `MAX_TOTALS`: orchestrator pairs are bounded by the live runs, and no other role of a live run can crowd a run's orchestrator out.
+  - Tests: `junk_run_ids_never_crowd_out_a_live_run` (1100 junk run ids as workers, then 1100 as orchestrators; neither reaches the sink, and `r-fix` is still metered), `a_run_that_ends_is_evicted`, `an_ended_run_is_evicted_from_the_ledger`, `past_the_totals_cap_an_orchestrator_is_still_metered`, `only_runs_the_daemon_has_and_that_have_not_ended_are_live`.
+- **Orchestrator events are coalesced (I4).** The unbounded channel between the receiver and the engine is gone.
+  - `UsageSink::post` keeps the latest total per run in a pending map. It sends one `Msg::Usage` to the event loop only when the map goes from empty to not empty. The loop drains the map into one `OrchestratorUsage` step per run.
+  - A flood of posts therefore adds at most one message to the engine's queue, and the map holds at most one total per live run.
+  - The receiver already posts one total per touched run per request.
+  - Tests: `one_post_with_many_points_posts_one_total_per_run` (500 points, one post) and `a_flood_of_posts_queues_one_drain_with_the_latest_totals` (2000 posts for two runs, one queued drain, the latest totals).
+- **A chunk's CRLF split across reads (I1).** `line(max)` now waits while the buffer holds at most `max + 1` bytes, so a CR whose LF has not arrived yet is not refused. Test: `a_chunk_whose_crlf_is_split_across_reads_is_accepted` (raw TCP: `2\r\n{}\r`, a pause, then `\n0\r\n\r\n`).
+- **The oversize tests are strict (I2).** Oversized headers and a chunked body past the cap must each be answered `413`, not merely closed.
+- **The 9th connection.** A connection beyond `OTLP_MAX_CONNECTIONS` now waits up to `OTLP_SLOT_WAIT` (1 s) for a slot, in the accept loop, before it is closed unanswered. New connections wait in the listen backlog meanwhile. Tests: `past_the_connection_cap_a_connection_is_closed_after_the_slot_wait` and `a_connection_waiting_for_a_slot_is_served_when_one_frees`. The follow-up to size the cap from the concurrent runs is under "From M8b.15's review".
+- **Minor fixes:**
+  - The run id and role are checked against `MAX_ID_BYTES` once per resource, and the session id and model before a point is built, so an oversized id is never copied per point (`a_point_with_any_id_over_the_cap_is_dropped`).
+  - The deep-nesting test is real: 200 000 levels inside an unknown field (`Ok`) and inside `resourceMetrics` (`Err`), each parsed on a thread with a 2 MiB stack (`deep_nesting_inside_a_field_never_overflows_the_stack`). The old one began with `[`, which the object check refused before serde ran.
+  - Parsing, the live filter, eviction, `apply` and `total` all run in one `spawn_blocking` closure. The tokio worker only posts the totals.
+  - HTTP reading moved to `metering/http.rs`. Its `ReadBuf` consumes by advancing an offset and drops the consumed prefix only once it is at least half the buffer, so chunked decoding is linear. Between kept-alive requests, `settle` drops the consumed bytes and shrinks the buffer back to `KEEP_CAPACITY` (64 KiB).
+  - `otlp.addr` is written with mode 0600.
+  - New tests kill the surviving mutants: `past_the_series_cap_only_known_series_count` (`MAX_SERIES`), `another_role_reaches_no_sink` (the orchestrator-role filter), and the two connection-cap tests.
+- **`TokenUsage +=` saturates** (`crates/proto`, its own commit). It is a behaviour change, not a wire change, so `PROTO_VERSION` stays 8. Test: `token_usage_add_assign_saturates`.
+- **Names beyond the Interfaces:** `metering::UsageSink`, `metering::otlp::ORCHESTRATOR`, `OtlpLedger::retain_runs`, `server::OTLP_SLOT_WAIT`, `Run.orchestrator_base`. `bind` takes an `Arc<dyn UsageSink>` instead of a channel, and `RunService::orchestrator_usage` is replaced by `UsageSink::post`.
+- **File budgets.** `run/driver.rs` 581 → 591. `run/engine/mod.rs` 552 → 554. `metering/server.rs` 452 → 293, with `metering/http.rs` new at 340. `tests/otlp_server.rs` 307 → 551. All stay under 600. `driver/requests.rs` is untouched.
+
 ### Main's decision 33a (merged 2026-09-27)
 
 Main's `6928fce` ("docs: record model routing choices and candidates") added decision 33a: routing decisions and candidate snapshots, stored in `Task.routing_decisions` and copied into `TaskRecord`. It was written against main's older numbering, where one task, "M8b.14 History", covered all of history. In this refreshed brief:

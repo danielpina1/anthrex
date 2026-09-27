@@ -1423,18 +1423,42 @@ scope.
 
 ## From M8b.15 (2026-09-27), for M8b and M9
 
-- **`TokenUsage`'s `+=` does not saturate.** `proto::TokenUsage`'s `AddAssign` (`crates/proto/src/run_info.rs`)
-  and `engine/signals.rs`'s `total.input += usage.input` panic on overflow in a debug build
-  and wrap in a release build. The numbers come from a decider's or worker's own stream,
-  so an overflow needs a session to report tokens near `u64::MAX`. M8b.15 saturates
-  everything that reads OTLP totals (`metering/otlp.rs`'s ledger, `run/snapshot.rs`'s
-  `run_usage`), since any local process can post those, but left the stream sums alone.
-  Making `AddAssign` saturate would cover every caller at once. M8b.16's history records
-  should sum with it too.
+- **`TokenUsage`'s `+=` saturates now; `engine/signals.rs`'s field sums do not.** The
+  M8b.15 fix made `proto::TokenUsage`'s `AddAssign` saturate (`fix(proto): saturate
+  TokenUsage addition`). `engine/signals.rs` still adds each field with a plain `u64 +=`
+  (`total.input += usage.input`), which panics on overflow in a debug build and wraps in a
+  release build. The numbers come from a session's own stream, so an overflow needs a
+  session to report tokens near `u64::MAX`. Summing with `TokenUsage`'s `+=` there would
+  cover it. M8b.16's history records should sum with `+=` too.
 - **The OTLP receiver is a small HTTP/1.1 server with no `Expect: 100-continue` support.**
   Claude Code's exporter (OTel JS 0.208) does not send it (M8b.1 item 5). A client that
   does would wait `OTLP_READ_TIMEOUT` and be closed. M9 should check this when it
   launches the orchestrator window with `orchestrator_env`.
+
+## From M8b.15's review (2026-09-27), for M9
+
+- **Orchestrator usage is not authenticated.** The OTLP receiver listens on loopback with
+  no credential, so any local process can post points for a live run and inflate its
+  `orchestrator_usage` (a run id is visible to anyone who can read the run's files or
+  guess it). The M8b.15 fix bounds the damage: only live runs are metered, the engine
+  gets one coalesced total per run per drain, and a restart never lowers the stored
+  usage. Nothing gates on usage, so inflation only makes the numbers shown untrue. M9
+  could give each orchestrator window a per-run token (an `OTEL_EXPORTER_OTLP_HEADERS`
+  bearer value) and drop points whose header does not match the run.
+- **Size the OTLP connection cap from the number of concurrent runs.**
+  `OTLP_MAX_CONNECTIONS` is 8. Each M9 orchestrator keeps one keep-alive connection and
+  exports every second, so it never reaches the 10 s idle close. With 9 or more
+  concurrent runs, the 9th orchestrator waits `OTLP_SLOT_WAIT` (1 s) for a slot and is
+  closed, on every attempt. M9 should derive the cap from the maximum number of
+  concurrent runs, with a margin, when it starts orchestrator windows. Any local process
+  can also hold every slot by reconnecting every 10 s; a per-run token (above) would let
+  the receiver close unauthenticated connections first.
+- **The ledger's series cap is global.** `MAX_SERIES` (4096) bounds every cumulative
+  series across live runs, so a local process posting many cumulative series for one live
+  run can stop new cumulative series of another live run from counting until that run
+  ends and is evicted. Claude Code exports deltas (M8b.1 item 5), which keep no series,
+  so the orchestrator is not affected today. A per-run series cap would close it if M9
+  meets a cumulative exporter.
 
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 

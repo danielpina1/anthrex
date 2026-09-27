@@ -150,7 +150,8 @@ pub enum EventKind {
         reply: ReplyId,
         run_id: String,
     },
-    /// M8b decision 30: the OTLP ledger's new total for `(run, "orchestrator")`.
+    /// M8b decision 30: the OTLP ledger's new total for `(run, "orchestrator")`. It
+    /// replaces the one before, on top of the usage restored at the daemon's start.
     OrchestratorUsage {
         run_id: String,
         usage: TokenUsage,
@@ -364,7 +365,8 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
         } => merge::base_advanced(&mut state, &run_id, to, commits, now),
         EventKind::OrchestratorUsage { run_id, usage } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
-                run.orchestrator_usage = usage;
+                run.orchestrator_usage = run.orchestrator_base;
+                run.orchestrator_usage += usage;
             }
         }
         EventKind::OpDone { run_id, op, result } => {

@@ -56,6 +56,8 @@ pub(super) fn restore(
 ) {
     let mut restored = Vec::new();
     for mut run in runs {
+        // M8b.15 review (I5): the new daemon's OTLP totals add to what was stored.
+        run.orchestrator_base = run.orchestrator_usage;
         let original = run.clone();
         let kept: BTreeSet<OpId> = replay
             .iter()

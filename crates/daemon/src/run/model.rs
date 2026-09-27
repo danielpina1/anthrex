@@ -457,6 +457,11 @@ pub struct Run {
     pub scout_usage: TokenUsage,
     #[serde(default)]
     pub orchestrator_usage: TokenUsage,
+    /// M8b.15 review (I5): the `orchestrator_usage` this daemon restored, which the
+    /// OTLP ledger's totals add to, so a restart never lowers it. Set at restore, never
+    /// stored: the next restore takes the stored usage again.
+    #[serde(skip)]
+    pub orchestrator_base: TokenUsage,
     /// M8b decision 25: when the user asked to promote this fast-path run (milestone 9
     /// performs it).
     #[serde(default)]

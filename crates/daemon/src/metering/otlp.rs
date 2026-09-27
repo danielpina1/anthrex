@@ -18,6 +18,10 @@ pub const MAX_SERIES: usize = 4096;
 pub const MAX_TOTALS: usize = 1024;
 /// The longest run id, role, session id or model a point may carry.
 pub const MAX_ID_BYTES: usize = 256;
+/// The role whose totals reach the engine (decision 30). Its pairs are exempt from
+/// [`MAX_TOTALS`]: the receiver admits only live runs, so they are bounded by the runs
+/// the daemon has, and no other pair can crowd a run's orchestrator out.
+pub const ORCHESTRATOR: &str = "orchestrator";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum UsageKind {
@@ -59,6 +63,10 @@ pub fn parse_metrics(body: &[u8]) -> Result<Vec<UsagePoint>, String> {
             continue;
         };
         let role = wire::attribute(attrs, "anthrex.role").unwrap_or_default();
+        // Checked once per resource, before any point copies them (review minor 1).
+        if run_id.len() > MAX_ID_BYTES || role.len() > MAX_ID_BYTES {
+            continue;
+        }
         for metric in resource.scope_metrics.iter().flat_map(|s| &s.metrics) {
             let (true, Some(sum)) = (metric.name == TOKEN_METRIC, &metric.sum) else {
                 continue;
@@ -82,19 +90,20 @@ pub fn parse_metrics(body: &[u8]) -> Result<Vec<UsagePoint>, String> {
                     _ => continue,
                 };
                 let Some(value) = point.value() else { continue };
-                let point = UsagePoint {
+                let session_id = wire::attribute(attrs, "session.id").unwrap_or_default();
+                let model = wire::attribute(attrs, "model").unwrap_or_default();
+                if session_id.len() > MAX_ID_BYTES || model.len() > MAX_ID_BYTES {
+                    continue;
+                }
+                points.push(UsagePoint {
                     run_id: run_id.clone(),
                     role: role.clone(),
-                    session_id: wire::attribute(attrs, "session.id").unwrap_or_default(),
-                    model: wire::attribute(attrs, "model").unwrap_or_default(),
+                    session_id,
+                    model,
                     kind,
                     value,
                     cumulative,
-                };
-                let ids = [&point.run_id, &point.role, &point.session_id, &point.model];
-                if ids.iter().all(|id| id.len() <= MAX_ID_BYTES) {
-                    points.push(point);
-                }
+                });
             }
         }
     }
@@ -115,12 +124,14 @@ impl OtlpLedger {
     /// Adds `points`: a delta point's value; a cumulative point's increase over its
     /// series' last value, or its value when the series went down (a reset). Returns the
     /// `(run, role)` pairs they touched, in order. A point for a new pair or a new series
-    /// beyond the caps is dropped; every sum saturates.
+    /// beyond the caps is dropped (an [`ORCHESTRATOR`] pair is never refused by the
+    /// totals cap); every sum saturates.
     pub fn apply(&mut self, points: &[UsagePoint]) -> Vec<(String, String)> {
         let mut touched = BTreeSet::new();
         for point in points {
             let pair = (point.run_id.clone(), point.role.clone());
-            if !self.totals.contains_key(&pair) && self.totals.len() >= MAX_TOTALS {
+            let capped = point.role != ORCHESTRATOR && self.totals.len() >= MAX_TOTALS;
+            if capped && !self.totals.contains_key(&pair) {
                 continue;
             }
             let added = if point.cumulative {
@@ -155,6 +166,13 @@ impl OtlpLedger {
             touched.insert(pair);
         }
         touched.into_iter().collect()
+    }
+
+    /// Drops the totals and series of every run `keep` refuses: a run that ended or is
+    /// gone (review I3).
+    pub fn retain_runs(&mut self, mut keep: impl FnMut(&str) -> bool) {
+        self.totals.retain(|(run, _), _| keep(run));
+        self.last.retain(|(run, ..), _| keep(run));
     }
 
     pub fn total(&self, run_id: &str, role: &str) -> TokenUsage {

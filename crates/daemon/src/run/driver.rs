@@ -27,6 +27,7 @@ mod observe;
 mod ops;
 mod requests;
 mod restore;
+mod usage;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ffi::OsString;
@@ -94,6 +95,8 @@ impl RunContext {
 
 enum Msg {
     Event(EventKind),
+    /// Orchestrator totals are pending (`driver/usage.rs`).
+    Usage,
     Stop(oneshot::Sender<()>),
 }
 
@@ -160,6 +163,8 @@ pub struct RunService {
     held_accepts: Mutex<Vec<restore::AcceptCleanUp>>,
     /// Milestone 8b's services, set once by the daemon (`set_adaptation`).
     adaptation: std::sync::OnceLock<Adaptation>,
+    /// The OTLP receiver's live runs and pending totals (`driver/usage.rs`).
+    metered: usage::Metered,
 }
 
 /// Unix seconds, the reducer's clock.
@@ -237,6 +242,7 @@ impl RunService {
             writes: effects::RunWrites::default(),
             held_accepts: Mutex::new(Vec::new()),
             adaptation: std::sync::OnceLock::new(),
+            metered: Default::default(),
         })
     }
 
@@ -267,6 +273,7 @@ impl RunService {
             while let Some(msg) = rx.recv().await {
                 match msg {
                     Msg::Event(kind) => service.handle(kind).await,
+                    Msg::Usage => service.drain_usage().await,
                     Msg::Stop(ack) => {
                         service.stop_now().await;
                         let _ = ack.send(());
@@ -378,7 +385,10 @@ impl RunService {
         let prepared = {
             let mut state = crate::lock(&self.state);
             match guard::guarded_step(&mut state, Event { now, kind }) {
-                Ok(fx) => Some(guard::prepare_guarded(&state, fx, now)),
+                Ok(fx) => {
+                    self.metered.refresh_live(&state);
+                    Some(guard::prepare_guarded(&state, fx, now))
+                }
                 Err(panic) => {
                     tracing::error!(%panic, "the run engine panicked on an event; the event is dropped");
                     None

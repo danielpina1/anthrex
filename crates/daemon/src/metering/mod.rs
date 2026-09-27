@@ -7,10 +7,12 @@
 //!
 //! - [`otlp`] is pure: parsing an OTLP/HTTP-JSON metrics body, the ledger, and the
 //!   environment milestone 9 gives the orchestrator's window.
-//! - [`server`] is the I/O: the listener, one task per connection, `<data_dir>/otlp.addr`.
+//! - [`server`] is the I/O: the listener, one task per connection, `<data_dir>/otlp.addr`,
+//!   and the [`UsageSink`] the run service implements; `http` reads and answers requests.
 
+mod http;
 pub mod otlp;
 pub mod server;
 
 pub use otlp::{OtlpLedger, UsageKind, UsagePoint, orchestrator_env, parse_metrics};
-pub use server::{OtlpServer, bind, start};
+pub use server::{OtlpServer, UsageSink, bind, start};

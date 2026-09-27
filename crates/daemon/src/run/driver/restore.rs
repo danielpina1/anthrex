@@ -152,7 +152,10 @@ impl RunService {
             },
         };
         let panic = match guarded_step(&mut state, all) {
-            Ok(fx) => return (prepare_guarded(&state, fx, now), BTreeSet::new()),
+            Ok(fx) => {
+                self.metered.refresh_live(&state);
+                return (prepare_guarded(&state, fx, now), BTreeSet::new());
+            }
             Err(panic) => panic,
         };
         tracing::error!(%panic, "restoring the runs panicked; restoring them one at a time");
@@ -176,6 +179,7 @@ impl RunService {
                 }
             }
         }
+        self.metered.refresh_live(&state);
         (prepare_guarded(&state, fx, now), skipped)
     }
 

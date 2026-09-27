@@ -1,24 +1,27 @@
 //! The OTLP/HTTP-JSON receiver (M8b decision 30). I/O.
 //!
 //! A minimal HTTP/1.1 server on `127.0.0.1` for one route, `POST /v1/metrics`, with no
-//! HTTP crate. It never blocks the daemon and never trusts its input:
+//! HTTP crate ([`super::http`] reads and answers). It never blocks the daemon and never
+//! trusts its input:
 //!
 //! - every connection is its own task, and at most [`OTLP_MAX_CONNECTIONS`] are served
-//!   at once (a connection beyond that is closed at once), so one slow client never
-//!   delays another and memory stays bounded;
+//!   at once (a connection beyond that waits up to [`OTLP_SLOT_WAIT`] for a slot, then
+//!   is closed), so one slow client never delays another and memory stays bounded;
 //! - each request is read within [`OTLP_READ_TIMEOUT`], headers up to
 //!   [`OTLP_MAX_HEADERS`] and a `Content-Length` or chunked body up to
 //!   [`OTLP_MAX_BODY`]; anything larger is `413` and the connection is closed;
-//! - the body is parsed on `spawn_blocking`, and the ledger's lock is held only to apply
-//!   the points;
+//! - the body is parsed and applied to the ledger on `spawn_blocking`;
+//! - only runs the daemon has now and that have not ended are metered
+//!   ([`UsageSink::is_live`]); a run that went is evicted from the ledger (review I3);
 //! - it makes no outbound call and never logs a body (ruling R-T1-5): exports carry the
 //!   user's account identity.
 //!
 //! Answers: `200 {}`; `400` for a malformed request or body; `404` for another path;
 //! `405` for another method; `415` for another content type (logged once per daemon);
 //! `413` for oversize. After each accepted request, the ledger's new total for every
-//! `(run, "orchestrator")` it touched goes to the sink.
+//! `(run, "orchestrator")` it touched goes to [`UsageSink::post`], once per run.
 
+use std::collections::BTreeSet;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,29 +29,37 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use proto::TokenUsage;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
-use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::otlp::{OtlpLedger, parse_metrics};
+use super::http::{Conn, Request, Unread};
+use super::otlp::{ORCHESTRATOR, OtlpLedger, UsagePoint, parse_metrics};
 
 pub const OTLP_MAX_BODY: usize = 4 << 20;
 pub const OTLP_MAX_HEADERS: usize = 16 << 10;
 pub const OTLP_READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// Connections served at once. Bounds memory at about this many bodies.
 pub const OTLP_MAX_CONNECTIONS: usize = 8;
-/// `<data_dir>/otlp.addr`: `http://127.0.0.1:<port>`, removed at shutdown.
+/// How long a connection beyond [`OTLP_MAX_CONNECTIONS`] waits for a slot before it is
+/// closed unanswered. New connections wait in the listen backlog meanwhile.
+pub const OTLP_SLOT_WAIT: Duration = Duration::from_secs(1);
+/// `<data_dir>/otlp.addr`: `http://127.0.0.1:<port>`, mode 0600, removed at shutdown.
 pub const ADDR_FILE: &str = "otlp.addr";
-/// The role whose totals reach the engine; any other is kept in the ledger only.
-const ORCHESTRATOR: &str = "orchestrator";
-/// The longest chunk-size line accepted.
-const MAX_CHUNK_LINE: usize = 1024;
-/// How long a refused connection is drained before it closes, so the client can read
-/// the answer rather than a reset.
-const LINGER: Duration = Duration::from_millis(500);
+
+/// Where the receiver's totals go, and which runs it may meter (review I3, I4). The
+/// daemon's is the run service; every method is cheap and never waits on the engine
+/// or the window manager.
+pub trait UsageSink: Send + Sync + 'static {
+    /// Whether `run_id` is a run the daemon has now and that has not ended.
+    fn is_live(&self, run_id: &str) -> bool;
+    /// Changes whenever the live runs change, so the ledger evicts the runs that went.
+    fn live_generation(&self) -> u64;
+    /// The ledger's new total for `(run_id, "orchestrator")`. The sink coalesces: the
+    /// engine sees at most one pending total per run, the latest.
+    fn post(&self, run_id: String, usage: TokenUsage);
+}
 
 /// The bound receiver. Its task stops when the shutdown token is cancelled, and removes
 /// the address file as it stops.
@@ -64,9 +75,16 @@ impl OtlpServer {
     }
 }
 
+/// The ledger and the live-run generation it last evicted for.
+#[derive(Default)]
+struct Ledger {
+    ledger: OtlpLedger,
+    generation: Option<u64>,
+}
+
 struct Shared {
-    ledger: Mutex<OtlpLedger>,
-    sink: UnboundedSender<(String, TokenUsage)>,
+    ledger: Mutex<Ledger>,
+    sink: Arc<dyn UsageSink>,
     /// `415` is logged once per daemon.
     logged_type: AtomicBool,
 }
@@ -76,7 +94,7 @@ struct Shared {
 pub async fn bind(
     port: u16,
     data_dir: &Path,
-    sink: UnboundedSender<(String, TokenUsage)>,
+    sink: Arc<dyn UsageSink>,
     shutdown: CancellationToken,
 ) -> std::io::Result<OtlpServer> {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?;
@@ -88,7 +106,7 @@ pub async fn bind(
         .await
         .map_err(std::io::Error::other)??;
     let shared = Arc::new(Shared {
-        ledger: Mutex::new(OtlpLedger::default()),
+        ledger: Mutex::new(Ledger::default()),
         sink,
         logged_type: AtomicBool::new(false),
     });
@@ -96,10 +114,10 @@ pub async fn bind(
     Ok(OtlpServer { addr, task })
 }
 
-/// The daemon's wiring (`lifecycle::run`): with `metering.otlp`, binds the receiver and
-/// forwards every orchestrator total to `runs`. A bind failure is logged and metering is
-/// off for this daemon; it never stops the daemon. With `otlp` off, a stale address
-/// file from an earlier daemon is removed.
+/// The daemon's wiring (`lifecycle::run`): with `metering.otlp`, binds the receiver with
+/// the run service as its sink. A bind failure is logged and metering is off for this
+/// daemon; it never stops the daemon. With `otlp` off, a stale address file from an
+/// earlier daemon is removed.
 pub async fn start(
     metering: &config::Metering,
     data_dir: &Path,
@@ -111,26 +129,30 @@ pub async fn start(
         let _ = tokio::task::spawn_blocking(move || std::fs::remove_file(stale)).await;
         return None;
     }
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let server = match bind(metering.otlp_port, data_dir, tx, shutdown).await {
-        Ok(server) => server,
+    match bind(metering.otlp_port, data_dir, runs, shutdown).await {
+        Ok(server) => {
+            tracing::info!(addr = %server.addr, "OTLP receiver listening");
+            Some(server)
+        }
         Err(error) => {
             tracing::error!(%error, port = metering.otlp_port, "the OTLP receiver could not bind; orchestrator metering is off");
-            return None;
+            None
         }
-    };
-    tracing::info!(addr = %server.addr, "OTLP receiver listening");
-    tokio::spawn(async move {
-        while let Some((run_id, usage)) = rx.recv().await {
-            runs.orchestrator_usage(run_id, usage);
-        }
-    });
-    Some(server)
+    }
 }
 
+/// Written through a temporary file and a rename, readable by the user only.
 fn write_addr(path: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
     let tmp = path.with_extension("addr.tmp");
-    std::fs::write(&tmp, text)?;
+    let _ = std::fs::remove_file(&tmp);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)?;
+    file.write_all(text.as_bytes())?;
     std::fs::rename(&tmp, path)
 }
 
@@ -146,8 +168,13 @@ async fn accept_loop(
             _ = shutdown.cancelled() => break,
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
-                    // Over the cap the connection is dropped, which closes it.
-                    let Ok(slot) = slots.clone().try_acquire_owned() else { continue };
+                    let wait = tokio::time::timeout(OTLP_SLOT_WAIT, slots.clone().acquire_owned());
+                    let slot = tokio::select! {
+                        _ = shutdown.cancelled() => break,
+                        slot = wait => slot,
+                    };
+                    // No slot in time: the connection is dropped, which closes it.
+                    let Ok(Ok(slot)) = slot else { continue };
                     let shared = shared.clone();
                     let stop = shutdown.clone();
                     tokio::spawn(async move {
@@ -173,30 +200,10 @@ async fn accept_loop(
     let _ = tokio::task::spawn_blocking(move || std::fs::remove_file(path)).await;
 }
 
-/// A request that was read in full.
-struct Request {
-    method: String,
-    path: String,
-    content_type: String,
-    body: Vec<u8>,
-    keep_alive: bool,
-}
-
-/// Why a request was not read.
-enum Unread {
-    /// The client closed, the read failed, or it ran out of time: close silently.
-    Gone,
-    /// Answer this status, then close.
-    Refuse(u16),
-}
-
 /// One connection: requests are read and answered until the client closes, a request
 /// is refused, or a read takes longer than [`OTLP_READ_TIMEOUT`].
-async fn serve(stream: TcpStream, shared: &Shared) {
-    let mut conn = Conn {
-        stream,
-        buf: Vec::new(),
-    };
+async fn serve(stream: TcpStream, shared: &Arc<Shared>) {
+    let mut conn = Conn::new(stream);
     loop {
         let read = tokio::time::timeout(OTLP_READ_TIMEOUT, conn.request()).await;
         let request = match read {
@@ -217,12 +224,13 @@ async fn serve(stream: TcpStream, shared: &Shared) {
         if conn.respond(status, true).await.is_err() {
             return;
         }
+        conn.buf.settle();
     }
 }
 
 /// The status for a request read in full; for `200`, its points are in the ledger and
-/// the orchestrator totals they touched are sent.
-async fn answer(request: Request, shared: &Shared) -> u16 {
+/// the orchestrator totals they touched are posted.
+async fn answer(request: Request, shared: &Arc<Shared>) -> u16 {
     if request.path.split('?').next() != Some("/v1/metrics") {
         return 404;
     }
@@ -238,215 +246,48 @@ async fn answer(request: Request, shared: &Shared) -> u16 {
         return 415;
     }
     let body = request.body;
-    let Ok(Ok(points)) = tokio::task::spawn_blocking(move || parse_metrics(&body)).await else {
+    let metering = shared.clone();
+    let metered = tokio::task::spawn_blocking(move || {
+        parse_metrics(&body).map(|points| meter(&metering, points))
+    })
+    .await;
+    let Ok(Ok(totals)) = metered else {
         return 400;
     };
-    let totals: Vec<(String, TokenUsage)> = {
-        let mut ledger = crate::lock(&shared.ledger);
-        ledger
-            .apply(&points)
-            .into_iter()
-            .filter(|(_, role)| role == ORCHESTRATOR)
-            .map(|(run, role)| {
-                let total = ledger.total(&run, &role);
-                (run, total)
-            })
-            .collect()
-    };
-    for total in totals {
-        let _ = shared.sink.send(total);
+    for (run_id, usage) in totals {
+        shared.sink.post(run_id, usage);
     }
     200
 }
 
-/// A connection and the bytes read past the last request.
-struct Conn {
-    stream: TcpStream,
-    buf: Vec<u8>,
-}
-
-impl Conn {
-    /// Reads more into the buffer; `Gone` at end of stream or on an error.
-    async fn fill(&mut self) -> Result<(), Unread> {
-        let mut chunk = [0u8; 16 << 10];
-        match self.stream.read(&mut chunk).await {
-            Ok(0) | Err(_) => Err(Unread::Gone),
-            Ok(n) => {
-                self.buf.extend_from_slice(&chunk[..n]);
-                Ok(())
-            }
-        }
+/// On a blocking thread: drops the points of runs that are not live, evicts the runs
+/// that went since the last request, applies the rest, and returns the new orchestrator
+/// total of every run they touched.
+fn meter(shared: &Shared, mut points: Vec<UsagePoint>) -> Vec<(String, TokenUsage)> {
+    let sink = &shared.sink;
+    // Read first: a run that ends after this is evicted at the next request.
+    let generation = sink.live_generation();
+    let live: BTreeSet<String> = points
+        .iter()
+        .map(|p| p.run_id.as_str())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter(|run| sink.is_live(run))
+        .map(str::to_string)
+        .collect();
+    points.retain(|p| live.contains(&p.run_id));
+    let mut held = crate::lock(&shared.ledger);
+    if held.generation != Some(generation) {
+        held.ledger.retain_runs(|run| sink.is_live(run));
+        held.generation = Some(generation);
     }
-
-    async fn request(&mut self) -> Result<Request, Unread> {
-        let head_end = loop {
-            if let Some(i) = find(&self.buf, b"\r\n\r\n") {
-                if i + 4 > OTLP_MAX_HEADERS {
-                    return Err(Unread::Refuse(413));
-                }
-                break i + 4;
-            }
-            if self.buf.len() > OTLP_MAX_HEADERS {
-                return Err(Unread::Refuse(413));
-            }
-            self.fill().await?;
-        };
-        let head: Vec<u8> = self.buf.drain(..head_end).collect();
-        let head = std::str::from_utf8(&head).map_err(|_| Unread::Refuse(400))?;
-        let mut lines = head.split("\r\n");
-        let mut first = lines.next().unwrap_or("").split(' ');
-        let (Some(method), Some(path), Some(version), None) =
-            (first.next(), first.next(), first.next(), first.next())
-        else {
-            return Err(Unread::Refuse(400));
-        };
-        if !version.starts_with("HTTP/1.") {
-            return Err(Unread::Refuse(400));
-        }
-        let mut content_type = String::new();
-        let mut length: Option<usize> = None;
-        let mut chunked = false;
-        let mut keep_alive = version == "HTTP/1.1";
-        for line in lines.filter(|l| !l.is_empty()) {
-            let (name, value) = line.split_once(':').ok_or(Unread::Refuse(400))?;
-            let value = value.trim();
-            match name.trim().to_ascii_lowercase().as_str() {
-                "content-type" => content_type = value.to_string(),
-                "content-length" => {
-                    let n: usize = value.parse().map_err(|_| Unread::Refuse(400))?;
-                    if length.is_some_and(|l| l != n) {
-                        return Err(Unread::Refuse(400));
-                    }
-                    length = Some(n);
-                }
-                "transfer-encoding" => {
-                    if !value.eq_ignore_ascii_case("chunked") {
-                        return Err(Unread::Refuse(400));
-                    }
-                    chunked = true;
-                }
-                "connection" => {
-                    let value = value.to_ascii_lowercase();
-                    if value.contains("close") {
-                        keep_alive = false;
-                    } else if value.contains("keep-alive") {
-                        keep_alive = true;
-                    }
-                }
-                _ => {}
-            }
-        }
-        let body = match (chunked, length) {
-            (true, Some(_)) => return Err(Unread::Refuse(400)),
-            (true, None) => self.chunked_body().await?,
-            (false, Some(n)) if n > OTLP_MAX_BODY => return Err(Unread::Refuse(413)),
-            (false, n) => self.exact(n.unwrap_or(0)).await?,
-        };
-        Ok(Request {
-            method: method.to_string(),
-            path: path.to_string(),
-            content_type,
-            body,
-            keep_alive,
+    let touched = held.ledger.apply(&points);
+    touched
+        .into_iter()
+        .filter(|(_, role)| role == ORCHESTRATOR)
+        .map(|(run, role)| {
+            let total = held.ledger.total(&run, &role);
+            (run, total)
         })
-    }
-
-    /// The next `n` bytes (`n` is at most [`OTLP_MAX_BODY`]).
-    async fn exact(&mut self, n: usize) -> Result<Vec<u8>, Unread> {
-        while self.buf.len() < n {
-            self.fill().await?;
-        }
-        Ok(self.buf.drain(..n).collect())
-    }
-
-    /// One line, without its CRLF, of at most `max` bytes.
-    async fn line(&mut self, max: usize) -> Result<Vec<u8>, Unread> {
-        loop {
-            if let Some(i) = find(&self.buf, b"\r\n") {
-                if i > max {
-                    return Err(Unread::Refuse(400));
-                }
-                let line = self.buf.drain(..i + 2).take(i).collect();
-                return Ok(line);
-            }
-            if self.buf.len() > max {
-                return Err(Unread::Refuse(400));
-            }
-            self.fill().await?;
-        }
-    }
-
-    /// A chunked body, its total held to [`OTLP_MAX_BODY`]; trailers are read and
-    /// dropped, held to [`OTLP_MAX_HEADERS`].
-    async fn chunked_body(&mut self) -> Result<Vec<u8>, Unread> {
-        let mut body = Vec::new();
-        loop {
-            let line = self.line(MAX_CHUNK_LINE).await?;
-            let line = std::str::from_utf8(&line).map_err(|_| Unread::Refuse(400))?;
-            let size = line.split(';').next().unwrap_or("").trim();
-            let size = usize::from_str_radix(size, 16).map_err(|_| Unread::Refuse(400))?;
-            if size == 0 {
-                break;
-            }
-            if size > OTLP_MAX_BODY - body.len() {
-                return Err(Unread::Refuse(413));
-            }
-            let chunk = self.exact(size).await?;
-            body.extend_from_slice(&chunk);
-            if !self.line(0).await?.is_empty() {
-                return Err(Unread::Refuse(400));
-            }
-        }
-        let mut trailers = 0;
-        loop {
-            let line = self.line(OTLP_MAX_HEADERS).await?;
-            trailers += line.len() + 2;
-            if trailers > OTLP_MAX_HEADERS {
-                return Err(Unread::Refuse(413));
-            }
-            if line.is_empty() {
-                return Ok(body);
-            }
-        }
-    }
-
-    async fn respond(&mut self, status: u16, keep_alive: bool) -> std::io::Result<()> {
-        let reason = match status {
-            200 => "OK",
-            400 => "Bad Request",
-            404 => "Not Found",
-            405 => "Method Not Allowed",
-            413 => "Payload Too Large",
-            415 => "Unsupported Media Type",
-            _ => "Error",
-        };
-        let connection = if keep_alive { "keep-alive" } else { "close" };
-        let text = format!(
-            "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: {connection}\r\n\r\n{{}}"
-        );
-        let write = self.stream.write_all(text.as_bytes());
-        match tokio::time::timeout(OTLP_READ_TIMEOUT, write).await {
-            Ok(result) => result,
-            Err(elapsed) => Err(std::io::Error::other(elapsed)),
-        }
-    }
-
-    /// Answers `status` and closes: the write side is shut, and what the client still
-    /// sends is read and dropped for at most [`LINGER`], so it sees the answer rather
-    /// than a reset.
-    async fn refuse(mut self, status: u16) {
-        if self.respond(status, false).await.is_err() {
-            return;
-        }
-        let _ = self.stream.shutdown().await;
-        let drain = async {
-            let mut sink = [0u8; 16 << 10];
-            while matches!(self.stream.read(&mut sink).await, Ok(n) if n > 0) {}
-        };
-        let _ = tokio::time::timeout(LINGER, drain).await;
-    }
-}
-
-fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|w| w == needle)
+        .collect()
 }

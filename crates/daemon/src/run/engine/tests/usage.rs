@@ -126,3 +126,75 @@ fn orchestrator_usage_is_stored_as_a_counter() {
     assert_eq!(fx.state.revision, before);
     assert!(!effects.iter().any(|e| matches!(e, Effect::Persist { .. })));
 }
+
+/// M8b.15 review (I5), decision 30 clarified: within one daemon the ledger's total
+/// replaces the stored one; across a restart the stored usage is a base the new
+/// daemon's totals add to, so a restart never lowers it.
+#[test]
+fn a_restart_never_lowers_the_orchestrator_usage() {
+    let (mut fx, _window) = working();
+    fx.run_mut().orchestrator_usage = usage(999);
+    let run = fx.run().clone();
+    let mut fresh = Fixture::new(&fx.plan);
+    fresh.next(EventKind::Restore {
+        held: Vec::new(),
+        runs: vec![run],
+        replay: vec![],
+    });
+    assert_eq!(fresh.run().orchestrator_usage, usage(999));
+    // Any local process may post a zero-valued point; the stored usage is unchanged.
+    fresh.next(EventKind::OrchestratorUsage {
+        run_id: RUN_ID.into(),
+        usage: TokenUsage::default(),
+    });
+    assert_eq!(fresh.run().orchestrator_usage, usage(999));
+    // The new session's totals add to the base, and still replace one another.
+    fresh.next(EventKind::OrchestratorUsage {
+        run_id: RUN_ID.into(),
+        usage: usage(1),
+    });
+    assert_eq!(fresh.run().orchestrator_usage, usage(1000));
+    fresh.next(EventKind::OrchestratorUsage {
+        run_id: RUN_ID.into(),
+        usage: usage(3),
+    });
+    assert_eq!(fresh.run().orchestrator_usage, usage(1002));
+    // A second restart takes the stored usage as its base again.
+    let run = fresh.run().clone();
+    let mut again = Fixture::new(&fx.plan);
+    again.next(EventKind::Restore {
+        held: Vec::new(),
+        runs: vec![run],
+        replay: vec![],
+    });
+    again.next(EventKind::OrchestratorUsage {
+        run_id: RUN_ID.into(),
+        usage: usage(2),
+    });
+    assert_eq!(again.run().orchestrator_usage, usage(1004));
+}
+
+/// M8b.15 review (I5): base + total saturates.
+#[test]
+fn the_base_and_the_new_total_saturate() {
+    let (mut fx, _window) = working();
+    fx.run_mut().orchestrator_usage = usage(u64::MAX / 1000);
+    let run = fx.run().clone();
+    let mut fresh = Fixture::new(&fx.plan);
+    fresh.next(EventKind::Restore {
+        held: Vec::new(),
+        runs: vec![run],
+        replay: vec![],
+    });
+    let max = TokenUsage {
+        input: u64::MAX,
+        output: u64::MAX,
+        cache_read: u64::MAX,
+        cache_write: u64::MAX,
+    };
+    fresh.next(EventKind::OrchestratorUsage {
+        run_id: RUN_ID.into(),
+        usage: max,
+    });
+    assert_eq!(fresh.run().orchestrator_usage, max);
+}

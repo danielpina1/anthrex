@@ -183,9 +183,136 @@ fn malformed_json_is_an_error() {
     assert!(parse_metrics(b"not json").is_err());
     assert!(parse_metrics(b"[]").is_err());
     assert!(parse_metrics(&[0xff, 0xfe]).is_err());
-    // Deep nesting is refused by the parser's own recursion limit, never a stack overflow.
-    let deep = format!("{}{}", "[".repeat(100_000), "]".repeat(100_000));
-    assert!(parse_metrics(deep.as_bytes()).is_err());
+}
+
+/// M8b.15 review (minor 2): deep nesting inside an object never overflows the stack, on
+/// a thread with the 2 MiB stack a tokio blocking thread has. Inside an unknown field it
+/// is skipped (`Ok`); inside a field that is read, serde's recursion limit refuses it.
+#[test]
+fn deep_nesting_inside_a_field_never_overflows_the_stack() {
+    let nested = |field: &str| {
+        let depth = 200_000;
+        format!(
+            "{{\"{field}\": {}{}}}",
+            "[".repeat(depth),
+            "]".repeat(depth)
+        )
+    };
+    let (unknown, read) = std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(move || {
+            let unknown = parse_metrics(nested("x").as_bytes());
+            let read = parse_metrics(nested("resourceMetrics").as_bytes());
+            (unknown, read)
+        })
+        .unwrap()
+        .join()
+        .expect("the parser never overflows the stack");
+    assert_eq!(unknown, Ok(vec![]));
+    assert!(read.is_err(), "{read:?}");
+}
+
+/// M8b.15 review (minor 1): an id over the cap drops its points, whichever id it is.
+#[test]
+fn a_point_with_any_id_over_the_cap_is_dropped() {
+    let long = "x".repeat(MAX_ID_BYTES + 1);
+    let long_role = body(
+        &[("anthrex.run", "r1"), ("anthrex.role", &long)],
+        1,
+        &[("input", json!(1))],
+    );
+    assert_eq!(parse_metrics(&long_role), Ok(vec![]));
+    let mut long_session: Value =
+        serde_json::from_slice(&body(ORCH, 1, &[("input", json!(1))])).unwrap();
+    long_session["resourceMetrics"][0]["scopeMetrics"][0]["metrics"][0]["sum"]["dataPoints"][0]["attributes"]
+        [1] = attr("session.id", &long);
+    let long_session = serde_json::to_vec(&long_session).unwrap();
+    assert_eq!(parse_metrics(&long_session), Ok(vec![]));
+    let at_cap = "x".repeat(MAX_ID_BYTES);
+    let at_cap = body(&[("anthrex.run", &at_cap)], 1, &[("input", json!(1))]);
+    assert_eq!(parse_metrics(&at_cap).map(|p| p.len()), Ok(1));
+}
+
+/// A cumulative point of series `session` for run `r1`, role `worker`.
+fn series_point(session: &str, value: u64) -> UsagePoint {
+    UsagePoint {
+        run_id: "r1".into(),
+        role: "worker".into(),
+        session_id: session.into(),
+        model: "m1".into(),
+        kind: UsageKind::Input,
+        value,
+        cumulative: true,
+    }
+}
+
+/// M8b.15 review (minor 3): past `MAX_SERIES`, a new cumulative series is dropped while
+/// a known one still counts.
+#[test]
+fn past_the_series_cap_only_known_series_count() {
+    let mut ledger = OtlpLedger::default();
+    let full: Vec<UsagePoint> = (0..MAX_SERIES)
+        .map(|i| series_point(&format!("s{i}"), 1))
+        .collect();
+    ledger.apply(&full);
+    let before = ledger.total("r1", "worker").input;
+    assert_eq!(before, MAX_SERIES as u64);
+    ledger.apply(&[series_point("s-new", 50)]);
+    assert_eq!(
+        ledger.total("r1", "worker").input,
+        before,
+        "a new series is dropped"
+    );
+    ledger.apply(&[series_point("s0", 5)]);
+    assert_eq!(ledger.total("r1", "worker").input, before + 4);
+}
+
+/// M8b.15 review (I3): the totals cap never stops a run's orchestrator from being
+/// metered. The receiver admits only live runs, so orchestrator pairs are bounded by
+/// the runs the daemon has.
+#[test]
+fn past_the_totals_cap_an_orchestrator_is_still_metered() {
+    let mut ledger = OtlpLedger::default();
+    for i in 0..MAX_TOTALS {
+        let run = format!("r{i}");
+        applied(
+            &mut ledger,
+            &body(
+                &[("anthrex.run", &run), ("anthrex.role", "worker")],
+                1,
+                &[("input", json!(1))],
+            ),
+        );
+    }
+    let late = &[("anthrex.run", "r-late"), ("anthrex.role", ORCHESTRATOR)];
+    let touched = applied(&mut ledger, &body(late, 1, &[("input", json!(9))]));
+    assert_eq!(
+        touched,
+        vec![("r-late".to_string(), ORCHESTRATOR.to_string())]
+    );
+    assert_eq!(ledger.total("r-late", ORCHESTRATOR), usage(9, 0, 0, 0));
+    // Another role of a new pair is still dropped.
+    let other = &[("anthrex.run", "r-late"), ("anthrex.role", "worker")];
+    assert_eq!(
+        applied(&mut ledger, &body(other, 1, &[("input", json!(9))])),
+        vec![]
+    );
+}
+
+/// M8b.15 review (I3): a run that ended loses its totals and its series.
+#[test]
+fn an_ended_run_is_evicted_from_the_ledger() {
+    let mut ledger = OtlpLedger::default();
+    applied(&mut ledger, &body(ORCH, 2, &[("input", json!(10))]));
+    let other = &[("anthrex.run", "r2"), ("anthrex.role", "orchestrator")];
+    applied(&mut ledger, &body(other, 2, &[("input", json!(3))]));
+    ledger.retain_runs(|run| run == "r2");
+    assert_eq!(ledger.total("r1", "orchestrator"), TokenUsage::default());
+    assert_eq!((ledger.totals.len(), ledger.last.len()), (1, 1));
+    assert_eq!(ledger.total("r2", "orchestrator"), usage(3, 0, 0, 0));
+    // The evicted series starts over: its whole value counts again.
+    applied(&mut ledger, &body(ORCH, 2, &[("input", json!(10))]));
+    assert_eq!(ledger.total("r1", "orchestrator"), usage(10, 0, 0, 0));
 }
 
 #[test]
