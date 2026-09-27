@@ -2973,3 +2973,11 @@ Controller rulings on the M8b.17 review:
 - **Detection by a goal** is left to finish (`PROFILE_WAIT`, the scout reports `check = "sh check.sh"`), so no scout outlives the test; the proposal's origin is `goal` and it ends `ready`.
 
 **Verification.** `run_e2e_adapt` (7 tests) and `run_e2e_adapt_engine` (6) pass, each run twice alone (9–11 s each) and once both at once (17 s each); `cargo test -p anthrex-daemon --lib` (1263), `filter_hook`, `filter_run`, and the harness users `run_e2e_settings`, `run_cli` and `profile_cli_edits` pass. No `anthrex daemon` or `fake-agent` process was left.
+
+### M8b.19 end-to-end scenarios II: the profile, history, and smoke stage 11d (2026-09-27)
+
+**Carry-over from M8b.18's review (its own commit, `fix(daemon): derive filter prefixes that match their own single-test command`).**
+- *I1, evidence.* `derived_prefixes` took the text of `single_test` before `{test}`, cut to two words, so `pytest tests/test_{test}.py` derived `pytest tests/test_`. That prefix ends in a word character, so `output_filter::matches` requires the end or whitespace after it, and `pytest tests/test_foo.py` has `foo.py`: the profile's own single-test command was never wrapped. Unit test `a_prefix_derived_from_a_glued_placeholder_matches_its_own_single_test` (`profile/tests.rs`) failed before the fix (`left: ["pytest tests/test_"]`).
+- *Fix, and why this one.* Of the two options, the derivation changed, not `matches`: `derived_prefixes` now trims the word characters glued to `{test}` before taking two words (`pytest tests/`, which already matches under M8b.18's separator rule), and derives nothing when what is left has no alphanumeric character (`./run_{test}` would otherwise derive `./`, which matches every `./` command). Treating derived prefixes as raw prefixes in `matches` would need `matches` to know where a prefix came from (a new argument through the hook's `--prefix` flags), and would make `cargo test` derived from `cargo test {test}` match `cargo testing`. The change is confined to the one pure function; `matches` is untouched.
+- *m1.* `e2e_green_s_task_on_the_fast_path`'s snapshot wait uses `REQUEST_WAIT`, with its row in `docs/timing-budgets.md`.
+- *m3, m5.* Recorded in the follow-ups under "From M8b.18's review".

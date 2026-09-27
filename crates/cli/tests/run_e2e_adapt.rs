@@ -15,7 +15,7 @@ use proto::{
 };
 use serde_json::{Value, json};
 use support::run_adapt::{ADAPT_FILES, PROFILE_LINES, PROFILE_WAIT, STORED_PROFILE, triage_single};
-use support::run_harness::{RUN_WAIT, RunHarness};
+use support::run_harness::{REQUEST_WAIT, RUN_WAIT, RunHarness};
 use support::run_plans::*;
 
 /// A harness running deciders in `mode`, with the stored profile (`profile` extra lines)
@@ -115,7 +115,7 @@ fn e2e_green_s_task_on_the_fast_path() {
     assert_eq!(triage.scale, Scale::Single);
     assert_eq!(t(&run, "t1").state, TaskState::Merged);
 
-    watcher.wait_for(std::time::Duration::from_secs(10), |m| {
+    watcher.wait_for(REQUEST_WAIT, |m| {
         matches!(m, DaemonMsg::Run(RunReply::Snapshot(s))
             if s.runs.iter().any(|r| r.run_id == id && r.state == RunState::Complete))
     });

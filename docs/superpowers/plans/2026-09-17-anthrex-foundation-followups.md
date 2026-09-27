@@ -1483,6 +1483,26 @@ scope.
   already recorded as a candidate too, and on a revert of it record a `reinstated` line
   (or drop the revert record's effect) keyed by the original `reverted` sha.
 
+## From M8b.18's review (2026-09-27), for M8b
+
+- **Wider prefix matching wraps more compound commands (review m3).** Since M8b.18 a
+  filter prefix ending in a separator (`sh tests/`) matches the path after it, and
+  M8b.19 cuts a derived prefix back to its last separator when `{test}` is glued to a
+  word (`pytest tests/test_{test}.py` derives `pytest tests/`). Both widen what the
+  hook wraps. A wrapped command runs in filter-run's own `$SHELL -c`, so a compound
+  command that sets Bash-session state (`export X=1; pytest tests/…`, `cd sub && …`
+  beyond the leading `cd` the matcher strips, `source venv/bin/activate && …`) loses
+  that state for the agent's next call, and a trailing `&` leaves a background child
+  holding filter-run's pipe (see M8b.8's review M6), so the call returns only when the
+  child exits. A fix could skip the rewrite when the command contains `;`, `&&` after
+  the matched part, `export`, `source` or a trailing `&`.
+- **Empty per-task TMPDIRs pile up under `/tmp/ax-<uid>/` (review m5).** About 3000
+  empty directories (`/tmp/ax-501/<16 hex>/`, from September 25 to 27) were left by e2e
+  runs on this machine. Each is a task's short `TMPDIR` (`run/git/tmp.rs`'s `task_tmp`, via
+  `role_launch::task_tmp_dir`); the task's checkout and repository directory are removed,
+  but the empty short directory is not. The engine's task cleanup (or the harness's
+  teardown) should remove it once the task's checkout is gone.
+
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
 - **The main pane can switch to a new window while the new-agent form is still open and

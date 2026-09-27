@@ -280,6 +280,44 @@ fn derived_prefixes_from_check_and_single_test() {
     );
 }
 
+/// M8b.18 review I1: when `{test}` is glued to a word character, the derived prefix
+/// is cut back to the last separator before it, so it matches its own single-test
+/// command; a head that leaves no word at all derives nothing.
+#[test]
+fn a_prefix_derived_from_a_glued_placeholder_matches_its_own_single_test() {
+    for (single, expected, command) in [
+        (
+            "pytest tests/test_{test}.py",
+            Some("pytest tests/"),
+            "pytest tests/test_foo.py",
+        ),
+        (
+            "python -m pytest tests/test_{test}.py",
+            Some("python -m"),
+            "python -m pytest tests/test_foo.py",
+        ),
+        ("sh tests/{test}.sh", Some("sh tests/"), "sh tests/t_ok.sh"),
+        ("./run_{test}", None, "./run_foo"),
+    ] {
+        let profile = RepoProfile {
+            single_test: Some(single.into()),
+            ..Default::default()
+        };
+        let derived = derived_prefixes(&profile);
+        assert_eq!(
+            derived,
+            expected.map(|p| vec![p.to_string()]).unwrap_or_default(),
+            "{single}"
+        );
+        if expected.is_some() {
+            assert!(
+                crate::output_filter::matches(command, &derived),
+                "{single}: {derived:?} must match {command}"
+            );
+        }
+    }
+}
+
 #[test]
 fn from_findings_keeps_only_extra_protected_entries() {
     let proposed = RepoProfile {

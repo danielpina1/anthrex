@@ -129,7 +129,8 @@ fn two_words(text: &str) -> Option<String> {
 
 /// Decision 28: the output filter's prefixes when the profile names none — the first
 /// two words of each segment of `check` (split on `&&`, `||` and `;`), then the text of
-/// `single_test` before `{test}`, cut to two words; de-duplicated, in order.
+/// `single_test` before `{test}` (cut back to its last separator when `{test}` is glued
+/// to a word character), cut to two words; de-duplicated, in order.
 pub fn derived_prefixes(profile: &RepoProfile) -> Vec<String> {
     let mut candidates = Vec::new();
     if let Some(check) = &profile.check {
@@ -143,7 +144,11 @@ pub fn derived_prefixes(profile: &RepoProfile) -> Vec<String> {
     }
     if let Some(single) = &profile.single_test {
         let head = single.split("{test}").next().unwrap_or_default();
-        candidates.extend(two_words(head));
+        // `{test}` glued to a word character (`tests/test_{test}.py`): cut back to the
+        // last separator, or the prefix would never match its own command, since a
+        // prefix ending in a word character must be followed by a boundary.
+        let head = head.trim_end_matches(|c: char| c.is_alphanumeric() || c == '_');
+        candidates.extend(two_words(head).filter(|p| p.chars().any(char::is_alphanumeric)));
     }
     let mut out: Vec<String> = Vec::new();
     for candidate in candidates {
