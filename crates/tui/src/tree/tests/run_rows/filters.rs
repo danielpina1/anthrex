@@ -1,5 +1,6 @@
 //! Milestone 8c task 4: the run view's filters, folds, scale and hostile snapshots (decision 21).
 
+use super::super::run_fixtures::two_hundred_task_run;
 use super::*;
 /// Scouts `S1` (Claude, working) and `S2` (Codex, reported); planner `A`; `t0` merged
 /// (Claude, one ended Claude worker); `t1` working in `A` (Claude: a live Claude worker
@@ -256,22 +257,7 @@ fn a_collapsed_task_hides_its_rounds() {
 
 #[test]
 fn two_hundred_tasks_build_in_order() {
-    let mut info = run(RUN_ID, PROJECT, RunState::Running);
-    info.tasks = (0..200u64)
-        .map(|index| {
-            let id = format!("t{index}");
-            let mut info = task(&id, "work", Size::S, TaskState::Review);
-            let start = 1_000 + index * 10;
-            let mut first = reviewer(1, None, Runtime::Codex, start + 1);
-            first.ended_at = Some(start + 2);
-            info.rounds = vec![
-                reviewer(2, None, Runtime::Codex, start + 3),
-                worker(1, None, Runtime::Claude, start),
-                first,
-            ];
-            info
-        })
-        .collect();
+    let info = two_hundred_task_run();
 
     let rows = run_rows(&info, &[], &TreeState::default(), RunFilter::All);
     assert_eq!(rows.len(), 801);

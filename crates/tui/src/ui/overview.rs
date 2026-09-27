@@ -226,18 +226,19 @@ fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, String, String) {
             )
         }
         RowKind::Run { run, .. } => run_footer(run),
-        // The run view's rows (task M8c.4) get their single line from task M8c.5.
+        // The run view's single line: the canvas's own live glyph and text; the
+        // muted right-hand text comes with task M8c.7's projections.
         RowKind::Planner { .. }
         | RowKind::Scout { .. }
         | RowKind::Task { .. }
-        | RowKind::AgentRound { .. } => (
-            Span::styled(
-                theme::status_glyph(proto::Status::Idle, app.spinner_frame),
-                Style::default().fg(theme::status_color(proto::Status::Idle)),
-            ),
-            graph::content_text(row),
-            String::new(),
-        ),
+        | RowKind::AgentRound { .. } => {
+            let (glyph, color) = graph::paint::style::node_glyph(row, app);
+            (
+                Span::styled(glyph, Style::default().fg(color)),
+                graph::content_text(row),
+                String::new(),
+            )
+        }
     }
 }
 

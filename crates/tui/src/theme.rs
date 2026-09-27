@@ -1,6 +1,6 @@
 //! Colours and glyphs. Spec section 6.5: inherit the terminal background, one accent, unicode-only glyphs.
 
-use proto::{RunState, Status, SubagentInfo, SubagentState};
+use proto::{RunState, Status, SubagentInfo, SubagentState, TaskState};
 use ratatui::style::{Color, Modifier, Style};
 
 /// The built-in accent, used until `config.toml`'s `accent` (decision 4) says
@@ -45,6 +45,51 @@ pub fn run_color(state: RunState) -> Color {
         RunState::Running => status_color(Status::Working),
         RunState::Complete | RunState::Accepted => status_color(Status::Done),
         RunState::Discarded | RunState::Failed => DIM,
+    }
+}
+
+/// Milestone 8c: a task's glyph (Interfaces "Glyphs"). At the plan gate every task
+/// is drawn as planned, `○`; `working` spins only while `animating`, which the caller
+/// sets while the task's live worker round's window is `Working` (decision 19).
+pub fn task_glyph(
+    state: TaskState,
+    gate_open: bool,
+    animating: bool,
+    spinner_frame: usize,
+) -> &'static str {
+    if gate_open {
+        return "○";
+    }
+    match state {
+        TaskState::Pending => "◌",
+        TaskState::Queued => "▫",
+        TaskState::Preparing => "●",
+        TaskState::Working if animating => status_glyph(Status::Working, spinner_frame),
+        TaskState::Working => "●",
+        TaskState::Proof | TaskState::Check => "◇",
+        TaskState::Review => "◐",
+        TaskState::MergeQueue => "▸",
+        TaskState::Merged => "✓",
+        TaskState::Blocked => "⊘",
+        TaskState::Cancelled => "–",
+    }
+}
+
+/// Milestone 8c: a task's glyph colour by its state; the gate's `○` is
+/// `status_color(Idle)`, which the caller picks.
+pub fn task_color(state: TaskState) -> Color {
+    match state {
+        TaskState::Pending => status_color(Status::Starting),
+        TaskState::Queued => status_color(Status::Idle),
+        TaskState::Preparing
+        | TaskState::Working
+        | TaskState::Proof
+        | TaskState::Check
+        | TaskState::Review
+        | TaskState::MergeQueue => status_color(Status::Working),
+        TaskState::Merged => status_color(Status::Done),
+        TaskState::Blocked => status_color(Status::Attention),
+        TaskState::Cancelled => DIM,
     }
 }
 

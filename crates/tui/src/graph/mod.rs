@@ -14,6 +14,7 @@ use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
 pub mod paint;
+mod run_text;
 pub mod viewport;
 
 pub use viewport::Pan;
@@ -221,25 +222,12 @@ pub(crate) fn content_text(row: &Row<'_>) -> String {
         RowKind::Subagent { info } => crate::tree::subagent_label(info),
         RowKind::Run {
             run, orchestrator, ..
-        } => {
-            let (merged, total) = crate::tree::run_progress(run);
-            match orchestrator {
-                Some(_) => format!("orchestrator  {merged}/{total}"),
-                None => format!("run {}  {merged}/{total}", run_short(&run.run_id)),
-            }
-        }
-        // The run view's rows (task M8c.4) get their text from task M8c.5.
-        RowKind::Planner { planner, .. } => format!("planner {}", planner.epic),
+        } => run_text::run_text(run, orchestrator.is_some()),
+        RowKind::Planner { run, planner } => run_text::planner_text(run, planner),
         RowKind::Scout { scout, .. } => scout.question.clone(),
-        RowKind::Task { task, .. } => format!("{} {}", task.id, task.title),
-        RowKind::AgentRound { round, .. } => format!("#{}", round.number),
+        RowKind::Task { task, .. } => run_text::task_text(task),
+        RowKind::AgentRound { round, .. } => run_text::round_text(round),
     }
-}
-
-/// A run id's last four characters, as `Run::short()` names its windows.
-fn run_short(run_id: &str) -> String {
-    let skip = run_id.chars().count().saturating_sub(4);
-    run_id.chars().skip(skip).collect()
 }
 
 /// The display width of everything inside a node's box, glyph included.

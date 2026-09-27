@@ -249,3 +249,26 @@ pub(crate) fn three_task_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
         ],
     )
 }
+
+/// A `running` run of 200 tasks `t0`…`t199`, each `review`, S, titled `work`, with a
+/// Claude worker and two Codex reviewer rounds (the first finished), listed out of
+/// start order: 801 rows and 600 leaves (review focus 2).
+pub(crate) fn two_hundred_task_run() -> RunInfo {
+    let mut info = run(RUN_ID, PROJECT, RunState::Running);
+    info.tasks = (0..200u64)
+        .map(|index| {
+            let id = format!("t{index}");
+            let mut info = task(&id, "work", Size::S, TaskState::Review);
+            let start = 1_000 + index * 10;
+            let mut first = reviewer(1, None, Runtime::Codex, start + 1);
+            first.ended_at = Some(start + 2);
+            info.rounds = vec![
+                reviewer(2, None, Runtime::Codex, start + 3),
+                worker(1, None, Runtime::Claude, start),
+                first,
+            ];
+            info
+        })
+        .collect();
+    info
+}
