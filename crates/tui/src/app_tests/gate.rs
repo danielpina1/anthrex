@@ -2,7 +2,7 @@
 //! 32–34). The client sends only the user's own requests, each after a confirm.
 
 use super::*;
-use crate::app::{Modal, PendingAction};
+use crate::app::{Modal, PendingAction, RunView};
 use crate::run_edit::tests::edit_fixture_task;
 use crate::run_edit::{EditField, TaskEditForm};
 use crate::tree::NodeKey;
@@ -14,10 +14,14 @@ use proto::{
 
 use super::runs::{app_with_runs, deliver, open_run_view};
 
+#[path = "gate/filter.rs"]
+mod filter;
 #[path = "gate/replies.rs"]
 mod replies;
 #[path = "gate/stale.rs"]
 mod stale;
+#[path = "gate/unsent.rs"]
+mod unsent;
 
 /// The gate fixture with the brief's edit-form `t1`, the run view open on it.
 pub(super) fn gate() -> App {

@@ -222,3 +222,48 @@ fn control_commands_on_a_headless_window_open_nothing() {
     press(&mut app, KeyCode::Char('R'), KeyModifiers::NONE);
     assert!(matches!(app.modal, Some(Modal::Confirm { .. })));
 }
+
+/// Whole-branch review M1: a sub-agent of a headless window listed as a plain window
+/// (no run in the snapshot names it) opens that window's conversation on Enter. It
+/// never focuses the window or leaves tree mode.
+#[test]
+fn enter_on_a_plain_listed_headless_windows_sub_agent_opens_its_conversation() {
+    let mut worker = headless(2, "worker", Status::Working);
+    worker.subagents = vec![proto::SubagentInfo {
+        id: "a1".into(),
+        parent_id: None,
+        kind: "general-purpose".into(),
+        label: Some("explore".into()),
+        model: None,
+        state: proto::SubagentState::Running,
+        tool: None,
+        started_secs: 5,
+        ended_secs: None,
+        needs_permission: false,
+    }];
+    let mut app = app_with(vec![win(1, "pty", Status::Idle), worker]);
+    assert_eq!(app.focused, Some(1));
+    assert_eq!(app.run_view, None);
+    app.enter_tree();
+    let key = crate::tree::NodeKey::Subagent {
+        window_id: 2,
+        id: "a1".into(),
+    };
+    let rows = tree::build_with_runs(&app.windows, &app.runs.runs, &app.tree);
+    app.tree.select(&rows, key.clone());
+    assert_eq!(app.tree.selected, Some(key));
+
+    let effects = press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(
+        effects,
+        vec![Effect::Send(ClientMsg::SubscribeConversation {
+            window_id: 2,
+            agent_id: None,
+            from_rev: None,
+        })]
+    );
+    assert_eq!(app.focused, Some(1), "Enter focused the headless window");
+    assert!(app.conversation.is_open());
+    assert!(!subscribes(&effects, 2));
+    assert!(!inputs(&effects));
+}

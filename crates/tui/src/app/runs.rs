@@ -446,6 +446,16 @@ impl App {
         }
     }
 
+    /// Whole-branch review M2: the `Edit` a submitting form waits on was refused by the
+    /// connection, or its reply went with a lost link, so no reply will come. The form
+    /// stops submitting and says so inline; `Enter` sends it again.
+    pub(super) fn edit_not_sent(&mut self) {
+        if let Some(form) = self.submitting_form() {
+            form.submitting = false;
+            form.error = Some("the edit was not sent; press Enter to retry".into());
+        }
+    }
+
     /// Decision 32's task while the gate is open, else the toast saying why not.
     fn gate_task(&self, run_id: &str, task_id: &str) -> Result<&TaskInfo, String> {
         let gone = || format!("{task_id} is no longer in run {run_id}'s plan");

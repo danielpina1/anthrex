@@ -1624,3 +1624,13 @@ scope.
   brief budgeted for M8c.11 (still under the 600 rule). The turn-end handling added by
   M8c.11's review fixes (the Claude `ProcessExited` arm, `hook_stopped`, `keep_stop`) is
   the natural piece to move into its own module the next time the file grows.
+- **Every run's task briefs ride on every snapshot push** (whole-branch review M3, for
+  **M9**). `crates/daemon/src/run/snapshot.rs:311-313` copies each task's `brief`,
+  `acceptance` and `route_spec` into the snapshot for every run `EngineState.runs` holds,
+  terminal runs included, and terminal runs are never removed from it. `snapshot()`
+  publishes all of them on every structural change to every subscriber, though only the
+  plan gate's edit form reads these fields. A push therefore grows without bound as run
+  history accumulates, against `proto::MAX_FRAME` (16 MB); an oversized push fails
+  `encode`. Not urgent at today's sizes. Suggested fix: publish `brief`, `acceptance` and
+  `route_spec` only while the run is `awaiting_approval`, or prune terminal runs' task
+  detail (or the runs themselves) from pushes.

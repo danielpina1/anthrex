@@ -176,11 +176,32 @@ fn a_fresh_app_ticks_without_a_run_subscription() {
     assert!(app.on_tick().is_empty());
 }
 
+/// Whole-branch review M4: asserts `probe()` is `base` plus the client's whole seconds
+/// since `at`, read just before and just after it. A stalled CI host moves the
+/// expected value with the clock; it never fails the test, and never widens it.
+#[track_caller]
+fn assert_since(at: Instant, base: u64, probe: impl FnOnce() -> u64) {
+    let lo = at.elapsed().as_secs();
+    let value = probe();
+    let hi = at.elapsed().as_secs();
+    assert!(
+        (base + lo..=base + hi).contains(&value),
+        "{value} is not {base} + {lo}..={hi} seconds"
+    );
+}
+
+/// `secs` ago on the monotonic clock; `None` on a host up for less than that.
+fn ago(secs: u64) -> Option<Instant> {
+    Instant::now().checked_sub(Duration::from_secs(secs))
+}
+
 #[test]
 fn run_age_counts_from_the_daemons_clock() {
-    let app = app_with_runs(vec![], snapshot(1, 5000, vec![]));
-    assert_eq!(app.run_now(), 5000);
-    assert_eq!(app.run_age(4000), 1000);
+    let mut app = app_with_runs(vec![], snapshot(1, 5000, vec![]));
+    let at = Instant::now();
+    app.set_runs_received_at(at);
+    assert_since(at, 5000, || app.run_now());
+    assert_since(at, 1000, || app.run_age(4000));
     // Hostile: a time after the daemon's clock saturates instead of underflowing.
     assert_eq!(app.run_age(6000), 0);
     assert_eq!(app.run_age(u64::MAX), 0);
@@ -189,12 +210,19 @@ fn run_age_counts_from_the_daemons_clock() {
 #[test]
 fn run_now_uses_the_time_the_snapshot_arrived() {
     let mut app = app_with_runs(vec![], snapshot(1, 5000, vec![]));
-    app.set_runs_received_at(Instant::now().checked_sub(Duration::from_secs(40)).unwrap());
-    assert_eq!(app.run_now(), 5040);
-    assert_eq!(app.run_age(5000), 40);
-    // A new snapshot restarts the client-side count.
+    let Some(at) = ago(40) else {
+        eprintln!("skipped: the host has been up for under 40 s");
+        return;
+    };
+    app.set_runs_received_at(at);
+    assert_since(at, 5000, || app.run_now());
+    assert_since(at, 0, || app.run_age(5000));
+    // A new snapshot restarts the client-side count, at its delivery after `before`.
+    let before = Instant::now();
     deliver(&mut app, snapshot(2, 6000, vec![]));
-    assert_eq!(app.run_now(), 6000);
+    let now = app.run_now();
+    let most = 6000 + before.elapsed().as_secs();
+    assert!((6000..=most).contains(&now), "{now} is not 6000..={most}");
 }
 
 #[test]
@@ -205,9 +233,18 @@ fn rate_limited_only_until_its_end() {
     assert!(!app.rate_limited(&round(Some(4990), true)));
     assert!(!app.rate_limited(&round(None, true)));
     // 40 seconds of client time later, the limit has run out.
-    app.set_runs_received_at(Instant::now().checked_sub(Duration::from_secs(40)).unwrap());
+    let Some(at) = ago(40) else {
+        eprintln!("skipped: the host has been up for under 40 s");
+        return;
+    };
+    app.set_runs_received_at(at);
     assert!(!app.rate_limited(&round(Some(5030), true)));
-    assert!(app.rate_limited(&round(Some(5041), false)));
+    // A limit ending one second after the client's own clock is still live. Missing
+    // it is accepted only if that clock ticked during the check (review M4).
+    let before = at.elapsed().as_secs();
+    let live = app.rate_limited(&round(Some(5000 + before + 1), false));
+    assert!(before >= 40);
+    assert!(live || at.elapsed().as_secs() > before);
 }
 
 #[test]
@@ -320,6 +357,9 @@ fn both_dropped_subscriptions_are_retried_on_one_tick() {
 fn other_run_replies_change_nothing() {
     let mut app = app_with_runs(vec![win(1, "a", Status::Idle)], snapshot(9, 50, vec![]));
     app.toast = None;
+    // Arrived 40 s ago, so a reply that restarted the client-side count shows.
+    let at = ago(40).unwrap_or_else(Instant::now);
+    app.set_runs_received_at(at);
     let triage = serde_json::from_value(serde_json::json!({
         "kinds": [], "scale": "single", "path": "fast", "reason": "r",
         "source": "fallback", "fallback_reason": null, "at": 0,
@@ -366,7 +406,8 @@ fn other_run_replies_change_nothing() {
         assert_eq!(app.toast_text(), None, "{label}");
         assert!(app.modal.is_none(), "{label}");
         assert_eq!(app.runs.revision, 9, "{label}");
-        assert_eq!(app.run_now(), 50, "{label}");
+        assert_eq!(app.runs.now, 50, "{label}");
+        assert_since(at, 50, || app.run_now());
         assert!(app.run_subscribed, "{label}");
     }
 }
