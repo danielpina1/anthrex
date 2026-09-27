@@ -404,3 +404,78 @@ fn a_snapshot_prunes_the_keys_of_runs_that_left() {
     assert!(!app.tree.is_collapsed(&run_key));
     assert!(!app.tree.is_collapsed(&project));
 }
+
+/// Review I1: the selection repair in `replace_runs` (`app/runs.rs`). The selected
+/// `Run` row leaves with its discarded run, and the selection moves to the row now
+/// at its old index, the plain window after it.
+#[test]
+fn a_discarded_runs_selected_row_hands_the_selection_to_its_neighbour() {
+    use crate::tree::run_fixtures::{RUN_ID, gate_fixture};
+    let (mut snap, windows) = gate_fixture();
+    let mut app = app_with_runs(windows, snap.clone());
+    app.enter_tree();
+    let run_key = tree::NodeKey::Run(RUN_ID.into());
+    let rows = tree::build_with_runs(&app.windows, &app.runs.runs, &app.tree);
+    app.tree.select(&rows, run_key.clone());
+    assert_eq!(app.tree.selected, Some(run_key));
+
+    snap.runs[0].state = RunState::Discarded;
+    deliver(&mut app, snap);
+    assert_eq!(app.tree.selected, Some(tree::NodeKey::Window(1)));
+    assert_eq!(
+        tree::row_index(&app.rows(), &tree::NodeKey::Window(1)),
+        Some(1)
+    );
+    assert_eq!(app.tree.selected_index(&app.rows()), Some(1));
+}
+
+/// Review I1: a tree that the snapshot empties clears the selection, with no panic.
+#[test]
+fn a_snapshot_that_empties_the_tree_clears_the_selection() {
+    use crate::tree::run_fixtures::{RUN_ID, gate_fixture};
+    let (mut snap, _) = gate_fixture();
+    let mut app = app_with_runs(vec![], snap.clone());
+    app.enter_tree();
+    let run_key = tree::NodeKey::Run(RUN_ID.into());
+    let rows = tree::build_with_runs(&app.windows, &app.runs.runs, &app.tree);
+    app.tree.select(&rows, run_key.clone());
+    assert_eq!(app.tree.selected, Some(run_key));
+
+    snap.runs[0].state = RunState::Discarded;
+    deliver(&mut app, snap);
+    assert!(app.rows().is_empty());
+    assert_eq!(app.tree.selected, None);
+    // An empty snapshot after that is still quiet.
+    deliver(&mut app, snapshot(2, 10, vec![]));
+    assert_eq!(app.tree.selected, None);
+}
+
+/// Review I1: the reveal in `replace_runs`. Runs arriving above the plain windows push
+/// the selected last window below the sidebar; the snapshot scrolls it back in view.
+#[test]
+fn runs_arriving_above_the_selection_keep_it_in_the_sidebar() {
+    use crate::tree::run_fixtures::{PROJECT, pty, run};
+    let windows: Vec<_> = (1..=8)
+        .map(|id| pty(id, &format!("w{id}"), PROJECT, Status::Idle))
+        .collect();
+    let mut app = app_with_runs(windows, snapshot(1, 10, vec![]));
+    app.enter_tree();
+    app.set_tree_viewports(4, 10);
+    let last = tree::NodeKey::Window(8);
+    let rows = tree::build_with_runs(&app.windows, &app.runs.runs, &app.tree);
+    app.tree.select(&rows, last.clone());
+    app.reveal_tree_anchor();
+    assert_eq!(app.tree.sidebar.top, 5, "row 8 is the last of four");
+
+    let runs = ["a-0001", "b-0002", "c-0003"]
+        .map(|id| run(id, PROJECT, RunState::Running))
+        .to_vec();
+    deliver(&mut app, snapshot(2, 10, runs));
+    let index = app
+        .tree
+        .selected_index(&app.rows())
+        .expect("still selected");
+    assert_eq!(index, 11);
+    assert_eq!(app.tree.selected, Some(last));
+    assert_eq!(app.tree.sidebar.top, 8, "the selected row is revealed");
+}

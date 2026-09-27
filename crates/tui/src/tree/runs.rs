@@ -17,7 +17,9 @@ pub(super) struct ShownRun<'a> {
 }
 
 /// Decision 6: the runs the tree shows are the non-terminal ones, oldest first by
-/// `(created_at, run_id)` — the snapshot arrives newest first (decision 7).
+/// `(created_at, run_id)` — the snapshot arrives newest first (decision 7). A run id
+/// listed twice is shown once, the first copy in that order, so no two rows share a
+/// key (the daemon builds the list from a map, so this is robustness only).
 pub fn shown_runs(runs: &[RunInfo]) -> impl Iterator<Item = &RunInfo> {
     let mut shown: Vec<&RunInfo> = runs.iter().filter(|run| !run.state.is_terminal()).collect();
     shown.sort_by(|left, right| {
@@ -25,6 +27,8 @@ pub fn shown_runs(runs: &[RunInfo]) -> impl Iterator<Item = &RunInfo> {
             .cmp(&right.created_at)
             .then_with(|| left.run_id.cmp(&right.run_id))
     });
+    let mut seen = HashSet::new();
+    shown.retain(|run| seen.insert(run.run_id.as_str()));
     shown.into_iter()
 }
 

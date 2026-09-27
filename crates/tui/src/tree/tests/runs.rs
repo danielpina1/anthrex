@@ -381,6 +381,22 @@ fn the_filter_matches_a_runs_goal_and_id() {
         );
         assert_eq!(rows[1].guides, "└─", "{filter}");
     }
+    // Review M4: a project matched by its own name keeps its run as well as its
+    // windows, though the run's goal and id do not contain the filter.
+    let state = TreeState {
+        filter: "demo".into(),
+        ..TreeState::default()
+    };
+    let rows = build_with_runs(&windows, &snap.runs, &state);
+    assert_eq!(
+        keys_and_depths(&rows),
+        vec![
+            (project(PROJECT), 0),
+            (run_key(RUN_ID), 1),
+            (NodeKey::Window(1), 1),
+            (NodeKey::Window(2), 1),
+        ]
+    );
     // A filter naming the window drops the run.
     let state = TreeState {
         filter: "api".into(),
@@ -504,4 +520,51 @@ fn toggle_folds_every_new_key() {
     for key in &keys {
         assert!(state.is_collapsed(key));
     }
+}
+
+/// Review M2: cancelled tasks count in neither the merged nor the total figure.
+#[test]
+fn cancelled_tasks_are_left_out_of_a_runs_progress() {
+    let mut three = run(RUN_ID, PROJECT, RunState::Running);
+    three.tasks = vec![
+        task("t0", "a", Size::S, TaskState::Merged),
+        task("t1", "b", Size::S, TaskState::Cancelled),
+        task("t2", "c", Size::S, TaskState::Working),
+        task("t3", "d", Size::S, TaskState::Cancelled),
+    ];
+    assert_eq!(run_progress(&three), (1, 2));
+}
+
+/// Review M2: a whitespace-only goal is blank, so the run is known by its id.
+#[test]
+fn a_blank_goal_falls_back_to_the_run_id() {
+    let mut blank = run(RUN_ID, PROJECT, RunState::Running);
+    blank.goal = " \t\n ".into();
+    assert_eq!(run_title(&blank), RUN_ID);
+    blank.goal = "  Add reset ".into();
+    assert_eq!(run_title(&blank), "  Add reset ");
+}
+
+/// Review M1: a run listed twice in one snapshot is shown once, the first copy by the
+/// shown order, so no two rows share a key and positions are not handed out twice.
+#[test]
+fn a_run_listed_twice_is_shown_once() {
+    let (snap, windows) = three_task_fixture();
+    let mut later = snap.runs[0].clone();
+    later.created_at += 100;
+    later.goal = "the later copy".into();
+    let runs = vec![later, snap.runs[0].clone()];
+    let shown: Vec<_> = shown_runs(&runs).collect();
+    assert_eq!(shown.len(), 1);
+    assert_eq!(shown[0].goal, super::run_fixtures::GOAL);
+    let rows = build_with_runs(&windows, &runs, &TreeState::default());
+    assert_eq!(
+        keys_and_depths(&rows),
+        vec![
+            (project(PROJECT), 0),
+            (run_key(RUN_ID), 1),
+            (NodeKey::Window(1), 1),
+        ]
+    );
+    assert_eq!(agent_order(&rows), vec![3, 1]);
 }

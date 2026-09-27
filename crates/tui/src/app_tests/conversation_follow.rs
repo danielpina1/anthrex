@@ -219,7 +219,7 @@ fn a_sidebar_click_moves_the_view_to_the_clicked_window() {
 
     let layout = crate::ui::layout(ratatui::layout::Rect::new(0, 0, 120, 30), 34);
     app.set_tree_viewports(layout.sidebar_list.height, layout.main_inner.height);
-    let rows = crate::tree::build(&app.windows, &app.tree);
+    let rows = crate::tree::build_with_runs(&app.windows, &app.runs.runs, &app.tree);
     let index = rows
         .iter()
         .position(|row| row.key == crate::tree::NodeKey::Window(9))

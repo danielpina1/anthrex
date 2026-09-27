@@ -59,7 +59,7 @@ fn assert_closed(app: &App) {
 }
 
 fn select(app: &mut App, key: NodeKey) {
-    let rows = tree::build(&app.windows, &app.tree);
+    let rows = tree::build_with_runs(&app.windows, &app.runs.runs, &app.tree);
     app.tree.select(&rows, key);
     app.reveal_tree_anchor();
 }

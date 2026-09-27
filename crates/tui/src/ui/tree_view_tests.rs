@@ -398,3 +398,25 @@ fn a_run_with_an_empty_goal_shows_its_id() {
     let text = run_line(&app, 40);
     assert!(text.contains("add-reset-3f9a"), "{text:?}");
 }
+
+/// Review M2: a run whose orchestrator is focused carries the accent `▎` marker; one
+/// whose orchestrator is not focused has a blank in its place.
+#[test]
+fn a_focused_orchestrator_marks_its_run_line() {
+    let (snapshot, windows) = tree::run_fixtures::three_task_fixture();
+    let mut app = app_with_runs(windows, snapshot);
+    let marker = |app: &App| {
+        let rows = app.rows();
+        let row = rows
+            .iter()
+            .find(|row| matches!(row.kind, tree::RowKind::Run { .. }))
+            .expect("a run row");
+        let line = ui::tree_view::narrow_line(app, row, 40, 1, false);
+        assert_eq!(line.spans[0].content.as_ref(), row.guides.as_str());
+        line.spans[1].content.to_string()
+    };
+    app.focused = Some(1);
+    assert_eq!(marker(&app), " ");
+    app.focused = Some(3);
+    assert_eq!(marker(&app), "▎");
+}
