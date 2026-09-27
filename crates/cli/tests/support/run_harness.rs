@@ -25,6 +25,10 @@ use super::{ANTHREX, RunningCommand, fake_agent_bin, runtime};
 /// task paths waits `k * RUN_WAIT` (`docs/timing-budgets.md`).
 pub const RUN_WAIT: Duration = Duration::from_secs(300);
 
+/// The harness's decider command: a path that does not exist, so a decider a test did
+/// not ask for falls back instead of running anything.
+pub const NO_DECIDER_BIN: &str = "/nonexistent/anthrex-test/decider";
+
 /// How long one raw request may take, `run accept` and `run discard` aside: `run
 /// start`'s legal worst case is its preflight's git calls at the harness's 5 s
 /// `git_timeout_secs` (six calls, 30 s) plus the id draw's and the settings scan's
@@ -127,7 +131,7 @@ impl RunHarness {
         (harness, started)
     }
 
-    fn unstarted(
+    pub(super) fn unstarted(
         orchestrator: &str,
         env: &[(&str, &str)],
         git_off: bool,
@@ -182,6 +186,9 @@ impl RunHarness {
             ("ANTHREX_CONFIG".into(), path(&config)),
             ("ANTHREX_CLAUDE_BIN".into(), path(&fake)),
             ("ANTHREX_CODEX_BIN".into(), path(&fake)),
+            // M8b's safety rule: no decider can ever reach a real agent binary. A test
+            // that runs deciders overrides this with `fake-agent` (`run_adapt.rs`).
+            ("ANTHREX_DECIDER_BIN".into(), NO_DECIDER_BIN.into()),
             ("FAKE_AGENT_ARGS_FILE".into(), path(&io)),
             ("FAKE_AGENT_STDIN_FILE".into(), path(&io)),
             ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
@@ -214,7 +221,7 @@ impl RunHarness {
         self.dir.path().join("data")
     }
 
-    fn command(&self, args: &[&str]) -> Command {
+    pub(super) fn command(&self, args: &[&str]) -> Command {
         let mut command = Command::new(ANTHREX);
         // Decision 50's check reads the daemon's own `ANTHROPIC_API_KEY`: never the
         // developer's.
@@ -245,7 +252,7 @@ impl RunHarness {
     /// Starts `anthrex daemon start --foreground` as this harness's own child and waits
     /// at most `wait` for its socket. On `Err` the daemon is still owned, and stopped
     /// with the harness.
-    fn start_daemon(&self, wait: Duration) -> Result<(), String> {
+    pub(super) fn start_daemon(&self, wait: Duration) -> Result<(), String> {
         let mut command = self.command(&["daemon", "start", "--foreground"]);
         let mut daemon = DaemonProcess::spawn(&mut command, &self.dir.path().join("daemon.out"));
         let up = daemon.wait_up(&self.socket(), wait);
