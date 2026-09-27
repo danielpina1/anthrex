@@ -937,7 +937,8 @@ scope.
 
 ## From M8a.25 (2026-09-24), for M8a
 
-- **A session's signals and tool calls before its `CreateWindow` result are lost.** The
+- **Handled (`fix-early-session-events`: `run/engine/early.rs` holds and replays them.)**
+  **A session's signals and tool calls before its `CreateWindow` result are lost.** The
   engine finds a round by its `window_id`, which it learns from the `Window` result;
   the session's process starts inside that op, so everything it does before the op's
   `done` line is written and its `OpDone` stepped is dropped (`signals::on_signal`
@@ -959,8 +960,9 @@ scope.
     or a round resumed since, which drops it as a repeat of the exit it took (final fix
     batch F3, B-10; before F3 it ended that round or counted a death, T25-N1).
     `e2e_a_session_that_exits_before_its_window_is_known_still_escalates` reproduces the
-    race with `ANTHREX_TEST_DELAY_WINDOW_MS`. The dropped early events themselves are
-    still open: that test's later sessions wait out the hold before their tool calls.
+    race with `ANTHREX_TEST_DELAY_WINDOW_MS`. The early events are now held and replayed
+    (above), so that test's later sessions no longer wait out the hold, and session 1's
+    exit reaches its round.
 - **`fake-agent`'s `git_commit` step does not create a missing directory** (`a/flag`
   fails, and the process exits mid-turn). The M8a.25 tests commit into a new directory
   with `sh` instead.
