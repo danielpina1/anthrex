@@ -115,8 +115,9 @@ impl HeadlessHandle {
     /// `CLAUDECODE`, `ANTHREX_WINDOW_ID`, `ANTHREX_SOCKET`, AGENTS.md rule 11's git
     /// variables and each of `remove` (final fix batch F2: a login session's API
     /// credentials, [`super::credential_scrub`]) removed, then `env` set (the caller's
-    /// window id and socket, and the profile's env). `on_event(pid, event)` receives every event of the process, from
-    /// one thread, in the order the module doc describes.
+    /// window id and socket, and the profile's env), then a Claude session's pins
+    /// ([`super::session_vars`]). `on_event(pid, event)` receives every event of the
+    /// process, from one thread, in the order the module doc describes.
     ///
     /// Blocking (a `fork`/`exec` and thread starts): call it from `spawn_blocking` or a
     /// thread, never from a tokio worker.
@@ -142,7 +143,7 @@ impl HeadlessHandle {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .process_group(0);
-        session_env(&mut command, env, remove);
+        session_env(&mut command, &super::session_vars(runtime, env), remove);
         let mut child = command
             .spawn()
             .with_context(|| format!("could not start {}", program.to_string_lossy()))?;

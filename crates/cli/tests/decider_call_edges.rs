@@ -158,3 +158,49 @@ fn the_fixture_never_resolves_to_a_real_agent_binary() {
     }
     assert!(fx.calls().is_empty(), "{:?}", fx.calls());
 }
+
+/// The Claude tool-search fix (2026-09-27): a Claude decider's process has
+/// `ENABLE_TOOL_SEARCH=false` in its environment exactly once; a Codex decider's has
+/// none. A wrapper around the fixture's program writes the environment it was started
+/// with, then `exec`s it.
+#[test]
+fn a_claude_decider_runs_with_tool_search_off() {
+    let fx = Fixture::new();
+    fx.script("blocked_reason", 1, json!({"answer": answer()}));
+    fx.script("blocked_reason", 2, json!({"answer": answer()}));
+    for (n, (mode, expected)) in [(DeciderMode::Claude, 1), (DeciderMode::Codex, 0)]
+        .into_iter()
+        .enumerate()
+    {
+        let dump = fx.root().join(format!("env-{n}.txt"));
+        let wrapper = fx.root().join(format!("env-{n}.sh"));
+        write_executable(
+            &wrapper,
+            &format!(
+                "#!/bin/sh\nenv > '{}'\nexec '{}' \"$@\"\n",
+                dump.display(),
+                fx.program().display()
+            ),
+        );
+        let program = wrapper.to_string_lossy().into_owned();
+        let ctx = context_with(fx.root(), mode, |key| {
+            (key == "ANTHREX_DECIDER_BIN").then(|| program.clone())
+        });
+        let decision = runtime().block_on(decide(&ctx, &blocked("x")));
+        assert_eq!(
+            decision.source,
+            DeciderSource::Decider,
+            "{mode:?}: {decision:?}"
+        );
+        let env = std::fs::read_to_string(&dump).unwrap();
+        let pins: Vec<&str> = env
+            .lines()
+            .filter(|l| l.starts_with("ENABLE_TOOL_SEARCH="))
+            .collect();
+        assert_eq!(pins.len(), expected, "{mode:?}: {env}");
+        assert!(
+            pins.iter().all(|l| *l == "ENABLE_TOOL_SEARCH=false"),
+            "{env}"
+        );
+    }
+}
