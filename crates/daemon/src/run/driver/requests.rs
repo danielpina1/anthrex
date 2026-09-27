@@ -87,9 +87,6 @@ fn run_refs(git: &OsString, root: &Path, timeout: Duration) -> Result<Vec<String
     Ok(listing.lines().map(str::to_string).collect())
 }
 
-/// The answer to a milestone-8b request whose task has not landed yet.
-const NOT_YET: &str = "not available yet";
-
 impl RunService {
     /// Answers every `RunRequest` but `Subscribe` and `Unsubscribe` (`server/run_api.rs`).
     pub async fn request(&self, req: RunRequest) -> RunReply {
@@ -162,7 +159,8 @@ impl RunService {
             } => self.finish(run_id, action, confirm).await,
             RunRequest::List => RunReply::Snapshot(self.current()),
             RunRequest::Tool(call) => self.tool(call).await,
-            // Milestone 8b: refused until the task that answers each one lands.
+            // Milestone 8b: `run start --goal` (decision 22), `run promote` (25), `run
+            // stats` (35) and `anthrex profile` (10); the logic is in `driver/adapt.rs`.
             RunRequest::StartGoal {
                 goal,
                 dir,
@@ -177,7 +175,7 @@ impl RunService {
                 request::PROMOTE,
                 self.ask(|reply| EventKind::Promote { reply, run_id }).await,
             ),
-            RunRequest::Stats { .. } => answer(request::STATS, Err(NOT_YET.into())),
+            RunRequest::Stats { dir } => self.stats(dir).await,
             RunRequest::Profile(profile) => self.profile(profile).await,
             RunRequest::Subscribe | RunRequest::Unsubscribe => RunReply::Refused {
                 request: "run".to_string(),

@@ -96,10 +96,12 @@ async fn a_disconnected_client_is_not_held_open_by_its_run_request() {
     shutdown.cancel();
 }
 
-/// Milestone 8b task 2: each new request is refused, labelled, until the task that
-/// answers it lands.
+/// Milestone 8b task 2 added four requests refused `not available yet`; since M8b.17
+/// every one is answered by its own handler. `run stats` outside a repository is
+/// refused with the reason. (`run promote` is an engine event: this service's loop is
+/// not spawned, so it is left to `engine/tests/fast_path.rs`.)
 #[tokio::test(flavor = "multi_thread")]
-async fn every_milestone_8b_request_is_refused_until_its_task_lands() {
+async fn every_milestone_8b_request_is_answered_by_its_task() {
     use proto::run_wire::{ProfileRequest, request};
     let dir = tempfile::Builder::new()
         .prefix("ax-runs8b")
@@ -118,30 +120,25 @@ async fn every_milestone_8b_request_is_refused_until_its_task_lands() {
     );
     let runs = RunService::new(manager, ctx);
     let here = dir.path().to_path_buf();
-    for (req, label) in [
-        (
-            RunRequest::StartGoal {
-                goal: "g".into(),
-                dir: here.clone(),
-                yes: true,
-                trust_project: false,
-                unconfined_checks: false,
-            },
-            request::START_GOAL,
-        ),
-        (RunRequest::Promote { run_id: "r".into() }, request::PROMOTE),
-        (RunRequest::Stats { dir: here.clone() }, request::STATS),
-        (
-            RunRequest::Profile(ProfileRequest::Status { dir: here.clone() }),
-            request::PROFILE,
-        ),
+    for req in [
+        RunRequest::StartGoal {
+            goal: "g".into(),
+            dir: here.clone(),
+            yes: true,
+            trust_project: false,
+            unconfined_checks: false,
+        },
+        RunRequest::Stats { dir: here.clone() },
+        RunRequest::Profile(ProfileRequest::Status { dir: here.clone() }),
     ] {
-        assert_eq!(
-            runs.request(req).await,
-            proto::RunReply::Refused {
-                request: label.to_string(),
-                message: "not available yet".to_string(),
-            }
-        );
+        let reply = format!("{:?}", runs.request(req).await);
+        assert!(!reply.contains("not available yet"), "{reply}");
     }
+    assert_eq!(
+        runs.request(RunRequest::Stats { dir: here.clone() }).await,
+        proto::RunReply::Refused {
+            request: request::STATS.to_string(),
+            message: format!("not a git repository: {}", here.display()),
+        }
+    );
 }

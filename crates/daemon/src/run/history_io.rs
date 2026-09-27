@@ -1,15 +1,16 @@
-//! M8b decisions 32 and 33: `history.jsonl` on disk, and the diff measurement. Blocking
+//! M8b decisions 32 and 33: `history.jsonl` on disk, and the diff measurement; M8b.17,
+//! decisions 34 and 35: revert detection, and `run stats`' read. Blocking
 //! I/O (M8b decision 1): the driver calls every function here on `spawn_blocking`,
 //! never under a lock. Every git call goes through `run::git::Git` (`worktree::run_git`'s
 //! code: `--no-optional-locks`, a scrubbed environment, hooks off, a deadline).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::io::{BufRead, Write};
 use std::path::Path;
 use std::time::Duration;
 
-use proto::{DiffStats, HistoryLine};
+use proto::{DiffStats, HISTORY_VERSION, HistoryLine, HistoryStats, RevertRecord};
 
 use super::git::{DIFF_FLAGS, Git, os, read_ref};
 
@@ -165,4 +166,177 @@ pub fn fill_accepted_commit(
         }
     }
     HistoryLine::Run(record)
+}
+
+/// Decision 34: only accepts at most this old are looked for.
+pub const REVERT_WINDOW_SECS: u64 = 90 * 86_400;
+
+/// Decision 34: how many commits of the base branch are read.
+pub const REVERT_LOG_MAX: u32 = 2000;
+
+/// `git revert`'s standard message names the reverted commit after this.
+const REVERTS_MARKER: &str = "This reverts commit ";
+
+/// The shas a commit message says it reverts.
+fn reverted_shas(body: &str) -> impl Iterator<Item = &str> {
+    body.match_indices(REVERTS_MARKER).map(|(at, marker)| {
+        let rest = &body[at + marker.len()..];
+        let end = rest
+            .find(|c: char| !c.is_ascii_hexdigit())
+            .unwrap_or(rest.len());
+        &rest[..end]
+    })
+}
+
+/// Decision 34's candidates on `base_branch`: each accepted run's accept merge
+/// (`task_id: None`) and its merged tasks' merge commits, for runs accepted into that
+/// branch at most [`REVERT_WINDOW_SECS`] before `now`, less every commit a revert
+/// record already names. Keyed by sha: `(run, task)`.
+fn candidates<'a>(
+    history: &'a [HistoryLine],
+    base_branch: &str,
+    now: u64,
+) -> HashMap<&'a str, (&'a str, Option<&'a str>)> {
+    let mut runs = HashSet::new();
+    let mut shas = HashMap::new();
+    for line in history {
+        if let HistoryLine::Run(r) = line
+            && r.base_branch == base_branch
+            && now.saturating_sub(r.at) <= REVERT_WINDOW_SECS
+            && let Some(accepted) = r.accepted_commit.as_deref()
+        {
+            runs.insert(r.run_id.as_str());
+            shas.insert(accepted, (r.run_id.as_str(), None));
+        }
+    }
+    for line in history {
+        if let HistoryLine::Task(t) = line
+            && runs.contains(t.run_id.as_str())
+            && let Some(merge) = t.merge_commit.as_deref()
+        {
+            shas.insert(merge, (t.run_id.as_str(), Some(t.task_id.as_str())));
+        }
+    }
+    for line in history {
+        if let HistoryLine::Revert(r) = line {
+            shas.remove(r.reverted.as_str());
+        }
+    }
+    shas
+}
+
+/// Decision 34: the commits on `base_branch` (its newest [`REVERT_LOG_MAX`], through
+/// `run::git::Git`: `--no-optional-locks`, the scrubbed environment, hooks off, the
+/// deadline) whose message says `This reverts commit <sha>` of a candidate (see
+/// [`candidates`]), oldest first, one record each (`revert/<revert commit>`; a commit
+/// already recorded is skipped). Only reads: it never writes to the repository or any
+/// ref. A failed read (a branch that does not exist included) is an error.
+pub fn detect_reverts(
+    git: &OsStr,
+    root: &Path,
+    base_branch: &str,
+    history: &[HistoryLine],
+    now: u64,
+    timeout: Duration,
+) -> Result<Vec<RevertRecord>, String> {
+    let wanted = candidates(history, base_branch, now);
+    if wanted.is_empty() {
+        return Ok(Vec::new());
+    }
+    let recorded: HashSet<&str> = history.iter().map(record_id).collect();
+    let limit = format!("-n{REVERT_LOG_MAX}");
+    // `refs/heads/` in front: a branch name from the file can never read as an option.
+    let branch = format!("refs/heads/{base_branch}");
+    let log = Git::new(git, timeout).ok(
+        root,
+        &[
+            os("log"),
+            os(&limit),
+            os("--no-show-signature"),
+            os("--format=%H%x1f%B%x1e"),
+            os(&branch),
+            os("--"),
+        ],
+    )?;
+    let mut found = Vec::new();
+    for entry in log.split('\x1e') {
+        let Some((commit, body)) = entry.trim_start().split_once('\x1f') else {
+            continue;
+        };
+        let record_id = format!("revert/{commit}");
+        if recorded.contains(record_id.as_str()) {
+            continue;
+        }
+        let hit = reverted_shas(body)
+            .find_map(|sha| wanted.get_key_value(sha.to_ascii_lowercase().as_str()));
+        if let Some((reverted, &(run_id, task_id))) = hit {
+            found.push(RevertRecord {
+                v: HISTORY_VERSION,
+                record_id,
+                at: now,
+                run_id: run_id.to_string(),
+                task_id: task_id.map(str::to_string),
+                reverted: reverted.to_string(),
+                revert_commit: commit.to_string(),
+            });
+        }
+    }
+    found.reverse();
+    Ok(found)
+}
+
+/// Decision 34 at `run start` and `run stats`: [`detect_reverts`] on each base branch
+/// an accepted run of the history names, each record appended with [`append_line`].
+/// Every failure is one warning returned, never an error: history never gates anything.
+pub fn record_reverts(
+    git: &OsStr,
+    root: &Path,
+    path: &Path,
+    now: u64,
+    timeout: Duration,
+) -> Vec<String> {
+    let (history, _) = read_history(path);
+    let mut branches: Vec<&str> = history
+        .iter()
+        .filter_map(|line| match line {
+            HistoryLine::Run(r) if r.accepted_commit.is_some() => Some(r.base_branch.as_str()),
+            _ => None,
+        })
+        .collect();
+    branches.sort_unstable();
+    branches.dedup();
+    let mut warnings = Vec::new();
+    for branch in branches {
+        match detect_reverts(git, root, branch, &history, now, timeout) {
+            Ok(records) => {
+                for record in records {
+                    let id = record.record_id.clone();
+                    if let Err(error) = append_line(path, &HistoryLine::Revert(record)) {
+                        warnings.push(format!("revert record {id} was not written: {error}"));
+                    }
+                }
+            }
+            Err(error) => warnings.push(format!("could not look for reverts on {branch}: {error}")),
+        }
+    }
+    warnings
+}
+
+/// Decision 35's blocking core: reverts recorded first ([`record_reverts`], each
+/// warning logged), then the history read once more and aggregated, with that read's
+/// skipped lines as the problems (so each is reported once).
+pub fn summarise(
+    git: &OsStr,
+    root: &Path,
+    path: &Path,
+    now: u64,
+    timeout: Duration,
+) -> HistoryStats {
+    for warning in record_reverts(git, root, path, now, timeout) {
+        tracing::warn!(path = %path.display(), %warning, "revert detection");
+    }
+    let (lines, problems) = read_history(path);
+    let mut stats = super::stats::aggregate(&lines, path);
+    stats.problems = problems;
+    stats
 }

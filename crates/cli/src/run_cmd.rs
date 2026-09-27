@@ -100,6 +100,12 @@ enum RunCommand {
     Cancel { run: String },
     /// Mark a fast-path run for promotion to a planned run (acted on from milestone 9)
     Promote { run: String },
+    /// Summarise this repository's run history, by task class
+    Stats {
+        /// Print the summary as pretty JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Resume a paused or halted run
     Resume {
         run: String,
@@ -218,6 +224,7 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
             let run_id = runs.resolve(&run).await?;
             runs.done(RunRequest::Promote { run_id }).await
         }
+        RunCommand::Stats { json } => adapt::stats(&mut runs, dir, json).await,
         RunCommand::Resume { run, rebaseline } => {
             let run_id = runs.resolve(&run).await?;
             runs.done(RunRequest::Resume { run_id, rebaseline }).await

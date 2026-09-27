@@ -18,6 +18,9 @@
 //! M8b.14: `RunRequest::StartGoal`, in `adapt_goal.rs`.
 //!
 //! M8b.15: the OTLP receiver's way into the engine is `driver/usage.rs`.
+//!
+//! M8b.17: `RunRequest::Stats`, and revert detection at every `run start`, in
+//! `adapt_history.rs`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -43,7 +46,8 @@ use crate::scout::service::ScoutService;
 mod goal;
 pub(super) use goal::{BuildError, fast_barrier};
 
-// M8b.16: `MeasureDiff` and `AppendHistory` (decisions 32, 33).
+// M8b.16: `MeasureDiff` and `AppendHistory` (decisions 32, 33); M8b.17: `run stats`
+// and revert detection (decisions 34, 35).
 #[path = "adapt_history.rs"]
 mod history;
 
@@ -207,6 +211,9 @@ impl RunService {
             let (profiles, pre, stale) = (adaptation.profiles.clone(), pre.clone(), stale.clone());
             tokio::spawn(async move { profiles.auto_on_stale(&pre, stale).await });
         }
+        // Decision 34: every `run start`, of either kind, looks for reverts of accepted
+        // runs, in the background.
+        self.detect_reverts_later(pre.root.clone(), &repo_dir);
         let languages = stored.as_ref().map(|p| p.languages.clone());
         let chosen = run_profile(stored.as_ref(), &path, &plan.profile, &config.profile);
         apply_to_plan(&chosen, &mut plan.profile, &mut config.profile);

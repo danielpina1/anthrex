@@ -66,6 +66,7 @@ mod tools;
 pub use crate::headless::TurnOutcome;
 pub(crate) use clock::epoch_spend;
 pub use clock::{BudgetEpoch, TaskClock};
+pub use history::HISTORY_FILE;
 pub use ops::{OpKind, OpResult, OverrideCount, ResolutionAt, ScratchAt};
 pub use signals::INTERRUPT_GRACE_SECS;
 

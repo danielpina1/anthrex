@@ -51,6 +51,7 @@ pub mod roster;
 pub mod routing;
 pub mod seatbelt;
 pub mod snapshot;
+pub mod stats;
 pub mod triage;
 pub mod validate;
 mod validate_graph;

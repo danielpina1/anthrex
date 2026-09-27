@@ -1,5 +1,5 @@
-//! Milestone 8b's `anthrex run` commands: `run start --goal` (decision 22) and
-//! `run promote` (decision 25). `run stats` arrives with M8b.17.
+//! Milestone 8b's `anthrex run` commands: `run start --goal` (decision 22), `run
+//! promote` (decision 25) and `run stats` (decision 35).
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -44,6 +44,23 @@ pub(super) async fn start_goal(
             Ok(())
         }
         RunReply::Triaged { message, .. } => anyhow::bail!(message),
+        other => print_outcome(other),
+    }
+}
+
+/// `run stats`: the daemon's summary of the history of `dir`'s repository, as
+/// `stats::render` lays it out, or with `--json` as `HistoryStats`.
+pub(super) async fn stats(runs: &mut Runs, dir: Option<PathBuf>, json: bool) -> anyhow::Result<()> {
+    let dir = crate::resolve_dir(dir)?;
+    match runs.request(RunRequest::Stats { dir }).await? {
+        RunReply::Stats(stats) if json => {
+            println!("{}", serde_json::to_string_pretty(&stats)?);
+            Ok(())
+        }
+        RunReply::Stats(stats) => {
+            print!("{}", daemon::run::stats::render(&stats));
+            Ok(())
+        }
         other => print_outcome(other),
     }
 }
@@ -109,5 +126,25 @@ mod tests {
         );
         let promote = RunRequest::Promote { run_id: "r".into() };
         assert_eq!(request_timeout(&promote), super::super::RUN_REQUEST_TIMEOUT);
+    }
+
+    /// M8b.17's acceptance: `anthrex run --help` lists `stats`, which takes `--json`.
+    #[test]
+    fn run_help_lists_stats_and_stats_takes_json() {
+        use clap::CommandFactory;
+        let help = Cli::command().render_help().to_string();
+        assert!(
+            help.lines().any(|l| l.trim_start().starts_with("stats ")),
+            "{help}"
+        );
+        let json = format!("{:?}", parse(&["stats", "--json"]));
+        assert!(
+            json.contains("Stats") && json.contains("json: true"),
+            "{json}"
+        );
+        let text = format!("{:?}", parse(&["stats"]));
+        assert!(text.contains("json: false"), "{text}");
+        let stats = RunRequest::Stats { dir: "/r".into() };
+        assert_eq!(request_timeout(&stats), super::super::RUN_REQUEST_TIMEOUT);
     }
 }
