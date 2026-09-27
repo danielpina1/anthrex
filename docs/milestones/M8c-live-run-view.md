@@ -849,6 +849,9 @@ Shared test helpers, created in M8c.3 and extended as tasks need them:
 
 **Commit.** `feat(tui): give run nodes a twelve-row inspector laid out one field per row`
 
+
+**M8c.8 review fixes.** A wrapping field whose value is blank after cleaning still draws its label row with an empty value (M4.7's column layout drops it instead); it costs exactly one row, pinned by `a_blank_wrapped_field_still_costs_its_row`. The planner's epic now goes through `clean` in the name, like every other daemon text.
+
 ### M8c.9 The plan gate
 
 **Files.** Create `crates/tui/src/run_edit.rs`, `crates/tui/src/run_edit_tests.rs`, `crates/tui/src/ui/run_edit.rs`, `crates/tui/src/ui/run_edit_tests.rs`, `crates/tui/src/app_tests/gate.rs`. Modify `crates/tui/src/app/runs.rs` (keys `a x e d`, `on_edit_task_key`, reply handling of the form), `crates/tui/src/app/mod.rs` (`Modal::EditTask`, the `on_paste` arm), `crates/tui/src/app/lifecycle.rs` (three `perform` arms), `crates/tui/src/app/modal_keys.rs` (one dispatch arm), `crates/tui/src/ui/modal.rs` (one render arm), `crates/tui/src/ui/dialog.rs` (`LABEL_WIDTH`, `MARKER_WIDTH` become `pub(crate)`), `crates/tui/src/lib.rs` (`pub mod run_edit;`). The approve/reject/edit request labels are `proto::run_wire::request::{APPROVE, REJECT, EDIT}` (`run_wire.rs:193-197`; not re-exported at the root, because `proto::messages::request` exists). *(Refreshed 2026-09-27: `dialog.rs`'s constants were private; the labels' module path.)*

@@ -503,3 +503,23 @@ fn no_panic_at_degenerate_panel_sizes() {
         }
     }
 }
+
+/// Review M8c.8 m1: a question blank after cleaning still costs its one row, so the
+/// panel never returns more lines than its height.
+#[test]
+fn a_blank_wrapped_field_still_costs_its_row() {
+    let inspection = rows(
+        "scout s1",
+        None,
+        vec![
+            wrapping("question", "   "),
+            plain("a", "1"),
+            plain("b", "2"),
+        ],
+    );
+    for height in 0..=6 {
+        let lines = super::lines(&inspection, 40, height);
+        assert!(lines.len() <= height.max(1), "{height}: {}", lines.len());
+    }
+    assert_eq!(super::lines(&inspection, 40, 3).len(), 3);
+}

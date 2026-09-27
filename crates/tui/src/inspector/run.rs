@@ -285,9 +285,9 @@ pub(crate) fn planner_inspection(run: &RunInfo, planner: &PlannerInfo, app: &App
     fields.push(field("edits", edits));
     let title = planner.title.trim();
     let name = if title.is_empty() {
-        format!("planner {}", planner.epic)
+        format!("planner {}", clean(&planner.epic))
     } else {
-        format!("planner {}  {}", planner.epic, clean(title))
+        format!("planner {}  {}", clean(&planner.epic), clean(title))
     };
     let glyph = kind_glyph(RowKind::Planner { run, planner }, app);
     rows(glyph, name, right, fields)

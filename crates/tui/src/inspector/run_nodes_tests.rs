@@ -298,3 +298,21 @@ fn clean_cuts_past_300_characters() {
     assert_eq!(clean(&over), format!("{exact}…"));
     assert_eq!(clean("a\u{1b}[2Jb\nc\u{7}"), "a [2Jb c ");
 }
+
+/// Review M8c.8 m2: a planner's epic reaches the title cleaned, like every other text.
+#[test]
+fn a_hostile_epic_is_cleaned_in_the_name() {
+    let (mut snapshot, windows) = planner_fixture();
+    snapshot.runs[0].planners[0].epic = "A\u{1b}[31m\n".into();
+    let app = app_of((snapshot, windows));
+    let key = NodeKey::Planner {
+        run: "r2".into(),
+        epic: "A\u{1b}[31m\n".into(),
+    };
+    let inspection = inspect_node(&app, &key);
+    assert!(
+        !inspection.name.chars().any(char::is_control),
+        "{:?}",
+        inspection.name
+    );
+}
