@@ -498,7 +498,7 @@ fn accept(
     } else {
         gates::next_gate(run, i, None)
     };
-    gates::enter(run, i, next);
+    gates::enter(run, i, next, now);
     let how = match signal {
         DoneSignal::TaskDone => "task_done",
         DoneSignal::TurnEndFallback => "the turn-end fallback",

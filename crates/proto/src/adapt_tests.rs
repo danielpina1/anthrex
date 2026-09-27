@@ -547,3 +547,30 @@ fn meta_project_and_confirm_shown_default_when_absent() {
         }
     );
 }
+
+/// Decision 33a: a task record keeps its routing decisions through JSON and MessagePack,
+/// and a line written before them reads as none.
+#[test]
+fn routing_decisions_round_trip_and_default_to_none() {
+    let record = a_task_record();
+    assert_eq!(record.routing_decisions.len(), 1);
+    let packed = rmp_serde::to_vec_named(&record).unwrap();
+    assert_eq!(
+        rmp_serde::from_slice::<TaskRecord>(&packed).unwrap(),
+        record
+    );
+    let mut v = serde_json::to_value(HistoryLine::Task(record.clone())).unwrap();
+    assert_eq!(
+        v["routing_decisions"][0]["pick_policy"],
+        serde_json::Value::Null
+    );
+    v.as_object_mut().unwrap().remove("routing_decisions");
+    let HistoryLine::Task(old) = serde_json::from_value(v).unwrap() else {
+        panic!("a task line");
+    };
+    assert!(old.routing_decisions.is_empty());
+    let mut decision = serde_json::to_value(a_routing_decision()).unwrap();
+    decision.as_object_mut().unwrap().remove("pick_policy");
+    let back: RoutingDecision = serde_json::from_value(decision).unwrap();
+    assert_eq!(back, a_routing_decision());
+}

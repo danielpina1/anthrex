@@ -295,6 +295,28 @@ pub struct Task {
     /// being dispatched.
     #[serde(default)]
     pub size_check: Option<SizeCheckState>,
+    /// M8b decision 31: seconds in each state, and when the current one began (0: a
+    /// task from before milestone 8b, whose open state counts nowhere).
+    #[serde(default)]
+    pub phases: proto::PhaseSecs,
+    #[serde(default)]
+    pub phase_since: u64,
+    /// M8b decision 31: the highest rung the task reached.
+    #[serde(default)]
+    pub max_rung: u8,
+    /// M8b decision 32: what the task changed, measured by diff.
+    #[serde(default)]
+    pub diff: Option<proto::DiffStats>,
+    /// M8b decision 33: its `history.jsonl` record was emitted.
+    #[serde(default)]
+    pub history_written: bool,
+    /// M8b decision 33a: every route chosen for a session of this task, in order.
+    #[serde(default)]
+    pub routing_decisions: Vec<proto::RoutingDecision>,
+    /// M8b decision 33a: the route rung 2 or `run retry` escalated from; the next
+    /// worker launch records that escalation and clears it.
+    #[serde(default)]
+    pub escalated_from: Option<Route>,
 }
 
 impl Task {
@@ -466,6 +488,13 @@ pub struct Run {
     /// performs it).
     #[serde(default)]
     pub promote_requested_at: Option<u64>,
+    /// M8b decision 33: the run's `run` record of `history.jsonl` was emitted.
+    #[serde(default)]
+    pub run_record_written: bool,
+    /// M8b decision 33a: the stored profile's languages, frozen at start (empty with no
+    /// stored profile), for every routing decision's input.
+    #[serde(default)]
+    pub profile_languages: Vec<String>,
 }
 
 impl Run {

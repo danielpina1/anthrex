@@ -90,7 +90,7 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
 /// M8b decision 29: usage by role. Worker and reviewer rounds from their streams,
 /// deciders with triage, run scouts, and the orchestrator from OTLP. Every role is
 /// listed, and every sum saturates: OTLP totals come from any local process.
-fn run_usage(run: &Run) -> RunUsage {
+pub(crate) fn run_usage(run: &Run) -> RunUsage {
     fn add(to: &mut TokenUsage, u: TokenUsage) {
         to.input = to.input.saturating_add(u.input);
         to.output = to.output.saturating_add(u.output);
@@ -289,8 +289,9 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64) -> TaskInfo 
             Some(crate::run::model::SizeCheckState::Done(info)) => Some(info.clone()),
             _ => None,
         },
-        diff: None,
-        phases: None,
+        // M8b decisions 31 and 32.
+        diff: t.diff,
+        phases: (t.phases != Default::default()).then_some(t.phases),
         block_source: t.block_source,
     }
 }

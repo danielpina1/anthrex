@@ -92,6 +92,17 @@ fn prepare(run: &mut Run, kept: &BTreeSet<OpId>, now: u64, fx: &mut Vec<Effect>)
     // M8a.14: an accept's or discard's reply belonged to the old daemon.
     run.finish_reply = None;
     if run.state.is_terminal() {
+        // M8b decision 33: an ended run still owes the history lines it had in flight.
+        let history: Vec<PendingOp> = run
+            .pending_ops
+            .values()
+            .filter(|p| !kept.contains(&p.op) && is_history(&p.kind))
+            .cloned()
+            .collect();
+        for pending in history {
+            run.pending_ops.remove(&pending.op);
+            lost(run, pending, now, fx);
+        }
         return;
     }
     // Rulings T15-I2, T15-I3: the downtime is no session time.
@@ -133,6 +144,14 @@ fn prepare(run: &mut Run, kept: &BTreeSet<OpId>, now: u64, fx: &mut Vec<Effect>)
     }
 }
 
+/// M8b decisions 32 and 33: a diff measurement or a history line.
+fn is_history(kind: &OpKind) -> bool {
+    matches!(
+        kind,
+        OpKind::MeasureDiff { .. } | OpKind::AppendHistory { .. }
+    )
+}
+
 /// Decision 44: an op dropped as `NotStarted`, and what its task needs instead.
 fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
     let PendingOp { op, task_id, kind } = pending;
@@ -145,7 +164,9 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
             OpKind::CreateRunBranch { .. }
             | OpKind::PrepareWorktree { .. }
             | OpKind::AbortMerge { .. }
-            | OpKind::RemoveWorktree { .. },
+            | OpKind::RemoveWorktree { .. }
+            | OpKind::MeasureDiff { .. }
+            | OpKind::AppendHistory { .. },
             _,
         ) => {
             let again = next_op(run);

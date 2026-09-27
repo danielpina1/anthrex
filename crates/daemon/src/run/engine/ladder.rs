@@ -3,6 +3,7 @@
 //! once the old session is gone (`DiffSoFar`, then decision 30's hand-over prompt).
 //! Pure (design decision 2).
 
+use crate::run::phases::set_state;
 use proto::{AgentRole, BlockReason, Budget, GateKind, Size, Spend, TaskState};
 
 use super::dispatch::{block, history, launch_fresh};
@@ -197,7 +198,7 @@ pub(super) fn take_rung(
     } else {
         let task = &mut run.tasks[i];
         task.rung = 1;
-        task.state = TaskState::Working;
+        set_state(task, TaskState::Working, now);
         // M8a.13: the time the gates took is not the worker's silence; a turn still
         // open is watched from here.
         if let Some(r) = worker_round(task) {
@@ -270,8 +271,9 @@ pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut 
     let route = escalate(&run.roster, &run.tasks[i].route);
     let task = &mut run.tasks[i];
     task.rung = 2;
-    task.state = TaskState::Working;
-    task.route = route;
+    set_state(task, TaskState::Working, now);
+    // M8b decision 33a: the next worker launch records this escalation.
+    task.escalated_from = Some(std::mem::replace(&mut task.route, route));
     task.fresh_session = Some(FreshSession {
         reason: reason.clone(),
         append: None,

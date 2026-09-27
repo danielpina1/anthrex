@@ -30,6 +30,9 @@
 //! M8b.12 adds `deciders.rs` (M8b decisions 18, 20 and 21: decider ops in reader
 //! slots, the check summary a failed check's rung waits for, and the classification of
 //! a `task_blocked` with no kind).
+//!
+//! M8b.16 adds `history.rs` (M8b decisions 32 and 33: a task's diff and the records of
+//! `history.jsonl`, as journaled ops).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -47,6 +50,7 @@ mod dispatch;
 mod done;
 mod fallback;
 mod gates;
+mod history;
 mod holds;
 pub(crate) mod ladder;
 mod merge;
@@ -402,6 +406,8 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
     }
     for run in state.runs.values_mut() {
         dispatch::schedule(run, now, &mut fx);
+        // M8b decision 33: the history records that are due, whatever the run's state.
+        history::pass(run, now, &mut fx);
     }
     finish(&mut state, &before, before_revision, fx)
 }
@@ -522,6 +528,8 @@ fn op_done(
         (OpKind::DiffSoFar { .. }, Some(i)) => ladder::fresh_diff(run, i, result, now, fx),
         (OpKind::ResumeSession { .. }, Some(i)) => outbox::resumed(run, i, op, result, now, fx),
         (kind @ OpKind::Decide { .. }, _) => deciders::op_done(run, &kind, result, now, fx),
+        (OpKind::MeasureDiff { .. }, Some(i)) => history::measured(run, i, result, now, fx),
+        (kind @ OpKind::AppendHistory { .. }, _) => history::appended(run, &kind, result, now),
         _ => {}
     }
 }

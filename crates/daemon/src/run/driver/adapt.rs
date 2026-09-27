@@ -43,6 +43,10 @@ use crate::scout::service::ScoutService;
 mod goal;
 pub(super) use goal::{BuildError, fast_barrier};
 
+// M8b.16: `MeasureDiff` and `AppendHistory` (decisions 32, 33).
+#[path = "adapt_history.rs"]
+mod history;
+
 /// What decision 6 chose, for the run `build_run` makes.
 pub(super) struct ProfileChoice {
     source: ProfileSource,
@@ -53,6 +57,8 @@ pub(super) struct ProfileChoice {
     notes: Vec<String>,
     /// M8b decision 19: the stored profile's onboarding report (the alias `onboarding`).
     onboarding_report: Option<String>,
+    /// M8b decision 33a: the stored profile's languages, for routing decisions.
+    languages: Vec<String>,
 }
 
 /// Decision 6's refusal for a stored profile that does not parse.
@@ -201,6 +207,7 @@ impl RunService {
             let (profiles, pre, stale) = (adaptation.profiles.clone(), pre.clone(), stale.clone());
             tokio::spawn(async move { profiles.auto_on_stale(&pre, stale).await });
         }
+        let languages = stored.as_ref().map(|p| p.languages.clone());
         let chosen = run_profile(stored.as_ref(), &path, &plan.profile, &config.profile);
         apply_to_plan(&chosen, &mut plan.profile, &mut config.profile);
         Ok(ProfileChoice {
@@ -211,6 +218,7 @@ impl RunService {
             stale,
             notes: chosen.notes,
             onboarding_report,
+            languages: languages.unwrap_or_default(),
         })
     }
 }
@@ -222,6 +230,7 @@ pub(super) fn apply_choice(run: &mut Run, choice: ProfileChoice, now: u64) {
     run.output_filter = choice.output_filter;
     run.filter_prefixes = choice.filter_prefixes;
     run.repo_dir = choice.repo_dir;
+    run.profile_languages = choice.languages;
     run.stale_profile = choice.stale;
     run.onboarding_report = choice.onboarding_report;
     run.log.extend(
@@ -359,6 +368,7 @@ mod tests {
             stale: vec!["Cargo.toml".into()],
             notes: vec!["note one".into(), "note two".into()],
             onboarding_report: Some("onboarding-7".into()),
+            languages: vec!["rust".into()],
         };
         apply_choice(&mut run, choice, 42);
         assert_eq!(run.profile_source, Some(ProfileSource::Stored));
@@ -367,6 +377,7 @@ mod tests {
         assert_eq!(run.repo_dir, PathBuf::from("/data/repos/r-00000000"));
         assert_eq!(run.stale_profile, vec!["Cargo.toml".to_string()]);
         assert_eq!(run.onboarding_report.as_deref(), Some("onboarding-7"));
+        assert_eq!(run.profile_languages, vec!["rust".to_string()]);
         let logged: Vec<(u64, &str)> = run.log.iter().map(|e| (e.at, e.text.as_str())).collect();
         assert_eq!(logged, vec![(42, "note one"), (42, "note two")]);
     }

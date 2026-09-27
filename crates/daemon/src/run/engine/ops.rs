@@ -235,6 +235,27 @@ pub enum OpKind {
         task_ids: Vec<String>,
         request: DeciderRequest,
     },
+    /// M8b decision 32: what a task changed, `from` → `to` in the user's checkout
+    /// `root` (three dots: from their merge base). **Executor contract:**
+    /// `history_io::measure_diff` on `spawn_blocking` (reads, no queue); the result is
+    /// `DiffMeasured`, or `Failed` (the record is then written without a diff).
+    MeasureDiff {
+        root: PathBuf,
+        from: String,
+        to: String,
+        three_dot: bool,
+    },
+    /// M8b decision 33: one line of `history.jsonl`. **Executor contract:**
+    /// `history_io::append_line` on `spawn_blocking`, after filling a `run` record's
+    /// `accepted_commit` from `refs/heads/<base>` when its outcome is `accepted`; the
+    /// result is `HistoryAppended`, or `Failed`.
+    AppendHistory {
+        path: PathBuf,
+        record_id: String,
+        /// Boxed: a task record would triple every op's size (clippy's
+        /// `large_enum_variant`); invisible in the journal.
+        line: Box<proto::HistoryLine>,
+    },
 }
 
 impl OpKind {
@@ -260,6 +281,8 @@ impl OpKind {
             OpKind::Accept { .. } => "Accept",
             OpKind::Discard { .. } => "Discard",
             OpKind::Decide { .. } => "Decide",
+            OpKind::MeasureDiff { .. } => "MeasureDiff",
+            OpKind::AppendHistory { .. } => "AppendHistory",
         }
     }
 }
@@ -406,4 +429,8 @@ pub enum OpResult {
     /// M8b decision 18: `Decide`'s answer, from the decider or its fallback. Boxed: a
     /// triage answer would triple every result's size (clippy's `large_enum_variant`).
     Decided(Box<Decision>),
+    /// M8b decision 32: `MeasureDiff`'s answer.
+    DiffMeasured(proto::DiffStats),
+    /// M8b decision 33: `AppendHistory` wrote its line.
+    HistoryAppended,
 }

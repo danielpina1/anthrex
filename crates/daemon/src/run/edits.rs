@@ -9,6 +9,7 @@
 //! live session, pause, resume, finish) comes back as [`EditConsequence`]s; nothing is
 //! executed here.
 
+use super::phases::set_state;
 use std::collections::BTreeSet;
 
 use proto::{AgentRole, BlockInfo, BlockReason, PlanEdit, PlanTask, Size, TaskState};
@@ -82,7 +83,7 @@ pub fn apply_edits(
     for (task, deps) in edited.tasks.iter_mut().zip(implicit) {
         task.implicit_deps = deps;
     }
-    requeue_waiting(&mut edited);
+    requeue_waiting(&mut edited, now);
     if errors.is_empty() {
         errors.extend(combined_cycles(&edited.tasks));
     }
@@ -97,7 +98,7 @@ pub fn apply_edits(
 /// declared dependency that is not merged, or an implicit one that is neither merged
 /// nor cancelled (decision 41), goes back to `pending` (`add_dep`, and implicit
 /// dependencies gained through a split or an added task, fix round 2, N2).
-fn requeue_waiting(run: &mut Run) {
+fn requeue_waiting(run: &mut Run, now: u64) {
     let state_of = |tasks: &[Task], id: &str| tasks.iter().find(|t| t.id() == id).map(|t| t.state);
     let waiting: Vec<usize> = run
         .tasks
@@ -116,7 +117,7 @@ fn requeue_waiting(run: &mut Run) {
         .map(|(i, _)| i)
         .collect();
     for i in waiting {
-        run.tasks[i].state = TaskState::Pending;
+        set_state(&mut run.tasks[i], TaskState::Pending, now);
     }
 }
 
@@ -290,7 +291,7 @@ impl Batch {
             });
         }
         let task = &mut self.run.tasks[i];
-        task.state = TaskState::Cancelled;
+        set_state(task, TaskState::Cancelled, self.now);
         task.block = None;
         // Ruling T14-R3: nothing is handed back to a cancelled task, as `run cancel` has it.
         task.handback_due = false;
@@ -313,7 +314,7 @@ impl Batch {
                 ),
                 _ => format!("blocked: {text}"),
             };
-            dependent.state = TaskState::Blocked;
+            set_state(dependent, TaskState::Blocked, self.now);
             dependent.block = Some(BlockInfo {
                 reason: BlockReason::DepCancelled,
                 text,
@@ -559,7 +560,7 @@ impl Batch {
         if !question && task.state != TaskState::Working {
             return self.refuse(i, "only blocked(question) or working tasks can be answered");
         }
-        task.state = TaskState::Working;
+        set_state(task, TaskState::Working, self.now);
         task.block = None;
         // M8b decision 21: an answer before the classification wins.
         task.pending_classification = None;

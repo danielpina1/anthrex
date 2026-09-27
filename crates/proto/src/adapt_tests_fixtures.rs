@@ -172,6 +172,7 @@ pub(super) fn a_task_record() -> TaskRecord {
         size_check: Some(a_size_check()),
         route: claude_route(),
         review_routes: vec![claude_route()],
+        routing_decisions: vec![a_routing_decision()],
         outcome: TaskOutcome::MergedWithoutApproval,
         block: Some(BlockReason::Question),
         diff: Some(DiffStats {
@@ -215,5 +216,51 @@ pub(super) fn a_task_record() -> TaskRecord {
         sessions: 2,
         done_signal: Some(DoneSignal::TaskDone),
         merge_commit: Some("dddd4444".into()),
+    }
+}
+
+/// Decision 33a: an escalation whose chosen route is the second candidate.
+pub(super) fn a_routing_decision() -> RoutingDecision {
+    let codex = a_route(
+        Runtime::Codex,
+        Strength::Standard,
+        Effort::High,
+        "gpt-5-codex",
+    );
+    RoutingDecision {
+        seq: 2,
+        at: 1_700_000_500,
+        role: AgentRole::Worker,
+        session: 2,
+        round: None,
+        lane: None,
+        trigger: "escalation".into(),
+        source: "escalation_policy".into(),
+        policy_version: "m8a-escalate-v1".into(),
+        pick_policy: None,
+        input: RoutingInput {
+            title: "Reset token model".into(),
+            brief: "Add the model.".into(),
+            acceptance: vec!["tokens expire".into()],
+            owns: vec!["crates/auth/**".into()],
+            kind: TaskKind::Code,
+            size: Size::S,
+            hub: false,
+            interface_change: true,
+            test_mode: TestMode::Tdd,
+            languages: vec!["rust".into()],
+        },
+        chosen: codex.clone(),
+        selected_index: 1,
+        candidates: vec![
+            RoutingCandidate {
+                route: claude_route(),
+                skipped_reason: Some("effort is already high".into()),
+            },
+            RoutingCandidate {
+                route: codex,
+                skipped_reason: None,
+            },
+        ],
     }
 }

@@ -434,6 +434,8 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         orchestrator_usage: Default::default(),
         orchestrator_base: Default::default(),
         promote_requested_at: None,
+        run_record_written: false,
+        profile_languages: Vec::new(),
     })
 }
 

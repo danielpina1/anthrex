@@ -412,6 +412,9 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
             branch_prefix,
         } => cleanup::discard(service, ctx, root, worktrees, branch_prefix).await,
         OpKind::Decide { request, .. } => service.decide(ctx, request).await,
+        kind @ (OpKind::MeasureDiff { .. } | OpKind::AppendHistory { .. }) => {
+            service.history_op(ctx, kind).await
+        }
     }
 }
 

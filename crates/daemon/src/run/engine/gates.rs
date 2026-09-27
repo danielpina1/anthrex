@@ -7,6 +7,7 @@
 //! run at all (setup or git failed, the command could not start) blocks the task on
 //! its environment and counts nothing. Pure (design decision 2).
 
+use crate::run::phases::set_state;
 use proto::{BlockReason, GateKind, RunState, TaskState, TestMode};
 
 use super::dispatch::{block, history};
@@ -51,8 +52,8 @@ pub(super) fn next_gate(run: &Run, i: usize, passed: Option<TaskState>) -> TaskS
 }
 
 /// Task `i` enters `state`; the merge queue is FIFO in arrival order (decision 36).
-pub(super) fn enter(run: &mut Run, i: usize, state: TaskState) {
-    run.tasks[i].state = state;
+pub(super) fn enter(run: &mut Run, i: usize, state: TaskState, now: u64) {
+    set_state(&mut run.tasks[i], state, now);
     run.tasks[i].gate_op = None;
     let id = run.tasks[i].id().to_string();
     if state == TaskState::MergeQueue && !run.merge_queue.contains(&id) {
@@ -63,7 +64,7 @@ pub(super) fn enter(run: &mut Run, i: usize, state: TaskState) {
 /// Task `i` passed `gate`: on to the next one.
 fn passed(run: &mut Run, i: usize, gate: TaskState, now: u64) {
     let next = next_gate(run, i, Some(gate));
-    enter(run, i, next);
+    enter(run, i, next, now);
     history(
         run,
         i,
@@ -409,7 +410,7 @@ fn send_to_queue(run: &mut Run, i: usize, reason: &str, now: u64, fx: &mut Vec<E
     // Review I1: a block's classification no longer applies.
     task.pending_classification = None;
     task.block = None;
-    enter(run, i, TaskState::MergeQueue);
+    enter(run, i, TaskState::MergeQueue, now);
     history(
         run,
         i,

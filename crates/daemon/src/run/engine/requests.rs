@@ -4,6 +4,7 @@
 //! `complete.rs` and `merge.rs` answer cancel, finish and a halted run's resume;
 //! `restore.rs` (M8a.15) answers restore and a paused run's resume.
 
+use crate::run::phases::set_state;
 use proto::{
     BlockReason, DeciderSource, PlanEdit, RunPath, RunState, Runtime, Size, SizeCheckInfo,
     TaskState,
@@ -476,7 +477,8 @@ pub(super) fn retry(
     task.budget_exceeded = 0;
     task.conflicts = 0;
     task.rung = 2;
-    task.route = route;
+    // M8b decision 33a: the next worker launch records this escalation.
+    task.escalated_from = Some(std::mem::replace(&mut task.route, route));
     // Ruling T15-C1: a new budget epoch; rung 4 counts from the fresh session.
     super::clock::new_epoch(task);
     // `kill_worker`'s `supersede` ended the hand-back context (`handed_back`,
@@ -490,7 +492,7 @@ pub(super) fn retry(
         format!(" (it was blocked({label}): {})", b.text)
     });
     let how = if task.start_commit.is_none() {
-        task.state = TaskState::Queued;
+        set_state(task, TaskState::Queued, now);
         task.block = None;
         task.fresh_session = None;
         "it is dispatched again"
@@ -503,7 +505,7 @@ pub(super) fn retry(
             task.held_answered = true;
             "the run head is merged into its worktree first"
         } else {
-            task.state = TaskState::Working;
+            set_state(task, TaskState::Working, now);
             task.block = None;
             "a fresh session starts"
         }

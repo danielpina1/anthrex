@@ -28,6 +28,7 @@ mod gates_exits;
 mod gates_fixes;
 mod gates_review;
 mod gates_rounds;
+mod history;
 mod holds;
 mod holds_conflicts;
 mod launch_pid;

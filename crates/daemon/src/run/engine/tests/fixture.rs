@@ -411,6 +411,8 @@ pub fn op_name(kind: &OpKind) -> &'static str {
         OpKind::Accept { .. } => "Accept",
         OpKind::Discard { .. } => "Discard",
         OpKind::Decide { .. } => "Decide",
+        OpKind::MeasureDiff { .. } => "MeasureDiff",
+        OpKind::AppendHistory { .. } => "AppendHistory",
     }
 }
 

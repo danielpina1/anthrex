@@ -217,6 +217,18 @@ fn check(
         | OpKind::Discard { .. } => Ok(Reconciled::NotStarted),
         // M8b decision 18: a decider only reads its prompt; it is simply asked again.
         OpKind::Decide { .. } => Ok(Reconciled::NotStarted),
+        // M8b decision 32: a diff is only read, and simply measured again.
+        OpKind::MeasureDiff { .. } => Ok(Reconciled::NotStarted),
+        // M8b decision 33: a history line is appended again unless the file holds its
+        // record already.
+        OpKind::AppendHistory {
+            path, record_id, ..
+        } => super::history_io::contains_record(path, record_id)
+            .map(|found| match found {
+                true => Reconciled::Replay(OpResult::HistoryAppended),
+                false => Reconciled::NotStarted,
+            })
+            .map_err(|error| error.to_string()),
     };
     checked.unwrap_or_else(|err| {
         notes.push(format!(

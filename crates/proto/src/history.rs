@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::adapt::{DiffStats, PhaseSecs, RunPath, RunUsage, SizeCheckInfo, TriageInfo};
 use crate::profile::ProfileSource;
-use crate::run::{BlockReason, DoneSignal, GateCounts, Route, Size, TaskKind, TestMode};
+use crate::run::{AgentRole, BlockReason, DoneSignal, GateCounts, Route, Size, TaskKind, TestMode};
 use crate::run_info::TokenUsage;
 
 /// The `v` every record written by this milestone carries.
@@ -56,6 +56,55 @@ pub struct SeverityTally {
     pub minor: u32,
 }
 
+/// One route a routing decision could have chosen (spec §15, M8b decision 33a), with
+/// why it was not, when it was not.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoutingCandidate {
+    pub route: Route,
+    pub skipped_reason: Option<String>,
+}
+
+/// What the task looked like when a route was chosen for it (decision 33a): the input a
+/// future router may learn from. Never rewritten by a later edit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoutingInput {
+    pub title: String,
+    pub brief: String,
+    pub acceptance: Vec<String>,
+    pub owns: Vec<String>,
+    pub kind: TaskKind,
+    pub size: Size,
+    pub hub: bool,
+    pub interface_change: bool,
+    pub test_mode: TestMode,
+    pub languages: Vec<String>,
+}
+
+/// One route chosen for a task-bound agent session (decision 33a), identified by
+/// `(role, session, round, lane)`. `candidates[selected_index].route == chosen`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoutingDecision {
+    pub seq: u32,
+    pub at: u64,
+    pub role: AgentRole,
+    pub session: u32,
+    pub round: Option<u32>,
+    pub lane: Option<String>,
+    /// `initial`, `review` or `escalation` (M9.5 adds `race` and `test_writer`).
+    pub trigger: String,
+    /// `explicit_task`, `class_default`, `review_policy` or `escalation_policy`.
+    pub source: String,
+    /// `m8a-worker-v1`, `m8a-review-v1` or `m8a-escalate-v1`.
+    pub policy_version: String,
+    /// `None` until milestone 9.5's candidate lists apply.
+    #[serde(default)]
+    pub pick_policy: Option<String>,
+    pub input: RoutingInput,
+    pub chosen: Route,
+    pub selected_index: u32,
+    pub candidates: Vec<RoutingCandidate>,
+}
+
 /// One finished task.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskRecord {
@@ -73,6 +122,10 @@ pub struct TaskRecord {
     pub size_check: Option<SizeCheckInfo>,
     pub route: Route,
     pub review_routes: Vec<Route>,
+    /// Decision 33a: every route chosen for the task, in order. Absent from a line
+    /// written before it: empty.
+    #[serde(default)]
+    pub routing_decisions: Vec<RoutingDecision>,
     pub outcome: TaskOutcome,
     pub block: Option<BlockReason>,
     pub diff: Option<DiffStats>,

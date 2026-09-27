@@ -5,6 +5,7 @@
 //! for new dependencies (M8a.6 ruling N5), and the clean-up of a cancelled task's
 //! worktree when no session is left (M8a.6's F5). Pure (design decision 2).
 
+use crate::run::phases::set_state;
 use std::path::Path;
 
 use proto::{AgentRole, BlockInfo, BlockReason, RunState, Runtime, TaskState};
@@ -30,7 +31,7 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     }
     clock::watch_open_turns(run, now, fx);
     holds::enforce_holds(run, now, fx);
-    requeue(run);
+    requeue(run, now);
     if integration_ready(run) {
         match run.state {
             RunState::AwaitingApproval => prewarm(run, now, fx),
@@ -86,7 +87,7 @@ fn integration_ready(run: &Run) -> bool {
 }
 
 /// Decision 31: `queued` is runnable, `pending` waits for dependencies.
-fn requeue(run: &mut Run) {
+fn requeue(run: &mut Run, now: u64) {
     for i in 0..run.tasks.len() {
         let state = run.tasks[i].state;
         if !matches!(state, TaskState::Pending | TaskState::Queued) {
@@ -97,7 +98,7 @@ fn requeue(run: &mut Run) {
         } else {
             TaskState::Pending
         };
-        run.tasks[i].state = next;
+        set_state(&mut run.tasks[i], next, now);
     }
 }
 
@@ -115,7 +116,7 @@ pub(super) fn block(run: &mut Run, i: usize, reason: BlockReason, text: String, 
         .unwrap_or_default();
     history(run, i, now, format!("blocked ({label}): {text}"));
     let task = &mut run.tasks[i];
-    task.state = TaskState::Blocked;
+    set_state(task, TaskState::Blocked, now);
     task.block = Some(BlockInfo { reason, text });
     // Ruling T12-I4b: a pending interrupt no longer applies to a blocked task; its
     // stale nudge is dropped, so whatever unblocks the task is delivered.
@@ -214,7 +215,7 @@ fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         {
             continue;
         }
-        run.tasks[i].state = TaskState::Preparing;
+        set_state(&mut run.tasks[i], TaskState::Preparing, now);
         history(run, i, now, "dispatched");
         if prepare_in_flight(run, i) {
             // A pre-warm still running: its result continues the dispatch.
@@ -307,6 +308,8 @@ fn launch(
         run.tasks[i].start_commit = Some(start);
     }
     run.tasks[i].session += 1;
+    // M8b decision 33a: the route is fixed; decided before the session-start op.
+    crate::run::routing::record_worker(run, i, now);
     let task = &run.tasks[i];
     let spec = worker_spec(run, task);
     let first_turn = first_turn(run, task);
@@ -532,7 +535,7 @@ pub(super) fn window_done(
                 round.retiring = true;
                 fx.push(Effect::KillWindow { window_id });
             } else if state == TaskState::Preparing && round.role == AgentRole::Worker {
-                run.tasks[i].state = TaskState::Working;
+                set_state(&mut run.tasks[i], TaskState::Working, now);
             }
         }
         OpResult::Failed { message } => {
