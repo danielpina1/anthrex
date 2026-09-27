@@ -53,9 +53,11 @@ In:
 - Task kinds `research` and `review`, executed.
 - The per-epic integration review of the large path.
 - Wake-ups for an idle orchestrator, and the engine support for its reactions (rewrite restarts a mis-sized task; replacing a cancelled dependency).
+- The binding 2026-09-26 spec §12: orchestrator and user messages to workers, `refresh` of a worker's task branch, and worker `task_note` reports, with their state, history, CLI and view behavior.
+- Dispatch-time routing history for the orchestrator, sub-planners, run scouts and deciders, including pre-run triage, so the future router has examples for every agent role.
 - `run promote` performing the promotion M8b recorded.
 - `finish` with the orchestrator's summary.
-- The small TUI changes the new states need in M8c's view (task M9.15).
+- The M8c run-view changes and a TUI form that starts a goal run for the selected Git project (task M9.15).
 - `fake-agent`: PTY-mode MCP calls, PTY `read_message`, `mcp_until`, `capture_json`, `expect`, planner and run-scout scripts, and an MCP call log.
 
 Out:
@@ -65,7 +67,7 @@ Out:
 | Adaptive concurrency (§13 item 9), threshold and budget refitting, routing proposals in `run stats` | M9.5 |
 | Racing (§4.1 "Race") and the test-writer-then-implementer pattern (`pair = true`), with their `AgentRole` variants and node labels | M9.5 |
 | `RunInfo.estimate_left_secs` and `bound_ratio_permille` (history-derived, M8c placeholders) | M9.5 |
-| A TUI form for starting a goal run or editing the profile | Follow-up (the CLI starts goal runs; M8b's follow-up for the profile form stays open) |
+| A TUI form for editing the repository profile or creating a new Git repository | Follow-up (goal runs in a selected project are in M9) |
 | OTLP metering of a Codex orchestrator | Follow-up (decision 14) |
 | Stub-then-fill, a merge queue wider than 1, a learned router | Deferred by the spec (§13, §15) |
 | Orchestrators that spawn orchestrators; sub-planners that spawn anything | Never (spec §18, amendment §5.10 row) |
@@ -323,7 +325,13 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
 
 ### Contracts
 
-41. **Contracts are fixed texts** (Interfaces, exact): `ORCHESTRATOR_CONTRACT` and `PLANNER_CONTRACT` in `run/orch/contract.rs`. They never vary within a session, so the cached prefix stays stable (spec §14.2); the run's facts go in the first prompt and in `get_context`. Contract tests assert every rule the spec asks the planner to follow is present (task M9.5). The worker, reviewer and scout contracts of M8a and M8b are unchanged. *(Spec §7, §8, §9, §6, §14.2.)*
+41. **Contracts are fixed texts** (Interfaces, exact): `ORCHESTRATOR_CONTRACT` and `PLANNER_CONTRACT` in `run/orch/contract.rs`. They never vary within a session, so the cached prefix stays stable (spec §14.2); the run's facts go in the first prompt and in `get_context`. Contract tests assert every rule the spec asks the planner to follow is present (task M9.5). M8a's worker contract gains only the message and `task_note` rules of decision 42; the reviewer sees `change` messages, while its other rules and the scout contract stay unchanged. *(Spec §7, §8, §9, §6, §14.2; 2026-09-26 spec §12.)*
+
+### Additions from the 2026-09-26 amendment and the 2026-09-27 scope review
+
+42. **Messages, refresh and notes are M9 work.** The binding tiered-testing and PR-delivery spec §12 defines recipient selection, state-dependent delivery, `stop_and_wait`, branch refresh, worker `task_note`, CLI commands, display and tests. Implement those rules without a second communication path: live-worker messages use M8a's turn-boundary outbox, a pending worker sees notes in its first prompt, and a refresh uses journaled Git operations. `Message` and `Refresh` each occupy a one-edit `edit_plan` call; mixing either with plan mutations is refused before any effect, preserving decision 19's atomic plan batches. A `Message` resolves recipients at acceptance and returns separate delivered and refused task ids, as §12 requires; one refused recipient does not roll back delivery to the others. M9.2 adds the wire types; M9.5 updates the contracts; M9.13a implements state, delivery and Git; M9.14 adds the CLI; M9.15 adds the view; M9.16 tests the complete flow. No tool call interrupts a worker mid-turn. *(2026-09-26 spec §12.)*
+43. **Role routing history complements M8b decision 33a.** For each orchestrator, sub-planner, run scout and decider session, including a decider that runs before a run exists, record a `RoleRoutingDecision` at dispatch. It has a stable `record_id`, time, optional run and task ids, role and session identity, trigger, source, policy version, role-specific input, chosen `Route`, selected index, and the ordered, resolved candidate routes with skip reasons. The input includes the run path, goal capped like M8b's `RunRecord`, profile languages, and applicable epic, area or decider question kind; it excludes transcripts, credentials and raw tool output. The selected route is appended if absent from the candidate source. A run-bound decision is `#[serde(default)]` in the persisted `Run` before its session-start effect and is appended once as `HistoryLine::RoleRoute` when the session ends or recovery establishes its interruption. Pre-run triage appends the same record after its answer or fallback, even if no run is created. The record keeps factual results (`completed`, `failed`, `interrupted` or `fallback`, plus the role's existing accepted/rejected, report or submission status), without treating an unchosen candidate as a failure or attributing the whole run's outcome to one role. Existing history lines and runs load unchanged. M9.2 adds the history schema and its round-trip tests; M9.13b implements capture and idempotent append; M9.16–17 cover real sessions. Milestone 9.5's configured role lists later supply the candidate snapshot. *(Adaptive spec §15.)*
+44. **Start a goal from the TUI.** `C-b g` opens a pure goal form for the selected Git project (or the focused window's project). It has a goal text area (`Ctrl-J` inserts a newline), optional orchestrator runtime and model, and a `trust_project` toggle that starts off; the plan gate remains on by default. `Enter` sends M8b's existing `RunRequest::StartGoal` with M9's optional orchestrator choice, `Esc` cancels, an error stays in the form, and success opens the run view on the new run. With no selected project, it says `select a Git project to start a goal` and sends nothing. It does not create a Git repository or edit its profile. M9.15 implements the form and M9.16–17 exercise it through the real client. *(M8c's pure form and effect pattern; spec §16.)*
 
 ## Interfaces
 
@@ -335,8 +343,12 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
 pub enum AgentRole { Orchestrator, Worker, Reviewer, Scout, Planner }   // Scout is M8b's; "planner"
 pub enum RunState  { /* M8a's eight */ Planning }                       // "planning"; label() "planning"; not terminal
 pub enum TaskState { /* M8a's eleven */ Reported }                      // "reported"; label() "reported"; is_finished() true
+// BlockReason gains, last: MessagePause; a blocked task with this reason is shown as paused(message).
 pub struct PlanTask { /* M8a's fields */ #[serde(default)] pub review_target: Option<String> }   // decision 24
 // PlanEdit::AmendTask gains, last:  #[serde(default)] deps: Option<Vec<String>>                 // decision 25
+// PlanEdit gains, last: Message { to: MessageTarget, text: String, kind: MessageKind },
+//                       Refresh { task_id: String }; both follow amendment §12.
+// MessageTarget is an explicit task-id list, a stage number or Running; MessageKind is Info, Change, StopAndWait.
 ```
 
 `crates/proto/src/orch.rs` (new; everything derives `Debug, Clone, PartialEq, Serialize, Deserialize`, plus what is noted):
@@ -360,6 +372,8 @@ pub struct IntegrationInfo { pub epic: String, pub state: IntegrationState, pub 
                              pub merges: Vec<String>, pub reviews: Vec<ReviewInfo> }
 #[derive(Eq)]
 pub struct EditLogInfo { pub at: u64, pub source: String, pub text: String, pub accepted: bool, pub error: Option<String> }
+#[serde(rename_all = "snake_case")] pub enum TaskNoteKind { Discovery, Risk, Progress }
+pub struct TaskNoteInfo { pub task_id: String, pub kind: TaskNoteKind, pub text: String, pub at: u64 }
 ```
 
 `crates/proto/src/run_info.rs`, new fields, each `#[serde(default)]`:
@@ -373,6 +387,8 @@ pub digest_revision: u64, pub edit_log: Vec<EditLogInfo>, pub research_report: O
 pub note: Option<String>,
 // TaskInfo
 pub hold: Option<String>, pub review_target: Option<String>, pub research_bytes: Option<u32>,
+#[serde(default)] pub message_count: u32, pub last_message_kind: Option<MessageKind>,
+#[serde(default)] pub task_notes: Vec<TaskNoteInfo>, // attributed discovery/risk/progress notes, capped by §12
 ```
 
 `crates/proto/src/run_wire.rs`:
@@ -390,6 +406,8 @@ pub enum RunRequest {
 ```
 
 `lib.rs` re-exports the new types and bumps `PROTO_VERSION` (header).
+
+`crates/proto/src/history.rs` gains `RoleRoutingDecision` and `HistoryLine::RoleRoute(RoleRoutingDecision)` (decision 43), with `HISTORY_VERSION = 2`; its reader still accepts M8b's version-1 task, run and revert lines. `Run.role_routing_decisions: Vec<RoleRoutingDecision>` is persisted with `#[serde(default)]`, so an older run loads with none; only dispatches from new runs record choices. A role record has `v`, `record_id`, `at`, optional `run_id` and `task_id`, `role`, stable `session_id`, `trigger`, `source`, `policy_version`, optional `pick_policy`, `input`, `chosen`, `selected_index`, `candidates`, and an optional factual `outcome` plus role-specific `result`. Its input has optional run path, goal (capped as in M8b's `RunRecord`), epic, scout area and decider question kind, plus profile languages; optional fields use `#[serde(default)]`. Candidates reuse M8b's `RoutingCandidate`, and `candidates[selected_index].route == chosen`. `outcome` is `completed`, `failed`, `interrupted` or `fallback`; `result` records only the role's accepted/rejected, report or submission status, never a judgment on unchosen candidates. The outcome is absent until the session ends; only the completed or recovered record is appended to `<repo_dir>/history.jsonl`. Pre-run triage has no `run_id` and is appended when its answer or fallback resolves. Existing `TaskRecord.routing_decisions` remains task-bound.
 
 ### `config` (`crates/config/src/orchestrator_agent.rs`, new; one call from M8a's `orchestrator::read`)
 
@@ -412,14 +430,16 @@ pub planner_task_cap: u32,                    // [orchestrator] planner_task_cap
 pub max_scouts: u32,                          // 12, 1..=50 (per run)
 pub wake_orchestrator: bool,                  // true
 pub wake_quiet_secs: u64,                     // 5, 1..=120
+pub message_max_per_turn: u32,                // 3, 0..=20; zero disables messages to a task in that turn
+pub note_max_per_task: u32,                   // 10, 0..=100; zero disables worker notes
 pub agent: AgentConfig, pub planners: PlannerConfig,
 pub(crate) fn read_agent(table: &toml::Table, problems: &mut Vec<Problem>)
-    -> (u32, u32, bool, u64, AgentConfig, PlannerConfig);
+    -> (u32, u32, bool, u64, u32, u32, AgentConfig, PlannerConfig);
 ```
 
 Messages follow M8a's format, for example `orchestrator.planner_task_cap: must be between 2 and 50 (using 12)`, `orchestrator.agent.effort: must be low, medium or high (using high)`, and `unknown key, ignored` under the two new tables. A non-empty `agent.model` that is not in the merged roster for the resolved runtime is not a config problem; `run start --goal` refuses with decision 6's text.
 
-`RunLimits` (M8a) gains `planner_task_cap: u32`, `max_scouts: u32`, `wake_orchestrator: bool`, `wake_quiet_secs: u64`, `planners: config::PlannerConfig`, each `#[serde(default)]` with the config defaults.
+`RunLimits` (M8a) gains `planner_task_cap: u32`, `max_scouts: u32`, `wake_orchestrator: bool`, `wake_quiet_secs: u64`, `message_max_per_turn: u32`, `note_max_per_task: u32`, `planners: config::PlannerConfig`, each `#[serde(default)]` with the config defaults. Freeze the message and note limits at run start, so a later config edit cannot change the rules of a live run.
 
 ### `daemon`
 
@@ -605,8 +625,9 @@ impl WindowManager {
 | orchestrator | `run_status` | `Read the run digest. With since and wait_secs, wait up to wait_secs seconds (at most 50) for it to change.` | `since` integer ≥ 0; `wait_secs` integer 0–50 |
 | orchestrator | `task_result` | `Read everything about one task: brief, commits, diff size, checks, proofs, reviews, agent rounds and any report.` | **`task_id`** string 1–16 |
 | planner | `submit_epic` | `Submit your epic's tasks as one batch of plan edits. If it returns errors, fix them and call it again. When it is accepted you are done.` | **`edits`** array 1–60 of `plan_edit`; `note` string 1–2000 |
+| worker | `task_note` | `Report a discovery, risk or progress without blocking the task.` | **`kind`** enum `discovery`, `risk`, `progress`; **`text`** string 1–4000 |
 
-`plan_edit` is an object with **`op`** enum `add_task`, `split_task`, `cancel_task`, `amend_task`, `add_dep`, `answer`, `pause`, `resume`, `finish`, and optional `task` (`plan_task`), `task_id` string 1–16, `into` array 1–12 of `plan_task`, `brief` string 1–8000, `acceptance` array 1–20 of string 1–500, `route` (`route`), `test_mode` enum `tdd`, `check`, `none`, `test_mode_reason` string 1–300, `priority` integer, `size` enum `S`, `M`, `L`, `deps` array ≤ 20 of string 1–16, `dep` string 1–16, `text` string 1–8000. Which keys each op needs is M8a's `PlanEdit` serde shape, checked by the daemon (`invalid arguments: edits[<i>]: <serde error>`).
+`plan_edit` is an object with **`op`** enum `add_task`, `split_task`, `cancel_task`, `amend_task`, `add_dep`, `answer`, `message`, `refresh`, `pause`, `resume`, `finish`, and optional `task` (`plan_task`), `task_id` string 1–16, `into` array 1–12 of `plan_task`, `brief` string 1–8000, `acceptance` array 1–20 of string 1–500, `route` (`route`), `test_mode` enum `tdd`, `check`, `none`, `test_mode_reason` string 1–300, `priority` integer, `size` enum `S`, `M`, `L`, `deps` array ≤ 20 of string 1–16, `dep` string 1–16, `to` (task-id array, `stage:<n>` or `running`), `kind` enum `info`, `change`, `stop_and_wait`, `text` string 1–8000 (at most 4000 for `message`). Which keys each op needs is M8a's `PlanEdit` serde shape, checked by the daemon (`invalid arguments: edits[<i>]: <serde error>`).
 
 `plan_task` is an object with **`id`** string matching `^[a-z0-9][a-z0-9-]{0,15}$`; **`title`** string 1–120; `epic` string 1–16; `kind` enum `code`, `docs`, `research`, `review`; **`size`** enum `S`, `M`, `L`; `interface_change` boolean; `test_mode` enum; `test_mode_reason` string 1–300; **`owns`** array ≤ 20 of string 1–300; `deps` array ≤ 20 of string 1–16; `priority` integer; **`brief`** string 1–8000; **`acceptance`** array 1–20 of string 1–500; `test_to_write` string 1–300; `scout_refs` array ≤ 20 of string 1–48; `route` (`route`); `review_target` string 1–200. `budget` is deliberately absent (decision 23.1).
 
@@ -798,6 +819,8 @@ anthrex run start (--plan <file> | --goal <text>) [--orchestrator <runtime>[:<mo
 anthrex run promote <run> [--orchestrator <runtime>[:<model>]]
 anthrex run approve <run> [--hold <hold>]
 anthrex run reject <run> [--hold <hold>] [--confirm <run-id>]
+anthrex run message <run> <task|stage:<n>|running> [--kind info|change|stop_and_wait] <text>
+anthrex run refresh <run> <task>
 anthrex run status [<run>] [--json]
 anthrex run accept <run> [--yes]
 anthrex mcp --role <orchestrator|planner|scout|worker|reviewer> --run <run> [--task <task>] [--epic <epic>] [--scout <id>] --window <id> [--socket <path>]   (hidden)
@@ -808,6 +831,11 @@ anthrex mcp --role <orchestrator|planner|scout|worker|reviewer> --run <run> [--t
 - `run approve <run> --hold <h>` sends `ApproveHold`; `run reject <run> --hold <h>` sends `RejectHold` and needs no confirmation (it cancels only held tasks that never started). Without `--hold`, both keep M8a's meaning; on a `running` run with an awaiting hold, `run approve <run>` without `--hold` exits 1 with `run <id> has holds waiting for approval: <ids>; pass --hold <id>`.
 - `run status` adds, per run: `planning` as a state; a line `  orchestrator: window <n>, <runtime> <model or (default)>, <live | exited>`; a line `  planners: <e> <state>[ (<n> tasks)], …` when there are epics; a line `  holds: <id> <state> (<n> tasks), …` when there are holds; a line `  summary: written` once the orchestrator wrote one. The task table's `STATE` shows `reported`, and a held task's state is followed by ` (held)`.
 - `run accept` prints `research report: <path>` when `research_report` is set, and asks `nothing to merge; accept run <id> and remove its branches? [y/N]` instead of M8a's merge question when `run_head == base_sha`.
+- `run message` and `run refresh` use the same edit and journal path as the orchestrator (decision 42), preserving the source `user` in the edit log. They never write into a headless agent's terminal.
+
+### TUI goal form
+
+`C-b g` is unused in M8c's prefix map and opens decision 44's form. The project root is taken from the selected project or focused project's window; the form never guesses a different repository. The goal supports `Ctrl-J` for a newline, `Tab` changes fields, `Esc` cancels, and `Enter` sends `StartGoal`. Optional runtime and model select the orchestrator; `trust_project` starts false and is an explicit toggle. An error leaves the filled form open. Success closes it and selects the new run in M8c's run view. This is a view over the existing goal request, not a second planning pipeline.
 
 ### File sizes this milestone must respect
 
@@ -830,7 +858,7 @@ AGENTS.md rule 8: about 600 lines. At the start, run `wc -l` on every file below
 | M8a's `run/driver.rs`, `run/driver/ops.rs` | M8a | +20, +20 | New code in `run/driver/{orch,orch_ops,wake}.rs`. |
 | M8a's `crates/mcp/src/tools.rs`, `lib.rs` | M8a | +10, +15 | Schemas in `tools_orch.rs`. |
 | M8a's `crates/proto/src/run.rs`, `run_info.rs`, `run_wire.rs` | M8a | +10, +25, +15 | New types in `orch.rs`. |
-| M8a's `crates/config/src/orchestrator.rs` | M8a | +10 | One `read_agent` call and six fields. |
+| M8a's `crates/config/src/orchestrator.rs` | M8a | +10 | One `read_agent` call and eight fields. |
 | M8a's `crates/cli/src/run_cmd.rs`, `run_cmd/status.rs` | M8a | +15, +40 | Bodies in `run_cmd/orch.rs`. |
 | M8c's `crates/tui/src/app/runs.rs`, `tree/runs.rs`, `tree/run_rows.rs`, `inspector/run.rs`, `theme.rs`, `graph/run_text.rs` | M8c | +40, +10, +10, +25, +10, +10 | Task M9.15. |
 | `crates/fake-agent/src/script.rs`, `main.rs` | 190, 319 (+ M8a) | +20, +10 | New steps' bodies in `src/orch_steps.rs`; PTY MCP in `src/mcp.rs` (M8a). |
@@ -938,6 +966,8 @@ Do them in this order. Each task's tests are written first and must fail before 
 - `appended_variants_keep_their_indices`: `AgentRole::Planner`, `RunState::Planning`, `TaskState::Reported` serialize after every older variant (MessagePack index check on the variant list).
 - `proto_version_is_bumped`: `PROTO_VERSION` equals the value recorded in M9.1 item 9.
 - `reported_is_finished_and_planning_is_not_terminal`.
+- `message_and_refresh_edits_round_trip`: target ids, `stage:<n>` and `running`, every message kind, `Refresh`, and the appended `BlockReason::MessagePause` survive MessagePack and JSON.
+- `role_routing_history_round_trip`: every new role, an absent run id for pre-run triage, candidate order and skip reasons, and an older version-1 history line all decode; an old persisted run defaults `role_routing_decisions` to empty.
 
 **Acceptance.** The five AGENTS.md commands pass.
 
@@ -945,7 +975,7 @@ Do them in this order. Each task's tests are written first and must fail before 
 
 ### M9.3 Configuration
 
-**Files.** Create `crates/config/src/orchestrator_agent.rs`. Modify M8a's `crates/config/src/orchestrator.rs` (one call, six fields), M8a's `RunLimits` construction in `run/plan.rs`, and M8b's `run/triage.rs` so the triage prompt's upper bound and `PLAN_SCALE_MAX`'s use read `planner_task_cap`.
+**Files.** Create `crates/config/src/orchestrator_agent.rs`. Modify M8a's `crates/config/src/orchestrator.rs` (one call, eight fields), M8a's `RunLimits` construction in `run/plan.rs`, and M8b's `run/triage.rs` so the triage prompt's upper bound and `PLAN_SCALE_MAX`'s use read `planner_task_cap`.
 
 **Earlier-brief change (M8b's `PLAN_SCALE_MAX`, defect 20).** Delete M8b's `run::triage::PLAN_SCALE_MAX` constant. Every place that read it reads the configured `planner_task_cap` instead: the driver passes it into the triage decider's input, and M8b's triage prompt text `plan when it needs 2 to 12 tasks` is rendered as `plan when it needs 2 to <planner_task_cap> tasks`, so with the default 12 the prompt is byte-identical to M8b's and M8b's `triage_prompt_is_exact_for_a_fixed_input` passes unchanged. `run::triage::route` and `TriageRoute` are unchanged.
 
@@ -993,6 +1023,7 @@ Do them in this order. Each task's tests are written first and must fail before 
 - `contracts_do_not_vary`: built twice for two different runs, byte-equal (the facts are in the prompts).
 - One `*_prompt_is_exact` test per row of Interfaces "Prompts and messages", on a fixed run.
 - `worker_prompt_places_the_scout_extract_before_the_brief`: order is contract-free prompt text, profile summary, extract, brief last; `extract_is_capped_at_12_kib_with_a_cut_marker`; `unreadable_report_is_left_out`.
+- `worker_prompt_puts_saved_messages_before_the_brief`; `change_message_requires_acknowledgement_in_task_done`; `stop_and_wait_text_is_exact`; the orchestrator contract distinguishes `message` from `amend_task`, pairs `refresh` with a change message, and names `task_note` (decision 42).
 - `wake_text_is_clamped`.
 
 **Acceptance.** Every text in Interfaces is a `const` or a function in `run/orch/contract.rs`. The five AGENTS.md commands pass.
@@ -1178,6 +1209,26 @@ Do them in this order. Each task's tests are written first and must fail before 
 
 **Commit.** `feat(daemon): drive the orchestrator's ops and wake it when the run needs it`
 
+### M9.13a Orchestrator-to-worker messages, refresh and worker notes
+
+**Files.** Add focused `run/engine/worker_messages.rs` and `run/driver/refresh.rs`; extend M8a's task model, reducer outbox, journaled Git ops and worker prompt; extend `run/orch/digest.rs`, `crates/mcp/src/tools_orch.rs` and the worker tool registration. Use M9.2's `PlanEdit::{Message, Refresh}` and `BlockReason::MessagePause`. The binding 2026-09-26 spec §12 controls every state transition, limit and text.
+
+**Tests first.** A working worker receives an `info` or `change` message only after its current turn; a pending worker sees it in its first prompt; review-state recipients are refused individually while eligible recipients still get theirs; a message mixed with a plan mutation is refused without a side effect; a fresh escalation and a resumed session see all saved notes. `stop_and_wait` ends at a turn boundary, blocks `task_done`, stays `paused(message)` through a daemon restart, and a later message or task resume releases it. The per-turn and per-task limits are enforced. `refresh` merges a clean target into a committed task branch, reports commits in the next turn, hands conflicts back without incrementing the merge-conflict gate, refuses uncommitted work, and leaves task-owned diff accounting unchanged. `task_note` records `discovery`, `risk` and `progress` with attribution; only the first two wake the orchestrator. Messages and notes appear in the digest, edit log and run report without raw tool output. Cover each behavior with reducer and real temporary-Git tests; reuse M8a's scrubbed Git runner and journal recovery tests.
+
+**Acceptance.** No mid-turn interruption, no Git operation under the manager lock, and no direct input to a headless window. All five AGENTS.md commands pass.
+
+**Commit.** `feat(daemon): deliver worker messages, refresh task branches and record notes`
+
+### M9.13b Routing history for orchestrators, planners, scouts and deciders
+
+**Files.** Extend M8b's `run/history.rs`, triage and decider dispatch, M9's role launches, run persistence and restore paths. Use M9.2's `RoleRoutingDecision` and `HistoryLine::RoleRoute`. The history file remains under Anthrex's data directory; neither the repository nor an agent transcript receives this record.
+
+**Tests first.** For each role, the dispatch snapshot keeps the ordered eligible roster, selected index, source, resolved effort and role-specific input even if config later changes; an explicit choice in the roster remains identifiable as explicit. An orchestrator restart, planner retry, scout retry and decider fallback each get distinct stable session identities. Reconciliation writes one history line per completed or interrupted session, including after a daemon restart, and does not call an unchosen candidate a failure. Pre-run triage writes a record when it answers or falls back even if no run is created. A version-1 history fixture and an old `run.json` still load; new runs without history enabled write none. `run stats` ignores `RoleRoute` lines for task-size and budget aggregates. Use scripted fake agents for the role outcomes and a temporary repository for append/restart checks.
+
+**Acceptance.** The history is enough to join each role choice to its factual session outcome without reading transcripts. All five AGENTS.md commands pass.
+
+**Commit.** `feat(daemon): record routing choices and outcomes for non-task agents`
+
 ### M9.14 CLI
 
 **Files.** Create `crates/cli/src/run_cmd/orch.rs`. Modify M8a's `crates/cli/src/run_cmd.rs`, `run_cmd/status.rs`, M8b's goal and promote commands, `crates/cli/tests/run_cli.rs` (M8a's CLI test file).
@@ -1189,6 +1240,7 @@ Do them in this order. Each task's tests are written first and must fail before 
 - `status_shows_orchestrator_planners_holds_and_summary_lines` (exact lines); `status_json_carries_the_new_fields`.
 - `accept_prints_the_research_report_and_the_nothing_to_merge_question`.
 - `promote_with_orchestrator_choice`.
+- `run_message_reaches_the_selected_task_or_stage`; `run_message_running_targets_only_live_workers`; `run_refresh_refuses_uncommitted_work`; the command help names `info`, `change` and `stop_and_wait` (decision 42).
 
 **Acceptance.** The five AGENTS.md commands pass.
 
@@ -1196,11 +1248,11 @@ Do them in this order. Each task's tests are written first and must fail before 
 
 ### M9.15 TUI
 
-**Files.** Modify M8c's `crates/tui/src/app/runs.rs`, `tree/runs.rs`, `tree/run_rows.rs`, `inspector/run.rs`, `theme.rs`, `graph/run_text.rs`, and their tests.
+**Files.** Modify M8c's `crates/tui/src/app/runs.rs`, `tree/runs.rs`, `tree/run_rows.rs`, `inspector/run.rs`, `theme.rs`, `graph/run_text.rs`, the prefix keymap and their tests. Add pure `crates/tui/src/run_goal.rs` and its renderer under `ui/` for decision 44.
 
-**Change.** A `planning` run shows `planning` in its header and its orchestrator node; `Reported` tasks get `✓` in the finished colour and the label `reported`; a held task shows `○` and `held` after its stage; an awaiting hold appears in the run's attention list as `hold <id>: <n> tasks wait for approval` and `a` / `x` on that line send `ApproveHold` / `RejectHold` (with the M8c confirmation prompt for `x`); planner nodes use `PlannerInfo` with M8c's content text (`planner {epic} {title}  {merged}/{total}`) and planner glyphs, now filled (decision 33); a research session's round label is `research #n`; Enter on the orchestrator node focuses its PTY window (spec §16.4, M8c's handling of PTY run windows). The reducer stays pure (AGENTS.md rule 5): each key returns `Effect`s.
+**Change.** A `planning` run shows `planning` in its header and its orchestrator node; `Reported` tasks get `✓` in the finished colour and the label `reported`; a held task shows `○` and `held` after its stage; an awaiting hold appears in the run's attention list as `hold <id>: <n> tasks wait for approval` and `a` / `x` on that line send `ApproveHold` / `RejectHold` (with the M8c confirmation prompt for `x`); planner nodes use `PlannerInfo` with M8c's content text (`planner {epic} {title}  {merged}/{total}`) and planner glyphs, now filled (decision 33); a research session's round label is `research #n`; Enter on the orchestrator node focuses its PTY window (spec §16.4, M8c's handling of PTY run windows). `C-b g` opens decision 44's goal form for the selected project; a successful `StartGoal` opens the resulting run view. A task inspector shows the message count and latest kind, `paused(message)` has `‖` and an attention line after 10 minutes, and discovery/risk notes are attributed in the inspector (amendment §12.6). The reducer stays pure (AGENTS.md rule 5): each key returns `Effect`s.
 
-**Tests first.** `planning_run_header`; `reported_and_held_glyphs`; `hold_attention_line_and_keys_emit_the_requests`; `planner_nodes_from_planner_info`; `research_round_label`; `enter_on_the_orchestrator_focuses_its_window`; M8c's mockup tests updated only where a new field appears, each change listed in "Implementation notes".
+**Tests first.** `planning_run_header`; `reported_and_held_glyphs`; `hold_attention_line_and_keys_emit_the_requests`; `planner_nodes_from_planner_info`; `research_round_label`; `enter_on_the_orchestrator_focuses_its_window`; `goal_form_requires_a_selected_project`; `goal_form_sends_start_goal_and_opens_the_run`; `goal_form_keeps_its_input_on_error`; `message_pause_and_notes_render_with_attribution`; M8c's mockup tests updated only where a new field appears, each change listed in "Implementation notes".
 
 **Acceptance.** `crates/tui/src/app.rs` and `ui/**` do no I/O. The five AGENTS.md commands pass.
 
@@ -1219,6 +1271,9 @@ Do them in this order. Each task's tests are written first and must fail before 
 - `e2e_promote_starts_an_orchestrator_and_holds_its_tasks`: a fast-path run whose `t1` waits on `read_message`; `run promote`; an orchestrator window appears; its script adds `t2` and submits; `t2` shows hold `promotion` awaiting; `t1` keeps running and merges; `run approve --hold promotion` releases `t2`.
 - `e2e_orchestrator_cannot_approve_merge_or_write`: the script calls `edit_plan` with `{"op": "override", …}` (error text asserted), `task_done` (refused by `anthrex mcp` for the role), and the fake runtime's argv shows `--disallowedTools Edit,Write,NotebookEdit,Bash,Agent`; the run branch has no commit the orchestrator could have made.
 - `e2e_wake_does_not_collide_with_typing`: while the test types into the orchestrator every 300 ms for 3 s (`wake_quiet_secs = 1`), a task blocks; no paste reaches the window until 1 s after the typing stops (asserted from the stdin file's timestamps written by `fake-agent`).
+- `e2e_message_refresh_and_task_note`: after an interface task merges, the orchestrator sends a `change` message and refreshes a live worker; the next worker turn sees both the new commits and the instruction, its `task_done` acknowledges the change, and a `discovery` note reaches the orchestrator with attribution. A second task gets `stop_and_wait`, cannot finish, then resumes after a later message. The event log shows no mid-turn delivery and no duplicate delivery after restart.
+- `e2e_tui_goal_form_starts_the_plan_path`: in a selected Git project, `C-b g`, a goal and Enter send `StartGoal`; the run view opens on its planning run. A refusal leaves the form filled, and opening the form with no selected project sends nothing.
+- `e2e_role_routing_records_survive_restart`: the orchestrator's and a scout's choices keep their dispatch-time roster snapshots and distinct session ids in `history.jsonl` after a daemon restart; old task-history aggregates are unchanged.
 
 **Acceptance.** All pass three times in a row (`cargo test -p anthrex --test run_e2e_orch -- --test-threads=1`, repeated). The five AGENTS.md commands pass.
 
@@ -1237,6 +1292,7 @@ Do them in this order. Each task's tests are written first and must fail before 
 - `e2e_review_goal_reviews_a_range_without_merging`: the repository has a branch `feature` two commits ahead; the orchestrator adds a review task with `review_target = "main..feature"`; the reviewer's prompt names both shas; its `changes` verdict still ends `reported`; the findings are in `REPORT.md`; nothing merged.
 - `e2e_restart_resumes_the_orchestrator_with_its_role_flags`: during `running`, `restart_daemon`; the run is `paused`; `run resume`; the orchestrator's args file has a second line with `--resume` and every role flag; its first wake contains `the daemon restarted`.
 - `e2e_claude_orchestrator_gets_the_otlp_environment`: with M8b's receiver running (`<data_dir>/otlp.addr` exists), the orchestrator's environment file has M8b's OTLP variables and `anthrex.role=orchestrator`; a Codex orchestrator's does not, and `run status --json` has no orchestrator usage.
+- `e2e_role_history_for_large_and_triage_paths`: a pre-run triage decider, two sub-planners and their area scouts each have one factual role-routing history record; a separate direct triage test covers a decision after which run creation fails. Candidates not chosen have no failure label.
 
 **Smoke stage.** In `scripts/pty_smoke_orch.py`, `orch_stage(env, bin_path)`, called from `pty-smoke.py` after stages 11c, 11d and 11e (M8a, M8b, M8c), printing `== stage 11f: a goal is planned by a scripted orchestrator ==`. With the smoke's isolated daemon, `fake-agent` as both runtimes and M8b's scripted triage decider (`plan`): `run start --goal "add two files"`; open the TUI, `C-b T`, wait for the run's `planning` header, Enter on the orchestrator node and wait for its window; the scripted orchestrator adds two S tasks and submits; press `a` in the run view; wait for `complete`; type `done\r` into the orchestrator window (its script's `read_message {expect: "done"}` then writes the summary); `run accept --yes`; both files on `main`. Every wait is a deadline loop bounded by `RUN_WAIT`.
 
@@ -1370,4 +1426,3 @@ Found while writing this brief. Each is resolved by the decision named. Items 1�
 | `OrchestratorRecord` (route, wakes) and orchestrator OTLP usage | Orchestrator cost in `run stats` | Decisions 10, 14 |
 
 ## Implementation notes
-

@@ -440,6 +440,8 @@ predicted size and route · actual files, hunks and lines changed · tool calls 
 
 Each decision keeps an ordered snapshot of its **candidates** with resolved runtime/model/strength/effort. When M9.5's user-configured class or role list applies, that list is the candidate source; otherwise it is the applicable merged roster. Record which candidate was selected and why a listed candidate was skipped (for example, an overlapping task prevents a cross-runtime escalation). Append the selected route if it was outside the candidate source, including an explicit route or a fallback. A later config or roster edit must not rewrite historical candidates. This history stays local to anthrex's data directory; a future training export must be explicit. Do not include agent transcripts, credentials or raw tool output. The task's existing outcome, gate, usage and later revert records supply result labels; an unchosen candidate is **not** labelled as a failure. M8b defines the task-history schema and captures its worker and reviewer decisions; M9.5 extends capture to its configured lists, racers and test writers. This records evidence for a later learned router without enabling one now.
 
+**M9 also records choices for agents that do not belong to a task.** The orchestrator, sub-planners, run scouts and deciders (including triage before a run exists) each get a role-routing record. It snapshots the ordered eligible candidates, chosen route, source, policy version and role-specific input at dispatch, then records factual session results such as a planner's accepted or rejected submission, a scout's report, a decider fallback, or an orchestrator's submitted plan. A run-bound choice survives a daemon restart; a completed pre-run triage is written to the same local history even when no run starts. Use a stable session identity so recovery cannot duplicate a record. Link a record to a run when there is one, but do not label an unchosen candidate as a failure or claim that one model caused the run outcome. M9 defines the history shape and capture points; M9.5's configured role lists become the candidate source when present.
+
 - **Actual size is measured by diff**, not tokens.
 - After `adapt.min_samples` tasks (default 30) of a size, the engine computes new line thresholds and sets each budget to 2–3x the observed median.
 - **Budgets refit automatically. Size thresholds and routing are proposed** in `anthrex run stats` and applied when the user confirms, because they change what the planner is allowed to do. [J]
@@ -450,6 +452,8 @@ Each decision keeps an ordered snapshot of its **candidates** with resolved runt
 ## 16. The live run view in `C-b T`
 
 A run is watched in the **expanded graph overview that already exists** (`C-b T`, milestone 4.6): the left-to-right, node-and-edge canvas with the node inspector below it (milestone 4.7). It is extended, not replaced, and it is live: every task state, agent start, review verdict and merge redraws as it happens. It is also the plan gate's view before the run starts. [J — the canvas already lays out any tree left to right, and `crates/tui/src/tree.rs` already reserves `NodeKey::Run` and a run row for milestone 8]
+
+M9 also lets the user **start** that goal run from the TUI: `C-b g` opens a goal form for the selected Git project, sends the same `StartGoal` request as `anthrex run start --goal`, and opens the new run view on success. It does not create a repository or bypass the plan gate. The M9 brief defines the form and tests.
 
 ### 16.1 Everything starts at the orchestrator node
 

@@ -498,6 +498,7 @@ message { to: [task_id] | "stage:<n>" | "running", text, kind: "info" | "change"
   - At most `message_max_per_turn` (default 3) messages are queued per task per turn. They are delivered together as one turn, as the outbox already does.
   - A message can't change `owns`, route, size, test mode or acceptance criteria; those stay `amend_task`. The orchestrator's contract says: `A message informs; an amendment changes the task. If the task's scope changes, use amend_task.`
 - **Urgency.** No message interrupts a turn in progress. Interrupting mid-tool-call is unreliable across runtimes, and a turn is bounded by the stall watchdog anyway. `stop_and_wait` is the fastest stop, and it takes effect at the end of the current turn.
+- **Batch boundary.** `message` or `refresh` is the only edit in its `edit_plan` call. Mixing one with other plan mutations is refused before any change. A message can still accept eligible recipients and refuse ineligible recipients in the same call, reporting both lists; this does not turn a partial recipient refusal into a rollback of the accepted recipients.
 
 ### 12.2 `refresh`: bring merged changes into a running worker's worktree
 
