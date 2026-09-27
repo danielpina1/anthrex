@@ -335,3 +335,237 @@ fn an_interrupted_turn_that_was_never_sent() {
         assert_reply_closed(&w.conversation());
     }
 }
+
+/// The review's roles and states, to compare a conversation's shape at a glance.
+fn shape(conversation: &proto::Conversation) -> Vec<(Role, TurnState)> {
+    conversation
+        .turns
+        .iter()
+        .map(|t| (t.role, t.state))
+        .collect()
+}
+
+fn killed() -> SessionEvent {
+    SessionEvent::ProcessExited {
+        code: None,
+        signal: Some(15),
+    }
+}
+
+fn notification_turn(w: &mut Window, tool_use_id: &str) {
+    w.real_hook(json!({
+        "hook_event_name": "UserPromptSubmit", "session_id": SESSION,
+        "prompt": "<task-notification>agent done</task-notification>"
+    }));
+    w.real_hook(json!({
+        "hook_event_name": "PreToolUse", "session_id": SESSION, "tool_name": "Bash",
+        "tool_input": {"command": "sleep 100"}, "tool_use_id": tool_use_id
+    }));
+}
+
+/// M8c.11 review I1: hooks and results arrive by different paths, so a turn Claude Code
+/// started by itself can have its prompt and tool hooks applied before the interrupted
+/// turn's `result` is read. That `result` ends the interrupted turn only: its `Stop`
+/// must not close the later turn, which is still working.
+#[test]
+fn an_interrupt_never_closes_a_later_turn_already_open() {
+    for cursor in [StreamCursor::fed(), StreamCursor::default()] {
+        let mut w = claude_turn_with_open_call(cursor, true);
+        notification_turn(&mut w, "toolu_bg");
+        let before = shape(&w.conversation());
+        assert_eq!(
+            before[before.len() - 2..],
+            [
+                (Role::User, TurnState::Complete),
+                (Role::Assistant, TurnState::Running)
+            ]
+        );
+        assert_eq!(w.claude_line(INTERRUPTED), []);
+        assert_eq!(shape(&w.conversation()), before);
+        // The later turn's own interruption still ends it.
+        assert_eq!(w.claude_line(INTERRUPTED), [stop()]);
+        assert_reply_closed(&w.conversation());
+    }
+}
+
+/// M8c.11 review I2: an engine kill (a stall, a cancel, a give-up) SIGTERMs a Claude
+/// process mid-turn, and no `result` is printed. Its exit ends the open turn, and the
+/// resumed session's next turn builds as usual.
+#[test]
+fn a_killed_claude_turn_ends() {
+    for (cursor, feed) in [
+        (StreamCursor::fed(), true),
+        (StreamCursor::default(), true),
+        (StreamCursor::default(), false),
+    ] {
+        let mut w = claude_turn_with_open_call(cursor, feed);
+        assert_eq!(w.event(&killed()), [stop()]);
+        assert_reply_closed(&w.conversation());
+        // Hostile: the same exit again ends nothing more.
+        assert_eq!(w.event(&killed()), []);
+
+        w.cursor.process_replaced();
+        w.sent("next");
+        w.real_hook(json!({
+            "hook_event_name": "UserPromptSubmit", "session_id": SESSION, "prompt": "next"
+        }));
+        w.real_hook(json!({
+            "hook_event_name": "PreToolUse", "session_id": SESSION, "tool_name": "Bash",
+            "tool_input": {"command": "ls"}, "tool_use_id": "toolu_next"
+        }));
+        let conversation = w.conversation();
+        let tail = shape(&conversation);
+        assert_eq!(
+            tail[tail.len() - 4..],
+            [
+                (Role::User, TurnState::Complete),
+                (Role::Assistant, TurnState::Complete),
+                (Role::User, TurnState::Complete),
+                (Role::Assistant, TurnState::Running),
+            ],
+            "{conversation:?}"
+        );
+        let Block::ToolCall { state, .. } = &conversation.turns.last().unwrap().blocks[0] else {
+            panic!("{conversation:?}");
+        };
+        assert_eq!(*state, ToolState::Pending);
+    }
+    // A kill of a turn whose prompt hook opened it, in a fed cursor, and a kill of a
+    // turn Claude Code started by itself.
+    let mut w = Window::new(Runtime::Claude, true, StreamCursor::fed(), true);
+    notification_turn(&mut w, "toolu_bg");
+    assert_eq!(w.event(&killed()), [stop()]);
+    assert_reply_closed(&w.conversation());
+    // Claude without hooks: the sent turn's exit synthesises the `Stop` too.
+    let mut w = Window::new(Runtime::Claude, false, StreamCursor::default(), false);
+    w.sent("go");
+    w.event(&tool_use("toolu_slow"));
+    assert_eq!(w.event(&killed()), [stop_without_session()]);
+    assert_reply_closed(&w.conversation());
+}
+
+#[test]
+fn a_claude_exit_with_no_turn_open_ends_nothing() {
+    for (cursor, feed) in [
+        (StreamCursor::fed(), true),
+        (StreamCursor::default(), true),
+        (StreamCursor::default(), false),
+    ] {
+        let mut w = Window::new(Runtime::Claude, true, cursor.clone(), feed);
+        assert_eq!(w.event(&killed()), []);
+        w.real_hook(
+            json!({"hook_event_name": "SessionStart", "session_id": SESSION, "source": "startup"}),
+        );
+        assert_eq!(w.event(&killed()), []);
+        // A turn that ended normally: its `Stop` hook, then its `result`.
+        let mut w = claude_turn_with_open_call(cursor, feed);
+        w.real_hook(json!({"hook_event_name": "Stop", "session_id": SESSION}));
+        assert_eq!(
+            w.claude_line(r#"{"type":"result","subtype":"success","is_error":false}"#),
+            []
+        );
+        assert_eq!(w.event(&exited()), []);
+    }
+    // A turn its real `Stop` hook closed, killed before its `result`: the exit ends the
+    // turn in the cursor but synthesises no second `Stop`.
+    let mut w = claude_turn_with_open_call(StreamCursor::fed(), true);
+    w.real_hook(json!({"hook_event_name": "Stop", "session_id": SESSION}));
+    assert_eq!(w.event(&killed()), []);
+    assert_eq!(w.event(&killed()), []);
+    // Claude without hooks, after its turn's `result`.
+    let mut w = Window::new(Runtime::Claude, false, StreamCursor::default(), false);
+    w.sent("go");
+    w.claude_line(r#"{"type":"result","subtype":"success","is_error":false}"#);
+    assert_eq!(w.event(&exited()), []);
+}
+
+/// M8c.11 review m1: a real `Stop` does not always end the turn. The user's own blocking
+/// `Stop` hook makes Claude go on, and M6.5 opens a new reply on its next tool hook; an
+/// interruption of that continuation must still end it.
+#[test]
+fn a_continuation_after_a_blocking_stop_hook_still_ends_when_interrupted() {
+    for cursor in [StreamCursor::fed(), StreamCursor::default()] {
+        let mut w = claude_turn_with_open_call(cursor, true);
+        w.real_hook(json!({"hook_event_name": "Stop", "session_id": SESSION}));
+        w.real_hook(json!({
+            "hook_event_name": "PreToolUse", "session_id": SESSION, "tool_name": "Bash",
+            "tool_input": {"command": "sleep 100"}, "tool_use_id": "toolu_cont"
+        }));
+        assert_eq!(
+            w.conversation().turns.last().unwrap().state,
+            TurnState::Running
+        );
+        assert_eq!(w.claude_line(INTERRUPTED), [stop()]);
+        let last = w.conversation().turns.last().unwrap().clone();
+        assert_eq!(
+            (last.role, last.state),
+            (Role::Assistant, TurnState::Complete)
+        );
+    }
+    // The same through a `PostToolUse` alone (its `PreToolUse` came before the `Stop`).
+    let mut w = claude_turn_with_open_call(StreamCursor::fed(), true);
+    w.real_hook(json!({"hook_event_name": "Stop", "session_id": SESSION}));
+    w.real_hook(json!({
+        "hook_event_name": "PostToolUse", "session_id": SESSION, "tool_name": "Bash",
+        "tool_use_id": "toolu_slow", "tool_response": {"stdout": "x"}
+    }));
+    assert_eq!(w.claude_line(INTERRUPTED), [stop()]);
+}
+
+/// M8c.11 review m1: a `Stop` hook that comes after its turn's `result` (its ack missed
+/// `anthrex hook`'s deadline) does not hold over a later turn whose prompt hook was lost,
+/// nor over a new process of the session.
+#[test]
+fn a_late_stop_hook_does_not_hold_over_a_lost_prompt() {
+    let success = r#"{"type":"result","subtype":"success","is_error":false}"#;
+    let late_stop = |w: &mut Window| {
+        w.claude_line(success);
+        w.real_hook(json!({"hook_event_name": "Stop", "session_id": SESSION}));
+    };
+    // The next turn's prompt hook is lost; its tool hook arrives.
+    let mut w = claude_turn_with_open_call(StreamCursor::fed(), true);
+    late_stop(&mut w);
+    w.sent("next");
+    w.real_hook(json!({
+        "hook_event_name": "PreToolUse", "session_id": SESSION, "tool_name": "Bash",
+        "tool_input": {"command": "sleep 100"}, "tool_use_id": "toolu_next"
+    }));
+    assert_eq!(w.claude_line(INTERRUPTED), [stop()]);
+    assert_eq!(
+        w.conversation().turns.last().unwrap().state,
+        TurnState::Complete
+    );
+    // A new process, and its first turn's prompt hook is lost too.
+    let mut w = claude_turn_with_open_call(StreamCursor::fed(), true);
+    late_stop(&mut w);
+    w.cursor.process_replaced();
+    w.sent("next");
+    assert_eq!(w.claude_line(INTERRUPTED), [stop()]);
+}
+
+/// M8c.11 review m2: a turn's `result` clears the real `Stop` that closed it, so the next
+/// turn, whose prompt hook was lost, still ends when interrupted.
+#[test]
+fn a_turn_end_clears_its_real_stop() {
+    let success = r#"{"type":"result","subtype":"success","is_error":false}"#;
+    // The review's order: a tool hook comes between the two `result`s.
+    let mut w = claude_turn_with_open_call(StreamCursor::fed(), true);
+    w.real_hook(json!({"hook_event_name": "Stop", "session_id": SESSION}));
+    w.claude_line(success);
+    w.sent("next");
+    w.real_hook(json!({
+        "hook_event_name": "PreToolUse", "session_id": SESSION, "tool_name": "Bash",
+        "tool_input": {"command": "sleep 100"}, "tool_use_id": "toolu_next"
+    }));
+    assert_eq!(w.claude_line(INTERRUPTED), [stop()]);
+    // Nothing but prose between them: only the `result` can have cleared it.
+    let mut w = claude_turn_with_open_call(StreamCursor::fed(), true);
+    w.real_hook(json!({"hook_event_name": "Stop", "session_id": SESSION}));
+    w.claude_line(success);
+    w.sent("next");
+    w.event(&SessionEvent::AssistantText {
+        text: "thinking".into(),
+        parent: None,
+    });
+    assert_eq!(w.claude_line(INTERRUPTED), [stop()]);
+}

@@ -167,3 +167,19 @@ fn a_text_field_over_the_result_cap_is_cut_and_marked_truncated() {
     assert!(!result.ok);
     assert_eq!(state, ToolState::Failed);
 }
+
+/// M8c.11 review m4: an `output` that starts with blank lines summarises its first real
+/// line, not an empty one. A text with no real line summarises as empty.
+#[test]
+fn an_output_starting_with_blank_lines_summarises_its_first_real_line() {
+    let result = codex_call_result(
+        "\n  \n\t\n[task-b 9d0ec2a] add a\nmore",
+        false,
+        Caps::default(),
+    );
+    assert_eq!(result.summary, "[task-b 9d0ec2a] add a");
+    assert_eq!(
+        codex_call_result("\n \n", false, Caps::default()).summary,
+        ""
+    );
+}

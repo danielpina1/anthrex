@@ -245,12 +245,13 @@ fn post_tool_use(draft: &mut Draft, hook: &ParsedHook, now: Instant, caps: Caps)
         .as_ref()
         .and_then(summary::response_text)
         .map(|text| cap_bytes(text, caps.max_result_bytes).0);
-    let first_line = text_field
-        .as_deref()
-        .unwrap_or(&capped)
-        .lines()
-        .next()
-        .unwrap_or("");
+    // A text field's first non-blank line, so an output that opens with a newline
+    // still says something (M8c.11 review m4).
+    let first_line = match text_field.as_deref() {
+        Some(text) => text.lines().find(|l| !l.trim().is_empty()),
+        None => capped.lines().next(),
+    }
+    .unwrap_or("");
     let text = summary::truncate_graphemes(first_line);
     let truncated = hook.tool_result_truncated == Some(true) || byte_capped;
     let duration_ms = take_tool_start(draft, hook).map(|started| {

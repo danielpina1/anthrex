@@ -280,13 +280,29 @@ fn conversation_map_follows_the_table() {
         ] {
             row(runtime, &[], Some(&other), vec![], vec![]);
         }
-        // A process exit while a sent turn is open: Codex's ends that turn (M8c.11, an
-        // interrupted Codex turn has no `turn.*` line); Claude's is nothing.
-        let stop = match runtime {
-            Runtime::Codex => vec![stream_hook(HookKind::Stop, Some("s-7"))],
-            _ => vec![],
-        };
-        row(runtime, &[], Some(&exited()), vec![], stop);
+        // A process exit while a sent turn is open ends that turn (M8c.11): an
+        // interrupted Codex turn has no `turn.*` line, and a killed Claude process prints
+        // no `result`.
+        match runtime {
+            Runtime::Codex => row(
+                runtime,
+                &[],
+                Some(&exited()),
+                vec![],
+                vec![stream_hook(HookKind::Stop, Some("s-7"))],
+            ),
+            // Claude fires no `Stop` hook for a killed turn, so its `Stop` is kept even
+            // with hooks firing (`a_killed_claude_turn_ends`).
+            _ => {
+                for hooks_fire in [false, true] {
+                    let mut cursor = primed(runtime, hooks_fire);
+                    let input = map(runtime, hooks_fire, &exited(), &mut cursor);
+                    assert_eq!(input.records, [], "hooks_fire {hooks_fire}");
+                    let stop = stream_hook(HookKind::Stop, Some("s-7"));
+                    assert_eq!(input.hooks, [stop], "hooks_fire {hooks_fire}");
+                }
+            }
+        }
     }
 }
 
