@@ -334,11 +334,11 @@ fn chmod_nofollow(path: &Path, mode: u32) -> std::io::Result<()> {
     let err = std::io::Error::last_os_error();
     // Linux's `fchmodat` may not support the flag; only a real directory, checked
     // again just now, is then changed through its path.
-    if matches!(
-        err.raw_os_error(),
-        Some(libc::ENOTSUP) | Some(libc::EOPNOTSUPP)
-    ) && std::fs::symlink_metadata(path)?.file_type().is_dir()
-    {
+    // (`ENOTSUP` and `EOPNOTSUPP` are one value on Linux, two on macOS.)
+    let unsupported = err
+        .raw_os_error()
+        .is_some_and(|code| code == libc::ENOTSUP || code == libc::EOPNOTSUPP);
+    if unsupported && std::fs::symlink_metadata(path)?.file_type().is_dir() {
         use std::os::unix::fs::PermissionsExt;
         return std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
     }

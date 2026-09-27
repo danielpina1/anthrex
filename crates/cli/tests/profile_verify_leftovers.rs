@@ -16,7 +16,9 @@ use daemon::profile::verify::{SALVAGE_PREFIX, discard_named};
 #[cfg(target_os = "macos")]
 use daemon::run::git::task_tmp;
 
-use support::profile_rig::{COMMAND_TIMEOUT, GIT_TIMEOUT, Rig, check};
+#[cfg(target_os = "macos")]
+use support::profile_rig::COMMAND_TIMEOUT;
+use support::profile_rig::{GIT_TIMEOUT, Rig, check};
 use support::run_harness::{git_in, init_repo};
 use support::tempdir;
 
