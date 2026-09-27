@@ -162,6 +162,49 @@ pub fn narrow_line(
                 vec![],
             ],
         ),
+        RowKind::Run {
+            run,
+            orchestrator,
+            position,
+        } => {
+            let focused = orchestrator.is_some_and(|window| app.focused == Some(window.id));
+            let (merged, total) = tree::run_progress(run);
+            let position = position.map_or_else(String::new, |position| position.to_string());
+            (
+                vec![
+                    Span::raw(row.guides.clone()),
+                    Span::styled(
+                        if focused { "▎" } else { " " },
+                        Style::default().fg(app.settings.accent),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(
+                        theme::RUN_GLYPH,
+                        Style::default().fg(theme::run_color(run.state)),
+                    ),
+                    Span::raw(format!(" {position:>pos_width$} ")),
+                ],
+                Span::styled(
+                    tree::run_title(run).to_owned(),
+                    if focused { bold } else { Style::default() },
+                ),
+                None,
+                vec![
+                    vec![Span::styled(format!("{merged}/{total}"), theme::muted())],
+                    vec![],
+                ],
+            )
+        }
+        // The run view's rows (task M8c.4) are drawn only on its canvas, never here.
+        RowKind::Planner { .. }
+        | RowKind::Scout { .. }
+        | RowKind::Task { .. }
+        | RowKind::AgentRound { .. } => (
+            vec![Span::raw(row.guides.clone())],
+            Span::raw(crate::graph::content_text(row)),
+            None,
+            vec![vec![]],
+        ),
     };
     fit_line(prefix, name, branch, rights, usize::from(width), selected)
 }

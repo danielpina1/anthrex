@@ -9,7 +9,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 impl App {
     pub fn rows(&self) -> Vec<tree::Row<'_>> {
-        tree::build(&self.windows, &self.tree)
+        tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree)
     }
 
     pub fn set_tree_viewports(&mut self, sidebar_rows: u16, overview_rows: u16) {
@@ -99,7 +99,7 @@ impl App {
         self.tree_input = Some(TreeInput::Navigate);
         self.keymap.set_tree_mode(true);
 
-        let rows = tree::build(&self.windows, &self.tree);
+        let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
         let selected = self
             .focused
             .map(NodeKey::Window)
@@ -202,11 +202,17 @@ impl App {
                 self.exit_tree();
                 effects
             }
+            // Opening the run view on a run, and Enter inside it, are task M8c.6's.
+            NodeKey::Run(_)
+            | NodeKey::Planner { .. }
+            | NodeKey::Scout { .. }
+            | NodeKey::Task { .. }
+            | NodeKey::AgentRound { .. } => vec![],
         }
     }
 
     fn move_tree_selection(&mut self, delta: isize) {
-        let rows = tree::build(&self.windows, &self.tree);
+        let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
         self.tree.move_selection(&rows, delta);
         self.reveal_tree_anchor();
     }
@@ -215,7 +221,7 @@ impl App {
     /// in the visible pre-order list. A no-op at a root, which has no
     /// shallower row before it (decision 17).
     fn select_tree_parent(&mut self) {
-        let rows = tree::build(&self.windows, &self.tree);
+        let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
         let Some(index) = self.tree.selected_index(&rows) else {
             return;
         };
@@ -234,7 +240,7 @@ impl App {
     /// leaf, whether it has no children or is collapsed — either way the next
     /// row is not a child (decision 17, decision 7).
     fn select_first_visible_child(&mut self) {
-        let rows = tree::build(&self.windows, &self.tree);
+        let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
         let Some(index) = self.tree.selected_index(&rows) else {
             return;
         };
@@ -249,7 +255,7 @@ impl App {
 
     pub(crate) fn toggle_tree_node(&mut self, key: &NodeKey) {
         if self.tree.toggle(key) {
-            let rows = tree::build(&self.windows, &self.tree);
+            let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
             self.tree.repair_selection(&rows);
             self.reveal_tree_anchor();
         }
@@ -284,7 +290,7 @@ impl App {
     }
 
     fn repair_filtered_selection(&mut self) {
-        let rows = tree::build(&self.windows, &self.tree);
+        let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
         if self.tree.selected_index(&rows).is_none() {
             let first = rows
                 .iter()

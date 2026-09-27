@@ -1,6 +1,6 @@
 //! Colours and glyphs. Spec section 6.5: inherit the terminal background, one accent, unicode-only glyphs.
 
-use proto::{Status, SubagentInfo, SubagentState};
+use proto::{RunState, Status, SubagentInfo, SubagentState};
 use ratatui::style::{Color, Modifier, Style};
 
 /// The built-in accent, used until `config.toml`'s `accent` (decision 4) says
@@ -30,6 +30,21 @@ pub fn status_glyph(status: Status, spinner_frame: usize) -> &'static str {
         Status::Attention => "◆",
         Status::Done => "✓",
         Status::Exited => "✕",
+    }
+}
+
+/// Milestone 8c: a run's node glyph, drawn in `run_color`.
+pub const RUN_GLYPH: &str = "◉";
+
+/// Milestone 8c: a run's colour by its state.
+pub fn run_color(state: RunState) -> Color {
+    match state {
+        RunState::AwaitingApproval | RunState::Paused | RunState::Halted => {
+            status_color(Status::Attention)
+        }
+        RunState::Running => status_color(Status::Working),
+        RunState::Complete | RunState::Accepted => status_color(Status::Done),
+        RunState::Discarded | RunState::Failed => DIM,
     }
 }
 

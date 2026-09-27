@@ -139,7 +139,7 @@ impl App {
         if !self.sidebar_visible {
             return vec![];
         }
-        let rows = tree::build(&self.windows, &self.tree);
+        let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
         let geometry =
             ui::tree_view::geometry(layout.sidebar_list, rows.len(), self.tree.sidebar.top);
         let Some(index) = geometry.index_at(column, row) else {
@@ -155,6 +155,11 @@ impl App {
                 vec![]
             }
             NodeKey::Window(id) | NodeKey::Subagent { window_id: id, .. } => self.focus(id),
+            key @ (NodeKey::Run(_)
+            | NodeKey::Planner { .. }
+            | NodeKey::Scout { .. }
+            | NodeKey::Task { .. }
+            | NodeKey::AgentRound { .. }) => self.activate_tree_node(key),
         };
         self.reveal_tree_anchor();
         effects
@@ -176,7 +181,7 @@ impl App {
     ) -> Option<Vec<Effect>> {
         // One row build for the gesture: `overview::view` would otherwise
         // build its own, and the selection below needs the same list.
-        let rows = tree::build(&self.windows, &self.tree);
+        let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
         let view = overview::view_of(self, main, &rows);
         if !view.canvas.contains((column, row).into()) {
             return None;

@@ -351,3 +351,56 @@ fn other_run_replies_change_nothing() {
         assert!(app.run_subscribed, "{label}");
     }
 }
+
+/// M8c.3, decision 10. The brief's single-project form cannot move at all: folding
+/// `/r/demo` hides the orchestrator's row as well as window 1, and `focus_relative`
+/// returns early on an empty visible order. So window 1 lives in a second, folded
+/// project, `/r/alpha` (sorted first by its `Attention`), and the expanded order
+/// `[1, 3, 2]` must come from `build_with_runs`: plain `build` lists window 3 after
+/// window 2 (`[1, 2, 3, 6]`), and the folded `rows()` does not contain window 1 at all.
+#[test]
+fn focus_relative_reaches_the_orchestrator_even_when_folded() {
+    use crate::tree::run_fixtures::{PROJECT, pty, three_task_fixture};
+    let (snapshot, mut windows) = three_task_fixture();
+    windows[0].project = "/r/alpha".into();
+    windows[0].cwd = "/r/alpha".into();
+    windows[0].status = Status::Attention;
+    windows.push(pty(2, "api", PROJECT, Status::Idle));
+    let mut app = app_with_runs(windows, snapshot);
+    assert_eq!(tree::agent_order(&app.rows()), vec![1, 3, 2]);
+    assert!(app.tree.toggle(&tree::NodeKey::Project("/r/alpha".into())));
+    assert_eq!(tree::agent_order(&app.rows()), vec![3, 2]);
+
+    let _ = app.focus(1);
+    prefix(&mut app);
+    press(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
+    assert_eq!(app.focused, Some(3), "the orchestrator follows window 1");
+
+    let _ = app.focus(1);
+    prefix(&mut app);
+    press(&mut app, KeyCode::Char('k'), KeyModifiers::NONE);
+    assert_eq!(app.focused, Some(2), "window 2 precedes window 1, wrapping");
+}
+
+/// M8c.3: a snapshot prunes run keys and keeps a run-only project's fold.
+#[test]
+fn a_snapshot_prunes_the_keys_of_runs_that_left() {
+    use crate::tree::run_fixtures::{gate_fixture, snapshot};
+    let (snap, _) = gate_fixture();
+    let mut app = app_with_runs(vec![], snap.clone());
+    let run_key = tree::NodeKey::Run("add-reset-3f9a".into());
+    let project = tree::NodeKey::Project("/r/demo".into());
+    assert!(app.tree.toggle(&run_key));
+    assert!(app.tree.toggle(&project));
+    deliver(&mut app, snap);
+    let _ = app.on_daemon(DaemonMsg::WindowsChanged { windows: vec![] });
+    assert!(app.tree.is_collapsed(&run_key));
+    assert!(
+        app.tree.is_collapsed(&project),
+        "a shown run names the project"
+    );
+
+    deliver(&mut app, snapshot(20_000, vec![]));
+    assert!(!app.tree.is_collapsed(&run_key));
+    assert!(!app.tree.is_collapsed(&project));
+}

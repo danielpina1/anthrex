@@ -351,3 +351,50 @@ fn tree_groups_worktree_windows_under_the_repository() {
         .count();
     assert_eq!(window_rows, 2);
 }
+
+/// M8c.3: an `App` holding `windows` and the run snapshot `snapshot`.
+fn app_with_runs(windows: Vec<WindowInfo>, snapshot: proto::RunsSnapshot) -> App {
+    let mut app = App::new(windows, "/tmp".into(), UiSettings::default());
+    let _ = app.on_run_reply(proto::RunReply::Snapshot(snapshot));
+    app
+}
+
+fn run_line(app: &App, width: u16) -> String {
+    let rows = app.rows();
+    let row = rows
+        .iter()
+        .find(|row| matches!(row.kind, tree::RowKind::Run { .. }))
+        .expect("a run row");
+    spans_text(&ui::tree_view::narrow_line(app, row, width, 1, false))
+}
+
+#[test]
+fn the_sidebar_line_of_a_run_names_its_goal_and_progress() {
+    let (snapshot, windows) = tree::run_fixtures::gate_fixture();
+    let app = app_with_runs(windows, snapshot);
+    let text = run_line(&app, 40);
+    assert!(text.starts_with("├─"), "{text:?}");
+    assert!(text.contains('◉'), "{text:?}");
+    assert!(text.contains("Add password reset"), "{text:?}");
+    assert!(text.ends_with("0/2"), "{text:?}");
+    assert_eq!(UnicodeWidthStr::width(text.as_str()), 40, "{text:?}");
+
+    let (snapshot, windows) = tree::run_fixtures::three_task_fixture();
+    let app = app_with_runs(windows, snapshot);
+    let text = run_line(&app, 40);
+    assert!(text.contains("◉ 1 Add password reset"), "{text:?}");
+    assert!(text.ends_with("1/3"), "{text:?}");
+    // A narrow sidebar keeps the glyph and the position and cuts the goal.
+    let text = run_line(&app, 14);
+    assert!(text.contains("◉ 1 "), "{text:?}");
+    assert_eq!(UnicodeWidthStr::width(text.as_str()), 14, "{text:?}");
+}
+
+#[test]
+fn a_run_with_an_empty_goal_shows_its_id() {
+    let (mut snapshot, windows) = tree::run_fixtures::gate_fixture();
+    snapshot.runs[0].goal = String::new();
+    let app = app_with_runs(windows, snapshot);
+    let text = run_line(&app, 40);
+    assert!(text.contains("add-reset-3f9a"), "{text:?}");
+}

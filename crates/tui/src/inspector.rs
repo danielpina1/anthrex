@@ -82,6 +82,30 @@ pub fn inspect(row: &Row<'_>, app: &App) -> Inspection {
             name: subagent_name(info),
             fields: subagent_fields(row, info, app),
         },
+        // A run's own projection is task M8c.7's; until then its state and progress.
+        RowKind::Run { run, .. } => {
+            let (merged, total) = tree::run_progress(run);
+            Inspection {
+                glyph: Span::styled(
+                    theme::RUN_GLYPH,
+                    Style::default().fg(theme::run_color(run.state)),
+                ),
+                name: format!("{}  {}", run.run_id, run.goal),
+                fields: vec![
+                    field("state", run.state.label()),
+                    field("tasks", format!("{merged}/{total} merged")),
+                ],
+            }
+        }
+        // The run view's rows (task M8c.4) are projected by task M8c.7.
+        RowKind::Planner { .. }
+        | RowKind::Scout { .. }
+        | RowKind::Task { .. }
+        | RowKind::AgentRound { .. } => Inspection {
+            glyph: status_span(Status::Idle, app),
+            name: crate::graph::content_text(row),
+            fields: vec![],
+        },
     }
 }
 

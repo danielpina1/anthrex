@@ -121,6 +121,12 @@ pub fn tree_text(windows: &[WindowInfo], project: Option<ProjectQuery<'_>>) -> S
                 tree::format_elapsed(subagent_duration(info)),
                 tool_suffix(info.tool.as_deref())
             ),
+            // `tree::build` lists plain windows only; run rows need the run snapshot.
+            RowKind::Run { .. }
+            | RowKind::Planner { .. }
+            | RowKind::Scout { .. }
+            | RowKind::Task { .. }
+            | RowKind::AgentRound { .. } => Ok(()),
         }
         .expect("writing to a String cannot fail");
     }
@@ -177,7 +183,12 @@ pub fn tree_json(windows: &[WindowInfo], project: Option<ProjectQuery<'_>>) -> T
                         .map(subagent_json)
                         .collect(),
                 }),
-            RowKind::Subagent { .. } => {}
+            RowKind::Subagent { .. }
+            | RowKind::Run { .. }
+            | RowKind::Planner { .. }
+            | RowKind::Scout { .. }
+            | RowKind::Task { .. }
+            | RowKind::AgentRound { .. } => {}
         }
     }
     result

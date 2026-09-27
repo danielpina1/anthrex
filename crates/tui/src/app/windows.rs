@@ -41,8 +41,11 @@ impl App {
         {
             visible[(current as isize + delta).rem_euclid(len) as usize]
         } else {
-            let expanded = tree::agent_order(&tree::build(
+            // Every fold open (milestone 8c decision 10): the orchestrator's place in
+            // the order holds even while its project is folded.
+            let expanded = tree::agent_order(&tree::build_with_runs(
                 &self.windows,
+                &self.runs.runs,
                 &crate::tree::TreeState::default(),
             ));
             let current = self
@@ -126,8 +129,9 @@ impl App {
         self.windows = windows;
         self.prune_git();
         self.windows_received_at = Instant::now();
+        self.tree.prune_runs(&self.runs.runs);
         self.tree.prune(&self.windows);
-        let rows = tree::build(&self.windows, &self.tree);
+        let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
         self.tree.repair_selection(&rows);
         // Only on the edges decision 15 names, never on every list. The daemon
         // republishes on every status flip and every output event — several

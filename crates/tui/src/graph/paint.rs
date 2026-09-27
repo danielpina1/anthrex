@@ -284,6 +284,15 @@ fn glyph_and_color(kind: &RowKind<'_>, app: &App) -> (&'static str, Color) {
             theme::subagent_glyph(info, app.spinner_frame),
             theme::subagent_color(info),
         ),
+        RowKind::Run { run, .. } => (theme::RUN_GLYPH, theme::run_color(run.state)),
+        // The run view's rows (task M8c.4) get their glyphs from task M8c.5.
+        RowKind::Planner { .. }
+        | RowKind::Scout { .. }
+        | RowKind::Task { .. }
+        | RowKind::AgentRound { .. } => (
+            theme::status_glyph(proto::Status::Idle, app.spinner_frame),
+            theme::status_color(proto::Status::Idle),
+        ),
     }
 }
 

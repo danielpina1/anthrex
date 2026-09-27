@@ -225,7 +225,34 @@ fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, String, String) {
                 ),
             )
         }
+        RowKind::Run { run, .. } => run_footer(run),
+        // The run view's rows (task M8c.4) get their single line from task M8c.5.
+        RowKind::Planner { .. }
+        | RowKind::Scout { .. }
+        | RowKind::Task { .. }
+        | RowKind::AgentRound { .. } => (
+            Span::styled(
+                theme::status_glyph(proto::Status::Idle, app.spinner_frame),
+                Style::default().fg(theme::status_color(proto::Status::Idle)),
+            ),
+            graph::content_text(row),
+            String::new(),
+        ),
     }
+}
+
+/// A run's footer until task M8c.5's single line: its glyph, id and goal, then its
+/// state and progress.
+fn run_footer(run: &proto::RunInfo) -> (Span<'static>, String, String) {
+    let (merged, total) = tree::run_progress(run);
+    (
+        Span::styled(
+            theme::RUN_GLYPH,
+            Style::default().fg(theme::run_color(run.state)),
+        ),
+        format!("{}  {}", run.run_id, run.goal),
+        format!("  {}  {merged}/{total}", run.state.label()),
+    )
 }
 
 /// How long a sub-agent that has stopped ran for. Both fields are ages, so the

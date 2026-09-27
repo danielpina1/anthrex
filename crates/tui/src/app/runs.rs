@@ -4,6 +4,7 @@
 //! replies this client asked for.
 
 use super::{App, Effect};
+use crate::tree;
 use proto::{AgentRoundInfo, ClientMsg, RunReply, RunRequest, RunsSnapshot};
 use std::time::Instant;
 
@@ -74,7 +75,7 @@ impl App {
             // restarted daemon counts from the start again. A push also proves the
             // subscription is live, so a pending retry has nothing left to do.
             RunReply::Snapshot(snapshot) => {
-                self.runs = snapshot;
+                self.replace_runs(snapshot);
                 self.runs_received_at = Instant::now();
                 self.run_subscribed = true;
             }
@@ -91,6 +92,23 @@ impl App {
             | RunReply::Stats(_) => {}
         }
         vec![]
+    }
+
+    /// Task M8c.3: the tree follows the snapshot as it follows a window list —
+    /// fold state of runs that left is pruned, the selection repaired, and the
+    /// selection revealed only when the rows changed (decision 15 of milestone 4.6).
+    fn replace_runs(&mut self, snapshot: RunsSnapshot) {
+        let previous_keys: Vec<_> = self.rows().into_iter().map(|row| row.key).collect();
+        let previous_selection = self.tree.selected.clone();
+        self.runs = snapshot;
+        self.tree.prune_runs(&self.runs.runs);
+        self.tree.prune(&self.windows);
+        let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
+        self.tree.repair_selection(&rows);
+        let changed = rows.iter().map(|row| &row.key).ne(previous_keys.iter());
+        if changed || self.tree.selected != previous_selection {
+            self.reveal_tree_anchor();
+        }
     }
 
     /// Decision 2: the daemon's unix seconds as this client sees them now — the
