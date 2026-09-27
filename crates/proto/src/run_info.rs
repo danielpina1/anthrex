@@ -48,13 +48,14 @@ impl TokenUsage {
     }
 }
 
-/// Field-wise (milestone 8b's usage by role).
+/// Field-wise and saturating (milestone 8b's usage by role): a sum never panics or
+/// wraps, whatever a stream or an OTLP export reported.
 impl std::ops::AddAssign for TokenUsage {
     fn add_assign(&mut self, other: Self) {
-        self.input += other.input;
-        self.output += other.output;
-        self.cache_read += other.cache_read;
-        self.cache_write += other.cache_write;
+        self.input = self.input.saturating_add(other.input);
+        self.output = self.output.saturating_add(other.output);
+        self.cache_read = self.cache_read.saturating_add(other.cache_read);
+        self.cache_write = self.cache_write.saturating_add(other.cache_write);
     }
 }
 

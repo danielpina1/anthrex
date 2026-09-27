@@ -501,6 +501,33 @@ fn token_usage_add_assign_is_field_wise() {
     );
 }
 
+/// M8b.15 review: `+=` saturates field by field, so a huge sum never panics (debug) or
+/// wraps (release).
+#[test]
+fn token_usage_add_assign_saturates() {
+    let mut total = TokenUsage {
+        input: u64::MAX - 1,
+        output: 5,
+        cache_read: u64::MAX,
+        cache_write: 1,
+    };
+    total += TokenUsage {
+        input: 10,
+        output: 7,
+        cache_read: u64::MAX,
+        cache_write: u64::MAX,
+    };
+    assert_eq!(
+        total,
+        TokenUsage {
+            input: u64::MAX,
+            output: 12,
+            cache_read: u64::MAX,
+            cache_write: u64::MAX,
+        }
+    );
+}
+
 /// M8b.11 review (I4, m3): a meta written before `project` existed, and a `Confirm`
 /// without `shown`, still read.
 #[test]
