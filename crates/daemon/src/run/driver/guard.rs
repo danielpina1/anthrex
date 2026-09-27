@@ -90,7 +90,8 @@ pub(super) fn reply_of(kind: &EventKind) -> Option<ReplyId> {
         | EventKind::Cancel { reply, .. }
         | EventKind::Resume { reply, .. }
         | EventKind::Finish { reply, .. }
-        | EventKind::Tool { reply, .. } => Some(*reply),
+        | EventKind::Tool { reply, .. }
+        | EventKind::Promote { reply, .. } => Some(*reply),
         EventKind::BaseAdvanced { .. }
         | EventKind::OpDone { .. }
         | EventKind::Signal { .. }

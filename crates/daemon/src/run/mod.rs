@@ -47,6 +47,7 @@ pub mod role_launch;
 pub mod roster;
 pub mod seatbelt;
 pub mod snapshot;
+pub mod triage;
 pub mod validate;
 mod validate_graph;
 

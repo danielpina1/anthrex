@@ -415,3 +415,26 @@ fn a_check_summary_names_its_source() {
     assert!(out.contains(", summary by its fallback\n"), "{out}");
     assert_eq!(out.matches("summary by").count(), 2, "{out}");
 }
+
+/// M8b decision 24: a fast-path run's header names its path and what triage decided; a
+/// run from a plan file has no path line.
+#[test]
+fn a_fast_path_run_reports_its_path() {
+    let mut run = base_run();
+    assert!(!render(&run, 2_000).contains("path: "));
+    let triage = proto::TriageInfo {
+        kinds: vec![proto::TaskKind::Code, proto::TaskKind::Docs],
+        scale: proto::Scale::Single,
+        path: proto::RunPath::Fast,
+        reason: "small".into(),
+        source: proto::DeciderSource::Decider,
+        fallback_reason: None,
+        at: 1,
+    };
+    crate::run::triage::mark_fast(&mut run, triage, None);
+    let out = render(&run, 2_000);
+    assert!(
+        out.contains("Approved by: fast path\npath: fast (triage: code,docs/single, decider)\n"),
+        "{out}"
+    );
+}

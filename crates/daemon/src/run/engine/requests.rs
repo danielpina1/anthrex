@@ -4,7 +4,10 @@
 //! `complete.rs` and `merge.rs` answer cancel, finish and a halted run's resume;
 //! `restore.rs` (M8a.15) answers restore and a paused run's resume.
 
-use proto::{BlockReason, PlanEdit, RunState, Runtime, Size, TaskState};
+use proto::{
+    BlockReason, DeciderSource, PlanEdit, RunPath, RunState, Runtime, Size, SizeCheckInfo,
+    TaskState,
+};
 
 use super::dispatch::{finishing_as, history, salvage_ref};
 use super::schedule::deps_done;
@@ -13,9 +16,10 @@ use super::{
     Effect, EngineState, OpKind, OpResult, ReplyId, deciders, emit_op, ladder, next_op, outbox,
     restore, review,
 };
+use crate::decider::fallback::SIZED_BY_TRIAGE;
 use crate::run::edits::{EditConsequence, apply_edits};
 use crate::run::env::profile_env;
-use crate::run::model::{FreshSession, LogEntry, Run};
+use crate::run::model::{FreshSession, LogEntry, Run, SizeCheckState, hh_mm};
 use crate::run::reach::reachable_runtimes;
 use crate::run::roster::escalate;
 use crate::run::validate::EditScope;
@@ -56,7 +60,12 @@ pub(super) fn start(
     if state.runs.contains_key(&run.id) {
         return reply(fx, id, Err(format!("run {} already exists", run.id)));
     }
-    if run.approved_by.as_deref() == Some("--yes") {
+    let fast = run.path == Some(RunPath::Fast);
+    if fast {
+        // M8b decision 24: a fast-path run has no plan gate.
+        run.state = RunState::Running;
+        log(&mut run, now, "started on the fast path; no plan gate");
+    } else if run.approved_by.as_deref() == Some("--yes") {
         run.state = RunState::Running;
         log(&mut run, now, "started; approved by --yes");
     } else {
@@ -73,9 +82,22 @@ pub(super) fn start(
         env: profile_env(&run.profile, &path),
     };
     emit_op(&mut run, op, None, kind, fx);
-    // M8b decision 19: every task is cross-checked; one waiting is not runnable.
-    let ids: Vec<String> = run.tasks.iter().map(|t| t.id().to_string()).collect();
-    deciders::cross_check(&mut run, &ids, now, fx);
+    // M8b decision 19: every task is cross-checked; one waiting is not runnable. The
+    // fast path's task is not: triage sized it a moment earlier (ruling R-T13-1).
+    if fast {
+        for task in &mut run.tasks {
+            task.size_check = Some(SizeCheckState::Done(SizeCheckInfo {
+                engine: task.size,
+                decided: None,
+                agreed: true,
+                reason: SIZED_BY_TRIAGE.into(),
+                source: DeciderSource::Fallback,
+            }));
+        }
+    } else {
+        let ids: Vec<String> = run.tasks.iter().map(|t| t.id().to_string()).collect();
+        deciders::cross_check(&mut run, &ids, now, fx);
+    }
     reply(fx, id, Ok(run.id.clone()));
     state.runs.insert(run.id.clone(), run);
 }
@@ -133,6 +155,46 @@ pub(super) fn approve(
     }
     log(run, now, "approved by the user");
     reply(fx, id, Ok(format!("run {run_id} approved")));
+}
+
+/// M8b decision 25: `run promote` records the user's wish on a live fast-path run.
+/// Nothing else changes: no task, op or window. Milestone 9 performs the promotion.
+pub(super) fn promote(
+    state: &mut EngineState,
+    id: ReplyId,
+    run_id: &str,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
+    let Some(run) = state.runs.get_mut(run_id) else {
+        return reply(fx, id, Err(unknown(run_id)));
+    };
+    if run.path != Some(RunPath::Fast) {
+        return reply(fx, id, Err(format!("run {run_id} is not a fast-path run")));
+    }
+    if run.state.is_terminal() {
+        return reply(
+            fx,
+            id,
+            Err(format!("run {run_id} is {}", run.state.label())),
+        );
+    }
+    if let Some(at) = run.promote_requested_at {
+        let text = format!(
+            "run {run_id} was already marked for promotion at {}",
+            hh_mm(at)
+        );
+        return reply(fx, id, Ok(text));
+    }
+    run.promote_requested_at = Some(now);
+    log(run, now, "promotion to a planned run requested by the user");
+    reply(
+        fx,
+        id,
+        Ok(format!(
+            "recorded: run {run_id} is marked for promotion to a planned run. Until the orchestrator exists (milestone 9) nothing else changes: the fast-path task continues and the run finishes as a fast-path run."
+        )),
+    );
 }
 
 /// Decision 14: `run reject` discards the run (decision 20): every worktree salvaged and

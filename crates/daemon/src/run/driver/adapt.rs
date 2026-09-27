@@ -14,6 +14,8 @@
 //!
 //! M8b.13: a size check's `evidence_refs` are read into `Evidence` first
 //! ([`read_evidence`], on `spawn_blocking`), only from the reports anthrex stored.
+//!
+//! M8b.14: `RunRequest::StartGoal`, in `adapt_goal.rs`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,6 +35,11 @@ use crate::run::engine::{EventKind, OpResult};
 use crate::run::model::{LogEntry, Run};
 use crate::run::plan::Preflight;
 use crate::scout::service::ScoutService;
+
+// M8b.14: `run start --goal` (decision 22).
+#[path = "adapt_goal.rs"]
+mod goal;
+pub(super) use goal::BuildError;
 
 /// What decision 6 chose, for the run `build_run` makes.
 pub(super) struct ProfileChoice {

@@ -69,6 +69,8 @@ pub fn run_profile(
         };
     };
     let mut spec = stored.spec();
+    // A plan whose profile is the stored one (the fast path's, M8b.14) ignores nothing.
+    let same = *plan == spec;
     // The stored extras, then the plan's, then the config's: the config's `profile` is
     // cleared for this run (`apply_choice`), so its entries travel in the spec.
     let mut protected: Vec<String> = Vec::new();
@@ -85,6 +87,7 @@ pub fn run_profile(
     spec.protected = (!protected.is_empty()).then_some(protected);
     let notes = set_keys(plan)
         .into_iter()
+        .filter(|_| !same)
         .map(|key| {
             format!(
                 "profile.{key} from the plan file is ignored: this repository has a stored profile ({})",

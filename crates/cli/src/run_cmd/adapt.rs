@@ -1,0 +1,113 @@
+//! Milestone 8b's `anthrex run` commands: `run start --goal` (decision 22) and
+//! `run promote` (decision 25). `run stats` arrives with M8b.17.
+
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use proto::{RunReply, RunRequest};
+
+use super::{Runs, print_outcome};
+
+/// `run start --goal`'s reply bound (decision 22): [`super::RUN_REQUEST_TIMEOUT`] for
+/// M8a's start path, the largest configurable `deciders.timeout_secs` (600 s) for the
+/// triage call, and 30 s for the request's own preflight and `git ls-files`.
+pub const GOAL_REQUEST_TIMEOUT: Duration = Duration::from_secs(810);
+
+/// `run start --goal`: on the fast path the run id on stdout and triage's message on
+/// stderr; any refusal, the planned path's included, is the command's error (exit 1).
+pub(super) async fn start_goal(
+    socket: &Path,
+    dir: Option<PathBuf>,
+    goal: String,
+    (yes, trust_project, unconfined_checks): (bool, bool, bool),
+) -> anyhow::Result<()> {
+    let dir = crate::resolve_dir(dir)?;
+    tui::spawn::ensure_daemon(&std::env::current_exe()?, socket).await?;
+    let mut runs = Runs::connect(socket).await?;
+    let reply = runs
+        .request(RunRequest::StartGoal {
+            goal,
+            dir,
+            yes,
+            trust_project,
+            unconfined_checks,
+        })
+        .await?;
+    match reply {
+        RunReply::Triaged {
+            run_id: Some(run_id),
+            message,
+            ..
+        } => {
+            println!("{run_id}");
+            eprintln!("{message}");
+            Ok(())
+        }
+        RunReply::Triaged { message, .. } => anyhow::bail!(message),
+        other => print_outcome(other),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+    use clap::error::ErrorKind;
+    use proto::RunRequest;
+
+    use super::super::{RunCommand, request_timeout};
+    use super::GOAL_REQUEST_TIMEOUT;
+    use std::time::Duration;
+
+    #[derive(Parser, Debug)]
+    struct Cli {
+        #[command(subcommand)]
+        command: RunCommand,
+    }
+
+    fn parse(args: &[&str]) -> Result<RunCommand, ErrorKind> {
+        let mut all = vec!["run"];
+        all.extend_from_slice(args);
+        Cli::try_parse_from(all)
+            .map(|cli| cli.command)
+            .map_err(|e| e.kind())
+    }
+
+    #[test]
+    fn goal_and_plan_are_mutually_exclusive_and_one_is_required() {
+        assert_eq!(
+            parse(&["start", "--plan", "p.toml", "--goal", "fix it"]).unwrap_err(),
+            ErrorKind::ArgumentConflict
+        );
+        assert_eq!(
+            parse(&["start", "--yes"]).unwrap_err(),
+            ErrorKind::MissingRequiredArgument
+        );
+        let goal = format!(
+            "{:?}",
+            parse(&["start", "--goal", "fix it", "--yes"]).unwrap()
+        );
+        assert!(goal.contains("goal: Some(\"fix it\")"), "{goal}");
+        let plan = format!("{:?}", parse(&["start", "--plan", "p.toml"]).unwrap());
+        assert!(plan.contains("plan: Some(\"p.toml\")"), "{plan}");
+        let promote = format!("{:?}", parse(&["promote", "3f9a"]).unwrap());
+        assert!(promote.contains("Promote"), "{promote}");
+    }
+
+    #[test]
+    fn goal_uses_the_goal_request_timeout() {
+        let goal = RunRequest::StartGoal {
+            goal: "g".into(),
+            dir: "/r".into(),
+            yes: false,
+            trust_project: false,
+            unconfined_checks: false,
+        };
+        assert_eq!(request_timeout(&goal), GOAL_REQUEST_TIMEOUT);
+        assert_eq!(
+            GOAL_REQUEST_TIMEOUT,
+            super::super::RUN_REQUEST_TIMEOUT + Duration::from_secs(600 + 30)
+        );
+        let promote = RunRequest::Promote { run_id: "r".into() };
+        assert_eq!(request_timeout(&promote), super::super::RUN_REQUEST_TIMEOUT);
+    }
+}

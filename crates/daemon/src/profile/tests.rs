@@ -67,6 +67,22 @@ fn stored_profile_replaces_the_plan_profile_entirely() {
     );
 }
 
+/// M8b.14: the fast path's plan carries the stored profile's own spec
+/// (`triage::fast_plan`); it ignores nothing, so the run log gets no note.
+#[test]
+fn a_plan_profile_equal_to_the_stored_one_ignores_nothing() {
+    let stored = with_everything();
+    let chosen = run_profile(
+        Some(&stored),
+        &stored_path(),
+        &stored.spec(),
+        &ProfileSpec::default(),
+    );
+    assert_eq!(chosen.source, ProfileSource::Stored);
+    assert_eq!(chosen.notes, Vec::<String>::new());
+    assert_eq!(chosen.spec, stored.spec());
+}
+
 #[test]
 fn a_stored_profile_leaves_no_gap_for_the_config() {
     let stored = RepoProfile {

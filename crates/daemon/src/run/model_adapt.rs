@@ -16,6 +16,21 @@ impl Run {
             )
         })
     }
+
+    /// M8b decision 25's attention line, once the user asked to promote the run.
+    pub fn promotion_line(&self) -> Option<String> {
+        self.promote_requested_at.map(|at| {
+            format!(
+                "promotion requested at {}; it takes effect when the orchestrator exists (milestone 9)",
+                hh_mm(at)
+            )
+        })
+    }
+}
+
+/// `<hh:mm>` in UTC, as the snapshot's task history shows times.
+pub fn hh_mm(at: u64) -> String {
+    format!("{:02}:{:02}", (at / 3600) % 24, (at / 60) % 60)
 }
 
 impl Task {

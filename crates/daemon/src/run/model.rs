@@ -443,6 +443,18 @@ pub struct Run {
     /// alias `onboarding`), when the repository has one.
     #[serde(default)]
     pub onboarding_report: Option<String>,
+    /// M8b decision 22: `Some(Fast)` for a fast-path run, with what triage decided and
+    /// its usage (decision 29); `None` for a run from a plan file.
+    #[serde(default)]
+    pub path: Option<proto::RunPath>,
+    #[serde(default)]
+    pub triage: Option<proto::TriageInfo>,
+    #[serde(default)]
+    pub triage_usage: TokenUsage,
+    /// M8b decision 25: when the user asked to promote this fast-path run (milestone 9
+    /// performs it).
+    #[serde(default)]
+    pub promote_requested_at: Option<u64>,
 }
 
 impl Run {

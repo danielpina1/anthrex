@@ -51,6 +51,9 @@ pub fn fallback(request: &DeciderRequest) -> DeciderAnswer {
 
 /// Decision 16's fallback reason with the deciders off (exact).
 pub const OFF_REASON: &str = "deciders are off";
+/// Decision 16's reason for the fast path's task, which is never cross-checked
+/// (decision 19): triage sized it.
+pub const SIZED_BY_TRIAGE: &str = "sized by triage";
 
 /// The fallback [`Decision`] for `request`, with one of decision 16's reasons.
 pub fn fallback_decision(request: &DeciderRequest, reason: String) -> Decision {

@@ -13,6 +13,7 @@ use std::time::Duration;
 use proto::run_wire::request;
 use proto::{BaseMovedInfo, FinishAction, Plan, RunReply, RunRequest, Runtime};
 
+use super::adapt::BuildError;
 use super::{RunService, unix_now};
 use crate::run::confine;
 use crate::run::engine::EventKind;
@@ -162,8 +163,20 @@ impl RunService {
             RunRequest::List => RunReply::Snapshot(self.current()),
             RunRequest::Tool(call) => self.tool(call).await,
             // Milestone 8b: refused until the task that answers each one lands.
-            RunRequest::StartGoal { .. } => answer(request::START_GOAL, Err(NOT_YET.into())),
-            RunRequest::Promote { .. } => answer(request::PROMOTE, Err(NOT_YET.into())),
+            RunRequest::StartGoal {
+                goal,
+                dir,
+                yes: _,
+                trust_project,
+                unconfined_checks,
+            } => {
+                self.start_goal(goal, dir, trust_project, unconfined_checks)
+                    .await
+            }
+            RunRequest::Promote { run_id } => answer(
+                request::PROMOTE,
+                self.ask(|reply| EventKind::Promote { reply, run_id }).await,
+            ),
             RunRequest::Stats { .. } => answer(request::STATS, Err(NOT_YET.into())),
             RunRequest::Profile(profile) => self.profile(profile).await,
             RunRequest::Subscribe | RunRequest::Unsubscribe => RunReply::Refused {
@@ -225,6 +238,7 @@ impl RunService {
         let plan = parse_plan(&plan_toml)?;
         self.build_plan(plan, dir, yes, trust_project, unconfined_checks)
             .await
+            .map_err(BuildError::text)
     }
 
     /// Everything `run start` checks and builds for a parsed plan (M8b decision 22 shares
@@ -236,14 +250,14 @@ impl RunService {
         yes: bool,
         trust_project: bool,
         unconfined_checks: bool,
-    ) -> Result<Run, String> {
+    ) -> Result<Run, BuildError> {
         let mut config = self.ctx.orchestrator.clone();
         // Final fix batch F1c round 2: never run worker-written code unconfined unless
         // the user said so, on the command line or in their own config.
         let available = confine::available();
         let allowed = unconfined_checks || config.unconfined_checks;
         if let Some(refusal) = confine::start_refusal(config.worker_sandbox, available, allowed) {
-            return Err(refusal);
+            return Err(refusal.into());
         }
         let timeout = Duration::from_secs(config.git_timeout_secs);
         let git = self.ctx.git.clone();
@@ -272,13 +286,7 @@ impl RunService {
             now,
             yes,
         };
-        let mut run = crate::run::plan::build_run(plan, pre, ctx).map_err(|errors| {
-            errors
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("\n")
-        })?;
+        let mut run = crate::run::plan::build_run(plan, pre, ctx).map_err(BuildError::Plan)?;
         super::adapt::apply_choice(&mut run, choice, now);
         run.limits.unconfined_checks = run.limits.worker_sandbox && !available;
         run.session_nonce = random_nonce();
@@ -292,7 +300,7 @@ impl RunService {
         let runtimes = reachable_runtimes(&run);
         let checks = self.check_runtimes(&run, &runtimes, timeout).await?;
         if let Some((_, text)) = checks.api_key.first() {
-            return Err(text.clone());
+            return Err(text.clone().into());
         }
         if !trust_project {
             let refusals: Vec<String> = checks
@@ -302,7 +310,7 @@ impl RunService {
                 .map(|(_, who, paths)| settings_refusal(who, paths))
                 .collect();
             if !refusals.is_empty() {
-                return Err(refusals.join("\n"));
+                return Err(refusals.join("\n").into());
             }
         }
         run.trusted_project = checks

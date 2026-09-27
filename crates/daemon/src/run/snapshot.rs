@@ -75,10 +75,10 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         report_path: run.report_path(),
         outcome: run.outcome.clone(),
         created_at: run.created_at,
-        // Milestone 8b: the rest are filled by its later tasks (triage, metering, scouts).
-        path: None,
-        triage: None,
-        promote_requested_at: None,
+        // Milestone 8b: `usage` and `scouts` are filled by its later tasks.
+        path: run.path,
+        triage: run.triage.clone(),
+        promote_requested_at: run.promote_requested_at,
         profile_source: run.profile_source,
         usage: None,
         scouts: Vec::new(),
@@ -115,6 +115,7 @@ fn attention(run: &Run) -> Vec<String> {
         lines.push("final check failed on the run head".to_string());
     }
     lines.extend(run.stale_profile_line());
+    lines.extend(run.promotion_line());
     lines
 }
 

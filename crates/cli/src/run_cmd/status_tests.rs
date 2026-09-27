@@ -353,3 +353,39 @@ fn long_cells_keep_a_space() {
         EXAMPLE.replacen("2/4 merged", "1/4 merged", 1)
     );
 }
+
+/// M8b decision 24: a fast-path run shows `fast path` after its state and what triage
+/// decided under its goal; a run from a plan file shows neither.
+#[test]
+fn status_shows_fast_path_and_triage() {
+    let plain = run_block(&example());
+    assert!(!plain.contains("fast path"), "{plain}");
+    assert!(!plain.contains("triage:"), "{plain}");
+    let mut run = example();
+    run.path = Some(proto::RunPath::Fast);
+    run.triage = Some(proto::TriageInfo {
+        kinds: vec![TaskKind::Code],
+        scale: proto::Scale::Single,
+        path: proto::RunPath::Fast,
+        reason: "small".into(),
+        source: proto::DeciderSource::Decider,
+        fallback_reason: None,
+        at: 1,
+    });
+    let text = run_block(&run);
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(
+        lines[0].starts_with("add-reset-3f9a  running fast path  1/4 merged  "),
+        "{text}"
+    );
+    assert_eq!(lines[1], "  goal: Add password reset");
+    assert_eq!(lines[2], "  triage: code/single (decider)");
+    // Paused, the path still follows the state.
+    run.state = RunState::Paused;
+    run.paused_from = Some(RunState::Running);
+    let text = run_block(&run);
+    assert!(
+        text.starts_with("add-reset-3f9a  paused (from running) fast path  1/4 merged  "),
+        "{text}"
+    );
+}

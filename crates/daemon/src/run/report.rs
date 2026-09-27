@@ -17,6 +17,7 @@ use super::contract::{mode_label, sha7, size_label};
 use super::model::Run;
 use super::report_escape::{escape_cell, list_item_text, plain_text_line};
 use super::report_task::render_task;
+use super::triage::{kinds_scale, source_label};
 use crate::headless::argv::CodexProjectConfig;
 
 /// The whole document.
@@ -39,6 +40,14 @@ fn header(run: &Run, out: &mut String) {
     out.push_str(&format!("Goal: {}\n\n", plain_text_line(&run.goal)));
     out.push_str(&format!("State: {}\n", state_line(run)));
     out.push_str(&format!("Approved by: {}\n", approved_by_line(run)));
+    // M8b decision 24: `path: fast (triage: <kinds>/<scale>, <source>)`.
+    if let (Some(proto::RunPath::Fast), Some(t)) = (run.path, &run.triage) {
+        out.push_str(&format!(
+            "path: fast (triage: {}, {})\n",
+            kinds_scale(&t.kinds, t.scale),
+            source_label(t.source)
+        ));
+    }
     out.push_str(&format!(
         "Base branch: {} at {}\n",
         run.base_branch,

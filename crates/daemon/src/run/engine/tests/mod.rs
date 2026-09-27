@@ -21,6 +21,7 @@ mod done;
 mod done_tools;
 mod driver_carries;
 mod exit_duplicates;
+mod fast_path;
 mod fixture;
 mod gates;
 mod gates_exits;

@@ -129,8 +129,25 @@ impl ProfileService {
     /// An automatic detection (decisions 7 and 22): a refusal is stored as the
     /// proposal's `Failed` reason, unless the refusal is that one already runs.
     pub async fn auto_detect(self: &Arc<Self>, pre: &Preflight, origin: ProposalOrigin) {
+        self.detect_or_record(pre, origin, false, false).await;
+    }
+
+    /// `[orchestrator.onboarding] auto`.
+    pub fn onboarding_auto(&self) -> bool {
+        self.ctx.orchestrator.onboarding.auto
+    }
+
+    /// [`auto_detect`](Self::auto_detect) with the request's own flags (decision 22: a
+    /// goal's `--trust-project` and `--unconfined-checks`).
+    pub async fn detect_or_record(
+        self: &Arc<Self>,
+        pre: &Preflight,
+        origin: ProposalOrigin,
+        trust_project: bool,
+        unconfined_checks: bool,
+    ) {
         let Err(reason) = self
-            .start_detection(pre, origin.clone(), false, false)
+            .start_detection(pre, origin.clone(), trust_project, unconfined_checks)
             .await
         else {
             return;

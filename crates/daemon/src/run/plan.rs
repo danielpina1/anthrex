@@ -427,6 +427,10 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         decider_usage: Default::default(),
         scout_reports: Vec::new(),
         onboarding_report: None,
+        path: None,
+        triage: None,
+        triage_usage: Default::default(),
+        promote_requested_at: None,
     })
 }
 

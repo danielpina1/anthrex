@@ -145,6 +145,11 @@ pub enum EventKind {
         reply: ReplyId,
         call: ToolCall,
     },
+    /// M8b decision 25: `run promote`, recorded for milestone 9 to act on.
+    Promote {
+        reply: ReplyId,
+        run_id: String,
+    },
     OpDone {
         run_id: String,
         op: OpId,
@@ -344,6 +349,9 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             action,
         } => complete::finish(&mut state, reply, &run_id, action, now, &mut fx),
         EventKind::Tool { reply, call } => done::tool(&mut state, reply, call, now, &mut fx),
+        EventKind::Promote { reply, run_id } => {
+            requests::promote(&mut state, reply, &run_id, now, &mut fx)
+        }
         EventKind::BaseAdvanced {
             run_id,
             to,
