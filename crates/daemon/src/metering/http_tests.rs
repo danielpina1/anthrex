@@ -233,3 +233,19 @@ fn a_resumed_scan_finds_a_split_terminator_and_keeps_the_caps() {
         Err(Unread::Refuse(413))
     ));
 }
+
+/// M8b.15 re-review 2, m2: a line longer than its cap is refused even when it arrives
+/// whole, CRLF included, in one read; only the first `max + 2` bytes are searched.
+#[tokio::test]
+async fn an_over_long_line_arriving_whole_in_one_read_is_refused() {
+    let (mut buf, mut scanned) = (ReadBuf::default(), 0);
+    buf.extend(b"abcde\r\n");
+    assert!(matches!(
+        buf.line_end(3, &mut scanned),
+        Err(Unread::Refuse(400))
+    ));
+    // A chunk-size line of 1100 bytes ("0…02"), sent with its whole request at once.
+    let size = format!("{}2", "0".repeat(1099));
+    let request = format!("{POST}Transfer-Encoding: chunked\r\n\r\n{size}\r\n{{}}\r\n0\r\n\r\n");
+    assert_eq!(read_one(request.as_bytes()).await, Err(Some(400)));
+}

@@ -229,3 +229,26 @@ async fn restoring_a_run_with_orchestrator_usage_writes_nothing() {
         "run.json was rewritten"
     );
 }
+
+/// M8b.15 re-review 2, m1: a run the restore does change is saved, orchestrator usage
+/// and all. `same_on_disk` answering "same" for it would leave `run.json` stale.
+#[tokio::test(flavor = "multi_thread")]
+async fn restoring_a_run_the_restore_changes_saves_it() {
+    let data = tempfile::tempdir().unwrap();
+    let s = service(data.path());
+    let mut stored = run("live", data.path(), RunState::Running);
+    stored.orchestrator_usage = usage(999);
+    crate::run::journal::save_run(&stored).unwrap();
+    tokio::time::timeout(Duration::from_secs(60), s.restore())
+        .await
+        .expect("the restore returns");
+    assert_eq!(crate::lock(&s.state).runs["live"].state, RunState::Paused);
+    let file = stored.data_dir.join(crate::run::journal::RUN_FILE);
+    let on_disk: Run = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    assert_eq!(
+        on_disk.state,
+        RunState::Paused,
+        "run.json was not rewritten"
+    );
+    assert_eq!(on_disk.orchestrator_usage, usage(999));
+}
