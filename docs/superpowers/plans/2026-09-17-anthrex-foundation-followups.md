@@ -1459,6 +1459,15 @@ scope.
   ends and is evicted. Claude Code exports deltas (M8b.1 item 5), which keep no series,
   so the orchestrator is not affected today. A per-run series cap would close it if M9
   meets a cumulative exporter.
+- **Two concurrent requests for one run can post their totals out of order.** Since the
+  M8b.15 fix round 2, `metering::server::meter` computes each request's totals under the
+  ledger lock, but `answer` posts them after the lock is released. Two requests for the
+  same run on two connections can therefore post in the opposite order, and the pending
+  map (latest wins) keeps the older, lower total until the run's next export corrects it.
+  Only if those were the run's last two exports before it ended does the stored usage
+  stay slightly low. An M9 orchestrator exports on one kept-alive connection, so its
+  requests are sequential. Posting inside the locked section (the sink's `post` is one
+  short mutex and at most one channel send) would close it.
 
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 

@@ -221,10 +221,9 @@ async fn serve(stream: TcpStream, shared: &Arc<Shared>) {
             conn.refuse(status).await;
             return;
         }
-        if conn.respond(status, true).await.is_err() {
+        if conn.keep(status).await.is_err() {
             return;
         }
-        conn.buf.settle();
     }
 }
 
@@ -260,13 +259,22 @@ async fn answer(request: Request, shared: &Arc<Shared>) -> u16 {
     200
 }
 
-/// On a blocking thread: drops the points of runs that are not live, evicts the runs
-/// that went since the last request, applies the rest, and returns the new orchestrator
-/// total of every run they touched.
+/// On a blocking thread, all under the ledger lock (re-review Important 1): evicts the
+/// runs that went since the last request, drops the points of runs that are not live,
+/// applies the rest, and returns the new orchestrator total of every run they touched.
+///
+/// Holding the lock from the generation read to the apply means no other request can
+/// evict a run between this one's live check and its apply. A run evicted as not live
+/// never passes the filter again, since a run that ended never becomes live again, so
+/// its total is never rebuilt from a later request's points alone.
 fn meter(shared: &Shared, mut points: Vec<UsagePoint>) -> Vec<(String, TokenUsage)> {
     let sink = &shared.sink;
-    // Read first: a run that ends after this is evicted at the next request.
+    let mut held = crate::lock(&shared.ledger);
     let generation = sink.live_generation();
+    if held.generation != Some(generation) {
+        held.ledger.retain_runs(|run| sink.is_live(run));
+        held.generation = Some(generation);
+    }
     let live: BTreeSet<String> = points
         .iter()
         .map(|p| p.run_id.as_str())
@@ -276,11 +284,6 @@ fn meter(shared: &Shared, mut points: Vec<UsagePoint>) -> Vec<(String, TokenUsag
         .map(str::to_string)
         .collect();
     points.retain(|p| live.contains(&p.run_id));
-    let mut held = crate::lock(&shared.ledger);
-    if held.generation != Some(generation) {
-        held.ledger.retain_runs(|run| sink.is_live(run));
-        held.generation = Some(generation);
-    }
     let touched = held.ledger.apply(&points);
     touched
         .into_iter()
@@ -291,3 +294,7 @@ fn meter(shared: &Shared, mut points: Vec<UsagePoint>) -> Vec<(String, TokenUsag
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "server_tests.rs"]
+mod tests;

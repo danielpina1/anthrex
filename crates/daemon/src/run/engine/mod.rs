@@ -364,7 +364,13 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             commits,
         } => merge::base_advanced(&mut state, &run_id, to, commits, now),
         EventKind::OrchestratorUsage { run_id, usage } => {
-            if let Some(run) = state.runs.get_mut(&run_id) {
+            // A run that ended keeps the usage it ended with (M8b.15 re-review): a
+            // total that raced its end is dropped.
+            let open = state
+                .runs
+                .get_mut(&run_id)
+                .filter(|r| !r.state.is_terminal());
+            if let Some(run) = open {
                 run.orchestrator_usage = run.orchestrator_base;
                 run.orchestrator_usage += usage;
             }

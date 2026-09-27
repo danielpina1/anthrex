@@ -119,9 +119,12 @@ impl RunService {
         }
         let (mut prepared, skipped) = self.restore_step(runs, replay, held, now);
         crate::lock(&self.held_accepts).retain(|c| !skipped.contains(&c.ctx.run_id));
-        // A run the restore left exactly as loaded is already on disk.
+        // A run the restore left exactly as loaded is already on disk. The base the
+        // restore sets is never stored, so it alone is no reason to write.
         prepared.retain(|item| match item {
-            effects::Ready::Save(run) => as_loaded.get(&run.id) != Some(&**run),
+            effects::Ready::Save(run) => !as_loaded
+                .get(&run.id)
+                .is_some_and(|loaded: &Run| loaded.same_on_disk(run)),
             _ => true,
         });
         self.execute(prepared, now).await;

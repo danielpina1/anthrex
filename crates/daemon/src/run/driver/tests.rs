@@ -284,6 +284,10 @@ async fn a_run_whose_restore_panics_does_not_stop_the_others() {
     let state = crate::lock(&s.state);
     assert_eq!(state.runs.keys().collect::<Vec<_>>(), vec!["good"]);
     assert_eq!(state.runs["good"].state, proto::RunState::Paused);
+    // Review minor 2 (mutant O): the one-at-a-time restore refreshes the live runs too.
+    use crate::metering::UsageSink;
+    assert!(s.is_live("good"), "a run restored on its own is live");
+    assert!(!s.is_live("bad"));
 }
 
 /// A manager restored from a `state.json` holding one dormant headless window of run

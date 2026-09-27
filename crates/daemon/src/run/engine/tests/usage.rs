@@ -198,3 +198,35 @@ fn the_base_and_the_new_total_saturate() {
     });
     assert_eq!(fresh.run().orchestrator_usage, max);
 }
+
+/// M8b.15 re-review (Important 1, defence in depth): a run that ended keeps the usage
+/// it ended with; a late total, from a request that raced the end, changes nothing.
+#[test]
+fn a_run_that_ended_ignores_orchestrator_usage() {
+    for ended in [
+        proto::RunState::Accepted,
+        proto::RunState::Discarded,
+        proto::RunState::Failed,
+    ] {
+        let (mut fx, _window) = working();
+        fx.next(EventKind::OrchestratorUsage {
+            run_id: RUN_ID.into(),
+            usage: usage(100),
+        });
+        assert_eq!(fx.run().orchestrator_usage, usage(100));
+        fx.run_mut().state = ended;
+        fx.next(EventKind::OrchestratorUsage {
+            run_id: RUN_ID.into(),
+            usage: usage(5),
+        });
+        assert_eq!(fx.run().orchestrator_usage, usage(100), "{ended:?}");
+    }
+    // A run that has not ended still takes the latest total.
+    let (mut fx, _window) = working();
+    fx.run_mut().state = proto::RunState::Complete;
+    fx.next(EventKind::OrchestratorUsage {
+        run_id: RUN_ID.into(),
+        usage: usage(5),
+    });
+    assert_eq!(fx.run().orchestrator_usage, usage(5));
+}

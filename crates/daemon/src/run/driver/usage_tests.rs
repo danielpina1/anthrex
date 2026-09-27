@@ -152,3 +152,80 @@ async fn a_restored_run_is_live_and_its_usage_adds_to_what_was_stored() {
     s.stop().await;
     let _ = handle.await;
 }
+
+/// Review minor 2 (mutant B): a step that ends one run and starts another keeps the
+/// count of live runs but changes them, and the new set is taken.
+#[test]
+fn live_runs_that_change_but_keep_their_count_are_refreshed() {
+    let data = tempfile::tempdir().unwrap();
+    let metered = super::Metered::default();
+    let mut state = crate::run::engine::EngineState::default();
+    state
+        .runs
+        .insert("r1".into(), run("r1", data.path(), RunState::Paused));
+    metered.refresh_live(&state);
+    let generation = metered.generation.load(std::sync::atomic::Ordering::SeqCst);
+    state.runs.get_mut("r1").unwrap().state = RunState::Accepted;
+    state
+        .runs
+        .insert("r2".into(), run("r2", data.path(), RunState::Paused));
+    metered.refresh_live(&state);
+    let live = crate::lock(&metered.live).clone();
+    assert_eq!(live, ["r2".to_string()].into_iter().collect());
+    assert!(metered.generation.load(std::sync::atomic::Ordering::SeqCst) > generation);
+}
+
+/// Review minor 2 (mutant D): one drain gives every pending run its total, not only
+/// the first.
+#[tokio::test(flavor = "multi_thread")]
+async fn one_drain_gives_every_pending_run_its_total() {
+    let data = tempfile::tempdir().unwrap();
+    let s = service(data.path());
+    {
+        let mut state = crate::lock(&s.state);
+        for id in ["r1", "r2", "r3"] {
+            state
+                .runs
+                .insert(id.into(), run(id, data.path(), RunState::Paused));
+        }
+    }
+    // Queued before the loop runs, so the three totals are in one drain.
+    s.post("r1".into(), usage(1));
+    s.post("r2".into(), usage(2));
+    s.post("r3".into(), usage(3));
+    let handle = s.spawn(CancellationToken::new());
+    let total = |id: &str| crate::lock(&s.state).runs[id].orchestrator_usage;
+    until("every run has its total", || {
+        (total("r1"), total("r2"), total("r3")) == (usage(1), usage(2), usage(3))
+    })
+    .await;
+    s.stop().await;
+    let _ = handle.await;
+}
+
+/// Review minor 1: the base a restore sets is never stored, so a run the restore does
+/// not otherwise change is not rewritten because it has orchestrator usage.
+#[tokio::test(flavor = "multi_thread")]
+async fn restoring_a_run_with_orchestrator_usage_writes_nothing() {
+    use std::os::unix::fs::MetadataExt;
+    let data = tempfile::tempdir().unwrap();
+    let s = service(data.path());
+    let mut stored = run("done", data.path(), RunState::Accepted);
+    stored.orchestrator_usage = usage(999);
+    stored.revision = 4;
+    crate::run::journal::save_run(&stored).unwrap();
+    let file = stored.data_dir.join(crate::run::journal::RUN_FILE);
+    let before = std::fs::metadata(&file).unwrap().ino();
+    tokio::time::timeout(Duration::from_secs(60), s.restore())
+        .await
+        .expect("the restore returns");
+    assert_eq!(
+        crate::lock(&s.state).runs["done"].orchestrator_usage,
+        usage(999)
+    );
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().ino(),
+        before,
+        "run.json was rewritten"
+    );
+}

@@ -64,6 +64,40 @@ impl ReadBuf {
         out
     }
 
+    /// Where the head ends (past its blank line), once it has all arrived; `413` when
+    /// it is past [`OTLP_MAX_HEADERS`]. `scanned` is how far earlier calls looked.
+    pub(super) fn head_end(&self, scanned: &mut usize) -> Result<Option<usize>, Unread> {
+        if let Some(i) = find_from(self.pending(), b"\r\n\r\n", scanned) {
+            if i + 4 > OTLP_MAX_HEADERS {
+                return Err(Unread::Refuse(413));
+            }
+            return Ok(Some(i + 4));
+        }
+        if self.len() > OTLP_MAX_HEADERS {
+            return Err(Unread::Refuse(413));
+        }
+        Ok(None)
+    }
+
+    /// Where a line of at most `max` bytes ends (its CR), once its CRLF has arrived;
+    /// `400` when it is longer. A line of `max` bytes whose CR has arrived without its
+    /// LF waits for the LF (review I1): TCP may split a read between the two.
+    pub(super) fn line_end(
+        &self,
+        max: usize,
+        scanned: &mut usize,
+    ) -> Result<Option<usize>, Unread> {
+        let pending = self.pending();
+        let window = &pending[..pending.len().min(max + 2)];
+        if let Some(i) = find_from(window, b"\r\n", scanned) {
+            return Ok(Some(i));
+        }
+        if self.len() > max + 1 {
+            return Err(Unread::Refuse(400));
+        }
+        Ok(None)
+    }
+
     /// Between two requests of a kept-alive connection: drops what was consumed, and
     /// gives back what a large request needed beyond [`KEEP_CAPACITY`].
     pub(super) fn settle(&mut self) {
@@ -95,7 +129,7 @@ pub(super) enum Unread {
 /// A connection and the bytes read past the last request.
 pub(super) struct Conn {
     stream: TcpStream,
-    pub buf: ReadBuf,
+    buf: ReadBuf,
 }
 
 impl Conn {
@@ -119,15 +153,10 @@ impl Conn {
     }
 
     pub(super) async fn request(&mut self) -> Result<Request, Unread> {
+        let mut scanned = 0;
         let head_end = loop {
-            if let Some(i) = find(self.buf.pending(), b"\r\n\r\n") {
-                if i + 4 > OTLP_MAX_HEADERS {
-                    return Err(Unread::Refuse(413));
-                }
-                break i + 4;
-            }
-            if self.buf.len() > OTLP_MAX_HEADERS {
-                return Err(Unread::Refuse(413));
+            if let Some(end) = self.buf.head_end(&mut scanned)? {
+                break end;
             }
             self.fill().await?;
         };
@@ -203,20 +232,14 @@ impl Conn {
         Ok(())
     }
 
-    /// One line, without its CRLF, of at most `max` bytes. A line of `max` bytes whose
-    /// CR has arrived without its LF waits for the LF (review I1): TCP may split a read
-    /// between the two.
+    /// One line, without its CRLF, of at most `max` bytes ([`ReadBuf::line_end`]).
     async fn line(&mut self, max: usize) -> Result<Vec<u8>, Unread> {
+        let mut scanned = 0;
         loop {
-            let pending = self.buf.pending();
-            let window = &pending[..pending.len().min(max + 2)];
-            if let Some(i) = find(window, b"\r\n") {
+            if let Some(i) = self.buf.line_end(max, &mut scanned)? {
                 let line = self.buf.take(i);
                 self.buf.skip(2);
                 return Ok(line);
-            }
-            if self.buf.len() > max + 1 {
-                return Err(Unread::Refuse(400));
             }
             self.fill().await?;
         }
@@ -257,7 +280,7 @@ impl Conn {
         }
     }
 
-    pub(super) async fn respond(&mut self, status: u16, keep_alive: bool) -> std::io::Result<()> {
+    async fn respond(&mut self, status: u16, keep_alive: bool) -> std::io::Result<()> {
         let reason = match status {
             200 => "OK",
             400 => "Bad Request",
@@ -278,6 +301,14 @@ impl Conn {
         }
     }
 
+    /// Answers `status` and keeps the connection for the next request, whose reading
+    /// starts from a settled buffer ([`ReadBuf::settle`], review minor 7).
+    pub(super) async fn keep(&mut self, status: u16) -> std::io::Result<()> {
+        self.respond(status, true).await?;
+        self.buf.settle();
+        Ok(())
+    }
+
     /// Answers `status` and closes: the write side is shut, and what the client still
     /// sends is read and dropped for at most [`LINGER`], so it sees the answer rather
     /// than a reset.
@@ -294,47 +325,23 @@ impl Conn {
     }
 }
 
-fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|w| w == needle)
+/// The first `needle` in `haystack`, searching only from where an earlier call over a
+/// shorter prefix of the same bytes stopped (`scanned`), so a haystack that grows a
+/// byte per read is searched in linear time, not quadratic (re-review minor 3). When
+/// it is not found, `scanned` becomes the haystack's length.
+fn find_from(haystack: &[u8], needle: &[u8], scanned: &mut usize) -> Option<usize> {
+    // A needle split across the old end starts at most `len - 1` bytes before it.
+    let from = scanned.saturating_sub(needle.len() - 1).min(haystack.len());
+    let found = haystack[from..]
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .map(|i| from + i);
+    if found.is_none() {
+        *scanned = haystack.len();
+    }
+    found
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn consuming_moves_an_offset_and_settling_gives_memory_back() {
-        let mut buf = ReadBuf::default();
-        buf.extend(&vec![b'a'; 4 << 20]);
-        buf.extend(b"next");
-        let data = buf.data.as_ptr();
-        buf.skip(1);
-        assert_eq!(buf.take(3), b"aaa");
-        // Consuming moved nothing.
-        assert_eq!((buf.data.as_ptr(), buf.start), (data, 4));
-        buf.skip((4 << 20) - 4);
-        assert_eq!(buf.pending(), b"next");
-        buf.settle();
-        assert_eq!(buf.pending(), b"next");
-        assert!(
-            buf.data.capacity() <= KEEP_CAPACITY,
-            "{}",
-            buf.data.capacity()
-        );
-    }
-
-    #[test]
-    fn a_fully_consumed_buffer_is_reused_and_a_long_prefix_is_dropped() {
-        let mut buf = ReadBuf::default();
-        buf.extend(b"abc");
-        buf.skip(3);
-        buf.extend(b"de");
-        assert_eq!((buf.start, buf.data.as_slice()), (0, b"de".as_slice()));
-        let mut buf = ReadBuf::default();
-        buf.extend(&vec![b'x'; COMPACT_AT + 10]);
-        buf.skip(COMPACT_AT);
-        buf.extend(b"y");
-        assert_eq!(buf.start, 0);
-        assert_eq!(buf.pending(), b"xxxxxxxxxxy");
-    }
-}
+#[path = "http_tests.rs"]
+mod tests;

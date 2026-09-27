@@ -2795,6 +2795,40 @@ This round supersedes the notes above where they differ: the connection cap, the
 - **Names beyond the Interfaces:** `metering::UsageSink`, `metering::otlp::ORCHESTRATOR`, `OtlpLedger::retain_runs`, `server::OTLP_SLOT_WAIT`, `Run.orchestrator_base`. `bind` takes an `Arc<dyn UsageSink>` instead of a channel, and `RunService::orchestrator_usage` is replaced by `UsageSink::post`.
 - **File budgets.** `run/driver.rs` 581 → 591. `run/engine/mod.rs` 552 → 554. `metering/server.rs` 452 → 293, with `metering/http.rs` new at 340. `tests/otlp_server.rs` 307 → 551. All stay under 600. `driver/requests.rs` is untouched.
 
+### M8b.15 fix round 2: the re-review's findings (2026-09-27)
+
+- **Metering runs under the ledger lock (Important 1).** `metering::server::meter` now takes the ledger lock first. The generation read, the eviction and the `is_live` filter all happen while holding it, and then the apply.
+  - No other request can evict a run between this request's live check and its apply.
+  - A run evicted as not live can never pass the filter again, because a terminal state is final. So its total can no longer be rebuilt from one request's points, which is how the re-review lowered it from 100 to 5.
+  - Lock order is unchanged: `ledger` → `live`.
+  - Test: `a_run_that_ends_while_a_request_is_metered_is_never_rebuilt_lower` (`metering/server_tests.rs`). A fake sink's `is_live("r")` ends `r` and meters request B on another thread, between A's check and A's apply. At b4f24ce, `r`'s total is 5; now it is 105.
+- **An ended run ignores `OrchestratorUsage` (defence in depth).** In the reducer, a run that is `Accepted`, `Discarded` or `Failed` keeps the usage it ended with. `Complete` still takes totals. Test: `a_run_that_ended_ignores_orchestrator_usage`.
+- **A restart no longer rewrites `run.json` because of the base (minor 1).**
+  - The restore's "left exactly as loaded" check now uses the new `Run::same_on_disk`, which ignores the never-stored `orchestrator_base`. It clones only when the two bases differ.
+  - Test: `restoring_a_run_with_orchestrator_usage_writes_nothing` (the inode is unchanged).
+- **The head and trailer scans are linear (minor 3).**
+  - The scans are now `ReadBuf::head_end` and `ReadBuf::line_end`. Each resumes from where the last read stopped (`find_from`, which backs up by the needle's length minus 1).
+  - Test: `a_head_or_a_trailer_arriving_a_byte_at_a_time_is_scanned_in_linear_time`. It feeds a 16 KiB head and a 16 KiB trailer line one byte per call. It takes 6 ms, against 4.0 s before the fix. The bound is 500 ms, and a row in `docs/timing-budgets.md` records it.
+  - Also `a_resumed_scan_finds_a_split_terminator_and_keeps_the_caps`.
+- **The surviving mutants are covered (minor 2).** Each test below failed with its mutant applied.
+
+  | Mutant | Test |
+  |---|---|
+  | B (`usage.rs`, the id comparison) | `live_runs_that_change_but_keep_their_count_are_refreshed` |
+  | D (`drain_usage` drains one run) | `one_drain_gives_every_pending_run_its_total` |
+  | O (no live refresh after the one-at-a-time restore) | `a_run_whose_restore_panics_does_not_stop_the_others`, which now also asserts `is_live("good")` |
+  | G (a stale `otlp.addr.tmp`) | `a_stale_temporary_address_file_is_replaced` |
+  | H (two different `Content-Length` values) | `two_different_content_lengths_are_refused` |
+  | I (a length together with chunked) | `a_length_together_with_chunked_is_refused` |
+  | J (the cumulative trailer cap) | `trailers_past_the_header_cap_in_total_are_refused` |
+  | P (the `HTTP/1.` check) | `another_protocol_version_is_refused` |
+  | F (`settle`) | `a_kept_alive_answer_settles_the_buffer` |
+
+  For F, the kept-alive answer and `settle` moved together into `Conn::keep`, so the test can drive them on a real socket. `Conn::respond` and `Conn::buf` are now private.
+- **HTTP unit tests moved to `metering/http_tests.rs`.**
+- **Names beyond the Interfaces:** `Run::same_on_disk`, `ReadBuf::head_end`, `ReadBuf::line_end` and `Conn::keep`.
+- **Residual race, recorded under "From M8b.15's review".** Two concurrent requests for one run can still post their totals out of order.
+
 ### Main's decision 33a (merged 2026-09-27)
 
 Main's `6928fce` ("docs: record model routing choices and candidates") added decision 33a: routing decisions and candidate snapshots, stored in `Task.routing_decisions` and copied into `TaskRecord`. It was written against main's older numbering, where one task, "M8b.14 History", covered all of history. In this refreshed brief:

@@ -469,6 +469,17 @@ pub struct Run {
 }
 
 impl Run {
+    /// Whether `self` and `other` store the same `run.json`: equal in everything but
+    /// the fields never stored (`orchestrator_base`, M8b.15 re-review minor 1).
+    pub fn same_on_disk(&self, other: &Run) -> bool {
+        if self.orchestrator_base == other.orchestrator_base {
+            return self == other;
+        }
+        let mut rebased = self.clone();
+        rebased.orchestrator_base = other.orchestrator_base;
+        rebased == *other
+    }
+
     /// `anthrex/<id>/integration`.
     pub fn run_branch(&self) -> String {
         format!("anthrex/{}/integration", self.id)
