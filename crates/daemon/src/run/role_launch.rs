@@ -365,6 +365,10 @@ pub fn jitter_ms(run_id: &str, task_id: &str, session: u32) -> u64 {
 mod filter_tests;
 
 #[cfg(test)]
+#[path = "role_launch_env_tests.rs"]
+mod env_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::run::test_support::{PROFILE, plan_with, run_ok, task_toml};

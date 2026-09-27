@@ -104,3 +104,16 @@ fn worker_prompt_layout() {
     }
     assert!(REVIEWER_CONTRACT.contains("submit_review"));
 }
+
+/// The Claude tool-search fix (2026-09-27): each contract names its tools by the full
+/// id a Claude session sees, so a model that searches for a tool searches for that id.
+/// Codex names MCP tools differently, so the id is marked as Claude's.
+#[test]
+fn contracts_name_each_tool_by_its_claude_id() {
+    for tool in ["task_done", "task_blocked"] {
+        let named = format!("{tool} (in Claude: mcp__anthrex__{tool})");
+        assert!(WORKER_CONTRACT.contains(&named), "{named}");
+    }
+    let named = "submit_review (in Claude: mcp__anthrex__submit_review)";
+    assert!(REVIEWER_CONTRACT.contains(named), "{named}");
+}

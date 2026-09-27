@@ -179,3 +179,27 @@ fn only_a_claude_api_key_session_keeps_the_api_credentials() {
     assert_eq!(scrub(Runtime::Codex, config::ClaudeAuth::Login), all);
     assert_eq!(scrub(Runtime::Codex, config::ClaudeAuth::ApiKey), all);
 }
+
+/// The Claude tool-search fix (2026-09-27): a Claude session's process gets
+/// `ENABLE_TOOL_SEARCH=false`, exactly once and last, whatever `env` says; a Codex
+/// session's `env` is passed through unchanged.
+#[test]
+fn a_claude_session_pins_tool_search_off_and_a_codex_session_does_not() {
+    let env = vec![
+        ("CARGO_TARGET_DIR".to_string(), "/wt/target".to_string()),
+        ("ENABLE_TOOL_SEARCH".to_string(), "true".to_string()),
+    ];
+    let claude = session_vars(Runtime::Claude, &env);
+    assert_eq!(
+        claude,
+        [
+            ("CARGO_TARGET_DIR".to_string(), "/wt/target".to_string()),
+            ("ENABLE_TOOL_SEARCH".to_string(), "false".to_string()),
+        ]
+    );
+    assert_eq!(session_vars(Runtime::Codex, &env), env);
+    assert_eq!(
+        session_vars(Runtime::Claude, &[]),
+        [("ENABLE_TOOL_SEARCH".to_string(), "false".to_string())]
+    );
+}

@@ -242,6 +242,23 @@ pub fn credential_scrub_for(runtime: Runtime, auth: config::ClaudeAuth) -> Vec<&
     names
 }
 
+/// The variables a session's process gets on top of what it inherits: `env` (the
+/// caller's), then, for a Claude session, `ENABLE_TOOL_SEARCH=false`
+/// ([`config::reserved_env::CLAUDE_TOOL_SEARCH`]) last and only once, so neither the
+/// daemon's own environment nor `env` can turn `ToolSearch` back on. Every headless
+/// session (worker, reviewer, scout, decider) starts through
+/// [`session::HeadlessHandle::spawn`], which applies this; the user's own PTY windows
+/// never do.
+pub fn session_vars(runtime: Runtime, env: &[(String, String)]) -> Vec<(String, String)> {
+    let (name, value) = config::reserved_env::CLAUDE_TOOL_SEARCH;
+    let mut vars = env.to_vec();
+    if runtime == Runtime::Claude {
+        vars.retain(|(key, _)| key != name);
+        vars.push((name.to_string(), value.to_string()));
+    }
+    vars
+}
+
 /// `config::ClaudeAuth` has no serde derive (the config crate does not depend on serde),
 /// so the spec spells it as decision 50's own config strings.
 mod claude_auth_serde {
