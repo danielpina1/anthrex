@@ -272,11 +272,10 @@ pub(super) fn rung2(run: &mut Run, i: usize, reason: String, now: u64, fx: &mut 
     let task = &mut run.tasks[i];
     task.rung = 2;
     set_state(task, TaskState::Working, now);
-    // M8b decision 33a: the next worker launch records this escalation, from the
-    // route the last launched session ran (review m4: a second escalation before the
-    // launch keeps the first origin).
-    let from = std::mem::replace(&mut task.route, route);
-    task.escalated_from.get_or_insert(from);
+    // M8b decision 33a: the next worker launch records this escalation, its pool
+    // stepping from the route the selector stepped from (a second escalation before
+    // the launch overwrites the first: the intermediate route never ran).
+    task.escalated_from = Some(std::mem::replace(&mut task.route, route));
     task.fresh_session = Some(FreshSession {
         reason: reason.clone(),
         append: None,

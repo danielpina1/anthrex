@@ -18,7 +18,7 @@ use super::merge::{
 };
 use crate::run::engine::{Effect, EventKind, OpKind, OpResult};
 use crate::run::roster::escalate;
-use crate::run::routing::{escalation_pool, select};
+use crate::run::routing::{PASSED_OVER, escalation_pool, select};
 
 const REPO: &str = "/tmp/data/repos/x-3f9a";
 
@@ -411,6 +411,17 @@ fn identity(d: &proto::RoutingDecision) -> (AgentRole, u32, &str, &str) {
     (d.role, d.session, d.trigger.as_str(), d.source.as_str())
 }
 
+/// The pool is the selector's own: its pick first, nothing passed over.
+fn selectors_own_pool(d: &proto::RoutingDecision) {
+    assert_eq!(d.selected_index, 0, "{d:#?}");
+    assert!(
+        d.candidates
+            .iter()
+            .all(|c| c.skipped_reason.as_deref() != Some(PASSED_OVER)),
+        "{d:#?}"
+    );
+}
+
 /// Review I1: `run retry` of a started task records its fresh session as an escalation
 /// by the escalation policy, chosen from the route the blocked session ran.
 #[test]
@@ -447,13 +458,14 @@ fn a_retried_started_task_records_its_escalation() {
         select(escalation_pool(&fx.run().roster, &before), &chosen),
         "the pool steps from the route the blocked session ran"
     );
+    selectors_own_pool(d);
 }
 
 /// Review I1 and m4: a task that never started, retried twice before its first
-/// launch, records one escalation from the route it was planned on (the earliest),
-/// not from the intermediate route no session ran.
+/// launch, records one escalation whose pool steps from the route the second retry's
+/// selector stepped from (the intermediate one, which no session ran).
 #[test]
-fn a_twice_retried_unstarted_task_escalates_from_its_planned_route() {
+fn a_twice_retried_unstarted_task_escalates_from_its_intermediate_route() {
     let mut fx = Fixture::new(&plan_with(PROFILE, &[task("t1", "S", "a", "")]));
     fx.ready(true);
     let planned = fx.task("t1").route.clone();
@@ -473,11 +485,13 @@ fn a_twice_retried_unstarted_task_escalates_from_its_planned_route() {
             Ok("task t1 retried at rung 2: it is dispatched again".to_string())
         );
     }
-    assert_eq!(fx.task("t1").escalated_from.as_ref(), Some(&planned));
+    let intermediate = escalate(&fx.run().roster, &planned);
+    assert_ne!(intermediate, planned);
+    assert_eq!(fx.task("t1").escalated_from.as_ref(), Some(&intermediate));
     fx.launch_all();
     let t1 = fx.task("t1");
     let roster = &fx.run().roster;
-    let chosen = escalate(roster, &escalate(roster, &planned));
+    let chosen = escalate(roster, &intermediate);
     assert_eq!(t1.route, chosen);
     let decisions = &t1.routing_decisions;
     assert_eq!(decisions.len(), 1, "{decisions:#?}");
@@ -489,9 +503,49 @@ fn a_twice_retried_unstarted_task_escalates_from_its_planned_route() {
     assert_eq!(d.chosen, chosen);
     assert_eq!(
         (d.candidates.clone(), d.selected_index),
-        select(escalation_pool(roster, &planned), &chosen)
+        select(escalation_pool(roster, &intermediate), &chosen)
     );
+    selectors_own_pool(d);
     assert_eq!(t1.escalated_from, None);
+}
+
+/// Re-review m4: rung 2 records the route its selector stepped from, even over an
+/// earlier escalation marker no launch took (constructed here: the marker left set
+/// while a session works).
+#[test]
+fn a_rung_two_escalation_steps_from_the_route_it_replaced() {
+    let (mut fx, window) = working_on(PROFILE, CHECK_MODE);
+    let before = fx.task("t1").route.clone();
+    let stale = {
+        let roster = &fx.run().roster;
+        escalate(roster, &escalate(roster, &before))
+    };
+    assert_ne!(stale, before);
+    fx.task_mut("t1").escalated_from = Some(stale);
+    for _ in 0..2 {
+        let effects = super::gates::accepted(&mut fx, window, serde_json::json!({"summary": "s"}));
+        let (op, _) = only_op(&effects, "Check");
+        fx.done(op, check_result(false));
+    }
+    assert_eq!(fx.task("t1").rung, 2);
+    assert_eq!(fx.task("t1").escalated_from.as_ref(), Some(&before));
+    let effects = super::turns::killed_exit(&mut fx, window);
+    let (op, _) = only_op(&effects, "DiffSoFar");
+    fx.done(
+        op,
+        OpResult::Diff {
+            stat: String::new(),
+            patch: String::new(),
+        },
+    );
+    let t1 = fx.task("t1");
+    let d = &t1.routing_decisions[1];
+    assert_eq!(d.chosen, escalate(&fx.run().roster, &before));
+    assert_eq!(
+        (d.candidates.clone(), d.selected_index),
+        select(escalation_pool(&fx.run().roster, &before), &d.chosen)
+    );
+    selectors_own_pool(d);
 }
 
 /// Review m2: a merged task whose diff was never measured (its measure lost) is not
