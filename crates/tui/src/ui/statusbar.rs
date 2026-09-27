@@ -85,7 +85,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
 
     let toast_width = app
         .toast_text()
-        .map(|text| (UnicodeWidthStr::width(text) as u16 + 1).min(area.width))
+        .map(|text| toast_columns(text, area.width))
         .unwrap_or(0);
 
     match app.tree_input {
@@ -122,7 +122,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 
     if let Some(text) = app.toast_text() {
-        let width = (UnicodeWidthStr::width(text) as u16 + 1).min(area.width);
+        let width = toast_columns(text, area.width);
         let right = Rect {
             x: area.x + area.width - width,
             width,
@@ -340,3 +340,12 @@ pub fn git_spans(state: &GitState, budget: usize) -> Vec<Span<'static>> {
 #[cfg(test)]
 #[path = "statusbar_tests.rs"]
 mod tests;
+
+/// The toast's columns: its text plus one space, clipped to `bar` — computed in `usize`,
+/// so a toast wider than `u16::MAX` cannot overflow (review M8c.2 M1).
+fn toast_columns(text: &str, bar: u16) -> u16 {
+    let clipped = UnicodeWidthStr::width(text)
+        .saturating_add(1)
+        .min(usize::from(bar));
+    u16::try_from(clipped).unwrap_or(bar)
+}

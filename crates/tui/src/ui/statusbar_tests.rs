@@ -311,6 +311,22 @@ fn the_toast_is_never_overwritten_by_git() {
     );
 }
 
+/// Review M8c.2 M1: a toast at least `u16::MAX` columns wide renders clipped to the bar
+/// instead of overflowing the width sum.
+#[test]
+fn a_toast_wider_than_u16_renders_clipped() {
+    let mut app = App::new(
+        vec![window(1, Some("/repo".into()))],
+        "/tmp".into(),
+        UiSettings::default(),
+    );
+    app.set_terminal_size(80, 24);
+    app.toast("x".repeat(usize::from(u16::MAX)));
+    let buffer = render_row(&app, 60);
+    let rendered: String = (0..60).map(|x| buffer[(x, 0)].symbol()).collect();
+    assert!(rendered.contains("xxxx"), "{rendered:?}");
+}
+
 /// Task M6.11, decision 34: the persistent `DISCONNECTED` badge and its status text,
 /// for both `Link::Reconnecting` and `Link::Lost`.
 #[test]

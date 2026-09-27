@@ -237,6 +237,66 @@ fn a_refusal_without_text_still_toasts() {
     assert_eq!(app.toast_text(), Some("first (+1 more)"));
 }
 
+/// Review M3: trailing spaces on a refusal's first line are not shown before the count.
+#[test]
+fn a_refusals_first_line_loses_its_trailing_spaces() {
+    assert_eq!(
+        crate::app::runs::first_line_and_more("a  \t\nb"),
+        Some("a (+1 more)".to_string())
+    );
+}
+
+/// Review M1: a huge reply is capped before it reaches the status bar, which also
+/// renders it without overflowing.
+#[test]
+fn a_huge_reply_toast_is_capped_and_renders() {
+    use crate::app::runs::TOAST_MAX_CHARS;
+    let mut app = app_with(vec![win(1, "a", Status::Idle)]);
+    let _ = app.on_daemon(DaemonMsg::Run(RunReply::Refused {
+        request: "run edit".into(),
+        message: format!("{}\nsecond", "日".repeat(70_000)),
+    }));
+    let expected = format!("{}… (+1 more)", "日".repeat(TOAST_MAX_CHARS));
+    assert_eq!(app.toast_text(), Some(expected.as_str()));
+    // Exactly at the cap: whole.
+    let _ = app.on_daemon(DaemonMsg::Run(RunReply::Done {
+        request: "run edit".into(),
+        message: "x".repeat(TOAST_MAX_CHARS),
+    }));
+    assert_eq!(
+        app.toast_text().map(|t| t.chars().count()),
+        Some(TOAST_MAX_CHARS)
+    );
+    let _ = app.on_daemon(DaemonMsg::Run(RunReply::Done {
+        request: "run edit".into(),
+        message: "x".repeat(TOAST_MAX_CHARS + 1),
+    }));
+    let expected = format!("{}…", "x".repeat(TOAST_MAX_CHARS));
+    assert_eq!(app.toast_text(), Some(expected.as_str()));
+}
+
+/// Review M4: a window `Subscribe` and the run subscription dropped together are both
+/// sent again on the same tick.
+#[test]
+fn both_dropped_subscriptions_are_retried_on_one_tick() {
+    let mut app = app_with(vec![win(1, "a", Status::Idle)]);
+    app.focus(1);
+    let _ = app.run_subscription();
+    let _ = app.on_send_failed(&ClientMsg::Subscribe {
+        window_id: 1,
+        cols: 80,
+        rows: 24,
+    });
+    let _ = app.on_send_failed(&ClientMsg::Run(RunRequest::Subscribe));
+    let effects = app.on_tick();
+    assert_eq!(run_subscribes(&effects), 1, "{effects:?}");
+    let window = effects
+        .iter()
+        .filter(|e| matches!(e, Effect::Send(ClientMsg::Subscribe { window_id: 1, .. })))
+        .count();
+    assert_eq!(window, 1, "{effects:?}");
+}
+
 #[test]
 fn other_run_replies_change_nothing() {
     let mut app = app_with_runs(vec![win(1, "a", Status::Idle)], snapshot(9, 50, vec![]));

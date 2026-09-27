@@ -16,17 +16,30 @@ pub(super) fn no_runs() -> RunsSnapshot {
     }
 }
 
+/// The longest daemon text a toast shows, in characters, before `…`: a reply's text is
+/// the daemon's, and a toast is one status-bar line (review M1).
+pub(crate) const TOAST_MAX_CHARS: usize = 300;
+
+/// `text` cut to [`TOAST_MAX_CHARS`] characters plus `…`, on a char boundary.
+fn capped(text: &str) -> String {
+    let mut out: String = text.chars().take(TOAST_MAX_CHARS).collect();
+    if text.chars().nth(TOAST_MAX_CHARS).is_some() {
+        out.push('…');
+    }
+    out
+}
+
 /// Decision 34: a refusal can be several lines (`engine/requests.rs` joins a batch's
-/// errors with `\n`). Shows the first non-blank line, then ` (+{n} more)` for the
-/// other non-blank lines; `None` when there is no text at all.
+/// errors with `\n`). Shows the first non-blank line, capped, then ` (+{n} more)` for
+/// the other non-blank lines; `None` when there is no text at all.
 pub(crate) fn first_line_and_more(text: &str) -> Option<String> {
     let mut lines = text
         .lines()
         .map(str::trim_end)
         .filter(|l| !l.trim().is_empty());
-    let first = lines.next()?;
+    let first = capped(lines.next()?);
     Some(match lines.count() {
-        0 => first.to_string(),
+        0 => first,
         more => format!("{first} (+{more} more)"),
     })
 }
@@ -65,7 +78,7 @@ impl App {
                 self.runs_received_at = Instant::now();
                 self.run_subscribed = true;
             }
-            RunReply::Done { message, .. } => self.toast(message),
+            RunReply::Done { message, .. } => self.toast(capped(&message)),
             RunReply::Refused { request, message } => {
                 let text = first_line_and_more(&message);
                 self.toast(text.unwrap_or_else(|| format!("{request} refused")));

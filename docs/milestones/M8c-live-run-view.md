@@ -701,6 +701,9 @@ Shared test helpers, created in M8c.3 and extended as tasks need them:
 
 **Commit.** `feat(tui): subscribe to the run snapshot and keep the latest copy`
 
+
+**M8c.2 review fixes.** A reply's text reaches a toast capped at 300 characters plus `…` (`app/runs.rs::TOAST_MAX_CHARS`), for `Done` and for a refusal's first line: a 65 535-column refusal overflowed `ui/statusbar.rs`'s `u16` width sum (a debug panic). That sum is now computed in `usize` (`toast_columns`), for both of its uses. The startup `run_subscription()` in `lib.rs` has no unit test (it needs a real terminal); the M8c.10 smoke stage is its check.
+
 ### M8c.3 Runs in the project tree
 
 **Files.** Modify `crates/tui/src/tree.rs`, `crates/tui/src/tree/rows.rs` (`visible_windows` takes the hidden set), `crates/tui/src/ui/tree_view.rs` (`narrow_line` arms), `crates/tui/src/ui/sidebar.rs`, `crates/tui/src/app/runs.rs` (`prune_runs` after each snapshot and each window list), `crates/tui/src/tree_input.rs` (`App::rows` at `:11` now calls `build_with_runs`; its other `tree::build` calls, `:102, 209, 218, 237, 252, 287`, become `self.rows()`), `crates/tui/src/app/windows.rs` (`:44`, `focus_relative`'s expanded order, becomes `tree::build_with_runs(&self.windows, &self.runs.runs, &TreeState::default())` — not `self.rows()`, which would honour the user's folds; `:130` becomes `self.rows()`) and `crates/tui/src/mouse.rs` (`:142, 179` become `self.rows()`; their exhaustive `NodeKey` matches gain arms: every new key activates through `activate_tree_node`), `crates/tui/src/tree/tests.rs` (three `mod` lines). Create `crates/tui/src/tree/runs.rs`, `crates/tui/src/tree/tests/runs.rs`, `crates/tui/src/tree/tests/run_fixtures.rs`. *(Refreshed 2026-09-27: `App::rows` lives in `tree_input.rs`, and every `tree::build` caller is named.)*
