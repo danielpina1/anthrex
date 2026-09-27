@@ -16,6 +16,8 @@ use super::runs::{app_with_runs, deliver, open_run_view};
 
 #[path = "gate/replies.rs"]
 mod replies;
+#[path = "gate/stale.rs"]
+mod stale;
 
 /// The gate fixture with the brief's edit-form `t1`, the run view open on it.
 pub(super) fn gate() -> App {

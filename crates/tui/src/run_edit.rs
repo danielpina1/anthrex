@@ -41,6 +41,9 @@ struct TaskInfoValues {
     test_mode: TestMode,
     reason: String,
     brief: String,
+    /// The snapshot's own reason and brief, uncleaned, for `opened_from`.
+    raw_reason: Option<String>,
+    raw_brief: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -212,6 +215,7 @@ fn insert_bounded(input: &mut TextInput, text: &str) {
 impl TaskEditForm {
     pub fn new(run_id: &str, task: &TaskInfo) -> Self {
         let spec = task.route_spec.clone();
+        // Invisible characters are dropped here, so an edited field is sent without them.
         let model = clean(spec.model.as_deref().unwrap_or(""), None);
         let reason = clean(task.test_mode_reason.as_deref().unwrap_or(""), None);
         let brief = clean(&task.brief, Some(NEWLINE_MARK));
@@ -237,8 +241,21 @@ impl TaskEditForm {
                 test_mode: task.test_mode,
                 reason,
                 brief,
+                raw_reason: task.test_mode_reason.clone(),
+                raw_brief: task.brief.clone(),
             },
         }
+    }
+
+    /// Review M6: `task` still holds every value the form opened from. An amend sends
+    /// the whole route, so one changed elsewhere would be reverted.
+    pub fn opened_from(&self, task: &TaskInfo) -> bool {
+        let original = &self.original;
+        task.route_spec == original.route_spec
+            && task.size == original.size
+            && task.test_mode == original.test_mode
+            && task.test_mode_reason == original.raw_reason
+            && task.brief == original.raw_brief
     }
 
     /// Every field in order; `Reason` only while the test mode is not `tdd`.
@@ -418,9 +435,12 @@ impl TaskEditForm {
     }
 
     /// A row's value as drawn: the text, and the resolved value shown muted after it
-    /// when the field is `policy` (decision 33).
+    /// when the field is `policy` (decision 33) — only while the runtime is the task's
+    /// current one, since a resolution names one runtime's values (review M4).
     pub fn value_parts(&self, field: EditField) -> (String, Option<String>) {
-        let policy = |resolved: &str| (choice("policy"), Some(resolved.to_string()));
+        let current = self.runtime.unwrap_or(self.resolved.runtime) == self.resolved.runtime;
+        let muted = |resolved: String| Some(resolved).filter(|r| current && !r.is_empty());
+        let policy = |resolved: &str| (choice("policy"), muted(resolved.to_string()));
         match field {
             EditField::Runtime => match self.runtime {
                 Some(runtime) => (choice(runtime_word(runtime)), None),
@@ -428,10 +448,7 @@ impl TaskEditForm {
             },
             EditField::Model if self.model.text().is_empty() => {
                 let resolved = clean(&self.resolved.model, None);
-                (
-                    "policy".to_string(),
-                    Some(resolved).filter(|m| !m.is_empty()),
-                )
+                ("policy".to_string(), muted(resolved))
             }
             EditField::Model => (self.model.text().to_string(), None),
             EditField::Strength => match self.strength {

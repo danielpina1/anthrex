@@ -429,3 +429,110 @@ fn a_pinned_strength_or_effort_back_to_policy_sends_none() {
         "policy is sent as policy, never as the value it resolved to"
     );
 }
+
+#[test]
+fn a_pinned_model_is_kept_byte_for_byte_through_a_strength_or_effort_change() {
+    for hostile in [false, true] {
+        let pinned = if hostile {
+            " m\u{1b}x "
+        } else {
+            "claude-opus-9"
+        };
+        let mut t = edit_fixture_task();
+        t.route_spec.model = Some(pinned.into());
+        let mut form = TaskEditForm::new(RUN_ID, &t);
+        focus(&mut form, EditField::Strength);
+        form.on_key(key(KeyCode::Right));
+        focus(&mut form, EditField::Effort);
+        form.on_key(key(KeyCode::Right));
+        let PlanEdit::AmendTask { route, .. } = amend(&form) else {
+            panic!("an amend");
+        };
+        assert_eq!(
+            route,
+            Some(RouteSpec {
+                runtime: Some(Runtime::Claude),
+                model: Some(pinned.into()),
+                strength: Some(Strength::Fast),
+                effort: Some(Effort::High),
+            }),
+            "an untouched model is the plan's own, hostile {hostile}"
+        );
+    }
+}
+
+#[test]
+fn ctrl_j_outside_the_brief_does_nothing() {
+    let mut t = edit_fixture_task();
+    t.test_mode = TestMode::Check;
+    t.test_mode_reason = Some("renames".into());
+    let mut form = TaskEditForm::new(RUN_ID, &t);
+    for field in [EditField::Model, EditField::Reason] {
+        focus(&mut form, field);
+        let before = form.clone();
+        assert_eq!(form.on_key(ctrl('j')), EditOutcome::Stay);
+        assert_eq!(form, before, "{field:?}");
+    }
+    assert_eq!(form.edits(), Ok(vec![]));
+}
+
+#[test]
+fn a_reason_typed_then_back_to_tdd_is_nothing_changed() {
+    let mut form = edit_fixture_form();
+    focus(&mut form, EditField::TestMode);
+    form.on_key(key(KeyCode::Right));
+    assert_eq!(form.test_mode, TestMode::Check);
+    focus(&mut form, EditField::Reason);
+    typed(&mut form, "x");
+    focus(&mut form, EditField::TestMode);
+    form.on_key(key(KeyCode::Left));
+    assert_eq!(form.test_mode, TestMode::Tdd);
+    assert_eq!(form.on_key(key(KeyCode::Enter)), EditOutcome::Unchanged);
+    assert!(!form.submitting);
+}
+
+#[test]
+fn a_resubmit_clears_the_refusal() {
+    let mut form = edit_fixture_form();
+    focus(&mut form, EditField::Size);
+    form.on_key(key(KeyCode::Right));
+    form.error = Some("task t1: size: below the floor".into());
+    assert!(matches!(
+        form.on_key(key(KeyCode::Enter)),
+        EditOutcome::Submit(_)
+    ));
+    assert_eq!(form.error, None);
+    assert!(form.submitting);
+}
+
+#[test]
+fn after_a_runtime_change_policy_rows_show_no_stale_resolved_value() {
+    let mut form = edit_fixture_form();
+    form.on_key(key(KeyCode::Right));
+    assert_eq!(form.runtime, Some(Runtime::Codex));
+    assert_eq!(form.value_parts(EditField::Model), ("policy".into(), None));
+    assert_eq!(
+        form.value_parts(EditField::Strength),
+        ("‹ policy ›".into(), None)
+    );
+    focus(&mut form, EditField::Effort);
+    form.on_key(key(KeyCode::Right));
+    form.on_key(key(KeyCode::Right));
+    assert_eq!(form.effort, None);
+    assert_eq!(
+        form.value_parts(EditField::Effort),
+        ("‹ policy ›".into(), None)
+    );
+    // Policy resolves to the task's own runtime again, so its values are current.
+    focus(&mut form, EditField::Runtime);
+    form.on_key(key(KeyCode::Right));
+    assert_eq!(form.runtime, None);
+    assert_eq!(
+        form.value_parts(EditField::Model),
+        ("policy".into(), Some("claude-sonnet-5".into()))
+    );
+    assert_eq!(
+        form.value_parts(EditField::Strength),
+        ("‹ policy ›".into(), Some("standard".into()))
+    );
+}

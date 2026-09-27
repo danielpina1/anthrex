@@ -14,7 +14,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use proto::run_wire::request::EDIT;
 use proto::{
     AgentRoundInfo, ClientMsg, RunInfo, RunPath, RunReply, RunRequest, RunState, RunsSnapshot,
-    Runtime, TaskState, WindowInfo,
+    Runtime, TaskInfo, TaskState, WindowInfo,
 };
 use std::time::Instant;
 
@@ -85,6 +85,16 @@ pub(crate) fn state_text(state: RunState) -> &'static str {
 
 fn confirm(message: String, action: PendingAction) -> Modal {
     Modal::Confirm { message, action }
+}
+
+/// Decision 32's approve confirm: the tasks not `cancelled` are the ones that start.
+fn approve_message(run: &RunInfo) -> String {
+    let run_id = &run.run_id;
+    let starting = run.tasks.iter().filter(|t| t.state != TaskState::Cancelled);
+    match starting.count() {
+        1 => format!("Approve run {run_id}? 1 task starts."),
+        n => format!("Approve run {run_id}? {n} tasks start."),
+    }
 }
 
 /// `App.runs` before the first snapshot arrives: revision 0, no runs.
@@ -201,7 +211,7 @@ impl App {
         self.tree.prune_runs(&self.runs.runs);
         self.tree.prune(&self.windows);
         self.close_run_view_if_gone(run_row);
-        self.close_edit_form_if_stale();
+        self.close_gate_modal_if_stale();
         let rows = nav_rows_of(
             &self.windows,
             &self.runs.runs,
@@ -380,14 +390,7 @@ impl App {
             _ => None,
         };
         let modal = match (key, task) {
-            ('a', _) => {
-                let starting = run.tasks.iter().filter(|t| t.state != TaskState::Cancelled);
-                let message = match starting.count() {
-                    1 => format!("Approve run {run_id}? 1 task starts."),
-                    n => format!("Approve run {run_id}? {n} tasks start."),
-                };
-                confirm(message, PendingAction::ApproveRun(run_id))
-            }
+            ('a', _) => confirm(approve_message(run), PendingAction::ApproveRun(run_id)),
             ('x', _) => confirm(
                 format!(
                     "Reject run {run_id}? Its branches and worktrees are removed; \
@@ -443,22 +446,64 @@ impl App {
         }
     }
 
-    /// A snapshot that closes the gate, or drops the form's task, closes the form with
-    /// a toast saying which: its edit could only be refused now.
-    fn close_edit_form_if_stale(&mut self) {
-        let Some(Modal::EditTask(form)) = &self.modal else {
-            return;
+    /// Decision 32's task while the gate is open, else the toast saying why not.
+    fn gate_task(&self, run_id: &str, task_id: &str) -> Result<&TaskInfo, String> {
+        let gone = || format!("{task_id} is no longer in run {run_id}'s plan");
+        let run = self.gate_run(run_id)?;
+        run.tasks.iter().find(|t| t.id == task_id).ok_or_else(gone)
+    }
+
+    /// After every snapshot (review I1 and M6): an open gate `Confirm` or edit form
+    /// whose request could now only be refused, or would do other than it said, closes
+    /// with a toast saying why. A `y` or `Enter` after it sends nothing.
+    fn close_gate_modal_if_stale(&mut self) {
+        let text = match &self.modal {
+            Some(Modal::EditTask(form)) => self.stale_form(form),
+            Some(Modal::Confirm { message, action }) => self.stale_confirm(message, action),
+            _ => None,
         };
-        let (run_id, task_id) = (form.run_id.clone(), form.task_id.clone());
-        let text = match self.gate_run(&run_id) {
-            Err(text) => text,
-            Ok(run) if !run.tasks.iter().any(|task| task.id == task_id) => {
-                format!("{task_id} is no longer in run {run_id}'s plan")
+        if let Some(text) = text {
+            self.modal = None;
+            self.toast(text);
+        }
+    }
+
+    /// The gate closed, the task gone, or — while not submitting, since our own edit
+    /// changes these — the task's values changed elsewhere, so its route would revert.
+    fn stale_form(&self, form: &TaskEditForm) -> Option<String> {
+        let (run_id, task_id) = (&form.run_id, &form.task_id);
+        match self.gate_task(run_id, task_id) {
+            Err(text) => Some(text),
+            Ok(task) if !form.submitting && !form.opened_from(task) => {
+                Some(format!("{task_id} changed in run {run_id}; press e again"))
             }
-            Ok(_) => return,
-        };
-        self.modal = None;
-        self.toast(text);
+            Ok(_) => None,
+        }
+    }
+
+    /// The gate closed; for a remove, its task gone or finished; for an approve, a
+    /// different number of tasks would start than the confirm says.
+    fn stale_confirm(&self, message: &str, action: &PendingAction) -> Option<String> {
+        match action {
+            PendingAction::ApproveRun(run_id) => match self.gate_run(run_id) {
+                Err(text) => Some(text),
+                Ok(run) if approve_message(run) != message => {
+                    Some(format!("run {run_id}'s plan changed; press a again"))
+                }
+                Ok(_) => None,
+            },
+            PendingAction::RejectRun(run_id) => self.gate_run(run_id).err(),
+            PendingAction::RemoveTask { run_id, task_id } => {
+                match self.gate_task(run_id, task_id) {
+                    Err(text) => Some(text),
+                    Ok(task) if task.state.is_finished() => {
+                        Some(format!("{task_id} is no longer in run {run_id}'s plan"))
+                    }
+                    Ok(_) => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     /// Tests move the snapshot's arrival into the past instead of sleeping.
