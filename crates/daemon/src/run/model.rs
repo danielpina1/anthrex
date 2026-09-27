@@ -495,6 +495,10 @@ pub struct Run {
     /// stored profile), for every routing decision's input.
     #[serde(default)]
     pub profile_languages: Vec<String>,
+    /// M8b decision 33: the run was started with history (milestone 8b.16 on). A run
+    /// started before has no phases, diffs or routing decisions, and writes none.
+    #[serde(default)]
+    pub history: bool,
 }
 
 impl Run {

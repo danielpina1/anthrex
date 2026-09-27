@@ -29,7 +29,8 @@ fn set_state_accumulates_phase_times() {
     set_state(task, TaskState::Queued, 150);
     set_state(task, TaskState::Preparing, 157);
     set_state(task, TaskState::Working, 162);
-    set_state(task, TaskState::Check, 262);
+    set_state(task, TaskState::Proof, 262);
+    set_state(task, TaskState::Check, 269);
     set_state(task, TaskState::Review, 282);
     set_state(task, TaskState::MergeQueue, 312);
     set_state(task, TaskState::Merged, 315);
@@ -37,7 +38,8 @@ fn set_state_accumulates_phase_times() {
         queued: 10,
         preparing: 5,
         working: 100,
-        check: 20,
+        proof: 7,
+        check: 13,
         review: 30,
         merge: 3,
         ..PhaseSecs::default()
@@ -150,7 +152,8 @@ fn task_record_from_a_merged_task() {
     task.phases = PhaseSecs {
         queued: 10,
         working: 100,
-        check: 20,
+        proof: 7,
+        check: 13,
         review: 30,
         merge: 3,
         ..PhaseSecs::default()
@@ -462,6 +465,7 @@ fn old_task_record_has_no_routing_decisions() {
     let object = old.as_object_mut().unwrap();
     object.remove("run_record_written");
     object.remove("profile_languages");
+    object.remove("history");
     for task in object["tasks"].as_array_mut().unwrap() {
         for key in [
             "routing_decisions",
@@ -474,6 +478,7 @@ fn old_task_record_has_no_routing_decisions() {
     }
     let loaded: Run = serde_json::from_value(old).unwrap();
     assert!(!loaded.run_record_written && loaded.profile_languages.is_empty());
+    assert!(!loaded.history, "an old run writes no history");
     assert!(!loaded.tasks[0].history_written);
 }
 

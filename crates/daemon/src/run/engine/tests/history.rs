@@ -17,6 +17,8 @@ use super::merge::{
     window_of,
 };
 use crate::run::engine::{Effect, EventKind, OpKind, OpResult};
+use crate::run::roster::escalate;
+use crate::run::routing::{escalation_pool, select};
 
 const REPO: &str = "/tmp/data/repos/x-3f9a";
 
@@ -402,4 +404,129 @@ fn a_failed_run_records_its_unfinished_tasks_then_itself() {
         panic!("a run line");
     };
     assert_eq!(record.outcome, "failed");
+}
+
+/// `(role, session, trigger, source)` of a decision.
+fn identity(d: &proto::RoutingDecision) -> (AgentRole, u32, &str, &str) {
+    (d.role, d.session, d.trigger.as_str(), d.source.as_str())
+}
+
+/// Review I1: `run retry` of a started task records its fresh session as an escalation
+/// by the escalation policy, chosen from the route the blocked session ran.
+#[test]
+fn a_retried_started_task_records_its_escalation() {
+    let (mut fx, window) = super::turns::working();
+    let before = fx.task("t1").route.clone();
+    super::control::blocked(&mut fx, window, "mis_sized", "too big");
+    super::turns::killed_exit(&mut fx, window);
+    let effects = super::control::retry(&mut fx, "t1");
+    let (op, _) = only_op(&effects, "DiffSoFar");
+    let effects = fx.done(
+        op,
+        OpResult::Diff {
+            stat: String::new(),
+            patch: String::new(),
+        },
+    );
+    only_op(&effects, "CreateWindow");
+    let t1 = fx.task("t1");
+    let chosen = escalate(&fx.run().roster, &before);
+    assert_ne!(chosen, before);
+    assert_eq!(t1.route, chosen);
+    assert_eq!(t1.escalated_from, None, "the marker is spent");
+    let decisions = &t1.routing_decisions;
+    assert_eq!(decisions.len(), 2, "{decisions:#?}");
+    let d = &decisions[1];
+    assert_eq!(
+        identity(d),
+        (AgentRole::Worker, 2, "escalation", "escalation_policy")
+    );
+    assert_eq!(d.chosen, chosen);
+    assert_eq!(
+        (d.candidates.clone(), d.selected_index),
+        select(escalation_pool(&fx.run().roster, &before), &chosen),
+        "the pool steps from the route the blocked session ran"
+    );
+}
+
+/// Review I1 and m4: a task that never started, retried twice before its first
+/// launch, records one escalation from the route it was planned on (the earliest),
+/// not from the intermediate route no session ran.
+#[test]
+fn a_twice_retried_unstarted_task_escalates_from_its_planned_route() {
+    let mut fx = Fixture::new(&plan_with(PROFILE, &[task("t1", "S", "a", "")]));
+    fx.ready(true);
+    let planned = fx.task("t1").route.clone();
+    for _ in 0..2 {
+        let (op, _) = pending_one(&fx, "PrepareWorktree", Some("t1"));
+        fx.done(
+            op,
+            OpResult::SetupFailed {
+                output: "no make".into(),
+            },
+        );
+        assert_eq!(fx.task("t1").state, TaskState::Blocked);
+        assert_eq!(fx.task("t1").start_commit, None, "never started");
+        let effects = super::control::retry(&mut fx, "t1");
+        assert_eq!(
+            super::done::one_reply(&effects),
+            Ok("task t1 retried at rung 2: it is dispatched again".to_string())
+        );
+    }
+    assert_eq!(fx.task("t1").escalated_from.as_ref(), Some(&planned));
+    fx.launch_all();
+    let t1 = fx.task("t1");
+    let roster = &fx.run().roster;
+    let chosen = escalate(roster, &escalate(roster, &planned));
+    assert_eq!(t1.route, chosen);
+    let decisions = &t1.routing_decisions;
+    assert_eq!(decisions.len(), 1, "{decisions:#?}");
+    let d = &decisions[0];
+    assert_eq!(
+        identity(d),
+        (AgentRole::Worker, 1, "escalation", "escalation_policy")
+    );
+    assert_eq!(d.chosen, chosen);
+    assert_eq!(
+        (d.candidates.clone(), d.selected_index),
+        select(escalation_pool(roster, &planned), &chosen)
+    );
+    assert_eq!(t1.escalated_from, None);
+}
+
+/// Review m2: a merged task whose diff was never measured (its measure lost) is not
+/// measured from the run head it is already part of; its record goes without a diff.
+#[test]
+fn a_merged_task_without_a_measure_is_recorded_without_one() {
+    let (mut fx, windows) = start_history(PROFILE, &[doc_task("t1", "")]);
+    to_queue(&mut fx, "t1", window_of(&windows, "t1"));
+    merge(&mut fx, "t1", &commit(1));
+    let (measure, _) = fx.op("MeasureDiff");
+    fx.run_mut().pending_ops.retain(|_, p| p.op != measure);
+    assert!(fx.task("t1").head.is_some());
+    let effects = fx.tick();
+    assert!(ops_in(&effects, "MeasureDiff").is_empty(), "{effects:#?}");
+    let added = appends(&effects);
+    assert_eq!(added.len(), 1, "{effects:#?}");
+    let record = task_line(&added[0].2);
+    assert_eq!((record.outcome, record.diff), (TaskOutcome::Merged, None));
+}
+
+/// Review m3: a run started before milestone 8b.16 (its `run.json` has no `history`
+/// flag) writes no history, even with a repository data directory; a run started now
+/// does.
+#[test]
+fn a_run_started_before_history_writes_none() {
+    let (fx, _) = start_history(PROFILE, &[doc_task("t1", "")]);
+    assert!(fx.run().history, "a new run writes history");
+    let (mut fx, windows) = start_history(PROFILE, &[doc_task("t1", "")]);
+    let mut old = serde_json::to_value(fx.run()).unwrap();
+    old.as_object_mut().unwrap().remove("history");
+    let old: crate::run::model::Run = serde_json::from_value(old).unwrap();
+    assert!(!old.history);
+    *fx.run_mut() = old;
+    to_queue(&mut fx, "t1", window_of(&windows, "t1"));
+    merge(&mut fx, "t1", &commit(1));
+    fx.tick();
+    assert!(fx.ops("MeasureDiff").is_empty() && fx.ops("AppendHistory").is_empty());
 }

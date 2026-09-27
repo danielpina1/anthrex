@@ -477,8 +477,11 @@ pub(super) fn retry(
     task.budget_exceeded = 0;
     task.conflicts = 0;
     task.rung = 2;
-    // M8b decision 33a: the next worker launch records this escalation.
-    task.escalated_from = Some(std::mem::replace(&mut task.route, route));
+    // M8b decision 33a: the next worker launch records this escalation, from the
+    // route the last launched session ran (review m4: a second escalation before the
+    // launch keeps the first origin).
+    let from = std::mem::replace(&mut task.route, route);
+    task.escalated_from.get_or_insert(from);
     // Ruling T15-C1: a new budget epoch; rung 4 counts from the fresh session.
     super::clock::new_epoch(task);
     // `kill_worker`'s `supersede` ended the hand-back context (`handed_back`,

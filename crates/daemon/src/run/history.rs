@@ -19,10 +19,11 @@ pub fn task_record_id(run_id: &str, task_id: &str) -> String {
     format!("{run_id}/{task_id}")
 }
 
-/// Whether the run writes history: a run from milestone 8a has no repository data
-/// directory, and writes none.
+/// Whether the run writes history: only a run started with it (`Run.history`, from
+/// milestone 8b.16 on), and never a run from milestone 8a, which has no repository
+/// data directory. A run started before has no phases, diffs or routing decisions.
 pub fn enabled(run: &Run) -> bool {
-    !run.repo_dir.as_os_str().is_empty()
+    run.history && !run.repo_dir.as_os_str().is_empty()
 }
 
 /// The outcome of a run whose records are due: `accepted`, `discarded`, `failed`, or

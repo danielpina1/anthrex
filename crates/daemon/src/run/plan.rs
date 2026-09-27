@@ -436,6 +436,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         promote_requested_at: None,
         run_record_written: false,
         profile_languages: Vec::new(),
+        history: true,
     })
 }
 

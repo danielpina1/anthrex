@@ -1460,6 +1460,18 @@ scope.
   so the orchestrator is not affected today. A per-run series cap would close it if M9
   meets a cumulative exporter.
 
+## From M8b.16's review (2026-09-27), for M8b
+
+- **Phase times are wall-clock, so they include daemon downtime, pauses and the plan-gate
+  wait.** `run/phases.rs::set_state` adds `now - phase_since` to the phase of the state a
+  task leaves. A daemon that is down, a paused run, and the `queued` time of a task
+  re-asserted by `requeue` while the plan awaits approval (`engine/dispatch.rs`) all count.
+  Spec §15 asks for wall-clock per phase, and the inflation only loosens M8b.17's budget
+  refits, so M8b.16 keeps it (controller ruling m5). The fix: at restore
+  (`engine/restore.rs`, next to `clock::stop_at_restore`), close each task's open phase
+  at the task clock's `stopped` time and restart it at `now`; and leave the time a run
+  spends paused, and a task's time before the plan is approved, out of its phases.
+
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
 - **The main pane can switch to a new window while the new-agent form is still open and

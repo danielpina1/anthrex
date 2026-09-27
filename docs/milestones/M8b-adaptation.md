@@ -1851,6 +1851,8 @@ rg -n '\.state = ' crates/daemon/src/run --glob '!**/tests/**' --glob '!*_tests*
 
 **Change.** Decisions 34 and 35.
 
+**Controller ruling (M8b.16 review, Q2).** A plan rejected at the gate is `discarded`, so its never-dispatched tasks keep their `unfinished` records (decision 33 read literally). `stats` leaves every task record with `sessions == 0` out of its task counts and medians: such a task never ran a session, so it says nothing about how tasks of its class perform. Add a case for it to `stats_medians_by_class_over_merged_tasks` or a test of its own.
+
 **Acceptance.** Tests pass. `anthrex run --help` lists `stats`.
 
 **Commit.** `feat: detect reverts after accept and summarise run history with anthrex run stats`
@@ -2883,6 +2885,16 @@ M8b records the initial and escalated workers and every reviewer round. Configur
 
 **File budgets.** `run/model.rs` 530 → 559, `engine/dispatch.rs` 584 → 587, `engine/review.rs` 541 → 544, `engine/ladder.rs` 547 → 549, `engine/mod.rs` 560 → 568, `engine/restore.rs` 401 → 422, `engine/ops.rs` 409 → 436, `edits.rs` 576 → 577, `driver/adapt.rs` 373 → 384, `driver/ops.rs` 581 → 584, `proto/adapt_tests.rs` 549 → 576; every file under 600.
 
-**Open questions.**
+**Open questions** (both answered by the controller in the review fix round, below).
 1. A run from M8b.4–M8b.15 (it has a `repo_dir`) that is already accepted or discarded gets its task and run records on the first restore after this change, stamped with that time. Keep, or skip runs that ended before M8b.16 (they have no phases or diff)?
 2. A plan rejected at the gate is `discarded`, so its never-dispatched tasks get `unfinished` records, as decision 33 reads. M8b.17's stats count them as tasks; they could be left out there if that skews the rows.
+
+**Review fix round (2026-09-27).** Controller rulings on the M8b.16 review:
+- **I1: `run retry` records `escalation`.** A retry re-enters the task at rung 2 on `roster::escalate`'s route, so its next worker launch records trigger `escalation`, source `escalation_policy`, `m8a-escalate-v1`, with the pool stepping from the route the blocked session ran. The trigger stays `escalation` (the reviewer's recommendation): `initial` would claim a class-default or explicit pick that did not choose the route. Pinned by `a_retried_started_task_records_its_escalation` (a started task: its second decision) and `a_twice_retried_unstarted_task_escalates_from_its_planned_route` (a task whose setup failed before it started: its first decision is `escalation`); both fail when `run retry` assigns the route without `escalated_from`.
+- **m1.** `set_state_accumulates_phase_times` now spends 7 s in `proof`, so `Proof` counted as `check` fails it.
+- **m2.** `a_merged_task_without_a_measure_is_recorded_without_one` (engine): a merged task with a head, no diff and no measure in flight is recorded without a diff and never measured three-dot from the run head it is already part of; it fails without the `state != Merged` head filter in `engine/history.rs::pass`.
+- **m3: runs started before M8b.16 write no history.** **New field `Run.history: bool`** (`#[serde(default)]`): `build_run` sets it, and `history::enabled` requires it as well as a `repo_dir`. A `run.json` without the field loads with `false`, so a run that ended before this change, or one still in flight across it (half its data missing), writes no task or run record and measures nothing. Pinned by `a_run_started_before_history_writes_none` (engine: a new run has `history == true`; the same run loaded without the field merges and emits no `MeasureDiff` or `AppendHistory`) and `old_task_record_has_no_routing_decisions` (an old `run.json` loads with `history == false`).
+- **m4: the earliest origin is kept.** Rung 2 and `run retry` now set `escalated_from` only when it is unset (`get_or_insert`), so a second escalation before the launch keeps the route the last launched session ran (for a task that never started, its planned route). The decision's pool then steps from that route, and the chosen route, two steps on, is found further down the pool (or appended), with the earlier selectable candidates `passed over`. `a_twice_retried_unstarted_task_escalates_from_its_planned_route` covers it and fails when the marker is overwritten.
+- **m5.** Phase times stay wall-clock (spec §15). The follow-up (close open phases at the task clock's stop time on restore; leave pauses and the plan-gate wait out) is in the follow-ups file under "From M8b.16's review".
+- **Q2.** Rejected plans keep their `unfinished` records; M8b.17's section carries the controller ruling that `stats` leaves out tasks with `sessions == 0`.
+- **File budgets.** `engine/tests/history.rs` 405 → 532, `history_tests.rs` 585 → 590, `run/model.rs` 559 → 563, `engine/ladder.rs` 549 → 552, `engine/requests.rs` 520 → 523.
