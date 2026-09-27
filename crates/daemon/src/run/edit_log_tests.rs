@@ -111,6 +111,17 @@ fn describe_is_capped() {
     let text = describe(&wide);
     assert_eq!(text.chars().count(), DESCRIBE_MAX_CHARS + 1);
     assert!(text.ends_with('…'), "{text}");
+    // Exactly at the cap: whole, no `…`. One past it: the first 300 plus `…`.
+    let at_cap = format!("{}日", "x".repeat(DESCRIBE_MAX_CHARS - "cancel ".len() - 1));
+    let exact = describe(&[PlanEdit::CancelTask {
+        task_id: at_cap.clone(),
+    }]);
+    assert_eq!(exact, format!("cancel {at_cap}"));
+    assert_eq!(exact.chars().count(), DESCRIBE_MAX_CHARS);
+    let over = describe(&[PlanEdit::CancelTask {
+        task_id: format!("{at_cap}日"),
+    }]);
+    assert_eq!(over, format!("cancel {at_cap}…"));
 }
 
 #[test]
