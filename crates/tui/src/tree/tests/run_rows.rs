@@ -405,8 +405,18 @@ fn sub_agents_hang_under_the_last_display_round_only() {
 
 #[test]
 fn a_round_whose_window_is_not_listed_has_no_sub_agents_and_no_panic() {
-    let (mut snapshot, windows) = three_task_fixture();
+    let (mut snapshot, mut windows) = three_task_fixture();
     snapshot.runs[0].tasks[1].rounds[0].window_id = Some(99);
+    // Window 6, `t1`'s worker's by its run reference, is listed with a sub-agent; the
+    // round names window 99, so the sub-agent is not reattached to it.
+    windows[2].subagents = vec![subagent(
+        "a",
+        None,
+        "Explore",
+        "grep",
+        SubagentState::Running,
+        1,
+    )];
 
     let rows = run_rows(
         &snapshot.runs[0],
@@ -459,3 +469,4 @@ fn a_scout_with_a_listed_window_shows_its_sub_agents() {
 }
 
 mod filters;
+mod placement;

@@ -45,11 +45,18 @@ pub fn round_label(role: AgentRole, session: u32, number: u32) -> String {
 /// taken in time order and never before the session's start, and a repeated
 /// `(role, session, number)` keeps its earliest copy, so no two rounds share a key.
 pub fn display_rounds<'a>(task: &'a TaskInfo, windows: &'a [WindowInfo]) -> Vec<DisplayRound<'a>> {
+    rounds_with(task, |id| windows.iter().find(|window| window.id == id))
+}
+
+/// [`display_rounds`] with the window lookup given, so `run_rows` looks each id up once
+/// in a map rather than scanning the listed windows per round.
+fn rounds_with<'a>(
+    task: &'a TaskInfo,
+    lookup: impl Fn(u32) -> Option<&'a WindowInfo>,
+) -> Vec<DisplayRound<'a>> {
     let mut rounds = Vec::new();
     for info in &task.rounds {
-        let window = info
-            .window_id
-            .and_then(|id| windows.iter().find(|window| window.id == id));
+        let window = info.window_id.and_then(&lookup);
         let single = |number| DisplayRound {
             info,
             number,
@@ -157,7 +164,8 @@ fn node(key: NodeKey, kind: RowKind<'_>) -> Node<'_> {
 /// window's sub-agents appear at most once.
 struct Builder<'a> {
     run: &'a RunInfo,
-    windows: &'a [WindowInfo],
+    /// The listed windows by id, the first of a repeated id kept, as a scan would find.
+    windows: HashMap<u32, &'a WindowInfo>,
     keep_finished_secs: u64,
     claimed: HashSet<u32>,
 }
@@ -173,8 +181,7 @@ impl<'a> Builder<'a> {
     }
 
     fn window(&self, id: Option<u32>) -> Option<&'a WindowInfo> {
-        let windows = self.windows;
-        id.and_then(|id| windows.iter().find(|window| window.id == id))
+        id.and_then(|id| self.windows.get(&id).copied())
     }
 
     fn scout(&mut self, scout: &'a ScoutInfo) -> Node<'a> {
@@ -196,7 +203,8 @@ impl<'a> Builder<'a> {
             id: task.id.clone(),
         };
         let mut task_node = node(key, RowKind::Task { run, task });
-        for round in display_rounds(task, self.windows) {
+        let windows = &self.windows;
+        for round in rounds_with(task, |id| windows.get(&id).copied()) {
             let key = NodeKey::AgentRound {
                 run: run.run_id.clone(),
                 task: task.id.clone(),
@@ -271,9 +279,13 @@ impl Entry<'_> {
 
 fn build_tree<'a>(run: &'a RunInfo, windows: &'a [WindowInfo], keep: u64) -> Node<'a> {
     let orchestrator = orchestrator_of(run, windows);
+    let mut by_id = HashMap::new();
+    for window in windows {
+        by_id.entry(window.id).or_insert(window);
+    }
     let mut builder = Builder {
         run,
-        windows,
+        windows: by_id,
         keep_finished_secs: keep,
         claimed: orchestrator.iter().map(|window| window.id).collect(),
     };

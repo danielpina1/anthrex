@@ -104,6 +104,51 @@ fn filters_keep_ancestors_and_drop_the_rest() {
 }
 
 #[test]
+fn only_the_unended_piece_of_a_bounced_session_is_running() {
+    let mut info = run(RUN_ID, PROJECT, RunState::Running);
+    // A task whose own state is not running, so only its rounds can match.
+    let mut t1 = task("t1", "spawn", Size::M, TaskState::Queued);
+    let mut session = worker(1, None, Runtime::Claude, 100);
+    session.sent_back_at = vec![300];
+    t1.rounds = vec![session];
+    info.tasks = vec![t1];
+
+    assert_eq!(
+        rows_of(&info, RunFilter::Running),
+        vec![
+            (root(), 0),
+            (t("t1"), 1),
+            (rd("t1", AgentRole::Worker, 1, 2), 2),
+        ]
+    );
+}
+
+#[test]
+fn a_planner_never_matches_a_runtime_by_its_own_route() {
+    let mut info = run(RUN_ID, PROJECT, RunState::Running);
+    let mut codex_planner = planner("A", "daemon");
+    codex_planner.route.runtime = Runtime::Codex;
+    info.planners = vec![codex_planner];
+    let mut t1 = in_wave(pending("t1"), 0, Some("A"));
+    t1.rounds = vec![worker(1, None, Runtime::Claude, 100)];
+    info.tasks = vec![t1];
+
+    assert_eq!(
+        rows_of(&info, RunFilter::Runtime(Runtime::Codex)),
+        vec![(root(), 0)]
+    );
+    assert_eq!(
+        rows_of(&info, RunFilter::Runtime(Runtime::Claude)),
+        vec![
+            (root(), 0),
+            (pl("A"), 1),
+            (t("t1"), 2),
+            (rd("t1", AgentRole::Worker, 1, 1), 3),
+        ]
+    );
+}
+
+#[test]
 fn the_text_filter_keeps_a_matching_task_with_all_its_rounds() {
     let (snapshot, windows) = three_task_fixture();
     let info = &snapshot.runs[0];
