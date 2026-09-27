@@ -373,11 +373,14 @@ fn e2e_a_session_that_exits_before_its_window_is_known_still_escalates() {
         .cloned()
         .expect("session 1's round");
     assert!(
-        first["deaths"].as_u64().unwrap_or(0) >= 1,
+        first["deaths"].as_u64() == Some(1),
         "session 1's exit did not reach its round: {first:#}"
     );
     let t1 = t(&run, "t1");
     assert_eq!(t1.state, TaskState::Merged);
+    // The ladder: the death resumes the session, whose turn ends again with nothing, a
+    // stall; the stall starts the fresh session 2.
+    assert_eq!(t1.stalls, 1);
     assert!(
         t1.rounds
             .iter()

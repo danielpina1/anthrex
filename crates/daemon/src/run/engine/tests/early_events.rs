@@ -212,6 +212,34 @@ fn a_window_holds_at_most_the_cap_and_keeps_its_turn_end() {
 }
 
 #[test]
+fn at_most_the_window_cap_of_windows_hold_events() {
+    let cap = crate::run::engine::HOLD_WINDOWS_CAP;
+    let (mut fx, _) = launching();
+    let first = 1000;
+    // A burst within one second, well inside the hold's limit.
+    let at = fx.now + 1;
+    let activity = |fx: &mut Fixture, window_id| {
+        fx.send(
+            at,
+            EventKind::Signal {
+                window_id,
+                signal: AgentSignal::Activity,
+            },
+        );
+    };
+    for w in first..first + cap as u32 + 10 {
+        activity(&mut fx, w);
+    }
+    assert_eq!(fx.state.pending.len(), cap);
+    // A window already holding keeps holding; a new one past the cap is answered at once.
+    activity(&mut fx, first);
+    assert_eq!(fx.state.pending[&first].events.len(), 2);
+    let effects = fx.tool(EARLY, "task_done", done_args());
+    assert_eq!(replies(&effects), vec![Err(not_worker())]);
+    assert_eq!(fx.state.pending.len(), cap);
+}
+
+#[test]
 fn a_held_call_of_another_role_is_refused_at_once() {
     let (mut fx, _) = launching();
     let effects = fx.tool_as(

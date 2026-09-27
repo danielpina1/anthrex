@@ -20,7 +20,8 @@
 //!   flight (failed, ended, dropped with their run or task). An entry left with none, or
 //!   held [`HOLD_LIMIT_SECS`], is discarded: its signals are dropped and each call gets
 //!   the answer it gets unheld, the refusal of a window no round has.
-//! - **The cap.** A window holds at most [`HOLD_CAP`] events. Past it, the oldest held
+//! - **The cap.** At most [`HOLD_WINDOWS_CAP`] windows hold events; a new window's
+//!   events past it are dropped or answered at once, as before the hold. A window holds at most [`HOLD_CAP`] events. Past it, the oldest held
 //!   `Activity` or `ToolUse` makes room: losing one costs a counter and a `last_event`
 //!   that a later event refreshes. With none to evict, a new signal is dropped, as it
 //!   was before the hold, and a new call is answered at once, unheld.
@@ -40,6 +41,11 @@ use crate::run::model::{AgentRound, OpId, Run};
 
 /// The most events one window holds.
 pub const HOLD_CAP: usize = 256;
+
+/// At most this many windows hold events at once. The driver forwards every window's
+/// signals, a run's or not, so a burst from many unrelated windows is dropped past it,
+/// as every early event was before the hold.
+pub const HOLD_WINDOWS_CAP: usize = 64;
 
 /// How long a window's first held event waits for its launch, in the reducer's unix
 /// seconds.
@@ -117,6 +123,9 @@ fn evictable(event: &HeldEvent) -> bool {
 fn hold(state: &mut EngineState, window: u32, event: HeldEvent, now: u64) -> Option<HeldEvent> {
     let launches = in_flight(state);
     if launches.is_empty() {
+        return Some(event);
+    }
+    if !state.pending.contains_key(&window) && state.pending.len() >= HOLD_WINDOWS_CAP {
         return Some(event);
     }
     let held = state.pending.entry(window).or_insert_with(|| HeldWindow {
