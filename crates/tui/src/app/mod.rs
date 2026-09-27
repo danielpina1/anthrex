@@ -92,6 +92,9 @@ pub struct App {
     /// The overview's canvas viewport on screen; `set_graph_viewport` keeps it
     /// current, and it stays empty until the first frame that draws one.
     pub(crate) graph_area: ratatui::layout::Rect,
+    /// The overview's own area as the last frame gave it, so opening or leaving the
+    /// run view can re-split it at once (milestone 8c decision 28).
+    pub(crate) graph_main: Option<ratatui::layout::Rect>,
     pub(crate) graph_mouse: crate::mouse::MouseState,
     pub keymap: Keymap,
     /// The conversation view (task M6.5.12); `app/conversation.rs` keeps the keymap's
@@ -175,6 +178,7 @@ impl App {
             inspector_visible: true,
             graph_pan: crate::graph::Pan::default(),
             graph_area: ratatui::layout::Rect::default(),
+            graph_main: None,
             graph_mouse: crate::mouse::MouseState::default(),
             keymap: Keymap::new(settings.prefix),
             conversation: Default::default(),

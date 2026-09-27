@@ -25,6 +25,9 @@ mod run_enter;
 #[path = "overview/run_view_rows.rs"]
 mod run_view_rows;
 
+#[path = "overview/run_inspector.rs"]
+mod run_inspector;
+
 fn toggle(app: &mut App) -> Vec<Effect> {
     prefix(app);
     press(app, KeyCode::Char('T'), KeyModifiers::NONE)

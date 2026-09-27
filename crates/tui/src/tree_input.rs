@@ -25,7 +25,20 @@ impl App {
     /// The renderer calls this with the overview's own area after every draw,
     /// the way `set_tree_viewports` reports the list heights.
     pub fn set_graph_viewport(&mut self, main: Rect) {
-        let (canvas, _) = crate::ui::overview::areas(main, self.inspector_visible);
+        self.graph_main = Some(main);
+        self.settle_graph_viewport();
+    }
+
+    /// Re-splits the last frame's overview area. The split is the frame's own, the run
+    /// view's tall panel included, or the reveal would aim at a viewport the frame
+    /// does not have; opening and leaving the run view call it at once, so the keys
+    /// that follow before the next frame reveal into the right canvas.
+    pub(crate) fn settle_graph_viewport(&mut self) {
+        let Some(main) = self.graph_main else {
+            return;
+        };
+        let (canvas, _) =
+            crate::ui::overview::areas(main, self.inspector_visible, self.run_view.is_some());
         if self.graph_area != canvas {
             self.graph_area = canvas;
             self.reveal_graph_selection();

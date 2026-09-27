@@ -10,7 +10,10 @@
 
 use super::tree_view;
 use crate::graph::{self, Pan, paint::paint, viewport::GraphGeometry};
-use crate::inspector::{self, INSPECTOR_HEIGHT, MIN_INTERIOR_FOR_PANEL};
+use crate::inspector::{
+    self, INSPECTOR_HEIGHT, MIN_INTERIOR_FOR_PANEL, MIN_INTERIOR_FOR_RUN_PANEL,
+    RUN_INSPECTOR_HEIGHT,
+};
 use crate::tree::{self, Row, RowKind};
 use crate::{app::App, theme};
 use ratatui::{
@@ -27,9 +30,18 @@ use ratatui::{
 ///
 /// A short terminal loses the panel, never the canvas: the panel is only ever
 /// carved out of an interior with six rows of canvas left above it.
-pub fn areas(main: Rect, inspector_visible: bool) -> (Rect, Rect) {
+///
+/// While the run view is open the panel is milestone 8c's tall one when the interior
+/// has room for it, and steps down to milestone 4.7's eight rows, then to the single
+/// line (milestone 8c decision 28). The height follows the view, never the node, so
+/// the canvas does not jump as the selection moves.
+pub fn areas(main: Rect, inspector_visible: bool, run_view: bool) -> (Rect, Rect) {
     let inner = super::inset(main);
-    let footer_height = if inspector_visible && inner.height >= MIN_INTERIOR_FOR_PANEL {
+    let footer_height = if !inspector_visible {
+        inner.height.min(1)
+    } else if run_view && inner.height >= MIN_INTERIOR_FOR_RUN_PANEL {
+        RUN_INSPECTOR_HEIGHT
+    } else if inner.height >= MIN_INTERIOR_FOR_PANEL {
         INSPECTOR_HEIGHT
     } else {
         inner.height.min(1)
@@ -68,10 +80,11 @@ impl View {
     }
 
     /// Whether the rect below the canvas is the panel. It is the panel exactly
-    /// when `areas` gave it the panel's height, so what is drawn there can
-    /// never disagree with the height it was drawn into.
+    /// when `areas` gave it one of the panel's heights — milestone 4.7's, or the
+    /// run view's tall one — so what is drawn there can never disagree with the
+    /// height it was drawn into.
     fn shows_panel(&self) -> bool {
-        self.footer.height >= INSPECTOR_HEIGHT
+        matches!(self.footer.height, INSPECTOR_HEIGHT | RUN_INSPECTOR_HEIGHT)
     }
 }
 
@@ -82,7 +95,7 @@ pub fn view(app: &App, main: Rect) -> View {
 /// `view` for a caller that has the visible rows in hand already, so one frame
 /// or one gesture builds that list once instead of once per reader.
 pub fn view_of(app: &App, main: Rect, rows: &[Row<'_>]) -> View {
-    let (canvas, footer) = areas(main, app.inspector_visible);
+    let (canvas, footer) = areas(main, app.inspector_visible, app.run_view.is_some());
     let layout = graph::layout(rows);
     // The stored pan can outlive the canvas it was clamped against — a
     // narrowed terminal, or rows that vanished — so it is clamped on the way
@@ -228,35 +241,22 @@ pub(super) fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, String, 
                 ),
             )
         }
-        RowKind::Run { run, .. } => run_footer(run),
-        // The run view's single line: the canvas's own live glyph and text; the
-        // muted right-hand text comes with task M8c.7's projections.
-        RowKind::Planner { .. }
+        // Every run kind's single line is its inspection's title: the glyph, the
+        // name, then two spaces and the right-hand text (milestone 8c, Interfaces
+        // "The single line"). The glyph is the canvas's own, by construction.
+        RowKind::Run { .. }
+        | RowKind::Planner { .. }
         | RowKind::Scout { .. }
         | RowKind::Task { .. }
         | RowKind::AgentRound { .. } => {
-            let (glyph, color) = graph::paint::style::node_glyph(row, app);
-            (
-                Span::styled(glyph, Style::default().fg(color)),
-                graph::content_text(row),
-                String::new(),
-            )
+            let inspection = inspector::inspect(row, app);
+            let right = inspection
+                .right
+                .map(|right| format!("  {right}"))
+                .unwrap_or_default();
+            (inspection.glyph, inspection.name, right)
         }
     }
-}
-
-/// A run's footer until task M8c.5's single line: its glyph, id and goal, then its
-/// state and progress.
-fn run_footer(run: &proto::RunInfo) -> (Span<'static>, String, String) {
-    let (merged, total) = tree::run_progress(run);
-    (
-        Span::styled(
-            theme::RUN_GLYPH,
-            Style::default().fg(theme::run_color(run.state)),
-        ),
-        format!("{}  {}", run.run_id, run.goal),
-        format!("  {}  {merged}/{total}", run.state.label()),
-    )
 }
 
 /// How long a sub-agent that has stopped ran for. Both fields are ages, so the

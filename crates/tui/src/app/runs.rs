@@ -240,6 +240,7 @@ impl App {
             filter: RunFilter::All,
         });
         self.graph_pan = crate::graph::Pan::default();
+        self.settle_graph_viewport();
         let rows = nav_rows_of(
             &self.windows,
             &self.runs.runs,
@@ -262,6 +263,7 @@ impl App {
         let Some(view) = self.run_view.take() else {
             return;
         };
+        self.settle_graph_viewport();
         self.tree.filter.clear();
         if self.tree_input.is_some() {
             self.tree_input = Some(TreeInput::Navigate);
