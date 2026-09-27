@@ -1503,6 +1503,18 @@ scope.
   but the empty short directory is not. The engine's task cleanup (or the harness's
   teardown) should remove it once the task's checkout is gone.
 
+## From M8b's whole-branch review (2026-09-27), for M8b, M9 and M9.5
+
+- **A TUI form for the profile (M9).** `anthrex profile edit` is the only editor.
+- **The output filter for Codex workers (M9.5).** Decision 28 wraps Claude workers' Bash through the PreToolUse hook; Codex has no equivalent hook yet.
+- **Pruning `history.jsonl`.** It only grows; readers keep the last line per `record_id`.
+- **Routing and threshold proposals in `run stats` (M9.5).** Stats only reports today.
+- **A leftover scout process after a daemon crash is not killed (decision 11).** Weigh it under the process-kill safety rule: kill only by an exact recorded pid, never by pattern.
+- **`run::git::checkout::default_repo_dir`** (`<parent>/.anthrex/<name>`) is used only by tests' convenience wrappers and should not be reachable from daemon code (a guard or a rename).
+- **The profile fingerprint walk checks a path and then opens it** (M8b.4), a check-then-open race; open with `O_NOFOLLOW` and check the opened handle instead.
+- **Smoke stage 11d's `profile status` timeout** (`scripts/pty_smoke_adapt.py`) uses `RUN_REQUEST_TIMEOUT` (`crates/cli/src/profile_cmd.rs`) without a derivation row in `docs/timing-budgets.md`.
+- **Derived filter prefixes.** `check` can still derive a prefix made only of punctuation (the alphanumeric guard covers only `single_test`), and a `single_test` whose `{test}` is glued inside its first word (`./run_{test}`) derives no prefix, so that command is never filtered.
+
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
 - **The main pane can switch to a new window while the new-agent form is still open and

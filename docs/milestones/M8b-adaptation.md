@@ -14,7 +14,7 @@ The user's design rules, which bind every decision here:
 
 | | |
 |--|--|
-| Status | `ready` — milestone 8a is done (PR #17). |
+| Status | `done` — every task and the milestone verification pass; deviations are under "Implementation notes". |
 | Depends on | Milestone 8a (the engine, headless sessions, the MCP crate, `fake-agent`'s headless modes, the run harness, confined checks). Milestone 8c may run before or after this one, but not at the same time: both raise the protocol (roadmap, "Why this order"). |
 | Spec sections | §4 (roles; the decider row; headless sessions; read-only launch; containment), §4.2, §5.1 (triage, the fast path, `run promote`), §6 (the repo profile and the onboarding scout, as amended, `generated` and `protected` included), §7.1 and §7.2 rule 5 (the size cross-check), §10 (the ≤ 40-line check summary, classifying free-text `task_blocked` reasons), §11.3, §13 item 3 (deciders in reader slots), §14 items 1, 3, 5 and 8 (scout once, filtered output, deciders, OTLP for the orchestrator), §15 (recording only), §16.5 (new snapshot fields), §17 (scrubbed environment, nothing deleted dirty), §19 (scout tool; deciders have no tools), §21 (M8b row, the fast-path scenario), §22.1, §22.4, §23 (deciders are a second model surface; thresholds are placeholders). |
 | Branch | `m8b-adaptation` |
