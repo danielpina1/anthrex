@@ -154,17 +154,23 @@ fn cut(line: &str) -> String {
 
 /// Whether `command` is one the hook wraps: after leading `cd <dir> && ` segments and
 /// `NAME=value ` assignments, it starts with a prefix followed by the end or
-/// whitespace, and it is not already a `filter-run` command (decision 28).
+/// whitespace, and it is not already a `filter-run` command (decision 28). The end or
+/// whitespace is a word boundary: a prefix that ends in anything but a word character
+/// (`sh tests/`) already ends at one, so what follows it may be a path (M8b.18).
 pub fn matches(command: &str, prefixes: &[String]) -> bool {
     if command.contains(" filter-run ") {
         return false;
     }
     let rest = strip_leading(command);
     prefixes.iter().any(|prefix| {
+        let bounded = prefix
+            .chars()
+            .last()
+            .is_some_and(|c| !(c.is_alphanumeric() || c == '_'));
         !prefix.is_empty()
-            && rest
-                .strip_prefix(prefix.as_str())
-                .is_some_and(|after| after.is_empty() || after.starts_with(char::is_whitespace))
+            && rest.strip_prefix(prefix.as_str()).is_some_and(|after| {
+                bounded || after.is_empty() || after.starts_with(char::is_whitespace)
+            })
     })
 }
 

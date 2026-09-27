@@ -132,6 +132,26 @@ fn matches_strips_cd_and_env_prefixes_and_respects_word_boundaries() {
     assert!(!matches("cargo test", &[]));
 }
 
+/// M8b.18: a prefix that ends in a path separator (the brief's `filter_prefixes = ["sh
+/// tests/"]`, and what `derived_prefixes` makes of `single_test = "sh
+/// tests/{test}.sh"`) already ends at a word boundary, so the path that follows it
+/// matches. A prefix that ends in a word character still needs the end or whitespace.
+#[test]
+fn a_prefix_ending_in_a_separator_matches_the_path_after_it() {
+    let prefixes = vec!["sh tests/".to_string(), "cargo test".to_string()];
+    for yes in [
+        "sh tests/noisy.sh",
+        "sh tests/t_ok.sh",
+        "cd sub && sh tests/x.sh -v",
+        "sh tests/",
+    ] {
+        assert!(matches(yes, &prefixes), "{yes:?}");
+    }
+    for no in ["sh testsuite", "sh tests", "cargo testing", "sh test/x.sh"] {
+        assert!(!matches(no, &prefixes), "{no:?}");
+    }
+}
+
 #[test]
 fn wrap_quotes_every_part() {
     let hook = FilterHook {
