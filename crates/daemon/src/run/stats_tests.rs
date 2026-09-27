@@ -351,50 +351,51 @@ fn reverted_counts_join_task_and_run_reverts() {
 #[test]
 fn a_skipped_line_is_reported_once() {
     let mut stats = aggregate(&[], Path::new(PATH));
-    stats.problems = vec![
-        "line 3: skipped: bad".into(),
-        "line 9: skipped: torn".into(),
-    ];
+    stats.problems = vec!["line 3: bad".into(), "line 9: torn".into()];
     let text = render(&stats);
     let skipped: Vec<&str> = text.lines().filter(|l| l.contains("skipped")).collect();
-    assert_eq!(
-        skipped,
-        ["history: 2 lines skipped: line 3: skipped: bad"],
-        "{text}"
-    );
+    assert_eq!(skipped, ["history: 2 lines skipped: line 3: bad"], "{text}");
     assert!(
-        text.ends_with("history: 2 lines skipped: line 3: skipped: bad\n"),
+        text.ends_with("history: 2 lines skipped: line 3: bad\n"),
         "{text}"
     );
     stats.problems.truncate(1);
-    assert!(render(&stats).ends_with("history: 1 line skipped: line 3: skipped: bad\n"));
+    assert!(render(&stats).ends_with("history: 1 line skipped: line 3: bad\n"));
 
     // The daemon's whole `stats` (revert detection, then the read): one bad line in the
-    // file is one problem, though the file is read twice.
+    // file is one problem, though the file is read twice, and "skipped" is said once
+    // (M8b.17 review, m6).
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("history.jsonl");
     let good =
         serde_json::to_string(&HistoryLine::Task(merged("r", "t", Size::S, (1, 1, 1, 1)))).unwrap();
     let accepted = serde_json::to_string(&HistoryLine::Run(run("r", 0, 0))).unwrap();
     std::fs::write(&path, format!("{good}\nnot json\n{accepted}\n")).unwrap();
-    let git = std::ffi::OsStr::new("/nonexistent/anthrex-test/git");
-    let stats = crate::run::history_io::summarise(
-        git,
-        dir.path(),
-        &path,
-        1_000,
-        std::time::Duration::from_secs(5),
-    );
+    let stats = summarise_at(dir.path(), &path);
     assert_eq!(stats.problems.len(), 1, "{:?}", stats.problems);
     assert!(stats.problems[0].contains("line 2"), "{:?}", stats.problems);
     assert_eq!((stats.task_records, stats.run_records), (1, 1));
     let text = render(&stats);
-    assert_eq!(text.matches("skipped").count(), 2, "{text}");
-    assert_eq!(
-        text.lines()
-            .filter(|l| l.contains("lines skipped") || l.contains("line skipped"))
-            .count(),
-        1,
-        "{text}"
-    );
+    assert_eq!(text.matches("skipped").count(), 1, "{text}");
+    assert!(text.contains("history: 1 line skipped: "), "{text}");
+}
+
+/// `summarise` in `dir` with a `git` that does not exist.
+fn summarise_at(dir: &Path, path: &Path) -> HistoryStats {
+    let git = std::ffi::OsStr::new("/nonexistent/anthrex-test/git");
+    crate::run::history_io::summarise(git, dir, path, 1_000, std::time::Duration::from_secs(5))
+}
+
+/// M8b.17 review, m6: a history file that cannot be read is said as it is, never as
+/// "1 line skipped".
+#[test]
+fn an_unreadable_history_is_not_a_skipped_line() {
+    let dir = tempfile::tempdir().unwrap();
+    // A directory reads as an error, whoever runs the test.
+    let stats = summarise_at(dir.path(), dir.path());
+    assert_eq!(stats.problems.len(), 1, "{:?}", stats.problems);
+    let text = render(&stats);
+    assert!(!text.contains("skipped"), "{text}");
+    let want = format!("history: could not read {}: ", dir.path().display());
+    assert!(text.lines().any(|l| l.starts_with(&want)), "{text}");
 }

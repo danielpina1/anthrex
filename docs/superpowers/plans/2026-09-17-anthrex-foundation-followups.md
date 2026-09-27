@@ -1472,6 +1472,17 @@ scope.
   at the task clock's `stopped` time and restart it at `now`; and leave the time a run
   spends paused, and a task's time before the plan is approved, out of its phases.
 
+## From M8b.17's review (2026-09-27), for M8b and M9.5
+
+- **A revert of a revert does not clear the reverted count.** If the user reverts a task
+  merge (or a run's accept merge) and later reverts that revert, the re-apply's message
+  names the first revert commit, which is no candidate, so `detect_reverts`
+  (`run/history_io.rs`) records nothing and `run/stats.rs` keeps counting the task as
+  reverted. Recording only, so M8b keeps it (controller ruling m3). It matters to M9.5,
+  whose refit uses "merged, unreverted" tasks per class. The fix: treat a revert commit
+  already recorded as a candidate too, and on a revert of it record a `reinstated` line
+  (or drop the revert record's effect) keyed by the original `reverted` sha.
+
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
 - **The main pane can switch to a new window while the new-agent form is still open and

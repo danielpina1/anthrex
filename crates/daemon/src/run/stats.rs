@@ -215,11 +215,16 @@ pub fn render(stats: &HistoryStats) -> String {
         stats.size_checked,
         stats.size_raised
     ));
-    if let Some(first) = stats.problems.first() {
-        out.push_str(&format!(
+    // A file that could not be read is said as it is (M8b.17 review, m6).
+    match stats.problems.first() {
+        Some(first) if first.starts_with(super::history_io::UNREADABLE) => {
+            out.push_str(&format!("history: {first}\n"));
+        }
+        Some(first) => out.push_str(&format!(
             "history: {} skipped: {first}\n",
             count(stats.problems.len() as u32, "line")
-        ));
+        )),
+        None => {}
     }
     out
 }

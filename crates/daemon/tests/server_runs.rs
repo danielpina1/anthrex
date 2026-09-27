@@ -102,7 +102,7 @@ async fn a_disconnected_client_is_not_held_open_by_its_run_request() {
 /// not spawned, so it is left to `engine/tests/fast_path.rs`.)
 #[tokio::test(flavor = "multi_thread")]
 async fn every_milestone_8b_request_is_answered_by_its_task() {
-    use proto::run_wire::{ProfileRequest, request};
+    use proto::run_wire::{ProfileReply, ProfileRequest, request};
     let dir = tempfile::Builder::new()
         .prefix("ax-runs8b")
         .tempdir_in("/tmp")
@@ -120,20 +120,32 @@ async fn every_milestone_8b_request_is_answered_by_its_task() {
     );
     let runs = RunService::new(manager, ctx);
     let here = dir.path().to_path_buf();
-    for req in [
-        RunRequest::StartGoal {
+    // M8b.17 review, m8: each request's own answer, exactly (this service's profile
+    // side is not wired, so the adaptation requests say so).
+    let not_running = "the profile service is not running".to_string();
+    assert_eq!(
+        runs.request(RunRequest::StartGoal {
             goal: "g".into(),
             dir: here.clone(),
             yes: true,
             trust_project: false,
             unconfined_checks: false,
-        },
-        RunRequest::Stats { dir: here.clone() },
-        RunRequest::Profile(ProfileRequest::Status { dir: here.clone() }),
-    ] {
-        let reply = format!("{:?}", runs.request(req).await);
-        assert!(!reply.contains("not available yet"), "{reply}");
-    }
+        })
+        .await,
+        proto::RunReply::Refused {
+            request: request::START_GOAL.to_string(),
+            message: not_running.clone(),
+        }
+    );
+    assert_eq!(
+        runs.request(RunRequest::Profile(ProfileRequest::Status {
+            dir: here.clone()
+        }))
+        .await,
+        proto::RunReply::Profile(Box::new(ProfileReply::Refused {
+            message: not_running
+        }))
+    );
     assert_eq!(
         runs.request(RunRequest::Stats { dir: here.clone() }).await,
         proto::RunReply::Refused {
