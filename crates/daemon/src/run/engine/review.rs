@@ -404,7 +404,7 @@ fn failed_turn(
         rate_limit,
     };
     if rate_limit {
-        round.rate_limited_until = Some(not_before(now, wait));
+        round.set_rate_limited(Some(not_before(now, wait)), now);
     }
     round.failed_error = Some(error);
     // One event, unless a retry streak ran straight into this failure (decision 32).
@@ -526,7 +526,7 @@ pub(super) fn watch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             && now >= at
         {
             round.failed_turn = FailedTurn::ContinueSent { rate_limit };
-            round.rate_limited_until = None;
+            round.set_rate_limited(None, now);
             let reason = round.failed_error.clone().unwrap_or_default();
             let address = mailbox(run.tasks[i].id());
             outbox::queue_to(run, &address, r, rate_limit_continue(&reason), now);

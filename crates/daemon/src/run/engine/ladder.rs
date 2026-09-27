@@ -201,8 +201,10 @@ pub(super) fn take_rung(
         set_state(task, TaskState::Working, now);
         // M8a.13: the time the gates took is not the worker's silence; a turn still
         // open is watched from here.
+        // M8c: sent back, whether or not the text is queued (`told`, decision 55).
         if let Some(r) = worker_round(task) {
             task.rounds[r].last_event = now;
+            task.rounds[r].sent_back_at.push(now);
         }
         history(run, i, now, format!("the {label} gate bounced it (rung 1)"));
         if !told {

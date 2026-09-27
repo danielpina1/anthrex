@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 
 use proto::{
-    AgentRole, AgentRoundInfo, BaseMovedInfo, CheckInfo, ProofInfo, ReviewInfo, RunInfo, RunUsage,
-    RunsSnapshot, Severity, Spend, TaskInfo, TokenUsage,
+    AgentRole, AgentRoundInfo, BaseMovedInfo, CheckInfo, PlanEditInfo, ProofInfo, ReviewInfo,
+    RunInfo, RunUsage, RunsSnapshot, Severity, Spend, TaskEventInfo, TaskInfo, TokenUsage,
 };
 
 use super::contract::sha7;
@@ -18,7 +18,11 @@ use super::model::{AgentRound, Run, Task};
 /// History entries a task shows, newest first.
 const HISTORY_SHOWN: usize = 10;
 
-/// Every run, newest first, at the engine's revision.
+/// Plan edits a run shows, newest first (milestone 8c).
+const PLAN_EDITS_SHOWN: usize = 10;
+
+/// Every run, newest first, at the engine's revision. Every time in it is raw unix
+/// seconds; `now` is the clients' time base (milestone 8c decision 2).
 pub fn snapshot(state: &EngineState, now: u64) -> RunsSnapshot {
     let mut runs: Vec<RunInfo> = state.runs.values().map(|r| run_info(r, now)).collect();
     runs.sort_by(|a, b| {
@@ -29,6 +33,7 @@ pub fn snapshot(state: &EngineState, now: u64) -> RunsSnapshot {
     RunsSnapshot {
         revision: state.revision,
         runs,
+        now,
     }
 }
 
@@ -84,6 +89,22 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         profile_source: run.profile_source,
         usage: Some(run_usage(run)),
         scouts: Vec::new(),
+        // Milestone 8c; `planners` (M9) and the estimates (M9.5) are placeholders.
+        approved_at: run.approved_at,
+        plan_edits: run
+            .plan_edits
+            .iter()
+            .rev()
+            .take(PLAN_EDITS_SHOWN)
+            .map(|e| PlanEditInfo {
+                at: e.at,
+                text: e.text.clone(),
+            })
+            .collect(),
+        plan_edits_since_approval: run.plan_edits_since_approval,
+        planners: Vec::new(),
+        estimate_left_secs: None,
+        bound_ratio_permille: None,
     }
 }
 
@@ -174,6 +195,9 @@ fn round_info(r: &AgentRound, now: u64) -> AgentRoundInfo {
         open_subagents: u32::try_from(r.open_subagents.len()).unwrap_or(u32::MAX),
         denials: r.denials,
         usage: r.usage,
+        rate_limited_since: r.rate_limited_since,
+        rate_limited_until: r.rate_limited_until,
+        sent_back_at: r.sent_back_at.clone(),
     }
 }
 
@@ -186,11 +210,6 @@ fn session_spend(task: &Task, now: u64) -> Spend {
         .find(|r| r.role == AgentRole::Worker)
         .map(|r| round_spend(r, task.clock.stopped, now))
         .unwrap_or_default()
-}
-
-/// `<hh:mm>` in UTC.
-fn clock(at: u64) -> String {
-    format!("{:02}:{:02}", (at / 3600) % 24, (at / 60) % 60)
 }
 
 fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64) -> TaskInfo {
@@ -275,7 +294,10 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64) -> TaskInfo 
             .iter()
             .rev()
             .take(HISTORY_SHOWN)
-            .map(|e| format!("{} {}", clock(e.at), e.text))
+            .map(|e| TaskEventInfo {
+                at: e.at,
+                text: e.text.clone(),
+            })
             .collect(),
         decider_usage: (t.decider_usage != Default::default()).then_some(t.decider_usage),
         size_check: match &t.size_check {
@@ -286,5 +308,8 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64) -> TaskInfo 
         diff: t.diff,
         phases: (t.phases != Default::default()).then_some(t.phases),
         block_source: t.block_source,
+        brief: t.spec.brief.clone(),
+        acceptance: t.spec.acceptance.clone(),
+        route_spec: t.spec.route.clone(),
     }
 }

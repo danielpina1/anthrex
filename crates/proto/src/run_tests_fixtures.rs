@@ -58,6 +58,10 @@ pub(super) fn an_agent_round() -> AgentRoundInfo {
         open_subagents: 4,
         denials: 5,
         usage: a_token_usage(),
+        // Milestone 8c's fields, unset; `run_tests_view.rs` sets each.
+        rate_limited_since: None,
+        rate_limited_until: None,
+        sent_back_at: Vec::new(),
     }
 }
 
@@ -152,7 +156,10 @@ pub(super) fn a_task_info() -> TaskInfo {
         salvage_refs: vec!["refs/anthrex/salvage/run-a1b2/t1/1".into()],
         on_critical_path: true,
         wave: 2,
-        history: vec!["09:14 review round 1 requested changes".into()],
+        history: vec![TaskEventInfo {
+            at: 1_700_000_040,
+            text: "review round 1 requested changes".into(),
+        }],
         // Milestone 8b's fields, unset as in a milestone-8a snapshot; `adapt_tests.rs`
         // sets each.
         decider_usage: None,
@@ -160,6 +167,9 @@ pub(super) fn a_task_info() -> TaskInfo {
         diff: None,
         phases: None,
         block_source: None,
+        brief: String::new(),
+        acceptance: Vec::new(),
+        route_spec: RouteSpec::default(),
     }
 }
 
@@ -211,6 +221,12 @@ pub(super) fn a_run_info() -> RunInfo {
         profile_source: None,
         usage: None,
         scouts: Vec::new(),
+        approved_at: None,
+        plan_edits: Vec::new(),
+        plan_edits_since_approval: 0,
+        planners: Vec::new(),
+        estimate_left_secs: None,
+        bound_ratio_permille: None,
     }
 }
 

@@ -29,7 +29,15 @@
 /// milestone-8a peer cannot decode. The new snapshot fields are `#[serde(default)]`, so a
 /// milestone-8a `run.json` still loads. Derivation: `PROTO_VERSION` was 7 at
 /// `crates/proto/src/lib.rs:25` before this change (set by M8a task 2); 7 + 1 = 8.
-pub const PROTO_VERSION: u32 = 8;
+///
+/// Milestone 8c task 1 bumps this to 9: it adds the run view's snapshot fields
+/// (`RunsSnapshot.now`, the plan's approval time and edit log, task briefs and route
+/// specs, rate-limit times, rung 1 bounces, the planner placeholders) and changes
+/// `TaskInfo.history`'s element type to `TaskEventInfo`. The new fields are all
+/// `#[serde(default)]`; the bump keeps an 8 client from showing a 9 daemon's view half
+/// filled. Derivation: `PROTO_VERSION` was 8 at `crates/proto/src/lib.rs:32` before
+/// this change (set by M8b task 2); 8 + 1 = 9.
+pub const PROTO_VERSION: u32 = 9;
 
 /// How long the daemon waits for a freshly connected client's `Hello`, and how long a
 /// client waits for the daemon's `Welcome`, before giving up on the handshake. Design
@@ -44,6 +52,7 @@ pub mod conversation;
 pub mod history;
 pub mod messages;
 pub mod paths;
+pub mod planner;
 pub mod profile;
 pub mod run;
 pub mod run_info;
@@ -69,6 +78,7 @@ pub use messages::{ClientMsg, DaemonMsg, HookSource};
 // could silently shadow an existing root name (for instance `run_wire::request` beside
 // `messages::request`) the next time either module gains a public item, with no
 // compile error to catch it.
+pub use planner::{PlannerInfo, PlannerState};
 pub use profile::{
     CommandCheck, DroppedCommand, OutputFilter, ProfileMeta, ProfileSource, ProfileStatus,
     ProfileVerification, ProposalOrigin, ProposalRecord, ProposalState, RepoProfile,
@@ -79,8 +89,8 @@ pub use run::{
     RunRef, RunState, Severity, Size, Strength, TaskKind, TaskState, TestMode, Verdict,
 };
 pub use run_info::{
-    AgentRoundInfo, BaseMovedInfo, BlockInfo, CheckInfo, ProofInfo, ReviewInfo, RunInfo,
-    RunsSnapshot, Spend, TaskInfo, TokenUsage,
+    AgentRoundInfo, BaseMovedInfo, BlockInfo, CheckInfo, PlanEditInfo, ProofInfo, ReviewInfo,
+    RunInfo, RunsSnapshot, Spend, TaskEventInfo, TaskInfo, TokenUsage,
 };
 pub use run_wire::{ProfileReply, ProfileRequest, RunReply, RunRequest, ToolCall};
 pub use scout::{ScoutFile, ScoutInfo, ScoutKind, ScoutReport, ScoutState};
@@ -96,8 +106,8 @@ mod adapt_tests;
 #[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_eight() {
-        assert_eq!(super::PROTO_VERSION, 8);
+    fn proto_version_is_nine() {
+        assert_eq!(super::PROTO_VERSION, 9);
     }
 
     #[test]

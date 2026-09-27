@@ -6,8 +6,8 @@ use super::*;
 use crate::conversation::Role;
 use crate::messages::{ClientMsg, DaemonMsg};
 use crate::run_info::{
-    AgentRoundInfo, BaseMovedInfo, BlockInfo, ReviewInfo, RunInfo, RunsSnapshot, Spend, TaskInfo,
-    TokenUsage,
+    AgentRoundInfo, BaseMovedInfo, BlockInfo, ReviewInfo, RunInfo, RunsSnapshot, Spend,
+    TaskEventInfo, TaskInfo, TokenUsage,
 };
 use crate::run_wire;
 use crate::run_wire::{RunReply, RunRequest, ToolCall};
@@ -18,6 +18,10 @@ use crate::types::Runtime;
 #[path = "run_tests_fixtures.rs"]
 mod fixtures;
 use fixtures::*;
+
+/// Milestone 8c task 1's snapshot fields.
+#[path = "run_tests_view.rs"]
+mod view;
 
 /// Decision 7's plan-file example, restated verbatim from
 /// `docs/milestones/M8a-orchestration-engine-core.md`. Every value differs from the
@@ -291,6 +295,7 @@ fn every_run_request_and_reply_round_trips() {
     let snapshot = RunsSnapshot {
         revision: 42,
         runs: vec![a_run_info()],
+        now: 1_700_000_900,
     };
 
     let requests = vec![

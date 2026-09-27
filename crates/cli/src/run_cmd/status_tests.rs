@@ -33,6 +33,9 @@ fn round(window: u32) -> AgentRoundInfo {
         open_subagents: 0,
         denials: 0,
         usage: TokenUsage::default(),
+        rate_limited_since: None,
+        rate_limited_until: None,
+        sent_back_at: vec![],
     }
 }
 
@@ -101,6 +104,9 @@ fn task(
         diff: None,
         phases: None,
         block_source: None,
+        brief: String::new(),
+        acceptance: vec![],
+        route_spec: Default::default(),
     }
 }
 
@@ -200,6 +206,12 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
         profile_source: None,
         usage: None,
         scouts: vec![],
+        approved_at: None,
+        plan_edits: vec![],
+        plan_edits_since_approval: 0,
+        planners: vec![],
+        estimate_left_secs: None,
+        bound_ratio_permille: None,
     }
 }
 

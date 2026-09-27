@@ -38,6 +38,8 @@ fn round(role: AgentRole, session: u32, turns: u32, tool_calls: u32, denials: u3
         last_event: 1_500,
         tool_calls,
         rate_limited_until: None,
+        rate_limited_since: None,
+        sent_back_at: Vec::new(),
         in_retry_streak: false,
         open_subagents: Default::default(),
         denials,
