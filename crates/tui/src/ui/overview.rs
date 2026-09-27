@@ -76,7 +76,7 @@ impl View {
 }
 
 pub fn view(app: &App, main: Rect) -> View {
-    view_of(app, main, &app.rows())
+    view_of(app, main, &app.nav_rows())
 }
 
 /// `view` for a caller that has the visible rows in hand already, so one frame
@@ -106,15 +106,18 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             theme::border()
         })
         .title(Line::from(Span::styled(
-            " tree overview ",
+            match &app.run_view {
+                Some(view) => format!(" run {} ", view.run_id),
+                None => " tree overview ".to_string(),
+            },
             theme::title(app.settings.accent),
         )));
     frame.render_widget(block, area);
 
     // One row build for the whole frame: the layout, the painter and the
     // footer all read this list, and a frame is drawn at least ten times a
-    // second.
-    let rows = app.rows();
+    // second. The run view's rows while it is open (milestone 8c decision 11).
+    let rows = app.nav_rows();
     let view = view_of(app, area, &rows);
     let lines = paint(&view.layout, view.canvas, view.pan, &rows, app);
     frame.render_widget(Paragraph::new(lines), view.canvas);

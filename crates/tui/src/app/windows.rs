@@ -121,7 +121,8 @@ impl App {
         // compares against.
         let previous_rows = self.rows();
         let previous_order = tree::agent_order(&previous_rows);
-        let previous_keys: Vec<_> = previous_rows.iter().map(|row| row.key.clone()).collect();
+        // The canvas's keys: the run view's while it is open (milestone 8c decision 11).
+        let previous_keys: Vec<_> = self.nav_rows().into_iter().map(|row| row.key).collect();
         let previous_index = self
             .focused
             .and_then(|id| previous_order.iter().position(|candidate| *candidate == id));
@@ -131,7 +132,12 @@ impl App {
         self.windows_received_at = Instant::now();
         self.tree.prune_runs(&self.runs.runs);
         self.tree.prune(&self.windows);
-        let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
+        let rows = super::nav_rows_of(
+            &self.windows,
+            &self.runs.runs,
+            &self.tree,
+            self.run_view.as_ref(),
+        );
         self.tree.repair_selection(&rows);
         // Only on the edges decision 15 names, never on every list. The daemon
         // republishes on every status flip and every output event — several

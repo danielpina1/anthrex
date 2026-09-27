@@ -35,7 +35,7 @@ fn snapshot(revision: u64, now: u64, runs: Vec<RunInfo>) -> RunsSnapshot {
     }
 }
 
-fn deliver(app: &mut App, snapshot: RunsSnapshot) -> Vec<Effect> {
+pub(super) fn deliver(app: &mut App, snapshot: RunsSnapshot) -> Vec<Effect> {
     app.on_daemon(DaemonMsg::Run(RunReply::Snapshot(snapshot)))
 }
 
@@ -45,6 +45,25 @@ pub(super) fn app_with_runs(windows: Vec<WindowInfo>, snapshot: RunsSnapshot) ->
     let _ = app.run_subscription();
     deliver(&mut app, snapshot);
     app
+}
+
+/// M8c.6: opens the run view on `run_id` with keys — `C-b T` when the overview is
+/// closed, the run's node selected, then `l`.
+pub(super) fn open_run_view(app: &mut App, run_id: &str) {
+    if !app.overview {
+        prefix(app);
+        assert!(press(app, KeyCode::Char('T'), KeyModifiers::NONE).is_empty());
+    }
+    let key = tree::NodeKey::Run(run_id.into());
+    let rows = tree::build_with_runs(&app.windows, &app.runs.runs, &app.tree);
+    app.tree.select(&rows, key.clone());
+    assert_eq!(
+        app.tree.selected,
+        Some(key),
+        "the run's node is on the canvas"
+    );
+    assert!(press(app, KeyCode::Char('l'), KeyModifiers::NONE).is_empty());
+    assert!(app.run_view.is_some(), "`l` opened the run view");
 }
 
 fn round(until: Option<u64>, flag: bool) -> AgentRoundInfo {

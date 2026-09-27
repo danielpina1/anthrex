@@ -1,12 +1,82 @@
 //! Milestone 8c: the client's copy of the run snapshot (task M8c.2, decisions 1, 2 and
 //! 34). One pushed `RunsSnapshot`, subscribed once per connection, replaced whole by
 //! every push; the daemon's clock as the client sees it; and the toasts for the run
-//! replies this client asked for.
+//! replies this client asked for. Task M8c.6 adds the run view's state (decision 11):
+//! opening, leaving and the keys only it has; Enter inside it is `run_enter.rs`.
 
-use super::{App, Effect};
-use crate::tree;
-use proto::{AgentRoundInfo, ClientMsg, RunReply, RunRequest, RunsSnapshot};
+use super::{App, Effect, TreeInput};
+use crate::tree::{self, NodeKey, Row, RunFilter, TreeState};
+use crossterm::event::{KeyCode, KeyEvent};
+use proto::{
+    AgentRoundInfo, ClientMsg, RunInfo, RunReply, RunRequest, RunState, RunsSnapshot, Runtime,
+    WindowInfo,
+};
 use std::time::Instant;
+
+/// Decision 11: the overview rooted at one run instead of the project tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunView {
+    pub run_id: String,
+    pub filter: RunFilter,
+}
+
+/// Decision 11's row list, from the fields apart, so a caller can go on to mutate
+/// `App.tree` with the rows in hand: the run view's rows while `view` names a shown
+/// run, the project tree's otherwise.
+pub fn nav_rows_of<'a>(
+    windows: &'a [WindowInfo],
+    runs: &'a [RunInfo],
+    state: &TreeState,
+    view: Option<&RunView>,
+) -> Vec<Row<'a>> {
+    let shown = view.and_then(|view| {
+        tree::shown_runs(runs)
+            .find(|run| run.run_id == view.run_id)
+            .map(|run| (run, view.filter))
+    });
+    match shown {
+        Some((run, filter)) => tree::run_rows(run, windows, state, filter),
+        None => tree::build_with_runs(windows, runs, state),
+    }
+}
+
+/// Decision 21: `f`'s cycle.
+fn next_filter(filter: RunFilter) -> RunFilter {
+    match filter {
+        RunFilter::All => RunFilter::Running,
+        RunFilter::Running => RunFilter::Blocked,
+        RunFilter::Blocked => RunFilter::Runtime(Runtime::Claude),
+        RunFilter::Runtime(Runtime::Claude) => RunFilter::Runtime(Runtime::Codex),
+        RunFilter::Runtime(_) => RunFilter::All,
+    }
+}
+
+/// Decision 21's labels, as the status bar shows them.
+pub fn filter_label(filter: RunFilter) -> &'static str {
+    match filter {
+        RunFilter::All => "all",
+        RunFilter::Running => "running",
+        RunFilter::Blocked => "blocked",
+        RunFilter::Runtime(Runtime::Claude) => "claude",
+        RunFilter::Runtime(Runtime::Codex) => "codex",
+        RunFilter::Runtime(Runtime::Shell) => "shell",
+    }
+}
+
+/// Decision 23: this view's own words for a run's state (`RunState::label` is
+/// snake_case).
+pub(crate) fn state_text(state: RunState) -> &'static str {
+    match state {
+        RunState::AwaitingApproval => "awaiting approval",
+        RunState::Running => "running",
+        RunState::Paused => "paused",
+        RunState::Halted => "halted",
+        RunState::Complete => "complete",
+        RunState::Accepted => "accepted",
+        RunState::Discarded => "discarded",
+        RunState::Failed => "failed",
+    }
+}
 
 /// `App.runs` before the first snapshot arrives: revision 0, no runs.
 pub(super) fn no_runs() -> RunsSnapshot {
@@ -98,12 +168,18 @@ impl App {
     /// fold state of runs that left is pruned, the selection repaired, and the
     /// selection revealed only when the rows changed (decision 15 of milestone 4.6).
     fn replace_runs(&mut self, snapshot: RunsSnapshot) {
-        let previous_keys: Vec<_> = self.rows().into_iter().map(|row| row.key).collect();
+        let previous_keys: Vec<_> = self.nav_rows().into_iter().map(|row| row.key).collect();
         let previous_selection = self.tree.selected.clone();
         self.runs = snapshot;
         self.tree.prune_runs(&self.runs.runs);
         self.tree.prune(&self.windows);
-        let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
+        self.close_run_view_if_gone();
+        let rows = nav_rows_of(
+            &self.windows,
+            &self.runs.runs,
+            &self.tree,
+            self.run_view.as_ref(),
+        );
         self.tree.repair_selection(&rows);
         let changed = rows.iter().map(|row| &row.key).ne(previous_keys.iter());
         if changed || self.tree.selected != previous_selection {
@@ -130,6 +206,104 @@ impl App {
         round
             .rate_limited_until
             .is_some_and(|until| until > self.run_now())
+    }
+
+    /// Decision 11: the rows the canvas, the painter, the inspector, the reveal, the
+    /// selection keys and the mouse read. The sidebar keeps reading `rows()`.
+    pub fn nav_rows(&self) -> Vec<Row<'_>> {
+        nav_rows_of(
+            &self.windows,
+            &self.runs.runs,
+            &self.tree,
+            self.run_view.as_ref(),
+        )
+    }
+
+    /// Decision 22: the run view on `run_id`, root selected, pan at the origin, both
+    /// filters reset. From the sidebar tree it turns the overview on first, through
+    /// `enter_overview`, so tree navigation is on (the reversed box and the dependency
+    /// highlight need it).
+    pub(crate) fn open_run_view(&mut self, run_id: String) {
+        if !self.overview {
+            self.enter_overview();
+        }
+        self.tree_input = Some(TreeInput::Navigate);
+        self.tree.filter.clear();
+        self.run_view = Some(RunView {
+            run_id: run_id.clone(),
+            filter: RunFilter::All,
+        });
+        self.graph_pan = crate::graph::Pan::default();
+        let rows = nav_rows_of(
+            &self.windows,
+            &self.runs.runs,
+            &self.tree,
+            self.run_view.as_ref(),
+        );
+        self.tree.select(&rows, NodeKey::Run(run_id));
+        self.reveal_tree_anchor();
+    }
+
+    /// Decision 23: back to the project overview with the run's node selected (or, when
+    /// the run has left the tree, its neighbour), both filters reset.
+    pub(crate) fn close_run_view(&mut self) {
+        let Some(view) = self.run_view.take() else {
+            return;
+        };
+        self.tree.filter.clear();
+        if self.tree_input.is_some() {
+            self.tree_input = Some(TreeInput::Navigate);
+        }
+        let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
+        self.tree.select(&rows, NodeKey::Run(view.run_id));
+        self.tree.repair_selection(&rows);
+        self.reveal_tree_anchor();
+    }
+
+    /// Decision 23: a snapshot that no longer names the open run, or names it in a
+    /// terminal state, closes the view with a toast saying which.
+    fn close_run_view_if_gone(&mut self) {
+        let Some(id) = self.run_view.as_ref().map(|view| view.run_id.clone()) else {
+            return;
+        };
+        let text = match self.runs.runs.iter().find(|run| run.run_id == id) {
+            None => format!("run {id} is gone"),
+            Some(run) if run.state.is_terminal() => {
+                format!("run {id} is {}", state_text(run.state))
+            }
+            Some(_) => return,
+        };
+        self.close_run_view();
+        self.toast(text);
+    }
+
+    /// The keys only the run view has (decisions 21 and 23): `f` cycles the filter, `h`
+    /// at the root and `Esc` leave. `None`: not one of them, so the project tree's rule
+    /// applies (`h` below the root selects the parent). `a`, `x`, `e` and `d` are the
+    /// plan gate's, task M8c.9's.
+    pub(crate) fn on_run_view_key(&mut self, key: KeyEvent) -> Option<Vec<Effect>> {
+        let view = self.run_view.as_mut()?;
+        match key.code {
+            KeyCode::Char('f') => {
+                view.filter = next_filter(view.filter);
+                let rows = nav_rows_of(
+                    &self.windows,
+                    &self.runs.runs,
+                    &self.tree,
+                    self.run_view.as_ref(),
+                );
+                self.tree.repair_selection(&rows);
+                self.reveal_tree_anchor();
+            }
+            KeyCode::Char('h') | KeyCode::Left
+                if self.tree.selected == Some(NodeKey::Run(view.run_id.clone())) =>
+            {
+                self.close_run_view();
+            }
+            KeyCode::Esc => self.close_run_view(),
+            _ => return None,
+        }
+        Some(vec![])
     }
 
     /// Tests move the snapshot's arrival into the past instead of sleeping.

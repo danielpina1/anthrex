@@ -8,6 +8,7 @@ use crossterm::event::KeyEvent;
 pub use link::Link;
 use prompt::RenamePrompt;
 use proto::{ClientMsg, GitState, WindowInfo};
+pub use runs::{RunView, filter_label, nav_rows_of};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -181,6 +182,8 @@ pub struct App {
     /// being masked forever by "we're already focused there."
     subscribed: Option<u32>,
     pub runs: proto::RunsSnapshot,
+    /// Milestone 8c decision 11: the overview rooted at a run; `None` is the project tree.
+    pub run_view: Option<RunView>,
     runs_received_at: Instant,
     /// Decision 1: `false` only while a refused `Run(Subscribe)` waits for `on_tick`.
     run_subscribed: bool,
@@ -228,6 +231,7 @@ impl App {
             pending_focus: None,
             subscribed: None,
             runs: runs::no_runs(),
+            run_view: None,
             runs_received_at: Instant::now(),
             run_subscribed: true,
             settings,
@@ -539,6 +543,7 @@ mod lifecycle;
 mod link;
 mod modal_keys;
 pub(crate) mod prompt;
+mod run_enter;
 mod runs;
 mod windows;
 

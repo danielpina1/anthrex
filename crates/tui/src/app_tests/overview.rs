@@ -16,6 +16,12 @@ mod mouse;
 #[path = "overview/inspector.rs"]
 mod inspector;
 
+#[path = "overview/runs.rs"]
+mod run_view;
+
+#[path = "overview/run_enter.rs"]
+mod run_enter;
+
 fn toggle(app: &mut App) -> Vec<Effect> {
     prefix(app);
     press(app, KeyCode::Char('T'), KeyModifiers::NONE)

@@ -493,3 +493,15 @@ fn conversation_mode_never_sends_bytes() {
         }
     }
 }
+
+/// M8c decision 27, a pinning test (green before milestone 8c changed anything): an M6.5
+/// conversation opened over the run view gets its own keys, because conversation mode is
+/// checked before tree mode.
+#[test]
+fn conversation_mode_wins_over_tree_mode() {
+    let mut km = Keymap::new(Keymap::default_prefix());
+    km.set_tree_mode(true);
+    km.set_conversation_mode(true);
+    let j = key(KeyCode::Char('j'), KeyModifiers::NONE);
+    assert_eq!(km.handle(j, false), KeyAction::Conversation(j));
+}

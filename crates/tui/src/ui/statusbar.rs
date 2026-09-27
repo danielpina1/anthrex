@@ -89,10 +89,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .unwrap_or(0);
 
     match app.tree_input {
-        Some(TreeInput::Navigate) => spans.push(Span::styled(
-            "j/k move  ⏎ focus  space fold  / filter  esc back",
-            theme::muted(),
-        )),
+        Some(TreeInput::Navigate) => spans.push(Span::styled(navigate_hint(app), theme::muted())),
         Some(TreeInput::Filter) => spans.push(Span::styled(
             format!("/{}", app.tree.filter),
             theme::muted(),
@@ -133,6 +130,26 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(accent).add_modifier(Modifier::BOLD),
         );
         frame.render_widget(Paragraph::new(Line::from(toast)), right);
+    }
+}
+
+/// Tree navigation's hint: the project tree's, or the run view's two (milestone 8c,
+/// Interfaces "Status bar and overview title"), the plan gate's while the run awaits
+/// approval.
+fn navigate_hint(app: &App) -> String {
+    let Some(view) = &app.run_view else {
+        return "j/k move  ⏎ focus  space fold  / filter  esc back".to_string();
+    };
+    let label = crate::app::filter_label(view.filter);
+    let gate = app
+        .runs
+        .runs
+        .iter()
+        .any(|run| run.run_id == view.run_id && run.state == proto::RunState::AwaitingApproval);
+    if gate {
+        format!("a approve  x reject  e edit  d remove  ⏎ open  f filter: {label}  esc back")
+    } else {
+        format!("j/k move  h/l tier  ⏎ open  space fold  f filter: {label}  / find  esc back")
     }
 }
 

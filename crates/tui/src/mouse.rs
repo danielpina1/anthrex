@@ -154,9 +154,24 @@ impl App {
                 self.toggle_tree_node(&key);
                 vec![]
             }
-            NodeKey::Window(id) | NodeKey::Subagent { window_id: id, .. } => self.focus(id),
-            key @ (NodeKey::Run(_)
-            | NodeKey::Planner { .. }
+            // Milestone 8c decision 26: a headless window's row opens its conversation,
+            // as Enter on it does. A PTY window is focused without leaving tree mode,
+            // as ever (`activate_tree_node` would leave it).
+            NodeKey::Window(id) | NodeKey::Subagent { window_id: id, .. } => {
+                if self.is_headless(id) {
+                    self.activate_tree_node(key)
+                } else {
+                    self.focus(id)
+                }
+            }
+            // Decision 22: a click on a run's row opens the run view on it, turning
+            // the overview on when it is off — also when the view is already open on
+            // that run, where Enter on the shared key would mean its root.
+            NodeKey::Run(id) => {
+                self.open_run_view(id);
+                vec![]
+            }
+            key @ (NodeKey::Planner { .. }
             | NodeKey::Scout { .. }
             | NodeKey::Task { .. }
             | NodeKey::AgentRound { .. }) => self.activate_tree_node(key),
@@ -180,8 +195,14 @@ impl App {
         main: ratatui::layout::Rect,
     ) -> Option<Vec<Effect>> {
         // One row build for the gesture: `overview::view` would otherwise
-        // build its own, and the selection below needs the same list.
-        let rows = tree::build_with_runs(&self.windows, &self.runs.runs, &self.tree);
+        // build its own, and the selection below needs the same list — the run
+        // view's while it is open (milestone 8c decision 11).
+        let rows = crate::app::nav_rows_of(
+            &self.windows,
+            &self.runs.runs,
+            &self.tree,
+            self.run_view.as_ref(),
+        );
         let view = overview::view_of(self, main, &rows);
         if !view.canvas.contains((column, row).into()) {
             return None;
