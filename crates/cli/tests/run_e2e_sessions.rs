@@ -335,65 +335,36 @@ fn e2e_a_second_death_in_a_round_is_a_stall() {
 
 /// How long the daemon holds a `CreateWindow`'s `done` line (the debug builds'
 /// `ANTHREX_TEST_DELAY_WINDOW_MS`): far over `fake-agent`'s start and exit (tens of
-/// milliseconds), so the session's exit reaches the engine before its round has the
-/// window, and is dropped (the race in the followups file, From M8a.25).
+/// milliseconds), so each session's events, its exit and its tool calls included, reach
+/// the engine before its round has the window (the race in the followups file, From
+/// M8a.25). The engine holds them and replays them once the round has it.
 const WINDOW_HOLD_MS: &str = "2000";
-/// Session 2's and the reviewer's own wait before they work, so their tool calls come
-/// after their windows are known (the hold applies to every `CreateWindow`): until
-/// `run.json` records a window for the `role` round of `session` (T25-N2: a condition,
-/// not a sleep), polled every 0.2 s for at most one `RUN_WAIT` (1500 × 0.2 s).
-/// `run.json` is compact JSON with `AgentRound`'s fields in declaration order (`role`,
-/// `session`, `round`, `window_id`), and is saved after the step that recorded the
-/// window, so the engine has it by then. (The reviewer is a Codex session, which has no
-/// `ANTHREX_WINDOW_ID` to match on.)
-fn wait_for_window(h: &RunHarness, role: &str, session: u32) -> Value {
-    sh(&format!(
-        r#"for i in $(seq 1 1500); do grep -qE '"role":"{role}","session":{session},"round":[0-9]+,"window_id":[0-9]' '{}'/runs/*/run.json && exit 0; sleep 0.2; done; exit 1"#,
-        h.data().display()
-    ))
-}
-/// Over the hold and the save after it, so session 2's wait is not itself a stall.
-const STALL_AFTER_SECS: u64 = 10;
-/// `engine::signals::INTERRUPT_GRACE_SECS`: the interrupt of a session with no process
-/// never ends its turn, so the grace runs out.
-const INTERRUPT_GRACE_SECS: u64 = 30;
 
 /// M8a.25 fix round 1 (review finding 1): a worker whose process exits before its
-/// `CreateWindow` result is stepped has its exit dropped, and its round recorded that
-/// dead process's pid. The stall's kill then waited for an exit that had already come,
-/// the round never ended and rung 2's fresh session never started.
+/// `CreateWindow` result is stepped. Its exit used to be dropped while its round
+/// recorded the dead process's pid, and the stall's kill then waited for an exit that
+/// had already come. Now the exit is held and replayed when the round gets its window,
+/// so the round counts the death and the ladder carries on to a fresh session. Session
+/// 2 and the reviewer act at once too: their tool calls wait for their windows.
 #[test]
 fn e2e_a_session_that_exits_before_its_window_is_known_still_escalates() {
     let h = RunHarness::with_env(
-        &format!("stall_after_secs = {STALL_AFTER_SECS}"),
+        "",
         &[("ANTHREX_TEST_DELAY_WINDOW_MS", WINDOW_HOLD_MS)],
         true,
     );
     h.script("worker-t1-1", &[exit(1)]);
-    h.script(
-        "worker-t1-2",
-        &[
-            wait_for_window(&h, "worker", 2),
-            commit("a.txt", "a\n"),
-            done("added a"),
-        ],
-    );
-    h.script(
-        "reviewer-t1-1",
-        &[wait_for_window(&h, "reviewer", 1), approve()],
-    );
+    h.script("worker-t1-2", &[commit("a.txt", "a\n"), done("added a")]);
+    h.script("reviewer-t1-1", &[approve()]);
     let id = h.start(&plan("", &[task("t1", &["a.txt"], "")]), true);
-    // Session 1's path, then session 2's (k = 2), and the stall and the interrupt's
-    // grace waited out on the way.
-    let wait = 2 * RUN_WAIT + Duration::from_secs(STALL_AFTER_SECS + INTERRUPT_GRACE_SECS);
-    let run = h.wait_run(&id, complete, wait);
+    // Session 1's path, then session 2's (k = 2).
+    let run = h.wait_run(&id, complete, 2 * RUN_WAIT);
     let log = std::fs::read_to_string(h.data().join("daemon.log")).unwrap_or_default();
     assert!(
         log.contains("ANTHREX_TEST_DELAY_WINDOW_MS: holding op done lines"),
         "the window hold was not armed:\n{log}"
     );
-    // T25-N3: the race was reproduced. Had session 1's exit reached its round, the
-    // round would show a death (then a resume, a second death and a stall).
+    // Session 1's exit came before its window was known, and still reached its round.
     let first = task_json(&run, "t1")["rounds"]
         .as_array()
         .unwrap()
@@ -401,13 +372,12 @@ fn e2e_a_session_that_exits_before_its_window_is_known_still_escalates() {
         .find(|r| r["role"] == "worker" && r["session"] == 1)
         .cloned()
         .expect("session 1's round");
-    assert_eq!(
-        first["deaths"], 0,
-        "the race was not reproduced: session 1's exit reached its round: {first:#}"
+    assert!(
+        first["deaths"].as_u64().unwrap_or(0) >= 1,
+        "session 1's exit did not reach its round: {first:#}"
     );
     let t1 = t(&run, "t1");
     assert_eq!(t1.state, TaskState::Merged);
-    assert_eq!(t1.stalls, 1);
     assert!(
         t1.rounds
             .iter()

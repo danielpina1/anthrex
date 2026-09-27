@@ -48,6 +48,7 @@ pub(crate) mod deciders;
 mod deciders_size;
 mod dispatch;
 mod done;
+mod early;
 mod fallback;
 mod gates;
 mod history;
@@ -66,6 +67,7 @@ mod tools;
 pub use crate::headless::TurnOutcome;
 pub(crate) use clock::epoch_spend;
 pub use clock::{BudgetEpoch, TaskClock};
+pub use early::{HOLD_CAP, HOLD_LIMIT_SECS, HeldEvent, HeldWindow};
 pub use history::HISTORY_FILE;
 pub use ops::{OpKind, OpResult, OverrideCount, ResolutionAt, ScratchAt};
 pub use signals::INTERRUPT_GRACE_SECS;
@@ -80,6 +82,9 @@ pub struct EngineState {
     pub runs: BTreeMap<String, Run>,
     pub revision: u64,
     pub stopped: bool,
+    /// The events of windows no round has yet, held while a launch is in flight
+    /// (`early.rs`). In memory only: never persisted, empty after a restart.
+    pub pending: BTreeMap<u32, HeldWindow>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -410,6 +415,8 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
         // M8b decision 33: the history records that are due, whatever the run's state.
         history::pass(run, now, &mut fx);
     }
+    // Held events whose launches are over, or that waited too long (`early.rs`).
+    early::sweep(&mut state, now, &mut fx);
     finish(&mut state, &before, before_revision, fx)
 }
 
@@ -490,6 +497,7 @@ fn op_done(
         .task_id
         .as_deref()
         .and_then(|id| run.tasks.iter().position(|t| t.id() == id));
+    let mut bound = None;
     match (pending.kind, task) {
         (kind @ OpKind::Proof { .. }, Some(i)) => {
             gates::proof_done(run, i, op, &kind, result, now, fx)
@@ -508,6 +516,9 @@ fn op_done(
             dispatch::worktree_done(run, i, from, result, now, fx)
         }
         (OpKind::CreateWindow { .. }, Some(i)) => {
+            if let OpResult::Window { window_id, .. } = result {
+                bound = Some(window_id);
+            }
             dispatch::window_done(run, i, op, result, now, fx)
         }
         (OpKind::PrepareReview { .. }, Some(i)) => {
@@ -532,6 +543,10 @@ fn op_done(
         (OpKind::MeasureDiff { .. }, Some(i)) => history::measured(run, i, result, now, fx),
         (kind @ OpKind::AppendHistory { .. }, _) => history::appended(run, &kind, result, now),
         _ => {}
+    }
+    // The session's events that came before its window, now that its round has it.
+    if let Some(window_id) = bound {
+        early::replay(state, window_id, fx);
     }
 }
 

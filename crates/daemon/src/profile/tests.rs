@@ -533,7 +533,7 @@ fn a_stale_profile_gets_the_attention_line() {
     let mut state = crate::run::engine::EngineState {
         runs: Default::default(),
         revision: 1,
-        stopped: false,
+        ..Default::default()
     };
     state.runs.insert(run.id.clone(), run.clone());
     let info = &crate::run::snapshot::snapshot(&state, 2).runs[0];

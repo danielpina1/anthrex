@@ -20,6 +20,7 @@ mod dispatch_slots;
 mod done;
 mod done_tools;
 mod driver_carries;
+mod early_events;
 mod exit_duplicates;
 mod fast_path;
 mod fixture;

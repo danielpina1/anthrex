@@ -309,9 +309,13 @@ impl RunHarness {
 
     /// The last 60 lines of `daemon.log`.
     pub fn log_tail(&self) -> String {
-        let text = std::fs::read_to_string(self.data().join("daemon.log")).unwrap_or_default();
-        let lines: Vec<&str> = text.lines().collect();
-        lines[lines.len().saturating_sub(60)..].join("\n")
+        tail(&self.data().join("daemon.log"))
+    }
+
+    /// The last lines of the daemon's own stdout and stderr (`start_daemon`'s
+    /// `daemon.out`), where a panic lands.
+    pub fn out_tail(&self) -> String {
+        tail(&self.dir.path().join("daemon.out"))
     }
 
     /// Writes `<repo>/.git/fake-agent/<name>.jsonl`.
@@ -446,9 +450,10 @@ impl RunHarness {
             }
             if Instant::now() >= deadline {
                 panic!(
-                    "run {id} did not get there within {wait:?}; last snapshot:\n{}\n--- daemon.log:\n{}",
+                    "run {id} did not get there within {wait:?}; last snapshot:\n{}\n--- daemon.log:\n{}\n--- daemon.out:\n{}",
                     serde_json::to_string_pretty(&last).unwrap(),
-                    self.log_tail()
+                    self.log_tail(),
+                    self.out_tail()
                 );
             }
             std::thread::sleep(Duration::from_millis(200));
@@ -539,4 +544,11 @@ pub(super) async fn connect(socket: &Path) -> UnixStream {
         Ok(Some(DaemonMsg::Welcome { .. })) => stream,
         other => panic!("no Welcome: {other:?}"),
     }
+}
+
+/// The last 60 lines of the file at `path`; empty when it cannot be read.
+fn tail(path: &Path) -> String {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(60)..].join("\n")
 }

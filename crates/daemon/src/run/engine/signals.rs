@@ -10,8 +10,8 @@ use super::clock::{not_before, stall_due};
 use super::dispatch::{block, history};
 use super::ladder::{self, check_budget, kill_worker, live, worker_round};
 use super::{
-    AgentSignal, Effect, EngineState, OpKind, TurnOutcome, emit_op, fallback, next_op, outbox,
-    review,
+    AgentSignal, Effect, EngineState, OpKind, TurnOutcome, early, emit_op, fallback, next_op,
+    outbox, review,
 };
 use crate::headless::FailureKind;
 use crate::run::contract::{
@@ -28,7 +28,8 @@ pub const INTERRUPT_GRACE_SECS: u64 = 30;
 /// A rate-limit retry's error (decision 32; M8a.7's `ApiRetry.error`).
 const RATE_LIMIT: &str = "rate_limit";
 
-/// Applies `signal` to the round of `window_id` (the latest round with that window).
+/// Applies `signal` to the round of `window_id` (the latest round with that window), or
+/// holds it until a round has the window.
 pub(super) fn on_signal(
     state: &mut EngineState,
     window_id: u32,
@@ -48,6 +49,8 @@ pub(super) fn on_signal(
             return;
         }
     }
+    // No round has the window yet: held while a launch is in flight (`early.rs`).
+    early::hold_signal(state, window_id, signal, now);
 }
 
 fn runtime_label(runtime: Runtime) -> String {
