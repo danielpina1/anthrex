@@ -1851,7 +1851,7 @@ rg -n '\.state = ' crates/daemon/src/run --glob '!**/tests/**' --glob '!*_tests*
 
 **Change.** Decisions 34 and 35.
 
-**Acceptance.** Tests pass.
+**Acceptance.** Tests pass. `anthrex run --help` lists `stats`.
 
 **Commit.** `feat: detect reverts after accept and summarise run history with anthrex run stats`
 
@@ -1868,6 +1868,7 @@ rg -n '\.state = ' crates/daemon/src/run --glob '!**/tests/**' --glob '!*_tests*
   - `triage.source == Decider`;
   - `run accept --yes` succeeds.
 - `e2e_goal_needing_a_plan_is_refused_without_side_effects`. Triage answers `plan`: exit 1 with `refused_message`, no `refs/heads/anthrex/*`, no `<data>/runs/*`, and no window.
+- `e2e_goal_touching_a_hub_file_is_refused_without_side_effects`. Triage answers `single` with `owns` on a hub glob: exit 1 with the reason `the fast path does not apply: task t1 touches a hub file`, no `refs/heads/anthrex/*`, no `<data>/runs/*`, and no window. It covers the driver's wiring of the fast path's barrier (M8b.14 review I1).
 - `e2e_goal_without_deciders_takes_the_plan_path` (mode `off`: the reason names `deciders are off`).
 - `e2e_goal_without_a_profile_starts_detection` (no stored profile, `onboarding.auto`: the exact refusal, and `profile status` shows detection).
 - `e2e_goal_runs_m8a_start_checks` (`ANTHREX_TEST_NO_SETTING_SOURCES=1` and a tracked `.claude/settings.json` with hooks: the fast path is refused with M8a's settings text, and `--trust-project` starts it).
@@ -2697,6 +2698,15 @@ The only lock held across an await is `writes` (a `tokio::sync::Mutex`), which o
 - **File budgets.** `run/model.rs` is 508 (the M8b budget was +45 over 430; M8b.12/13 had already taken it to 496; +12 here). `run/engine/requests.rs` is 510 (404 + 40 was the budget; M8b.12/13 had it at 448; +62 here, the promote handler and the fast start). Both stay under 600.
 - **Timing budget.** `GOAL_REQUEST_TIMEOUT` = 810 s lives in `crates/cli/src/run_cmd/adapt.rs`; `docs/timing-budgets.md`'s row records the landed call count (9 git calls before triage, then `run start`'s own).
 - **Tests.** `run/triage_tests.rs` has the brief's nine plus `tracked_files_are_sorted_capped_and_counted`; `engine/tests/fast_path.rs` the brief's four; `run_cmd/adapt.rs` and `status_tests.rs` the brief's three. Extra: `a_fast_path_run_reports_its_path` (`report_tests.rs`) and `a_plan_profile_equal_to_the_stored_one_ignores_nothing` (`profile/tests.rs`). The driver's `StartGoal` has no process test here: M8b.18's `e2e_goal_*` tests cover it. It was checked by hand against an isolated daemon (socket and data under `/tmp`, `ANTHREX_CLAUDE_BIN`/`ANTHREX_CODEX_BIN` nonexistent, `ANTHREX_DECIDER_BIN` = `fake-agent`): the no-profile refusal, a fast-path start, `promote` twice, `plan`-scale and hub refusals with no branch or run directory created, the report's path line, then cancel, discard and `daemon stop`.
+
+**Review fixes (M8b.14 review, 2026-09-27):**
+- **I1, the fast path's invariant is enforced in three places.** `run::triage::fast_refusal(tasks)` is the one check: exactly one task, neither `hub` nor L, else `the fast path does not apply: <a fast-path run has exactly one task, not <n> | task t1 touches a hub file | task t1 is L>`. `check_fast` applies it; `build_plan` applies it on the fast path right after `build_run` (m1 below); and the engine's `requests::start` applies it to every `path == Some(Fast)` run. The engine **refuses** such a start (`Err` with that reason, and no run, op or window is created) rather than falling back to the plan gate: decision 22 step 5 routes such a goal to the planned path, which in M8b creates nothing (step 6), so a run on the plan gate would be a state the brief never produces. The driver's reply is then the request's refusal. Tests: `a_fast_path_start_refuses_hub_l_and_many_tasks` (engine; a mutation that disables the check fails it), `fast_refusal_needs_one_task_neither_hub_nor_l` (triage). M8b.18 gains `e2e_goal_touching_a_hub_file_is_refused_without_side_effects`.
+- **m1, the hub and L reason comes before the runtime checks.** `build_plan` takes a `fast` flag (false for `run start --plan`); with it set, `driver/adapt_goal.rs::fast_barrier` runs `fast_refusal` right after `build_run`, before the `.codex` tree and the runtime checks of decisions 50 and 53, and returns `BuildError::NotFast(reason)`, which `start_goal` turns into the planned path with that reason. A hub goal in a repository with untrusted project settings therefore reports the hub reason, not the settings text that suggests `--trust-project`. Test: `a_hub_goal_reports_the_hub_reason_before_the_runtime_checks` (`driver/adapt_goal_tests.rs`, a temporary repository tracking `.mcp.json`; the control shows the `--plan` path refuses with the settings text). The logic lives in `adapt_goal.rs`; `driver/requests.rs` is 590 lines.
+- **m2, a blank goal is refused before anything else.** `start_goal` first checks `run::triage::blank_goal`, which refuses an empty or whitespace-only goal with `build_run`'s own wording, `goal: must not be blank`, before the profile service, preflight or triage. Tests: `a_blank_goal_is_refused_with_build_runs_wording`, and `a_blank_goal_is_refused_before_anything_else` (a service with no profile service and a directory that is not a repository still answers the blank-goal refusal, so nothing before it ran and no decider was spawned).
+- **m3, `run promote` refuses a `complete` run.** A `complete` run only waits for `run accept` or `run discard`, so nothing is left to promote. It is refused like a terminal run: `run <id> is complete`. This deviates from decision 25's letter ("not terminal"), by the controller's ruling. Test: `promote_refuses_plan_runs_and_terminal_runs` now includes `complete`.
+- **m4:** M8b.17's acceptance now names `anthrex run --help` listing `stats`.
+- **m5:** recorded in the follow-ups file under M8b.14's review.
+- **Open questions accepted by the review:** (1) goal-started detection uses the goal's `--trust-project` and `--unconfined-checks`; (2) a `Failed` proposal counts as nothing pending, with no backoff, because every restart needs a `run start --goal` the user typed; (3) `GOAL_REQUEST_TIMEOUT` stays 810 s, its terms covering calls that answer normally, as M8a's do; (5) `check_fast`'s L check is kept as defence in depth, now beside the driver's and the engine's.
 
 ### Main's decision 33a (merged 2026-09-27)
 

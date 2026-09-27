@@ -39,7 +39,7 @@ use crate::scout::service::ScoutService;
 // M8b.14: `run start --goal` (decision 22).
 #[path = "adapt_goal.rs"]
 mod goal;
-pub(super) use goal::BuildError;
+pub(super) use goal::{BuildError, fast_barrier};
 
 /// What decision 6 chose, for the run `build_run` makes.
 pub(super) struct ProfileChoice {

@@ -19,6 +19,7 @@ use crate::profile::service::{Effective, state_label};
 use crate::run::confine;
 use crate::run::engine::EventKind;
 use crate::run::git::{self, Git, os};
+use crate::run::model::Run;
 use crate::run::plan::{PlanError, Preflight};
 use crate::run::triage::{self, TriageRoute};
 use crate::scout::report::ONBOARDING_ALIAS;
@@ -28,11 +29,22 @@ use crate::scout::report::ONBOARDING_ALIAS;
 pub(in crate::run::driver) enum BuildError {
     Plan(Vec<PlanError>),
     Refused(String),
+    /// The fast path's own barrier ([`fast_barrier`]): the planned path, with the reason.
+    NotFast(String),
 }
 
 impl From<String> for BuildError {
     fn from(message: String) -> Self {
         BuildError::Refused(message)
+    }
+}
+
+/// Review m1: on the fast path, [`triage::fast_refusal`] right after `build_run`, so a
+/// hub or L task gets its own reason before the runtime checks' refusals.
+pub(in crate::run::driver) fn fast_barrier(fast: bool, run: &Run) -> Result<(), BuildError> {
+    match fast.then(|| triage::fast_refusal(&run.tasks)).flatten() {
+        Some(reason) => Err(BuildError::NotFast(reason)),
+        None => Ok(()),
     }
 }
 
@@ -45,7 +57,7 @@ impl BuildError {
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join("\n"),
-            BuildError::Refused(message) => message,
+            BuildError::Refused(message) | BuildError::NotFast(message) => message,
         }
     }
 }
@@ -89,6 +101,10 @@ impl RunService {
         trust_project: bool,
         unconfined_checks: bool,
     ) -> RunReply {
+        // Review m2: a blank goal never spends a triage call.
+        if let Some(refusal) = triage::blank_goal(&goal) {
+            return refused(refusal);
+        }
         let Some(adaptation) = self.adaptation.get() else {
             return refused("the profile service is not running".to_string());
         };
@@ -136,11 +152,12 @@ impl RunService {
         // 5. The fast path: M8a's whole start path for a one-task plan.
         let plan = triage::fast_plan(&goal, *task, profile.spec());
         let built = match self
-            .build_plan(plan, dir, true, trust_project, unconfined_checks)
+            .build_plan(plan, dir, true, trust_project, unconfined_checks, true)
             .await
         {
             Ok(run) => Ok(run),
             Err(BuildError::Plan(errors)) => Err(errors),
+            Err(BuildError::NotFast(reason)) => return planned(triage::not_fast(info, reason)),
             Err(BuildError::Refused(message)) => return refused(message),
         };
         let mut run = match triage::check_fast(built) {
@@ -260,3 +277,7 @@ async fn no_profile(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "adapt_goal_tests.rs"]
+mod tests;

@@ -226,19 +226,40 @@ pub fn check_fast(built: Result<Run, Vec<PlanError>>) -> Result<Run, String> {
             return Err(not_applicable(&first));
         }
     };
-    let Some(task) = run.tasks.first() else {
-        return Err(not_applicable("the plan has no task"));
+    if let Some(reason) = fast_refusal(&run.tasks) {
+        return Err(reason);
+    }
+    Ok(run)
+}
+
+/// The fast path's invariant (decision 24, review I1): exactly one task, neither hub nor
+/// L. `None` when `tasks` meet it, else the reason. The driver's `build_plan`,
+/// [`check_fast`] and the engine's `start` all apply it.
+pub fn fast_refusal(tasks: &[Task]) -> Option<String> {
+    let [task] = tasks else {
+        return Some(not_applicable(&format!(
+            "a fast-path run has exactly one task, not {}",
+            tasks.len()
+        )));
     };
     if task.hub {
-        return Err(not_applicable(&format!(
+        return Some(not_applicable(&format!(
             "task {} touches a hub file",
             task.id()
         )));
     }
     if task.size == Size::L {
-        return Err(not_applicable(&format!("task {} is L", task.id())));
+        return Some(not_applicable(&format!("task {} is L", task.id())));
     }
-    Ok(run)
+    None
+}
+
+/// Review m2: a blank goal is refused before triage spends a call, with `build_run`'s
+/// own wording (`goal: must not be blank`).
+pub fn blank_goal(goal: &str) -> Option<String> {
+    goal.trim()
+        .is_empty()
+        .then(|| PlanError::new(None, "goal", "fields", "must not be blank").to_string())
 }
 
 /// `info` for a goal the fast path turned out not to apply to: the planned path.

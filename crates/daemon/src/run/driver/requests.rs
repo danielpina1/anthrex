@@ -236,13 +236,14 @@ impl RunService {
         unconfined_checks: bool,
     ) -> Result<Run, String> {
         let plan = parse_plan(&plan_toml)?;
-        self.build_plan(plan, dir, yes, trust_project, unconfined_checks)
+        self.build_plan(plan, dir, yes, trust_project, unconfined_checks, false)
             .await
             .map_err(BuildError::text)
     }
 
     /// Everything `run start` checks and builds for a parsed plan (M8b decision 22 shares
-    /// it with the fast path); decision 6's profile choice right after preflight.
+    /// it with the fast path, `fast`: its barrier before the runtime checks, review m1);
+    /// decision 6's profile choice right after preflight.
     pub(super) async fn build_plan(
         &self,
         mut plan: Plan,
@@ -250,6 +251,7 @@ impl RunService {
         yes: bool,
         trust_project: bool,
         unconfined_checks: bool,
+        fast: bool,
     ) -> Result<Run, BuildError> {
         let mut config = self.ctx.orchestrator.clone();
         // Final fix batch F1c round 2: never run worker-written code unconfined unless
@@ -287,6 +289,7 @@ impl RunService {
             yes,
         };
         let mut run = crate::run::plan::build_run(plan, pre, ctx).map_err(BuildError::Plan)?;
+        super::adapt::fast_barrier(fast, &run)?;
         super::adapt::apply_choice(&mut run, choice, now);
         run.limits.unconfined_checks = run.limits.worker_sandbox && !available;
         run.session_nonce = random_nonce();

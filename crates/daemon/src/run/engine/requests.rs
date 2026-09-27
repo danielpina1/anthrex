@@ -22,6 +22,7 @@ use crate::run::env::profile_env;
 use crate::run::model::{FreshSession, LogEntry, Run, SizeCheckState, hh_mm};
 use crate::run::reach::reachable_runtimes;
 use crate::run::roster::escalate;
+use crate::run::triage::fast_refusal;
 use crate::run::validate::EditScope;
 
 /// At most this many log entries per run (Interfaces, `LogEntry`).
@@ -61,6 +62,11 @@ pub(super) fn start(
         return reply(fx, id, Err(format!("run {} already exists", run.id)));
     }
     let fast = run.path == Some(RunPath::Fast);
+    // Review I1: the engine's own barrier. A fast-path run is one task, neither hub nor
+    // L, whatever its caller checked; any other is refused and nothing is created.
+    if let Some(reason) = fast.then(|| fast_refusal(&run.tasks)).flatten() {
+        return reply(fx, id, Err(reason));
+    }
     if fast {
         // M8b decision 24: a fast-path run has no plan gate.
         run.state = RunState::Running;
@@ -157,7 +163,8 @@ pub(super) fn approve(
     reply(fx, id, Ok(format!("run {run_id} approved")));
 }
 
-/// M8b decision 25: `run promote` records the user's wish on a live fast-path run.
+/// M8b decision 25: `run promote` records the user's wish on a live fast-path run (not
+/// terminal and not `complete`, review m3).
 /// Nothing else changes: no task, op or window. Milestone 9 performs the promotion.
 pub(super) fn promote(
     state: &mut EngineState,
@@ -172,7 +179,8 @@ pub(super) fn promote(
     if run.path != Some(RunPath::Fast) {
         return reply(fx, id, Err(format!("run {run_id} is not a fast-path run")));
     }
-    if run.state.is_terminal() {
+    // Review m3: a `complete` run only waits for accept; nothing is left to promote.
+    if run.state.is_terminal() || run.state == RunState::Complete {
         return reply(
             fx,
             id,

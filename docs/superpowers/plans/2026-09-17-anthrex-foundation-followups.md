@@ -1411,6 +1411,16 @@ scope.
   behind a long write in one project delays proposal saves in every project. It is not
   a deadlock. Per-project mutexes, or dropping the guard before the discard, would fix it.
 
+## From M8b.14's review (2026-09-27), for M8b
+
+- **`run start --goal` replies "detection has started" even when detection failed at once
+  (review m5).** When `ProfileService::detect_or_record`'s start fails immediately, for
+  example on the project-settings refusal or the confinement refusal, the goal still
+  answers `DETECTION_STARTED` (`crates/daemon/src/run/driver/adapt_goal.rs`, `no_profile`).
+  The failure is visible only in `anthrex profile status`. The text is the brief's exact
+  wording (decision 22 step 2), so it is not a defect. A follow-up could append the
+  proposal's `Failed` reason when the restart failed.
+
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
 - **The main pane can switch to a new window while the new-agent form is still open and

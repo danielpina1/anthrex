@@ -183,7 +183,13 @@ fn promote_refuses_plan_runs_and_terminal_runs() {
     assert_eq!(plan.run().promote_requested_at, None);
     only_bookkeeping(&effects);
 
-    for state in [RunState::Failed, RunState::Accepted, RunState::Discarded] {
+    // Review m3: a `complete` run waits for accept; nothing is left to promote.
+    for state in [
+        RunState::Complete,
+        RunState::Failed,
+        RunState::Accepted,
+        RunState::Discarded,
+    ] {
         let mut fx = started(true);
         fx.run_mut().state = state;
         let effects = promote(&mut fx, RUN_ID);
@@ -199,4 +205,46 @@ fn promote_refuses_plan_runs_and_terminal_runs() {
         replies(&promote(&mut fx, "nope")),
         vec![Err("unknown run nope".to_string())]
     );
+}
+
+/// Review I1: the engine's own barrier. A `path == Fast` run with a hub task, an L task
+/// or more than one task is refused, and nothing is created: no run, op or window.
+#[test]
+fn a_fast_path_start_refuses_hub_l_and_many_tasks() {
+    let cases: [(Vec<String>, Option<Size>, &str); 3] = [
+        (
+            vec![task("t1", "S", "proto", "")],
+            None,
+            "task t1 touches a hub file",
+        ),
+        (
+            vec![task("t1", "S", "auth", "")],
+            Some(Size::L),
+            "task t1 is L",
+        ),
+        (
+            vec![task("t1", "S", "auth", ""), task("t2", "S", "mail", "")],
+            None,
+            "a fast-path run has exactly one task, not 2",
+        ),
+    ];
+    for (tasks, size, why) in cases {
+        let mut fx =
+            Fixture::deciding(&plan_with(PROFILE, &tasks), config::Orchestrator::default());
+        let effects = fx.start_with(false, |run: &mut Run| {
+            mark_fast(run, triage(), None);
+            if let Some(size) = size {
+                run.tasks[0].size = size;
+            }
+        });
+        assert_eq!(
+            replies(&effects),
+            vec![Err(format!("the fast path does not apply: {why}"))]
+        );
+        only_bookkeeping(&effects);
+        assert!(fx.state.runs.is_empty(), "{why}: a run was created");
+    }
+    // The control: the same one-task run that is neither hub nor L starts.
+    let fx = started(true);
+    assert_eq!(fx.run().state, RunState::Running);
 }

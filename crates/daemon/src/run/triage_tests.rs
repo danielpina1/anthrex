@@ -357,3 +357,44 @@ fn tracked_files_are_sorted_capped_and_counted() {
     assert_eq!((kept.len(), total), (FILES_BYTES / 101, 600));
     assert_eq!(goal_input(&"é".repeat(5000)).chars().count(), GOAL_CHARS);
 }
+
+/// Review I1: the one check the driver, `build_plan` and the engine share. A fast-path
+/// run has exactly one task, and it is neither hub nor L.
+#[test]
+fn fast_refusal_needs_one_task_neither_hub_nor_l() {
+    let ok = check_fast(build_fast(&single(Size::S, &["crates/auth/src/link.rs"]))).unwrap();
+    assert_eq!(fast_refusal(&ok.tasks), None);
+    let hub = build_fast(&single(Size::M, &["crates/proto/src/wire.rs"])).unwrap();
+    assert_eq!(
+        fast_refusal(&hub.tasks).as_deref(),
+        Some("the fast path does not apply: task t1 touches a hub file")
+    );
+    let mut l = ok.clone();
+    l.tasks[0].size = Size::L;
+    assert_eq!(
+        fast_refusal(&l.tasks).as_deref(),
+        Some("the fast path does not apply: task t1 is L")
+    );
+    let mut two = ok.clone();
+    two.tasks.push(ok.tasks[0].clone());
+    let many = "the fast path does not apply: a fast-path run has exactly one task, not 2";
+    assert_eq!(fast_refusal(&two.tasks).as_deref(), Some(many));
+    assert_eq!(check_fast(Ok(two)).unwrap_err(), many);
+    assert_eq!(
+        fast_refusal(&[]).as_deref(),
+        Some("the fast path does not apply: a fast-path run has exactly one task, not 0")
+    );
+}
+
+/// Review m2: a blank goal is refused with `build_run`'s own wording.
+#[test]
+fn a_blank_goal_is_refused_with_build_runs_wording() {
+    for goal in ["", "   ", "\n\t "] {
+        assert_eq!(
+            blank_goal(goal).as_deref(),
+            Some("goal: must not be blank"),
+            "{goal:?}"
+        );
+    }
+    assert_eq!(blank_goal(" fix the link "), None);
+}
