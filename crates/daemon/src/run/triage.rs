@@ -279,6 +279,12 @@ pub fn owned_protected(
     protected: &[String],
     protected_files: &[String],
 ) -> Option<String> {
+    // Whole-branch re-review N1: a case-insensitive file system folds some non-ASCII
+    // letters onto ASCII (`ſ` opens as `s`), which the ASCII-folding matcher cannot
+    // see, so a fast-path task never owns a non-ASCII path.
+    if let Some(entry) = owns.iter().find(|entry| !entry.is_ascii()) {
+        return Some(entry.clone());
+    }
     let literal = |entry: &&String| !entry.contains(['*', '?', '[']);
     if let Ok(matcher) = globs::ProtectedMatcher::new(protected)
         && let Some(entry) = owns

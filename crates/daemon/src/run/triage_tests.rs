@@ -410,7 +410,7 @@ fn a_fast_task_owning_a_protected_file_takes_the_plan_path() {
     };
     // (owns, tracked protected files, profile extras, the path the reason names)
     type Case<'a> = (&'a [&'a str], &'a [&'a str], &'a [&'a str], &'a str);
-    let refused: [Case; 14] = [
+    let refused: [Case; 15] = [
         (&["AGENTS.md"], &[], &[], "AGENTS.md"),
         (&["src/a.rs", "CLAUDE.md"], &[], &[], "CLAUDE.md"),
         (&["docs/AGENTS.md"], &[], &[], "docs/AGENTS.md"),
@@ -440,6 +440,13 @@ fn a_fast_task_owning_a_protected_file_takes_the_plan_path() {
             "docs/agents.txt",
         ),
         (&["docs/**"], &[], &["docs/*.txt"], "docs/*.txt"),
+        // Re-review N1: `ſ` opens as `s` on a case-insensitive file system.
+        (
+            &["src/a.rs", "AGENT\u{17f}.md"],
+            &[],
+            &[],
+            "AGENT\u{17f}.md",
+        ),
     ];
     for (owns, tracked, extra, path) in refused {
         assert_eq!(

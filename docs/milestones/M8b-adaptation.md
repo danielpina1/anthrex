@@ -3027,3 +3027,7 @@ The controller's rulings on `.superpowers/sdd/M8b-adaptation/whole-branch-review
 
   This round adds: `engine/requests.rs` 522 → 531 (m1), `run/triage.rs` 316 → 361, `run/globs.rs` 278 → 341, `run/routing.rs` 352 → 359, `run/report.rs` 245 → 255, `cli/src/run_cmd/status.rs` 232 → 244.
 - **m5, `choose_profile` starts side effects before a start that may still be refused.** `driver/adapt.rs::choose_profile` spawns the stale-profile re-detection and `detect_reverts_later` before `build_run` and the runtime checks. A `run start` that is then refused (a settings refusal, a `PlanError`, the fast-path barrier inside `build_plan`) may still have started a detection scout (with `onboarding.auto` on and a stale profile) and appended revert records. Decisions 7 and 34 say "at every `run start`", so this is within their letter; decision 22.6's "nothing is created" holds for triage's `Plan`/`Large` routes, which never reach `build_plan`, but not for a fast-path candidate refused inside it. Left as is.
+
+### Whole-branch re-review (2026-09-27)
+
+READY. Two minors were fixed by the controller: a fast-path task whose `owns` holds a non-ASCII entry takes the plan path (`owned_protected`; `ſ` opens as `s` on a case-insensitive volume, which the ASCII-folding matcher cannot see), and `run status` shows triage's test-mode reason with control characters as spaces. Each test failed with its fix removed. The general non-ASCII folding gap in M8a's done gate, and three other minors, are in the follow-ups ledger.

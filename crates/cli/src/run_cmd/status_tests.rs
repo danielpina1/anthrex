@@ -390,6 +390,12 @@ fn status_shows_fast_path_and_triage() {
         run_block(&run).lines().nth(2),
         Some("  triage: code/single (decider); t1 test mode check (a one-line config fix)")
     );
+    // Re-review N4: a model-written reason cannot break the line.
+    run.tasks[0].test_mode_reason = Some("one\nline\x1b[2Jfix".into());
+    assert_eq!(
+        run_block(&run).lines().nth(2),
+        Some("  triage: code/single (decider); t1 test mode check (one line [2Jfix)")
+    );
     // Paused, the path still follows the state.
     run.state = RunState::Paused;
     run.paused_from = Some(RunState::Running);

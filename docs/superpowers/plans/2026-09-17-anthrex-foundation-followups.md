@@ -1515,6 +1515,13 @@ scope.
 - **Smoke stage 11d's `profile status` timeout** (`scripts/pty_smoke_adapt.py`) uses `RUN_REQUEST_TIMEOUT` (`crates/cli/src/profile_cmd.rs`) without a derivation row in `docs/timing-budgets.md`.
 - **Derived filter prefixes.** `check` can still derive a prefix made only of punctuation (the alphanumeric guard covers only `single_test`), and a `single_test` whose `{test}` is glued inside its first word (`./run_{test}`) derives no prefix, so that command is never filtered.
 
+## From M8b's whole-branch re-review (2026-09-27), for M8a's protected-file gate and M8b
+
+- **Non-ASCII case folding in `ProtectedMatcher` (security, predates M8b).** `run/globs.rs`'s matcher folds case only for ASCII, but the default case-insensitive macOS volume also folds letters such as `ſ` (U+017F) onto `s`. So `owns = ["AGENTſ.md"]` passes the done gate and the file opens as `AGENTS.md` (`.mcp.jſon` likewise). Nothing reaches the base branch before accept, where the change shows, but under a lookalike name. M8b closes it for the fast path only (a non-ASCII `owns` entry leaves the fast path); the gate itself should compare Unicode-case-folded, normalised paths, or refuse non-ASCII protected-lookalike paths, for planned runs too.
+- **`owned_protected` skips its checks when the protected list fails to compile** (`run/triage.rs`), where the done gate refuses. Unreachable today (the list is validated when the run is built); make it refuse.
+- **`{` is not a glob character** in `run/globs.rs`, so `owns = ["{AGENTS.md,x}"]` is not routed to the plan path; the done gate still bounces the change, so the only effect is a failed fast run.
+- **`AmendTask { size: L }` still applies to a fast-path run.** User-initiated, so not a bypass; consider refusing it like `add_task`.
+
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
 - **The main pane can switch to a new window while the new-agent form is still open and

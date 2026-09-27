@@ -66,7 +66,7 @@ pub fn run_block(run: &RunInfo) -> String {
                 mode_label(task.test_mode),
                 task.test_mode_reason
                     .as_deref()
-                    .map_or(String::new(), |why| format!(" ({why})"))
+                    .map_or(String::new(), |why| format!(" ({})", one_line(why)))
             ),
             None => String::new(),
         };
@@ -242,3 +242,11 @@ pub fn base_moved_question(base: &str, info: &BaseMovedInfo) -> String {
 #[cfg(test)]
 #[path = "status_tests.rs"]
 pub(super) mod tests;
+
+/// Whole-branch re-review N4: a model-written reason on one status line, with every
+/// control character (a newline, an escape) shown as a space.
+fn one_line(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
