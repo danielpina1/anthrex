@@ -369,6 +369,21 @@ fn cancelled_tasks_are_out_of_the_total_and_appended() {
     );
 }
 
+/// Spec §16.4 bounds the critical path over non-cancelled tasks: a cancelled task on it
+/// is not left, like a merged one.
+#[test]
+fn a_cancelled_task_on_the_critical_path_is_not_left() {
+    let app = gemini_with(|run| {
+        let t3 = run.tasks.iter_mut().find(|t| t.id == "t3").expect("t3");
+        t3.state = TaskState::Cancelled;
+    });
+    let inspection = inspect_node(&app, &run_key("r1"));
+    assert_eq!(
+        value(&inspection, "path"),
+        Some("critical path t0 → t6 → t2 → t3 · 1 task left · 1.2× the bound")
+    );
+}
+
 #[test]
 fn every_progress_category_in_order() {
     let states = [

@@ -103,11 +103,12 @@ fn fixing_prefers_the_decider_summary() {
 
 #[test]
 fn fixing_takes_the_latest_failure_before_the_round() {
-    // The blocking review (ended at `now − 360`) is later than the check at `now − 400`.
+    // The blocking review (started at `now − 900`) is later than the check at `now − 950`:
+    // the gates run the check before the review.
     let app = with_task("t2", |task| {
         let check = task.last_check.as_mut().expect("check");
         check.ok = false;
-        check.at = GEMINI_NOW - 400;
+        check.at = GEMINI_NOW - 950;
     });
     assert_eq!(
         fixing(&app).as_deref(),
@@ -130,11 +131,31 @@ fn fixing_takes_the_latest_failure_before_the_round() {
     assert_eq!(fixing(&app).as_deref(), Some("test proof failed"));
 }
 
+/// Ruling I1: the daemon sends the worker back when the reviewer submits
+/// (`review.rs::submit` → `ladder::gate_failure`), but ends the reviewer's round only
+/// when its process exits, after the retire's grace. The review that sent the piece
+/// back is timed by its round's start, not its end.
+#[test]
+fn the_review_that_sent_it_back_is_fixing_though_its_round_ended_later() {
+    let app = with_task("t2", |task| {
+        task.rounds[1].ended_at = Some(GEMINI_NOW - 357);
+    });
+    assert_eq!(
+        fixing(&app).as_deref(),
+        Some("status.rs:118 critical — SubagentStop not paired")
+    );
+    // A review that starts only as the piece starts did not send it back.
+    let app = with_task("t2", |task| {
+        task.rounds[1].started_at = GEMINI_NOW - 360;
+    });
+    assert_eq!(fixing(&app), None);
+}
+
 #[test]
 fn a_second_session_is_fixing_from_its_first_piece() {
     let app = with_task("t2", |task| {
         let mut second =
-            crate::tree::run_fixtures::worker(2, None, proto::Runtime::Codex, GEMINI_NOW - 30);
+            crate::tree::run_fixtures::worker(2, None, proto::Runtime::Codex, GEMINI_NOW - 90);
         second.route = task.route.clone();
         task.rounds.push(second);
     });
@@ -144,7 +165,8 @@ fn a_second_session_is_fixing_from_its_first_piece() {
         Some("status.rs:118 critical — SubagentStop not paired")
     );
     assert_eq!(value(&inspection, "session"), Some("no window yet"));
-    assert_eq!(inspection.right.as_deref(), Some("starting · 30s · t2"));
+    // 90 s back reads `1m` through 29 s of suite load, as the other aged rows do.
+    assert_eq!(inspection.right.as_deref(), Some("starting · 1m · t2"));
 }
 
 #[test]
@@ -166,6 +188,7 @@ fn hostile_check_summaries_stay_one_bounded_line() {
 fn t7_on_window(change: impl FnOnce(&mut proto::AgentRoundInfo)) -> App {
     let (mut snapshot, mut windows) = gemini_fixture();
     let task = &mut snapshot.runs[0].tasks[7];
+    task.branch = "anthrex/r1/t7".into();
     task.rounds[0].window_id = Some(11);
     change(&mut task.rounds[0]);
     windows.push(headless(
@@ -190,7 +213,7 @@ fn a_rate_limited_round() {
             ("activity", "turns 0 · tool calls 0 · tokens 0"),
             (
                 "session",
-                "#11 · headless · worktree  · Enter: conversation"
+                "#11 · headless · worktree anthrex/r1/t7 · Enter: conversation"
             ),
         ]
     );
@@ -393,5 +416,18 @@ fn the_agents_row_ages_the_earliest_live_limit() {
     assert_eq!(
         value(&run, "agents"),
         Some("workers 3/3 · readers 1/3 · claude ok · codex rate-limited 4m")
+    );
+}
+
+/// A worker's worktree branch reaches its `session` row through `clean`.
+#[test]
+fn a_hostile_branch_is_cleaned_in_the_session_row() {
+    let app = with_task("t2", |task| {
+        task.branch = "anthrex/r1/\u{1b}]0;x\u{7}t2".into();
+    });
+    let inspection = inspect_node(&app, &round_key("t2", AgentRole::Worker, 1, 2));
+    assert_eq!(
+        value(&inspection, "session"),
+        Some("#7 · headless · worktree anthrex/r1/ ]0;x t2 · Enter: conversation")
     );
 }

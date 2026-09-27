@@ -104,9 +104,12 @@ fn worker_fields(
     fields
 }
 
-/// The latest gate failure at or before `start`: a blocking review's most severe
-/// critical or important finding (timed by its reviewer round's end), a failed check,
-/// or a failed proof.
+/// The latest gate failure before `start`: a blocking review's most severe critical
+/// or important finding, a failed check, or a failed proof. A review is timed by its
+/// reviewer round's start, strictly before `start` (ruling I1): the daemon sends the
+/// worker back when the reviewer submits, and ends the reviewer's round only when its
+/// process exits, after the send-back. A check or proof is timed by its record's `at`,
+/// at or before `start`: the daemon sends back at or after that `at`.
 fn fixing_text(task: &TaskInfo, start: u64) -> Option<String> {
     let mut failures: Vec<(u64, String)> = Vec::new();
     for review in task
@@ -114,17 +117,18 @@ fn fixing_text(task: &TaskInfo, start: u64) -> Option<String> {
         .iter()
         .filter(|r| r.blocking && r.verdict.is_some())
     {
-        let ended = task
+        let started = task
             .rounds
             .iter()
-            .filter(|r| r.role == AgentRole::Reviewer && r.round == review.round)
-            .find_map(|r| r.ended_at);
+            .find(|r| r.role == AgentRole::Reviewer && r.round == review.round)
+            .map(|r| r.started_at)
+            .filter(|at| *at < start);
         let worst = review
             .findings
             .iter()
             .filter(|f| f.severity != Severity::Minor)
             .min_by_key(|f| rank(f.severity));
-        if let (Some(at), Some(worst)) = (ended, worst) {
+        if let (Some(at), Some(worst)) = (started, worst) {
             failures.push((at, finding_text(worst)));
         }
     }

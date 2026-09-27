@@ -162,6 +162,21 @@ fn task_deps_include_implicit_ones_once() {
         value(&inspection, "deps"),
         Some("waits on t0 ✓ t6 ✓ · unblocks t3, t5, t7 · on critical path")
     );
+    // A working dependency's glyph is a static `●`, never the spinner (controller
+    // ruling), though its worker's window is `Working` and the spinner has moved on.
+    let mut app = with_task("t3", |task| task.deps = vec!["t2".into()]);
+    app.spinner_frame = 3;
+    let t2 = app.runs.runs[0]
+        .tasks
+        .iter_mut()
+        .find(|t| t.id == "t2")
+        .expect("t2");
+    t2.state = TaskState::Working;
+    let inspection = inspect_node(&app, &task_key("t3"));
+    assert_eq!(
+        value(&inspection, "deps"),
+        Some("waits on t2 ● · on critical path")
+    );
     // No deps, no dependents, off the critical path: no row.
     let inspection = inspect_node(&app, &task_key("t8"));
     assert_eq!(value(&inspection, "deps"), None);
@@ -400,4 +415,15 @@ fn a_minor_only_review_is_a_check_with_its_findings() {
         value(&inspect_node(&app, &task_key("t2")), "review"),
         Some("r1 ✓ 2 minor: hooks.rs:12 \"naming\"")
     );
+}
+
+/// A task's title reaches the name through `clean`: no control character, bounded.
+#[test]
+fn a_hostile_title_is_cleaned_in_the_name() {
+    let app = with_task("t2", |task| {
+        task.title = format!("map\u{1b}[2J\nhooks{}", "z".repeat(400));
+    });
+    let inspection = inspect_node(&app, &task_key("t2"));
+    let expected = format!("map [2J hooks{}…", "z".repeat(300 - 13));
+    assert_eq!(inspection.name, format!("t2  {expected}"));
 }

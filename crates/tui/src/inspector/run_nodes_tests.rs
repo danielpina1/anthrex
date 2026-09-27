@@ -146,6 +146,8 @@ fn a_live_scout_on_a_listed_window() {
         id: "S1".into(),
     };
     let inspection = inspect_node(&app, &key);
+    // Its glyph is the canvas's: a static `●` while its listed window is `Idle`.
+    assert_eq!(inspection.glyph.content, "●");
     assert_eq!(inspection.right.as_deref(), Some("working · 1h05m"));
     assert_eq!(value(&inspection, "state"), Some("working · Grep"));
     assert_eq!(value(&inspection, "report"), Some("not yet"));
@@ -154,6 +156,17 @@ fn a_live_scout_on_a_listed_window() {
         value(&inspection, "session"),
         Some("#4 · headless · main checkout, read-only · Enter: conversation")
     );
+
+    // On a `Working` window, it spins.
+    let (mut snapshot, mut windows) = gemini_fixture();
+    let scout = &mut snapshot.runs[0].scouts[0];
+    scout.state = proto::ScoutState::Working;
+    scout.ended_at = None;
+    let mut window = crate::tree::run_fixtures::headless(4, "r1/S1", "/r/anthrex", None);
+    window.status = proto::Status::Working;
+    windows.push(window);
+    let app = app_of((snapshot, windows));
+    assert_eq!(inspect_node(&app, &key).glyph.content, "⠋");
 
     let (mut snapshot, windows) = gemini_fixture();
     let scout = &mut snapshot.runs[0].scouts[0];
@@ -272,4 +285,16 @@ fn a_reported_scout_whose_window_lingers_shows_no_tool() {
         value(&inspection, "session"),
         Some("#4 · headless · main checkout, read-only · Enter: conversation")
     );
+}
+
+/// `clean` keeps exactly 300 characters whole and cuts the 301st with `…`, counting
+/// characters, not bytes.
+#[test]
+fn clean_cuts_past_300_characters() {
+    use super::run_format::clean;
+    let exact = "é".repeat(300);
+    assert_eq!(clean(&exact), exact);
+    let over = format!("{exact}x");
+    assert_eq!(clean(&over), format!("{exact}…"));
+    assert_eq!(clean("a\u{1b}[2Jb\nc\u{7}"), "a [2Jb c ");
 }
