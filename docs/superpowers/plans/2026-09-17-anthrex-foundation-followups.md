@@ -1536,7 +1536,7 @@ scope.
 ## From M8b's Linux CI audit (2026-09-27), watch items
 
 - **`profile_cli_refusals` "stopping" refusal is timing-dependent.** `crates/cli/tests/profile_cli_refusals.rs:~196` expects the "stopping" refusal right after `reject`, but `detect` runs preflight's git calls before it checks the job. If cleanup wins, the reply differs. It has passed on both CI platforms; if it ever flakes, hold the stopping state deterministically (for example a verification command that hangs until released).
-- **ETXTBSY on freshly written stand-in scripts (Linux).** Tests write a script and the daemon executes it directly (`ANTHREX_DECIDER_BIN`, scout and hook stand-ins). A concurrent fork in another test thread can briefly inherit the write fd. A rename does not help, because ETXTBSY is per inode. If it appears, retry the spawn on ETXTBSY in the test harness, or exec through `/bin/sh <script>`.
+- **ETXTBSY on freshly written stand-in scripts (Linux).** Tests write a script and the daemon executes it directly (`ANTHREX_DECIDER_BIN`, scout and hook stand-ins). A concurrent fork in another test thread can briefly inherit the write fd. A rename does not help, because ETXTBSY is per inode. If it appears, retry the spawn on ETXTBSY in the test harness, or exec through `/bin/sh <script>`. It appeared on ubuntu CI twice (PR #21: `an_interrupted_import_is_finished_by_the_next` and `pseudo_refs_planted_after_the_checks_steer_nothing`), both through `tests/support/run_git.rs::wrapper_git`, which now waits with a probe run until the script executes. The other stand-in writers (decider, scout, hook scripts) still lack it; apply the same `settle` when one flakes.
 
 ## From the Claude tool-search fix (2026-09-27), for M8a and M9
 
