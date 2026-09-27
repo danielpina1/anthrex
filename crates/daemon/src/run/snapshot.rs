@@ -1,9 +1,11 @@
 //! The pushed run snapshot (decision 47, spec §16.5). Pure — no `std::fs`,
 //! `std::process`, `std::thread`, `tokio` or `std::time::SystemTime` (design decision 2).
 
+use std::collections::BTreeMap;
+
 use proto::{
-    AgentRole, AgentRoundInfo, BaseMovedInfo, CheckInfo, ProofInfo, ReviewInfo, RunInfo,
-    RunsSnapshot, Severity, Spend, TaskInfo,
+    AgentRole, AgentRoundInfo, BaseMovedInfo, CheckInfo, ProofInfo, ReviewInfo, RunInfo, RunUsage,
+    RunsSnapshot, Severity, Spend, TaskInfo, TokenUsage,
 };
 
 use super::contract::sha7;
@@ -75,13 +77,55 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         report_path: run.report_path(),
         outcome: run.outcome.clone(),
         created_at: run.created_at,
-        // Milestone 8b: `usage` and `scouts` are filled by its later tasks.
+        // Milestone 8b: `scouts` is filled by milestone 9's run scouts.
         path: run.path,
         triage: run.triage.clone(),
         promote_requested_at: run.promote_requested_at,
         profile_source: run.profile_source,
-        usage: None,
+        usage: Some(run_usage(run)),
         scouts: Vec::new(),
+    }
+}
+
+/// M8b decision 29: usage by role. Worker and reviewer rounds from their streams,
+/// deciders with triage, run scouts, and the orchestrator from OTLP. Every role is
+/// listed, and every sum saturates: OTLP totals come from any local process.
+fn run_usage(run: &Run) -> RunUsage {
+    fn add(to: &mut TokenUsage, u: TokenUsage) {
+        to.input = to.input.saturating_add(u.input);
+        to.output = to.output.saturating_add(u.output);
+        to.cache_read = to.cache_read.saturating_add(u.cache_read);
+        to.cache_write = to.cache_write.saturating_add(u.cache_write);
+    }
+    let mut by_role: BTreeMap<String, TokenUsage> =
+        ["worker", "reviewer", "scout", "decider", "orchestrator"]
+            .into_iter()
+            .map(|role| (role.to_string(), TokenUsage::default()))
+            .collect();
+    let mut credit =
+        |role: &str, u: TokenUsage| add(by_role.entry(role.to_string()).or_default(), u);
+    for round in run.tasks.iter().flat_map(|t| &t.rounds) {
+        let role = match round.role {
+            AgentRole::Worker => "worker",
+            AgentRole::Reviewer => "reviewer",
+            AgentRole::Scout => "scout",
+            AgentRole::Orchestrator => "orchestrator",
+        };
+        credit(role, round.usage);
+    }
+    credit("decider", run.decider_usage);
+    credit("decider", run.triage_usage);
+    credit("scout", run.scout_usage);
+    credit("orchestrator", run.orchestrator_usage);
+    let mut total = TokenUsage::default();
+    for u in by_role.values() {
+        add(&mut total, *u);
+    }
+    RunUsage {
+        total,
+        by_role,
+        decider_calls: run.decider_calls,
+        decider_fallbacks: run.decider_fallbacks,
     }
 }
 

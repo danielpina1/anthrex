@@ -150,6 +150,11 @@ pub enum EventKind {
         reply: ReplyId,
         run_id: String,
     },
+    /// M8b decision 30: the OTLP ledger's new total for `(run, "orchestrator")`.
+    OrchestratorUsage {
+        run_id: String,
+        usage: TokenUsage,
+    },
     OpDone {
         run_id: String,
         op: OpId,
@@ -357,6 +362,11 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             to,
             commits,
         } => merge::base_advanced(&mut state, &run_id, to, commits, now),
+        EventKind::OrchestratorUsage { run_id, usage } => {
+            if let Some(run) = state.runs.get_mut(&run_id) {
+                run.orchestrator_usage = usage;
+            }
+        }
         EventKind::OpDone { run_id, op, result } => {
             op_done(&mut state, &run_id, op, result, now, &mut fx)
         }
@@ -431,6 +441,9 @@ fn finish(
 fn without_counters(run: &Run) -> Run {
     let mut run = run.clone();
     run.revision = 0;
+    // M8b decision 29: usage from OTLP and run scouts is a counter too.
+    run.orchestrator_usage = Default::default();
+    run.scout_usage = Default::default();
     for task in run.tasks.iter_mut() {
         task.spent_total = Default::default();
     }

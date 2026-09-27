@@ -1421,6 +1421,21 @@ scope.
   wording (decision 22 step 2), so it is not a defect. A follow-up could append the
   proposal's `Failed` reason when the restart failed.
 
+## From M8b.15 (2026-09-27), for M8b and M9
+
+- **`TokenUsage`'s `+=` does not saturate.** `proto::TokenUsage`'s `AddAssign` (`crates/proto/src/run_info.rs`)
+  and `engine/signals.rs`'s `total.input += usage.input` panic on overflow in a debug build
+  and wrap in a release build. The numbers come from a decider's or worker's own stream,
+  so an overflow needs a session to report tokens near `u64::MAX`. M8b.15 saturates
+  everything that reads OTLP totals (`metering/otlp.rs`'s ledger, `run/snapshot.rs`'s
+  `run_usage`), since any local process can post those, but left the stream sums alone.
+  Making `AddAssign` saturate would cover every caller at once. M8b.16's history records
+  should sum with it too.
+- **The OTLP receiver is a small HTTP/1.1 server with no `Expect: 100-continue` support.**
+  Claude Code's exporter (OTel JS 0.208) does not send it (M8b.1 item 5). A client that
+  does would wait `OTLP_READ_TIMEOUT` and be closed. M9 should check this when it
+  launches the orchestrator window with `orchestrator_env`.
+
 ## From the main-branch CI failures (2026-09-23), deliberately deferred
 
 - **The main pane can switch to a new window while the new-agent form is still open and

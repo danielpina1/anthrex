@@ -16,6 +16,8 @@
 //! ([`read_evidence`], on `spawn_blocking`), only from the reports anthrex stored.
 //!
 //! M8b.14: `RunRequest::StartGoal`, in `adapt_goal.rs`.
+//!
+//! M8b.15: [`RunService::orchestrator_usage`], the OTLP receiver's way into the engine.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -117,6 +119,12 @@ impl RunService {
     /// Sets the services once; a second call is ignored.
     pub fn set_adaptation(&self, adaptation: Adaptation) {
         let _ = self.adaptation.set(adaptation);
+    }
+
+    /// M8b decision 30: the OTLP ledger's new total for `(run, "orchestrator")`, from
+    /// the receiver (`metering::server`). Never waits; an unknown run is ignored.
+    pub fn orchestrator_usage(&self, run_id: String, usage: proto::TokenUsage) {
+        self.send(EventKind::OrchestratorUsage { run_id, usage });
     }
 
     /// The per-repository git write queue, shared with the profile service.

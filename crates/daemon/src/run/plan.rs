@@ -430,6 +430,8 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         path: None,
         triage: None,
         triage_usage: Default::default(),
+        scout_usage: Default::default(),
+        orchestrator_usage: Default::default(),
         promote_requested_at: None,
     })
 }

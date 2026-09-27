@@ -451,6 +451,12 @@ pub struct Run {
     pub triage: Option<proto::TriageInfo>,
     #[serde(default)]
     pub triage_usage: TokenUsage,
+    /// M8b decision 29: run scouts' usage (milestone 9 starts them), and the
+    /// orchestrator's, the OTLP ledger's latest total (decision 30).
+    #[serde(default)]
+    pub scout_usage: TokenUsage,
+    #[serde(default)]
+    pub orchestrator_usage: TokenUsage,
     /// M8b decision 25: when the user asked to promote this fast-path run (milestone 9
     /// performs it).
     #[serde(default)]

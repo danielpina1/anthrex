@@ -374,6 +374,15 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
 
     let run_loop = runs.spawn(shutdown.clone());
     profiles.spawn(shutdown.clone());
+    // M8b decision 30: the OTLP receiver, once the engine runs; it stops with `shutdown`
+    // and removes `<data_dir>/otlp.addr` as it does.
+    let otlp = crate::metering::start(
+        &loaded_config.orchestrator.metering,
+        &opts.data_dir,
+        runs.clone(),
+        shutdown.clone(),
+    )
+    .await;
     let served = server::serve(
         listener,
         manager.clone(),
@@ -394,6 +403,11 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
     // budget, because `probe`'s own loop checks this token on every turn.
     probe_shutdown.cancel();
     let _ = probe.await;
+    // `shutdown` is cancelled once `serve` returns; the receiver's own stop is bounded.
+    if let Some(otlp) = otlp {
+        shutdown.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(5), otlp.stopped()).await;
+    }
     // Decision 46: the engine stops first, so the sessions killed below are not failures.
     runs.stop().await;
     let _ = tokio::time::timeout(Duration::from_secs(5), run_loop).await;

@@ -2708,6 +2708,59 @@ The only lock held across an await is `writes` (a `tokio::sync::Mutex`), which o
 - **m5:** recorded in the follow-ups file under M8b.14's review.
 - **Open questions accepted by the review:** (1) goal-started detection uses the goal's `--trust-project` and `--unconfined-checks`; (2) a `Failed` proposal counts as nothing pending, with no backoff, because every restart needs a `run start --goal` the user typed; (3) `GOAL_REQUEST_TIMEOUT` stays 810 s, its terms covering calls that answer normally, as M8a's do; (5) `check_fast`'s L check is kept as defence in depth, now beside the driver's and the engine's.
 
+### M8b.15 metering: usage by role and the OTLP receiver (2026-09-27)
+
+**Deviations and choices the brief leaves open:**
+- **No protocol change.** `RunUsage`, `RunInfo.usage` and `TaskInfo.decider_usage` landed in M8b.2, with their round trips (`crates/proto/src/adapt_tests.rs`). `PROTO_VERSION` stays 8, and no wire message is new or changed.
+- **`Run.scout_usage` and `Run.orchestrator_usage`** are added (`#[serde(default)]`), as the Interfaces list them. Nothing sets `scout_usage` until milestone 9's run scouts. Both are counters: `engine::without_counters` clears them, so an OTLP total is persisted lazily and published as a counter update (decision 47), like a round's usage.
+- **`EventKind::OrchestratorUsage`** replaces `Run.orchestrator_usage` with the ledger's total (the ledger sends its whole total, never an increment). A run the engine does not know is ignored, with no revision or persist.
+- **`RunInfo.usage`** is always `Some`, and `by_role` always lists all five roles (zero when unused), so a client never has to tell "no usage" from "role unknown". `worker` and `reviewer` sum every round of every task by its role (`Scout` and `Orchestrator` rounds, which no run has yet, map to their own keys); `decider` is `Run.decider_usage` + `Run.triage_usage`. `Task.decider_usage` is not added again: M8b.12 already puts it in `Run.decider_usage`. Every sum saturates, because OTLP totals come from any local process. `decider_calls` and `decider_fallbacks` are the run's (ruling R-T12-1).
+- **Where run and role come from.** Only the resource attributes `anthrex.run` and `anthrex.role`, as decision 30 says. M8b.1 found Claude Code also copies them onto every data point; those copies are ignored. A missing `anthrex.role` is the role `""`, kept in the ledger and not shown.
+- **Untrusted input, in `metering/otlp.rs`:**
+  - The body must be a JSON object; serde's own recursion limit refuses deep nesting.
+  - Only the fields read are kept (typed `Deserialize` structs; unknown fields are skipped).
+  - Values come from `asDouble` or `asInt`, each a number or protobuf-JSON's decimal string.
+  - A point is dropped when its value is negative, not finite or not a number; when its `type` is unknown; when its temporality is unspecified; or when its run id, role, session id or model is over `MAX_ID_BYTES` (256).
+  - `as u64` saturates huge values.
+  - The ledger keeps at most `MAX_TOTALS` (1024) `(run, role)` pairs and `MAX_SERIES` (4096) cumulative series. A point for a new pair or series beyond the cap is dropped. Every total saturates.
+- **The cumulative series key is `(run, role, session.id, model, type)`**, a superset of decision 30's `(session.id, model, type)`. Two runs or roles never share a series. A series seen for the first time adds its whole value.
+- **The server, beyond decision 30's answers:**
+  - `400` for a malformed request line, header, chunk or JSON body.
+  - `405` for another method on `/v1/metrics`.
+  - `413` for headers over `OTLP_MAX_HEADERS`, as for a body.
+  - A request that runs out of `OTLP_READ_TIMEOUT` is closed with no answer.
+  - Every answer but `200` closes the connection. First the write side is shut, and what the client still sends is drained for at most 500 ms, so the client reads the answer rather than a reset.
+  - A `200` keeps the connection when the request asked for it (Claude Code's exporter sends `Connection: keep-alive`).
+  - At most `OTLP_MAX_CONNECTIONS` (8) connections are served at once, and a connection beyond that is closed at once. With the 4 MiB body cap, memory stays bounded.
+  - Parsing runs on `spawn_blocking`. The ledger's `std::sync::Mutex` (taken with `daemon::lock`) is held only for `apply` and `total`.
+  - Nothing is logged but the bind, accept errors and the once-per-daemon `415` line (its content type cut to 64 characters). No body is ever logged (ruling R-T1-5).
+  - It makes no outbound connection.
+- **Names beyond the Interfaces** (`metering/server.rs`):
+  - `ADDR_FILE` (`"otlp.addr"`, written through a temporary file and a rename) and `OTLP_MAX_CONNECTIONS`.
+  - `OtlpServer` gains a private task handle and `stopped()`, which waits for the accept loop to stop and the address file to be removed.
+  - `start(&config::Metering, data_dir, Arc<RunService>, shutdown) -> Option<OtlpServer>` is `lifecycle::run`'s one call, re-exported as `metering::start`. With `otlp = true`, it binds and forwards every orchestrator total to `RunService::orchestrator_usage`. A bind failure is logged at `error`, and the daemon runs without metering. With `otlp = false`, it removes a stale `otlp.addr` left by an earlier daemon.
+  - `metering/otlp.rs` adds `TOKEN_METRIC`, `MAX_SERIES`, `MAX_TOTALS` and `MAX_ID_BYTES`.
+- **Lifecycle order.** The receiver starts right after `runs.spawn` and `profiles.spawn`, so after the socket is bound and the engine runs. At shutdown, once `serve` returns, its stop is awaited, bounded by 5 s, before `runs.stop()`.
+- **File budgets.** `lifecycle.rs` 450 → 464 (+14, within +35 of 439). `run/snapshot.rs` 252 → 296 (230 + 50 was the budget; 66 over 230). `run/engine/mod.rs` 539 → 552 (524 + 20 was the budget; M8b.12–14 had it at 539). All stay under 600. `driver/requests.rs` is untouched (590); `RunService::orchestrator_usage` is in `driver/adapt.rs`.
+- **Tests beyond the list.**
+  - `huge_values_saturate_and_the_ledger_is_bounded` (`otlp_tests.rs`).
+  - `a_new_run_shows_every_role_at_zero`, `usage_totals_saturate` and `orchestrator_usage_is_stored_as_a_counter`, in `engine/tests/usage.rs` with `run_usage_sums_roles` ("the snapshot tests").
+  - `parses_the_recorded_fixture` runs on the observed fixture (`"observed": true`), so `parses_the_documented_shape` is not needed.
+  - `otlp_server.rs` also covers keep-alive, a body with no run, `400`, `405`, a chunk size that overflows, and oversized headers.
+- **Red and green.**
+  - Every new test failed before the change except `other_metrics_are_ignored`, which passed against a stub that returned no points.
+  - That test was proved by a mutation: the metric-name check was removed, and the test fails.
+  - Every server test failed at the stub's `bind`.
+  - `a_slow_client_does_not_block_another` was also proved by serving each connection inline in the accept loop. The test fails at 2.0 s.
+  - `orchestrator_usage_is_stored_as_a_counter` was proved by removing `orchestrator_usage` from `without_counters`. The test fails with an urgent persist.
+  - Every mutant was reverted.
+- **Timing budget.** The 2 s bound is recorded in `docs/timing-budgets.md`. Measured: 0.6–1.5 ms. The test asserts at compile time that the bound stays under `OTLP_READ_TIMEOUT`.
+- **Manual check.** An isolated daemon was run with its socket, data directory and config under `/tmp`, and `ANTHREX_CLAUDE_BIN`, `ANTHREX_CODEX_BIN` and `ANTHREX_DECIDER_BIN` pointing to nonexistent paths.
+  - It wrote `otlp.addr`.
+  - `curl` posting M8b.1's fixture got `200`, and posting `application/x-protobuf` got `415`, logged once without the body.
+  - After `daemon stop`, `otlp.addr` was gone.
+- **Follow-ups** (recorded under "From M8b.15"): `TokenUsage`'s `+=` does not saturate for stream usage, and there is no `Expect: 100-continue` support.
+
 ### Main's decision 33a (merged 2026-09-27)
 
 Main's `6928fce` ("docs: record model routing choices and candidates") added decision 33a: routing decisions and candidate snapshots, stored in `Task.routing_decisions` and copied into `TaskRecord`. It was written against main's older numbering, where one task, "M8b.14 History", covered all of history. In this refreshed brief:
