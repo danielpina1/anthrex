@@ -31,7 +31,7 @@ pub const RUN_WAIT: Duration = Duration::from_secs(300);
 /// (three more, 15 s) and the base's `.codex` listing (final fix batch F2, 5 s), 50 s;
 /// every other request is one engine step. Recorded in
 /// `docs/timing-budgets.md`.
-const REQUEST_WAIT: Duration = Duration::from_secs(60);
+pub const REQUEST_WAIT: Duration = Duration::from_secs(60);
 
 /// How long `Finish` may take: its own reads (three git calls, 15 s), then the op.
 /// Accept's merge runs under `ACCEPT_MERGE_TIMEOUT` (600 s, never shortened); its other

@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use daemon::run::engine::HISTORY_FILE;
 use proto::{HISTORY_VERSION, HistoryLine, RunRecord};
-use support::run_harness::{RUN_WAIT, RunHarness, git_in};
+use support::run_harness::{REQUEST_WAIT, RunHarness, git_in};
 use support::run_plans::{plan, task, until};
 
 #[test]
@@ -58,7 +58,7 @@ fn run_start_records_a_revert_of_an_accepted_run() {
 
     // A plain start, stopped at its plan gate; `run stats` is never asked.
     h.start(&plan("", &[task("t1", &["a.txt"], "")]), false);
-    let line = until("the revert record", RUN_WAIT, || {
+    let line = until("the revert record", REQUEST_WAIT, || {
         let text = std::fs::read_to_string(&path).ok()?;
         text.lines()
             .find(|l| l.contains(&format!("\"record_id\":\"revert/{revert}\"")))
