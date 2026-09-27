@@ -2797,7 +2797,7 @@ This round supersedes the notes above where they differ: the connection cap, the
 
 ### M8b.15 fix round 2: the re-review's findings (2026-09-27)
 
-- **Metering runs under the ledger lock (Important 1).** `metering::server::meter` now takes the ledger lock first. The generation read, the eviction and the `is_live` filter all happen while holding it, and then the apply.
+- **Metering runs under the ledger lock (Important 1).** `metering::server::meter` (renamed `record` by the second commit, below) now takes the ledger lock first. The generation read, the eviction and the `is_live` filter all happen while holding it, and then the apply.
   - No other request can evict a run between this request's live check and its apply.
   - A run evicted as not live can never pass the filter again, because a terminal state is final. So its total can no longer be rebuilt from one request's points, which is how the re-review lowered it from 100 to 5.
   - Lock order is unchanged: `ledger` → `live`.
@@ -2826,8 +2826,13 @@ This round supersedes the notes above where they differ: the connection cap, the
 
   For F, the kept-alive answer and `settle` moved together into `Conn::keep`, so the test can drive them on a real socket. `Conn::respond` and `Conn::buf` are now private.
 - **HTTP unit tests moved to `metering/http_tests.rs`.**
-- **Names beyond the Interfaces:** `Run::same_on_disk`, `ReadBuf::head_end`, `ReadBuf::line_end` and `Conn::keep`.
-- **Residual race, recorded under "From M8b.15's review".** Two concurrent requests for one run can still post their totals out of order.
+- **Names beyond the Interfaces:** `Run::same_on_disk`, `ReadBuf::head_end`, `ReadBuf::line_end`, `Conn::keep`, and `server::record` (private, formerly `meter`).
+- **Totals are posted under the ledger lock (controller ruling, fix round 2's second commit).**
+  - Before this, `answer` posted a request's totals after the lock was released. Two concurrent requests for one run could post out of order, and the sink's latest-wins pending map could keep the lower total.
+  - `server::record` (formerly `meter`) now posts each total to `UsageSink::post` inside the locked section, so totals reach the sink in the order the ledger computed them.
+  - `post` is one short lock of the pending map plus at most one non-blocking unbounded send. It never takes the engine, manager or ledger lock.
+  - Lock order: `ledger` → `live` and `ledger` → `pending`. `pending` is otherwise taken alone (`offer`, `take`), so there is no cycle.
+  - Test: `two_requests_for_one_run_post_their_totals_in_order`. A recording sink's first post for `r` runs request B on another thread. Before the change, the posts were `[105, 100]`; now they are `[100, 105]`.
 
 ### Main's decision 33a (merged 2026-09-27)
 

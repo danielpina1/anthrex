@@ -10,7 +10,8 @@
 //! - each request is read within [`OTLP_READ_TIMEOUT`], headers up to
 //!   [`OTLP_MAX_HEADERS`] and a `Content-Length` or chunked body up to
 //!   [`OTLP_MAX_BODY`]; anything larger is `413` and the connection is closed;
-//! - the body is parsed and applied to the ledger on `spawn_blocking`;
+//! - the body is parsed, applied to the ledger and its totals posted on
+//!   `spawn_blocking`, under the ledger lock, so totals are posted in order;
 //! - only runs the daemon has now and that have not ended are metered
 //!   ([`UsageSink::is_live`]); a run that went is evicted from the ledger (review I3);
 //! - it makes no outbound call and never logs a body (ruling R-T1-5): exports carry the
@@ -57,7 +58,9 @@ pub trait UsageSink: Send + Sync + 'static {
     /// Changes whenever the live runs change, so the ledger evicts the runs that went.
     fn live_generation(&self) -> u64;
     /// The ledger's new total for `(run_id, "orchestrator")`. The sink coalesces: the
-    /// engine sees at most one pending total per run, the latest.
+    /// engine sees at most one pending total per run, the latest. Called under the
+    /// ledger lock, so totals arrive in order: it must stay cheap, never block, and
+    /// never take the ledger, the engine or the window manager's lock.
     fn post(&self, run_id: String, usage: TokenUsage);
 }
 
@@ -247,27 +250,30 @@ async fn answer(request: Request, shared: &Arc<Shared>) -> u16 {
     let body = request.body;
     let metering = shared.clone();
     let metered = tokio::task::spawn_blocking(move || {
-        parse_metrics(&body).map(|points| meter(&metering, points))
+        parse_metrics(&body).map(|points| record(&metering, points))
     })
     .await;
-    let Ok(Ok(totals)) = metered else {
+    let Ok(Ok(_)) = metered else {
         return 400;
     };
-    for (run_id, usage) in totals {
-        shared.sink.post(run_id, usage);
-    }
     200
 }
 
 /// On a blocking thread, all under the ledger lock (re-review Important 1): evicts the
 /// runs that went since the last request, drops the points of runs that are not live,
-/// applies the rest, and returns the new orchestrator total of every run they touched.
+/// applies the rest, and posts the new orchestrator total of every run they touched to
+/// [`UsageSink::post`]. Returns what it posted.
 ///
 /// Holding the lock from the generation read to the apply means no other request can
 /// evict a run between this one's live check and its apply. A run evicted as not live
 /// never passes the filter again, since a run that ended never becomes live again, so
 /// its total is never rebuilt from a later request's points alone.
-fn meter(shared: &Shared, mut points: Vec<UsagePoint>) -> Vec<(String, TokenUsage)> {
+///
+/// Posting under the lock too (fix round 2) means totals reach the sink in the order
+/// the ledger computed them, so the latest post, which the sink keeps, is the highest.
+/// Lock order: `ledger` → the sink's `live` (in `is_live`) and `ledger` → its pending
+/// map (in `post`); the sink never takes the ledger, so no cycle is possible.
+fn record(shared: &Shared, mut points: Vec<UsagePoint>) -> Vec<(String, TokenUsage)> {
     let sink = &shared.sink;
     let mut held = crate::lock(&shared.ledger);
     let generation = sink.live_generation();
@@ -285,14 +291,19 @@ fn meter(shared: &Shared, mut points: Vec<UsagePoint>) -> Vec<(String, TokenUsag
         .collect();
     points.retain(|p| live.contains(&p.run_id));
     let touched = held.ledger.apply(&points);
-    touched
+    let totals: Vec<(String, TokenUsage)> = touched
         .into_iter()
         .filter(|(_, role)| role == ORCHESTRATOR)
         .map(|(run, role)| {
             let total = held.ledger.total(&run, &role);
             (run, total)
         })
-        .collect()
+        .collect();
+    for (run_id, usage) in &totals {
+        sink.post(run_id.clone(), *usage);
+    }
+    drop(held);
+    totals
 }
 
 #[cfg(test)]

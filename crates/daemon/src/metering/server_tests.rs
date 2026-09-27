@@ -72,7 +72,7 @@ fn a_run_that_ends_while_a_request_is_metered_is_never_rebuilt_lower() {
         logged_type: AtomicBool::new(false),
     });
     assert_eq!(
-        meter(&shared, vec![point("r", 100)]),
+        record(&shared, vec![point("r", 100)]),
         vec![("r".to_string(), input(100))]
     );
     // While A checks `r`: `r` ends, and B, another connection's request, is metered.
@@ -84,7 +84,7 @@ fn a_run_that_ends_while_a_request_is_metered_is_never_rebuilt_lower() {
         crate::lock(&hook_sink.live).remove("r");
         hook_sink.generation.fetch_add(1, Ordering::SeqCst);
         let handle = std::thread::spawn(move || {
-            let totals = meter(&hook_shared, vec![point("other", 1)]);
+            let totals = record(&hook_shared, vec![point("other", 1)]);
             let _ = done_tx.send(());
             totals
         });
@@ -93,7 +93,7 @@ fn a_run_that_ends_while_a_request_is_metered_is_never_rebuilt_lower() {
         let _ = done_rx.recv_timeout(Duration::from_millis(300));
         *crate::lock(&b_slot) = Some(handle);
     }));
-    let a = meter(&shared, vec![point("r", 5)]);
+    let a = record(&shared, vec![point("r", 5)]);
     let b = crate::lock(&b)
         .take()
         .expect("the hook ran")
@@ -129,4 +129,75 @@ fn a_stale_temporary_address_file_is_replaced() {
     let mode = std::fs::metadata(&path).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o600);
     assert!(!path.with_extension("addr.tmp").exists());
+}
+
+/// A sink that records every post, and whose first post of run `r` can run a hook
+/// before it is recorded.
+#[derive(Default)]
+struct Recording {
+    posts: Mutex<Vec<(String, TokenUsage)>>,
+    hook: Mutex<Option<Hook>>,
+}
+
+impl UsageSink for Recording {
+    fn is_live(&self, _: &str) -> bool {
+        true
+    }
+
+    fn live_generation(&self) -> u64 {
+        0
+    }
+
+    fn post(&self, run_id: String, usage: TokenUsage) {
+        if run_id == "r" {
+            let hook = crate::lock(&self.hook).take();
+            if let Some(hook) = hook {
+                hook();
+            }
+        }
+        crate::lock(&self.posts).push((run_id, usage));
+    }
+}
+
+/// Fix round 2 ruling: two requests for one run post their totals in the order the
+/// ledger computed them, so the latest post, the one the engine keeps, is the higher.
+#[test]
+fn two_requests_for_one_run_post_their_totals_in_order() {
+    let sink = Arc::new(Recording::default());
+    let shared = Arc::new(Shared {
+        ledger: Mutex::new(Ledger::default()),
+        sink: sink.clone(),
+        logged_type: AtomicBool::new(false),
+    });
+    // As A posts its total, B, another connection's request for the same run, is
+    // recorded.
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let hook_shared = shared.clone();
+    let b = Arc::new(Mutex::new(None));
+    let b_slot = b.clone();
+    *crate::lock(&sink.hook) = Some(Box::new(move || {
+        let handle = std::thread::spawn(move || {
+            record(&hook_shared, vec![point("r", 5)]);
+            let _ = done_tx.send(());
+        });
+        // Under the fix B waits for A's ledger lock, so this only bounds the wait; before
+        // it, B computes and posts here, between A's total and A's post.
+        let _ = done_rx.recv_timeout(Duration::from_millis(300));
+        *crate::lock(&b_slot) = Some(handle);
+    }));
+    assert_eq!(
+        record(&shared, vec![point("r", 100)]),
+        vec![("r".to_string(), input(100))]
+    );
+    crate::lock(&b)
+        .take()
+        .expect("the hook ran")
+        .join()
+        .unwrap();
+    let posts = crate::lock(&sink.posts).clone();
+    assert_eq!(
+        posts,
+        vec![("r".to_string(), input(100)), ("r".to_string(), input(105))],
+        "the posts arrived out of order"
+    );
 }
