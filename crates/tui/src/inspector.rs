@@ -28,6 +28,24 @@ pub const INSPECTOR_HEIGHT: u16 = 8;
 /// canvas (decision 6).
 pub const MIN_INTERIOR_FOR_PANEL: u16 = INSPECTOR_HEIGHT + 6;
 
+/// Milestone 8c decision 28: the run view's panel — a border, the title, nine rows, a
+/// border — and the interior it needs before the panel takes that height.
+pub const RUN_INSPECTOR_HEIGHT: u16 = 12;
+pub const MIN_INTERIOR_FOR_RUN_PANEL: u16 = RUN_INSPECTOR_HEIGHT + 6;
+/// Decision 29: a run inspection's label column.
+pub const RUN_LABEL_WIDTH: usize = 10;
+/// Decision 30: the run's progress bar, and a planner's and a task budget's.
+pub const RUN_PROGRESS_WIDTH: usize = 18;
+pub const PROGRESS_WIDTH: usize = 10;
+
+/// How the panel lays fields out: milestone 4.7's columns, or one per row (decision 29).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FieldLayout {
+    #[default]
+    Columns,
+    Rows,
+}
+
 /// One labelled value. `wrap` marks the one field a column may not elide: the
 /// sub-agent's task, which the panel exists to show whole (decision 5).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,12 +56,15 @@ pub struct Field {
 }
 
 /// One node, projected: its status glyph in its status colour, the name it is
-/// known by, and its fields in the order decisions 8 to 10 give them.
-#[derive(Debug, Clone, PartialEq)]
+/// known by, and its fields in the order decisions 8 to 10 give them. A run-view node
+/// also has a right-aligned `right` text and lays its fields out in rows (M8c).
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Inspection {
     pub glyph: Span<'static>,
     pub name: String,
+    pub right: Option<String>,
     pub fields: Vec<Field>,
+    pub layout: FieldLayout,
 }
 
 fn field(label: &'static str, value: impl Into<String>) -> Field {
@@ -68,11 +89,13 @@ pub fn inspect(row: &Row<'_>, app: &App) -> Inspection {
             glyph: status_span(*status, app),
             name: name.clone(),
             fields: project_fields(root, *status, *counts, app),
+            ..Default::default()
         },
         RowKind::Window { info, position, .. } => Inspection {
             glyph: status_span(info.status, app),
             name: format!("{position} {}", info.name),
             fields: window_fields(info, app),
+            ..Default::default()
         },
         RowKind::Subagent { info } => Inspection {
             glyph: Span::styled(
@@ -81,31 +104,17 @@ pub fn inspect(row: &Row<'_>, app: &App) -> Inspection {
             ),
             name: subagent_name(info),
             fields: subagent_fields(row, info, app),
+            ..Default::default()
         },
-        // A run's own projection is task M8c.7's; until then its state and progress.
-        RowKind::Run { run, .. } => {
-            let (merged, total) = tree::run_progress(run);
-            Inspection {
-                glyph: Span::styled(
-                    theme::RUN_GLYPH,
-                    Style::default().fg(theme::run_color(run.state)),
-                ),
-                name: format!("{}  {}", run.run_id, run.goal),
-                fields: vec![
-                    field("state", run.state.label()),
-                    field("tasks", format!("{merged}/{total} merged")),
-                ],
-            }
+        RowKind::Run {
+            run, orchestrator, ..
+        } => run::run_inspection(run, *orchestrator, app),
+        RowKind::Planner { run, planner } => run::planner_inspection(run, planner, app),
+        RowKind::Scout { run, scout, window } => run::scout_inspection(run, scout, *window, app),
+        RowKind::Task { run, task } => run_task::task_inspection(run, task, app),
+        RowKind::AgentRound { run, task, round } => {
+            run_round::round_inspection(run, task, round, app)
         }
-        // The run view's rows (task M8c.4) are projected by task M8c.7.
-        RowKind::Planner { .. }
-        | RowKind::Scout { .. }
-        | RowKind::Task { .. }
-        | RowKind::AgentRound { .. } => Inspection {
-            glyph: status_span(Status::Idle, app),
-            name: crate::graph::content_text(row),
-            fields: vec![],
-        },
     }
 }
 
@@ -317,8 +326,25 @@ fn git_text(state: &GitState) -> String {
 }
 
 mod panel;
+mod run;
+mod run_format;
+mod run_round;
+mod run_task;
 
 pub use panel::render;
+pub use run_format::{format_duration, format_tokens, local_hhmm, progress_bar};
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod run_tests;
+
+#[cfg(test)]
+mod run_nodes_tests;
+
+#[cfg(test)]
+mod run_task_tests;
+
+#[cfg(test)]
+mod run_round_tests;

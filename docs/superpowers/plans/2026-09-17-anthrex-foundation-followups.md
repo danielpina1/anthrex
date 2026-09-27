@@ -1564,5 +1564,9 @@ scope.
 
 ## From M8c.1's review (2026-09-27), for M8c and M9
 
-- **The promotion time in the run view (M8c).** The snapshot's promotion attention line no longer carries a time (M8c.1 review I1; brief R17 had assumed the line carried it). The view's gate or attention rendering should show `local_hhmm(RunInfo.promote_requested_at)` beside it.
+- **The promotion time in the run view (M8c).** The snapshot's promotion attention line no longer carries a time (M8c.1 review I1; brief R17 had assumed the line carried it). The view's gate or attention rendering should show `local_hhmm(RunInfo.promote_requested_at)` beside it. *Handled in M8c.7:* the `attention` row shows the line as `promotion requested at <local hh:mm>; …`.
 - **`run promote`'s repeat reply is in UTC (M9).** `engine/requests.rs::promote` answers a second request with `was already marked for promotion at <hh:mm>` through `model_adapt::hh_mm`, in UTC. It is a request reply, not the snapshot, so M8c.1 left it; either drop the time or let the CLI format `promote_requested_at` locally.
+
+## From M8c.7 (2026-09-27), for proto
+
+- **`TokenUsage::billable()` can overflow.** `proto/src/run_info.rs` adds `input + cache_write + output` with plain `+`, so a hostile or corrupt usage report (any field near `u64::MAX`) panics a debug build and wraps in release. `AddAssign` for the same type already saturates. The run inspector computes the same sum with `saturating_add` (`inspector/run_format.rs::billable`) rather than touch `proto`; `billable()` itself should saturate, and its other callers (`run status`, the budget checks) would then be safe too.

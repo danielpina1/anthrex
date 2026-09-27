@@ -23,6 +23,7 @@ fn inspection(name: &str, fields: Vec<Field>) -> Inspection {
         glyph: idle_glyph(),
         name: name.to_owned(),
         fields,
+        ..Default::default()
     }
 }
 

@@ -8,6 +8,7 @@ use crossterm::event::KeyEvent;
 pub use link::Link;
 use prompt::RenamePrompt;
 use proto::{ClientMsg, GitState, WindowInfo};
+pub(crate) use runs::state_text;
 pub use runs::{RunView, filter_label, nav_rows_of};
 use std::collections::HashMap;
 use std::path::PathBuf;
