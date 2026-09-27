@@ -33,6 +33,13 @@ fn init(session: &str) -> SessionEvent {
     }
 }
 
+fn exited() -> SessionEvent {
+    SessionEvent::ProcessExited {
+        code: Some(0),
+        signal: None,
+    }
+}
+
 /// A cursor that has seen `Init { s-7 }` and sent two turns, so the latest sent turn's
 /// ordinal is 1 (not 0, not the count 2).
 fn primed(runtime: Runtime, hooks_fire: bool) -> StreamCursor {
@@ -228,10 +235,10 @@ fn conversation_map_follows_the_table() {
             vec![],
             vec![],
         );
-        // A turn's end, whatever its outcome.
+        // A turn's end, whatever its outcome. An interrupted one keeps its `Stop` even
+        // with hooks firing (M8c.11): `an_interrupted_turn_ends_even_when_hooks_fire`.
         for outcome in [
             TurnOutcome::Completed,
-            TurnOutcome::Interrupted,
             TurnOutcome::Failed {
                 error: "x".into(),
                 kind: FailureKind::Other,
@@ -270,13 +277,16 @@ fn conversation_map_follows_the_table() {
             },
             SessionEvent::Unknown { line: "?".into() },
             SessionEvent::StderrLine { line: "e".into() },
-            SessionEvent::ProcessExited {
-                code: Some(0),
-                signal: None,
-            },
         ] {
             row(runtime, &[], Some(&other), vec![], vec![]);
         }
+        // A process exit while a sent turn is open: Codex's ends that turn (M8c.11, an
+        // interrupted Codex turn has no `turn.*` line); Claude's is nothing.
+        let stop = match runtime {
+            Runtime::Codex => vec![stream_hook(HookKind::Stop, Some("s-7"))],
+            _ => vec![],
+        };
+        row(runtime, &[], Some(&exited()), vec![], stop);
     }
 }
 
@@ -397,6 +407,12 @@ fn synthesised_tool_responses_are_bounded_like_the_hooks() {
     assert!(encoded.len() <= proto::conversation::TOOL_RESULT_SUMMARY_MAX);
     assert!(matches!(response.get("output"), Some(Value::String(_))));
 }
+
+#[path = "conversation_turn_end_tests.rs"]
+mod turn_end;
+
+#[path = "conversation_summary_tests.rs"]
+mod summary;
 
 #[path = "conversation_session_tests.rs"]
 mod session;

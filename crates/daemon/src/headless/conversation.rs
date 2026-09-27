@@ -1,7 +1,7 @@
 //! Session events to milestone 6.5's two conversation inputs (decision 27, the
 //! Interfaces mapping table). Pure.
 
-use super::SessionEvent;
+use super::{SessionEvent, TurnOutcome};
 use crate::conversation::align::{Alignment, Prompt, alignment};
 use crate::hooks::{HookKind, ParsedHook};
 use crate::transcript::Record;
@@ -44,6 +44,10 @@ pub struct StreamCursor {
     /// The latest `TurnEnded` ended a turn Claude Code started by itself while a turn
     /// the daemon sent was still waiting to run ([`StreamCursor::ended_unprompted`]).
     ended_unprompted: bool,
+    /// A real `Stop` hook has closed the current turn: set by `observe_hook`, cleared by
+    /// the next prompt hook and by the turn's `TurnEnded`, so an interrupted turn's end
+    /// synthesises no second `Stop` (M8c.11).
+    hook_stopped: bool,
 }
 
 impl StreamCursor {
@@ -88,6 +92,13 @@ pub struct ConversationInput {
 /// turn hooks did not fire in `-p`, which M8a.1 found they do), with `source: Stream`,
 /// `session_source: None` and the session id from `Init`.
 ///
+/// Two turn ends are synthesised whatever `hooks_fire` says, because nothing else would
+/// close the turn (M8c.11): an interrupted `TurnEnded`, for which Claude fires no `Stop`
+/// hook (unless a real `Stop` hook already closed the turn), and a Codex `ProcessExited`
+/// while a sent turn is open, since an interrupted Codex turn has no `turn.*` line. Every
+/// earlier event of the process has been mapped by then (the driver's order), and the
+/// next turn is recorded only after it (`retire`), so the exit cannot close a later turn.
+///
 /// Refinements of the table, from M8a.1's recordings and M8a.7's review:
 ///
 /// - Claude repeats `Init` every turn and Codex every process, so `SessionStart` is
@@ -110,6 +121,7 @@ pub fn map(
     cursor: &mut StreamCursor,
 ) -> ConversationInput {
     let mut input = ConversationInput::default();
+    let mut keep_stop = false;
     match event {
         SessionEvent::Init { session_id, .. } => {
             if hooks_fire && !cursor.turn_open && cursor.after_turn_end {
@@ -194,10 +206,21 @@ pub fn map(
                 });
             }
         }
-        SessionEvent::TurnEnded { .. } => {
+        SessionEvent::TurnEnded { outcome, .. } => {
             cursor.turn_open = false;
             cursor.after_turn_end = true;
             cursor.ended_unprompted = hooks_fire && cursor.hook_feed && cursor.end_turn();
+            cursor.tool_names.clear();
+            input.hooks.push(cursor.hook(HookKind::Stop));
+            // Claude fires no `Stop` hook for an interrupted turn, so its `Stop` is
+            // synthesised even with hooks firing, unless a real one already came.
+            keep_stop = *outcome == TurnOutcome::Interrupted && !cursor.hook_stopped;
+            cursor.hook_stopped = false;
+        }
+        // An interrupted Codex turn ends with its process and no `turn.*` line.
+        SessionEvent::ProcessExited { .. } if runtime == Runtime::Codex && cursor.turn_open => {
+            cursor.turn_open = false;
+            cursor.after_turn_end = true;
             cursor.tool_names.clear();
             input.hooks.push(cursor.hook(HookKind::Stop));
         }
@@ -205,6 +228,9 @@ pub fn map(
     }
     if hooks_fire {
         input.hooks.clear();
+        if keep_stop {
+            input.hooks.push(cursor.hook(HookKind::Stop));
+        }
     }
     input
 }
@@ -263,9 +289,10 @@ pub fn sent_turn(
 }
 
 /// A real hook the manager has just applied to this headless window's conversation
-/// (through `WindowManager::conversation_hook`, under the same lock). Only a
-/// `UserPromptSubmit` matters: it starts a turn, and its prompt says whose turn it is
-/// (ruling T7-N1).
+/// (through `WindowManager::conversation_hook`, under the same lock). A
+/// `UserPromptSubmit` starts a turn, and its prompt says whose turn it is (ruling
+/// T7-N1); a `Stop` records that the turn is closed (M8c.11). Any other hook changes
+/// nothing.
 ///
 /// - The prompt is numbered by the count of prompts observed, which is the count of
 ///   `User` turns M6.5 built from the same hooks, whoever sent them.
@@ -281,8 +308,13 @@ pub fn observe_hook(
     hook: &ParsedHook,
     cursor: &mut StreamCursor,
 ) -> ConversationInput {
-    if hook.kind != HookKind::UserPromptSubmit {
-        return ConversationInput::default();
+    match hook.kind {
+        HookKind::UserPromptSubmit => cursor.hook_stopped = false,
+        HookKind::Stop => {
+            cursor.hook_stopped = true;
+            return ConversationInput::default();
+        }
+        _ => return ConversationInput::default(),
     }
     cursor.hook_feed = true;
     let text = hook.prompt.clone().unwrap_or_default();

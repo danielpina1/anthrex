@@ -238,7 +238,19 @@ fn post_tool_use(draft: &mut Draft, hook: &ParsedHook, now: Instant, caps: Caps)
     let ok = response_is_ok(hook.tool_response.as_ref());
     let raw = render_response(hook.tool_response.as_ref());
     let (capped, byte_capped) = cap_bytes(&raw, caps.max_result_bytes);
-    let first_line = capped.lines().next().unwrap_or("");
+    // An object's one text field reads better than its JSON (M8c.11), capped the same
+    // way; `truncated` still measures the response as it arrived.
+    let text_field = hook
+        .tool_response
+        .as_ref()
+        .and_then(summary::response_text)
+        .map(|text| cap_bytes(text, caps.max_result_bytes).0);
+    let first_line = text_field
+        .as_deref()
+        .unwrap_or(&capped)
+        .lines()
+        .next()
+        .unwrap_or("");
     let text = summary::truncate_graphemes(first_line);
     let truncated = hook.tool_result_truncated == Some(true) || byte_capped;
     let duration_ms = take_tool_start(draft, hook).map(|started| {

@@ -137,6 +137,30 @@ fn fallback(obj: &Map<String, Value>) -> String {
     String::new()
 }
 
+/// The keys whose string value says what a tool's object response was: Codex's
+/// synthesised `{"output": …}` or `{"error": …}` (M8a decision 27) and Claude's own
+/// `{"stdout": …}`.
+const RESPONSE_TEXT_KEYS: [&str; 3] = ["output", "error", "stdout"];
+
+/// The one text an object `tool_response` carries, for its one-line summary (M8c.11):
+/// the value of the single non-empty [`RESPONSE_TEXT_KEYS`] field. `None` when the value
+/// is not an object, when two of those fields are non-empty, when none is, or when one
+/// is neither a string nor `null` (a `null` field counts as absent, as
+/// `build::response_is_ok` reads it); the caller then falls back to the compact JSON.
+pub(super) fn response_text(value: &Value) -> Option<&str> {
+    let obj = value.as_object()?;
+    let mut found = None;
+    for key in RESPONSE_TEXT_KEYS {
+        match obj.get(key) {
+            None | Some(Value::Null) => {}
+            Some(Value::String(text)) if text.is_empty() => {}
+            Some(Value::String(text)) if found.is_none() => found = Some(text.as_str()),
+            Some(_) => return None,
+        }
+    }
+    found
+}
+
 /// Truncates `s` to [`SUMMARY_MAX_GRAPHEMES`] grapheme clusters, appending `"…"` when
 /// truncation occurred. Counting and slicing by grapheme cluster, not by byte or `char`,
 /// keeps a multi-codepoint cluster (a family emoji, a combining-mark sequence) intact --
