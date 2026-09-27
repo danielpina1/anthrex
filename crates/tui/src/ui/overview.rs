@@ -160,7 +160,7 @@ fn footer_line(row: &Row<'_>, app: &App) -> Line<'static> {
 
 /// One node's footer: its status glyph in its status colour, the text it is
 /// known by, and the fields that follow it.
-fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, String, String) {
+pub(super) fn footer_parts(row: &Row<'_>, app: &App) -> (Span<'static>, String, String) {
     match &row.kind {
         RowKind::Project {
             root,

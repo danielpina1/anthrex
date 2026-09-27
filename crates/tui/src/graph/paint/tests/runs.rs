@@ -381,6 +381,32 @@ fn a_row_that_disagrees_with_its_node_is_skipped() {
     let text = lines_text(&lines).join("\n");
     assert!(text.contains("orchestrator  1/3"), "{text}");
     assert!(text.contains("t1 spawn M  ⇠t0"), "{text}");
+
+    // Skip two of the root's three children: the edge is not drawn at all, so no
+    // junction lands on the root's border (the M8c.5 review's M1).
+    let index = |key: &NodeKey| rows.iter().position(|row| &row.key == key).unwrap();
+    let mut two_skipped = rows.clone();
+    for id in ["t0", "t2"] {
+        two_skipped[index(&task_key(id))].key = NodeKey::Window(999);
+    }
+    let lines = paint(&layout, area, Pan::default(), &two_skipped, &app);
+    let edge = layout
+        .edges
+        .iter()
+        .find(|edge| edge.children.contains(&task_key("t1")))
+        .expect("the root's edge");
+    let root = rect_of(&layout, &edge.parent);
+    let right = root.x + root.width - 1;
+    let bottom = root.y + root.height - 1;
+    assert_eq!(cell_at(&lines, right, root.y).0, "╮");
+    assert_eq!(cell_at(&lines, right, bottom).0, "╯", "root's bottom-right");
+    for y in root.y + 1..bottom {
+        assert_eq!(
+            cell_at(&lines, right, y).0,
+            "│",
+            "root's right border at {y}"
+        );
+    }
 }
 
 #[test]

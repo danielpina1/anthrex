@@ -35,7 +35,8 @@ use unicode_width::UnicodeWidthStr;
 /// process meant to run for days. `layout` pushes one `PlacedNode` per row in
 /// row order, so the two zip and no node has to be looked up by key. A row
 /// whose key disagrees with its node's is skipped — neither its box nor any
-/// edge that ends on it is painted — rather than drawn in the wrong place.
+/// edge that starts or ends on it is painted — rather than drawn in the wrong
+/// place.
 pub fn paint(
     layout: &Layout,
     area: Rect,
@@ -347,15 +348,22 @@ enum BusCell {
 
 /// Draws one parent-to-children connection in the `TIER_GAP` columns
 /// (decision 13).
+///
+/// An edge whose parent or any child was skipped is not drawn at all: the parent
+/// is centred on all of its children, so a partial fan-out could run its bus
+/// short of the parent or put a junction on the parent's corner.
 fn paint_edge(grid: &mut Grid, placed: &HashMap<&NodeKey, Rect>, edge: &Edge) {
     let Some(parent) = placed.get(&edge.parent).copied() else {
         return;
     };
-    let children: Vec<Rect> = edge
+    let Some(children) = edge
         .children
         .iter()
-        .filter_map(|child| placed.get(child).copied())
-        .collect();
+        .map(|child| placed.get(child).copied())
+        .collect::<Option<Vec<Rect>>>()
+    else {
+        return;
+    };
     let Some(geometry) = EdgeGeometry::new(parent, &children) else {
         return;
     };

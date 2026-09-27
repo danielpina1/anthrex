@@ -32,6 +32,19 @@ fn review(round: &AgentRoundInfo, verdict: Verdict, blocking: bool) -> ReviewInf
     }
 }
 
+/// The record the daemon pushes when a review round starts, before any verdict
+/// (`engine/review.rs:162-170`, `:279-289`).
+fn pending(round: &AgentRoundInfo) -> ReviewInfo {
+    ReviewInfo {
+        round: round.round,
+        route: round.route.clone(),
+        verdict: None,
+        summary: String::new(),
+        findings: Vec::new(),
+        blocking: false,
+    }
+}
+
 /// The glyph and its colour for the row with `key`.
 fn glyph(app: &App, key: &NodeKey) -> (&'static str, Color) {
     let rows = view_rows(app);
@@ -56,6 +69,10 @@ fn verdict_app() -> App {
     reviews.reviews = vec![
         review(&reviews.rounds[1], Verdict::Changes, true),
         review(&reviews.rounds[2], Verdict::Changes, false),
+        // Rounds 3 (ended with no verdict) and 4 (live) carry the record the daemon
+        // pushes at their start, with `verdict: None`.
+        pending(&reviews.rounds[3]),
+        pending(&reviews.rounds[4]),
     ];
 
     let mut limited = task("t2", "limited", Size::S, TaskState::Working);
@@ -167,32 +184,36 @@ fn only_the_last_sessions_last_piece_of_a_blocked_task_is_a_cross() {
 #[test]
 fn scouts_and_planners_glyph_by_their_state() {
     let mut info = run(RUN_ID, PROJECT, RunState::Running);
-    let with_state = |id: &str, state, window| {
+    let with_state = |id: &str, state, window, ended_at| {
         let mut one = scout(id, id, Runtime::Claude, 10);
         one.state = state;
         one.window_id = window;
-        if matches!(state, ScoutState::Reported | ScoutState::Failed) {
-            one.ended_at = Some(20);
-        }
+        one.ended_at = ended_at;
         one
     };
+    // Each half of "finished" alone: s3 is reported with no end time yet, s5 has
+    // ended while its state still says working.
     info.scouts = vec![
-        with_state("s1", ScoutState::Starting, None),
-        with_state("s2", ScoutState::Working, Some(9)),
-        with_state("s3", ScoutState::Reported, None),
-        with_state("s4", ScoutState::Failed, None),
+        with_state("s1", ScoutState::Starting, None, None),
+        with_state("s2", ScoutState::Working, Some(9), None),
+        with_state("s3", ScoutState::Reported, None, None),
+        with_state("s4", ScoutState::Failed, None, Some(20)),
+        with_state("s5", ScoutState::Working, None, Some(20)),
     ];
-    let planner_in = |epic: &str, state, window| {
+    let planner_in = |epic: &str, state, window, ended_at| {
         let mut one = planner(epic, "p");
         one.state = state;
         one.window_id = window;
+        one.ended_at = ended_at;
         one
     };
+    // B is finished with no end time; E has ended while still planning.
     info.planners = vec![
-        planner_in("A", PlannerState::Planning, Some(10)),
-        planner_in("B", PlannerState::Finished, None),
-        planner_in("C", PlannerState::Failed, None),
-        planner_in("D", PlannerState::Planning, None),
+        planner_in("A", PlannerState::Planning, Some(10), None),
+        planner_in("B", PlannerState::Finished, None, None),
+        planner_in("C", PlannerState::Failed, None, Some(20)),
+        planner_in("D", PlannerState::Planning, None, None),
+        planner_in("E", PlannerState::Planning, None, Some(20)),
     ];
     let mut working = headless(9, "scout", PROJECT, None);
     working.status = proto::Status::Working;
@@ -220,6 +241,16 @@ fn scouts_and_planners_glyph_by_their_state() {
     assert_eq!(glyph(&app, &planner_key("B")), ("✓", green));
     assert_eq!(glyph(&app, &planner_key("C")), ("✗", Color::Red));
     assert_eq!(glyph(&app, &planner_key("D")), ("●", live));
+    assert_eq!(
+        glyph(&app, &scout_key("s5")),
+        ("●", live),
+        "ended, state working"
+    );
+    assert_eq!(
+        glyph(&app, &planner_key("E")),
+        ("●", live),
+        "ended, planning"
+    );
 
     // Finished scouts and planners are dim; live ones are not.
     let (layout, lines) = paint_view(&app);
@@ -232,8 +263,10 @@ fn scouts_and_planners_glyph_by_their_state() {
     for key in [
         scout_key("s3"),
         scout_key("s4"),
+        scout_key("s5"),
         planner_key("B"),
         planner_key("C"),
+        planner_key("E"),
     ] {
         assert!(dim(&key), "{key:?} is dim");
     }
@@ -245,4 +278,50 @@ fn scouts_and_planners_glyph_by_their_state() {
     ] {
         assert!(!dim(&key), "{key:?} is not dim");
     }
+}
+
+/// Decision 19: `working` animates only while its live *worker* round's window is
+/// `Working`. A live reviewer on a `Working` window spins its own round node
+/// ("●/spinner (live, no verdict)") but leaves the task at `●`.
+#[test]
+fn only_a_live_worker_round_animates_a_working_task() {
+    let mut info = run(RUN_ID, PROJECT, RunState::Running);
+    let mut reviewed = task("t1", "reviewed", Size::S, TaskState::Working);
+    reviewed.rounds = vec![
+        ended(worker(1, None, Runtime::Claude, 100), 150),
+        reviewer(1, Some(8), Runtime::Codex, 200),
+    ];
+    reviewed.reviews = vec![pending(&reviewed.rounds[1])];
+    let mut worked = task("t2", "worked", Size::S, TaskState::Working);
+    worked.rounds = vec![worker(1, Some(9), Runtime::Claude, 100)];
+    info.tasks = vec![reviewed, worked];
+    let working = |id, name: &str, task_id, role| {
+        let mut window = headless(
+            id,
+            name,
+            PROJECT,
+            Some(run_ref(RUN_ID, Some(task_id), role, 1)),
+        );
+        window.status = proto::Status::Working;
+        window
+    };
+    let windows = vec![
+        working(8, "3f9a/t1.r1", "t1", AgentRole::Reviewer),
+        working(9, "3f9a/t2.w1", "t2", AgentRole::Worker),
+    ];
+    let mut app = app_of((snapshot(NOW, vec![info]), windows));
+    app.spinner_frame = 1;
+    let live = theme::status_color(proto::Status::Working);
+
+    assert_eq!(glyph(&app, &task_key("t1")), ("●", live), "a reviewer only");
+    assert_eq!(
+        glyph(&app, &round_key("t1", AgentRole::Reviewer, 1, 1)),
+        (theme::SPINNER[1], live),
+        "the live reviewer's own node spins"
+    );
+    assert_eq!(
+        glyph(&app, &task_key("t2")),
+        (theme::SPINNER[1], live),
+        "a live worker"
+    );
 }

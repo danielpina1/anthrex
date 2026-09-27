@@ -92,6 +92,15 @@ fn task_text_with_an_empty_title() {
     assert_eq!(task_text(&info), "t1 M");
 }
 
+/// A kept title is trimmed, and an all-blank one counts as empty.
+#[test]
+fn task_text_trims_the_title() {
+    let info = task("t1", "  padded title \t", Size::S, TaskState::Queued);
+    assert_eq!(task_text(&info), "t1 padded title S");
+    let info = task("t1", "   ", Size::M, TaskState::Queued);
+    assert_eq!(task_text(&info), "t1 M");
+}
+
 /// Hostile: wide CJK and emoji titles are cut by display width, never past 24.
 #[test]
 fn task_text_cuts_wide_titles_by_display_width() {

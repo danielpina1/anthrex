@@ -132,3 +132,44 @@ fn overview_handles_zero_and_one_cell_areas() {
         }
     }
 }
+
+/// The run view's single line (M8c.5): the canvas's own live glyph, in its colour,
+/// and the node's canvas text, for a task and for one of its rounds. M8c.8 replaces
+/// the text with the inspector's name and adds the right-hand text.
+#[test]
+fn the_run_views_single_line_is_the_live_glyph_and_the_canvas_text() {
+    use crate::tree::run_fixtures::{RUN_ID, three_task_fixture};
+    use crate::tree::{NodeKey, RunFilter, run_rows};
+    let (snapshot, windows) = three_task_fixture();
+    let mut app = App::new(windows, "/tmp".into(), UiSettings::default());
+    app.on_daemon(proto::DaemonMsg::Run(proto::RunReply::Snapshot(snapshot)));
+    let rows = run_rows(&app.runs.runs[0], &app.windows, &app.tree, RunFilter::All);
+    let line = |key: NodeKey| {
+        let row = rows
+            .iter()
+            .find(|row| row.key == key)
+            .unwrap_or_else(|| panic!("{key:?} is a row"));
+        let (glyph, label, right) = super::overview::footer_parts(row, &app);
+        (glyph.content.into_owned(), glyph.style.fg, label, right)
+    };
+    let live = Some(crate::theme::status_color(Status::Working));
+    let task = NodeKey::Task {
+        run: RUN_ID.into(),
+        id: "t1".into(),
+    };
+    assert_eq!(
+        line(task),
+        ("●".into(), live, "t1 spawn M  ⇠t0".into(), String::new())
+    );
+    let round = NodeKey::AgentRound {
+        run: RUN_ID.into(),
+        task: "t1".into(),
+        role: proto::AgentRole::Worker,
+        session: 1,
+        round: 1,
+    };
+    assert_eq!(
+        line(round),
+        ("●".into(), live, "worker #1 claude".into(), String::new())
+    );
+}
