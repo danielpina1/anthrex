@@ -2490,3 +2490,49 @@ These controller rulings answer the second M9.4 review, of `2e2c8ca`. They repla
   4. **`MCP_TOOL_TIMEOUT` (decision 10) is dropped.** The CLI's default is about 27.8 h, and 70 s and 130 s tool calls completed without it (check 3). The launch environment does not set it.
   5. **The scrub gains the `MCP_` prefix** (`config::reserved_env::SCRUBBED_PREFIXES`). Every agent session the daemon launches drops inherited `MCP_*` variables, for example `MCP_CONNECTION_NONBLOCKING` from a daemon started inside Claude Code, and a profile may not set them. M9.10 owns this, with a reserved-env test.
   6. **Check 4 and the Codex half of check 6 are outstanding.** The Codex login on this machine was revoked (401 on workspace routing), and the user must sign in again. Until then decision 8 is built as written, amended by ruling 3. Observed for the sandbox: a Unix-socket connect from inside `codex sandbox` read-only fails with EPERM. So if Codex ran its MCP servers inside the sandbox, the orchestrator's anthrex tools would fail, but it is expected to run them outside. M9.10's manual check re-runs this after the login.
+
+### M9.1 Codex re-run (2026-09-28, after the user signed in again)
+
+
+- **Version.** `codex --version` gives `codex-cli 0.156.1`. `codex login status`: `Logged in using ChatGPT`. No 401 this time.
+- **Where.** Scratch repository `…/scratchpad/m9.1/repoE` (`git init`). Driver `sessE.py` (PTY 180×50, hard limit 235 s, kills its own child pid only). Stub `stub_mcp.py --role codex` connects to `sock_listener.py` on `…/m9.1/d.sock`; for this run the stub also logs its `ppid` and any `*SANDBOX*` env var, and its `run_status` also tries to write `…/m9.1/stub-write-test.txt`. Logs: `…/m9.1/logs/{E1,E2,E3,R1,R2}-*`.
+- **Command (E2, trimmed).**
+  ```
+  codex -C repoE -c notify=[python3,codex_notify.py,…] -c tui.terminal_title=["status"] -c tui.notifications=["approval-requested"] -c tui.notification_method="bel" -c tui.notification_condition="always" -c 'projects={"<repoE>"={trust_level="trusted"}}' -c mcp_servers.anthrex.command="python3" -c mcp_servers.anthrex.args=[stub_mcp.py,--role,codex,--log,…,--sock,d.sock] -c mcp_servers.anthrex.tool_timeout_sec=120 -c mcp_servers.anthrex.default_tools_approval_mode="approve" -c developer_instructions="…" -c model_reasoning_effort="low" -s read-only -a on-request -m gpt-5.6-luna -- 'Call the anthrex MCP tool run_status exactly once and reply with exactly the text it returned.'
+  ```
+- **Probe-harness finding (E1, not a decision-8 issue).** The earlier dotted form `-c projects."<path>".trust_level="trusted"` did **not** take effect: Codex showed its "Folder access / Trust this folder?" dialog. The scratch path contains a dot (`m9.1`), and Codex splits `-c` keys on every `.`, quotes notwithstanding. The inline-table form `-c 'projects={"<path>"={trust_level="trusted"}}'` works. The dialog was never answered (the session was killed), so nothing was saved to `~/.codex/config.toml` (mtime still Sep 27, no `repoE` entry). Anthrex does not pass a project-trust flag for interactive Codex, so this matters only if it ever does: any repository path with a `.` in it needs the inline-table form.
+
+1. **Decision 8's flags are accepted at run time: holds.**
+   - Fresh start with `-s read-only -a on-request -m … -- <prompt>` (E2) and resume with `-s read-only -a on-request -m … resume <id>` (R1, R2) both started. `/status` in the resumed session shows `Permissions: Read Only (Ask for approval)`, `Model: GPT-5.6-Luna (reasoning low …)`, `Session: 01a0e80c-0ce4-7440-9864-007591da1950`.
+   - `tool_timeout_sec=120` and both approval modes were accepted with no warning. The only warnings (`f2`) were for the user's own configured MCP servers: `MCP client for 'pycharm' timed out after 30 seconds…` and `MCP startup incomplete (failed: pycharm, vercel)`.
+   - **`"approve"` vs `"auto"`.**
+     - `"approve"` (E2): the tool ran with **no prompt**. Screen: `• Called anthrex.run_status({})`, first turn complete 16.2 s after start.
+     - `"auto"` (E3): Codex **prompted**, 15 s after start: `Allow the anthrex MCP server to run tool "run_status"?` with `1. Allow / 2. Allow for this session / 3. Always allow / 4. Cancel`. The turn waited until Enter (Allow) was sent; then the call ran and succeeded. So in an interactive `-a on-request` session `"auto"` asks the user for a tool without annotations; `"approve"` does not.
+2. **A read-only interactive Codex calls an MCP tool: holds (under `"approve"`, no prompt).** Stub log: `tools/call run_status` → `call_done … "digest: all tasks idle. socket connect OK, reply=pong from listener; write OK"`. Notify `agent-turn-complete` carried the same text as `last-assistant-message`.
+3. **Socket connect from the MCP server under `-s read-only`: SUCCEEDS.** Codex runs MCP servers **outside** its sandbox.
+   - Stub `run_status`: `socket connect OK, reply=pong from listener`; listener log `{"got": "hello from stub\n"}` (E2 and E3).
+   - The same stub also **wrote a file** in the scratch dir (`write OK`; `stub-write-test.txt` existed afterwards), which the read-only Seatbelt profile forbids (compare the earlier `codex sandbox` probe: `connect FAILED: PermissionError [Errno 1] Operation not permitted`).
+   - The stub's start log shows `ppid` = the `codex` pid itself (19125 in E2, 19553 in E3) and no `*SANDBOX*` variable in its environment (`sandbox_env: {}`), so it was spawned directly by Codex, not through `sandbox-exec`.
+4. **`resume <id>` with the flags ahead of it: holds.**
+   - Id from E2's notify payload `thread-id` = `01a0e80c-0ce4-7440-9864-007591da1950`.
+   - R1 (`… -s read-only -a on-request -m gpt-5.6-luna resume 01a0e80c-…`): the TUI restored the whole transcript (the MCP call and both pastes) and `/status` showed the same session id and Read Only permissions. The probe prompt typed ~4 s after start was lost (typed before the TUI accepted input) — a driver timing issue.
+   - R2 (same argv, prompt typed after startup settled): the turn completed in 9.4 s; notify `input-messages` held all four user messages of the thread and the reply was `PASTETWO`, i.e. the resumed model had the earlier context. Same `thread-id`.
+   - Decision 8's fallback (moving `-s`/`-a` after `resume <id>`) is not needed.
+5. **Check 6, Codex half (bracketed paste): holds.**
+   - With the 200 ms delay: `ESC[200~Reply with just the word PASTEONE.\nThis is line two of the paste.ESC[201~`, 200 ms, `\r` → one turn; notify `input-messages` entry `"Reply with just the word PASTEONE.\nThis is line two of the paste."`, reply `PASTEONE`.
+   - Without the delay (paste and `\r` in one write): one turn, `"Reply with just the word PASTETWO.\nThis is line two of the second paste."`, reply `PASTETWO`. The `\r` did **not** land inside the paste; no extra Enter was needed.
+- **Does decision 8 need changing?**
+  - **Yes, one value:** `default_tools_approval_mode="auto"` must be `"approve"` (as controller ruling 3 already says, and as the headless `codex_args` ships). With `"auto"`, every orchestrator MCP call in the interactive session stops at an Allow prompt.
+  - Everything else holds as written: `-s read-only -a on-request` ahead of `resume <id>` and ahead of `-- <prompt>`, `tool_timeout_sec=120`, and the anthrex MCP server's socket connect from a read-only session (Codex spawns MCP servers unsandboxed).
+  - Side observation for decision 9 (not a decision-8 change): the user's own `~/.codex` MCP servers (here `pycharm`, `vercel`) also start inside the orchestrator session; a failing one adds a startup warning and up to its 30 s startup timeout, but did not delay the first turn here.
+- **Pids.** Recorded in `…/m9.1/pids.txt`: codex 18827, 19125, 19553, 20436, 20958; listeners 18825, 19124, 19552, 20435, 20957. Stub MCP servers (from stub logs): 19156, 19652, 20464, 20983. `ps -p` on all of them, and on every earlier pid in `pids.txt`, prints only the header (exit 1).
+
+- **Controller rulings on the Codex re-run** (bind M9.10):
+  1. Check 4 holds:
+     - `-s read-only -a on-request` is accepted ahead of `resume <id>`, and resume keeps the thread;
+     - Codex runs MCP servers **outside** its sandbox, so the anthrex socket connect works from a read-only session;
+     - the Codex half of check 6 holds.
+     
+     Decision 8 stands, amended only by ruling 3 (`default_tools_approval_mode="approve"`; `"auto"` prompts per call).
+  2. **Trust.** anthrex passes no Codex trust flag today (`headless/argv.rs`). If M9.10 ever passes one, it uses the inline-table form `-c 'projects={"<path>"={trust_level="trusted"}}'`, because a dotted `-c` key splits on every `.` in the path. Otherwise the orchestrator's first start may show Codex's trust dialog in its own window, which the user answers. M9.10's manual check records which happens.
+  3. **User MCP servers.** A Codex orchestrator also starts the user's own `~/.codex` MCP servers, a Claude one does not, since `--strict-mcp-config` applies there. That is the user's own configuration, which the design rules allow. They keep their own approval mode, and only `anthrex` is set to `approve`. Recorded as a difference between runtimes, not changed.
