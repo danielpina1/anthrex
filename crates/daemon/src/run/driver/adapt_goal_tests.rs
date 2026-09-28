@@ -155,3 +155,14 @@ async fn a_hub_goal_reports_the_hub_reason_before_the_runtime_checks() {
     let runs = tmp.path().join("data").join("runs");
     assert!(!runs.exists() || std::fs::read_dir(&runs).unwrap().next().is_none());
 }
+
+/// M9.3 review: the configured `[orchestrator] planner_task_cap` reaches the triage
+/// decider's input, so a non-default cap renders in the triage prompt.
+#[test]
+fn the_configured_planner_cap_reaches_triage() {
+    let mut orchestrator = config::Orchestrator::default();
+    orchestrator.agent.planner_task_cap = 7;
+    let input = super::triage_input("Add a flag", &proto::RepoProfile::default(), &orchestrator);
+    assert_eq!(input.planner_task_cap, 7);
+    assert_eq!(input.goal, "Add a flag");
+}

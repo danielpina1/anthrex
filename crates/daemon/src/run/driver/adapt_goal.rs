@@ -192,15 +192,7 @@ impl RunService {
         pre: &Preflight,
         timeout: Duration,
     ) -> Decision {
-        let mut input = TriageInput {
-            goal: triage::goal_input(goal),
-            profile_summary: crate::profile::summary(profile),
-            report_summary: None,
-            report_files: Vec::new(),
-            files: Vec::new(),
-            files_total: 0,
-            planner_task_cap: self.ctx.orchestrator.agent.planner_task_cap,
-        };
+        let mut input = triage_input(goal, profile, &self.ctx.orchestrator);
         if adaptation.deciders.mode == DeciderMode::Off {
             return fallback_decision(&DeciderRequest::Triage(input), OFF_REASON.into());
         }
@@ -236,6 +228,24 @@ impl RunService {
                 format!("the decider could not start: could not list tracked files: {error}"),
             ),
         }
+    }
+}
+
+/// The triage decider's input before any evidence is read: the goal, the profile
+/// summary, and `[orchestrator] planner_task_cap`, the plan scale's upper bound (M9.3).
+fn triage_input(
+    goal: &str,
+    profile: &RepoProfile,
+    orchestrator: &config::Orchestrator,
+) -> TriageInput {
+    TriageInput {
+        goal: triage::goal_input(goal),
+        profile_summary: crate::profile::summary(profile),
+        report_summary: None,
+        report_files: Vec::new(),
+        files: Vec::new(),
+        files_total: 0,
+        planner_task_cap: orchestrator.agent.planner_task_cap,
     }
 }
 
