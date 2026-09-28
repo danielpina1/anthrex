@@ -35,7 +35,7 @@ use super::requests::log;
 use super::signals::end_round;
 use super::{
     Effect, EngineState, OpId, OpKind, OpResult, ReplyId, clock, complete, emit_op, merge, next_op,
-    op_done, outbox, review,
+    outbox, results::op_done, review,
 };
 use crate::run::contract::{RESUME_REVIEWER, RESUME_WORKER, sha7};
 use crate::run::model::{FallbackState, PendingOp, Run, StallState};
