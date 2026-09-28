@@ -268,6 +268,8 @@ impl RunService {
                     adaptation.scouts.stop_planner(window_id, &reason);
                 }
             }
+            // Decision 39: the paste is task M9.13's (`driver/wake.rs`).
+            Effect::WakeOrchestrator { .. } => {}
             Effect::Persist { .. } | Effect::Op { .. } | Effect::Publish { .. } => {}
         }
     }
@@ -455,7 +457,14 @@ impl RunService {
                 std::fs::create_dir_all(&run.data_dir)?;
                 let tmp = run.data_dir.join("REPORT.md.tmp");
                 std::fs::write(&tmp, text)?;
-                std::fs::rename(&tmp, &path)
+                std::fs::rename(&tmp, &path)?;
+                // Milestone 9 decision 35: the research alone, beside the report.
+                if let Some(text) = report::research_text(&run) {
+                    let tmp = run.data_dir.join("research.md.tmp");
+                    std::fs::write(&tmp, text)?;
+                    std::fs::rename(&tmp, run.data_dir.join(report::RESEARCH_FILE))?;
+                }
+                Ok::<(), std::io::Error>(())
             })
             .await;
             if !matches!(written, Ok(Ok(()))) {

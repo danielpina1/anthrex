@@ -200,7 +200,10 @@ pub(super) fn hold_signal(state: &mut EngineState, window: u32, signal: AgentSig
 pub(super) fn holds_call(state: &EngineState, call: &ToolCall) -> bool {
     let known = matches!(
         (call.role, call.tool.as_str()),
-        (AgentRole::Worker, "task_done" | "task_blocked") | (AgentRole::Reviewer, "submit_review")
+        (AgentRole::Worker, "task_done" | "task_blocked")
+            | (AgentRole::Reviewer, "submit_review")
+            // Milestone 9 decision 35: a research task's report joins the hold.
+            | (AgentRole::Scout, "submit_scout_report")
     );
     if !known || bound(state, call.window_id) {
         return false;

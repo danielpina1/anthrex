@@ -37,6 +37,9 @@ pub enum TaskOutcome {
     Cancelled,
     Blocked,
     Unfinished,
+    /// Milestone 9 decisions 35 and 36: a research or review task delivered its report
+    /// or verdict; it finished and merged nothing.
+    Reported,
 }
 
 /// How often each gate ran and failed for one task.

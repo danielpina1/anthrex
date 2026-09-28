@@ -416,6 +416,8 @@ pub(super) fn relaunch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                     AgentRole::Worker => {
                         matches!(task.state, TaskState::Preparing | TaskState::Working)
                     }
+                    // Milestone 9 decision 35: a research task's session.
+                    AgentRole::Scout => task.state == TaskState::Working,
                     _ => task.state == TaskState::Review,
                 };
             if !wanted {

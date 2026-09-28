@@ -122,8 +122,12 @@ pub struct OrchestratorRecord {
     pub plan_submitted: bool,
     /// Decision 19's `summary`, the last one given.
     pub summary: Option<String>,
-    /// Decision 39's pending wake notes.
+    /// Decision 39's pending wake notes, oldest first, at most 20.
     pub notes: Vec<String>,
+    /// The digest revision each note of `notes` was added at, one per note: a
+    /// `DigestRead` or `OrchestratorWoken` of a revision drops the notes up to it.
+    #[serde(default)]
+    pub note_revs: Vec<u64>,
     pub last_wake_rev: u64,
     pub wakes: u32,
     pub otlp_token: String,
@@ -269,6 +273,10 @@ pub struct EpicRecord {
     pub merges: Vec<(String, String)>,
     pub integration_state: IntegrationState,
     pub integration_rounds: u32,
+    /// How many of `merges` the latest integration review covers: a round is due only
+    /// once a merge came after it (decision 37).
+    #[serde(default)]
+    pub integration_reviewed: u32,
 }
 
 impl EpicRecord {
@@ -308,6 +316,7 @@ impl EpicRecord {
             merges: Vec::new(),
             integration_state: IntegrationState::default(),
             integration_rounds: 0,
+            integration_reviewed: 0,
         }
     }
 }
@@ -357,6 +366,7 @@ impl EpicRecord {
             merges: Vec::new(),
             integration_state: IntegrationState::default(),
             integration_rounds: 0,
+            integration_reviewed: 0,
         }
     }
 }
@@ -493,6 +503,7 @@ impl OrchestratorRecord {
             plan_submitted: false,
             summary: None,
             notes: Vec::new(),
+            note_revs: Vec::new(),
             last_wake_rev: 0,
             wakes: 0,
             otlp_token: String::new(),

@@ -1,7 +1,10 @@
 //! Milestone 9's part of the pushed snapshot (task M9.6): decision 16a's plan text
 //! only at the gate, and decision 42d's message counts and bounded task notes. Pure.
 
-use proto::{HoldInfo, OrchestratorInfo, PlannerInfo, PlannerState, TaskNoteInfo};
+use proto::{
+    HoldInfo, IntegrationInfo, IntegrationState, OrchestratorInfo, PlannerInfo, PlannerState,
+    TaskNoteInfo,
+};
 
 use super::model::{Run, Task};
 
@@ -112,4 +115,34 @@ pub(super) fn planners(run: &Run) -> Vec<PlannerInfo> {
             note: e.note.clone(),
         })
         .collect()
+}
+
+/// Decision 37: each epic whose integration review started, with its base, its merge
+/// commits and its `<e>-int<n>` tasks.
+pub(super) fn integration(run: &Run) -> Vec<IntegrationInfo> {
+    run.orch
+        .epics
+        .iter()
+        .filter(|e| e.integration_state != IntegrationState::NotYet)
+        .map(|e| IntegrationInfo {
+            epic: e.epic.clone(),
+            state: e.integration_state,
+            base: e.base.clone(),
+            merges: e.merges.iter().map(|(_, c)| c.clone()).collect(),
+            tasks: run
+                .tasks
+                .iter()
+                .filter(|t| t.orch.integration_of.as_deref() == Some(e.epic.as_str()))
+                .map(|t| t.id().to_string())
+                .collect(),
+        })
+        .collect()
+}
+
+/// Decision 35: `<data_dir>/research.md`, once a research task reported.
+pub(super) fn research_report(run: &Run) -> Option<std::path::PathBuf> {
+    run.tasks
+        .iter()
+        .any(|t| t.orch.research.is_some())
+        .then(|| run.data_dir.join(super::report::RESEARCH_FILE))
 }

@@ -313,8 +313,13 @@ fn e2e_promote_performs_and_the_task_continues() {
     );
 
     std::fs::write(&go, "").unwrap();
-    let run = h.wait_run(&id, complete, RUN_WAIT);
+    let run = h.wait_run(&id, |r| t(r, "t1").state == TaskState::Merged, RUN_WAIT);
     assert_eq!(run.path, Some(RunPath::Plan));
-    assert_eq!(t(&run, "t1").state, TaskState::Merged);
     assert!(run.promote_requested_at.is_some());
+    // Decision 38: a run with an orchestrator completes only after its plan was
+    // submitted. The orchestrator's launch fails in the driver's placeholder until
+    // M9.13, so the promoted run keeps running with its task merged.
+    let run = h.run(&id).unwrap();
+    assert_eq!(run.state, RunState::Running);
+    assert!(!run.orchestrator.as_ref().unwrap().plan_submitted);
 }

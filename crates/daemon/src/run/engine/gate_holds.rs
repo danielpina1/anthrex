@@ -494,6 +494,7 @@ fn decide(
     if approve {
         hold.state = HoldState::Approved;
         log(run, now, format!("hold {id} approved by the user"));
+        super::wake::note(run, format!("the user approved hold {id}"));
         // Only live work counts: a task the user's own `run edit` cancelled or split
         // (its children are the user's and carry no hold) is released already (M9.7
         // second review, ruling 3).
@@ -519,6 +520,7 @@ fn decide(
         cancelled += 1;
     }
     log(run, now, format!("hold {id} rejected by the user"));
+    super::wake::note(run, format!("the user rejected hold {id}"));
     Ok(format!(
         "hold {id} of run {run_id} rejected: {cancelled} task{} cancelled",
         plural(cancelled)

@@ -3,7 +3,7 @@
 
 use super::{
     Effect, EngineState, OpId, OpKind, OpResult, complete, deciders, dispatch, done, early,
-    fallback, gates, history, holds, ladder, merge, orch_window, outbox, planners, requests,
+    fallback, gates, history, holds, kinds, ladder, merge, orch_window, outbox, planners, requests,
     review, run_scouts,
 };
 
@@ -54,6 +54,8 @@ pub(super) fn op_done(
         (OpKind::PrepareReview { .. }, Some(i)) => {
             review::review_ready(run, i, op, result, now, fx)
         }
+        // Milestone 9 decision 36: a review task's target.
+        (OpKind::ResolveTarget { .. }, Some(i)) => kinds::target_done(run, i, op, result, now, fx),
         (OpKind::HandBack { run_head, .. }, Some(i)) if merge::awaits(run, i, op) => {
             merge::handed_back(run, i, op, &run_head, result, now, fx)
         }

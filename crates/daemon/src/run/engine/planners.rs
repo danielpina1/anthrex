@@ -12,10 +12,12 @@
 
 use proto::{PlanEdit, RunPath, RunState, Runtime, TaskState, ToolCall};
 
-use super::batch::{Applied, Refused, apply_batch};
+use super::batch::{Applied, Refused, apply_batch, record_rejected};
 use super::orch::{refuse, rejected, settle};
 use super::requests::log;
-use super::{Effect, OpKind, OpResult, ReplyId, emit_op, gate_holds, next_op, run_scouts};
+use super::{
+    Effect, OpKind, OpResult, ReplyId, emit_op, gate_holds, kinds, next_op, run_scouts, wake,
+};
 use crate::run::edits_orch::planner_confinement;
 use crate::run::globs::{intersects, validate_glob};
 use crate::run::model::Run;
@@ -167,14 +169,7 @@ fn fail(run: &mut Run, k: usize, reason: String, now: u64) {
     epic.ended_at = Some(now);
     let name = epic.epic.clone();
     log(run, now, format!("sub-planner {name} failed: {reason}"));
-    wake_note(run, format!("sub-planner {name} failed: {reason}"));
-}
-
-/// Decision 39's note for the orchestrator. Task M9.9 caps the notes and wakes it.
-pub(super) fn wake_note(run: &mut Run, text: String) {
-    if let Some(o) = run.orch.orchestrator.as_mut() {
-        o.notes.push(text);
-    }
+    wake::note(run, format!("sub-planner {name} failed: {reason}"));
 }
 
 /// Decision 32 after a daemon restart: a queued or live sub-planner is not resumed; it
@@ -419,17 +414,25 @@ fn submit_epic(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
-    if let Some(op) = edits.iter().find_map(forbidden) {
-        return refuse(
-            fx,
-            reply,
-            format!("op {op} is not available to a sub-planner"),
-        );
-    }
     let epic = run.orch.epics[k].epic.clone();
+    let source = EditSource::Planner { epic: epic.clone() };
+    let refused = edits
+        .iter()
+        .find_map(forbidden)
+        .map(|op| format!("op {op} is not available to a sub-planner"))
+        .or_else(|| kinds::engine_owned(run, edits));
+    if let Some(text) = refused {
+        record_rejected(run, edits, &source, text.clone(), now);
+        return refuse(fx, reply, text);
+    }
     let mut confined = planner_confinement(run, edits, &epic);
     confined.extend(outside_its_round(run, edits, &epic));
     if !confined.is_empty() {
+        let first = confined
+            .first()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        record_rejected(run, edits, &source, first, now);
         return reject(run, reply, (k, window), &confined, now, fx);
     }
     let mut edited = run.clone();
@@ -437,12 +440,18 @@ fn submit_epic(
     let scope = EditScope::Area {
         globs: run.orch.epics[k].area.clone(),
     };
-    let source = EditSource::Planner { epic: epic.clone() };
     let batch = (edits, &scope, refusals);
     let added = match apply_batch(&mut edited, batch, &source, now, &mut effects) {
         Ok(Applied { added, .. }) => added,
-        Err(Refused::Text(text)) => return refuse(fx, reply, text),
-        Err(Refused::Plan(errors)) => return reject(run, reply, (k, window), &errors, now, fx),
+        Err(Refused::Text(text)) => {
+            record_rejected(run, edits, &source, text.clone(), now);
+            return refuse(fx, reply, text);
+        }
+        Err(Refused::Plan(errors)) => {
+            let first = errors.first().map(ToString::to_string).unwrap_or_default();
+            record_rejected(run, edits, &source, first, now);
+            return reject(run, reply, (k, window), &errors, now, fx);
+        }
     };
     gate_holds::assign(&mut edited, edits, &added, now);
     let record = &mut edited.orch.epics[k];
@@ -468,7 +477,7 @@ fn submit_epic(
         now,
         format!("sub-planner {epic} submitted its epic"),
     );
-    wake_note(
+    wake::note(
         &mut edited,
         format!("sub-planner {epic} finished with {n} task{plural}"),
     );

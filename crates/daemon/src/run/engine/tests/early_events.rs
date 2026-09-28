@@ -306,3 +306,21 @@ fn a_planners_held_submit_is_refused_when_its_launch_fails() {
     assert!(fx.run().task("m1").is_none());
     assert!(fx.state.pending.is_empty());
 }
+
+/// Task M9.9: a research task's `submit_scout_report` joins the hold (the early-events
+/// fix's default for a headless role's tool), so its first turn's report is not lost.
+#[test]
+fn a_research_report_before_its_window_is_answered_after_binding() {
+    use super::kinds::{report_args, research, running, submit_report};
+    let mut fx = running("", &[research("r1", "")]);
+    let (op, _) = fx.op("CreateWindow");
+    let effects = submit_report(&mut fx, EARLY, "r1", report_args());
+    assert!(replies(&effects).is_empty(), "held: {effects:#?}");
+    assert_eq!(fx.task("r1").state, TaskState::Working);
+    let effects = bind(&mut fx, op, EARLY);
+    assert_eq!(
+        replies(&effects),
+        vec![Ok(crate::scout::service::REPORT_ACCEPTED.to_string())]
+    );
+    assert_eq!(fx.task("r1").state, TaskState::Reported);
+}

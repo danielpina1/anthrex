@@ -196,11 +196,10 @@ pub(super) fn count_rate_limit(run: &mut Run, i: usize, r: usize) {
     *run.rate_limits.entry(label).or_insert(0) += 1;
 }
 
+/// Saturating, as `TokenUsage`'s `+=` is (followups file, "From M8b.15"): a session's
+/// reported usage never overflows the round's sum.
 fn add_usage(total: &mut TokenUsage, usage: TokenUsage) {
-    total.input += usage.input;
-    total.output += usage.output;
-    total.cache_read += usage.cache_read;
-    total.cache_write += usage.cache_write;
+    *total += usage;
 }
 
 /// Decision 32's denial rule: `denials_before_block` in one session block the task as
@@ -269,6 +268,10 @@ fn turn_ended(
         || matches!(round.stall, StallState::Interrupted { .. });
     if matches!(round.stall, StallState::Interrupted { .. }) {
         round.stall = StallState::Nudged;
+    }
+    // Milestone 9 decision 35: a research task's session.
+    if run.tasks[i].rounds[r].role == AgentRole::Scout {
+        return super::kinds::turn_ended(run, i, r, outcome, now, fx);
     }
     if !worker {
         return review::turn_ended(run, i, r, outcome, streak, now, fx);
@@ -380,6 +383,7 @@ fn exited(
     let working = run.tasks[i].state == TaskState::Working;
     let round = &mut run.tasks[i].rounds[r];
     let worker = round.role == AgentRole::Worker;
+    let research = round.role == AgentRole::Scout;
     // Codex runs one process per turn: its exit between turns is the normal end of one,
     // and the round has no process until the next starts. A retiring round's exit ends
     // it (rulings T13-I2, T13-R2).
@@ -389,6 +393,10 @@ fn exited(
     }
     round.pid = None;
     round.exited_pid = Some(pid);
+    // Milestone 9 decision 35: a research task's session.
+    if research {
+        return super::kinds::exited(run, i, r, killed, now, fx);
+    }
     // Decision 35's resume rule for reviewers (M8a.13).
     if !worker {
         return review::exited(run, i, r, killed, now, fx);

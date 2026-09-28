@@ -135,3 +135,14 @@ fn role_routing_history_round_trip() {
     };
     assert_eq!(old.v, 1);
 }
+
+/// Task M9.9: a reported research or review task's outcome, appended last.
+#[test]
+fn reported_task_outcome_round_trips() {
+    use crate::history::TaskOutcome;
+    both_ways(&TaskOutcome::Reported);
+    assert_eq!(
+        serde_json::to_string(&TaskOutcome::Reported).unwrap(),
+        "\"reported\""
+    );
+}

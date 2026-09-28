@@ -101,26 +101,27 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
             .iter()
             .rev()
             .take(PLAN_EDITS_SHOWN)
+            // Milestone 9 decision 40: sources, refusals and recipients.
             .map(|e| PlanEditInfo {
                 at: e.at,
                 text: e.text.clone(),
-                // Milestone 9 decision 40 records sources, refusals and recipients.
-                source: "user".to_string(),
-                accepted: true,
-                error: None,
-                recipients: Vec::new(),
+                source: e.source.clone(),
+                accepted: e.accepted,
+                error: e.error.clone(),
+                recipients: e.recipients.clone(),
             })
             .collect(),
         plan_edits_since_approval: run.plan_edits_since_approval,
         planners: super::snapshot_orch::planners(run),
         estimate_left_secs: None,
         bound_ratio_permille: None,
-        // Milestone 9: the orchestrator and holds (task M9.7); the rest by later tasks.
+        // Milestone 9: the orchestrator and holds (task M9.7), the integration reviews
+        // and the research report (task M9.9).
         orchestrator: super::snapshot_orch::orchestrator(run),
         holds: super::snapshot_orch::holds(run),
-        integration: Vec::new(),
+        integration: super::snapshot_orch::integration(run),
         digest_revision: run.orch.digest_rev,
-        research_report: None,
+        research_report: super::snapshot_orch::research_report(run),
     }
 }
 

@@ -12,7 +12,7 @@ use proto::{AgentRole, BlockReason, TaskState};
 use super::clock::not_before;
 use super::dispatch::{block, history};
 use super::signals::end_round;
-use super::{Effect, OpId, OpKind, OpResult, emit_op, next_op, review};
+use super::{Effect, OpId, OpKind, OpResult, emit_op, kinds, next_op, review};
 use crate::run::messages::{DELIVERY_MAX_FAILURES, DELIVERY_RETRY_SECS, join_turn};
 use crate::run::model::{FailedTurn, FreshSession, Outgoing, Run, StallState};
 use crate::run::role_launch::jitter_ms;
@@ -42,6 +42,7 @@ pub(super) fn queue(run: &mut Run, task_id: &str, text: String, now: u64) {
 /// is round `r`'s (M8a.13).
 pub(super) fn queue_to(run: &mut Run, address: &str, r: usize, text: String, now: u64) {
     let window_id = review::mailbox_task(address)
+        .or_else(|| kinds::mailbox_task(address))
         .and_then(|t| run.task(t))
         .and_then(|t| t.rounds.get(r))
         .and_then(|r| r.window_id)
@@ -68,6 +69,14 @@ fn target(run: &Run, address: &str) -> Option<(usize, Option<usize>, bool)> {
             return None;
         }
         return Some((i, review::reviewer_round(run, i), true));
+    }
+    // Milestone 9 decision 35: a research task's session, while it works.
+    if let Some(task) = kinds::mailbox_task(address) {
+        let i = run.tasks.iter().position(|t| t.id() == task)?;
+        if run.tasks[i].state != TaskState::Working {
+            return None;
+        }
+        return Some((i, kinds::research_round(run, i), true));
     }
     let i = run.tasks.iter().position(|t| t.id() == address)?;
     let r = run.tasks[i]
@@ -98,9 +107,10 @@ pub(super) fn deliver(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             state,
             TaskState::Proof | TaskState::Check | TaskState::Review | TaskState::MergeQueue
         );
+        // Milestone 9 (M9.2 review ruling 4): a reported task is finished too.
         if matches!(
             state,
-            TaskState::Blocked | TaskState::Merged | TaskState::Cancelled
+            TaskState::Blocked | TaskState::Merged | TaskState::Cancelled | TaskState::Reported
         ) || (in_gate && !reviewer)
         {
             continue;
@@ -217,13 +227,15 @@ pub(super) fn delivered(
     }
     for i in 0..run.tasks.len() {
         let id = run.tasks[i].id();
-        let (worker, reviewer) = (
+        let (worker, reviewer, research) = (
             tasks.iter().any(|t| t == id),
             tasks.iter().any(|t| review::mailbox_task(t) == Some(id)),
+            tasks.iter().any(|t| kinds::mailbox_task(t) == Some(id)),
         );
-        for role in [AgentRole::Worker, AgentRole::Reviewer] {
+        for role in [AgentRole::Worker, AgentRole::Reviewer, AgentRole::Scout] {
             let wanted = match role {
                 AgentRole::Worker => worker,
+                AgentRole::Scout => research,
                 _ => reviewer,
             };
             if wanted {
@@ -303,6 +315,9 @@ pub(super) fn resumed(
     };
     if run.tasks[i].rounds[r].role == AgentRole::Reviewer {
         return reviewer_resumed(run, i, r, result, now, fx);
+    }
+    if run.tasks[i].rounds[r].role == AgentRole::Scout {
+        return kinds::resumed(run, i, r, result, now, fx);
     }
     run.tasks[i].rounds[r].resume_op = None;
     let carried = std::mem::take(&mut run.tasks[i].rounds[r].carried);

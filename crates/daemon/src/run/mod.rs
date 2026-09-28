@@ -49,6 +49,7 @@ pub mod reach;
 pub mod reconcile;
 pub mod report;
 mod report_escape;
+mod report_orch;
 mod report_task;
 pub mod role_launch;
 pub mod roster;

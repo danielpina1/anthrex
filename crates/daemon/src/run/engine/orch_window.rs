@@ -126,6 +126,9 @@ pub(super) fn relaunch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool {
                 now,
                 format!("restarting the orchestrator in window {window_id}"),
             );
+            // Decisions 11, 39: its first wake-up says so.
+            let text = "the daemon restarted and your session was resumed";
+            super::wake::note(run, text.to_string());
         }
         None => launch(run, fx),
     }

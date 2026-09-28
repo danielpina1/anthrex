@@ -16,6 +16,7 @@ use proto::{DoneSignal, RunState, Verdict};
 use super::contract::{mode_label, sha7, size_label};
 use super::model::Run;
 use super::report_escape::{escape_cell, list_item_text, plain_text_line};
+pub use super::report_orch::{RESEARCH_FILE, research_text};
 use super::report_task::{render_task, strength_label};
 use super::triage::{kinds_scale, source_label};
 use crate::headless::argv::CodexProjectConfig;
@@ -30,6 +31,8 @@ pub fn render(run: &Run, now: u64) -> String {
         out.push('\n');
         render_task(task, now, &mut out);
     }
+    // Milestone 9 decisions 35 and 36.
+    super::report_orch::sections(run, &mut out);
     out.push_str("\n## Log\n\n");
     log_section(run, &mut out);
     out

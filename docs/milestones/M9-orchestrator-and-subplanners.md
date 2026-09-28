@@ -2747,3 +2747,53 @@ One commit, `fix(daemon): hold a promoted run's additions until the user approve
   - the orchestrator's live-epic check removed;
   - each of the two `past_gate` clauses removed.
   Each mutation turned its tests red.
+
+### Task M9.9 (Engine: research, review, integration, completion and wake notes)
+
+- **Files.**
+  - Preparatory commit `09d1ec5` moves `new_round` out of `dispatch.rs` into `engine/rounds.rs` with no behaviour change, so `dispatch.rs` stays under 600 lines (about 550 after M9.9).
+  - Research and review tasks are in `engine/kinds.rs`. Decision 37's integration review and decision 38's `may_complete` are in `engine/integration.rs`, re-exported from `kinds`, so neither file passes 600 lines.
+  - Decision 39's notes, cap and wake-up are in the new `engine/wake.rs`. `planners::wake_note` is gone, and every note source goes through `wake::note`.
+  - The `research.md` sections are in the new `run/report_orch.rs`.
+  - The new tests are in new files: `engine/tests/kinds.rs`, `kinds_integration.rs`, `kinds_complete.rs` and `wake_notes.rs`. `done.rs` is 586 lines.
+- **Fields beyond Interfaces**, both `#[serde(default)]`:
+  - `EpicRecord.integration_reviewed`, which counts real integration rounds;
+  - `OrchestratorRecord.note_revs`, each note's digest revision. It is parallel to `notes`. A note is `PENDING` until `engine::finish` settles it at the step's final revision. `DigestRead` and `OrchestratorWoken` drop notes up to their revision.
+- **Integration ids.** The id is the first free `<e>-int<n>`, counting from the next round's number (M9.4 ruling 7: a user's `run edit` may hold one). The title uses that same number. `integration_rounds` counts the rounds that actually ran, so a skipped id does not use up a bounce.
+- **Research failures (decision 35's "M8a's worker rules"), the implementer's reading:**
+  - A rate-limited or otherwise failed turn counts as a turn with no report. There is no wait-and-continue.
+  - An authentication, billing or sandbox failure blocks at once.
+  - A stall blocks at once (`blocked(environment)`) instead of an interrupt and a nudge.
+  - A first mid-turn death resumes with `RESEARCH_RESUME_AFTER_EXIT`, and a second one blocks.
+  - Run budgets are not applied to research sessions.
+- **Decision 25's restart** reuses `run retry`'s rung-2 path, `requests::rung2`, now shared. So it escalates the route even when the rewrite changed the route. An L task, and a task still awaiting its dependencies, is not restarted. Only a `blocked(mis_sized)` task whose brief, acceptance, size or route changed restarts. Human, conflict and environment blocks stay blocked (`editing_a_human_blocked_task_does_not_restart_it`).
+- **Wake-note sources, readings.**
+  - A user-edit note is added in any run state, not only while the gate is open or after it.
+  - The restart note is added on every `RestartOrchestrator`.
+  - Blocked-task notes come from comparing each run before and after the step. They skip `message_pause`, and they are suppressed while the step is the orchestrator's own tool call.
+  - Notes for a worker's discovery or risk and for a failed refresh are M9.13a's.
+  - Delivering the wake-up is M9.13's. `Effect::WakeOrchestrator` is emitted, and the driver ignores it until then.
+- **ResolveTarget** is still answered "not available yet" by the driver until M9.13. End to end, a review task therefore blocks `environment` with that text. The engine tests drive the result directly.
+- **Edit log (decision 40).** `edit_log::record` takes the source and an `EditOutcome`. A rejected batch is logged with its error, and an empty batch is not logged. Only accepted batches count toward `plan_edits_since_approval`.
+  - Because the digest fingerprint includes the edits, a logged rejection moves `digest_rev`.
+  - Two M9.7 `orch_edit` tests compared whole runs across a refused batch, so they now compare through `but_the_log()`.
+- **Decision 38 and the promoted run.** `run_e2e_adapt::e2e_promote_performs_and_the_task_continues` waited for `complete`. A promoted run's orchestrator cannot submit until M9.13 launches it, so with decision 38 the run correctly keeps running. The test now waits for `t1` to merge, then asserts the run is `running` with `plan_submitted` false. M9.16/M9.17 should assert completion once the orchestrator runs.
+- **Snapshot and report.**
+  - `RunInfo.integration` and `research_report` are now filled.
+  - The driver writes `research.md` beside `REPORT.md`, on the same blocking task.
+  - `PlanEditInfo` maps the record's source, accepted flag, error and recipients.
+- **Usage sums saturate** (`signals::add_usage`); an overflow used to panic.
+- **Constructed state.** `the_outbox_skips_a_reported_task`, `a_run_of_merged_and_reported_tasks_completes` and `completion_waits_for_holds_planners_scouts_integration_and_submit` set their state directly rather than driving it through events.
+- **Red evidence.**
+  - Against `todo!` and no-op stubs, 34 of the 39 new tests failed. The 5 that passed are `plan_path_has_no_integration_review`, a pin, and existing edit-log tests.
+  - Each new behaviour was then mutated from a `cp` backup, and each mutation turned its test red:
+    - the mis-sized check in `rewritten`;
+    - the outbox's `Reported` skip;
+    - the `quiet` flag;
+    - the early `Scout` hold;
+    - the first free id;
+    - the round cap;
+    - `engine_owned`;
+    - the `Changes` clause;
+    - the finish edit closing `Changes`;
+    - a `Reported` dependency satisfying its dependents.

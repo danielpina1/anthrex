@@ -55,6 +55,7 @@ fn cancel_task(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut Vec<Effect
 pub(super) fn cancel_now(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut Vec<Effect>) {
     ladder::kill_worker(run, i, fx);
     review::stop_reviewers(run, i, now, fx);
+    super::kinds::stop_research(run, i, fx);
     // Review m3: its queued deciders are dropped.
     let id = run.tasks[i].id().to_string();
     super::deciders::drop_queued(&mut run.decider_queue, &id);
@@ -115,14 +116,13 @@ pub(super) fn finish_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     }
 }
 
-/// Decision 37: a running run whose tasks are all `merged` or `cancelled`, with an
-/// empty merge queue, no op pending and no cancelled task's session still ending, runs
-/// the ref guard first.
+/// Decision 37: a running run whose tasks are all finished (`merged`, `cancelled` or,
+/// since milestone 9, `reported`), with an empty merge queue, no op pending and no
+/// cancelled task's session still ending, runs the ref guard first. With an
+/// orchestrator, milestone 9 decision 38's conditions hold too (`kinds::may_complete`).
 pub(super) fn complete_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
-    let finished = run
-        .tasks
-        .iter()
-        .all(|t| matches!(t.state, TaskState::Merged | TaskState::Cancelled));
+    let finished =
+        run.tasks.iter().all(|t| t.state.is_finished()) && super::kinds::may_complete(run);
     let ending = run
         .tasks
         .iter()
@@ -220,12 +220,20 @@ pub(super) fn final_checked(run: &mut Run, result: OpResult, now: u64, fx: &mut 
 fn complete(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     let count = |state| run.tasks.iter().filter(|t| t.state == state).count();
     let (merged, cancelled) = (count(TaskState::Merged), count(TaskState::Cancelled));
+    let reported = count(TaskState::Reported);
     run.state = RunState::Complete;
+    let reported = match reported {
+        0 => String::new(),
+        n => format!(", {n} reported"),
+    };
     log(
         run,
         now,
-        format!("complete: {merged} merged, {cancelled} cancelled"),
+        format!("complete: {merged} merged, {cancelled} cancelled{reported}"),
     );
+    // Milestone 9 decision 38.
+    let text = "the run is complete; write your summary with edit_plan summary";
+    super::wake::note(run, text.to_string());
     fx.push(Effect::WriteReport {
         run_id: run.id.clone(),
     });

@@ -11,7 +11,7 @@ use super::orch::{ORCH, add, edit_plan, launched, planned};
 use crate::run::engine::{EngineState, Event, EventKind, OpKind, OpResult, step};
 
 /// The fixture's state after a daemon restart: its runs restored, nothing replayed.
-fn restart(fx: &mut Fixture) {
+pub(super) fn restart(fx: &mut Fixture) {
     let runs: Vec<_> = fx.state.runs.values().cloned().collect();
     fx.state = EngineState::default();
     fx.next(EventKind::Restore {
@@ -21,7 +21,7 @@ fn restart(fx: &mut Fixture) {
     });
 }
 
-fn resume(fx: &mut Fixture) -> Vec<crate::run::engine::Effect> {
+pub(super) fn resume(fx: &mut Fixture) -> Vec<crate::run::engine::Effect> {
     let reply = fx.reply();
     fx.next(EventKind::Resume {
         reply,

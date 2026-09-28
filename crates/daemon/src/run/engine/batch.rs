@@ -77,6 +77,8 @@ pub(super) fn apply_batch(
         .collect();
     // M8b decision 19: the unstarted tasks this batch added or amended.
     let touched = touched_unstarted(&edited, edits);
+    // Milestone 9 decision 25: the mis-sized tasks this batch rewrote.
+    let rewritten = super::done::rewritten(run, &edited);
     *run = edited;
     for consequence in consequences {
         match consequence {
@@ -99,7 +101,13 @@ pub(super) fn apply_batch(
         }
     }
     deciders::cross_check(run, &touched, now, fx);
-    edit_log::record(run, edits, now);
+    super::done::restart_rewritten(run, &rewritten, now, fx);
+    edit_log::record(run, edits, now, source, edit_log::EditOutcome::accepted());
+    // Milestone 9 decision 39: the orchestrator sees what the user changed.
+    if *source == EditSource::User {
+        let text = format!("the user edited the plan: {}", edit_log::describe(edits));
+        super::wake::note(run, text);
+    }
     let n = edits.len();
     log(
         run,
@@ -111,6 +119,26 @@ pub(super) fn apply_batch(
         text.push_str(&super::complete::deferred_note(task));
     }
     Ok(Applied { text, added })
+}
+
+/// Decision 40: a rejected batch of the orchestrator's or a sub-planner's is logged
+/// with its first error; a call with no edit (a lone `submit`) logs nothing.
+pub(super) fn record_rejected(
+    run: &mut Run,
+    edits: &[PlanEdit],
+    source: &EditSource,
+    error: String,
+    now: u64,
+) {
+    if !edits.is_empty() {
+        edit_log::record(
+            run,
+            edits,
+            now,
+            source,
+            edit_log::EditOutcome::Rejected { error },
+        );
+    }
 }
 
 /// M8b decision 19's edit side: decision 13's touched set (the tasks the batch added,

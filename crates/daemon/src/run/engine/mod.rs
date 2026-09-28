@@ -55,6 +55,8 @@ mod gate_holds;
 mod gates;
 mod history;
 mod holds;
+mod integration;
+mod kinds;
 pub(crate) mod ladder;
 mod merge;
 mod ops;
@@ -72,6 +74,7 @@ mod run_scouts;
 pub(crate) mod schedule;
 mod signals;
 mod tools;
+mod wake;
 
 pub use crate::headless::TurnOutcome;
 pub(crate) use clock::epoch_spend;
@@ -332,6 +335,14 @@ pub enum Effect {
         window_id: u32,
         reason: String,
     },
+    /// Decision 39: paste `text` into the idle orchestrator's window (the driver's
+    /// `wake.rs`, task M9.13), then answer `OrchEvent::OrchestratorWoken`.
+    WakeOrchestrator {
+        run_id: String,
+        window_id: u32,
+        text: String,
+        digest_revision: u64,
+    },
 }
 
 /// One reducer step: apply the event, run the scheduler on every run, then bump the
@@ -344,6 +355,9 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
     let before = state.runs.clone();
     let before_revision = state.revision;
     let now = event.now;
+    // Milestone 9 decision 39: the orchestrator's own edits add no wake note.
+    let quiet = matches!(&event.kind, EventKind::Orch(OrchEvent::Tool { call, .. })
+        if call.role == proto::AgentRole::Orchestrator);
     let mut fx = Vec::new();
     match event.kind {
         EventKind::Start { reply, run } => requests::start(&mut state, reply, *run, now, &mut fx),
@@ -442,12 +456,14 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
         // Milestone 9 decision 29: a promotion recorded before milestone 9.
         EventKind::Tick => promote::on_tick(&mut state, now, &mut fx),
     }
-    for run in state.runs.values_mut() {
+    for (id, run) in state.runs.iter_mut() {
         dispatch::schedule(run, now, &mut fx);
         orch_window::ended(run);
         gate_holds::drop_empty_rounds(run, now);
         // M8b decision 33: the history records that are due, whatever the run's state.
         history::pass(run, now, &mut fx);
+        // Milestone 9 decision 39: a note for each task this step blocked.
+        wake::blocked_notes(before.get(id), run, quiet);
     }
     // Held events whose launches are over, or that waited too long (`early.rs`).
     early::sweep(&mut state, now, &mut fx);
@@ -466,6 +482,7 @@ fn finish(
     fx: Vec<Effect>,
 ) -> (EngineState, Vec<Effect>) {
     let mut persist = Vec::new();
+    let mut wakes = Vec::new();
     let mut structural = false;
     for (id, run) in state.runs.iter_mut() {
         let urgent = match before.get(id) {
@@ -478,6 +495,10 @@ fn finish(
                 if urgent {
                     super::orch::digest::note_change(run);
                 }
+                // Decision 39: this step's notes take its digest revision, and a
+                // wake-up is due when the orchestrator should see them.
+                wake::settle(run);
+                wakes.extend(wake::effect(run));
                 urgent
             }
             None => true,
@@ -492,6 +513,7 @@ fn finish(
     let changed = state.revision != before_revision;
     let mut out = persist;
     out.extend(fx);
+    out.extend(wakes);
     if changed {
         out.push(Effect::Publish { structural });
     }

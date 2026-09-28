@@ -19,11 +19,12 @@ use super::extract::ExtractSlot;
 use super::{EpicRecord, RunScout};
 use crate::headless::{ClaudeSandbox, HeadlessSpec, McpTarget};
 use crate::launch::role::{ORCHESTRATOR_ALLOWED_TOOLS, ORCHESTRATOR_DISALLOWED_TOOLS, RoleLaunch};
-use crate::run::model::Run;
+use crate::run::model::{Run, Task};
 use crate::run::role_launch::{
     REVIEWER_CODEX_SANDBOX, REVIEWER_DISALLOWED_TOOLS, REVIEWER_PERMISSION_MODE,
     codex_config_guard, protected_write_denials,
 };
+use crate::scout::contract::SCOUT_CONTRACT;
 use crate::scout::planner::PlannerSpec;
 use crate::scout::spec::ScoutSpec;
 
@@ -191,56 +192,32 @@ pub const PLANNER_ALLOWED_TOOLS: &[&str] = &[
 /// re-planned, with the slot the driver puts the epic's scout extract in (decision 34).
 pub fn planner_spec(run: &Run, epic: &EpicRecord, session: u32) -> PlannerSpec {
     let route = epic.route.clone();
-    let claude = route.runtime == Runtime::Claude;
     let replan = !epic.replans.is_empty();
     let first_turn = match replan {
         false => planner_prompt(run, epic, ""),
         true => replan_prompt(run, epic, ""),
     };
     let at = planner_extract_at(run, epic, replan);
-    let mut deny = protected_write_denials(&run.root, &[]);
-    for path in [&run.root, &run.project, &run.git_common_dir] {
-        if !deny.contains(path) {
-            deny.push(path.clone());
-        }
-    }
-    let headless = HeadlessSpec {
-        runtime: route.runtime,
-        model: route.model.clone(),
-        effort: route.effort,
-        cwd: run.root.clone(),
-        instructions: PLANNER_CONTRACT.to_string(),
-        mcp: Some(McpTarget {
-            role: AgentRole::Planner,
-            run_id: run.id.clone(),
-            task_id: None,
-            scout_id: None,
-            epic: Some(epic.epic.clone()),
-        }),
-        allowed_tools: strings(PLANNER_ALLOWED_TOOLS),
-        claude_permission_mode: claude.then(|| REVIEWER_PERMISSION_MODE.to_string()),
-        claude_disallowed_tools: match claude {
-            true => strings(&REVIEWER_DISALLOWED_TOOLS),
-            false => Vec::new(),
-        },
-        claude_sandbox: claude.then(|| ClaudeSandbox {
-            writable_roots: Vec::new(),
-            deny_write: deny,
-        }),
-        codex_sandbox: REVIEWER_CODEX_SANDBOX.to_string(),
-        codex_writable_roots: Vec::new(),
-        env: Vec::new(),
-        claude_auth: run.limits.claude_auth.into(),
-        api_key_helper: run.limits.api_key_helper.clone(),
-        run_ref: Some(RunRef {
-            run_id: run.id.clone(),
-            task_id: None,
-            role: AgentRole::Planner,
-            session,
-        }),
-        codex_config_guard: codex_config_guard(run, route.runtime),
-        output_filter: None,
+    let mcp = McpTarget {
+        role: AgentRole::Planner,
+        run_id: run.id.clone(),
+        task_id: None,
+        scout_id: None,
+        epic: Some(epic.epic.clone()),
     };
+    let run_ref = RunRef {
+        run_id: run.id.clone(),
+        task_id: None,
+        role: AgentRole::Planner,
+        session,
+    };
+    let headless = read_only(
+        run,
+        &route,
+        (PLANNER_CONTRACT, PLANNER_ALLOWED_TOOLS),
+        mcp,
+        run_ref,
+    );
     let limits = &run.limits.orch.planners;
     PlannerSpec {
         run_id: run.id.clone(),
@@ -273,6 +250,96 @@ pub fn scout_spec(run: &Run, scout: &RunScout, root: &Path, project: &Path) -> S
         codex_config: run.codex_config_base.clone(),
         base_sha: run.base_sha.clone(),
         repo_paths: vec![run.root.clone(), run.git_common_dir.clone()],
+    }
+}
+
+/// The Claude tools a research session may use (decision 35): M8b's area scout's, and
+/// the web.
+pub const RESEARCH_ALLOWED_TOOLS: &[&str] = &[
+    crate::scout::spec::SUBMIT_TOOL,
+    "Read",
+    "Glob",
+    "Grep",
+    "WebFetch",
+    "WebSearch",
+];
+
+/// Decision 35: research task `task`'s session `task.session`, launched as M8b's area
+/// scout is (decision 31's read-only launch): the scout contract, its tools with the
+/// web ones, the task's resolved route, the user's checkout (decision 20a), and MCP
+/// bound to the task, so its `submit_scout_report` reaches the engine.
+pub fn research_spec(run: &Run, task: &Task) -> HeadlessSpec {
+    let run_ref = RunRef {
+        run_id: run.id.clone(),
+        task_id: Some(task.id().to_string()),
+        role: AgentRole::Scout,
+        session: task.session,
+    };
+    let mcp = McpTarget {
+        role: AgentRole::Scout,
+        run_id: run.id.clone(),
+        task_id: Some(task.id().to_string()),
+        scout_id: None,
+        epic: None,
+    };
+    read_only(
+        run,
+        &task.route,
+        (SCOUT_CONTRACT, RESEARCH_ALLOWED_TOOLS),
+        mcp,
+        run_ref,
+    )
+}
+
+/// Decisions 36 and 37: a review task's reviewer, launched as M8a's reviewer of a
+/// task (`role_launch::reviewer_spec`): read-only in the task's review worktree.
+pub fn review_task_spec(run: &Run, task: &Task, route: &Route) -> HeadlessSpec {
+    crate::run::role_launch::reviewer_spec(run, task, route)
+}
+
+/// A read-only session in the user's checkout (decisions 20a, 31): an explicit
+/// `--permission-mode` with the reviewers' denials, an empty-root Claude sandbox
+/// denying the checkout and every repository path, Codex `read-only` with the run's
+/// config guard, no output filter.
+fn read_only(
+    run: &Run,
+    route: &Route,
+    (instructions, tools): (&str, &[&str]),
+    mcp: McpTarget,
+    run_ref: RunRef,
+) -> HeadlessSpec {
+    let claude = route.runtime == Runtime::Claude;
+    let mut deny = protected_write_denials(&run.root, &[]);
+    for path in [&run.root, &run.project, &run.git_common_dir] {
+        if !deny.contains(path) {
+            deny.push(path.clone());
+        }
+    }
+    HeadlessSpec {
+        runtime: route.runtime,
+        model: route.model.clone(),
+        effort: route.effort,
+        cwd: run.root.clone(),
+        instructions: instructions.to_string(),
+        mcp: Some(mcp),
+        allowed_tools: strings(tools),
+        claude_permission_mode: claude.then(|| REVIEWER_PERMISSION_MODE.to_string()),
+        claude_disallowed_tools: match claude {
+            true => strings(&REVIEWER_DISALLOWED_TOOLS),
+            false => Vec::new(),
+        },
+        claude_sandbox: claude.then(|| ClaudeSandbox {
+            writable_roots: Vec::new(),
+            deny_write: deny,
+        }),
+        codex_sandbox: REVIEWER_CODEX_SANDBOX.to_string(),
+        codex_writable_roots: Vec::new(),
+        env: Vec::new(),
+        claude_auth: run.limits.claude_auth.into(),
+        api_key_helper: run.limits.api_key_helper.clone(),
+        run_ref: Some(run_ref),
+        codex_config_guard: codex_config_guard(run, route.runtime),
+        output_filter: None,
     }
 }
 

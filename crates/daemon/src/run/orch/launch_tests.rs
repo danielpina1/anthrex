@@ -153,3 +153,66 @@ fn planner_and_research_specs_carry_the_read_only_sandbox() {
         .unwrap();
     assert_eq!(argv[at + 1], "read-only", "{argv:?}");
 }
+
+/// Decision 35 (task M9.9): the research half of the F1 N4 rule. A research task runs
+/// as an area scout bound to its task: read-only on both runtimes, the scout contract
+/// and tools with the web ones, the task's route, in the user's checkout.
+#[test]
+fn research_spec_is_read_only_and_bound_to_its_task() {
+    for runtime in [Runtime::Claude, Runtime::Codex] {
+        let mut run = run_with(&[task_toml("r1", "S", "[]", "kind = \"research\"")]);
+        run.tasks[0].route.runtime = runtime;
+        run.tasks[0].session = 1;
+        let task = run.tasks[0].clone();
+        let h = research_spec(&run, &task);
+        assert_eq!(h.runtime, runtime);
+        assert_eq!(h.model, task.route.model);
+        assert_eq!(h.cwd, run.root);
+        assert_eq!(h.instructions, crate::scout::contract::SCOUT_CONTRACT);
+        let mcp = h.mcp.clone().unwrap();
+        assert_eq!(
+            (mcp.role, mcp.task_id.as_deref(), mcp.scout_id, mcp.epic),
+            (AgentRole::Scout, Some("r1"), None, None)
+        );
+        let run_ref = h.run_ref.clone().unwrap();
+        assert_eq!(
+            (run_ref.role, run_ref.task_id.as_deref(), run_ref.session),
+            (AgentRole::Scout, Some("r1"), 1)
+        );
+        assert_eq!(
+            h.allowed_tools,
+            [
+                "mcp__anthrex__submit_scout_report",
+                "Read",
+                "Glob",
+                "Grep",
+                "WebFetch",
+                "WebSearch"
+            ]
+        );
+        assert_eq!(h.codex_sandbox, REVIEWER_CODEX_SANDBOX);
+        assert!(h.codex_writable_roots.is_empty());
+        assert_eq!(h.output_filter, None);
+        match runtime {
+            Runtime::Claude => {
+                let sandbox = h.claude_sandbox.clone().expect("sandboxed");
+                assert!(sandbox.writable_roots.is_empty());
+                for denied in [&run.root, &run.project, &run.git_common_dir] {
+                    assert!(sandbox.deny_write.contains(denied), "{sandbox:?}");
+                }
+                assert_eq!(
+                    h.claude_permission_mode.as_deref(),
+                    Some(REVIEWER_PERMISSION_MODE)
+                );
+                assert_eq!(h.claude_disallowed_tools, REVIEWER_DISALLOWED_TOOLS);
+            }
+            _ => {
+                assert_eq!(h.claude_sandbox, None);
+                assert_eq!(
+                    h.codex_config_guard,
+                    crate::run::role_launch::codex_config_guard(&run, Runtime::Codex)
+                );
+            }
+        }
+    }
+}

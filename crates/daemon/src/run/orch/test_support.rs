@@ -80,6 +80,7 @@ pub fn orchestrator() -> OrchestratorRecord {
         plan_submitted: true,
         summary: None,
         notes: Vec::new(),
+        note_revs: Vec::new(),
         last_wake_rev: 0,
         wakes: 0,
         otlp_token: "secret-token".into(),

@@ -11,13 +11,13 @@ use std::path::Path;
 use proto::{AgentRole, BlockInfo, BlockReason, RunState, Runtime, TaskState};
 
 use super::schedule::{
-    deps_done, dispatch_order, held_hub_waits_for, hub_started, may_return_to_working,
-    op_in_flight, size_check_pending, writers_busy,
+    deps_done, dispatch_order, held_hub_waits_for, hub_started, is_reader_task,
+    may_return_to_working, op_in_flight, size_check_pending, writers_busy,
 };
 use super::{Effect, OpKind, OpResult, emit_op, next_op};
 use super::{
-    clock, complete, deciders, done, gate_holds, gates, holds, ladder, merge, outbox, restore,
-    review, signals,
+    clock, complete, deciders, done, gate_holds, gates, holds, kinds, ladder, merge, outbox,
+    restore, review, signals,
 };
 use crate::run::contract::{handover_prompt, is_stall_nudge, worker_prompt};
 use crate::run::env::profile_env;
@@ -45,6 +45,9 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 ladder::recover_sessionless(run, now);
                 ladder::start_fresh_sessions(run, fx);
                 complete::finish_pass(run, now, fx);
+                // Milestone 9 decision 37: an epic merged gets its integration review.
+                kinds::integration_pass(run, now);
+                kinds::watch(run, now, fx);
                 gates::start_gates(run, now, fx);
                 merge::start_due_hand_backs(run, now, fx);
                 merge::start_merge(run, now, fx);
@@ -54,11 +57,15 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
                 // M8b decision 18: queued deciders take free reader slots first.
                 fx.extend(deciders::dispatch(run, now));
                 review::dispatch_reviewers(run, fx);
+                // Milestone 9 decision 31: integration reviews go with the reviewers.
+                kinds::dispatch(run, now, true, fx);
             }
             _ => {}
         }
         // Milestone 9 decision 31: sub-planners, then run scouts, in free reader slots.
         super::planners::dispatch(run, now, fx);
+        // Then research and review tasks (decisions 35, 36).
+        kinds::dispatch(run, now, false, fx);
     }
     remove_cancelled_worktrees(run, now, fx);
     if run.state == RunState::Running {
@@ -181,7 +188,9 @@ fn prewarm(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             break;
         }
         let task = &run.tasks[i];
+        // Milestone 9: a research or review task has no worktree to pre-warm.
         if task.state != TaskState::Queued
+            || is_reader_task(task)
             || !gate_holds::released(run, task)
             || task.prewarmed
             || task.worktree_live
@@ -205,7 +214,9 @@ fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     for i in dispatch_order(run) {
         // M8b decision 19: a task waiting for its size cross-check is not runnable;
         // milestone 9 decision 28: nor is one whose approval hold is not approved.
+        // Milestone 9 decisions 35, 36: research and review tasks take reader slots.
         if run.tasks[i].state != TaskState::Queued
+            || is_reader_task(&run.tasks[i])
             || size_check_pending(&run.tasks[i])
             || !gate_holds::released(run, &run.tasks[i])
             || only

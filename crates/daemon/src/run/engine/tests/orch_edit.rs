@@ -40,8 +40,8 @@ fn submit_while_a_planner_is_live_is_refused() {
         "sub-planner auth is still planning; submit when every sub-planner has finished"
     );
     assert_eq!(
-        *fx.run(),
-        before,
+        but_the_log(fx.run()),
+        but_the_log(&before),
         "the batch's edits are not applied either"
     );
     // The control: once it finished, the same call submits.
@@ -141,7 +141,17 @@ fn edit_plan_is_one_batch() {
     let (ok, value) = answer(&edit_plan(&mut fx, batch));
     assert!(!ok);
     assert_eq!(value["accepted"], false);
-    assert_eq!(*fx.run(), before, "unchanged, digest_rev included");
+    assert_eq!(
+        but_the_log(fx.run()),
+        but_the_log(&before),
+        "unchanged but for the log"
+    );
+    // Task M9.9 (decision 40): the rejected batch is logged, which moves the run.
+    let record = fx.run().plan_edits.last().unwrap();
+    assert_eq!(
+        (record.source.as_str(), record.accepted),
+        ("orchestrator", false)
+    );
 }
 
 #[test]
@@ -364,4 +374,15 @@ fn a_fast_orchestrator_is_reported_below_the_frontier() {
     let report = crate::run::report::render(fx.run(), fx.now);
     let line = format!("\norchestrator below the frontier tier: {runtime} ({model}) fast\n");
     assert!(report.contains(&line), "{report}");
+}
+
+/// `run` without what a rejected batch still changes (task M9.9, decision 40): its
+/// edit-log record, and the revisions that record moves.
+fn but_the_log(run: &crate::run::model::Run) -> crate::run::model::Run {
+    let mut run = run.clone();
+    run.plan_edits.clear();
+    run.revision = 0;
+    run.orch.digest_rev = 0;
+    run.orch.digest_fp = 0;
+    run
 }

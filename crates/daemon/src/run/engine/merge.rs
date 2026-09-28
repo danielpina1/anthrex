@@ -192,6 +192,8 @@ fn merged(
     fx: &mut Vec<Effect>,
 ) {
     let id = run.tasks[i].id().to_string();
+    // Milestone 9 decision 37: an epic's merges, for its integration review.
+    super::kinds::record_merge(run, i, &from, &commit);
     super::history::merged(run, i, from, commit.clone(), fx);
     let task = &mut run.tasks[i];
     set_state(task, TaskState::Merged, now);
@@ -417,6 +419,8 @@ pub(crate) fn candidate_in_flight(run: &Run, i: usize) -> bool {
 pub(super) fn halt(run: &mut Run, reason: String, now: u64) {
     run.halt_retryable = false;
     log(run, now, format!("halted: {reason}"));
+    // Milestone 9 decision 39.
+    super::wake::note(run, format!("the run halted: {reason}"));
     run.state = RunState::Halted;
     run.halted_reason = Some(reason);
 }

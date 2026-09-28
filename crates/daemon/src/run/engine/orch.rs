@@ -11,9 +11,9 @@
 use proto::{AgentRole, RunState, Runtime, TokenUsage, ToolCall};
 use serde_json::json;
 
-use super::batch::{Applied, Refused, apply_batch};
+use super::batch::{Applied, Refused, apply_batch, record_rejected};
 use super::requests::log;
-use super::{Effect, EngineState, ReplyId, gate_holds, planners, run_scouts};
+use super::{Effect, EngineState, ReplyId, gate_holds, kinds, planners, run_scouts, wake};
 use crate::run::model::Run;
 use crate::run::orch::tools::{OrchCall, parse_call};
 use crate::run::orch::{EditSource, EpicRecord, digest};
@@ -56,6 +56,17 @@ pub enum OrchEvent {
         outcome: ScoutEnd,
         usage: TokenUsage,
     },
+    /// Decision 39: the driver pasted the wake-up of `digest_revision` into the
+    /// orchestrator's window.
+    OrchestratorWoken {
+        run_id: String,
+        digest_revision: u64,
+    },
+    /// Decisions 16 and 39: the orchestrator read the digest at `digest_revision`.
+    DigestRead {
+        run_id: String,
+        digest_revision: u64,
+    },
 }
 
 /// How a run scout's or sub-planner's session ended: its report or epic accepted, or
@@ -73,7 +84,10 @@ impl OrchEvent {
             OrchEvent::Tool { reply, .. }
             | OrchEvent::ApproveHold { reply, .. }
             | OrchEvent::RejectHold { reply, .. } => Some(*reply),
-            OrchEvent::ScoutEnded { .. } | OrchEvent::PlannerEnded { .. } => None,
+            OrchEvent::ScoutEnded { .. }
+            | OrchEvent::PlannerEnded { .. }
+            | OrchEvent::OrchestratorWoken { .. }
+            | OrchEvent::DigestRead { .. } => None,
         }
     }
 }
@@ -126,6 +140,22 @@ pub(super) fn on_orch_event(
         } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
                 planners::ended(run, (&epic, session), outcome, usage, now);
+            }
+        }
+        OrchEvent::OrchestratorWoken {
+            run_id,
+            digest_revision,
+        } => {
+            if let Some(run) = state.runs.get_mut(&run_id) {
+                wake::woken(run, digest_revision);
+            }
+        }
+        OrchEvent::DigestRead {
+            run_id,
+            digest_revision,
+        } => {
+            if let Some(run) = state.runs.get_mut(&run_id) {
+                wake::digest_read(run, digest_revision, now);
             }
         }
     }
@@ -238,21 +268,27 @@ fn edit_plan(
         write_summary(run, summary, now);
         return accepted(run, reply, (Vec::new(), None), now, fx);
     }
+    let source = EditSource::Orchestrator;
+    // Decision 37: the engine owns its integration reviews.
+    if let Some(text) = kinds::engine_owned(run, edits) {
+        record_rejected(run, edits, &source, text.clone(), now);
+        return refuse(fx, reply, text);
+    }
     let mut edited = run.clone();
     let mut effects = Vec::new();
     let mut added = Vec::new();
     if !edits.is_empty() {
         let batch = (edits, &EditScope::Run, refusals);
-        match apply_batch(
-            &mut edited,
-            batch,
-            &EditSource::Orchestrator,
-            now,
-            &mut effects,
-        ) {
+        match apply_batch(&mut edited, batch, &source, now, &mut effects) {
             Ok(Applied { added: new, .. }) => added = new,
-            Err(Refused::Text(text)) => return refuse(fx, reply, text),
+            // Decision 40: a rejected batch is logged too.
+            Err(Refused::Text(text)) => {
+                record_rejected(run, edits, &source, text.clone(), now);
+                return refuse(fx, reply, text);
+            }
             Err(Refused::Plan(errors)) => {
+                let first = errors.first().map(ToString::to_string).unwrap_or_default();
+                record_rejected(run, edits, &source, first, now);
                 return fx.push(Effect::Reply {
                     reply,
                     result: Err(rejected(&errors)),
@@ -262,6 +298,7 @@ fn edit_plan(
     }
     let held = gate_holds::assign(&mut edited, edits, &added, now);
     if submit && let Err(text) = submit_plan(&mut edited, "the orchestrator", now) {
+        record_rejected(run, edits, &source, text.clone(), now);
         return refuse(fx, reply, text);
     }
     if let Some(summary) = summary {

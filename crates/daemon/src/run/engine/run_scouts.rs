@@ -5,8 +5,8 @@
 //! (design decision 2).
 
 use super::orch::{refuse, settle};
-use super::planners::wake_note;
 use super::requests::log;
+use super::wake;
 use super::{Effect, OpKind, OpResult, ReplyId, ScoutEnd, emit_op, next_op};
 use crate::run::globs::validate_glob;
 use crate::run::model::Run;
@@ -166,7 +166,7 @@ fn end(run: &mut Run, id: &str, result: Result<(), String>, now: u64) {
         }
     };
     log(run, now, note.clone());
-    wake_note(run, note);
+    wake::note(run, note);
 }
 
 /// Decision 20 after a daemon restart: a queued or running run scout is not resumed; it

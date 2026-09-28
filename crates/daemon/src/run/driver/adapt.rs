@@ -148,10 +148,12 @@ impl RunService {
     }
 
     /// A `submit_*` call from an agent (decision 15): a scout's goes to the scout
-    /// service, every other to the engine. Every text reaches the agent verbatim
-    /// (M8a.19), so each is worded for an agent.
+    /// service, every other to the engine, and so does a research task's (milestone 9
+    /// decision 35: a scout window bound to a task, with no scout id). Every text
+    /// reaches the agent verbatim (M8a.19), so each is worded for an agent.
     pub(super) async fn tool(&self, call: ToolCall) -> RunReply {
-        if call.role == AgentRole::Scout {
+        let research = call.task_id.is_some() && call.scout_id.is_none();
+        if call.role == AgentRole::Scout && !research {
             return match self.adaptation.get() {
                 Some(adaptation) => adaptation.scouts.tool(call).await,
                 None => RunReply::tool_result(

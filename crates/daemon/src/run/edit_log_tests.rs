@@ -3,6 +3,7 @@
 use proto::{PlanEdit, PlanTask};
 
 use super::*;
+use crate::run::orch::EditSource;
 use crate::run::test_support::{EXAMPLE_PLAN, run_ok};
 
 fn a_task(id: &str) -> PlanTask {
@@ -65,7 +66,13 @@ fn describe_names_every_edit_op() {
 fn record_keeps_the_last_fifty() {
     let mut run = run_ok(EXAMPLE_PLAN);
     for n in 0..(PLAN_EDITS_KEPT as u64 + 7) {
-        record(&mut run, &[PlanEdit::Pause], 1_000 + n);
+        record(
+            &mut run,
+            &[PlanEdit::Pause],
+            1_000 + n,
+            &EditSource::User,
+            EditOutcome::accepted(),
+        );
     }
     assert_eq!(run.plan_edits.len(), PLAN_EDITS_KEPT);
     assert_eq!(PLAN_EDITS_KEPT, 50);
@@ -77,7 +84,13 @@ fn record_keeps_the_last_fifty() {
     assert_eq!(run.plan_edits_since_approval, 0);
 
     run.approved_at = Some(2_000);
-    record(&mut run, &[PlanEdit::Resume], 2_001);
+    record(
+        &mut run,
+        &[PlanEdit::Resume],
+        2_001,
+        &EditSource::User,
+        EditOutcome::accepted(),
+    );
     assert_eq!(run.plan_edits_since_approval, 1);
     assert_eq!(run.plan_edits.len(), PLAN_EDITS_KEPT);
     assert_eq!(
@@ -145,4 +158,56 @@ fn describe_replaces_control_characters() {
         task_id: "t\n1\u{1b}[31m\r\t".into(),
     }];
     assert_eq!(describe(&edits), "cancel t 1 [31m  ");
+}
+
+/// Decision 40 (task M9.9): a record keeps its source, whether it was accepted, a
+/// rejected batch's error and a message's recipients; only accepted batches count as
+/// edits after approval.
+#[test]
+fn record_keeps_source_outcome_and_recipients() {
+    let mut run = run_ok(EXAMPLE_PLAN);
+    run.approved_at = Some(2_000);
+    let planner = EditSource::Planner {
+        epic: "mail".into(),
+    };
+    record(
+        &mut run,
+        &[PlanEdit::Pause],
+        2_001,
+        &planner,
+        EditOutcome::Rejected {
+            error: "task t9: epic: nope".into(),
+        },
+    );
+    record(
+        &mut run,
+        &[PlanEdit::Resume],
+        2_002,
+        &EditSource::Orchestrator,
+        EditOutcome::Accepted {
+            recipients: vec!["t1".into(), "t2".into()],
+        },
+    );
+    assert_eq!(
+        run.plan_edits,
+        vec![
+            PlanEditRecord {
+                at: 2_001,
+                text: "pause".into(),
+                source: "planner:mail".into(),
+                accepted: false,
+                error: Some("task t9: epic: nope".into()),
+                recipients: Vec::new(),
+            },
+            PlanEditRecord {
+                at: 2_002,
+                text: "resume".into(),
+                source: "orchestrator".into(),
+                accepted: true,
+                error: None,
+                recipients: vec!["t1".into(), "t2".into()],
+            },
+        ]
+    );
+    assert_eq!(run.plan_edits_since_approval, 1);
 }

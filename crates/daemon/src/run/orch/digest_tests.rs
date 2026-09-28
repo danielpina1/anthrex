@@ -270,6 +270,8 @@ fn big_run() -> Run {
                 task_id: format!("t{i}"),
             }],
             2_000 + i,
+            &crate::run::orch::EditSource::User,
+            crate::run::edit_log::EditOutcome::accepted(),
         );
     }
     run

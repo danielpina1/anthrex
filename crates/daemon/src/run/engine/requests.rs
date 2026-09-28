@@ -175,6 +175,8 @@ pub(super) fn approve(
         q.queued_at = now;
     }
     log(run, now, "approved by the user");
+    // Milestone 9 decisions 30, 39.
+    super::wake::note(run, "the user approved the plan".to_string());
     reply(fx, id, Ok(format!("run {run_id} approved")));
 }
 
@@ -227,6 +229,7 @@ pub(super) fn reject(
     };
     emit_op(run, op, None, kind, fx);
     log(run, now, "rejected by the user; discarding");
+    super::wake::note(run, "the user rejected the plan; run discarded".to_string());
     reply(fx, id, Ok(format!("run {run_id} rejected; discarding it")));
 }
 
@@ -368,7 +371,35 @@ pub(super) fn retry(
     if let Some(text) = refusal {
         return reply(fx, id, Err(text));
     }
-    let block = task.block.clone();
+    let was = task.block.clone().map_or_else(String::new, |b| {
+        let label = serde_json::to_value(b.reason)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default();
+        format!(" (it was blocked({label}): {})", b.text)
+    });
+    let how = rung2(run, i, format!("the user retried it{was}"), now, fx);
+    history(run, i, now, format!("retried by the user at rung 2{was}"));
+    log(run, now, format!("{task_id} retried at rung 2"));
+    reply(
+        fx,
+        id,
+        Ok(format!("task {task_id} retried at rung 2: {how}")),
+    );
+}
+
+/// Decision 42's re-entry at rung 2 of blocked task `i`, which `run retry` and
+/// milestone 9 decision 25's rewrite of a mis-sized task share: `failures = 1`, the
+/// counters cleared, the route escalated, and a fresh session (`why` is its hand-over
+/// reason), or a dispatch again for a task that never started. Returns how it goes on.
+pub(super) fn rung2(
+    run: &mut Run,
+    i: usize,
+    why: String,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) -> &'static str {
+    let task = &run.tasks[i];
     let route = escalate(&run.roster, &task.route);
     ladder::kill_worker(run, i, fx);
     review::stop_reviewers(run, i, now, fx);
@@ -394,21 +425,14 @@ pub(super) fn retry(
     // `kill_worker`'s `supersede` ended the hand-back context (`handed_back`,
     // `resolution`); its gates' pass goes too (carry T14-R2).
     task.gates_after_handback = false;
-    let was = block.map_or_else(String::new, |b| {
-        let label = serde_json::to_value(b.reason)
-            .ok()
-            .and_then(|v| v.as_str().map(str::to_string))
-            .unwrap_or_default();
-        format!(" (it was blocked({label}): {})", b.text)
-    });
-    let how = if task.start_commit.is_none() {
+    if task.start_commit.is_none() {
         set_state(task, TaskState::Queued, now);
         task.block = None;
         task.fresh_session = None;
         "it is dispatched again"
     } else {
         task.fresh_session = Some(FreshSession {
-            reason: format!("the user retried it{was}"),
+            reason: why,
             append: None,
         });
         if task.awaiting_deps {
@@ -419,12 +443,5 @@ pub(super) fn retry(
             task.block = None;
             "a fresh session starts"
         }
-    };
-    history(run, i, now, format!("retried by the user at rung 2{was}"));
-    log(run, now, format!("{task_id} retried at rung 2"));
-    reply(
-        fx,
-        id,
-        Ok(format!("task {task_id} retried at rung 2: {how}")),
-    );
+    }
 }
