@@ -37,6 +37,17 @@ pub fn render(run: &Run, now: u64) -> String {
 
 fn header(run: &Run, out: &mut String) {
     out.push_str(&format!("# anthrex run {}\n\n", run.id));
+    // Milestone 9 decision 19: the orchestrator's summary, the last one it wrote.
+    if let Some(summary) = run
+        .orch
+        .orchestrator
+        .as_ref()
+        .and_then(|o| o.summary.as_deref())
+    {
+        out.push_str("## Summary from the orchestrator\n\n");
+        out.push_str(&plain_text_line(summary));
+        out.push_str("\n\n");
+    }
     out.push_str(&format!("Goal: {}\n\n", plain_text_line(&run.goal)));
     out.push_str(&format!("State: {}\n", state_line(run)));
     out.push_str(&format!("Approved by: {}\n", approved_by_line(run)));

@@ -1,0 +1,149 @@
+//! The orchestrator window's lifecycle, engine side (milestone 9 decisions 5, 11 and
+//! 26): launched with a planned run or a promotion, counted toward `max_windows`,
+//! restored dormant after a daemon restart and restarted by `run resume` with a new
+//! session. Pure (design decision 2).
+
+use super::requests::log;
+use super::{Effect, OpId, OpKind, OpResult, emit_op, next_op};
+use crate::run::model::Run;
+use crate::run::orch::contract::orchestrator_first_prompt;
+use crate::run::orch::launch::{orchestrator_role, orchestrator_window_spec};
+
+/// Decisions 5 and 26: the orchestrator's window, with its first prompt (the planned
+/// run's, unless a promotion set its own).
+pub(super) fn launch(run: &mut Run, fx: &mut Vec<Effect>) {
+    let Some(o) = run.orch.orchestrator.as_ref() else {
+        return;
+    };
+    let route = o.route.clone();
+    let first = if o.first_prompt.is_empty() {
+        orchestrator_first_prompt(run)
+    } else {
+        o.first_prompt.clone()
+    };
+    let spec = orchestrator_window_spec(run, &route, &first);
+    let role = orchestrator_role(run, &route);
+    let op = next_op(run);
+    if let Some(o) = run.orch.orchestrator.as_mut() {
+        o.first_prompt = first;
+        o.launch_op = Some(op);
+    }
+    let kind = OpKind::CreateOrchestrator {
+        spec: Box::new(spec),
+        role: Box::new(role),
+        project: run.project.clone(),
+    };
+    emit_op(run, op, None, kind, fx);
+}
+
+/// `CreateOrchestrator`'s result: the window counts toward `max_windows` (decision 5).
+pub(super) fn launched(run: &mut Run, op: OpId, result: OpResult, now: u64) {
+    let Some(o) = run.orch.orchestrator.as_mut() else {
+        return;
+    };
+    if o.launch_op != Some(op) {
+        return;
+    }
+    o.launch_op = None;
+    match result {
+        OpResult::Window { window_id, .. } => {
+            o.window_id = Some(window_id);
+            o.live = true;
+            o.exited_at = None;
+            run.windows_created += 1;
+            log(
+                run,
+                now,
+                format!("the orchestrator started in window {window_id}"),
+            );
+        }
+        OpResult::Failed { message } => {
+            log(
+                run,
+                now,
+                format!("the orchestrator could not start: {message}"),
+            );
+        }
+        _ => {}
+    }
+}
+
+/// `RestartOrchestrator`'s result.
+pub(super) fn restarted(run: &mut Run, result: OpResult, now: u64) {
+    let Some(o) = run.orch.orchestrator.as_mut() else {
+        return;
+    };
+    match result {
+        OpResult::Restarted => {
+            o.live = true;
+            o.exited_at = None;
+            log(run, now, "the orchestrator restarted");
+        }
+        OpResult::Failed { message } => {
+            log(
+                run,
+                now,
+                format!("the orchestrator could not restart: {message}"),
+            );
+        }
+        _ => {}
+    }
+}
+
+/// Whether a `CreateOrchestrator` or `RestartOrchestrator` is in flight.
+fn launching(run: &Run) -> bool {
+    run.pending_ops.values().any(|p| {
+        matches!(
+            p.kind,
+            OpKind::CreateOrchestrator { .. } | OpKind::RestartOrchestrator { .. }
+        )
+    })
+}
+
+/// Decision 11: a resumed run's dormant orchestrator (restored after a daemon restart,
+/// or exited) restarts in its window with its role and a new session; one whose window
+/// was never made is launched again. Returns whether anything was issued.
+pub(super) fn relaunch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool {
+    let Some(o) = run.orch.orchestrator.as_mut() else {
+        return false;
+    };
+    if o.live || run.state.is_terminal() {
+        return false;
+    }
+    let window = o.window_id;
+    if launching(run) {
+        return false;
+    }
+    match window {
+        Some(window_id) => {
+            if let Some(o) = run.orch.orchestrator.as_mut() {
+                o.session += 1;
+            }
+            let op = next_op(run);
+            emit_op(run, op, None, OpKind::RestartOrchestrator { window_id }, fx);
+            log(
+                run,
+                now,
+                format!("restarting the orchestrator in window {window_id}"),
+            );
+        }
+        None => launch(run, fx),
+    }
+    true
+}
+
+/// After a daemon restart the orchestrator's window is dormant (decision 11).
+pub(super) fn restored(run: &mut Run) {
+    if let Some(o) = run.orch.orchestrator.as_mut() {
+        o.live = false;
+    }
+}
+
+/// A `CreateOrchestrator` the restart lost: `run resume` launches it again.
+pub(super) fn launch_lost(run: &mut Run, op: OpId) {
+    if let Some(o) = run.orch.orchestrator.as_mut()
+        && o.launch_op == Some(op)
+    {
+        o.launch_op = None;
+    }
+}

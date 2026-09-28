@@ -87,9 +87,6 @@ fn run_refs(git: &OsString, root: &Path, timeout: Duration) -> Result<Vec<String
     Ok(listing.lines().map(str::to_string).collect())
 }
 
-/// `ApproveHold` and `RejectHold` until the engine keeps approval holds (task M9.7).
-const NO_HOLDS: &str = "this run has no approval holds";
-
 impl RunService {
     /// Answers every `RunRequest` but `Subscribe` and `Unsubscribe` (`server/run_api.rs`).
     pub async fn request(&self, req: RunRequest) -> RunReply {
@@ -169,15 +166,15 @@ impl RunService {
                 self.start_goal(goal, dir, trust_project, unconfined_checks)
                     .await
             }
-            RunRequest::Promote { run_id, .. } => answer(
-                request::PROMOTE,
-                self.ask(|reply| EventKind::Promote { reply, run_id }).await,
-            ),
+            RunRequest::Promote {
+                run_id,
+                orchestrator,
+            } => self.promote(run_id, orchestrator).await,
             RunRequest::Stats { dir } => self.stats(dir).await,
             RunRequest::Profile(profile) => self.profile(profile).await,
-            // Milestone 9 decision 28's approval holds; the engine answers them from M9.7.
-            RunRequest::ApproveHold { .. } => RunReply::refused(request::APPROVE, NO_HOLDS),
-            RunRequest::RejectHold { .. } => RunReply::refused(request::REJECT, NO_HOLDS),
+            // Milestone 9 decision 28's approval holds: only the user's requests decide.
+            RunRequest::ApproveHold { run_id, hold } => self.hold_verdict(run_id, hold, true).await,
+            RunRequest::RejectHold { run_id, hold } => self.hold_verdict(run_id, hold, false).await,
             RunRequest::Subscribe | RunRequest::Unsubscribe => {
                 RunReply::refused("run", "subscriptions are answered by the connection")
             }

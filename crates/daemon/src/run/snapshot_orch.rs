@@ -1,7 +1,7 @@
 //! Milestone 9's part of the pushed snapshot (task M9.6): decision 16a's plan text
 //! only at the gate, and decision 42d's message counts and bounded task notes. Pure.
 
-use proto::TaskNoteInfo;
+use proto::{HoldInfo, OrchestratorInfo, TaskNoteInfo};
 
 use super::model::{Run, Task};
 
@@ -48,6 +48,38 @@ pub(super) fn task_notes(task: &Task) -> Vec<TaskNoteInfo> {
             kind: n.kind,
             text: crate::run::orch::json::cut(&n.text, SNAPSHOT_NOTE_MAX),
             at: n.at,
+        })
+        .collect()
+}
+
+/// Decision 11's orchestrator, as the run view shows it (never its OTLP token).
+pub(super) fn orchestrator(run: &Run) -> Option<OrchestratorInfo> {
+    let o = run.orch.orchestrator.as_ref()?;
+    Some(OrchestratorInfo {
+        route: o.route.clone(),
+        window_id: o.window_id,
+        live: o.live,
+        started_at: o.started_at,
+        plan_submitted: o.plan_submitted,
+        summary: o.summary.clone(),
+        notes: o.notes.clone(),
+        wakes: o.wakes,
+    })
+}
+
+/// Decision 28's approval holds, in creation order.
+pub(super) fn holds(run: &Run) -> Vec<HoldInfo> {
+    run.orch
+        .gate_holds
+        .iter()
+        .map(|h| HoldInfo {
+            id: h.id.clone(),
+            kind: h.kind.clone(),
+            state: h.state,
+            tasks: h.tasks.clone(),
+            created_at: h.created_at,
+            decided_at: h.decided_at,
+            decided_by: h.decided_by.clone(),
         })
         .collect()
 }

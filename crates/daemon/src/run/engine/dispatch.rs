@@ -16,7 +16,8 @@ use super::schedule::{
 };
 use super::{Effect, OpKind, OpResult, emit_op, next_op};
 use super::{
-    clock, complete, deciders, done, gates, holds, ladder, merge, outbox, restore, review, signals,
+    clock, complete, deciders, done, gate_holds, gates, holds, ladder, merge, outbox, restore,
+    review, signals,
 };
 use crate::run::contract::{handover_prompt, is_stall_nudge, worker_prompt};
 use crate::run::env::profile_env;
@@ -177,6 +178,7 @@ fn prewarm(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
         }
         let task = &run.tasks[i];
         if task.state != TaskState::Queued
+            || !gate_holds::released(run, task)
             || task.prewarmed
             || task.worktree_live
             || !task.spec.deps.is_empty()
@@ -197,9 +199,11 @@ fn dispatch_writers(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     // F3 review N1: a held hub task lets only what it waits for start.
     let only = held_hub_waits_for(run);
     for i in dispatch_order(run) {
-        // M8b decision 19: a task waiting for its size cross-check is not runnable.
+        // M8b decision 19: a task waiting for its size cross-check is not runnable;
+        // milestone 9 decision 28: nor is one whose approval hold is not approved.
         if run.tasks[i].state != TaskState::Queued
             || size_check_pending(&run.tasks[i])
+            || !gate_holds::released(run, &run.tasks[i])
             || only
                 .as_ref()
                 .is_some_and(|waits| !waits.iter().any(|id| id == run.tasks[i].id()))

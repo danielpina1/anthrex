@@ -26,6 +26,7 @@ mod profile;
 mod roster;
 
 pub use adapt::{Deciders, Metering, Onboarding, Scouts};
+pub use agent::AgentConfig;
 
 use profile::{read_profile, report_unknown_profile};
 pub use roster::default_roster;

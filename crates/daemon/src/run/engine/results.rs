@@ -3,7 +3,7 @@
 
 use super::{
     Effect, EngineState, OpId, OpKind, OpResult, complete, deciders, dispatch, done, early,
-    fallback, gates, history, holds, ladder, merge, outbox, requests, review,
+    fallback, gates, history, holds, ladder, merge, orch_window, outbox, requests, review,
 };
 
 /// Routes an op's result by the kind of the op it answers. A result for an op the run
@@ -71,6 +71,9 @@ pub(super) fn op_done(
         (kind @ OpKind::Decide { .. }, _) => deciders::op_done(run, &kind, result, now, fx),
         (OpKind::MeasureDiff { .. }, Some(i)) => history::measured(run, i, result, now, fx),
         (kind @ OpKind::AppendHistory { .. }, _) => history::appended(run, &kind, result, now),
+        // Milestone 9 decisions 5 and 11: the orchestrator's window.
+        (OpKind::CreateOrchestrator { .. }, _) => orch_window::launched(run, op, result, now),
+        (OpKind::RestartOrchestrator { .. }, _) => orch_window::restarted(run, result, now),
         _ => {}
     }
     // The session's events that came before its window, now that its round has it.

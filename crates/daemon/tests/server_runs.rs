@@ -161,10 +161,10 @@ async fn every_milestone_8b_request_is_answered_by_its_task() {
     );
 }
 
-/// M9.2 review ruling 8, pinning: until M9.7 keeps approval holds, `ApproveHold` and
-/// `RejectHold` are refused under their own labels with the `NO_HOLDS` text.
+/// M9.2 review ruling 8, updated by M9.7: `ApproveHold` and `RejectHold` reach the
+/// engine, which keeps approval holds, and are answered under their own labels.
 #[tokio::test(flavor = "multi_thread")]
-async fn approval_holds_are_refused_until_the_engine_keeps_them() {
+async fn approval_holds_are_answered_by_the_engine() {
     use proto::run_wire::request;
     let dir = tempfile::Builder::new()
         .prefix("ax-runs9h")
@@ -182,6 +182,8 @@ async fn approval_holds_are_refused_until_the_engine_keeps_them() {
         git.registry.clone(),
     );
     let runs = RunService::new(manager, ctx);
+    let shutdown = CancellationToken::new();
+    runs.spawn(shutdown.clone());
     let (run_id, hold) = ("r1".to_string(), "h1".to_string());
     for (req, label) in [
         (
@@ -193,11 +195,12 @@ async fn approval_holds_are_refused_until_the_engine_keeps_them() {
         ),
         (RunRequest::RejectHold { run_id, hold }, request::REJECT),
     ] {
-        assert_eq!(
-            runs.request(req).await,
-            proto::RunReply::refused(label, "this run has no approval holds")
-        );
+        let reply = tokio::time::timeout(Duration::from_secs(30), runs.request(req))
+            .await
+            .expect("the engine answers within 30 s");
+        assert_eq!(reply, proto::RunReply::refused(label, "unknown run r1"));
     }
+    shutdown.cancel();
 }
 
 /// A daemon on `dir/d.sock` with its run service, and the milestone-8b profile and

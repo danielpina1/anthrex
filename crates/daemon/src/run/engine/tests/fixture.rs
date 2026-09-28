@@ -414,6 +414,10 @@ pub fn op_name(kind: &OpKind) -> &'static str {
         OpKind::Decide { .. } => "Decide",
         OpKind::MeasureDiff { .. } => "MeasureDiff",
         OpKind::AppendHistory { .. } => "AppendHistory",
+        OpKind::CreateOrchestrator { .. } => "CreateOrchestrator",
+        OpKind::RestartOrchestrator { .. } => "RestartOrchestrator",
+        OpKind::StartScout { .. } => "StartScout",
+        OpKind::ResolveTarget { .. } => "ResolveTarget",
     }
 }
 

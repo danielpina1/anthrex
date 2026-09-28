@@ -92,6 +92,7 @@ pub(super) fn reply_of(kind: &EventKind) -> Option<ReplyId> {
         | EventKind::Finish { reply, .. }
         | EventKind::Tool { reply, .. }
         | EventKind::Promote { reply, .. } => Some(*reply),
+        EventKind::Orch(event) => event.reply(),
         EventKind::BaseAdvanced { .. }
         | EventKind::OrchestratorUsage { .. }
         | EventKind::OpDone { .. }

@@ -415,6 +415,11 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
         kind @ (OpKind::MeasureDiff { .. } | OpKind::AppendHistory { .. }) => {
             service.history_op(ctx, kind).await
         }
+        // Milestone 9: executed from task M9.13 (`driver/orch_ops.rs`).
+        kind @ (OpKind::CreateOrchestrator { .. }
+        | OpKind::RestartOrchestrator { .. }
+        | OpKind::StartScout { .. }
+        | OpKind::ResolveTarget { .. }) => failed(format!("{} is not available yet", kind.name())),
     }
 }
 

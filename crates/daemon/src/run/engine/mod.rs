@@ -42,6 +42,7 @@ use proto::{FinishAction, PlanEdit, TokenUsage, ToolCall};
 use super::model::{OpId, PendingOp, Run};
 use super::validate::EditScope;
 
+mod batch;
 mod clock;
 mod complete;
 pub(crate) mod deciders;
@@ -50,13 +51,17 @@ mod dispatch;
 mod done;
 mod early;
 mod fallback;
+mod gate_holds;
 mod gates;
 mod history;
 mod holds;
 pub(crate) mod ladder;
 mod merge;
 mod ops;
+mod orch;
+mod orch_window;
 mod outbox;
+mod promote;
 mod requests;
 mod restore;
 mod results;
@@ -71,6 +76,7 @@ pub use clock::{BudgetEpoch, TaskClock};
 pub use early::{HOLD_CAP, HOLD_LIMIT_SECS, HOLD_WINDOWS_CAP, HeldEvent, HeldWindow};
 pub use history::HISTORY_FILE;
 pub use ops::{OpKind, OpResult, OverrideCount, ResolutionAt, ScratchAt};
+pub use orch::OrchEvent;
 pub use signals::INTERRUPT_GRACE_SECS;
 
 /// Identifies a client request waiting for its [`Effect::Reply`].
@@ -156,10 +162,12 @@ pub enum EventKind {
         reply: ReplyId,
         call: ToolCall,
     },
-    /// M8b decision 25: `run promote`, recorded for milestone 9 to act on.
+    /// M8b decision 25: `run promote`, which milestone 9 performs (decision 29) with the
+    /// orchestrator the user chose, if any.
     Promote {
         reply: ReplyId,
         run_id: String,
+        orchestrator: Option<proto::OrchestratorChoice>,
     },
     /// M8b decision 30: the OTLP ledger's new total for `(run, "orchestrator")`. It
     /// replaces the one before, on top of the usage restored at the daemon's start.
@@ -192,6 +200,8 @@ pub enum EventKind {
     },
     Stop,
     Tick,
+    /// Milestone 9: the orchestrator's and sub-planners' events (`orch.rs`).
+    Orch(OrchEvent),
 }
 
 /// The driver's translation of a window's session events (decision 27).
@@ -366,9 +376,12 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             action,
         } => complete::finish(&mut state, reply, &run_id, action, now, &mut fx),
         EventKind::Tool { reply, call } => done::tool(&mut state, reply, call, now, &mut fx),
-        EventKind::Promote { reply, run_id } => {
-            requests::promote(&mut state, reply, &run_id, now, &mut fx)
-        }
+        EventKind::Promote {
+            reply,
+            run_id,
+            orchestrator,
+        } => promote::request(&mut state, reply, &run_id, orchestrator, now, &mut fx),
+        EventKind::Orch(event) => orch::on_orch_event(&mut state, event, now, &mut fx),
         EventKind::BaseAdvanced {
             run_id,
             to,
@@ -409,7 +422,8 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             state.stopped = true;
             return (state, fx);
         }
-        EventKind::Tick => {}
+        // Milestone 9 decision 29: a promotion recorded before milestone 9.
+        EventKind::Tick => promote::on_tick(&mut state, now, &mut fx),
     }
     for run in state.runs.values_mut() {
         dispatch::schedule(run, now, &mut fx);

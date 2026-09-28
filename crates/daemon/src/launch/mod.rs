@@ -3,6 +3,7 @@
 pub mod claude;
 pub mod codex;
 mod gate;
+pub mod role;
 
 pub use gate::LaunchGate;
 

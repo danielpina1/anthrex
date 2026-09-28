@@ -267,8 +267,11 @@ fn wait_for_file(path: &std::path::Path) -> Value {
     ))
 }
 
+/// Milestone 9 decision 29 (M9.7): `run promote` performs the promotion. The run gets
+/// an orchestrator record and the planned path, and the fast-path task runs on through
+/// its gates. The orchestrator's window itself is the driver's (task M9.13).
 #[test]
-fn e2e_promote_records_intent_and_the_task_continues() {
+fn e2e_promote_performs_and_the_task_continues() {
     let h = harness("claude", "", &[], &[]);
     h.decider("triage", 1, triage_single(&["a.txt"]));
     let go = h.dir.path().join("go");
@@ -287,31 +290,31 @@ fn e2e_promote_records_intent_and_the_task_continues() {
     assert_eq!(
         stdout(&out).trim_end(),
         format!(
-            "recorded: run {id} is marked for promotion to a planned run. Until the orchestrator exists (milestone 9) nothing else changes: the fast-path task continues and the run finishes as a fast-path run."
+            "promoted: run {id} now has an orchestrator; it starts in a moment (anthrex run status {id})"
         )
     );
     let run = h.run(&id).unwrap();
     assert!(run.promote_requested_at.is_some());
+    assert_eq!(run.path, Some(RunPath::Plan));
+    assert!(run.orchestrator.is_some());
     assert!(
-        run.attention
+        !run.attention
             .iter()
-            .any(|a| a.starts_with("promotion requested;")
-                && a.ends_with("it takes effect when the orchestrator exists (milestone 9)")),
+            .any(|a| a.starts_with("promotion requested")),
         "{:?}",
         run.attention
     );
     assert_eq!(t(&run, "t1").state, TaskState::Working);
     let again = promote(&h);
     assert!(again.status.success(), "{}", stderr(&again));
-    assert!(
-        stdout(&again).contains("was already marked for promotion at"),
-        "{}",
-        stdout(&again)
+    assert_eq!(
+        stdout(&again).trim_end(),
+        format!("run {id} was already marked for promotion")
     );
 
     std::fs::write(&go, "").unwrap();
     let run = h.wait_run(&id, complete, RUN_WAIT);
-    assert_eq!(run.path, Some(RunPath::Fast));
+    assert_eq!(run.path, Some(RunPath::Plan));
     assert_eq!(t(&run, "t1").state, TaskState::Merged);
     assert!(run.promote_requested_at.is_some());
 }

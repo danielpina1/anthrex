@@ -256,6 +256,27 @@ pub enum OpKind {
         /// `large_enum_variant`); invisible in the journal.
         line: Box<proto::HistoryLine>,
     },
+    /// Milestone 9 decision 5: the run's orchestrator window, `WindowManager::
+    /// create_run_window`; the result is `Window`, or `Failed`. Boxed as `CreateWindow`'s
+    /// spec is.
+    CreateOrchestrator {
+        spec: Box<proto::WindowSpec>,
+        role: Box<crate::launch::role::RoleLaunch>,
+        project: PathBuf,
+    },
+    /// Decision 11: `WindowManager::restart` of the orchestrator window, which re-passes
+    /// its role with its session; the result is `Restarted`, or `Failed`.
+    RestartOrchestrator { window_id: u32 },
+    /// Decision 20: a run scout on M8b's `ScoutService`; the result is `ScoutStarted`.
+    StartScout {
+        spec: Box<crate::scout::spec::ScoutSpec>,
+    },
+    /// Decision 36: a review task's target, resolved in `root`; the result is `Target`.
+    ResolveTarget {
+        root: PathBuf,
+        target: String,
+        base_branch: String,
+    },
 }
 
 impl OpKind {
@@ -283,6 +304,10 @@ impl OpKind {
             OpKind::Decide { .. } => "Decide",
             OpKind::MeasureDiff { .. } => "MeasureDiff",
             OpKind::AppendHistory { .. } => "AppendHistory",
+            OpKind::CreateOrchestrator { .. } => "CreateOrchestrator",
+            OpKind::RestartOrchestrator { .. } => "RestartOrchestrator",
+            OpKind::StartScout { .. } => "StartScout",
+            OpKind::ResolveTarget { .. } => "ResolveTarget",
         }
     }
 }
@@ -433,4 +458,15 @@ pub enum OpResult {
     DiffMeasured(proto::DiffStats),
     /// M8b decision 33: `AppendHistory` wrote its line.
     HistoryAppended,
+    /// Milestone 9: `RestartOrchestrator` restarted the window.
+    Restarted,
+    /// `StartScout`'s scout window.
+    ScoutStarted {
+        window_id: u32,
+    },
+    /// `ResolveTarget`'s `(base, head)` commits.
+    Target {
+        base: String,
+        head: String,
+    },
 }

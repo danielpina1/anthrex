@@ -394,8 +394,8 @@ fn old_run_defaults_role_routing_decisions_to_empty() {
     assert!(run.role_routing_decisions.is_empty());
 }
 
-/// Review I1: a promoted fast-path run's attention line carries no clock time; the view
-/// formats `promote_requested_at` itself, in local time.
+/// Review I1: a promoted fast-path run publishes no clock time; the view formats
+/// `promote_requested_at` itself, in local time.
 #[test]
 fn a_promoted_run_publishes_no_clock_time() {
     let mut fx = one_task("");
@@ -416,6 +416,7 @@ fn a_promoted_run_publishes_no_clock_time() {
     fx.next(EventKind::Promote {
         reply,
         run_id: RUN_ID.into(),
+        orchestrator: None,
     });
     let at = 3_600 * 13 + 60 * 7;
     assert_eq!(fx.run().promote_requested_at, Some(at));
@@ -425,12 +426,15 @@ fn a_promoted_run_publishes_no_clock_time() {
     strings(&serde_json::to_value(&snap).unwrap(), &mut texts);
     let clocks: Vec<&String> = texts.iter().filter(|s| has_clock(s)).collect();
     assert!(clocks.is_empty(), "formatted times: {clocks:?}");
+    // Milestone 9 decision 29: the promoted run shows its orchestrator, not M8b's
+    // attention line.
     assert!(
-        snap.runs[0].attention.contains(
-            &"promotion requested; it takes effect when the orchestrator exists (milestone 9)"
-                .to_string()
-        ),
+        !snap.runs[0]
+            .attention
+            .iter()
+            .any(|a| a.starts_with("promotion requested")),
         "{:?}",
         snap.runs[0].attention
     );
+    assert!(snap.runs[0].orchestrator.is_some());
 }

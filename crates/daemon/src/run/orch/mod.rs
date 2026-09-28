@@ -29,6 +29,7 @@ pub mod contract;
 pub mod digest;
 pub mod extract;
 pub(crate) mod json;
+pub mod launch;
 pub mod result;
 pub mod rules;
 #[cfg(test)]
@@ -270,6 +271,47 @@ pub struct EpicRecord {
     pub integration_rounds: u32,
 }
 
+impl EpicRecord {
+    /// A new epic as `spawn_subplanner` asks for it (decision 21), its sub-planner
+    /// queued; the engine sets its route and start time.
+    pub fn requested(
+        epic: &str,
+        title: &str,
+        area: Vec<String>,
+        brief: &str,
+        scout_refs: Vec<String>,
+    ) -> EpicRecord {
+        EpicRecord {
+            epic: epic.into(),
+            title: title.into(),
+            area,
+            brief: brief.into(),
+            scout_refs,
+            route: Route {
+                runtime: Runtime::Claude,
+                model: String::new(),
+                strength: Strength::Frontier,
+                effort: Effort::High,
+            },
+            phase: PlannerPhase::Queued,
+            request: brief.into(),
+            sessions: Vec::new(),
+            started_at: 0,
+            ended_at: None,
+            edits_accepted: 0,
+            edits_rejected: 0,
+            last_rejection: None,
+            replans: Vec::new(),
+            note: None,
+            gate_hold: None,
+            base: None,
+            merges: Vec::new(),
+            integration_state: IntegrationState::default(),
+            integration_rounds: 0,
+        }
+    }
+}
+
 /// One sub-planner session of an epic.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlannerSession {
@@ -330,6 +372,30 @@ pub struct OrchLimits {
     /// Zero turns notes off.
     pub note_max_per_task: u32,
     pub planners: PlannerLimits,
+    /// `[orchestrator.agent]`, frozen too (task M9.7): `run promote` and a promotion
+    /// recorded before milestone 9 resolve the orchestrator's route from the run alone.
+    pub agent: AgentLimits,
+}
+
+/// `[orchestrator.agent]`: `runtime` `None` means `default_runtime`; an empty `model`
+/// means decision 6's resolution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentLimits {
+    pub runtime: Option<Runtime>,
+    pub model: String,
+    pub effort: Effort,
+}
+
+impl AgentLimits {
+    /// The `config::AgentConfig` these limits were frozen from.
+    pub fn config(&self) -> config::AgentConfig {
+        config::AgentConfig {
+            runtime: self.runtime,
+            model: self.model.clone(),
+            effort: self.effort,
+        }
+    }
 }
 
 /// `[orchestrator.planners]`. `runtime` `None` means the orchestrator's runtime.
@@ -364,6 +430,11 @@ impl OrchLimits {
                 timeout_secs: p.timeout_secs,
                 max_rejections: p.max_rejections,
             },
+            agent: AgentLimits {
+                runtime: a.agent.runtime,
+                model: a.agent.model.clone(),
+                effort: a.agent.effort,
+            },
         }
     }
 }
@@ -374,8 +445,55 @@ impl Default for OrchLimits {
     }
 }
 
+impl Default for AgentLimits {
+    fn default() -> Self {
+        OrchLimits::default().agent
+    }
+}
+
 impl Default for PlannerLimits {
     fn default() -> Self {
         OrchLimits::default().planners
+    }
+}
+
+/// Decision 26: a run `RunService::build_plan` built from an empty plan becomes a
+/// planned run, `planning` with its orchestrator (the route of decision 6) not yet
+/// launched. `yes` applies at submit (decision 27), so the build's own `yes` is false.
+pub fn make_planned(
+    run: &mut super::model::Run,
+    triage: proto::TriageInfo,
+    route: Route,
+    yes: bool,
+    installed: BTreeMap<String, bool>,
+) {
+    run.state = proto::RunState::Planning;
+    run.path = Some(triage.path);
+    run.triage = Some(triage);
+    run.orch.yes = yes;
+    run.orch.installed = installed;
+    run.orch.orchestrator = Some(OrchestratorRecord::new(route, run.created_at));
+}
+
+impl OrchestratorRecord {
+    /// A record for an orchestrator about to be launched: no window yet, session 1.
+    /// The driver fills `otlp_token` (decision 14a); the engine the first prompt.
+    pub fn new(route: Route, now: u64) -> OrchestratorRecord {
+        OrchestratorRecord {
+            route,
+            window_id: None,
+            launch_op: None,
+            live: false,
+            started_at: now,
+            exited_at: None,
+            first_prompt: String::new(),
+            plan_submitted: false,
+            summary: None,
+            notes: Vec::new(),
+            last_wake_rev: 0,
+            wakes: 0,
+            otlp_token: String::new(),
+            session: 1,
+        }
     }
 }

@@ -115,9 +115,9 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         planners: Vec::new(),
         estimate_left_secs: None,
         bound_ratio_permille: None,
-        // Milestone 9: filled by its later tasks.
-        orchestrator: None,
-        holds: Vec::new(),
+        // Milestone 9: the orchestrator and holds (task M9.7); the rest by later tasks.
+        orchestrator: super::snapshot_orch::orchestrator(run),
+        holds: super::snapshot_orch::holds(run),
         integration: Vec::new(),
         digest_revision: run.orch.digest_rev,
         research_report: None,
@@ -192,7 +192,6 @@ pub(crate) fn attention(run: &Run) -> Vec<String> {
         lines.push("final check failed on the run head".to_string());
     }
     lines.extend(run.stale_profile_line());
-    lines.extend(run.promotion_line());
     lines
 }
 

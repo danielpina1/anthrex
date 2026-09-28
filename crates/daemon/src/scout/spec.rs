@@ -18,8 +18,8 @@ use crate::run::roster::{lowest_at_or_above, peer};
 /// The scout's own MCP tool, as Claude names it.
 pub const SUBMIT_TOOL: &str = "mcp__anthrex__submit_scout_report";
 
-/// One scout to launch.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One scout to launch. Serializable: milestone 9's `StartScout` op carries it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ScoutSpec {
     pub id: String,
     pub kind: ScoutKind,

@@ -217,6 +217,14 @@ fn check(
         | OpKind::Discard { .. } => Ok(Reconciled::NotStarted),
         // M8b decision 18: a decider only reads its prompt; it is simply asked again.
         OpKind::Decide { .. } => Ok(Reconciled::NotStarted),
+        // Milestone 9 decisions 11 and 20: a restored orchestrator window is the op's
+        // result (dormant: `run resume` restarts it). A restart and a target resolve are
+        // simply issued again. A run scout is never replayed and nothing is killed; its
+        // record is failed on `Restore`.
+        OpKind::CreateOrchestrator { .. } => Ok(sessions::restored_orchestrator(run, windows)),
+        OpKind::RestartOrchestrator { .. }
+        | OpKind::ResolveTarget { .. }
+        | OpKind::StartScout { .. } => Ok(Reconciled::NotStarted),
         // M8b decision 32: a diff is only read, and simply measured again.
         OpKind::MeasureDiff { .. } => Ok(Reconciled::NotStarted),
         // M8b decision 33: a history line is appended again unless the file holds its
@@ -239,6 +247,10 @@ fn check(
         Reconciled::NotStarted
     })
 }
+
+#[cfg(test)]
+#[path = "orch_tests.rs"]
+mod orch_tests;
 
 #[cfg(test)]
 mod tests {
