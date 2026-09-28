@@ -327,6 +327,17 @@ impl EpicRecord {
             integration_reviewed: 0,
         }
     }
+
+    /// Decision 15's planner check (M9.8 review, ruling 3): `window` is the epic's
+    /// latest session's, that session has not ended, and the epic is being planned (a
+    /// queued re-plan has no such session yet). The engine's writes and the driver's
+    /// reads both ask it.
+    pub fn is_live_caller(&self, window: u32) -> bool {
+        let latest = self.sessions.last();
+        latest.and_then(|s| s.window_id) == Some(window)
+            && latest.is_some_and(|s| s.ended_at.is_none())
+            && self.phase == PlannerPhase::Planning
+    }
 }
 
 /// One sub-planner session of an epic.

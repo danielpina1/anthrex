@@ -72,7 +72,7 @@ pub async fn forward(opts: &McpOptions, tool: &str, args: serde_json::Value) -> 
         tool: tool.to_string(),
         args,
         scout_id: opts.scout_id.clone(),
-        epic: None,
+        epic: opts.epic.clone(),
     };
     if let Err(e) = write_frame(&mut wr, &ClientMsg::Run(RunRequest::Tool(call))).await {
         return (false, unreachable(&e));

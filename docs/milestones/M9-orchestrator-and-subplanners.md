@@ -2961,3 +2961,61 @@ One commit, `fix(daemon): an orchestrator window never restarts without its role
 5. **`StopFailure` in headless sessions.** `headless/conversation.rs::observe_hook` treats `StopFailure` as `Stop` (it sets `hook_stopped`), so no second `Stop` is synthesised for a turn it ended. The change is in the existing match arm, so `conversation.rs` does not grow. Test `a_turn_ended_by_stop_failure_gets_no_second_stop` (red: a second `Stop`).
 6. **`OTEL_` is scrubbed from agent sessions.** A new list, `config::reserved_env::AGENT_SCRUBBED_PREFIXES = ["OTEL_"]`, is applied by the orchestrator window's scrub (`window.rs`) and by every headless session (`headless/session.rs`), not by engine commands, and it is not reserved: a profile may still set `OTEL_*` for a worker's own tooling, and a user's test command may rely on its own. anthrex's OTLP variables are set after the scrub. **Finding:** no headless role relies on an inherited `OTEL_*` variable; the only `OTEL_*` the daemon sets are the orchestrator's (`metering::orchestrator_env`, `launch::role::otlp_env`), and headless sessions are metered from their streams with `CLAUDE_CODE_*` (so Claude's telemetry switch) already scrubbed. Test: `scrub_removes_agent_session_and_credential_variables` now inherits `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, which must be gone, and checks the role's `OTEL_EXPORTER_OTLP_ENDPOINT` (red: the inherited one reached the window).
 7. **Test hygiene.** `scrub_removes_agent_session_and_credential_variables` sets its variables through an `EnvVars` guard that saves them under the shared env lock and puts them back under it on drop; the lock is never held across an `await`. The lock test is left as it is (a pin).
+
+### Task M9.11 (MCP tools)
+
+- **Schemas.** `crates/mcp/src/tools_orch.rs` holds the orchestrator's six tools, the sub-planner's two and the worker's `task_note`, in decision 15's order, with the Interfaces table's texts and bounds. `tools_for(Worker)` is `task_done`, `task_blocked`, `task_note`. `schemas_match_the_interface_table` compares every schema with `crates/mcp/src/fixtures/orch_tools.json`, which was built from the table alone. `every_schema_is_closed_at_every_level` walks `properties`, `patternProperties`, `items` and `oneOf` branches for every role, and counts the objects per role. The old `every_schema_is_a_closed_object` stays and now counts `task_note`. `orchestrator_tools_are_empty` is removed. `no_role_gets_a_tool_it_must_not_have` (not named by the brief) pins each role's exact list and `allowed` for every tool of every role; a decider has none, and no tool name approves, accepts, merges or overrides.
+- **`anthrex mcp`.** `McpOptions.epic` is new, and `forward` sends it as `ToolCall.epic`. `--epic` is parsed. **Deviation:** clap cannot state a per-role presence or conflict, so `McpArgs::into_options` now returns `Result<McpOptions, clap::Error>`, and `main.rs` exits with the error. That is a usage error, exit code 2, as clap's own are:
+  - `--role planner requires --epic <e>`;
+  - `--epic <e> is accepted only with --role planner`;
+  - `--role scout takes exactly one of --scout <id> or --task <t>`.
+  M8b's scout MCP tests pass. `mcp_parses_the_daemons_headless_argv_and_is_hidden` now also covers a planner with its epic and a research task's scout window, which has `--task` and no `--scout`.
+- **Deviation: where the tests live.**
+  - `planner_needs_epic_and_orchestrator_refuses_it` and `scout_accepts_task_instead_of_scout` are in `crates/cli/src/mcp_cmd_tests.rs`, since the flags are the CLI's. The brief lists them under `crates/mcp`.
+  - `tool_outside_the_role_is_refused_without_a_daemon` is in `crates/mcp/tests/stdio.rs`. It also shows that a tool inside the role does reach the socket.
+  - `a_planner_call_carries_its_epic` (stdio) and `a_role_flag_mismatch_is_a_usage_error` (`crates/cli/tests/mcp_cli.rs`, the built binary) are added.
+  - The driver tests are in-crate: `run/driver/orch_read_tests.rs` (`run_status`), `orch_read_tests_tools.rs` (the other tools) and the shared rig `orch_read_rig.rs`. `crates/mcp` cannot depend on the daemon, and the orchestrator window's launch is M9.13's, so the run is put in the engine by hand with its orchestrator record's window set. Its `digest_fp` is settled first, so the first step bumps nothing. It is `running`, with one task working in a window that does not exist and one blocked, so the scheduler starts nothing.
+  - The test MCP client is `mcp::forward`, the exact path `anthrex mcp` takes, over a real socket served by `server::serve`. So `crates/daemon` gains `mcp` as a **dev-dependency**. `rmcp` is compiled into the daemon's tests only, never into the daemon.
+- **Routing (decision 15).** `driver/adapt.rs::tool` sends every orchestrator and planner call, and a worker's `task_note`, to `driver/orch.rs::orch_tool`, ahead of M8b's scout branch.
+  - `get_context`, `run_status` and `task_result` go to the read path.
+  - Everything else goes to the engine as `OrchEvent::Tool`. `task_note` is answered `tool task_note is not available yet` until M9.13a. `WORKER_MCP_TOOLS` stays at two until M9.13a too.
+  - An `edit_plan` or `submit_epic` batch carries the runtime refusals of ruling T22-I1b. `run edit`'s computation became `RunService::runtime_refusals`, shared by both. It runs only for a caller that passes decision 15's check, so a wrong window cannot make the daemon run the project-settings git reads.
+  - `driver/requests.rs` is 597 lines (588 before).
+- **The caller check** for reads is the engine's. An orchestrator call must come from `orchestrator.window_id`. A planner call must come from its epic's latest live session, in `Planning`: `EpicRecord::is_live_caller`, now shared with `engine/planners.rs::tool`. So a sub-planner whose `submit_epic` was accepted can no longer read its context. The order is the run (`unknown run`), the caller, then `parse_call` (the role's list and the arguments). Reads answer in every run state, terminal ones included.
+- **`run_status` (decision 16).**
+  - With `since` and `wait_secs > 0`, the driver subscribes to the snapshot pushes, then looks the run up once under the lock. So a change published before the subscription is not missed.
+  - It then waits on the pushes with a hard deadline. The wait ends when the run's `digest_revision` differs from `since`, when its state `is_terminal()` (accepted, discarded, failed), or when the run is gone. `complete` is not terminal, but reaching it changes the digest.
+  - On `RecvError::Lagged` it subscribes again and looks again.
+  - The answer is built from a clone taken under the lock, on `spawn_blocking`. Then `OrchEvent::DigestRead` carries that clone's `digest_rev` and `wake::notes_seq` (the M9.9 M6 obligation). A `since` other than the current revision, or `wait_secs` 0, answers at once.
+- **`get_context` (decision 17).**
+  - Its reads, on `spawn_blocking`, are:
+    - the stored profile, through `profile::store::load` of `run.repo_dir`;
+    - the onboarding report, when `run.onboarding_report` is a valid id;
+    - each id in `run.scout_reports`.
+  - Every ref is resolved only through `scout::report::resolve_ref`, and read through `read_report`'s guards. One that cannot be read is left out with a warning.
+  - An empty `repo_dir` reads nothing.
+  - **Not in the brief:** the reads and the build share one `CONTEXT_READ_TIMEOUT` (10 s).
+- **`task_result` (decision 18).**
+  - The git reads run only when the task has a `start_commit` (the M9.6 obligation), with `None` passed otherwise.
+  - Both reads run in one `spawn_blocking` under one `DONE_CHECK_GIT_TIMEOUT` deadline (the M-4 obligation). Each git command's own bound is the smaller of the run's `git_timeout_secs` and 10 s.
+  - Past the deadline the answer has `git: "git did not answer within 10 s"`, and the abandoned read ends on its own bound.
+  - The build runs on `spawn_blocking` (the second-review Minor 5 obligation).
+  - **Left for M9.13:** `resolve_target` is not on the read path. It is the `ResolveTarget` op's, which M9.13 executes, so the one-deadline rule for it is M9.13's.
+- **Tests.**
+  - mcp: `tools_for_orchestrator_and_planner_are_exact`, `worker_tools_are_task_done_task_blocked_and_task_note`, `every_schema_is_closed_at_every_level`, `schemas_match_the_interface_table`, `no_role_gets_a_tool_it_must_not_have`, `tool_outside_the_role_is_refused_without_a_daemon`, `a_planner_call_carries_its_epic`.
+  - cli: `planner_needs_epic_and_orchestrator_refuses_it`, `scout_accepts_task_instead_of_scout`, `a_role_flag_mismatch_is_a_usage_error`.
+  - daemon: the brief's seven driver tests. Also:
+    - `a_lagged_wait_subscribes_again_and_keeps_waiting`, on one thread, so the lag is certain;
+    - `writes_go_to_the_engine`;
+    - `task_result_answers_a_git_error_at_its_one_deadline`, which uses a stand-in `git` that sleeps 8 s a call.
+  - Their bounds are in `docs/timing-budgets.md` ("Recorded, from M9.11").
+- **Red before green.**
+  - mcp: the five lib tests failed on the empty orchestrator and planner lists and the two-tool worker list. The stdio tests failed to compile (no `McpOptions.epic`).
+  - cli: the flag tests failed with `--epic` parsed and no checks (a planner without `--epic` was accepted, and a scout with neither flag too).
+  - daemon: all seven driver tests failed before the routing. Each call reached M8a's worker gate: `tool run_status is not available to the orchestrator role`, and the waits answered at once.
+  - Mutations, each restored from a `cp` backup:
+    - `Lagged` treated as the end turned `a_lagged_wait_…` red;
+    - dropping `is_terminal()` from the wait's end turned `terminal_run_ends_the_wait` red;
+    - skipping the `DigestRead` turned `run_status_returns_at_once_without_since` red, since the note was never dropped;
+    - bypassing the routing turned `writes_go_to_the_engine` red;
+    - widening the one git deadline to 60 s turned the deadline test red, since it answered at 16 s with no error.

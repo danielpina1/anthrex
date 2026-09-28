@@ -1,5 +1,6 @@
 //! The anthrex MCP server (decisions 4 and 5): headless worker and reviewer agents
-//! report to the run engine through it. `anthrex mcp` runs [`serve_stdio`]; each tool
+//! report to the run engine through it, and milestone 9's orchestrator and sub-planners
+//! read and plan through it. `anthrex mcp` runs [`serve_stdio`]; each tool
 //! call is forwarded to the daemon over its socket by [`forward`].
 //!
 //! Stdout carries JSON-RPC and nothing else (pitfall 17): nothing in this crate
@@ -7,6 +8,7 @@
 
 pub mod forward;
 pub mod tools;
+pub mod tools_orch;
 pub mod tools_scout;
 
 use std::path::PathBuf;
@@ -23,14 +25,16 @@ use rmcp::{ErrorData, ServerHandler, ServiceExt};
 pub use forward::forward;
 pub use tools::tools_for;
 
-/// Who this server speaks for: `anthrex mcp --role [--run] [--task] [--scout] --window
-/// --socket`. `run_id` is empty for a repository-level scout (M8b decision 15).
+/// Who this server speaks for: `anthrex mcp --role [--run] [--task] [--scout] [--epic]
+/// --window --socket`. `run_id` is empty for a repository-level scout (M8b decision 15);
+/// `epic` is a sub-planner's own (milestone 9 decision 15).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpOptions {
     pub role: proto::AgentRole,
     pub run_id: String,
     pub task_id: Option<String>,
     pub scout_id: Option<String>,
+    pub epic: Option<String>,
     pub window_id: u32,
     pub socket: PathBuf,
 }

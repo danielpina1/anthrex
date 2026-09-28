@@ -112,6 +112,7 @@ name = "anthrex-daemon"
 version = "0.1.0"
 dependencies = [
  "anthrex-config",
+ "anthrex-mcp",
  "anthrex-proto",
  "anyhow",
  "bytes",

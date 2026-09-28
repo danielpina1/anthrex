@@ -355,10 +355,7 @@ pub(super) fn tool(
     }
     // M9.8 review, ruling 3: only the latest session, live and not ended, may call; a
     // queued re-plan's epic has no such session yet.
-    let stale = window != Some(call.window_id)
-        || latest.is_some_and(|s| s.ended_at.is_some())
-        || record.phase != PlannerPhase::Planning;
-    if stale {
+    if !record.is_live_caller(call.window_id) {
         let text = format!(
             "this window is not the sub-planner of epic {epic} of run {}",
             run.id

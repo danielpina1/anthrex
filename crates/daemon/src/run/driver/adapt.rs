@@ -152,6 +152,10 @@ impl RunService {
     /// decision 35: a scout window bound to a task, with no scout id). Every text
     /// reaches the agent verbatim (M8a.19), so each is worded for an agent.
     pub(super) async fn tool(&self, call: ToolCall) -> RunReply {
+        // Milestone 9 decision 15: its branches go ahead of the scout's.
+        if super::orch::is_orch_call(&call) {
+            return self.orch_tool(call).await;
+        }
         let research = call.task_id.is_some() && call.scout_id.is_none();
         if call.role == AgentRole::Scout && !research {
             return match self.adaptation.get() {

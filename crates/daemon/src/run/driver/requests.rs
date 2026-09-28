@@ -324,19 +324,36 @@ impl RunService {
         Ok(run)
     }
 
-    /// `run edit` (ruling T22-I1b): decisions 50 and 53 for each runtime the run cannot
-    /// reach yet, so the engine refuses an edit that would reach one whose checks fail
-    /// with that check's text. Project settings already trusted at `run start` pass.
-    /// Only a batch that adds, splits or amends a task is probed (T22-P2, F4).
+    /// `run edit`, with its [`Self::runtime_refusals`].
     async fn edit(
         &self,
         run_id: String,
         edits: Vec<proto::PlanEdit>,
         submit: bool,
     ) -> Result<String, String> {
-        let run = crate::lock(&self.state).runs.get(&run_id).cloned();
+        let refusals = self.runtime_refusals(&run_id, &edits).await?;
+        self.ask(|reply| EventKind::Edit {
+            reply,
+            run_id,
+            edits,
+            scope: EditScope::Run,
+            refusals,
+            submit,
+        })
+        .await
+    }
+
+    /// Ruling T22-I1b (`run edit`, and milestone 9's `edit_plan` and `submit_epic`):
+    /// decisions 50 and 53 for each runtime the run cannot reach yet, with trusted
+    /// project settings passing; only a batch that adds, splits or amends is probed.
+    pub(super) async fn runtime_refusals(
+        &self,
+        run_id: &str,
+        edits: &[proto::PlanEdit],
+    ) -> Result<Vec<(Runtime, String)>, String> {
+        let run = crate::lock(&self.state).runs.get(run_id).cloned();
         let mut refusals = Vec::new();
-        if let Some(run) = run.filter(|_| edits_may_widen(&edits)) {
+        if let Some(run) = run.filter(|_| edits_may_widen(edits)) {
             let reachable = reachable_runtimes(&run);
             let unreached: Vec<Runtime> = [Runtime::Claude, Runtime::Codex]
                 .into_iter()
@@ -352,15 +369,7 @@ impl RunService {
                 }
             }
         }
-        self.ask(|reply| EventKind::Edit {
-            reply,
-            run_id,
-            edits,
-            scope: EditScope::Run,
-            refusals,
-            submit,
-        })
-        .await
+        Ok(refusals)
     }
 
     /// Decisions 50 and 53 for `runtimes`: decision 50's refusal when Claude is among

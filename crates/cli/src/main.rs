@@ -172,7 +172,10 @@ async fn run_cli() -> anyhow::Result<()> {
     match cli.command {
         // Pitfall 17: nothing but JSON-RPC may reach stdout from here on, so this arm
         // prints nothing and installs no tracing subscriber.
-        Some(Command::Mcp(args)) => mcp::serve_stdio(args.into_options(socket)).await,
+        Some(Command::Mcp(args)) => match args.into_options(socket) {
+            Ok(options) => mcp::serve_stdio(options).await,
+            Err(usage) => usage.exit(),
+        },
         None => attach(socket, resolve_dir(cli.dir)?, None).await,
         Some(Command::Run(args)) => run_cmd::main(args, socket, cli.dir).await,
         Some(Command::Profile(args)) => profile_cmd::main(args, socket, cli.dir).await,

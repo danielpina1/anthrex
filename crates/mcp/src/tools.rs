@@ -12,14 +12,15 @@ pub const TASK_DONE: &str = "task_done";
 pub const TASK_BLOCKED: &str = "task_blocked";
 pub const SUBMIT_REVIEW: &str = "submit_review";
 
-/// The tools `role` may call. `Orchestrator` gets none in this milestone (M9 adds its
-/// own).
+/// The tools `role` may call (milestone 9 decision 15 for the orchestrator's, the
+/// sub-planner's and the worker's `task_note`).
 pub fn tools_for(role: AgentRole) -> Vec<Tool> {
+    use crate::tools_orch::{orchestrator_tools, planner_tools, task_note};
     match role {
-        AgentRole::Worker => vec![task_done(), task_blocked()],
+        AgentRole::Worker => vec![task_done(), task_blocked(), task_note()],
         AgentRole::Reviewer => vec![submit_review()],
-        // Milestone 9 task M9.11 adds the orchestrator's and the sub-planner's tools.
-        AgentRole::Orchestrator | AgentRole::Planner => Vec::new(),
+        AgentRole::Orchestrator => orchestrator_tools(),
+        AgentRole::Planner => planner_tools(),
         AgentRole::Scout => vec![crate::tools_scout::submit_scout_report()],
         // Milestone 9 decision 43: a decider never runs `anthrex mcp`, and never gets
         // an anthrex tool even if something asked for its list.
@@ -138,9 +139,17 @@ mod tests {
         Value::Object((*tool(role, name).input_schema).clone())
     }
 
+    /// Decision 42f: M8a's `worker_tools_are_task_done_and_task_blocked`, renamed.
     #[test]
-    fn worker_tools_are_task_done_and_task_blocked() {
-        assert_eq!(names(AgentRole::Worker), ["task_done", "task_blocked"]);
+    fn worker_tools_are_task_done_task_blocked_and_task_note() {
+        assert_eq!(
+            names(AgentRole::Worker),
+            ["task_done", "task_blocked", "task_note"]
+        );
+        assert_eq!(
+            tool(AgentRole::Worker, "task_note").description.as_deref(),
+            Some("Report a discovery, risk or progress without blocking the task.")
+        );
         assert_eq!(
             tool(AgentRole::Worker, "task_done").description.as_deref(),
             Some(
@@ -186,11 +195,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn orchestrator_tools_are_empty() {
-        assert!(tools_for(AgentRole::Orchestrator).is_empty());
-    }
-
     /// M9.2 review ruling 2: a decider is never given an anthrex tool.
     #[test]
     fn a_decider_has_no_tools() {
@@ -234,7 +238,7 @@ mod tests {
                 check(&t.name, &s, &mut objects);
             }
         }
-        assert_eq!(objects, 4, "three tool schemas and the finding object");
+        assert_eq!(objects, 5, "four tool schemas and the finding object");
     }
 
     #[test]

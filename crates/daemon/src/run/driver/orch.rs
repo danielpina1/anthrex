@@ -1,13 +1,77 @@
 //! Milestone 9's driver side. Task M9.6: decision 20's overlay of each run's scouts
 //! onto the pure snapshot. Task M9.7: the user's hold verdicts and `run promote`,
-//! handed to the engine. Later tasks add the orchestrator's tool routing here.
+//! handed to the engine. Task M9.11: decision 15's routing of the orchestrator's, the
+//! sub-planners' and the worker's `task_note` calls, and the read path of decisions 16
+//! to 18 (`run_status`'s long-poll, `get_context`, `task_result`).
+//!
+//! **The read path holds no engine lock but to look a run up and clone it.** Each
+//! answer is built from that clone on `spawn_blocking`, and its file and git reads are
+//! bounded by a timeout. `run_status` waits on the snapshot pushes (a `broadcast`
+//! channel, resubscribed after a lag), never under the lock.
+
+use std::time::Duration;
 
 use proto::run_wire::request;
-use proto::{OrchestratorChoice, RunReply, RunsSnapshot};
+use proto::{AgentRole, OrchestratorChoice, RepoProfile, RunReply, RunsSnapshot, ScoutReport};
+use proto::{Runtime, ToolCall};
+use serde_json::json;
+use tokio::sync::broadcast::error::RecvError;
 
-use super::RunService;
-use crate::run::engine::{EventKind, OrchEvent};
+use super::{DONE_CHECK_GIT_TIMEOUT, RunService, unix_now};
+use crate::run::engine::{EventKind, OrchEvent, notes_seq};
+use crate::run::model::{Run, task_branch};
+use crate::run::orch::context::{Asker, ContextInputs, context};
 use crate::run::orch::extract::ExtractSlot;
+use crate::run::orch::result::{TaskGit, task_result};
+use crate::run::orch::tools::{OrchCall, parse_call};
+
+/// How long `get_context`'s file reads and build may take (the stored profile and the
+/// scout reports, each at most 1 MiB).
+pub const CONTEXT_READ_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Decision 15: whether `call` is one of milestone 9's, which `orch_tool` routes: every
+/// orchestrator and sub-planner call, and a worker's `task_note`.
+pub(super) fn is_orch_call(call: &ToolCall) -> bool {
+    matches!(call.role, AgentRole::Orchestrator | AgentRole::Planner)
+        || (call.role == AgentRole::Worker && call.tool == "task_note")
+}
+
+/// Decision 15's refusal: `ToolResult { ok: false }` holding `{"error": "<text>"}`.
+fn refused(text: impl Into<String>) -> RunReply {
+    RunReply::tool_result(false, json!({ "error": text.into() }).to_string())
+}
+
+/// Decision 15's caller check, the engine's for writes: an orchestrator call comes
+/// from the run's orchestrator window, a planner call from the live session of its
+/// epic's sub-planner. Any other role is left to `parse_call`, which refuses it.
+fn caller(run: &Run, call: &ToolCall) -> Result<(), String> {
+    match call.role {
+        AgentRole::Orchestrator => {
+            let window = run.orch.orchestrator.as_ref().and_then(|o| o.window_id);
+            if window == Some(call.window_id) {
+                return Ok(());
+            }
+            Err(format!(
+                "this window is not the orchestrator of run {}",
+                run.id
+            ))
+        }
+        AgentRole::Planner => {
+            let epic = call.epic.as_deref().unwrap_or_default();
+            let Some(record) = run.orch.epics.iter().find(|e| e.epic == epic) else {
+                return Err(format!("unknown epic {epic}"));
+            };
+            if record.is_live_caller(call.window_id) {
+                return Ok(());
+            }
+            Err(format!(
+                "this window is not the sub-planner of epic {epic} of run {}",
+                run.id
+            ))
+        }
+        _ => Ok(()),
+    }
+}
 
 fn answer(label: &str, result: Result<String, String>) -> RunReply {
     match result {
@@ -60,6 +124,197 @@ impl RunService {
         answer(label, result)
     }
 
+    /// Decision 15's routing: `get_context`, `run_status` and `task_result` go to the
+    /// driver's read path; every other call, with the runtime refusals an `edit_plan`
+    /// or `submit_epic` batch needs (ruling T22-I1b), goes to the engine as
+    /// `OrchEvent::Tool`.
+    pub(super) async fn orch_tool(&self, call: ToolCall) -> RunReply {
+        let read = matches!(
+            call.tool.as_str(),
+            "get_context" | "run_status" | "task_result"
+        );
+        if read && call.role != AgentRole::Worker {
+            return self.read(call).await;
+        }
+        let refusals = match self.tool_refusals(&call).await {
+            Ok(refusals) => refusals,
+            Err(text) => return refused(text),
+        };
+        let event = |reply| {
+            EventKind::Orch(OrchEvent::Tool {
+                reply,
+                call,
+                refusals,
+            })
+        };
+        match self.ask(event).await {
+            Ok(text) => RunReply::tool_result(true, text),
+            Err(text) => RunReply::tool_result(false, text),
+        }
+    }
+
+    /// The runtime refusals of an authorized caller's `edit_plan` or `submit_epic`
+    /// batch; none for any other call (the engine refuses those on its own).
+    async fn tool_refusals(&self, call: &ToolCall) -> Result<Vec<(Runtime, String)>, String> {
+        let edits = match parse_call(call.role, &call.tool, &call.args) {
+            Ok(OrchCall::EditPlan { edits, .. } | OrchCall::SubmitEpic { edits, .. }) => edits,
+            _ => return Ok(Vec::new()),
+        };
+        if self.looked_up(call, |_| ()).is_err() {
+            return Ok(Vec::new());
+        }
+        self.runtime_refusals(&call.run_id, &edits).await
+    }
+
+    /// `read(run)` of the caller's run under the engine lock, after decision 15's run
+    /// and caller checks; the lock is released on return.
+    fn looked_up<T>(&self, call: &ToolCall, read: impl FnOnce(&Run) -> T) -> Result<T, String> {
+        let state = crate::lock(&self.state);
+        let Some(run) = state.runs.get(&call.run_id) else {
+            return Err(format!("unknown run {}", call.run_id));
+        };
+        caller(run, call)?;
+        Ok(read(run))
+    }
+
+    /// Decisions 16 to 18. Reads answer in every run state, terminal ones included.
+    async fn read(&self, call: ToolCall) -> RunReply {
+        if let Err(text) = self.looked_up(&call, |_| ()) {
+            return refused(text);
+        }
+        let parsed = match parse_call(call.role, &call.tool, &call.args) {
+            Ok(parsed) => parsed,
+            Err(text) => return refused(text),
+        };
+        match parsed {
+            OrchCall::RunStatus { since, wait_secs } => {
+                if let Some(since) = since.filter(|_| wait_secs > 0) {
+                    let wait = Duration::from_secs(wait_secs);
+                    self.wait_digest(&call.run_id, since, wait).await;
+                }
+                self.run_status(&call).await
+            }
+            OrchCall::GetContext { scouts } => {
+                let asker = match call.role {
+                    AgentRole::Planner => Asker::Planner {
+                        epic: call.epic.clone().unwrap_or_default(),
+                    },
+                    _ => Asker::Orchestrator,
+                };
+                match self.looked_up(&call, Run::clone) {
+                    Ok(run) => get_context(run, asker, scouts).await,
+                    Err(text) => refused(text),
+                }
+            }
+            OrchCall::TaskResult { task_id } => match self.looked_up(&call, Run::clone) {
+                Ok(run) => self.task_result(run, task_id).await,
+                Err(text) => refused(text),
+            },
+            // `parse_call` lets no other call of these three tools through.
+            _ => refused(format!("tool {} is not available here", call.tool)),
+        }
+    }
+
+    /// Decision 16's wait: until the run's digest revision differs from `since`, the
+    /// run is terminal or gone, or `wait` has passed. It reads the snapshot pushes and
+    /// takes the engine lock only for one lookup after each (re)subscription, so a
+    /// change published before it subscribed is not missed. After a lag it subscribes
+    /// again (AGENTS.md: a lagged receiver resumes from the oldest message).
+    async fn wait_digest(&self, run_id: &str, since: u64, wait: Duration) {
+        let deadline = tokio::time::Instant::now() + wait;
+        let ends = |rev: u64, state: proto::RunState| rev != since || state.is_terminal();
+        loop {
+            let mut pushes = self.pushes();
+            let done = crate::lock(&self.state)
+                .runs
+                .get(run_id)
+                .is_none_or(|run| ends(run.orch.digest_rev, run.state));
+            if done {
+                return;
+            }
+            loop {
+                match tokio::time::timeout_at(deadline, pushes.recv()).await {
+                    Err(_) | Ok(Err(RecvError::Closed)) => return,
+                    Ok(Err(RecvError::Lagged(_))) => break,
+                    Ok(Ok(snap)) => {
+                        let run = snap.runs.iter().find(|r| r.run_id == run_id);
+                        if run.is_none_or(|r| ends(r.digest_revision, r.state)) {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The digest of a clone of the run, built on `spawn_blocking`; then the read
+    /// receipt with that clone's revision and wake-note seq (decision 16; M9.9 review
+    /// M6), so a note added after the clone stays.
+    async fn run_status(&self, call: &ToolCall) -> RunReply {
+        let run = match self.looked_up(call, Run::clone) {
+            Ok(run) => run,
+            Err(text) => return refused(text),
+        };
+        let (run_id, digest_revision, seq) = (run.id.clone(), run.orch.digest_rev, notes_seq(&run));
+        let now = unix_now();
+        let built = tokio::task::spawn_blocking(move || {
+            crate::run::orch::digest::digest(&run, now).to_string()
+        })
+        .await;
+        match built {
+            Ok(text) => {
+                self.send(EventKind::Orch(OrchEvent::DigestRead {
+                    run_id,
+                    digest_revision,
+                    notes_seq: seq,
+                }));
+                RunReply::tool_result(true, text)
+            }
+            Err(error) => refused(format!("a blocking step did not finish: {error}")),
+        }
+    }
+
+    /// Decision 18: the task's result, with its two git reads when it has a start
+    /// commit (M9.6: only then), all under one `DONE_CHECK_GIT_TIMEOUT` deadline (M9.6
+    /// review, M-4): past it the answer carries the git error, whatever the separate
+    /// commands still had left. The build runs on `spawn_blocking`.
+    async fn task_result(&self, run: Run, task_id: String) -> RunReply {
+        let Some(task) = run.task(&task_id) else {
+            return refused(format!("unknown task {task_id}"));
+        };
+        let git = match task.start_commit.clone() {
+            Some(start) => Some(self.task_git(&run, &task_id, start).await),
+            None => None,
+        };
+        let built = tokio::task::spawn_blocking(move || {
+            run.task(&task_id)
+                .map(|task| task_result(&run, task, git.as_ref()).to_string())
+        })
+        .await;
+        match built {
+            Ok(Some(text)) => RunReply::tool_result(true, text),
+            Ok(None) => refused("unknown task"),
+            Err(error) => refused(format!("a blocking step did not finish: {error}")),
+        }
+    }
+
+    async fn task_git(&self, run: &Run, task_id: &str, start: String) -> Result<TaskGit, String> {
+        let git = self.ctx.git.clone();
+        let (root, branch) = (run.root.clone(), task_branch(&run.id, task_id));
+        let each = Duration::from_secs(run.limits.git_timeout_secs).min(DONE_CHECK_GIT_TIMEOUT);
+        let read = tokio::task::spawn_blocking(move || {
+            crate::run::git::task_summary(&git, &root, &start, &branch, each)
+        });
+        match tokio::time::timeout(DONE_CHECK_GIT_TIMEOUT, read).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => Err(format!("a blocking step did not finish: {error}")),
+            Err(_) => Err(format!(
+                "git did not answer within {} s",
+                DONE_CHECK_GIT_TIMEOUT.as_secs()
+            )),
+        }
+    }
+
     /// Decision 29: `run promote`, performed by the engine.
     pub(super) async fn promote(
         &self,
@@ -73,6 +328,70 @@ impl RunService {
         };
         answer(request::PROMOTE, self.ask(event).await)
     }
+}
+
+/// Decision 17: the context of a clone of the run, its stored profile and scout
+/// reports read and the answer built on `spawn_blocking`, within
+/// [`CONTEXT_READ_TIMEOUT`].
+async fn get_context(run: Run, asker: Asker, only: Option<Vec<String>>) -> RunReply {
+    let build = tokio::task::spawn_blocking(move || {
+        let (profile, reports) = context_reads(&run);
+        let inputs = ContextInputs {
+            run: &run,
+            asker,
+            profile: profile.as_ref(),
+            reports,
+            only,
+        };
+        context(&inputs).to_string()
+    });
+    match tokio::time::timeout(CONTEXT_READ_TIMEOUT, build).await {
+        Ok(Ok(text)) => RunReply::tool_result(true, text),
+        Ok(Err(error)) => refused(format!("a blocking step did not finish: {error}")),
+        Err(_) => refused(format!(
+            "the run's context could not be read within {} s",
+            CONTEXT_READ_TIMEOUT.as_secs()
+        )),
+    }
+}
+
+/// `get_context`'s reads (blocking): the repository's stored profile, and the reports
+/// it lists, the onboarding one (the alias `onboarding`, when the profile names one)
+/// and each run scout's. Each ref is resolved only to a report anthrex stored
+/// (`scout::report::resolve_ref`, through `read_report`'s guards); one that cannot be
+/// read is left out with a warning.
+pub(super) fn context_reads(run: &Run) -> (Option<RepoProfile>, Vec<ScoutReport>) {
+    use crate::profile::store::{Stored, load};
+    use crate::scout::report::{ONBOARDING_ALIAS, resolve_ref};
+    use crate::scout::spec::valid_id;
+    let repo_dir = &run.repo_dir;
+    if repo_dir.as_os_str().is_empty() {
+        return (None, Vec::new());
+    }
+    let profile = match load(repo_dir) {
+        Stored::Found { profile, .. } => Some(profile),
+        _ => None,
+    };
+    let run_dir = crate::run::journal::runs_dir(&run.data_dir).join(&run.id);
+    let onboarding = run.onboarding_report.as_deref().filter(|id| valid_id(id));
+    let mut refs: Vec<&str> = onboarding.map(|_| ONBOARDING_ALIAS).into_iter().collect();
+    for id in &run.scout_reports {
+        if valid_id(id) && id != ONBOARDING_ALIAS && !refs.contains(&id.as_str()) {
+            refs.push(id);
+        }
+    }
+    let reports = refs
+        .into_iter()
+        .filter_map(|reference| {
+            let path = resolve_ref(reference, &run_dir, repo_dir, onboarding);
+            super::adapt::read_report(&path)
+                .inspect_err(
+                    |error| tracing::warn!(run = %run.id, "scout report {reference}: {error}"),
+                )
+                .ok()
+        })
+        .collect();
+    (profile, reports)
 }
 
 /// Decision 34, the driver's half: a first turn with the scout extract of its slot's
@@ -126,3 +445,15 @@ pub(super) fn filled(
 #[cfg(test)]
 #[path = "orch_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "orch_read_rig.rs"]
+mod read_rig;
+
+#[cfg(test)]
+#[path = "orch_read_tests.rs"]
+mod read_tests;
+
+#[cfg(test)]
+#[path = "orch_read_tests_tools.rs"]
+mod read_tests_tools;

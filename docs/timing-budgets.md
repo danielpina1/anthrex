@@ -200,6 +200,20 @@ or one push, far under its bound; each absence window is paired with a positive 
 | `a_young_untokened_connection_is_not_closed_to_make_room`: no connection younger than the grace is closed | `crates/daemon/tests/otlp_server/tokens.rs` | `wait()` for the answer (`None`), then a 50 ms read per idle connection | The newcomer waits `OTLP_SLOT_WAIT` (1 s) and is closed; the idle connections are younger than `OTLP_EVICT_GRACE` (2 s) for that whole wait, which the test asserts at compile time (`OTLP_SLOT_WAIT < OTLP_EVICT_GRACE`), and they stay open until `OTLP_READ_TIMEOUT`. | **Recorded** (M9.10 review). Without the grace the newcomer is served. |
 | `create_run_window_does_not_hold_the_manager_lock_across_spawn`: `list()` while the launch is held, and after | `crates/daemon/tests/orchestrator_window.rs` | a `sleep(100 ms)` absence before the gate opens; `list()` under 100 ms | The absence: nothing spawns while the launch gate is closed (the positive half, the window after `gate.open()`, follows). `list()` takes the manager lock only; the same 100 ms bound as `a_slow_worktree_create_does_not_block_the_manager`. | **Recorded** (M9.10). |
 
+### Recorded, from M9.11 (2026-09-28)
+
+The driver's read path (`crates/daemon/src/run/driver/orch_read_tests.rs` and `orch_read_tests_tools.rs`, rig in `orch_read_rig.rs`). Every call is one `mcp::forward` over a real socket, with no agent.
+
+| Test | Site | Bound | The code's own legal worst case | Status |
+|---|---|---|---|---|
+| `run_status_returns_at_once_without_since`: each answer that must not wait | `orch_read_tests.rs` | `< 5 s` | One engine lookup and clone, the digest built on `spawn_blocking` (milliseconds for two tasks), one socket round trip. No timer is on the path. | **Recorded.** A hang guard, far from any timer; a wait that wrongly ran would take `wait_secs` (50 s). |
+| `run_status_waits_until_the_digest_changes`: the answer after `run edit` | `orch_read_tests.rs` | `< 5 s` after the edit's reply (the brief's bound); a 500 ms absence first | The edit's engine step, then the snapshot push: the driver publishes at the next 1 s tick, then one digest build. About 1 s. | **Recorded.** The absence (the call has not answered after 500 ms) only needs the call to be waiting; its bound, 20 s, is far off. |
+| `run_status_times_out_with_the_same_revision` | `orch_read_tests.rs` | `>= 2 s` and `< 4 s` | `wait_secs` (2 s) exactly, then one digest build. | **Recorded.** The lower bound is the wait itself; 2 s of margin above. |
+| `a_counter_change_does_not_end_the_wait` | `orch_read_tests.rs` | `>= 3 s` (`wait_secs`); `ANSWER` (10 s) for the tool call to be counted | The counted signal is one engine step. | **Recorded.** No upper bound on the wait is asserted beyond the hang guard. |
+| `terminal_run_ends_the_wait` and `a_lagged_wait_subscribes_again_and_keeps_waiting` | `orch_read_tests.rs` | `< 2 s` after the push; 500 ms absences | The test publishes itself, so no tick is on the path: one push read, one digest build. | **Recorded.** The lag test runs on one thread, so the 1000 pushes are sent before the waiting task can read one: the lag is certain, not timed. |
+| `long_poll_holds_no_engine_lock`: `run status` (a `List`) while a call waits | `orch_read_tests.rs` | `< 2 s` | One engine lock for the snapshot; the waiting call holds none. A held lock would answer only after the wait (10 s). | **Recorded.** A separation: 2 s against 10 s. |
+| `task_result_answers_a_git_error_at_its_one_deadline` | `orch_read_tests_tools.rs` (`SLOW_GIT_SECS` = 8) | `>= DONE_CHECK_GIT_TIMEOUT` (10 s) and `< 2 * SLOW_GIT_SECS - 2` (14 s) | The call's one deadline, `DONE_CHECK_GIT_TIMEOUT` (10 s). Without it the two reads (8 s each, each under the run's 9 s per-command bound) answer at 16 s with no error. | **Recorded.** A separation: 10 s against 16 s. The test takes about 16 s, since the runtime waits for the abandoned blocking read to end. |
+
 ### Recorded, from M8b.18 (2026-09-27)
 
 | Test | Site | Bound | The code's own legal worst case | Status |

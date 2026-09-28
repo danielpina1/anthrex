@@ -103,7 +103,7 @@ fn mcp_subcommand_speaks_json_rpc_on_stdout_only() {
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["task_done", "task_blocked"]);
+    assert_eq!(names, ["task_done", "task_blocked", "task_note"]);
 
     send(
         json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
@@ -267,4 +267,42 @@ fn a_refused_handshake_is_logged_to_stderr_and_never_reaches_stdout() {
         err.contains(MISMATCH),
         "stderr carries the daemon's text: {err:?}"
     );
+}
+
+/// Milestone 9: the checks `anthrex mcp` makes per role after clap's are usage errors,
+/// exit code 2 with the flags named on stderr, and nothing on stdout.
+#[test]
+fn a_role_flag_mismatch_is_a_usage_error() {
+    for (args, flags) in [
+        (&["--role", "planner", "--run", "r1"][..], &["--epic"][..]),
+        (
+            &["--role", "orchestrator", "--run", "r1", "--epic", "a"][..],
+            &["--epic"][..],
+        ),
+        (
+            &["--role", "scout", "--run", "r1"][..],
+            &["--scout", "--task"][..],
+        ),
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_anthrex"))
+            .arg("mcp")
+            .args(args)
+            .args([
+                "--window",
+                "3",
+                "--socket",
+                "/tmp/anthrex-mcp-cli-none.sock",
+            ])
+            .env("ANTHREX_SOCKET", "/tmp/anthrex-mcp-cli-none-env.sock")
+            .env("ANTHREX_DATA_DIR", "/tmp/anthrex-mcp-cli-none-data")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {out:?}");
+        assert!(out.stdout.is_empty(), "{args:?}: {out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        for flag in flags {
+            assert!(stderr.contains(flag), "{args:?}: {stderr}");
+        }
+    }
 }
