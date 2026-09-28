@@ -1,6 +1,8 @@
 //! M8a.22 fix round 1 (ruling T22-minors, m1): a run request answered on its own task
 //! must not keep a disconnected client's connection open. The request itself carries on.
 
+mod support;
+
 use daemon::manager::{ManagerConfig, WindowManager};
 use daemon::run::driver::{RunContext, RunService};
 use daemon::server::{GitWiring, serve};
@@ -9,6 +11,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
+use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio_util::sync::CancellationToken;
 
 /// How long the stand-in `git` takes: far past the test's own bound, so a connection
@@ -144,9 +147,9 @@ async fn every_milestone_8b_request_is_answered_by_its_task() {
             dir: here.clone()
         }))
         .await,
-        proto::RunReply::Profile(Box::new(ProfileReply::Refused {
+        proto::RunReply::profile(ProfileReply::Refused {
             message: not_running
-        }))
+        })
     );
     assert_eq!(
         runs.request(RunRequest::Stats { dir: here.clone() }).await,
@@ -158,17 +161,55 @@ async fn every_milestone_8b_request_is_answered_by_its_task() {
     );
 }
 
-/// Milestone 9 task 2 (decision 2): a `ClientMsg::RunTagged` request is answered like
-/// `ClientMsg::Run`, and its `Done` or `Refused` reply echoes the id; an untagged
-/// request's reply carries none.
+/// M9.2 review ruling 8, pinning: until M9.7 keeps approval holds, `ApproveHold` and
+/// `RejectHold` are refused under their own labels with the `NO_HOLDS` text.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_tagged_run_request_is_answered_with_its_id() {
-    use proto::RunReply;
+async fn approval_holds_are_refused_until_the_engine_keeps_them() {
+    use proto::run_wire::request;
     let dir = tempfile::Builder::new()
-        .prefix("ax-runs9")
+        .prefix("ax-runs9h")
         .tempdir_in("/tmp")
         .unwrap();
-    let socket = dir.path().join("d.sock");
+    let (manager, _events) = WindowManager::new(ManagerConfig::new(
+        dir.path().join("d.sock"),
+        "/bin/sh".into(),
+    ));
+    let git = GitWiring::new(config::Git::default());
+    let ctx = RunContext::new(
+        dir.path().join("data"),
+        manager.config(),
+        config::Orchestrator::default(),
+        git.registry.clone(),
+    );
+    let runs = RunService::new(manager, ctx);
+    let (run_id, hold) = ("r1".to_string(), "h1".to_string());
+    for (req, label) in [
+        (
+            RunRequest::ApproveHold {
+                run_id: run_id.clone(),
+                hold: hold.clone(),
+            },
+            request::APPROVE,
+        ),
+        (RunRequest::RejectHold { run_id, hold }, request::REJECT),
+    ] {
+        assert_eq!(
+            runs.request(req).await,
+            proto::RunReply::refused(label, "this run has no approval holds")
+        );
+    }
+}
+
+/// A daemon on `dir/d.sock` with its run service, and the milestone-8b profile and
+/// decider services too when `adaptation` is set (deciders off, so nothing is spawned).
+/// Returns a connected, welcomed client.
+async fn tagged_rig(
+    dir: &std::path::Path,
+    adaptation: bool,
+    shutdown: &CancellationToken,
+) -> (OwnedReadHalf, OwnedWriteHalf) {
+    let socket = dir.join("d.sock");
+    let data = dir.join("data");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let (manager, _events) =
         WindowManager::new(ManagerConfig::new(socket.clone(), "/bin/sh".into()));
@@ -176,14 +217,18 @@ async fn a_tagged_run_request_is_answered_with_its_id() {
         enabled: false,
         ..config::Git::default()
     });
+    let mut orchestrator = config::Orchestrator::default();
+    orchestrator.deciders.mode = proto::DeciderMode::Off;
     let ctx = RunContext::new(
-        dir.path().join("data"),
+        data.clone(),
         manager.config(),
-        config::Orchestrator::default(),
+        orchestrator.clone(),
         git.registry.clone(),
     );
     let runs = RunService::new(manager.clone(), ctx);
-    let shutdown = CancellationToken::new();
+    if adaptation {
+        daemon::profile::service::wire(&manager, &runs, &data, &socket, &orchestrator);
+    }
     runs.spawn(shutdown.clone());
     tokio::spawn(serve(listener, manager, git, runs, shutdown.clone()));
 
@@ -199,6 +244,36 @@ async fn a_tagged_run_request_is_answered_with_its_id() {
         matches!(welcome, Some(DaemonMsg::Welcome { .. })),
         "{welcome:?}"
     );
+    (rd, wr)
+}
+
+/// The next run reply, skipping broadcasts, within a deadline.
+async fn next_run_reply(rd: &mut OwnedReadHalf) -> proto::RunReply {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            match read_frame::<_, DaemonMsg>(rd).await {
+                Ok(Some(DaemonMsg::Run(reply))) => return reply,
+                Ok(Some(_)) => continue,
+                other => panic!("the connection ended: {other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("the request is answered")
+}
+
+/// Milestone 9 task 2 (decision 2): a `ClientMsg::RunTagged` request is answered like
+/// `ClientMsg::Run`, and its `Done` or `Refused` reply echoes the id; an untagged
+/// request's reply carries none.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tagged_run_request_is_answered_with_its_id() {
+    use proto::RunReply;
+    let dir = tempfile::Builder::new()
+        .prefix("ax-runs9")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let shutdown = CancellationToken::new();
+    let (mut rd, mut wr) = tagged_rig(dir.path(), false, &shutdown).await;
     // `run stats` outside a repository is refused at once, whoever asks.
     let stats = RunRequest::Stats {
         dir: dir.path().to_path_buf(),
@@ -209,21 +284,57 @@ async fn a_tagged_run_request_is_answered_with_its_id() {
     };
     for (msg, expected) in [(tagged, Some(7)), (ClientMsg::Run(stats), None)] {
         write_frame(&mut wr, &msg).await.unwrap();
-        let reply = tokio::time::timeout(Duration::from_secs(30), async {
-            loop {
-                match read_frame::<_, DaemonMsg>(&mut rd).await {
-                    Ok(Some(DaemonMsg::Run(reply))) => return reply,
-                    Ok(Some(_)) => continue,
-                    other => panic!("the connection ended: {other:?}"),
-                }
-            }
-        })
-        .await
-        .expect("the request is answered");
+        let reply = next_run_reply(&mut rd).await;
         let RunReply::Refused { request_id, .. } = reply else {
             panic!("refused: {reply:?}");
         };
         assert_eq!(request_id, expected);
     }
+    shutdown.cancel();
+}
+
+/// M9.2 review ruling 1: a tagged request's success reply carries its id too. A goal
+/// start in a repository with a stored profile and the deciders off takes triage's
+/// fallback (the plan path), so it is answered `Triaged` with no run and no agent.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tagged_goal_start_is_triaged_with_its_id() {
+    use proto::RunReply;
+    let repo = support::run_git::repo();
+    let dir = tempfile::Builder::new()
+        .prefix("ax-runs9g")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let meta = proto::ProfileMeta {
+        confirmed_at: 1_700_000_000,
+        report: None,
+        verification: None,
+        fingerprint: Default::default(),
+        edited_keys: Vec::new(),
+        project: None,
+    };
+    let repo_dir = daemon::profile::repo_dir(&dir.path().join("data"), &repo.root);
+    daemon::profile::store::save(&repo_dir, &proto::RepoProfile::default(), &meta).unwrap();
+    let shutdown = CancellationToken::new();
+    let (mut rd, mut wr) = tagged_rig(dir.path(), true, &shutdown).await;
+    let msg = ClientMsg::RunTagged {
+        id: 11,
+        request: RunRequest::StartGoal {
+            goal: "rework storage".into(),
+            dir: repo.root.clone(),
+            yes: true,
+            trust_project: false,
+            unconfined_checks: true,
+            orchestrator: None,
+        },
+    };
+    write_frame(&mut wr, &msg).await.unwrap();
+    let reply = next_run_reply(&mut rd).await;
+    let RunReply::Triaged {
+        run_id, request_id, ..
+    } = reply
+    else {
+        panic!("triaged: {reply:?}");
+    };
+    assert_eq!((run_id, request_id), (None, Some(11)));
     shutdown.cancel();
 }

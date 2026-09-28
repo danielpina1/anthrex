@@ -221,6 +221,8 @@ fn round_glyph(task: &TaskInfo, round: &DisplayRound<'_>, app: &App) -> (&'stati
                 check()
             }
         }
+        // A decider has no rounds (decision 43); a stray one is drawn as ended.
+        AgentRole::Decider => ("–", theme::DIM),
     }
 }
 

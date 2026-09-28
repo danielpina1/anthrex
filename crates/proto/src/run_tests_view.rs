@@ -204,7 +204,10 @@ fn old_run_info_still_decodes() {
     assert_eq!(run.research_report, None);
     assert_eq!(run.planners[0].note, None);
     let edit = &run.plan_edits[0];
-    assert_eq!(edit.source, "");
+    assert_eq!(
+        edit.source, "user",
+        "decision 40: an entry without a source is the user's"
+    );
     assert!(edit.accepted, "an M8c edit-log entry was an accepted batch");
     assert_eq!(edit.error, None);
     assert!(edit.recipients.is_empty());

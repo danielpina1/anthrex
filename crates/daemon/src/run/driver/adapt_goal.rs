@@ -175,6 +175,7 @@ impl RunService {
                 triage: info,
                 run_id: Some(run_id),
                 message,
+                request_id: None,
             },
             Err(message) => refused(message),
         }
@@ -244,6 +245,7 @@ fn planned(info: proto::TriageInfo) -> RunReply {
         triage: info,
         run_id: None,
         message,
+        request_id: None,
     }
 }
 

@@ -350,9 +350,10 @@ fn every_new_request_and_reply_round_trips() {
             triage: a_triage(),
             run_id: Some("run-a1b2".into()),
             message: "fast path".into(),
+            request_id: None,
         },
-        RunReply::Profile(Box::new(ProfileReply::Status(status))),
-        RunReply::Profile(Box::new(ProfileReply::Shown {
+        RunReply::profile(ProfileReply::Status(status)),
+        RunReply::profile(ProfileReply::Shown {
             source: ProfileSource::None,
             toml: SPEC_PROFILE.into(),
             meta: Some(ProfileMeta {
@@ -365,14 +366,14 @@ fn every_new_request_and_reply_round_trips() {
             }),
             verification: Some(a_verification()),
             dropped: vec![a_dropped()],
-        })),
-        RunReply::Profile(Box::new(ProfileReply::Done {
+        }),
+        RunReply::profile(ProfileReply::Done {
             message: "stored".into(),
-        })),
-        RunReply::Profile(Box::new(ProfileReply::Refused {
+        }),
+        RunReply::profile(ProfileReply::Refused {
             message: "no proposal".into(),
-        })),
-        RunReply::Stats(a_stats()),
+        }),
+        RunReply::stats(a_stats()),
     ];
     for reply in replies {
         let msg = DaemonMsg::Run(reply);

@@ -47,6 +47,8 @@ pub(crate) fn round_inspection(
         AgentRole::Worker | AgentRole::Orchestrator | AgentRole::Scout | AgentRole::Planner => {
             worker_fields(task, round, limited, app)
         }
+        // A decider has no rounds (decision 43): nothing of a worker's to show.
+        AgentRole::Decider => Vec::new(),
     };
     let glyph = kind_glyph(
         RowKind::AgentRound {

@@ -390,6 +390,7 @@ fn every_run_request_and_reply_round_trips() {
         RunReply::Started {
             run_id: "run-a1b2".into(),
             state: RunState::AwaitingApproval,
+            request_id: None,
         },
         RunReply::Done {
             request: run_wire::request::APPROVE.into(),
@@ -410,11 +411,13 @@ fn every_run_request_and_reply_round_trips() {
                 commits: vec!["abc1234 alice: fix the thing".into()],
                 total: 3,
             }),
+            request_id: None,
         },
         RunReply::Snapshot(snapshot.clone()),
         RunReply::ToolResult {
             ok: true,
             text: "task marked done".into(),
+            request_id: None,
         },
     ];
     for reply in replies {
@@ -429,6 +432,7 @@ fn every_run_request_and_reply_round_trips() {
     let started = DaemonMsg::Run(RunReply::Started {
         run_id: "run-a1b2".into(),
         state: RunState::AwaitingApproval,
+        request_id: None,
     });
     let packed = rmp_serde::to_vec_named(&started).unwrap();
     let DaemonMsg::Run(RunReply::Started { run_id, .. }) = rmp_serde::from_slice(&packed).unwrap()

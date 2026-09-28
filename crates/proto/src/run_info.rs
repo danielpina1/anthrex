@@ -245,7 +245,8 @@ pub struct TaskEventInfo {
 pub struct PlanEditInfo {
     pub at: u64,
     pub text: String,
-    #[serde(default)]
+    /// `user`, `orchestrator` or `planner:<epic>`; `user` when absent (decision 40).
+    #[serde(default = "user_by_default")]
     pub source: String,
     #[serde(default = "accepted_by_default")]
     pub accepted: bool,
@@ -257,6 +258,10 @@ pub struct PlanEditInfo {
 
 fn accepted_by_default() -> bool {
     true
+}
+
+fn user_by_default() -> String {
+    "user".to_string()
 }
 
 /// The base branch has moved under a run (decision 21): not a halt on its own, but

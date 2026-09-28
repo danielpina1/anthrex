@@ -62,8 +62,8 @@ fn role_routing_history_round_trip() {
         (AgentRole::Orchestrator, Some("run-a1b2")),
         (AgentRole::Planner, Some("run-a1b2")),
         (AgentRole::Scout, Some("run-a1b2")),
-        // A decider has no `AgentRole` of its own; pre-run triage has no run.
-        (AgentRole::Reviewer, None),
+        // Pre-run triage: a decider session, and no run.
+        (AgentRole::Decider, None),
     ];
     for (role, run_id) in roles {
         let line = HistoryLine::RoleRoute(a_role_decision(role, run_id));
@@ -98,11 +98,12 @@ fn role_routing_history_round_trip() {
     // Pre-run triage: no `run_id`, `task_id`, `pick_policy`, `outcome` or `result`
     // keys at all, and the optional input fields absent.
     let mut v = serde_json::to_value(HistoryLine::RoleRoute(a_role_decision(
-        AgentRole::Reviewer,
+        AgentRole::Decider,
         None,
     )))
     .unwrap();
     let map = v.as_object_mut().unwrap();
+    assert_eq!(map["role"], "decider");
     for key in ["run_id", "task_id", "pick_policy", "outcome", "result"] {
         map.remove(key);
     }

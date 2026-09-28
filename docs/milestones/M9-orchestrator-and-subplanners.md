@@ -493,7 +493,7 @@ Numbered and final. If one proves wrong or impossible, stop work on it, record t
 `crates/proto/src/run.rs` (M8a's), appended variants and fields:
 
 ```rust
-pub enum AgentRole { Orchestrator, Worker, Reviewer, Scout, Planner }   // Scout is M8b's; "planner"
+pub enum AgentRole { Orchestrator, Worker, Reviewer, Scout, Planner, Decider }   // Scout is M8b's; "planner"; "decider" (M9.2 review ruling 2: named only by role-routing records, never given anthrex tools)
 pub enum RunState  { /* M8a's eight */ Planning }                       // "planning"; label() "planning"; not terminal
 pub enum TaskState { /* M8a's eleven */ Reported }                      // "reported"; label() "reported"; is_finished() true
 pub enum BlockReason { /* M8a's six */ MessagePause }                   // "message_pause"; shown as paused(message) (decision 42c)
@@ -564,8 +564,12 @@ pub enum RunRequest {
 }
 // ApproveHold answers with request label request::APPROVE, RejectHold with request::REJECT.
 // run message and run refresh send M8a's RunRequest::Edit with one edit (decision 42h): no new request.
-// RunReply::Done { request, message } and RunReply::Refused { request, message } gain, last:
+// Every RunReply that answers a RunRequest gains, last:  (M9.2 review ruling 1)
 //     #[serde(default)] request_id: Option<u64>          // decision 2: echoes a RunTagged id; None for ClientMsg::Run
+//   Started, Done, Refused, ConfirmNeeded, ToolResult and Triaged carry it as their last field;
+//   Profile and Stats become struct variants to carry it: Profile { reply: Box<ProfileReply>, request_id },
+//   Stats { stats: HistoryStats, request_id }. Snapshot, which a subscription also pushes unasked, carries none.
+//   RunReply::tagged(id) stamps every one of them.
 // messages.rs: ClientMsg gains, last:  RunTagged { id: u64, request: RunRequest }
 ```
 
@@ -1437,6 +1441,10 @@ Do them in this order: M9.1, M9.2, M9.3, M9.4, M9.5, M9.6, M9.7, M9.8, M9.9, M9.
 2. M8b decision 15's tool routing (`run/driver/adapt.rs::tool`, `:153`) gains one branch ahead of `ScoutService::tool`: a call with `role == Scout`, `task_id` set and `scout_id` unset goes to the engine.
 3. M8c's `edit_log::record(run, edits, now)` (`edit_log.rs:67`) becomes `record(run, edits, now, source, outcome)`; its one caller (`engine/requests.rs:352`) passes source `user` and outcome accepted. M8c's `edit_log_tests.rs` pass with the new arguments.
 4. `engine/signals.rs::add_usage` (`:196`) sums with `TokenUsage`'s saturating `+=` (followups file, "From M8b.15").
+5. **`Reported` is a finished state in the engine** (M9.2 review ruling 4). M9.2 added `TaskState::Reported` to the wire only; three engine places still treat it as unfinished, and this task, which produces `Reported`, fixes each:
+   - `engine/complete.rs::complete_pass` (`:121-125`) counts only `merged` and `cancelled` as finished; a run whose remaining tasks are `reported` must complete. Test: `a_run_of_merged_and_reported_tasks_completes`.
+   - `engine/outbox.rs` (`:101-106`) skips `blocked`, `merged` and `cancelled` tasks when delivering; a `reported` task must be skipped too, so no message is queued for a finished session. Test: `the_outbox_skips_a_reported_task`.
+   - `run/history.rs::outcome` (`:44-54`) maps every other state, `reported` included, to `TaskOutcome::Unfinished`; a reported task's history record must carry an outcome that says it finished (an appended `TaskOutcome` variant is the natural one, inside PROTO 10 and `HISTORY_VERSION` 2). Test: `a_reported_task_is_recorded_as_finished`.
 
 **Tests first**, pure:
 - `research_task_takes_a_reader_slot_and_no_worktree`; `research_report_marks_the_task_reported`; `research_without_report_is_nudged_then_blocked`; `dependent_of_a_reported_task_runs`.
@@ -2013,7 +2021,39 @@ Line numbers cited on `cc9dcb7` and `c103308` above may have shifted in files th
   - TUI: `Planning` → `planning`, drawn as working; `Reported` → `reported`, `✓`, done colour, outside the progress categories; `MessagePause` → `paused(message)`; `Planner` → `planner #<session>`, drawn as a worker round, ranked after scouts. M9.15 owns the real display.
 - **Tests.** `orch_types_round_trip`, `new_requests_round_trip` (with `ClientMsg::RunTagged` and M8b-shaped `StartGoal`/`Promote` without `orchestrator`), `request_id_round_trips`, `appended_variants_keep_their_indices`, `reported_is_finished_and_planning_is_not_terminal`, `message_and_refresh_edits_round_trip` (JSON, MessagePack and a TOML edit file) in `proto/src/orch_tests.rs`; `role_routing_history_round_trip` in `proto/src/orch_tests_history.rs`; `old_run_info_still_decodes` and `orchestrator_snapshot_fields_round_trip` in `proto/src/run_tests_view.rs`; `proto_version_is_ten` in `lib.rs`; the daemon half of the history test is `old_run_defaults_role_routing_decisions_to_empty` (`run/engine/tests/view_fields.rs`, against `m8b_run.json`); and `a_tagged_run_request_is_answered_with_its_id` in `daemon/tests/server_runs.rs` pins the server's echo over a real socket (not named by the brief). `appended_variants_keep_their_indices` decodes a MessagePack integer as each unit enum's variant index; `PlanEdit` is internally tagged by name, so its order is pinned by the `op` list serde reports.
 - **Fixture.** `crates/proto/src/m8c_run_info.json` is `a_view_snapshot().runs[0]` serialized with milestone 8c's `RunInfo` before any change of this task.
-- **Left open for M9.13b.** `RoleRoutingDecision.role` is an `AgentRole`, which has no decider variant; the history test uses a placeholder role for the pre-run triage record. M9.13b decides how a decider's record names its role (a new `AgentRole` variant would need its own protocol change).
+- **Left open for M9.13b.** `RoleRoutingDecision.role` is an `AgentRole`, which has no decider variant; the history test uses a placeholder role for the pre-run triage record. M9.13b decides how a decider's record names its role (a new `AgentRole` variant would need its own protocol change). *Superseded by the review fixes below (ruling 2).*
+
+### M9.2 review fixes
+
+Controller rulings on the M9.2 review (commit `7042f12`), each done in one commit:
+
+1. **Every run reply carries `request_id`.** `Started`, `Done`, `Refused`, `ConfirmNeeded`, `ToolResult` and `Triaged` gain `#[serde(default)] request_id: Option<u64>` as their last field. `Profile` and `Stats` were newtype variants, so they became struct variants to hold the field: `Profile { reply: Box<ProfileReply>, request_id }` and `Stats { stats: HistoryStats, request_id }`. Their milestone-8c shape no longer decodes, which the PROTO 10 handshake already enforces. **Deviation: `Snapshot` carries no id.** It stays a newtype. A snapshot is state, not an answer: a subscription pushes the same value unasked, and any snapshot answers `List` equally. `RunReply::tagged(id)` stamps every other variant, and `RunReply::request_id()` reads it back. New untagged constructors `RunReply::{tool_result, profile, stats}` join `done` and `refused`. Tests:
+   - `every_run_reply_round_trips_its_request_id` (all eight answering variants, and `Snapshot` untouched), in the new `proto/src/orch_tests_replies.rs`;
+   - `request_id_round_trips`, moved there and widened to every struct-shaped milestone-8c reply decoding as `None`;
+   - `a_tagged_goal_start_is_triaged_with_its_id` in `daemon/tests/server_runs.rs`: a real socket, a repository with a stored profile, deciders off, so triage falls back to the plan path and answers `Triaged` with no run and no agent;
+   - `a_tagged_run_request_is_answered_with_its_id`, which now shares that file's `tagged_rig` helper.
+
+   The Interfaces entry says every reply carries it.
+2. **`AgentRole::Decider`**, appended after `Planner`, inside PROTO 10 (`appended_variants_keep_their_indices` extended). It is serialized as `decider`. A decider has no rounds or tasks, and no arm folds it into a worker:
+   - usage roll-up: `decider`;
+   - TUI `round_label`: `decider`, ranked last;
+   - round glyph: `–` dimmed;
+   - round inspector: no fields;
+   - `mcp::tools::tools_for(Decider)` is empty and `role_name` is `decider` (test `a_decider_has_no_tools`).
+
+   `headless::argv::mcp_args` now returns `Option<Vec<String>>` and answers `None` for a decider, so a session that names one gets no anthrex MCP server on either runtime (test `mcp_args_refuses_a_decider`). This refusal needs no `unreachable!`. The history test's pre-run triage record uses `Decider`. **For M9.13b:** a triage record's `record_id` must be namespaced (the fixture uses `triage/<request>/<n>`) so it never collides with a task or run record's id, because `history_io.rs` deduplicates on `record_id`. M9.13b owns the format.
+3. **`Reported` in the TUI progress line.** `inspector/run_format.rs::progress_text` counted a `Reported` task as `waiting` and in the total (`unwrap_or(5)`). It now skips it. Test: `a_reported_task_is_outside_the_progress_line`, red before with `1/4 merged · 1 working · 2 waiting`.
+4. **`Reported` is not yet finished in the engine.** The places are `engine/complete.rs::complete_pass`, `engine/outbox.rs`'s delivery skip list, and `run/history.rs::outcome`. They are unchanged here and are written into M9.9's task text ("Earlier-brief changes", item 5) as obligations with their tests.
+5. **`running` is a reserved task id.** `validate.rs::check_fields` refuses it with `running is reserved for the message target of every running task` (test `reserved_id_running`). `stage:` needs nothing, because the id pattern has no `:`. That is pinned by `a_task_id_cannot_look_like_a_stage_target`, a pinning test that passed at once.
+6. **`anthrex mcp --role planner`.** `mcp_cmd.rs`'s `RoleArg` gains `Planner`, and `--run` is required for it as for the other run roles. There is no `Decider`. Tests:
+   - `mcp_role_planner_parses_and_decider_does_not`;
+   - the planner row added to `mcp_parses_the_daemons_headless_argv_and_is_hidden` and `run_is_required_except_for_scouts`.
+7. **`RunApi::handle` returns `()`.** Both server arms are `{ run_api.handle(..); None }`. This supersedes the `Option<DaemonMsg>` note above.
+8. **Placeholder refusals pinned** (pinning, passed at once):
+   - `placeholder_edits_refuse_their_whole_batch` (`run/edits_tests_placeholders.rs`, through `apply_edits`, with a valid `cancel` in the batch too);
+   - `placeholder_edits_leave_the_run_unchanged` (`engine/tests/dispatch_edits.rs`, through the engine's `run edit` path on a running run). It covers `Message`, `Refresh`, `AmendTask { deps: Some }`, `[Pause, Message]` and `[Finish, Refresh]`, and asserts the run is equal before and after;
+   - `approval_holds_are_refused_until_the_engine_keeps_them` (`daemon/tests/server_runs.rs`), for `ApproveHold` and `RejectHold` under `request::APPROVE`/`REJECT` with the `NO_HOLDS` text.
+9. **`PlanEditInfo.source` defaults to `user`** through `user_by_default`, as `accepted` does. `old_run_info_still_decodes` now expects `user`. The daemon's snapshot also fills `user` until M9.9 records sources. **Decision 40 wins over the M9.2 task text** for `describe_one`: a message is described as `message <to> (<kind>)`, for example `message t6,t7 (change)`, not `message to <to>` (`describe_names_every_edit_op` updated).
 
 ### M9.1 External facts and names (2026-09-28)
 

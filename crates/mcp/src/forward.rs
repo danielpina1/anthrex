@@ -126,7 +126,7 @@ async fn handshake(rd: &mut OwnedReadHalf) -> Result<(), Handshake> {
 async fn reply(rd: &mut OwnedReadHalf, tool: &str) -> (bool, String) {
     loop {
         match read_frame::<_, DaemonMsg>(rd).await {
-            Ok(Some(DaemonMsg::Run(RunReply::ToolResult { ok, text }))) => return (ok, text),
+            Ok(Some(DaemonMsg::Run(RunReply::ToolResult { ok, text, .. }))) => return (ok, text),
             Ok(Some(DaemonMsg::Error { request, message }))
                 if request == proto::run_wire::request::TOOL =>
             {

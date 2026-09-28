@@ -127,7 +127,8 @@ const CATEGORIES: [&str; 6] = [
 ];
 
 /// Decision 30's progress line over `tasks`: the bar, `{merged}/{total} merged`, each
-/// non-zero category, then the cancelled; `no tasks yet` when nothing counts.
+/// non-zero category, then the cancelled; `no tasks yet` when nothing counts. A
+/// `Reported` task is not counted at all.
 pub(super) fn progress_text<'a>(tasks: impl Iterator<Item = &'a TaskInfo>, width: usize) -> String {
     let (mut merged, mut total, mut cancelled) = (0u64, 0u64, 0u64);
     let mut counts = [0u64; 6];
@@ -135,6 +136,9 @@ pub(super) fn progress_text<'a>(tasks: impl Iterator<Item = &'a TaskInfo>, width
         match task.state {
             TaskState::Cancelled => cancelled += 1,
             TaskState::Merged => merged += 1,
+            // A research or review task's report (M9.9) ends it without a merge: it
+            // is outside the progress categories and the total (M9.2 review ruling 3).
+            TaskState::Reported => continue,
             state => counts[category(state).unwrap_or(5)] += 1,
         }
         total += u64::from(task.state != TaskState::Cancelled);

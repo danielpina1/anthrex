@@ -122,6 +122,7 @@ impl StubDaemon {
                         DaemonMsg::Run(RunReply::ToolResult {
                             ok: *ok,
                             text: text.clone(),
+                            request_id: None,
                         }),
                     ],
                     Script::Frames(frames) => frames.clone(),

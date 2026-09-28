@@ -147,14 +147,20 @@ pub enum ProfileRequest {
 }
 
 /// Daemon → client, carried inside `DaemonMsg::Run`.
+///
+/// Every reply that answers a `RunRequest` ends with `request_id` (milestone 9
+/// decision 2): it echoes a `ClientMsg::RunTagged` id, and is `None` for a
+/// `ClientMsg::Run` and for a reply from before milestone 9. `Snapshot` is the one
+/// exception: it is state, not an answer, and a subscription pushes the same value
+/// unasked, so any snapshot answers `List` equally.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RunReply {
     Started {
         run_id: String,
         state: RunState,
+        #[serde(default)]
+        request_id: Option<u64>,
     },
-    /// `request_id` (milestone 9 decision 2) echoes a `ClientMsg::RunTagged` id, and
-    /// is `None` for a `ClientMsg::Run`.
     Done {
         request: String,
         message: String,
@@ -173,22 +179,38 @@ pub enum RunReply {
         run_id: String,
         prompt: String,
         base_moved: Option<BaseMovedInfo>,
+        #[serde(default)]
+        request_id: Option<u64>,
     },
     Snapshot(RunsSnapshot),
     ToolResult {
         ok: bool,
         text: String,
+        #[serde(default)]
+        request_id: Option<u64>,
     },
     // Milestone 8b.
     Triaged {
         triage: TriageInfo,
         run_id: Option<String>,
         message: String,
+        #[serde(default)]
+        request_id: Option<u64>,
     },
-    /// Boxed so `RunReply` (and `DaemonMsg`, which every broadcast slot holds) stays
-    /// small; a `Box` is invisible on the wire.
-    Profile(Box<ProfileReply>),
-    Stats(HistoryStats),
+    /// `reply` is boxed so `RunReply` (and `DaemonMsg`, which every broadcast slot
+    /// holds) stays small; a `Box` is invisible on the wire. A struct variant since
+    /// milestone 9, so it can carry `request_id`.
+    Profile {
+        reply: Box<ProfileReply>,
+        #[serde(default)]
+        request_id: Option<u64>,
+    },
+    /// A struct variant since milestone 9, so it can carry `request_id`.
+    Stats {
+        stats: HistoryStats,
+        #[serde(default)]
+        request_id: Option<u64>,
+    },
 }
 
 impl RunReply {
@@ -210,14 +232,61 @@ impl RunReply {
         }
     }
 
-    /// Stamps a tagged request's id on the replies it is matched by (`Done` and
-    /// `Refused`); every other reply is returned as it is.
+    /// `ToolResult` for an untagged request (`request_id: None`).
+    pub fn tool_result(ok: bool, text: impl Into<String>) -> RunReply {
+        RunReply::ToolResult {
+            ok,
+            text: text.into(),
+            request_id: None,
+        }
+    }
+
+    /// `Profile` for an untagged request (`request_id: None`).
+    pub fn profile(reply: ProfileReply) -> RunReply {
+        RunReply::Profile {
+            reply: Box::new(reply),
+            request_id: None,
+        }
+    }
+
+    /// `Stats` for an untagged request (`request_id: None`).
+    pub fn stats(stats: HistoryStats) -> RunReply {
+        RunReply::Stats {
+            stats,
+            request_id: None,
+        }
+    }
+
+    /// Stamps a tagged request's id on every reply that answers a request. A
+    /// `Snapshot` is returned as it is.
     pub fn tagged(mut self, id: Option<u64>) -> RunReply {
-        if let RunReply::Done { request_id, .. } | RunReply::Refused { request_id, .. } = &mut self
-        {
-            *request_id = id;
+        match &mut self {
+            RunReply::Started { request_id, .. }
+            | RunReply::Done { request_id, .. }
+            | RunReply::Refused { request_id, .. }
+            | RunReply::ConfirmNeeded { request_id, .. }
+            | RunReply::ToolResult { request_id, .. }
+            | RunReply::Triaged { request_id, .. }
+            | RunReply::Profile { request_id, .. }
+            | RunReply::Stats { request_id, .. } => *request_id = id,
+            RunReply::Snapshot(_) => {}
         }
         self
+    }
+
+    /// The id a tagged request's reply echoes; `None` for a `Snapshot`.
+    pub fn request_id(&self) -> Option<u64> {
+        match self {
+            RunReply::Started { request_id, .. }
+            | RunReply::Done { request_id, .. }
+            | RunReply::Refused { request_id, .. }
+            | RunReply::ConfirmNeeded { request_id, .. }
+            | RunReply::ToolResult { request_id, .. }
+            | RunReply::Triaged { request_id, .. }
+            | RunReply::Profile { request_id, .. }
+            | RunReply::Stats { request_id, .. } => *request_id,
+            RunReply::Snapshot(_) => None,
+        }
     }
 }
 

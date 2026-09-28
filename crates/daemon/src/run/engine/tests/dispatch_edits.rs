@@ -387,3 +387,53 @@ fn an_edit_that_reaches_an_unchecked_runtime_is_refused() {
     assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
     assert_eq!(fx.run().tasks.len(), 2);
 }
+
+/// M9.2 review ruling 8, pinning, through the engine's `run edit` path: `message`,
+/// `refresh` and an `amend_task` with `deps` refuse their whole batch, with a pause or a
+/// finish beside them too, and the run is left exactly as it was.
+#[test]
+fn placeholder_edits_leave_the_run_unchanged() {
+    use proto::{MessageKind, MessageTarget};
+    let plan = plan_with(
+        PROFILE,
+        &[
+            task_toml("t1", "S", "[\"docs/a.md\"]", ""),
+            task_toml("t2", "S", "[\"docs/b.md\"]", ""),
+        ],
+    );
+    let mut fx = Fixture::new(&plan);
+    fx.ready(true);
+    assert_eq!(fx.run().state, proto::RunState::Running);
+    let message = PlanEdit::Message {
+        to: MessageTarget::Running,
+        text: "the API changed".into(),
+        kind: MessageKind::Info,
+    };
+    let refresh = PlanEdit::Refresh {
+        task_id: "t1".into(),
+    };
+    let amend_deps = PlanEdit::AmendTask {
+        task_id: "t2".into(),
+        brief: None,
+        acceptance: None,
+        route: None,
+        test_mode: None,
+        test_mode_reason: None,
+        priority: None,
+        size: None,
+        deps: Some(vec!["t1".into()]),
+    };
+    let not_yet = "op: amend deps, message and refresh are not available yet".to_string();
+    for batch in [
+        vec![message.clone()],
+        vec![refresh.clone()],
+        vec![amend_deps],
+        vec![PlanEdit::Pause, message],
+        vec![PlanEdit::Finish, refresh],
+    ] {
+        let before = fx.run().clone();
+        let effects = edit(&mut fx, batch.clone());
+        assert_eq!(replies(&effects), vec![Err(not_yet.clone())], "{batch:?}");
+        assert_eq!(fx.run(), &before, "{batch:?}");
+    }
+}

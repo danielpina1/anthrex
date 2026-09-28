@@ -373,7 +373,7 @@ impl ScoutService {
             Ok(text) => (true, text),
             Err(text) => (false, text),
         };
-        RunReply::ToolResult { ok, text }
+        RunReply::tool_result(ok, text)
     }
 
     async fn submit(&self, call: ToolCall) -> Result<String, String> {

@@ -16,6 +16,7 @@ fn mcp_parses_the_daemons_headless_argv_and_is_hidden() {
         (AgentRole::Worker, "add-reset-3f9a", Some("t1"), None),
         (AgentRole::Reviewer, "add-reset-3f9a", Some("t2"), None),
         (AgentRole::Orchestrator, "add-reset-3f9a", None, None),
+        (AgentRole::Planner, "add-reset-3f9a", None, None),
         (AgentRole::Scout, "add-reset-3f9a", None, Some("api-1")),
         (AgentRole::Scout, "", None, Some("onboarding-1")),
     ] {
@@ -26,7 +27,7 @@ fn mcp_parses_the_daemons_headless_argv_and_is_hidden() {
             scout_id: scout.map(String::from),
         };
         let mut argv = vec!["anthrex".to_string()];
-        argv.extend(daemon::headless::argv::mcp_args(&target, 12, socket));
+        argv.extend(daemon::headless::argv::mcp_args(&target, 12, socket).expect("an mcp role"));
         match Cli::try_parse_from(&argv)
             .unwrap_or_else(|e| panic!("{argv:?}: {e}"))
             .command
@@ -74,7 +75,7 @@ fn mcp_socket_defaults_to_the_daemons() {
 /// M8b decision 15: `--run` may be left out for a scout only.
 #[test]
 fn run_is_required_except_for_scouts() {
-    for role in ["worker", "reviewer", "orchestrator"] {
+    for role in ["worker", "reviewer", "orchestrator", "planner"] {
         let argv = ["anthrex", "mcp", "--role", role, "--window", "1"];
         let error = match Cli::try_parse_from(argv) {
             Ok(_) => panic!("{role} parsed without --run"),
@@ -101,4 +102,25 @@ fn run_is_required_except_for_scouts() {
         }
         other => panic!("expected Mcp, got {other:?}"),
     }
+}
+
+/// M9.2 review ruling 6: the daemon can build a planner's `anthrex mcp`, so it parses.
+/// `decider` is not a role `anthrex mcp` accepts: a decider never runs it.
+#[test]
+fn mcp_role_planner_parses_and_decider_does_not() {
+    let argv = [
+        "anthrex", "mcp", "--role", "planner", "--run", "r1", "--window", "3",
+    ];
+    match Cli::try_parse_from(argv).unwrap().command {
+        Some(Command::Mcp(args)) => {
+            let opts = args.into_options(PathBuf::from("/tmp/d.sock"));
+            assert_eq!(opts.role, AgentRole::Planner);
+            assert_eq!(opts.run_id, "r1");
+        }
+        other => panic!("expected Mcp, got {other:?}"),
+    }
+    let argv = [
+        "anthrex", "mcp", "--role", "decider", "--run", "r1", "--window", "3",
+    ];
+    assert!(Cli::try_parse_from(argv).is_err(), "decider must not parse");
 }

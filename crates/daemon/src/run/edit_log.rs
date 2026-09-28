@@ -48,6 +48,14 @@ pub fn describe(edits: &[PlanEdit]) -> String {
     out
 }
 
+fn kind_label(kind: proto::MessageKind) -> &'static str {
+    match kind {
+        proto::MessageKind::Info => "info",
+        proto::MessageKind::Change => "change",
+        proto::MessageKind::StopAndWait => "stop_and_wait",
+    }
+}
+
 fn describe_one(edit: &PlanEdit) -> String {
     match edit {
         PlanEdit::AddTask { task } => format!("add {}", task.id),
@@ -59,7 +67,8 @@ fn describe_one(edit: &PlanEdit) -> String {
         PlanEdit::Pause => "pause".to_string(),
         PlanEdit::Resume => "resume".to_string(),
         PlanEdit::Finish => "finish".to_string(),
-        PlanEdit::Message { to, .. } => format!("message to {to}"),
+        // Decision 40's wording: `message t1,t2 (change)`.
+        PlanEdit::Message { to, kind, .. } => format!("message {to} ({})", kind_label(*kind)),
         PlanEdit::Refresh { task_id } => format!("refresh {task_id}"),
     }
 }

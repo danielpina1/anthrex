@@ -387,25 +387,25 @@ fn other_run_replies_change_nothing() {
         RunReply::Started {
             run_id: "r1".into(),
             state: RunState::AwaitingApproval,
+            request_id: None,
         },
         RunReply::ConfirmNeeded {
             run_id: "r1".into(),
             prompt: "p".into(),
             base_moved: None,
+            request_id: None,
         },
-        RunReply::ToolResult {
-            ok: false,
-            text: "t".into(),
-        },
+        RunReply::tool_result(false, "t"),
         RunReply::Triaged {
             triage,
             run_id: None,
             message: "m".into(),
+            request_id: None,
         },
-        RunReply::Profile(Box::new(ProfileReply::Done {
+        RunReply::profile(ProfileReply::Done {
             message: "m".into(),
-        })),
-        RunReply::Stats(stats),
+        }),
+        RunReply::stats(stats),
     ];
     for reply in replies {
         let label = format!("{reply:?}");

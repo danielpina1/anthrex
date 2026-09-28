@@ -7,16 +7,20 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::EditFile;
-use crate::messages::{ClientMsg, DaemonMsg};
+use crate::messages::ClientMsg;
 use crate::orch::*;
 use crate::run::{AgentRole, BlockReason, Effort, PlanEdit, Route, RunState, Strength, TaskState};
-use crate::run_wire::{RunReply, RunRequest, request};
+use crate::run_wire::RunRequest;
 use crate::types::Runtime;
 
 /// The role-routing history line (decision 43), split out to keep this file under the
 /// 600-line rule.
 #[path = "orch_tests_history.rs"]
 mod history;
+
+/// Request ids on run replies (decision 2), split out for the same reason.
+#[path = "orch_tests_replies.rs"]
+mod replies;
 
 fn a_route(runtime: Runtime, model: &str) -> Route {
     Route {
@@ -264,7 +268,7 @@ fn appended_variants_keep_their_indices() {
     use AgentRole as A;
     assert_last(
         &[A::Orchestrator, A::Worker, A::Reviewer, A::Scout],
-        &[A::Planner],
+        &[A::Planner, A::Decider],
     );
     use RunState as R;
     assert_last(
@@ -442,48 +446,4 @@ fn new_requests_round_trip() {
         panic!("a Promote");
     };
     assert_eq!(orchestrator, None);
-}
-
-#[test]
-fn request_id_round_trips() {
-    let replies = [
-        RunReply::Done {
-            request: request::APPROVE.into(),
-            message: "hold h1 approved".into(),
-            request_id: Some(7),
-        },
-        RunReply::Refused {
-            request: request::START_GOAL.into(),
-            message: "not a Git repository".into(),
-            request_id: Some(7),
-        },
-    ];
-    for reply in &replies {
-        both_ways(&DaemonMsg::Run(reply.clone()));
-    }
-    for tag in ["Done", "Refused"] {
-        let old = serde_json::json!({ tag: {"request": "run edit", "message": "m"} });
-        match serde_json::from_value::<RunReply>(old).unwrap() {
-            RunReply::Done { request_id, .. } | RunReply::Refused { request_id, .. } => {
-                assert_eq!(request_id, None, "{tag}")
-            }
-            other => panic!("{other:?}"),
-        }
-    }
-    // `tagged` stamps an id on the two replies a tagged request is matched by, and
-    // leaves every other reply as it is.
-    let done = RunReply::Done {
-        request: request::EDIT.into(),
-        message: "ok".into(),
-        request_id: None,
-    };
-    let RunReply::Done { request_id, .. } = done.tagged(Some(9)) else {
-        panic!("still Done");
-    };
-    assert_eq!(request_id, Some(9));
-    let result = RunReply::ToolResult {
-        ok: true,
-        text: "t".into(),
-    };
-    assert_eq!(result.clone().tagged(Some(9)), result);
 }

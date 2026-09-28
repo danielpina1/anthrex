@@ -27,6 +27,10 @@ pub enum AgentRole {
     Scout,
     /// Milestone 9: a headless sub-planner, one per epic (`"planner"`).
     Planner,
+    /// Milestone 9 decision 43: a decider session (`"decider"`), named only by its
+    /// role-routing record. A decider has no rounds or tasks and never runs
+    /// `anthrex mcp`, so it is never given anthrex tools.
+    Decider,
 }
 
 /// Identifies one agent round: which run, optionally which task, which role, and which

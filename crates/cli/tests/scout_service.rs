@@ -246,7 +246,9 @@ fn call(window_id: u32, scout: &str) -> ToolCall {
 
 fn refusal(reply: RunReply) -> String {
     match reply {
-        RunReply::ToolResult { ok: false, text } => text,
+        RunReply::ToolResult {
+            ok: false, text, ..
+        } => text,
         other => panic!("expected a refusal, got {other:?}"),
     }
 }

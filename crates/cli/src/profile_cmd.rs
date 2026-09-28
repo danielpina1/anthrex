@@ -87,7 +87,7 @@ async fn request(client: &mut CliClient, request: ProfileRequest) -> anyhow::Res
         .request_with_timeout(msg, RUN_REQUEST_TIMEOUT)
         .await?
     {
-        DaemonMsg::Run(RunReply::Profile(reply)) => Ok(*reply),
+        DaemonMsg::Run(RunReply::Profile { reply, .. }) => Ok(*reply),
         DaemonMsg::Run(RunReply::Refused { message, .. }) => anyhow::bail!(message),
         DaemonMsg::Error { message, .. } => anyhow::bail!(message),
         other => anyhow::bail!("unexpected reply: {other:?}"),

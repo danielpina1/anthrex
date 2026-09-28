@@ -259,7 +259,7 @@ impl RunHarness {
     /// One raw profile request for the harness repository.
     pub fn profile_request(&self, request: ProfileRequest) -> ProfileReply {
         match self.request(RunRequest::Profile(request)) {
-            RunReply::Profile(reply) => *reply,
+            RunReply::Profile { reply, .. } => *reply,
             other => panic!("a profile request answered {other:?}"),
         }
     }

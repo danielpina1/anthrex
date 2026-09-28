@@ -25,6 +25,9 @@ const ID_PATTERN: &str = "^[a-z0-9][a-z0-9-]{0,15}$";
 const ID_MAX: usize = 16;
 /// The id of the run's own branch, `anthrex/<run>/integration` (decision 16).
 const RESERVED_ID: &str = "integration";
+/// Milestone 9's message target for every running task (`proto::MessageTarget::Running`,
+/// M9.2 review ruling 5). `stage:<n>` needs no reservation: an id cannot hold `:`.
+const RUNNING_ID: &str = "running";
 
 pub(super) fn strength_label(s: Strength) -> &'static str {
     match s {
@@ -268,6 +271,12 @@ fn check_fields(spec: &PlanTask, errors: &mut Vec<PlanError>) {
             "id",
             "id",
             "integration is reserved for the run branch".to_string(),
+        ));
+    } else if id == RUNNING_ID {
+        errors.push(e(
+            "id",
+            "id",
+            "running is reserved for the message target of every running task".to_string(),
         ));
     }
     if matches!(spec.kind, TaskKind::Research | TaskKind::Review) {

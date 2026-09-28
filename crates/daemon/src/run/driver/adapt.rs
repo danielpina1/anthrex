@@ -144,7 +144,7 @@ impl RunService {
                 message: "the profile service is not running".to_string(),
             },
         };
-        RunReply::Profile(Box::new(reply))
+        RunReply::profile(reply)
     }
 
     /// A `submit_*` call from an agent (decision 15): a scout's goes to the scout
@@ -154,15 +154,15 @@ impl RunService {
         if call.role == AgentRole::Scout {
             return match self.adaptation.get() {
                 Some(adaptation) => adaptation.scouts.tool(call).await,
-                None => RunReply::ToolResult {
-                    ok: false,
-                    text: format!("unknown scout {}", call.scout_id.unwrap_or_default()),
-                },
+                None => RunReply::tool_result(
+                    false,
+                    format!("unknown scout {}", call.scout_id.unwrap_or_default()),
+                ),
             };
         }
         match self.ask(|reply| EventKind::Tool { reply, call }).await {
-            Ok(text) => RunReply::ToolResult { ok: true, text },
-            Err(text) => RunReply::ToolResult { ok: false, text },
+            Ok(text) => RunReply::tool_result(true, text),
+            Err(text) => RunReply::tool_result(false, text),
         }
     }
 

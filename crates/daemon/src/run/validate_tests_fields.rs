@@ -57,6 +57,38 @@ fn reserved_id_integration() {
     );
 }
 
+/// M9.2 review ruling 5: `running` is a message target (`MessageTarget::Running`), so
+/// no task may be named so, or `message running` would be ambiguous.
+#[test]
+fn reserved_id_running() {
+    let text = plan_with(PROFILE, &[one("running", "")]);
+    assert_eq!(
+        errors_of(&text),
+        vec![err(
+            Some("running"),
+            "id",
+            "id",
+            "running is reserved for the message target of every running task"
+        )]
+    );
+}
+
+/// M9.2 review ruling 5, pinning: a task id cannot contain `:`, so no task id can be
+/// read as a `stage:<n>` message target.
+#[test]
+fn a_task_id_cannot_look_like_a_stage_target() {
+    let text = plan_with(PROFILE, &[one("stage:3", ""), one("stage-3", "")]);
+    assert_eq!(
+        errors_of(&text),
+        vec![err(
+            Some("stage:3"),
+            "id",
+            "id",
+            "must match ^[a-z0-9][a-z0-9-]{0,15}$"
+        )]
+    );
+}
+
 #[test]
 fn unknown_dependency() {
     let text = plan_with(

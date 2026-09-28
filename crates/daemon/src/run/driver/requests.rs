@@ -213,7 +213,11 @@ impl RunService {
                             .runs
                             .get(&id)
                             .map_or(proto::RunState::AwaitingApproval, |run| run.state);
-                        RunReply::Started { run_id, state }
+                        RunReply::Started {
+                            run_id,
+                            state,
+                            request_id: None,
+                        }
                     }
                     Err(message) => refused(message),
                 }
@@ -478,6 +482,7 @@ impl RunService {
                     ),
                     run_id,
                     base_moved: None,
+                    request_id: None,
                 };
             }
             return self.finish_now(run_id, action).await;
@@ -543,6 +548,7 @@ impl RunService {
                 run_id,
                 prompt,
                 base_moved: None,
+                request_id: None,
             },
             Some(info) if confirm.as_deref() == Some(format!("{run_id}@{}", info.to).as_str()) => {
                 self.send(EventKind::BaseAdvanced {
@@ -556,6 +562,7 @@ impl RunService {
                 run_id,
                 prompt,
                 base_moved: Some(info),
+                request_id: None,
             },
         }
     }

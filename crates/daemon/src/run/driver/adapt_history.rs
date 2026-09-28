@@ -102,7 +102,7 @@ impl RunService {
         })
         .await;
         match result {
-            Ok(Ok(stats)) => RunReply::Stats(stats),
+            Ok(Ok(stats)) => RunReply::stats(stats),
             Ok(Err(message)) => refused(message),
             Err(error) => refused(format!("a blocking step did not finish: {error}")),
         }

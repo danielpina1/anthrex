@@ -332,7 +332,7 @@ fn mcp_args_for_a_scout() {
         scout_id: Some("onboarding-1".into()),
     };
     assert_eq!(
-        mcp_args(&target, 7, Path::new("/tmp/a.sock")),
+        mcp_args(&target, 7, Path::new("/tmp/a.sock")).unwrap(),
         [
             "mcp",
             "--role",
@@ -351,7 +351,37 @@ fn mcp_args_for_a_scout() {
         ..target
     };
     assert_eq!(
-        mcp_args(&run_scout, 7, Path::new("/tmp/a.sock"))[..7],
+        mcp_args(&run_scout, 7, Path::new("/tmp/a.sock")).unwrap()[..7],
         ["mcp", "--role", "scout", "--run", "r1", "--scout", "api-1"]
     );
+}
+
+/// M9.2 review ruling 6: a decider never runs `anthrex mcp`. `mcp_args` refuses its
+/// target, and a session that names one gets no anthrex MCP server on either runtime.
+#[test]
+fn mcp_args_refuses_a_decider() {
+    let target = McpTarget {
+        role: AgentRole::Decider,
+        run_id: "r-3f9a".into(),
+        task_id: None,
+        scout_id: None,
+    };
+    assert_eq!(mcp_args(&target, 7, Path::new("/tmp/a.sock")), None);
+    for runtime in [Runtime::Claude, Runtime::Codex] {
+        let spec = HeadlessSpec {
+            mcp: Some(target.clone()),
+            ..worker(runtime)
+        };
+        let argv = match runtime {
+            Runtime::Codex => codex(&spec, &SessionArg::New { uuid: None }, "go", &CLI_CAPS),
+            _ => claude(&spec, &new_session(), &CLI_CAPS),
+        };
+        assert!(
+            !argv
+                .iter()
+                .any(|a| a == "--mcp-config" || a.contains("mcp_servers.anthrex")),
+            "{runtime:?}: {argv:?}"
+        );
+        assert!(!argv.iter().any(|a| a.contains("--role")), "{argv:?}");
+    }
 }

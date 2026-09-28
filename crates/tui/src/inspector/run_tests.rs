@@ -422,6 +422,43 @@ fn every_progress_category_in_order() {
     );
 }
 
+/// M9.2 review ruling 3: a `Reported` task sits outside the progress categories. It is
+/// neither `waiting` nor part of the total, so the line reads as if it were absent.
+#[test]
+fn a_reported_task_is_outside_the_progress_line() {
+    let progress = |states: &[TaskState]| {
+        let app = gate_with(|run| {
+            run.state = RunState::Running;
+            run.tasks = states
+                .iter()
+                .enumerate()
+                .map(|(index, state)| {
+                    crate::tree::run_fixtures::task(
+                        &format!("t{index}"),
+                        "x",
+                        proto::Size::S,
+                        *state,
+                    )
+                })
+                .collect();
+        });
+        value(&inspect_node(&app, &run_key(RUN_ID)), "progress").map(str::to_owned)
+    };
+    let with = progress(&[
+        TaskState::Merged,
+        TaskState::Working,
+        TaskState::Reported,
+        TaskState::Pending,
+    ]);
+    let without = progress(&[TaskState::Merged, TaskState::Working, TaskState::Pending]);
+    let text = with.clone().expect("a progress line");
+    assert!(
+        text.contains("1/3 merged · 1 working · 1 waiting"),
+        "{text}"
+    );
+    assert_eq!(with, without);
+}
+
 #[test]
 fn hostile_run_values_never_panic_and_stay_one_line() {
     let app = gemini_with(|run| {

@@ -42,10 +42,7 @@ impl StubDaemon {
                 );
                 if let Some(ClientMsg::Run(RunRequest::Tool(call))) = read_frame(&mut stream) {
                     record.lock().unwrap().push(call);
-                    let reply = RunReply::ToolResult {
-                        ok,
-                        text: text.clone(),
-                    };
+                    let reply = RunReply::tool_result(ok, text.clone());
                     write_frame(&mut stream, &DaemonMsg::Run(reply));
                 }
             }

@@ -56,7 +56,7 @@ fn describe_names_every_edit_op() {
     assert_eq!(
         describe(&edits),
         "add t9, split t2, cancel t3, amend t4, dep t4 on t2, answer t5, pause, resume, \
-         finish, message to t6,t7, refresh t8"
+         finish, message t6,t7 (change), refresh t8"
     );
     assert_eq!(describe(&[PlanEdit::Pause]), "pause");
 }

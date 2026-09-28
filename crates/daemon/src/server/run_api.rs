@@ -25,10 +25,10 @@ impl RunApi {
         }
     }
 
-    /// `id`: a `ClientMsg::RunTagged` request's, echoed on its `Done` or `Refused`
-    /// reply (milestone 9 decision 2). Always `None`: the connection's loop sends
-    /// nothing itself.
-    pub(super) fn handle(&mut self, request: RunRequest, id: Option<u64>) -> Option<DaemonMsg> {
+    /// `id`: a `ClientMsg::RunTagged` request's, echoed on every reply that answers it
+    /// (milestone 9 decision 2). Every answer is sent from here, so the connection's
+    /// loop sends nothing itself.
+    pub(super) fn handle(&mut self, request: RunRequest, id: Option<u64>) {
         match request {
             RunRequest::Subscribe => {
                 self.unsubscribe();
@@ -50,7 +50,6 @@ impl RunApi {
                 });
             }
         }
-        None
     }
 
     fn unsubscribe(&mut self) {

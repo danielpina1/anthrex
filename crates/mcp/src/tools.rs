@@ -21,6 +21,9 @@ pub fn tools_for(role: AgentRole) -> Vec<Tool> {
         // Milestone 9 task M9.11 adds the orchestrator's and the sub-planner's tools.
         AgentRole::Orchestrator | AgentRole::Planner => Vec::new(),
         AgentRole::Scout => vec![crate::tools_scout::submit_scout_report()],
+        // Milestone 9 decision 43: a decider never runs `anthrex mcp`, and never gets
+        // an anthrex tool even if something asked for its list.
+        AgentRole::Decider => Vec::new(),
     }
 }
 
@@ -38,6 +41,7 @@ pub fn role_name(role: AgentRole) -> &'static str {
         AgentRole::Reviewer => "reviewer",
         AgentRole::Scout => "scout",
         AgentRole::Planner => "planner",
+        AgentRole::Decider => "decider",
     }
 }
 
@@ -185,6 +189,21 @@ mod tests {
     #[test]
     fn orchestrator_tools_are_empty() {
         assert!(tools_for(AgentRole::Orchestrator).is_empty());
+    }
+
+    /// M9.2 review ruling 2: a decider is never given an anthrex tool.
+    #[test]
+    fn a_decider_has_no_tools() {
+        assert!(tools_for(AgentRole::Decider).is_empty());
+        assert_eq!(role_name(AgentRole::Decider), "decider");
+        for tool in [
+            TASK_DONE,
+            TASK_BLOCKED,
+            SUBMIT_REVIEW,
+            "submit_scout_report",
+        ] {
+            assert!(!allowed(AgentRole::Decider, tool), "{tool}");
+        }
     }
 
     /// Every object in every schema, the finding items included, is closed.

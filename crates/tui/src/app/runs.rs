@@ -196,8 +196,8 @@ impl App {
             | RunReply::ConfirmNeeded { .. }
             | RunReply::ToolResult { .. }
             | RunReply::Triaged { .. }
-            | RunReply::Profile(_)
-            | RunReply::Stats(_) => {}
+            | RunReply::Profile { .. }
+            | RunReply::Stats { .. } => {}
         }
         vec![]
     }

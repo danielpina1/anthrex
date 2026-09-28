@@ -12,6 +12,7 @@ pub struct McpArgs {
     /// (M8b decision 15).
     #[arg(long = "run", required_if_eq_any([
         ("role", "worker"), ("role", "reviewer"), ("role", "orchestrator"),
+        ("role", "planner"),
     ]))]
     run_id: Option<String>,
     #[arg(long = "task")]
@@ -25,14 +26,17 @@ pub struct McpArgs {
     socket: Option<PathBuf>,
 }
 
-/// `--role`. `orchestrator` is accepted because the launcher can build it; it serves no
-/// tools until milestone 9. `scout` (milestone 8b) serves `submit_scout_report`.
+/// `--role`. `orchestrator` and `planner` are accepted because the launcher can build
+/// them; they serve no tools until milestone 9's M9.11. `scout` (milestone 8b) serves
+/// `submit_scout_report`. There is no `decider`: a decider never runs `anthrex mcp`
+/// (`daemon::headless::argv::mcp_args` refuses one).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum RoleArg {
     Worker,
     Reviewer,
     Orchestrator,
     Scout,
+    Planner,
 }
 
 impl From<RoleArg> for proto::AgentRole {
@@ -42,6 +46,7 @@ impl From<RoleArg> for proto::AgentRole {
             RoleArg::Reviewer => proto::AgentRole::Reviewer,
             RoleArg::Orchestrator => proto::AgentRole::Orchestrator,
             RoleArg::Scout => proto::AgentRole::Scout,
+            RoleArg::Planner => proto::AgentRole::Planner,
         }
     }
 }

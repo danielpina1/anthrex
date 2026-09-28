@@ -54,11 +54,11 @@ pub(super) async fn start_goal(
 pub(super) async fn stats(runs: &mut Runs, dir: Option<PathBuf>, json: bool) -> anyhow::Result<()> {
     let dir = crate::resolve_dir(dir)?;
     match runs.request(RunRequest::Stats { dir }).await? {
-        RunReply::Stats(stats) if json => {
+        RunReply::Stats { stats, .. } if json => {
             println!("{}", serde_json::to_string_pretty(&stats)?);
             Ok(())
         }
-        RunReply::Stats(stats) => {
+        RunReply::Stats { stats, .. } => {
             print!("{}", daemon::run::stats::render(&stats));
             Ok(())
         }

@@ -100,7 +100,7 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
                 at: e.at,
                 text: e.text.clone(),
                 // Milestone 9 decision 40 records sources, refusals and recipients.
-                source: String::new(),
+                source: "user".to_string(),
                 accepted: true,
                 error: None,
                 recipients: Vec::new(),
@@ -136,6 +136,8 @@ pub(crate) fn run_usage(run: &Run) -> RunUsage {
             AgentRole::Scout => "scout",
             AgentRole::Orchestrator => "orchestrator",
             AgentRole::Planner => "planner",
+            // A decider has no rounds (decision 43); its usage is `decider_usage`.
+            AgentRole::Decider => "decider",
         };
         credit(role, round.usage);
     }

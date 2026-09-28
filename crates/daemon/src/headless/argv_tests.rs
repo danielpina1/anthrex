@@ -207,7 +207,7 @@ fn mcp_args_for_a_worker() {
     };
     assert_eq!(
         mcp_args(&target, 7, Path::new("/tmp/a.sock")),
-        strs(&[
+        Some(strs(&[
             "mcp",
             "--role",
             "worker",
@@ -219,7 +219,7 @@ fn mcp_args_for_a_worker() {
             "7",
             "--socket",
             "/tmp/a.sock"
-        ])
+        ]))
     );
     let no_task = McpTarget {
         task_id: None,
@@ -228,9 +228,9 @@ fn mcp_args_for_a_worker() {
     };
     assert_eq!(
         mcp_args(&no_task, 12, Path::new("/s")),
-        strs(&[
+        Some(strs(&[
             "mcp", "--role", "reviewer", "--run", "r-3f9a", "--window", "12", "--socket", "/s"
-        ])
+        ]))
     );
 }
 
