@@ -159,6 +159,9 @@ pub struct RunLimits {
     /// M8b decision 18: `[orchestrator.deciders] slot_wait_secs`.
     #[serde(default = "adapt::slot_wait_absent")]
     pub decider_slot_wait_secs: u64,
+    /// Milestone 9 (ruling D-5): the orchestrator settings, frozen at run start.
+    #[serde(default)]
+    pub orch: super::orch::OrchLimits,
 }
 
 /// A resolved task: the planner's spec plus everything decisions 8–10 and 35 derive

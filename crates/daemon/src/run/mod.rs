@@ -40,6 +40,7 @@ pub mod history_io;
 pub mod journal;
 pub mod messages;
 pub mod model;
+pub mod orch;
 pub mod phases;
 pub mod plan;
 pub mod proof;

@@ -186,6 +186,7 @@ pub fn run_limits(
         api_key_helper: config.claude.api_key_helper.clone(),
         decider_mode: config.deciders.mode,
         decider_slot_wait_secs: config.deciders.slot_wait_secs,
+        orch: super::orch::OrchLimits::from_config(config),
     }
 }
 

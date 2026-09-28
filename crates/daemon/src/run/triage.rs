@@ -19,9 +19,6 @@ use super::model::{Run, Task};
 use super::plan::PlanError;
 use crate::decider::{DeciderAnswer, Decision, TriageAnswer};
 
-/// Spec §22.3's `planner_task_cap` starting point; milestone 9 owns the config key.
-pub const PLAN_SCALE_MAX: usize = 12;
-
 /// The fast-path task's id.
 pub const FAST_TASK_ID: &str = "t1";
 

@@ -182,6 +182,7 @@ fn fallback_triage_routes_plan_with_the_reason() {
         report_files: vec![],
         files: vec![],
         files_total: 0,
+        planner_task_cap: 12,
     });
     let d = fallback_decision(&request, OFF_REASON.into());
     let r = route(&d, true);
@@ -328,6 +329,7 @@ fn messages_are_exact() {
             report_files: vec![],
             files: vec![],
             files_total: 0,
+            planner_task_cap: 12,
         }),
         OFF_REASON.into(),
     );

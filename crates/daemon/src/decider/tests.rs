@@ -462,6 +462,7 @@ fn fallback_table() {
         report_files: vec![],
         files: vec![],
         files_total: 0,
+        planner_task_cap: 12,
     });
     let DeciderAnswer::Triage(t) = fallback(&triage) else {
         panic!("not triage")

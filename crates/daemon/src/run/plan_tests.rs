@@ -479,6 +479,53 @@ fn all_errors_are_collected() {
     );
 }
 
+/// M9.3 (ruling D-5): the orchestrator limits are copied from `[orchestrator]` when the
+/// run is built, so a later config edit cannot change the rules of a live run; they
+/// survive `run.json`, and a run recorded before milestone 9 gets the config defaults.
+#[test]
+fn limits_are_frozen_at_run_start() {
+    use crate::run::orch::{OrchLimits, PlannerLimits};
+    let mut config = config::Orchestrator::default();
+    config.agent.message_max_per_turn = 1;
+    config.agent.note_max_per_task = 4;
+    config.agent.planners.runtime = Some(Runtime::Codex);
+    config.agent.planners.timeout_secs = 600;
+    let text = plan_with(
+        PROFILE,
+        &[task_toml("t1", "S", r#"["crates/a/src/lib.rs"]"#, "")],
+    );
+    let run = build_with(&text, &config).unwrap_or_else(|e| panic!("{}", show(&e)));
+    config.agent.message_max_per_turn = 7;
+    config.agent.note_max_per_task = 9;
+    let frozen = OrchLimits {
+        planner_task_cap: 12,
+        max_scouts: 12,
+        wake_orchestrator: true,
+        wake_quiet_secs: 5,
+        message_max_per_turn: 1,
+        note_max_per_task: 4,
+        planners: PlannerLimits {
+            runtime: Some(Runtime::Codex),
+            strength: Strength::Frontier,
+            effort: Effort::High,
+            max_tool_calls: 200,
+            timeout_secs: 600,
+            max_rejections: 5,
+        },
+    };
+    assert_eq!(run.limits.orch, frozen);
+
+    let json = serde_json::to_value(&run).unwrap();
+    let back: Run = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(back.limits.orch, frozen);
+    let mut old = json;
+    old["limits"].as_object_mut().unwrap().remove("orch");
+    let old: Run = serde_json::from_value(old).unwrap();
+    let defaults = build(&text).unwrap_or_else(|e| panic!("{}", show(&e)));
+    assert_eq!(old.limits.orch, OrchLimits::default());
+    assert_eq!(defaults.limits.orch, OrchLimits::default());
+}
+
 #[path = "plan_tests_parse.rs"]
 mod parse;
 

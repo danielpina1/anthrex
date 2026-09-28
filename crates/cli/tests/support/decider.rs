@@ -148,6 +148,7 @@ pub fn triage() -> DeciderRequest {
         report_files: vec![],
         files: vec!["README.md".into()],
         files_total: 1,
+        planner_task_cap: 12,
     })
 }
 

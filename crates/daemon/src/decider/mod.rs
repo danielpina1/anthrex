@@ -65,6 +65,8 @@ pub struct TriageInput {
     /// Tracked paths (a prefix of `git ls-files`), and how many there are in all.
     pub files: Vec<String>,
     pub files_total: u32,
+    /// `[orchestrator] planner_task_cap`: the plan scale's upper bound (M9.3).
+    pub planner_task_cap: u32,
 }
 
 /// One task of a size check.

@@ -352,6 +352,13 @@ fn old_run_json_loads() {
     ] {
         assert!(map.remove(key).is_some(), "{key}");
     }
+    // Milestone 9 task 3: the orchestrator limits, at the config defaults.
+    let limits = map["limits"].as_object_mut().unwrap();
+    let orch = limits.remove("orch").expect("limits.orch");
+    assert_eq!(
+        serde_json::from_value::<crate::run::orch::OrchLimits>(orch).unwrap(),
+        crate::run::orch::OrchLimits::default()
+    );
     for task in back["tasks"].as_array_mut().unwrap() {
         // Milestone 9 decision 24's plan field.
         let spec = task["spec"].as_object_mut().unwrap();

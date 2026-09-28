@@ -199,6 +199,7 @@ impl RunService {
             report_files: Vec::new(),
             files: Vec::new(),
             files_total: 0,
+            planner_task_cap: self.ctx.orchestrator.agent.planner_task_cap,
         };
         if adaptation.deciders.mode == DeciderMode::Off {
             return fallback_decision(&DeciderRequest::Triage(input), OFF_REASON.into());

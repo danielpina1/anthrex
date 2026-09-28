@@ -2123,3 +2123,24 @@ Checked on `origin/main` at `8d440d7`, read with `git show` / `git grep` (no wor
 - `List`, `Subscribe` and `Unsubscribe` must never be sent tagged. A `Snapshot` or nothing answers them, so a client matching by id would wait forever.
 - Nothing pins the snapshot's `PlanEditInfo.source = "user"`. M9.9 replaces that line, and its test pins the recorded source.
 - **For M9.13a:** a `run.json` from before M9 may already hold a task named `running`. It loads without re-validation, so there `MessageTarget::Running` and the task id collide. M9.13a resolves a `running` target by state, never by id, and states that in its tests.
+
+### Task M9.3 (Configuration)
+
+- **Where the values come from.** Every default and range is the Interfaces "`config`" block as written. None of M9.3's keys depends on M9.1's outstanding real-CLI checks 1–7 and 10. `MCP_TOOL_TIMEOUT` (decision 10, check 3) is a launch variable of the orchestrator, not a config key, so it is left to M9.10, which builds it as the brief says.
+- **Messages the brief did not spell out**, in M8a/M8b's form:
+  - `orchestrator.agent.runtime: must be claude or codex (using orchestrator.default_runtime)`;
+  - `orchestrator.planners.runtime: … (using the orchestrator's runtime)`;
+  - `orchestrator.agent.model: expected a string (using unset)`, as `claude.api_key_helper` does;
+  - `orchestrator.agent` or `orchestrator.planners` that is not a table: `expected a table (using table of defaults)`, as `deciders` does.
+- **Files outside the task's list.**
+  - `config/src/orchestrator/adapt.rs`: `read_strength`, `read_effort` and `sub_table` became `pub(super)` so `agent.rs` reuses them. Their behaviour is unchanged.
+  - `daemon/src/decider/mod.rs`: `TriageInput` gains `planner_task_cap: u32`. `run/driver/adapt_goal.rs` fills it from `[orchestrator] planner_task_cap`, which is how "the driver passes it into the triage decider's input". The `TriageInput` literals in `decider/tests.rs`, `decider/tests_prompt.rs`, `run/triage_tests.rs` and `cli/tests/support/decider.rs` gain `planner_task_cap: 12`. The body of `triage_prompt_is_exact_for_a_fixed_input` is unchanged. Its `triage()` helper sets 12, and the test passes against the M8b golden.
+  - `run/mod.rs`: `pub mod orch;`. `run/orch/mod.rs` is new and holds only `OrchLimits` and `PlannerLimits`. `OrchLimits::from_config(&config::Orchestrator)` builds them, and `Default` gives the config defaults, which a pre-M9 `run.json` gets through `#[serde(default)]`.
+  - `run/engine/tests/view_fields.rs::old_run_json_loads` strips `limits.orch`, the new key, and asserts that it holds the defaults. This is the same treatment M9.2 gave its keys.
+- **Types not named outside the config crate.** `lib.rs` must stay unchanged, so `AgentSettings`, `AgentConfig` and `PlannerConfig` are not re-exported. Other crates reach them only through `config::Orchestrator.agent`'s fields. That is why `OrchLimits::from_config` takes the whole `config::Orchestrator`. A later task that needs to name one of these types re-exports it in `lib.rs` as a recorded deviation.
+- **`TRIAGE_HEAD`** holds `{cap}` and is rendered with `planner_task_cap`. `PLAN_SCALE_MAX` is deleted. `route` and `TriageRoute` are unchanged.
+- **Tests.**
+  - `defaults_when_absent`, `each_range_is_enforced_with_the_exact_message`, `effort_and_strength_and_runtime_parse` and `unknown_keys_warn` are in `config/src/orchestrator_tests_agent.rs`, included from `orchestrator_tests.rs` as `mod orch_agent`.
+  - `limits_are_frozen_at_run_start` in `run/plan_tests.rs` also checks two more things: the limits survive a `run.json` round trip, and a run without `limits.orch` loads with the defaults.
+  - `triage_prompt_uses_planner_task_cap` in `decider/tests_prompt.rs`.
+  - All six failed to compile before the change: there was no `Orchestrator.agent`, no `run::orch`, no `RunLimits.orch`, and no `TriageInput.planner_task_cap`.

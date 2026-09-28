@@ -21,10 +21,12 @@ const EVIDENCE_SUMMARY_CHARS: usize = 4000;
 /// A size check's briefs are cut to this many characters last.
 const BRIEF_CHARS: usize = 2000;
 
+/// `{cap}` is `[orchestrator] planner_task_cap` (M9.3); with the default 12 the head is
+/// byte-identical to milestone 8b's.
 const TRIAGE_HEAD: &str = "[anthrex decider] triage v1
 You label a coding goal for an orchestration engine. Answer with one JSON object that matches the schema, and nothing else.
 kinds: every kind the goal needs. code changes behaviour; docs changes documentation, comments or configuration nothing executes; research investigates and reports without changing code; review reviews an existing branch or commit range.
-scale: single when one task of size S or M does the whole goal; plan when it needs 2 to 12 tasks; large when it needs more, or two or more separate areas that each need several tasks.
+scale: single when one task of size S or M does the whole goal; plan when it needs 2 to {cap} tasks; large when it needs more, or two or more separate areas that each need several tasks.
 Size S: one file, no interface change, about 20 changed lines or fewer. Size M: 1 to 3 files inside one module, about 100 changed lines or fewer. Anything bigger is not single.
 When scale is single, give task: a short title; a brief a worker can follow without asking anything; acceptance criteria; the paths it owns, as globs relative to the repository root and as narrow as possible; its size; whether it changes an interface other code uses; its test mode (tdd for any change in behaviour, check for behaviour-preserving work already covered by tests, none for docs) with a one-line reason unless tdd; and for tdd the name of the test to write. Otherwise task is null.";
 
@@ -228,7 +230,8 @@ fn triage_with(input: &TriageInput, cut: TriageCut) -> String {
             paths.join("\n")
         )
     };
-    join(TRIAGE_HEAD, vec![goal, profile, report, tracked])
+    let head = TRIAGE_HEAD.replace("{cap}", &input.planner_task_cap.to_string());
+    join(&head, vec![goal, profile, report, tracked])
 }
 
 // ---- size check ---------------------------------------------------------------------

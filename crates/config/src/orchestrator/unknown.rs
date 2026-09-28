@@ -4,6 +4,7 @@
 use super::adapt::{
     KNOWN_DECIDERS_KEYS, KNOWN_METERING_KEYS, KNOWN_ONBOARDING_KEYS, KNOWN_SCOUTS_KEYS,
 };
+use super::agent::{KNOWN_AGENT_KEYS, KNOWN_PLANNERS_KEYS};
 use super::report_unknown_profile;
 use crate::{Problem, report_unknown_nested, unknown_key_problem};
 
@@ -40,7 +41,13 @@ pub(crate) fn report_unknown(value: &toml::Value, problems: &mut Vec<Problem>) {
             | "confined_network"
             | "confined_unix_sockets"
             | "confined_localhost_ports"
-            | "fast_path" => {}
+            | "fast_path"
+            | "planner_task_cap"
+            | "max_scouts"
+            | "wake_orchestrator"
+            | "wake_quiet_secs"
+            | "message_max_per_turn"
+            | "note_max_per_task" => {}
             "models" => report_unknown_model_keys(sub, problems),
             "review" => {
                 report_unknown_nested(sub, "orchestrator.review", KNOWN_REVIEW_KEYS, problems)
@@ -64,6 +71,10 @@ pub(crate) fn report_unknown(value: &toml::Value, problems: &mut Vec<Problem>) {
             ),
             "metering" => {
                 report_unknown_nested(sub, "orchestrator.metering", KNOWN_METERING_KEYS, problems)
+            }
+            "agent" => report_unknown_nested(sub, "orchestrator.agent", KNOWN_AGENT_KEYS, problems),
+            "planners" => {
+                report_unknown_nested(sub, "orchestrator.planners", KNOWN_PLANNERS_KEYS, problems)
             }
             other => problems.push(unknown_key_problem(&format!("orchestrator.{other}"))),
         }
