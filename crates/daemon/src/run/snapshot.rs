@@ -14,6 +14,8 @@ use super::engine::ladder::{round_spend, total_spend};
 use super::engine::schedule::{critical_path, readers_busy, waves, writers_busy};
 use super::messages::summary;
 use super::model::{AgentRound, Run, Task};
+pub use super::snapshot_orch::SNAPSHOT_NOTE_MAX;
+use super::snapshot_orch::{message_line, plan_text_shown, task_notes};
 
 /// History entries a task shows, newest first.
 const HISTORY_SHOWN: usize = 10;
@@ -44,7 +46,10 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         .tasks
         .iter()
         .enumerate()
-        .map(|(i, t)| task_info(t, path.contains(&i), waves[i], now))
+        .map(|(i, t)| {
+            let text = plan_text_shown(run, t);
+            task_info(t, path.contains(&i), waves[i], now, text)
+        })
         .collect();
     RunInfo {
         run_id: run.id.clone(),
@@ -114,7 +119,7 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         orchestrator: None,
         holds: Vec::new(),
         integration: Vec::new(),
-        digest_revision: 0,
+        digest_revision: run.orch.digest_rev,
         research_report: None,
     }
 }
@@ -159,7 +164,7 @@ pub(crate) fn run_usage(run: &Run) -> RunUsage {
 
 /// One line per thing the user must look at: blocked tasks, a moved base, a failed
 /// final check.
-fn attention(run: &Run) -> Vec<String> {
+pub(crate) fn attention(run: &Run) -> Vec<String> {
     let mut lines: Vec<String> = run
         .tasks
         .iter()
@@ -226,7 +231,7 @@ fn session_spend(task: &Task, now: u64) -> Spend {
         .unwrap_or_default()
 }
 
-fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64) -> TaskInfo {
+fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: bool) -> TaskInfo {
     let done = t.done.as_ref();
     TaskInfo {
         id: t.spec.id.clone(),
@@ -322,15 +327,38 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64) -> TaskInfo 
         diff: t.diff,
         phases: (t.phases != Default::default()).then_some(t.phases),
         block_source: t.block_source,
-        brief: t.spec.brief.clone(),
-        acceptance: t.spec.acceptance.clone(),
-        route_spec: t.spec.route.clone(),
-        hold: None,
+        // Decision 16a: only at the gate.
+        brief: if plan_text {
+            t.spec.brief.clone()
+        } else {
+            String::new()
+        },
+        acceptance: if plan_text {
+            t.spec.acceptance.clone()
+        } else {
+            Vec::new()
+        },
+        route_spec: if plan_text {
+            t.spec.route.clone()
+        } else {
+            Default::default()
+        },
+        hold: t.orch.gate_hold.clone(),
         review_target: None,
         research_bytes: None,
-        message_count: 0,
-        last_message_kind: None,
-        last_message_line: None,
-        task_notes: Vec::new(),
+        // Decision 42d: counts and one line, never message texts.
+        message_count: u32::try_from(t.orch.messages.len()).unwrap_or(u32::MAX),
+        last_message_kind: t.orch.messages.last().map(|m| m.kind),
+        last_message_line: message_line(t),
+        task_notes: task_notes(t),
     }
 }
+
+/// Decision 16a's test: 50 complete runs of 20 tasks encode under 1.25 KiB a task
+/// (the decision's 256 KiB cannot hold; Implementation notes, M9.6).
+#[cfg(test)]
+const SNAPSHOT_BOUND: usize = 50 * 20 * 1280;
+
+#[cfg(test)]
+#[path = "snapshot_tests.rs"]
+mod tests;

@@ -25,6 +25,7 @@ mod guard;
 mod merge;
 mod observe;
 mod ops;
+mod orch;
 mod requests;
 mod restore;
 mod usage;
@@ -354,8 +355,8 @@ impl RunService {
 
     /// The runs as they are now (decision 47's snapshot).
     pub fn current(&self) -> RunsSnapshot {
-        let state = crate::lock(&self.state);
-        snapshot(&state, unix_now())
+        let snap = snapshot(&crate::lock(&self.state), unix_now());
+        self.with_scouts(snap)
     }
 
     fn send(&self, kind: EventKind) {
@@ -561,7 +562,7 @@ impl RunService {
     }
 
     fn publish(&self, snap: RunsSnapshot) {
-        let _ = self.pushes.send(Arc::new(snap));
+        let _ = self.pushes.send(Arc::new(self.with_scouts(snap)));
     }
 
     fn watch_root(&self, root: &Path) {

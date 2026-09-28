@@ -19,8 +19,9 @@ pub const SCOUTS_DIR: &str = "scouts";
 /// The `scout_refs` alias for the stored profile's onboarding report.
 pub const ONBOARDING_ALIAS: &str = "onboarding";
 
-/// A report's arguments, validated.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A report's arguments, validated. Serde since milestone 9, which keeps a research
+/// task's report in `Task.orch.research` (decision 35).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ScoutReportArgs {
     pub summary: String,
     pub files: Vec<ScoutFile>,

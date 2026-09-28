@@ -1,24 +1,39 @@
 //! Milestone 9, the orchestrator and sub-planners
 //! (`docs/milestones/M9-orchestrator-and-subplanners.md`). Pure.
 //!
-//! The model types here are those decision 23's rules read ([`rules`]): where an edit
-//! batch comes from ([`EditSource`]), the run's epics ([`RunOrch`], [`EpicRecord`]) and
-//! a task's integration-review mark ([`TaskOrch`]). Task M9.7 and later add the rest of
-//! decision 1's types and fields, each `#[serde(default)]`.
+//! The model types of decision 1 (Interfaces "daemon"): where an edit batch comes from
+//! ([`EditSource`]), the run's orchestrator, epics, approval holds and run scouts
+//! ([`RunOrch`]), and a task's hold, messages, notes and refresh ([`TaskOrch`]). Task
+//! M9.6 added the fields the digest, the context and the task result read; the tasks
+//! that produce them (M9.7 on) fill them. Every field is `#[serde(default)]`.
 //!
 //! [`OrchLimits`] is `RunLimits.orch`: the orchestrator settings a run is frozen with at
 //! start (ruling D-5), so a later config edit cannot change the rules of a live run. The
 //! config crate has no serde, so `config::PlannerConfig` cannot be persisted; these are
 //! its serde mirrors, of proto types.
 
-use proto::{Effort, IntegrationState, MessageKind, Route, Runtime, Strength, TokenUsage};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+use proto::{
+    Effort, HoldKind, HoldState, IntegrationState, MessageKind, Route, Runtime, Strength,
+    TaskNoteKind, TokenUsage,
+};
 use serde::{Deserialize, Serialize};
 
 use super::model::OpId;
+use crate::scout::report::ScoutReportArgs;
 
+pub mod context;
 pub mod contract;
+pub mod digest;
 pub mod extract;
+pub(crate) mod json;
+pub mod result;
 pub mod rules;
+#[cfg(test)]
+pub(crate) mod test_support;
+pub mod tools;
 
 /// Who sent an edit batch. Plan files and the user's `run edit` are [`EditSource::User`]
 /// and keep M8a's rules only; the orchestrator's `edit_plan` and a sub-planner's
@@ -46,18 +61,135 @@ impl EditSource {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RunOrch {
+    /// The run's orchestrator window (decisions 4, 11), once it exists.
+    pub orchestrator: Option<OrchestratorRecord>,
     /// Every epic the orchestrator created with `spawn_subplanner`, in creation order.
     pub epics: Vec<EpicRecord>,
+    /// Decision 28's approval holds, in creation order.
+    pub gate_holds: Vec<GateHoldRecord>,
+    /// Decision 20's run scouts, in the order they were asked for.
+    pub run_scouts: Vec<RunScout>,
+    /// Decision 16: the revision `run_status` waits on, bumped only when
+    /// [`digest::fingerprint`] changes, and the fingerprint it was bumped for.
+    pub digest_rev: u64,
+    pub digest_fp: u64,
+    /// When the orchestrator last read the digest (`OrchEvent::DigestRead`): the
+    /// digest's `gate.holds` keeps a hold decided since then. `None`: never read.
+    pub digest_read_at: Option<u64>,
+    /// Decision 17: whether each runtime's configured binary was found when the run
+    /// was built, keyed by `Runtime::label`.
+    pub installed: BTreeMap<String, bool>,
     /// The goal request's `yes`: a submitted plan starts at once (decisions 26, 27).
     pub yes: bool,
+    pub research_report: Option<PathBuf>,
+    pub planner_usage: TokenUsage,
 }
 
 /// `Task.orch`: a task's milestone 9 state. Absent from an older run: empty.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TaskOrch {
+    /// Decision 28: the approval hold the task was added under.
+    pub gate_hold: Option<String>,
+    /// Decision 35: a research task's report.
+    pub research: Option<ScoutReportArgs>,
+    /// Decision 36: a review task's resolved `(base, head)`.
+    pub review_range: Option<(String, String)>,
     /// Decision 37: the epic an engine-made integration review task reviews.
     pub integration_of: Option<String>,
+    /// Decision 42d: every accepted `message` to the task, and its `task_note`s.
+    pub messages: Vec<TaskMessage>,
+    pub worker_notes: Vec<WorkerNote>,
+    /// Decision 42e: a refresh due or in flight, and the merge commits refreshes made.
+    pub refresh: Option<RefreshState>,
+    pub refresh_merges: Vec<String>,
+}
+
+/// The run's orchestrator (decision 1). `otlp_token` never reaches the snapshot or
+/// the digest (decision 14a).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OrchestratorRecord {
+    pub route: Route,
+    pub window_id: Option<u32>,
+    pub launch_op: Option<OpId>,
+    pub live: bool,
+    pub started_at: u64,
+    pub exited_at: Option<u64>,
+    pub first_prompt: String,
+    pub plan_submitted: bool,
+    /// Decision 19's `summary`, the last one given.
+    pub summary: Option<String>,
+    /// Decision 39's pending wake notes.
+    pub notes: Vec<String>,
+    pub last_wake_rev: u64,
+    pub wakes: u32,
+    pub otlp_token: String,
+    /// Decision 43: 1 at launch, +1 per restart.
+    pub session: u32,
+}
+
+/// Decision 28's approval hold, as the daemon keeps it (the wire's is `HoldInfo`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateHoldRecord {
+    pub id: String,
+    pub kind: HoldKind,
+    pub state: HoldState,
+    pub tasks: Vec<String>,
+    pub created_at: u64,
+    pub decided_at: Option<u64>,
+    pub decided_by: Option<String>,
+}
+
+/// A run scout's state (decision 20). `Queued` has no window yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunScoutState {
+    Queued,
+    Running,
+    Reported,
+    Failed { reason: String },
+}
+
+impl RunScoutState {
+    /// `queued`, `running`, `reported` or `failed`: the digest's labels.
+    pub fn label(&self) -> &'static str {
+        match self {
+            RunScoutState::Queued => "queued",
+            RunScoutState::Running => "running",
+            RunScoutState::Reported => "reported",
+            RunScoutState::Failed { .. } => "failed",
+        }
+    }
+}
+
+/// One run scout (decision 20); `id` is the full `<h4>-<id>`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunScout {
+    pub id: String,
+    pub question: String,
+    pub area: Vec<String>,
+    pub web: bool,
+    pub state: RunScoutState,
+    pub queued_at: u64,
+    pub started_at: Option<u64>,
+    pub ended_at: Option<u64>,
+    pub window_id: Option<u32>,
+}
+
+/// Decision 42f: one `task_note` of a task's worker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkerNote {
+    pub at: u64,
+    pub kind: TaskNoteKind,
+    pub text: String,
+}
+
+/// Decision 42e: a refresh waiting for the turn boundary, or its `HandBack` op.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefreshState {
+    Due,
+    InFlight(OpId),
 }
 
 /// Decision 42d: one accepted `message` to a task, kept across sessions for its prompts

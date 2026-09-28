@@ -369,7 +369,10 @@ fn old_run_json_loads() {
         // Milestone 9 decision 24's plan field, and task 4's empty task state.
         let task = task.as_object_mut().unwrap();
         let orch = task.remove("orch").expect("task orch");
-        assert_eq!(orch, serde_json::json!({ "integration_of": null }));
+        assert_eq!(
+            orch,
+            serde_json::to_value(crate::run::orch::TaskOrch::default()).unwrap()
+        );
         let spec = task["spec"].as_object_mut().unwrap();
         assert!(spec.remove("review_target").is_some(), "review_target");
         for round in task["rounds"].as_array_mut().unwrap() {

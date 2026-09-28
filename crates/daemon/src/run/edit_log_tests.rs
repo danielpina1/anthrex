@@ -84,7 +84,11 @@ fn record_keeps_the_last_fifty() {
         run.plan_edits.last(),
         Some(&PlanEditRecord {
             at: 2_001,
-            text: "resume".into()
+            text: "resume".into(),
+            source: "user".into(),
+            accepted: true,
+            error: None,
+            recipients: Vec::new(),
         })
     );
 }

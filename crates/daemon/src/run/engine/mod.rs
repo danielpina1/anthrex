@@ -438,7 +438,13 @@ fn finish(
             Some(old) if old == run => continue,
             Some(old) => {
                 run.revision += 1;
-                without_counters(old) != without_counters(run)
+                let urgent = without_counters(old) != without_counters(run);
+                // Decision 16: the digest's revision moves only with its fingerprint. A
+                // run new to the state (a restore) is left as loaded (final review B-5).
+                if urgent {
+                    super::orch::digest::note_change(run);
+                }
+                urgent
             }
             None => true,
         };

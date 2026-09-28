@@ -14,6 +14,25 @@ use super::model::Run;
 pub struct PlanEditRecord {
     pub at: u64,
     pub text: String,
+    /// Milestone 9 decision 40: `user`, `orchestrator` or `planner:<e>`; whether the
+    /// batch was accepted, a rejected one's first error, and a `message`'s recipients.
+    /// Absent from an older run: an accepted batch of the user's. Task M9.9 records them.
+    #[serde(default = "user_source")]
+    pub source: String,
+    #[serde(default = "accepted_by_default")]
+    pub accepted: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub recipients: Vec<String>,
+}
+
+fn user_source() -> String {
+    "user".to_string()
+}
+
+fn accepted_by_default() -> bool {
+    true
 }
 
 /// Records a run keeps; older ones are dropped.
@@ -79,6 +98,10 @@ pub fn record(run: &mut Run, edits: &[PlanEdit], now: u64) {
     run.plan_edits.push(PlanEditRecord {
         at: now,
         text: describe(edits),
+        source: user_source(),
+        accepted: true,
+        error: None,
+        recipients: Vec::new(),
     });
     if run.plan_edits.len() > PLAN_EDITS_KEPT {
         let excess = run.plan_edits.len() - PLAN_EDITS_KEPT;
