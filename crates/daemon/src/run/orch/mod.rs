@@ -83,6 +83,8 @@ pub struct RunOrch {
     pub yes: bool,
     pub research_report: Option<PathBuf>,
     pub planner_usage: TokenUsage,
+    /// The last [`WorkerNote::seq`] handed out by [`add_worker_note`].
+    pub note_seq: u64,
 }
 
 /// `Task.orch`: a task's milestone 9 state. Absent from an older run: empty.
@@ -182,6 +184,23 @@ pub struct WorkerNote {
     pub at: u64,
     pub kind: TaskNoteKind,
     pub text: String,
+    /// The run-wide order the note was added in (1, 2, …; 0 for a note added before
+    /// it existed): the digest breaks a tie on `at` by it, newest first.
+    #[serde(default)]
+    pub seq: u64,
+}
+
+/// Appends `note` to task `task`'s notes with the next run-wide `seq`; false when
+/// the run has no such task. Every `task_note` goes through here (M9.13a), so a note
+/// added in the same second as others still reaches the digest's newest ten.
+pub fn add_worker_note(run: &mut super::model::Run, task: &str, mut note: WorkerNote) -> bool {
+    let Some(i) = run.tasks.iter().position(|t| t.id() == task) else {
+        return false;
+    };
+    run.orch.note_seq += 1;
+    note.seq = run.orch.note_seq;
+    run.tasks[i].orch.worker_notes.push(note);
+    true
 }
 
 /// Decision 42e: a refresh waiting for the turn boundary, or its `HandBack` op.

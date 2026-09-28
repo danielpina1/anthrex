@@ -79,9 +79,12 @@ pub(super) fn restore(
         };
         settle(run, now, fx);
         // Decision 47: a run the restore changed bumps its revision (review minor 5);
-        // `step` leaves a run new to the state at the revision it arrived with.
+        // `step` leaves a run new to the state at the revision it arrived with. The
+        // digest moves with it (M9.6 review fix I-1); an unchanged run is left as
+        // loaded, so restoring it writes nothing.
         if *run != original {
             run.revision += 1;
+            crate::run::orch::digest::note_change(run);
         }
     }
 }

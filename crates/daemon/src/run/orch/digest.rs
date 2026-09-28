@@ -319,8 +319,9 @@ fn task_notes(run: &Run) -> Vec<Value> {
         .iter()
         .flat_map(|t| t.orch.worker_notes.iter().map(move |n| (t, n)))
         .collect();
-    // Stable: equal times keep plan order, reversed with the rest.
-    notes.sort_by_key(|(_, n)| n.at);
+    // Equal times: the note added last is the newest (`seq`, review fix M-2); notes
+    // with no `seq` keep plan order, reversed with the rest (the sort is stable).
+    notes.sort_by_key(|(_, n)| (n.at, n.seq));
     notes
         .iter()
         .rev()
@@ -355,9 +356,11 @@ fn spend(run: &Run) -> Value {
 /// Decision 16's trimming past the cap, in order: finished tasks dropped oldest first
 /// (counted in `omitted_tasks`), `edits` cut to 3, `task_notes` to 3, `block.text` to
 /// 200 characters (and the attention lines with it), `notes` to 5. Beyond the
-/// Interfaces, so the cap always holds: unfinished tasks dropped from the end of the
-/// plan (counted too), then every string cut to 120 characters, then the other lists
-/// cut to 10 entries.
+/// Interfaces, so the cap always holds, texts and lists are cut before an unfinished
+/// task goes: `attention` cut to 10 lines (those of tasks already dropped first), every
+/// string cut to 120 characters, `scouts`, `planners`, `integration` and `notes` cut to
+/// 10; only then unfinished tasks dropped from the end of the plan (counted too), and
+/// the attention lines of the tasks dropped last removed with them.
 fn trim(digest: &mut Value, run: &Run) {
     let fits = |d: &Value| size(d) <= DIGEST_MAX_BYTES;
     if fits(digest) {
@@ -409,6 +412,21 @@ fn trim(digest: &mut Value, run: &Run) {
         return;
     }
     truncate(digest, "notes", NOTES_TRIMMED);
+    if fits(digest) {
+        return;
+    }
+    drop_attention_of_dropped_tasks(digest, run);
+    truncate(digest, "attention", 10);
+    if fits(digest) {
+        return;
+    }
+    shrink_strings(digest, 120);
+    for key in ["scouts", "planners", "integration", "notes"] {
+        if fits(digest) {
+            return;
+        }
+        truncate(digest, key, 10);
+    }
     while !fits(digest) {
         let last = match digest.get("tasks") {
             Some(Value::Array(tasks)) => tasks.last().and_then(|t| t["id"].as_str()),
@@ -419,15 +437,26 @@ fn trim(digest: &mut Value, run: &Run) {
             None => break,
         }
     }
-    if fits(digest) {
-        return;
-    }
-    shrink_strings(digest, 120);
-    for key in ["attention", "scouts", "planners", "integration", "notes"] {
-        if fits(digest) {
-            return;
-        }
-        truncate(digest, key, 10);
+    drop_attention_of_dropped_tasks(digest, run);
+}
+
+/// Removes the attention lines of the run's tasks that `tasks` no longer shows: a
+/// blocked task's line starts `<id> blocked (`.
+fn drop_attention_of_dropped_tasks(digest: &mut Value, run: &Run) {
+    let shown: Vec<String> = match digest.get("tasks") {
+        Some(Value::Array(tasks)) => tasks
+            .iter()
+            .filter_map(|t| t["id"].as_str().map(str::to_string))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let dropped = |line: &str| {
+        line.split_once(" blocked (").is_some_and(|(id, _)| {
+            !shown.iter().any(|s| s == id) && run.tasks.iter().any(|t| t.id() == id)
+        })
+    };
+    if let Some(Value::Array(lines)) = digest.get_mut("attention") {
+        lines.retain(|l| !l.as_str().is_some_and(dropped));
     }
 }
 

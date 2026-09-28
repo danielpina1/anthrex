@@ -131,6 +131,7 @@ pub fn note(at: u64, kind: TaskNoteKind, text: &str) -> WorkerNote {
         at,
         kind,
         text: text.into(),
+        seq: 0,
     }
 }
 

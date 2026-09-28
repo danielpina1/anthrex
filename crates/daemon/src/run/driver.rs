@@ -480,8 +480,8 @@ impl RunService {
         self.retire_deadlines();
         let publish = std::mem::take(&mut crate::lock(&self.book).publish_due);
         if publish {
-            let snap = self.current();
-            self.publish(snap);
+            // `publish` lays the scouts over it (review fix M-5: once per tick).
+            self.publish(snapshot(&crate::lock(&self.state), unix_now()));
         }
         let dirty = {
             let mut book = crate::lock(&self.book);

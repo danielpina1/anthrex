@@ -96,13 +96,14 @@ fn task_summary_lists_commits_and_diffstat() {
     let joined: Vec<String> = calls.iter().map(|a| a.join(" ")).collect();
     assert!(
         joined.iter().any(|a| a.contains(" log ")
-            && a.ends_with(&format!("--format=%h%x1f%s -n 50 {base}..{BRANCH}"))),
+            && a.ends_with(&format!(
+                "--format=%h%x1f%s -n 50 --end-of-options {base}..{BRANCH}"
+            ))),
         "{joined:?}"
     );
     assert!(
-        joined
-            .iter()
-            .any(|a| a.contains("diff") && a.contains(&format!("--stat=100 {base}...{BRANCH}"))),
+        joined.iter().any(|a| a.contains("diff")
+            && a.contains(&format!("--stat=100 --end-of-options {base}...{BRANCH}"))),
         "{joined:?}"
     );
 }
@@ -190,4 +191,44 @@ fn summary_times_out() {
     assert!(error.contains("timed out"), "{error}");
     let error = resolve_target(stand_in.as_os_str(), &repo.root, "a..b", "main", one).unwrap_err();
     assert!(error.contains("timed out"), "{error}");
+}
+
+/// Every regular file under `dir`, recursively.
+fn files_under(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            found.extend(files_under(&path));
+        } else {
+            found.push(path);
+        }
+    }
+    found
+}
+
+/// M9.6 review fix M-3: a `start` (or branch) that reads as an option is refused, and
+/// never reaches git as one: `--output=<path>` writes no file.
+#[test]
+fn a_start_that_reads_as_an_option_is_refused() {
+    let repo = repo();
+    let (_, base) = forked(&repo.root);
+    let out_dir = tempfile::tempdir().unwrap();
+    // The parents of the files `git log` and `git diff` would write, so a forged
+    // option would succeed if it reached git.
+    let target = out_dir.path().join("o");
+    for range in ["..", "..."] {
+        let parent = format!("{}{range}{}", target.display(), BRANCH);
+        std::fs::create_dir_all(Path::new(&parent).parent().unwrap()).unwrap();
+    }
+    let forged = format!("--output={}", target.display());
+    let git = real_git();
+    let result = task_summary(git, &repo.root, &forged, BRANCH, T);
+    assert!(result.is_err(), "{result:?}");
+    let refused = task_summary(git, &repo.root, &base, "-p", T);
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!(
+        files_under(out_dir.path()),
+        Vec::<std::path::PathBuf>::new()
+    );
 }

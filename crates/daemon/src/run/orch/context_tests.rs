@@ -309,6 +309,36 @@ fn file_lists_go_after_the_summaries() {
     assert_eq!(c["omitted"]["scouts"], 40);
 }
 
+/// M9.6 review fix M-1: a plan of 200 tasks, each owning 20 globs of about 90
+/// characters, still fits in 96 KiB, and the reports are kept.
+#[test]
+fn a_large_plan_stays_under_the_cap() {
+    let mut run = run_of(200);
+    for (i, task) in run.tasks.iter_mut().enumerate() {
+        task.spec.owns = (0..20)
+            .map(|g| format!("crates/module-{i:03}/src/{g:02}/{}/**", "d".repeat(64)))
+            .collect();
+        if i % 2 == 0 {
+            task.state = proto::TaskState::Merged;
+        }
+    }
+    let c = context(&ContextInputs {
+        run: &run,
+        asker: Asker::Orchestrator,
+        profile: None,
+        reports: reports(),
+        only: None,
+    });
+    assert!(size(&c) <= CONTEXT_MAX_BYTES, "{}", size(&c));
+    assert_eq!(c["scouts"][0]["id"], "onboarding");
+    let plan = c["plan"].as_array().unwrap();
+    assert!(!plan.is_empty());
+    let omitted = c["omitted"]["tasks"].as_u64().unwrap_or(0) as usize;
+    assert_eq!(plan.len() + omitted, 200, "{}", c["omitted"]);
+    // Finished tasks go before unfinished ones.
+    assert!(plan.iter().all(|t| t["state"] != "merged") || omitted == 0);
+}
+
 /// Carry-forward rule: a scout's text stays inside its JSON string.
 #[test]
 fn untrusted_text_stays_inside_its_json_string() {

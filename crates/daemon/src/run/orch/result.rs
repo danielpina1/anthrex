@@ -57,7 +57,9 @@ pub fn task_result(_run: &Run, task: &Task, git: Option<&Result<TaskGit, String>
             "review_target": spec.review_target,
             "notes": task.notes,
             "messages": task.orch.messages,
-            "task_notes": task.orch.worker_notes,
+            "task_notes": task.orch.worker_notes.iter().map(|n| json!({
+                "at": n.at, "kind": n.kind, "text": n.text,
+            })).collect::<Vec<_>>(),
         },
         "done": task.done.as_ref().map(|d| json!({
             "signal": d.signal, "summary": d.summary, "test": d.test, "red": d.red,
@@ -128,10 +130,22 @@ fn insert_git(map: &mut Map<String, Value>, git: &Result<TaskGit, String>) {
     }
 }
 
+/// What the count trims leave, step by step: findings across the kept reviews (never
+/// fewer than 5, so the newest verdict keeps its reasons), then each research list
+/// and the proofs.
+const FINDINGS_STEPS: [usize; 3] = [20, 10, 5];
+const LIST_STEPS: [usize; 4] = [20, 10, 5, 0];
+/// The last-resort string cuts, in characters.
+const HARD_SHRINK: [usize; 3] = [100, 40, 16];
+
 /// Decision 18's trimming past the cap: the last 3 checks, the last 5 rounds, the
 /// research summary cut to 16 000 characters. Beyond the decision, so the cap always
 /// holds: the last 20 history lines, the last 10 messages and task notes, the last 2
-/// reviews, then every string cut to 2000, 500, then 200 characters.
+/// reviews, then every string cut to 2000, 500, then 200 characters; then the
+/// reviews' findings cut to 20, 10, then 5, the newest review's kept first; then
+/// the research lists and the proofs the same way (the first entries of a list, the
+/// newest proofs); then every string cut to 100, 40, then 16 characters. What the
+/// count trims drop is counted in `omitted` (`findings`, `research`, `proofs`).
 fn trim(answer: &mut Value) {
     let fits = |a: &Value| size(a) <= TASK_RESULT_MAX_BYTES;
     let keep_last = |a: &mut Value, pointer: &str, keep: usize| {
@@ -167,6 +181,69 @@ fn trim(answer: &mut Value) {
         }
         shrink_strings(answer, max);
     }
+    for keep in FINDINGS_STEPS {
+        if fits(answer) {
+            return;
+        }
+        let dropped = keep_findings(answer, keep);
+        omit(answer, "findings", dropped);
+    }
+    for keep in LIST_STEPS {
+        if fits(answer) {
+            return;
+        }
+        let mut dropped = 0;
+        for list in ["files", "modules", "interfaces", "risks"] {
+            if let Some(Value::Array(items)) = answer.pointer_mut(&format!("/research/{list}")) {
+                dropped += items.len().saturating_sub(keep);
+                items.truncate(keep);
+            }
+        }
+        omit(answer, "research", dropped);
+        if let Some(Value::Array(proofs)) = answer.pointer_mut("/proofs") {
+            let excess = proofs.len().saturating_sub(keep);
+            proofs.drain(..excess);
+            omit(answer, "proofs", excess);
+        }
+    }
+    for max in HARD_SHRINK {
+        if fits(answer) {
+            return;
+        }
+        shrink_strings(answer, max);
+    }
+}
+
+/// Leaves at most `keep` findings across the reviews, the newest review's first;
+/// returns how many it dropped.
+fn keep_findings(answer: &mut Value, keep: usize) -> usize {
+    let Some(Value::Array(reviews)) = answer.pointer_mut("/reviews") else {
+        return 0;
+    };
+    let mut left = keep;
+    let mut dropped = 0;
+    for review in reviews.iter_mut().rev() {
+        if let Some(Value::Array(findings)) = review.get_mut("findings") {
+            let kept = findings.len().min(left);
+            dropped += findings.len() - kept;
+            findings.truncate(kept);
+            left -= kept;
+        }
+    }
+    dropped
+}
+
+/// Adds `n` to `omitted.<key>`, creating `omitted` on the first drop.
+fn omit(answer: &mut Value, key: &str, n: usize) {
+    if n == 0 {
+        return;
+    }
+    let Some(map) = answer.as_object_mut() else {
+        return;
+    };
+    let omitted = map.entry("omitted").or_insert_with(|| json!({}));
+    let count = omitted[key].as_u64().unwrap_or(0) + n as u64;
+    omitted[key] = json!(count);
 }
 
 #[cfg(test)]

@@ -287,3 +287,92 @@ fn untrusted_text_stays_inside_its_json_string() {
     let failed = Err(FORGED.to_string());
     assert_contained(&task_result(&run, run.task("t2").unwrap(), Some(&failed)));
 }
+
+/// M9.6 review fix I-2: a task filled to the MCP schema maxima (3 reviews of 50
+/// findings, every text at its longest, a full research report, many proofs) still
+/// fits, in ASCII and in multibyte text, and the newest review keeps its findings
+/// longest.
+#[test]
+fn the_cap_holds_at_the_schema_maxima() {
+    for unit in ["x", "é", "語"] {
+        let text = |n: usize| unit.repeat(n);
+        let mut run = full_run();
+        let t = task_mut(&mut run, "t2");
+        t.spec.brief = text(4000);
+        t.spec.acceptance = vec![text(1000); 10];
+        block(t, BlockReason::Question, &text(4000));
+        t.done.as_mut().unwrap().summary = text(4000);
+        t.reviews = (1..=3)
+            .map(|round| {
+                let mut r = review(round, Some(Verdict::Changes), &[]);
+                r.summary = text(4000);
+                r.findings = (0..50)
+                    .map(|_| proto::Finding {
+                        severity: Severity::Important,
+                        file: Some(text(500)),
+                        line: Some(1),
+                        input: Some(text(2000)),
+                        text: text(2000),
+                    })
+                    .collect();
+                r
+            })
+            .collect();
+        let mut report = research(&text(8000));
+        report.files = (0..60)
+            .map(|_| ScoutFile {
+                path: text(500),
+                why: text(300),
+            })
+            .collect();
+        report.modules = vec![text(200); 40];
+        report.interfaces = vec![text(500); 40];
+        report.risks = vec![text(500); 20];
+        t.orch.research = Some(report);
+        t.proofs = (0..50)
+            .map(|i| ProofRecord {
+                at: AT + i,
+                test: text(300),
+                red: text(40),
+                head: "c".repeat(40),
+                red_failed: true,
+                head_passed: true,
+                matched: true,
+                red_tail: text(4000),
+                head_tail: text(4000),
+            })
+            .collect();
+        t.orch.messages = (0..50)
+            .map(|i| message(AT + i, MessageKind::Info, &text(4000), true))
+            .collect();
+        t.orch.worker_notes = (0..100)
+            .map(|i| note(AT + i, TaskNoteKind::Risk, &text(4000)))
+            .collect();
+        for i in 0..500 {
+            event(t, AT + i, &text(300));
+        }
+        let failed = Err(text(4000));
+        let r = task_result(&run, run.task("t2").unwrap(), Some(&failed));
+        let encoded = serde_json::to_string(&r).unwrap();
+        assert!(
+            encoded.len() <= TASK_RESULT_MAX_BYTES,
+            "{unit}: {}",
+            encoded.len()
+        );
+        let parsed: Value = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(parsed["task"]["id"], "t2");
+        let reviews = parsed["reviews"].as_array().unwrap();
+        let newest = reviews.last().unwrap();
+        assert_eq!(newest["round"], 3, "{unit}");
+        assert!(
+            !newest["findings"].as_array().unwrap().is_empty(),
+            "{unit}: the newest review keeps findings"
+        );
+        let kept: usize = reviews
+            .iter()
+            .map(|r| r["findings"].as_array().unwrap().len())
+            .sum();
+        let omitted = parsed["omitted"]["findings"].as_u64().unwrap_or(0) as usize;
+        assert_eq!(kept + omitted, 2 * 50, "{unit}: {}", parsed["omitted"]);
+    }
+}

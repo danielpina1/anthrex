@@ -1504,6 +1504,8 @@ Do them in this order: M9.1, M9.2, M9.3, M9.4, M9.5, M9.6, M9.7, M9.8, M9.9, M9.
   - `long_poll_holds_no_engine_lock` (a second `run status` answers while a `run_status` waits);
   - `get_context_and_task_result_answer_from_the_driver`.
 
+**From M9.6's review (M-4).** `task_summary` and `resolve_target` give each git command its own deadline, so one call can take several. M9.11's read path wraps the whole call in one `DONE_CHECK_GIT_TIMEOUT` deadline on `spawn_blocking`: the tool answers with a git error once that deadline passes, whatever the separate commands still have left.
+
 **Acceptance.** The five AGENTS.md commands pass.
 
 **Commit.** `feat(mcp): serve the orchestrator's and sub-planners' tools, with a long-polled run digest`
@@ -1651,6 +1653,8 @@ Real git, in `crates/daemon/tests/run_git_handback.rs` and a new `crates/daemon/
 **Change.** A `planning` run shows `planning` in its header and its orchestrator node; `Reported` tasks get `✓` in the finished colour and the label `reported`; a held task shows `○` and `held` after its stage; a `paused(message)` task shows `‖` in its own colour and the stage text `paused (message)`, and the run's attention line lists it after 600 s; an awaiting gate hold appears in the run's attention list as `hold <id>: <n> tasks wait for approval`, and `a` / `x` send `ApproveHold` / `RejectHold` (with the M8c confirmation prompt for `x`) when the selected node is a held task, or the run's root while exactly one hold is awaiting (with several, the root's `a` toasts `select a held task to approve its hold`); planner nodes use `PlannerInfo` with M8c's content text (`planner {epic} {title}  {merged}/{total}`) and planner glyphs, now filled (decision 33); a research session's round label is `research #n`; the task inspector gains the `messages` row (count, latest kind and first line) and the task's `discovery`/`risk` notes with attribution (decision 42i); a delivered message's user turn in the conversation view is labelled `orchestrator` or `user` from its prefix, with no protocol change. Enter on the run's root already focuses the orchestrator's PTY window (M8c, `app_tests/overview/run_enter.rs:43`); M9 keeps it. `C-b g` opens decision 44's goal form; the M8c edit form and the goal form send tagged requests and match replies by id (decision 2). The reducer stays pure (AGENTS.md rule 5): each key returns `Effect`s.
 
 **Tests first.** `planning_run_header`; `reported_held_and_paused_glyphs`; `hold_attention_line_and_keys_emit_the_requests` (held-task node; root with one awaiting hold; root with two toasts); `planner_nodes_from_planner_info`; `research_round_label`; `messages_row`; `message_pause_and_notes_render_with_attribution`; `delivered_message_turn_is_labelled_by_source` (and a user turn without the prefix is unchanged); `enter_on_the_root_focuses_the_orchestrator` (**pinning**, M8c's test, kept); `goal_form_requires_a_selected_project` (the toast, no effect); `goal_form_sends_start_goal_and_opens_the_run` (a tagged `StartGoal` with `yes: false`, `unconfined_checks: false`, the chosen runtime and model); `goal_form_opens_the_view_only_once_the_snapshot_names_the_run` (`Triaged` first, snapshot second); `goal_form_keeps_its_input_on_error`; `a_refusal_for_an_earlier_request_does_not_reach_the_form` (a `Refused` with another `request_id`); `kill_and_remove_of_a_live_orchestrator_open_nothing` (if not already in M9.10); M8c's mockup tests updated only where a new field appears, each change listed in "Implementation notes".
+
+**From M9.6's review (M-6).** The snapshot's task-note texts (`TaskInfo.task_notes`) and `last_message_line` are agent-written. The TUI sanitises them when rendering: it strips control characters, U+2028 and U+2029, and the bidi controls (U+200E, U+200F, U+202A–U+202E, U+2066–U+2069). Test: `task_notes_and_message_lines_render_sanitised` (a note and a message line holding each of them render without any).
 
 **Acceptance.** `crates/tui/src/app/`, `ui/**`, `run_goal.rs` and `conversation_label.rs` do no I/O. `conversation.rs` (595) is not touched. The five AGENTS.md commands pass.
 
@@ -2311,6 +2315,45 @@ These controller rulings answer the second M9.4 review, of `2e2c8ca`. They repla
 - **Tests outside the named files:** `engine/tests/digest.rs`, `run/snapshot_tests.rs`, `run/orch/test_support.rs` (shared builders), `crates/daemon/tests/run_git_summary.rs` (the blocking suite), plus `note_change_bumps_the_revision_only_on_a_new_fingerprint`, `diffstat_keeps_at_most_60_lines_and_its_total`, `invalid_arguments_name_the_field_and_the_problem`, `file_lists_go_after_the_summaries`, `last_message_line_is_one_clean_line_of_at_most_80_characters`, `the_rest_of_a_task_is_still_published` and `the_digest_revision_is_published`. `old_run_json_loads` now compares a task's `orch` with `TaskOrch::default()`.
 - **Red before green.** The context, result, tools, summary, snapshot, driver and engine tests were written first and failed against stubs that compiled with the Interfaces signatures. Two passed against their stubs: `task_without_start_has_no_git`, which asserts absent keys that an empty stub also lacks, and `the_rest_of_a_task_is_still_published`, which is pinning. The digest was written before its tests, so it was run red by stubbing `digest` and `fingerprint` (all 11 failed), and by two targeted mutations: keeping `last` in the fingerprint failed `counter_changes_do_not_change_the_fingerprint`; keeping `notes` and every decided hold failed `a_read_does_not_change_the_fingerprint` and `gate_states`. Making `plan_text_shown` always true failed both 16a tests. `digest.rs` and `snapshot.rs` were restored from copies each time.
 - **For later tasks.** M9.7 fills `RunInfo.holds` and `orchestrator`. M9.9 fills `PlanEditRecord`'s fields through `record` and maps them into `PlanEditInfo`. M9.11's read path calls `task_summary` on `spawn_blocking` with `DONE_CHECK_GIT_TIMEOUT` only when the task has a start commit, and passes `None` otherwise.
+
+### M9.6 review fixes
+
+- **I-1: a restore moves the digest.** `engine/restore.rs` calls `digest::note_change(run)` inside its `if *run != original { run.revision += 1; }` block, so a restored run the restore changed (a running run paused) gets a fresh `digest_fp` and a higher `digest_rev`. An unchanged run is still left as loaded: `restoring_an_unchanged_finished_run_writes_nothing` stays green. Test: `engine/tests/digest.rs::a_restore_that_changes_the_run_moves_the_digest` (red before: `digest_fp` was the pre-restore fingerprint).
+- **I-2: `task_result` always fits 64 KiB.** After the existing trims (the string cuts to 2000, 500 and 200 included), `result.rs` now:
+  - cuts the kept reviews' findings to 20, 10, then 5 in all, the newest review's first;
+  - then cuts each research list (`files`, `modules`, `interfaces`, `risks`, first entries kept) and the proofs (newest kept) to 20, 10, 5, then none;
+  - finally shrinks every string to 100, 40, then 16 characters.
+  - What the count trims drop is counted in a top-level `omitted` object (`findings`, `research`, `proofs`), present only once something was dropped.
+  - **Deviation:** the findings trim stops at 5, not none, so the newest verdict keeps its reasons. The hard shrink still brings the answer under the cap: every other list is already bounded (history 20, messages and notes 10, reviews 2, commits 50, diffstat 60 lines).
+  - `task.task_notes` is now written field by field (`at`, `kind`, `text`), so M-2's `seq` stays out of the answer.
+  - Test: `the_cap_holds_at_the_schema_maxima` (3 reviews × 50 findings with every text at its MCP maximum, a full research report, 50 proofs, 50 messages, 100 notes, 500 history lines and a 4000-character git error, in ASCII, `é` and `語`). The answer is at most 64 KiB and parses back. Red before: 142 065 bytes in ASCII.
+- **I-3: the digest trims text before it drops an unfinished task.** The documented order is kept up to `notes` → 5. Then:
+  - `attention` loses the lines of tasks already dropped and is cut to 10;
+  - every string is cut to 120 characters;
+  - `scouts`, `planners`, `integration` and `notes` are cut to 10;
+  - only then are unfinished tasks dropped from the end of the plan, and the attention lines of the tasks dropped there are removed with them.
+  - **Deviation:** the ruling moved the attention cut and `shrink_strings` before the unfinished-task drop. The four list cuts moved too, because they also trim before a task goes. An attention line of a dropped task is removed rather than marked omitted. `omitted_tasks` counts the task.
+  - Tests: `texts_are_shortened_before_an_unfinished_task_is_dropped` (50 blocked tasks, 500-character CJK reasons, default `max_tasks` 50: all 50 kept, texts at most 201 characters; red before: 27 omitted) and `attention_names_only_tasks_the_digest_shows` (200 blocked tasks; red before: every task was dropped, so `tasks` was empty).
+  - `past_the_finished_tasks_edits_notes_and_blocks_are_cut` asserted each block text was exactly 201 characters, which relied on the old order dropping tasks instead. It now asserts at most 201 and that no task is omitted.
+- **M-1: the context holds 96 KiB.** After the existing string cut to 300, and before later reports are left out, `context.rs` trims:
+  - the plan: every `owns` cut to 3 globs (`omitted.owns`), then the finished tasks left out (`omitted.tasks`), then every `owns` emptied;
+  - the profile's five lists emptied;
+  - the epics' areas emptied, then later epics left out (`omitted.epics`);
+  - `you.epic`'s area emptied and its brief cut to 1000 characters.
+  - Then later reports are left out as before, then every string is cut to 120, 40 and 16 characters, and last, later plan tasks are left out (`omitted.tasks`).
+  - The new `omitted` keys appear only when non-zero, so `omitted` is still `{"scouts": n}` otherwise.
+  - **Choice:** the plan trims run before any report is dropped, so a big plan never costs the planners the onboarding report.
+  - Test: `a_large_plan_stays_under_the_cap` (200 tasks × 20 owns of about 90 characters, half merged). The answer is under 96 KiB, the onboarding report is kept, and `plan` plus `omitted.tasks` is 200. Red before: 405 165 bytes.
+- **M-2: a new note always moves the fingerprint.**
+  - **Deviation (model):** notes have no run-wide order to break a tie with, so `WorkerNote` gains `seq: u64` (`#[serde(default)]`, 0 for an older note) and `RunOrch` gains `note_seq`. `run/orch/mod.rs::add_worker_note(run, task, note)` appends a note with the next `seq`.
+  - The digest sorts task notes by `(at, seq)`, newest first. Notes with no `seq` keep the old stable plan order.
+  - **Obligation for M9.13a:** every `task_note` is stored through `add_worker_note`.
+  - Test: `a_new_note_in_the_same_second_moves_the_fingerprint` (the reviewer's case: 10 notes on `t3` at T, then a `risk` note on `t0` at T; the fingerprint moves and the risk note is `task_notes[0]`). Red before: equal fingerprints.
+- **M-3: `run/git/summary.rs` hardening.** `task_summary` refuses a `start` or `branch` that begins with `-` (`<rev>: a revision cannot start with '-'`). It also passes `--end-of-options` before the range in `git log` and `git diff`.
+  - Test: `tests/run_git_summary.rs::a_start_that_reads_as_an_option_is_refused`. `start = "--output=<path>"` returns an error, and so does a branch `-p`. No file is written under the target directory, whose parent directories the test creates so a leaked option would succeed. Red before: `Ok` with empty output.
+  - `task_summary_lists_commits_and_diffstat` now expects `--end-of-options` in both argvs.
+- **M-5: the scouts overlay runs once per tick.** `driver.rs::on_tick` publishes the engine's raw snapshot, and `publish` lays the scouts over it. Before, `current()` and then `publish` each applied it. This is structural, so there is no new test. `run_scouts_appear_in_the_snapshot` stays green, and `driver.rs` stays at 592 lines.
+- **For later tasks:** M-4 is added to M9.11's text and M-6 to M9.15's.
 
 ### M9.1 real-CLI checks (2026-09-28, authorized by the user in chat)
 

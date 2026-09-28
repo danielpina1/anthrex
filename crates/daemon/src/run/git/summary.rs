@@ -17,9 +17,10 @@ const LOG_MAX: &str = "50";
 /// Lines of `git diff --stat` kept; the last is always the total.
 const DIFFSTAT_LINES: usize = 60;
 
-/// `git log --format=%h%x1f%s -n 50 <start>..<branch>` and `git diff --stat=100
-/// <start>...<branch>`, in `root`: the task's commits (short sha, subject) and its
-/// diffstat, at most 60 lines with the total kept.
+/// `git log --format=%h%x1f%s -n 50 --end-of-options <start>..<branch>` and `git diff
+/// --stat=100 --end-of-options <start>...<branch>`, in `root`: the task's commits
+/// (short sha, subject) and its diffstat, at most 60 lines with the total kept. A
+/// `start` or `branch` beginning with `-` is refused.
 pub fn task_summary(
     git: &OsStr,
     root: &Path,
@@ -27,6 +28,11 @@ pub fn task_summary(
     branch: &str,
     timeout: Duration,
 ) -> Result<TaskGit, String> {
+    // A revision that reads as an option (`--output=<path>`) is refused before git
+    // sees it; `--end-of-options` below keeps the range a revision regardless.
+    if let Some(rev) = [start, branch].into_iter().find(|r| r.starts_with('-')) {
+        return Err(format!("{rev}: a revision cannot start with '-'"));
+    }
     let g = Git::new(git, timeout);
     let range = format!("{start}..{branch}");
     let log = g.ok(
@@ -37,6 +43,7 @@ pub fn task_summary(
             os("--format=%h%x1f%s"),
             os("-n"),
             os(LOG_MAX),
+            os("--end-of-options"),
             os(&range),
         ],
     )?;
@@ -48,7 +55,7 @@ pub fn task_summary(
     let range = format!("{start}...{branch}");
     let mut args = vec![os("diff")];
     args.extend(DIFF_FLAGS.iter().map(|flag| os(flag)));
-    args.extend([os("--stat=100"), os(&range)]);
+    args.extend([os("--stat=100"), os("--end-of-options"), os(&range)]);
     let stat = g.ok(root, &args)?;
     Ok(TaskGit {
         commits,

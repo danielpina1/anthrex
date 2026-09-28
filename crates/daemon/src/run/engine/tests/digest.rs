@@ -43,3 +43,18 @@ fn digest_revision_moves_only_on_fingerprint_change() {
     fx.tick();
     assert_eq!(fx.run().orch.digest_rev, rev + 1);
 }
+
+/// M9.6 review fix I-1: a restore that changes a run (a running run is paused) moves
+/// its digest too, so an orchestrator's wait sees the change.
+#[test]
+fn a_restore_that_changes_the_run_moves_the_digest() {
+    let (mut fx, _) = working();
+    let rev = fx.run().orch.digest_rev;
+    super::control_restore::restart(&mut fx, vec![]);
+    assert_eq!(fx.run().orch.digest_fp, fingerprint(fx.run()));
+    assert!(
+        fx.run().orch.digest_rev > rev,
+        "{}",
+        fx.run().orch.digest_rev
+    );
+}

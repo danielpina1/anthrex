@@ -128,7 +128,13 @@ pub fn context(inputs: &ContextInputs<'_>) -> Value {
         "omitted": {"scouts": 0},
     });
     fold_all(&mut answer);
-    trim(&mut answer);
+    let finished: Vec<&str> = run
+        .tasks
+        .iter()
+        .filter(|t| t.state.is_finished())
+        .map(|t| t.id())
+        .collect();
+    trim(&mut answer, &finished);
     answer
 }
 
@@ -221,9 +227,14 @@ fn entry(
 /// Decision 17's bounds past the cap: later reports' summaries cut to 1000
 /// characters, then their file lists dropped, each report so shortened counted in
 /// `omitted.scouts`. Beyond the decision, so the cap always holds: then their
-/// modules, interfaces and risks, then every string cut to 300 characters, then later
-/// reports left out (counted too).
-fn trim(answer: &mut Value) {
+/// modules, interfaces and risks, then every string cut to 300 characters; then the
+/// plan's `owns` lists cut to 3 globs (counted in `omitted.owns`), its finished tasks
+/// left out (counted in `omitted.tasks`), its `owns` lists emptied, the profile's
+/// lists emptied, the epics' areas emptied and later epics left out (`omitted.epics`),
+/// `you.epic`'s area emptied and its brief cut to 1000 characters; then later reports
+/// left out (counted in `omitted.scouts`); then every string cut to 120, 40, then 16
+/// characters; last, later plan tasks left out (counted in `omitted.tasks`).
+fn trim(answer: &mut Value, finished: &[&str]) {
     let fits = |a: &Value| size(a) <= CONTEXT_MAX_BYTES;
     if fits(answer) {
         return;
@@ -242,6 +253,7 @@ fn trim(answer: &mut Value) {
     if !fits(answer) {
         shrink_strings(answer, 300);
     }
+    trim_plan(answer, finished);
     let mut dropped = 0;
     while !fits(answer) {
         match answer.get_mut("scouts") {
@@ -255,6 +267,96 @@ fn trim(answer: &mut Value) {
     let kept = count - dropped;
     let omitted = shortened[..kept].iter().filter(|s| **s).count() + dropped;
     answer["omitted"]["scouts"] = json!(omitted);
+    for max in [120, 40, 16] {
+        if fits(answer) {
+            return;
+        }
+        shrink_strings(answer, max);
+    }
+    while !fits(answer) {
+        match answer.get_mut("plan") {
+            Some(Value::Array(plan)) if !plan.is_empty() => {
+                plan.pop();
+                omit(answer, "tasks", 1);
+            }
+            _ => break,
+        }
+    }
+}
+
+/// Review fix M-1's steps, each only while the answer is over its cap: the plan's
+/// `owns` cut to 3 globs, its finished tasks left out, its `owns` emptied; the
+/// profile's lists; the epics' areas, then later epics; `you.epic`.
+fn trim_plan(answer: &mut Value, finished: &[&str]) {
+    let fits = |a: &Value| size(a) <= CONTEXT_MAX_BYTES;
+    for keep in [3, 0] {
+        if fits(answer) {
+            return;
+        }
+        let mut dropped = 0;
+        if let Some(Value::Array(plan)) = answer.get_mut("plan") {
+            for task in plan.iter_mut() {
+                if let Some(Value::Array(owns)) = task.get_mut("owns") {
+                    dropped += owns.len().saturating_sub(keep);
+                    owns.truncate(keep);
+                }
+            }
+        }
+        omit(answer, "owns", dropped);
+        if keep == 0 || fits(answer) {
+            continue;
+        }
+        let mut left_out = 0;
+        if let Some(Value::Array(plan)) = answer.get_mut("plan") {
+            let before = plan.len();
+            plan.retain(|t| !t["id"].as_str().is_some_and(|id| finished.contains(&id)));
+            left_out = before - plan.len();
+        }
+        omit(answer, "tasks", left_out);
+    }
+    if fits(answer) {
+        return;
+    }
+    if let Some(Value::Object(profile)) = answer.get_mut("profile") {
+        for key in ["modules", "hub", "source", "generated", "protected"] {
+            if let Some(Value::Array(items)) = profile.get_mut(key) {
+                items.clear();
+            }
+        }
+    }
+    if fits(answer) {
+        return;
+    }
+    if let Some(Value::Array(epics)) = answer.get_mut("epics") {
+        for epic in epics.iter_mut() {
+            clear(epic, &["area"]);
+        }
+    }
+    while !fits(answer) {
+        match answer.get_mut("epics") {
+            Some(Value::Array(epics)) if !epics.is_empty() => {
+                epics.pop();
+                omit(answer, "epics", 1);
+            }
+            _ => break,
+        }
+    }
+    if let Some(epic) = answer.pointer_mut("/you/epic")
+        && epic.is_object()
+    {
+        clear(epic, &["area"]);
+        if let Some(Value::String(brief)) = epic.get_mut("brief") {
+            *brief = cut(brief, SUMMARY_TRIMMED);
+        }
+    }
+}
+
+/// Adds `n` to `omitted.<key>`.
+fn omit(answer: &mut Value, key: &str, n: usize) {
+    if n > 0 {
+        let count = answer["omitted"][key].as_u64().unwrap_or(0) + n as u64;
+        answer["omitted"][key] = json!(count);
+    }
 }
 
 /// A report's summary cut to [`SUMMARY_TRIMMED`] characters; true if it was longer.
