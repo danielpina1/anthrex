@@ -24,9 +24,28 @@ fn reply(fx: &mut Vec<Effect>, reply: ReplyId, result: Result<String, String>) {
     fx.push(Effect::Reply { reply, result });
 }
 
-/// `Event::Tool`: the MCP tools' engine-side acceptance (Interfaces, "MCP tools"), in
-/// order: the run, its state, the tool, the caller, the task's state, the arguments.
+/// `Event::Tool`: a call from a window whose launch is still in flight waits for it
+/// (`early.rs`); any other is answered now.
 pub(super) fn tool(
+    state: &mut EngineState,
+    id: ReplyId,
+    call: ToolCall,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
+    let running = state
+        .runs
+        .get(&call.run_id)
+        .is_some_and(|r| r.state == RunState::Running);
+    if running && super::early::holds_call(state, &call) {
+        return super::early::hold_call(state, id, call, now, fx);
+    }
+    answer(state, id, call, now, fx)
+}
+
+/// The MCP tools' engine-side acceptance (Interfaces, "MCP tools"), in order: the run,
+/// its state, the tool, the caller, the task's state, the arguments.
+pub(super) fn answer(
     state: &mut EngineState,
     id: ReplyId,
     call: ToolCall,
