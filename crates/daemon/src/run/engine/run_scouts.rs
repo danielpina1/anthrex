@@ -104,7 +104,13 @@ pub(super) fn start_next(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool 
 }
 
 /// `StartScout`'s result: the scout's window, or its failure.
-pub(super) fn started(run: &mut Run, kind: &OpKind, result: OpResult, now: u64) {
+pub(super) fn started(
+    run: &mut Run,
+    kind: &OpKind,
+    result: OpResult,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
     let OpKind::StartScout { spec } = kind else {
         return;
     };
@@ -112,6 +118,13 @@ pub(super) fn started(run: &mut Run, kind: &OpKind, result: OpResult, now: u64) 
         OpResult::ScoutStarted { window_id } => {
             if let Some(s) = run.orch.run_scouts.iter_mut().find(|s| s.id == spec.id) {
                 s.window_id = Some(window_id);
+                // Halted while its launch was in flight (`halt_all`): stopped at once.
+                if let RunScoutState::Failed { reason } = &s.state {
+                    fx.push(Effect::StopScout {
+                        scout_id: s.id.clone(),
+                        reason: reason.clone(),
+                    });
+                }
             }
         }
         OpResult::Failed { message } => {
@@ -182,5 +195,26 @@ pub(super) fn restore(run: &mut Run, now: u64) {
     for id in live {
         let reason = "the daemon restarted during this scout".to_string();
         end(run, &id, Err(reason), now);
+    }
+}
+
+/// `planners::halt_all`'s run scouts: a running one is halted (`Effect::StopScout`),
+/// a queued one never starts; each fails with `reason`.
+pub(super) fn halt_all(run: &mut Run, reason: &str, now: u64, fx: &mut Vec<Effect>) {
+    let live: Vec<(String, bool)> = run
+        .orch
+        .run_scouts
+        .iter()
+        .filter(|s| matches!(s.state, RunScoutState::Queued | RunScoutState::Running))
+        .map(|s| (s.id.clone(), s.state == RunScoutState::Running))
+        .collect();
+    for (id, running) in live {
+        if running {
+            fx.push(Effect::StopScout {
+                scout_id: id.clone(),
+                reason: reason.to_string(),
+            });
+        }
+        end(run, &id, Err(reason.to_string()), now);
     }
 }

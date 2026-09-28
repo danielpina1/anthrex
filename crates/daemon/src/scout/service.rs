@@ -532,6 +532,13 @@ impl ScoutService {
         self.drive(id, ScoutEvent::Stop);
     }
 
+    /// The engine halted run scout `id` (`run cancel`, the `finish` edit): the machine
+    /// kills the session with the engine's reason, as `stop_planner` does.
+    pub fn halt(&self, id: &str, reason: &str) {
+        let reason = reason.to_string();
+        self.drive(id, ScoutEvent::Halt { reason });
+    }
+
     /// The sub-planner session in window `window_id`, if it is one of ours.
     pub(super) fn planner_at(&self, window_id: u32) -> Option<String> {
         let table = crate::lock(&self.table);

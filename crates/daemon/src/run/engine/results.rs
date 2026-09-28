@@ -78,9 +78,9 @@ pub(super) fn op_done(
         (OpKind::CreateOrchestrator { .. }, _) => orch_window::launched(run, op, result, now),
         (OpKind::RestartOrchestrator { .. }, _) => orch_window::restarted(run, result, now),
         // Decisions 20 and 32: a run scout's and a sub-planner's session.
-        (kind @ OpKind::StartScout { .. }, _) => run_scouts::started(run, &kind, result, now),
+        (kind @ OpKind::StartScout { .. }, _) => run_scouts::started(run, &kind, result, now, fx),
         (kind @ OpKind::StartPlanner { .. }, _) => {
-            bound = planners::started(run, &kind, result, now);
+            bound = planners::started(run, &kind, result, now, fx);
         }
         _ => {}
     }

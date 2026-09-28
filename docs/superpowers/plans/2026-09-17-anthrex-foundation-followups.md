@@ -1654,6 +1654,4 @@ scope.
 
 ## From M9.9's review fixes (2026-09-28), for M9
 
-- **`run cancel` does not stop a live sub-planner or run scout.** Completion waits for them (decision 38), and a planner's `submit_epic` accepted after the cancel would add tasks to a run being ended. Suggested fix: `complete::cancel` stops live planners (`Effect::StopPlanner`) and marks queued ones failed, stops run scouts, and `planners::tool` refuses a cancelled run.
-- **`run retry` of a blocked research or review task** takes M8a's worker path (`requests::rung2`, a fresh worker session with `DiffSoFar` in the task's worktree), which a reader task does not have. Suggested fix: refuse it, as `run override` now is, or relaunch the research session or re-resolve the review target.
 - **An accepted `edit_plan` runs the scheduler inside its handler (`orch::settle`)**, before `engine::step` takes I2's snapshot. So a stall that falls due in the same step as the orchestrator's accepted edit adds no wake note, though the digest shows it. Suggested fix: take the snapshot inside `settle`, before its scheduler pass.

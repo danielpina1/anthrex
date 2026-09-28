@@ -443,7 +443,10 @@ pub(super) fn rung2(
     // `kill_worker`'s `supersede` ended the hand-back context (`handed_back`,
     // `resolution`); its gates' pass goes too (carry T14-R2).
     task.gates_after_handback = false;
-    if task.start_commit.is_none() {
+    // A research or review task has no worktree and never a start commit: it is
+    // dispatched again, as that kind starts (a fresh research session, a fresh review
+    // of its target), never a worker's fresh session (M9.9 review fixes).
+    if task.start_commit.is_none() || super::schedule::is_reader_task(task) {
         set_state(task, TaskState::Queued, now);
         task.block = None;
         task.fresh_session = None;

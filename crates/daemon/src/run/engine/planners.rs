@@ -103,7 +103,13 @@ fn start(run: &mut Run, k: usize, now: u64, fx: &mut Vec<Effect>) {
 
 /// `StartPlanner`'s result: the session's window, or its failure. Returns the window a
 /// session was bound to, for the calls held before it (`early.rs`).
-pub(super) fn started(run: &mut Run, kind: &OpKind, result: OpResult, now: u64) -> Option<u32> {
+pub(super) fn started(
+    run: &mut Run,
+    kind: &OpKind,
+    result: OpResult,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) -> Option<u32> {
     let OpKind::StartPlanner { spec } = kind else {
         return None;
     };
@@ -117,6 +123,11 @@ pub(super) fn started(run: &mut Run, kind: &OpKind, result: OpResult, now: u64) 
     match result {
         OpResult::PlannerStarted { window_id } => {
             session.window_id = Some(window_id);
+            // Halted while its launch was in flight (`halt_all`): stopped at once.
+            if let (true, PlannerPhase::Failed { reason }) = (latest, &epic.phase) {
+                let reason = reason.clone();
+                fx.push(Effect::StopPlanner { window_id, reason });
+            }
             Some(window_id)
         }
         OpResult::Failed { message } if latest && epic.phase == PlannerPhase::Planning => {
@@ -170,6 +181,36 @@ fn fail(run: &mut Run, k: usize, reason: String, now: u64) {
     let name = epic.epic.clone();
     log(run, now, format!("sub-planner {name} failed: {reason}"));
     wake::note(run, format!("sub-planner {name} failed: {reason}"));
+}
+
+/// `run cancel`'s reason for the sub-planners and run scouts it halts.
+pub const RUN_CANCELLED: &str = "the run was cancelled";
+/// The `finish` edit's reason for the sub-planners and run scouts it halts.
+pub const RUN_FINISHED: &str = "the finish edit ends the run";
+
+/// M9.9 review fixes: `run cancel` and the `finish` edit end the run's sub-planners
+/// and run scouts rather than wait for them. A live session is halted (the machine's
+/// `ScoutEvent::Halt`, through `Effect::StopPlanner` or `Effect::StopScout`); a queued
+/// one never starts. Each ends `failed` with `reason` (decisions 20 and 32's outcome).
+pub(super) fn halt_all(run: &mut Run, reason: &str, now: u64, fx: &mut Vec<Effect>) {
+    for k in 0..run.orch.epics.len() {
+        if !run.orch.epics[k].phase.is_live() {
+            continue;
+        }
+        let window = run.orch.epics[k]
+            .sessions
+            .last()
+            .filter(|s| s.ended_at.is_none())
+            .and_then(|s| s.window_id);
+        if let Some(window_id) = window {
+            fx.push(Effect::StopPlanner {
+                window_id,
+                reason: reason.to_string(),
+            });
+        }
+        fail(run, k, reason.to_string(), now);
+    }
+    run_scouts::halt_all(run, reason, now, fx);
 }
 
 /// Decision 32 after a daemon restart: a queued or live sub-planner is not resumed; it

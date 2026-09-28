@@ -36,6 +36,7 @@ mod history;
 mod holds;
 mod holds_conflicts;
 mod kinds;
+mod kinds_cancel;
 mod kinds_complete;
 mod kinds_end;
 mod kinds_integration;

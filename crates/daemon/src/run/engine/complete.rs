@@ -97,9 +97,15 @@ pub(super) fn cancel_now(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut 
 /// that has not started is cancelled at once; once no task is live, the blocked ones
 /// are cancelled too, and completion follows.
 pub(super) fn finish_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+    // M9.9 review fixes: a run being ended runs no sub-planner or run scout, even one
+    // the orchestrator asked for since.
+    if run.cancelled {
+        super::planners::halt_all(run, super::planners::RUN_CANCELLED, now, fx);
+    }
     if !run.finish_edit {
         return;
     }
+    super::planners::halt_all(run, super::planners::RUN_FINISHED, now, fx);
     for i in 0..run.tasks.len() {
         let task = &run.tasks[i];
         if !task.state.is_finished() && task.start_commit.is_none() {
@@ -273,6 +279,7 @@ pub(super) fn cancel(
         }
     }
     run.cancelled = true;
+    super::planners::halt_all(run, super::planners::RUN_CANCELLED, now, fx);
     log(run, now, "cancelled by the user");
     let mut text = format!("run {run_id} cancelled; it completes once its sessions have ended");
     for id in merging {

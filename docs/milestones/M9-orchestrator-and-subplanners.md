@@ -2869,3 +2869,22 @@ One commit, `fix(daemon): hold a promoted run's additions until the user approve
   - M4's clip and eviction;
   - M5;
   - M6's seq filter.
+- **Second round: cancelling a run stops its planners and scouts.**
+  - `run cancel` and the `finish` edit halt every queued or live sub-planner and run scout (`planners::halt_all`, with `run_scouts::halt_all`), where before the run waited for them to end on their own, for up to `[orchestrator.planners] timeout_secs`.
+  - A live planner gets `Effect::StopPlanner`. A running run scout gets the new `Effect::StopScout { scout_id, reason }`, which the driver turns into `ScoutService::halt`, driving the machine's `ScoutEvent::Halt` as `stop_planner` does.
+  - A queued planner or scout never starts. Each record ends `failed` (the outcome vocabulary of decisions 20 and 32; there is no `interrupted`) with `the run was cancelled`, or `the finish edit ends the run`.
+  - The halt runs at the cancel and on every running pass of a cancelled or finishing run (`complete::finish_pass`), so a scout or planner the orchestrator asks for afterwards is dropped too.
+  - A launch still in flight at the halt is stopped when its window arrives (`planners::started`, `run_scouts::started`).
+  - **Reading:** the records fail at the halt, so completion does not wait for the halted sessions' end events. It waits for their launch ops, like any pending op.
+  - Tests in the new `engine/tests/kinds_cancel.rs`, each written first and red:
+    - `cancel_halts_planners_and_scouts`: a live planner, a running scout and a queued one. It checks both halt effects and that the queued scout never starts; once the sessions end, the run completes.
+    - `the_finish_edit_halts_planners_and_scouts`.
+    - `a_launch_in_flight_at_cancel_is_stopped_when_it_starts`: written after its code, and shown red by reverting each of the two `started` branches.
+  - This supersedes the follow-up recorded in the first round.
+- **`run retry` of a research or review task was already that kind's own path.** The first round's follow-up said otherwise, and was wrong:
+  - these tasks never have a `start_commit`, so `requests::rung2` puts them back to `queued`;
+  - the reader dispatch then starts a fresh research session, or resolves the review target again and reviews it afresh;
+  - no `DiffSoFar` or worktree is involved.
+  - `rung2` now also names the case explicitly (`is_reader_task`).
+  - Pinning tests `retrying_a_research_task_starts_a_fresh_research_session` and `retrying_a_review_task_reviews_it_again` passed before any change. They turn red when `rung2` is forced onto the worker path.
+

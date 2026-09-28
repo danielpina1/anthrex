@@ -338,6 +338,12 @@ pub enum Effect {
         window_id: u32,
         reason: String,
     },
+    /// Decision 20: a run scout is halted by the engine (`run cancel`, the `finish`
+    /// edit); the driver stops its session on the scout service with `reason`.
+    StopScout {
+        scout_id: String,
+        reason: String,
+    },
     /// Decision 39: paste `text` into the idle orchestrator's window (the driver's
     /// `wake.rs`, task M9.13), then answer `OrchEvent::OrchestratorWoken`.
     WakeOrchestrator {

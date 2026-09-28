@@ -268,6 +268,11 @@ impl RunService {
                     adaptation.scouts.stop_planner(window_id, &reason);
                 }
             }
+            Effect::StopScout { scout_id, reason } => {
+                if let Some(adaptation) = self.adaptation.get() {
+                    adaptation.scouts.halt(&scout_id, &reason);
+                }
+            }
             // Decision 39: the paste is task M9.13's (`driver/wake.rs`).
             Effect::WakeOrchestrator { .. } => {}
             Effect::Persist { .. } | Effect::Op { .. } | Effect::Publish { .. } => {}
