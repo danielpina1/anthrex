@@ -34,7 +34,7 @@ fn promote(fx: &mut Fixture, choice: Option<OrchestratorChoice>) -> Vec<Effect> 
 }
 
 /// [`fast`], promoted, with its orchestrator in window [`ORCH`].
-fn promoted() -> Fixture {
+pub(super) fn promoted() -> Fixture {
     promoted_from(fast())
 }
 
@@ -222,7 +222,7 @@ fn pre_m9_promote_request_is_performed_on_resume_and_on_tick() {
     assert!(ops_in(&fx.tick(), "CreateOrchestrator").is_empty());
 }
 
-fn hold_verdict(fx: &mut Fixture, hold: &str, approve: bool) -> Vec<Effect> {
+pub(super) fn hold_verdict(fx: &mut Fixture, hold: &str, approve: bool) -> Vec<Effect> {
     let reply = fx.reply();
     let (run_id, hold) = (RUN_ID.to_string(), hold.to_string());
     fx.next(EventKind::Orch(if approve {
@@ -240,7 +240,7 @@ fn hold_verdict(fx: &mut Fixture, hold: &str, approve: bool) -> Vec<Effect> {
     }))
 }
 
-fn prepared(fx: &Fixture, id: &str) -> bool {
+pub(super) fn prepared(fx: &Fixture, id: &str) -> bool {
     fx.ops("PrepareWorktree")
         .iter()
         .any(|(_, k)| op_task(k) == id)
@@ -462,7 +462,7 @@ fn spawn(fx: &mut Fixture, epic: &str) -> serde_json::Value {
 }
 
 /// The orchestrator's addition of `id` to `epic`, as its finished sub-planner's would be.
-fn add_to_epic(fx: &mut Fixture, id: &str, epic: &str) -> serde_json::Value {
+pub(super) fn add_to_epic(fx: &mut Fixture, id: &str, epic: &str) -> serde_json::Value {
     let e = fx
         .run_mut()
         .orch

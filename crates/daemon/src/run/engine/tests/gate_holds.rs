@@ -29,7 +29,7 @@ fn spawn(fx: &mut Fixture, epic: &str) -> Value {
 
 /// A running run (`t1`, approved by the user or `--yes`) whose orchestrator started a
 /// new epic `mail` and, once its sub-planner finished, added `t2` to it.
-fn held(yes: bool) -> Fixture {
+pub(super) fn held(yes: bool) -> Fixture {
     let mut fx = launched(yes);
     edit_plan(
         &mut fx,
@@ -51,7 +51,7 @@ fn held(yes: bool) -> Fixture {
     fx
 }
 
-fn hold_state(fx: &Fixture, id: &str) -> HoldState {
+pub(super) fn hold_state(fx: &Fixture, id: &str) -> HoldState {
     fx.run()
         .orch
         .gate_holds
@@ -79,7 +79,7 @@ fn verdict(fx: &mut Fixture, hold: &str, approve: bool) -> Vec<Effect> {
     }))
 }
 
-fn awaiting(fx: &mut Fixture) {
+pub(super) fn awaiting(fx: &mut Fixture) {
     let now = fx.now;
     submitted(fx.run_mut(), "epic:mail", now);
     assert_eq!(hold_state(fx, "epic:mail"), HoldState::Awaiting);
@@ -325,6 +325,9 @@ fn amending_a_held_task_keeps_its_hold() {
 fn a_users_split_of_a_held_task_releases_it_and_the_approval_counts_none() {
     use super::holds::plan_task;
     let mut fx = held(false);
+    // Awaiting the user: a `Drafting` round the split left with no live task would be
+    // dropped (item 10.2), with nothing to approve.
+    awaiting(&mut fx);
     let split = proto::PlanEdit::SplitTask {
         task_id: "t2".into(),
         into: vec![
@@ -338,7 +341,6 @@ fn a_users_split_of_a_held_task_releases_it_and_the_approval_counts_none() {
     for id in ["t2a", "t2b"] {
         assert_eq!(fx.task(id).orch.gate_hold, None, "{id} is the user's");
     }
-    awaiting(&mut fx);
     let effects = verdict(&mut fx, "epic:mail", true);
     assert_eq!(
         replies(&effects),

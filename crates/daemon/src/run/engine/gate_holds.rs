@@ -123,13 +123,16 @@ pub(super) fn assign(
     let mut first = None;
     for id in added {
         let parent = split_parent(edits, id);
-        let hold = match parent.and_then(|p| unreleased_hold(run, p)) {
-            Some(inherited) => Some(inherited),
-            // An epic's rule comes first: its work waits for its own round, never
-            // the promotion's (M9.7 second review, ruling 9).
-            None if names_an_epic(run, id) => epic_hold(run, id, now),
-            None if promotion_open(run) => Some(promotion_round(run, now)),
-            None => None,
+        // An open epic's rule comes first, for a split child too: its work waits
+        // for the epic's own round, never an inherited or the promotion's (M9.7
+        // second review, rulings 9 and 10).
+        let hold = match open_epic(run, id) {
+            Some(epic) => Some(epic_round(run, &epic, now)),
+            None => match parent.and_then(|p| unreleased_hold(run, p)) {
+                Some(inherited) => Some(inherited),
+                None if promotion_open(run) => Some(promotion_round(run, now)),
+                None => None,
+            },
         };
         let Some(hold) = hold else {
             continue;
@@ -204,30 +207,39 @@ fn is_round_of(hold: &GateHoldRecord, epic: &str) -> bool {
 /// until the user approves one (decision 28; after a rejection, M9.7 second review,
 /// ruling 8).
 fn epic_open(run: &Run, epic: &str) -> bool {
-    // The record names a round once one was opened; it keeps naming it when an empty
-    // round is dropped (`drop_empty_rounds`), so the epic stays held.
-    let opened = run
+    // The record names the epic's latest round once one was opened. It keeps naming it
+    // when an empty round is dropped (`drop_empty_rounds`), so the epic stays held. A
+    // re-plan opens a new round after an approved one (ruling 10), so only the latest
+    // round's approval releases the epic.
+    let Some(latest) = run
         .orch
         .epics
         .iter()
-        .any(|e| e.epic == epic && e.gate_hold.is_some());
-    let rounds: Vec<_> = run
-        .orch
+        .find(|e| e.epic == epic)
+        .and_then(|e| e.gate_hold.as_ref())
+    else {
+        return false;
+    };
+    !run.orch
         .gate_holds
         .iter()
-        .filter(|h| is_round_of(h, epic))
-        .collect();
-    opened && rounds.iter().all(|h| h.state != HoldState::Approved)
+        .any(|h| &h.id == latest && h.state == HoldState::Approved)
 }
 
-/// Task `id` names an epic the run has.
-fn names_an_epic(run: &Run, id: &str) -> bool {
-    run.task(id)
-        .and_then(|t| t.spec.epic.as_deref())
-        .is_some_and(|epic| run.orch.epics.iter().any(|e| e.epic == epic))
+/// The epic task `id` names, when that epic's rounds are open.
+fn open_epic(run: &Run, id: &str) -> Option<String> {
+    let epic = run.task(id)?.spec.epic.clone()?;
+    epic_open(run, &epic).then_some(epic)
 }
 
-/// Decision 38: a round still `Drafting` with no task, whose epic's sub-planner has
+/// Every task of `hold` is finished or gone (ruling 10: a user's cancel of them all).
+fn no_live_task(run: &Run, hold: &GateHoldRecord) -> bool {
+    hold.tasks
+        .iter()
+        .all(|t| run.task(t).is_none_or(|t| t.state.is_finished()))
+}
+
+/// Decision 38: a round still `Drafting` with no live task, whose epic's sub-planner has
 /// ended without submitting, is dropped, so it cannot keep the run from completing.
 /// The epic's record still names it, so the epic stays held and its next re-plan or
 /// addition opens a round again (M9.7 second review, ruling 9).
@@ -242,7 +254,7 @@ pub(super) fn drop_empty_rounds(run: &mut Run, now: u64) {
         .orch
         .gate_holds
         .iter()
-        .filter(|h| h.state == HoldState::Drafting && h.tasks.is_empty())
+        .filter(|h| h.state == HoldState::Drafting && no_live_task(run, h))
         .filter(|h| matches!(&h.kind, HoldKind::Epic { epic } if ended(run, epic)))
         .map(|h| h.id.clone())
         .collect();
@@ -290,11 +302,6 @@ fn epic_round(run: &mut Run, epic: &str, now: u64) -> String {
 
 /// The round task `id` of an epic waits under: its epic's open round, opened anew
 /// after a rejection; none when the epic has no round or one was approved.
-fn epic_hold(run: &mut Run, id: &str, now: u64) -> Option<String> {
-    let epic = run.task(id)?.spec.epic.clone()?;
-    epic_open(run, &epic).then(|| epic_round(run, &epic, now))
-}
-
 /// The first free id of round `rounds + 1` of `base`: `base` itself for the first,
 /// then `base<sep><n>`.
 fn fresh(run: &Run, base: &str, sep: char, rounds: usize) -> String {
@@ -339,10 +346,12 @@ pub(super) fn create_epic_hold(run: &mut Run, epic: &str, now: u64) -> Option<St
     Some(epic_round(run, epic, now))
 }
 
-/// A re-planned epic whose every round was rejected opens a new round (M9.7 second
-/// review, ruling 8); any other re-plan is held as before.
+/// A re-plan of an epic on a run past its gate is new, unreviewed work: it joins the
+/// epic's undecided round, or opens a new one, after an approved round too (M9.7
+/// second review, ruling 10, the controller's decision).
 pub(super) fn replan_epic_hold(run: &mut Run, epic: &str, now: u64) -> Option<String> {
-    epic_open(run, epic).then(|| epic_round(run, epic, now))
+    run.orch.orchestrator.as_ref()?;
+    past_gate(run).then(|| epic_round(run, epic, now))
 }
 
 /// A drafted hold is submitted (the orchestrator's `submit`, a sub-planner's accepted
