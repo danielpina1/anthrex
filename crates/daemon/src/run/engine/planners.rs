@@ -348,32 +348,45 @@ pub(super) fn tool(
     }
 }
 
-/// M9.8 review, ruling 2: a sub-planner amends only its own epic's tasks that are not
-/// released: not started, and held under a round not yet approved (or, before the
-/// gate, not yet approved at all). The orchestrator's and the user's amends keep
-/// decision 19's rights.
-fn released_amends(run: &Run, edits: &[PlanEdit], epic: &str) -> Vec<PlanError> {
-    let started = |t: &crate::run::model::Task| {
-        t.session > 0
+/// M9.8 review, ruling 2, as the second review rules it: a sub-planner changes only
+/// its current session's round. It may `amend_task`, `split_task` or `add_dep` (as
+/// the dependent) a task of its epic only when the task sits in the `Drafting` round
+/// its session's additions join, and `cancel_task` one only when it is neither released
+/// nor started, since cancelling unapproved work only reduces it. Before the gate
+/// nothing is approved, so any unstarted task of its epic may change. Another epic's
+/// task is `planner_confinement`'s; the orchestrator's and the user's rights are
+/// decision 19's.
+fn outside_its_round(run: &Run, edits: &[PlanEdit], epic: &str) -> Vec<PlanError> {
+    let round = gate_holds::session_round(run, epic);
+    let may_change = |t: &crate::run::model::Task, cancel: bool| {
+        let started = t.session > 0
             || !matches!(
                 t.state,
                 TaskState::Pending | TaskState::Queued | TaskState::Blocked
-            )
+            );
+        if started {
+            false
+        } else if cancel {
+            !gate_holds::released_past_gate(run, t)
+        } else {
+            !gate_holds::past_gate(run) || (t.orch.gate_hold.is_some() && t.orch.gate_hold == round)
+        }
     };
     edits
         .iter()
         .filter_map(|edit| match edit {
-            PlanEdit::AmendTask { task_id, .. } => Some(task_id),
+            PlanEdit::AmendTask { task_id, .. }
+            | PlanEdit::SplitTask { task_id, .. }
+            | PlanEdit::AddDep { task_id, .. } => Some((task_id, false)),
+            PlanEdit::CancelTask { task_id } => Some((task_id, true)),
             _ => None,
         })
-        .filter(|id| {
-            run.task(id).is_some_and(|t| {
-                t.spec.epic.as_deref() == Some(epic)
-                    && (started(t) || gate_holds::released_past_gate(run, t))
-            })
+        .filter(|(id, cancel)| {
+            run.task(id)
+                .is_some_and(|t| t.spec.epic.as_deref() == Some(epic) && !may_change(t, *cancel))
         })
-        .map(|id| {
-            let text = format!("task {id}: a sub-planner amends only its epic's unapproved tasks");
+        .map(|(id, _)| {
+            let text = format!("task {id}: a sub-planner changes only its own round's tasks");
             PlanError::new(Some(id), "", "2.epic", text)
         })
         .collect()
@@ -415,7 +428,7 @@ fn submit_epic(
     }
     let epic = run.orch.epics[k].epic.clone();
     let mut confined = planner_confinement(run, edits, &epic);
-    confined.extend(released_amends(run, edits, &epic));
+    confined.extend(outside_its_round(run, edits, &epic));
     if !confined.is_empty() {
         return reject(run, reply, (k, window), &confined, now, fx);
     }

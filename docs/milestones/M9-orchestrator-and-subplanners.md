@@ -2693,7 +2693,7 @@ One commit, `fix(daemon): hold a promoted run's additions until the user approve
 - **Ruling 1: a re-plan never joins an `Awaiting` round.** `gate_holds::epic_round` joins an `Awaiting` round only while the epic has no queued or planning sub-planner; otherwise it joins the latest round only when that round is `Drafting`, and opens a new one if it is not.
   - A re-plan marks its epic `Queued` before `replan_epic_hold`. So a re-plan reuses a `Drafting` round, or opens `epic:<e>.<n>` after an `Awaiting` or an approved one.
   - The planner's `submit_epic` then puts its additions and split children into that `Drafting` session round, and submits it. Approving an earlier round releases none of them.
-  - **Reading:** "an orchestrator addition naming an epic whose planner is queued or planning joins that planner's `Drafting` round" cannot arise. `orch/rules.rs` (M9.4, rule `2.epic`) refuses the orchestrator's new task naming a live epic, with `epic <e> is being planned by its sub-planner`, and `is_live` covers `Queued`. `epic_round` would still put such a task in the `Drafting` round.
+  - **Reading:** "an orchestrator addition naming an epic whose planner is queued or planning joins that planner's `Drafting` round" cannot arise. `orch/rules.rs` (M9.4, rule `2.epic`) refuses the orchestrator's new task naming a live epic, with `epic <e> is being planned by its sub-planner`, and `is_live` covers `Queued`. `epic_round` would still put such a task in the `Drafting` round. Since the second review (ruling 2 below), rule `2.epic` also refuses the orchestrator's `split_task` of such an epic's task, and an `add_dep` onto one. A split child naming no epic would otherwise inherit its parent's `Awaiting` hold. So an `Awaiting` round is never joined while its epic is live.
   - When no planner is live, an orchestrator addition still joins its epic's `Awaiting` round, as M9.7 ruled for the promotion round.
   - Tests in the new `engine/tests/planners_review.rs`:
     - `a_replan_never_joins_an_awaiting_round` (the reviewer's sequence);
@@ -2717,3 +2717,33 @@ One commit, `fix(daemon): hold a promoted run's additions until the user approve
   - `MAX_REPLANS_PER_EPIC = 3`: refused with `epic <e> was already re-planned 3 times, the most one epic allows`.
   - `MAX_EPICS = 20`: refused with `run <id> already has 20 epics, the most one run allows`.
   Tests: `replans_per_epic_are_bounded` and `epics_per_run_are_bounded`, both red before the fix. M9.9's task text now says that the wake notes M9.8 adds need M9.9's cap. M9.9 already had the cap test `notes_are_capped_at_20_with_the_earlier_line`; it did not say that M9.8's `wake_note` is uncapped.
+
+#### Second review
+
+- **Ruling 1: a sub-planner changes only its own round's work.** This replaces the first review's `released_amends` with `planners.rs::outside_its_round`, and fixes the reviewer's findings 1 and 2. For a task of the planner's own epic that existed before the batch:
+  - `amend_task`, `split_task` and `add_dep` (the task as the dependent) are allowed only when the task is unstarted and its hold is the session's round. That round is `gate_holds::session_round`: the epic's current round, past the gate, while `Drafting`, which is the round the session's additions join.
+  - `cancel_task` is allowed when the task is neither started nor released (`released_past_gate`), since cancelling unapproved work only reduces it.
+  - Anything else is refused with `task <id>: a sub-planner changes only its own round's tasks` (rule `2.epic`).
+  - So a later session cannot rewrite, split or add to a task in an earlier `Awaiting` round, where the change would ride on that round's approval; it may only cancel such a task. Another epic's task keeps `planner_confinement`'s refusal, and the orchestrator's and the user's rights are unchanged.
+  - Tests in the new `engine/tests/planners_rounds.rs`:
+    - `a_planner_cannot_cancel_split_or_add_a_dep_to_released_or_started_work`: an approved `t2`, then a `Working` `t2`; all three ops are refused, and the plan is unchanged.
+    - `a_later_session_only_cancels_an_earlier_awaiting_rounds_task`: amend, split and `add_dep` of `t2` in the earlier `Awaiting` round are refused; its cancel is accepted.
+    - `a_session_changes_its_own_rounds_tasks`: amend, `add_dep` and split of a task in the session's own round, and an amend of a task the batch adds, are all accepted.
+  - The first review's tests are adjusted:
+    - `a_replans_split_children_wait_for_its_own_round` is removed. Its split of the earlier round's `t2` is now refused, and `a_later_session_only_cancels_an_earlier_awaiting_rounds_task` pins that.
+    - `a_planner_amends_only_its_epics_unapproved_tasks` now expects the new message and no longer accepts an amend of the earlier round's `t2`.
+    - `an_accepted_epic_with_no_new_task_asks_the_user_nothing` now cancels the still-held `t2` instead of amending it.
+  - **Reading:** a session's own round can hold tasks from before the batch only when the re-plan joined a `Drafting` round that the orchestrator had filled (ruling 4). A fresh `epic:<e>.<n>` holds only what the session's batch adds, and those tasks are its own. The `gate_hold.is_some()` guard in the round comparison is defensive: past the gate, a live session's round is `None` only if its round is not `Drafting`, which ruling 1 of the first review prevents.
+- **Ruling 2: the orchestrator's split of a live epic's task is refused.** `Batch::epic_being_planned` (in `edits_orch.rs`, called from `split_owned` and `add_dep`) refuses, for the orchestrator's batch, a `split_task` of, or an `add_dep` onto, a task whose epic has a queued or planning sub-planner. It uses rule `2.epic`'s text, `epic <e> is being planned by its sub-planner`. The brief's ruling-1 reading above is corrected to say so. Test: `the_orchestrator_cannot_split_or_add_a_dep_to_a_live_epics_task`, the reviewer's probe (`t2` awaits under `epic:mail`, `mail` is re-planned, and the orchestrator's split of `t2` into `t2x` is refused). Red before the fix: the split was accepted and `t2x` was held under `epic:mail`.
+- **Ruling 3: the `past_gate` clauses are pinned.** `before_the_gate_a_replan_changes_any_of_its_epics_tasks`: before the gate, a re-plan's session amends, splits and cancels its epic's tasks. The reading holds with ruling 1: before the gate no round exists and nothing is approved, so any unstarted task of the epic may change. Both mutations turn this test red:
+  - removing `!past_gate(run) ||` from the non-cancel clause;
+  - removing `past_gate(run) &&` from `released_past_gate`, which the cancel clause uses.
+  It passed before the fix, as a pin.
+- **Ruling 4, recorded (no change):** a re-plan may join a `Drafting` round the orchestrator filled, since a re-plan opens a new round only when the latest one is not `Drafting`. The planner's `submit_epic` then submits that round, and the user approves the orchestrator's and the planner's tasks together, knowingly: the round lists them all. `a_session_changes_its_own_rounds_tasks` exercises this.
+- **Red evidence.** Before the fixes, three tests were red (the release, earlier-round and orchestrator tests). I then mutated each fix from a `cp` backup:
+  - the own-round check removed;
+  - the round comparison loosened to "has a hold";
+  - the cancel rule removed;
+  - the orchestrator's live-epic check removed;
+  - each of the two `past_gate` clauses removed.
+  Each mutation turned its tests red.

@@ -21,12 +21,12 @@ use crate::run::engine::planners::{EPIC_RECORDED, MAX_EPICS, MAX_REPLANS_PER_EPI
 use crate::run::engine::{Effect, ScoutEnd};
 use crate::run::orch::PlannerPhase;
 
-const SECOND: u32 = PLANNER + 1;
+pub(super) const SECOND: u32 = PLANNER + 1;
 
 /// `planning_mail` whose planner submitted `t2` (owning `module`): `epic:mail` awaits
 /// the user, the session has ended, and `mail` is re-planned (session 2 live in
 /// [`SECOND`]).
-fn replanned_with_t2_awaiting(module: &str) -> Fixture {
+pub(super) fn replanned_with_t2_awaiting(module: &str) -> Fixture {
     let mut fx = planning_mail(false);
     submit_epic(&mut fx, json!([task_in("t2", module)]));
     assert_eq!(hold_state(&fx, "epic:mail"), Some(HoldState::Awaiting));
@@ -37,7 +37,7 @@ fn replanned_with_t2_awaiting(module: &str) -> Fixture {
     fx
 }
 
-fn second_submits(fx: &mut Fixture, edits: serde_json::Value) -> Vec<Effect> {
+pub(super) fn second_submits(fx: &mut Fixture, edits: serde_json::Value) -> Vec<Effect> {
     let args = json!({"edits": edits});
     planner_tool(fx, (SECOND, "mail"), "submit_epic", args)
 }
@@ -61,29 +61,6 @@ fn a_replan_never_joins_an_awaiting_round() {
     );
     hold_verdict(&mut fx, "epic:mail.2", true);
     assert!(prepared(&fx, "t3"));
-}
-
-/// Ruling 1 through a split: session 2 splits the awaiting `t2`; its children wait under
-/// `epic:mail.2`, and approving `epic:mail` releases neither.
-#[test]
-fn a_replans_split_children_wait_for_its_own_round() {
-    let mut fx = replanned_with_t2_awaiting("mail");
-    let split = json!({"op": "split_task", "task_id": "t2",
-        "into": [task_in("t2a", "mail/a")["task"].clone(), task_in("t2b", "mail/b")["task"].clone()]});
-    let effects = second_submits(&mut fx, json!([split]));
-    assert_eq!(replies(&effects), vec![Ok(EPIC_RECORDED.to_string())]);
-    for child in ["t2a", "t2b"] {
-        assert_eq!(
-            fx.task(child).orch.gate_hold.as_deref(),
-            Some("epic:mail.2"),
-            "{child}"
-        );
-    }
-    hold_verdict(&mut fx, "epic:mail", true);
-    fx.tick();
-    assert!(!prepared(&fx, "t2a") && !prepared(&fx, "t2b"));
-    hold_verdict(&mut fx, "epic:mail.2", true);
-    assert!(prepared(&fx, "t2a") && prepared(&fx, "t2b"));
 }
 
 /// Ruling 1 for a round the orchestrator's own addition opened: `t2` (added to the
@@ -115,7 +92,7 @@ fn amend_refused(fx: &mut Fixture, id: &str) {
     let effects = second_submits(fx, json!([amend(id)]));
     let (ok, text) = reply(&effects);
     assert!(!ok, "{text}");
-    let expected = format!("task {id}: a sub-planner amends only its epic's unapproved tasks");
+    let expected = format!("task {id}: a sub-planner changes only its own round's tasks");
     assert!(text.contains(&expected), "{text}");
     assert_eq!(fx.task(id).spec.brief, before);
     assert_eq!(fx.run().outbox.len(), outbox, "nothing is delivered");
@@ -126,7 +103,8 @@ fn amend_refused(fx: &mut Fixture, id: &str) {
 }
 
 /// Ruling 2: session 2 may not amend its epic's `Working` task, nor an approved one
-/// that has not started; it may amend its epic's task still held.
+/// that has not started. (Its amend of a task still held in an earlier round is refused
+/// too since the second review: `planners_rounds.rs`.)
 #[test]
 fn a_planner_amends_only_its_epics_unapproved_tasks() {
     let mut fx = replanned_with_t2_awaiting("mail/a");
@@ -136,14 +114,6 @@ fn a_planner_amends_only_its_epics_unapproved_tasks() {
     amend_refused(&mut fx, "t2");
     fx.task_mut("t2").state = TaskState::Working;
     amend_refused(&mut fx, "t2");
-    // Its own held task (t2 awaits the user under epic:mail): accepted.
-    let mut fx = replanned_with_t2_awaiting("mail/a");
-    let effects = second_submits(
-        &mut fx,
-        json!([task_in("t3", "mail/b"), {"op": "amend_task", "task_id": "t2", "brief": "Held brief"}]),
-    );
-    assert_eq!(replies(&effects), vec![Ok(EPIC_RECORDED.to_string())]);
-    assert_eq!(fx.task("t2").spec.brief, "Held brief");
 }
 
 /// Ruling 3, the reviewer's case: no reader slot is free, session 1 has failed and a

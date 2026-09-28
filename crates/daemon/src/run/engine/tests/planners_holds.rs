@@ -92,8 +92,8 @@ fn a_promoted_runs_planner_and_its_replan_wait_for_their_rounds() {
 
 /// A re-plan whose sub-planner adds no task asks the user nothing: its round, left
 /// `Drafting` with no live task, is dropped once the planner has finished. Here it
-/// amends `t2`, still held under `epic:mail` (M9.8 review ruling 2 lets a planner
-/// amend only unapproved tasks), which stays the user's to decide.
+/// cancels `t2`, still held under `epic:mail`: a later session only cancels an earlier
+/// round's task (M9.8 second review, ruling 1).
 #[test]
 fn an_accepted_epic_with_no_new_task_asks_the_user_nothing() {
     let mut fx = planning_mail(false);
@@ -101,11 +101,10 @@ fn an_accepted_epic_with_no_new_task_asks_the_user_nothing() {
     planner_ended(&mut fx, ("mail", 1), ScoutEnd::Reported);
     assert_eq!(spawn(&mut fx, "mail")["hold"], "epic:mail.2");
     planner_started(&mut fx, PLANNER + 1);
-    let amend = json!({"op": "amend_task", "task_id": "t2", "brief": "Clearer brief"});
-    let args = json!({"edits": [amend]});
+    let args = json!({"edits": [{"op": "cancel_task", "task_id": "t2"}]});
     let effects = planner_tool(&mut fx, (PLANNER + 1, "mail"), "submit_epic", args);
     assert_eq!(replies(&effects), vec![Ok(EPIC_RECORDED.to_string())]);
-    assert_eq!(fx.task("t2").spec.brief, "Clearer brief");
+    assert_eq!(fx.task("t2").state, proto::TaskState::Cancelled);
     assert_eq!(hold_state(&fx, "epic:mail.2"), None);
     assert_eq!(hold_state(&fx, "epic:mail"), Some(HoldState::Awaiting));
 }

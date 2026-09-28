@@ -546,6 +546,9 @@ impl Batch {
 
     fn add_dep(&mut self, id: &str, dep: &str) {
         let Some(i) = self.find(id) else { return };
+        if self.epic_being_planned(i) {
+            return;
+        }
         if !not_started(self.run.tasks[i].state) {
             return self.refuse(
                 i,

@@ -50,6 +50,7 @@ mod planners;
 mod planners_confine;
 mod planners_holds;
 mod planners_review;
+mod planners_rounds;
 mod promote;
 mod run_scouts;
 mod turns;

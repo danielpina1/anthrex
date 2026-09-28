@@ -96,6 +96,9 @@ impl Batch {
     /// such before any epic rule (M9.4 second review, ruling 4).
     pub(super) fn split_owned(&mut self, id: &str, into: &[PlanTask]) {
         let Some(i) = self.find(id) else { return };
+        if self.epic_being_planned(i) {
+            return;
+        }
         if let EditSource::Planner { epic } = &self.source
             && self.run.tasks[i].spec.epic.as_ref() != Some(epic)
         {
@@ -108,6 +111,33 @@ impl Batch {
         if let Some(into) = owned.into_iter().collect::<Option<Vec<_>>>() {
             self.split(id, &into);
         }
+    }
+
+    /// Rule `2.epic` (M9.8 second review, ruling 2): the orchestrator does not split,
+    /// or add a dependency onto, a task of an epic whose sub-planner is queued or
+    /// planning, as it adds no task naming one; that work is the planner's, and its
+    /// round is the planner's to submit. Records the error and returns true.
+    pub(super) fn epic_being_planned(&mut self, i: usize) -> bool {
+        if self.source != EditSource::Orchestrator {
+            return false;
+        }
+        let task = &self.run.tasks[i];
+        let Some(epic) = task.spec.epic.clone() else {
+            return false;
+        };
+        let live = self
+            .run
+            .orch
+            .epics
+            .iter()
+            .any(|e| e.epic == epic && e.phase.is_live());
+        if live {
+            let id = task.id().to_string();
+            let text = format!("epic {epic} is being planned by its sub-planner");
+            self.errors
+                .push(PlanError::new(Some(&id), "epic", "2.epic", text));
+        }
+        live
     }
 
     /// A task this batch's source adds, as the batch holds it. Decision 22: a

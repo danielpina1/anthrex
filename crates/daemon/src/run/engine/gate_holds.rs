@@ -99,14 +99,35 @@ pub(super) fn submit_promotion(run: &mut Run, now: u64) -> bool {
 }
 
 /// M9.8 review, ruling 2: the task may run, past the gate, with no hold or an approved
-/// one. Before the gate nothing is released.
+/// one. Before the gate nothing is released. (A sub-planner cancels only such a task
+/// that is not released, second review ruling 1.)
 pub(super) fn released_past_gate(run: &Run, task: &Task) -> bool {
     past_gate(run) && released(run, task)
 }
 
+/// M9.8 second review, ruling 1: the round a live sub-planner's session fills, past
+/// the gate: its epic's current round, while `Drafting`.
+pub(super) fn session_round(run: &Run, epic: &str) -> Option<String> {
+    if !past_gate(run) {
+        return None;
+    }
+    let id = run
+        .orch
+        .epics
+        .iter()
+        .find(|e| e.epic == epic)?
+        .gate_hold
+        .clone()?;
+    run.orch
+        .gate_holds
+        .iter()
+        .any(|h| h.id == id && h.state == HoldState::Drafting)
+        .then_some(id)
+}
+
 /// The run's plan was approved once (by the user, `--yes` or the fast path), or the run
 /// was promoted: work added from now on is past the gate.
-fn past_gate(run: &Run) -> bool {
+pub(super) fn past_gate(run: &Run) -> bool {
     run.approved_at.is_some() || promoted(run)
 }
 
