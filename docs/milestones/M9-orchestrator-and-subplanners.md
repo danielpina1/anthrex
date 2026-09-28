@@ -2311,3 +2311,139 @@ These controller rulings answer the second M9.4 review, of `2e2c8ca`. They repla
 - **Tests outside the named files:** `engine/tests/digest.rs`, `run/snapshot_tests.rs`, `run/orch/test_support.rs` (shared builders), `crates/daemon/tests/run_git_summary.rs` (the blocking suite), plus `note_change_bumps_the_revision_only_on_a_new_fingerprint`, `diffstat_keeps_at_most_60_lines_and_its_total`, `invalid_arguments_name_the_field_and_the_problem`, `file_lists_go_after_the_summaries`, `last_message_line_is_one_clean_line_of_at_most_80_characters`, `the_rest_of_a_task_is_still_published` and `the_digest_revision_is_published`. `old_run_json_loads` now compares a task's `orch` with `TaskOrch::default()`.
 - **Red before green.** The context, result, tools, summary, snapshot, driver and engine tests were written first and failed against stubs that compiled with the Interfaces signatures. Two passed against their stubs: `task_without_start_has_no_git`, which asserts absent keys that an empty stub also lacks, and `the_rest_of_a_task_is_still_published`, which is pinning. The digest was written before its tests, so it was run red by stubbing `digest` and `fingerprint` (all 11 failed), and by two targeted mutations: keeping `last` in the fingerprint failed `counter_changes_do_not_change_the_fingerprint`; keeping `notes` and every decided hold failed `a_read_does_not_change_the_fingerprint` and `gate_states`. Making `plan_text_shown` always true failed both 16a tests. `digest.rs` and `snapshot.rs` were restored from copies each time.
 - **For later tasks.** M9.7 fills `RunInfo.holds` and `orchestrator`. M9.9 fills `PlanEditRecord`'s fields through `record` and maps them into `PlanEditInfo`. M9.11's read path calls `task_summary` on `spawn_blocking` with `DONE_CHECK_GIT_TIMEOUT` only when the task has a start commit, and passes `None` otherwise.
+
+### M9.1 real-CLI checks (2026-09-28, authorized by the user in chat)
+
+- - **Checks 1–7 and 10 (real CLIs, 2026-09-28).** Run by a subagent, with the user's authorization of 2026-09-28 ("go ahead with the real CLI checks").
+    - **Setup.**
+      - **Versions.** `claude --version` gives `2.1.280 (Claude Code)`. `codex --version` gives `codex-cli 0.156.1`.
+      - **Where they ran.** Every session ran in a scratch `git init` repository under the session scratchpad (`…/scratchpad/m9.1/repo{A,B,C,D,3,10}`). None ran in this repository or through an anthrex daemon.
+      - **Stub MCP server.** `stub_mcp.py` is a Python stdio JSON-RPC server that handles `initialize`, `tools/list`, `tools/call` and `ping`. It has one role per check:
+        - `orchestrator`: the six tools `get_context`, `spawn_scout`, `spawn_subplanner`, `edit_plan`, `run_status` and `task_result`;
+        - `worker`: `task_done`, `task_blocked` and `task_note`;
+        - `slow`: `slow_sleep`;
+        - `codex`: `run_status`, which connects to a Unix-socket listener.
+      - **Hooks.** A `--settings` hook logger recorded every event: the 10 of `HOOK_EVENTS`, plus `StopFailure`, `PreCompact` and `PostCompact`.
+      - **Environment.** Each session ran in the caller's environment with these removed: `CLAUDE_CODE_*`, `CLAUDECODE`, `CLAUDE_PID`, `CLAUDE_EFFORT`, `CLAUDE_AGENT_SDK_VERSION`, `MCP_*` and the API-key variables. That emulates a daemon started from a terminal.
+      - **Driver.** The interactive sessions were driven through a Python `pty` wrapper:
+        - 180×50 terminal;
+        - a hard limit of 4 minutes per session;
+        - the child pid alone is killed at the end, with SIGTERM, then SIGKILL after 3 s.
+      - **Models.** `--model haiku` and `--effort low` for Claude; `-m gpt-5.6-luna` for Codex.
+    - **1. Interactive Claude flags: holds.**
+      - **Help.** `claude --help` lists all ten flags: `--mcp-config <configs...>`, `--allowedTools`, `--disallowedTools`, `--append-system-prompt`, `--strict-mcp-config`, `--effort <level>` (low, medium, high, xhigh, max), `-n, --name`, `--settings <file-or-json>`, `-r, --resume [value]` and `--setting-sources <sources>`.
+      - **Command.** Decision 7's argv, run interactively, with `ENABLE_TOOL_SEARCH=false`:
+        ```
+        claude --name orch-probe-A --settings '<hooks json>' --setting-sources user --strict-mcp-config --mcp-config '{"mcpServers":{"anthrex":{"type":"stdio","command":"python3","args":[stub_mcp.py,--role,orchestrator,…]}}}' --allowedTools mcp__anthrex__get_context,…,mcp__anthrex__task_result,Read,Glob,Grep --disallowedTools Edit,Write,NotebookEdit,Bash,Agent --append-system-prompt '<probe contract>' --effort low --model haiku -- 'Call the tool mcp__anthrex__get_context once, then reply with just the word READY.'
+        ```
+      - **Startup.** The TUI started. In a folder never trusted before, it first showed the workspace trust dialog, with "No, exit" as the default choice: Down, then Enter, accepts it. After that dialog, the prompt after `--` was submitted with no further input: `UserPromptSubmit` carried it verbatim.
+      - **First turn.** The hook sequence was `SessionStart, UserPromptSubmit, PreToolUse/mcp__anthrex__get_context, PostToolUse/mcp__anthrex__get_context, Stop`, with `Stop` 7.2 s after start. There was no `ToolSearch` call; the stub logged one `tools/call get_context`.
+      - **`/mcp`.** It shows `anthrex · ✔ connected · 6 tools`. The details screen says `Status: ✔ connected · Config location: Dynamically configured · Tools: 6 tools`. "View tools" lists `get_context, spawn_scout, spawn_subplanner, edit_plan, run_status, …`.
+      - **`--effort`.** The interactive CLI accepts it: the status line shows `effort: low`. Decision 7's `--effort` condition holds.
+      - **Fallback.** None.
+    - **2. `--disallowedTools` holds, with a caveat.** Session B used the same argv (`--name orch-probe-B`, first prompt `Reply with just the word READY.`). It asked three times.
+      - **Write.** The model replied `DENIED: No Write tool available…`, and `probe.txt` was not created.
+        - First, though, it tried the **`Artifact`** tool, Claude Code's built-in page publisher, with `probe.txt`. That tool was available in the interactive session and ran with no permission prompt. It failed only on input validation: `Error: an Artifact's page must be .html …`.
+        - No `PreToolUse` hook fired for that call.
+      - **`ls`.** The model replied `DENIED: No Bash tool available in current session`.
+      - **Sub-agent.** The model replied `DENIED: No Agent tool available…`. It saw only `TaskCreate`, `TaskGet`, `TaskList`, `TaskStop` and `TaskUpdate`, which track tasks.
+      - **Prompts and hooks.** No permission prompt appeared for any of the three, and no `PermissionRequest` hook fired.
+      - **Result.** `Edit`, `Write`, `NotebookEdit`, `Bash` and `Agent` are removed from the model's tool list, so decision 7's fallback (`--permission-mode plan`) does **not** trigger.
+      - **Two facts contradict decision 7's rationale.** Its rationale says "everything not allowed and not disallowed keeps Claude Code's default permission behaviour, which asks the user".
+        - **(a) Auto mode.** Every interactive session in this account started with `⏵⏵ auto mode on (shift+tab to cycle)` in its status line. The mode does not come from `~/.claude/settings.json`, which has no `permissions.defaultMode`; it is the CLI and account default. In auto mode, a tool that is neither allowed nor disallowed is decided by the classifier, and the user is not asked.
+        - **(b) More write-capable tools.** The interactive tool set has more tools that write or act outside the checkout than the five disallowed. Examples are `Artifact` and, as the headless init in check 10 lists, `CronCreate`, `RemoteTrigger`, `PushNotification`, `SendMessage`, `Workflow` and `WebFetch`.
+        - **Needs a controller ruling.** One option is an explicit `--permission-mode default`. Another is a longer `--disallowedTools`.
+    - **3. MCP tool timeout: default ≥ 120 s, so `MCP_TOOL_TIMEOUT` is not needed.**
+      - **Source.** In the 2.1.280 bundle, the per-call timeout is `server.timeout (≥1000) ?? env.MCP_TOOL_TIMEOUT ?? 1e8` ms: the default is 100,000,000 ms, about 27.8 h.
+      - **Command.** `claude -p 'Call the tool mcp__anthrex__slow_sleep once with seconds=N …' --output-format stream-json --verbose --setting-sources user --strict-mcp-config --mcp-config '<slow stub>' --allowedTools mcp__anthrex__slow_sleep --model haiku --max-turns 3`, with `MCP_TOOL_TIMEOUT` unset.
+      - **Observed.**
+        - N=70: `tool_result at 75.1s: slept 70.0 seconds`, result `success`.
+        - N=130: `tool_result at 137.4s: slept 130.0 seconds`, result `success`.
+      - **Result.** The default is above 120 s, so decision 10's `MCP_TOOL_TIMEOUT=120000` condition is false and the variable is not set. Setting it would do no harm.
+    - **4. Codex flags: partly verified. Interactive Codex was blocked by expired login.**
+      - **Help.** `codex --help` lists `-c, --config`, `-m, --model`, `-s, --sandbox <SANDBOX_MODE>`, `-a, --ask-for-approval` and the `resume` subcommand. `codex resume --help` also lists `-s`, `-a` and `-m`.
+      - **Order.** `codex -s read-only -a on-request -m gpt-5.6-luna resume --help` exits 0. `codex -s bogus -a on-request mcp list` fails with `invalid value 'bogus' for '--sandbox <SANDBOX_MODE>'`, so root `-s` and `-a` are parsed and validated ahead of a subcommand.
+      - **Keys.** `codex -s read-only -a on-request -c mcp_servers.anthrex.command="python3" -c mcp_servers.anthrex.args=[…] -c mcp_servers.anthrex.tool_timeout_sec=120 -c mcp_servers.anthrex.default_tools_approval_mode="auto" mcp list --json` accepts the keys: it prints `"tool_timeout_sec": 120.0` for `anthrex`. `approve` is accepted too. A wrong value fails with `unknown variant 'bogusmode', expected one of 'auto', 'prompt', 'writes', 'approve'`.
+        - Decision 8 says `"auto"`, while the shipped headless `codex_args` uses `"approve"`. Both are valid. What `auto` does in an interactive `-a on-request` session, auto-approve or prompt, could **not** be observed: see below.
+      - **Interactive session.** Decision 8's argv, without M3's hook-trust bypass:
+        ```
+        codex -C repoD -c notify=[…] -c tui.* … -c projects."repoD".trust_level="trusted" -c mcp_servers.anthrex.… -c developer_instructions="…" -c model_reasoning_effort="low" -s read-only -a on-request -m gpt-5.6-luna -- '<prompt>'
+        ```
+        The TUI rendered its header, then exited with:
+        ```
+        Error: account/read failed during TUI bootstrap: account/read failed: workspace routing discovery unauthorized (401)
+        ```
+        Codex's own log (`~/.codex/logs_2.sqlite`, read only) gives the cause: `Failed to refresh token: Your access token could not be refreshed because your refresh token was revoked. Please log out and sign in again.` `codex login status` still prints `Logged in using ChatGPT`.
+      - **Not verified.** `-s`/`-a` ahead of `resume <id>` at run time, the MCP call from a read-only interactive session, and whether its socket connect succeeds. The user must sign in to Codex again.
+      - **Supplementary.** `codex sandbox -c 'sandbox_mode="read-only"' -- python3 sockprobe.py <sock>` ran the probe under Codex's own read-only Seatbelt policy.
+        - It gives `connect FAILED: PermissionError [Errno 1] Operation not permitted`.
+        - The same probe outside the sandbox gives `connect OK`.
+        - So **if** Codex ran MCP servers inside its sandbox, the anthrex MCP socket would be refused under `read-only`. Codex is expected to spawn MCP servers outside the sandbox, but this was not observed.
+      - **Fallback.** Decision 8's fallback (moving `-s`/`-a` after `resume <id>`) is not indicated: the parser takes them ahead of the subcommand. It is not proven at run time.
+    - **5. `StopFailure` and `/compact`: both hold, and no fallback triggers.**
+      - **`StopFailure`.** Session C used decision 7's argv with `--model claude-nonexistent-model-m91 -- 'Reply with just the word READY.'`. The hooks were `SessionStart(startup), UserPromptSubmit, StopFailure`, and there was **no `Stop`**. The payload was `{"hook_event_name":"StopFailure","error":"model_not_found","last_assistant_message":"There's an issue with the selected model (claude-nonexistent-model-m91)…"}`, with keys `cwd, effort, error, hook_event_name, last_assistant_message, prompt_id, scratchpad_dir, session_id, transcript_path`. That confirms decision 12: without `StopFailure` the window stays `Working`.
+      - **Manual `/compact`.** Session B ran it from idle. The hooks were `PreCompact(trigger=manual), SubagentStop, SessionStart(source=compact), PostCompact(trigger=manual)`. There was no `UserPromptSubmit`, no `PreToolUse` and no `Stop`.
+        - In anthrex's subscribed set, only `SubagentStop` (no status event) and `SessionStart` arrive. `SessionStart` does not change the status once signals have been seen (`status.rs`).
+        - So `/compact` leaves no turn open and never sets `Working`. Decision 12's fallback (adding `PreCompact`/`PostCompact`) does not trigger.
+    - **6. Bracketed paste: Claude holds. Codex was blocked by the login (check 4).**
+      - **Claude, with the delay.** `ESC[200~Reply with just the word PASTEONE.\nThis is line two of the paste.ESC[201~`, then 200 ms, then `\r`, was submitted as one message: `UserPromptSubmit.prompt` held both lines joined by `\n`.
+      - **Claude, without the delay.** Paste plus `\r` in a single write was also submitted as one message, both lines intact. The `\r` did **not** land inside the paste.
+      - **Codex.** Not run. It needs a working login.
+    - **7. OTLP from an interactive session: holds.**
+      - **Command.** Session A's argv, with `metering::orchestrator_env`'s variables and decision 14a's header:
+        - `CLAUDE_CODE_ENABLE_TELEMETRY=1`
+        - `OTEL_METRICS_EXPORTER=otlp`
+        - `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`
+        - `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:<port>`
+        - `OTEL_METRIC_EXPORT_INTERVAL=1000`
+        - `OTEL_RESOURCE_ATTRIBUTES=anthrex.run=r-probe,anthrex.role=orchestrator`
+        - `OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer <32 hex>`
+      - **Listener.** A Python `http.server` on 127.0.0.1.
+      - **Timing.** 8 `POST /v1/metrics`. The first came 0.6 s after `SessionStart`, well inside the 1 s interval.
+      - **Headers.** `authorization: Bearer <token>` (exact match), `Content-Type: application/json`, `User-Agent: OTel-OTLP-Exporter-JavaScript/0.208.0` and `Connection: keep-alive`.
+      - **`Expect: 100-continue`.** Never sent, and the listener's `handle_expect_100` was never called. Decision 14 needs no code.
+      - **Resource.** `anthrex.run=r-probe`, `anthrex.role=orchestrator` and `service.name=claude-code`.
+      - **Metrics.** `claude_code.session.count`, `claude_code.active_time.total`, `claude_code.token.usage` (`type=input|output|cacheRead…`, `model=claude-haiku-4-5-20251001`) and `claude_code.cost.usage`.
+      - **Deltas.** Every sum has `aggregationTemporality: 1`, which is **DELTA**. The exporter sends deltas, so the global series cap stays a follow-up, as the brief says.
+    - **10. MCP tool visibility against the real CLI: holds.**
+      - **Command.** One headless worker session with `run/role_launch.rs::worker_spec`'s argv shape, `ENABLE_TOOL_SEARCH=false` and `TMPDIR` set to a scratch dir:
+        ```
+        claude -p --input-format stream-json --output-format stream-json --verbose --permission-prompts none --session-id <uuid> --setting-sources user --strict-mcp-config --settings '<hooks + sandbox block with CLAUDE_SANDBOX_PINS>' --mcp-config '<worker stub>' --allowedTools mcp__anthrex__task_done,mcp__anthrex__task_blocked,mcp__anthrex__task_note,Bash,Edit,Write,Read,Glob,Grep,Agent,TodoWrite --append-system-prompt '<WORKER_CONTRACT, verbatim>' --permission-mode acceptEdits --model haiku --effort low
+        ```
+        The first turn was a stream-json user message on stdin.
+      - **`system/init`.** `claude_code_version: 2.1.280`; `mcp_servers: [{"name":"anthrex","status":"connected"}]`. It lists the anthrex tools `mcp__anthrex__task_blocked`, `mcp__anthrex__task_done` and `mcp__anthrex__task_note`. `ToolSearch` is absent.
+      - **Full tool list.**
+        ```
+        Task, Bash, CronCreate, CronDelete, CronList, DesignSync, Edit, EnterWorktree, ExitWorktree, Glob, Grep, ListAgents, Monitor, NotebookEdit, PushNotification, Read, RemoteTrigger, ReportFindings, ScheduleWakeup, SendMessage, Skill, TaskCreate, TaskGet, TaskList, TaskStop, TaskUpdate, WebFetch, WebSearch, Workflow, Write, mcp__anthrex__task_blocked, mcp__anthrex__task_done, mcp__anthrex__task_note
+        ```
+        The sub-agent tool is named `Task` in the init list, and `--allowedTools`/`--disallowedTools` say `Agent`. Check 2 shows that disallowing `Agent` removes it.
+      - **Tool calls.** The session made exactly one tool call, `mcp__anthrex__task_done` with `{"summary":"probe: nothing to do"}`, and no `ToolSearch` call. It ended with `result: success`. The hooks were `SessionStart, UserPromptSubmit, PreToolUse/task_done, PostToolUse/task_done, Stop, SessionEnd`.
+      - **Result.** Decision 42f's premise holds.
+    - **Fallbacks.** No decision's fallback triggered:
+      - decision 7's `--permission-mode plan`: check 2 held;
+      - decision 8's `-s`/`-a` after `resume`: the parser accepts them ahead of a subcommand, but this is not proven at run time;
+      - decision 10's `MCP_TOOL_TIMEOUT`: the default is about 27.8 h;
+      - decision 12's `PreCompact`/`PostCompact`: `/compact` leaves no turn open;
+      - decisions 14 and 14a: no `Expect: 100-continue`, and the token header arrives;
+      - decision 42f: holds.
+    - **Outstanding.**
+      - The Codex interactive part of checks 4 and 6 is blocked because the Codex ChatGPT refresh token was revoked. The user must sign in to Codex again.
+      - Decision 7's premise that other tools "ask the user" is false under this account's default auto mode. That needs a controller ruling.
+    - **Side effects.** The CLIs wrote their own normal state:
+      - Claude session transcripts;
+      - `~/.claude.json` trust entries for `repoA`, `repoB` and `repoC`, from accepting the trust dialog;
+      - Codex's log database.
+      
+      No settings file was edited. No bypass flag was used.
+
+- **Controller rulings on the real-CLI findings.** These bind M9.10, which adds the tests.
+  1. **The orchestrator's permission mode.** On this account, an interactive `claude` starts in "auto mode", so a tool that is neither allowed nor disallowed goes to a classifier, not to the user. Decision 7 assumed the user is asked.
+     - The orchestrator's argv adds an explicit `--permission-mode default` after `--disallowedTools`, so any unlisted tool prompts the user at the orchestrator's own window.
+     - `--disallowedTools` also gains the outward-acting tools that check 2 and check 10 observed: `Artifact`, `CronCreate`, `CronDelete`, `RemoteTrigger`, `PushNotification`, `SendMessage`, `Workflow`, `WebFetch` and `WebSearch`. The orchestrator plans. It never publishes, schedules or messages, and research is the scouts' job.
+     - The explicit mode is the guard. The list is best effort, since a CLI can add tools.
+     - Headless roles are unaffected: every one already passes an explicit `--permission-mode` (`role_launch.rs:212`, `:276`; `decider/argv.rs:106`; `scout/spec.rs:114`).
+  2. **`Task` and `Agent`.** `system/init` names the sub-agent tool `Task`, but disallowing `Agent` removed it (check 2). The argv keeps `Agent` and adds `Task` too, which costs nothing.
+  3. **Codex tool approval (decision 8).** The orchestrator uses `default_tools_approval_mode="approve"`, the value the shipped headless `codex_args` already uses and that works in practice, not the brief's unobserved `"auto"`.
+  4. **`MCP_TOOL_TIMEOUT` (decision 10) is dropped.** The CLI's default is about 27.8 h, and 70 s and 130 s tool calls completed without it (check 3). The launch environment does not set it.
+  5. **The scrub gains the `MCP_` prefix** (`config::reserved_env::SCRUBBED_PREFIXES`). Every agent session the daemon launches drops inherited `MCP_*` variables, for example `MCP_CONNECTION_NONBLOCKING` from a daemon started inside Claude Code, and a profile may not set them. M9.10 owns this, with a reserved-env test.
+  6. **Check 4 and the Codex half of check 6 are outstanding.** The Codex login on this machine was revoked (401 on workspace routing), and the user must sign in again. Until then decision 8 is built as written, amended by ruling 3. Observed for the sandbox: a Unix-socket connect from inside `codex sandbox` read-only fails with EPERM. So if Codex ran its MCP servers inside the sandbox, the orchestrator's anthrex tools would fail, but it is expected to run them outside. M9.10's manual check re-runs this after the login.
