@@ -352,6 +352,12 @@ fn old_run_json_loads() {
     ] {
         assert!(map.remove(key).is_some(), "{key}");
     }
+    // Milestone 9 task 4: the run's and each task's orchestrator state, empty.
+    let orch = map.remove("orch").expect("orch");
+    assert_eq!(
+        serde_json::from_value::<crate::run::orch::RunOrch>(orch).unwrap(),
+        crate::run::orch::RunOrch::default()
+    );
     // Milestone 9 task 3: the orchestrator limits, at the config defaults.
     let limits = map["limits"].as_object_mut().unwrap();
     let orch = limits.remove("orch").expect("limits.orch");
@@ -360,7 +366,10 @@ fn old_run_json_loads() {
         crate::run::orch::OrchLimits::default()
     );
     for task in back["tasks"].as_array_mut().unwrap() {
-        // Milestone 9 decision 24's plan field.
+        // Milestone 9 decision 24's plan field, and task 4's empty task state.
+        let task = task.as_object_mut().unwrap();
+        let orch = task.remove("orch").expect("task orch");
+        assert_eq!(orch, serde_json::json!({ "integration_of": null }));
         let spec = task["spec"].as_object_mut().unwrap();
         assert!(spec.remove("review_target").is_some(), "review_target");
         for round in task["rounds"].as_array_mut().unwrap() {

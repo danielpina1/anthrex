@@ -165,16 +165,26 @@ fn blank_fields() {
 
 #[test]
 fn owns_required() {
-    let text = plan_with(PROFILE, &[task_toml("t1", "S", "[]", "")]);
-    assert_eq!(
-        errors_of(&text),
-        vec![err(
-            Some("t1"),
-            "owns",
-            "fields",
-            "at least one glob is required"
-        )]
+    let text = plan_with(
+        PROFILE,
+        &[
+            task_toml("t1", "S", "[]", ""),
+            task_toml(
+                "d1",
+                "S",
+                "[]",
+                "kind = \"docs\"\ntest_mode_reason = \"prose\"",
+            ),
+        ],
     );
+    let required = |id| err(Some(id), "owns", "fields", "at least one glob is required");
+    assert_eq!(errors_of(&text), vec![required("t1"), required("d1")]);
+    // Milestone 9 decision 24: a research task owns nothing, and that is accepted.
+    let run = run_ok(&plan_with(
+        PROFILE,
+        &[task_toml("r1", "S", "[]", "kind = \"research\"")],
+    ));
+    assert!(task(&run, "r1").spec.owns.is_empty());
 }
 
 #[test]
@@ -207,39 +217,8 @@ fn absolute_owns() {
     );
 }
 
-#[test]
-fn research_and_review_kinds_are_deferred() {
-    let text = plan_with(
-        PROFILE,
-        &[
-            one(
-                "t1",
-                "kind = \"research\"\ntest_mode = \"none\"\ntest_mode_reason = \"r\"",
-            ),
-            one(
-                "t2",
-                "kind = \"review\"\ntest_mode = \"none\"\ntest_mode_reason = \"r\"",
-            ),
-        ],
-    );
-    assert_eq!(
-        errors_of(&text),
-        vec![
-            err(
-                Some("t1"),
-                "kind",
-                "kind",
-                "research tasks are executed from milestone 9; use code or docs"
-            ),
-            err(
-                Some("t2"),
-                "kind",
-                "kind",
-                "review tasks are executed from milestone 9; use code or docs"
-            ),
-        ]
-    );
-}
+// M8a's `research_and_review_kinds_are_deferred` was deleted by task M9.4: milestone 9
+// decision 24 executes research and review tasks (`validate_tests_kinds.rs`).
 
 /// Unit 1 task, bound `max_tasks` = 3 (not the default 50): 3 build, 4 are rejected.
 #[test]

@@ -320,6 +320,9 @@ pub struct Task {
     /// worker launch records that escalation and clears it.
     #[serde(default)]
     pub escalated_from: Option<Route>,
+    /// Milestone 9's task state (`run::orch::TaskOrch`).
+    #[serde(default)]
+    pub orch: super::orch::TaskOrch,
 }
 
 impl Task {
@@ -514,6 +517,9 @@ pub struct Run {
     /// M8c: accepted plan-edit batches since the plan was approved.
     #[serde(default)]
     pub plan_edits_since_approval: u32,
+    /// Milestone 9's run state (`run::orch::RunOrch`).
+    #[serde(default)]
+    pub orch: super::orch::RunOrch,
 }
 
 impl Run {

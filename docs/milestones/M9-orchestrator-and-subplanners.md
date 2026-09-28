@@ -2144,3 +2144,32 @@ Checked on `origin/main` at `8d440d7`, read with `git show` / `git grep` (no wor
   - `limits_are_frozen_at_run_start` in `run/plan_tests.rs` also checks two more things: the limits survive a `run.json` round trip, and a run without `limits.orch` loads with the defaults.
   - `triage_prompt_uses_planner_task_cap` in `decider/tests_prompt.rs`.
   - All six failed to compile before the change: there was no `Orchestrator.agent`, no `run::orch`, no `RunLimits.orch`, and no `TriageInput.planner_task_cap`.
+
+### Task M9.4 (Plan rules)
+
+- **Before M9.4 (M9.3 review gap), commit `c7ead5c`.** `driver/adapt_goal.rs` builds the triage input in a pure helper, `triage_input(goal, profile, &config::Orchestrator)`, and `the_configured_planner_cap_reaches_triage` pins that a cap of 7 reaches it. It went red (`left: 12, right: 7`) with the helper hard-coding 12.
+- **Where decision 23 runs.** `apply_edits` gains `source: &EditSource` (`run edit` in `engine/requests.rs` passes `User`; M9.7 passes the orchestrator's and planners'). After M8a's validation it calls `orch::rules::apply(&mut edited, &touched, source)`, so the rules see exactly the batch's added, split-in and amended tasks. `rules.rs` has `check` as the Interfaces entry gives it, plus `note_unbacked` (decision 23.2's note needs a `&mut Run`, which `check` does not take) and `apply` (both). `EditSource::User` gets neither: plan files and `run edit` keep M8a's rules.
+- **Readings of decision 23:**
+  - A "finished scout report" is an id in `Run.scout_reports` (M8b decision 19's list, which M9.8's run scouts fill), or `onboarding` while `Run.onboarding_report` is set, which is the same source as `engine/deciders_size.rs::refs_of`. Every `scout_refs` entry is checked on every kind. The "name at least one" rule and the `size not backed by a scout report` note apply to `code` and `docs` tasks only.
+  - The cap (23.3) is checked only for the groups a touched task is in: the orchestrator's (no epic), or each touched epic. A group over the cap that the batch did not touch (a user's edits are unchecked) does not refuse an unrelated batch.
+  - The reserved-id rule (23.6) is `-int` followed by one or more digits at the end, and it skips a task whose `orch.integration_of` is set (the engine's own review).
+  - A sub-planner's added and split-in tasks are given its epic (`EditSource::own`), whatever epic the spec names. Amended tasks keep theirs.
+  - Error order: per touched task in plan order, the reserved id, then the epic, the budget and the evidence; then the caps.
+- **Model.** `run/orch/mod.rs` now holds `EditSource` (serde snake_case; `label()`), `RunOrch { epics }`, `TaskOrch { integration_of }`, and `EpicRecord`, `PlannerPhase` and `PlannerSession` in full. Only the fields the rules read exist yet; M9.7 and later tasks add the rest of decision 1's fields, each `#[serde(default)]`. They derive `Eq`, because `Run` and `Task` do. `EpicRecord::new` is test-only. `old_run_json_loads` strips the new `orch` keys (run and task) and checks that they are empty.
+- **`amend_task deps` (decision 25).**
+  - `apply_amend_deps` takes `now` (for `set_state`); this is a deviation from the Interfaces signature.
+  - The state refusal is `amend_task`'s per-field form: `task <id> is <state>; deps can be amended only on pending, queued or blocked tasks`.
+  - The list is deduplicated. Every new dependency counts as added by the batch, so a cancelled one is refused even if it was already in the list. Unknown ids and cycles are M8a's batch validation, as for `add_dep`.
+  - A `blocked(dep_cancelled)` task returns to `pending`; a task blocked for any other reason stays blocked. The history line is `amended: deps`.
+  - `Batch` and four of its fields became `pub(super)`, so `impl Batch` in `edits_orch.rs` holds `amend_deps` and the `message`/`refresh` placeholder. The placeholder text is now `message and refresh are not available yet`, and M9.2's pinning tests (`placeholder_edits_refuse_their_whole_batch`, `placeholder_edits_leave_the_run_unchanged`) no longer list `amend deps`.
+- **Decision 24 in a new file, `run/validate_kinds.rs`** (not in the task's list). In `validate.rs` it would have reached 555 lines against a budget of 539; with the file, `validate.rs` is 512. The four field errors carry rule `5.2`. The test-mode note is added to every research and review task. `review_target` is split at its first `..`, so `a...b` passes the syntax check as `a` and `.b`, which is what the regex allows; dispatch (decision 36) then fails to resolve it. The tests are in `validate_tests_kinds.rs`, not `validate_tests_fields.rs`, which would have been 604 lines; the deleted M8a test is named in a comment in both.
+- **Decision 23a: a finding.** No M8a validation of a planned run calls `may_cover_protected`; its only caller is the fast path's `triage::owned_protected`, which already refuses any non-ASCII entry. So the decision's "M8a's validation requires such an entry to be a literal path" does not follow from the change. What holds is the done gate: a changed non-ASCII path is `protected_changed` unless `owns` names it byte for byte. That covers a wildcard entry as well, because the wildcard never names the path. Both functions changed as the decision says, and no new validation rule was added. M8a's `engine_paths_with_spaces_and_unicode_work` (`daemon/tests/run_git_worktrees.rs`) now expects `src/ü file.rs` in `protected_changed`, not `outside_owns`.
+- **File sizes.** `edits.rs` is 593 lines, one over its budget of 577 + 15; it was 588 when M9.4 started. `model.rs` is 584 (budget 592), `validate.rs` 512, `globs.rs` 349. The new files are `orch/rules.rs` 172, `edits_orch.rs` 84 and `validate_kinds.rs` 59.
+- **Red before green.** These failed first, as assertions against the old behaviour:
+  - the six `edits_tests_orch.rs` tests and the updated placeholder test;
+  - `non_ascii_paths_are_protected`;
+  - `owns_required`;
+  - the five `validate_tests_kinds.rs` tests;
+  - four rules tests, which went through the edit path or built research tasks.
+
+  The other rules tests were written after `rules.rs`, so they were run red by stubbing out `check` and `note_unbacked` (restored from a copy): 10 of 14 then failed. The acceptance-only tests (`cancelled_and_integration_review_tasks_do_not_count` and `onboarding_ref_is_accepted`) then gained controls that fail under the stub.

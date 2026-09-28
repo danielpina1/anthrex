@@ -30,6 +30,7 @@ pub mod contract;
 pub mod driver;
 pub mod edit_log;
 pub mod edits;
+mod edits_orch;
 pub mod engine;
 pub mod env;
 pub mod exec;
@@ -58,6 +59,7 @@ pub mod stats;
 pub mod triage;
 pub mod validate;
 mod validate_graph;
+mod validate_kinds;
 
 #[cfg(test)]
 mod test_support;

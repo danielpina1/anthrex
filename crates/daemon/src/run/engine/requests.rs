@@ -22,6 +22,7 @@ use crate::run::edit_log;
 use crate::run::edits::{EditConsequence, apply_edits};
 use crate::run::env::profile_env;
 use crate::run::model::{FreshSession, LogEntry, Run, SizeCheckState, hh_mm};
+use crate::run::orch::EditSource;
 use crate::run::reach::reachable_runtimes;
 use crate::run::roster::escalate;
 use crate::run::triage::fast_refusal;
@@ -295,7 +296,7 @@ pub(super) fn edit(
     if let Err(text) = pause_or_resume_fits(run, edits) {
         return reply(fx, id, Err(text));
     }
-    let (edited, consequences) = match apply_edits(run, edits, scope, now) {
+    let (edited, consequences) = match apply_edits(run, edits, scope, &EditSource::User, now) {
         Ok(ok) => ok,
         Err(errors) => {
             let lines: Vec<String> = errors.iter().map(ToString::to_string).collect();

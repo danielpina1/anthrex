@@ -16,6 +16,7 @@ use super::globs::{ModuleSpan, OwnsMatcher, any_intersect, modules_spanned, vali
 use super::model::{Profile, ReviewLevel, RunLimits, Task};
 use super::plan::PlanError;
 use super::roster;
+use super::validate_kinds::{READER_TEST_MODE_NOTE, check_reader_fields, is_reader};
 
 pub use super::validate_graph::{
     EditScope, combined_cycles, implicit_deps, validate_tasks, validate_tasks_with,
@@ -42,15 +43,6 @@ fn size_label(s: Size) -> &'static str {
         Size::S => "S",
         Size::M => "M",
         Size::L => "L",
-    }
-}
-
-fn kind_label(k: TaskKind) -> &'static str {
-    match k {
-        TaskKind::Code => "code",
-        TaskKind::Docs => "docs",
-        TaskKind::Research => "research",
-        TaskKind::Review => "review",
     }
 }
 
@@ -154,7 +146,11 @@ pub(super) fn resolve_task_lenient(
     };
     let declared = spec.test_mode.unwrap_or(kind_default);
     let mut test_mode = declared;
-    if hub && spec.kind == TaskKind::Code && declared != TestMode::Tdd {
+    if is_reader(spec.kind) {
+        // Decision 24: forced, and a given reason is kept but none is required.
+        test_mode = TestMode::None;
+        notes.push(READER_TEST_MODE_NOTE.to_string());
+    } else if hub && spec.kind == TaskKind::Code && declared != TestMode::Tdd {
         test_mode = TestMode::Tdd;
         notes.push("test mode forced to tdd: hub task (rule 8.2)".to_string());
     } else {
@@ -279,16 +275,6 @@ fn check_fields(spec: &PlanTask, errors: &mut Vec<PlanError>) {
             "running is reserved for the message target of every running task".to_string(),
         ));
     }
-    if matches!(spec.kind, TaskKind::Research | TaskKind::Review) {
-        errors.push(e(
-            "kind",
-            "kind",
-            format!(
-                "{} tasks are executed from milestone 9; use code or docs",
-                kind_label(spec.kind)
-            ),
-        ));
-    }
     if spec.title.trim().is_empty() {
         errors.push(e("title", "fields", "must not be blank".to_string()));
     }
@@ -311,13 +297,15 @@ fn check_fields(spec: &PlanTask, errors: &mut Vec<PlanError>) {
             ));
         }
     }
-    if spec.owns.is_empty() {
+    // M8a's `owns` requirement, for code and docs tasks only (decision 24).
+    if spec.owns.is_empty() && !is_reader(spec.kind) {
         errors.push(e(
             "owns",
             "fields",
             "at least one glob is required".to_string(),
         ));
     }
+    check_reader_fields(spec, errors);
     for glob in &spec.owns {
         if let Err(msg) = validate_glob(glob) {
             errors.push(e("owns", "globs", format!("{glob} {msg}")));
@@ -486,6 +474,7 @@ fn new_task(
         history_written: false,
         routing_decisions: Vec::new(),
         escalated_from: None,
+        orch: Default::default(),
     }
 }
 

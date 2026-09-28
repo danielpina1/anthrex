@@ -172,3 +172,41 @@ fn dot_and_empty_components_are_invalid() {
     assert_eq!(validate_glob("crates/a/"), Ok(()));
     assert_eq!(validate_glob("crates/.github/**"), Ok(()));
 }
+
+/// Milestone 9 decision 23a: a case-insensitive volume folds some non-ASCII letters
+/// onto ASCII (`ſ` opens as `s`), so any path with a non-ASCII character is protected,
+/// and any `owns` entry with one may cover a protected path. ASCII paths keep M8a's
+/// answers.
+#[test]
+fn non_ascii_paths_are_protected() {
+    let matcher = ProtectedMatcher::new(&s(&["AGENTS.md", ".claude/**"])).unwrap();
+    for path in ["AGENTſ.md", "docs/café.md", "src/ﬁle.rs", "a/b/Ω"] {
+        assert!(matcher.matches(path), "{path}");
+    }
+    // Even with nothing configured.
+    assert!(ProtectedMatcher::new(&[]).unwrap().matches("naïve.txt"));
+    // ASCII: M8a's answers, unchanged.
+    for (path, protected) in [
+        ("AGENTS.md", true),
+        ("agents.md", true),
+        (".Claude/settings.json", true),
+        (".claude", true),
+        ("docs/cafe.md", false),
+        ("src/AGENTS.md.bak", false),
+    ] {
+        assert_eq!(matcher.matches(path), protected, "{path}");
+    }
+
+    for entry in ["AGENTſ.md", "docs/café/**", "é"] {
+        assert!(may_cover_protected(entry, "AGENTS.md"), "{entry}");
+        assert!(may_cover_protected(entry, "docs/agents/**"), "{entry}");
+    }
+    for (entry, covers) in [
+        ("**/*.md", true),
+        ("agents.md", true),
+        ("docs/**", false),
+        ("src/lib.rs", false),
+    ] {
+        assert_eq!(may_cover_protected(entry, "AGENTS.md"), covers, "{entry}");
+    }
+}

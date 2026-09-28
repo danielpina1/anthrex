@@ -186,7 +186,7 @@ fn edit_outside_its_area_is_rejected() {
     let outside = PlanEdit::AddTask {
         task: spec(&task_toml("t5", "S", "[\"crates/tui/**\"]", "")),
     };
-    let errors: Vec<String> = match apply_edits(&run, &[outside], &area, 5_000) {
+    let errors: Vec<String> = match apply_edits(&run, &[outside], &area, &EditSource::User, 5_000) {
         Err(errors) => errors.iter().map(ToString::to_string).collect(),
         Ok(_) => panic!("an add outside the area must be rejected"),
     };
@@ -198,7 +198,7 @@ fn edit_outside_its_area_is_rejected() {
     let inside = PlanEdit::AddTask {
         task: spec(&task_toml("t6", "S", "[\"crates/daemon/src/x.rs\"]", "")),
     };
-    let (edited, _) = apply_edits(&run, &[inside], &area, 5_000)
+    let (edited, _) = apply_edits(&run, &[inside], &area, &EditSource::User, 5_000)
         .unwrap_or_else(|e| panic!("inside the area must apply: {}", show(&e)));
     assert_eq!(ids(&edited), vec!["t1", "t2", "t3", "t4", "t6"]);
 }

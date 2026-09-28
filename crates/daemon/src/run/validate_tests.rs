@@ -468,3 +468,6 @@ fn same_runtime_overlap_is_allowed_and_becomes_an_implicit_dep() {
 
 #[path = "validate_tests_fields.rs"]
 mod fields;
+
+#[path = "validate_tests_kinds.rs"]
+mod kinds;

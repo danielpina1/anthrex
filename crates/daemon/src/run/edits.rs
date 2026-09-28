@@ -16,6 +16,7 @@ use proto::{AgentRole, BlockInfo, BlockReason, PlanEdit, PlanTask, Size, TaskSta
 
 use super::contract::{amend_message, answer_message};
 use super::model::{Run, Task, TaskEvent, task_branch, task_path};
+use super::orch::EditSource;
 use super::plan::PlanError;
 use super::roster::pick_reviewer;
 use super::validate::{
@@ -42,15 +43,17 @@ pub enum EditConsequence {
 }
 
 /// Applies `edits` in order to a copy of `run` and validates the result (decision 13).
-/// `scope` limits where added and amended tasks may own files (decision 12); `now`
-/// stamps the task history entries the edits write.
+/// `scope` limits where tasks may own files (decision 12); a batch from the orchestrator
+/// or a sub-planner (`source`) also meets `orch::rules`; `now` stamps task history.
 pub fn apply_edits(
     run: &Run,
     edits: &[PlanEdit],
     scope: &EditScope,
+    source: &EditSource,
     now: u64,
 ) -> Result<(Run, Vec<EditConsequence>), Vec<PlanError>> {
     let mut batch = Batch {
+        source: source.clone(),
         run: run.clone(),
         touched: BTreeSet::new(),
         added_deps: BTreeSet::new(),
@@ -77,6 +80,7 @@ pub fn apply_edits(
         edited.limits.max_tasks,
         edited.limits.default_runtime,
     ));
+    errors.extend(super::orch::rules::apply(&mut edited, &touched, source));
     // Decision 41's implicit dependencies follow the edited graph; the combined check
     // is the same backstop `build_run` runs (M8a.6 fix round 1, F2).
     let implicit = implicit_deps(&edited.tasks);
@@ -123,7 +127,7 @@ fn requeue_waiting(run: &mut Run, now: u64) {
 
 /// The states in which a task has not started: route, size, test mode and dependencies
 /// may change, and it may be split.
-fn not_started(state: TaskState) -> bool {
+pub(super) fn not_started(state: TaskState) -> bool {
     matches!(
         state,
         TaskState::Pending | TaskState::Queued | TaskState::Blocked
@@ -164,40 +168,36 @@ fn block_label(reason: BlockReason) -> &'static str {
     }
 }
 
-const NOT_YET: &str = "amend deps, message and refresh are not available yet";
-fn not_yet() -> PlanError {
-    PlanError::new(None, "op", "13", NOT_YET)
-}
-
 /// `working`, `merged`, or `blocked(<reason>)`.
-fn state_label(task: &Task) -> String {
+pub(super) fn state_label(task: &Task) -> String {
     match (task.state, &task.block) {
         (TaskState::Blocked, Some(block)) => format!("blocked({})", block_label(block.reason)),
         (state, _) => state.label().to_string(),
     }
 }
 
-struct Batch {
-    run: Run,
+pub(super) struct Batch {
+    source: EditSource,
+    pub(super) run: Run,
     touched: BTreeSet<String>,
     /// `(task, dep)` pairs this batch adds: the cancelled-dependency rule applies to
     /// these only (F3).
-    added_deps: BTreeSet<(String, String)>,
-    errors: Vec<PlanError>,
+    pub(super) added_deps: BTreeSet<(String, String)>,
+    pub(super) errors: Vec<PlanError>,
     consequences: Vec<EditConsequence>,
-    now: u64,
+    pub(super) now: u64,
 }
 
 impl Batch {
     fn apply(&mut self, edit: &PlanEdit) {
         match edit {
-            PlanEdit::AddTask { task } => self.add_task(task.clone()),
-            PlanEdit::SplitTask { task_id, into } => self.split(task_id, into),
+            PlanEdit::AddTask { task } => self.add_task(self.source.own(task)),
+            PlanEdit::SplitTask { task_id, into } => {
+                self.split(task_id, &self.source.own_all(into))
+            }
             PlanEdit::CancelTask { task_id } => self.cancel(task_id),
-            // Milestone 9 decisions 25, 42a and 42e (tasks M9.4 and M9.13a).
-            PlanEdit::AmendTask { deps: Some(_), .. }
-            | PlanEdit::Message { .. }
-            | PlanEdit::Refresh { .. } => self.errors.push(not_yet()),
+            // Milestone 9 decisions 42a and 42e (task M9.13a).
+            PlanEdit::Message { .. } | PlanEdit::Refresh { .. } => self.not_yet(),
             PlanEdit::AmendTask { .. } => self.amend_task(edit),
             PlanEdit::AddDep { task_id, dep } => self.add_dep(task_id, dep),
             PlanEdit::Answer { task_id, text } => self.answer(task_id, text),
@@ -402,7 +402,7 @@ impl Batch {
             test_mode_reason,
             priority,
             size,
-            ..
+            deps,
         } = edit
         else {
             return;
@@ -414,7 +414,8 @@ impl Batch {
             && test_mode.is_none()
             && test_mode_reason.is_none()
             && priority.is_none()
-            && size.is_none();
+            && size.is_none()
+            && deps.is_none();
         if nothing {
             self.errors.push(PlanError::new(
                 Some(task_id),
@@ -433,9 +434,10 @@ impl Batch {
             ("test_mode", test_mode.is_some()),
             ("test_mode_reason", test_mode_reason.is_some()),
             ("size", size.is_some()),
+            ("deps", deps.is_some()),
         ];
-        let reresolve = restricted.iter().any(|(_, set)| *set);
-        if reresolve && !not_started(state) {
+        let reresolve = restricted[..4].iter().any(|(_, set)| *set);
+        if restricted.iter().any(|(_, set)| *set) && !not_started(state) {
             for (name, _) in restricted.iter().filter(|(_, set)| *set) {
                 self.refuse(
                     i,
@@ -481,6 +483,9 @@ impl Batch {
             self.run.tasks[i].spec = resolved.spec;
         } else {
             self.reresolve(i, spec, route.is_some());
+        }
+        if let Some(deps) = deps {
+            self.amend_deps(i, deps, &mut changed);
         }
         let task = &self.run.tasks[i];
         if (brief.is_some() || acceptance.is_some()) && has_live_worker(task) {

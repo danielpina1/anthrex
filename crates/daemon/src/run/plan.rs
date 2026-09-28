@@ -442,6 +442,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         approved_at: None,
         plan_edits: Vec::new(),
         plan_edits_since_approval: 0,
+        orch: Default::default(),
         role_routing_decisions: Vec::new(),
     })
 }
