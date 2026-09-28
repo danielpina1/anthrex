@@ -5,6 +5,8 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
+use crate::orch_steps::{CaptureJson, Match, Text, Until};
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Step {
     Print(String),
@@ -54,6 +56,14 @@ pub enum Step {
     Hang,
     /// A Claude `Bash` tool call that honours `PreToolUse` hooks (M8b decision 37).
     Bash(String),
+    // Milestone 9's steps (M9.12), run by `orch_steps`.
+    McpUntil(Until),
+    CaptureJson {
+        name: String,
+        pointer: String,
+    },
+    Expect(Match),
+    ExpectErrorContains(String),
 }
 
 /// The token usage a turn end reports (the `usage` step).
@@ -239,6 +249,20 @@ fn parse_step(value: Value) -> Result<Step> {
         Some("hang") if has_keys(object, &["hang"]) => {
             let NoArgs {} = field(object, "hang")?;
             Ok(Step::Hang)
+        }
+        Some("mcp_until") if has_keys(object, &["mcp_until"]) => {
+            Ok(Step::McpUntil(field(object, "mcp_until")?))
+        }
+        Some("capture_json") if has_keys(object, &["capture_json"]) => {
+            let CaptureJson { name, pointer } = field(object, "capture_json")?;
+            Ok(Step::CaptureJson { name, pointer })
+        }
+        Some("expect") if has_keys(object, &["expect"]) => {
+            Ok(Step::Expect(field(object, "expect")?))
+        }
+        Some("expect_error_contains") if has_keys(object, &["expect_error_contains"]) => {
+            let Text { text } = field(object, "expect_error_contains")?;
+            Ok(Step::ExpectErrorContains(text))
         }
         Some("transcript") if has_keys(object, &["transcript"]) => {
             object["transcript"]

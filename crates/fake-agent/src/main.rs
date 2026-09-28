@@ -2,6 +2,7 @@ mod bash;
 mod decider;
 mod headless;
 mod mcp;
+mod orch_steps;
 mod roles;
 mod runtime;
 mod script;
@@ -40,6 +41,10 @@ fn run() -> Result<i32> {
     let args: Vec<String> = env::args().skip(1).collect();
     if let Some(invocation) = headless::detect(&args) {
         return headless::run(&args, invocation);
+    }
+    // M9.12: a run's orchestrator, a terminal with the anthrex MCP server.
+    if let Some(code) = orch_steps::pty(&args)? {
+        return Ok(code);
     }
     roles::record_args(&roles::fallback().name, &args)?;
     if args.iter().any(|arg| arg == "--version") {

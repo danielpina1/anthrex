@@ -158,7 +158,7 @@ async fn a_planner_session_runs_on_the_scout_machine_and_is_accepted() {
     let nudge = "Your turn ended without an accepted epic";
     script_in(
         &repo,
-        "planner-1",
+        "planner-mail-1",
         &[
             json!({"read_message": {}}),
             json!({"read_message": {"expect": nudge}}),

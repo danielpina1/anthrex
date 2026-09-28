@@ -51,6 +51,25 @@ pub fn fill(args: &Value, captures: &BTreeMap<String, String>) -> Value {
     }
 }
 
+/// `FAKE_AGENT_MCP_LOG` (M9.12): when set, one JSON line per call,
+/// `{"script","tool","args","ok","result"}`, `result` being the reply's text. The line
+/// is one `write` in append mode, so sessions sharing the file do not interleave.
+pub fn log(script: &str, tool: &str, args: &Value, reply: &Reply) -> Result<()> {
+    let Some(path) = std::env::var_os("FAKE_AGENT_MCP_LOG") else {
+        return Ok(());
+    };
+    let line = json!({"script": script, "tool": tool, "args": args, "ok": reply.ok,
+        "result": reply.text});
+    let mut bytes = serde_json::to_vec(&line).context("encode the MCP log line")?;
+    bytes.push(b'\n');
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut file| file.write_all(&bytes))
+        .with_context(|| format!("append to {}", path.to_string_lossy()))
+}
+
 /// Calls `tool` with `args` on a fresh `server` process.
 pub fn call(server: &McpServer, tool: &str, args: &Value) -> Result<Reply> {
     let mut command = Command::new(&server.command);

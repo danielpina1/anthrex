@@ -155,13 +155,8 @@ pub fn run(args: &[String], invocation: Invocation) -> Result<i32> {
     steps::install_signal_handlers();
     let hooks = runtime::discover(args)?;
     let server = runtime::mcp_server(args)?;
-    let flag = |name| server.as_ref().and_then(|s| s.flag(name)).map(String::from);
-    let role = flag("--role");
-    // A scout's script is named by its scout id (M8b decision 37).
-    let task = match role.as_deref() {
-        Some("scout") => flag("--scout"),
-        _ => flag("--task"),
-    };
+    // A scout's script is named by its scout id (M8b decision 37); M9.12's keys.
+    let (role, task) = roles::key(server.as_ref());
     let session = invocation
         .resume
         .clone()

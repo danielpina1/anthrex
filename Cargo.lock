@@ -147,6 +147,7 @@ dependencies = [
  "anthrex-proto",
  "anyhow",
  "libc",
+ "portable-pty",
  "regex",
  "serde",
  "serde_json",

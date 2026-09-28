@@ -3073,3 +3073,46 @@ One commit, `fix(daemon): null is absent in tool bounds, and an early orchestrat
 5. **An orchestrator write still waiting at its limit is refused in the driver** with `the orchestrator's launch has not finished; call again once it has` (`ORCHESTRATOR_LAUNCH_PENDING`), and never sent to the engine. Otherwise a `Window` result reduced just before the event could let the batch through without the ruling T22-I1b refusals.
    - Test `an_orchestrator_write_whose_launch_never_finishes_is_refused`, at a 300 ms limit. The engine logged no batch.
    - Red: the call reached the engine and was answered `this window is not the orchestrator of run …`.
+
+### Task M9.12 (`fake-agent`: an orchestrator in a PTY, planners and run scouts)
+
+- **Argv from the daemon's own builder.** `tests/orch_modes.rs` builds the orchestrator's Claude and Codex argv with `daemon::launch::plan` and a `RoleLaunch` (the shape of M9.10's `claude_orchestrator_argv_is_exact` and `codex_orchestrator_argv_is_exact`), and the planners' and scouts' Codex argv with `daemon::headless::argv::codex_args`, so no argv is guessed. The `exe` the daemon names is a stand-in that logs `hook` calls and runs the real `anthrex mcp` for everything else; the daemon is M8a's stub.
+- **Script keys (`roles::key`, used by both modes).** Orchestrator: `run` (`orchestrator-run-<n>`, as smoke stage 11f writes it). Planner: `--epic`. Scout: `--scout` without the `<h4>-` prefix when `--run` is given (the prefix is the run id's last 4 characters, `Run::short`), else `--task`. Everyone else: `--task`. A repository scout (no `--run`) keeps M8b's id and its timestamp fallback.
+- **PTY `read_message`.** In PTY mode with an MCP server, the terminal is put in raw mode (no `ICANON`, `ECHO`, `ICRNL`; signals kept), as a real TUI does, so a paste of any length arrives whole and `\r` arrives as `\r`. A message ends at `\r` or `\n` outside a paste. The paste brackets are removed from the text.
+  - The `FAKE_AGENT_STDIN_FILE` line per read is JSON: `{"at": <UTC ISO time>, "raw": <the bytes read, brackets and \r included>, "text": <the message>}`.
+  - `Stop` goes through the Claude hook. A Codex orchestrator has no `Stop` hook on its argv (`codex_hook_source` is unset), so its turn end is its `notify` (`agent-turn-complete`), and it sends no `UserPromptSubmit`.
+  - EOF exits 0, a timeout exits 4, and an `expect` mismatch exits 3, as in M8a.
+  - The message is kept in the runner. It is not exported as an environment variable, because PTY mode runs no `sh` step.
+- **Resume.** A PTY session's id is Claude's `--resume <id>` or Codex's `resume <id>`, else `fake-session-<ANTHREX_WINDOW_ID>`, the id its hooks report. A resumed session continues its claimed script from the saved position, as a headless one does. Nothing tests this yet; M9.17's restart scenario will.
+- **Steps (my readings where the brief is silent).**
+  - `mcp_until`: an error reply exits 3, as an unexpected error does for `mcp_call`. Calls are 200 ms apart. The timeout is checked after each call, so the last call may run past it. In a headless turn, an interrupt ends the wait.
+  - `capture_json`: nothing at the pointer, or a result that is not JSON, exits 3.
+  - `expect`: a result that is not JSON differs, so it exits 3.
+  - `expect_error_contains`: a substring check on the last result.
+  - All four also run in headless turns, through the `orch_steps::Host` trait.
+- **`FAKE_AGENT_MCP_LOG`.** Each line's `result` is the reply's text (what `FAKE_AGENT_RESULT` holds), not parsed JSON. Every call of an `mcp_until` is logged. Each line is written with a single append.
+- **Deviations: files outside the brief's list.**
+  - `headless.rs` and `headless_steps.rs` changed: the headless role and key parsing moved into `roles::key` (headless.rs 576 → 571), and the new `Step` variants need arms in `headless_steps.rs`'s exhaustive match.
+  - `Cargo.toml` gained `portable-pty` as a dev-dependency, for a real PTY.
+  - `tests/headless_support/stub_daemon.rs` gained `StubDaemon::replies`, which scripts a sequence of replies, the last one repeating.
+  - `tests/headless_support/mod.rs` gained `codex_argv_for`.
+  - The PTY and argv helpers went to a new `tests/orch_support/mod.rs`, which keeps `orch_modes.rs` under 600 lines.
+  - M9.8's `crates/cli/tests/scout_service_planner.rs` now writes `planner-mail-1`, the brief's new name, where it wrote `planner-1`.
+- **Test name.** The brief's "`mcp_until_polls_until_the_pointer_matches`, `and_times_out`" became two tests, `mcp_until_polls_until_the_pointer_matches` and `mcp_until_times_out`.
+- **Red before the change.**
+  - The six PTY tests ran until `MCP_RUN` (150 s). With no MCP-aware PTY mode, the process found no script and waited for EOF.
+  - `pty_read_message_…` never saw a `Stop`.
+  - `script_names_…` got exit 0 for the planner and the research scout, which claimed no script, and 99 for the run scout, which claimed the unstripped `scout-7a2c-api-1`.
+- **File sizes.**
+
+  | File | Lines |
+  |------|-------|
+  | `orch_steps.rs` | 563 |
+  | `script.rs` | 456 |
+  | `main.rs` | 387 |
+  | `roles.rs` | 370 |
+  | `mcp.rs` | 217 |
+  | `headless.rs` | 571 |
+  | `headless_steps.rs` | 358 |
+  | `tests/orch_modes.rs` | 361 |
+  | `tests/orch_support/mod.rs` | 274 |
