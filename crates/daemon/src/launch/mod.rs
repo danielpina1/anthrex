@@ -7,6 +7,7 @@ pub mod role;
 
 pub use gate::LaunchGate;
 
+use crate::headless::argv::CliCaps;
 use proto::{HookSource, Runtime, WindowSpec};
 use std::path::{Path, PathBuf};
 
@@ -17,6 +18,10 @@ pub struct LaunchPlan {
     pub args: Vec<String>,
     pub cwd: PathBuf,
     pub env: Vec<(String, String)>,
+    /// Milestone 9 decision 10: a run window drops the inherited agent-session variables
+    /// and `remove_env` before `env` is set. False and empty for every other window.
+    pub scrub_agent_env: bool,
+    pub remove_env: Vec<String>,
 }
 
 /// Per-window facts the launcher needs that are not in the spec.
@@ -38,6 +43,10 @@ pub struct LaunchContext<'a> {
     /// When set, the initial prompt is left out: it already belongs to the session being
     /// resumed. Ignored for `Runtime::Shell`.
     pub resume: Option<&'a str>,
+    /// What the installed CLIs accept (`ManagerConfig::cli_caps`).
+    pub caps: &'a CliCaps,
+    /// Milestone 9 decisions 7–10: the orchestrator's role; `None` for every other window.
+    pub role: Option<&'a role::RoleLaunch>,
 }
 
 pub fn shell_quote(s: &str) -> String {
@@ -62,7 +71,7 @@ pub fn hook_command(exe: &Path, window_id: u32, source: HookSource) -> String {
 }
 
 pub fn plan(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> LaunchPlan {
-    let env = vec![
+    let mut env = vec![
         ("TERM".to_string(), "xterm-256color".to_string()),
         ("COLORTERM".to_string(), "truecolor".to_string()),
         ("ANTHREX_WINDOW_ID".to_string(), ctx.window_id.to_string()),
@@ -82,6 +91,9 @@ pub fn plan(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> LaunchPlan {
                 "--settings".to_string(),
                 settings,
             ];
+            if let Some(role) = ctx.role {
+                args.extend(role::claude_role_args(role, ctx, ctx.caps));
+            }
             if let Some(model) = &spec.model {
                 args.push("--model".to_string());
                 args.push(model.clone());
@@ -102,11 +114,16 @@ pub fn plan(spec: &WindowSpec, ctx: &LaunchContext<'_>) -> LaunchPlan {
         }
         Runtime::Codex => (ctx.codex_bin.to_string(), codex::args(spec, ctx)),
     };
+    if let Some(role) = ctx.role {
+        env.extend(role::launch_env(role, spec.runtime));
+    }
     LaunchPlan {
         program,
         args,
         cwd: spec.cwd.clone(),
         env,
+        scrub_agent_env: ctx.role.is_some(),
+        remove_env: ctx.role.map(|r| r.remove_env.clone()).unwrap_or_default(),
     }
 }
 
@@ -139,6 +156,8 @@ mod tests {
             codex_hook_source: None,
             codex_bypass_hook_trust: false,
             resume: None,
+            caps: &crate::headless::argv::CLI_CAPS,
+            role: None,
         }
     }
 

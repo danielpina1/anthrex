@@ -17,6 +17,8 @@ pub enum HookKind {
     SubagentStop,
     SessionEnd,
     TurnComplete,
+    /// Milestone 9 decision 12: a Claude turn that ended on an API error.
+    StopFailure,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -81,6 +83,7 @@ pub fn parse(source: HookSource, payload: &Value) -> Option<ParsedHook> {
             "PermissionRequest" => HookKind::PermissionRequest,
             "Notification" => HookKind::Notification,
             "Stop" => HookKind::Stop,
+            "StopFailure" => HookKind::StopFailure,
             "SubagentStart" => HookKind::SubagentStart,
             "SubagentStop" => HookKind::SubagentStop,
             "SessionEnd" => HookKind::SessionEnd,
@@ -129,7 +132,8 @@ impl ParsedHook {
                 Some("idle_prompt") => Some(StatusEvent::IdlePrompt),
                 _ => None,
             },
-            HookKind::Stop => Some(StatusEvent::Stop),
+            // Decision 12: a turn that ended on an API error is over.
+            HookKind::Stop | HookKind::StopFailure => Some(StatusEvent::Stop),
             HookKind::TurnComplete => Some(StatusEvent::CodexNotify),
             HookKind::SubagentStart | HookKind::SubagentStop | HookKind::SessionEnd => None,
         }
@@ -142,6 +146,17 @@ mod tests {
     use crate::status::StatusEvent;
     use proto::{HookSource, Runtime};
     use serde_json::json;
+
+    /// Milestone 9 decision 12 (M9.1 check 5): a turn that ends on an API error sends
+    /// `StopFailure`, not `Stop`; it ends the turn, so the window goes idle.
+    #[test]
+    fn stop_failure_parses_and_maps_to_stop() {
+        let payload = json!({"hook_event_name": "StopFailure", "session_id": "s1", "error": "model_not_found"});
+        let hook = parse(HookSource::Claude, &payload).expect("StopFailure parsed");
+        assert_eq!(hook.kind, HookKind::StopFailure);
+        assert_eq!(hook.session_id.as_deref(), Some("s1"));
+        assert_eq!(hook.status_event(), Some(StatusEvent::Stop));
+    }
 
     #[test]
     fn parses_codex_notify() {

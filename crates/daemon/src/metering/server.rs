@@ -4,9 +4,15 @@
 //! HTTP crate ([`super::http`] reads and answers). It never blocks the daemon and never
 //! trusts its input:
 //!
-//! - every connection is its own task, and at most [`OTLP_MAX_CONNECTIONS`] are served
-//!   at once (a connection beyond that waits up to [`OTLP_SLOT_WAIT`] for a slot, then
-//!   is closed), so one slow client never delays another and memory stays bounded;
+//! - every connection is its own task, and at most [`OTLP_BASE_CONNECTIONS`] plus the
+//!   live orchestrators are served at once (a connection beyond that first closes one
+//!   that never presented a valid token, then waits up to [`OTLP_SLOT_WAIT`] for a slot,
+//!   then is closed), so one slow client never delays another, memory stays bounded,
+//!   and a local process holding slots cannot starve an orchestrator (milestone 9
+//!   decision 14b);
+//! - only points carrying their run's token (`Authorization: Bearer <token>`,
+//!   [`UsageSink::token`]) are metered; the rest are dropped and counted per run
+//!   (decision 14a);
 //! - each request is read within [`OTLP_READ_TIMEOUT`], headers up to
 //!   [`OTLP_MAX_HEADERS`] and a `Content-Length` or chunked body up to
 //!   [`OTLP_MAX_BODY`]; anything larger is `413` and the connection is closed;
@@ -22,7 +28,7 @@
 //! `413` for oversize. After each accepted request, the ledger's new total for every
 //! `(run, "orchestrator")` it touched goes to [`UsageSink::post`], once per run.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,19 +37,27 @@ use std::time::Duration;
 
 use proto::TokenUsage;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::http::{Conn, Request, Unread};
 use super::otlp::{ORCHESTRATOR, OtlpLedger, UsagePoint, parse_metrics};
+use slots::{ConnState, Slots};
+use token::authorize;
+
+#[path = "slots.rs"]
+mod slots;
+#[path = "token.rs"]
+mod token;
 
 pub const OTLP_MAX_BODY: usize = 4 << 20;
 pub const OTLP_MAX_HEADERS: usize = 16 << 10;
 pub const OTLP_READ_TIMEOUT: Duration = Duration::from_secs(10);
-/// Connections served at once. Bounds memory at about this many bodies.
-pub const OTLP_MAX_CONNECTIONS: usize = 8;
-/// How long a connection beyond [`OTLP_MAX_CONNECTIONS`] waits for a slot before it is
+/// Connections served at once with no live orchestrator (milestone 9 decision 14b: the
+/// cap is this plus [`UsageSink::live_orchestrators`]). Bounds memory at about this many
+/// bodies.
+pub const OTLP_BASE_CONNECTIONS: usize = 8;
+/// How long a connection beyond the cap waits for a slot before it is
 /// closed unanswered. New connections wait in the listen backlog meanwhile.
 pub const OTLP_SLOT_WAIT: Duration = Duration::from_secs(1);
 /// `<data_dir>/otlp.addr`: `http://127.0.0.1:<port>`, mode 0600, removed at shutdown.
@@ -62,6 +76,10 @@ pub trait UsageSink: Send + Sync + 'static {
     /// ledger lock, so totals arrive in order: it must stay cheap, never block, and
     /// never take the ledger, the engine or the window manager's lock.
     fn post(&self, run_id: String, usage: TokenUsage);
+    /// Milestone 9 decision 14a: the live run's OTLP token, `None` when it has none.
+    fn token(&self, run_id: &str) -> Option<String>;
+    /// Decision 14b: the live runs with an orchestrator, which widen the connection cap.
+    fn live_orchestrators(&self) -> usize;
 }
 
 /// The bound receiver. Its task stops when the shutdown token is cancelled, and removes
@@ -83,6 +101,8 @@ impl OtlpServer {
 struct Ledger {
     ledger: OtlpLedger,
     generation: Option<u64>,
+    /// Decision 14a: points dropped for a missing or wrong token, per live run.
+    drops: BTreeMap<String, u64>,
 }
 
 struct Shared {
@@ -165,25 +185,31 @@ async fn accept_loop(
     shutdown: CancellationToken,
     path: PathBuf,
 ) {
-    let slots = Arc::new(Semaphore::new(OTLP_MAX_CONNECTIONS));
+    let slots = Arc::new(Slots::default());
+    let mut cap = (None, OTLP_BASE_CONNECTIONS);
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => break,
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
-                    let wait = tokio::time::timeout(OTLP_SLOT_WAIT, slots.clone().acquire_owned());
+                    // Decision 14b: the cap is read again when the live runs change.
+                    let generation = shared.sink.live_generation();
+                    if cap.0 != Some(generation) {
+                        cap = (Some(generation), OTLP_BASE_CONNECTIONS + shared.sink.live_orchestrators());
+                    }
                     let slot = tokio::select! {
                         _ = shutdown.cancelled() => break,
-                        slot = wait => slot,
+                        slot = slots.acquire(cap.1) => slot,
                     };
                     // No slot in time: the connection is dropped, which closes it.
-                    let Ok(Ok(slot)) = slot else { continue };
+                    let Some(slot) = slot else { continue };
                     let shared = shared.clone();
                     let stop = shutdown.clone();
                     tokio::spawn(async move {
                         tokio::select! {
                             _ = stop.cancelled() => {}
-                            _ = serve(stream, &shared) => {}
+                            _ = slot.state.close.cancelled() => {}
+                            _ = serve(stream, &shared, &slot.state) => {}
                         }
                         drop(slot);
                     });
@@ -205,7 +231,7 @@ async fn accept_loop(
 
 /// One connection: requests are read and answered until the client closes, a request
 /// is refused, or a read takes longer than [`OTLP_READ_TIMEOUT`].
-async fn serve(stream: TcpStream, shared: &Arc<Shared>) {
+async fn serve(stream: TcpStream, shared: &Arc<Shared>, state: &ConnState) {
     let mut conn = Conn::new(stream);
     loop {
         let read = tokio::time::timeout(OTLP_READ_TIMEOUT, conn.request()).await;
@@ -218,7 +244,7 @@ async fn serve(stream: TcpStream, shared: &Arc<Shared>) {
             Ok(Ok(request)) => request,
         };
         let keep_alive = request.keep_alive;
-        let status = answer(request, shared).await;
+        let status = answer(request, shared, state).await;
         let keep = status == 200 && keep_alive;
         if !keep {
             conn.refuse(status).await;
@@ -232,7 +258,7 @@ async fn serve(stream: TcpStream, shared: &Arc<Shared>) {
 
 /// The status for a request read in full; for `200`, its points are in the ledger and
 /// the orchestrator totals they touched are posted.
-async fn answer(request: Request, shared: &Arc<Shared>) -> u16 {
+async fn answer(request: Request, shared: &Arc<Shared>, state: &ConnState) -> u16 {
     if request.path.split('?').next() != Some("/v1/metrics") {
         return 404;
     }
@@ -248,14 +274,22 @@ async fn answer(request: Request, shared: &Arc<Shared>) -> u16 {
         return 415;
     }
     let body = request.body;
+    let presented = request.authorization;
     let metering = shared.clone();
     let metered = tokio::task::spawn_blocking(move || {
-        parse_metrics(&body).map(|points| record(&metering, points))
+        parse_metrics(&body).map(|points| {
+            let (points, tokened) = authorize(&metering, points, presented.as_deref());
+            record(&metering, points);
+            tokened
+        })
     })
     .await;
-    let Ok(Ok(_)) = metered else {
+    let Ok(Ok(tokened)) = metered else {
         return 400;
     };
+    if tokened {
+        state.tokened.store(true, Ordering::SeqCst);
+    }
     200
 }
 

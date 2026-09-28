@@ -9,6 +9,8 @@ fn plan(program: &str, args: &[&str]) -> LaunchPlan {
         args: args.iter().map(|s| s.to_string()).collect(),
         cwd: std::env::temp_dir(),
         env: vec![("TERM".to_string(), "xterm-256color".to_string())],
+        scrub_agent_env: false,
+        remove_env: Vec::new(),
     }
 }
 

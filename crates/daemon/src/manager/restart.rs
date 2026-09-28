@@ -243,6 +243,7 @@ struct ForRelaunch {
     session_id: Option<String>,
     cols: u16,
     rows: u16,
+    role: Option<crate::launch::role::RoleLaunch>,
 }
 
 impl WindowManager {
@@ -445,6 +446,7 @@ impl WindowManager {
             session_id: entry.state.session_id.clone(),
             cols,
             rows,
+            role: entry.role.clone(),
         })
     }
 
@@ -546,6 +548,8 @@ fn spawn_for_restart(
             codex_hook_source: config.codex_hook_source.as_deref(),
             codex_bypass_hook_trust: config.codex_bypass_hook_trust,
             resume: info.session_id.as_deref(),
+            caps: &config.cli_caps,
+            role: info.role.as_ref(),
         },
     );
     Window::spawn(id, &plan, info.cols.max(1), info.rows.max(1), events)

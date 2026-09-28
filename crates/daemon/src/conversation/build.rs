@@ -36,7 +36,9 @@ pub(super) fn apply(
         HookKind::PostToolUse => post_tool_use(draft, hook, now, caps),
         HookKind::PermissionRequest => permission_request(draft, hook, now_unix_secs),
         HookKind::Notification => notification(draft, hook, now_unix_secs),
-        HookKind::Stop | HookKind::SessionEnd | HookKind::TurnComplete => draft.close_open_turn(),
+        HookKind::Stop | HookKind::StopFailure | HookKind::SessionEnd | HookKind::TurnComplete => {
+            draft.close_open_turn()
+        }
         HookKind::SubagentStart => subagent_start(draft, hook, spawn, now_unix_secs),
         HookKind::SubagentStop => draft.close_open_turn(),
     }

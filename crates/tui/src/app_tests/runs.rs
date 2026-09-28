@@ -15,7 +15,7 @@ fn run_subscribes(effects: &[Effect]) -> usize {
     effects.iter().filter(|e| **e == run_subscribe()).count()
 }
 
-fn run_info(id: &str) -> RunInfo {
+pub(super) fn run_info(id: &str) -> RunInfo {
     serde_json::from_value(serde_json::json!({
         "run_id": id, "goal": "g", "project": "/p", "root": "/p", "state": "running",
         "base_branch": "main", "base_sha": "", "run_branch": "", "run_head": "",
@@ -27,7 +27,7 @@ fn run_info(id: &str) -> RunInfo {
     .expect("a minimal RunInfo")
 }
 
-fn snapshot(revision: u64, now: u64, runs: Vec<RunInfo>) -> RunsSnapshot {
+pub(super) fn snapshot(revision: u64, now: u64, runs: Vec<RunInfo>) -> RunsSnapshot {
     RunsSnapshot {
         revision,
         runs,

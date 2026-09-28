@@ -118,6 +118,12 @@ pub(super) struct Entry {
     /// (decision 9).
     pub(super) conversation_viewers: u32,
     pub(super) transcript: super::conversation::TranscriptSlot,
+    /// Milestone 9 decision 11: the orchestrator's role, `None` for every other window.
+    pub(super) role: Option<crate::launch::role::RoleLaunch>,
+    /// Decision 11's run-live flag; not persisted (false after a daemon restart).
+    pub(super) run_live: bool,
+    /// When a client's `Input` last reached this window (decision 39's quiet time).
+    pub(super) last_client_input: Option<Instant>,
 }
 
 impl Entry {
@@ -149,7 +155,10 @@ impl Entry {
                 Process::Headless(_) => proto::WindowKind::Headless,
                 _ => proto::WindowKind::Pty,
             },
-            run: self.headless().and_then(|spec| spec.run_ref.clone()),
+            run: match &self.role {
+                Some(role) => Some(role.run_ref.clone()),
+                None => self.headless().and_then(|spec| spec.run_ref.clone()),
+            },
         }
     }
 

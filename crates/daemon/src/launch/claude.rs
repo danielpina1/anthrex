@@ -3,7 +3,7 @@ use proto::HookSource;
 use serde_json::{Value, json};
 use std::path::Path;
 
-pub const HOOK_EVENTS: [&str; 10] = [
+pub const HOOK_EVENTS: [&str; 11] = [
     "Notification",
     "PermissionRequest",
     "PostToolUse",
@@ -11,6 +11,7 @@ pub const HOOK_EVENTS: [&str; 10] = [
     "SessionEnd",
     "SessionStart",
     "Stop",
+    "StopFailure",
     "SubagentStart",
     "SubagentStop",
     "UserPromptSubmit",
@@ -54,6 +55,7 @@ mod tests {
                 "SessionEnd": hook,
                 "SessionStart": hook,
                 "Stop": hook,
+                "StopFailure": hook,
                 "SubagentStart": hook,
                 "SubagentStop": hook,
                 "UserPromptSubmit": hook

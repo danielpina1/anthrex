@@ -27,6 +27,7 @@
 use super::entry::{Entry, Inner, Process};
 use super::{ManagerConfig, WindowManager, git, validate_name};
 use crate::agent_state::AgentState;
+use crate::launch::role::RoleLaunch;
 use crate::launch::{self, LaunchContext};
 use crate::project::DetectedRoots;
 use crate::window::{Window, WindowEvent};
@@ -39,20 +40,21 @@ use tokio::sync::mpsc;
 /// What phase A settled and phase B needs: the id it spent, the name it reserved, and the
 /// size the client asked for. One argument rather than four, so the signature stays
 /// readable as phase B grows.
-struct Admitted<'a> {
-    id: u32,
-    name: &'a str,
-    cols: u16,
-    rows: u16,
+pub(super) struct Admitted<'a> {
+    pub(super) id: u32,
+    pub(super) name: &'a str,
+    pub(super) cols: u16,
+    pub(super) rows: u16,
 }
 
 /// What phase B hands phase C: a live window, the spec as the child actually saw it
 /// (design decision 11 replaces `cwd` for a worktree window), and the worktree that was
 /// made for it, if any.
-struct Spawned {
+pub(super) struct Spawned {
     spec: WindowSpec,
     window: Window,
     created: Option<Created>,
+    role: Option<RoleLaunch>, // milestone 9 decision 11; persisted in `Entry.run`
 }
 
 /// Holds a window's name against other creates and against `rename`, and the directory
@@ -62,9 +64,9 @@ struct Spawned {
 /// ways to end — an error from git, a panic in the blocking closure, a dropped future —
 /// and a name or a path left reserved after any of them would be unusable until the
 /// daemon restarted, with nothing in `list()` to explain why.
-struct Reservation<'a> {
+pub(super) struct Reservation<'a> {
     manager: &'a WindowManager,
-    name: String,
+    pub(super) name: String,
     /// The worktree directory this create will make, for a create that asked for one.
     worktree_path: Option<PathBuf>,
     held: bool,
@@ -161,6 +163,7 @@ impl WindowManager {
                     cols,
                     rows,
                 },
+                None,
             )
         })
         .await
@@ -185,7 +188,11 @@ impl WindowManager {
     /// without the lock, so anything two concurrent creates could collide on has to be
     /// settled before either of them starts. The name is one. The worktree directory is
     /// the other, and it is the dangerous one — see [`worktree_claim`].
-    fn admit(&self, spec: &WindowSpec, project: &Path) -> anyhow::Result<(u32, Reservation<'_>)> {
+    pub(super) fn admit(
+        &self,
+        spec: &WindowSpec,
+        project: &Path,
+    ) -> anyhow::Result<(u32, Reservation<'_>)> {
         let claim = worktree_claim(&self.config.worktrees_root, project, spec);
         let mut inner = crate::lock(&self.inner);
         anyhow::ensure!(!inner.shutting_down, "daemon is shutting down");
@@ -242,7 +249,7 @@ impl WindowManager {
     }
 
     /// Phase C.
-    fn insert(
+    pub(super) fn insert(
         &self,
         id: u32,
         name: String,
@@ -255,6 +262,7 @@ impl WindowManager {
             spec,
             window,
             created,
+            role,
         } = spawned;
         // Fix wave 8, Minor (re-review of M6.5's Minor 3): `restore` sets `Entry.spec.name`
         // to its record's own validated name (`restore.rs`'s
@@ -308,7 +316,10 @@ impl WindowManager {
             conversation_viewers: 0,
             transcript: Default::default(),
             process: Process::Live(window),
-            run: None,
+            run: role.as_ref().map(super::role_window::role_record),
+            role,
+            run_live: false,
+            last_client_input: None,
         };
         let info = entry.info(now);
         tracing::info!(
@@ -374,12 +385,13 @@ fn worktree_claim(worktrees_root: &Path, project: &Path, spec: &WindowSpec) -> O
 
 /// Phase B, the only phase that can take seconds. Blocking throughout, called only from
 /// `spawn_blocking`, and holding no lock of any kind.
-fn spawn_window(
+pub(super) fn spawn_window(
     config: &ManagerConfig,
     events: mpsc::UnboundedSender<(u32, WindowEvent)>,
     mut spec: WindowSpec,
     roots: &DetectedRoots,
     admitted: &Admitted<'_>,
+    role: Option<RoleLaunch>,
 ) -> anyhow::Result<Spawned> {
     let &Admitted {
         id,
@@ -430,6 +442,8 @@ fn spawn_window(
             // A fresh `create` is never a resume; only a later task's `restart` (design
             // decision 17) resumes a known session id.
             resume: None,
+            caps: &config.cli_caps,
+            role: role.as_ref(),
         },
     );
 
@@ -447,6 +461,7 @@ fn spawn_window(
         spec,
         window,
         created,
+        role,
     })
 }
 

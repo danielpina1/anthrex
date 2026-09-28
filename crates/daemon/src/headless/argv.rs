@@ -447,12 +447,12 @@ pub fn codex_args(
 }
 
 /// A TOML array of basic strings: `[` + the strings joined by `,` + `]`.
-fn toml_array(items: &[String]) -> String {
+pub(crate) fn toml_array(items: &[String]) -> String {
     let strings: Vec<String> = items.iter().map(|s| toml_string(s)).collect();
     format!("[{}]", strings.join(","))
 }
 
-fn effort(effort: Effort) -> &'static str {
+pub(crate) fn effort(effort: Effort) -> &'static str {
     match effort {
         Effort::Low => "low",
         Effort::Medium => "medium",

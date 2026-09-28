@@ -22,8 +22,10 @@ pub const GIT_LOCATION_VARS: [&str; 5] = [
 
 /// Decision 26: inherited variables removed from every headless session and every
 /// engine command, by prefix ... Since F2 round 2 (N1) also exported shell functions
-/// (`BASH_FUNC_<name>%%`), which bash imports at start-up.
-pub const SCRUBBED_PREFIXES: &[&str] = &["CLAUDE_CODE_", "BASH_FUNC_"];
+/// (`BASH_FUNC_<name>%%`), which bash imports at start-up. Since milestone 9 (M9.1
+/// real-CLI ruling 5) also `MCP_*`, which tunes an agent's MCP client (for example
+/// `MCP_CONNECTION_NONBLOCKING` from a daemon started inside Claude Code).
+pub const SCRUBBED_PREFIXES: &[&str] = &["CLAUDE_CODE_", "BASH_FUNC_", "MCP_"];
 /// ... and by name. Since F2 round 2 (N1) also the shell start-up inlets that exist
 /// only to run or reshape code at a shell's start (a user's own `ZDOTDIR`, `SHELL` or
 /// `PYTHONPATH` is kept: it is their own setting, and only a profile may not set it).
@@ -94,6 +96,10 @@ const RESERVED_PREFIXES: &[(&str, &str)] = &[
         "it redirects git (AGENTS.md rule 11) or its configuration",
     ),
     ("ANTHREX_", "anthrex sets its own variables"),
+    (
+        "MCP_",
+        "it tunes the agent's MCP client, which anthrex configures",
+    ),
     (
         "DYLD_",
         "it loads code into the agent before its sandbox applies",
@@ -221,6 +227,21 @@ mod tests {
         for prefix in SCRUBBED_PREFIXES {
             let name = format!("{prefix}ANYTHING");
             assert!(reserved_env(&name).is_some(), "{name} is not reserved");
+        }
+    }
+
+    /// M9.1 real-CLI ruling 5: every agent session drops inherited `MCP_*` variables
+    /// (`MCP_CONNECTION_NONBLOCKING` from a daemon started inside Claude Code, say), and
+    /// a profile may not set one back.
+    #[test]
+    fn mcp_variables_are_scrubbed_and_reserved() {
+        assert!(SCRUBBED_PREFIXES.contains(&"MCP_"), "{SCRUBBED_PREFIXES:?}");
+        for key in [
+            "MCP_CONNECTION_NONBLOCKING",
+            "MCP_TOOL_TIMEOUT",
+            "mcp_timeout",
+        ] {
+            assert!(reserved_env(key).is_some(), "{key} is not reserved");
         }
     }
 

@@ -347,7 +347,7 @@ async fn handle_client(
                 })
             }
             ClientMsg::Input { window_id, bytes } => manager
-                .write_input(window_id, &bytes)
+                .write_client_input(window_id, &bytes)
                 .err()
                 .map(|e| error("input", e.to_string())),
             ClientMsg::Resize {

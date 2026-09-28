@@ -319,16 +319,6 @@ fn e2e_filter_hook_shrinks_test_output_for_a_claude_worker() {
 const ORCHESTRATOR_FIXTURE: &str =
     include_str!("../../daemon/tests/fixtures/otlp/claude-2.1.280-metrics.json");
 
-/// M8b.1 item 5's recorded totals (one delta export).
-fn fixture_usage(times: u64) -> TokenUsage {
-    TokenUsage {
-        input: 10 * times,
-        output: 170 * times,
-        cache_read: 13_689 * times,
-        cache_write: 12_503 * times,
-    }
-}
-
 /// `POST /v1/metrics` to `addr` (`http://127.0.0.1:<port>`), with a `Content-Length`
 /// or a chunked body; the status line.
 fn post(addr: &str, body: &[u8], chunked: bool) -> String {
@@ -372,10 +362,15 @@ fn otlp_addr(data: &Path) -> String {
     .to_string()
 }
 
+/// M8b.15, with milestone 9 decision 14a: a run's orchestrator usage is metered only
+/// from points carrying the run's own OTLP token. A `--plan` run has no orchestrator, so
+/// no token: its exports are answered `200` and dropped (the drop is logged), and its
+/// usage stays zero. The metered path, a real orchestrator's tokened export, is covered
+/// by `daemon/tests/otlp_server.rs` and end to end by M9.16.
 #[test]
-fn e2e_otlp_usage_reaches_the_run_snapshot() {
+fn e2e_otlp_points_without_the_runs_token_are_dropped() {
     let h = harness("off", &[], &[]);
-    // A run held at its plan gate: live, so the receiver meters it.
+    // A run held at its plan gate: live, so only the token keeps it from being metered.
     let id = h.start(&plan_of(&[task("t1", &["a.txt"], "")]), false);
     assert_eq!(
         orchestrator_usage(&h.run(&id).unwrap()),
@@ -386,18 +381,18 @@ fn e2e_otlp_usage_reaches_the_run_snapshot() {
     let addr = otlp_addr(&h.data());
 
     assert_eq!(post(&addr, body.as_bytes(), false), "HTTP/1.1 200 OK");
-    h.wait_run(
-        &id,
-        |r| orchestrator_usage(r) == Some(fixture_usage(1)),
-        REQUEST_WAIT,
-    );
-    // A second, chunked export of the same deltas adds them again.
     assert_eq!(post(&addr, body.as_bytes(), true), "HTTP/1.1 200 OK");
-    let run = h.wait_run(
-        &id,
-        |r| orchestrator_usage(r) == Some(fixture_usage(2)),
-        REQUEST_WAIT,
+    // The receiver logs the drop before it answers; nothing was posted to the engine.
+    let log = h.data().join("daemon.log");
+    until("the logged drop", REQUEST_WAIT, || {
+        std::fs::read_to_string(&log).ok().filter(|text| {
+            text.lines().any(|l| {
+                l.contains("OTLP points without the run's token were dropped") && l.contains(&id)
+            })
+        })
+    });
+    assert_eq!(
+        orchestrator_usage(&h.run(&id).unwrap()),
+        Some(TokenUsage::default())
     );
-    let usage = run.usage.unwrap();
-    assert_eq!(usage.total, fixture_usage(2), "no other role has spent");
 }
