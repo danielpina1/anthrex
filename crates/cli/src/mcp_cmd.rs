@@ -30,7 +30,8 @@ pub struct McpArgs {
 }
 
 /// `--role`. `orchestrator` and `planner` serve milestone 9's tools (decision 15);
-/// `scout` (milestone 8b) serves `submit_scout_report`, for a scout or a research task. There is no `decider`: a decider never runs `anthrex mcp`
+/// `scout` (milestone 8b) serves `submit_scout_report`, for a scout or a research
+/// task. There is no `decider`: a decider never runs `anthrex mcp`
 /// (`daemon::headless::argv::mcp_args` refuses one).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum RoleArg {

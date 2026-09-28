@@ -263,7 +263,9 @@ fn array<'a>(value: &'a Value, field: &str, min: usize, max: usize) -> Result<&'
     Ok(items)
 }
 
-/// `edits`: required, `min` to 60 plan edits, each M8a's `PlanEdit` serde shape
+/// `edits`: required, `min` to 60 plan edits, each within the Interfaces table's
+/// nested bounds with no field the schema lacks (`tools_bounds.rs`), then M8a's
+/// `PlanEdit` serde shape
 /// (decision 19: `{"op": "override"}` fails here), a `message`'s text at most 4000
 /// characters (decision 42a).
 fn edits(map: &Map<String, Value>, min: usize) -> Result<Vec<PlanEdit>, String> {
@@ -272,6 +274,7 @@ fn edits(map: &Map<String, Value>, min: usize) -> Result<Vec<PlanEdit>, String> 
         .iter()
         .enumerate()
         .map(|(i, v)| {
+            bounds::check_edit(v).map_err(|e| format!("edits[{i}]: {e}"))?;
             let edit: PlanEdit =
                 serde_json::from_value(v.clone()).map_err(|e| format!("edits[{i}]: {e}"))?;
             if let PlanEdit::Message { text, .. } = &edit
@@ -286,6 +289,13 @@ fn edits(map: &Map<String, Value>, min: usize) -> Result<Vec<PlanEdit>, String> 
         .collect()
 }
 
+#[path = "tools_bounds.rs"]
+mod bounds;
+
 #[cfg(test)]
 #[path = "tools_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tools_tests_bounds.rs"]
+mod tests_bounds;

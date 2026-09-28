@@ -1,0 +1,230 @@
+//! Task M9.11, review finding 3: the daemon enforces the Interfaces table's bounds
+//! inside `plan_edit`, `plan_task` and `route`, and refuses their unknown fields, on a
+//! tool call's untrusted arguments (the MCP schema is only what the model sees). Pure.
+
+use proto::AgentRole;
+use serde_json::{Value, json};
+
+use super::*;
+
+/// A valid `plan_task`, each string at its table maximum when `full`.
+fn task(full: bool) -> Value {
+    let s = |n: usize, c: char| {
+        if full {
+            c.to_string().repeat(n)
+        } else {
+            c.to_string()
+        }
+    };
+    let list = |n: usize, each: usize| -> Vec<String> {
+        (0..if full { n } else { 1 })
+            .map(|i| format!("{i:0>width$}", width = if full { each } else { 1 }))
+            .collect()
+    };
+    json!({
+        "id": "m1", "title": s(120, 't'), "epic": s(11, 'e'), "kind": "code", "size": "S",
+        "interface_change": false, "test_mode": "check", "test_mode_reason": s(300, 'r'),
+        "owns": list(20, 300), "deps": list(20, 16), "priority": 3, "brief": s(8000, 'b'),
+        "acceptance": list(20, 500), "test_to_write": s(300, 'w'),
+        "scout_refs": list(20, 48), "review_target": s(200, 'v'),
+        "route": {"runtime": "claude", "model": s(100, 'm'), "strength": "standard",
+                  "effort": "high"},
+    })
+}
+
+fn edit_plan(edit: Value) -> Result<OrchCall, String> {
+    parse_call(
+        AgentRole::Orchestrator,
+        "edit_plan",
+        &json!({ "edits": [edit] }),
+    )
+}
+
+fn refusal(edit: Value) -> String {
+    edit_plan(edit).expect_err("refused")
+}
+
+#[test]
+fn a_task_at_every_bound_is_accepted() {
+    for full in [false, true] {
+        let edit = json!({"op": "add_task", "task": task(full)});
+        assert!(edit_plan(edit).is_ok(), "full: {full}");
+    }
+    let into: Vec<Value> = (0..12).map(|_| task(true)).collect();
+    assert!(edit_plan(json!({"op": "split_task", "task_id": "t1", "into": into})).is_ok());
+}
+
+/// The reviewer's case: a forged `add_task` whose brief is 200 000 characters.
+#[test]
+fn nested_strings_past_their_bound_are_refused() {
+    let with = |key: &str, value: Value| {
+        let mut t = task(false);
+        t[key] = value;
+        json!({"op": "add_task", "task": t})
+    };
+    let long = |n: usize| Value::String("x".repeat(n));
+    let cases = [
+        (
+            with("brief", long(200_000)),
+            "task: brief: must be 1 to 8000 characters",
+        ),
+        (
+            with("title", long(121)),
+            "task: title: must be 1 to 120 characters",
+        ),
+        (
+            with("title", long(0)),
+            "task: title: must be 1 to 120 characters",
+        ),
+        (
+            with("epic", long(12)),
+            "task: epic: must be 1 to 11 characters",
+        ),
+        (with("id", long(17)), "task: id: must be 1 to 16 characters"),
+        (
+            with("test_to_write", long(301)),
+            "task: test_to_write: must be 1 to 300 characters",
+        ),
+        (
+            with("review_target", long(201)),
+            "task: review_target: must be 1 to 200 characters",
+        ),
+        (
+            with("owns", json!([long(301)])),
+            "task: owns[0]: must be 1 to 300 characters",
+        ),
+        (
+            with("deps", json!([long(17)])),
+            "task: deps[0]: must be 1 to 16 characters",
+        ),
+        (
+            with("route", json!({"model": long(101)})),
+            "task: route: model: must be 0 to 100 characters",
+        ),
+        (with("title", json!(7)), "task: title: must be a string"),
+    ];
+    for (edit, want) in cases {
+        assert_eq!(
+            refusal(edit),
+            format!("invalid arguments: edits[0]: {want}")
+        );
+    }
+    let edit_cases = [
+        (
+            json!({"op": "amend_task", "task_id": "t1", "brief": "x".repeat(8001)}),
+            "brief: must be 1 to 8000 characters",
+        ),
+        (
+            json!({"op": "answer", "task_id": "t1", "text": "x".repeat(8001)}),
+            "text: must be 1 to 8000 characters",
+        ),
+        (
+            json!({"op": "add_dep", "task_id": "t1", "dep": "x".repeat(17)}),
+            "dep: must be 1 to 16 characters",
+        ),
+        (
+            json!({"op": "amend_task", "task_id": "x".repeat(17)}),
+            "task_id: must be 1 to 16 characters",
+        ),
+        (
+            json!({"op": "amend_task", "task_id": "t1", "test_mode_reason": "x".repeat(301)}),
+            "test_mode_reason: must be 1 to 300 characters",
+        ),
+    ];
+    for (edit, want) in edit_cases {
+        assert_eq!(
+            refusal(edit),
+            format!("invalid arguments: edits[0]: {want}")
+        );
+    }
+}
+
+#[test]
+fn nested_lists_past_their_bound_are_refused() {
+    let with = |key: &str, n: usize| {
+        let mut t = task(false);
+        t[key] = json!((0..n).map(|i| format!("a{i}")).collect::<Vec<_>>());
+        json!({"op": "add_task", "task": t})
+    };
+    let cases = [
+        (with("owns", 21), "task: owns: at most 20 items"),
+        (with("deps", 21), "task: deps: at most 20 items"),
+        (with("scout_refs", 21), "task: scout_refs: at most 20 items"),
+        (with("acceptance", 21), "task: acceptance: at most 20 items"),
+        (with("acceptance", 0), "task: acceptance: at least 1 item"),
+    ];
+    for (edit, want) in cases {
+        assert_eq!(
+            refusal(edit),
+            format!("invalid arguments: edits[0]: {want}")
+        );
+    }
+    let into: Vec<Value> = (0..13).map(|_| task(false)).collect();
+    let split = json!({"op": "split_task", "task_id": "t1", "into": into});
+    assert_eq!(
+        refusal(split),
+        "invalid arguments: edits[0]: into: at most 12 items"
+    );
+    let mut child = task(false);
+    child["brief"] = json!("x".repeat(8001));
+    let split = json!({"op": "split_task", "task_id": "t1", "into": [task(false), child]});
+    assert_eq!(
+        refusal(split),
+        "invalid arguments: edits[0]: into[1]: brief: must be 1 to 8000 characters"
+    );
+    let ids: Vec<String> = (0..21).map(|i| format!("t{i}")).collect();
+    let message = json!({"op": "message", "to": ids, "kind": "info", "text": "hi"});
+    assert_eq!(
+        refusal(message),
+        "invalid arguments: edits[0]: to: at most 20 items"
+    );
+    let message = json!({"op": "message", "to": ["x".repeat(17)], "kind": "info", "text": "hi"});
+    assert_eq!(
+        refusal(message),
+        "invalid arguments: edits[0]: to[0]: must be 1 to 16 characters"
+    );
+    let amend = json!({"op": "amend_task", "task_id": "t1", "acceptance": vec!["a"; 21]});
+    assert_eq!(
+        refusal(amend),
+        "invalid arguments: edits[0]: acceptance: at most 20 items"
+    );
+}
+
+/// The schema's objects are closed: a field it does not have is refused, at every
+/// level. `budget` is left to rule 7.1's own refusal (`edit_plan_reply_shapes`), and an
+/// unknown `op` to serde's (`orchestrator_tools_cannot_approve`).
+#[test]
+fn unknown_nested_fields_are_refused() {
+    let mut budgeted = task(false);
+    budgeted["hub"] = json!(true);
+    let mut routed = task(false);
+    routed["route"]["provider"] = json!("x");
+    let cases = [
+        (
+            json!({"op": "add_task", "task": budgeted}),
+            "task: hub: unknown field",
+        ),
+        (
+            json!({"op": "add_task", "task": routed}),
+            "task: route: provider: unknown field",
+        ),
+        (
+            json!({"op": "pause", "reason": "x"}),
+            "reason: unknown field",
+        ),
+    ];
+    for (edit, want) in cases {
+        assert_eq!(
+            refusal(edit),
+            format!("invalid arguments: edits[0]: {want}")
+        );
+    }
+    // `submit_epic` goes through the same check.
+    let mut t = task(false);
+    t["brief"] = json!("x".repeat(8001));
+    let args = json!({"edits": [{"op": "add_task", "task": t}]});
+    assert_eq!(
+        parse_call(AgentRole::Planner, "submit_epic", &args),
+        Err("invalid arguments: edits[0]: task: brief: must be 1 to 8000 characters".into())
+    );
+}

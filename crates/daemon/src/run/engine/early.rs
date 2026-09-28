@@ -21,7 +21,8 @@
 //!   held [`HOLD_LIMIT_SECS`], is discarded: its signals are dropped and each call gets
 //!   the answer it gets unheld, the refusal of a window no round has.
 //! - **The cap.** At most [`HOLD_WINDOWS_CAP`] windows hold events; a new window's
-//!   events past it are dropped or answered at once, as before the hold. A window holds at most [`HOLD_CAP`] events. Past it, the oldest held
+//!   events past it are dropped or answered at once, as before the hold. A window
+//!   holds at most [`HOLD_CAP`] events. Past it, the oldest held
 //!   `Activity` or `ToolUse` makes room: losing one costs a counter and a `last_event`
 //!   that a later event refreshes. With none to evict, a new signal is dropped, as it
 //!   was before the hold, and a new call is answered at once, unheld.
@@ -239,20 +240,43 @@ pub(super) fn hold_call(
 /// Whether a sub-planner's `submit_epic` waits for its window (task M9.8, joining
 /// PR #22's hold so the planner's one write cannot be lost): from a window no session
 /// has, naming an epic whose latest session is being launched.
-pub(super) fn holds_planner_call(state: &EngineState, call: &ToolCall) -> bool {
-    if call.role != AgentRole::Planner || call.tool != "submit_epic" || bound(state, call.window_id)
-    {
+pub(crate) fn holds_planner_call(state: &EngineState, call: &ToolCall) -> bool {
+    call.role == AgentRole::Planner && call.tool == "submit_epic" && awaits_launch(state, call)
+}
+
+/// Task M9.11 (review finding 1): whether `call`, a sub-planner's or the
+/// orchestrator's, comes from a window nothing has yet while the launch it may belong
+/// to is in flight: its epic's latest session's `StartPlanner` (the rule
+/// [`holds_planner_call`] holds a `submit_epic` by), or the run's `CreateOrchestrator`.
+/// The driver makes such a call wait, at most [`HOLD_LIMIT_SECS`], then checks its
+/// caller as usual: the reads of both roles and the orchestrator's writes (a
+/// sub-planner's `submit_epic` is held here instead).
+pub(crate) fn awaits_launch(state: &EngineState, call: &ToolCall) -> bool {
+    if bound(state, call.window_id) {
         return false;
     }
     let Some(run) = state.runs.get(&call.run_id) else {
         return false;
     };
-    run.orch
-        .epics
-        .iter()
-        .find(|e| Some(&e.epic) == call.epic.as_ref())
-        .and_then(|e| e.sessions.last().map(|s| planner_launching(run, e, s)))
-        .unwrap_or(false)
+    match call.role {
+        AgentRole::Planner => run
+            .orch
+            .epics
+            .iter()
+            .find(|e| Some(&e.epic) == call.epic.as_ref())
+            .and_then(|e| e.sessions.last().map(|s| planner_launching(run, e, s)))
+            .unwrap_or(false),
+        AgentRole::Orchestrator => run.orch.orchestrator.as_ref().is_some_and(|o| {
+            !run.state.is_terminal()
+                && o.window_id != Some(call.window_id)
+                && o.launch_op.is_some_and(|op| {
+                    run.pending_ops
+                        .get(&op)
+                        .is_some_and(|p| matches!(p.kind, OpKind::CreateOrchestrator { .. }))
+                })
+        }),
+        _ => false,
+    }
 }
 
 /// Holds a sub-planner's call ([`holds_planner_call`] accepted it), or answers it at

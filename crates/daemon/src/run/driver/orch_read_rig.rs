@@ -44,13 +44,13 @@ impl Rig {
     /// A daemon on a socket under `/tmp` (a socket path's length is bounded), and one
     /// run changed by `prepare` before the engine sees it.
     pub(super) async fn new(prepare: impl FnOnce(&mut Run, &Path)) -> Rig {
-        Rig::with_git(prepare, |_| None).await
+        Rig::with(prepare, |_, _| {}).await
     }
 
-    /// As [`Rig::new`], with the engine's `git` program `git(dir)` when it is `Some`.
-    pub(super) async fn with_git(
+    /// As [`Rig::new`], with the run service's context changed by `configure` first.
+    pub(super) async fn with(
         prepare: impl FnOnce(&mut Run, &Path),
-        git_program: impl FnOnce(&Path) -> Option<PathBuf>,
+        configure: impl FnOnce(&Path, &mut RunContext),
     ) -> Rig {
         let dir = tempfile::Builder::new()
             .prefix("anthrex-orch-read-")
@@ -75,9 +75,7 @@ impl Rig {
             config::Orchestrator::default(),
             git.registry.clone(),
         );
-        if let Some(program) = git_program(dir.path()) {
-            ctx.git = program.into_os_string();
-        }
+        configure(dir.path(), &mut ctx);
         let runs = RunService::new(manager.clone(), ctx);
 
         let mut run = run_of(2);

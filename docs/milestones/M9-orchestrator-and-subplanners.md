@@ -3019,3 +3019,37 @@ One commit, `fix(daemon): an orchestrator window never restarts without its role
     - skipping the `DigestRead` turned `run_status_returns_at_once_without_since` red, since the note was never dropped;
     - bypassing the routing turned `writes_go_to_the_engine` red;
     - widening the one git deadline to 60 s turned the deadline test red, since it answered at 16 s with no error.
+
+### M9.11 review fixes
+
+One commit, `fix(daemon): early M9 calls wait for their launch, and the daemon enforces the tools' nested bounds`. Each test was written first and seen red for the reason given.
+
+1. **A session's calls before its window is bound (Important).** The engine learns a sub-planner's window from its `StartPlanner` result and the orchestrator's from its `CreateOrchestrator` result. The session can call before either arrives.
+   - The new `early::awaits_launch(state, call)` is the rule. The call comes from a window nothing has bound yet, and it is one of these:
+     - a planner call naming an epic whose latest session's `StartPlanner` is in flight (M9.8's `planner_launching`);
+     - an orchestrator call while the run's `CreateOrchestrator` op is pending, from any window but the record's own.
+   - `holds_planner_call` is now "`submit_epic` and `awaits_launch`", so the engine's hold uses the same rule as the driver's wait. `engine::early` is `pub(crate)`, which leaves `engine/mod.rs` at 599 lines.
+   - **Decision.** The driver's reads (both roles) and the orchestrator's writes wait while `awaits_launch` holds, polling the engine state every `LAUNCH_POLL` (50 ms). Each look takes the lock only for itself. The wait is bounded by the engine's own `HOLD_LIMIT_SECS` (30 s). The caller is then checked as before, so no check is weaker than the engine's: a failed launch is refused with `this window is not the sub-planner of epic …`.
+   - A sub-planner's `submit_epic` is still held by the engine, not the driver.
+   - The engine has no hold for the orchestrator's calls. Its tool gate would refuse an early call, so the driver's wait covers the orchestrator's writes too. The engine gains no second hold for the same case.
+   - Tests:
+     - `early_events::a_planners_read_before_its_window_waits_for_its_launch` and `the_orchestrators_calls_before_its_window_wait_for_its_launch` (red against a stub that answered `false`);
+     - `driver/orch_read_tests_launch.rs::a_planners_first_read_waits_for_its_launch`, bound and failed (red: the read answered at once with the refusal);
+     - `driver/orch_read_tests_launch.rs::an_orchestrators_first_calls_wait_for_its_launch`, a `run_status` and an `edit_plan` (red: both answered at once, refused).
+2. **A held `submit_epic` carries its runtime refusals (Important).** `tool_refusals` computes the refusals when the caller passes decision 15's check, and also when `holds_planner_call` would hold the call. So the replayed batch carries them (ruling T22-I1b).
+   - Test: `a_held_submit_carries_its_runtime_refusals`. The planning run has no task, and its orchestrator and planners run on Codex, so it reaches Codex only. Planners are at standard strength, since the roster's Codex has no frontier model. `cli_caps.claude_user_settings_only` is `None`, and the base commit tracks `.mcp.json`.
+   - The early `submit_epic` adds a Claude task. It is held, and then refused on the `PlannerStarted` replay with the project-settings refusal.
+   - Red before the fix: the replay answered `Epic recorded. You are done; end your turn now.`
+3. **The daemon enforces the nested bounds (Minor).** The new `run/orch/tools_bounds.rs::check_edit` runs on each raw edit before serde, for `edit_plan` and `submit_epic`. It applies the Interfaces table's string and array bounds in `plan_edit`, `plan_task` (at the top and in `into`) and `route`: `brief` ≤ 8000, `title` ≤ 120, `owns` ≤ 20 of ≤ 300, `into` 1–12, `to` 1–20 of ≤ 16, `route.model` 0–100, and so on. The paths look like `edits[0]: into[1]: brief: must be 1 to 8000 characters`. Fields the schemas lack are refused (`task: hub: unknown field`).
+   - **Readings.** Two cases are left to their existing, documented refusals:
+     - an edit whose `op` is not the schema's goes to serde (`unknown variant \`override\``, decision 19; `orchestrator_tools_cannot_approve`);
+     - `plan_task.budget` goes to rule 7.1's `budgets come from the task's size; leave budget out` (decision 23.1; `edit_plan_reply_shapes`).
+   - Enums, integers and patterns stay serde's and the plan rules'. `tools_orch.rs`'s comment, that the daemon refuses what breaks the limits, is now true.
+   - Tests in the new `run/orch/tools_tests_bounds.rs`:
+     - `a_task_at_every_bound_is_accepted`, a pin;
+     - `nested_strings_past_their_bound_are_refused`, whose first case is the reviewer's 200 000-character brief;
+     - `nested_lists_past_their_bound_are_refused`;
+     - `unknown_nested_fields_are_refused`.
+     The last three were red: the long brief was accepted, and an unknown field reached serde.
+4. **The long-poll's deadline spans resubscriptions (Minor).** Test `the_deadline_spans_lagged_resubscriptions`. A sender thread floods the snapshot channel for 12 s, and `run_status` with `wait_secs = 2` still answers in 2 to 5 s with the same revision. It passed against the code as it was; the mutation that sets the deadline inside the resubscribe loop turns it red (answered after 14 s).
+5. **Sizes and lines.** `driver/requests.rs` (597) and `cli/src/main.rs` (600) are not touched. `mcp_cmd.rs`'s long doc line is wrapped, and so is one pre-existing long line in `early.rs`'s module doc. The rows for the new timing bounds are in `docs/timing-budgets.md`.

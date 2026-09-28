@@ -324,3 +324,82 @@ fn a_research_report_before_its_window_is_answered_after_binding() {
     );
     assert_eq!(fx.task("r1").state, TaskState::Reported);
 }
+
+/// `call` of `role` from `window`, `mail`'s for a planner.
+fn m9_call(role: AgentRole, window: u32, tool: &str) -> proto::ToolCall {
+    proto::ToolCall {
+        run_id: RUN_ID.into(),
+        task_id: None,
+        role,
+        window_id: window,
+        tool: tool.into(),
+        args: serde_json::json!({}),
+        scout_id: None,
+        epic: (role == AgentRole::Planner).then(|| "mail".to_string()),
+    }
+}
+
+/// Task M9.11 (review finding 1): a sub-planner's read before its `StartPlanner`
+/// result names its window waits with the rule its `submit_epic` is held by, and so
+/// does no call once the launch is over, bound or failed.
+#[test]
+fn a_planners_read_before_its_window_waits_for_its_launch() {
+    use crate::run::engine::early::awaits_launch;
+    for bound in [true, false] {
+        let (mut fx, op) = planner_launching();
+        let read = m9_call(AgentRole::Planner, EARLY, "get_context");
+        assert!(awaits_launch(&fx.state, &read));
+        assert!(awaits_launch(
+            &fx.state,
+            &m9_call(AgentRole::Planner, EARLY, "submit_epic")
+        ));
+        // Another role's call never waits for a sub-planner's launch.
+        assert!(!awaits_launch(
+            &fx.state,
+            &m9_call(AgentRole::Worker, EARLY, "task_note")
+        ));
+        let result = if bound {
+            OpResult::PlannerStarted { window_id: EARLY }
+        } else {
+            OpResult::Failed {
+                message: "no binary".into(),
+            }
+        };
+        fx.done(op, result);
+        assert!(!awaits_launch(&fx.state, &read), "bound: {bound}");
+    }
+}
+
+/// Task M9.11 (review finding 1): the orchestrator's calls, reads and writes, before
+/// its `CreateOrchestrator` result names its window wait for it; once bound or failed
+/// they do not, and the orchestrator's own window never waits.
+#[test]
+fn the_orchestrators_calls_before_its_window_wait_for_its_launch() {
+    use super::orch::ORCH;
+    use crate::run::engine::early::awaits_launch;
+    for bound in [true, false] {
+        let mut fx = super::orch::planned(false);
+        let (op, _) = fx.op("CreateRunBranch");
+        fx.done(op, OpResult::Worktree { head: BASE.into() });
+        let (op, _) = fx.op("CreateOrchestrator");
+        for tool in ["get_context", "run_status", "edit_plan"] {
+            let call = m9_call(AgentRole::Orchestrator, ORCH, tool);
+            assert!(awaits_launch(&fx.state, &call), "{tool}");
+        }
+        let result = if bound {
+            OpResult::Window {
+                window_id: ORCH,
+                pid: None,
+            }
+        } else {
+            OpResult::Failed {
+                message: "no binary".into(),
+            }
+        };
+        fx.done(op, result);
+        for window in [ORCH, EARLY] {
+            let call = m9_call(AgentRole::Orchestrator, window, "run_status");
+            assert!(!awaits_launch(&fx.state, &call), "bound: {bound}, {window}");
+        }
+    }
+}

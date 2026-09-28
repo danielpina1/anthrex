@@ -199,6 +199,44 @@ async fn a_lagged_wait_subscribes_again_and_keeps_waiting() {
     assert!(ok && digest["revision"].as_u64().unwrap() > rev, "{digest}");
 }
 
+/// Review finding 4: the wait's deadline is set once and spans every resubscription.
+/// A sender thread keeps the waiting receiver lagging for the whole wait (and past
+/// it); the call still answers at `wait_secs`, with the same revision.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_deadline_spans_lagged_resubscriptions() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let rig = Arc::new(Rig::new(|_, _| {}).await);
+    let rev = rig.digest_rev();
+    let snap = Arc::new(snapshot(&crate::lock(&rig.runs.state), unix_now()));
+    let stop = Arc::new(AtomicBool::new(false));
+    let (flooding, sender, pushes) = (stop.clone(), snap.clone(), rig.runs.pushes.clone());
+    let flood = std::thread::spawn(move || {
+        let until = Instant::now() + Duration::from_secs(12);
+        while !flooding.load(Ordering::Relaxed) && Instant::now() < until {
+            for _ in 0..512 {
+                let _ = pushes.send(sender.clone());
+            }
+            std::thread::yield_now();
+        }
+    });
+    let started = Instant::now();
+    let answer = tokio::time::timeout(
+        Duration::from_secs(15),
+        rig.orch("run_status", json!({"since": rev, "wait_secs": 2})),
+    )
+    .await;
+    let took = started.elapsed();
+    stop.store(true, Ordering::Relaxed);
+    flood.join().unwrap();
+    let (ok, digest) = answer.expect("the wait ends");
+    assert!(ok, "{digest}");
+    assert!(
+        took >= Duration::from_secs(2) && took < Duration::from_secs(5),
+        "{took:?}"
+    );
+    assert_eq!(digest["revision"], json!(rev));
+}
+
 /// No engine lock is held while `run_status` waits: `run status` (a `List`) answers.
 #[tokio::test(flavor = "multi_thread")]
 async fn long_poll_holds_no_engine_lock() {

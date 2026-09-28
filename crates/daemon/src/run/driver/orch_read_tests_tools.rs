@@ -246,17 +246,17 @@ const SLOW_GIT_SECS: u64 = 8;
 #[tokio::test(flavor = "multi_thread")]
 async fn task_result_answers_a_git_error_at_its_one_deadline() {
     use std::os::unix::fs::PermissionsExt;
-    let rig = Rig::with_git(
+    let rig = Rig::with(
         |run, _| {
             run.limits.git_timeout_secs = 9;
             task_mut(run, "t0").start_commit = Some("a1b2c3d".into());
         },
-        |dir| {
+        |dir, ctx| {
             let program = dir.join("slow-git.sh");
             let body = format!("#!/bin/sh\nsleep {SLOW_GIT_SECS}\n");
             std::fs::write(&program, body).unwrap();
             std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
-            Some(program)
+            ctx.git = program.into_os_string();
         },
     )
     .await;

@@ -49,7 +49,7 @@ pub(crate) mod deciders;
 mod deciders_size;
 mod dispatch;
 mod done;
-mod early;
+pub(crate) mod early;
 mod fallback;
 mod gate_holds;
 mod gates;

@@ -18,7 +18,8 @@ use serde_json::json;
 use tokio::sync::broadcast::error::RecvError;
 
 use super::{DONE_CHECK_GIT_TIMEOUT, RunService, unix_now};
-use crate::run::engine::{EventKind, OrchEvent, notes_seq};
+use crate::run::engine::early::{awaits_launch, holds_planner_call};
+use crate::run::engine::{EventKind, HOLD_LIMIT_SECS, OrchEvent, notes_seq};
 use crate::run::model::{Run, task_branch};
 use crate::run::orch::context::{Asker, ContextInputs, context};
 use crate::run::orch::extract::ExtractSlot;
@@ -28,6 +29,9 @@ use crate::run::orch::tools::{OrchCall, parse_call};
 /// How long `get_context`'s file reads and build may take (the stored profile and the
 /// scout reports, each at most 1 MiB).
 pub const CONTEXT_READ_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How often a call waiting for its launch looks again (review finding 1).
+const LAUNCH_POLL: Duration = Duration::from_millis(50);
 
 /// Decision 15: whether `call` is one of milestone 9's, which `orch_tool` routes: every
 /// orchestrator and sub-planner call, and a worker's `task_note`.
@@ -136,6 +140,11 @@ impl RunService {
         if read && call.role != AgentRole::Worker {
             return self.read(call).await;
         }
+        // The engine holds a sub-planner's early `submit_epic` itself; it has no hold
+        // for the orchestrator, whose early calls wait here instead (review finding 1).
+        if call.role == AgentRole::Orchestrator {
+            self.await_launch(&call).await;
+        }
         let refusals = match self.tool_refusals(&call).await {
             Ok(refusals) => refusals,
             Err(text) => return refused(text),
@@ -153,17 +162,36 @@ impl RunService {
         }
     }
 
-    /// The runtime refusals of an authorized caller's `edit_plan` or `submit_epic`
-    /// batch; none for any other call (the engine refuses those on its own).
+    /// The runtime refusals of an `edit_plan` or `submit_epic` batch from a caller that
+    /// passes decision 15's check, or whose call the engine will hold until its window
+    /// is bound (`early::holds_planner_call`), so a replayed batch carries them too
+    /// (review finding 2); none for any other call (the engine refuses those itself).
     async fn tool_refusals(&self, call: &ToolCall) -> Result<Vec<(Runtime, String)>, String> {
         let edits = match parse_call(call.role, &call.tool, &call.args) {
             Ok(OrchCall::EditPlan { edits, .. } | OrchCall::SubmitEpic { edits, .. }) => edits,
             _ => return Ok(Vec::new()),
         };
-        if self.looked_up(call, |_| ()).is_err() {
+        let held = holds_planner_call(&crate::lock(&self.state), call);
+        if !held && self.looked_up(call, |_| ()).is_err() {
             return Ok(Vec::new());
         }
         self.runtime_refusals(&call.run_id, &edits).await
+    }
+
+    /// Review finding 1: a call from a window nothing has yet, while the launch it may
+    /// belong to is in flight (`early::awaits_launch`: its sub-planner's `StartPlanner`
+    /// or the orchestrator's `CreateOrchestrator`), waits for that launch to resolve,
+    /// at most the engine's own `HOLD_LIMIT_SECS`, polling the engine state with the
+    /// lock taken only for each look. The caller is then checked as usual.
+    async fn await_launch(&self, call: &ToolCall) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(HOLD_LIMIT_SECS);
+        loop {
+            let waiting = awaits_launch(&crate::lock(&self.state), call);
+            if !waiting || tokio::time::Instant::now() >= deadline {
+                return;
+            }
+            tokio::time::sleep(LAUNCH_POLL).await;
+        }
     }
 
     /// `read(run)` of the caller's run under the engine lock, after decision 15's run
@@ -179,6 +207,7 @@ impl RunService {
 
     /// Decisions 16 to 18. Reads answer in every run state, terminal ones included.
     async fn read(&self, call: ToolCall) -> RunReply {
+        self.await_launch(&call).await;
         if let Err(text) = self.looked_up(&call, |_| ()) {
             return refused(text);
         }
@@ -457,3 +486,7 @@ mod read_tests;
 #[cfg(test)]
 #[path = "orch_read_tests_tools.rs"]
 mod read_tests_tools;
+
+#[cfg(test)]
+#[path = "orch_read_tests_launch.rs"]
+mod read_tests_launch;
