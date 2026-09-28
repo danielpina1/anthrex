@@ -432,6 +432,7 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
     for run in state.runs.values_mut() {
         dispatch::schedule(run, now, &mut fx);
         orch_window::ended(run);
+        gate_holds::drop_empty_rounds(run, now);
         // M8b decision 33: the history records that are due, whatever the run's state.
         history::pass(run, now, &mut fx);
     }

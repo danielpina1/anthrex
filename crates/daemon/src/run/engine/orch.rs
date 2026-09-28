@@ -316,10 +316,10 @@ pub(super) fn submit_plan(run: &mut Run, who: &str, now: u64) -> Result<(), Stri
             }
         }
         RunState::Running if run.orch.orchestrator.is_some() => {
-            // A promoted run's submit waits for its sub-planners too, so no epic
-            // planned inside the promotion window outlives it (M9.7 second review,
-            // ruling 8).
-            if gate_holds::promoted(run) {
+            // While the promotion window is open, its submit waits for the
+            // sub-planners too, so the user sees the promotion's whole plan (M9.7
+            // second review, rulings 8 and 9).
+            if gate_holds::promotion_open(run) {
                 planners_finished(run)?;
             }
             set_submitted(run);

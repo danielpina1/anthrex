@@ -40,7 +40,7 @@ pub(super) fn promoted(run: &Run) -> bool {
 /// approved. A rejected round does not close it: the orchestrator's next addition or
 /// submit opens a new round, so its work never bypasses the user's "no" (M9.7 second
 /// review, ruling 7).
-fn promotion_open(run: &Run) -> bool {
+pub(super) fn promotion_open(run: &Run) -> bool {
     promoted(run)
         && !run
             .orch
@@ -125,8 +125,11 @@ pub(super) fn assign(
         let parent = split_parent(edits, id);
         let hold = match parent.and_then(|p| unreleased_hold(run, p)) {
             Some(inherited) => Some(inherited),
+            // An epic's rule comes first: its work waits for its own round, never
+            // the promotion's (M9.7 second review, ruling 9).
+            None if names_an_epic(run, id) => epic_hold(run, id, now),
             None if promotion_open(run) => Some(promotion_round(run, now)),
-            None => epic_hold(run, id, now),
+            None => None,
         };
         let Some(hold) = hold else {
             continue;
@@ -201,13 +204,56 @@ fn is_round_of(hold: &GateHoldRecord, epic: &str) -> bool {
 /// until the user approves one (decision 28; after a rejection, M9.7 second review,
 /// ruling 8).
 fn epic_open(run: &Run, epic: &str) -> bool {
+    // The record names a round once one was opened; it keeps naming it when an empty
+    // round is dropped (`drop_empty_rounds`), so the epic stays held.
+    let opened = run
+        .orch
+        .epics
+        .iter()
+        .any(|e| e.epic == epic && e.gate_hold.is_some());
     let rounds: Vec<_> = run
         .orch
         .gate_holds
         .iter()
         .filter(|h| is_round_of(h, epic))
         .collect();
-    !rounds.is_empty() && rounds.iter().all(|h| h.state != HoldState::Approved)
+    opened && rounds.iter().all(|h| h.state != HoldState::Approved)
+}
+
+/// Task `id` names an epic the run has.
+fn names_an_epic(run: &Run, id: &str) -> bool {
+    run.task(id)
+        .and_then(|t| t.spec.epic.as_deref())
+        .is_some_and(|epic| run.orch.epics.iter().any(|e| e.epic == epic))
+}
+
+/// Decision 38: a round still `Drafting` with no task, whose epic's sub-planner has
+/// ended without submitting, is dropped, so it cannot keep the run from completing.
+/// The epic's record still names it, so the epic stays held and its next re-plan or
+/// addition opens a round again (M9.7 second review, ruling 9).
+pub(super) fn drop_empty_rounds(run: &mut Run, now: u64) {
+    let ended = |run: &Run, epic: &str| {
+        run.orch
+            .epics
+            .iter()
+            .any(|e| e.epic == epic && !e.phase.is_live())
+    };
+    let dropped: Vec<String> = run
+        .orch
+        .gate_holds
+        .iter()
+        .filter(|h| h.state == HoldState::Drafting && h.tasks.is_empty())
+        .filter(|h| matches!(&h.kind, HoldKind::Epic { epic } if ended(run, epic)))
+        .map(|h| h.id.clone())
+        .collect();
+    for id in dropped {
+        run.orch.gate_holds.retain(|h| h.id != id);
+        log(
+            run,
+            now,
+            format!("hold {id} dropped: its sub-planner ended with no task"),
+        );
+    }
 }
 
 /// `epic`'s undecided round, or a new `Drafting` one: `epic:<e>` first, then
@@ -282,12 +328,12 @@ fn create(run: &mut Run, id: &str, kind: HoldKind, now: u64) -> String {
 }
 
 /// Decision 28: a new epic of a running run, whose plan was submitted, gets hold
-/// `epic:<e>`, `Drafting` until its sub-planner's epic is accepted. Inside a promoted
-/// run's window its tasks join the promotion round instead (M9.7 second review,
-/// ruling 8), so it gets none.
+/// `epic:<e>`, `Drafting` until its sub-planner's epic is accepted. So does every new
+/// epic of a promoted run, the promotion window included: approving the promotion
+/// never releases an epic's work (M9.7 second review, ruling 9).
 pub(super) fn create_epic_hold(run: &mut Run, epic: &str, now: u64) -> Option<String> {
-    let submitted = run.orch.orchestrator.as_ref()?.plan_submitted;
-    if !past_gate(run) || !submitted || promotion_open(run) {
+    run.orch.orchestrator.as_ref()?;
+    if !past_gate(run) {
         return None;
     }
     Some(epic_round(run, epic, now))

@@ -483,20 +483,65 @@ fn add_to_epic(fx: &mut Fixture, id: &str, epic: &str) -> serde_json::Value {
 #[test]
 fn epic_spawned_before_submit_stays_held() {
     let mut fx = promoted();
-    spawn(&mut fx, "mail");
+    // Ruling 9.1: the epic has its own round, even inside the promotion window.
+    assert_eq!(spawn(&mut fx, "mail")["hold"], "epic:mail");
     let effects = edit_plan(&mut fx, json!({"edits": [], "submit": true}));
     assert_eq!(
         super::orch::error(&effects),
         "sub-planner mail is still planning; submit when every sub-planner has finished"
     );
-    assert!(fx.run().orch.gate_holds.is_empty(), "nothing submitted");
-    assert_eq!(add_to_epic(&mut fx, "t7", "mail")["held"], "promotion");
+    assert!(
+        fx.run().orch.gate_holds.iter().all(|h| h.id != "promotion"),
+        "nothing submitted"
+    );
+    assert_eq!(add_to_epic(&mut fx, "t7", "mail")["held"], "epic:mail");
     let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true})));
     assert!(ok, "{value}");
-    fx.tick();
-    assert!(!prepared(&fx, "t7"), "t7 waits for the user");
     hold_verdict(&mut fx, "promotion", true);
-    assert!(prepared(&fx, "t7"), "dispatched on approval");
+    fx.tick();
+    assert!(
+        !prepared(&fx, "t7"),
+        "approving the promotion releases no epic"
+    );
+    let now = fx.now;
+    crate::run::engine::gate_holds::submitted(fx.run_mut(), "epic:mail", now);
+    hold_verdict(&mut fx, "epic:mail", true);
+    assert!(prepared(&fx, "t7"), "dispatched on its epic's approval");
+}
+
+/// M9.7 second review, ruling 9.1 (the final review's scenario, M6): an epic spawned
+/// while the promotion awaits the user gets its own round, which the promotion's
+/// approval does not release.
+#[test]
+fn epic_spawned_while_promotion_awaits_stays_held() {
+    let mut fx = promoted();
+    edit_plan(&mut fx, json!({"edits": [add("t2", "mail")]}));
+    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    assert_eq!(spawn(&mut fx, "web")["hold"], "epic:web");
+    assert_eq!(add_to_epic(&mut fx, "t7", "web")["held"], "epic:web");
+    hold_verdict(&mut fx, "promotion", true);
+    fx.tick();
+    assert!(prepared(&fx, "t2"), "the promotion's own task runs");
+    assert!(
+        !prepared(&fx, "t7"),
+        "the epic's task waits for its own round"
+    );
+    let now = fx.now;
+    crate::run::engine::gate_holds::submitted(fx.run_mut(), "epic:web", now);
+    hold_verdict(&mut fx, "epic:web", true);
+    assert!(prepared(&fx, "t7"));
+}
+
+/// M9.7 second review, ruling 9.2 (minor 3): once the promotion is approved, a submit
+/// with a live sub-planner is accepted, as on a planned run.
+#[test]
+fn after_the_promotion_is_approved_a_submit_with_a_live_planner_is_accepted() {
+    let mut fx = promoted();
+    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    hold_verdict(&mut fx, "promotion", true);
+    spawn(&mut fx, "web");
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true})));
+    assert!(ok, "{value}");
 }
 
 /// M9.7 second review, ruling 8.2: a rejected epic, planned again, opens a new round

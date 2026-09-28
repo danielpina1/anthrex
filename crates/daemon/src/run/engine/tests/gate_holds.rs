@@ -374,3 +374,63 @@ fn verdicts_count_only_unfinished_tasks() {
         );
     }
 }
+
+/// M9.7 second review, ruling 9.3 (M1): an addition to an epic planned before the gate,
+/// which has no round, is not held and opens none.
+#[test]
+fn an_epic_planned_before_the_gate_is_not_held() {
+    let mut fx = launched(false);
+    spawn(&mut fx, "mail");
+    fx.run_mut().orch.epics[0].phase = PlannerPhase::Finished;
+    edit_plan(
+        &mut fx,
+        json!({"edits": [in_epic("t1", "mail", "mail")], "submit": true}),
+    );
+    fx.approve();
+    let (ok, value) = answer(&edit_plan(
+        &mut fx,
+        json!({"edits": [in_epic("t2", "mail2", "mail")]}),
+    ));
+    assert!(ok, "{value}");
+    assert_eq!(value["held"], Value::Null);
+    assert!(fx.run().orch.gate_holds.is_empty(), "no round opened");
+}
+
+/// M9.7 second review, ruling 9.3 (M2): an addition to an epic whose round the user
+/// approved is not held (decision 29).
+#[test]
+fn an_addition_to_an_approved_epic_is_not_held() {
+    let mut fx = held(false);
+    awaiting(&mut fx);
+    verdict(&mut fx, "epic:mail", true);
+    let (ok, value) = answer(&edit_plan(
+        &mut fx,
+        json!({"edits": [in_epic("t3", "sms", "mail")]}),
+    ));
+    assert!(ok, "{value}");
+    assert_eq!(value["held"], Value::Null);
+    assert_eq!(fx.task("t3").orch.gate_hold, None);
+    assert_eq!(fx.run().orch.gate_holds.len(), 1, "no new round");
+}
+
+/// M9.7 second review, ruling 9.4: an empty `Drafting` round whose sub-planner ended
+/// without submitting is dropped, so it cannot keep the run from completing (decision
+/// 38); the epic stays held, and a re-plan opens a round again.
+#[test]
+fn an_empty_drafting_round_of_an_ended_planner_is_dropped() {
+    let mut fx = launched(false);
+    edit_plan(
+        &mut fx,
+        json!({"edits": [add("t1", "auth")], "submit": true}),
+    );
+    fx.approve();
+    assert_eq!(spawn(&mut fx, "web")["hold"], "epic:web");
+    fx.tick();
+    assert_eq!(fx.run().orch.gate_holds.len(), 1, "kept while it plans");
+    fx.run_mut().orch.epics[0].phase = PlannerPhase::Failed {
+        reason: "exited".into(),
+    };
+    fx.tick();
+    assert!(fx.run().orch.gate_holds.is_empty(), "dropped");
+    assert_eq!(spawn(&mut fx, "web")["hold"], "epic:web", "held again");
+}
