@@ -92,11 +92,12 @@ impl Batch {
     }
 
     /// `split_task`, after [`Batch::owned`] for each new task. Decision 22: a
-    /// sub-planner splits only its own epic's tasks.
+    /// sub-planner splits only its own epic's tasks. An unknown task is reported as
+    /// such before any epic rule (M9.4 second review, ruling 4).
     pub(super) fn split_owned(&mut self, id: &str, into: &[PlanTask]) {
+        let Some(i) = self.find(id) else { return };
         if let EditSource::Planner { epic } = &self.source
-            && let Some(task) = self.run.tasks.iter().find(|t| t.id() == id)
-            && task.spec.epic.as_ref() != Some(epic)
+            && self.run.tasks[i].spec.epic.as_ref() != Some(epic)
         {
             let text = format!("a sub-planner splits only tasks of its own epic {epic}");
             self.errors

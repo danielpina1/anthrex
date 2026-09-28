@@ -124,7 +124,8 @@ fn changed<'a>(run: &'a Run, before: &'a Run) -> impl Iterator<Item = (&'a Task,
 /// not decision 37's integration reviews. A group is refused only when the batch raised
 /// its count above the cap: one already over it (a user's edits are unchecked) never
 /// refuses a batch that leaves it the same or smaller. Decision 23.5: the orchestrator's
-/// fix task for an epic whose integration review has finished does not meet its cap.
+/// fix tasks for an epic whose integration review has reported do not meet its cap, however
+/// many (deliberate: M9.4 second review, ruling 2).
 fn caps(run: &Run, before: &Run, source: &EditSource) -> Vec<PlanError> {
     let cap = run.limits.orch.planner_task_cap;
     let (after, prior) = (counts(run), counts(before));
@@ -135,7 +136,7 @@ fn caps(run: &Run, before: &Run, source: &EditSource) -> Vec<PlanError> {
         }
         if let Some(e) = group
             && *source == EditSource::Orchestrator
-            && integration_reviewed(run, e)
+            && integration_reviewed(before, e)
         {
             continue;
         }
@@ -165,11 +166,14 @@ fn counts(run: &Run) -> BTreeMap<Option<String>, u32> {
     counts
 }
 
-/// Whether an integration review of epic `e` has finished (decision 37).
-fn integration_reviewed(run: &Run, e: &str) -> bool {
-    run.tasks
+/// Whether an integration review of epic `e` has reported (decision 37), in `before`,
+/// the run before the batch: a cancelled review reviewed nothing, and a batch cannot
+/// cancel a review to exempt its own additions (M9.4 second review, ruling 1).
+fn integration_reviewed(before: &Run, e: &str) -> bool {
+    before
+        .tasks
         .iter()
-        .any(|t| t.orch.integration_of.as_deref() == Some(e) && t.state.is_finished())
+        .any(|t| t.orch.integration_of.as_deref() == Some(e) && t.state == TaskState::Reported)
 }
 
 /// Code and docs tasks change files; research and review tasks do not (decision 24).

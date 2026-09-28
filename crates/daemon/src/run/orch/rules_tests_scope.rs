@@ -1,7 +1,7 @@
 //! The M9.4 review fixes: decision 23's rules apply to what a batch changes. Evidence
 //! and budget (23.1, 23.2) apply to added and split-in tasks and to an `amend_task`
 //! that changes `size`; the cap (23.3) refuses only a batch that raised a group's count
-//! above it; decision 23.5's fix task after a finished integration review is exempt
+//! above it; decision 23.5's fix tasks after a reported integration review are exempt
 //! from its epic's cap. Every test goes through `apply_edits`.
 
 use proto::{PlanEdit, PlanTask, Size, TaskState};
@@ -194,4 +194,91 @@ fn a_fix_task_after_a_finished_integration_review_is_exempt_from_the_cap() {
         orchestrator(&run, &[fix]).unwrap_err(),
         ["tasks: epic auth has 3 tasks, more than planner_task_cap (2); split the epic (rule 5.1)"]
     );
+}
+
+/// Epic auth at cap 2: a1, a2 and its integration review `auth-int1`, in `state`.
+fn reviewed_epic(state: TaskState) -> Run {
+    let review = task_toml(
+        "auth-int1",
+        "M",
+        "[]",
+        "epic = \"auth\"\nkind = \"review\"\nreview_target = \"main..HEAD\"",
+    );
+    let mut run = run_ok(&plan_with(
+        PROFILE,
+        &[
+            one("a1", "epic = \"auth\""),
+            one("a2", "epic = \"auth\""),
+            review,
+        ],
+    ));
+    run.limits.orch.planner_task_cap = 2;
+    run.orch
+        .epics
+        .push(EpicRecord::new("auth", PlannerPhase::Finished));
+    run.tasks[2].orch.integration_of = Some("auth".into());
+    run.tasks[2].state = state;
+    run
+}
+
+const AUTH_CAP: &str =
+    "tasks: epic auth has 4 tasks, more than planner_task_cap (2); split the epic (rule 5.1)";
+
+/// Second review, ruling 1: only a `reported` review lifts the cap. A batch that
+/// cancels a pending review cannot use the cancel to exempt its own additions.
+#[test]
+fn cancelling_the_review_in_the_batch_does_not_lift_the_cap() {
+    let run = reviewed_epic(TaskState::Pending);
+    let edits = [
+        PlanEdit::CancelTask {
+            task_id: "auth-int1".into(),
+        },
+        add(&one("a3", "epic = \"auth\"")),
+        add(&one("a4", "epic = \"auth\"")),
+    ];
+    assert_eq!(orchestrator(&run, &edits).unwrap_err(), [AUTH_CAP]);
+}
+
+/// Second review, ruling 1: a review cancelled before the batch did not review.
+#[test]
+fn a_cancelled_review_does_not_lift_the_cap() {
+    let run = reviewed_epic(TaskState::Cancelled);
+    let edits = [
+        add(&one("a3", "epic = \"auth\"")),
+        add(&one("a4", "epic = \"auth\"")),
+    ];
+    assert_eq!(orchestrator(&run, &edits).unwrap_err(), [AUTH_CAP]);
+    // The control: a reported review does, for as many fix tasks as the batch adds
+    // (ruling 2: the exemption is unlimited).
+    orchestrator(&reviewed_epic(TaskState::Reported), &edits).unwrap();
+}
+
+/// An onboarded run whose tasks each name the onboarding report.
+fn onboarded_with(tasks: &[&str], extra: &str) -> Run {
+    let extra = format!("scout_refs = [\"onboarding\"]\n{extra}");
+    let tables: Vec<String> = tasks.iter().map(|id| one(id, &extra)).collect();
+    let mut run = run_ok(&plan_with(PROFILE, &tables));
+    run.onboarding_report = Some("0123abcd".into());
+    run
+}
+
+/// Second review, ruling 3: the epic rule (23.5) is for new tasks only. The
+/// orchestrator may resize a user's task in an epic a sub-planner is still planning.
+#[test]
+fn resizing_a_task_of_a_live_planners_epic_is_accepted() {
+    let mut run = onboarded_with(&["a1"], "epic = \"auth\"");
+    run.orch
+        .epics
+        .push(EpicRecord::new("auth", PlannerPhase::Planning));
+    let run = orchestrator(&run, &[amend("a1", None, None, Some(Size::M))]).unwrap();
+    assert_eq!(run.tasks[0].spec.size, Size::M);
+}
+
+/// Second review, ruling 3: the reserved id (23.6) is for new tasks only. The
+/// orchestrator may resize a user's own task named like an integration review.
+#[test]
+fn resizing_a_users_task_with_a_reserved_id_is_accepted() {
+    let run = onboarded_with(&["x-int1"], "");
+    let run = orchestrator(&run, &[amend("x-int1", None, None, Some(Size::M))]).unwrap();
+    assert_eq!(run.tasks[0].spec.size, Size::M);
 }

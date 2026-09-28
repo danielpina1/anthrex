@@ -2211,3 +2211,20 @@ These controller rulings answer the M9.4 review of `10114ab`. They replace the M
 7. **M9.9 obligation.** When M9.9 creates `<e>-int<n>`, it picks the first free round number, because a user's `run edit` may already hold that id. It is in M9.9's task text as `integration_review_takes_the_first_free_round_id`.
 
 **File sizes.** `edits.rs` is 591 lines, under its budget of 592; the owned-edit logic moved to `edits_orch.rs`. The test file `orch/rules_tests_scope.rs` is new.
+
+#### Second review
+
+These controller rulings answer the second M9.4 review, of `2e2c8ca`. They replace review fix 3 above where the two differ.
+
+1. **Only a reported integration review lifts an epic's cap** (Important). `rules::integration_reviewed` now requires `TaskState::Reported`, not `is_finished()`, which includes `Cancelled`. It reads `before`, the run before the batch, so a batch cannot cancel a pending review to exempt its own additions.
+   - Tests in `run/orch/rules_tests_scope.rs`:
+     - `cancelling_the_review_in_the_batch_does_not_lift_the_cap`: `[cancel auth-int1 (pending), add a3, add a4]` over the cap is refused;
+     - `a_cancelled_review_does_not_lift_the_cap`: an already-cancelled review does not exempt; its control, a `reported` review in `before`, does.
+   - Both failed before the fix: each batch was accepted, since a cancelled review counted as finished.
+2. **The exemption stays unlimited**, as review fix 3 worded it. This is deliberate: once an epic's integration review has reported, the orchestrator may add any number of fix tasks to it past the cap. `a_cancelled_review_does_not_lift_the_cap`'s control adds two. M9.5's tuning may revisit this.
+3. **The epic (23.5) and reserved-id (23.6) rules apply to new tasks only**, now pinned:
+   - `resizing_a_task_of_a_live_planners_epic_is_accepted`: the orchestrator resizes a user's task in an epic a sub-planner is still planning, with evidence (`scout_refs = ["onboarding"]`);
+   - `resizing_a_users_task_with_a_reserved_id_is_accepted`: the orchestrator resizes a user's own task named `x-int1`, with evidence.
+   - These are pinning tests and passed before the change. Each goes red under the mutation that applies its rule to every changed task: dropping `new &&` from the reserved-id condition fails only the second, and replacing `new` with `true` in the epic rule fails only the first. `rules.rs` was restored from a copy after each.
+4. **An unknown task is reported before any epic rule.** A sub-planner's `split_task` of an unknown id reports `task <id>: task_id: no such task`, not an epic error for its would-be children. `Batch::split_owned` checks existence first, through `Batch::find`, now `pub(super)` so `edits_orch.rs` can call it.
+   - Test: `edits_tests_orch.rs::a_planners_split_of_an_unknown_task_reports_the_unknown_task`, which splits `ghost` into a child naming another epic. It failed before the fix, reporting only the child's epic error.

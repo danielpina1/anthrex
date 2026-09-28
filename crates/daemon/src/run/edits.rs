@@ -206,7 +206,7 @@ impl Batch {
     }
 
     /// The first task with `id`, or an error naming it.
-    fn find(&mut self, id: &str) -> Option<usize> {
+    pub(super) fn find(&mut self, id: &str) -> Option<usize> {
         let found = self.run.tasks.iter().position(|t| t.id() == id);
         if found.is_none() {
             self.errors

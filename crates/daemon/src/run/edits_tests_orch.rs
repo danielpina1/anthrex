@@ -237,3 +237,28 @@ fn a_planners_split_outside_its_epic_is_refused() {
     let a9 = edited.tasks.iter().find(|t| t.id() == "a9").unwrap();
     assert_eq!(a9.spec.epic.as_deref(), Some("auth"));
 }
+
+/// Second review, ruling 4: a sub-planner's split of a task that does not exist says
+/// so, before any epic rule: the unknown task, not its would-be children's epic.
+#[test]
+fn a_planners_split_of_an_unknown_task_reports_the_unknown_task() {
+    let mut run = run_ok(&plan_with(PROFILE, &[one("a1", "epic = \"auth\"")]));
+    for e in ["auth", "billing"] {
+        run.orch
+            .epics
+            .push(EpicRecord::new(e, PlannerPhase::Planning));
+    }
+    let source = EditSource::Planner {
+        epic: "auth".into(),
+    };
+    let edits = [PlanEdit::SplitTask {
+        task_id: "ghost".into(),
+        into: vec![spec(&one("a8", "epic = \"billing\"")), spec(&one("a9", ""))],
+    }];
+    let errors: Vec<String> = apply_edits(&run, &edits, &EditScope::Run, &source, 9)
+        .unwrap_err()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(errors, ["task ghost: task_id: no such task"]);
+}
