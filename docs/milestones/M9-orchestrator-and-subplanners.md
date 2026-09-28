@@ -2014,3 +2014,64 @@ Line numbers cited on `cc9dcb7` and `c103308` above may have shifted in files th
 - **Tests.** `orch_types_round_trip`, `new_requests_round_trip` (with `ClientMsg::RunTagged` and M8b-shaped `StartGoal`/`Promote` without `orchestrator`), `request_id_round_trips`, `appended_variants_keep_their_indices`, `reported_is_finished_and_planning_is_not_terminal`, `message_and_refresh_edits_round_trip` (JSON, MessagePack and a TOML edit file) in `proto/src/orch_tests.rs`; `role_routing_history_round_trip` in `proto/src/orch_tests_history.rs`; `old_run_info_still_decodes` and `orchestrator_snapshot_fields_round_trip` in `proto/src/run_tests_view.rs`; `proto_version_is_ten` in `lib.rs`; the daemon half of the history test is `old_run_defaults_role_routing_decisions_to_empty` (`run/engine/tests/view_fields.rs`, against `m8b_run.json`); and `a_tagged_run_request_is_answered_with_its_id` in `daemon/tests/server_runs.rs` pins the server's echo over a real socket (not named by the brief). `appended_variants_keep_their_indices` decodes a MessagePack integer as each unit enum's variant index; `PlanEdit` is internally tagged by name, so its order is pinned by the `op` list serde reports.
 - **Fixture.** `crates/proto/src/m8c_run_info.json` is `a_view_snapshot().runs[0]` serialized with milestone 8c's `RunInfo` before any change of this task.
 - **Left open for M9.13b.** `RoleRoutingDecision.role` is an `AgentRole`, which has no decider variant; the history test uses a placeholder role for the pre-run triage record. M9.13b decides how a decider's record names its role (a new `AgentRole` variant would need its own protocol change).
+
+### M9.1 External facts and names (2026-09-28)
+
+- **Checks 1–7 and 10 (real `claude`/`codex`): outstanding.** The run's auto-mode safety classifier refused to launch an agent running the real CLIs, and this was not worked around. The user has been asked. Until then, every decision these checks guard is built as written, with its fallback unexercised: 7, 8, 10, 12, 14, 14a and 42f. The PR lists them as outstanding.
+- **Check 11 (`packed-refs.lock`), done 2026-09-28 by the controller with git 2.50.1 (Apple Git-155), no agent CLI involved.**
+  - **Setup.** A checkout shaped like `run/git/checkout.rs::config`: its own git dir, `core.bare = false`, `core.worktree`, `core.logAllRefUpdates = false` and `gc.auto = 0`. A `sandbox-exec` profile denies only `file-write*` of `<gitdir>/packed-refs.lock`.
+  - **What happens.** `git commit` prints `error: Unable to create '<gitdir>/packed-refs.lock': Operation not permitted` and exits 0. The commit is made.
+  - **Which git command takes the lock.** `GIT_TRACE_REFS=1` shows the lock is taken by the commit process itself, not by a child:
+    - the HEAD update transaction finishes (`finish: 0`);
+    - git reads `CHERRY_PICK_HEAD` and `REVERT_HEAD`;
+    - a second ref transaction, the post-commit removal of merge-state refs, fails in `transaction_prepare` with that error;
+    - then git reads `MERGE_AUTOSTASH`.
+  - **Why no config key stops it.** The files backend takes `packed-refs.lock` for any ref deletion, whether or not the ref or a `packed-refs` file exists. The same error appears:
+    - with the branch loose;
+    - with no `packed-refs` file at all;
+    - on a detached HEAD;
+    - with `-c maintenance.auto=false`, which stops the `git maintenance run --auto --quiet --detach` child that `git commit` also starts (seen in `GIT_TRACE2_EVENT`);
+    - with `-c maintenance.pack-refs.enabled=false`;
+    - with `gc.auto=0`.
+  - **Result under controller ruling 1.** No engine-set key stops it without widening the sandbox, so the warning stays. It is harmless: the commit succeeds with exit 0. **M9.13c closes as "no change"**, and the sandbox is not widened. What M9.13c still owes is a line in the worker contract. That line says the `packed-refs.lock` warning after a commit is expected and needs no action, so a model does not try to "fix" it. That is the followups file's concern at F1 re-review 2, S5.
+
+Checked on `origin/main` at `8d440d7`, read with `git show` / `git grep` (no worktree files).
+
+- **Check 8 (names).** Differences from "Names taken from earlier briefs":
+  - `Run.notes` does not exist. The only `notes` field in the model is `Task.notes: Vec<String>` (`crates/daemon/src/run/model.rs:172`); `Run` (`model.rs:365–510`) has no notes field. Every other listed `Run` and `Task` field is present (for example `Run.revision` at `model.rs:395`, `Run.plan_edits_since_approval` at `:510`, `Task.conflicts` at `:190`). A task that needs run-level notes must add the field; it is not inherited.
+  - `RunInfo.approved_hhmm` does not exist. The field is `RunInfo.approved_at: Option<u64>` (Unix seconds) (`crates/proto/src/run_info.rs:297`). The hh:mm formatting is `model_adapt.rs::hh_mm` (`crates/daemon/src/run/model_adapt.rs:33`). `RunInfo.plan_edits` is `Vec<PlanEditInfo>`, at most 10 (`run_info.rs:300`), not `PlanEditRecord`.
+  - `edit_log::describe_one` is private: `fn describe_one(edit: &PlanEdit) -> String` (`crates/daemon/src/run/edit_log.rs:51`). `describe` (`:29`), `record` (`:67`), `PlanEditRecord` (`:14`), `PLAN_EDITS_KEPT` (`:20`) and `DESCRIBE_MAX_CHARS` (`:23`) are `pub`.
+  - "The snapshot `watch`" is not a `tokio::sync::watch`. Snapshots go out on a `broadcast::Sender<Arc<RunsSnapshot>>` field `pushes` (`crates/daemon/src/run/driver.rs:141`), read through `RunService::pushes()` (`driver.rs:351`) and sent by `fn publish` (`driver.rs:563`). `RunService` (`driver.rs:132`), `RunContext` (`driver.rs:66`) and `RunService::request` (`crates/daemon/src/run/driver/requests.rs:92`) are as named.
+  - `with_deciders(mode, dir)` is a free function, not a `RunHarness` method: `pub fn with_deciders(mode: &str, dir: &Path) -> (String, Vec<(String, String)>)` (`crates/cli/tests/support/run_adapt.rs:76`). `decider_calls` (`:151`), `stored_profile` (`:163`) and `onboarding_report` (`:328`) are methods in `impl RunHarness` (`:102`).
+  - `proto::Runtime` is defined in `crates/proto/src/types.rs:10`, not `proto/src/run.rs`. The other types in that row are in `run.rs` (for example `AgentRole` at `:21`, `RunRef { run_id, task_id, role, session }` at `:32`).
+  - `decider::prompt::TRIAGE_HEAD` is a private `const` at `crates/daemon/src/decider/prompt.rs:24` (the brief says `:27`). `run::triage::{route (:116), PLAN_SCALE_MAX (:23), TriageRoute (:64)}` match. `PLAN_SCALE_MAX` is still unused: its only occurrence in `crates/` is its definition.
+  - Minor, same names: `EventKind` is at `run/engine/mod.rs:98` and `step` at `:313` (the brief cites `:93`). `EditScope` is defined in `run/validate_graph.rs:18` and re-exported from `validate.rs:21`. `headless::session::{SCRUB_PREFIXES, SCRUB_NAMES}` are `pub use` aliases of `config::reserved_env::{SCRUBBED_PREFIXES, SCRUBBED_NAMES}` (`headless/session.rs:50–52`). `run/engine/mod.rs:55` already declares `mod holds;` (M8a's early holds, `HeldEvent`/`HeldWindow`), so the new `gate_holds.rs` must keep a distinct name.
+  - All other 24 rows confirmed.
+
+- **Check 9 (counts).** `git show origin/main:<path> | wc -l`, brief "Today" → actual:
+  - `crates/daemon/src/launch/mod.rs` 432 → 432; `launch/codex.rs` 353 → 353; `launch/claude.rs` 71 → 71; `hooks.rs` 399 → 399
+  - `manager/create.rs` 563 → 563; `manager/restart.rs` 556 → 556; `manager/entry.rs` 387 → 387; `manager/restore.rs` 554 → 554; `manager/headless.rs` 526 → 526
+  - `window.rs` 371 → 371; `server.rs` 570 → 570; `server/headless_guard.rs` 35 → 35
+  - `headless/argv.rs` 450 → 450; `headless/mod.rs` 291 → 291; `headless/conversation.rs` 452 → 452
+  - `scout/service.rs` 521 → 521; `scout/machine.rs` 239 → 239; `scout/spec.rs` 174 → 174
+  - `run/engine/mod.rs` **569 → 584 (+15)**; `engine/requests.rs` 536 → 536; `engine/dispatch.rs` 589 → 589; `engine/done.rs` **507 → 526 (+19)**; `engine/merge.rs` 518 → 518; `engine/outbox.rs` 360 → 360; `engine/restore.rs` 422 → 422; `engine/complete.rs` 429 → 429
+  - `run/model.rs` 572 → 572; `validate.rs` 514 → 514; `edits.rs` 577 → 577; `contract.rs` 584 → 584; `snapshot.rs` 315 → 315; `report.rs` 255 → 255; `report_task.rs` 237 → 237; `edit_log.rs` 83 → 83; `reach.rs` 97 → 97
+  - `run/role_launch.rs` 579 → 579; `run/reconcile/mod.rs` 305 → 305
+  - `run/driver.rs` 591 → 591; `driver/ops.rs` 584 → 584; `driver/requests.rs` 588 → 588; `driver/adapt.rs` 391 → 391; `driver/adapt_goal.rs` 283 → 283
+  - `run/history_io.rs` 395 → 395; `run/stats.rs` 234 → 234; `run/triage.rs` 367 → 367; `run/engine/history.rs` 135 → 135
+  - `metering/server.rs` 311 → 311; `decider/prompt.rs` 430 → 430
+  - `crates/mcp/src/tools.rs` 258 → 258; `mcp/src/lib.rs` 109 → 109
+  - `crates/proto/src/run.rs` 453 → 453; `run_info.rs` 320 → 320; `run_wire.rs` 211 → 211; `messages.rs` **— → 549**; `history.rs` 210 → 210; `planner.rs` 33 → 33; `lib.rs` 117 → 117
+  - `crates/config/src/orchestrator.rs` 585 → 585
+  - `crates/cli/src/run_cmd.rs` 501 → 501; `run_cmd/status.rs` 267 → 267; `mcp_cmd.rs` 65 → 65
+  - `crates/tui/src/app/runs.rs` 524 → 524; `keymap.rs` 275 → 275; `app/mod.rs` 499 → 499; `theme.rs` 132 → 132; `tree/runs.rs` 198 → 198; `tree/run_rows.rs` 516 → 516; `inspector/run.rs` 349 → 349; `inspector/run_task.rs` 301 → 301; `inspector/run_round.rs` 228 → 228; `graph/run_text.rs` 98 → 98; `graph/paint/style.rs` 260 → 260; `ui/modal.rs` 247 → 247; `app/headless.rs` 38 → 38
+  - `crates/tui/src/ui/conversation.rs` 389 → 389; (not touched) `crates/tui/src/conversation.rs` 595 → 595
+  - `crates/fake-agent/src/script.rs` 432 → 432; `main.rs` 382 → 382; `mcp.rs` 198 → 198; `roles.rs` 343 → 343; (not touched) `headless.rs` 576 → 576, `stream_claude.rs` 581 → 581
+  - `crates/cli/tests/support/run_harness.rs` **542 → 554 (+12)**
+  - `scripts/pty-smoke.py` 1799 → 1799
+  - Budget consequence: `run/engine/mod.rs` at 584 plus its +25 is 609, past the 600-line limit. Either the budget drops to +16 or engine code moves out first. `done.rs` (526 + 20 = 546), `messages.rs` (549 + 5 = 554) and `run_harness.rs` (554 + 10 = 564) stay under 600.
+  - `PROTO_VERSION` = **9** (`crates/proto/src/lib.rs:40`, `pub const PROTO_VERSION: u32 = 9;`; the test at `:110` asserts 9). As expected, M9 makes it 10.
+
+- **Controller rulings on checks 8 and 9:**
+  - Tasks use the names as shipped: `Task.notes` only, with run-level notes added in `model.rs` where a task needs them; `RunInfo.approved_at` (unix seconds), formatted client-side; `describe_one` becomes `pub(crate)` where needed; the `broadcast` `pushes` channel, whose long-poll resubscribes on `Lagged`; and the free function `with_deciders`.
+  - `run/engine/mod.rs` is 584 lines. Any task that grows it must first move code out, for example the step's dispatch helpers into a new file, so it stays under 600. Its row's budget becomes +15.
