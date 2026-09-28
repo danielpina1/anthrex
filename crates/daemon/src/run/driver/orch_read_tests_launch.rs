@@ -42,6 +42,19 @@ fn planner_launching(run: &mut Run) {
     pending(run, PLANNER_OP, kind);
 }
 
+/// The run's orchestrator with its `CreateOrchestrator` in flight and no window.
+fn orchestrator_launching(run: &mut Run) {
+    let record = run.orch.orchestrator.as_mut().unwrap();
+    (record.window_id, record.launch_op) = (None, Some(ORCH_OP));
+    let route = record.route.clone();
+    let kind = OpKind::CreateOrchestrator {
+        spec: Box::new(orchestrator_window_spec(run, &route, "plan")),
+        role: Box::new(orchestrator_role(run, &route)),
+        project: run.project.clone(),
+    };
+    pending(run, ORCH_OP, kind);
+}
+
 fn pending(run: &mut Run, op: u64, kind: OpKind) {
     let entry = PendingOp {
         op,
@@ -116,20 +129,7 @@ async fn a_planners_first_read_waits_for_its_launch() {
 /// `CreateOrchestrator` result, wait for it and are answered once it is bound.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_orchestrators_first_calls_wait_for_its_launch() {
-    let rig = Arc::new(
-        Rig::new(|run, _| {
-            let record = run.orch.orchestrator.as_mut().unwrap();
-            (record.window_id, record.launch_op) = (None, Some(ORCH_OP));
-            let route = record.route.clone();
-            let kind = OpKind::CreateOrchestrator {
-                spec: Box::new(orchestrator_window_spec(run, &route, "plan")),
-                role: Box::new(orchestrator_role(run, &route)),
-                project: run.project.clone(),
-            };
-            pending(run, ORCH_OP, kind);
-        })
-        .await,
-    );
+    let rig = Arc::new(Rig::new(|run, _| orchestrator_launching(run)).await);
     let opts = rig.opts(AgentRole::Orchestrator, ORCH, None);
     let read = spawn_call(&rig, opts.clone(), "run_status", json!({}));
     let write = spawn_call(&rig, opts, "edit_plan", json!({"edits": []}));
@@ -221,4 +221,83 @@ async fn a_held_submit_carries_its_runtime_refusals() {
     assert!(!ok, "the batch reaches Claude: {answer}");
     assert!(answer.to_string().contains(".mcp.json"), "{answer}");
     assert!(rig.run(|run| run.task("m1").is_none()));
+}
+
+/// The launch wait's limit in the re-review tests: `HOLD_LIMIT_SECS` shortened.
+const SHORT_LIMIT: Duration = Duration::from_millis(300);
+
+/// `tool` from `window` in `role`, as `anthrex mcp` sends it.
+fn tool_call(rig: &Rig, role: AgentRole, window: u32, tool: &str, args: Value) -> proto::ToolCall {
+    proto::ToolCall {
+        run_id: rig.run_id.clone(),
+        task_id: None,
+        role,
+        window_id: window,
+        tool: tool.into(),
+        args,
+        scout_id: None,
+        epic: (role == AgentRole::Planner).then(|| "mail".to_string()),
+    }
+}
+
+/// The text of a `ToolResult`.
+fn reply_text(reply: proto::RunReply) -> (bool, Value) {
+    let proto::RunReply::ToolResult { ok, text, .. } = reply else {
+        panic!("not a tool result: {reply:?}");
+    };
+    (
+        ok,
+        serde_json::from_str(&text).unwrap_or(Value::String(text)),
+    )
+}
+
+/// Re-review finding 2: a launch that never resolves ends the wait at its limit (the
+/// production limit is `HOLD_LIMIT_SECS`), and the caller is then checked as usual.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launch_wait_ends_at_its_limit() {
+    let rig = Rig::new(|run, _| {
+        orchestrator_launching(run);
+        planner_launching(run);
+    })
+    .await;
+    for (role, window, text) in [
+        (
+            AgentRole::Orchestrator,
+            ORCH,
+            format!("this window is not the orchestrator of run {}", rig.run_id),
+        ),
+        (
+            AgentRole::Planner,
+            PLANNER,
+            format!(
+                "this window is not the sub-planner of epic mail of run {}",
+                rig.run_id
+            ),
+        ),
+    ] {
+        let call = tool_call(&rig, role, window, "get_context", json!({}));
+        let reply = tokio::time::timeout(ANSWER, rig.runs.orch_tool_within(call, SHORT_LIMIT))
+            .await
+            .expect("the wait ends at its limit");
+        assert_eq!(reply_text(reply), (false, json!({ "error": text })));
+    }
+}
+
+/// Re-review finding 5: an orchestrator write whose wait ends with its launch still in
+/// flight is refused in the driver, never sent to the engine without its runtime
+/// refusals (a `Window` result reduced just before it would let it through).
+#[tokio::test(flavor = "multi_thread")]
+async fn an_orchestrator_write_whose_launch_never_finishes_is_refused() {
+    let rig = Rig::new(|run, _| orchestrator_launching(run)).await;
+    let edits = json!({"edits": [{"op": "cancel_task", "task_id": "t1"}]});
+    let call = tool_call(&rig, AgentRole::Orchestrator, ORCH, "edit_plan", edits);
+    let reply = tokio::time::timeout(ANSWER, rig.runs.orch_tool_within(call, SHORT_LIMIT))
+        .await
+        .expect("the wait ends at its limit");
+    let text = super::ORCHESTRATOR_LAUNCH_PENDING;
+    assert_eq!(reply_text(reply), (false, json!({ "error": text })));
+    assert!(
+        rig.run(|run| run.plan_edits.is_empty()),
+        "the engine saw no batch"
+    );
 }

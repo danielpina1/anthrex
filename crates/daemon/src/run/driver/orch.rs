@@ -33,6 +33,14 @@ pub const CONTEXT_READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// How often a call waiting for its launch looks again (review finding 1).
 const LAUNCH_POLL: Duration = Duration::from_millis(50);
 
+/// The most an early call waits for its launch: the engine's own hold limit.
+const LAUNCH_WAIT: Duration = Duration::from_secs(HOLD_LIMIT_SECS);
+
+/// The refusal of an orchestrator write whose launch was still in flight when its wait
+/// ended (M9.11 re-review finding 5).
+pub(super) const ORCHESTRATOR_LAUNCH_PENDING: &str =
+    "the orchestrator's launch has not finished; call again once it has";
+
 /// Decision 15: whether `call` is one of milestone 9's, which `orch_tool` routes: every
 /// orchestrator and sub-planner call, and a worker's `task_note`.
 pub(super) fn is_orch_call(call: &ToolCall) -> bool {
@@ -133,17 +141,26 @@ impl RunService {
     /// or `submit_epic` batch needs (ruling T22-I1b), goes to the engine as
     /// `OrchEvent::Tool`.
     pub(super) async fn orch_tool(&self, call: ToolCall) -> RunReply {
+        self.orch_tool_within(call, LAUNCH_WAIT).await
+    }
+
+    /// [`Self::orch_tool`], with an early call's launch wait bounded by `limit` (a test
+    /// shortens it; production passes [`LAUNCH_WAIT`]).
+    pub(super) async fn orch_tool_within(&self, call: ToolCall, limit: Duration) -> RunReply {
         let read = matches!(
             call.tool.as_str(),
             "get_context" | "run_status" | "task_result"
         );
         if read && call.role != AgentRole::Worker {
-            return self.read(call).await;
+            return self.read(call, limit).await;
         }
         // The engine holds a sub-planner's early `submit_epic` itself; it has no hold
         // for the orchestrator, whose early calls wait here instead (review finding 1).
-        if call.role == AgentRole::Orchestrator {
-            self.await_launch(&call).await;
+        // Still launching when the wait ends: refused here, since its runtime refusals
+        // were not computed and a `Window` result could bind it before the engine
+        // reads it (M9.11 re-review finding 5).
+        if call.role == AgentRole::Orchestrator && !self.await_launch(&call, limit).await {
+            return refused(ORCHESTRATOR_LAUNCH_PENDING);
         }
         let refusals = match self.tool_refusals(&call).await {
             Ok(refusals) => refusals,
@@ -183,12 +200,18 @@ impl RunService {
     /// or the orchestrator's `CreateOrchestrator`), waits for that launch to resolve,
     /// at most the engine's own `HOLD_LIMIT_SECS`, polling the engine state with the
     /// lock taken only for each look. The caller is then checked as usual.
-    async fn await_launch(&self, call: &ToolCall) {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(HOLD_LIMIT_SECS);
+    ///
+    /// `true` once the call no longer waits; `false` when `limit` passed with the
+    /// launch still in flight.
+    async fn await_launch(&self, call: &ToolCall, limit: Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + limit;
         loop {
             let waiting = awaits_launch(&crate::lock(&self.state), call);
-            if !waiting || tokio::time::Instant::now() >= deadline {
-                return;
+            if !waiting {
+                return true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return false;
             }
             tokio::time::sleep(LAUNCH_POLL).await;
         }
@@ -206,8 +229,8 @@ impl RunService {
     }
 
     /// Decisions 16 to 18. Reads answer in every run state, terminal ones included.
-    async fn read(&self, call: ToolCall) -> RunReply {
-        self.await_launch(&call).await;
+    async fn read(&self, call: ToolCall, limit: Duration) -> RunReply {
+        self.await_launch(&call, limit).await;
         if let Err(text) = self.looked_up(&call, |_| ()) {
             return refused(text);
         }

@@ -5,8 +5,8 @@
 //! they do not list is refused, except `plan_task`'s `budget`, which rule 7.1 refuses
 //! with its own text (decision 23.1), and an edit whose `op` is not the schema's,
 //! which serde refuses (decision 19).
-//! Enums, integers, patterns and which keys each `op` needs are left to serde and the
-//! plan rules, as before. Pure.
+//! Enums, integers, patterns, a task's `id`, `null` (an absent optional field) and
+//! which keys each `op` needs are left to serde and the plan rules, as before. Pure.
 
 use serde_json::{Map, Value};
 
@@ -46,7 +46,8 @@ const EDIT: &[(&str, Rule)] = &[
 ];
 
 const TASK: &[(&str, Rule)] = &[
-    ("id", Rule::Text(1, 16)),
+    // Decision 19's structured `id` error is the plan rules' (M9.11 re-review 3).
+    ("id", Rule::Serde),
     ("title", Rule::Text(1, 120)),
     ("epic", Rule::Text(1, 11)),
     ("kind", Rule::Serde),
@@ -114,6 +115,11 @@ fn fields(map: &Map<String, Value>, rules: &[(&str, Rule)], path: &str) -> Resul
         let Some((_, rule)) = rules.iter().find(|(name, _)| name == key) else {
             return Err(format!("{at}: unknown field"));
         };
+        // `null` is absent, as serde's `Option` reads it; for a field that is not
+        // optional, serde refuses it with its own text (M9.11 re-review 1).
+        if value.is_null() {
+            continue;
+        }
         match rule {
             Rule::Serde => {}
             Rule::Text(min, max) => text(value, &at, *min, *max)?,

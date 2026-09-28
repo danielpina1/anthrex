@@ -80,7 +80,6 @@ fn nested_strings_past_their_bound_are_refused() {
             with("epic", long(12)),
             "task: epic: must be 1 to 11 characters",
         ),
-        (with("id", long(17)), "task: id: must be 1 to 16 characters"),
         (
             with("test_to_write", long(301)),
             "task: test_to_write: must be 1 to 300 characters",
@@ -227,4 +226,37 @@ fn unknown_nested_fields_are_refused() {
         parse_call(AgentRole::Planner, "submit_epic", &args),
         Err("invalid arguments: edits[0]: task: brief: must be 1 to 8000 characters".into())
     );
+}
+
+/// Re-review finding 1: `null` in an optional field is absent, as serde's `Option`
+/// reads it; the bounds pass it on to serde at every level.
+#[test]
+fn null_in_an_optional_field_is_absent() {
+    let mut t = task(false);
+    t["epic"] = Value::Null;
+    t["test_to_write"] = Value::Null;
+    t["route"] = json!({"runtime": "claude", "model": null});
+    assert!(edit_plan(json!({"op": "add_task", "task": t})).is_ok());
+    // A field serde does not read as an `Option` refuses `null` with serde's text.
+    let mut t = task(false);
+    t["route"] = Value::Null;
+    let error = refusal(json!({"op": "add_task", "task": t}));
+    assert!(error.contains("invalid type: null"), "{error}");
+    let amend = json!({"op": "amend_task", "task_id": "t1", "brief": null, "acceptance": null});
+    assert!(edit_plan(amend.clone()).is_ok(), "{:?}", edit_plan(amend));
+    // Present and not null, a field is still bounded.
+    let amend = json!({"op": "amend_task", "task_id": "t1", "brief": 7});
+    assert_eq!(
+        refusal(amend),
+        "invalid arguments: edits[0]: brief: must be a string"
+    );
+}
+
+/// Re-review finding 3: a task's id is the plan rules' (decision 19's structured
+/// `id` error, `engine/tests/orch_edit.rs`), not a length bound here.
+#[test]
+fn a_task_id_is_left_to_the_plan_rules() {
+    let mut t = task(false);
+    t["id"] = json!("x".repeat(17));
+    assert!(edit_plan(json!({"op": "add_task", "task": t})).is_ok());
 }

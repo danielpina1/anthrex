@@ -2979,7 +2979,7 @@ One commit, `fix(daemon): an orchestrator window never restarts without its role
 - **Routing (decision 15).** `driver/adapt.rs::tool` sends every orchestrator and planner call, and a worker's `task_note`, to `driver/orch.rs::orch_tool`, ahead of M8b's scout branch.
   - `get_context`, `run_status` and `task_result` go to the read path.
   - Everything else goes to the engine as `OrchEvent::Tool`. `task_note` is answered `tool task_note is not available yet` until M9.13a. `WORKER_MCP_TOOLS` stays at two until M9.13a too.
-  - An `edit_plan` or `submit_epic` batch carries the runtime refusals of ruling T22-I1b. `run edit`'s computation became `RunService::runtime_refusals`, shared by both. It runs only for a caller that passes decision 15's check, so a wrong window cannot make the daemon run the project-settings git reads.
+  - An `edit_plan` or `submit_epic` batch carries the runtime refusals of ruling T22-I1b. `run edit`'s computation became `RunService::runtime_refusals`, shared by both. It runs for a caller that passes decision 15's check, and, since the review fixes (finding 2), for a planner call the engine would hold (`early::holds_planner_call`). So an unbound window that names a launching planner's epic can make the daemon run the project-settings git reads; see the re-review fixes, item 4, for why that is accepted.
   - `driver/requests.rs` is 597 lines (588 before).
 - **The caller check** for reads is the engine's. An orchestrator call must come from `orchestrator.window_id`. A planner call must come from its epic's latest live session, in `Planning`: `EpicRecord::is_live_caller`, now shared with `engine/planners.rs::tool`. So a sub-planner whose `submit_epic` was accepted can no longer read its context. The order is the run (`unknown run`), the caller, then `parse_call` (the role's list and the arguments). Reads answer in every run state, terminal ones included.
 - **`run_status` (decision 16).**
@@ -3053,3 +3053,23 @@ One commit, `fix(daemon): early M9 calls wait for their launch, and the daemon e
      The last three were red: the long brief was accepted, and an unknown field reached serde.
 4. **The long-poll's deadline spans resubscriptions (Minor).** Test `the_deadline_spans_lagged_resubscriptions`. A sender thread floods the snapshot channel for 12 s, and `run_status` with `wait_secs = 2` still answers in 2 to 5 s with the same revision. It passed against the code as it was; the mutation that sets the deadline inside the resubscribe loop turns it red (answered after 14 s).
 5. **Sizes and lines.** `driver/requests.rs` (597) and `cli/src/main.rs` (600) are not touched. `mcp_cmd.rs`'s long doc line is wrapped, and so is one pre-existing long line in `early.rs`'s module doc. The rows for the new timing bounds are in `docs/timing-budgets.md`.
+
+#### Re-review fixes
+
+One commit, `fix(daemon): null is absent in tool bounds, and an early orchestrator write that outwaits its launch is refused`. Each test was written first and seen red, except where noted.
+
+1. **`null` in an optional field is absent.** `tools_bounds.rs` skips a `null` value, as serde's `Option` reads it. A field that is not an `Option` still refuses it, with serde's own text: `"route": null` gives `invalid type: null`, as it did before the bounds existed.
+   - Test `null_in_an_optional_field_is_absent`: `task.epic`, `task.test_to_write`, `route.model`, and `amend_task`'s `brief` and `acceptance` as `null` are accepted, while `brief: 7` is still refused.
+   - Red: `epic: null` was refused with `must be a string`.
+2. **The launch wait's limit is tested.** `orch_tool` is now `orch_tool_within(call, LAUNCH_WAIT)`, where `LAUNCH_WAIT` is `HOLD_LIMIT_SECS` (30 s) in production. `await_launch` takes the limit and returns whether the launch is over.
+   - Test `a_launch_wait_ends_at_its_limit`: the orchestrator and a sub-planner are both launching, and neither resolves. Each one's `get_context`, at a 300 ms limit, is answered with its caller refusal.
+   - It passed once the limit became a parameter. With the deadline check removed, it and item 5's test hang past their 10 s bound, so both go red.
+3. **A task's `id` is the plan rules'.** The `id` bound is removed from `tools_bounds.rs`.
+   - Tests `a_task_id_is_left_to_the_plan_rules` (parse) and `engine/tests/orch_edit.rs::a_long_task_id_gets_the_plan_rules_error`: a 17-character id gets decision 19's structured error, with `task`, `field: "id"` and `rule: "id"`.
+   - Red: `task: id: must be 1 to 16 characters` pre-empted the plan rule.
+4. **The brief's text about the refusals' reach is corrected** in the Task M9.11 notes above. An unbound window that names a launching planner's epic now triggers `runtime_refusals`, whose project-settings reads are git calls on `spawn_blocking` bounded by `git_timeout_secs`. This is accepted, not closed, for two reasons:
+   - the refusals must exist before the engine holds the batch, and the engine alone decides at replay which session the window was;
+   - the reads are bounded, read-only, and can only be triggered while a `StartPlanner` of that run is in flight.
+5. **An orchestrator write still waiting at its limit is refused in the driver** with `the orchestrator's launch has not finished; call again once it has` (`ORCHESTRATOR_LAUNCH_PENDING`), and never sent to the engine. Otherwise a `Window` result reduced just before the event could let the batch through without the ruling T22-I1b refusals.
+   - Test `an_orchestrator_write_whose_launch_never_finishes_is_refused`, at a 300 ms limit. The engine logged no batch.
+   - Red: the call reached the engine and was answered `this window is not the orchestrator of run …`.

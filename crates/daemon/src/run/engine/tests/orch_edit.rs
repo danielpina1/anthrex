@@ -386,3 +386,17 @@ fn but_the_log(run: &crate::run::model::Run) -> crate::run::model::Run {
     run.orch.digest_fp = 0;
     run
 }
+
+/// M9.11 re-review finding 3: a 17-character id reaches the plan rules, whose error
+/// names the task, the field and the rule (decision 19).
+#[test]
+fn a_long_task_id_gets_the_plan_rules_error() {
+    let mut fx = launched(false);
+    let id = "a".repeat(17);
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [add(&id, "auth")]})));
+    assert!(!ok);
+    assert_eq!(value["accepted"], json!(false), "{value}");
+    assert_eq!(value["errors"][0]["task"], json!(id), "{value}");
+    assert_eq!(value["errors"][0]["field"], "id", "{value}");
+    assert_eq!(value["errors"][0]["rule"], "id", "{value}");
+}
