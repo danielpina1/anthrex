@@ -199,6 +199,7 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
             runs.done(RunRequest::Edit {
                 run_id,
                 edits: edits.edits,
+                submit: false,
             })
             .await
         }

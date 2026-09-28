@@ -438,6 +438,7 @@ impl App {
                 vec![Effect::Send(ClientMsg::Run(RunRequest::Edit {
                     run_id,
                     edits,
+                    submit: false,
                 }))]
             }
         }

@@ -172,6 +172,7 @@ fn e2e_mis_sized_task_blocks_and_is_split_by_an_edit() {
             task_id: "t2".into(),
             into: vec![half("t2a", "a.txt"), half("t2b", "b.txt")],
         }],
+        submit: false,
     }) {
         RunReply::Done { .. } => {}
         other => panic!("the split: {other:?}"),

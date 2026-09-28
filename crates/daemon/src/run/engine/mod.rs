@@ -125,6 +125,9 @@ pub enum EventKind {
         /// not reach when the request came in and whose checks fail; an edit that makes
         /// one of them reachable is refused with its text.
         refusals: Vec<(proto::Runtime, String)>,
+        /// Milestone 9 decision 13: the user submits a planning run's plan after the
+        /// batch (M9.7 review fixes, ruling 5).
+        submit: bool,
     },
     Retry {
         reply: ReplyId,
@@ -343,11 +346,12 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
             edits,
             scope,
             refusals,
+            submit,
         } => requests::edit(
             &mut state,
             reply,
             &run_id,
-            (&edits, &scope, &refusals),
+            (&edits, &scope, &refusals, submit),
             now,
             &mut fx,
         ),

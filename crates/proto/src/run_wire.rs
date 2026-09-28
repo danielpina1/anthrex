@@ -53,6 +53,10 @@ pub enum RunRequest {
     Edit {
         run_id: String,
         edits: Vec<PlanEdit>,
+        /// Milestone 9 decision 13 (M9.7 review fixes, ruling 5): after the batch, the
+        /// user submits a planning run's plan, as its orchestrator's `submit` would.
+        #[serde(default)]
+        submit: bool,
     },
     Retry {
         run_id: String,

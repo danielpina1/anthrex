@@ -35,7 +35,11 @@ fn promote(fx: &mut Fixture, choice: Option<OrchestratorChoice>) -> Vec<Effect> 
 
 /// [`fast`], promoted, with its orchestrator in window [`ORCH`].
 fn promoted() -> Fixture {
-    let mut fx = fast();
+    promoted_from(fast())
+}
+
+/// `fx`, a running fast-path run, promoted, with its orchestrator in window [`ORCH`].
+fn promoted_from(mut fx: Fixture) -> Fixture {
     promote(&mut fx, None);
     let (op, _) = fx.op("CreateOrchestrator");
     fx.done(
@@ -215,4 +219,88 @@ fn pre_m9_promote_request_is_performed_on_resume_and_on_tick() {
     // The control: a fast-path run with no recorded wish is left alone.
     let mut fx = fast();
     assert!(ops_in(&fx.tick(), "CreateOrchestrator").is_empty());
+}
+
+fn hold_verdict(fx: &mut Fixture, hold: &str, approve: bool) -> Vec<Effect> {
+    let reply = fx.reply();
+    let (run_id, hold) = (RUN_ID.to_string(), hold.to_string());
+    fx.next(EventKind::Orch(if approve {
+        crate::run::engine::OrchEvent::ApproveHold {
+            reply,
+            run_id,
+            hold,
+        }
+    } else {
+        crate::run::engine::OrchEvent::RejectHold {
+            reply,
+            run_id,
+            hold,
+        }
+    }))
+}
+
+fn prepared(fx: &Fixture, id: &str) -> bool {
+    fx.ops("PrepareWorktree")
+        .iter()
+        .any(|(_, k)| op_task(k) == id)
+}
+
+/// M9.7 review fixes, ruling 1: the promotion hold keys on the promotion, not on
+/// `approved_at`. A fast-path run started under milestone 8b has none.
+#[test]
+fn a_promoted_run_with_no_approval_time_holds_its_additions() {
+    let mut fx = fast();
+    fx.run_mut().approved_at = None;
+    let mut fx = promoted_from(fx);
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [add("t2", "mail")]})));
+    assert!(ok, "{value}");
+    assert_eq!(value["held"], "promotion");
+    fx.tick();
+    assert_eq!(fx.task("t2").state, TaskState::Queued);
+    assert!(!prepared(&fx, "t2"), "t2 is not dispatched");
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true})));
+    assert!(ok, "{value}");
+    fx.tick();
+    assert!(!prepared(&fx, "t2"), "the hold awaits the user");
+    let effects = hold_verdict(&mut fx, "promotion", true);
+    assert!(replies(&effects)[0].is_ok(), "{effects:?}");
+    assert_eq!(fx.task("t2").state, TaskState::Preparing);
+    assert!(prepared(&fx, "t2"));
+}
+
+fn child(id: &str, module: &str) -> serde_json::Value {
+    add(id, module)["task"].clone()
+}
+
+/// M9.7 review fixes, ruling 2: a task split from a held task keeps its hold.
+#[test]
+fn split_children_of_a_promotion_held_task_stay_held() {
+    let mut fx = promoted();
+    edit_plan(&mut fx, json!({"edits": [add("t2", "mail")]}));
+    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    let split = json!({"op": "split_task", "task_id": "t2",
+        "into": [child("t2a", "mail_a"), child("t2b", "mail_b")]});
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [split]})));
+    assert!(ok, "{value}");
+    assert_eq!(value["held"], "promotion");
+    fx.tick();
+    for id in ["t2a", "t2b"] {
+        assert_eq!(fx.task(id).state, TaskState::Queued, "{id} waits");
+        assert_eq!(fx.task(id).orch.gate_hold.as_deref(), Some("promotion"));
+        assert!(!prepared(&fx, id), "{id} is not dispatched");
+    }
+    let hold = &fx.run().orch.gate_holds[0];
+    assert_eq!(hold.tasks, vec!["t2a".to_string(), "t2b".to_string()]);
+    assert_eq!(fx.task("t2").state, TaskState::Cancelled);
+    assert_eq!(fx.task("t2").orch.gate_hold, None, "split left the hold");
+    let effects = hold_verdict(&mut fx, "promotion", false);
+    assert_eq!(
+        replies(&effects),
+        vec![Ok(format!(
+            "hold promotion of run {RUN_ID} rejected: 2 tasks cancelled"
+        ))]
+    );
+    for id in ["t2a", "t2b"] {
+        assert_eq!(fx.task(id).state, TaskState::Cancelled, "{id}");
+    }
 }

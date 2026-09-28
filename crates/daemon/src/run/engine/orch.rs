@@ -206,8 +206,8 @@ fn edit_plan(
             }
         }
     }
-    let held = gate_holds::assign(&mut edited, &added, &EditSource::Orchestrator, now);
-    if submit && let Err(text) = submit_plan(&mut edited, now) {
+    let held = gate_holds::assign(&mut edited, edits, &added, now);
+    if submit && let Err(text) = submit_plan(&mut edited, "the orchestrator", now) {
         return refuse(fx, reply, text);
     }
     if let Some(summary) = summary {
@@ -279,8 +279,9 @@ fn write_summary(run: &mut Run, summary: String, now: u64) {
 /// sub-planner may be live; the run then waits at the gate, or runs at once when it was
 /// started with `--yes`. In `awaiting_approval` nothing changes. On a promoted running
 /// run the plan is submitted and hold `promotion` awaits the user. Otherwise it is
-/// ignored.
-fn submit_plan(run: &mut Run, now: u64) -> Result<(), String> {
+/// ignored. `who` submits: the orchestrator, or the user's `run edit` (decision 13,
+/// `requests::edit`, which admits `planning` only).
+pub(super) fn submit_plan(run: &mut Run, who: &str, now: u64) -> Result<(), String> {
     let submitted = run
         .orch
         .orchestrator
@@ -308,14 +309,14 @@ fn submit_plan(run: &mut Run, now: u64) -> Result<(), String> {
                 log(
                     run,
                     now,
-                    "the orchestrator submitted the plan; approved by --yes",
+                    format!("{who} submitted the plan; approved by --yes"),
                 );
             } else {
                 run.state = RunState::AwaitingApproval;
                 log(
                     run,
                     now,
-                    "the orchestrator submitted the plan; awaiting approval",
+                    format!("{who} submitted the plan; awaiting approval"),
                 );
             }
         }

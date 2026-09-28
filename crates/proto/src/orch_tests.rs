@@ -200,6 +200,7 @@ fn message_and_refresh_edits_round_trip() {
         both_ways(&ClientMsg::Run(RunRequest::Edit {
             run_id: "run-a1b2".into(),
             edits: vec![edit.clone()],
+            submit: false,
         }));
     }
     // The shape a `run edit --file` or an `edit_plan` call writes.
@@ -446,4 +447,22 @@ fn new_requests_round_trip() {
         panic!("a Promote");
     };
     assert_eq!(orchestrator, None);
+}
+
+/// M9.7 review fixes, ruling 5: `RunRequest::Edit.submit`, decision 13's user submit.
+#[test]
+fn edit_submit_round_trips_and_defaults_to_false() {
+    let submit = ClientMsg::Run(RunRequest::Edit {
+        run_id: "run-a1b2".into(),
+        edits: Vec::new(),
+        submit: true,
+    });
+    both_ways(&submit);
+    // An M8c-shaped `Edit`, without `submit`, still decodes, as a plain batch.
+    let old = serde_json::json!({"Edit": {"run_id": "run-a1b2", "edits": [{"op": "pause"}]}});
+    let RunRequest::Edit { submit, edits, .. } = serde_json::from_value(old).unwrap() else {
+        panic!("must decode as an Edit");
+    };
+    assert!(!submit);
+    assert_eq!(edits, vec![PlanEdit::Pause]);
 }

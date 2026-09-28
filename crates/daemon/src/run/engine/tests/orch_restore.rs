@@ -137,3 +137,22 @@ fn a_lost_orchestrator_launch_is_made_again_on_resume() {
     let o = state.runs[RUN_ID].orch.orchestrator.clone().unwrap();
     assert_eq!((o.window_id, o.live), (Some(7), false));
 }
+
+/// M9.7 review fixes, ruling 4: a planning run paused by a restart is still one the
+/// user may reject (decision 26); it is discarded.
+#[test]
+fn reject_of_a_restored_planning_run_discards_it() {
+    let mut fx = launched(false);
+    restart(&mut fx);
+    assert_eq!(fx.run().paused_from, Some(RunState::Planning));
+    let reply = fx.reply();
+    let effects = fx.next(EventKind::Reject {
+        reply,
+        run_id: RUN_ID.into(),
+    });
+    assert_eq!(
+        replies(&effects),
+        vec![Ok(format!("run {RUN_ID} rejected; discarding it"))]
+    );
+    assert_eq!(ops_in(&effects, "Discard").len(), 1);
+}

@@ -370,6 +370,7 @@ fn an_edit_that_reaches_an_unchecked_runtime_is_refused() {
         edits: vec![PlanEdit::AddTask { task: on_codex }],
         scope: crate::run::validate::EditScope::Run,
         refusals: vec![(Runtime::Codex, refusal.clone())],
+        submit: false,
     });
     assert_eq!(replies(&effects), vec![Err(refusal.clone())]);
     assert_eq!(fx.run().tasks.len(), 1, "a refused edit changes nothing");
@@ -383,6 +384,7 @@ fn an_edit_that_reaches_an_unchecked_runtime_is_refused() {
         }],
         scope: crate::run::validate::EditScope::Run,
         refusals: vec![(Runtime::Codex, refusal)],
+        submit: false,
     });
     assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
     assert_eq!(fx.run().tasks.len(), 2);

@@ -33,6 +33,7 @@ impl App {
             PendingAction::RemoveTask { run_id, task_id } => run(RunRequest::Edit {
                 run_id,
                 edits: vec![PlanEdit::CancelTask { task_id }],
+                submit: false,
             }),
         }
     }

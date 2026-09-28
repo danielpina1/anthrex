@@ -220,7 +220,7 @@ fn runtime_label(runtime: Runtime) -> &'static str {
     }
 }
 
-fn strength_label(strength: Strength) -> &'static str {
+pub(super) fn strength_label(strength: Strength) -> &'static str {
     match strength {
         Strength::Fast => "fast",
         Strength::Standard => "standard",

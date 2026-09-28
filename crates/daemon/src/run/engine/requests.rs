@@ -194,8 +194,11 @@ pub(super) fn reject(
     if let Some(how) = finishing_as(run) {
         return reply(fx, id, Err(format!("run {run_id} is being {how}")));
     }
-    // Milestone 9 decision 26: a run still being planned is discarded too.
-    if !matches!(run.state, RunState::AwaitingApproval | RunState::Planning) {
+    // Milestone 9 decision 26: a run still being planned is discarded too, also when a
+    // daemon restart paused it there (M9.7 review fixes, ruling 4).
+    let planning = run.state == RunState::Planning
+        || (run.state == RunState::Paused && run.paused_from == Some(RunState::Planning));
+    if !planning && run.state != RunState::AwaitingApproval {
         let label = run.state.label();
         let text =
             format!("run {run_id} is {label}; reject applies only while its plan awaits approval");
@@ -227,12 +230,13 @@ pub(super) fn reject(
     reply(fx, id, Ok(format!("run {run_id} rejected; discarding it")));
 }
 
-/// `run edit` (decision 13): the user's batch, through `batch::apply_batch`.
+/// `run edit` (decision 13): the user's batch, through `batch::apply_batch`, and with
+/// `submit`, milestone 9 decision 13's user submit of a planning run's plan.
 pub(super) fn edit(
     state: &mut EngineState,
     id: ReplyId,
     run_id: &str,
-    (edits, scope, refusals): (&[PlanEdit], &EditScope, &[(Runtime, String)]),
+    (edits, scope, refusals, submit): (&[PlanEdit], &EditScope, &[(Runtime, String)], bool),
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
@@ -257,6 +261,10 @@ pub(super) fn edit(
         return reply(fx, id, Err(text));
     }
     let batch = (edits, scope, refusals);
+    if submit {
+        let result = submit_edit(run, batch, now, fx);
+        return reply(fx, id, result);
+    }
     match apply_batch(run, batch, &EditSource::User, now, fx) {
         Ok(applied) => reply(fx, id, Ok(applied.text)),
         Err(Refused::Text(text)) => reply(fx, id, Err(text)),
@@ -265,6 +273,51 @@ pub(super) fn edit(
             reply(fx, id, Err(lines.join("\n")))
         }
     }
+}
+
+/// Decision 13's user submit (M9.7 review fixes, ruling 5): a planning run whose
+/// orchestrator cannot go on is completed by the user alone. The batch and the submit
+/// are one unit, applied to a copy, as the orchestrator's `edit_plan` is; the submit is
+/// the orchestrator's (`orch::submit_plan`), and the user then approves as usual.
+fn submit_edit(
+    run: &mut Run,
+    batch: (&[PlanEdit], &EditScope, &[(Runtime, String)]),
+    now: u64,
+    fx: &mut Vec<Effect>,
+) -> Result<String, String> {
+    if run.state != RunState::Planning {
+        let label = run.state.label();
+        return Err(format!(
+            "run {} is {label}; only a run being planned can be submitted",
+            run.id
+        ));
+    }
+    let mut edited = run.clone();
+    let mut effects = Vec::new();
+    let mut text = None;
+    if !batch.0.is_empty() {
+        match apply_batch(&mut edited, batch, &EditSource::User, now, &mut effects) {
+            Ok(applied) => text = Some(applied.text),
+            Err(Refused::Text(text)) => return Err(text),
+            Err(Refused::Plan(errors)) => {
+                let lines: Vec<String> = errors.iter().map(ToString::to_string).collect();
+                return Err(lines.join("\n"));
+            }
+        }
+    }
+    super::orch::submit_plan(&mut edited, "the user", now)?;
+    *run = edited;
+    fx.extend(effects);
+    let outcome = if run.state == RunState::Running {
+        "approved by --yes, it runs"
+    } else {
+        "it awaits approval"
+    };
+    let submitted = format!("the plan of run {} was submitted: {outcome}", run.id);
+    Ok(match text {
+        Some(text) => format!("{text}; {submitted}"),
+        None => submitted,
+    })
 }
 
 /// `run retry` (decision 42) of a blocked task that is neither L nor `dep_cancelled`:

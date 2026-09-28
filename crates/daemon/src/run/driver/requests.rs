@@ -113,9 +113,11 @@ impl RunService {
                 request::REJECT,
                 self.ask(|reply| EventKind::Reject { reply, run_id }).await,
             ),
-            RunRequest::Edit { run_id, edits } => {
-                answer(request::EDIT, self.edit(run_id, edits).await)
-            }
+            RunRequest::Edit {
+                run_id,
+                edits,
+                submit,
+            } => answer(request::EDIT, self.edit(run_id, edits, submit).await),
             RunRequest::Retry { run_id, task_id } => answer(
                 request::RETRY,
                 self.ask(|reply| EventKind::Retry {
@@ -326,7 +328,12 @@ impl RunService {
     /// reach yet, so the engine refuses an edit that would reach one whose checks fail
     /// with that check's text. Project settings already trusted at `run start` pass.
     /// Only a batch that adds, splits or amends a task is probed (T22-P2, F4).
-    async fn edit(&self, run_id: String, edits: Vec<proto::PlanEdit>) -> Result<String, String> {
+    async fn edit(
+        &self,
+        run_id: String,
+        edits: Vec<proto::PlanEdit>,
+        submit: bool,
+    ) -> Result<String, String> {
         let run = crate::lock(&self.state).runs.get(&run_id).cloned();
         let mut refusals = Vec::new();
         if let Some(run) = run.filter(|_| edits_may_widen(&edits)) {
@@ -351,6 +358,7 @@ impl RunService {
             edits,
             scope: EditScope::Run,
             refusals,
+            submit,
         })
         .await
     }

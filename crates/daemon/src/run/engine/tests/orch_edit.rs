@@ -5,8 +5,10 @@
 use proto::{RunState, TaskState};
 use serde_json::json;
 
+use super::dispatch::replies;
 use super::fixture::*;
 use super::orch::{ORCH, add, answer, edit_plan, error, launched, orch_tool};
+use crate::run::engine::{Effect, EventKind};
 use crate::run::orch::{EpicRecord, PlannerPhase};
 
 #[test]
@@ -209,4 +211,107 @@ fn summary_is_written_to_the_report() {
     assert!(report.starts_with(&expected), "{report}");
     assert!(!report.contains("an earlier one"), "the last one wins");
     assert_eq!(report.matches("\n## Tasks\n").count(), 1);
+}
+
+/// The user's `run edit`, with or without decision 13's user submit.
+fn user_edit(fx: &mut Fixture, edits: Vec<proto::PlanEdit>, submit: bool) -> Vec<Effect> {
+    let reply = fx.reply();
+    fx.next(EventKind::Edit {
+        reply,
+        run_id: RUN_ID.into(),
+        edits,
+        scope: crate::run::validate::EditScope::Run,
+        refusals: Vec::new(),
+        submit,
+    })
+}
+
+/// M9.7 review fixes, ruling 5: a planning run whose orchestrator cannot go on is
+/// completed by the user alone: their own tasks, their submit, their approval.
+#[test]
+fn a_user_submit_while_planning_opens_the_gate() {
+    let mut fx = launched(false);
+    let t1 = proto::PlanEdit::AddTask {
+        task: super::holds::plan_task("t1", "[\"crates/auth/**\"]"),
+    };
+    let effects = user_edit(&mut fx, vec![t1], true);
+    assert_eq!(
+        replies(&effects),
+        vec![Ok(format!(
+            "applied 1 edit; the plan of run {RUN_ID} was submitted: it awaits approval"
+        ))]
+    );
+    let run = fx.run();
+    assert_eq!(run.state, RunState::AwaitingApproval);
+    assert!(run.orch.orchestrator.as_ref().unwrap().plan_submitted);
+    assert_eq!(
+        replies(&fx.approve()),
+        vec![Ok(format!("run {RUN_ID} approved"))]
+    );
+    fx.tick();
+    assert_eq!(fx.task("t1").state, TaskState::Preparing);
+    // A submit alone, with no task, is refused as the orchestrator's is.
+    let mut fx = launched(false);
+    let before = fx.run().clone();
+    let effects = user_edit(&mut fx, Vec::new(), true);
+    assert_eq!(
+        replies(&effects),
+        vec![Err(
+            "the plan has no tasks yet; add tasks before submitting".to_string()
+        )]
+    );
+    assert_eq!(*fx.run(), before);
+}
+
+#[test]
+fn a_user_submit_is_refused_in_any_other_state() {
+    let mut fx = launched(false);
+    edit_plan(
+        &mut fx,
+        json!({"edits": [add("t1", "auth")], "submit": true}),
+    );
+    let refused = |fx: &mut Fixture| {
+        let before = fx.run().clone();
+        let t9 = proto::PlanEdit::AddTask {
+            task: super::holds::plan_task("t9", "[\"crates/t9/**\"]"),
+        };
+        let effects = user_edit(fx, vec![t9], true);
+        assert_eq!(*fx.run(), before, "nothing is applied");
+        replies(&effects).remove(0).unwrap_err()
+    };
+    assert_eq!(
+        refused(&mut fx),
+        format!("run {RUN_ID} is awaiting_approval; only a run being planned can be submitted")
+    );
+    fx.approve();
+    assert_eq!(
+        refused(&mut fx),
+        format!("run {RUN_ID} is running; only a run being planned can be submitted")
+    );
+}
+
+/// M9.7 review fixes, ruling 3: decision 6's report line, with the built-in roster.
+#[test]
+fn an_orchestrator_below_the_frontier_tier_is_reported() {
+    let mut fx = launched(false);
+    let report = crate::run::report::render(fx.run(), fx.now);
+    assert!(!report.contains("below the frontier tier"), "{report}");
+    let codex = proto::OrchestratorChoice {
+        runtime: proto::Runtime::Codex,
+        model: None,
+    };
+    let run = fx.run();
+    let resolved = crate::run::orch::launch::resolve_orchestrator(
+        Some(&codex),
+        &config::AgentConfig::default(),
+        run.limits.default_runtime,
+        &run.roster,
+    )
+    .unwrap();
+    fx.run_mut().orch.orchestrator.as_mut().unwrap().route = resolved.route;
+    let report = crate::run::report::render(fx.run(), fx.now);
+    assert!(
+        report.contains("\norchestrator below the frontier tier: codex (default) standard\n"),
+        "{report}"
+    );
 }

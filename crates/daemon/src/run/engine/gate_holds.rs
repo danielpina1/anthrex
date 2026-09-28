@@ -7,14 +7,14 @@
 //! before it submits) or `epic:<e>` (a new epic of a running run). A task whose hold is
 //! not `Approved` is not runnable and is not pre-warmed (`dispatch.rs`).
 
-use proto::{HoldKind, HoldState, RunState};
+use proto::{HoldKind, HoldState, PlanEdit, RunState, TaskState};
 
 use super::complete::cancel_now;
 use super::requests::log;
 use super::{Effect, EngineState, ReplyId};
 use crate::run::model::{Run, Task};
+use crate::run::orch::GateHoldRecord;
 use crate::run::orch::json::label;
-use crate::run::orch::{EditSource, GateHoldRecord};
 
 /// Decision 29's hold id.
 pub(super) const PROMOTION: &str = "promotion";
@@ -29,46 +29,107 @@ pub(super) fn released(run: &Run, task: &Task) -> bool {
     })
 }
 
-/// The run's plan was approved once (by the user, `--yes` or the fast path): work added
-/// from now on is past the gate.
-fn past_gate(run: &Run) -> bool {
-    run.approved_at.is_some()
+/// Decision 29: the run was promoted, and its orchestrator exists. A fast-path run
+/// started under milestone 8b has no `approved_at`, so the promotion, not the approval,
+/// is what puts its additions past the gate (M9.7 review fixes, ruling 1).
+fn promoted(run: &Run) -> bool {
+    run.promote_requested_at.is_some() && run.orch.orchestrator.is_some()
 }
 
-/// Gives each task of `added` (a batch's new tasks) the hold it waits under, if any,
-/// and returns the first such hold. Only the orchestrator's and sub-planners' tasks are
-/// held; a user's own edit is theirs. Before a promoted run's orchestrator submits,
-/// every task waits under `promotion`; after it, a task of an epic whose hold is still
+/// The run's plan was approved once (by the user, `--yes` or the fast path), or the run
+/// was promoted: work added from now on is past the gate.
+fn past_gate(run: &Run) -> bool {
+    run.approved_at.is_some() || promoted(run)
+}
+
+/// Gives each task of `added` (the new tasks of an orchestrator's or sub-planner's
+/// batch, `edits`; a user's own `run edit` never comes here) the hold it waits under,
+/// if any, and returns the first such hold. A task split from a task whose hold is not
+/// `Approved` inherits that hold, whatever epic it names, and the split parent, which
+/// the split cancelled, leaves it (M9.7 review fixes, ruling 2). Otherwise, before a
+/// promoted run's orchestrator submits, every task waits under `promotion` (decision
+/// 29, whatever the gate's state); after it, a task of an epic whose hold is still
 /// undecided waits under that hold.
 pub(super) fn assign(
     run: &mut Run,
+    edits: &[PlanEdit],
     added: &[String],
-    source: &EditSource,
     now: u64,
 ) -> Option<String> {
-    if *source == EditSource::User || !past_gate(run) {
-        return None;
-    }
     let submitted = run.orch.orchestrator.as_ref()?.plan_submitted;
     let mut first = None;
     for id in added {
-        let hold = if !submitted {
-            Some(ensure(run, PROMOTION, HoldKind::Promotion, now))
-        } else {
-            epic_hold(run, id)
+        let parent = split_parent(edits, id);
+        let hold = match parent.and_then(|p| unreleased_hold(run, p)) {
+            Some(inherited) => Some(inherited),
+            None if promoted(run) && !submitted => {
+                Some(ensure(run, PROMOTION, HoldKind::Promotion, now))
+            }
+            None => epic_hold(run, id),
         };
         let Some(hold) = hold else {
             continue;
         };
-        if let Some(record) = run.orch.gate_holds.iter_mut().find(|h| h.id == hold) {
-            record.tasks.push(id.clone());
-        }
-        if let Some(task) = run.tasks.iter_mut().find(|t| t.id() == id) {
-            task.orch.gate_hold = Some(hold.clone());
-        }
+        hold_task(run, &hold, id);
         first.get_or_insert(hold);
     }
+    for parent in split_parents(edits) {
+        release_split_parent(run, parent);
+    }
     first
+}
+
+/// The task `id` was split from by this batch, if any.
+fn split_parent<'a>(edits: &'a [PlanEdit], id: &str) -> Option<&'a str> {
+    edits.iter().find_map(|e| match e {
+        PlanEdit::SplitTask { task_id, into } if into.iter().any(|t| t.id == id) => {
+            Some(task_id.as_str())
+        }
+        _ => None,
+    })
+}
+
+fn split_parents(edits: &[PlanEdit]) -> impl Iterator<Item = &str> {
+    edits.iter().filter_map(|e| match e {
+        PlanEdit::SplitTask { task_id, .. } => Some(task_id.as_str()),
+        _ => None,
+    })
+}
+
+/// Task `id`'s hold, when it is not yet approved.
+fn unreleased_hold(run: &Run, id: &str) -> Option<String> {
+    let hold = run.task(id)?.orch.gate_hold.as_ref()?;
+    run.orch
+        .gate_holds
+        .iter()
+        .find(|h| &h.id == hold && h.state != HoldState::Approved)
+        .map(|h| h.id.clone())
+}
+
+fn hold_task(run: &mut Run, hold: &str, id: &str) {
+    if let Some(record) = run.orch.gate_holds.iter_mut().find(|h| h.id == hold) {
+        record.tasks.push(id.to_string());
+    }
+    if let Some(task) = run.tasks.iter_mut().find(|t| t.id() == id) {
+        task.orch.gate_hold = Some(hold.to_string());
+    }
+}
+
+/// A split cancels its parent: the parent is no longer among the tasks its hold would
+/// start or cancel, so a verdict counts only its children.
+fn release_split_parent(run: &mut Run, parent: &str) {
+    let Some(task) = run.tasks.iter_mut().find(|t| t.id() == parent) else {
+        return;
+    };
+    if task.state != TaskState::Cancelled {
+        return;
+    }
+    let Some(hold) = task.orch.gate_hold.take() else {
+        return;
+    };
+    if let Some(record) = run.orch.gate_holds.iter_mut().find(|h| h.id == hold) {
+        record.tasks.retain(|t| t != parent);
+    }
 }
 
 /// The undecided hold of the epic task `id` belongs to.

@@ -214,6 +214,7 @@ fn e2e_daemon_restart_pauses_and_resume_continues() {
             task_id: "t3".into(),
             text: "c.txt".into(),
         }],
+        submit: false,
     }) {
         RunReply::Done { .. } => {}
         other => panic!("the answer: {other:?}"),
@@ -493,6 +494,7 @@ fn e2e_headless_windows_refuse_client_control_while_the_engine_delivers() {
             task_id: "t1".into(),
             text: "a.txt".into(),
         }],
+        submit: false,
     }) {
         RunReply::Done { .. } => {}
         other => panic!("the answer: {other:?}"),

@@ -317,6 +317,7 @@ fn every_run_request_and_reply_round_trips() {
         RunRequest::Edit {
             run_id: "run-a1b2".into(),
             edits: vec![PlanEdit::Pause],
+            submit: false,
         },
         RunRequest::Retry {
             run_id: "run-a1b2".into(),

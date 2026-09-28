@@ -28,6 +28,7 @@ fn edit(h: &RunHarness, id: &str, edit: PlanEdit) {
     match h.request(RunRequest::Edit {
         run_id: id.to_string(),
         edits: vec![edit],
+        submit: false,
     }) {
         RunReply::Done { .. } => {}
         other => panic!("the edit: {other:?}"),

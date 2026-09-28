@@ -62,6 +62,7 @@ pub(super) fn edit(edits: Vec<PlanEdit>) -> Vec<Effect> {
     send(RunRequest::Edit {
         run_id: RUN_ID.into(),
         edits,
+        submit: false,
     })
 }
 

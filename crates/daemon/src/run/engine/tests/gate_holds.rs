@@ -265,3 +265,55 @@ fn gate_holds_do_not_touch_dependency_holds() {
     );
     assert_eq!(task.orch.gate_hold.as_deref(), Some("epic:mail"));
 }
+
+/// M9.7 review fixes, ruling 2: the children of a held task inherit its hold, although
+/// they name no epic.
+#[test]
+fn split_children_of_an_epic_held_task_stay_held() {
+    let mut fx = held(false);
+    let child = |id: &str, module: &str| add(id, module)["task"].clone();
+    let split = json!({"op": "split_task", "task_id": "t2",
+        "into": [child("t2a", "mail_a"), child("t2b", "mail_b")]});
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [split]})));
+    assert!(ok, "{value}");
+    assert_eq!(value["held"], "epic:mail");
+    awaiting(&mut fx);
+    fx.tick();
+    for id in ["t2a", "t2b"] {
+        assert_eq!(fx.task(id).spec.epic, None, "{id} names no epic");
+        assert_eq!(fx.task(id).orch.gate_hold.as_deref(), Some("epic:mail"));
+        assert_eq!(fx.task(id).state, TaskState::Queued, "{id} waits");
+        assert!(
+            fx.ops("PrepareWorktree")
+                .iter()
+                .all(|(_, k)| op_task(k) != id),
+            "{id} is not dispatched"
+        );
+    }
+    let effects = verdict(&mut fx, "epic:mail", false);
+    assert_eq!(
+        replies(&effects),
+        vec![Ok(format!(
+            "hold epic:mail of run {RUN_ID} rejected: 2 tasks cancelled"
+        ))]
+    );
+    for id in ["t2a", "t2b"] {
+        assert_eq!(fx.task(id).state, TaskState::Cancelled, "{id}");
+    }
+}
+
+/// M9.7 review fixes, ruling 2 (**pinning**): amending a held task keeps its hold,
+/// whether the amend re-resolves the task or not.
+#[test]
+fn amending_a_held_task_keeps_its_hold() {
+    let mut fx = held(false);
+    let amend = json!({"op": "amend_task", "task_id": "t2", "brief": "New brief"});
+    let resize = json!({"op": "amend_task", "task_id": "t2", "size": "M"});
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [amend, resize]})));
+    assert!(ok, "{value}");
+    assert_eq!(fx.task("t2").orch.gate_hold.as_deref(), Some("epic:mail"));
+    assert_eq!(fx.run().orch.gate_holds[0].tasks, vec!["t2".to_string()]);
+    awaiting(&mut fx);
+    fx.tick();
+    assert_eq!(fx.task("t2").state, TaskState::Queued);
+}

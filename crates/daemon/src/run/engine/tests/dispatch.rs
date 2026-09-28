@@ -37,6 +37,7 @@ pub(super) fn edit(fx: &mut Fixture, edits: Vec<PlanEdit>) -> Vec<Effect> {
         edits,
         scope: EditScope::Run,
         refusals: Vec::new(),
+        submit: false,
     })
 }
 
