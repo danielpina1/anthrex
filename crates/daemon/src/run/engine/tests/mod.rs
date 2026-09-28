@@ -49,6 +49,7 @@ mod orch_restore;
 mod planners;
 mod planners_confine;
 mod planners_holds;
+mod planners_review;
 mod promote;
 mod run_scouts;
 mod turns;

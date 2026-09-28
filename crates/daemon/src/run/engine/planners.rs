@@ -10,7 +10,7 @@
 //! under its epic's round, which its accepted epic submits to the user, so nothing it
 //! adds runs before the user approves a round that holds it.
 
-use proto::{PlanEdit, RunPath, RunState, Runtime, ToolCall};
+use proto::{PlanEdit, RunPath, RunState, Runtime, TaskState, ToolCall};
 
 use super::batch::{Applied, Refused, apply_batch};
 use super::orch::{refuse, rejected, settle};
@@ -22,6 +22,7 @@ use crate::run::model::Run;
 use crate::run::orch::launch::{planner_route, planner_spec};
 use crate::run::orch::tools::{OrchCall, parse_call};
 use crate::run::orch::{EditSource, EpicRecord, PlannerPhase, PlannerSession};
+use crate::run::plan::PlanError;
 use crate::run::validate::EditScope;
 use crate::run::validate_graph::is_valid_area_glob;
 
@@ -29,6 +30,12 @@ use super::ScoutEnd;
 
 /// Decision 22's reply to an accepted epic.
 pub const EPIC_RECORDED: &str = "Epic recorded. You are done; end your turn now.";
+
+/// M9.8 review, ruling 4: the most re-plans of one epic. Engine constants; M9.5's
+/// tuning may make them configurable.
+pub const MAX_REPLANS_PER_EPIC: u32 = 3;
+/// M9.8 review, ruling 4: the most epics in one run.
+pub const MAX_EPICS: usize = 20;
 
 /// The live sessions holding reader slots (decision 31): sub-planners that were
 /// started and have not ended, and run scouts running.
@@ -205,12 +212,25 @@ pub(super) fn spawn_subplanner(
                 format!("epic {epic} is being planned by its sub-planner; wait for it to finish");
             return refuse(fx, reply, text);
         }
+        if e.replans.len() >= MAX_REPLANS_PER_EPIC as usize {
+            let text = format!(
+                "epic {epic} was already re-planned {MAX_REPLANS_PER_EPIC} times, the most one epic allows"
+            );
+            return refuse(fx, reply, text);
+        }
         e.phase = PlannerPhase::Queued;
         e.replans.push(spec.brief.chars().take(40).collect());
         e.request = spec.brief;
         e.ended_at = None;
         hold = gate_holds::replan_epic_hold(run, &epic, now);
     } else {
+        if run.orch.epics.len() >= MAX_EPICS {
+            let text = format!(
+                "run {} already has {MAX_EPICS} epics, the most one run allows",
+                run.id
+            );
+            return refuse(fx, reply, text);
+        }
         if let Err(text) = check_area(run, &epic, &spec.area) {
             return refuse(fx, reply, text);
         }
@@ -291,16 +311,22 @@ pub(super) fn tool(
         return refuse(fx, reply, format!("unknown epic {epic}"));
     };
     let record = &run.orch.epics[k];
-    let window = record.sessions.last().and_then(|s| s.window_id);
-    if window != Some(call.window_id) || matches!(record.phase, PlannerPhase::Failed { .. }) {
+    let latest = record.sessions.last();
+    let window = latest.and_then(|s| s.window_id);
+    if window == Some(call.window_id) && record.phase == PlannerPhase::Finished {
+        let text = format!("submit_epic was already accepted for epic {epic}");
+        return refuse(fx, reply, text);
+    }
+    // M9.8 review, ruling 3: only the latest session, live and not ended, may call; a
+    // queued re-plan's epic has no such session yet.
+    let stale = window != Some(call.window_id)
+        || latest.is_some_and(|s| s.ended_at.is_some())
+        || record.phase != PlannerPhase::Planning;
+    if stale {
         let text = format!(
             "this window is not the sub-planner of epic {epic} of run {}",
             run.id
         );
-        return refuse(fx, reply, text);
-    }
-    if record.phase == PlannerPhase::Finished {
-        let text = format!("submit_epic was already accepted for epic {epic}");
         return refuse(fx, reply, text);
     }
     match parse_call(call.role, &call.tool, &call.args) {
@@ -320,6 +346,37 @@ pub(super) fn tool(
         ),
         Err(text) => refuse(fx, reply, text),
     }
+}
+
+/// M9.8 review, ruling 2: a sub-planner amends only its own epic's tasks that are not
+/// released: not started, and held under a round not yet approved (or, before the
+/// gate, not yet approved at all). The orchestrator's and the user's amends keep
+/// decision 19's rights.
+fn released_amends(run: &Run, edits: &[PlanEdit], epic: &str) -> Vec<PlanError> {
+    let started = |t: &crate::run::model::Task| {
+        t.session > 0
+            || !matches!(
+                t.state,
+                TaskState::Pending | TaskState::Queued | TaskState::Blocked
+            )
+    };
+    edits
+        .iter()
+        .filter_map(|edit| match edit {
+            PlanEdit::AmendTask { task_id, .. } => Some(task_id),
+            _ => None,
+        })
+        .filter(|id| {
+            run.task(id).is_some_and(|t| {
+                t.spec.epic.as_deref() == Some(epic)
+                    && (started(t) || gate_holds::released_past_gate(run, t))
+            })
+        })
+        .map(|id| {
+            let text = format!("task {id}: a sub-planner amends only its epic's unapproved tasks");
+            PlanError::new(Some(id), "", "2.epic", text)
+        })
+        .collect()
 }
 
 /// The edit ops a sub-planner may not use (decision 22, TT §12.1).
@@ -357,7 +414,8 @@ fn submit_epic(
         );
     }
     let epic = run.orch.epics[k].epic.clone();
-    let confined = planner_confinement(run, edits, &epic);
+    let mut confined = planner_confinement(run, edits, &epic);
+    confined.extend(released_amends(run, edits, &epic));
     if !confined.is_empty() {
         return reject(run, reply, (k, window), &confined, now, fx);
     }

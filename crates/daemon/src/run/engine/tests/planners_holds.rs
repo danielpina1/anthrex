@@ -91,12 +91,13 @@ fn a_promoted_runs_planner_and_its_replan_wait_for_their_rounds() {
 }
 
 /// A re-plan whose sub-planner adds no task asks the user nothing: its round, left
-/// `Drafting` with no live task, is dropped once the planner has finished.
+/// `Drafting` with no live task, is dropped once the planner has finished. Here it
+/// amends `t2`, still held under `epic:mail` (M9.8 review ruling 2 lets a planner
+/// amend only unapproved tasks), which stays the user's to decide.
 #[test]
 fn an_accepted_epic_with_no_new_task_asks_the_user_nothing() {
     let mut fx = planning_mail(false);
     submit_epic(&mut fx, json!([task_in("t2", "mail")]));
-    hold_verdict(&mut fx, "epic:mail", true);
     planner_ended(&mut fx, ("mail", 1), ScoutEnd::Reported);
     assert_eq!(spawn(&mut fx, "mail")["hold"], "epic:mail.2");
     planner_started(&mut fx, PLANNER + 1);
@@ -106,6 +107,7 @@ fn an_accepted_epic_with_no_new_task_asks_the_user_nothing() {
     assert_eq!(replies(&effects), vec![Ok(EPIC_RECORDED.to_string())]);
     assert_eq!(fx.task("t2").spec.brief, "Clearer brief");
     assert_eq!(hold_state(&fx, "epic:mail.2"), None);
+    assert_eq!(hold_state(&fx, "epic:mail"), Some(HoldState::Awaiting));
 }
 
 /// M9.7 second review, items 8 and 10: the orchestrator's `submit` moves every

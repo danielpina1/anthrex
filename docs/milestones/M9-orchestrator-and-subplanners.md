@@ -1458,6 +1458,7 @@ Do them in this order: M9.1, M9.2, M9.3, M9.4, M9.5, M9.6, M9.7, M9.8, M9.9, M9.
 - `completion_waits_for_holds_planners_scouts_integration_and_submit` (one case per condition).
 - `rewriting_a_mis_sized_task_restarts_it_at_rung_2`; `editing_a_human_blocked_task_does_not_restart_it`.
 - Wake notes: `each_note_source_adds_its_exact_line` (a table over decision 39's list); `orchestrators_own_edits_add_no_note`; `notes_are_capped_at_20_with_the_earlier_line`; `wake_effect_needs_live_window_setting_and_new_revision`; `digest_read_drops_notes_up_to_the_revision`; `woken_clears_delivered_notes`; `completion_note`.
+- Wake notes' cap (M9.8 review, ruling 4): M9.8 pushes its notes (sub-planner and run-scout ends) through `engine/planners.rs::wake_note` with no cap. M9.9 puts the cap there, so every note source goes through it; `notes_are_capped_at_20_with_the_earlier_line` covers an M9.8 source too.
 - `edit_log_records_every_source_rejections_and_recipients` (M8c's cap of 50 kept). It must fail on M9.7's interim state (M9.7 review fixes, ruling 6): today `engine/batch.rs::apply_batch` records every accepted batch, the orchestrator's included, with source `user`, and a rejected orchestrator batch is not recorded at all. The test drives an accepted and a rejected `edit_plan` through `OrchEvent::Tool` and checks source `orchestrator` on both and `accepted: false` with the error on the second.
 - `usage_sum_saturates`.
 
@@ -2686,3 +2687,33 @@ One commit, `fix(daemon): hold a promoted run's additions until the user approve
   - the driver's fill skipped;
   - the scout texts used for a planner (the real session test).
   The tests of new types and functions failed to compile before them.
+
+### M9.8 review fixes
+
+- **Ruling 1: a re-plan never joins an `Awaiting` round.** `gate_holds::epic_round` joins an `Awaiting` round only while the epic has no queued or planning sub-planner; otherwise it joins the latest round only when that round is `Drafting`, and opens a new one if it is not.
+  - A re-plan marks its epic `Queued` before `replan_epic_hold`. So a re-plan reuses a `Drafting` round, or opens `epic:<e>.<n>` after an `Awaiting` or an approved one.
+  - The planner's `submit_epic` then puts its additions and split children into that `Drafting` session round, and submits it. Approving an earlier round releases none of them.
+  - **Reading:** "an orchestrator addition naming an epic whose planner is queued or planning joins that planner's `Drafting` round" cannot arise. `orch/rules.rs` (M9.4, rule `2.epic`) refuses the orchestrator's new task naming a live epic, with `epic <e> is being planned by its sub-planner`, and `is_live` covers `Queued`. `epic_round` would still put such a task in the `Drafting` round.
+  - When no planner is live, an orchestrator addition still joins its epic's `Awaiting` round, as M9.7 ruled for the promotion round.
+  - Tests in the new `engine/tests/planners_review.rs`:
+    - `a_replan_never_joins_an_awaiting_round` (the reviewer's sequence);
+    - `a_replans_split_children_wait_for_its_own_round`;
+    - `a_replan_opens_a_round_past_an_orchestrator_round_awaiting_the_user`.
+    Red before the fix: the re-plan's reply named `epic:mail`, not `epic:mail.2`. With the fix's `Awaiting` filter mutated back, all three turn red again.
+- **Ruling 2: a sub-planner amends only its epic's unapproved tasks.** `planners.rs::released_amends` refuses an `amend_task` of the planner's own epic's task with `task <id>: a sub-planner amends only its epic's unapproved tasks` when either:
+  - the task has started (`session > 0`, or a state other than `pending`, `queued` or `blocked`);
+  - or it is released past the gate (`gate_holds::released_past_gate`: the run was approved or promoted, and the task has no hold or an approved one).
+  Another epic's task keeps M9.8's `2.epic` refusal. The orchestrator's and the user's amends are unchanged (decision 19).
+  - The "started" clause is defensive. A task starts only once released, so no reachable state pins it apart from the release clause; its mutation survives.
+  - Test: `a_planner_amends_only_its_epics_unapproved_tasks`. Session 2's amend of an approved but not started `t2`, and of a `Working` `t2`, are refused, with no `Deliver` and an unchanged outbox. Its amend of a `t2` still held is accepted. Red: both amends were accepted.
+  - `an_accepted_epic_with_no_new_task_asks_the_user_nothing` amended an approved `t2`, which ruling 2 now refuses. It now amends the still-held `t2`, and also asserts that `epic:mail` still awaits the user.
+- **Ruling 3: stale sessions.** A planner tool call is refused with `this window is not the sub-planner of epic <e> of run <id>` in any of these cases:
+  - the caller's window is not the latest session's;
+  - the latest session has `ended_at`;
+  - the epic is not `Planning` (a queued re-plan has no session yet, so its previous session's window would otherwise still match).
+  The latest session's own second `submit_epic` still gets `submit_epic was already accepted for epic <e>`.
+  - Tests: `a_stale_sessions_submit_is_refused_and_the_queued_replan_stays_queued`, which is the reviewer's case with `max_readers = 0`, plus a variant with the old session's `ended_at` cleared, which pins the phase clause on its own. Also `an_ended_sessions_call_is_refused`. Red: the stale submit was accepted.
+- **Ruling 4: bounds.** These are engine constants in `planners.rs`; M9.5's tuning may make them configurable.
+  - `MAX_REPLANS_PER_EPIC = 3`: refused with `epic <e> was already re-planned 3 times, the most one epic allows`.
+  - `MAX_EPICS = 20`: refused with `run <id> already has 20 epics, the most one run allows`.
+  Tests: `replans_per_epic_are_bounded` and `epics_per_run_are_bounded`, both red before the fix. M9.9's task text now says that the wake notes M9.8 adds need M9.9's cap. M9.9 already had the cap test `notes_are_capped_at_20_with_the_earlier_line`; it did not say that M9.8's `wake_note` is uncapped.

@@ -98,6 +98,12 @@ pub(super) fn submit_promotion(run: &mut Run, now: u64) -> bool {
     true
 }
 
+/// M9.8 review, ruling 2: the task may run, past the gate, with no hold or an approved
+/// one. Before the gate nothing is released.
+pub(super) fn released_past_gate(run: &Run, task: &Task) -> bool {
+    past_gate(run) && released(run, task)
+}
+
 /// The run's plan was approved once (by the user, `--yes` or the fast path), or the run
 /// was promoted: work added from now on is past the gate.
 fn past_gate(run: &Run) -> bool {
@@ -269,17 +275,31 @@ pub(super) fn drop_empty_rounds(run: &mut Run, now: u64) {
 }
 
 /// `epic`'s undecided round, or a new `Drafting` one: `epic:<e>` first, then
-/// `epic:<e>.2`, `epic:<e>.3` after each rejection. The separator is `.`, which an
-/// epic id (`^[a-z0-9][a-z0-9-]{0,10}$`) cannot hold, so a round never takes the id of
-/// another epic's hold. The epic's record names its current round.
+/// `epic:<e>.2`, `epic:<e>.3` after each rejection or re-plan. The separator is `.`,
+/// which an epic id (`^[a-z0-9][a-z0-9-]{0,10}$`) cannot hold, so a round never takes
+/// the id of another epic's hold. The epic's record names its current round.
+///
+/// While the epic's sub-planner is queued or planning (a re-plan included), only a
+/// `Drafting` round is joined: the planner's session round, which its `submit_epic`
+/// submits. A round already `Awaiting` the user is never joined then, so approving it
+/// never releases work submitted after it (M9.8 review, ruling 1).
 fn epic_round(run: &mut Run, epic: &str, now: u64) -> String {
+    let live = run
+        .orch
+        .epics
+        .iter()
+        .any(|e| e.epic == epic && e.phase.is_live());
     let open = run
         .orch
         .gate_holds
         .iter()
         .rev()
         .find(|h| is_round_of(h, epic))
-        .filter(|h| matches!(h.state, HoldState::Drafting | HoldState::Awaiting))
+        .filter(|h| match h.state {
+            HoldState::Drafting => true,
+            HoldState::Awaiting => !live,
+            _ => false,
+        })
         .map(|h| h.id.clone());
     let id = match open {
         Some(id) => id,
@@ -347,8 +367,9 @@ pub(super) fn create_epic_hold(run: &mut Run, epic: &str, now: u64) -> Option<St
 }
 
 /// A re-plan of an epic on a run past its gate is new, unreviewed work: it joins the
-/// epic's undecided round, or opens a new one, after an approved round too (M9.7
-/// second review, ruling 10, the controller's decision).
+/// epic's `Drafting` round, or opens a new one, after an approved or an `Awaiting`
+/// round too (M9.7 second review, ruling 10; M9.8 review, ruling 1). Its epic is
+/// already queued again, so [`epic_round`] joins no `Awaiting` round.
 pub(super) fn replan_epic_hold(run: &mut Run, epic: &str, now: u64) -> Option<String> {
     run.orch.orchestrator.as_ref()?;
     past_gate(run).then(|| epic_round(run, epic, now))
