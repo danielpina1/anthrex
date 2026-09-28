@@ -316,10 +316,12 @@ fn e2e_promote_performs_and_the_task_continues() {
     let run = h.wait_run(&id, |r| t(r, "t1").state == TaskState::Merged, RUN_WAIT);
     assert_eq!(run.path, Some(RunPath::Plan));
     assert!(run.promote_requested_at.is_some());
-    // Decision 38: a run with an orchestrator completes only after its plan was
-    // submitted. The orchestrator's launch fails in the driver's placeholder until
-    // M9.13, so the promoted run keeps running with its task merged.
-    let run = h.run(&id).unwrap();
-    assert_eq!(run.state, RunState::Running);
+    // Decision 38 holds a run with an orchestrator until its plan is submitted, and
+    // the orchestrator's launch fails in the driver's placeholder until M9.13. The
+    // user can always end the run (M9.9 review fixes, C1): `run cancel` completes it.
+    let out = h.anthrex(&["run", "cancel", &id]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let run = h.wait_run(&id, complete, RUN_WAIT);
+    assert_eq!(t(&run, "t1").state, TaskState::Merged);
     assert!(!run.orchestrator.as_ref().unwrap().plan_submitted);
 }

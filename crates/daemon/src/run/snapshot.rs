@@ -201,6 +201,7 @@ pub(crate) fn attention(run: &Run) -> Vec<String> {
         lines.push("final check failed on the run head".to_string());
     }
     lines.extend(run.stale_profile_line());
+    lines.extend(crate::run::engine::integration_attention(run));
     lines
 }
 

@@ -288,7 +288,15 @@ fn submit_edit(
     now: u64,
     fx: &mut Vec<Effect>,
 ) -> Result<String, String> {
-    if run.state != RunState::Planning {
+    // M9.9 review fixes, C1: a promoted running run whose orchestrator has not
+    // submitted is submitted by the user as the orchestrator's `submit` would.
+    let promoted = run.state == RunState::Running
+        && run
+            .orch
+            .orchestrator
+            .as_ref()
+            .is_some_and(|o| !o.plan_submitted);
+    if run.state != RunState::Planning && !promoted {
         let label = run.state.label();
         return Err(format!(
             "run {} is {label}; only a run being planned can be submitted",
@@ -311,7 +319,17 @@ fn submit_edit(
     super::orch::submit_plan(&mut edited, "the user", now)?;
     *run = edited;
     fx.extend(effects);
-    let outcome = if run.state == RunState::Running {
+    let awaiting = |id: &str| {
+        run.orch
+            .gate_holds
+            .iter()
+            .any(|h| h.id == id && h.state == proto::HoldState::Awaiting)
+    };
+    let outcome = if promoted && awaiting("promotion") {
+        "hold promotion awaits approval"
+    } else if promoted {
+        "it runs"
+    } else if run.state == RunState::Running {
         "approved by --yes, it runs"
     } else {
         "it awaits approval"

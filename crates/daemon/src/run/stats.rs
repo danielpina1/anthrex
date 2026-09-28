@@ -112,6 +112,9 @@ pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
                 .iter()
                 .copied()
                 .filter(|t| t.sessions > 0 && class(t) == Some(c))
+                // M9.9 review fixes, M5: a research or review task reports; it is
+                // neither merged nor unmerged work.
+                .filter(|t| t.outcome != TaskOutcome::Reported)
                 .collect();
             row(c, &of_class, &reverted)
         })

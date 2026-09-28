@@ -8,7 +8,7 @@ use super::kinds::is_integration;
 use super::requests::log;
 use crate::run::model::{ReviewLevel, Run, TaskEvent, task_branch, task_path};
 use crate::run::roster::pick_reviewer;
-use crate::run::validate::resolve_task_lenient;
+use crate::run::validate::{is_valid_id, resolve_task_lenient};
 
 /// Decision 37: the orchestrator may not amend, split or cancel an integration review.
 pub(super) fn engine_owned(run: &Run, edits: &[PlanEdit]) -> Option<String> {
@@ -45,7 +45,8 @@ pub(super) fn record_merge(run: &mut Run, i: usize, from: &str, commit: &str) {
 /// fewer than `max_bounces + 1` rounds ran. The `finish` edit closes an epic's
 /// `changes` instead (decision 38).
 pub(super) fn integration_pass(run: &mut Run, now: u64) {
-    if run.orch.orchestrator.is_none() {
+    // A cancelled run reviews nothing more (M9.9 review fixes, C1).
+    if run.orch.orchestrator.is_none() || run.cancelled {
         return;
     }
     for k in 0..run.orch.epics.len() {
@@ -61,6 +62,8 @@ pub(super) fn integration_pass(run: &mut Run, now: u64) {
             }
             continue;
         }
+        // M9.9 review fixes, M3: with no valid id, nothing is made
+        // (`attention` says so).
         if due(run, k) {
             add_round(run, k, now);
         }
@@ -95,11 +98,9 @@ fn due(run: &Run, k: usize) -> bool {
 fn add_round(run: &mut Run, k: usize, now: u64) {
     let record = &run.orch.epics[k];
     let epic = record.epic.clone();
-    let first = record.integration_rounds + 1;
-    let Some(n) = (first..).find(|n| run.task(&format!("{epic}-int{n}")).is_none()) else {
+    let Some((id, n)) = free_id(run, k) else {
         return;
     };
-    let id = format!("{epic}-int{n}");
     let base = record.base.clone().unwrap_or_else(|| run.base_sha.clone());
     let author = record
         .merges
@@ -156,6 +157,41 @@ fn add_round(run: &mut Run, k: usize, now: u64) {
     );
 }
 
+/// The first free `<e>-int<n>` from the next round's number, with its `n`, while it
+/// is a valid task id (M9.9 review fixes, M3); `None` when it would not be.
+fn free_id(run: &Run, k: usize) -> Option<(String, u32)> {
+    let record = &run.orch.epics[k];
+    let first = record.integration_rounds + 1;
+    let n = (first..).find(|n| run.task(&format!("{}-int{n}", record.epic)).is_none())?;
+    let id = format!("{}-int{n}", record.epic);
+    is_valid_id(&id).then_some((id, n))
+}
+
+fn no_free_id_line(epic: &str) -> String {
+    format!("epic {epic}: no free integration review id")
+}
+
+/// M9.9 review fixes, M3: an attention line for each epic whose integration review is
+/// due but has no valid id to take.
+pub(crate) fn attention(run: &Run) -> Vec<String> {
+    if run.orch.orchestrator.is_none() || run.finish_edit || run.cancelled {
+        return Vec::new();
+    }
+    (0..run.orch.epics.len())
+        .filter(|&k| due(run, k) && free_id(run, k).is_none())
+        .map(|k| no_free_id_line(&run.orch.epics[k].epic))
+        .collect()
+}
+
+/// The round integration review `task` is: the `n` of its id `<e>-int<n>`.
+pub(super) fn round_of(task: &crate::run::model::Task) -> Option<u32> {
+    let epic = task.orch.integration_of.as_deref()?;
+    task.id()
+        .strip_prefix(epic)?
+        .strip_prefix("-int")?
+        .parse()
+        .ok()
+}
 /// Decision 38: completion with an orchestrator also waits for every hold to be
 /// decided, every sub-planner and run scout to end, every integration review to finish
 /// with no `changes` left open (the `finish` edit closes them), and the plan to have
@@ -167,11 +203,20 @@ pub(super) fn may_complete(run: &Run) -> bool {
         return true;
     };
     let orch = &run.orch;
-    o.plan_submitted
-        && !orch
-            .gate_holds
-            .iter()
-            .any(|h| matches!(h.state, HoldState::Drafting | HoldState::Awaiting))
+    // M9.9 review fixes, C1: the user can always end a run. After `run cancel` or the
+    // `finish` edit, the plan's submit, the holds and a `changes` verdict wait for no
+    // one; the sessions and reviews still end first.
+    let ended = run.cancelled || run.finish_edit;
+    (ended
+        || o.plan_submitted
+            && !orch
+                .gate_holds
+                .iter()
+                .any(|h| matches!(h.state, HoldState::Drafting | HoldState::Awaiting))
+            && !orch
+                .epics
+                .iter()
+                .any(|e| e.integration_state == IntegrationState::Changes))
         && !orch.epics.iter().any(|e| e.phase.is_live())
         && !orch
             .run_scouts
@@ -181,8 +226,4 @@ pub(super) fn may_complete(run: &Run) -> bool {
             .tasks
             .iter()
             .any(|t| is_integration(t) && !t.state.is_finished())
-        && !orch
-            .epics
-            .iter()
-            .any(|e| e.integration_state == IntegrationState::Changes && !run.finish_edit)
 }

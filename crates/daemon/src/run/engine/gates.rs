@@ -314,6 +314,9 @@ pub(super) fn check_done(
 /// The refusal's tail when a task can go to the merge queue by no override.
 const OVERRIDE_APPLIES: &str = "override applies only to a task in review, or blocked with commits";
 
+/// M9.9 review fixes, M1: `run override` of a research or review task.
+pub const OVERRIDE_KINDS: &str = "override applies only to code and docs tasks";
+
 /// Decision 35's override: a task in `review`, or `blocked` with at least one commit,
 /// goes to the merge queue without review, marked for the report and exempt from the
 /// spill checks from then on; it still passes the candidate check. A live reviewer is
@@ -342,6 +345,11 @@ pub(super) fn override_task(
     let Some(i) = run.tasks.iter().position(|t| t.id() == task_id) else {
         return answer(fx, Err(format!("unknown task {task_id}")));
     };
+    // M9.9 review fixes, M1: research and review tasks, integration reviews among
+    // them, merge nothing, so nothing is overridden into the merge queue.
+    if super::schedule::is_reader_task(&run.tasks[i]) {
+        return answer(fx, Err(OVERRIDE_KINDS.to_string()));
+    }
     if let Some(text) = override_refusal(run, i) {
         return answer(fx, Err(text));
     }

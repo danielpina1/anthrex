@@ -111,6 +111,25 @@ fn describe_one(edit: &PlanEdit) -> String {
     }
 }
 
+/// The longest stored error of a rejected batch, in characters, `…` included.
+pub const ERROR_MAX_CHARS: usize = 300;
+
+/// M9.9 review fixes, M4: a rejected batch's error, one line of at most
+/// [`ERROR_MAX_CHARS`] characters.
+fn clip_error(error: &str) -> String {
+    let one_line = |c: char| if c.is_control() { ' ' } else { c };
+    if error.chars().count() <= ERROR_MAX_CHARS {
+        return error.chars().map(one_line).collect();
+    }
+    let mut out: String = error
+        .chars()
+        .take(ERROR_MAX_CHARS - 1)
+        .map(one_line)
+        .collect();
+    out.push('…');
+    out
+}
+
 /// Records a batch from `source` at `now` with its `outcome` (decision 40), keeping the
 /// last [`PLAN_EDITS_KEPT`]; an accepted batch counts as an edit after approval when
 /// the plan has been approved.
@@ -123,7 +142,7 @@ pub fn record(
 ) {
     let (accepted, error, recipients) = match outcome {
         EditOutcome::Accepted { recipients } => (true, None, recipients),
-        EditOutcome::Rejected { error } => (false, Some(error), Vec::new()),
+        EditOutcome::Rejected { error } => (false, Some(clip_error(&error)), Vec::new()),
     };
     run.plan_edits.push(PlanEditRecord {
         at: now,
@@ -133,9 +152,11 @@ pub fn record(
         error,
         recipients,
     });
-    if run.plan_edits.len() > PLAN_EDITS_KEPT {
-        let excess = run.plan_edits.len() - PLAN_EDITS_KEPT;
-        run.plan_edits.drain(..excess);
+    // M9.9 review fixes, M4: a full log drops its oldest rejected batch first, so a
+    // stream of refusals never pushes the accepted edits out.
+    while run.plan_edits.len() > PLAN_EDITS_KEPT {
+        let oldest = run.plan_edits.iter().position(|r| !r.accepted).unwrap_or(0);
+        run.plan_edits.remove(oldest);
     }
     if accepted && run.approved_at.is_some() {
         run.plan_edits_since_approval = run.plan_edits_since_approval.saturating_add(1);

@@ -3,7 +3,7 @@
 //! 19). Moved out of `requests.rs` by task M9.7, which shares it. Pure (design decision
 //! 2).
 
-use proto::{PlanEdit, RunState, Runtime, TaskState};
+use proto::{BlockReason, PlanEdit, RunState, Runtime, TaskState};
 
 use super::requests::log;
 use super::{Effect, deciders, outbox, restore};
@@ -78,7 +78,7 @@ pub(super) fn apply_batch(
     // M8b decision 19: the unstarted tasks this batch added or amended.
     let touched = touched_unstarted(&edited, edits);
     // Milestone 9 decision 25: the mis-sized tasks this batch rewrote.
-    let rewritten = super::done::rewritten(run, &edited);
+    let rewritten = rewritten(run, &edited);
     *run = edited;
     for consequence in consequences {
         match consequence {
@@ -101,7 +101,7 @@ pub(super) fn apply_batch(
         }
     }
     deciders::cross_check(run, &touched, now, fx);
-    super::done::restart_rewritten(run, &rewritten, now, fx);
+    restart_rewritten(run, &rewritten, now, fx);
     edit_log::record(run, edits, now, source, edit_log::EditOutcome::accepted());
     // Milestone 9 decision 39: the orchestrator sees what the user changed.
     if *source == EditSource::User {
@@ -202,4 +202,75 @@ fn pause_or_resume_fits(run: &Run, edits: &[PlanEdit]) -> Result<(), String> {
         state = to;
     }
     Ok(())
+}
+
+/// M9.9 review fixes, M2: decision 25 restarts a task at most this many times; the
+/// next rewrite blocks it for the user.
+pub const MAX_REWRITE_RESTARTS: u32 = 3;
+
+/// Milestone 9 decision 25: the tasks in `blocked(mis_sized)` whose `brief`,
+/// `acceptance`, `size` or `route` the batch that made `edited` from `run` changed, and
+/// which are still so blocked. Every source's batch (`batch::apply_batch`).
+fn rewritten(run: &Run, edited: &Run) -> Vec<String> {
+    let mis_sized = |t: &crate::run::model::Task| {
+        t.state == TaskState::Blocked
+            && t.block
+                .as_ref()
+                .is_some_and(|b| b.reason == BlockReason::MisSized)
+    };
+    edited
+        .tasks
+        .iter()
+        .filter(|t| mis_sized(t))
+        .filter(|t| {
+            run.task(t.id()).is_some_and(|old| {
+                mis_sized(old)
+                    && (old.spec.brief != t.spec.brief
+                        || old.spec.acceptance != t.spec.acceptance
+                        || old.spec.size != t.spec.size
+                        || old.spec.route != t.spec.route)
+            })
+        })
+        .map(|t| t.id().to_string())
+        .collect()
+}
+
+/// Decision 25: a rewritten mis-sized task re-enters exactly as `run retry` does (a
+/// fresh session at rung 2, `failures = 1`), once the batch is applied. One that is
+/// still L, or that waits for new dependencies, keeps its block, as `run retry` would
+/// refuse it. `blocked(human)`, `(conflict)` and `(environment)` are never restarted
+/// by an edit: only `run retry` lifts them.
+fn restart_rewritten(run: &mut Run, ids: &[String], now: u64, fx: &mut Vec<Effect>) {
+    for id in ids {
+        let Some(i) = run.tasks.iter().position(|t| t.id() == id) else {
+            continue;
+        };
+        let task = &run.tasks[i];
+        if task.size == proto::Size::L
+            || (task.awaiting_deps && !super::schedule::deps_done(run, task))
+        {
+            continue;
+        }
+        // M9.9 review fixes, M2: past MAX_REWRITE_RESTARTS the rewrite stands and
+        // the user decides.
+        if task.orch.rewrite_restarts >= MAX_REWRITE_RESTARTS {
+            let text = format!("rewritten {MAX_REWRITE_RESTARTS} times; the user decides");
+            super::dispatch::block(run, i, BlockReason::Environment, text, now);
+            continue;
+        }
+        run.tasks[i].orch.rewrite_restarts += 1;
+        let task = &run.tasks[i];
+        let text = task
+            .block
+            .as_ref()
+            .map_or_else(String::new, |b| b.text.clone());
+        let why = format!("its plan was rewritten (it was blocked(mis_sized): {text})");
+        let how = super::requests::rung2(run, i, why, now, fx);
+        super::dispatch::history(
+            run,
+            i,
+            now,
+            format!("rewritten by a plan edit; restarted at rung 2: {how}"),
+        );
+    }
 }

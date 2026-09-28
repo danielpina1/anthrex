@@ -271,7 +271,8 @@ fn turn_ended(
     }
     // Milestone 9 decision 35: a research task's session.
     if run.tasks[i].rounds[r].role == AgentRole::Scout {
-        return super::kinds::turn_ended(run, i, r, outcome, now, fx);
+        let flags = (streak, interrupted);
+        return super::research::turn_ended(run, (i, r), outcome, flags, now, fx);
     }
     if !worker {
         return review::turn_ended(run, i, r, outcome, streak, now, fx);
@@ -395,7 +396,7 @@ fn exited(
     round.exited_pid = Some(pid);
     // Milestone 9 decision 35: a research task's session.
     if research {
-        return super::kinds::exited(run, i, r, killed, now, fx);
+        return super::research::exited(run, i, r, killed, now, fx);
     }
     // Decision 35's resume rule for reviewers (M8a.13).
     if !worker {

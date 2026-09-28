@@ -2797,3 +2797,75 @@ One commit, `fix(daemon): hold a promoted run's additions until the user approve
     - the `Changes` clause;
     - the finish edit closing `Changes`;
     - a `Reported` dependency satisfying its dependents.
+
+### M9.9 review fixes
+
+- **C1 and I4: the user can always end a run.**
+  - Once the user has cancelled the run (`run cancel`, `Run.cancelled`) or sent the `finish` edit, `integration::may_complete` stops waiting for three conditions:
+    - `plan_submitted`;
+    - `Drafting` or `Awaiting` holds;
+    - integration state `Changes`.
+  - Every other condition still holds: no sub-planner or run scout live, no integration review unfinished, every task finished, the merge queue empty and no op pending.
+  - A cancelled run adds no integration review (`integration_pass` returns early), so cancelling an epic's work does not start a review of it.
+  - The user's submit (`RunRequest::Edit { submit }`, `requests::submit_edit`) is now accepted on a promoted `running` run whose `plan_submitted` is false, as the orchestrator's `submit` (`orch::submit_plan`). Its reply is `the plan of run <id> was submitted: hold promotion awaits approval`, or `it runs` when no hold awaits.
+  - Tests in the new `engine/tests/kinds_end.rs`. Each run completes and then takes `run accept` or `run discard`:
+    - `a_promoted_run_the_user_cancels_completes`;
+    - `a_promoted_run_the_user_finishes_completes`;
+    - `the_users_submit_ends_a_promoted_runs_promotion` (submit, approve hold `promotion`, complete);
+    - `a_planned_run_whose_epic_asked_for_changes_completes_on_cancel`.
+  - `run_e2e_adapt::e2e_promote_performs_and_the_task_continues` now ends the promoted run with `anthrex run cancel` and asserts that it completes with `t1` merged. It no longer asserts the stuck state.
+- **I1: wake notes stay on one line.** `wake::note`, the one entry for every note source, turns every control character into a space: `\n`, `\r`, U+0085 and the rest. U+2028 and U+2029 become spaces too. `wake_text` is therefore one line that starts with its own `[anthrex]` prefix.
+  - Tests: `a_wake_note_stays_on_one_line` (a `task_blocked` reason carrying `\n[anthrex] …`, `\r\n`, U+0085, U+2028, U+2029 and a vertical tab) and `every_note_source_is_folded_to_one_line`.
+- **I2: only the blocks the orchestrator's own edit causes are quiet.**
+  - For an orchestrator tool call, `engine::step` snapshots the runs after the event is applied and before the scheduler's passes. `wake::blocked_notes` then compares against that snapshot, so a block made by a time-based pass (a stall, a budget) in the same step is noted.
+  - Test `a_stall_in_the_orchestrators_step_is_noted`: an orchestrated run, a research task whose stall is due, and an orchestrator `run_status` call as that step.
+  - **Reading:** `edit_plan`'s own handler runs `orch::settle`, which runs the scheduler before replying (M9.6 and M9.7, for the reply's revision and holds). A stall that falls due in the same step as an accepted `edit_plan` is therefore taken by that in-handler pass, and stays quiet. The next digest still shows the block. Recorded in the follow-ups file.
+- **I3: research tasks follow M8a's worker rules (decision 35).** The session code moved from `kinds.rs` to the new `engine/research.rs`:
+  - **Failed turns (decision 32).** A rate-limited turn waits `rate_limit_retry_secs`, then gets `rate_limit_continue`. So does a first failed turn of another kind. Neither counts as a turn without a report. A second other failure in a row blocks the task. An authentication, billing or sandbox failure blocks at once.
+  - **Stalls.** Silence interrupts the turn and queues `research_stall_nudge`. An interrupt that does not end the turn within `INTERRUPT_GRACE_SECS`, or a second silence, is a stall.
+  - **Deaths.** An exit while the interrupt is pending ends the turn. The first death mid-turn resumes the session; the second is a stall.
+  - **Stall counting (decision 38).** A stall adds 1 to both `stalls` and `failures`. Where a worker would get rung 2, the research task gets a fresh research session: the old one is killed, and the next research session launches in the same pass with `rung = 2`. At three failures the task is `blocked(environment)`, not `mis_sized`, because a research task has no size to raise: `stalled <n> times (<f> failures in all); last: <reason>`.
+  - **Sessions with nothing to resume.** An exit before the session had an id, a failed resume, or a session that ended with no id gets a fresh session with no failure counted, as a worker's does.
+  - **Budgets (decision 40)** use the research rounds' spend:
+    - the soft wrap-up, `research_wrap_up`, goes once per session;
+    - a hard breach gets a fresh session, and the second blocks the task (`exceeded its budget twice; last: …`);
+    - the total over all research sessions reaching the next size's budget is rung 4's ceiling, `blocked(human)`.
+  - This supersedes the M9.9 note "Research failures".
+  - Tests in the new `engine/tests/kinds_research.rs`:
+    - `a_rate_limited_research_turn_waits_then_continues`;
+    - `a_research_stall_is_interrupted_and_nudged_before_it_counts`;
+    - `a_third_research_failure_blocks_the_task`;
+    - `a_second_research_death_in_a_round_is_a_stall`;
+    - `research_budgets_apply`.
+- **M1:** `run override` of a research or review task, integration reviews included, is refused with `override applies only to code and docs tasks` (`gates::OVERRIDE_KINDS`). Test `override_is_refused_for_research_and_review_tasks`.
+- **M2:** decision 25 restarts a task at most `MAX_REWRITE_RESTARTS` (3) times, counted in the new `TaskOrch.rewrite_restarts` (under `#[serde(default)]`). The next rewrite still applies, and the task is `blocked(environment)` with `rewritten 3 times; the user decides`. `rewritten` and `restart_rewritten` moved from `done.rs` to `batch.rs`, next to their one caller. Test `a_task_is_restarted_by_rewrites_at_most_three_times`.
+- **M3: integration ids stay valid.**
+  - `integration::free_id` makes an integration review only while the first free `<e>-int<n>` is a valid task id (`validate::is_valid_id`, now `pub(crate)`, at most 16 characters).
+  - Otherwise nothing is made, and the snapshot's attention gains `epic <e>: no free integration review id` (`integration::attention`, derived, so it clears when the run is cancelled or finished).
+  - `review_first_turn` numbers the round from the id's `n` (`integration::round_of`), as the title does.
+  - Tests `no_integration_review_is_made_without_a_valid_id` and `the_integration_prompt_numbers_the_round_from_its_id`.
+- **M4: the edit log.**
+  - A rejected batch's error is stored as one line of at most `ERROR_MAX_CHARS` (300) characters, `…` included.
+  - When the 50-entry log is full, the oldest rejected entry is dropped before any accepted one.
+  - Tests `a_rejected_batchs_error_is_capped` and `a_full_log_drops_rejected_batches_first`.
+- **M5:** `run stats` leaves `reported` task records out of the rows, but still counts them in `task_records`. Test `reported_tasks_are_left_out_of_the_rows`.
+- **M6: a digest read drops only what its answer held.**
+  - Each note gets a seq: `OrchestratorRecord.note_seqs` and `last_note_seq`, replacing M9.9's `note_revs` and its `PENDING` sentinel.
+  - `engine::notes_seq(run)` is the highest seq a digest answer or wake-up built from `run` includes. `OrchEvent::DigestRead` carries it (`notes_seq`), and so do `Effect::WakeOrchestrator` and `OrchEvent::OrchestratorWoken`, the same race. Only notes up to that seq are dropped.
+  - These events are engine-internal and never on the wire, so PROTO stays 10 and no `serde(default)` is needed.
+  - **Obligation for M9.11 and M9.13:** the driver sends `wake::notes_seq` of the snapshot it built the `run_status` answer from, and the effect's `notes_seq` with `OrchestratorWoken`.
+  - Test `a_digest_read_keeps_a_note_added_after_its_answer`. Every note source today also changes the digest, so the test adds the late note directly (`wake::note`) with the revision unmoved.
+- **Also:** `edits::requeue_waiting` treats a `reported` dependency as met, as `schedule::unfinished_deps` does. It has no test of its own: a dependent that is queued while a writer slot is free is dispatched in the same step.
+- **Files.** The new files are `engine/research.rs` (562 lines), `kinds_end.rs`, `kinds_research.rs`, `kinds_limits.rs` and `wake_fixes.rs`. `kinds.rs` is now 239 lines, `done.rs` 528 and `edits.rs` 596.
+- **Red evidence.** In this round the fixes were written before their tests. Each test was then shown red by reverting its fix alone from a `cp` backup, 17 reverts in all. Every revert turned its tests red, and each file was restored:
+  - C1's `ended` clause: 3 tests;
+  - the user's submit;
+  - I1's fold: 2 tests;
+  - I2's snapshot;
+  - I3's five rules (rate-limit wait, stall ladder, death, budget, third failure);
+  - M1;
+  - M2;
+  - M3's id check and round number;
+  - M4's clip and eviction;
+  - M5;
+  - M6's seq filter.

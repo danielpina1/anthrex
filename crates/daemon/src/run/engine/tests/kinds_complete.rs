@@ -229,7 +229,7 @@ fn completion_waits_for_holds_planners_scouts_integration_and_submit() {
 }
 
 /// A running run whose `t1` was started, then blocked with `reason`.
-fn blocked(reason: BlockReason) -> Fixture {
+pub(super) fn blocked(reason: BlockReason) -> Fixture {
     let mut fx = running("", &[task("t1", "M", "auth", "")]);
     fx.launch_all();
     let task = fx.task_mut("t1");

@@ -99,8 +99,8 @@ pub fn apply_edits(
 }
 
 /// Decision 31: `queued` means runnable. After a batch, a queued task that waits for a
-/// declared dependency that is not merged, or an implicit one that is neither merged
-/// nor cancelled (decision 41), goes back to `pending` (`add_dep`, and implicit
+/// declared dependency not merged or reported, or an implicit one not finished
+/// (decision 41), goes back to `pending` (`add_dep`, and implicit
 /// dependencies gained through a split or an added task, fix round 2, N2).
 fn requeue_waiting(run: &mut Run, now: u64) {
     let state_of = |tasks: &[Task], id: &str| tasks.iter().find(|t| t.id() == id).map(|t| t.state);
@@ -110,13 +110,15 @@ fn requeue_waiting(run: &mut Run, now: u64) {
         .enumerate()
         .filter(|(_, t)| t.state == TaskState::Queued)
         .filter(|(_, t)| {
-            t.spec
-                .deps
+            t.spec.deps.iter().any(|d| {
+                !matches!(
+                    state_of(&run.tasks, d),
+                    Some(TaskState::Merged | TaskState::Reported)
+                )
+            }) || t
+                .implicit_deps
                 .iter()
-                .any(|d| state_of(&run.tasks, d) != Some(TaskState::Merged))
-                || t.implicit_deps
-                    .iter()
-                    .any(|d| state_of(&run.tasks, d).is_some_and(|s| !s.is_finished()))
+                .any(|d| state_of(&run.tasks, d).is_some_and(|s| !s.is_finished()))
         })
         .map(|(i, _)| i)
         .collect();

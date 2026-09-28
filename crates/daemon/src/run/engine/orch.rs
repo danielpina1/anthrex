@@ -57,15 +57,19 @@ pub enum OrchEvent {
         usage: TokenUsage,
     },
     /// Decision 39: the driver pasted the wake-up of `digest_revision` into the
-    /// orchestrator's window.
+    /// orchestrator's window; `notes_seq` is its `Effect::WakeOrchestrator`'s.
     OrchestratorWoken {
         run_id: String,
         digest_revision: u64,
+        notes_seq: u64,
     },
-    /// Decisions 16 and 39: the orchestrator read the digest at `digest_revision`.
+    /// Decisions 16 and 39: the orchestrator read the digest at `digest_revision`,
+    /// whose answer included the wake notes up to `notes_seq` (`wake::notes_seq` of
+    /// the run the answer was built from; M9.9 review fixes, M6).
     DigestRead {
         run_id: String,
         digest_revision: u64,
+        notes_seq: u64,
     },
 }
 
@@ -145,17 +149,17 @@ pub(super) fn on_orch_event(
         OrchEvent::OrchestratorWoken {
             run_id,
             digest_revision,
+            notes_seq,
         } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
-                wake::woken(run, digest_revision);
+                wake::woken(run, digest_revision, notes_seq);
             }
         }
         OrchEvent::DigestRead {
-            run_id,
-            digest_revision,
+            run_id, notes_seq, ..
         } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
-                wake::digest_read(run, digest_revision, now);
+                wake::digest_read(run, notes_seq, now);
             }
         }
     }

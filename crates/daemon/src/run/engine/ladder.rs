@@ -368,7 +368,7 @@ pub(crate) fn total_spend(task: &Task, now: u64) -> Spend {
 }
 
 /// Some axis reached: `tool_calls`, minutes or (when set) tokens at or past `budget`.
-fn reached(spend: Spend, budget: Budget) -> bool {
+pub(super) fn reached(spend: Spend, budget: Budget) -> bool {
     spend.tool_calls >= budget.tool_calls
         || spend.secs >= u64::from(budget.minutes) * 60
         || budget.tokens.is_some_and(|t| spend.tokens >= t)
@@ -402,7 +402,7 @@ pub(super) fn breached(spend: Spend, budget: Budget) -> Option<String> {
 }
 
 /// Rung 4's ceiling: the next size's budget (S: M's; M or hub: L's).
-fn ceiling(run: &Run, task: &Task) -> Budget {
+pub(super) fn ceiling(run: &Run, task: &Task) -> Budget {
     if task.size == Size::S && !task.hub {
         run.limits.budget_m
     } else {

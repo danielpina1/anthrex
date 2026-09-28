@@ -399,3 +399,28 @@ fn an_unreadable_history_is_not_a_skipped_line() {
     let want = format!("history: could not read {}: ", dir.path().display());
     assert!(text.lines().any(|l| l.starts_with(&want)), "{text}");
 }
+
+/// M9.9 review fixes, M5: a research or review task's record (`reported`) is neither
+/// merged nor unmerged work: it is left out of the rows, though still a task record.
+#[test]
+fn reported_tasks_are_left_out_of_the_rows() {
+    let mut research = task("r1", "q1", Size::S, false, TaskOutcome::Reported, 1);
+    research.kind = TaskKind::Research;
+    research.bounces.review = 2;
+    let mut review = task("r1", "v1", Size::M, false, TaskOutcome::Reported, 1);
+    review.kind = TaskKind::Review;
+    let lines: Vec<HistoryLine> = [
+        merged("r1", "a1", Size::S, (8, 5, 1_500, 60)),
+        research,
+        review,
+    ]
+    .into_iter()
+    .map(HistoryLine::Task)
+    .collect();
+    let stats = aggregate(&lines, Path::new(PATH));
+    assert_eq!(stats.task_records, 3);
+    let s = row(&stats, "S");
+    assert_eq!((s.tasks, s.merged, s.bounces), (1, 1, 0));
+    let m = row(&stats, "M");
+    assert_eq!((m.tasks, m.merged), (0, 0));
+}

@@ -106,6 +106,8 @@ pub struct TaskOrch {
     /// Decision 42e: a refresh due or in flight, and the merge commits refreshes made.
     pub refresh: Option<RefreshState>,
     pub refresh_merges: Vec<String>,
+    /// Decision 25's restarts of the task by a rewrite (M9.9 review fixes, M2).
+    pub rewrite_restarts: u32,
 }
 
 /// The run's orchestrator (decision 1). `otlp_token` never reaches the snapshot or
@@ -124,10 +126,13 @@ pub struct OrchestratorRecord {
     pub summary: Option<String>,
     /// Decision 39's pending wake notes, oldest first, at most 20.
     pub notes: Vec<String>,
-    /// The digest revision each note of `notes` was added at, one per note: a
-    /// `DigestRead` or `OrchestratorWoken` of a revision drops the notes up to it.
+    /// Each note's seq, one per note of `notes`: a `DigestRead` or
+    /// `OrchestratorWoken` drops the notes up to the seq its answer included.
     #[serde(default)]
-    pub note_revs: Vec<u64>,
+    pub note_seqs: Vec<u64>,
+    /// The last seq handed to a note.
+    #[serde(default)]
+    pub last_note_seq: u64,
     pub last_wake_rev: u64,
     pub wakes: u32,
     pub otlp_token: String,
@@ -503,7 +508,8 @@ impl OrchestratorRecord {
             plan_submitted: false,
             summary: None,
             notes: Vec::new(),
-            note_revs: Vec::new(),
+            note_seqs: Vec::new(),
+            last_note_seq: 0,
             last_wake_rev: 0,
             wakes: 0,
             otlp_token: String::new(),

@@ -66,6 +66,7 @@ mod outbox;
 mod planners;
 mod promote;
 mod requests;
+mod research;
 mod restore;
 mod results;
 mod review;
@@ -81,9 +82,11 @@ pub(crate) use clock::epoch_spend;
 pub use clock::{BudgetEpoch, TaskClock};
 pub use early::{HOLD_CAP, HOLD_LIMIT_SECS, HOLD_WINDOWS_CAP, HeldEvent, HeldWindow};
 pub use history::HISTORY_FILE;
+pub(crate) use integration::attention as integration_attention;
 pub use ops::{OpKind, OpResult, OverrideCount, ResolutionAt, ScratchAt};
 pub use orch::{OrchEvent, ScoutEnd};
 pub use signals::INTERRUPT_GRACE_SECS;
+pub use wake::notes_seq;
 
 /// Identifies a client request waiting for its [`Effect::Reply`].
 pub type ReplyId = u64;
@@ -342,6 +345,9 @@ pub enum Effect {
         window_id: u32,
         text: String,
         digest_revision: u64,
+        /// The highest note seq `text` holds (`OrchEvent::OrchestratorWoken` drops
+        /// the notes up to it).
+        notes_seq: u64,
     },
 }
 
@@ -456,6 +462,10 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
         // Milestone 9 decision 29: a promotion recorded before milestone 9.
         EventKind::Tick => promote::on_tick(&mut state, now, &mut fx),
     }
+    // M9.9 review fixes, I2: for the orchestrator's own tool call, the blocks its edit
+    // caused are compared away (the run as the call left it); what the scheduler's
+    // passes block afterwards, a stall among them, is still noted.
+    let applied = quiet.then(|| state.runs.clone());
     for (id, run) in state.runs.iter_mut() {
         dispatch::schedule(run, now, &mut fx);
         orch_window::ended(run);
@@ -463,7 +473,8 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
         // M8b decision 33: the history records that are due, whatever the run's state.
         history::pass(run, now, &mut fx);
         // Milestone 9 decision 39: a note for each task this step blocked.
-        wake::blocked_notes(before.get(id), run, quiet);
+        let since = applied.as_ref().unwrap_or(&before);
+        wake::blocked_notes(since.get(id), run);
     }
     // Held events whose launches are over, or that waited too long (`early.rs`).
     early::sweep(&mut state, now, &mut fx);
@@ -495,9 +506,8 @@ fn finish(
                 if urgent {
                     super::orch::digest::note_change(run);
                 }
-                // Decision 39: this step's notes take its digest revision, and a
-                // wake-up is due when the orchestrator should see them.
-                wake::settle(run);
+                // Decision 39: a wake-up is due when the orchestrator should see its
+                // notes.
                 wakes.extend(wake::effect(run));
                 urgent
             }

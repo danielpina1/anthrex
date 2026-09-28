@@ -75,7 +75,7 @@ fn verify_refs(effects: &[Effect]) -> usize {
 }
 
 /// Every merge done, the review `mail-int1` then runs to `verdict_args`.
-fn reviewed(verdict_args: serde_json::Value) -> Fixture {
+pub(super) fn reviewed(verdict_args: serde_json::Value) -> Fixture {
     let mut fx = mail_epic(&["m1"]);
     merge_real(&mut fx, "t1", C1);
     merge_real(&mut fx, "m1", C2);

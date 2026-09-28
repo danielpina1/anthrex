@@ -12,10 +12,10 @@ use super::merge::pending_one;
 use super::orch::{ORCH, add, edit_plan, launched, orch_tool};
 use super::orch_restore::{restart, resume};
 use super::planners::{planner_ended, planning_mail, submit_epic, task_in};
-use crate::run::engine::{Effect, EventKind, OpResult, OrchEvent, ScoutEnd};
+use crate::run::engine::{Effect, EventKind, OpResult, OrchEvent, ScoutEnd, notes_seq};
 use crate::run::orch::contract::wake_text;
 
-fn notes(fx: &Fixture) -> Vec<String> {
+pub(super) fn notes(fx: &Fixture) -> Vec<String> {
     fx.run()
         .orch
         .orchestrator
@@ -26,7 +26,7 @@ fn notes(fx: &Fixture) -> Vec<String> {
 
 /// A planned run with `t1` and `t2` (which depends on `t1`), submitted and approved
 /// by the user; the orchestrator's notes emptied.
-fn approved() -> Fixture {
+pub(super) fn approved() -> Fixture {
     let mut fx = launched(false);
     let mut t2 = add("t2", "mail");
     t2["task"]["deps"] = json!(["t1"]);
@@ -41,10 +41,10 @@ fn approved() -> Fixture {
     fx
 }
 
-fn clear(fx: &mut Fixture) {
+pub(super) fn clear(fx: &mut Fixture) {
     let o = fx.run_mut().orch.orchestrator.as_mut().unwrap();
     o.notes.clear();
-    o.note_revs.clear();
+    o.note_seqs.clear();
 }
 
 fn cancel(id: &str) -> PlanEdit {
@@ -301,7 +301,7 @@ fn notes_are_capped_at_20_with_the_earlier_line() {
         .orchestrator
         .as_ref()
         .unwrap()
-        .note_revs
+        .note_seqs
         .clone();
     assert_eq!(revs.len(), 20);
     // Two more: the earlier line counts them.
@@ -326,7 +326,7 @@ fn notes_are_capped_at_20_with_the_earlier_line() {
     assert_eq!(notes_now[19], "sub-planner mail failed: boom");
 }
 
-fn wakes(effects: &[Effect]) -> Vec<(u32, String, u64)> {
+pub(super) fn wakes(effects: &[Effect]) -> Vec<(u32, String, u64)> {
     effects
         .iter()
         .filter_map(|e| match e {
@@ -335,6 +335,7 @@ fn wakes(effects: &[Effect]) -> Vec<(u32, String, u64)> {
                 window_id,
                 text,
                 digest_revision,
+                ..
             } if run_id == RUN_ID => Some((*window_id, text.clone(), *digest_revision)),
             _ => None,
         })
@@ -373,10 +374,17 @@ fn wake_effect_needs_live_window_setting_and_new_revision() {
     assert!(wakes(&fx.tick()).is_empty());
 }
 
-fn read(fx: &mut Fixture, revision: u64) -> Vec<Effect> {
+/// The orchestrator read the digest built from the run as it is now.
+pub(super) fn read_now(fx: &mut Fixture) -> Vec<Effect> {
+    let (revision, seq) = (fx.run().orch.digest_rev, notes_seq(fx.run()));
+    read(fx, revision, seq)
+}
+
+pub(super) fn read(fx: &mut Fixture, revision: u64, notes_seq: u64) -> Vec<Effect> {
     fx.next(EventKind::Orch(OrchEvent::DigestRead {
         run_id: RUN_ID.into(),
         digest_revision: revision,
+        notes_seq,
     }))
 }
 
@@ -384,19 +392,19 @@ fn read(fx: &mut Fixture, revision: u64) -> Vec<Effect> {
 fn digest_read_drops_notes_up_to_the_revision() {
     let mut fx = approved();
     edit(&mut fx, vec![PlanEdit::Pause]);
-    let first = fx.run().orch.digest_rev;
+    let (first, first_seq) = (fx.run().orch.digest_rev, notes_seq(fx.run()));
     edit(&mut fx, vec![PlanEdit::Resume]);
     let second = fx.run().orch.digest_rev;
     assert!(second > first);
     assert_eq!(notes(&fx).len(), 2);
-    read(&mut fx, first);
+    read(&mut fx, first, first_seq);
     assert_eq!(
         notes(&fx),
         vec!["the user edited the plan: resume".to_string()]
     );
     let now = fx.now;
     assert_eq!(fx.run().orch.digest_read_at, Some(now));
-    read(&mut fx, second);
+    read_now(&mut fx);
     assert!(notes(&fx).is_empty());
     assert!(
         fx.run()
@@ -404,7 +412,7 @@ fn digest_read_drops_notes_up_to_the_revision() {
             .orchestrator
             .as_ref()
             .unwrap()
-            .note_revs
+            .note_seqs
             .is_empty()
     );
 }
@@ -414,9 +422,11 @@ fn woken_clears_delivered_notes() {
     let mut fx = approved();
     let effects = edit(&mut fx, vec![PlanEdit::Pause]);
     let (_, _, revision) = wakes(&effects)[0].clone();
+    let notes_seq = notes_seq(fx.run());
     let effects = fx.next(EventKind::Orch(OrchEvent::OrchestratorWoken {
         run_id: RUN_ID.into(),
         digest_revision: revision,
+        notes_seq,
     }));
     let o = fx.run().orch.orchestrator.clone().unwrap();
     assert!(o.notes.is_empty());

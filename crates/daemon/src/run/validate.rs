@@ -46,7 +46,7 @@ fn size_label(s: Size) -> &'static str {
     }
 }
 
-fn is_valid_id(id: &str) -> bool {
+pub(crate) fn is_valid_id(id: &str) -> bool {
     let bytes = id.as_bytes();
     !bytes.is_empty()
         && bytes.len() <= ID_MAX

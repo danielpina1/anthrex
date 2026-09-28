@@ -4,67 +4,32 @@
 //! A **research** task runs a read-only scout session (`run::orch::launch::
 //! research_spec`) in a reader slot, with no worktree and no branch: its round's role is
 //! `Scout`, its mailbox `<task>.research`. Its `submit_scout_report` ends it `reported`
-//! with the report kept on the task; a turn without one gets `SCOUT_NUDGE` once and the
-//! second blocks it. A **review** task resolves its target (`OpKind::ResolveTarget`),
+//! with the report kept on the task; its session's rules are `research.rs`'s. A **review** task resolves its target (`OpKind::ResolveTarget`),
 //! then runs M8a's review round (`review.rs`) on that range: its first verdict, whatever
 //! it is, ends it `reported`, and nothing is merged or sent back. An **integration
 //! review** is a review task the engine adds itself once an epic's work is merged
 //! (decision 37). Research and review tasks never merge anything, integration reviews
 //! never approve anything but their epic's integration state, and completion is
-//! decision 38's (`may_complete`).
+//! decision 38's (`may_complete`); both are `integration.rs`'s.
 
 use proto::{
-    AgentRole, BlockReason, IntegrationState, RunState, Runtime, ScoutKind, Severity, Size,
-    TaskKind, TaskState, ToolCall, Verdict,
+    BlockReason, IntegrationState, RunState, Severity, Size, TaskKind, TaskState, Verdict,
 };
 
-use super::clock::stall_due;
-use super::dispatch::{block, history, new_round, window_limit_reached};
+use super::dispatch::{block, history};
 pub(super) use super::integration::{engine_owned, integration_pass, may_complete, record_merge};
 use super::requests::log;
+pub(super) use super::research::{
+    mailbox_task, research_round, resumed, stop_research, submit_research, watch,
+};
 use super::schedule::{
     dispatch_order, hub_holds_slot, is_reader_task, op_in_flight, readers_busy, size_check_pending,
 };
-use super::signals::end_round;
-use super::{Effect, OpId, OpKind, OpResult, ReplyId, emit_op, gate_holds, next_op, outbox, wake};
-use crate::headless::FailureKind;
+use super::{Effect, OpId, OpKind, OpResult, emit_op, gate_holds, next_op, wake};
 use crate::run::contract::sha7;
 use crate::run::model::{ReviewLevel, Run, Task};
-use crate::run::orch::contract::{integration_review_prompt, research_prompt, review_task_prompt};
-use crate::run::orch::launch::research_spec;
+use crate::run::orch::contract::{integration_review_prompt, review_task_prompt};
 use crate::run::phases::set_state;
-use crate::run::role_launch::{jitter_ms, session_uuid_of};
-use crate::scout::contract::SCOUT_NUDGE;
-use crate::scout::service::REPORT_ACCEPTED;
-
-/// Decision 35: the second turn with no report.
-pub const NO_REPORT: &str = "the research task ended two turns without a report";
-
-/// A research session whose process stopped mid-turn is resumed with this (decision
-/// 35's "deaths follow M8a's worker rules").
-pub const RESEARCH_RESUME_AFTER_EXIT: &str = "[anthrex] Your session's process stopped in the middle of a turn and has been resumed. Finish your research and call submit_scout_report, exactly once.";
-
-/// After a daemon restart, a research session that owes its report is resumed with this.
-pub const RESEARCH_RESUME: &str =
-    "[anthrex] The daemon restarted. Finish your research and call submit_scout_report.";
-
-/// The outbox address of research task `task`'s session (task ids cannot contain `.`).
-pub(super) fn mailbox(task: &str) -> String {
-    format!("{task}.research")
-}
-
-/// The task whose research session `address` is, if it is a research mailbox.
-pub(super) fn mailbox_task(address: &str) -> Option<&str> {
-    address.strip_suffix(".research")
-}
-
-/// Task `i`'s current research round, if it has one.
-pub(super) fn research_round(run: &Run, i: usize) -> Option<usize> {
-    run.tasks[i]
-        .rounds
-        .iter()
-        .rposition(|r| r.role == AgentRole::Scout)
-}
 
 pub(super) fn is_integration(task: &Task) -> bool {
     task.orch.integration_of.is_some()
@@ -98,49 +63,10 @@ pub(super) fn dispatch(run: &mut Run, now: u64, integration: bool, fx: &mut Vec<
             continue;
         }
         match task.spec.kind {
-            TaskKind::Research => launch_research(run, i, now, fx),
+            TaskKind::Research => super::research::launch(run, i, now, fx),
             _ => resolve(run, i, now, fx),
         }
     }
-}
-
-/// Decision 35: research session `n + 1` of task `i`, in the user's checkout.
-fn launch_research(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
-    if window_limit_reached(run, i, now) {
-        return;
-    }
-    let op = next_op(run);
-    run.tasks[i].session += 1;
-    let task = &run.tasks[i];
-    let spec = research_spec(run, task);
-    let first_turn = research_prompt(run, task);
-    let name = format!("{}/{}.s{}", run.short(), task.id(), task.session);
-    let uuid = (task.route.runtime == Runtime::Claude).then(|| session_uuid_of(run, op));
-    let jitter = jitter_ms(&run.id, task.id(), task.session);
-    let round = new_round(
-        AgentRole::Scout,
-        task.session,
-        task.route.clone(),
-        op,
-        uuid.clone(),
-        now,
-    );
-    let (id, session) = (task.id().to_string(), task.session);
-    run.tasks[i].rounds.push(round);
-    run.windows_created += 1;
-    set_state(&mut run.tasks[i], TaskState::Working, now);
-    history(run, i, now, format!("research session {session} starting"));
-    let kind = OpKind::CreateWindow {
-        name,
-        spec: Box::new(spec),
-        session_uuid: uuid,
-        first_turn,
-        project: run.project.clone(),
-        worktree: run.root.clone(),
-        jitter_ms: jitter,
-        extract: None,
-    };
-    emit_op(run, op, Some(&id), kind, fx);
 }
 
 /// Decision 36: a review task takes its reader slot and resolves its target first.
@@ -248,11 +174,9 @@ pub(super) fn review_first_turn(
     let Some(record) = run.orch.epics.iter().find(|e| e.epic == epic) else {
         return review_task_prompt(run, task, base, head, patch);
     };
-    // Its round: how many of the epic's integration reviews come up to it.
-    let round = run.tasks[..=i]
-        .iter()
-        .filter(|t| t.orch.integration_of.as_deref() == Some(epic))
-        .count() as u32;
+    // Its round: the `n` of its id `<e>-int<n>`, as its title says (M9.9 review
+    // fixes, M3).
+    let round = super::integration::round_of(task).unwrap_or(1);
     integration_review_prompt(run, record, round, base, head)
 }
 
@@ -298,251 +222,4 @@ pub(super) fn reviewed(run: &mut Run, i: usize, now: u64) {
     let text = format!("integration review of epic {epic}: {outcome}");
     log(run, now, text.clone());
     wake::note(run, text);
-}
-
-fn reply(fx: &mut Vec<Effect>, reply: ReplyId, result: Result<String, String>) {
-    fx.push(Effect::Reply { reply, result });
-}
-
-/// `submit_scout_report` from a research task's session (decision 35), in order: the
-/// caller is the task's current, live research round; the report validates as an area
-/// scout's (M8b's `scout::report::validate`). The report is kept, the task `reported`
-/// and the session retired.
-pub(super) fn submit_research(
-    run: &mut Run,
-    id: ReplyId,
-    call: &ToolCall,
-    now: u64,
-    fx: &mut Vec<Effect>,
-) {
-    let task_id = call.task_id.clone().unwrap_or_default();
-    let not_session = format!("this window is not the research session of task {task_id}");
-    let found = run.tasks.iter().position(|t| t.id() == task_id);
-    let current = found.and_then(|i| {
-        let task = &run.tasks[i];
-        let r = research_round(run, i)?;
-        let round = &task.rounds[r];
-        let live = !round.retiring && !round.ended && round.window_id == Some(call.window_id);
-        (call.role == AgentRole::Scout && task.state == TaskState::Working && live)
-            .then_some((i, r))
-    });
-    let Some((i, r)) = current else {
-        return reply(fx, id, Err(not_session));
-    };
-    let report = match crate::scout::report::validate(&call.args, ScoutKind::Area) {
-        Ok(report) => report,
-        Err(text) => return reply(fx, id, Err(text)),
-    };
-    let task = &mut run.tasks[i];
-    task.orch.research = Some(report);
-    set_state(task, TaskState::Reported, now);
-    task.block = None;
-    let round = &mut task.rounds[r];
-    round.retiring = true;
-    round.resume_op = None;
-    if let Some(window_id) = round.window_id {
-        fx.push(Effect::RetireWindow { window_id });
-    }
-    drop_mail(run, i);
-    history(run, i, now, "reported: its research report was recorded");
-    reply(fx, id, Ok(REPORT_ACCEPTED.to_string()));
-}
-
-fn drop_mail(run: &mut Run, i: usize) {
-    let address = mailbox(run.tasks[i].id());
-    run.outbox.retain(|m| m.task_id != address);
-}
-
-/// Stops task `i`'s live research session: the engine's kill, and its mail dropped (a
-/// cancel, a block).
-pub(super) fn stop_research(run: &mut Run, i: usize, fx: &mut Vec<Effect>) {
-    for round in run.tasks[i]
-        .rounds
-        .iter_mut()
-        .filter(|r| r.role == AgentRole::Scout && !r.retiring)
-    {
-        round.retiring = true;
-        round.resume_op = None;
-        if round.ended {
-            continue;
-        }
-        if round.route.runtime == Runtime::Codex && !round.turn_open && round.pid.is_none() {
-            round.ended = true;
-            continue;
-        }
-        if let Some(window_id) = round.window_id {
-            fx.push(Effect::KillWindow { window_id });
-        }
-    }
-    drop_mail(run, i);
-}
-
-/// The session is stopped and the task `blocked(environment)` with `text`.
-fn give_up(run: &mut Run, i: usize, text: String, now: u64, fx: &mut Vec<Effect>) {
-    stop_research(run, i, fx);
-    block(run, i, BlockReason::Environment, text, now);
-}
-
-/// Whether round `r` of task `i` is its research session still owing its report.
-fn owes_report(run: &Run, i: usize, r: usize) -> bool {
-    run.tasks[i].state == TaskState::Working
-        && research_round(run, i) == Some(r)
-        && !run.tasks[i].rounds[r].retiring
-}
-
-/// A research session's turn ended (decision 35): with no report, `SCOUT_NUDGE` is one
-/// more turn and a second such turn blocks the task. A failed turn is such a turn,
-/// except an authentication, billing or sandbox failure, which blocks at once.
-pub(super) fn turn_ended(
-    run: &mut Run,
-    i: usize,
-    r: usize,
-    outcome: crate::headless::TurnOutcome,
-    now: u64,
-    fx: &mut Vec<Effect>,
-) {
-    use crate::headless::TurnOutcome;
-    if !owes_report(run, i, r) {
-        return;
-    }
-    match outcome {
-        TurnOutcome::Interrupted => return,
-        TurnOutcome::Failed {
-            error,
-            kind:
-                FailureKind::Authentication | FailureKind::Billing | FailureKind::SandboxUnavailable,
-        } => {
-            return give_up(run, i, error, now, fx);
-        }
-        _ => {}
-    }
-    let round = &mut run.tasks[i].rounds[r];
-    if round.review_nudged {
-        return give_up(run, i, NO_REPORT.to_string(), now, fx);
-    }
-    round.review_nudged = true;
-    let address = mailbox(run.tasks[i].id());
-    outbox::queue_to(run, &address, r, SCOUT_NUDGE.to_string(), now);
-}
-
-/// A research session's process exited without the engine killing it: between turns
-/// the round is marked ended (a delivery resumes it); mid-turn, the first death in the
-/// round resumes the session and the second blocks the task.
-pub(super) fn exited(
-    run: &mut Run,
-    i: usize,
-    r: usize,
-    killed: bool,
-    now: u64,
-    fx: &mut Vec<Effect>,
-) {
-    let owes = owes_report(run, i, r);
-    let round = &mut run.tasks[i].rounds[r];
-    if killed || !owes || !round.turn_open {
-        return end_round(round, now);
-    }
-    round.deaths = round.deaths.saturating_add(1);
-    let resumable = round.window_id.zip(round.session_id.clone());
-    if round.deaths >= 2 || resumable.is_none() {
-        end_round(round, now);
-        let text = "the research session's process exited twice in one turn".to_string();
-        return give_up(run, i, text, now, fx);
-    }
-    let Some((window_id, session_id)) = resumable else {
-        return;
-    };
-    round.last_event = now;
-    let (id, session) = (run.tasks[i].id().to_string(), run.tasks[i].session);
-    let kind = OpKind::ResumeSession {
-        window_id,
-        session_id,
-        message: RESEARCH_RESUME_AFTER_EXIT.to_string(),
-        jitter_ms: jitter_ms(&run.id, &id, session),
-    };
-    let op = next_op(run);
-    run.tasks[i].rounds[r].resume_op = Some(op);
-    emit_op(run, op, Some(&id), kind, fx);
-    history(
-        run,
-        i,
-        now,
-        "its research session exited mid-turn; resuming it",
-    );
-}
-
-/// A research session's `ResumeSession` result: resumed, or the task blocked.
-pub(super) fn resumed(
-    run: &mut Run,
-    i: usize,
-    r: usize,
-    result: OpResult,
-    now: u64,
-    fx: &mut Vec<Effect>,
-) {
-    let round = &mut run.tasks[i].rounds[r];
-    round.resume_op = None;
-    let carried = std::mem::take(&mut round.carried);
-    run.outbox.retain(|m| !carried.contains(&m.id));
-    let error = match result {
-        OpResult::Resumed => return run.tasks[i].rounds[r].delivery_failures = 0,
-        OpResult::ResumeFailed { error } => error,
-        OpResult::Failed { message } => message,
-        _ => return,
-    };
-    end_round(&mut run.tasks[i].rounds[r], now);
-    if owes_report(run, i, r) {
-        let text = format!("the research session could not be resumed: {error}");
-        give_up(run, i, text, now, fx);
-    }
-}
-
-/// Every scheduler pass of a running run: an open research turn with no stream event
-/// for `stall_after_secs` blocks its task; a session a restart ended while it owed its
-/// report is resumed with [`RESEARCH_RESUME`], or blocks the task when it has no
-/// session to resume.
-pub(super) fn watch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
-    let stall_after = run.limits.stall_after_secs;
-    for i in 0..run.tasks.len() {
-        if run.tasks[i].spec.kind != TaskKind::Research {
-            continue;
-        }
-        let Some(r) = research_round(run, i) else {
-            continue;
-        };
-        if !owes_report(run, i, r) {
-            continue;
-        }
-        let round = &run.tasks[i].rounds[r];
-        let address = mailbox(run.tasks[i].id());
-        let waiting = run
-            .outbox
-            .iter()
-            .any(|m| m.task_id == address && m.delivered_at.is_none());
-        let busy = round.resume_op.is_some()
-            || op_in_flight(run, run.tasks[i].id(), |k| {
-                matches!(
-                    k,
-                    OpKind::CreateWindow { .. } | OpKind::ResumeSession { .. }
-                )
-            });
-        if round.ended && !waiting && !busy && round.relaunch.is_none() {
-            if round.session_id.is_none() {
-                let text = "the research session ended before it had an id to resume";
-                give_up(run, i, text.to_string(), now, fx);
-            } else {
-                outbox::queue_to(run, &address, r, RESEARCH_RESUME.to_string(), now);
-            }
-            continue;
-        }
-        if !round.ended && round.turn_open && now >= stall_due(round, stall_after) {
-            let text = format!("no stream event for {} minutes", stall_after / 60);
-            give_up(
-                run,
-                i,
-                format!("the research session stalled: {text}"),
-                now,
-                fx,
-            );
-        }
-    }
 }

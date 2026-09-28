@@ -85,64 +85,6 @@ pub(super) fn answer(
     }
 }
 
-/// Milestone 9 decision 25: the tasks in `blocked(mis_sized)` whose `brief`,
-/// `acceptance`, `size` or `route` the batch that made `edited` from `run` changed, and
-/// which are still so blocked. Every source's batch (`batch::apply_batch`).
-pub(super) fn rewritten(run: &Run, edited: &Run) -> Vec<String> {
-    let mis_sized = |t: &crate::run::model::Task| {
-        t.state == TaskState::Blocked
-            && t.block
-                .as_ref()
-                .is_some_and(|b| b.reason == BlockReason::MisSized)
-    };
-    edited
-        .tasks
-        .iter()
-        .filter(|t| mis_sized(t))
-        .filter(|t| {
-            run.task(t.id()).is_some_and(|old| {
-                mis_sized(old)
-                    && (old.spec.brief != t.spec.brief
-                        || old.spec.acceptance != t.spec.acceptance
-                        || old.spec.size != t.spec.size
-                        || old.spec.route != t.spec.route)
-            })
-        })
-        .map(|t| t.id().to_string())
-        .collect()
-}
-
-/// Decision 25: a rewritten mis-sized task re-enters exactly as `run retry` does (a
-/// fresh session at rung 2, `failures = 1`), once the batch is applied. One that is
-/// still L, or that waits for new dependencies, keeps its block, as `run retry` would
-/// refuse it. `blocked(human)`, `(conflict)` and `(environment)` are never restarted
-/// by an edit: only `run retry` lifts them.
-pub(super) fn restart_rewritten(run: &mut Run, ids: &[String], now: u64, fx: &mut Vec<Effect>) {
-    for id in ids {
-        let Some(i) = run.tasks.iter().position(|t| t.id() == id) else {
-            continue;
-        };
-        let task = &run.tasks[i];
-        if task.size == proto::Size::L
-            || (task.awaiting_deps && !super::schedule::deps_done(run, task))
-        {
-            continue;
-        }
-        let text = task
-            .block
-            .as_ref()
-            .map_or_else(String::new, |b| b.text.clone());
-        let why = format!("its plan was rewritten (it was blocked(mis_sized): {text})");
-        let how = super::requests::rung2(run, i, why, now, fx);
-        history(
-            run,
-            i,
-            now,
-            format!("rewritten by a plan edit; restarted at rung 2: {how}"),
-        );
-    }
-}
-
 fn worker_tool(run: &mut Run, id: ReplyId, call: &ToolCall, now: u64, fx: &mut Vec<Effect>) {
     let task_id = call.task_id.clone().unwrap_or_default();
     let found = run.tasks.iter().position(|t| t.id() == task_id);
