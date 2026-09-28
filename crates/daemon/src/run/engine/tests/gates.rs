@@ -395,6 +395,8 @@ fn check_failure_goes_up_the_ladder() {
         &reason,
         " crates/a/x.rs | 2 +-",
         "diff so far",
+        "",
+        "",
     );
     assert_eq!(first_turn, expected);
     assert!(first_turn.contains(&first) && first_turn.contains(&second));

@@ -2228,3 +2228,38 @@ These controller rulings answer the second M9.4 review, of `2e2c8ca`. They repla
    - These are pinning tests and passed before the change. Each goes red under the mutation that applies its rule to every changed task: dropping `new &&` from the reserved-id condition fails only the second, and replacing `new` with `true` in the epic rule fails only the first. `rules.rs` was restored from a copy after each.
 4. **An unknown task is reported before any epic rule.** A sub-planner's `split_task` of an unknown id reports `task <id>: task_id: no such task`, not an epic error for its would-be children. `Batch::split_owned` checks existence first, through `Batch::find`, now `pub(super)` so `edits_orch.rs` can call it.
    - Test: `edits_tests_orch.rs::a_planners_split_of_an_unknown_task_reports_the_unknown_task`, which splits `ghost` into a child naming another epic. It failed before the fix, reporting only the child's epic error.
+
+### Task M9.5 (Contracts and prompts)
+
+- **The texts.** `ORCHESTRATOR_CONTRACT` and `PLANNER_CONTRACT` were copied from Interfaces "Contracts (exact)" by script, not by hand, as were the worker contract's lines 10 and 11. `orchestrator_contract_is_exact`, `planner_contract_is_exact` and `worker_contract_is_exact` compare them byte for byte with a second copy made the same way. Every row of "Prompts and messages" is a `const` or a function in `run/orch/contract.rs`.
+- **The worker contract has 12 lines, and no `packed-refs.lock` line.** M9.1 check 11 assigns that line to task M9.13c ("What M9.13c still owes is a line in the worker contract"), and M9.5's `worker_contract_is_exact` fixes the contract at 12 lines. So M9.13c adds it, and updates this test to 13 lines.
+- **Readings of the prompt table:**
+  - **`review_task_prompt` takes `patch`**, which the table's signature leaves out. The table has a clamp line, "The diff below was cut at 16 KiB", and `REVIEWER_CONTRACT` says "The change's diff is in your prompt", but the table's lines never include the diff. So after the acceptance criteria come `Diff (<b>..<h>):` and the patch, clamped to `REVIEW_DIFF_MAX`, as in `reviewer_prompt`. The brief stays last. The clamp line appears when the clamped patch is shorter than the patch. An S task is reviewed at `small`, and any other size at `medium`.
+  - **Both planner prompts end with `epic.request`**, the live or last session's brief. The engine sets it to the `spawn_subplanner` brief on each start. `integration_review_prompt` ends with `epic.brief`, which is what the epic asked for.
+  - **`replan_prompt` places the epic's current tasks** directly before `What to plan:`, after the blank line. It writes `- none` for an epic with no tasks, as `planner_prompt` does for no planned tasks.
+  - **`orchestrator_first_prompt`** writes `Path: <path>` with no parentheses when the run has no triage, and `fallback` alone when the fallback has no reason.
+  - **Earlier findings in `integration_review_prompt`** are the critical and important findings of every task with `orch.integration_of == Some(e)`, in plan order.
+  - **`message_text`** labels a `Planner` source `orchestrator`. A sub-planner never sends a message (decision 22), so this never happens.
+  - **`refresh_clean`** is `refresh_clean(n, list: &[(sha, subject)])`. It names at most 10 commits, then `and <n - named> more`. It always writes `commits`, as the table does, even for one.
+  - **`notes_section` and `worker_messages_for_review`** sort by `at`, stably. Each returns an empty string when there is nothing to show, and the prompts then leave the section out.
+  - **`hh:mm`** comes from a UTC helper in `run/orch/contract.rs`, because M9.7 deletes `model_adapt::hh_mm`.
+- **The scout extract (decision 34).**
+  - Each report is written as `Scout report <id>:`, then the summary cut to 4000 characters, then `Files: <paths joined with , >`, or `Files: none` when there are no files. Reports are joined by one newline.
+  - Past 12 KiB the joined text is cut at a character boundary, so the later reports go first. It then ends with `EXTRACT_CUT_MARKER`, `\n[anthrex] The later scout reports were cut here to fit.`, whose wording is the implementer's.
+  - An unreadable report is dropped by a new pure helper, `readable_reports(Vec<(id, Result<ScoutReport, String>)>)`, which logs a `tracing::warn!` for each one it drops. `scout_extract` keeps the Interfaces signature.
+- **Model (outside the file list).**
+  - `run/orch/mod.rs` gains `TaskMessage` (Interfaces). The `TaskOrch.messages` field is left to M9.13a.
+  - `RunOrch.yes` (Interfaces; M9.7's `make_planned` sets it) is added now, because the first prompt's plan-gate line reads it. `old_run_json_loads` still passes.
+- **`WAKE_MAX_BYTES`** is defined in `run/orch/contract.rs`, because `wake_text` clamps with it. Interfaces place it in `run/driver/wake.rs`; M9.13 should use this one, not define a second.
+- **`run/contract.rs`.**
+  - Production code grew 27 lines, against a budget of 10. That is the two contract lines, one new parameter on `reviewer_prompt`, two each on `worker_prompt` and `handover_prompt` (rustfmt wraps `handover_prompt`'s signature), and the section loop. `engine/dispatch.rs` grew 1 line, to 590, because the first worker prompt is now a closure.
+  - The file is still 557 lines, down from 584, because the diff-clamp unit tests moved from its inline `mod tests` to `run/contract_tests.rs`, unchanged.
+  - `floor_boundary` became `pub(crate)` for the extract's cut.
+- **Test files.** The prompt tests are in a second file, `run/orch/contract_tests_prompts.rs` (435 lines), beside `contract_tests.rs` (349). One file would have been over 700 lines. `wake_text_is_clamped` has an exact-text companion, `wake_text_is_exact_and_clamped`. `short_texts_are_exact`, `planned_message_is_exact`, `refresh_texts_are_exact`, `scout_extract_is_exact`, `notes_section_is_exact` and `worker_messages_for_review_is_exact` cover the table rows that have no test named in the task. `contracts_do_not_vary` checks that neither contract contains either run's id, goal or root, and that the two first prompts differ.
+- **Left open.**
+  - The engine's callers pass `""` for `worker_prompt`/`handover_prompt`'s `extract` and `notes` and for `reviewer_prompt`'s `messages` (`engine/dispatch.rs`, `engine/review.rs`). No task's text says who fills them.
+    - Decision 34 says the driver reads the reports when it builds `OpKind::CreateWindow`, and puts the extract in `first_turn`. That fits M9.8, which feeds the same extract to `planner_prompt`.
+    - The notes and messages come from `Task.orch.messages`, which is M9.13a's.
+  - A controller ruling should assign both.
+- **Outstanding real-CLI checks.** The contracts name each tool as `<tool> (in Claude: mcp__anthrex__<tool>)`, the tool-search fix's form, as the brief says. Whether a real Claude session sees those ids is M9.1 check 10, which is still outstanding. The wake text's paste delivery is check 6, and is M9.13's. No other M9.5 text depends on checks 1 to 7 or 10.
+- **Red before green.** Every new test failed to compile before the change: there was no `run::orch::contract`, `TaskMessage` or `RunOrch.yes`, and the prompt functions had the old signatures. With the new code in place, removing lines 10 and 11 from `WORKER_CONTRACT` again failed four tests: `worker_contract_is_exact`, `contracts_round_trip_through_toml_string`, `change_message_requires_acknowledgement_in_task_done` and `contracts_name_every_tool_by_its_claude_id`. `contract.rs` was then restored from a copy.

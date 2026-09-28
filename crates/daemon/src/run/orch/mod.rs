@@ -11,11 +11,12 @@
 //! config crate has no serde, so `config::PlannerConfig` cannot be persisted; these are
 //! its serde mirrors, of proto types.
 
-use proto::{Effort, IntegrationState, Route, Runtime, Strength, TokenUsage};
+use proto::{Effort, IntegrationState, MessageKind, Route, Runtime, Strength, TokenUsage};
 use serde::{Deserialize, Serialize};
 
 use super::model::OpId;
 
+pub mod contract;
 pub mod rules;
 
 /// Who sent an edit batch. Plan files and the user's `run edit` are [`EditSource::User`]
@@ -46,6 +47,8 @@ impl EditSource {
 pub struct RunOrch {
     /// Every epic the orchestrator created with `spawn_subplanner`, in creation order.
     pub epics: Vec<EpicRecord>,
+    /// The goal request's `yes`: a submitted plan starts at once (decisions 26, 27).
+    pub yes: bool,
 }
 
 /// `Task.orch`: a task's milestone 9 state. Absent from an older run: empty.
@@ -54,6 +57,17 @@ pub struct RunOrch {
 pub struct TaskOrch {
     /// Decision 37: the epic an engine-made integration review task reviews.
     pub integration_of: Option<String>,
+}
+
+/// Decision 42d: one accepted `message` to a task, kept across sessions for its prompts
+/// ([`contract::notes_section`]). Task M9.13a records them in `Task.orch`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskMessage {
+    pub at: u64,
+    pub source: EditSource,
+    pub kind: MessageKind,
+    pub text: String,
+    pub delivered: bool,
 }
 
 /// A sub-planner's phase (decision 32). `Queued` and `Planning` are live.

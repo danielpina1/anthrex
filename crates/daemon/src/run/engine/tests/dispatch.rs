@@ -160,7 +160,7 @@ fn approve_starts_dispatch_and_yes_skips_the_gate() {
     assert_eq!(spec.instructions, WORKER_CONTRACT);
     assert_eq!(spec.runtime, Runtime::Claude);
     assert_eq!(uuid, &Some(session_uuid(RUN_ID, *op)));
-    assert_eq!(first_turn, &worker_prompt(fx.run(), fx.task("t1")));
+    assert_eq!(first_turn, &worker_prompt(fx.run(), fx.task("t1"), "", ""));
     assert_eq!(fx.task("t1").start_commit.as_deref(), Some(BASE));
     let round = fx.task("t1").rounds.last().unwrap();
     assert!(round.turn_open, "the first turn is open from dispatch");

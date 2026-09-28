@@ -284,7 +284,7 @@ fn reviewer_prompt_uses_the_latest_summary() {
         check(Some("old summary"), Some(DeciderSource::Decider)),
         check(Some("error: a::works"), Some(DeciderSource::Decider)),
     ];
-    let prompt = reviewer_prompt(fx.run(), &task, 1, BASE, HEAD, "diff");
+    let prompt = reviewer_prompt(fx.run(), &task, 1, BASE, HEAD, "diff", "");
     assert!(
         prompt.contains("Last check (40 lines):\nerror: a::works\n"),
         "{prompt}"
@@ -294,7 +294,7 @@ fn reviewer_prompt_uses_the_latest_summary() {
 
     // A fallback's record shows the tail, as in M8a.
     task.checks.push(check(None, Some(DeciderSource::Fallback)));
-    let prompt = reviewer_prompt(fx.run(), &task, 1, BASE, HEAD, "diff");
+    let prompt = reviewer_prompt(fx.run(), &task, 1, BASE, HEAD, "diff", "");
     assert!(
         prompt.contains(&format!("Last check (40 lines):\n{TAIL}\n")),
         "{prompt}"

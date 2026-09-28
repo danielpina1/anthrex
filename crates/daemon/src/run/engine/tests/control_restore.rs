@@ -295,7 +295,7 @@ fn a_failed_resume_starts_a_fresh_session() {
     };
     let t1 = fx.task("t1");
     let reason = "the session could not be resumed: no such session";
-    let expected = handover_prompt(fx.run(), t1, reason, &stat, &patch);
+    let expected = handover_prompt(fx.run(), t1, reason, &stat, &patch, "", "");
     assert_eq!(first_turn, format!("{expected}\n\n{RESUME_WORKER}"));
     assert_eq!((t1.session, t1.rung, t1.failures), (2, 0, 0));
     assert!(t1.rounds[0].ended && t1.rounds[0].window_id == Some(window));

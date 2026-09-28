@@ -139,7 +139,7 @@ pub(super) fn review_ready(
     let route = pick_reviewer(&run.roster, &author, level);
     let spec = reviewer_spec(run, task, &route);
     let round_no = spec.run_ref.as_ref().map_or(1, |r| r.session);
-    let first_turn = reviewer_prompt(run, task, round_no, &base, &head, &patch);
+    let first_turn = reviewer_prompt(run, task, round_no, &base, &head, &patch, "");
     let name = format!("{}/{}.r{round_no}", run.short(), task.id());
     let uuid = (route.runtime == Runtime::Claude).then(|| session_uuid_of(run, op));
     let jitter = jitter_ms(&run.id, &format!("{}.r", task.id()), round_no);

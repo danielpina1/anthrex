@@ -255,7 +255,8 @@ fn launch_ready(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 
 /// A new worker session for task `i`, starting at `start` (decisions 24–26, 30).
 fn launch_worker(run: &mut Run, i: usize, start: String, now: u64, fx: &mut Vec<Effect>) {
-    launch(run, i, Some(start), worker_prompt, now, fx);
+    let prompt = |run: &Run, task: &Task| worker_prompt(run, task, "", "");
+    launch(run, i, Some(start), prompt, now, fx);
 }
 
 /// A fresh worker session for a started task (rung 2, or a resume that failed): its
@@ -271,7 +272,7 @@ pub(super) fn launch_fresh(
     fx: &mut Vec<Effect>,
 ) {
     let prompt = |run: &Run, task: &Task| {
-        let mut text = handover_prompt(run, task, &fresh.reason, stat, patch);
+        let mut text = handover_prompt(run, task, &fresh.reason, stat, patch, "", "");
         if let Some(append) = &fresh.append {
             text.push_str("\n\n");
             text.push_str(append);
