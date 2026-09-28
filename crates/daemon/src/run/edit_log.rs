@@ -59,6 +59,8 @@ fn describe_one(edit: &PlanEdit) -> String {
         PlanEdit::Pause => "pause".to_string(),
         PlanEdit::Resume => "resume".to_string(),
         PlanEdit::Finish => "finish".to_string(),
+        PlanEdit::Message { to, .. } => format!("message to {to}"),
+        PlanEdit::Refresh { task_id } => format!("refresh {task_id}"),
     }
 }
 

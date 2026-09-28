@@ -240,6 +240,7 @@ fn call(window_id: u32, scout: &str) -> ToolCall {
         tool: "submit_scout_report".into(),
         args: report_args(),
         scout_id: Some(scout.into()),
+        epic: None,
     }
 }
 

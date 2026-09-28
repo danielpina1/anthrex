@@ -170,6 +170,13 @@ pub(super) fn a_task_info() -> TaskInfo {
         brief: String::new(),
         acceptance: Vec::new(),
         route_spec: RouteSpec::default(),
+        hold: None,
+        review_target: None,
+        research_bytes: None,
+        message_count: 0,
+        last_message_kind: None,
+        last_message_line: None,
+        task_notes: Vec::new(),
     }
 }
 
@@ -227,6 +234,11 @@ pub(super) fn a_run_info() -> RunInfo {
         planners: Vec::new(),
         estimate_left_secs: None,
         bound_ratio_permille: None,
+        orchestrator: None,
+        holds: Vec::new(),
+        integration: Vec::new(),
+        digest_revision: 0,
+        research_report: None,
     }
 }
 
@@ -239,5 +251,6 @@ pub(super) fn a_tool_call() -> ToolCall {
         tool: "task_done".into(),
         args: serde_json::json!({"summary": "ok"}),
         scout_id: None,
+        epic: None,
     }
 }

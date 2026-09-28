@@ -89,6 +89,7 @@ fn single_code_goal_takes_the_fast_path() {
             scout_refs: vec![],
             route: RouteSpec::default(),
             budget: None,
+            review_target: None,
         }
     );
     // A docs goal is fast too, with the kind carried.

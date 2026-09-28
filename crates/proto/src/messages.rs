@@ -79,6 +79,12 @@ pub enum ClientMsg {
     },
     Run(RunRequest),
     Shutdown,
+    /// Milestone 9 decision 2: a run request whose `Done` or `Refused` reply echoes
+    /// `id`, so a client matches its reply by id, never by request name.
+    RunTagged {
+        id: u64,
+        request: RunRequest,
+    },
 }
 
 /// Daemon → client.
@@ -509,6 +515,7 @@ mod tests {
             DaemonMsg::Run(crate::run_wire::RunReply::Refused {
                 request: "run".into(),
                 message: "runs are not available yet".into(),
+                request_id: None,
             }),
         ];
         for message in daemon_messages {

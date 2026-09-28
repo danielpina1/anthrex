@@ -130,11 +130,13 @@ async fn every_milestone_8b_request_is_answered_by_its_task() {
             yes: true,
             trust_project: false,
             unconfined_checks: false,
+            orchestrator: None,
         })
         .await,
         proto::RunReply::Refused {
             request: request::START_GOAL.to_string(),
             message: not_running.clone(),
+            request_id: None,
         }
     );
     assert_eq!(
@@ -151,6 +153,77 @@ async fn every_milestone_8b_request_is_answered_by_its_task() {
         proto::RunReply::Refused {
             request: request::STATS.to_string(),
             message: format!("not a git repository: {}", here.display()),
+            request_id: None,
         }
     );
+}
+
+/// Milestone 9 task 2 (decision 2): a `ClientMsg::RunTagged` request is answered like
+/// `ClientMsg::Run`, and its `Done` or `Refused` reply echoes the id; an untagged
+/// request's reply carries none.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tagged_run_request_is_answered_with_its_id() {
+    use proto::RunReply;
+    let dir = tempfile::Builder::new()
+        .prefix("ax-runs9")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let socket = dir.path().join("d.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let (manager, _events) =
+        WindowManager::new(ManagerConfig::new(socket.clone(), "/bin/sh".into()));
+    let git = GitWiring::new(config::Git {
+        enabled: false,
+        ..config::Git::default()
+    });
+    let ctx = RunContext::new(
+        dir.path().join("data"),
+        manager.config(),
+        config::Orchestrator::default(),
+        git.registry.clone(),
+    );
+    let runs = RunService::new(manager.clone(), ctx);
+    let shutdown = CancellationToken::new();
+    runs.spawn(shutdown.clone());
+    tokio::spawn(serve(listener, manager, git, runs, shutdown.clone()));
+
+    let stream = UnixStream::connect(&socket).await.unwrap();
+    let (mut rd, mut wr) = stream.into_split();
+    let hello = ClientMsg::Hello {
+        proto_version: PROTO_VERSION,
+        client: ClientKind::Cli,
+    };
+    write_frame(&mut wr, &hello).await.unwrap();
+    let welcome = read_frame::<_, DaemonMsg>(&mut rd).await.unwrap();
+    assert!(
+        matches!(welcome, Some(DaemonMsg::Welcome { .. })),
+        "{welcome:?}"
+    );
+    // `run stats` outside a repository is refused at once, whoever asks.
+    let stats = RunRequest::Stats {
+        dir: dir.path().to_path_buf(),
+    };
+    let tagged = ClientMsg::RunTagged {
+        id: 7,
+        request: stats.clone(),
+    };
+    for (msg, expected) in [(tagged, Some(7)), (ClientMsg::Run(stats), None)] {
+        write_frame(&mut wr, &msg).await.unwrap();
+        let reply = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                match read_frame::<_, DaemonMsg>(&mut rd).await {
+                    Ok(Some(DaemonMsg::Run(reply))) => return reply,
+                    Ok(Some(_)) => continue,
+                    other => panic!("the connection ended: {other:?}"),
+                }
+            }
+        })
+        .await
+        .expect("the request is answered");
+        let RunReply::Refused { request_id, .. } = reply else {
+            panic!("refused: {reply:?}");
+        };
+        assert_eq!(request_id, expected);
+    }
+    shutdown.cancel();
 }

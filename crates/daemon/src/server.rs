@@ -449,10 +449,8 @@ async fn handle_client(
                 }
                 None
             }
-            ClientMsg::Run(request) => {
-                run_api.handle(request);
-                None
-            }
+            ClientMsg::Run(request) => run_api.handle(request, None),
+            ClientMsg::RunTagged { id, request } => run_api.handle(request, Some(id)),
         };
         if let Some(reply) = reply
             && out_tx.send(reply).await.is_err()

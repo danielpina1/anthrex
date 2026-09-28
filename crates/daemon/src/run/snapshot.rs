@@ -99,12 +99,23 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
             .map(|e| PlanEditInfo {
                 at: e.at,
                 text: e.text.clone(),
+                // Milestone 9 decision 40 records sources, refusals and recipients.
+                source: String::new(),
+                accepted: true,
+                error: None,
+                recipients: Vec::new(),
             })
             .collect(),
         plan_edits_since_approval: run.plan_edits_since_approval,
         planners: Vec::new(),
         estimate_left_secs: None,
         bound_ratio_permille: None,
+        // Milestone 9: filled by its later tasks.
+        orchestrator: None,
+        holds: Vec::new(),
+        integration: Vec::new(),
+        digest_revision: 0,
+        research_report: None,
     }
 }
 
@@ -124,6 +135,7 @@ pub(crate) fn run_usage(run: &Run) -> RunUsage {
             AgentRole::Reviewer => "reviewer",
             AgentRole::Scout => "scout",
             AgentRole::Orchestrator => "orchestrator",
+            AgentRole::Planner => "planner",
         };
         credit(role, round.usage);
     }
@@ -311,5 +323,12 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64) -> TaskInfo 
         brief: t.spec.brief.clone(),
         acceptance: t.spec.acceptance.clone(),
         route_spec: t.spec.route.clone(),
+        hold: None,
+        review_target: None,
+        research_bytes: None,
+        message_count: 0,
+        last_message_kind: None,
+        last_message_line: None,
+        task_notes: Vec::new(),
     }
 }

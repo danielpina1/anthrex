@@ -44,7 +44,7 @@ pub fn run_status(run: &RunInfo) -> Status {
         {
             Status::Attention
         }
-        RunState::Running => Status::Working,
+        RunState::Running | RunState::Planning => Status::Working,
         RunState::Complete | RunState::Accepted => Status::Done,
         // Terminal: never shown (decision 6), mapped only to keep the match exhaustive.
         RunState::Discarded | RunState::Failed => Status::Exited,

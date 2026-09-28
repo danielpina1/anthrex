@@ -75,6 +75,7 @@ pub(super) fn amend(route: Option<RouteSpec>, size: Option<Size>) -> PlanEdit {
         test_mode: None,
         test_mode_reason: None,
         priority: None,
+        deps: None,
     }
 }
 
@@ -123,6 +124,7 @@ pub(super) fn done(request: &str, message: &str) -> RunReply {
     RunReply::Done {
         request: request.into(),
         message: message.into(),
+        request_id: None,
     }
 }
 
@@ -130,6 +132,7 @@ pub(super) fn refused(request: &str, message: &str) -> RunReply {
     RunReply::Refused {
         request: request.into(),
         message: message.into(),
+        request_id: None,
     }
 }
 
@@ -413,6 +416,7 @@ fn a_mode_other_than_tdd_needs_a_reason() {
             test_mode_reason: Some("renames only".into()),
             priority: None,
             size: None,
+            deps: None,
         }])
     );
 }
@@ -436,6 +440,7 @@ fn the_brief_round_trips_its_newlines() {
             test_mode_reason: None,
             priority: None,
             size: None,
+            deps: None,
         }])
     );
 }

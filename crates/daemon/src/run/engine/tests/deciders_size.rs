@@ -167,6 +167,7 @@ fn an_amend_never_lowers_a_cross_check_raise() {
             test_mode_reason: None,
             priority: None,
             size: Some(Size::S),
+            deps: None,
         }],
     );
     assert!(replies(&effects)[0].is_ok(), "{effects:#?}");
@@ -379,6 +380,7 @@ fn an_edit_cross_checks_only_the_touched_tasks() {
                 test_mode_reason: None,
                 priority: None,
                 size: None,
+                deps: None,
             },
         ],
     );

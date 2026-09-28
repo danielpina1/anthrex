@@ -425,6 +425,7 @@ impl TaskEditForm {
                 .then(|| reason.to_string()),
             priority: None,
             size: (self.size != original.size).then_some(self.size),
+            deps: None,
         };
         let changed = route_changed
             || mode_changed

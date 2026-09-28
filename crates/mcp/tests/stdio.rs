@@ -68,6 +68,7 @@ async fn tool_call_is_forwarded_with_role_run_task_and_window() {
             tool: "task_done".into(),
             args,
             scout_id: None,
+            epic: None,
         })
     );
 
@@ -198,6 +199,7 @@ async fn a_scout_call_carries_its_scout_id() {
             tool: "submit_scout_report".into(),
             args,
             scout_id: Some("onboarding-1".into()),
+            epic: None,
         })
     );
 }

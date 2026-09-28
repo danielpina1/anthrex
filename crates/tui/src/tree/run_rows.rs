@@ -36,6 +36,7 @@ pub fn round_label(role: AgentRole, session: u32, number: u32) -> String {
         AgentRole::Reviewer => format!("review #{number}"),
         AgentRole::Orchestrator => format!("orchestrator #{session}"),
         AgentRole::Scout => format!("scout #{session}"),
+        AgentRole::Planner => format!("planner #{session}"),
     }
 }
 
@@ -85,7 +86,10 @@ fn rounds_with<'a>(
                     });
                 }
             }
-            AgentRole::Reviewer | AgentRole::Orchestrator | AgentRole::Scout => {
+            AgentRole::Reviewer
+            | AgentRole::Orchestrator
+            | AgentRole::Scout
+            | AgentRole::Planner => {
                 rounds.push(single(info.round));
             }
         }
@@ -102,6 +106,7 @@ fn role_rank(role: AgentRole) -> u8 {
         AgentRole::Reviewer => 1,
         AgentRole::Orchestrator => 2,
         AgentRole::Scout => 3,
+        AgentRole::Planner => 4,
     }
 }
 

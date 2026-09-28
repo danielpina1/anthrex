@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::adapt::TriageInfo;
 use crate::history::HistoryStats;
+use crate::orch::OrchestratorChoice;
 use crate::profile::{
     DroppedCommand, ProfileMeta, ProfileSource, ProfileStatus, ProfileVerification,
 };
@@ -24,6 +25,9 @@ pub struct ToolCall {
     /// Milestone 8b: the calling scout's id (`anthrex mcp --scout`).
     #[serde(default)]
     pub scout_id: Option<String>,
+    /// Milestone 9: the calling sub-planner's epic (`anthrex mcp --epic`).
+    #[serde(default)]
+    pub epic: Option<String>,
 }
 
 /// Client → daemon, carried inside `ClientMsg::Run`.
@@ -82,14 +86,29 @@ pub enum RunRequest {
         yes: bool,
         trust_project: bool,
         unconfined_checks: bool,
+        /// Milestone 9 decision 6: `--orchestrator <runtime>[:<model>]`.
+        #[serde(default)]
+        orchestrator: Option<OrchestratorChoice>,
     },
     Promote {
         run_id: String,
+        /// Milestone 9 decision 6.
+        #[serde(default)]
+        orchestrator: Option<OrchestratorChoice>,
     },
     Stats {
         dir: PathBuf,
     },
     Profile(ProfileRequest),
+    // Milestone 9 decision 28: answered with `request::APPROVE` and `request::REJECT`.
+    ApproveHold {
+        run_id: String,
+        hold: String,
+    },
+    RejectHold {
+        run_id: String,
+        hold: String,
+    },
 }
 
 /// `anthrex profile …`, carried inside `RunRequest::Profile` (milestone 8b decision 10).
@@ -134,13 +153,19 @@ pub enum RunReply {
         run_id: String,
         state: RunState,
     },
+    /// `request_id` (milestone 9 decision 2) echoes a `ClientMsg::RunTagged` id, and
+    /// is `None` for a `ClientMsg::Run`.
     Done {
         request: String,
         message: String,
+        #[serde(default)]
+        request_id: Option<u64>,
     },
     Refused {
         request: String,
         message: String,
+        #[serde(default)]
+        request_id: Option<u64>,
     },
     /// `base_moved`: `Some` when accepting would land onto an advanced base and the
     /// client must confirm `"<run id>@<to>"`.
@@ -164,6 +189,36 @@ pub enum RunReply {
     /// small; a `Box` is invisible on the wire.
     Profile(Box<ProfileReply>),
     Stats(HistoryStats),
+}
+
+impl RunReply {
+    /// `Done` for an untagged request (`request_id: None`).
+    pub fn done(request: impl Into<String>, message: impl Into<String>) -> RunReply {
+        RunReply::Done {
+            request: request.into(),
+            message: message.into(),
+            request_id: None,
+        }
+    }
+
+    /// `Refused` for an untagged request (`request_id: None`).
+    pub fn refused(request: impl Into<String>, message: impl Into<String>) -> RunReply {
+        RunReply::Refused {
+            request: request.into(),
+            message: message.into(),
+            request_id: None,
+        }
+    }
+
+    /// Stamps a tagged request's id on the replies it is matched by (`Done` and
+    /// `Refused`); every other reply is returned as it is.
+    pub fn tagged(mut self, id: Option<u64>) -> RunReply {
+        if let RunReply::Done { request_id, .. } | RunReply::Refused { request_id, .. } = &mut self
+        {
+            *request_id = id;
+        }
+        self
+    }
 }
 
 /// The answer to a `ProfileRequest`, carried inside `RunReply::Profile`. Built once per

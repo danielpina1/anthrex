@@ -44,7 +44,7 @@ pub(crate) fn round_inspection(
     );
     let fields = match info.role {
         AgentRole::Reviewer => reviewer_fields(task, round, app),
-        AgentRole::Worker | AgentRole::Orchestrator | AgentRole::Scout => {
+        AgentRole::Worker | AgentRole::Orchestrator | AgentRole::Scout | AgentRole::Planner => {
             worker_fields(task, round, limited, app)
         }
     };

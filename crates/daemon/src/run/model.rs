@@ -495,6 +495,9 @@ pub struct Run {
     /// stored profile), for every routing decision's input.
     #[serde(default)]
     pub profile_languages: Vec<String>,
+    /// Milestone 9 decision 43: role-routing records not yet appended to the history.
+    #[serde(default)]
+    pub role_routing_decisions: Vec<proto::RoleRoutingDecision>,
     /// M8b decision 33: the run was started with history (milestone 8b.16 on). A run
     /// started before has no phases, diffs or routing decisions, and writes none.
     #[serde(default)]

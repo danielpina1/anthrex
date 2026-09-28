@@ -119,6 +119,7 @@ pub fn record_id(line: &HistoryLine) -> &str {
         HistoryLine::Task(r) => &r.record_id,
         HistoryLine::Run(r) => &r.record_id,
         HistoryLine::Revert(r) => &r.record_id,
+        HistoryLine::RoleRoute(r) => &r.record_id,
     }
 }
 

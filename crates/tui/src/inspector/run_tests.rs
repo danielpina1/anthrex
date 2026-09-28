@@ -186,6 +186,10 @@ fn run_fields_with_one_edit_and_yes() {
         run.plan_edits = vec![PlanEditInfo {
             at: GEMINI_DAY + 8 * 3600,
             text: "cancel t3".into(),
+            source: String::new(),
+            accepted: true,
+            error: None,
+            recipients: Vec::new(),
         }];
         run.plan_edits_since_approval = 1;
     });

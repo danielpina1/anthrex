@@ -131,6 +131,7 @@ fn half(id: &str, owns: &str) -> PlanTask {
         scout_refs: vec![],
         route: Default::default(),
         budget: None,
+        review_target: None,
     }
 }
 

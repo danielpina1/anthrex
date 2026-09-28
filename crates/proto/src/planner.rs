@@ -30,4 +30,7 @@ pub struct PlannerInfo {
     pub edits_rejected: u32,
     pub last_rejection: Option<String>,
     pub replans: Vec<String>,
+    /// Milestone 9: why the planner ended as it did, when it says.
+    #[serde(default)]
+    pub note: Option<String>,
 }

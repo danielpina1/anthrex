@@ -112,6 +112,7 @@ async fn a_blank_goal_is_refused_before_anything_else() {
         let RunReply::Refused {
             request: r,
             message,
+            ..
         } = reply
         else {
             panic!("not refused: {reply:?}");

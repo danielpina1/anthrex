@@ -212,7 +212,7 @@ fn round_glyph(task: &TaskInfo, round: &DisplayRound<'_>, app: &App) -> (&'stati
                 None => ("–", theme::DIM),
             }
         }
-        AgentRole::Worker | AgentRole::Orchestrator | AgentRole::Scout => {
+        AgentRole::Worker | AgentRole::Orchestrator | AgentRole::Scout | AgentRole::Planner => {
             if is_live {
                 live(round.window, app.rate_limited(info), app.spinner_frame)
             } else if task.state == TaskState::Blocked && last_worker_round(task, round) {

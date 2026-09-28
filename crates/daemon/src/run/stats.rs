@@ -89,6 +89,8 @@ pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
         match line {
             HistoryLine::Task(t) => tasks.push(t),
             HistoryLine::Run(r) => runs.push(r),
+            // Decision 43: role-routing records never count toward the aggregates.
+            HistoryLine::RoleRoute(_) => {}
             HistoryLine::Revert(r) => match &r.task_id {
                 Some(task) => {
                     task_reverts.insert((r.run_id.as_str(), task.as_str()));

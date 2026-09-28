@@ -205,7 +205,7 @@ fn history_lines_are_tagged() {
         assert!(json.starts_with(&format!("{{\"type\":\"{tag}\"")), "{json}");
         assert_eq!(serde_json::from_str::<HistoryLine>(&json).unwrap(), line);
     }
-    assert_eq!(HISTORY_VERSION, 1);
+    assert_eq!(HISTORY_VERSION, 2);
 }
 
 #[test]
@@ -282,9 +282,11 @@ fn every_new_request_and_reply_round_trips() {
             yes: true,
             trust_project: true,
             unconfined_checks: false,
+            orchestrator: None,
         },
         RunRequest::Promote {
             run_id: "run-a1b2".into(),
+            orchestrator: None,
         },
         RunRequest::Stats { dir: dir.clone() },
         RunRequest::Profile(ProfileRequest::Status { dir: dir.clone() }),

@@ -225,7 +225,11 @@ async fn dispatch(command: RunCommand, socket: &Path, dir: Option<PathBuf>) -> a
         }
         RunCommand::Promote { run } => {
             let run_id = runs.resolve(&run).await?;
-            runs.done(RunRequest::Promote { run_id }).await
+            runs.done(RunRequest::Promote {
+                run_id,
+                orchestrator: None,
+            })
+            .await
         }
         RunCommand::Stats { json } => adapt::stats(&mut runs, dir, json).await,
         RunCommand::Resume { run, rebaseline } => {

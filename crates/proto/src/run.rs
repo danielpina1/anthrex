@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::orch::{MessageKind, MessageTarget};
 use crate::types::Runtime;
 
 /// Who is running an agent round. `Orchestrator` is used from M9; `Worker` and
@@ -24,6 +25,8 @@ pub enum AgentRole {
     Reviewer,
     /// Milestone 8b: a read-only headless scout (`"scout"`).
     Scout,
+    /// Milestone 9: a headless sub-planner, one per epic (`"planner"`).
+    Planner,
 }
 
 /// Identifies one agent round: which run, optionally which task, which role, and which
@@ -184,6 +187,9 @@ pub struct PlanTask {
     pub route: RouteSpec,
     #[serde(default)]
     pub budget: Option<Budget>,
+    /// Milestone 9 decision 24: the range a `review` task reviews.
+    #[serde(default)]
+    pub review_target: Option<String>,
 }
 
 fn default_kind() -> TaskKind {
@@ -238,6 +244,9 @@ pub enum PlanEdit {
         priority: Option<i32>,
         #[serde(default)]
         size: Option<Size>,
+        /// Milestone 9 decision 25: replaces the task's dependencies.
+        #[serde(default)]
+        deps: Option<Vec<String>>,
     },
     AddDep {
         task_id: String,
@@ -250,6 +259,17 @@ pub enum PlanEdit {
     Pause,
     Resume,
     Finish,
+    /// Milestone 9 decision 42a: a message to workers, always alone in its call.
+    Message {
+        to: MessageTarget,
+        text: String,
+        kind: MessageKind,
+    },
+    /// Milestone 9 decision 42e: merge the run's latest merged work into a task's
+    /// branch at its next turn boundary, always alone in its call.
+    Refresh {
+        task_id: String,
+    },
 }
 
 /// A batch of edits, the shape `anthrex run edit --file` reads.
@@ -281,6 +301,8 @@ pub enum RunState {
     Accepted,
     Discarded,
     Failed,
+    /// Milestone 9 decision 26: the orchestrator is writing the plan.
+    Planning,
 }
 
 /// The lifecycle a task moves through.
@@ -298,6 +320,9 @@ pub enum TaskState {
     Merged,
     Blocked,
     Cancelled,
+    /// Milestone 9 decision 35: a research or review task delivered its report; it
+    /// merges nothing.
+    Reported,
 }
 
 /// Why a task is [`TaskState::Blocked`].
@@ -310,6 +335,8 @@ pub enum BlockReason {
     DepCancelled,
     Question,
     Environment,
+    /// Milestone 9 decision 42c: `stop_and_wait`, shown as `paused(message)`.
+    MessagePause,
 }
 
 /// Which gate a bounce count belongs to.
@@ -391,6 +418,7 @@ impl RunState {
             RunState::Accepted => "accepted",
             RunState::Discarded => "discarded",
             RunState::Failed => "failed",
+            RunState::Planning => "planning",
         }
     }
 
@@ -417,12 +445,16 @@ impl TaskState {
             TaskState::Merged => "merged",
             TaskState::Blocked => "blocked",
             TaskState::Cancelled => "cancelled",
+            TaskState::Reported => "reported",
         }
     }
 
-    /// True for a state the task never leaves: merged or cancelled.
+    /// True for a state the task never leaves: merged, cancelled or reported.
     pub fn is_finished(self) -> bool {
-        matches!(self, TaskState::Merged | TaskState::Cancelled)
+        matches!(
+            self,
+            TaskState::Merged | TaskState::Cancelled | TaskState::Reported
+        )
     }
 }
 

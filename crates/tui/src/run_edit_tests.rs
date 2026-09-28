@@ -249,6 +249,7 @@ fn only_the_reason_changing_sends_only_the_reason() {
             test_mode_reason: Some("renames only".into()),
             priority: None,
             size: None,
+            deps: None,
         }
     );
 }

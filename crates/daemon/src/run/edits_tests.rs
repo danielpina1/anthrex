@@ -97,6 +97,7 @@ fn amend(task_id: &str, a: Amend) -> PlanEdit {
         test_mode_reason: a.test_mode_reason,
         priority: a.priority,
         size: a.size,
+        deps: None,
     }
 }
 

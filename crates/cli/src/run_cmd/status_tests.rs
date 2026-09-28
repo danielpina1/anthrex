@@ -107,6 +107,13 @@ fn task(
         brief: String::new(),
         acceptance: vec![],
         route_spec: Default::default(),
+        hold: None,
+        review_target: None,
+        research_bytes: None,
+        message_count: 0,
+        last_message_kind: None,
+        last_message_line: None,
+        task_notes: Vec::new(),
     }
 }
 
@@ -212,6 +219,11 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
         planners: vec![],
         estimate_left_secs: None,
         bound_ratio_permille: None,
+        orchestrator: None,
+        holds: Vec::new(),
+        integration: Vec::new(),
+        digest_revision: 0,
+        research_report: None,
     }
 }
 

@@ -174,6 +174,7 @@ pub fn route(decision: &Decision, fast_path: bool) -> TriageRoute {
         scout_refs: Vec::new(),
         route: RouteSpec::default(),
         budget: None,
+        review_target: None,
     }))
 }
 

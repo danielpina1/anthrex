@@ -87,18 +87,15 @@ fn run_refs(git: &OsString, root: &Path, timeout: Duration) -> Result<Vec<String
     Ok(listing.lines().map(str::to_string).collect())
 }
 
+/// `ApproveHold` and `RejectHold` until the engine keeps approval holds (task M9.7).
+const NO_HOLDS: &str = "this run has no approval holds";
+
 impl RunService {
     /// Answers every `RunRequest` but `Subscribe` and `Unsubscribe` (`server/run_api.rs`).
     pub async fn request(&self, req: RunRequest) -> RunReply {
         let answer = |label: &str, result: Result<String, String>| match result {
-            Ok(message) => RunReply::Done {
-                request: label.to_string(),
-                message,
-            },
-            Err(message) => RunReply::Refused {
-                request: label.to_string(),
-                message,
-            },
+            Ok(message) => RunReply::done(label, message),
+            Err(message) => RunReply::refused(label, message),
         };
         match req {
             RunRequest::Start {
@@ -167,20 +164,23 @@ impl RunService {
                 yes: _,
                 trust_project,
                 unconfined_checks,
+                orchestrator: _,
             } => {
                 self.start_goal(goal, dir, trust_project, unconfined_checks)
                     .await
             }
-            RunRequest::Promote { run_id } => answer(
+            RunRequest::Promote { run_id, .. } => answer(
                 request::PROMOTE,
                 self.ask(|reply| EventKind::Promote { reply, run_id }).await,
             ),
             RunRequest::Stats { dir } => self.stats(dir).await,
             RunRequest::Profile(profile) => self.profile(profile).await,
-            RunRequest::Subscribe | RunRequest::Unsubscribe => RunReply::Refused {
-                request: "run".to_string(),
-                message: "subscriptions are answered by the connection".to_string(),
-            },
+            // Milestone 9 decision 28's approval holds; the engine answers them from M9.7.
+            RunRequest::ApproveHold { .. } => RunReply::refused(request::APPROVE, NO_HOLDS),
+            RunRequest::RejectHold { .. } => RunReply::refused(request::REJECT, NO_HOLDS),
+            RunRequest::Subscribe | RunRequest::Unsubscribe => {
+                RunReply::refused("run", "subscriptions are answered by the connection")
+            }
         }
     }
 
@@ -194,10 +194,7 @@ impl RunService {
         trust_project: bool,
         unconfined_checks: bool,
     ) -> RunReply {
-        let refused = |message: String| RunReply::Refused {
-            request: request::START.to_string(),
-            message,
-        };
+        let refused = |message: String| RunReply::refused(request::START, message);
         match self
             .build(plan_toml, dir, yes, trust_project, unconfined_checks)
             .await
@@ -464,10 +461,7 @@ impl RunService {
         action: FinishAction,
         confirm: Option<String>,
     ) -> RunReply {
-        let refused = |message: String| RunReply::Refused {
-            request: request::FINISH.to_string(),
-            message,
-        };
+        let refused = |message: String| RunReply::refused(request::FINISH, message);
         let Ok((root, base_branch, run_branch, timeout)) = self.run_refs_of(&run_id) else {
             return refused(format!("unknown run {run_id}"));
         };
@@ -575,14 +569,8 @@ impl RunService {
             })
             .await
         {
-            Ok(message) => RunReply::Done {
-                request: request::FINISH.to_string(),
-                message,
-            },
-            Err(message) => RunReply::Refused {
-                request: request::FINISH.to_string(),
-                message,
-            },
+            Ok(message) => RunReply::done(request::FINISH, message),
+            Err(message) => RunReply::refused(request::FINISH, message),
         }
     }
 }

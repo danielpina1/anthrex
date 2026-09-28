@@ -149,6 +149,7 @@ fn minimal_task(id: &str) -> PlanTask {
         scout_refs: vec![],
         route: RouteSpec::default(),
         budget: None,
+        review_target: None,
     }
 }
 
@@ -179,6 +180,7 @@ fn plan_edits_parse_from_an_edit_file() {
             test_mode_reason: Some("no single_test configured".into()),
             priority: Some(5),
             size: Some(Size::L),
+            deps: Some(vec!["t0".into()]),
         },
         PlanEdit::AddDep {
             task_id: "t4".into(),
@@ -392,10 +394,12 @@ fn every_run_request_and_reply_round_trips() {
         RunReply::Done {
             request: run_wire::request::APPROVE.into(),
             message: "run approved".into(),
+            request_id: None,
         },
         RunReply::Refused {
             request: run_wire::request::START.into(),
             message: "runs are not available yet".into(),
+            request_id: None,
         },
         RunReply::ConfirmNeeded {
             run_id: "run-a1b2".into(),

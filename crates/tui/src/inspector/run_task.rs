@@ -73,6 +73,7 @@ fn stage_text(run: &RunInfo, task: &TaskInfo) -> String {
         TaskState::MergeQueue => "merge queue".to_owned(),
         TaskState::Merged => "merged".to_owned(),
         TaskState::Cancelled => "cancelled".to_owned(),
+        TaskState::Reported => "reported".to_owned(),
         TaskState::Blocked => {
             let mut text = match &task.block {
                 Some(block) => format!("blocked: {}", reason_text(block.reason)),

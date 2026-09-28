@@ -241,6 +241,7 @@ pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Vec<String
         AgentRole::Worker => "worker",
         AgentRole::Reviewer => "reviewer",
         AgentRole::Scout => "scout",
+        AgentRole::Planner => "planner",
     };
     let mut args = vec!["mcp".to_string(), "--role".into(), role.into()];
     // M8b decision 15: a repository-level scout belongs to no run.

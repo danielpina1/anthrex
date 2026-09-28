@@ -225,6 +225,7 @@ fn only_task_edits_may_widen_the_reach() {
         test_mode_reason: None,
         priority: None,
         size: Some(proto::Size::M),
+        deps: None,
     };
     assert!(edits_may_widen(&[PlanEdit::Pause, amend]));
     assert!(edits_may_widen(&[PlanEdit::SplitTask {

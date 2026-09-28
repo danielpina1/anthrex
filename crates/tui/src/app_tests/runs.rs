@@ -255,6 +255,7 @@ fn done_replies_toast_and_refusals_toast() {
     let done = RunReply::Done {
         request: "run approve".into(),
         message: "run r1 approved".into(),
+        request_id: None,
     };
     assert!(reply(&mut app, done).is_empty());
     assert_eq!(app.toast_text(), Some("run r1 approved"));
@@ -262,6 +263,7 @@ fn done_replies_toast_and_refusals_toast() {
     let refused = |message: &str| RunReply::Refused {
         request: "run reject".into(),
         message: message.into(),
+        request_id: None,
     };
     assert!(reply(&mut app, refused("no such run")).is_empty());
     assert_eq!(app.toast_text(), Some("no such run"));
@@ -282,6 +284,7 @@ fn a_refusal_without_text_still_toasts() {
         let _ = app.on_daemon(DaemonMsg::Run(RunReply::Refused {
             request: "run reject".into(),
             message: message.into(),
+            request_id: None,
         }));
         assert_eq!(app.toast_text(), Some("run reject refused"), "{message:?}");
     }
@@ -289,6 +292,7 @@ fn a_refusal_without_text_still_toasts() {
     let _ = app.on_daemon(DaemonMsg::Run(RunReply::Refused {
         request: "run edit".into(),
         message: "\n\nfirst\n\nsecond\n".into(),
+        request_id: None,
     }));
     assert_eq!(app.toast_text(), Some("first (+1 more)"));
 }
@@ -311,6 +315,7 @@ fn a_huge_reply_toast_is_capped_and_renders() {
     let _ = app.on_daemon(DaemonMsg::Run(RunReply::Refused {
         request: "run edit".into(),
         message: format!("{}\nsecond", "日".repeat(70_000)),
+        request_id: None,
     }));
     let expected = format!("{}… (+1 more)", "日".repeat(TOAST_MAX_CHARS));
     assert_eq!(app.toast_text(), Some(expected.as_str()));
@@ -318,6 +323,7 @@ fn a_huge_reply_toast_is_capped_and_renders() {
     let _ = app.on_daemon(DaemonMsg::Run(RunReply::Done {
         request: "run edit".into(),
         message: "x".repeat(TOAST_MAX_CHARS),
+        request_id: None,
     }));
     assert_eq!(
         app.toast_text().map(|t| t.chars().count()),
@@ -326,6 +332,7 @@ fn a_huge_reply_toast_is_capped_and_renders() {
     let _ = app.on_daemon(DaemonMsg::Run(RunReply::Done {
         request: "run edit".into(),
         message: "x".repeat(TOAST_MAX_CHARS + 1),
+        request_id: None,
     }));
     let expected = format!("{}…", "x".repeat(TOAST_MAX_CHARS));
     assert_eq!(app.toast_text(), Some(expected.as_str()));

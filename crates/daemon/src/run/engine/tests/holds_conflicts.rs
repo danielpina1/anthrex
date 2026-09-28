@@ -24,6 +24,7 @@ fn amend_brief(text: &str) -> PlanEdit {
         test_mode_reason: None,
         priority: None,
         size: None,
+        deps: None,
     }
 }
 

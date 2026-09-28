@@ -28,6 +28,7 @@ fn amend(priority: i32) -> Vec<PlanEdit> {
         test_mode_reason: None,
         priority: Some(priority),
         size: None,
+        deps: None,
     }]
 }
 
@@ -343,10 +344,18 @@ fn old_run_json_loads() {
     // Everything it stored comes back as it was: only the new keys are added.
     let mut back = serde_json::to_value(&run).unwrap();
     let map = back.as_object_mut().unwrap();
-    for key in ["approved_at", "plan_edits", "plan_edits_since_approval"] {
+    for key in [
+        "approved_at",
+        "plan_edits",
+        "plan_edits_since_approval",
+        "role_routing_decisions",
+    ] {
         assert!(map.remove(key).is_some(), "{key}");
     }
     for task in back["tasks"].as_array_mut().unwrap() {
+        // Milestone 9 decision 24's plan field.
+        let spec = task["spec"].as_object_mut().unwrap();
+        assert!(spec.remove("review_target").is_some(), "review_target");
         for round in task["rounds"].as_array_mut().unwrap() {
             let round = round.as_object_mut().unwrap();
             for key in ["rate_limited_since", "sent_back_at"] {
@@ -356,6 +365,14 @@ fn old_run_json_loads() {
     }
     let stored: serde_json::Value = serde_json::from_str(text).unwrap();
     assert_eq!(back, stored);
+}
+
+/// Milestone 9 task 2 (decision 43): a run persisted before role-routing history loads
+/// with no role-routing decisions; only dispatches from new runs record choices.
+#[test]
+fn old_run_defaults_role_routing_decisions_to_empty() {
+    let run: Run = serde_json::from_str(include_str!("m8b_run.json")).unwrap();
+    assert!(run.role_routing_decisions.is_empty());
 }
 
 /// Review I1: a promoted fast-path run's attention line carries no clock time; the view

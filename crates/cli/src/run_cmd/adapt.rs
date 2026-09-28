@@ -31,6 +31,7 @@ pub(super) async fn start_goal(
             yes,
             trust_project,
             unconfined_checks,
+            orchestrator: None,
         })
         .await?;
     match reply {
@@ -118,13 +119,17 @@ mod tests {
             yes: false,
             trust_project: false,
             unconfined_checks: false,
+            orchestrator: None,
         };
         assert_eq!(request_timeout(&goal), GOAL_REQUEST_TIMEOUT);
         assert_eq!(
             GOAL_REQUEST_TIMEOUT,
             super::super::RUN_REQUEST_TIMEOUT + Duration::from_secs(600 + 30)
         );
-        let promote = RunRequest::Promote { run_id: "r".into() };
+        let promote = RunRequest::Promote {
+            run_id: "r".into(),
+            orchestrator: None,
+        };
         assert_eq!(request_timeout(&promote), super::super::RUN_REQUEST_TIMEOUT);
     }
 

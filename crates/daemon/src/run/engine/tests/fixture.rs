@@ -314,6 +314,7 @@ impl Fixture {
                 tool: tool.into(),
                 args,
                 scout_id: None,
+                epic: None,
             },
         })
     }

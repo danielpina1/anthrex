@@ -23,6 +23,7 @@ fn a_planner() -> PlannerInfo {
         edits_rejected: 1,
         last_rejection: Some("t9 owns overlap t2".into()),
         replans: vec!["split t4".into()],
+        note: None,
     }
 }
 
@@ -34,10 +35,18 @@ fn a_view_snapshot() -> RunsSnapshot {
         PlanEditInfo {
             at: 1_700_000_300,
             text: "split t2".into(),
+            source: "user".into(),
+            accepted: true,
+            error: None,
+            recipients: Vec::new(),
         },
         PlanEditInfo {
             at: 1_700_000_200,
             text: "amend t1".into(),
+            source: "user".into(),
+            accepted: true,
+            error: None,
+            recipients: Vec::new(),
         },
     ];
     run.plan_edits_since_approval = 2;
@@ -178,4 +187,110 @@ fn planner_state_is_snake_case_and_defaults_to_planning() {
         serde_json::to_string(&PlannerState::Finished).unwrap(),
         "\"finished\""
     );
+}
+
+/// Milestone 9 task 2: `m8c_run_info.json` is `a_view_snapshot()`'s run as milestone
+/// 8c's `RunInfo` serialized it (written from that type before milestone 9 changed it).
+/// It decodes with every milestone-9 field at its default.
+#[test]
+fn old_run_info_still_decodes() {
+    let run: crate::RunInfo =
+        serde_json::from_str(include_str!("m8c_run_info.json")).expect("an M8c RunInfo decodes");
+    assert_eq!(run.run_id, a_run_info().run_id);
+    assert_eq!(run.orchestrator, None);
+    assert!(run.holds.is_empty());
+    assert!(run.integration.is_empty());
+    assert_eq!(run.digest_revision, 0);
+    assert_eq!(run.research_report, None);
+    assert_eq!(run.planners[0].note, None);
+    let edit = &run.plan_edits[0];
+    assert_eq!(edit.source, "");
+    assert!(edit.accepted, "an M8c edit-log entry was an accepted batch");
+    assert_eq!(edit.error, None);
+    assert!(edit.recipients.is_empty());
+    let task = &run.tasks[0];
+    assert_eq!(task.hold, None);
+    assert_eq!(task.review_target, None);
+    assert_eq!(task.research_bytes, None);
+    assert_eq!(task.message_count, 0);
+    assert_eq!(task.last_message_kind, None);
+    assert_eq!(task.last_message_line, None);
+    assert!(task.task_notes.is_empty());
+}
+
+/// Milestone 9 task 2: every new snapshot field set survives the wire, by name.
+#[test]
+fn orchestrator_snapshot_fields_round_trip() {
+    use crate::orch::*;
+    let mut snapshot = a_view_snapshot();
+    let run = &mut snapshot.runs[0];
+    run.orchestrator = Some(OrchestratorInfo {
+        route: a_route(
+            Runtime::Claude,
+            Strength::Frontier,
+            Effort::High,
+            "claude-opus-5",
+        ),
+        window_id: Some(21),
+        live: true,
+        started_at: 1_700_000_020,
+        plan_submitted: true,
+        summary: None,
+        notes: vec!["t1 is blocked".into()],
+        wakes: 2,
+    });
+    run.holds = vec![HoldInfo {
+        id: "h1".into(),
+        kind: HoldKind::Promotion,
+        state: HoldState::Awaiting,
+        tasks: vec!["t1".into()],
+        created_at: 1_700_000_030,
+        decided_at: None,
+        decided_by: None,
+    }];
+    run.integration = vec![IntegrationInfo {
+        epic: "A".into(),
+        state: IntegrationState::Reviewing,
+        base: Some("abc1234".into()),
+        merges: vec!["def5678".into()],
+        tasks: vec!["A-int1".into()],
+    }];
+    run.digest_revision = 17;
+    run.research_report = Some("/tmp/report.md".into());
+    run.planners[0].note = Some("replanned once".into());
+    run.plan_edits[0].source = "orchestrator".into();
+    run.plan_edits[0].accepted = false;
+    run.plan_edits[0].error = Some("t9 owns overlap t2".into());
+    run.plan_edits[0].recipients = vec!["t1".into()];
+    let task = &mut run.tasks[0];
+    task.hold = Some("h1".into());
+    task.review_target = Some("main..feature".into());
+    task.research_bytes = Some(4_096);
+    task.message_count = 3;
+    task.last_message_kind = Some(MessageKind::Change);
+    task.last_message_line = Some("the schema moved".into());
+    task.task_notes = vec![TaskNoteInfo {
+        task_id: "t1".into(),
+        kind: TaskNoteKind::Risk,
+        text: "shared parser".into(),
+        at: 1_700_000_600,
+    }];
+    let msg = DaemonMsg::Run(RunReply::Snapshot(snapshot.clone()));
+    let packed = rmp_serde::to_vec_named(&msg).unwrap();
+    let DaemonMsg::Run(RunReply::Snapshot(back)) = rmp_serde::from_slice(&packed).unwrap() else {
+        panic!("must decode back to RunReply::Snapshot");
+    };
+    assert_eq!(back, snapshot);
+    let (run, task) = (&back.runs[0], &back.runs[0].tasks[0]);
+    assert_eq!(run.digest_revision, 17);
+    assert_eq!(run.orchestrator.as_ref().unwrap().window_id, Some(21));
+    assert_eq!(run.orchestrator.as_ref().unwrap().wakes, 2);
+    assert_eq!(
+        run.plan_edits[0].error.as_deref(),
+        Some("t9 owns overlap t2")
+    );
+    assert_eq!(task.message_count, 3);
+    assert_eq!(task.research_bytes, Some(4_096));
+    assert_eq!(task.hold.as_deref(), Some("h1"));
+    assert_eq!(task.review_target.as_deref(), Some("main..feature"));
 }

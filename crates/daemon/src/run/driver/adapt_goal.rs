@@ -86,10 +86,7 @@ async fn blocking<T: Send + 'static>(
 }
 
 fn refused(message: String) -> RunReply {
-    RunReply::Refused {
-        request: request::START_GOAL.to_string(),
-        message,
-    }
+    RunReply::refused(request::START_GOAL, message)
 }
 
 impl RunService {

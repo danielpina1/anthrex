@@ -42,7 +42,7 @@ pub fn run_color(state: RunState) -> Color {
         RunState::AwaitingApproval | RunState::Paused | RunState::Halted => {
             status_color(Status::Attention)
         }
-        RunState::Running => status_color(Status::Working),
+        RunState::Running | RunState::Planning => status_color(Status::Working),
         RunState::Complete | RunState::Accepted => status_color(Status::Done),
         RunState::Discarded | RunState::Failed => DIM,
     }
@@ -69,7 +69,7 @@ pub fn task_glyph(
         TaskState::Proof | TaskState::Check => "◇",
         TaskState::Review => "◐",
         TaskState::MergeQueue => "▸",
-        TaskState::Merged => "✓",
+        TaskState::Merged | TaskState::Reported => "✓",
         TaskState::Blocked => "⊘",
         TaskState::Cancelled => "–",
     }
@@ -87,7 +87,7 @@ pub fn task_color(state: TaskState) -> Color {
         | TaskState::Check
         | TaskState::Review
         | TaskState::MergeQueue => status_color(Status::Working),
-        TaskState::Merged => status_color(Status::Done),
+        TaskState::Merged | TaskState::Reported => status_color(Status::Done),
         TaskState::Blocked => status_color(Status::Attention),
         TaskState::Cancelled => DIM,
     }

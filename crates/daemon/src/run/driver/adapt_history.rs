@@ -92,10 +92,7 @@ impl RunService {
     /// history of `dir`'s repository summarised, all on `spawn_blocking`. A repository
     /// with no history answers empty rows.
     pub(in crate::run::driver) async fn stats(&self, dir: PathBuf) -> RunReply {
-        let refused = |message: String| RunReply::Refused {
-            request: request::STATS.to_string(),
-            message,
-        };
+        let refused = |message: String| RunReply::refused(request::STATS, message);
         let (git, timeout) = (self.ctx.git.clone(), self.git_timeout_secs());
         let data_dir = self.ctx.data_dir.clone();
         let result = tokio::task::spawn_blocking(move || {

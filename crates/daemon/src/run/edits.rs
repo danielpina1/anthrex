@@ -160,7 +160,13 @@ fn block_label(reason: BlockReason) -> &'static str {
         BlockReason::DepCancelled => "dep_cancelled",
         BlockReason::Question => "question",
         BlockReason::Environment => "environment",
+        BlockReason::MessagePause => "message_pause",
     }
+}
+
+const NOT_YET: &str = "amend deps, message and refresh are not available yet";
+fn not_yet() -> PlanError {
+    PlanError::new(None, "op", "13", NOT_YET)
 }
 
 /// `working`, `merged`, or `blocked(<reason>)`.
@@ -188,6 +194,10 @@ impl Batch {
             PlanEdit::AddTask { task } => self.add_task(task.clone()),
             PlanEdit::SplitTask { task_id, into } => self.split(task_id, into),
             PlanEdit::CancelTask { task_id } => self.cancel(task_id),
+            // Milestone 9 decisions 25, 42a and 42e (tasks M9.4 and M9.13a).
+            PlanEdit::AmendTask { deps: Some(_), .. }
+            | PlanEdit::Message { .. }
+            | PlanEdit::Refresh { .. } => self.errors.push(not_yet()),
             PlanEdit::AmendTask { .. } => self.amend_task(edit),
             PlanEdit::AddDep { task_id, dep } => self.add_dep(task_id, dep),
             PlanEdit::Answer { task_id, text } => self.answer(task_id, text),
@@ -392,6 +402,7 @@ impl Batch {
             test_mode_reason,
             priority,
             size,
+            ..
         } = edit
         else {
             return;

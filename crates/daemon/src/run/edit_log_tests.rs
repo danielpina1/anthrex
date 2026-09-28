@@ -31,6 +31,7 @@ fn describe_names_every_edit_op() {
             test_mode_reason: None,
             priority: None,
             size: None,
+            deps: None,
         },
         PlanEdit::AddDep {
             task_id: "t4".into(),
@@ -43,10 +44,19 @@ fn describe_names_every_edit_op() {
         PlanEdit::Pause,
         PlanEdit::Resume,
         PlanEdit::Finish,
+        PlanEdit::Message {
+            to: proto::MessageTarget::Tasks(vec!["t6".into(), "t7".into()]),
+            text: "the schema moved".into(),
+            kind: proto::MessageKind::Change,
+        },
+        PlanEdit::Refresh {
+            task_id: "t8".into(),
+        },
     ];
     assert_eq!(
         describe(&edits),
-        "add t9, split t2, cancel t3, amend t4, dep t4 on t2, answer t5, pause, resume, finish"
+        "add t9, split t2, cancel t3, amend t4, dep t4 on t2, answer t5, pause, resume, \
+         finish, message to t6,t7, refresh t8"
     );
     assert_eq!(describe(&[PlanEdit::Pause]), "pause");
 }
@@ -92,6 +102,7 @@ fn describe_is_capped() {
             test_mode_reason: None,
             priority: Some(1),
             size: None,
+            deps: None,
         })
         .collect();
     let text = describe(&edits);

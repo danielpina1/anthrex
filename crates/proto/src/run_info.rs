@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::adapt::{
     DeciderSource, DiffStats, PhaseSecs, RunPath, RunUsage, SizeCheckInfo, TriageInfo,
 };
+use crate::orch::{HoldInfo, IntegrationInfo, MessageKind, OrchestratorInfo, TaskNoteInfo};
 use crate::planner::PlannerInfo;
 use crate::profile::ProfileSource;
 use crate::run::{
@@ -208,6 +209,26 @@ pub struct TaskInfo {
     pub acceptance: Vec<String>,
     #[serde(default)]
     pub route_spec: RouteSpec,
+    // Milestone 9.
+    /// The approval hold (decision 28) the task waits in, by id.
+    #[serde(default)]
+    pub hold: Option<String>,
+    #[serde(default)]
+    pub review_target: Option<String>,
+    /// A research task's report size.
+    #[serde(default)]
+    pub research_bytes: Option<u32>,
+    /// Decision 42d: every message the task was sent, the latest one's kind, and its
+    /// first line (at most 80 characters).
+    #[serde(default)]
+    pub message_count: u32,
+    #[serde(default)]
+    pub last_message_kind: Option<MessageKind>,
+    #[serde(default)]
+    pub last_message_line: Option<String>,
+    /// The task's last 10 `task_note`s (decisions 16a, 42d).
+    #[serde(default)]
+    pub task_notes: Vec<TaskNoteInfo>,
 }
 
 /// One task event (milestone 8c): its unix time and text.
@@ -217,11 +238,25 @@ pub struct TaskEventInfo {
     pub text: String,
 }
 
-/// One accepted plan-edit batch (milestone 8c): its unix time and what it did.
+/// One plan-edit batch (milestone 8c): its unix time and what it did. Milestone 9
+/// (decision 40) adds who sent it, whether it was accepted, and a message's resolved
+/// recipients; an entry from milestone 8c was an accepted batch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanEditInfo {
     pub at: u64,
     pub text: String,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default = "accepted_by_default")]
+    pub accepted: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub recipients: Vec<String>,
+}
+
+fn accepted_by_default() -> bool {
+    true
 }
 
 /// The base branch has moved under a run (decision 21): not a halt on its own, but
@@ -307,6 +342,18 @@ pub struct RunInfo {
     pub estimate_left_secs: Option<u64>,
     #[serde(default)]
     pub bound_ratio_permille: Option<u32>,
+    // Milestone 9.
+    #[serde(default)]
+    pub orchestrator: Option<OrchestratorInfo>,
+    #[serde(default)]
+    pub holds: Vec<HoldInfo>,
+    #[serde(default)]
+    pub integration: Vec<IntegrationInfo>,
+    /// Decision 16: bumped whenever `run_status`'s digest would change.
+    #[serde(default)]
+    pub digest_revision: u64,
+    #[serde(default)]
+    pub research_report: Option<PathBuf>,
 }
 
 /// Every run the daemon knows about, at one revision.

@@ -13,16 +13,20 @@ use crate::profile::ProfileSource;
 use crate::run::{AgentRole, BlockReason, DoneSignal, GateCounts, Route, Size, TaskKind, TestMode};
 use crate::run_info::TokenUsage;
 
-/// The `v` every record written by this milestone carries.
-pub const HISTORY_VERSION: u32 = 1;
+/// The `v` every record written now carries. Milestone 9 (decision 43) raised it from
+/// 1 with the `role_route` line; version-1 lines still decode unchanged.
+pub const HISTORY_VERSION: u32 = 2;
 
-/// One line of `history.jsonl`, tagged `"type": "task" | "run" | "revert"`.
+/// One line of `history.jsonl`, tagged `"type": "task" | "run" | "revert" |
+/// "role_route"`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HistoryLine {
     Task(TaskRecord),
     Run(RunRecord),
     Revert(RevertRecord),
+    /// Milestone 9 decision 43.
+    RoleRoute(RoleRoutingDecision),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,6 +107,74 @@ pub struct RoutingDecision {
     pub chosen: Route,
     pub selected_index: u32,
     pub candidates: Vec<RoutingCandidate>,
+}
+
+/// Decision 43: the route chosen for an agent session that belongs to no task (the
+/// orchestrator, a sub-planner, a run scout, a decider), with the full ordered candidate
+/// snapshot. `candidates[selected_index].route == chosen`. An unchosen candidate is
+/// never a failure; `outcome` is the session's own, set when it ends.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoleRoutingDecision {
+    pub v: u32,
+    /// `<run id>/<role>/<session id>`, or `triage/<run-or-request id>/<n>`.
+    pub record_id: String,
+    pub at: u64,
+    /// `None` for pre-run triage.
+    #[serde(default)]
+    pub run_id: Option<String>,
+    #[serde(default)]
+    pub task_id: Option<String>,
+    pub role: AgentRole,
+    pub session_id: String,
+    /// `start`, `restart`, `replan`, `retry`, `triage`, `size_check`, …
+    pub trigger: String,
+    /// `explicit_choice`, `agent_config`, `planner_config`, `roster_default` or
+    /// `decider_config`.
+    pub source: String,
+    /// `m9-orchestrator-v1`, `m9-planner-v1`, `m9-scout-v1` or `m9-decider-v1`.
+    pub policy_version: String,
+    /// `None` until milestone 9.5's role lists apply.
+    #[serde(default)]
+    pub pick_policy: Option<String>,
+    pub input: RoleRoutingInput,
+    pub chosen: Route,
+    pub selected_index: u32,
+    pub candidates: Vec<RoutingCandidate>,
+    /// `None` until the session ends.
+    #[serde(default)]
+    pub outcome: Option<RoleOutcome>,
+    /// The role's accepted/rejected, report or submission status.
+    #[serde(default)]
+    pub result: Option<String>,
+}
+
+/// What a role session was dispatched for (decision 43). Never transcripts,
+/// credentials or raw tool output.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoleRoutingInput {
+    #[serde(default)]
+    pub run_path: Option<RunPath>,
+    /// Capped as `RunRecord.goal` is.
+    #[serde(default)]
+    pub goal: Option<String>,
+    #[serde(default)]
+    pub languages: Vec<String>,
+    #[serde(default)]
+    pub epic: Option<String>,
+    #[serde(default)]
+    pub area: Vec<String>,
+    #[serde(default)]
+    pub question_kind: Option<String>,
+}
+
+/// A role session's factual outcome (decision 43).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoleOutcome {
+    Completed,
+    Failed,
+    Interrupted,
+    Fallback,
 }
 
 /// One finished task.

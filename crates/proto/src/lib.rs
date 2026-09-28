@@ -37,7 +37,17 @@
 /// `#[serde(default)]`; the bump keeps an 8 client from showing a 9 daemon's view half
 /// filled. Derivation: `PROTO_VERSION` was 8 at `crates/proto/src/lib.rs:32` before
 /// this change (set by M8b task 2); 8 + 1 = 9.
-pub const PROTO_VERSION: u32 = 9;
+///
+/// Milestone 9 task 2 bumps this to 10: it adds `ClientMsg::RunTagged` and the
+/// `request_id` its replies echo, the `RunRequest` variants `ApproveHold` and
+/// `RejectHold`, `AgentRole::Planner`, `RunState::Planning`, `TaskState::Reported`,
+/// `BlockReason::MessagePause`, the `PlanEdit` variants `Message` and `Refresh`, and the
+/// orchestrator, hold, integration and task-note snapshot types (`proto::orch`) —
+/// variants a milestone-8c peer cannot decode. Every new field is `#[serde(default)]`,
+/// so a milestone-8c `run.json` and snapshot still load. Derivation: `PROTO_VERSION`
+/// was 9 at `crates/proto/src/lib.rs:40` before this change (set by M8c task 1);
+/// 9 + 1 = 10.
+pub const PROTO_VERSION: u32 = 10;
 
 /// How long the daemon waits for a freshly connected client's `Hello`, and how long a
 /// client waits for the daemon's `Welcome`, before giving up on the handshake. Design
@@ -51,6 +61,7 @@ pub mod codec;
 pub mod conversation;
 pub mod history;
 pub mod messages;
+pub mod orch;
 pub mod paths;
 pub mod planner;
 pub mod profile;
@@ -70,10 +81,15 @@ pub use conversation::{
     TurnPatch, TurnState,
 };
 pub use history::{
-    GateTally, HISTORY_VERSION, HistoryLine, HistoryStats, RevertRecord, RoutingCandidate,
-    RoutingDecision, RoutingInput, RunRecord, SeverityTally, StatsRow, TaskOutcome, TaskRecord,
+    GateTally, HISTORY_VERSION, HistoryLine, HistoryStats, RevertRecord, RoleOutcome,
+    RoleRoutingDecision, RoleRoutingInput, RoutingCandidate, RoutingDecision, RoutingInput,
+    RunRecord, SeverityTally, StatsRow, TaskOutcome, TaskRecord,
 };
 pub use messages::{ClientMsg, DaemonMsg, HookSource};
+pub use orch::{
+    HoldInfo, HoldKind, HoldState, IntegrationInfo, IntegrationState, MessageKind, MessageTarget,
+    OrchestratorChoice, OrchestratorInfo, TaskNoteInfo, TaskNoteKind,
+};
 // Re-exported by name, never by glob (C20): a glob re-export of `run` or `run_wire`
 // could silently shadow an existing root name (for instance `run_wire::request` beside
 // `messages::request`) the next time either module gains a public item, with no
@@ -104,10 +120,14 @@ pub use types::{
 mod adapt_tests;
 
 #[cfg(test)]
+#[path = "orch_tests.rs"]
+mod orch_tests;
+
+#[cfg(test)]
 mod tests {
     #[test]
-    fn proto_version_is_nine() {
-        assert_eq!(super::PROTO_VERSION, 9);
+    fn proto_version_is_ten() {
+        assert_eq!(super::PROTO_VERSION, 10);
     }
 
     #[test]

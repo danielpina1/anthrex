@@ -18,7 +18,8 @@ pub fn tools_for(role: AgentRole) -> Vec<Tool> {
     match role {
         AgentRole::Worker => vec![task_done(), task_blocked()],
         AgentRole::Reviewer => vec![submit_review()],
-        AgentRole::Orchestrator => Vec::new(),
+        // Milestone 9 task M9.11 adds the orchestrator's and the sub-planner's tools.
+        AgentRole::Orchestrator | AgentRole::Planner => Vec::new(),
         AgentRole::Scout => vec![crate::tools_scout::submit_scout_report()],
     }
 }
@@ -36,6 +37,7 @@ pub fn role_name(role: AgentRole) -> &'static str {
         AgentRole::Worker => "worker",
         AgentRole::Reviewer => "reviewer",
         AgentRole::Scout => "scout",
+        AgentRole::Planner => "planner",
     }
 }
 

@@ -118,7 +118,7 @@ fn category(state: TaskState) -> Option<usize> {
         TaskState::MergeQueue => Some(3),
         TaskState::Blocked => Some(4),
         TaskState::Pending | TaskState::Queued => Some(5),
-        TaskState::Merged | TaskState::Cancelled => None,
+        TaskState::Merged | TaskState::Cancelled | TaskState::Reported => None,
     }
 }
 
@@ -166,6 +166,7 @@ pub(super) fn reason_text(reason: BlockReason) -> &'static str {
         BlockReason::DepCancelled => "dependency cancelled",
         BlockReason::Question => "question",
         BlockReason::Environment => "environment",
+        BlockReason::MessagePause => "paused(message)",
     }
 }
 

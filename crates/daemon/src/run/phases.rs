@@ -17,7 +17,9 @@ pub fn phase_mut(phases: &mut PhaseSecs, state: TaskState) -> Option<&mut u64> {
         TaskState::Review => &mut phases.review,
         TaskState::MergeQueue => &mut phases.merge,
         TaskState::Blocked => &mut phases.blocked,
-        TaskState::Pending | TaskState::Merged | TaskState::Cancelled => return None,
+        TaskState::Pending | TaskState::Merged | TaskState::Cancelled | TaskState::Reported => {
+            return None;
+        }
     })
 }
 

@@ -123,6 +123,7 @@ pub(crate) fn planner(epic: &str, title: &str) -> PlannerInfo {
         edits_rejected: 0,
         last_rejection: None,
         replans: vec![],
+        note: None,
     }
 }
 
@@ -438,10 +439,18 @@ pub(crate) fn gemini_fixture() -> (RunsSnapshot, Vec<WindowInfo>) {
         PlanEditInfo {
             at: GEMINI_DAY + 42_000,
             text: "split t2".into(),
+            source: String::new(),
+            accepted: true,
+            error: None,
+            recipients: Vec::new(),
         },
         PlanEditInfo {
             at: GEMINI_DAY + 40_800,
             text: "amend t4".into(),
+            source: String::new(),
+            accepted: true,
+            error: None,
+            recipients: Vec::new(),
         },
     ];
     r1.plan_edits_since_approval = 2;

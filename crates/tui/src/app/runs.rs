@@ -80,6 +80,7 @@ pub(crate) fn state_text(state: RunState) -> &'static str {
         RunState::Accepted => "accepted",
         RunState::Discarded => "discarded",
         RunState::Failed => "failed",
+        RunState::Planning => "planning",
     }
 }
 
@@ -170,13 +171,17 @@ impl App {
             }
             // Decision 34: an edit's reply ends a submitting form — closed on `Done`,
             // its error row filled on `Refused`. Every other reply is a toast.
-            RunReply::Done { request, message } => {
+            RunReply::Done {
+                request, message, ..
+            } => {
                 if request == EDIT && self.submitting_form().is_some() {
                     self.modal = None;
                 }
                 self.toast(capped(&message));
             }
-            RunReply::Refused { request, message } => {
+            RunReply::Refused {
+                request, message, ..
+            } => {
                 let text =
                     first_line_and_more(&message).unwrap_or_else(|| format!("{request} refused"));
                 match self.submitting_form().filter(|_| request == EDIT) {
