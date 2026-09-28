@@ -71,6 +71,24 @@ fn level_label(level: Option<ReviewLevel>) -> &'static str {
 /// task header and the profile summary, what it owns and must meet, M9's scout
 /// `extract` and `notes` (decisions 34, 42d; `run::orch::contract`), then the brief last.
 pub fn worker_prompt(run: &Run, task: &Task, extract: &str, notes: &str) -> String {
+    let mut out = worker_head(run, task);
+    for section in [extract, notes].into_iter().filter(|s| !s.is_empty()) {
+        out.push_str("\n\n");
+        out.push_str(section);
+    }
+    out.push_str("\n\n");
+    out.push_str(&task.spec.brief);
+    out
+}
+
+/// Where a worker's (or a handover's) first turn built with no extract takes one:
+/// right after [`worker_head`], behind a blank line (decision 34; the driver fills it).
+pub fn worker_extract_at(run: &Run, task: &Task) -> usize {
+    worker_head(run, task).len()
+}
+
+/// [`worker_prompt`] up to its acceptance criteria.
+fn worker_head(run: &Run, task: &Task) -> String {
     let spec = &task.spec;
     let start = task.start_commit.as_deref().unwrap_or(&run.run_head);
     let mut lines = vec![
@@ -102,11 +120,6 @@ pub fn worker_prompt(run: &Run, task: &Task, extract: &str, notes: &str) -> Stri
     lines.extend(spec.owns.iter().map(|glob| format!("- {glob}")));
     lines.push("Acceptance criteria:".to_string());
     lines.extend(spec.acceptance.iter().map(|item| format!("- {item}")));
-    for section in [extract, notes].into_iter().filter(|s| !s.is_empty()) {
-        lines.extend([String::new(), section.to_string()]);
-    }
-    lines.push(String::new());
-    lines.push(spec.brief.clone());
     lines.join("\n")
 }
 

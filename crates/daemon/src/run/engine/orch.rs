@@ -8,16 +8,15 @@
 //! verdict, which only the user's requests carry (`OrchEvent::{ApproveHold,
 //! RejectHold}`, from `anthrex run approve|reject --hold`).
 
-use proto::{AgentRole, RunState, Runtime, ToolCall};
+use proto::{AgentRole, RunState, Runtime, TokenUsage, ToolCall};
 use serde_json::json;
 
 use super::batch::{Applied, Refused, apply_batch};
 use super::requests::log;
-use super::{Effect, EngineState, ReplyId, gate_holds};
+use super::{Effect, EngineState, ReplyId, gate_holds, planners, run_scouts};
 use crate::run::model::Run;
-use crate::run::orch::launch::planner_route;
 use crate::run::orch::tools::{OrchCall, parse_call};
-use crate::run::orch::{EditSource, EpicRecord, PlannerPhase, digest};
+use crate::run::orch::{EditSource, EpicRecord, digest};
 use crate::run::validate::EditScope;
 
 /// The events of milestone 9's agents. Later tasks add the scouts', sub-planners' and
@@ -42,6 +41,29 @@ pub enum OrchEvent {
         run_id: String,
         hold: String,
     },
+    /// Decision 20: a run scout's session ended (the driver awaits its handle).
+    ScoutEnded {
+        run_id: String,
+        scout_id: String,
+        outcome: ScoutEnd,
+        usage: TokenUsage,
+    },
+    /// Decision 32: a sub-planner's session ended.
+    PlannerEnded {
+        run_id: String,
+        epic: String,
+        session: u32,
+        outcome: ScoutEnd,
+        usage: TokenUsage,
+    },
+}
+
+/// How a run scout's or sub-planner's session ended: its report or epic accepted, or
+/// the machine's failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScoutEnd {
+    Reported,
+    Failed { reason: String },
 }
 
 impl OrchEvent {
@@ -51,6 +73,7 @@ impl OrchEvent {
             OrchEvent::Tool { reply, .. }
             | OrchEvent::ApproveHold { reply, .. }
             | OrchEvent::RejectHold { reply, .. } => Some(*reply),
+            OrchEvent::ScoutEnded { .. } | OrchEvent::PlannerEnded { .. } => None,
         }
     }
 }
@@ -66,6 +89,13 @@ pub(super) fn on_orch_event(
             reply,
             call,
             refusals,
+        } if super::early::holds_planner_call(state, &call) => {
+            super::early::hold_planner_call(state, reply, call, refusals, now, fx)
+        }
+        OrchEvent::Tool {
+            reply,
+            call,
+            refusals,
         } => tool(state, reply, &call, &refusals, now, fx),
         OrchEvent::ApproveHold {
             reply,
@@ -77,11 +107,32 @@ pub(super) fn on_orch_event(
             run_id,
             hold,
         } => gate_holds::verdict(state, reply, (&run_id, &hold), false, now, fx),
+        OrchEvent::ScoutEnded {
+            run_id,
+            scout_id,
+            outcome,
+            usage,
+        } => {
+            if let Some(run) = state.runs.get_mut(&run_id) {
+                run_scouts::ended(run, &scout_id, outcome, usage, now);
+            }
+        }
+        OrchEvent::PlannerEnded {
+            run_id,
+            epic,
+            session,
+            outcome,
+            usage,
+        } => {
+            if let Some(run) = state.runs.get_mut(&run_id) {
+                planners::ended(run, (&epic, session), outcome, usage, now);
+            }
+        }
     }
 }
 
 /// A refusal: `ToolResult { ok: false }` holding `{"error": "<text>"}` (decision 15).
-fn refuse(fx: &mut Vec<Effect>, reply: ReplyId, text: impl Into<String>) {
+pub(super) fn refuse(fx: &mut Vec<Effect>, reply: ReplyId, text: impl Into<String>) {
     let error = json!({ "error": text.into() }).to_string();
     fx.push(Effect::Reply {
         reply,
@@ -89,9 +140,10 @@ fn refuse(fx: &mut Vec<Effect>, reply: ReplyId, text: impl Into<String>) {
     });
 }
 
-/// Decision 15, in order: the run, its state (the orchestrator's own gate, ahead of
-/// M8a's `running`-only one), the caller, the tool and its arguments.
-fn tool(
+/// Decision 15, in order: the run, its state (the orchestrator's and sub-planners' own
+/// gate, ahead of M8a's `running`-only one), the caller, the tool and its arguments. A
+/// sub-planner's call goes to `planners.rs` after the state gate.
+pub(super) fn tool(
     state: &mut EngineState,
     reply: ReplyId,
     call: &ToolCall,
@@ -102,8 +154,8 @@ fn tool(
     let Some(run) = state.runs.get_mut(&call.run_id) else {
         return refuse(fx, reply, format!("unknown run {}", call.run_id));
     };
-    if call.role != AgentRole::Orchestrator {
-        // Sub-planners' `submit_epic` (M9.8) and workers' `task_note` (M9.13a).
+    if !matches!(call.role, AgentRole::Orchestrator | AgentRole::Planner) {
+        // Workers' `task_note` (M9.13a).
         return refuse(
             fx,
             reply,
@@ -120,6 +172,9 @@ fn tool(
             return refuse(fx, reply, text);
         }
         other => return refuse(fx, reply, format!("run {} is {}", run.id, other.label())),
+    }
+    if call.role == AgentRole::Planner {
+        return planners::tool(run, reply, call, refusals, now, fx);
     }
     let window = run.orch.orchestrator.as_ref().and_then(|o| o.window_id);
     if window != Some(call.window_id) {
@@ -148,9 +203,15 @@ fn tool(
             scout_refs,
         } => {
             let spec = EpicRecord::requested(&epic, &title, area, &brief, scout_refs);
-            spawn_subplanner(run, reply, spec, now, fx)
+            planners::spawn_subplanner(run, reply, spec, now, fx)
         }
-        // `spawn_scout` is M9.8's; the reads are answered by the driver (M9.11).
+        OrchCall::SpawnScout {
+            id,
+            question,
+            area,
+            web,
+        } => run_scouts::spawn(run, reply, (&id, question, area, web), now, fx),
+        // The reads are answered by the driver (M9.11).
         _ => refuse(
             fx,
             reply,
@@ -192,16 +253,9 @@ fn edit_plan(
             Ok(Applied { added: new, .. }) => added = new,
             Err(Refused::Text(text)) => return refuse(fx, reply, text),
             Err(Refused::Plan(errors)) => {
-                let errors: Vec<_> = errors
-                    .iter()
-                    .map(|e| {
-                        json!({"task": e.task, "field": e.field, "rule": e.rule, "message": e.message})
-                    })
-                    .collect();
-                let text = json!({"accepted": false, "errors": errors}).to_string();
                 return fx.push(Effect::Reply {
                     reply,
-                    result: Err(text),
+                    result: Err(rejected(&errors)),
                 });
             }
         }
@@ -217,6 +271,15 @@ fn edit_plan(
     *run = edited;
     fx.extend(effects);
     accepted(run, reply, (notes, held), now, fx)
+}
+
+/// Decision 19's rejected batch: `{"accepted": false, "errors": [...]}`.
+pub(super) fn rejected(errors: &[crate::run::plan::PlanError]) -> String {
+    let errors: Vec<_> = errors
+        .iter()
+        .map(|e| json!({"task": e.task, "field": e.field, "rule": e.rule, "message": e.message}))
+        .collect();
+    json!({"accepted": false, "errors": errors}).to_string()
 }
 
 /// Decision 19's accepted reply. `revision` is the digest's after this batch and the
@@ -251,7 +314,7 @@ fn accepted(
 }
 
 /// The scheduler's pass, then the digest's revision (decision 16).
-fn settle(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
+pub(super) fn settle(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     super::dispatch::schedule(run, now, fx);
     digest::note_change(run);
 }
@@ -326,6 +389,9 @@ pub(super) fn submit_plan(run: &mut Run, who: &str, now: u64) -> Result<(), Stri
             if gate_holds::submit_promotion(run, now) {
                 log(run, now, "the orchestrator submitted its additions");
             }
+            // The epic rounds its own additions opened, whose epics no sub-planner is
+            // planning (M9.7 second review, items 8 and 10).
+            gate_holds::submit_epic_rounds(run, now);
         }
         _ => {}
     }
@@ -333,7 +399,7 @@ pub(super) fn submit_plan(run: &mut Run, who: &str, now: u64) -> Result<(), Stri
 }
 
 /// Decision 27: no sub-planner is queued or planning.
-fn planners_finished(run: &Run) -> Result<(), String> {
+pub(super) fn planners_finished(run: &Run) -> Result<(), String> {
     match run.orch.epics.iter().find(|e| e.phase.is_live()) {
         Some(e) => Err(format!(
             "sub-planner {} is still planning; submit when every sub-planner has finished",
@@ -347,58 +413,4 @@ fn set_submitted(run: &mut Run) {
     if let Some(o) = run.orch.orchestrator.as_mut() {
         o.plan_submitted = true;
     }
-}
-
-/// Decision 21, the engine's state half (task M9.8 validates the epic and its area,
-/// sets the path and starts the session in a reader slot): a new epic is recorded with
-/// its sub-planner queued, and held on a running run (decision 28); an epic whose
-/// sub-planner has ended is queued again for a fresh one. On a run awaiting approval,
-/// planning resumes (decision 27).
-fn spawn_subplanner(
-    run: &mut Run,
-    reply: ReplyId,
-    mut spec: EpicRecord,
-    now: u64,
-    fx: &mut Vec<Effect>,
-) {
-    let epic = spec.epic.clone();
-    let hold;
-    if let Some(e) = run.orch.epics.iter_mut().find(|e| e.epic == epic) {
-        if e.phase.is_live() {
-            let text =
-                format!("epic {epic} is being planned by its sub-planner; wait for it to finish");
-            return refuse(fx, reply, text);
-        }
-        e.phase = PlannerPhase::Queued;
-        e.replans.push(spec.brief.chars().take(40).collect());
-        e.request = spec.brief;
-        e.ended_at = None;
-        // An epic whose every round was rejected is held again (ruling 8).
-        hold = gate_holds::replan_epic_hold(run, &epic, now);
-    } else {
-        if let Some(route) = planner_route(run) {
-            spec.route = route;
-        }
-        spec.started_at = now;
-        run.orch.epics.push(spec);
-        hold = gate_holds::create_epic_hold(run, &epic, now);
-    }
-    log(run, now, format!("sub-planner {epic} queued"));
-    if run.state == RunState::AwaitingApproval {
-        run.state = RunState::Planning;
-        if let Some(o) = run.orch.orchestrator.as_mut() {
-            o.plan_submitted = false;
-        }
-        log(
-            run,
-            now,
-            "planning again: a sub-planner was started at the gate",
-        );
-    }
-    settle(run, now, fx);
-    let text = json!({"epic": epic, "state": "queued", "hold": hold}).to_string();
-    fx.push(Effect::Reply {
-        reply,
-        result: Ok(text),
-    });
 }

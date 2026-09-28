@@ -1,16 +1,31 @@
 //! What the engine launches for a run's planning agents (decision 1): the
-//! orchestrator's route (decision 6), its role and its window (decisions 5, 11), and a
-//! sub-planner's route (decision 31). Pure.
+//! orchestrator's route (decision 6), its role and its window (decisions 5, 11), a
+//! sub-planner's route and session (decision 31), and a run scout's (decision 20). Pure.
 
 use proto::{
     AgentRole, ModelEntry, OrchestratorChoice, Route, RoutingCandidate, RunRef, Runtime, Strength,
     WindowSpec,
 };
 
-use super::contract::ORCHESTRATOR_CONTRACT;
-use crate::headless::McpTarget;
+use std::path::Path;
+
+use proto::ScoutKind;
+
+use super::contract::{
+    ORCHESTRATOR_CONTRACT, PLANNER_CONTRACT, planner_extract_at, planner_prompt, replan_prompt,
+    scout_first_turn,
+};
+use super::extract::ExtractSlot;
+use super::{EpicRecord, RunScout};
+use crate::headless::{ClaudeSandbox, HeadlessSpec, McpTarget};
 use crate::launch::role::{ORCHESTRATOR_ALLOWED_TOOLS, ORCHESTRATOR_DISALLOWED_TOOLS, RoleLaunch};
 use crate::run::model::Run;
+use crate::run::role_launch::{
+    REVIEWER_CODEX_SANDBOX, REVIEWER_DISALLOWED_TOOLS, REVIEWER_PERMISSION_MODE,
+    codex_config_guard, protected_write_denials,
+};
+use crate::scout::planner::PlannerSpec;
+use crate::scout::spec::ScoutSpec;
 
 /// Decision 6's resolution, and decision 43's candidate snapshot: `source` is
 /// `explicit_choice`, `agent_config` or `roster_default`; `candidates` lists the
@@ -119,6 +134,7 @@ pub fn orchestrator_role(run: &Run, route: &Route) -> RoleLaunch {
             run_id: run.id.clone(),
             task_id: None,
             scout_id: None,
+            epic: None,
         },
         instructions: ORCHESTRATOR_CONTRACT.to_string(),
         effort: route.effort,
@@ -156,6 +172,114 @@ pub fn planner_route(run: &Run) -> Option<Route> {
     ))
 }
 
+/// The Claude tools a sub-planner may use (decision 31): its two anthrex tools and the
+/// read-only file tools.
+pub const PLANNER_ALLOWED_TOOLS: &[&str] = &[
+    "mcp__anthrex__get_context",
+    "mcp__anthrex__submit_epic",
+    "Read",
+    "Glob",
+    "Grep",
+];
+
+/// Decision 31: session `session` of `epic`'s sub-planner, launched read-only as M8b's
+/// area scouts are (`scout::spec::headless_spec`): the planner contract, its tools, an
+/// explicit `--permission-mode` with the reviewers' denials, an empty-root Claude
+/// sandbox denying the checkout and every repository path, Codex `read-only` with the
+/// run's config guard, no output filter. It reads the user's checkout (decision 20a).
+/// Its first turn is the planner prompt, or the re-plan prompt once the epic was
+/// re-planned, with the slot the driver puts the epic's scout extract in (decision 34).
+pub fn planner_spec(run: &Run, epic: &EpicRecord, session: u32) -> PlannerSpec {
+    let route = epic.route.clone();
+    let claude = route.runtime == Runtime::Claude;
+    let replan = !epic.replans.is_empty();
+    let first_turn = match replan {
+        false => planner_prompt(run, epic, ""),
+        true => replan_prompt(run, epic, ""),
+    };
+    let at = planner_extract_at(run, epic, replan);
+    let mut deny = protected_write_denials(&run.root, &[]);
+    for path in [&run.root, &run.project, &run.git_common_dir] {
+        if !deny.contains(path) {
+            deny.push(path.clone());
+        }
+    }
+    let headless = HeadlessSpec {
+        runtime: route.runtime,
+        model: route.model.clone(),
+        effort: route.effort,
+        cwd: run.root.clone(),
+        instructions: PLANNER_CONTRACT.to_string(),
+        mcp: Some(McpTarget {
+            role: AgentRole::Planner,
+            run_id: run.id.clone(),
+            task_id: None,
+            scout_id: None,
+            epic: Some(epic.epic.clone()),
+        }),
+        allowed_tools: strings(PLANNER_ALLOWED_TOOLS),
+        claude_permission_mode: claude.then(|| REVIEWER_PERMISSION_MODE.to_string()),
+        claude_disallowed_tools: match claude {
+            true => strings(&REVIEWER_DISALLOWED_TOOLS),
+            false => Vec::new(),
+        },
+        claude_sandbox: claude.then(|| ClaudeSandbox {
+            writable_roots: Vec::new(),
+            deny_write: deny,
+        }),
+        codex_sandbox: REVIEWER_CODEX_SANDBOX.to_string(),
+        codex_writable_roots: Vec::new(),
+        env: Vec::new(),
+        claude_auth: run.limits.claude_auth.into(),
+        api_key_helper: run.limits.api_key_helper.clone(),
+        run_ref: Some(RunRef {
+            run_id: run.id.clone(),
+            task_id: None,
+            role: AgentRole::Planner,
+            session,
+        }),
+        codex_config_guard: codex_config_guard(run, route.runtime),
+        output_filter: None,
+    };
+    let limits = &run.limits.orch.planners;
+    PlannerSpec {
+        run_id: run.id.clone(),
+        epic: epic.epic.clone(),
+        session,
+        headless,
+        first_turn,
+        project: run.project.clone(),
+        cwd: run.root.clone(),
+        route,
+        max_tool_calls: limits.max_tool_calls,
+        timeout_secs: limits.timeout_secs,
+        extract: ExtractSlot::new(&epic.scout_refs, run.onboarding_report.as_deref(), at, "\n"),
+    }
+}
+
+/// Decision 20: run scout `scout` as M8b decision 12's area scout, reading the user's
+/// checkout `root` (decision 20a), with the run's Codex guard entries, base and
+/// repository paths.
+pub fn scout_spec(run: &Run, scout: &RunScout, root: &Path, project: &Path) -> ScoutSpec {
+    ScoutSpec {
+        id: scout.id.clone(),
+        kind: ScoutKind::Area,
+        run_id: Some(run.id.clone()),
+        question: scout.question.clone(),
+        first_turn: scout_first_turn(run, &scout.id, &scout.area, &scout.question),
+        cwd: root.to_path_buf(),
+        project: project.to_path_buf(),
+        web: scout.web,
+        codex_config: run.codex_config_base.clone(),
+        base_sha: run.base_sha.clone(),
+        repo_paths: vec![run.root.clone(), run.git_common_dir.clone()],
+    }
+}
+
 fn strings(list: &[&str]) -> Vec<String> {
     list.iter().map(|s| s.to_string()).collect()
 }
+
+#[cfg(test)]
+#[path = "launch_tests.rs"]
+mod tests;

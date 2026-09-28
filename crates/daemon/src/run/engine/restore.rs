@@ -112,6 +112,8 @@ fn prepare(run: &mut Run, kept: &BTreeSet<OpId>, now: u64, fx: &mut Vec<Effect>)
     for task in run.tasks.iter_mut() {
         clock::stop_at_restore(task);
     }
+    // Milestone 9 decisions 20 and 32: run scouts and sub-planners are not resumed.
+    super::planners::restore(run, now);
     // Milestone 9 decision 26: a planning run has live agents too.
     if matches!(run.state, RunState::Running | RunState::Planning) {
         run.paused_from = Some(run.state);

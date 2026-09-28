@@ -202,8 +202,10 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
             project,
             worktree,
             jitter_ms,
+            extract,
         } => {
             tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
+            let first_turn = super::orch::fill_extract(ctx, &project, extract, first_turn).await;
             let mut spec = spec;
             if let Err(error) = worker_git_dirs(service, ctx, &mut spec).await {
                 return failed(error);
@@ -419,6 +421,7 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
         kind @ (OpKind::CreateOrchestrator { .. }
         | OpKind::RestartOrchestrator { .. }
         | OpKind::StartScout { .. }
+        | OpKind::StartPlanner { .. }
         | OpKind::ResolveTarget { .. }) => failed(format!("{} is not available yet", kind.name())),
     }
 }

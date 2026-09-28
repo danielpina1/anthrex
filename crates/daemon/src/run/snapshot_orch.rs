@@ -1,7 +1,7 @@
 //! Milestone 9's part of the pushed snapshot (task M9.6): decision 16a's plan text
 //! only at the gate, and decision 42d's message counts and bounded task notes. Pure.
 
-use proto::{HoldInfo, OrchestratorInfo, TaskNoteInfo};
+use proto::{HoldInfo, OrchestratorInfo, PlannerInfo, PlannerState, TaskNoteInfo};
 
 use super::model::{Run, Task};
 
@@ -80,6 +80,36 @@ pub(super) fn holds(run: &Run) -> Vec<HoldInfo> {
             created_at: h.created_at,
             decided_at: h.decided_at,
             decided_by: h.decided_by.clone(),
+        })
+        .collect()
+}
+
+/// Decision 33: one `PlannerInfo` per epic. A queued planner shows `Planning` (M8c's
+/// `PlannerState` has no queued); `window_id` is the latest session's, `started_at` the
+/// first session's (the epic's when none has started) and `ended_at` the last's.
+pub(super) fn planners(run: &Run) -> Vec<PlannerInfo> {
+    use crate::run::orch::PlannerPhase;
+    run.orch
+        .epics
+        .iter()
+        .map(|e| PlannerInfo {
+            epic: e.epic.clone(),
+            title: e.title.clone(),
+            area: e.area.clone(),
+            route: e.route.clone(),
+            window_id: e.sessions.last().and_then(|s| s.window_id),
+            state: match e.phase {
+                PlannerPhase::Queued | PlannerPhase::Planning => PlannerState::Planning,
+                PlannerPhase::Finished => PlannerState::Finished,
+                PlannerPhase::Failed { .. } => PlannerState::Failed,
+            },
+            started_at: e.sessions.first().map_or(e.started_at, |s| s.started_at),
+            ended_at: e.ended_at,
+            edits_accepted: e.edits_accepted,
+            edits_rejected: e.edits_rejected,
+            last_rejection: e.last_rejection.clone(),
+            replans: e.replans.clone(),
+            note: e.note.clone(),
         })
         .collect()
 }

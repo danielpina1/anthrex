@@ -72,6 +72,54 @@ fn indent(text: &str) -> String {
         .join("\n")
 }
 
+/// Decision 34, the engine's half: the reports a first turn's extract is built from,
+/// and where it goes. The engine builds the turn with no extract (it reads no file); the
+/// driver reads the reports when it launches the session and puts
+/// `sep` + [`scout_extract`] at byte `at` ([`ExtractSlot::fill`]), which gives exactly
+/// the prompt built with that extract.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExtractSlot {
+    /// `scout_refs` entries, in order: a run scout's full id, or `onboarding`.
+    pub refs: Vec<String>,
+    /// The report `onboarding` names (`Run.onboarding_report`).
+    pub onboarding: Option<String>,
+    pub at: usize,
+    pub sep: String,
+}
+
+impl ExtractSlot {
+    /// A slot for `refs`, none when there are no refs (the turn needs no extract).
+    pub fn new(refs: &[String], onboarding: Option<&str>, at: usize, sep: &str) -> Option<Self> {
+        (!refs.is_empty()).then(|| ExtractSlot {
+            refs: refs.to_vec(),
+            onboarding: onboarding.map(str::to_string),
+            at,
+            sep: sep.to_string(),
+        })
+    }
+
+    /// `first_turn` with `extract` in its place; unchanged when `extract` is empty or
+    /// the offset is not a character boundary of it.
+    pub fn fill(&self, first_turn: &str, extract: &str) -> String {
+        if extract.is_empty() || !first_turn.is_char_boundary(self.at) {
+            return first_turn.to_string();
+        }
+        let (head, tail) = first_turn.split_at(self.at);
+        format!("{head}{}{extract}{tail}", self.sep)
+    }
+}
+
+/// Decision 34: a worker's (or a handover's) slot for its task's `scout_refs`, after
+/// its acceptance criteria.
+pub fn worker_slot(
+    run: &crate::run::model::Run,
+    task: &crate::run::model::Task,
+) -> Option<ExtractSlot> {
+    let at = crate::run::contract::worker_extract_at(run, task);
+    let onboarding = run.onboarding_report.as_deref();
+    ExtractSlot::new(&task.spec.scout_refs, onboarding, at, "\n\n")
+}
+
 #[cfg(test)]
 #[path = "extract_tests.rs"]
 mod tests;

@@ -150,7 +150,7 @@ fn approve_starts_dispatch_and_yes_skips_the_gate() {
     assert_eq!(project, &PathBuf::from("/tmp/p"));
     assert!(matches!(
         &spec.mcp,
-        Some(McpTarget { role: AgentRole::Worker, task_id: Some(t), run_id, scout_id: None }) if t == "t1" && run_id == RUN_ID
+        Some(McpTarget { role: AgentRole::Worker, task_id: Some(t), run_id, scout_id: None, .. }) if t == "t1" && run_id == RUN_ID
     ));
     let mut tools = vec![
         "mcp__anthrex__task_done".to_string(),

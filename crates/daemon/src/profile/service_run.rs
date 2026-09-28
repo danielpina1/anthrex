@@ -325,6 +325,10 @@ impl ProfileService {
                 Stop::Failed("the onboarding scout reported no profile".to_string())
             }),
             Ok(ScoutOutcome::Failed { reason }) => Err(Stop::Failed(reason)),
+            // Only a sub-planner's session ends accepted (milestone 9 decision 22).
+            Ok(ScoutOutcome::Accepted) => Err(Stop::Failed(
+                "the onboarding scout reported nothing".to_string(),
+            )),
             Err(_) => Err(Stop::Failed(
                 "the onboarding scout ended without an outcome".to_string(),
             )),

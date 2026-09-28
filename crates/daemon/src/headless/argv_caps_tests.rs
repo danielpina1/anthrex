@@ -330,6 +330,7 @@ fn mcp_args_for_a_scout() {
         run_id: String::new(),
         task_id: None,
         scout_id: Some("onboarding-1".into()),
+        epic: None,
     };
     assert_eq!(
         mcp_args(&target, 7, Path::new("/tmp/a.sock")).unwrap(),
@@ -348,6 +349,7 @@ fn mcp_args_for_a_scout() {
     let run_scout = McpTarget {
         run_id: "r1".into(),
         scout_id: Some("api-1".into()),
+        epic: None,
         ..target
     };
     assert_eq!(
@@ -365,6 +367,7 @@ fn mcp_args_refuses_a_decider() {
         run_id: "r-3f9a".into(),
         task_id: None,
         scout_id: None,
+        epic: None,
     };
     assert_eq!(mcp_args(&target, 7, Path::new("/tmp/a.sock")), None);
     for runtime in [Runtime::Claude, Runtime::Codex] {
@@ -384,4 +387,33 @@ fn mcp_args_refuses_a_decider() {
         );
         assert!(!argv.iter().any(|a| a.contains("--role")), "{argv:?}");
     }
+}
+
+/// Milestone 9 decision 31: a sub-planner's server names its run and its epic, `--epic`
+/// after `--scout`'s place and before `--window`.
+#[test]
+fn mcp_args_for_a_planner() {
+    let target = McpTarget {
+        role: AgentRole::Planner,
+        run_id: "r-3f9a".into(),
+        task_id: None,
+        scout_id: None,
+        epic: Some("mail".into()),
+    };
+    assert_eq!(
+        mcp_args(&target, 7, Path::new("/tmp/a.sock")).unwrap(),
+        [
+            "mcp",
+            "--role",
+            "planner",
+            "--run",
+            "r-3f9a",
+            "--epic",
+            "mail",
+            "--window",
+            "7",
+            "--socket",
+            "/tmp/a.sock"
+        ]
+    );
 }

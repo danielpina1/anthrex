@@ -116,15 +116,16 @@ fn spawn_subplanner_in_awaiting_approval_returns_to_planning() {
                       "brief": "Plan the mail module"});
     let (ok, value) = answer(&orch_tool(&mut fx, ORCH, "spawn_subplanner", args));
     assert!(ok, "{value}");
+    // Task M9.8: a reader slot is free, so its session starts at once (decision 31).
     assert_eq!(
         value,
-        json!({"epic": "mail", "state": "queued", "hold": null})
+        json!({"epic": "mail", "state": "planning", "hold": null})
     );
     let run = fx.run();
     assert_eq!(run.state, RunState::Planning);
     assert!(!run.orch.orchestrator.as_ref().unwrap().plan_submitted);
     assert_eq!(run.orch.epics.len(), 1);
-    assert_eq!(run.orch.epics[0].phase, PlannerPhase::Queued);
+    assert_eq!(run.orch.epics[0].phase, PlannerPhase::Planning);
     assert!(fx.task("t1").prewarmed, "pre-warmed worktrees stay");
 }
 

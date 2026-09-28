@@ -258,7 +258,38 @@ pub fn replan_prompt(run: &Run, epic: &EpicRecord, extract: &str) -> String {
     planner_text(run, epic, extract, true)
 }
 
+/// Where a planner's first turn built with no extract takes one: after its task cap
+/// line, on a line of its own (decision 34; the driver fills it).
+pub fn planner_extract_at(run: &Run, epic: &EpicRecord, replan: bool) -> usize {
+    planner_head(run, epic, replan).join("\n").len()
+}
+
 fn planner_text(run: &Run, epic: &EpicRecord, extract: &str, replan: bool) -> String {
+    let mut lines = planner_head(run, epic, replan);
+    if !extract.is_empty() {
+        lines.push(extract.to_string());
+    }
+    lines.push(String::new());
+    if replan {
+        lines.push("The epic's current tasks:".into());
+        let current: Vec<String> = run
+            .tasks
+            .iter()
+            .filter(|t| t.spec.epic.as_deref() == Some(epic.epic.as_str()))
+            .map(|t| {
+                let size = size_label(t.size);
+                format!("- {} {size} {} {}", t.spec.id, state_label(t), t.spec.title)
+            })
+            .collect();
+        none_or(&mut lines, current);
+    }
+    lines.push("What to plan:".into());
+    lines.push(epic.request.clone());
+    lines.join("\n")
+}
+
+/// A planner's first turn up to its task cap line.
+fn planner_head(run: &Run, epic: &EpicRecord, replan: bool) -> Vec<String> {
     let verb = if replan { "Re-plan" } else { "Plan" };
     let mut lines = vec![
         format!(
@@ -294,26 +325,7 @@ fn planner_text(run: &Run, epic: &EpicRecord, extract: &str, replan: bool) -> St
         "Task cap: at most {} tasks.",
         run.limits.orch.planner_task_cap
     ));
-    if !extract.is_empty() {
-        lines.push(extract.to_string());
-    }
-    lines.push(String::new());
-    if replan {
-        lines.push("The epic's current tasks:".into());
-        let current: Vec<String> = run
-            .tasks
-            .iter()
-            .filter(|t| t.spec.epic.as_deref() == Some(epic.epic.as_str()))
-            .map(|t| {
-                let size = size_label(t.size);
-                format!("- {} {size} {} {}", t.spec.id, state_label(t), t.spec.title)
-            })
-            .collect();
-        none_or(&mut lines, current);
-    }
-    lines.push("What to plan:".into());
-    lines.push(epic.request.clone());
-    lines.join("\n")
+    lines
 }
 
 fn none_or(lines: &mut Vec<String>, items: Vec<String>) {

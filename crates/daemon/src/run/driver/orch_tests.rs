@@ -186,3 +186,70 @@ async fn the_tick_publishes_outside_the_engine_lock() {
         .unwrap();
     assert_eq!(pushed.runs.len(), 1);
 }
+
+/// Task M9.8 (decision 34): the driver reads the stored reports a first turn's slot
+/// names, each resolved as `scout::report::resolve_ref` says (a run scout's under the
+/// run, `onboarding` under the repository), and puts their extract in the slot. One
+/// that cannot be read, or that is not a scout id, is left out.
+#[test]
+fn the_driver_fills_a_first_turn_with_the_stored_reports() {
+    use crate::run::orch::extract::{ExtractSlot, scout_extract};
+    use crate::scout::report::report_path;
+    let dir = tempfile::tempdir().unwrap();
+    let (run_dir, repo_dir) = (dir.path().join("run"), dir.path().join("repo"));
+    let report = |id: &str, summary: &str| proto::ScoutReport {
+        id: id.into(),
+        kind: ScoutKind::Area,
+        run_id: None,
+        question: String::new(),
+        summary: summary.into(),
+        files: vec![proto::ScoutFile {
+            path: "crates/api/src/lib.rs".into(),
+            why: String::new(),
+        }],
+        modules: Vec::new(),
+        interfaces: Vec::new(),
+        risks: Vec::new(),
+        profile: None,
+        route: proto::Route {
+            runtime: proto::Runtime::Claude,
+            model: String::new(),
+            strength: proto::Strength::Fast,
+            effort: proto::Effort::Low,
+        },
+        window_id: None,
+        started_at: 0,
+        finished_at: 0,
+        tool_calls: 0,
+        usage: Default::default(),
+    };
+    let store = |path: PathBuf, report: &proto::ScoutReport| {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, serde_json::to_vec(report).unwrap()).unwrap();
+    };
+    let api = report("3f9a-api", "The API is one crate.");
+    store(report_path(&repo_dir, Some(&run_dir), "3f9a-api"), &api);
+    let onboarding = report("onboarding-7", "A Rust workspace.");
+    store(report_path(&repo_dir, None, "onboarding-7"), &onboarding);
+    let refs: Vec<String> = ["3f9a-api", "3f9a-gone", "onboarding", "../escape"]
+        .map(String::from)
+        .to_vec();
+    let slot = ExtractSlot::new(&refs, Some("onboarding-7"), 4, "\n\n").unwrap();
+    let got = super::filled(&slot, &run_dir, &repo_dir, "HEAD\n\nBRIEF");
+    let extract = scout_extract(&[
+        ("3f9a-api".to_string(), api),
+        ("onboarding".to_string(), onboarding),
+    ]);
+    assert_eq!(got, format!("HEAD\n\n{extract}\n\nBRIEF"));
+    assert!(
+        got.contains(
+            "Scout report 3f9a-api:\n  The API is one crate.\nFiles: crates/api/src/lib.rs"
+        )
+    );
+    // Nothing readable: the turn as the engine built it.
+    let slot = ExtractSlot::new(&refs[1..2], None, 4, "\n\n").unwrap();
+    assert_eq!(
+        super::filled(&slot, &run_dir, &repo_dir, "HEAD\n\nBRIEF"),
+        "HEAD\n\nBRIEF"
+    );
+}

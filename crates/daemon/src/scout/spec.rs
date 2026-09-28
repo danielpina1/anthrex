@@ -109,6 +109,7 @@ pub fn headless_spec(scout: &ScoutSpec, ctx: &ScoutContext) -> HeadlessSpec {
             run_id: run_id.clone(),
             task_id: None,
             scout_id: Some(scout.id.clone()),
+            epic: None,
         }),
         allowed_tools: allowed.into_iter().map(String::from).collect(),
         claude_permission_mode: claude.then(|| REVIEWER_PERMISSION_MODE.to_string()),

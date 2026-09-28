@@ -714,7 +714,10 @@ scope.
   `apply_edits` still accepts `cancel_task` and `answer` on tasks outside the area, and
   the run-level `pause`, `resume` and `finish` (task-6 review F7). Decision 12 speaks
   only of `owns`, so this is within M8a's letter. M9's sub-planner scope must decide
-  which edit kinds, and which tasks, a sub-planner may use.
+  which edit kinds, and which tasks, a sub-planner may use. *Handled in M9.8:*
+  `submit_epic` refuses `answer`, `pause`, `resume`, `finish`, `message` and `refresh`
+  (`op <op> is not available to a sub-planner`), and `run/edits_orch.rs::planner_confinement`
+  refuses `amend_task`, `cancel_task` and `add_dep` on a task of another epic or of none.
 - **No `remove_dep` / `replace_dep` edit.** A `blocked(dep_cancelled)` task stays
   editable (fix round 1, F3), and it can gain a dependency on a replacement task. But its
   dependency on the cancelled task cannot be removed, so it never becomes runnable. Today

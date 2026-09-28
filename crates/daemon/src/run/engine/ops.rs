@@ -45,6 +45,10 @@ pub enum OpKind {
         project: PathBuf,
         worktree: PathBuf,
         jitter_ms: u64,
+        /// Milestone 9 decision 34: where the driver puts the task's scout extract into
+        /// `first_turn`, when the task names scout reports.
+        #[serde(default)]
+        extract: Option<crate::run::orch::extract::ExtractSlot>,
     },
     ResumeSession {
         window_id: u32,
@@ -277,6 +281,11 @@ pub enum OpKind {
         target: String,
         base_branch: String,
     },
+    /// Decisions 31 and 32: a sub-planner session on M8b's scout machine; the result is
+    /// `PlannerStarted`, or `Failed`.
+    StartPlanner {
+        spec: Box<crate::scout::planner::PlannerSpec>,
+    },
 }
 
 impl OpKind {
@@ -308,6 +317,7 @@ impl OpKind {
             OpKind::RestartOrchestrator { .. } => "RestartOrchestrator",
             OpKind::StartScout { .. } => "StartScout",
             OpKind::ResolveTarget { .. } => "ResolveTarget",
+            OpKind::StartPlanner { .. } => "StartPlanner",
         }
     }
 }
@@ -468,5 +478,9 @@ pub enum OpResult {
     Target {
         base: String,
         head: String,
+    },
+    /// `StartPlanner`'s sub-planner window.
+    PlannerStarted {
+        window_id: u32,
     },
 }

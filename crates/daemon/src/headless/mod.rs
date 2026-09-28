@@ -83,6 +83,9 @@ pub struct McpTarget {
     /// A scout's id (`--scout`), M8b decision 15.
     #[serde(default)]
     pub scout_id: Option<String>,
+    /// A sub-planner's epic (`--epic`), milestone 9 decision 31.
+    #[serde(default)]
+    pub epic: Option<String>,
 }
 
 /// Which session a launch starts or continues.

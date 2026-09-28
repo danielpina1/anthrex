@@ -321,6 +321,9 @@ pub struct PlannerSession {
     pub started_at: u64,
     pub ended_at: Option<u64>,
     pub usage: TokenUsage,
+    /// The session's rejected `submit_epic` batches (decision 22's `max_rejections`).
+    #[serde(default)]
+    pub rejections: u32,
 }
 
 #[cfg(test)]

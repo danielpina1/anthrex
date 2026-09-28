@@ -377,6 +377,41 @@ pub(super) fn submitted(run: &mut Run, id: &str, now: u64) {
     }
 }
 
+/// The orchestrator's `submit` on a running run (M9.7 second review, items 8 and 10):
+/// each epic round still `Drafting` that holds live work and whose epic no sub-planner
+/// is queued for or planning awaits the user, as the promotion round does. An epic
+/// whose sub-planner is live is submitted by its `submit_epic`.
+pub(super) fn submit_epic_rounds(run: &mut Run, now: u64) {
+    let idle = |run: &Run, epic: &str| {
+        run.orch
+            .epics
+            .iter()
+            .any(|e| e.epic == epic && !e.phase.is_live())
+    };
+    submit_drafted(run, now, idle);
+}
+
+/// A sub-planner's `submit_epic` was accepted (decision 28): its epic's round awaits
+/// the user, or is approved by `--yes`. A round with no live task is left `Drafting`,
+/// for [`drop_empty_rounds`], so the user is never asked to approve nothing.
+pub(super) fn submit_epic_round(run: &mut Run, epic: &str, now: u64) {
+    submit_drafted(run, now, |_, e| e == epic);
+}
+
+fn submit_drafted(run: &mut Run, now: u64, pick: impl Fn(&Run, &str) -> bool) {
+    let ids: Vec<String> = run
+        .orch
+        .gate_holds
+        .iter()
+        .filter(|h| h.state == HoldState::Drafting && !no_live_task(run, h))
+        .filter(|h| matches!(&h.kind, HoldKind::Epic { epic } if pick(run, epic)))
+        .map(|h| h.id.clone())
+        .collect();
+    for id in ids {
+        submitted(run, &id, now);
+    }
+}
+
 /// `run approve --hold` (`approve`) or `run reject --hold`: an awaiting hold is
 /// approved, and its tasks become runnable, or rejected, and its tasks are cancelled
 /// (none has started; dependents become `blocked(dep_cancelled)`, decision 13).

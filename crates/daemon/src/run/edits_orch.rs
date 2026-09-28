@@ -4,7 +4,7 @@
 //! these. Pure — no `std::fs`, `std::process`, `std::thread`, `tokio` or
 //! `std::time::SystemTime` (M8a design decision 2).
 
-use proto::{BlockReason, PlanTask, TaskState};
+use proto::{BlockReason, PlanEdit, PlanTask, TaskState};
 
 use super::edits::{Batch, not_started, state_label};
 use super::model::Run;
@@ -126,4 +126,31 @@ impl Batch {
         }
         Some(spec)
     }
+}
+
+/// Decision 22: a sub-planner changes only its own epic's tasks. An `amend_task`,
+/// `cancel_task` or `add_dep` of a task of another epic, or of one with no epic (the
+/// orchestrator's or the user's), is refused; `add_dep`'s `dep` may name any task. This
+/// closes the M8a.6 follow-up that `EditScope::Area` limits only `owns`. A task the
+/// batch itself adds is the planner's own, and an unknown one is the batch's to report,
+/// so only tasks of the run before the batch are checked. (`split_task` and `add_task`
+/// are confined in the batch: `Batch::split_owned`, `Batch::owned`.)
+pub(crate) fn planner_confinement(run: &Run, edits: &[PlanEdit], epic: &str) -> Vec<PlanError> {
+    edits
+        .iter()
+        .filter_map(|edit| match edit {
+            PlanEdit::AmendTask { task_id, .. }
+            | PlanEdit::CancelTask { task_id }
+            | PlanEdit::AddDep { task_id, .. } => Some(task_id),
+            _ => None,
+        })
+        .filter(|id| {
+            run.task(id)
+                .is_some_and(|t| t.spec.epic.as_deref() != Some(epic))
+        })
+        .map(|id| {
+            let text = format!("task {id}: a sub-planner changes only its own epic's tasks");
+            PlanError::new(Some(id), "", "2.epic", text)
+        })
+        .collect()
 }

@@ -80,6 +80,7 @@ fn insert(service: &ScoutService, window_id: Option<u32>) {
             installed: false,
             kill_at: None,
             remove_at: None,
+            planner: None,
         },
     );
 }

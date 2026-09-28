@@ -7,6 +7,7 @@ use proto::{OrchestratorChoice, RunReply, RunsSnapshot};
 
 use super::RunService;
 use crate::run::engine::{EventKind, OrchEvent};
+use crate::run::orch::extract::ExtractSlot;
 
 fn answer(label: &str, result: Result<String, String>) -> RunReply {
     match result {
@@ -72,6 +73,54 @@ impl RunService {
         };
         answer(request::PROMOTE, self.ask(event).await)
     }
+}
+
+/// Decision 34, the driver's half: a first turn with the scout extract of its slot's
+/// reports, read on a blocking thread (each resolved only to a report anthrex stored,
+/// through `read_report`'s guards); a report that cannot be read is left out with a
+/// warning (`readable_reports`). With no slot, the turn as the engine built it.
+pub(super) async fn fill_extract(
+    ctx: &super::OpCtx,
+    project: &std::path::Path,
+    slot: Option<ExtractSlot>,
+    first_turn: String,
+) -> String {
+    let Some(slot) = slot else {
+        return first_turn;
+    };
+    let run_dir = crate::run::journal::runs_dir(&ctx.data_dir).join(&ctx.run_id);
+    let repo_dir = crate::profile::repo_dir(&ctx.data_dir, project);
+    let fallback = first_turn.clone();
+    tokio::task::spawn_blocking(move || filled(&slot, &run_dir, &repo_dir, &first_turn))
+        .await
+        .unwrap_or(fallback)
+}
+
+/// [`fill_extract`]'s blocking body.
+pub(super) fn filled(
+    slot: &ExtractSlot,
+    run_dir: &std::path::Path,
+    repo_dir: &std::path::Path,
+    first_turn: &str,
+) -> String {
+    use crate::run::orch::extract::{readable_reports, scout_extract};
+    use crate::scout::report::resolve_ref;
+    use crate::scout::spec::valid_id;
+    let read = slot
+        .refs
+        .iter()
+        .map(|reference| {
+            let report = if valid_id(reference) {
+                let onboarding = slot.onboarding.as_deref().filter(|id| valid_id(id));
+                let path = resolve_ref(reference, run_dir, repo_dir, onboarding);
+                super::adapt::read_report(&path)
+            } else {
+                Err("not a stored report".to_string())
+            };
+            (reference.clone(), report)
+        })
+        .collect();
+    slot.fill(first_turn, &scout_extract(&readable_reports(read)))
 }
 
 #[cfg(test)]

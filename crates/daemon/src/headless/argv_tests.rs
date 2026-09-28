@@ -26,6 +26,7 @@ pub(super) fn worker(runtime: Runtime) -> HeadlessSpec {
             run_id: "r-3f9a".into(),
             task_id: Some("t1".into()),
             scout_id: None,
+            epic: None,
         }),
         allowed_tools: [
             "mcp__anthrex__task_done",
@@ -70,6 +71,7 @@ pub(super) fn reviewer(runtime: Runtime) -> HeadlessSpec {
             run_id: "r-3f9a".into(),
             task_id: Some("t2".into()),
             scout_id: None,
+            epic: None,
         }),
         allowed_tools: [
             "mcp__anthrex__submit_review",
@@ -204,6 +206,7 @@ fn mcp_args_for_a_worker() {
         run_id: "r-3f9a".into(),
         task_id: Some("t1".into()),
         scout_id: None,
+        epic: None,
     };
     assert_eq!(
         mcp_args(&target, 7, Path::new("/tmp/a.sock")),

@@ -55,6 +55,8 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             }
             _ => {}
         }
+        // Milestone 9 decision 31: sub-planners, then run scouts, in free reader slots.
+        super::planners::dispatch(run, now, fx);
     }
     remove_cancelled_worktrees(run, now, fx);
     if run.state == RunState::Running {
@@ -318,6 +320,7 @@ fn launch(
     let task = &run.tasks[i];
     let spec = worker_spec(run, task);
     let first_turn = first_turn(run, task);
+    let extract = crate::run::orch::extract::worker_slot(run, task);
     let name = format!("{}/{}.w{}", run.short(), task.id(), task.session);
     let uuid = (task.route.runtime == Runtime::Claude).then(|| session_uuid_of(run, op));
     let jitter = jitter_ms(&run.id, task.id(), task.session);
@@ -341,6 +344,7 @@ fn launch(
         project: run.project.clone(),
         worktree,
         jitter_ms: jitter,
+        extract,
     };
     emit_op(run, op, Some(&id), kind, fx);
 }

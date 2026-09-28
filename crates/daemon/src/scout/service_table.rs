@@ -11,6 +11,7 @@ use tokio::sync::oneshot;
 use super::ScoutOutcome;
 use crate::run::driver::unix_now;
 use crate::scout::machine::{self, ScoutEffect, ScoutEvent, ScoutLimits, ScoutMachine};
+use crate::scout::planner::PlannerTag;
 use crate::scout::spec::ScoutSpec;
 
 /// One scout the service knows.
@@ -36,6 +37,9 @@ pub(super) struct Scout {
     pub(super) installed: bool,
     pub(super) kill_at: Option<Instant>,
     pub(super) remove_at: Option<Instant>,
+    /// A sub-planner's session (milestone 9 decision 31): its own limits, and no
+    /// report; `run_scouts` leaves it out.
+    pub(super) planner: Option<PlannerTag>,
 }
 
 #[derive(Default)]
@@ -76,6 +80,7 @@ pub(super) fn step_locked(scout: &mut Scout, event: ScoutEvent, limits: &ScoutLi
                     (Err(reason), _) => ScoutOutcome::Failed {
                         reason: reason.clone(),
                     },
+                    (Ok(()), None) if scout.planner.is_some() => ScoutOutcome::Accepted,
                     (Ok(()), None) => ScoutOutcome::Failed {
                         reason: "the scout reported nothing".into(),
                     },

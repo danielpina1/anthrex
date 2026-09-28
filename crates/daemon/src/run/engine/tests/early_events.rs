@@ -255,3 +255,54 @@ fn a_held_call_of_another_role_is_refused_at_once() {
     );
     assert!(fx.state.pending.is_empty());
 }
+
+/// Task M9.8: a sub-planner's `submit_epic` joins the hold. A run's planner whose
+/// `StartPlanner` is in flight, epic `mail`.
+fn planner_launching() -> (Fixture, OpId) {
+    let mut fx = super::orch::launched(false);
+    super::planners::spawn(&mut fx, "mail");
+    let (op, _) = fx.op("StartPlanner");
+    (fx, op)
+}
+
+fn early_submit(fx: &mut Fixture) -> Vec<Effect> {
+    let edits = serde_json::json!([super::planners::task_in("m1", "mail")]);
+    super::planners::planner_tool(
+        fx,
+        (EARLY, "mail"),
+        "submit_epic",
+        serde_json::json!({ "edits": edits }),
+    )
+}
+
+#[test]
+fn a_planners_submit_before_its_window_is_answered_after_binding() {
+    let (mut fx, op) = planner_launching();
+    let effects = early_submit(&mut fx);
+    assert!(replies(&effects).is_empty(), "held: {effects:#?}");
+    let effects = fx.done(op, OpResult::PlannerStarted { window_id: EARLY });
+    assert_eq!(
+        replies(&effects),
+        vec![Ok(crate::run::engine::planners::EPIC_RECORDED.to_string())]
+    );
+    assert!(effects.contains(&Effect::PlannerAccepted { window_id: EARLY }));
+    assert_eq!(fx.task("m1").spec.epic.as_deref(), Some("mail"));
+    assert!(fx.state.pending.is_empty());
+}
+
+#[test]
+fn a_planners_held_submit_is_refused_when_its_launch_fails() {
+    let (mut fx, op) = planner_launching();
+    assert!(replies(&early_submit(&mut fx)).is_empty());
+    let effects = fx.done(
+        op,
+        OpResult::Failed {
+            message: "no binary".into(),
+        },
+    );
+    let text = format!("this window is not the sub-planner of epic mail of run {RUN_ID}");
+    let error = serde_json::json!({ "error": text }).to_string();
+    assert_eq!(replies(&effects), vec![Err(error)]);
+    assert!(fx.run().task("m1").is_none());
+    assert!(fx.state.pending.is_empty());
+}

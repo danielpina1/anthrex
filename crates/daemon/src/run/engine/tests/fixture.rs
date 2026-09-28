@@ -418,6 +418,7 @@ pub fn op_name(kind: &OpKind) -> &'static str {
         OpKind::RestartOrchestrator { .. } => "RestartOrchestrator",
         OpKind::StartScout { .. } => "StartScout",
         OpKind::ResolveTarget { .. } => "ResolveTarget",
+        OpKind::StartPlanner { .. } => "StartPlanner",
     }
 }
 

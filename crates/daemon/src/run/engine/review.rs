@@ -178,6 +178,7 @@ pub(super) fn review_ready(
         project: run.project.clone(),
         worktree,
         jitter_ms: jitter,
+        extract: None,
     };
     emit_op(run, op, Some(&id), kind, fx);
 }

@@ -78,6 +78,7 @@ fn create(run_id: &str) -> OpKind {
                 run_id: r.run_id.clone(),
                 task_id: None,
                 scout_id: None,
+                epic: None,
             },
             run_ref: r,
             instructions: String::new(),

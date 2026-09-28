@@ -61,11 +61,13 @@ mod ops;
 mod orch;
 mod orch_window;
 mod outbox;
+mod planners;
 mod promote;
 mod requests;
 mod restore;
 mod results;
 mod review;
+mod run_scouts;
 pub(crate) mod schedule;
 mod signals;
 mod tools;
@@ -76,7 +78,7 @@ pub use clock::{BudgetEpoch, TaskClock};
 pub use early::{HOLD_CAP, HOLD_LIMIT_SECS, HOLD_WINDOWS_CAP, HeldEvent, HeldWindow};
 pub use history::HISTORY_FILE;
 pub use ops::{OpKind, OpResult, OverrideCount, ResolutionAt, ScratchAt};
-pub use orch::OrchEvent;
+pub use orch::{OrchEvent, ScoutEnd};
 pub use signals::INTERRUPT_GRACE_SECS;
 
 /// Identifies a client request waiting for its [`Effect::Reply`].
@@ -318,6 +320,16 @@ pub enum Effect {
     },
     Publish {
         structural: bool,
+    },
+    /// Milestone 9 decision 22: a sub-planner's epic was accepted; the driver retires
+    /// its session (`ScoutService::accept_planner`).
+    PlannerAccepted {
+        window_id: u32,
+    },
+    /// Decision 22: a sub-planner failed in the engine; the driver stops its session.
+    StopPlanner {
+        window_id: u32,
+        reason: String,
     },
 }
 

@@ -257,6 +257,17 @@ impl RunService {
                 crate::lock(&self.book).reports_due.insert(run_id);
                 self.write_due_reports(now, false).await;
             }
+            // Milestone 9 decision 22: a sub-planner's session on the scout machine.
+            Effect::PlannerAccepted { window_id } => {
+                if let Some(adaptation) = self.adaptation.get() {
+                    adaptation.scouts.accept_planner(window_id);
+                }
+            }
+            Effect::StopPlanner { window_id, reason } => {
+                if let Some(adaptation) = self.adaptation.get() {
+                    adaptation.scouts.stop_planner(window_id, &reason);
+                }
+            }
             Effect::Persist { .. } | Effect::Op { .. } | Effect::Publish { .. } => {}
         }
     }

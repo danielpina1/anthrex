@@ -175,3 +175,53 @@ fn file_path_with_a_newline_stays_on_its_line() {
     );
     assert!(column0(&text, "[anthrex]").is_empty(), "{text}");
 }
+
+/// Task M9.8 (decision 34): a first turn the engine built with no extract, filled by
+/// the driver at its slot, is exactly the prompt built with the extract: a worker's, a
+/// handover's (the worker prompt leads it), a planner's and a re-plan's.
+#[test]
+fn a_filled_slot_is_the_prompt_built_with_the_extract() {
+    use crate::run::contract::{handover_prompt, worker_extract_at};
+    use crate::run::orch::contract::{planner_extract_at, replan_prompt};
+    let extract = scout_extract(&[("s1".to_string(), report("s1", "ok\nmore", &["a.rs"]))]);
+    let mut run = run_ok(&plan_with(
+        PROFILE,
+        &[task_toml(
+            "a1",
+            "S",
+            "[\"crates/auth/src/a.rs\"]",
+            "epic = \"auth\"",
+        )],
+    ));
+    let mut epic = EpicRecord::new("auth", PlannerPhase::Planning);
+    epic.request = "Plan the auth epic.".into();
+    run.orch.epics.push(epic);
+    let refs = vec!["s1".to_string()];
+    let task = &run.tasks[0];
+    let slot = |at, sep| ExtractSlot::new(&refs, None, at, sep).unwrap();
+    let worker = slot(worker_extract_at(&run, task), "\n\n");
+    assert_eq!(
+        worker.fill(&worker_prompt(&run, task, "", ""), &extract),
+        worker_prompt(&run, task, &extract, "")
+    );
+    let notes = "Notes from the orchestrator:\n- 10:00 (info, from user) hi";
+    assert_eq!(
+        worker.fill(&worker_prompt(&run, task, "", notes), &extract),
+        worker_prompt(&run, task, &extract, notes)
+    );
+    let handover = |x: &str| handover_prompt(&run, task, "why", "stat", "patch", x, "");
+    assert_eq!(worker.fill(&handover(""), &extract), handover(&extract));
+    let epic = &run.orch.epics[0];
+    for replan in [false, true] {
+        let planner = slot(planner_extract_at(&run, epic, replan), "\n");
+        let prompt = |x: &str| match replan {
+            false => planner_prompt(&run, epic, x),
+            true => replan_prompt(&run, epic, x),
+        };
+        assert_eq!(planner.fill(&prompt(""), &extract), prompt(&extract));
+    }
+    // No refs, no slot; an empty extract changes nothing.
+    assert_eq!(ExtractSlot::new(&[], None, 0, "\n"), None);
+    let empty = worker_prompt(&run, task, "", "");
+    assert_eq!(worker.fill(&empty, ""), empty);
+}

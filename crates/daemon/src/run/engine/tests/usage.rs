@@ -37,6 +37,8 @@ fn run_usage_sums_roles() {
         run.triage_usage = usage(16);
         run.scout_usage = usage(32);
         run.orchestrator_usage = usage(64);
+        // Milestone 9 decision 32: sub-planners' sessions.
+        run.orch.planner_usage = usage(128);
         run.decider_calls = 3;
         run.decider_fallbacks = 1;
     }
@@ -49,12 +51,13 @@ fn run_usage_sums_roles() {
         vec![
             ("decider", usage(8 + 16)),
             ("orchestrator", usage(64)),
+            ("planner", usage(128)),
             ("reviewer", usage(4)),
             ("scout", usage(32)),
             ("worker", usage(1 + 2)),
         ]
     );
-    assert_eq!(got.total, usage(1 + 2 + 4 + 8 + 16 + 32 + 64));
+    assert_eq!(got.total, usage(1 + 2 + 4 + 8 + 16 + 32 + 64 + 128));
     assert_eq!((got.decider_calls, got.decider_fallbacks), (3, 1));
 }
 
@@ -65,7 +68,14 @@ fn a_new_run_shows_every_role_at_zero() {
     let roles: Vec<&str> = got.by_role.keys().map(String::as_str).collect();
     assert_eq!(
         roles,
-        ["decider", "orchestrator", "reviewer", "scout", "worker"]
+        [
+            "decider",
+            "orchestrator",
+            "planner",
+            "reviewer",
+            "scout",
+            "worker"
+        ]
     );
     assert_eq!(got.total, TokenUsage::default());
 }

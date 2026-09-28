@@ -94,7 +94,7 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         profile_source: run.profile_source,
         usage: Some(run_usage(run)),
         scouts: Vec::new(),
-        // Milestone 8c; `planners` (M9) and the estimates (M9.5) are placeholders.
+        // Milestone 8c; the estimates (M9.5) are placeholders.
         approved_at: run.approved_at,
         plan_edits: run
             .plan_edits
@@ -112,7 +112,7 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
             })
             .collect(),
         plan_edits_since_approval: run.plan_edits_since_approval,
-        planners: Vec::new(),
+        planners: super::snapshot_orch::planners(run),
         estimate_left_secs: None,
         bound_ratio_permille: None,
         // Milestone 9: the orchestrator and holds (task M9.7); the rest by later tasks.
@@ -128,11 +128,17 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
 /// deciders with triage, run scouts, and the orchestrator from OTLP. Every role is
 /// listed, and every sum saturates: OTLP totals come from any local process.
 pub(crate) fn run_usage(run: &Run) -> RunUsage {
-    let mut by_role: BTreeMap<String, TokenUsage> =
-        ["worker", "reviewer", "scout", "decider", "orchestrator"]
-            .into_iter()
-            .map(|role| (role.to_string(), TokenUsage::default()))
-            .collect();
+    let mut by_role: BTreeMap<String, TokenUsage> = [
+        "worker",
+        "reviewer",
+        "scout",
+        "decider",
+        "orchestrator",
+        "planner",
+    ]
+    .into_iter()
+    .map(|role| (role.to_string(), TokenUsage::default()))
+    .collect();
     let mut credit = |role: &str, u: TokenUsage| *by_role.entry(role.to_string()).or_default() += u;
     for round in run.tasks.iter().flat_map(|t| &t.rounds) {
         let role = match round.role {
@@ -150,6 +156,8 @@ pub(crate) fn run_usage(run: &Run) -> RunUsage {
     credit("decider", run.triage_usage);
     credit("scout", run.scout_usage);
     credit("orchestrator", run.orchestrator_usage);
+    // Milestone 9 decision 32: sub-planners' sessions.
+    credit("planner", run.orch.planner_usage);
     let mut total = TokenUsage::default();
     for u in by_role.values() {
         total += *u;

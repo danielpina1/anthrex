@@ -127,14 +127,17 @@ fn resumable_reviewer(task: &Task) -> bool {
         })
 }
 
-/// Live reviewers and, since M8b decision 18, deciders in flight.
+/// Live reviewers and, since M8b decision 18, deciders in flight; since milestone 9
+/// (decision 31), live sub-planners and run scouts.
 pub fn readers_busy(run: &Run) -> usize {
     let deciders = run
         .pending_ops
         .values()
         .filter(|p| matches!(p.kind, OpKind::Decide { .. }))
         .count();
-    run.tasks.iter().filter(|t| holds_reader(run, t)).count() + deciders
+    run.tasks.iter().filter(|t| holds_reader(run, t)).count()
+        + deciders
+        + super::planners::readers(run)
 }
 
 /// A task in `review` with no reviewer yet.

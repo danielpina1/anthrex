@@ -25,6 +25,7 @@ fn mcp_parses_the_daemons_headless_argv_and_is_hidden() {
             run_id: run.into(),
             task_id: task.map(String::from),
             scout_id: scout.map(String::from),
+            epic: None,
         };
         let mut argv = vec!["anthrex".to_string()];
         argv.extend(daemon::headless::argv::mcp_args(&target, 12, socket).expect("an mcp role"));

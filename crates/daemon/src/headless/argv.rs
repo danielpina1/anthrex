@@ -257,6 +257,10 @@ pub fn mcp_args(target: &McpTarget, window_id: u32, socket: &Path) -> Option<Vec
     if let Some(scout) = &target.scout_id {
         args.extend(["--scout".into(), scout.clone()]);
     }
+    // Milestone 9 decision 31: a sub-planner names its epic.
+    if let Some(epic) = &target.epic {
+        args.extend(["--epic".into(), epic.clone()]);
+    }
     args.extend([
         "--window".into(),
         window_id.to_string(),

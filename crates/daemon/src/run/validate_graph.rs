@@ -25,7 +25,7 @@ fn is_active(task: &Task) -> bool {
 }
 
 /// An area glob is a literal path or `<literal>/**` (decision 12).
-fn is_valid_area_glob(glob: &str) -> bool {
+pub(crate) fn is_valid_area_glob(glob: &str) -> bool {
     let literal = glob.strip_suffix("/**").unwrap_or(glob);
     !literal.is_empty() && literal_prefix(literal).len() == literal.split('/').count()
 }

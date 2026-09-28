@@ -299,7 +299,7 @@ pub(super) fn read_evidence(
 /// without following a link (and without blocking on a FIFO), checked through the
 /// opened handle, and read through a cap one byte past the limit, so a file swapped
 /// or grown after the check is neither followed nor read whole (review m3).
-fn read_report(path: &Path) -> Result<proto::ScoutReport, String> {
+pub(super) fn read_report(path: &Path) -> Result<proto::ScoutReport, String> {
     use std::io::Read;
     use std::os::unix::fs::OpenOptionsExt;
     let file = std::fs::OpenOptions::new()

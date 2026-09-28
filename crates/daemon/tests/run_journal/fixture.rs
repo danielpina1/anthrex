@@ -183,6 +183,7 @@ pub fn create_window(cwd: &Path, run_ref: RunRef, uuid: Option<&str>) -> OpKind 
         project: cwd.to_path_buf(),
         worktree: cwd.to_path_buf(),
         jitter_ms: 0,
+        extract: None,
     }
 }
 

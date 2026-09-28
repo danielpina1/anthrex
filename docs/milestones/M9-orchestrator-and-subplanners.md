@@ -2629,3 +2629,60 @@ One commit, `fix(daemon): hold a promoted run's additions until the user approve
     1. *The order for every added task* (`gate_holds::assign`), which **supersedes the first review's ruling 2 wherever the two conflict**: if the task names an epic whose rounds are open (`epic_open`), it takes that epic's open round, opening a new one after a rejection; else it inherits its split parent's unreleased hold; else the promotion rule applies. So a split child that names an epic follows the epic, not its parent: before, a split of the promotion-held `t2` into `t2a {epic: web}` put `t2a` in `promotion`, even after the user had rejected `epic:web`, and approving the promotion released web's work. A child naming an epic that is not open (no round, or its latest round approved) still inherits its parent's hold, then falls to the promotion rule, as the ruling orders. Test `a_split_child_naming_a_rejected_epic_opens_its_next_round` (in the new `engine/tests/gate_holds_epics.rs`, since `tests/promote.rs` is at 587 lines: `t2a` is held under `epic:web.2`, its sibling `t2b` under `promotion`, and `t2a` stays held after the promotion is approved; red: `t2a` was under `promotion`).
     2. *`Drafting` rounds with no mover.* `drop_empty_rounds` treats a round whose tasks are all finished or cancelled (or gone) as empty, so a `Drafting` round whose tasks the user cancelled, with its planner ended, is dropped and cannot block completion (decision 38). Test `a_drafting_round_whose_tasks_were_all_cancelled_is_dropped` (red: the round stayed `Drafting`). The first review's `a_users_split_of_a_held_task_releases_it_and_the_approval_counts_none` now puts its round `Awaiting` before the user's split, since a `Drafting` round the split left with no live task is now dropped. The obligation `orchestrator_submit_submits_its_drafting_epic_rounds` (commit `ca60139`) had landed under "### M9.10"; it is moved into "### M9.8", just before its "Acceptance", and names items 8 and 10.
     3. *A re-plan always opens a round* (the controller's decision). `replan_epic_hold`: a `spawn_subplanner` re-plan of an epic on a run past its gate is new, unreviewed work, so the planner's tasks join the epic's undecided round or a new one, `epic:<e>.<n>`, also after an approved round. `epic_open` now reads the epic's **latest** round (the one its record names): the epic is held while that round is not approved, so the new round holds the re-plan's tasks, and once it is approved an addition runs again. **Readings:** a single orchestrator `add_task` naming an epic whose latest round is approved still runs, per decision 29 as written (pinned by item 9's `an_addition_to_an_approved_epic_is_not_held`); a re-plan past the gate of an epic planned before the gate (no round yet) also opens a round, since it is equally new work; and after a re-plan's round is rejected, the epic's next addition opens the next round, as after any rejection. Test `a_replan_of_an_approved_epic_opens_a_new_round` (approve `epic:mail`; re-plan `mail` with a new brief; the reply names `epic:mail.2`; `t3` is held until the user approves it; red: the reply's `hold` was `null`). Item 9's M1 and M2 mutations, rewritten for the new `epic_open`, still turn their pins red, and only them.
+
+### Task M9.8 (Engine: sub-planners and run scouts)
+
+- **No preparatory commit.** `driver.rs` (597) is not touched. The driver's new code is in `driver/orch.rs` (`fill_extract`, `filled`), `driver/ops.rs` and `driver/effects.rs`. `engine/dispatch.rs` is 598 lines after it gained the worker's extract slot. The new engine code is in `engine/planners.rs` and `engine/run_scouts.rs`, and `orch.rs`'s `spawn_subplanner` moved into `planners.rs`. The new tests are in new files, because `tests/promote.rs` is at 587 lines: `tests/planners.rs`, `tests/planners_confine.rs`, `tests/planners_holds.rs` and `tests/run_scouts.rs`. The real session test is `crates/cli/tests/scout_service_planner.rs`, because `scout_service.rs` is at 592 lines.
+- **The scout machine's texts.** `MachineTexts` has a fifth field, `missing` ("a report" or "an accepted epic"). The machine's failure reasons are templated from `noun` and `missing`, so a scout's texts are unchanged. `ScoutLimits` carries its `texts`, and `scout_event` takes them.
+- **`ScoutEvent::Halt { reason }`** is new: the engine's stop of a planner (`max_rejections`) kills the session with the engine's reason.
+- **`ScoutOutcome::Accepted`** is new: a planner whose epic the engine accepted (`accept_planner` drives `ReportAccepted`) ends `Accepted`, not `Reported`, because it stores no report.
+- **Sub-planners on the scout service.** `scout/planner.rs` holds `PlannerSpec`, `PlannerTag`, `planner_names` (`<h4>-plan-<e>-<n>`, `<h4>/plan-<e>.p<n>`), and `start_planner`, `accept_planner` and `stop_planner`. `ScoutService::start` now delegates to a shared `launch`. A planner's table entry carries its tag. `claim` refuses a planner entry, and `run_scouts` leaves planners out.
+- **`PlannerSpec` fields.** Beyond the brief's fields, `PlannerSpec` has:
+  - `max_tool_calls` and `timeout_secs`, because the service knows only `[orchestrator.scouts]`;
+  - `extract: Option<ExtractSlot>`.
+- **`McpTarget.epic`** (`#[serde(default)]`) is new. `mcp_args` passes `--epic <e>` for a planner. The parsing of `--epic` in `anthrex mcp` is M9.11's. `crates/cli` builds its targets with `epic: None` until then.
+- **The scout extract (decision 34).**
+  - `run/orch/extract.rs::ExtractSlot { refs, onboarding, at, sep }` records where the extract goes. `ExtractSlot::fill` inserts it.
+  - `OpKind::CreateWindow` gains `#[serde(default)] extract: Option<ExtractSlot>`. `dispatch.rs` sets it for a worker, and a handover takes the same slot (`worker_slot`).
+  - The driver's `CreateWindow` arm fills the first turn on `spawn_blocking` before the window is created (`driver/orch.rs::fill_extract`). The reports are read only through `resolve_ref`, so an id that is not valid is never read.
+  - `run/contract.rs::worker_extract_at` and `run/orch/contract.rs::planner_extract_at` give the byte offset where the prompt builders put the extract. The prompts are built with an empty extract, then filled, and the result equals the prompt built with the extract. Test: `a_filled_slot_is_the_prompt_built_with_the_extract`.
+  - **Obligation for M9.13:** `PlannerSpec.extract` is set by `planner_spec`, but `StartPlanner` is answered "not available yet" until M9.13 executes it. M9.13's execution must fill the planner's first turn through `fill_extract`, as `CreateWindow` does.
+- **`PlannerSession.rejections`** (`#[serde(default)]`) counts a session's rejected `submit_epic` batches toward `max_rejections`. In the epic's record:
+  - `edits_rejected` counts rejected batches;
+  - `edits_accepted` counts the edits of the accepted batch.
+- **Reader slots.** `schedule::readers_busy` counts planning epics and running run scouts. Planner and scout sessions do not add to `windows_created`, so they do not count toward `max_windows`. They are bounded by the reader slots, and scouts also by `max_scouts`. Review this reading. The order is deciders, reviewers, planners, then scouts. The "kinds" part of `planner_waits_for_a_reader_slot_and_the_order_is_deciders_reviewers_planners_scouts_kinds` (research) is M9.9's. That test covers the order up to scouts.
+- **A re-plan keeps the epic's area and title.** The `spawn_subplanner` of an existing epic starts a fresh session and takes the new brief. Its `area` is not re-validated or replaced.
+- **Holds (the binding rule).** An accepted `submit_epic` runs its batch through `gate_holds::assign`, then `gate_holds::submit_epic_round`:
+  - On a promoted or gated run, the epic's round goes to `Awaiting`, or with `--yes` it is approved.
+  - A submit that adds no live task leaves its round `Drafting`, for `drop_empty_rounds`, so the user is never asked to approve nothing.
+  - The orchestrator's `submit` on a running run calls `gate_holds::submit_epic_rounds`. That submits every `Drafting` round with live work whose epic has no live planner (`orchestrator_submit_submits_its_drafting_epic_rounds`).
+  - Test for the rule, including after a re-plan: `a_promoted_runs_planner_and_its_replan_wait_for_their_rounds`.
+- **Wake notes** are pushed to `orchestrator.notes` without a cap. The cap and the wake itself are M9.9's.
+- **Early events.**
+  - **The planner's `submit_epic` joins the hold** (`early::holds_planner_call`): a submit from a window no session has yet is held while the epic's latest session is launching. It is answered after binding, or refused if the launch fails. Tests: `a_planners_submit_before_its_window_is_answered_after_binding` and `a_planners_held_submit_is_refused_when_its_launch_fails`.
+  - **The run scout's tool does not join.** A scout's `submit_scout_report` is answered by `ScoutService`, which binds the scout's window itself. It never reaches the engine's `early::holds_call`.
+- **Security.** `planner_spec` launches read-only:
+  - `cwd` is the run's root;
+  - Claude runs with `--permission-mode dontAsk`, the reviewer's disallowed tools, and a sandbox with no writable root that denies writes to the protected paths, the root, the project and the git common dir;
+  - Codex runs with the reviewer's read-only sandbox and the run's config guard.
+  Tool calls are authorized by the window and epic together: a call from another window, or for a failed session, is refused as "not the sub-planner of epic <e>". `planner_and_research_specs_carry_the_read_only_sandbox` tests the planner half. The research half is M9.9's.
+- **Tests updated.**
+  - `orch_edit`: `spawn_subplanner`'s reply state is now `planning` when a reader slot is free, and the epic's phase is `Planning`.
+  - `usage`: the `planner` role key and planner usage.
+  - `tests/dispatch.rs`: the `CreateWindow` pattern takes `..`.
+- **Red evidence.** Each new behaviour was mutated from a `cp` backup, and the pinning tests turned red. The mutations:
+  - confinement off;
+  - `pause` allowed;
+  - another epic's split allowed;
+  - no `submit_epic_round`;
+  - no `assign` for a planner batch;
+  - no `submit_epic_rounds`;
+  - the worker slot dropped;
+  - the planner hold off;
+  - the area-glob rule off;
+  - planners not counted as readers;
+  - `max_scouts` off;
+  - a scout report not recorded;
+  - the driver's fill skipped;
+  - the scout texts used for a planner (the real session test).
+  The tests of new types and functions failed to compile before them.
