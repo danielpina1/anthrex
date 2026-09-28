@@ -355,6 +355,8 @@ impl RunService {
 
     /// The runs as they are now (decision 47's snapshot).
     pub fn current(&self) -> RunsSnapshot {
+        // The engine guard drops at the end of this `let`, before the scout table's
+        // lock is taken (AGENTS.md rule 2).
         let snap = snapshot(&crate::lock(&self.state), unix_now());
         self.with_scouts(snap)
     }
@@ -480,8 +482,11 @@ impl RunService {
         self.retire_deadlines();
         let publish = std::mem::take(&mut crate::lock(&self.book).publish_due);
         if publish {
-            // `publish` lays the scouts over it (review fix M-5: once per tick).
-            self.publish(snapshot(&crate::lock(&self.state), unix_now()));
+            // Bound first, so the engine guard drops before `publish` takes the scout
+            // table (AGENTS.md rule 2; M9.6 second review). `publish` lays the scouts
+            // over it (review fix M-5: once per tick).
+            let snap = snapshot(&crate::lock(&self.state), unix_now());
+            self.publish(snap);
         }
         let dirty = {
             let mut book = crate::lock(&self.book);

@@ -1506,6 +1506,8 @@ Do them in this order: M9.1, M9.2, M9.3, M9.4, M9.5, M9.6, M9.7, M9.8, M9.9, M9.
 
 **From M9.6's review (M-4).** `task_summary` and `resolve_target` give each git command its own deadline, so one call can take several. M9.11's read path wraps the whole call in one `DONE_CHECK_GIT_TIMEOUT` deadline on `spawn_blocking`: the tool answers with a git error once that deadline passes, whatever the separate commands still have left.
 
+**From M9.6's second review (Minor 5).** `digest`, `context` and `task_result` are built from a clone of the `Run` taken under the engine lock, then released: the build runs outside the lock, on `spawn_blocking`, never on a tokio worker. A 500-task context takes up to about 0.9 s to build and trim.
+
 **Acceptance.** The five AGENTS.md commands pass.
 
 **Commit.** `feat(mcp): serve the orchestrator's and sub-planners' tools, with a long-polled run digest`
@@ -2354,6 +2356,23 @@ These controller rulings answer the second M9.4 review, of `2e2c8ca`. They repla
   - `task_summary_lists_commits_and_diffstat` now expects `--end-of-options` in both argvs.
 - **M-5: the scouts overlay runs once per tick.** `driver.rs::on_tick` publishes the engine's raw snapshot, and `publish` lays the scouts over it. Before, `current()` and then `publish` each applied it. This is structural, so there is no new test. `run_scouts_appear_in_the_snapshot` stays green, and `driver.rs` stays at 592 lines.
 - **For later tasks:** M-4 is added to M9.11's text and M-6 to M9.15's.
+
+#### Second review
+
+- **Important 1: the tick published under the engine lock.** `driver.rs::on_tick` called `self.publish(snapshot(&crate::lock(&self.state), unix_now()))`, whose temporary guard lives to the end of the statement, so the engine lock was held through `with_scouts` (the scout table's lock) and `pushes.send`. The snapshot is now bound first, so the guard drops before `publish`, with a comment naming AGENTS.md rule 2.
+  - Audit: `current()` already binds the snapshot in a `let` (the guard drops there; a comment now says so). `Ready::Publish` snapshots are taken in `effects::prepare` under the lock and published by `execute`, which runs after the lock is released. No other `publish(` or `with_scouts(` caller.
+  - Test: `run/driver/orch_tests.rs::the_tick_publishes_outside_the_engine_lock`. It holds the scout table (a `#[cfg(test)]` `ScoutService::with_table_held`) on a thread, runs a tick with a publish due, waits until the tick has taken `publish_due`, then takes the engine lock on a blocking thread within 3 s; it then releases the table and expects the push. Red before (the engine lock was not free). The one gap is a false green, never a false red: the probe could take the lock in the few instructions between the tick reading `publish_due` and taking the engine lock.
+- **Important 2: run-wide attention lines survive the cut.** The attention cut (new `digest_trim.rs::cut_attention`) puts the run-wide lines (a moved base, a failed final check, a stale profile, a promotion) ahead of the blocked tasks' `<id> blocked (` lines, then keeps 10: only blocked tasks' lines are cut to fit. A line counts as a task's only when its id is one of the run's tasks. Test: `run_wide_attention_lines_survive_the_cut` (50 blocked tasks, 500-character `語` reasons, `final_check_failed`; red before: the line was cut, `attention[0]` was `t0 blocked (question): …`).
+- **Minor 1: a second shortening pass.** After the list cuts to 10, the scouts' and planners' strings are cut to 40 characters, then both lists to 3 entries, before an unfinished task is dropped. Test: `scout_and_planner_texts_are_shortened_before_a_task_is_dropped` (10 blocked tasks, 50 failed scouts and 50 planners, every text at its bound, in `\u{1}` and `𝄞`: all 10 tasks shown). Red before for `\u{1}` (6 tasks omitted). The `𝄞` case passes before and after: at 4 bytes a character the first pass already fits; it stays as a guard.
+- **Minor 2: the context cuts strings before it drops a report.** After the plan trims, every string is cut to 120, then 40 characters; then later reports are left out with the onboarding report kept; then strings go to 16; only then is the onboarding report left out; last, later plan tasks. Test: `a_large_unfinished_plan_keeps_the_onboarding_report` (200 unfinished tasks, 120-character titles, 20 dependencies with 11-character ids; red before: every report dropped, `omitted.scouts` 4).
+  - **Choice:** the ruling says the onboarding report goes last of all reports; it also goes after the cut to 16 characters, which the other reports do not wait for.
+- **Minor 3: `edits[].recipients` is capped at 20** (`RECIPIENTS_SHOWN`) in the digest, with `recipients_omitted` present only when some were left out, so the Interfaces' shape and the fixture are unchanged. The fingerprint sees the capped list and the count. Test: `edit_recipients_are_capped_with_an_omitted_count` (10 edits × 500 recipients: under 48 KiB, 20 shown, 480 counted, no task omitted; red before: 6 tasks omitted).
+- **Minor 4: the first round's fixes are pinned.** Each was run red under its mutation, and the source restored from a copy:
+  - `the_cap_holds_at_the_schema_maxima` now asserts `omitted.findings > 0`, `omitted.research > 0` and `omitted.proofs > 0`, and that kept plus omitted is 160 research entries and 50 proofs. With the findings trim disabled it fails (`omitted` was `{"proofs":50,"research":160}`); with the research and proof truncation disabled it fails (`{"findings":95}`).
+  - `attention_names_only_tasks_the_digest_shows` now uses 50 blocked tasks with 400 dependency ids each, so fewer than 10 tasks are shown and the attention cut's 10 lines must lose those of the tasks dropped after it; it asserts the blocked lines name exactly the shown tasks. Removing the final `drop_attention_of_dropped_tasks` fails it.
+  - `a_start_that_reads_as_an_option_is_refused` asserts both errors contain `a revision cannot start with '-'`. With the check removed it fails: git's own `fatal: option '--output=…'` refusal no longer satisfies it.
+- **Minor 5** is added to M9.11's text.
+- **Files.** `digest.rs`'s trimming moved to `run/orch/digest_trim.rs` (a child module), and the trimming tests to `digest_tests_trim.rs`, so every file stays under 600 lines (`driver.rs` is 597).
 
 ### M9.1 real-CLI checks (2026-09-28, authorized by the user in chat)
 

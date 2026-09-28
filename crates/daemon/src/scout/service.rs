@@ -499,6 +499,14 @@ impl ScoutService {
     }
 
     /// The scouts of run `run_id`, for its snapshot (none until milestone 9).
+    /// Runs `f` while holding the scout table's lock: a test's stand-in for a scout
+    /// step that holds it (the M9.6 second review's lock-order test).
+    #[cfg(test)]
+    pub(crate) fn with_table_held<R>(&self, f: impl FnOnce() -> R) -> R {
+        let _table = crate::lock(&self.table);
+        f()
+    }
+
     pub fn run_scouts(&self, run_id: &str) -> Vec<ScoutInfo> {
         let table = crate::lock(&self.table);
         let mut scouts: Vec<ScoutInfo> = table

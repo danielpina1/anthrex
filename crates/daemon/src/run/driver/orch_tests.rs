@@ -104,3 +104,85 @@ async fn run_scouts_appear_in_the_snapshot() {
     // The window this test started, and nothing else.
     manager.headless_kill(handle.window_id).unwrap();
 }
+
+/// M9.6 second review (Important): the tick releases the engine lock before it lays
+/// the scouts over the snapshot, so a scout table held elsewhere never holds the
+/// engine lock too. The scout table is held while a tick with a publish due runs; once
+/// the tick has taken `publish_due` it is at, or on its way to, `with_scouts`, and the
+/// engine lock must still be free. Holding the engine lock across `publish` fails this
+/// test, unless the lock is taken in the few instructions between the tick's reading
+/// of `publish_due` and its taking of the engine lock: a rare false green, never a
+/// false red.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_tick_publishes_outside_the_engine_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("d.sock");
+    let mut config = ManagerConfig::new(socket.clone(), "/bin/sh".into());
+    config.claude_bin = "/nonexistent/anthrex-test/claude".into();
+    config.codex_bin = "/nonexistent/anthrex-test/codex".into();
+    config.worktrees_root = dir.path().join("worktrees");
+    config.launch_gate = LaunchGate::open_already();
+    let (manager, _events) = WindowManager::new(config);
+    let data = dir.path().join("data");
+    let runs = RunService::for_manager(&manager, data.clone(), Arc::new(NoRoots));
+    crate::profile::service::wire(
+        &manager,
+        &runs,
+        &data,
+        &socket,
+        &config::Orchestrator::default(),
+    );
+    let run = crate::run::test_support::run_ok(&crate::run::test_support::plan_with(
+        crate::run::test_support::PROFILE,
+        &[crate::run::test_support::task_toml(
+            "t1",
+            "S",
+            "[\"crates/a/**\"]",
+            "",
+        )],
+    ));
+    crate::lock(&runs.state).runs.insert(run.id.clone(), run);
+    let scouts = runs.adaptation.get().unwrap().scouts.clone();
+    let mut pushes = runs.pushes();
+
+    // The scout table, held on a thread of its own until `release` is sent.
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        scouts.with_table_held(|| {
+            held_tx.send(()).unwrap();
+            let _ = release_rx.recv_timeout(Duration::from_secs(30));
+        })
+    });
+    held_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+
+    crate::lock(&runs.book).publish_due = true;
+    let ticking = runs.clone();
+    let tick = tokio::spawn(async move { ticking.on_tick(unix_now()).await });
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while crate::lock(&runs.book).publish_due {
+        assert!(std::time::Instant::now() < deadline, "the tick never ran");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let probing = runs.clone();
+    let probe = tokio::task::spawn_blocking(move || {
+        drop(crate::lock(&probing.state));
+    });
+    let engine_free = tokio::time::timeout(Duration::from_secs(3), probe).await;
+
+    release_tx.send(()).unwrap();
+    holder.join().unwrap();
+    tokio::time::timeout(Duration::from_secs(10), tick)
+        .await
+        .expect("the tick finishes once the scout table is free")
+        .unwrap();
+    assert!(
+        engine_free.is_ok(),
+        "the engine lock was held while the tick waited on the scout table"
+    );
+    let pushed = tokio::time::timeout(Duration::from_secs(10), pushes.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(pushed.runs.len(), 1);
+}

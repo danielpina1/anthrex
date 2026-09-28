@@ -224,9 +224,17 @@ fn a_start_that_reads_as_an_option_is_refused() {
     let forged = format!("--output={}", target.display());
     let git = real_git();
     let result = task_summary(git, &repo.root, &forged, BRANCH, T);
-    assert!(result.is_err(), "{result:?}");
+    let error = result.expect_err("a start that reads as an option");
+    assert!(
+        error.contains("a revision cannot start with '-'"),
+        "refused by the check, not by git: {error}"
+    );
     let refused = task_summary(git, &repo.root, &base, "-p", T);
-    assert!(refused.is_err(), "{refused:?}");
+    let error = refused.expect_err("a branch that reads as an option");
+    assert!(
+        error.contains("a revision cannot start with '-'"),
+        "refused by the check, not by git: {error}"
+    );
     assert_eq!(
         files_under(out_dir.path()),
         Vec::<std::path::PathBuf>::new()

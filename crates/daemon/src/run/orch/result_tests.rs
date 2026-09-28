@@ -374,5 +374,19 @@ fn the_cap_holds_at_the_schema_maxima() {
             .sum();
         let omitted = parsed["omitted"]["findings"].as_u64().unwrap_or(0) as usize;
         assert_eq!(kept + omitted, 2 * 50, "{unit}: {}", parsed["omitted"]);
+        // The count trims ran (second review, Minor 4), not only the string cuts.
+        assert!(omitted > 0, "{unit}: {}", parsed["omitted"]);
+        let research = &parsed["research"];
+        let listed: usize = ["files", "modules", "interfaces", "risks"]
+            .iter()
+            .map(|k| research[k].as_array().unwrap().len())
+            .sum();
+        let omitted_research = parsed["omitted"]["research"].as_u64().unwrap_or(0) as usize;
+        assert!(omitted_research > 0, "{unit}: {}", parsed["omitted"]);
+        assert_eq!(listed + omitted_research, 60 + 40 + 40 + 20, "{unit}");
+        let proofs = parsed["proofs"].as_array().unwrap().len();
+        let omitted_proofs = parsed["omitted"]["proofs"].as_u64().unwrap_or(0) as usize;
+        assert!(omitted_proofs > 0, "{unit}: {}", parsed["omitted"]);
+        assert_eq!(proofs + omitted_proofs, 50, "{unit}");
     }
 }

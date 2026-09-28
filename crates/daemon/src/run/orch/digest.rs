@@ -6,7 +6,7 @@
 use proto::{BlockReason, HoldState, IntegrationState, RunPath, RunState, Severity, TaskState};
 use serde_json::{Map, Value, json};
 
-use super::json::{cut, cut_opt, fnv1a, fold_all, hh_mm, label, route_text, shrink_strings, size};
+use super::json::{cut, cut_opt, fnv1a, fold_all, hh_mm, label, route_text};
 use super::{PlannerPhase, RefreshState};
 use crate::run::contract::sha7;
 use crate::run::engine::schedule::{readers_busy, writers_busy};
@@ -23,6 +23,8 @@ pub const TASK_NOTE_MAX: usize = 400;
 /// Task notes and edit-log entries shown, and what trimming leaves of each.
 pub const TASK_NOTES_SHOWN: usize = 10;
 pub const EDITS_SHOWN: usize = 10;
+/// An edit's recipients shown; the rest are counted.
+pub const RECIPIENTS_SHOWN: usize = 20;
 const LISTS_TRIMMED: usize = 3;
 /// Wake notes left when trimming.
 const NOTES_TRIMMED: usize = 5;
@@ -32,6 +34,10 @@ const LINE_MAX: usize = 300;
 /// The goal and a task title, in characters.
 const GOAL_MAX: usize = 2000;
 const TITLE_MAX: usize = 120;
+
+#[path = "digest_trim.rs"]
+mod trim;
+use trim::trim;
 
 /// The digest of `run` at `now`, trimmed to [`DIGEST_MAX_BYTES`].
 pub fn digest(run: &Run, now: u64) -> Value {
@@ -126,16 +132,27 @@ fn build(run: &Run, now: u64, for_fingerprint: bool) -> Value {
         "attention": crate::run::snapshot::attention(run).iter().map(|l| cut(l, LINE_MAX)).collect::<Vec<_>>(),
         "notes": orch.map(|o| o.notes.iter().map(|n| cut(n, LINE_MAX)).collect::<Vec<_>>()).unwrap_or_default(),
         "task_notes": task_notes(run),
-        "edits": run.plan_edits.iter().rev().take(EDITS_SHOWN).map(|e| json!({
-            "at": hh_mm(e.at),
-            "source": e.source,
-            "text": e.text,
-            "accepted": e.accepted,
-            "error": cut_opt(e.error.as_deref(), LINE_MAX),
-            "recipients": e.recipients,
-        })).collect::<Vec<_>>(),
+        "edits": run.plan_edits.iter().rev().take(EDITS_SHOWN).map(edit_entry).collect::<Vec<_>>(),
         "spend": spend(run),
     })
+}
+
+/// An edit-log entry, its `recipients` cut to [`RECIPIENTS_SHOWN`] with the rest
+/// counted in `recipients_omitted` (present only then; second review, Minor 3).
+fn edit_entry(e: &crate::run::edit_log::PlanEditRecord) -> Value {
+    let mut entry = json!({
+        "at": hh_mm(e.at),
+        "source": e.source,
+        "text": e.text,
+        "accepted": e.accepted,
+        "error": cut_opt(e.error.as_deref(), LINE_MAX),
+        "recipients": e.recipients.iter().take(RECIPIENTS_SHOWN).collect::<Vec<_>>(),
+    });
+    let omitted = e.recipients.len().saturating_sub(RECIPIENTS_SHOWN);
+    if omitted > 0 {
+        entry["recipients_omitted"] = json!(omitted);
+    }
+    entry
 }
 
 /// `planning`, `awaiting_approval`, `approved` (with `at`) or `none` (a fast-path run
@@ -351,129 +368,6 @@ fn spend(run: &Run) -> Value {
         .map(|r| u64::from(r.tool_calls))
         .sum();
     json!({"tokens": tokens, "tool_calls": tool_calls})
-}
-
-/// Decision 16's trimming past the cap, in order: finished tasks dropped oldest first
-/// (counted in `omitted_tasks`), `edits` cut to 3, `task_notes` to 3, `block.text` to
-/// 200 characters (and the attention lines with it), `notes` to 5. Beyond the
-/// Interfaces, so the cap always holds, texts and lists are cut before an unfinished
-/// task goes: `attention` cut to 10 lines (those of tasks already dropped first), every
-/// string cut to 120 characters, `scouts`, `planners`, `integration` and `notes` cut to
-/// 10; only then unfinished tasks dropped from the end of the plan (counted too), and
-/// the attention lines of the tasks dropped last removed with them.
-fn trim(digest: &mut Value, run: &Run) {
-    let fits = |d: &Value| size(d) <= DIGEST_MAX_BYTES;
-    if fits(digest) {
-        return;
-    }
-    // Finished tasks, oldest first: by their newest history entry, then plan order.
-    let mut finished: Vec<(u64, usize)> = run
-        .tasks
-        .iter()
-        .enumerate()
-        .filter(|(_, t)| t.state.is_finished())
-        .map(|(i, t)| (t.history.last().map_or(0, |e| e.at), i))
-        .collect();
-    finished.sort();
-    let order: Vec<&str> = finished.iter().map(|(_, i)| run.tasks[*i].id()).collect();
-    for id in order {
-        if fits(digest) {
-            return;
-        }
-        drop_task(digest, id);
-    }
-    for key in ["edits", "task_notes"] {
-        if fits(digest) {
-            return;
-        }
-        truncate(digest, key, LISTS_TRIMMED);
-    }
-    if fits(digest) {
-        return;
-    }
-    if let Some(Value::Array(tasks)) = digest.get_mut("tasks") {
-        for text in tasks
-            .iter_mut()
-            .filter_map(|t| t.pointer_mut("/block/text"))
-        {
-            if let Value::String(s) = text {
-                *s = cut(s, BLOCK_TEXT_TRIMMED);
-            }
-        }
-    }
-    if let Some(Value::Array(lines)) = digest.get_mut("attention") {
-        for line in lines.iter_mut() {
-            if let Value::String(s) = line {
-                *s = cut(s, BLOCK_TEXT_TRIMMED);
-            }
-        }
-    }
-    if fits(digest) {
-        return;
-    }
-    truncate(digest, "notes", NOTES_TRIMMED);
-    if fits(digest) {
-        return;
-    }
-    drop_attention_of_dropped_tasks(digest, run);
-    truncate(digest, "attention", 10);
-    if fits(digest) {
-        return;
-    }
-    shrink_strings(digest, 120);
-    for key in ["scouts", "planners", "integration", "notes"] {
-        if fits(digest) {
-            return;
-        }
-        truncate(digest, key, 10);
-    }
-    while !fits(digest) {
-        let last = match digest.get("tasks") {
-            Some(Value::Array(tasks)) => tasks.last().and_then(|t| t["id"].as_str()),
-            _ => None,
-        };
-        match last.map(str::to_string) {
-            Some(id) => drop_task(digest, &id),
-            None => break,
-        }
-    }
-    drop_attention_of_dropped_tasks(digest, run);
-}
-
-/// Removes the attention lines of the run's tasks that `tasks` no longer shows: a
-/// blocked task's line starts `<id> blocked (`.
-fn drop_attention_of_dropped_tasks(digest: &mut Value, run: &Run) {
-    let shown: Vec<String> = match digest.get("tasks") {
-        Some(Value::Array(tasks)) => tasks
-            .iter()
-            .filter_map(|t| t["id"].as_str().map(str::to_string))
-            .collect(),
-        _ => Vec::new(),
-    };
-    let dropped = |line: &str| {
-        line.split_once(" blocked (").is_some_and(|(id, _)| {
-            !shown.iter().any(|s| s == id) && run.tasks.iter().any(|t| t.id() == id)
-        })
-    };
-    if let Some(Value::Array(lines)) = digest.get_mut("attention") {
-        lines.retain(|l| !l.as_str().is_some_and(dropped));
-    }
-}
-
-/// Removes task `id` from `tasks` and counts it in `omitted_tasks`.
-fn drop_task(digest: &mut Value, id: &str) {
-    if let Some(Value::Array(tasks)) = digest.get_mut("tasks") {
-        tasks.retain(|t| t["id"].as_str() != Some(id));
-    }
-    if let Some(n) = digest.get_mut("omitted_tasks") {
-        *n = json!(n.as_u64().unwrap_or(0) + 1);
-    }
-}
-
-fn truncate(digest: &mut Value, key: &str, keep: usize) {
-    if let Some(Value::Array(items)) = digest.get_mut(key) {
-        items.truncate(keep);
-    }
 }
 
 #[cfg(test)]

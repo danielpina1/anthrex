@@ -231,9 +231,11 @@ fn entry(
 /// plan's `owns` lists cut to 3 globs (counted in `omitted.owns`), its finished tasks
 /// left out (counted in `omitted.tasks`), its `owns` lists emptied, the profile's
 /// lists emptied, the epics' areas emptied and later epics left out (`omitted.epics`),
-/// `you.epic`'s area emptied and its brief cut to 1000 characters; then later reports
-/// left out (counted in `omitted.scouts`); then every string cut to 120, 40, then 16
-/// characters; last, later plan tasks left out (counted in `omitted.tasks`).
+/// `you.epic`'s area emptied and its brief cut to 1000 characters; then every string
+/// cut to 120, then 40 characters; then later reports left out, the onboarding report
+/// kept (counted in `omitted.scouts`); then every string cut to 16 characters; then the
+/// onboarding report left out; last, later plan tasks left out (counted in
+/// `omitted.tasks`).
 fn trim(answer: &mut Value, finished: &[&str]) {
     let fits = |a: &Value| size(a) <= CONTEXT_MAX_BYTES;
     if fits(answer) {
@@ -254,25 +256,28 @@ fn trim(answer: &mut Value, finished: &[&str]) {
         shrink_strings(answer, 300);
     }
     trim_plan(answer, finished);
-    let mut dropped = 0;
-    while !fits(answer) {
-        match answer.get_mut("scouts") {
-            Some(Value::Array(scouts)) if !scouts.is_empty() => {
-                scouts.pop();
-                dropped += 1;
-            }
-            _ => break,
+    // Second review, Minor 2: strings are cut to 120, then 40, before any report goes.
+    for max in [120, 40] {
+        if !fits(answer) {
+            shrink_strings(answer, max);
         }
+    }
+    // Later reports first; the onboarding report, listed first, is the last to go, and
+    // only once every string is at 16 characters.
+    let onboarding = usize::from(answer["scouts"][0]["id"].as_str() == Some(ONBOARDING_ALIAS));
+    let mut dropped = 0;
+    while !fits(answer) && drop_last_scout(answer, onboarding) {
+        dropped += 1;
+    }
+    if !fits(answer) {
+        shrink_strings(answer, 16);
+    }
+    while !fits(answer) && drop_last_scout(answer, 0) {
+        dropped += 1;
     }
     let kept = count - dropped;
     let omitted = shortened[..kept].iter().filter(|s| **s).count() + dropped;
     answer["omitted"]["scouts"] = json!(omitted);
-    for max in [120, 40, 16] {
-        if fits(answer) {
-            return;
-        }
-        shrink_strings(answer, max);
-    }
     while !fits(answer) {
         match answer.get_mut("plan") {
             Some(Value::Array(plan)) if !plan.is_empty() => {
@@ -281,6 +286,17 @@ fn trim(answer: &mut Value, finished: &[&str]) {
             }
             _ => break,
         }
+    }
+}
+
+/// Leaves out the last report while more than `keep` remain; true if one went.
+fn drop_last_scout(answer: &mut Value, keep: usize) -> bool {
+    match answer.get_mut("scouts") {
+        Some(Value::Array(scouts)) if scouts.len() > keep => {
+            scouts.pop();
+            true
+        }
+        _ => false,
     }
 }
 

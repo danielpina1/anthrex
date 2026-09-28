@@ -345,94 +345,6 @@ fn past_the_finished_tasks_edits_notes_and_blocks_are_cut() {
     }
 }
 
-/// Beyond the Interfaces: the cap holds for any run, however much its agents wrote.
-#[test]
-fn the_cap_holds_whatever_the_run_holds() {
-    let mut run = run_of(60);
-    run.goal = "g".repeat(20_000);
-    for task in run.tasks.iter_mut() {
-        task.spec.title = "t".repeat(120);
-        task.spec.deps = (0..20).map(|i| format!("dep-{i:012}")).collect();
-        block(task, BlockReason::Question, &"q".repeat(4_000));
-        event(task, 1, &"h".repeat(4_000));
-    }
-    run.orch.run_scouts = (0..50)
-        .map(|i| {
-            let mut s = scout(&format!("3f9a-s{i}"), RunScoutState::Queued, &["x/**"]);
-            s.question = "?".repeat(2_000);
-            s
-        })
-        .collect();
-    let d = digest(&run, NOW);
-    assert!(
-        crate::run::orch::json::size(&d) <= DIGEST_MAX_BYTES,
-        "{}",
-        crate::run::orch::json::size(&d)
-    );
-    assert_eq!(
-        d["tasks"].as_array().unwrap().len() as u64 + d["omitted_tasks"].as_u64().unwrap(),
-        60
-    );
-}
-
-/// M9.6 review fix I-3: at the default `max_tasks`, 50 blocked tasks with
-/// 500-character CJK reasons keep every task; their texts are shortened instead.
-#[test]
-fn texts_are_shortened_before_an_unfinished_task_is_dropped() {
-    let mut run = run_of(50);
-    assert_eq!(
-        config::Orchestrator::default().max_tasks,
-        50,
-        "the default max_tasks"
-    );
-    for task in run.tasks.iter_mut() {
-        block(task, BlockReason::Question, &"語".repeat(500));
-    }
-    let d = digest(&run, NOW);
-    let size = crate::run::orch::json::size(&d);
-    assert!(size <= DIGEST_MAX_BYTES, "{size}");
-    assert_eq!(d["omitted_tasks"], 0);
-    let tasks = d["tasks"].as_array().unwrap();
-    assert_eq!(tasks.len(), 50);
-    for task in tasks {
-        let text = task["block"]["text"].as_str().unwrap();
-        assert!(text.chars().count() <= BLOCK_TEXT_TRIMMED + 1, "{text}");
-        assert!(text.starts_with('語'));
-    }
-}
-
-/// M9.6 review fix I-3: with 200 blocked tasks, `attention` never names a task that
-/// `tasks` left out, unless it says it was omitted.
-#[test]
-fn attention_names_only_tasks_the_digest_shows() {
-    let mut run = run_of(200);
-    for task in run.tasks.iter_mut() {
-        block(task, BlockReason::Question, &"語".repeat(500));
-    }
-    let d = digest(&run, NOW);
-    let size = crate::run::orch::json::size(&d);
-    assert!(size <= DIGEST_MAX_BYTES, "{size}");
-    let shown: Vec<&str> = d["tasks"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|t| t["id"].as_str().unwrap())
-        .collect();
-    assert!(!shown.is_empty());
-    let lines = d["attention"].as_array().unwrap();
-    assert!(!lines.is_empty() && lines.len() <= 10, "{lines:?}");
-    for line in lines {
-        let line = line.as_str().unwrap();
-        let Some((id, _)) = line.split_once(" blocked (") else {
-            continue;
-        };
-        assert!(
-            shown.contains(&id) || line.contains("omitted"),
-            "{line} names a task the digest left out"
-        );
-    }
-}
-
 /// M9.6 review fix M-2: ten notes on `t3` at second T, then a `risk` note on `t0` in
 /// the same second: the new note is the newest, so it is shown and the fingerprint
 /// moves.
@@ -523,3 +435,6 @@ fn untrusted_text_stays_inside_its_json_string() {
     run.orch.epics[0].note = Some(FORGED.into());
     assert_contained(&digest(&run, NOW));
 }
+
+#[path = "digest_tests_trim.rs"]
+mod trim;

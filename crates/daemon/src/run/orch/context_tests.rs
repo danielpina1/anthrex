@@ -339,6 +339,32 @@ fn a_large_plan_stays_under_the_cap() {
     assert!(plan.iter().all(|t| t["state"] != "merged") || omitted == 0);
 }
 
+/// M9.6 second review (Minor 2): 200 unfinished tasks with 120-character titles and 20
+/// dependencies each (11-character ids): the strings are cut to 120, then 40, before any report goes,
+/// and the onboarding report is the last report to go.
+#[test]
+fn a_large_unfinished_plan_keeps_the_onboarding_report() {
+    let mut run = run_of(200);
+    for (i, task) in run.tasks.iter_mut().enumerate() {
+        task.spec.title = format!("{i:03}{}", "t".repeat(117));
+        task.spec.deps = (1..=20)
+            .map(|d| format!("task-{:06}", (i + d) % 200))
+            .collect();
+    }
+    let c = context(&ContextInputs {
+        run: &run,
+        asker: Asker::Orchestrator,
+        profile: None,
+        reports: reports(),
+        only: None,
+    });
+    assert!(size(&c) <= CONTEXT_MAX_BYTES, "{}", size(&c));
+    assert_eq!(c["scouts"][0]["id"], "onboarding", "{}", c["omitted"]);
+    let plan = c["plan"].as_array().unwrap();
+    let omitted = c["omitted"]["tasks"].as_u64().unwrap_or(0) as usize;
+    assert_eq!(plan.len() + omitted, 200, "{}", c["omitted"]);
+}
+
 /// Carry-forward rule: a scout's text stays inside its JSON string.
 #[test]
 fn untrusted_text_stays_inside_its_json_string() {
