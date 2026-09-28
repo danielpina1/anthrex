@@ -125,7 +125,7 @@ pub fn verify_done(
         ..DoneChecked::default()
     };
     for path in nul_fields(&changed) {
-        if protected.matches(path) {
+        if protected.guards_change(path) {
             if !names_literally(owns, path) {
                 result.protected_changed.push(path.to_string());
             }

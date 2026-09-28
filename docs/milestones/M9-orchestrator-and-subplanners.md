@@ -1424,6 +1424,7 @@ Do them in this order: M9.1, M9.2, M9.3, M9.4, M9.5, M9.6, M9.7, M9.8, M9.9, M9.
 - `turn_without_submit_is_nudged_once_then_fails`; `tool_call_wrap_up_then_kill`; `timeout_fails`.
 - `replan_starts_a_fresh_session_with_the_current_tasks`; `replan_of_a_live_planner_is_refused`.
 - `failed_planner_keeps_accepted_tasks_and_wakes_the_orchestrator`.
+- Confinement (M9.4 review fixes, ruling 4; M9.4 already refuses a sub-planner's `add_task` naming another epic and its `split_task` of a task outside its epic): `submit_epic_cannot_amend_another_epics_or_the_orchestrators_task`, `submit_epic_cannot_cancel_another_epics_or_the_orchestrators_task`, `submit_epic_cannot_add_dep_on_another_epics_or_the_orchestrators_task` (each an explicit test, for a task of another epic and for one with no epic), and `submit_epic_refuses_pause`.
 - `spawn_scout_queues_in_a_reader_slot_and_replies_at_once`; `scout_id_is_prefixed_and_unique`; `max_scouts_is_enforced`; `scout_ended_records_the_report_and_usage`; `restore_fails_running_scouts_with_the_documented_reason`; `restore_kills_nothing` (no kill effect for a run scout or a planner).
 - `planners_snapshot_fields` (every `PlannerInfo` field, a queued planner as `Planning`).
 - Real, in `crates/cli/tests/scout_service.rs` (M8b's service suite): `a_planner_session_runs_on_the_scout_machine_and_is_accepted` with `fake-agent`.
@@ -1449,14 +1450,14 @@ Do them in this order: M9.1, M9.2, M9.3, M9.4, M9.5, M9.6, M9.7, M9.8, M9.9, M9.
 **Tests first**, pure:
 - `research_task_takes_a_reader_slot_and_no_worktree`; `research_report_marks_the_task_reported`; `research_without_report_is_nudged_then_blocked`; `dependent_of_a_reported_task_runs`.
 - `review_task_resolves_its_target_first`; `unresolvable_target_blocks_environment_with_the_text`; `review_verdict_reports_whatever_it_is`; `review_findings_go_to_the_report`.
-- `integration_review_task_is_made_when_the_epic_is_merged` (id `<e>-int1`, kind review, engine-made); `integration_changes_holds_completion`; `fix_task_merge_makes_round_two`; `finish_closes_changes`; `no_round_after_max_bounces_plus_one`; `plan_path_has_no_integration_review`; `integration_reviewer_route_is_the_peer_at_frontier`; `integration_review_tasks_refuse_orchestrator_edits`.
+- `integration_review_task_is_made_when_the_epic_is_merged` (id `<e>-int1`, kind review, engine-made); `integration_review_takes_the_first_free_round_id` (M9.4 review fixes, ruling 7: a user's `run edit` may already hold `<e>-int<n>`, since plan files and `run edit` keep M8a's rules only, so the engine picks the first round number whose id is free); `integration_changes_holds_completion`; `fix_task_merge_makes_round_two`; `finish_closes_changes`; `no_round_after_max_bounces_plus_one`; `plan_path_has_no_integration_review`; `integration_reviewer_route_is_the_peer_at_frontier`; `integration_review_tasks_refuse_orchestrator_edits`.
 - `completion_waits_for_holds_planners_scouts_integration_and_submit` (one case per condition).
 - `rewriting_a_mis_sized_task_restarts_it_at_rung_2`; `editing_a_human_blocked_task_does_not_restart_it`.
 - Wake notes: `each_note_source_adds_its_exact_line` (a table over decision 39's list); `orchestrators_own_edits_add_no_note`; `notes_are_capped_at_20_with_the_earlier_line`; `wake_effect_needs_live_window_setting_and_new_revision`; `digest_read_drops_notes_up_to_the_revision`; `woken_clears_delivered_notes`; `completion_note`.
 - `edit_log_records_every_source_rejections_and_recipients` (M8c's cap of 50 kept).
 - `usage_sum_saturates`.
 
-**Acceptance.** The five AGENTS.md commands pass.
+**Acceptance.** The five AGENTS.md commands pass. M9.4's `a_fix_task_after_a_finished_integration_review_is_exempt_from_the_cap` (`run/orch/rules_tests_scope.rs`, built from constructed state) stays green once this task produces integration reviews (M9.4 review fixes, ruling 3).
 
 **Commit.** `feat(daemon): execute research and review tasks, review each epic, and note what the orchestrator must see`
 
@@ -2173,3 +2174,40 @@ Checked on `origin/main` at `8d440d7`, read with `git show` / `git grep` (no wor
   - four rules tests, which went through the edit path or built research tasks.
 
   The other rules tests were written after `rules.rs`, so they were run red by stubbing out `check` and `note_unbacked` (restored from a copy): 10 of 14 then failed. The acceptance-only tests (`cancelled_and_integration_review_tasks_do_not_count` and `onboarding_ref_is_accepted`) then gained controls that fail under the stub.
+
+### M9.4 review fixes
+
+These controller rulings answer the M9.4 review of `10114ab`. They replace the M9.4 notes above where the two differ: the scope of the rules, the cap, `EditSource::own`, decision 23a's two functions, and the `a...b` reading.
+
+1. **The non-ASCII rule applies at the done gate only** (Important). `ProtectedMatcher::matches` is back to M8a's answer. The non-ASCII rule is a new method, `ProtectedMatcher::guards_change(path)`, which returns `!path.is_ascii() || matches(path)`. Only `git::verify_done` calls it, when it decides `protected_changed`.
+   - `git::protected_files`, `triage::owned_protected` and `validate::protected_notes` behave exactly as on `origin/main`. Before the fix, every tracked non-ASCII path became protected at run start and on the fast path, which contradicts decision 23a's "M8b's fast-path rule … is unchanged".
+   - `may_cover_protected`'s non-ASCII branch is reverted too. The ruling puts the non-ASCII rule only at the done gate, and the branch was unreachable anyway: `owned_protected`, its only caller, refuses a non-ASCII entry first. This deviates from decision 23a's second bullet.
+   - Test: `daemon/tests/run_git_non_ascii.rs::non_ascii_paths_are_protected_at_the_done_gate_only`. It uses a real repository with tracked `docs/café.md` and `locales/日本語.json` and the built-in protected list. `protected_files` lists only `AGENTS.md`, `owned_protected(["docs/**"])` is `None` and no protected note is added. At the done gate, a changed `src/ü file.rs` is `protected_changed` under `owns = ["src/**"]`, and passes when `owns` names it exactly. The test failed before the fix, because `protected_files` listed both non-ASCII files. `globs_tests.rs::non_ascii_paths_are_protected` now checks `guards_change` against `matches`.
+   - **Decision 23a's open question** (controller's ruling): there is no new validation rule for non-ASCII `owns` entries. The done gate enforces it.
+2. **The rules apply to what an edit changes** (Important). `rules::check(run, before, source)` and `rules::apply` / `note_unbacked` take the run before the batch instead of the `touched` set. This deviates from the Interfaces signature `check(run, touched, source)`. `apply_edits` passes its input run.
+   - A task is *new* when its id is not in `before`: an added or split-in task. A task is *resized* when an `amend_task` changed its `spec.size`. An amend to the size a task already has is not a change.
+   - The reserved-id (23.6) and epic (23.5) rules apply to new tasks. The budget (23.1) and evidence (23.2) rules and the unbacked note apply to new and resized tasks. An amend of `priority`, `deps`, `brief` or any other field alone triggers none of them. `add_dep` does not trigger them either.
+   - **The cap** (23.3) now compares each group's count after the batch with its count before. A group is refused only when the count rose and is over the cap. A batch that leaves an over-cap group the same or smaller is never refused for it: a split into one task, or a cancel with an add. This replaces the "groups a touched task is in" reading.
+   - Tests in `run/orch/rules_tests_scope.rs`, through `apply_edits`:
+     - `amends_that_keep_the_size_are_not_ruled` (scenario A: an onboarded run, a task without `scout_refs`, the orchestrator amends `deps`, then `priority`, then `brief`);
+     - `an_over_cap_group_refuses_only_a_batch_that_grows_it` (scenario B);
+     - `a_size_amend_needs_evidence`.
+   - The first two failed before the fix: the `deps` amend was refused for evidence, and the priority amend by the cap. `a_size_amend_needs_evidence` pins behaviour that already held; it guards that the narrower scope still covers a resize. The existing `rules_tests.rs` tests call `check` through a helper, `check_new`, that builds `before` by removing the tasks named as new.
+3. **Decision 23.5 against the cap.** Once an epic has a finished integration review, the orchestrator may add a fix task to it past the cap. A finished review is a task with `orch.integration_of == Some(e)` in a finished state. Such an addition is exempt from the epic's `planner_task_cap`.
+   - Test: `a_fix_task_after_a_finished_integration_review_is_exempt_from_the_cap`. It builds its state by hand: a `reported` review marked for the epic, with an unfinished-review control. It failed before the fix.
+   - M9.9, which produces integration reviews, must keep this test green. M9.9's acceptance says so.
+4. **A sub-planner naming another epic is refused, not rewritten** (decision 22). `EditSource::own` / `own_all` are gone. `Batch::add_owned`, `split_owned` and `owned` in `run/edits_orch.rs` enforce the rule:
+   - An `add_task` or a split child naming another epic: `task <id>: epic: a sub-planner adds tasks only to its own epic <e>`. An absent `epic` is set to the planner's own.
+   - A `split_task` of a task outside the planner's epic (another epic's, or one with no epic): `task <id>: epic: a sub-planner splits only tasks of its own epic <e>`. The wording is the implementer's, since the ruling gave none.
+   - Both carry rule `2.epic`.
+   - Tests: `a_planners_task_for_another_epic_is_refused` and `a_planners_split_outside_its_epic_is_refused` in `edits_tests_orch.rs`. Both failed before the fix. `a_planners_added_task_inherits_its_epic` now splits a task of the planner's own epic.
+   - The other confinement checks stay M9.8's, as the brief assigns them. M9.8's task text now lists them as explicit tests: amend, cancel and `add_dep` on another epic's or the orchestrator's task, and `pause`.
+5. **The reserved-id exemption is tested.** `rules_tests.rs::an_integration_review_keeps_its_reserved_id` builds a new `auth-int1` whose `orch.integration_of` is set. Removing the condition from `rules.rs` turned this test red, the only failure in `run::orch`; the file was then restored from a copy.
+6. **`review_target`** (controller's ruling, beyond decision 24's per-part regex).
+   - No part may start with `.`, and an empty part stays refused. So `a...b`, `.a..b` and `.main` are refused.
+   - The whole target is at most 200 characters, matching the MCP schema (`REVIEW_TARGET_MAX` in `run/validate_kinds.rs`).
+   - `review_target_syntax` gained `a..b` and a 200-character range, both accepted. It also gained `a...b`, `.a..b`, `a..`, `..b`, `.main` and a 201-character range, all refused. The old "two full-length parts are accepted" case (401 characters) is gone.
+   - The test failed before the fix, on `a...b`.
+7. **M9.9 obligation.** When M9.9 creates `<e>-int<n>`, it picks the first free round number, because a user's `run edit` may already hold that id. It is in M9.9's task text as `integration_review_takes_the_first_free_round_id`.
+
+**File sizes.** `edits.rs` is 591 lines, under its budget of 592; the owned-edit logic moved to `edits_orch.rs`. The test file `orch/rules_tests_scope.rs` is new.

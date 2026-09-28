@@ -43,17 +43,23 @@ pub(super) fn check_reader_fields(spec: &PlanTask, errors: &mut Vec<PlanError>) 
     }
 }
 
-/// One revision, or `<a>..<b>`: each part is 1–200 of `[A-Za-z0-9._/@^~-]` and does not
-/// start with `-`. Whether it resolves is checked at dispatch (decision 36).
+/// The longest `review_target`, as the MCP schema has it (the M9.4 review fixes).
+const REVIEW_TARGET_MAX: usize = 200;
+
+/// One revision, or `<a>..<b>`: each part is 1–200 of `[A-Za-z0-9._/@^~-]` and starts
+/// with neither `-` nor `.` (so `a...b` is refused), and the whole target is at most
+/// [`REVIEW_TARGET_MAX`] characters. Whether it resolves is checked at dispatch
+/// (decision 36).
 fn is_review_target(target: &str) -> bool {
     let part = |p: &str| {
         (1..=200).contains(&p.len())
-            && !p.starts_with('-')
+            && !p.starts_with(['-', '.'])
             && p.bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"._/@^~-".contains(&b))
     };
-    match target.split_once("..") {
+    let well_formed = match target.split_once("..") {
         Some((a, b)) => part(a) && part(b) && !b.contains(".."),
         None => part(target),
-    }
+    };
+    well_formed && target.len() <= REVIEW_TARGET_MAX
 }

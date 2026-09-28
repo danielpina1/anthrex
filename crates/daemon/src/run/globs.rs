@@ -248,12 +248,20 @@ impl ProtectedMatcher {
         })
     }
 
-    /// Milestone 9 decision 23a: a path with any non-ASCII character is protected too,
-    /// since a case-insensitive volume may fold it onto a protected one (`AGENTſ.md`
-    /// opens as `AGENTS.md`); the done gate then passes it only when `owns` names it
-    /// exactly.
     pub fn matches(&self, path: &str) -> bool {
-        !path.is_ascii() || self.inner.matches(path)
+        self.inner.matches(path)
+    }
+
+    /// The done gate's question about a changed path (`git::verify_done`): [`matches`],
+    /// or, milestone 9 decision 23a, any path with a non-ASCII character, since a
+    /// case-insensitive volume may fold it onto a protected one (`AGENTſ.md` opens as
+    /// `AGENTS.md`). The gate then passes it only when `owns` names it exactly. Only
+    /// the done gate asks this (the M9.4 review fixes): the run's protected files, the
+    /// fast path and the plan's notes use [`matches`].
+    ///
+    /// [`matches`]: ProtectedMatcher::matches
+    pub fn guards_change(&self, path: &str) -> bool {
+        !path.is_ascii() || self.matches(path)
     }
 }
 
@@ -276,12 +284,8 @@ fn match_patterns(entry: &str) -> Vec<String> {
 /// as the root's `AGENTS.md`: every directory glob would otherwise cover one. Both are
 /// then compared component by component, ignoring ASCII case as decision 56's matcher
 /// does; two wildcard components meet when their literal heads and tails agree, which
-/// errs towards covering. An entry with a non-ASCII character may cover anything
-/// (milestone 9 decision 23a, as [`ProtectedMatcher::matches`]).
+/// errs towards covering.
 pub fn may_cover_protected(entry: &str, protected: &str) -> bool {
-    if !entry.is_ascii() {
-        return true;
-    }
     let mut guarded = vec![anchored(protected)];
     if let Some(dir) = protected.strip_suffix("/**")
         && !dir.is_empty()

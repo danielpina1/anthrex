@@ -1,12 +1,14 @@
-//! Milestone 9's plan edits: decision 25's `amend_task deps` (task M9.4) and, from
-//! task M9.13a, decision 42's `message` and `refresh`. `run/edits.rs` delegates to
+//! Milestone 9's plan edits: decision 25's `amend_task deps` and decision 22's
+//! confinement of a sub-planner's added and split tasks to its epic (task M9.4) and,
+//! from task M9.13a, decision 42's `message` and `refresh`. `run/edits.rs` delegates to
 //! these. Pure — no `std::fs`, `std::process`, `std::thread`, `tokio` or
 //! `std::time::SystemTime` (M8a design decision 2).
 
-use proto::{BlockReason, TaskState};
+use proto::{BlockReason, PlanTask, TaskState};
 
 use super::edits::{Batch, not_started, state_label};
 use super::model::Run;
+use super::orch::EditSource;
 use super::phases::set_state;
 use super::plan::PlanError;
 
@@ -80,5 +82,47 @@ impl Batch {
     /// Refuses a `message` or `refresh` edit, and with it the whole batch.
     pub(super) fn not_yet(&mut self) {
         self.errors.push(PlanError::new(None, "op", "13", NOT_YET));
+    }
+
+    /// `add_task`, after [`Batch::owned`].
+    pub(super) fn add_owned(&mut self, spec: &PlanTask) {
+        if let Some(spec) = self.owned(spec) {
+            self.add_task(spec);
+        }
+    }
+
+    /// `split_task`, after [`Batch::owned`] for each new task. Decision 22: a
+    /// sub-planner splits only its own epic's tasks.
+    pub(super) fn split_owned(&mut self, id: &str, into: &[PlanTask]) {
+        if let EditSource::Planner { epic } = &self.source
+            && let Some(task) = self.run.tasks.iter().find(|t| t.id() == id)
+            && task.spec.epic.as_ref() != Some(epic)
+        {
+            let text = format!("a sub-planner splits only tasks of its own epic {epic}");
+            self.errors
+                .push(PlanError::new(Some(id), "epic", "2.epic", text));
+            return;
+        }
+        let owned: Vec<Option<PlanTask>> = into.iter().map(|s| self.owned(s)).collect();
+        if let Some(into) = owned.into_iter().collect::<Option<Vec<_>>>() {
+            self.split(id, &into);
+        }
+    }
+
+    /// A task this batch's source adds, as the batch holds it. Decision 22: a
+    /// sub-planner adds tasks only to its own epic, which an absent `epic` is set to;
+    /// one naming another epic is refused (`None`).
+    fn owned(&mut self, spec: &PlanTask) -> Option<PlanTask> {
+        let mut spec = spec.clone();
+        if let EditSource::Planner { epic } = &self.source {
+            if spec.epic.as_ref().is_some_and(|named| named != epic) {
+                let text = format!("a sub-planner adds tasks only to its own epic {epic}");
+                self.errors
+                    .push(PlanError::new(Some(&spec.id), "epic", "2.epic", text));
+                return None;
+            }
+            spec.epic = Some(epic.clone());
+        }
+        Some(spec)
     }
 }

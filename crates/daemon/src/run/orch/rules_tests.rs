@@ -23,8 +23,15 @@ fn run_of(tasks: &[String]) -> Run {
     run_ok(&plan_with(PROFILE, tasks))
 }
 
-fn touched(ids: &[&str]) -> BTreeSet<String> {
-    ids.iter().map(|s| s.to_string()).collect()
+fn touched<'a>(ids: &[&'a str]) -> Vec<&'a str> {
+    ids.to_vec()
+}
+
+/// [`check`] on `run` as a batch that added the `new` tasks to the run without them.
+fn check_new(run: &Run, new: &[&str], source: &EditSource) -> Vec<PlanError> {
+    let mut before = run.clone();
+    before.tasks.retain(|t| !new.contains(&t.id()));
+    check(run, &before, source)
 }
 
 fn shown(errors: Vec<PlanError>) -> Vec<String> {
@@ -63,13 +70,17 @@ fn add(run: &Run, table: &str, source: &EditSource) -> Result<Run, Vec<String>> 
 fn planner_budget_is_refused() {
     let run = run_of(&[one("t1", BUDGET)]);
     assert_eq!(
-        shown(check(&run, &touched(&["t1"]), &EditSource::Orchestrator)),
+        shown(check_new(
+            &run,
+            &touched(&["t1"]),
+            &EditSource::Orchestrator
+        )),
         [BUDGET_ERROR]
     );
     let mut run = run_of(&[one("t1", &format!("epic = \"auth\"\n{BUDGET}"))]);
     run.orch.epics.push(epic("auth", PlannerPhase::Planning));
     assert_eq!(
-        shown(check(&run, &touched(&["t1"]), &planner("auth"))),
+        shown(check_new(&run, &touched(&["t1"]), &planner("auth"))),
         [BUDGET_ERROR]
     );
     // Through the edit path: the orchestrator's batch is refused whole.
@@ -87,7 +98,7 @@ fn plan_file_budget_is_still_accepted() {
     run.scout_reports = vec!["s1".into()];
     run = with_cap(run, 1);
     assert_eq!(run.tasks[0].budget.tool_calls, 10);
-    assert!(check(&run, &touched(&["t1"]), &EditSource::User).is_empty());
+    assert!(check_new(&run, &touched(&["t1"]), &EditSource::User).is_empty());
     let added = add(&run, &one("t2", BUDGET), &EditSource::User).unwrap();
     assert_eq!(added.tasks[1].budget.minutes, 5);
     assert!(
@@ -106,7 +117,7 @@ fn code_task_without_scout_refs_is_refused_when_reports_exist() {
     let mut run = run_of(&tasks);
     run.scout_reports = vec!["s1".into()];
     assert_eq!(
-        shown(check(
+        shown(check_new(
             &run,
             &touched(&["t1", "r1"]),
             &EditSource::Orchestrator
@@ -117,7 +128,7 @@ fn code_task_without_scout_refs_is_refused_when_reports_exist() {
     let mut run = run_of(&tasks);
     run.onboarding_report = Some("0123abcd".into());
     assert_eq!(
-        shown(check(
+        shown(check_new(
             &run,
             &touched(&["t1", "r1"]),
             &EditSource::Orchestrator
@@ -131,7 +142,11 @@ fn code_task_without_scout_refs_is_refused_when_reports_exist() {
     ]);
     run.scout_reports = vec!["s1".into()];
     assert_eq!(
-        shown(check(&run, &touched(&["t1"]), &EditSource::Orchestrator)),
+        shown(check_new(
+            &run,
+            &touched(&["t1"]),
+            &EditSource::Orchestrator
+        )),
         [error]
     );
 }
@@ -141,7 +156,11 @@ fn unknown_scout_ref_is_refused() {
     let mut run = run_of(&[one("t1", "scout_refs = [\"s1\", \"s9\", \"onboarding\"]")]);
     run.scout_reports = vec!["s1".into()];
     assert_eq!(
-        shown(check(&run, &touched(&["t1"]), &EditSource::Orchestrator)),
+        shown(check_new(
+            &run,
+            &touched(&["t1"]),
+            &EditSource::Orchestrator
+        )),
         [
             "task t1: scout_refs: s9 is not a finished scout report of this run",
             "task t1: scout_refs: onboarding is not a finished scout report of this run",
@@ -152,7 +171,7 @@ fn unknown_scout_ref_is_refused() {
 #[test]
 fn no_reports_gives_a_note_not_an_error() {
     let run = run_of(&[one("t0", "")]);
-    assert!(check(&run, &touched(&["t0"]), &EditSource::Orchestrator).is_empty());
+    assert!(check_new(&run, &touched(&["t0"]), &EditSource::Orchestrator).is_empty());
     let added = add(&run, &one("t1", ""), &EditSource::Orchestrator).unwrap();
     assert!(
         added.tasks[1].notes.iter().any(|n| n == UNBACKED_NOTE),
@@ -176,11 +195,15 @@ fn no_reports_gives_a_note_not_an_error() {
 fn onboarding_ref_is_accepted() {
     let mut run = run_of(&[one("t1", "scout_refs = [\"onboarding\"]")]);
     run.onboarding_report = Some("0123abcd".into());
-    assert!(check(&run, &touched(&["t1"]), &EditSource::Orchestrator).is_empty());
+    assert!(check_new(&run, &touched(&["t1"]), &EditSource::Orchestrator).is_empty());
     // The control: with no onboarding report the alias names nothing.
     run.onboarding_report = None;
     assert_eq!(
-        shown(check(&run, &touched(&["t1"]), &EditSource::Orchestrator)),
+        shown(check_new(
+            &run,
+            &touched(&["t1"]),
+            &EditSource::Orchestrator
+        )),
         ["task t1: scout_refs: onboarding is not a finished scout report of this run"]
     );
 }
@@ -196,13 +219,17 @@ fn orchestrator_cap_counts_tasks_without_an_epic() {
     let mut run = with_cap(run_of(&tasks), 2);
     run.orch.epics.push(epic("auth", PlannerPhase::Finished));
     assert_eq!(
-        shown(check(&run, &touched(&["t3"]), &EditSource::Orchestrator)),
+        shown(check_new(
+            &run,
+            &touched(&["t3"]),
+            &EditSource::Orchestrator
+        )),
         [
             "tasks: the orchestrator's plan has 3 tasks, more than planner_task_cap (2); plan the rest through sub-planners (rule 5.1)"
         ]
     );
     let run = with_cap(run, 3);
-    assert!(check(&run, &touched(&["t3"]), &EditSource::Orchestrator).is_empty());
+    assert!(check_new(&run, &touched(&["t3"]), &EditSource::Orchestrator).is_empty());
 }
 
 #[test]
@@ -217,7 +244,7 @@ fn epic_cap_counts_the_epics_tasks() {
     run.orch.epics.push(epic("auth", PlannerPhase::Planning));
     run.tasks[3].state = TaskState::Merged;
     assert_eq!(
-        shown(check(&run, &touched(&["a1", "a2"]), &planner("auth"))),
+        shown(check_new(&run, &touched(&["a1", "a2"]), &planner("auth"))),
         ["tasks: epic auth has 3 tasks, more than planner_task_cap (2); split the epic (rule 5.1)"]
     );
 }
@@ -242,13 +269,16 @@ fn cancelled_and_integration_review_tasks_do_not_count() {
     run.tasks[0].state = TaskState::Cancelled;
     run.tasks[5].orch.integration_of = Some("auth".into());
     let ids = touched(&["t3", "a2"]);
-    assert_eq!(shown(check(&run, &ids, &EditSource::Orchestrator)), [""; 0]);
+    assert_eq!(
+        shown(check_new(&run, &ids, &EditSource::Orchestrator)),
+        [""; 0]
+    );
     // The controls: counted, each group is over the cap.
     let mut counted = run.clone();
     counted.tasks[0].state = TaskState::Pending;
     counted.tasks[5].orch.integration_of = None;
     assert_eq!(
-        shown(check(&counted, &ids, &EditSource::Orchestrator)),
+        shown(check_new(&counted, &ids, &EditSource::Orchestrator)),
         [
             "tasks: the orchestrator's plan has 3 tasks, more than planner_task_cap (2); plan the rest through sub-planners (rule 5.1)",
             "tasks: epic auth has 3 tasks, more than planner_task_cap (2); split the epic (rule 5.1)",
@@ -261,7 +291,11 @@ fn task_naming_an_unknown_epic_is_refused() {
     let mut run = run_of(&[one("t1", "epic = \"nope\"")]);
     run.orch.epics.push(epic("auth", PlannerPhase::Finished));
     assert_eq!(
-        shown(check(&run, &touched(&["t1"]), &EditSource::Orchestrator)),
+        shown(check_new(
+            &run,
+            &touched(&["t1"]),
+            &EditSource::Orchestrator
+        )),
         ["task t1: epic: nope is not an epic of this run; create it with spawn_subplanner"]
     );
 }
@@ -272,12 +306,16 @@ fn task_for_a_live_planners_epic_from_the_orchestrator_is_refused() {
         let mut run = run_of(&[one("t1", "epic = \"auth\"")]);
         run.orch.epics.push(epic("auth", phase.clone()));
         assert_eq!(
-            shown(check(&run, &touched(&["t1"]), &EditSource::Orchestrator)),
+            shown(check_new(
+                &run,
+                &touched(&["t1"]),
+                &EditSource::Orchestrator
+            )),
             ["task t1: epic: epic auth is being planned by its sub-planner"],
             "{phase:?}"
         );
         // The epic's own planner may.
-        assert!(check(&run, &touched(&["t1"]), &planner("auth")).is_empty());
+        assert!(check_new(&run, &touched(&["t1"]), &planner("auth")).is_empty());
     }
 }
 
@@ -291,7 +329,7 @@ fn fix_task_for_a_finished_epic_is_accepted() {
     ] {
         let mut run = run_of(&[one("t1", "epic = \"auth\"")]);
         run.orch.epics.push(epic("auth", phase));
-        assert!(check(&run, &touched(&["t1"]), &EditSource::Orchestrator).is_empty());
+        assert!(check_new(&run, &touched(&["t1"]), &EditSource::Orchestrator).is_empty());
     }
 }
 
@@ -300,7 +338,7 @@ fn integration_review_ids_are_reserved() {
     let ids = ["auth-int1", "x-int12", "a-int", "a-intx", "int1", "a-int1b"];
     let run = run_of(&ids.map(|id| one(id, "")));
     assert_eq!(
-        shown(check(&run, &touched(&ids), &EditSource::Orchestrator)),
+        shown(check_new(&run, &touched(&ids), &EditSource::Orchestrator)),
         [
             "task auth-int1: id: ids ending in -int<n> are reserved for integration reviews",
             "task x-int12: id: ids ending in -int<n> are reserved for integration reviews",
@@ -326,7 +364,7 @@ fn rule_ids_are_the_documented_ones() {
     run.orch.epics.push(epic("auth", PlannerPhase::Planning));
     run.orch.epics.push(epic("done", PlannerPhase::Finished));
     let ids = touched(&["t1", "t2", "t3", "t4", "t5", "t6-int1", "a1", "a2"]);
-    let rules: BTreeSet<String> = check(&run, &ids, &EditSource::Orchestrator)
+    let rules: BTreeSet<String> = check_new(&run, &ids, &EditSource::Orchestrator)
         .into_iter()
         .map(|e| e.rule)
         .collect();
@@ -340,4 +378,29 @@ fn rule_ids_are_the_documented_ones() {
     .map(String::from)
     .into();
     assert_eq!(rules, documented);
+}
+
+/// Decision 37's own review task is exempt from the reserved-id rule (M9.4 review
+/// fixes, ruling 5).
+#[test]
+fn an_integration_review_keeps_its_reserved_id() {
+    let review = task_toml(
+        "auth-int1",
+        "M",
+        "[]",
+        "epic = \"auth\"\nkind = \"review\"\nreview_target = \"main..HEAD\"",
+    );
+    let mut run = run_of(&[one("a1", "epic = \"auth\""), review]);
+    run.orch.epics.push(epic("auth", PlannerPhase::Finished));
+    run.tasks[1].orch.integration_of = Some("auth".into());
+    assert_eq!(
+        shown(check_new(&run, &["auth-int1"], &EditSource::Orchestrator)),
+        [""; 0]
+    );
+    // The control: without the mark, the id is reserved.
+    run.tasks[1].orch.integration_of = None;
+    assert_eq!(
+        shown(check_new(&run, &["auth-int1"], &EditSource::Orchestrator)),
+        ["task auth-int1: id: ids ending in -int<n> are reserved for integration reviews"]
+    );
 }

@@ -80,7 +80,7 @@ pub fn apply_edits(
         edited.limits.max_tasks,
         edited.limits.default_runtime,
     ));
-    errors.extend(super::orch::rules::apply(&mut edited, &touched, source));
+    errors.extend(super::orch::rules::apply(&mut edited, run, source));
     // Decision 41's implicit dependencies follow the edited graph; the combined check
     // is the same backstop `build_run` runs (M8a.6 fix round 1, F2).
     let implicit = implicit_deps(&edited.tasks);
@@ -177,7 +177,7 @@ pub(super) fn state_label(task: &Task) -> String {
 }
 
 pub(super) struct Batch {
-    source: EditSource,
+    pub(super) source: EditSource,
     pub(super) run: Run,
     touched: BTreeSet<String>,
     /// `(task, dep)` pairs this batch adds: the cancelled-dependency rule applies to
@@ -191,10 +191,8 @@ pub(super) struct Batch {
 impl Batch {
     fn apply(&mut self, edit: &PlanEdit) {
         match edit {
-            PlanEdit::AddTask { task } => self.add_task(self.source.own(task)),
-            PlanEdit::SplitTask { task_id, into } => {
-                self.split(task_id, &self.source.own_all(into))
-            }
+            PlanEdit::AddTask { task } => self.add_owned(task),
+            PlanEdit::SplitTask { task_id, into } => self.split_owned(task_id, into),
             PlanEdit::CancelTask { task_id } => self.cancel(task_id),
             // Milestone 9 decisions 42a and 42e (task M9.13a).
             PlanEdit::Message { .. } | PlanEdit::Refresh { .. } => self.not_yet(),
@@ -260,7 +258,7 @@ impl Batch {
         }
     }
 
-    fn add_task(&mut self, spec: PlanTask) {
+    pub(super) fn add_task(&mut self, spec: PlanTask) {
         let task = self.resolve(spec);
         self.add_deps_of(&task);
         self.run.tasks.push(task);
@@ -335,7 +333,7 @@ impl Batch {
 
     /// Cancels `id`, inserts `into` right after it in plan order, and makes every task
     /// that depended on `id` depend on all of `into` instead.
-    fn split(&mut self, id: &str, into: &[PlanTask]) {
+    pub(super) fn split(&mut self, id: &str, into: &[PlanTask]) {
         let Some(i) = self.find(id) else { return };
         if !not_started(self.run.tasks[i].state) {
             return self.refuse(i, "only pending, queued or blocked tasks can be split");

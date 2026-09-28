@@ -57,11 +57,23 @@ fn review_task_needs_a_review_target() {
 #[test]
 fn review_target_syntax() {
     let long = "a".repeat(201);
-    let cases: [(&str, bool); 11] = [
+    // The M9.4 review fixes (ruling 6): no part is empty or starts with `.`, and the
+    // whole target is at most 200 characters, as the MCP schema has it.
+    let long_range = format!("{}..{}", "a".repeat(100), "b".repeat(99));
+    let full_range = format!("{}..{}", "a".repeat(100), "b".repeat(98));
+    let cases: [(&str, bool); 19] = [
         ("main", true),
         ("a1b2c3d", true),
         ("main..feature/x", true),
         ("HEAD~3..HEAD", true),
+        ("a..b", true),
+        (&full_range, true),
+        ("a...b", false),
+        (".a..b", false),
+        ("a..", false),
+        ("..b", false),
+        (".main", false),
+        (&long_range, false),
         ("v1.2@{1}^", false),
         ("-x", false),
         ("a..-x", false),
@@ -95,17 +107,8 @@ fn review_target_syntax() {
             "{target:?}"
         );
     }
-    // Two full-length parts are accepted.
-    let two = format!("{}..{}", "a".repeat(200), "b".repeat(200));
-    let text = plan_with(
-        PROFILE,
-        &[reader(
-            "v1",
-            "review",
-            &format!("review_target = \"{two}\""),
-        )],
-    );
-    assert!(build(&text).is_ok());
+    assert_eq!(full_range.len(), 200);
+    assert_eq!(long_range.len(), 201);
 }
 
 #[test]

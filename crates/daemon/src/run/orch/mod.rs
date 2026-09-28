@@ -38,21 +38,6 @@ impl EditSource {
             EditSource::Planner { epic } => format!("planner:{epic}"),
         }
     }
-
-    /// A task this source adds, as the batch holds it: a sub-planner's tasks belong to
-    /// its epic, whatever the spec names.
-    pub fn own(&self, spec: &proto::PlanTask) -> proto::PlanTask {
-        let mut spec = spec.clone();
-        if let EditSource::Planner { epic } = self {
-            spec.epic = Some(epic.clone());
-        }
-        spec
-    }
-
-    /// [`EditSource::own`] for each of a split's new tasks.
-    pub fn own_all(&self, specs: &[proto::PlanTask]) -> Vec<proto::PlanTask> {
-        specs.iter().map(|s| self.own(s)).collect()
-    }
 }
 
 /// `Run.orch`: a run's milestone 9 state. Absent from an older run: empty.
