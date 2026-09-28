@@ -160,9 +160,10 @@ fn promotion_hold_is_awaiting_after_submit() {
     assert!(run.orch.orchestrator.as_ref().unwrap().plan_submitted);
     assert_eq!(run.state, RunState::Running);
     assert_eq!(fx.task("t2").state, TaskState::Queued);
-    // After the submit, the orchestrator's additions are no longer held.
+    // M9.7 second review, ruling 1: until the user approves, an addition joins the
+    // awaiting hold (the first review's "no longer held" was the defect).
     edit_plan(&mut fx, json!({"edits": [add("t3", "sms")]}));
-    assert_eq!(fx.task("t3").orch.gate_hold, None);
+    assert_eq!(fx.task("t3").orch.gate_hold.as_deref(), Some("promotion"));
     let reply = fx.reply();
     let effects = fx.next(EventKind::Orch(
         crate::run::engine::OrchEvent::ApproveHold {
@@ -303,4 +304,98 @@ fn split_children_of_a_promotion_held_task_stay_held() {
     for id in ["t2a", "t2b"] {
         assert_eq!(fx.task(id).state, TaskState::Cancelled, "{id}");
     }
+}
+
+/// M9.7 second review, ruling 1, scenario A: an empty submit first. The promotion hold
+/// is created `Awaiting` with no task, so the user's approval still ends the window.
+#[test]
+fn an_empty_submit_after_promote_holds_later_additions_until_approval() {
+    let mut fx = promoted();
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true})));
+    assert!(ok, "{value}");
+    assert_eq!(value["held"], serde_json::Value::Null);
+    let hold = fx.run().orch.gate_holds[0].clone();
+    assert_eq!(
+        (hold.id.as_str(), hold.state, hold.tasks.len()),
+        ("promotion", HoldState::Awaiting, 0)
+    );
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [add("t2", "mail")]})));
+    assert!(ok, "{value}");
+    assert_eq!(value["held"], "promotion");
+    assert_eq!(value["awaiting_approval"], true);
+    fx.tick();
+    assert_eq!(fx.task("t2").state, TaskState::Queued);
+    assert!(!prepared(&fx, "t2"), "t2 waits for the user");
+    let effects = hold_verdict(&mut fx, "promotion", true);
+    assert_eq!(
+        replies(&effects),
+        vec![Ok(format!(
+            "hold promotion of run {RUN_ID} approved: 1 task may start"
+        ))]
+    );
+    assert!(prepared(&fx, "t2"), "dispatched on approval");
+}
+
+/// M9.7 second review, ruling 1, scenario B: an addition made after the submit, while
+/// the user has not decided, joins the awaiting hold. After the approval, decision 29's
+/// "only new epics are held" applies.
+#[test]
+fn additions_after_submit_join_the_awaiting_promotion_hold() {
+    let mut fx = promoted();
+    // Room for t1 to t4 at once, so a task left queued is one that was held.
+    fx.run_mut().limits.max_writers = 4;
+    edit_plan(&mut fx, json!({"edits": [add("t2", "mail")]}));
+    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    assert_eq!(fx.run().orch.gate_holds[0].state, HoldState::Awaiting);
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [add("t3", "sms")]})));
+    assert!(ok, "{value}");
+    assert_eq!(value["held"], "promotion");
+    assert_eq!(
+        fx.run().orch.gate_holds[0].tasks,
+        vec!["t2".to_string(), "t3".to_string()]
+    );
+    fx.tick();
+    for id in ["t2", "t3"] {
+        assert!(!prepared(&fx, id), "{id} waits for the user");
+    }
+    let effects = hold_verdict(&mut fx, "promotion", true);
+    assert_eq!(
+        replies(&effects),
+        vec![Ok(format!(
+            "hold promotion of run {RUN_ID} approved: 2 tasks may start"
+        ))]
+    );
+    for id in ["t2", "t3"] {
+        assert!(prepared(&fx, id), "{id} dispatched on approval");
+    }
+    // After the approval, an addition in no new epic is not held.
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [add("t4", "log")]})));
+    assert!(ok, "{value}");
+    assert_eq!(value["held"], serde_json::Value::Null);
+    assert_eq!(fx.task("t4").orch.gate_hold, None);
+    fx.tick();
+    assert!(prepared(&fx, "t4"), "t4 dispatched");
+}
+
+/// M9.7 second review, ruling 2: `past_gate` counts the promotion, so a promoted M8b
+/// run with no approval time holds a new epic once the promotion was approved.
+#[test]
+fn a_promoted_m8b_run_holds_a_new_epic_after_submit() {
+    let mut fx = fast();
+    fx.run_mut().approved_at = None;
+    let mut fx = promoted_from(fx);
+    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    let effects = hold_verdict(&mut fx, "promotion", true);
+    assert!(replies(&effects)[0].is_ok(), "{effects:?}");
+    assert_eq!(fx.run().approved_at, None);
+    let args = json!({"epic": "mail", "title": "Epic mail",
+        "area": ["crates/mail/**"], "brief": "Plan mail"});
+    let (ok, value) = answer(&super::orch::orch_tool(
+        &mut fx,
+        ORCH,
+        "spawn_subplanner",
+        args,
+    ));
+    assert!(ok, "{value}");
+    assert_eq!(value["hold"], "epic:mail");
 }

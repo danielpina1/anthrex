@@ -278,15 +278,15 @@ fn write_summary(run: &mut Run, summary: String, now: u64) {
 /// Decision 27's `submit`. In `planning` the plan must hold an unfinished task and no
 /// sub-planner may be live; the run then waits at the gate, or runs at once when it was
 /// started with `--yes`. In `awaiting_approval` nothing changes. On a promoted running
-/// run the plan is submitted and hold `promotion` awaits the user. Otherwise it is
+/// run the plan is submitted and hold `promotion` awaits the user, created empty when
+/// nothing was added. A run being discarded or accepted takes no submit. Otherwise it is
 /// ignored. `who` submits: the orchestrator, or the user's `run edit` (decision 13,
 /// `requests::edit`, which admits `planning` only).
 pub(super) fn submit_plan(run: &mut Run, who: &str, now: u64) -> Result<(), String> {
-    let submitted = run
-        .orch
-        .orchestrator
-        .as_ref()
-        .is_some_and(|o| o.plan_submitted);
+    // A discard or accept in flight takes no submit (M9.7 second review, ruling 4).
+    if let Some(how) = super::dispatch::finishing_as(run) {
+        return Err(format!("run {} is being {how}", run.id));
+    }
     match run.state {
         RunState::Planning => {
             if run.tasks.iter().all(|t| t.state.is_finished()) {
@@ -320,10 +320,11 @@ pub(super) fn submit_plan(run: &mut Run, who: &str, now: u64) -> Result<(), Stri
                 );
             }
         }
-        RunState::Running if !submitted && run.orch.orchestrator.is_some() => {
+        RunState::Running if run.orch.orchestrator.is_some() => {
             set_submitted(run);
-            gate_holds::submitted(run, gate_holds::PROMOTION, now);
-            log(run, now, "the orchestrator submitted its additions");
+            if gate_holds::submit_promotion(run, now) {
+                log(run, now, "the orchestrator submitted its additions");
+            }
         }
         _ => {}
     }

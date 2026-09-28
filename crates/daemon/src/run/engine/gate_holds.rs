@@ -4,7 +4,7 @@
 //! nothing here reads or changes that. Pure (design decision 2).
 //!
 //! A hold is `promotion` (decision 29: everything a promoted run's orchestrator adds
-//! before it submits) or `epic:<e>` (a new epic of a running run). A task whose hold is
+//! until the user approves the promotion) or `epic:<e>` (a new epic of a running run). A task whose hold is
 //! not `Approved` is not runnable and is not pre-warmed (`dispatch.rs`).
 
 use proto::{HoldKind, HoldState, PlanEdit, RunState, TaskState};
@@ -36,6 +36,38 @@ fn promoted(run: &Run) -> bool {
     run.promote_requested_at.is_some() && run.orch.orchestrator.is_some()
 }
 
+/// Decision 29's window: the run was promoted and the user has not yet decided its
+/// `promotion` hold (none yet, `Drafting` or `Awaiting`). A rejection ends it as an
+/// approval does (M9.7 second review, the implementer's reading of ruling 1): a task
+/// joining a rejected hold could never run.
+fn promotion_open(run: &Run) -> bool {
+    promoted(run)
+        && run
+            .orch
+            .gate_holds
+            .iter()
+            .find(|h| h.id == PROMOTION)
+            .is_none_or(|h| matches!(h.state, HoldState::Drafting | HoldState::Awaiting))
+}
+
+/// The orchestrator's `submit` on a promoted running run (decision 27): the `promotion`
+/// hold awaits the user (or is approved by `--yes`), created with no task when the
+/// orchestrator added nothing, so the user's approval is still what ends the promotion
+/// window (M9.7 second review, ruling 1). Returns whether it was submitted now.
+pub(super) fn submit_promotion(run: &mut Run, now: u64) -> bool {
+    if !promoted(run) {
+        return false;
+    }
+    let drafting = |h: &GateHoldRecord| h.id == PROMOTION && h.state == HoldState::Drafting;
+    let missing = !run.orch.gate_holds.iter().any(|h| h.id == PROMOTION);
+    if !missing && !run.orch.gate_holds.iter().any(drafting) {
+        return false;
+    }
+    ensure(run, PROMOTION, HoldKind::Promotion, now);
+    submitted(run, PROMOTION, now);
+    true
+}
+
 /// The run's plan was approved once (by the user, `--yes` or the fast path), or the run
 /// was promoted: work added from now on is past the gate.
 fn past_gate(run: &Run) -> bool {
@@ -46,25 +78,24 @@ fn past_gate(run: &Run) -> bool {
 /// batch, `edits`; a user's own `run edit` never comes here) the hold it waits under,
 /// if any, and returns the first such hold. A task split from a task whose hold is not
 /// `Approved` inherits that hold, whatever epic it names, and the split parent, which
-/// the split cancelled, leaves it (M9.7 review fixes, ruling 2). Otherwise, before a
-/// promoted run's orchestrator submits, every task waits under `promotion` (decision
-/// 29, whatever the gate's state); after it, a task of an epic whose hold is still
-/// undecided waits under that hold.
+/// the split cancelled, leaves it (M9.7 review fixes, ruling 2). Otherwise, until the
+/// user decides a promoted run's `promotion` hold, every task waits under it (decision
+/// 29, whatever the gate's state; joining it while it awaits the user, M9.7 second
+/// review, ruling 1); after that, a task of an epic whose hold is still undecided waits
+/// under that hold.
 pub(super) fn assign(
     run: &mut Run,
     edits: &[PlanEdit],
     added: &[String],
     now: u64,
 ) -> Option<String> {
-    let submitted = run.orch.orchestrator.as_ref()?.plan_submitted;
+    run.orch.orchestrator.as_ref()?;
     let mut first = None;
     for id in added {
         let parent = split_parent(edits, id);
         let hold = match parent.and_then(|p| unreleased_hold(run, p)) {
             Some(inherited) => Some(inherited),
-            None if promoted(run) && !submitted => {
-                Some(ensure(run, PROMOTION, HoldKind::Promotion, now))
-            }
+            None if promotion_open(run) => Some(ensure(run, PROMOTION, HoldKind::Promotion, now)),
             None => epic_hold(run, id),
         };
         let Some(hold) = hold else {
@@ -251,7 +282,13 @@ fn decide(
     if approve {
         hold.state = HoldState::Approved;
         log(run, now, format!("hold {id} approved by the user"));
-        let n = tasks.len();
+        // Only live work counts: a task the user's own `run edit` cancelled or split
+        // (its children are the user's and carry no hold) is released already (M9.7
+        // second review, ruling 3).
+        let n = tasks
+            .iter()
+            .filter(|t| run.task(t).is_some_and(|t| !t.state.is_finished()))
+            .count();
         return Ok(format!(
             "hold {id} of run {run_id} approved: {n} task{} may start",
             plural(n)

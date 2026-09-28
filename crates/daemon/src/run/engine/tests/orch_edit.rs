@@ -315,3 +315,52 @@ fn an_orchestrator_below_the_frontier_tier_is_reported() {
         "{report}"
     );
 }
+
+/// M9.7 second review, ruling 4: while a discard is in flight, neither the
+/// orchestrator's nor the user's submit is taken.
+#[test]
+fn a_submit_while_the_run_is_being_discarded_is_refused() {
+    let mut fx = launched(false);
+    edit_plan(&mut fx, json!({"edits": [add("t1", "auth")]}));
+    let reply = fx.reply();
+    fx.next(EventKind::Reject {
+        reply,
+        run_id: RUN_ID.into(),
+    });
+    let before = fx.run().clone();
+    let effects = edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    assert_eq!(error(&effects), format!("run {RUN_ID} is being discarded"));
+    assert_eq!(*fx.run(), before);
+    let reply = fx.reply();
+    let effects = fx.next(EventKind::Edit {
+        reply,
+        run_id: RUN_ID.into(),
+        edits: Vec::new(),
+        scope: crate::run::validate::EditScope::Run,
+        refusals: Vec::new(),
+        submit: true,
+    });
+    assert_eq!(
+        replies(&effects),
+        vec![Err(format!("run {RUN_ID} is being discarded"))]
+    );
+    assert_eq!(*fx.run(), before);
+}
+
+/// M9.7 second review, ruling 6: a `fast` orchestrator is below the frontier too.
+#[test]
+fn a_fast_orchestrator_is_reported_below_the_frontier() {
+    let mut fx = launched(false);
+    let o = fx.run_mut().orch.orchestrator.as_mut().unwrap();
+    o.route.strength = proto::Strength::Fast;
+    let model = o.route.model.clone();
+    let runtime = o.route.runtime.label();
+    let model = if model.is_empty() {
+        "default".into()
+    } else {
+        model
+    };
+    let report = crate::run::report::render(fx.run(), fx.now);
+    let line = format!("\norchestrator below the frontier tier: {runtime} ({model}) fast\n");
+    assert!(report.contains(&line), "{report}");
+}

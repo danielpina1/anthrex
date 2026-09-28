@@ -139,6 +139,18 @@ pub(super) fn restored(run: &mut Run) {
     }
 }
 
+/// Decisions 11 and 30: a run that ended (accepted, discarded or failed) has no live
+/// orchestrator; its window becomes a plain one. Run after every event, so a
+/// `Restarted` or `Window` result that comes back after the end cannot set it again
+/// (M9.7 second review, ruling 5).
+pub(super) fn ended(run: &mut Run) {
+    if run.state.is_terminal()
+        && let Some(o) = run.orch.orchestrator.as_mut()
+    {
+        o.live = false;
+    }
+}
+
 /// A `CreateOrchestrator` the restart lost: `run resume` launches it again.
 pub(super) fn launch_lost(run: &mut Run, op: OpId) {
     if let Some(o) = run.orch.orchestrator.as_mut()

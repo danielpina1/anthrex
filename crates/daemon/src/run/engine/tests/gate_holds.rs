@@ -317,3 +317,60 @@ fn amending_a_held_task_keeps_its_hold() {
     fx.tick();
     assert_eq!(fx.task("t2").state, TaskState::Queued);
 }
+
+/// M9.7 second review, ruling 3: a user's own `run edit` split of a held task releases
+/// the work (the user's edit is theirs: the children carry no hold). The split parent
+/// is cancelled, so an approval counts none of it.
+#[test]
+fn a_users_split_of_a_held_task_releases_it_and_the_approval_counts_none() {
+    use super::holds::plan_task;
+    let mut fx = held(false);
+    let split = proto::PlanEdit::SplitTask {
+        task_id: "t2".into(),
+        into: vec![
+            plan_task("t2a", "[\"crates/mail_a/**\"]"),
+            plan_task("t2b", "[\"crates/mail_b/**\"]"),
+        ],
+    };
+    let effects = super::dispatch::edit(&mut fx, vec![split]);
+    assert!(replies(&effects)[0].is_ok(), "{effects:?}");
+    assert_eq!(fx.task("t2").state, TaskState::Cancelled);
+    for id in ["t2a", "t2b"] {
+        assert_eq!(fx.task(id).orch.gate_hold, None, "{id} is the user's");
+    }
+    awaiting(&mut fx);
+    let effects = verdict(&mut fx, "epic:mail", true);
+    assert_eq!(
+        replies(&effects),
+        vec![Ok(format!(
+            "hold epic:mail of run {RUN_ID} approved: 0 tasks may start"
+        ))]
+    );
+}
+
+/// M9.7 second review, ruling 3: a verdict counts only the hold's unfinished tasks,
+/// approve as reject already did.
+#[test]
+fn verdicts_count_only_unfinished_tasks() {
+    for approve in [true, false] {
+        let mut fx = held(false);
+        edit_plan(&mut fx, json!({"edits": [in_epic("t3", "sms", "mail")]}));
+        assert_eq!(fx.run().orch.gate_holds[0].tasks.len(), 2);
+        let cancel = proto::PlanEdit::CancelTask {
+            task_id: "t2".into(),
+        };
+        let effects = super::dispatch::edit(&mut fx, vec![cancel]);
+        assert!(replies(&effects)[0].is_ok(), "{effects:?}");
+        awaiting(&mut fx);
+        let effects = verdict(&mut fx, "epic:mail", approve);
+        let text = if approve {
+            "approved: 1 task may start"
+        } else {
+            "rejected: 1 task cancelled"
+        };
+        assert_eq!(
+            replies(&effects),
+            vec![Ok(format!("hold epic:mail of run {RUN_ID} {text}"))]
+        );
+    }
+}

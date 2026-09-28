@@ -156,3 +156,30 @@ fn reject_of_a_restored_planning_run_discards_it() {
     );
     assert_eq!(ops_in(&effects, "Discard").len(), 1);
 }
+
+/// M9.7 second review, ruling 5: a run that ends leaves its orchestrator not live,
+/// even when a restart it asked for comes back after the reject.
+#[test]
+fn a_discarded_runs_orchestrator_is_not_live() {
+    let mut fx = launched(false);
+    restart(&mut fx);
+    resume(&mut fx);
+    let (restart_op, _) = fx.op("RestartOrchestrator");
+    let reply = fx.reply();
+    fx.next(EventKind::Reject {
+        reply,
+        run_id: RUN_ID.into(),
+    });
+    let (discard, _) = fx.op("Discard");
+    fx.done(restart_op, OpResult::Restarted);
+    fx.done(
+        discard,
+        OpResult::Finished {
+            outcome: "discarded".into(),
+            kept_branches: Vec::new(),
+        },
+    );
+    let run = fx.run();
+    assert_eq!(run.state, RunState::Discarded);
+    assert!(!run.orch.orchestrator.as_ref().unwrap().live);
+}
