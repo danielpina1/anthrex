@@ -158,7 +158,7 @@ fn change_message_requires_acknowledgement_in_task_done() {
     );
 }
 
-const EXTRACT: &str = "Scout report s1:\nSummary one\nFiles: crates/a/src/x.rs";
+const EXTRACT: &str = "Scout report s1:\n  Summary one\nFiles: crates/a/src/x.rs";
 
 fn notes() -> String {
     crate::run::orch::contract::notes_section(&[crate::run::orch::TaskMessage {

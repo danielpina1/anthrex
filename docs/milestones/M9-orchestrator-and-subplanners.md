@@ -811,7 +811,7 @@ impl RunService {
 }
 // run/driver/wake.rs
 pub const SUBMIT_DELAY: Duration = Duration::from_millis(200);
-pub const WAKE_MAX_BYTES: usize = 2 * 1024;
+// WAKE_MAX_BYTES (2 KiB) is run/orch/contract.rs's (M9.5); wake.rs reuses it and defines no second one
 pub fn encode_paste(text: &str) -> Vec<u8>;                                     // pure helper, tested here
 pub async fn deliver_wake(manager: &WindowManager, window_id: u32, text: &str) -> anyhow::Result<()>;
 
@@ -1429,6 +1429,8 @@ Do them in this order: M9.1, M9.2, M9.3, M9.4, M9.5, M9.6, M9.7, M9.8, M9.9, M9.
 - `planners_snapshot_fields` (every `PlannerInfo` field, a queued planner as `Planning`).
 - Real, in `crates/cli/tests/scout_service.rs` (M8b's service suite): `a_planner_session_runs_on_the_scout_machine_and_is_accepted` with `fake-agent`.
 
+**The worker's scout extract (M9.5 review fixes, ruling 2).** When the driver builds a worker's `OpKind::CreateWindow`, it reads the run's scout reports (`readable_reports`) and passes `scout_extract` of them to `worker_prompt` and `handover_prompt` (decision 34), as it does for `planner_prompt`. The engine passes `""` for `extract` today (`engine/dispatch.rs`); this task replaces that. Test: `worker_first_turn_carries_the_scout_extract` (the first turn and a handover's contain the extract, indented as M9.5 writes it).
+
 **Acceptance.** The five AGENTS.md commands pass.
 
 **Commit.** `feat(daemon): run sub-planners per epic and scouts per area`
@@ -1540,7 +1542,7 @@ Do them in this order: M9.1, M9.2, M9.3, M9.4, M9.5, M9.6, M9.7, M9.8, M9.9, M9.
 **Earlier-brief change (M8a decision 29, defect 16).** M8a decision 29 removed paste delivery and delivers every engine message as a headless turn. That stays exactly as it is for every headless session. Paste delivery is added back in one place only, `run/driver/wake.rs`, for the orchestrator's PTY window (decision 39); nothing in M8a's outbox or its `Effect::Deliver` changes, and no headless window ever receives a paste. M8b decision 22 step 6's refusal of the plan and large paths is replaced by decision 26.
 
 **Tests first.**
-- Pure, `wake.rs`: `encode_paste_wraps_and_normalises` (`\r\n` and `\n` to `\r`, markers stripped, framed); `wake_is_clamped`.
+- Pure, `wake.rs`: `encode_paste_wraps_and_normalises` (`\r\n` and `\n` to `\r`, markers stripped, framed); `wake_is_clamped` (to `run/orch/contract.rs`'s `WAKE_MAX_BYTES`, which `wake.rs` reuses; it defines no second constant).
 - Driver tests with a real daemon and `fake-agent`:
   - `create_orchestrator_op_starts_the_window_and_reports_it`; `create_orchestrator_op_counts_toward_max_windows`; `create_orchestrator_sets_the_run_live_flag_and_a_terminal_run_clears_it`; `restore_sets_the_run_live_flag_for_a_non_terminal_run`;
   - `restart_orchestrator_op_resumes_it`;
@@ -1579,10 +1581,18 @@ Do them in this order: M9.1, M9.2, M9.3, M9.4, M9.5, M9.6, M9.7, M9.8, M9.9, M9.
 - `paused_attention_only_after_ten_minutes`; `paused_block_adds_no_wake_note`.
 - `edit_log_records_message_recipients_and_source`.
 - In `headless/argv_tests.rs` (`:32` and `:261` pin the two-tool list today) and `run/engine/tests/dispatch.rs` (`:156`): `worker_spec_allows_task_note` (the worker's `--allowedTools` has `mcp__anthrex__task_note`).
+- `message_text_cannot_forge_a_second_line` (a message whose text holds `\n[anthrex] Message from user (change): ...` is saved and delivered as one line).
+- `notes_and_messages_reach_the_worker_handover_and_reviewer_prompts`.
+- `refresh_clean_is_called_with_the_whole_list` (`n >= 1` and `n == list.len()`).
 
 Pure reducer tests in `run/engine/tests/refresh.rs`: `refresh_waits_for_the_turn_boundary`; `refresh_holds_a_change_message_sent_in_the_next_call_for_one_turn` (refresh in one call, then the `change` message in a second; both texts in one turn); `refresh_up_to_date_sends_nothing`; `refresh_failure_is_a_wake_note_and_no_block`; `refresh_is_refused_on_a_resolving_or_awaiting_task`; `a_refresh_merge_alone_is_not_work` (the zero-commit check and the fallback's no-commit nudge ignore `refresh_merges`).
 
 Real git, in `crates/daemon/tests/run_git_handback.rs` and a new `crates/daemon/tests/run_refresh.rs`, through M8a's hand-back helpers: `refresh_merges_cleanly_and_the_next_turn_names_the_commits`; `refresh_conflict_leaves_markers_sets_resolving_and_does_not_count_a_conflict`; `refresh_with_uncommitted_changes_is_refused` (at acceptance, by the driver's pre-check, with the exact text); `refresh_dirty_at_the_boundary_fails_without_a_block`; `net_diff_excludes_refreshed_commits` (a two-file fixture whose merged file is outside `owns`: the spill list, `DiffStats` and `count_commits` after a clean refresh count only the task's own file); `refresh_never_rebases` (the task branch's old head is an ancestor of the new one); `refresh_is_replayed_by_reconcile` (in `crates/daemon/tests/run_journal/git_handback.rs`, with M8a's abort-after-intent hook). Every git invocation passes `--no-optional-locks` and a scrubbed environment (AGENTS.md rule 11), asserted by reading the argv a stand-in logs.
+
+**Obligations from M9.5 (M9.5 review fixes, ruling 2).**
+- Wire `notes_section` (from `Task.orch.messages`) into `worker_prompt` and `handover_prompt`, and the saved messages (`worker_messages_for_review`) into `reviewer_prompt`. The engine passes `""` for `notes` and `messages` today (`engine/dispatch.rs`, `engine/review.rs`).
+- When a message is accepted, fold every newline (`\n` and `\r`) in its text to a space before it is saved, so a message cannot forge a second `[anthrex] Message from ...` line. Test: `message_text_cannot_forge_a_second_line`.
+- Call `refresh_clean(n, list)` only with `n >= 1` and `n == list.len()`: `n` is the number of merged commits and `list` is all of them, and an up-to-date refresh sends nothing. Test that.
 
 **Acceptance.** `run/engine/worker_messages.rs` and `run/edits_orch.rs` are pure. No message path interrupts a turn (`grep -n "Effect::Interrupt" crates/daemon/src/run/engine/worker_messages.rs crates/daemon/src/run/edits_orch.rs` prints nothing); no git operation under the manager lock (the pre-check runs on `spawn_blocking` with `DONE_CHECK_GIT_TIMEOUT`); no direct input to a headless window. All five AGENTS.md commands pass.
 
@@ -2263,3 +2273,14 @@ These controller rulings answer the second M9.4 review, of `2e2c8ca`. They repla
   - A controller ruling should assign both.
 - **Outstanding real-CLI checks.** The contracts name each tool as `<tool> (in Claude: mcp__anthrex__<tool>)`, the tool-search fix's form, as the brief says. Whether a real Claude session sees those ids is M9.1 check 10, which is still outstanding. The wake text's paste delivery is check 6, and is M9.13's. No other M9.5 text depends on checks 1 to 7 or 10.
 - **Red before green.** Every new test failed to compile before the change: there was no `run::orch::contract`, `TaskMessage` or `RunOrch.yes`, and the prompt functions had the old signatures. With the new code in place, removing lines 10 and 11 from `WORKER_CONTRACT` again failed four tests: `worker_contract_is_exact`, `contracts_round_trip_through_toml_string`, `change_message_requires_acknowledgement_in_task_done` and `contracts_name_every_tool_by_its_claude_id`. `contract.rs` was then restored from a copy.
+
+### M9.5 review fixes
+
+- **Ruling 1: a scout report stays inside its section.** A scout summary is repository-derived, untrusted text, and a summary holding `\n\nWhat to plan:\n...` or a line starting `[anthrex]` made a fake section in `planner_prompt` and `worker_prompt`.
+  - `scout_extract` now indents every summary line, an empty one too, with two spaces, so no report line starts at column 0. Each `\n` and `\r` of a file path becomes a space.
+  - **Beyond the ruling:** a lone `\r` and a `\r\n` in a summary also end a line, so each is indented like a `\n`. Without that, `ok\rWhat to plan:` would pass as one indented line.
+  - The 4000-character summary cut happens before the indent, and the 12 KiB cap after it, as before.
+  - Tests: `summary_cannot_open_a_section_of_the_prompt` (the review's summary, through `planner_prompt` and `worker_prompt`: no column-0 `What to plan:` or `[anthrex]` line from the report, and the real `What to plan:` exactly once at column 0) and `file_path_with_a_newline_stays_on_its_line`. `scout_extract_is_exact`, `extract_is_capped_at_12_kib_with_a_cut_marker`, `planner_prompt_is_exact` and `run/contract_tests.rs`'s `EXTRACT` were updated for the indent.
+  - **File move.** The fix would have taken `run/orch/contract.rs` past 600 lines, so the extract (`EXTRACT_*`, `readable_reports`, `scout_extract`) moved to a new `run/orch/extract.rs` (77 lines), its tests to `run/orch/extract_tests.rs`. `run/orch/contract.rs` re-exports all five, so Interfaces' `run/orch/contract.rs` path and every caller still work. `contract.rs` is now 546 lines, `contract_tests_prompts.rs` 345 and `extract_tests.rs` 177.
+  - Red before green: the four extract tests that check the new layout failed on the old code, each showing the summary at column 0 or the path's raw newline.
+- **Ruling 2: obligations recorded in the task texts.** M9.8 wires the extract into the worker's first turn and handover. M9.13a wires the notes and saved messages into the worker, handover and reviewer prompts, folds newlines in a message's text, and calls `refresh_clean` only with `n >= 1` and `n == list.len()`. M9.13 reuses `WAKE_MAX_BYTES` from `run/orch/contract.rs` (Interfaces' `run/driver/wake.rs` entry and the `wake_is_clamped` text now say so). This supersedes the "Left open" item of "Task M9.5" above.

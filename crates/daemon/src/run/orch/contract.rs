@@ -8,17 +8,19 @@
 //! Claude id at its first mention, which is also correct for Codex (the tool-search
 //! fix's form).
 
-use proto::{
-    DeciderSource, MessageKind, RunPath, Scale, ScoutReport, Severity, TaskKind, TriageInfo,
-};
+use proto::{DeciderSource, MessageKind, RunPath, Scale, Severity, TaskKind, TriageInfo};
 
 use super::{EditSource, EpicRecord, TaskMessage};
 use crate::run::contract::{
-    REVIEW_DIFF_MAX, clamp_diff, clamp_with, finding_line, floor_boundary, sha7, size_label,
+    REVIEW_DIFF_MAX, clamp_diff, clamp_with, finding_line, sha7, size_label,
 };
 use crate::run::edits::state_label;
 use crate::run::messages::MESSAGE_CUT_MARKER;
 use crate::run::model::{Run, Task};
+
+pub use super::extract::{
+    EXTRACT_CUT_MARKER, EXTRACT_MAX_BYTES, EXTRACT_SUMMARY_CHARS, readable_reports, scout_extract,
+};
 
 /// The orchestrator's system prompt (Interfaces "Contracts (exact)").
 pub const ORCHESTRATOR_CONTRACT: &str = r#"You are the orchestrator of an anthrex run. The user gave a goal. You scout the repository, plan the work as small tasks, and steer the run until it finishes. anthrex's engine does the rest: it runs each task in its own git worktree with a headless worker, proves tdd tests, runs the check, has a different agent review the work, and merges approved work into the run branch. Nothing reaches the user's base branch until the user accepts the run.
@@ -120,13 +122,6 @@ pub const ONE_EDIT_RULE: &str = "message and refresh must be the only edit in th
 /// Decision 39: a wake text's cap. Interfaces places it in `run/driver/wake.rs` (task
 /// M9.13), which reuses this one.
 pub const WAKE_MAX_BYTES: usize = 2 * 1024;
-
-/// Decision 34: the scout extract's cap, and a report summary's.
-pub const EXTRACT_MAX_BYTES: usize = 12 * 1024;
-pub const EXTRACT_SUMMARY_CHARS: usize = 4000;
-
-/// The line [`scout_extract`] ends with when it cut the later reports.
-pub const EXTRACT_CUT_MARKER: &str = "\n[anthrex] The later scout reports were cut here to fit.";
 
 fn kind_label(kind: TaskKind) -> &'static str {
     match kind {
@@ -540,48 +535,6 @@ pub fn refresh_conflict(files: &[String]) -> String {
         "[anthrex] Merging the latest run branch into your worktree conflicted in: {}. Resolve them, commit, and continue.",
         files.join(", ")
     )
-}
-
-/// Decision 34: the reports the driver could read, in `scout_refs` order; one that could
-/// not be read is left out with a warning.
-pub fn readable_reports(
-    read: Vec<(String, Result<ScoutReport, String>)>,
-) -> Vec<(String, ScoutReport)> {
-    read.into_iter()
-        .filter_map(|(id, report)| match report {
-            Ok(report) => Some((id, report)),
-            Err(error) => {
-                tracing::warn!(%id, %error, "a scout report named in scout_refs is left out");
-                None
-            }
-        })
-        .collect()
-}
-
-/// Decision 34: `Scout report <id>:`, the summary cut to 4000 characters and
-/// `Files: <paths>` per report; at most [`EXTRACT_MAX_BYTES`] in all, the later reports
-/// cut first, ending with [`EXTRACT_CUT_MARKER`] when anything was cut. Empty for no
-/// reports.
-pub fn scout_extract(reports: &[(String, ScoutReport)]) -> String {
-    let blocks: Vec<String> = reports
-        .iter()
-        .map(|(id, report)| {
-            let summary: String = report.summary.chars().take(EXTRACT_SUMMARY_CHARS).collect();
-            let files: Vec<&str> = report.files.iter().map(|f| f.path.as_str()).collect();
-            let files = if files.is_empty() {
-                "none".to_string()
-            } else {
-                files.join(", ")
-            };
-            format!("Scout report {id}:\n{summary}\nFiles: {files}")
-        })
-        .collect();
-    let text = blocks.join("\n");
-    if text.len() <= EXTRACT_MAX_BYTES {
-        return text;
-    }
-    let cut = floor_boundary(&text, EXTRACT_MAX_BYTES - EXTRACT_CUT_MARKER.len());
-    format!("{}{EXTRACT_CUT_MARKER}", &text[..cut])
 }
 
 #[cfg(test)]

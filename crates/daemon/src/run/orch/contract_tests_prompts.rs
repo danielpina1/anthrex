@@ -2,8 +2,8 @@
 //! extract and the notes sections. Pure.
 
 use proto::{
-    DeciderSource, Finding, MessageKind, Route, RunPath, Scale, ScoutFile, ScoutKind, ScoutReport,
-    Severity, TaskKind, TaskState, TokenUsage, TriageInfo,
+    DeciderSource, Finding, MessageKind, Route, RunPath, Scale, Severity, TaskKind, TaskState,
+    TriageInfo,
 };
 
 use super::*;
@@ -99,7 +99,7 @@ fn promoted_first_prompt_is_exact() {
     );
 }
 
-const EXTRACT: &str = "Scout report s1:\nSummary one\nFiles: crates/auth/src/a.rs";
+const EXTRACT: &str = "Scout report s1:\n  Summary one\nFiles: crates/auth/src/a.rs";
 
 #[test]
 fn planner_prompt_is_exact() {
@@ -116,7 +116,7 @@ fn planner_prompt_is_exact() {
          - api S Title api (owns crates/core/src/api.rs, crates/core/src/lib.rs)\n\
          Task cap: at most 8 tasks.\n\
          Scout report s1:\n\
-         Summary one\n\
+         \x20 Summary one\n\
          Files: crates/auth/src/a.rs\n\
          \n\
          What to plan:\n\
@@ -292,96 +292,6 @@ fn integration_review_prompt_is_exact() {
         ),
         "{prompt}"
     );
-}
-
-fn report(id: &str, summary: &str, files: &[&str]) -> ScoutReport {
-    ScoutReport {
-        id: id.into(),
-        kind: ScoutKind::Area,
-        run_id: None,
-        question: String::new(),
-        summary: summary.into(),
-        files: files
-            .iter()
-            .map(|p| ScoutFile {
-                path: (*p).into(),
-                why: String::new(),
-            })
-            .collect(),
-        modules: Vec::new(),
-        interfaces: Vec::new(),
-        risks: Vec::new(),
-        profile: None,
-        route: Route {
-            runtime: proto::Runtime::Claude,
-            model: "claude-haiku-5".into(),
-            strength: proto::Strength::Fast,
-            effort: proto::Effort::Low,
-        },
-        window_id: None,
-        started_at: 0,
-        finished_at: 0,
-        tool_calls: 0,
-        usage: TokenUsage::default(),
-    }
-}
-
-#[test]
-fn scout_extract_is_exact() {
-    assert_eq!(scout_extract(&[]), "");
-    let reports = [
-        (
-            "s1".to_string(),
-            report("s1", "Summary one", &["a.rs", "b.rs"]),
-        ),
-        ("onboarding".to_string(), report("o-1", "Summary two", &[])),
-    ];
-    assert_eq!(
-        scout_extract(&reports),
-        "Scout report s1:\nSummary one\nFiles: a.rs, b.rs\nScout report onboarding:\nSummary two\nFiles: none"
-    );
-    // A summary is cut to 4000 characters.
-    let long = "世".repeat(5000);
-    let text = scout_extract(&[("s1".to_string(), report("s1", &long, &["a.rs"]))]);
-    assert_eq!(
-        text,
-        format!("Scout report s1:\n{}\nFiles: a.rs", "世".repeat(4000))
-    );
-}
-
-#[test]
-fn extract_is_capped_at_12_kib_with_a_cut_marker() {
-    let reports: Vec<(String, ScoutReport)> = (1..=5)
-        .map(|i| {
-            let id = format!("s{i}");
-            let summary = format!("{i}").repeat(4000);
-            (id.clone(), report(&id, &summary, &["a.rs"]))
-        })
-        .collect();
-    let text = scout_extract(&reports);
-    assert!(text.len() <= EXTRACT_MAX_BYTES, "{}", text.len());
-    assert!(text.ends_with(EXTRACT_CUT_MARKER), "{text}");
-    // The earlier reports are kept whole; the later ones are cut first.
-    assert!(text.starts_with(&format!(
-        "Scout report s1:\n{}\nFiles: a.rs\nScout report s2:\n{}\nFiles: a.rs\n",
-        "1".repeat(4000),
-        "2".repeat(4000)
-    )));
-    assert!(!text.contains("Scout report s5:"), "{text}");
-}
-
-#[test]
-fn unreadable_report_is_left_out() {
-    let read = vec![
-        ("s1".to_string(), Ok(report("s1", "Summary one", &["a.rs"]))),
-        ("s2".to_string(), Err("no such file".to_string())),
-        ("s3".to_string(), Ok(report("s3", "Summary three", &[]))),
-    ];
-    let kept = readable_reports(read);
-    let ids: Vec<&str> = kept.iter().map(|(id, _)| id.as_str()).collect();
-    assert_eq!(ids, ["s1", "s3"]);
-    let text = scout_extract(&kept);
-    assert!(!text.contains("s2"), "{text}");
 }
 
 fn message(at: u64, source: EditSource, kind: MessageKind, text: &str) -> TaskMessage {

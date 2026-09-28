@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use super::model::OpId;
 
 pub mod contract;
+pub mod extract;
 pub mod rules;
 
 /// Who sent an edit batch. Plan files and the user's `run edit` are [`EditSource::User`]
