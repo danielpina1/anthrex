@@ -296,11 +296,7 @@ fn wake_text_is_clamped() {
         text.ends_with(". Call run_status for the details."),
         "{text}"
     );
-    assert_eq!(
-        text.matches(crate::run::messages::MESSAGE_CUT_MARKER)
-            .count(),
-        1
-    );
+    assert_eq!(text.matches(super::WAKE_CUT_MARKER).count(), 1);
 }
 
 #[test]

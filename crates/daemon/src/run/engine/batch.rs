@@ -101,7 +101,7 @@ pub(super) fn apply_batch(
         }
     }
     deciders::cross_check(run, &touched, now, fx);
-    restart_rewritten(run, &rewritten, now, fx);
+    restart_rewritten(run, &rewritten, source, now, fx);
     edit_log::record(run, edits, now, source, edit_log::EditOutcome::accepted());
     // Milestone 9 decision 39: the orchestrator sees what the user changed.
     if *source == EditSource::User {
@@ -204,8 +204,9 @@ fn pause_or_resume_fits(run: &Run, edits: &[PlanEdit]) -> Result<(), String> {
     Ok(())
 }
 
-/// M9.9 review fixes, M2: decision 25 restarts a task at most this many times; the
-/// next rewrite blocks it for the user.
+/// M9.9 review fixes, M2: decision 25 restarts a task at most this many times for the
+/// orchestrator's and sub-planners' rewrites; the next blocks it for the user, whose
+/// own rewrite is never counted and whose `run retry` starts the count again.
 pub const MAX_REWRITE_RESTARTS: u32 = 3;
 
 /// Milestone 9 decision 25: the tasks in `blocked(mis_sized)` whose `brief`,
@@ -240,7 +241,16 @@ fn rewritten(run: &Run, edited: &Run) -> Vec<String> {
 /// still L, or that waits for new dependencies, keeps its block, as `run retry` would
 /// refuse it. `blocked(human)`, `(conflict)` and `(environment)` are never restarted
 /// by an edit: only `run retry` lifts them.
-fn restart_rewritten(run: &mut Run, ids: &[String], now: u64, fx: &mut Vec<Effect>) {
+fn restart_rewritten(
+    run: &mut Run,
+    ids: &[String],
+    source: &EditSource,
+    now: u64,
+    fx: &mut Vec<Effect>,
+) {
+    // M9.9 second review, M-c: the cap stops a model's rewrite loop; the user's own
+    // rewrite always restarts, and is not counted.
+    let counted = *source != EditSource::User;
     for id in ids {
         let Some(i) = run.tasks.iter().position(|t| t.id() == id) else {
             continue;
@@ -253,12 +263,14 @@ fn restart_rewritten(run: &mut Run, ids: &[String], now: u64, fx: &mut Vec<Effec
         }
         // M9.9 review fixes, M2: past MAX_REWRITE_RESTARTS the rewrite stands and
         // the user decides.
-        if task.orch.rewrite_restarts >= MAX_REWRITE_RESTARTS {
+        if counted && task.orch.rewrite_restarts >= MAX_REWRITE_RESTARTS {
             let text = format!("rewritten {MAX_REWRITE_RESTARTS} times; the user decides");
             super::dispatch::block(run, i, BlockReason::Environment, text, now);
             continue;
         }
-        run.tasks[i].orch.rewrite_restarts += 1;
+        if counted {
+            run.tasks[i].orch.rewrite_restarts += 1;
+        }
         let task = &run.tasks[i];
         let text = task
             .block

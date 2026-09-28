@@ -185,7 +185,10 @@ pub(super) fn tool(
     now: u64,
     fx: &mut Vec<Effect>,
 ) {
-    let Some(run) = state.runs.get_mut(&call.run_id) else {
+    let EngineState {
+        runs, quiet_base, ..
+    } = state;
+    let Some(run) = runs.get_mut(&call.run_id) else {
         return refuse(fx, reply, format!("unknown run {}", call.run_id));
     };
     if !matches!(call.role, AgentRole::Orchestrator | AgentRole::Planner) {
@@ -207,7 +210,13 @@ pub(super) fn tool(
         }
         other => return refuse(fx, reply, format!("run {} is {}", run.id, other.label())),
     }
+    // M9.9 second review, C-1: a run being ended takes no new work; the reads, and
+    // the orchestrator's summary, still answer.
+    let ending = ending(run);
     if call.role == AgentRole::Planner {
+        if let Some(text) = ending.filter(|_| call.tool == "submit_epic") {
+            return refuse(fx, reply, text);
+        }
         return planners::tool(run, reply, call, refusals, now, fx);
     }
     let window = run.orch.orchestrator.as_ref().and_then(|o| o.window_id);
@@ -220,11 +229,22 @@ pub(super) fn tool(
         Err(text) => return refuse(fx, reply, text),
     };
     match parsed {
+        OrchCall::EditPlan { edits, submit, .. }
+            if ending.is_some() && (submit || !edits.is_empty()) =>
+        {
+            refuse(fx, reply, ending.unwrap_or_default())
+        }
+        OrchCall::SpawnSubplanner { .. } | OrchCall::SpawnScout { .. } if ending.is_some() => {
+            refuse(fx, reply, ending.unwrap_or_default())
+        }
         OrchCall::EditPlan {
             edits,
             submit,
             summary,
-        } => edit_plan(run, reply, (&edits, submit, summary), refusals, now, fx),
+        } => {
+            let call = (&edits[..], submit, summary);
+            edit_plan(run, reply, call, refusals, (now, quiet_base), fx)
+        }
         _ if run.state == RunState::Complete => {
             let text = format!("run {} is {}", run.id, run.state.label());
             refuse(fx, reply, text)
@@ -237,14 +257,17 @@ pub(super) fn tool(
             scout_refs,
         } => {
             let spec = EpicRecord::requested(&epic, &title, area, &brief, scout_refs);
-            planners::spawn_subplanner(run, reply, spec, now, fx)
+            planners::spawn_subplanner(run, reply, spec, (now, quiet_base), fx)
         }
         OrchCall::SpawnScout {
             id,
             question,
             area,
             web,
-        } => run_scouts::spawn(run, reply, (&id, question, area, web), now, fx),
+        } => {
+            let args = (&id[..], question, area, web);
+            run_scouts::spawn(run, reply, args, (now, quiet_base), fx)
+        }
         // The reads are answered by the driver (M9.11).
         _ => refuse(
             fx,
@@ -261,7 +284,7 @@ fn edit_plan(
     reply: ReplyId,
     (edits, submit, summary): (&[proto::PlanEdit], bool, Option<String>),
     refusals: &[(Runtime, String)],
-    now: u64,
+    (now, base): (u64, &mut Option<Run>),
     fx: &mut Vec<Effect>,
 ) {
     if run.state == RunState::Complete {
@@ -270,7 +293,7 @@ fn edit_plan(
             return refuse(fx, reply, text);
         };
         write_summary(run, summary, now);
-        return accepted(run, reply, (Vec::new(), None), now, fx);
+        return accepted(run, reply, (Vec::new(), None), (now, base), fx);
     }
     let source = EditSource::Orchestrator;
     // Decision 37: the engine owns its integration reviews.
@@ -311,7 +334,7 @@ fn edit_plan(
     let notes = new_notes(run, &edited);
     *run = edited;
     fx.extend(effects);
-    accepted(run, reply, (notes, held), now, fx)
+    accepted(run, reply, (notes, held), (now, base), fx)
 }
 
 /// Decision 19's rejected batch: `{"accepted": false, "errors": [...]}`.
@@ -330,10 +353,10 @@ fn accepted(
     run: &mut Run,
     reply: ReplyId,
     (notes, held): (Vec<String>, Option<String>),
-    now: u64,
+    (now, base): (u64, &mut Option<Run>),
     fx: &mut Vec<Effect>,
 ) {
-    settle(run, now, fx);
+    settle_quiet(run, base, now, fx);
     let hold_awaits = held.as_ref().is_some_and(|id| {
         run.orch
             .gate_holds
@@ -352,6 +375,26 @@ fn accepted(
         reply,
         result: Ok(text),
     });
+}
+
+/// M9.9 second review, M-b: the orchestrator's own call keeps the run as its edit left
+/// it, before this pass, in `base`: `engine::step` quiets only the blocks up to there,
+/// so a stall this pass finds is still noted.
+pub(super) fn settle_quiet(run: &mut Run, base: &mut Option<Run>, now: u64, fx: &mut Vec<Effect>) {
+    *base = Some(run.clone());
+    settle(run, now, fx);
+}
+
+/// `run <id> was cancelled` or `run <id> is finishing` while the run is being ended
+/// (M9.9 second review, C-1).
+pub(super) fn ending(run: &Run) -> Option<String> {
+    if run.cancelled {
+        Some(format!("run {} was cancelled", run.id))
+    } else if run.finish_edit {
+        Some(format!("run {} is finishing", run.id))
+    } else {
+        None
+    }
 }
 
 /// The scheduler's pass, then the digest's revision (decision 16).

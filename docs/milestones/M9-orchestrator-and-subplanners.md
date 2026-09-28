@@ -2888,3 +2888,36 @@ One commit, `fix(daemon): hold a promoted run's additions until the user approve
   - `rung2` now also names the case explicitly (`is_reader_task`).
   - Pinning tests `retrying_a_research_task_starts_a_fresh_research_session` and `retrying_a_review_task_reviews_it_again` passed before any change. They turn red when `rung2` is forced onto the worker path.
 
+#### Second review
+
+- **C-1: a cancelled or finishing run takes no new work.**
+  - Once `run.cancelled` is set or the `finish` edit was accepted, `orch::tool` refuses these calls with `run <id> was cancelled`, or `run <id> is finishing`:
+    - the orchestrator's `edit_plan` with edits or `submit`;
+    - `spawn_scout` and `spawn_subplanner`;
+    - a sub-planner's `submit_epic`.
+  - The reads still answer, and so does a summary-only `edit_plan`, which the completion note asks for.
+  - The user's `run edit` on a cancelled run refuses `add_task`, `split_task` and `submit` with the same text; cancelling and other removals still apply.
+  - `complete::finish_pass` now cancels every unstarted task when the run was cancelled, not only after a `finish` edit.
+  - `refs_verified` and `final_checked` complete the run only while every task is still finished; otherwise the next pass verifies again.
+  - `finish_pass`'s halt of a cancelled run's planners and scouts is gone: `cancel` halts them, and new ones are refused.
+  - Tests in the new `engine/tests/cancel_work.rs`, each written first and red (the refusals were accepted, the guard completed the run):
+    - `a_cancelled_run_refuses_the_orchestrators_new_work`: the reviewer's `--yes` scenario, with no window made for `t2`;
+    - `a_cancelled_promoted_run_refuses_additions_and_completes`;
+    - `a_cancelled_run_refuses_new_scouts_and_planners` (it also checks a live planner's `submit_epic`);
+    - `a_finishing_run_refuses_new_work`;
+    - `the_users_edit_of_a_cancelled_run_only_removes_work`;
+    - `the_ref_guard_does_not_complete_a_run_with_an_unfinished_task`.
+  - M-a's halt: removing `finish_pass`'s `halt_all` turns `the_finish_edit_halts_planners_and_scouts` red, and removing `cancel`'s turns `cancel_halts_planners_and_scouts` red (both checked by mutation).
+- **I-1: the wake text stays on one line after its clamp.** `wake_text` now clamps with the new `WAKE_CUT_MARKER`, `" [anthrex: the middle of this note was cut to fit] "`. `MESSAGE_CUT_MARKER` stays for messages, whose test splits on it.
+  - Test `the_wake_text_stays_on_one_line_after_its_clamp`, red first: 20 long notes stay at most `WAKE_MAX_BYTES` with no newline, and a padded `task_blocked` reason adds none.
+  - `wake_text_is_clamped` now counts the new marker.
+- **M-b: I2's gap is closed.** The orchestrator's `edit_plan` (and with it `submit`), `spawn_scout` and `spawn_subplanner` settle through `orch::settle_quiet`. That keeps the run as the call left it, before the handler's scheduler pass, in the new transient `EngineState.quiet_base`, and `engine::step` compares block notes against it.
+  - **Reading:** "only the tasks the batch touched" is the blocks the batch itself made, `dep_cancelled` among them, as M9.9's `orchestrators_own_edits_add_no_note` pins.
+  - Test `a_stall_in_the_step_of_the_orchestrators_edit_is_noted`, red first.
+  - The follow-up entry is removed.
+- **M-c: `rewrite_restarts` counts only a model's rewrites.** It counts the orchestrator's and, as the implementer's reading, a sub-planner's, since the cap stops a model's loop. The user's own rewrite always restarts and is not counted, and the user's `run retry` resets the count.
+  - `a_task_is_restarted_by_rewrites_at_most_three_times` now drives the orchestrator's rewrites.
+  - Test `the_users_rewrite_and_retry_are_not_capped`, red first: the user's fourth rewrite was blocked.
+- **M-d:** a research turn interrupted before its session had an id gets the stall nudge appended to the fresh research session's first turn. This is what a worker's rung 2 does; the new `TaskOrch.research_append` carries it and is cleared at the launch.
+  - Test `a_research_turn_interrupted_before_its_id_gets_the_nudge_next`, red first.
+

@@ -19,7 +19,7 @@ use crate::scout::contract::SCOUT_NUDGE;
 
 /// A running run of research task `r1`, its session launched with its turn open;
 /// returns the fixture and the session's window.
-fn researching() -> (Fixture, u32) {
+pub(super) fn researching() -> (Fixture, u32) {
     let mut fx = running("", &[research("r1", "")]);
     fx.tick();
     let window = research_window(&mut fx, "r1");
@@ -33,14 +33,14 @@ fn delivered(effects: &[Effect], window: u32, needle: &str) -> bool {
     })
 }
 
-fn sessions(fx: &Fixture) -> usize {
+pub(super) fn sessions(fx: &Fixture) -> usize {
     fx.ops("CreateWindow")
         .iter()
         .filter(|(_, k)| window_task(k) == "r1")
         .count()
 }
 
-fn round(fx: &mut Fixture) -> &mut crate::run::model::AgentRound {
+pub(super) fn round(fx: &mut Fixture) -> &mut crate::run::model::AgentRound {
     let task = fx.task_mut("r1");
     let r = task
         .rounds

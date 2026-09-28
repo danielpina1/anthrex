@@ -15,7 +15,6 @@ use crate::run::contract::{
     REVIEW_DIFF_MAX, clamp_diff, clamp_with, finding_line, sha7, size_label,
 };
 use crate::run::edits::state_label;
-use crate::run::messages::MESSAGE_CUT_MARKER;
 use crate::run::model::{Run, Task};
 
 pub use super::extract::{
@@ -122,6 +121,10 @@ pub const ONE_EDIT_RULE: &str = "message and refresh must be the only edit in th
 /// Decision 39: a wake text's cap. Interfaces places it in `run/driver/wake.rs` (task
 /// M9.13), which reuses this one.
 pub const WAKE_MAX_BYTES: usize = 2 * 1024;
+
+/// Where [`wake_text`] was cut: one line, so the wake-up stays one line (M9.9 second
+/// review, I-1; `messages::MESSAGE_CUT_MARKER` starts lines of its own).
+pub const WAKE_CUT_MARKER: &str = " [anthrex: the middle of this note was cut to fit] ";
 
 fn kind_label(kind: TaskKind) -> &'static str {
     match kind {
@@ -450,13 +453,13 @@ pub fn integration_review_prompt(
 }
 
 /// Decision 39: the text pasted into an idle orchestrator, clamped to
-/// [`WAKE_MAX_BYTES`] by M8a's `messages::clamp` rule (head, marker, tail).
+/// [`WAKE_MAX_BYTES`] by M8a's `messages::clamp` rule (head, [`WAKE_CUT_MARKER`], tail).
 pub fn wake_text(run_id: &str, notes: &[String]) -> String {
     let text = format!(
         "[anthrex] Run {run_id} changed: {}. Call run_status for the details.",
         notes.join("; ")
     );
-    clamp_with(&text, WAKE_MAX_BYTES, MESSAGE_CUT_MARKER)
+    clamp_with(&text, WAKE_MAX_BYTES, WAKE_CUT_MARKER)
 }
 
 /// Decision 26: what `run start --goal` prints on stderr for a planned run.

@@ -263,6 +263,11 @@ pub(super) fn edit(
         );
         return reply(fx, id, Err(text));
     }
+    // M9.9 second review, C-1: a cancelled run only loses work.
+    let adds = |e: &PlanEdit| matches!(e, PlanEdit::AddTask { .. } | PlanEdit::SplitTask { .. });
+    if run.cancelled && (submit || edits.iter().any(adds)) {
+        return reply(fx, id, Err(format!("run {run_id} was cancelled")));
+    }
     let batch = (edits, scope, refusals);
     if submit {
         let result = submit_edit(run, batch, now, fx);
@@ -396,6 +401,8 @@ pub(super) fn retry(
             .unwrap_or_default();
         format!(" (it was blocked({label}): {})", b.text)
     });
+    // M9.9 second review, M-c: the user's retry lifts decision 25's cap.
+    run.tasks[i].orch.rewrite_restarts = 0;
     let how = rung2(run, i, format!("the user retried it{was}"), now, fx);
     history(run, i, now, format!("retried by the user at rung 2{was}"));
     log(run, now, format!("{task_id} retried at rung 2"));

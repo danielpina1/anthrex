@@ -4,7 +4,7 @@
 //! stored by the service; the engine records that it reported, and its usage. Pure
 //! (design decision 2).
 
-use super::orch::{refuse, settle};
+use super::orch::{refuse, settle_quiet};
 use super::requests::log;
 use super::wake;
 use super::{Effect, OpKind, OpResult, ReplyId, ScoutEnd, emit_op, next_op};
@@ -29,7 +29,7 @@ pub(super) fn spawn(
     run: &mut Run,
     reply: ReplyId,
     (id, question, area, web): (&str, String, Vec<String>, bool),
-    now: u64,
+    (now, base): (u64, &mut Option<Run>),
     fx: &mut Vec<Effect>,
 ) {
     let full = format!("{}-{id}", run.short());
@@ -67,7 +67,7 @@ pub(super) fn spawn(
         window_id: None,
     });
     log(run, now, format!("scout {full} queued"));
-    settle(run, now, fx);
+    settle_quiet(run, base, now, fx);
     let state = match run.orch.run_scouts.iter().find(|s| s.id == full) {
         Some(s) if s.state == RunScoutState::Running => "starting",
         _ => "queued",

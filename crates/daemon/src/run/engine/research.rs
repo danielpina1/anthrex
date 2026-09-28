@@ -81,7 +81,12 @@ pub(super) fn launch(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
     run.tasks[i].session += 1;
     let task = &run.tasks[i];
     let spec = research_spec(run, task);
-    let first_turn = research_prompt(run, task);
+    let mut first_turn = research_prompt(run, task);
+    // M9.9 second review, M-d: a worker's `FreshSession::append`, for research.
+    if let Some(append) = &task.orch.research_append {
+        first_turn.push_str("\n\n");
+        first_turn.push_str(append);
+    }
     let name = format!("{}/{}.s{}", run.short(), task.id(), task.session);
     let uuid = (task.route.runtime == Runtime::Claude).then(|| session_uuid_of(run, op));
     let jitter = jitter_ms(&run.id, task.id(), task.session);
@@ -94,6 +99,7 @@ pub(super) fn launch(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
         now,
     );
     let (id, session) = (task.id().to_string(), task.session);
+    run.tasks[i].orch.research_append = None;
     run.tasks[i].rounds.push(round);
     run.windows_created += 1;
     set_state(&mut run.tasks[i], TaskState::Working, now);
@@ -339,6 +345,9 @@ pub(super) fn exited(
         round.interrupted = false;
         if round.session_id.is_none() {
             end_round(round, now);
+            // As a worker's rung 2 (`signals::exited`): the nudge ends its first turn.
+            let nudge = research_stall_nudge(run.limits.stall_after_secs / 60);
+            run.tasks[i].orch.research_append = Some(nudge);
             let reason = "its turn was interrupted before its session had an id".to_string();
             return fresh(run, i, reason, now, fx);
         }

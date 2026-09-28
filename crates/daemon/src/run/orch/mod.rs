@@ -108,6 +108,9 @@ pub struct TaskOrch {
     pub refresh_merges: Vec<String>,
     /// Decision 25's restarts of the task by a rewrite (M9.9 review fixes, M2).
     pub rewrite_restarts: u32,
+    /// Text the next research session's first turn ends with (a worker's
+    /// `FreshSession::append`, M9.9 second review, M-d).
+    pub research_append: Option<String>,
 }
 
 /// The run's orchestrator (decision 1). `otlp_token` never reaches the snapshot or

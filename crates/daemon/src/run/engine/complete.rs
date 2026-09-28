@@ -97,22 +97,24 @@ pub(super) fn cancel_now(run: &mut Run, i: usize, why: &str, now: u64, fx: &mut 
 /// that has not started is cancelled at once; once no task is live, the blocked ones
 /// are cancelled too, and completion follows.
 pub(super) fn finish_pass(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
-    // M9.9 review fixes: a run being ended runs no sub-planner or run scout, even one
-    // the orchestrator asked for since.
-    if run.cancelled {
-        super::planners::halt_all(run, super::planners::RUN_CANCELLED, now, fx);
-    }
-    if !run.finish_edit {
+    // M9.9 second review, C-1: a cancelled run starts nothing either; `cancel` halted
+    // its sub-planners and run scouts, and new ones are refused.
+    let why = if run.finish_edit {
+        // M9.9 review fixes: a finishing run runs no sub-planner or run scout.
+        super::planners::halt_all(run, super::planners::RUN_FINISHED, now, fx);
+        "the finish edit (not started)"
+    } else if run.cancelled {
+        "run cancel (not started)"
+    } else {
         return;
-    }
-    super::planners::halt_all(run, super::planners::RUN_FINISHED, now, fx);
+    };
     for i in 0..run.tasks.len() {
         let task = &run.tasks[i];
         if !task.state.is_finished() && task.start_commit.is_none() {
-            cancel_task(run, i, "the finish edit (not started)", now, fx);
+            cancel_task(run, i, why, now, fx);
         }
     }
-    if run.tasks.iter().any(|t| live(t.state)) {
+    if !run.finish_edit || run.tasks.iter().any(|t| live(t.state)) {
         return;
     }
     for i in 0..run.tasks.len() {
@@ -159,6 +161,9 @@ pub(super) fn refs_verified(run: &mut Run, result: OpResult, now: u64, fx: &mut 
         run.verify_failures = 0;
     }
     match result {
+        // M9.9 second review, C-1: every task is still finished (none came since the
+        // guard started), else the next pass verifies again.
+        OpResult::RefsOk if run.state == RunState::Running && !all_finished(run) => {}
         OpResult::RefsOk if run.state == RunState::Running => {
             let green = run.last_green_candidate.as_deref() == Some(run.run_head.as_str());
             match run.profile.check.clone() {
@@ -220,7 +225,13 @@ pub(super) fn final_checked(run: &mut Run, result: OpResult, now: u64, fx: &mut 
         }
         _ => return,
     }
-    complete(run, now, fx);
+    if all_finished(run) {
+        complete(run, now, fx);
+    }
+}
+
+fn all_finished(run: &Run) -> bool {
+    run.tasks.iter().all(|t| t.state.is_finished())
 }
 
 fn complete(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {

@@ -13,7 +13,7 @@
 use proto::{PlanEdit, RunPath, RunState, Runtime, TaskState, ToolCall};
 
 use super::batch::{Applied, Refused, apply_batch, record_rejected};
-use super::orch::{refuse, rejected, settle};
+use super::orch::{refuse, rejected, settle, settle_quiet};
 use super::requests::log;
 use super::{
     Effect, OpKind, OpResult, ReplyId, emit_op, gate_holds, kinds, next_op, run_scouts, wake,
@@ -237,7 +237,7 @@ pub(super) fn spawn_subplanner(
     run: &mut Run,
     reply: ReplyId,
     mut spec: EpicRecord,
-    now: u64,
+    (now, base): (u64, &mut Option<Run>),
     fx: &mut Vec<Effect>,
 ) {
     let epic = spec.epic.clone();
@@ -290,7 +290,7 @@ pub(super) fn spawn_subplanner(
             "planning again: a sub-planner was started at the gate",
         );
     }
-    settle(run, now, fx);
+    settle_quiet(run, base, now, fx);
     let state = match run.orch.epics.iter().find(|e| e.epic == epic) {
         Some(e) if e.phase == PlannerPhase::Planning => "planning",
         _ => "queued",

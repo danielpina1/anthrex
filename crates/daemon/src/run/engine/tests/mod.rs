@@ -1,6 +1,7 @@
 //! The engine unit tests (M8a.11 onwards).
 
 mod budgets;
+mod cancel_work;
 mod control;
 mod control_clock;
 mod control_clock_props;

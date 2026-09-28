@@ -16,7 +16,7 @@ use crate::run::orch::{PlannerPhase, RunScoutState};
 
 const CANCELLED: &str = "the run was cancelled";
 
-fn spawn_scout(fx: &mut Fixture, id: &str) {
+pub(super) fn spawn_scout(fx: &mut Fixture, id: &str) {
     let args = json!({"id": id, "question": format!("What is {id}?"), "area": ["crates/api/**"]});
     let effects = orch_tool(fx, ORCH, "spawn_scout", args);
     assert!(matches!(&replies(&effects)[..], [Ok(_)]), "{effects:#?}");
@@ -49,7 +49,7 @@ fn busy() -> Fixture {
     fx
 }
 
-fn cancel(fx: &mut Fixture) -> Vec<Effect> {
+pub(super) fn cancel(fx: &mut Fixture) -> Vec<Effect> {
     let reply = fx.reply();
     fx.next(EventKind::Cancel {
         reply,
@@ -59,7 +59,7 @@ fn cancel(fx: &mut Fixture) -> Vec<Effect> {
 
 /// Every op still pending answered as the executor would, and every killed window's
 /// exit delivered, until nothing is left; then the ref guard.
-fn settle_all(fx: &mut Fixture) {
+pub(super) fn settle_all(fx: &mut Fixture) {
     for _ in 0..8 {
         let ops: Vec<_> = fx
             .run()

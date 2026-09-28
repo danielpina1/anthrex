@@ -101,6 +101,9 @@ pub struct EngineState {
     /// The events of windows no round has yet, held while a launch is in flight
     /// (`early.rs`). In memory only: never persisted, empty after a restart.
     pub pending: BTreeMap<u32, HeldWindow>,
+    /// The run as the orchestrator's own tool call left it, before its handler's
+    /// scheduler pass (`orch::settle_quiet`); taken by the step that set it.
+    pub quiet_base: Option<Run>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -468,10 +471,17 @@ pub fn step(mut state: EngineState, event: Event) -> (EngineState, Vec<Effect>) 
         // Milestone 9 decision 29: a promotion recorded before milestone 9.
         EventKind::Tick => promote::on_tick(&mut state, now, &mut fx),
     }
-    // M9.9 review fixes, I2: for the orchestrator's own tool call, the blocks its edit
-    // caused are compared away (the run as the call left it); what the scheduler's
-    // passes block afterwards, a stall among them, is still noted.
-    let applied = quiet.then(|| state.runs.clone());
+    // M9.9 review fixes, I2 and M-b: an orchestrator call's own blocks are compared
+    // away (the run before its handler's scheduler pass, `quiet_base`); what the
+    // scheduler's passes block, a stall among them, is still noted.
+    let base = state.quiet_base.take();
+    let applied = quiet.then(|| {
+        let mut runs = state.runs.clone();
+        if let Some(base) = base {
+            runs.insert(base.id.clone(), base);
+        }
+        runs
+    });
     for (id, run) in state.runs.iter_mut() {
         dispatch::schedule(run, now, &mut fx);
         orch_window::ended(run);
