@@ -328,7 +328,7 @@ pub fn observe_hook(
 ) -> ConversationInput {
     match hook.kind {
         HookKind::UserPromptSubmit => cursor.hook_stopped = false,
-        HookKind::Stop => {
+        HookKind::Stop | HookKind::StopFailure => {
             cursor.hook_stopped = true;
             return ConversationInput::default();
         }

@@ -10,7 +10,7 @@ mod socket;
 
 use daemon::headless::{McpTarget, credential_scrub_for};
 use daemon::launch::role::{ORCHESTRATOR_ALLOWED_TOOLS, ORCHESTRATOR_DISALLOWED_TOOLS, RoleLaunch};
-use daemon::manager::{RUN_WINDOW_SIZE, WindowManager};
+use daemon::manager::{RUN_WINDOW_SIZE, WindowManager, lost_role_refusal};
 use daemon::state::WindowRecord;
 use proto::{
     AgentRole, Effort, HookSource, RunRef, Runtime, Status, WindowInfo, WindowKind, WindowSpec,
@@ -22,9 +22,47 @@ use std::time::{Duration, Instant};
 use support::headless::{DEADLINE, find, manager, script, wait_until};
 
 const RUN: &str = "r-7a2c";
+/// anthrex's own receiver, as the driver puts it in the role's environment.
+const ANTHREX_OTLP: &str = "http://127.0.0.1:4318";
 
 /// Edition 2024: tests that change the process environment hold this.
 static ENV: Mutex<()> = Mutex::new(());
+
+/// Variables set for one test, under [`ENV`], and put back as they were when it ends,
+/// under [`ENV`] again. The lock is not held in between, so it is never held across an
+/// `await`.
+struct EnvVars(Vec<(&'static str, Option<std::ffi::OsString>)>);
+
+impl EnvVars {
+    fn set(vars: &[(&'static str, &str)]) -> EnvVars {
+        let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = vars
+            .iter()
+            .map(|(k, _)| (*k, std::env::var_os(k)))
+            .collect();
+        for (key, value) in vars {
+            // SAFETY: under `ENV`; std's own environment lock orders the reads the
+            // spawns in other tests make.
+            unsafe { std::env::set_var(key, value) };
+        }
+        EnvVars(saved)
+    }
+}
+
+impl Drop for EnvVars {
+    fn drop(&mut self) {
+        let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+        for (key, value) in &self.0 {
+            // SAFETY: as in `set`.
+            unsafe {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+}
 
 fn role() -> RoleLaunch {
     RoleLaunch {
@@ -51,7 +89,10 @@ fn role() -> RoleLaunch {
             .iter()
             .map(|t| t.to_string())
             .collect(),
-        env: vec![("ROLE_VAR".into(), "role-value".into())],
+        env: vec![
+            ("ROLE_VAR".into(), "role-value".into()),
+            ("OTEL_EXPORTER_OTLP_ENDPOINT".into(), ANTHREX_OTLP.into()),
+        ],
         remove_env: credential_scrub_for(Runtime::Claude, config::ClaudeAuth::Login)
             .into_iter()
             .map(String::from)
@@ -143,20 +184,18 @@ async fn run_window_is_pty_with_run_ref_and_counts_to_max_windows() {
 /// Decision 10 with M9.1 ruling 5: a daemon started inside a Claude session with an API
 /// key does not make the orchestrator a nested session, bill the key, or tune its MCP
 /// client; its own identity and `ENABLE_TOOL_SEARCH=false` are set. A plain window in
-/// the same environment keeps what it inherits.
+/// the same environment keeps what it inherits. M9.10 review: an inherited
+/// signal-specific `OTEL_*` variable cannot redirect the orchestrator's metrics, and
+/// anthrex's own endpoint, set after the scrub, is there.
 #[tokio::test]
 async fn scrub_removes_agent_session_and_credential_variables() {
-    {
-        let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
-        // SAFETY: under `ENV`; nothing in this binary reads these concurrently in a way that
-        // matters, and std's own environment lock orders the reads the spawns make.
-        unsafe {
-            std::env::set_var("CLAUDECODE", "1");
-            std::env::set_var("CLAUDE_CODE_ENTRYPOINT", "x");
-            std::env::set_var("ANTHROPIC_API_KEY", "x");
-            std::env::set_var("MCP_CONNECTION_NONBLOCKING", "true");
-        }
-    }
+    let _vars = EnvVars::set(&[
+        ("CLAUDECODE", "1"),
+        ("CLAUDE_CODE_ENTRYPOINT", "x"),
+        ("ANTHROPIC_API_KEY", "x"),
+        ("MCP_CONNECTION_NONBLOCKING", "true"),
+        ("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://127.0.0.1:9"),
+    ]);
     let dir = tempfile::tempdir().unwrap();
     let claude = stand_in(dir.path());
     let m = manager(&claude, &claude, |_| {});
@@ -168,6 +207,7 @@ async fn scrub_removes_agent_session_and_credential_variables() {
         "CLAUDE_CODE_ENTRYPOINT=",
         "ANTHROPIC_API_KEY=",
         "MCP_CONNECTION_NONBLOCKING=",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=",
     ] {
         // Only the offending line is printed: the environment can hold secrets.
         let found: Vec<&String> = env.iter().filter(|l| l.starts_with(gone)).collect();
@@ -177,6 +217,7 @@ async fn scrub_removes_agent_session_and_credential_variables() {
         format!("ANTHREX_WINDOW_ID={}", info.id),
         "ENABLE_TOOL_SEARCH=false".to_string(),
         "ROLE_VAR=role-value".to_string(),
+        format!("OTEL_EXPORTER_OTLP_ENDPOINT={ANTHREX_OTLP}"),
     ] {
         assert!(env.contains(&kept), "{kept} missing");
     }
@@ -274,31 +315,54 @@ async fn role_survives_a_daemon_restart() {
     restored.remove(info.id).unwrap();
 }
 
-/// Decision 11: a Pty record whose role does not parse comes back as a plain PTY
-/// window, with a warning; a restart then launches it with no role flags.
+/// M9.10 review, the controller's ruling (over decision 11's plain-window fallback): a
+/// Pty record whose role does not parse never runs again as a plain agent. It comes back
+/// with no session to resume, refuses a restart, and launches nothing.
 #[tokio::test]
-async fn unparseable_role_restores_a_plain_window_with_a_warning() {
+async fn unparseable_role_restores_a_window_that_never_restarts() {
     let dir = tempfile::tempdir().unwrap();
     let claude = stand_in(dir.path());
     let m = manager(&claude, &claude, |_| {});
     let info = run_window(&m, dir.path()).await;
     wait_for_args(dir.path(), "the first args", |a| !a.is_empty()).await;
-    let mut state = m.state_snapshot();
+    session_start(&m, info.id, "sess-5");
+    wait_until("the session id", || find(&m, info.id).session_id.is_some()).await;
+    let state = broken_role(m.state_snapshot(), info.id);
     m.remove(info.id).unwrap();
-    let record: &mut WindowRecord = state.windows.iter_mut().find(|r| r.id == info.id).unwrap();
-    record.run = Some(json!({"role_launch": {"run_ref": "not a run ref"}}));
 
     let restored = manager(&claude, &claude, |_| {});
     restored.restore(state);
     let window = find(&restored, info.id);
     assert_eq!(window.kind, WindowKind::Pty);
-    assert_eq!(window.run, None);
+    assert_eq!(window.status, Status::Exited);
+    assert_eq!(window.session_id, None, "no session to resume");
     std::fs::remove_file(dir.path().join("args")).unwrap();
-    restored.restart(info.id).await.expect("restart");
-    let args = wait_for_args(dir.path(), "the plain args", |a| !a.is_empty()).await;
-    assert!(!args.iter().any(|a| a == "--mcp-config"), "{args:?}");
-    assert!(!args.iter().any(|a| a == "--disallowedTools"), "{args:?}");
+    let refused = restored
+        .restart(info.id)
+        .await
+        .expect_err("restart is refused");
+    assert_eq!(refused.to_string(), lost_role_refusal(info.id, RUN));
+    assert!(!dir.path().join("args").exists(), "nothing was launched");
+    // It is saved again as it came, still refused after the next restart.
+    let again = restored.state_snapshot();
+    let record = again.windows.iter().find(|r| r.id == info.id).unwrap();
+    assert_eq!(record.session_id, None);
+    assert!(
+        record
+            .run
+            .as_ref()
+            .is_some_and(|run| run.get("role_launch").is_some())
+    );
     restored.remove(info.id).unwrap();
+}
+
+/// A snapshot whose window `id` has a role that no longer parses (an unknown effort),
+/// with its run still named.
+fn broken_role(mut state: daemon::state::StateFile, id: u32) -> daemon::state::StateFile {
+    let record: &mut WindowRecord = state.windows.iter_mut().find(|r| r.id == id).unwrap();
+    let run = record.run.as_mut().unwrap();
+    run["role_launch"]["effort"] = json!("extreme");
+    state
 }
 
 /// AGENTS.md rule 2: the run window's spawn holds no manager lock. While its launch is

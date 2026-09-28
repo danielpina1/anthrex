@@ -20,7 +20,7 @@ pub use headless::{
 };
 pub use headless_turns::RESUME_START_TIMEOUT;
 pub use remove::{GitRoots, RemoveError};
-pub use role_window::{RUN_WINDOW_SIZE, orchestrator_refusal};
+pub use role_window::{RUN_WINDOW_SIZE, lost_role_refusal, orchestrator_refusal};
 
 use crate::hooks;
 use crate::launch;

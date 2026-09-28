@@ -38,6 +38,7 @@ pub enum AgentRole {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunRef {
     pub run_id: String,
+    #[serde(default)]
     pub task_id: Option<String>,
     pub role: AgentRole,
     pub session: u32,

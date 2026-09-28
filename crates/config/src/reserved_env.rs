@@ -26,6 +26,12 @@ pub const GIT_LOCATION_VARS: [&str; 5] = [
 /// real-CLI ruling 5) also `MCP_*`, which tunes an agent's MCP client (for example
 /// `MCP_CONNECTION_NONBLOCKING` from a daemon started inside Claude Code).
 pub const SCRUBBED_PREFIXES: &[&str] = &["CLAUDE_CODE_", "BASH_FUNC_", "MCP_"];
+/// M9.10 review: inherited variables removed from every agent session (the
+/// orchestrator's window and every headless session), not from engine commands, and not
+/// reserved: a profile may set them for a worker. `OTEL_*`: a signal-specific
+/// `OTEL_EXPORTER_OTLP_METRICS_*` would redirect or break the orchestrator's metrics,
+/// whose own variables are set after the scrub; no headless role reads them.
+pub const AGENT_SCRUBBED_PREFIXES: &[&str] = &["OTEL_"];
 /// ... and by name. Since F2 round 2 (N1) also the shell start-up inlets that exist
 /// only to run or reshape code at a shell's start (a user's own `ZDOTDIR`, `SHELL` or
 /// `PYTHONPATH` is kept: it is their own setting, and only a profile may not set it).

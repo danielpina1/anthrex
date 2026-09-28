@@ -79,6 +79,7 @@ pub struct McpTarget {
     pub role: AgentRole,
     /// Empty for a repository-level scout (M8b decision 15).
     pub run_id: String,
+    #[serde(default)]
     pub task_id: Option<String>,
     /// A scout's id (`--scout`), M8b decision 15.
     #[serde(default)]

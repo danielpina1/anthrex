@@ -4,7 +4,7 @@
 
 use super::support::{Client, TestDaemon, start_daemon_configured};
 use super::*;
-use daemon::manager::orchestrator_refusal;
+use daemon::manager::{lost_role_refusal, orchestrator_refusal};
 use proto::{ClientMsg, DaemonMsg, PROTO_VERSION};
 
 /// Decision 11a: a headless record whose `run` does not parse comes back as an exited
@@ -275,4 +275,59 @@ async fn stop_failure_hook_makes_the_window_idle() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
+}
+
+/// M9.10 review, the controller's ruling: a restored window whose role does not parse
+/// refuses `Restart` and `Input` from a client; `Kill` and `Remove` work.
+#[tokio::test]
+async fn a_window_whose_role_is_lost_refuses_restart_and_input() {
+    let dir = tempfile::tempdir().unwrap();
+    let (d, id) = socket_run_window(dir.path()).await;
+    wait_for_args(dir.path(), "the first args", |a| !a.is_empty()).await;
+    let state = broken_role(d.manager.state_snapshot(), id);
+    d.manager.remove(id).unwrap();
+    std::fs::remove_file(dir.path().join("args")).unwrap();
+    d.manager.restore(state);
+    let (mut client, _) = Client::connect(&d, PROTO_VERSION).await;
+    let message = lost_role_refusal(id, RUN);
+    for (msg, request) in [
+        (ClientMsg::Restart { window_id: id }, "restart"),
+        (
+            ClientMsg::Input {
+                window_id: id,
+                bytes: b"hi\r".to_vec(),
+            },
+            "input",
+        ),
+    ] {
+        client.send(msg).await;
+        assert_eq!(
+            reply(&mut client).await,
+            DaemonMsg::Error {
+                request: request.into(),
+                message: message.clone()
+            }
+        );
+    }
+    assert!(!dir.path().join("args").exists(), "nothing was launched");
+    client.send(ClientMsg::Kill { window_id: id }).await;
+    assert_eq!(
+        reply(&mut client).await,
+        DaemonMsg::Ack {
+            request: "kill".into()
+        }
+    );
+    client
+        .send(ClientMsg::Remove {
+            window_id: id,
+            remove_worktree: false,
+            force: false,
+        })
+        .await;
+    assert_eq!(
+        reply(&mut client).await,
+        DaemonMsg::Ack {
+            request: "remove".into()
+        }
+    );
 }

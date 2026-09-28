@@ -23,6 +23,43 @@ pub fn orchestrator_refusal(id: u32, run_id: &str) -> String {
     )
 }
 
+/// M9.10 review (the controller's ruling): the refusal of `Restart` and `Input` for a
+/// restored window whose role did not parse.
+pub fn lost_role_refusal(id: u32, run_id: &str) -> String {
+    format!(
+        "window {id} was the orchestrator of run {run_id}, and its role could not be restored; it cannot be restarted or typed into. Remove it with anthrex rm {id}"
+    )
+}
+
+/// The run a Pty record's unparseable role names (`"unknown"` when even that is
+/// unreadable), or `None` when the record has no role or its role parses.
+pub(super) fn lost_run(kind: WindowKind, run: Option<&serde_json::Value>) -> Option<String> {
+    let role = run?
+        .get("role_launch")
+        .filter(|_| kind == WindowKind::Pty)?;
+    if RoleLaunch::deserialize(role).is_ok() {
+        return None;
+    }
+    let run_id = role.pointer("/run_ref/run_id").and_then(|v| v.as_str());
+    Some(run_id.unwrap_or("unknown").to_string())
+}
+
+/// M9.10 review (the controller's ruling, over decision 11's plain-window fallback): the
+/// run of an entry restored with a role that did not parse. Such a window never runs
+/// again: without its role it would start as a plain agent, with none of the read-only
+/// flags, no user-settings-only flags and no scrub.
+pub(super) fn lost_role(entry: &super::entry::Entry) -> Option<String> {
+    let kind = if entry.is_headless() {
+        WindowKind::Headless
+    } else {
+        WindowKind::Pty
+    };
+    entry
+        .role
+        .is_none()
+        .then(|| lost_run(kind, entry.run.as_ref()))?
+}
+
 /// Decision 11: a Pty record's `run` is `{"role_launch": <RoleLaunch>}`.
 pub(super) fn role_record(role: &RoleLaunch) -> serde_json::Value {
     serde_json::json!({ "role_launch": role })
@@ -45,10 +82,11 @@ pub(super) fn restored_role(
     match Record::deserialize(run?) {
         Ok(record) => Some(record.role_launch),
         Err(error) => {
+            let run = lost_run(kind, run).unwrap_or_default();
             tracing::warn!(
                 id,
                 %error,
-                "restore: window {id}'s role does not parse; restored as a plain PTY window"
+                "restore: window {id}'s role in run {run} does not parse; it is restored, and never restarted"
             );
             None
         }
@@ -159,6 +197,13 @@ impl WindowManager {
     pub fn write_client_input(&self, id: u32, bytes: &[u8]) -> anyhow::Result<()> {
         self.note_client_input(id);
         self.write_input(id, bytes)
+    }
+
+    /// M9.10 review: `Some(run)` when `id` was restored with a role that did not parse;
+    /// the guard refuses its `Restart` and `Input`.
+    pub fn lost_role_run(&self, id: u32) -> Option<String> {
+        let inner = crate::lock(&self.inner);
+        lost_role(inner.entries.get(&id)?)
     }
 
     /// Decision 11a: a headless window restored from a record that did not parse, which

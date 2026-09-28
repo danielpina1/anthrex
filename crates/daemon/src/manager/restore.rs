@@ -210,6 +210,9 @@ impl WindowManager {
             // wanted, is derived at the point of display instead (`Entry::info`).
             // Milestone 9 decision 11: a run window's role comes back with it.
             let role = super::role_window::restored_role(id, kind, run.as_ref());
+            // M9.10 review: a lost role leaves no session to resume as a plain agent.
+            let lost = role.is_none() && super::role_window::lost_run(kind, run.as_ref()).is_some();
+            let session_id = session_id.filter(|_| !lost);
             let process = match headless_spec(id, kind, run.as_ref(), runtime, &cwd) {
                 // Decision 28: the session's process died with the daemon; the window
                 // comes back ended, and `run resume` restarts its session.

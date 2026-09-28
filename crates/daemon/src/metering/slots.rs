@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
-use super::OTLP_SLOT_WAIT;
+use std::time::Instant;
+
+use super::{OTLP_EVICT_GRACE, OTLP_SLOT_WAIT};
 
 /// The connections being served (decision 14b). A connection that has presented a valid
 /// token is never closed to make room; one that has not is, oldest first.
@@ -21,8 +23,8 @@ pub(super) struct Slots {
     freed: Notify,
 }
 
-#[derive(Default)]
 pub(super) struct ConnState {
+    opened: Instant,
     pub(super) tokened: AtomicBool,
     pub(super) close: CancellationToken,
 }
@@ -55,15 +57,22 @@ impl Slots {
                 let mut open = crate::lock(&self.open);
                 if open.len() < cap {
                     let id = self.next.fetch_add(1, Ordering::Relaxed);
-                    let state = Arc::new(ConnState::default());
+                    let state = Arc::new(ConnState {
+                        opened: Instant::now(),
+                        tokened: AtomicBool::new(false),
+                        close: CancellationToken::new(),
+                    });
                     open.insert(id, state.clone());
                     let slots = self.clone();
                     return Some(Slot { slots, id, state });
                 }
                 if !evicted {
-                    let victim = open
-                        .values()
-                        .find(|c| !c.tokened.load(Ordering::SeqCst) && !c.close.is_cancelled());
+                    // Never one younger than the grace: its first POST may be on its way.
+                    let victim = open.values().find(|c| {
+                        !c.tokened.load(Ordering::SeqCst)
+                            && !c.close.is_cancelled()
+                            && c.opened.elapsed() >= OTLP_EVICT_GRACE
+                    });
                     if let Some(victim) = victim {
                         victim.close.cancel();
                         evicted = true;

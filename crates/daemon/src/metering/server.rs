@@ -60,6 +60,9 @@ pub const OTLP_BASE_CONNECTIONS: usize = 8;
 /// How long a connection beyond the cap waits for a slot before it is
 /// closed unanswered. New connections wait in the listen backlog meanwhile.
 pub const OTLP_SLOT_WAIT: Duration = Duration::from_secs(1);
+/// M9.10 review: a connection younger than this is never closed to make room, so a real
+/// orchestrator's new connection is not closed before its first POST marks it tokened.
+pub const OTLP_EVICT_GRACE: Duration = Duration::from_secs(2);
 /// `<data_dir>/otlp.addr`: `http://127.0.0.1:<port>`, mode 0600, removed at shutdown.
 pub const ADDR_FILE: &str = "otlp.addr";
 

@@ -7,7 +7,9 @@
 //! needs no refusal: the manager accepts and ignores it, with no reply, as it answers
 //! any successful `Resize`.
 
-use crate::manager::{WindowManager, control_refusal, orchestrator_refusal, subscribe_refusal};
+use crate::manager::{
+    WindowManager, control_refusal, lost_role_refusal, orchestrator_refusal, subscribe_refusal,
+};
 use proto::messages::request;
 use proto::{ClientMsg, DaemonMsg};
 
@@ -35,6 +37,13 @@ pub(super) fn refuse(manager: &WindowManager, msg: &ClientMsg) -> Option<DaemonM
         if manager.is_placeholder_headless(window_id) {
             return None;
         }
+    }
+    if matches!(msg, ClientMsg::Input { .. } | ClientMsg::Restart { .. })
+        && let Some(run) = manager.lost_role_run(window_id)
+    {
+        let message = lost_role_refusal(window_id, &run);
+        let request = request.to_string();
+        return Some(DaemonMsg::Error { request, message });
     }
     let run = manager.headless_run(window_id)?;
     let message = match msg {

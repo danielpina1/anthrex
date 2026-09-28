@@ -113,9 +113,11 @@ pub struct Window {
 /// Milestone 9 decision 10: a run window drops the inherited agent-session variables
 /// (`MCP_*` included) and `remove` before `plan.env` sets its own.
 fn scrub_agent_env(cmd: &mut CommandBuilder, remove: &[String]) {
-    use config::reserved_env::{SCRUBBED_NAMES, SCRUBBED_PREFIXES, SESSION_IDENTITY};
+    use config::reserved_env::SCRUBBED_PREFIXES;
+    use config::reserved_env::{AGENT_SCRUBBED_PREFIXES, SCRUBBED_NAMES, SESSION_IDENTITY};
     let inherited = std::env::vars_os().map(|(key, _)| key.to_string_lossy().into_owned());
-    let prefixed = inherited.filter(|key| SCRUBBED_PREFIXES.iter().any(|p| key.starts_with(p)));
+    let prefixes = SCRUBBED_PREFIXES.iter().chain(AGENT_SCRUBBED_PREFIXES);
+    let prefixed = inherited.filter(|key| prefixes.clone().any(|p| key.starts_with(p)));
     let named = SCRUBBED_NAMES
         .iter()
         .chain(SESSION_IDENTITY)

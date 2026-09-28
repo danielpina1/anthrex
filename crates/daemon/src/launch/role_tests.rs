@@ -83,7 +83,7 @@ fn mcp_config() -> String {
 }
 
 const ALLOWED: &str = "mcp__anthrex__get_context,mcp__anthrex__spawn_scout,mcp__anthrex__spawn_subplanner,mcp__anthrex__edit_plan,mcp__anthrex__run_status,mcp__anthrex__task_result,Read,Glob,Grep";
-const DISALLOWED: &str = "Edit,Write,NotebookEdit,Bash,Agent,Task,Artifact,CronCreate,CronDelete,RemoteTrigger,PushNotification,SendMessage,Workflow,WebFetch,WebSearch";
+const DISALLOWED: &str = "Edit,Write,NotebookEdit,Bash,Agent,Task,Artifact,CronCreate,CronDelete,RemoteTrigger,PushNotification,SendMessage,Workflow,WebFetch,WebSearch,Monitor,EnterWorktree,ExitWorktree,ScheduleWakeup,DesignSync";
 
 /// Decision 7's order, with rulings 1 and 2: the user-settings-only flags, the MCP
 /// server, the tool lists, `--permission-mode default` after `--disallowedTools`, the
@@ -330,4 +330,37 @@ fn claude_orchestrator_env_turns_tool_search_off_and_codex_does_not() {
     assert!(!p.env.iter().any(|(k, _)| k == "ENABLE_TOOL_SEARCH"));
     assert_eq!(p.env.len(), 4, "{:?}", p.env);
     assert!(p.scrub_agent_env);
+}
+
+/// M9.10 review: a persisted role missing a field a later daemon made optional still
+/// parses, so an upgrade rarely strands an orchestrator window. The fields that make it
+/// read-only (the tool lists, the contract, the effort) are never defaulted.
+#[test]
+fn a_role_record_missing_optional_fields_still_parses() {
+    let mut value = serde_json::to_value(role()).unwrap();
+    let object = value.as_object_mut().unwrap();
+    object.remove("env");
+    object.remove("remove_env");
+    object["run_ref"].as_object_mut().unwrap().remove("task_id");
+    let mcp = object["mcp"].as_object_mut().unwrap();
+    for key in ["task_id", "scout_id", "epic"] {
+        mcp.remove(key);
+    }
+    let parsed: RoleLaunch = serde_json::from_value(value).expect("parses");
+    assert_eq!(parsed.run_ref, role().run_ref);
+    assert_eq!(parsed.mcp, role().mcp);
+    assert!(parsed.env.is_empty() && parsed.remove_env.is_empty());
+    for required in [
+        "claude_disallowed_tools",
+        "claude_allowed_tools",
+        "instructions",
+        "effort",
+    ] {
+        let mut value = serde_json::to_value(role()).unwrap();
+        value.as_object_mut().unwrap().remove(required);
+        assert!(
+            serde_json::from_value::<RoleLaunch>(value).is_err(),
+            "{required}"
+        );
+    }
 }

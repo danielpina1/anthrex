@@ -569,3 +569,14 @@ fn a_turn_end_clears_its_real_stop() {
     });
     assert_eq!(w.claude_line(INTERRUPTED), [stop()]);
 }
+
+/// Milestone 9 decision 12 (M9.10 review): a real `StopFailure` hook closes the turn as
+/// a real `Stop` does, so no second `Stop` is synthesised for it.
+#[test]
+fn a_turn_ended_by_stop_failure_gets_no_second_stop() {
+    for cursor in [StreamCursor::fed(), StreamCursor::default()] {
+        let mut w = claude_turn_with_open_call(cursor, true);
+        w.real_hook(json!({"hook_event_name": "StopFailure", "session_id": SESSION}));
+        assert_eq!(w.claude_line(INTERRUPTED), []);
+    }
+}

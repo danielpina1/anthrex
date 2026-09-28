@@ -376,6 +376,9 @@ impl WindowManager {
         if entry.removing {
             anyhow::bail!("window {id} is being removed");
         }
+        if let Some(run) = super::role_window::lost_role(entry) {
+            anyhow::bail!(super::role_window::lost_role_refusal(id, &run));
+        }
         let was_live = entry.child_alive;
         let cwd = entry.spec.cwd.clone();
         entry.restarting = true;

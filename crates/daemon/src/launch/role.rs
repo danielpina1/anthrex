@@ -24,6 +24,9 @@ pub struct RoleLaunch {
     pub effort: Effort,
     pub claude_allowed_tools: Vec<String>,
     pub claude_disallowed_tools: Vec<String>,
+    /// Optional (M9.10 review): a record without it restores with no extra variables.
+    /// The tool lists, the contract and the effort are never defaulted.
+    #[serde(default)]
     pub env: Vec<(String, String)>,
     #[serde(default)]
     pub remove_env: Vec<String>,
@@ -60,6 +63,12 @@ pub const ORCHESTRATOR_DISALLOWED_TOOLS: &[&str] = &[
     "Workflow",
     "WebFetch",
     "WebSearch",
+    // M9.10 review: the rest of what check 10 observed that acts outside a read.
+    "Monitor",
+    "EnterWorktree",
+    "ExitWorktree",
+    "ScheduleWakeup",
+    "DesignSync",
 ];
 
 /// Decision 7's middle block for a Claude orchestrator, between M3's `--settings` and

@@ -3,6 +3,7 @@
 //! receiver closes a connection that never presented a token first.
 
 use super::*;
+use daemon::metering::server::OTLP_EVICT_GRACE;
 
 /// Milestone 9 decision 14a: only points carrying their run's token are metered. A
 /// missing or wrong token is still answered `200`, and nothing reaches the sink.
@@ -56,8 +57,9 @@ async fn untokened_connections_are_closed_first_when_full() {
     for _ in 0..OTLP_BASE_CONNECTIONS {
         idle.push(TcpStream::connect(addr).await.unwrap());
     }
-    // Every idle connection holds a slot before the tokened one arrives.
-    tokio::time::sleep(OTLP_SLOT_WAIT / 10).await;
+    // Every idle connection holds a slot, and is past the eviction grace, before the
+    // tokened one arrives.
+    tokio::time::sleep(OTLP_EVICT_GRACE + OTLP_SLOT_WAIT / 10).await;
     let started = Instant::now();
     let (_, answer) = send(addr, &request("/v1/metrics", "application/json", FIXTURE)).await;
     assert_eq!(answer, Some((200, "{}".to_string())));
@@ -77,5 +79,31 @@ async fn untokened_connections_are_closed_first_when_full() {
         }
     }
     assert_eq!(closed, 1);
+    rx.shutdown.cancel();
+}
+
+/// M9.10 review: a connection younger than `OTLP_EVICT_GRACE` is never closed to make
+/// room, so a real orchestrator's new connection cannot be closed before its first POST
+/// marks it tokened. With every slot held by fresh idle connections, a newcomer waits
+/// the slot wait and is closed, and every idle connection stays open.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_young_untokened_connection_is_not_closed_to_make_room() {
+    const { assert!(OTLP_SLOT_WAIT.as_millis() < OTLP_EVICT_GRACE.as_millis()) };
+    let rx = start().await;
+    let addr = rx.server.addr;
+    let mut idle = Vec::new();
+    for _ in 0..OTLP_BASE_CONNECTIONS {
+        idle.push(TcpStream::connect(addr).await.unwrap());
+    }
+    let (_, answer) = send(addr, &request("/v1/metrics", "application/json", FIXTURE)).await;
+    assert_eq!(
+        answer, None,
+        "no slot, and none of the young ones was closed"
+    );
+    for stream in &mut idle {
+        let mut byte = [0u8; 1];
+        let read = tokio::time::timeout(Duration::from_millis(50), stream.read(&mut byte)).await;
+        assert!(read.is_err(), "an idle connection was closed: {read:?}");
+    }
     rx.shutdown.cancel();
 }
