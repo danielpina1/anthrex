@@ -292,12 +292,7 @@ pub(super) fn submit_plan(run: &mut Run, who: &str, now: u64) -> Result<(), Stri
             if run.tasks.iter().all(|t| t.state.is_finished()) {
                 return Err("the plan has no tasks yet; add tasks before submitting".into());
             }
-            if let Some(e) = run.orch.epics.iter().find(|e| e.phase.is_live()) {
-                return Err(format!(
-                    "sub-planner {} is still planning; submit when every sub-planner has finished",
-                    e.epic
-                ));
-            }
+            planners_finished(run)?;
             set_submitted(run);
             if run.orch.yes {
                 run.state = RunState::Running;
@@ -321,6 +316,12 @@ pub(super) fn submit_plan(run: &mut Run, who: &str, now: u64) -> Result<(), Stri
             }
         }
         RunState::Running if run.orch.orchestrator.is_some() => {
+            // A promoted run's submit waits for its sub-planners too, so no epic
+            // planned inside the promotion window outlives it (M9.7 second review,
+            // ruling 8).
+            if gate_holds::promoted(run) {
+                planners_finished(run)?;
+            }
             set_submitted(run);
             if gate_holds::submit_promotion(run, now) {
                 log(run, now, "the orchestrator submitted its additions");
@@ -329,6 +330,17 @@ pub(super) fn submit_plan(run: &mut Run, who: &str, now: u64) -> Result<(), Stri
         _ => {}
     }
     Ok(())
+}
+
+/// Decision 27: no sub-planner is queued or planning.
+fn planners_finished(run: &Run) -> Result<(), String> {
+    match run.orch.epics.iter().find(|e| e.phase.is_live()) {
+        Some(e) => Err(format!(
+            "sub-planner {} is still planning; submit when every sub-planner has finished",
+            e.epic
+        )),
+        None => Ok(()),
+    }
 }
 
 fn set_submitted(run: &mut Run) {
@@ -350,7 +362,7 @@ fn spawn_subplanner(
     fx: &mut Vec<Effect>,
 ) {
     let epic = spec.epic.clone();
-    let mut hold = None;
+    let hold;
     if let Some(e) = run.orch.epics.iter_mut().find(|e| e.epic == epic) {
         if e.phase.is_live() {
             let text =
@@ -361,6 +373,8 @@ fn spawn_subplanner(
         e.replans.push(spec.brief.chars().take(40).collect());
         e.request = spec.brief;
         e.ended_at = None;
+        // An epic whose every round was rejected is held again (ruling 8).
+        hold = gate_holds::replan_epic_hold(run, &epic, now);
     } else {
         if let Some(route) = planner_route(run) {
             spec.route = route;

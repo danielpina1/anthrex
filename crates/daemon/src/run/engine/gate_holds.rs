@@ -32,7 +32,7 @@ pub(super) fn released(run: &Run, task: &Task) -> bool {
 /// Decision 29: the run was promoted, and its orchestrator exists. A fast-path run
 /// started under milestone 8b has no `approved_at`, so the promotion, not the approval,
 /// is what puts its additions past the gate (M9.7 review fixes, ruling 1).
-fn promoted(run: &Run) -> bool {
+pub(super) fn promoted(run: &Run) -> bool {
     run.promote_requested_at.is_some() && run.orch.orchestrator.is_some()
 }
 
@@ -71,23 +71,14 @@ fn promotion_round(run: &mut Run, now: u64) -> String {
     if let Some(open) = open_round(run) {
         return open.id.clone();
     }
-    let taken = |run: &Run, id: &str| run.orch.gate_holds.iter().any(|h| h.id == id);
-    let name = |n: usize| match n {
-        1 => PROMOTION.to_string(),
-        n => format!("{PROMOTION}-{n}"),
-    };
-    let mut n = run
+    let rounds = run
         .orch
         .gate_holds
         .iter()
         .filter(|h| is_promotion(h))
-        .count()
-        + 1;
-    while taken(run, &name(n)) {
-        n += 1;
-    }
-    let id = name(n);
-    ensure(run, &id, HoldKind::Promotion, now)
+        .count();
+    let id = fresh(run, PROMOTION, '-', rounds);
+    create(run, &id, HoldKind::Promotion, now)
 }
 
 /// The orchestrator's `submit` on a promoted running run (decision 27): the open
@@ -135,7 +126,7 @@ pub(super) fn assign(
         let hold = match parent.and_then(|p| unreleased_hold(run, p)) {
             Some(inherited) => Some(inherited),
             None if promotion_open(run) => Some(promotion_round(run, now)),
-            None => epic_hold(run, id),
+            None => epic_hold(run, id, now),
         };
         let Some(hold) = hold else {
             continue;
@@ -202,60 +193,110 @@ fn release_split_parent(run: &mut Run, parent: &str) {
     }
 }
 
-/// The undecided hold of the epic task `id` belongs to.
-fn epic_hold(run: &Run, id: &str) -> Option<String> {
-    let epic = run.task(id)?.spec.epic.as_deref()?;
-    let hold = run
-        .orch
-        .epics
-        .iter()
-        .find(|e| e.epic == epic)?
-        .gate_hold
-        .clone()?;
-    let undecided = |h: &&GateHoldRecord| {
-        h.id == hold && matches!(h.state, HoldState::Drafting | HoldState::Awaiting)
-    };
-    run.orch
-        .gate_holds
-        .iter()
-        .find(undecided)
-        .map(|h| h.id.clone())
+fn is_round_of(hold: &GateHoldRecord, epic: &str) -> bool {
+    matches!(&hold.kind, HoldKind::Epic { epic: e } if e == epic)
 }
 
-/// The hold `id`, created `Drafting` when the run has none by that id.
-fn ensure(run: &mut Run, id: &str, kind: HoldKind, now: u64) -> String {
-    if !run.orch.gate_holds.iter().any(|h| h.id == id) {
-        run.orch.gate_holds.push(GateHoldRecord {
-            id: id.to_string(),
-            kind,
-            state: HoldState::Drafting,
-            tasks: Vec::new(),
-            created_at: now,
-            decided_at: None,
-            decided_by: None,
-        });
-        log(run, now, format!("hold {id} created"));
+/// Whether `epic` has a round and none of its rounds is approved: its work is held
+/// until the user approves one (decision 28; after a rejection, M9.7 second review,
+/// ruling 8).
+fn epic_open(run: &Run, epic: &str) -> bool {
+    let rounds: Vec<_> = run
+        .orch
+        .gate_holds
+        .iter()
+        .filter(|h| is_round_of(h, epic))
+        .collect();
+    !rounds.is_empty() && rounds.iter().all(|h| h.state != HoldState::Approved)
+}
+
+/// `epic`'s undecided round, or a new `Drafting` one: `epic:<e>` first, then
+/// `epic:<e>.2`, `epic:<e>.3` after each rejection. The separator is `.`, which an
+/// epic id (`^[a-z0-9][a-z0-9-]{0,10}$`) cannot hold, so a round never takes the id of
+/// another epic's hold. The epic's record names its current round.
+fn epic_round(run: &mut Run, epic: &str, now: u64) -> String {
+    let open = run
+        .orch
+        .gate_holds
+        .iter()
+        .rev()
+        .find(|h| is_round_of(h, epic))
+        .filter(|h| matches!(h.state, HoldState::Drafting | HoldState::Awaiting))
+        .map(|h| h.id.clone());
+    let id = match open {
+        Some(id) => id,
+        None => {
+            let rounds = run
+                .orch
+                .gate_holds
+                .iter()
+                .filter(|h| is_round_of(h, epic))
+                .count();
+            let id = fresh(run, &format!("epic:{epic}"), '.', rounds);
+            create(run, &id, HoldKind::Epic { epic: epic.into() }, now)
+        }
+    };
+    if let Some(record) = run.orch.epics.iter_mut().find(|e| e.epic == epic) {
+        record.gate_hold = Some(id.clone());
     }
+    id
+}
+
+/// The round task `id` of an epic waits under: its epic's open round, opened anew
+/// after a rejection; none when the epic has no round or one was approved.
+fn epic_hold(run: &mut Run, id: &str, now: u64) -> Option<String> {
+    let epic = run.task(id)?.spec.epic.clone()?;
+    epic_open(run, &epic).then(|| epic_round(run, &epic, now))
+}
+
+/// The first free id of round `rounds + 1` of `base`: `base` itself for the first,
+/// then `base<sep><n>`.
+fn fresh(run: &Run, base: &str, sep: char, rounds: usize) -> String {
+    let taken = |id: &str| run.orch.gate_holds.iter().any(|h| h.id == id);
+    let name = |n: usize| match n {
+        1 => base.to_string(),
+        n => format!("{base}{sep}{n}"),
+    };
+    let mut n = rounds + 1;
+    while taken(&name(n)) {
+        n += 1;
+    }
+    name(n)
+}
+
+/// A new `Drafting` hold `id`. Callers pass a free id ([`fresh`]), so no rejected or
+/// decided hold is ever handed back as the one to join.
+fn create(run: &mut Run, id: &str, kind: HoldKind, now: u64) -> String {
+    debug_assert!(!run.orch.gate_holds.iter().any(|h| h.id == id), "{id}");
+    run.orch.gate_holds.push(GateHoldRecord {
+        id: id.to_string(),
+        kind,
+        state: HoldState::Drafting,
+        tasks: Vec::new(),
+        created_at: now,
+        decided_at: None,
+        decided_by: None,
+    });
+    log(run, now, format!("hold {id} created"));
     id.to_string()
 }
 
 /// Decision 28: a new epic of a running run, whose plan was submitted, gets hold
-/// `epic:<e>`, `Drafting` until its sub-planner's epic is accepted.
+/// `epic:<e>`, `Drafting` until its sub-planner's epic is accepted. Inside a promoted
+/// run's window its tasks join the promotion round instead (M9.7 second review,
+/// ruling 8), so it gets none.
 pub(super) fn create_epic_hold(run: &mut Run, epic: &str, now: u64) -> Option<String> {
     let submitted = run.orch.orchestrator.as_ref()?.plan_submitted;
-    if !past_gate(run) || !submitted {
+    if !past_gate(run) || !submitted || promotion_open(run) {
         return None;
     }
-    let id = ensure(
-        run,
-        &format!("epic:{epic}"),
-        HoldKind::Epic { epic: epic.into() },
-        now,
-    );
-    if let Some(record) = run.orch.epics.iter_mut().find(|e| e.epic == epic) {
-        record.gate_hold = Some(id.clone());
-    }
-    Some(id)
+    Some(epic_round(run, epic, now))
+}
+
+/// A re-planned epic whose every round was rejected opens a new round (M9.7 second
+/// review, ruling 8); any other re-plan is held as before.
+pub(super) fn replan_epic_hold(run: &mut Run, epic: &str, now: u64) -> Option<String> {
+    epic_open(run, epic).then(|| epic_round(run, epic, now))
 }
 
 /// A drafted hold is submitted (the orchestrator's `submit`, a sub-planner's accepted

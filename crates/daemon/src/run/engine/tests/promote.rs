@@ -452,3 +452,91 @@ fn after_a_rejected_promotion_an_empty_submit_opens_an_awaiting_round() {
     fx.tick();
     assert!(!prepared(&fx, "t2"), "t2 waits for the user");
 }
+
+fn spawn(fx: &mut Fixture, epic: &str) -> serde_json::Value {
+    let args = json!({"epic": epic, "title": format!("Epic {epic}"),
+        "area": [format!("crates/{epic}/**")], "brief": format!("Plan {epic}")});
+    let (ok, value) = answer(&super::orch::orch_tool(fx, ORCH, "spawn_subplanner", args));
+    assert!(ok, "{value}");
+    value
+}
+
+/// The orchestrator's addition of `id` to `epic`, as its finished sub-planner's would be.
+fn add_to_epic(fx: &mut Fixture, id: &str, epic: &str) -> serde_json::Value {
+    let e = fx
+        .run_mut()
+        .orch
+        .epics
+        .iter_mut()
+        .find(|e| e.epic == epic)
+        .unwrap();
+    e.phase = crate::run::orch::PlannerPhase::Finished;
+    let mut edit = add(id, id);
+    edit["task"]["epic"] = json!(epic);
+    let (ok, value) = answer(&edit_plan(fx, json!({"edits": [edit]})));
+    assert!(ok, "{value}");
+    value
+}
+
+/// M9.7 second review, ruling 8.1: a promoted run's submit waits for its sub-planners,
+/// and an epic spawned in the promotion window has its tasks held under the round.
+#[test]
+fn epic_spawned_before_submit_stays_held() {
+    let mut fx = promoted();
+    spawn(&mut fx, "mail");
+    let effects = edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    assert_eq!(
+        super::orch::error(&effects),
+        "sub-planner mail is still planning; submit when every sub-planner has finished"
+    );
+    assert!(fx.run().orch.gate_holds.is_empty(), "nothing submitted");
+    assert_eq!(add_to_epic(&mut fx, "t7", "mail")["held"], "promotion");
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true})));
+    assert!(ok, "{value}");
+    fx.tick();
+    assert!(!prepared(&fx, "t7"), "t7 waits for the user");
+    hold_verdict(&mut fx, "promotion", true);
+    assert!(prepared(&fx, "t7"), "dispatched on approval");
+}
+
+/// M9.7 second review, ruling 8.2: a rejected epic, planned again, opens a new round
+/// `epic:mail.2` (a `.` cannot appear in an epic id, so no epic's own hold collides).
+#[test]
+fn rejected_epic_replanned_stays_held() {
+    let mut fx = promoted();
+    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    hold_verdict(&mut fx, "promotion", true);
+    assert_eq!(spawn(&mut fx, "mail")["hold"], "epic:mail");
+    assert_eq!(add_to_epic(&mut fx, "t5", "mail")["held"], "epic:mail");
+    let now = fx.now;
+    crate::run::engine::gate_holds::submitted(fx.run_mut(), "epic:mail", now);
+    hold_verdict(&mut fx, "epic:mail", false);
+    assert_eq!(fx.task("t5").state, TaskState::Cancelled);
+    assert_eq!(spawn(&mut fx, "mail")["hold"], "epic:mail.2");
+    assert_eq!(add_to_epic(&mut fx, "t6", "mail")["held"], "epic:mail.2");
+    let now = fx.now;
+    crate::run::engine::gate_holds::submitted(fx.run_mut(), "epic:mail.2", now);
+    fx.tick();
+    assert!(!prepared(&fx, "t6"), "t6 waits for the user");
+    let effects = hold_verdict(&mut fx, "epic:mail.2", true);
+    assert!(replies(&effects)[0].is_ok(), "{effects:?}");
+    assert!(prepared(&fx, "t6"), "dispatched on approval");
+}
+
+/// M9.7 second review, ruling 8.3 (**pinning**): a resubmit while the promotion round
+/// awaits the user submits nothing again.
+#[test]
+fn a_resubmit_while_the_promotion_round_awaits_submits_nothing() {
+    let mut fx = promoted();
+    edit_plan(&mut fx, json!({"edits": [add("t2", "mail")]}));
+    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true})));
+    assert!(ok, "{value}");
+    let submits = fx
+        .run()
+        .log
+        .iter()
+        .filter(|l| l.text == "the orchestrator submitted its additions")
+        .count();
+    assert_eq!(submits, 1);
+}
