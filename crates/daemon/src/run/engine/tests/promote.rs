@@ -399,3 +399,56 @@ fn a_promoted_m8b_run_holds_a_new_epic_after_submit() {
     assert!(ok, "{value}");
     assert_eq!(value["hold"], "epic:mail");
 }
+
+/// M9.7 second review, ruling 7: a rejection does not end the promotion window. The
+/// next addition opens a new round, `promotion-2`, under the same rules.
+#[test]
+fn after_a_rejected_promotion_additions_open_a_new_round() {
+    let mut fx = promoted();
+    edit_plan(&mut fx, json!({"edits": [add("t2", "mail")]}));
+    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    let effects = hold_verdict(&mut fx, "promotion", false);
+    assert!(replies(&effects)[0].is_ok(), "{effects:?}");
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [add("t3", "sms")]})));
+    assert!(ok, "{value}");
+    assert_eq!(value["held"], "promotion-2");
+    let round = fx.run().orch.gate_holds[1].clone();
+    assert_eq!(
+        (round.id.as_str(), round.kind, round.state, round.tasks),
+        (
+            "promotion-2",
+            proto::HoldKind::Promotion,
+            HoldState::Drafting,
+            vec!["t3".to_string()]
+        )
+    );
+    fx.tick();
+    assert!(!prepared(&fx, "t3"), "t3 waits for the new round");
+    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    fx.tick();
+    assert!(!prepared(&fx, "t3"), "the new round awaits the user");
+    let effects = hold_verdict(&mut fx, "promotion-2", true);
+    assert!(replies(&effects)[0].is_ok(), "{effects:?}");
+    assert!(prepared(&fx, "t3"), "dispatched on approval");
+}
+
+/// M9.7 second review, ruling 7: after a rejection, an empty submit opens the new round
+/// `Awaiting` with no task, and a later addition joins it.
+#[test]
+fn after_a_rejected_promotion_an_empty_submit_opens_an_awaiting_round() {
+    let mut fx = promoted();
+    edit_plan(&mut fx, json!({"edits": [], "submit": true}));
+    hold_verdict(&mut fx, "promotion", false);
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [], "submit": true})));
+    assert!(ok, "{value}");
+    let round = fx.run().orch.gate_holds[1].clone();
+    assert_eq!(
+        (round.id.as_str(), round.state, round.tasks.len()),
+        ("promotion-2", HoldState::Awaiting, 0)
+    );
+    let (ok, value) = answer(&edit_plan(&mut fx, json!({"edits": [add("t2", "mail")]})));
+    assert!(ok, "{value}");
+    assert_eq!(value["held"], "promotion-2");
+    fx.tick();
+    assert!(!prepared(&fx, "t2"), "t2 waits for the user");
+}

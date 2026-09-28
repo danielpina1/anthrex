@@ -36,35 +36,74 @@ fn promoted(run: &Run) -> bool {
     run.promote_requested_at.is_some() && run.orch.orchestrator.is_some()
 }
 
-/// Decision 29's window: the run was promoted and the user has not yet decided its
-/// `promotion` hold (none yet, `Drafting` or `Awaiting`). A rejection ends it as an
-/// approval does (M9.7 second review, the implementer's reading of ruling 1): a task
-/// joining a rejected hold could never run.
+/// Decision 29's window: the run was promoted and no `promotion` round has been
+/// approved. A rejected round does not close it: the orchestrator's next addition or
+/// submit opens a new round, so its work never bypasses the user's "no" (M9.7 second
+/// review, ruling 7).
 fn promotion_open(run: &Run) -> bool {
     promoted(run)
-        && run
+        && !run
             .orch
             .gate_holds
             .iter()
-            .find(|h| h.id == PROMOTION)
-            .is_none_or(|h| matches!(h.state, HoldState::Drafting | HoldState::Awaiting))
+            .any(|h| is_promotion(h) && h.state == HoldState::Approved)
 }
 
-/// The orchestrator's `submit` on a promoted running run (decision 27): the `promotion`
-/// hold awaits the user (or is approved by `--yes`), created with no task when the
-/// orchestrator added nothing, so the user's approval is still what ends the promotion
-/// window (M9.7 second review, ruling 1). Returns whether it was submitted now.
+fn is_promotion(hold: &GateHoldRecord) -> bool {
+    matches!(hold.kind, HoldKind::Promotion)
+}
+
+/// The undecided `promotion` round, if any: the last one, when it is `Drafting` or
+/// `Awaiting`.
+fn open_round(run: &Run) -> Option<&GateHoldRecord> {
+    run.orch
+        .gate_holds
+        .iter()
+        .rev()
+        .find(|h| is_promotion(h))
+        .filter(|h| matches!(h.state, HoldState::Drafting | HoldState::Awaiting))
+}
+
+/// The open `promotion` round, or a new `Drafting` one: `promotion` first, then
+/// `promotion-2`, `promotion-3` after each rejection, so every round keeps its own id
+/// in the history, the digest and the run view.
+fn promotion_round(run: &mut Run, now: u64) -> String {
+    if let Some(open) = open_round(run) {
+        return open.id.clone();
+    }
+    let taken = |run: &Run, id: &str| run.orch.gate_holds.iter().any(|h| h.id == id);
+    let name = |n: usize| match n {
+        1 => PROMOTION.to_string(),
+        n => format!("{PROMOTION}-{n}"),
+    };
+    let mut n = run
+        .orch
+        .gate_holds
+        .iter()
+        .filter(|h| is_promotion(h))
+        .count()
+        + 1;
+    while taken(run, &name(n)) {
+        n += 1;
+    }
+    let id = name(n);
+    ensure(run, &id, HoldKind::Promotion, now)
+}
+
+/// The orchestrator's `submit` on a promoted running run (decision 27): the open
+/// `promotion` round awaits the user (or is approved by `--yes`), created with no task
+/// when the orchestrator added nothing since the last round, so the user's approval is
+/// still what ends the promotion window (M9.7 second review, rulings 1 and 7). Returns
+/// whether a round was submitted now.
 pub(super) fn submit_promotion(run: &mut Run, now: u64) -> bool {
-    if !promoted(run) {
+    if !promotion_open(run) {
         return false;
     }
-    let drafting = |h: &GateHoldRecord| h.id == PROMOTION && h.state == HoldState::Drafting;
-    let missing = !run.orch.gate_holds.iter().any(|h| h.id == PROMOTION);
-    if !missing && !run.orch.gate_holds.iter().any(drafting) {
+    if open_round(run).is_some_and(|h| h.state == HoldState::Awaiting) {
         return false;
     }
-    ensure(run, PROMOTION, HoldKind::Promotion, now);
-    submitted(run, PROMOTION, now);
+    let id = promotion_round(run, now);
+    submitted(run, &id, now);
     true
 }
 
@@ -95,7 +134,7 @@ pub(super) fn assign(
         let parent = split_parent(edits, id);
         let hold = match parent.and_then(|p| unreleased_hold(run, p)) {
             Some(inherited) => Some(inherited),
-            None if promotion_open(run) => Some(ensure(run, PROMOTION, HoldKind::Promotion, now)),
+            None if promotion_open(run) => Some(promotion_round(run, now)),
             None => epic_hold(run, id),
         };
         let Some(hold) = hold else {
