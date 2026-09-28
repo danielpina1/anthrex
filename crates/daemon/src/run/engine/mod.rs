@@ -67,6 +67,7 @@ mod requests;
 mod restore;
 mod results;
 mod review;
+mod rounds;
 mod run_scouts;
 pub(crate) mod schedule;
 mod signals;
