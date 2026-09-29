@@ -50,12 +50,18 @@ fn summary_of_an_empty_tail_is_empty() {
 #[test]
 fn engine_env_is_applied_to_the_command() {
     let mut command = Command::new("env");
-    engine_env(&mut command, &[("A".into(), "1".into())], false);
+    let a = [("A".to_string(), "1".to_string())];
+    let b = [("A".to_string(), "2".to_string())];
+    engine_env(&mut command, (&a, &b), false);
     let envs: Vec<(&OsStr, Option<&OsStr>)> = command.get_envs().collect();
     assert!(envs.contains(&(OsStr::new("CLAUDECODE"), None)));
     assert!(envs.contains(&(OsStr::new("ANTHREX_WINDOW_ID"), None)));
     assert!(envs.contains(&(OsStr::new("GIT_DIR"), None)));
-    assert!(envs.contains(&(OsStr::new("A"), Some(OsStr::new("1")))));
+    // Milestone 9.1 decision 26: `extra` is set after `env`, so it wins.
+    assert!(
+        envs.contains(&(OsStr::new("A"), Some(OsStr::new("2")))),
+        "{envs:?}"
+    );
     // T14-P1 (F4): `GIT_NO_REPLACE_OBJECTS` is for the engine's own git calls; a
     // check, proof or `setup` runs the project's commands with the user's git.
     assert!(
@@ -69,7 +75,7 @@ fn engine_env_is_applied_to_the_command() {
 
     // F1c round 3 (N1): a confined command loses `ANTHREX_SOCKET`/`ANTHREX_DATA_DIR`.
     let mut confined = Command::new("env");
-    engine_env(&mut confined, &[], true);
+    engine_env(&mut confined, (&[], &[]), true);
     let confined_envs: Vec<(&OsStr, Option<&OsStr>)> = confined.get_envs().collect();
     assert!(confined_envs.contains(&(OsStr::new("ANTHREX_SOCKET"), None)));
     assert!(confined_envs.contains(&(OsStr::new("ANTHREX_DATA_DIR"), None)));

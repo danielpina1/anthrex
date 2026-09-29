@@ -32,6 +32,7 @@ mod salvage;
 mod sandbox;
 mod settings;
 mod summary;
+mod tiers;
 mod tmp;
 mod worktrees;
 
@@ -56,6 +57,7 @@ pub use merge_state::abort_merge;
 pub use salvage::{delete_branches, remove_checkout, remove_worktree, salvage};
 pub use settings::{codex_config_tree, project_settings};
 pub use summary::{resolve_target, task_summary, task_summary_excluding};
+pub use tiers::{changed_paths, tree_of};
 
 /// Reads reconcile (M8a.21) shares with the ops it checks.
 pub(crate) use handback::{finish_clean, interrupted_conflict};

@@ -142,7 +142,8 @@ pub fn run_proof(
         if let Some(setup) = &op.setup {
             // A reused worktree may be at any commit; setup runs at red, as in a new one.
             git_write(checkout(git, &op.path, &op.red, git_timeout)).map_err(ProofError::Failed)?;
-            let (outcome, _) = run_matching(&op.path, setup, &op.env, timeout, None, confined);
+            let (outcome, _) =
+                run_matching(&op.path, setup, (&op.env, &[]), timeout, None, confined);
             if !outcome.ok {
                 return Err(ProofError::SetupFailed {
                     output: with_timeout_note(outcome),
@@ -155,7 +156,14 @@ pub fn run_proof(
     }
 
     git_write(checkout(git, &op.path, &op.red, git_timeout)).map_err(ProofError::Failed)?;
-    let (red, _) = run_matching(&op.path, &op.command, &op.env, timeout, None, confined);
+    let (red, _) = run_matching(
+        &op.path,
+        &op.command,
+        (&op.env, &[]),
+        timeout,
+        None,
+        confined,
+    );
     let mut runs = ProofRuns {
         red_failed: !red.ok && !red.timed_out,
         ..ProofRuns::default()
@@ -169,7 +177,7 @@ pub fn run_proof(
     let (head, matched) = run_matching(
         &op.path,
         &op.command,
-        &op.env,
+        (&op.env, &[]),
         timeout,
         Some(&pattern),
         confined,

@@ -110,7 +110,14 @@ fn run_one(
     confine: Option<&ConfineSpec>,
 ) -> (ShellOutcome, bool) {
     match confine.map(|spec| spec.for_checkout(dir)).transpose() {
-        Ok(confinement) => run_matching(dir, command, env, timeout, pattern, confinement.as_ref()),
+        Ok(confinement) => run_matching(
+            dir,
+            command,
+            (env, &[]),
+            timeout,
+            pattern,
+            confinement.as_ref(),
+        ),
         Err(error) => (ShellOutcome::refused(error), false),
     }
 }

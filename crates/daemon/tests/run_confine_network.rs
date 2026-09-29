@@ -110,7 +110,7 @@ fn confined_network_alone_reaches_no_local_service() {
         lookup_probe(&["com.apple.SecurityServer"])
     );
 
-    let outcome = run_confined(&task, &command, &[], LONG, Some(&confinement));
+    let outcome = run_confined(&task, &command, &[], &[], LONG, Some(&confinement));
     for name in ["service", "daemon", "loopback"] {
         assert!(
             outcome.tail.contains(&format!("{name} denied")),
@@ -158,7 +158,7 @@ fn confined_network_keeps_remote_ip_and_name_resolution() {
     assert!(!profile.contains("(allow network*)"), "{profile}");
     let command =
         "python3 -c \"import socket; socket.getaddrinfo('localhost', 80); print('resolved')\"";
-    let outcome = run_confined(&task, command, &[], LONG, Some(&confinement));
+    let outcome = run_confined(&task, command, &[], &[], LONG, Some(&confinement));
     assert!(outcome.tail.contains("resolved"), "{}", outcome.tail);
 
     // Off, the profile has no IP rule at all.
@@ -198,7 +198,7 @@ fn listed_unix_sockets_and_localhost_ports_are_the_only_local_services() {
                 ("closed-port", closed_port.local_addr().unwrap().port()),
             ],
         );
-        let outcome = run_confined(&task, &command, &[], LONG, Some(&confinement));
+        let outcome = run_confined(&task, &command, &[], &[], LONG, Some(&confinement));
         for (name, verdict) in [
             ("listed", "connected"),
             ("other", "denied"),

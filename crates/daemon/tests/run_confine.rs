@@ -50,7 +50,7 @@ fn a_confined_check_writes_only_its_checkout_tmp_objects_and_caches() {
     );
     let env = vec![("HOME".to_string(), home.display().to_string())];
 
-    let outcome = run_confined(&task, &command, &env, LONG, Some(&confinement));
+    let outcome = run_confined(&task, &command, &env, &[], LONG, Some(&confinement));
     assert!(outcome.ok, "{outcome:?}");
     assert!(outcome.tail.ends_with("allowed"), "{}", outcome.tail);
     assert!(
@@ -77,7 +77,7 @@ fn a_confined_check_writes_only_its_checkout_tmp_objects_and_caches() {
     assert!(objects.join("allowed").is_file());
 
     // Unconfined, the same command reaches them: the test's payloads are live.
-    let outcome = run_confined(&task, &attacks(&w.common()), &env, LONG, None);
+    let outcome = run_confined(&task, &attacks(&w.common()), &env, &[], LONG, None);
     assert!(outcome.ok, "{outcome:?}");
     assert!(w.common().join("objects/pwned").exists());
     assert!(home.join("pwned").exists());
@@ -105,7 +105,7 @@ fn a_confined_integration_check_cannot_write_its_git_dir() {
         admin = admin.display()
     );
     let head_before = std::fs::read(admin.join("HEAD")).unwrap();
-    let outcome = run_confined(&integration, &command, &[], LONG, Some(&confinement));
+    let outcome = run_confined(&integration, &command, &[], &[], LONG, Some(&confinement));
     assert!(outcome.ok, "{outcome:?}");
     assert_eq!(std::fs::read(admin.join("HEAD")).unwrap(), head_before);
     assert!(integration.join("built.txt").is_file());
@@ -212,6 +212,7 @@ fn a_confined_command_that_times_out_is_killed_with_its_group() {
         &task,
         "sleep 30 & sleep 30",
         &[],
+        &[],
         timeout,
         Some(&confinement),
     );
@@ -271,7 +272,7 @@ fn a_confined_check_cannot_connect_to_a_socket_outside_its_writable_dirs() {
         ins = inside.display(),
     );
 
-    let outcome = run_confined(&task, &command, &[], LONG, Some(&confinement));
+    let outcome = run_confined(&task, &command, &[], &[], LONG, Some(&confinement));
     assert!(outcome.ok, "{outcome:?}");
     assert!(
         outcome
@@ -312,7 +313,7 @@ fn a_confined_check_cannot_submit_a_launchd_job() {
         "launchctl submit -l {label} -- /usr/bin/touch {marker}; echo submit=$?",
         marker = marker.display()
     );
-    let outcome = run_confined(&task, &command, &[], LONG, Some(&confinement));
+    let outcome = run_confined(&task, &command, &[], &[], LONG, Some(&confinement));
     // Give any job that did slip through a moment, then clean it up by exact label.
     std::thread::sleep(Duration::from_millis(500));
     let ran = marker.exists();

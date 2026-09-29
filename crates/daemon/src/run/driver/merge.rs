@@ -101,6 +101,7 @@ pub(super) async fn candidate(
                     &at,
                     &check,
                     &env,
+                    &[],
                     timeout,
                     confine.as_deref(),
                 ))

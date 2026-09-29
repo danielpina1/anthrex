@@ -47,7 +47,7 @@ fn a_confined_command_cannot_write_protected_agent_config() {
     }
     command.push_str("printf ok > built.txt && printf ok > sub/notes.md && echo done");
 
-    let outcome = run_confined(&task, &command, &[], LONG, Some(&confinement));
+    let outcome = run_confined(&task, &command, &[], &[], LONG, Some(&confinement));
     assert!(outcome.ok, "{outcome:?}");
     assert!(!outcome.tail.contains("WROTE"), "{}", outcome.tail);
     assert!(outcome.tail.ends_with("done"), "{}", outcome.tail);
@@ -79,6 +79,7 @@ fn a_confined_command_cannot_write_protected_agent_config() {
     let outcome = run_confined(
         &task,
         "printf x > CLAUDE.md && mkdir .codex",
+        &[],
         &[],
         LONG,
         None,
@@ -118,7 +119,7 @@ fn a_confined_command_cannot_write_protected_agent_config_in_another_case() {
     }
     command.push_str("printf ok > built.txt && echo done");
 
-    let outcome = run_confined(&task, &command, &[], LONG, Some(&confinement));
+    let outcome = run_confined(&task, &command, &[], &[], LONG, Some(&confinement));
     assert!(outcome.ok, "{outcome:?}");
     assert!(!outcome.tail.contains("WROTE"), "{}", outcome.tail);
     assert!(outcome.tail.ends_with("done"), "{}", outcome.tail);
@@ -177,7 +178,7 @@ fn a_confined_command_may_install_and_remove_dependencies_that_ship_agent_files(
     }
     command.push_str("echo done");
 
-    let outcome = run_confined(&task, &command, &[], LONG, Some(&confinement));
+    let outcome = run_confined(&task, &command, &[], &[], LONG, Some(&confinement));
     assert!(outcome.ok, "{outcome:?}");
     assert!(!outcome.tail.contains("WROTE"), "{}", outcome.tail);
     assert!(outcome.tail.ends_with("done"), "{}", outcome.tail);

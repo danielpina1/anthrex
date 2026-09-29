@@ -22,7 +22,7 @@ const LONG: Duration = Duration::from_secs(60);
 
 fn shell(command: &str) -> ShellOutcome {
     let dir = tempfile::tempdir().unwrap();
-    run_shell(dir.path(), command, &[], LONG)
+    run_shell(dir.path(), command, &[], &[], LONG)
 }
 
 #[test]
@@ -87,6 +87,7 @@ fn check_timeout_kills_the_process_group() {
         dir.path(),
         &format!("sleep 30 & echo $! > '{}'; wait", bg.display()),
         &[],
+        &[],
         timeout,
     );
     let elapsed = started.elapsed();
@@ -123,6 +124,7 @@ fn a_check_that_exits_leaves_no_background_process_behind() {
     let outcome = run_shell(
         dir.path(),
         &format!("sleep 120 & echo $! > '{}'; echo done", bg.display()),
+        &[],
         &[],
         LONG,
     );
@@ -165,6 +167,7 @@ fn check_tail_survives_invalid_utf8_and_huge_lines() {
         dir.path(),
         "cat ascii; cat wide; cat bad; cat emoji; echo end",
         &[],
+        &[],
         LONG,
     );
     assert!(outcome.ok, "{outcome:?}");
@@ -200,6 +203,7 @@ fn check_timeout_holds_under_an_output_flood() {
         dir.path(),
         "for i in 1 2 3 4 5 6 7 8; do yes '' & done; wait",
         &[],
+        &[],
         timeout,
     );
     let elapsed = started.elapsed();
@@ -224,6 +228,7 @@ fn output_grace_is_a_hard_cap_for_a_writer_that_left_the_group() {
              close $f; exec \"yes\", \"\"' '{}' & echo done",
             pidfile.display()
         ),
+        &[],
         &[],
         LONG,
     );

@@ -93,7 +93,7 @@ impl RunService {
             OpKind::Decide {
                 task_ids, request, ..
             } => self.decide_as(ctx, Some((op, task_ids)), request).await,
-            kind => super::ops::run(self, ctx, kind).await,
+            kind => super::ops::run(self, ctx, op, kind).await,
         }
     }
 

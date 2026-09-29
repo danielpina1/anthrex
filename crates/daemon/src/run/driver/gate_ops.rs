@@ -86,9 +86,17 @@ pub(super) async fn check(
                     return failed(error);
                 }
                 let (at, env, confine) = (dir.clone(), env.clone(), ctx.confine.clone());
-                let outcome =
-                    blocking(move || Ok(confined(&at, &setup, &env, timeout, confine.as_deref())))
-                        .await;
+                let outcome = blocking(move || {
+                    Ok(confined(
+                        &at,
+                        &setup,
+                        &env,
+                        &[],
+                        timeout,
+                        confine.as_deref(),
+                    ))
+                })
+                .await;
                 match outcome {
                     Ok(outcome) if !outcome.ok => {
                         return OpResult::SetupFailed {
@@ -117,7 +125,18 @@ pub(super) async fn check(
         }
     }
     let confine = ctx.confine.clone();
-    match blocking(move || Ok(confined(&dir, &command, &env, timeout, confine.as_deref()))).await {
+    match blocking(move || {
+        Ok(confined(
+            &dir,
+            &command,
+            &env,
+            &[],
+            timeout,
+            confine.as_deref(),
+        ))
+    })
+    .await
+    {
         Ok(outcome) => OpResult::Check {
             ok: outcome.ok,
             code: outcome.code,

@@ -92,15 +92,17 @@ impl ShellOutcome {
 }
 
 /// Runs `command` in `dir` under decision 34's rules: its own process group, stdin
-/// `/dev/null`, stderr merged into stdout, decision 26's environment plus `env`, and
-/// `SIGKILL` for the whole group on timeout or once it has finished.
+/// `/dev/null`, stderr merged into stdout, decision 26's environment plus `env`, then
+/// `extra` (milestone 9.1 decision 26: the slot and isolation variables, which win),
+/// and `SIGKILL` for the whole group on timeout or once it has finished.
 pub fn run_shell(
     dir: &Path,
     command: &str,
     env: &[(String, String)],
+    extra: &[(String, String)],
     timeout: Duration,
 ) -> ShellOutcome {
-    run_matching(dir, command, env, timeout, None, None).0
+    run_matching(dir, command, (env, extra), timeout, None, None).0
 }
 
 /// [`run_shell`] under `confine` when it is set (final fix batch F1c, I2; see
@@ -112,10 +114,11 @@ pub fn run_confined(
     dir: &Path,
     command: &str,
     env: &[(String, String)],
+    extra: &[(String, String)],
     timeout: Duration,
     confine: Option<&Confinement>,
 ) -> ShellOutcome {
-    run_matching(dir, command, env, timeout, None, confine).0
+    run_matching(dir, command, (env, extra), timeout, None, confine).0
 }
 
 /// Removes decision 26's agent variables and AGENTS.md rule 11's git variables from
@@ -123,7 +126,7 @@ pub fn run_confined(
 /// variable is removed too (F1c round 3, N1): a confined command runs code the workers
 /// wrote, so it must not be handed the daemon's own coordinates (`ANTHREX_SOCKET`,
 /// `ANTHREX_DATA_DIR`), even though the sandbox already denies the connection.
-fn engine_env(command: &mut Command, env: &[(String, String)], confined: bool) {
+fn engine_env(command: &mut Command, (env, extra): Env<'_>, confined: bool) {
     use config::reserved_env::{SCRUBBED_NAMES, SCRUBBED_PREFIXES};
     scrub_git_location_env(command);
     for (key, _) in std::env::vars_os() {
@@ -154,10 +157,16 @@ fn engine_env(command: &mut Command, env: &[(String, String)], confined: bool) {
             }
         }
     }
-    for (key, value) in env {
+    for (key, value) in env.iter().chain(extra) {
         command.env(key, value);
     }
 }
+
+/// What a run matches its output lines against, and whom it hands them to.
+type Observe<'a> = (Option<&'a Regex>, Option<&'a mut dyn FnMut(&str)>);
+
+/// A command's profile `env`, then its `extra` (set last, so it wins).
+pub(crate) type Env<'a> = (&'a [(String, String)], &'a [(String, String)]);
 
 /// [`run_shell`], also reporting whether any whole output line matched `pattern` (the
 /// proof's `test_passed`, decision 33). Every line is tested as it is read, so a match
@@ -165,9 +174,34 @@ fn engine_env(command: &mut Command, env: &[(String, String)], confined: bool) {
 pub(crate) fn run_matching(
     dir: &Path,
     command: &str,
-    env: &[(String, String)],
+    env: Env<'_>,
     timeout: Duration,
     pattern: Option<&Regex>,
+    confine: Option<&Confinement>,
+) -> (ShellOutcome, bool) {
+    run_observed(dir, command, env, timeout, (pattern, None), confine)
+}
+
+/// [`run_confined`] handing every whole output line (up to 64 KiB of it, one trailing
+/// `\r` removed) to `on_line` as it is read: milestone 9.1 decision 32 reads failing
+/// test names from a red step's whole output, not only its tail.
+pub(crate) fn run_lines(
+    dir: &Path,
+    command: &str,
+    env: Env<'_>,
+    timeout: Duration,
+    confine: Option<&Confinement>,
+    on_line: &mut dyn FnMut(&str),
+) -> ShellOutcome {
+    run_observed(dir, command, env, timeout, (None, Some(on_line)), confine).0
+}
+
+fn run_observed<'a>(
+    dir: &Path,
+    command: &str,
+    env: Env<'_>,
+    timeout: Duration,
+    (pattern, on_line): Observe<'a>,
     confine: Option<&Confinement>,
 ) -> (ShellOutcome, bool) {
     let started = Instant::now();
@@ -222,6 +256,10 @@ pub(crate) fn run_matching(
     let pid = child.id() as libc::pid_t;
 
     let mut sink = LineTail::new(pattern);
+    if on_line.is_some() {
+        sink.keep = MATCH_LINE_BYTES;
+    }
+    sink.on_line = on_line;
     let mut eof = match set_nonblocking(&reader) {
         Ok(()) => false,
         Err(error) => {
@@ -409,6 +447,7 @@ struct LineTail<'a> {
     keep: usize,
     pattern: Option<&'a Regex>,
     matched: bool,
+    on_line: Option<&'a mut dyn FnMut(&str)>,
 }
 
 impl<'a> LineTail<'a> {
@@ -424,6 +463,7 @@ impl<'a> LineTail<'a> {
             },
             pattern,
             matched: false,
+            on_line: None,
         }
     }
 
@@ -458,6 +498,9 @@ impl<'a> LineTail<'a> {
             && pattern.is_match(&text)
         {
             self.matched = true;
+        }
+        if let Some(on_line) = self.on_line.as_mut() {
+            on_line(&text);
         }
         let cut: String = text.chars().take(LINE_MAX_CHARS).collect();
         self.lines.push_back(cut);

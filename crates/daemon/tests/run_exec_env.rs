@@ -62,6 +62,7 @@ fn engine_commands_get_the_profile_env_and_lose_agent_variables() {
         &worktree,
         "env | grep -E '^(CLAUDE|ANTHREX|CARGO_TARGET_DIR)'; true",
         &env,
+        &[],
         Duration::from_secs(60),
     );
     assert!(outcome.ok, "{outcome:?}");
@@ -93,14 +94,14 @@ fn engine_commands_get_the_profile_env_and_lose_agent_variables() {
         "SHELLOPTS=",
     ];
     for (entry, outcome) in [
-        ("run_shell", run_shell(&worktree, probe, &env, t)),
+        ("run_shell", run_shell(&worktree, probe, &env, &[], t)),
         (
             "run_confined",
-            daemon::run::exec::run_confined(&worktree, probe, &env, t, None),
+            daemon::run::exec::run_confined(&worktree, probe, &env, &[], t, None),
         ),
         (
             "confined",
-            daemon::run::confine::confined(&worktree, probe, &env, t, None),
+            daemon::run::confine::confined(&worktree, probe, &env, &[], t, None),
         ),
     ] {
         assert!(outcome.ok, "{entry}: {outcome:?}");

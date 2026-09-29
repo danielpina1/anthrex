@@ -20,8 +20,11 @@ pub mod cache_key;
 pub mod command;
 pub mod failing;
 pub mod graph;
+pub mod spec;
 pub mod steps;
 pub mod weakening;
+
+pub use spec::{StepOutcome, TestAtSpec, TierOutcome, TierSpec};
 
 #[cfg(test)]
 mod affected_tests;

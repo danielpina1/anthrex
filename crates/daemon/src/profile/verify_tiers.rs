@@ -46,7 +46,17 @@ fn run(
     confine: Option<&ConfineSpec>,
 ) -> ShellOutcome {
     match confine.map(|spec| spec.for_checkout(dir)).transpose() {
-        Ok(confinement) => run_matching(dir, command, env, timeout, None, confinement.as_ref()).0,
+        Ok(confinement) => {
+            run_matching(
+                dir,
+                command,
+                (env, &[]),
+                timeout,
+                None,
+                confinement.as_ref(),
+            )
+            .0
+        }
         Err(error) => ShellOutcome::refused(error),
     }
 }
@@ -84,7 +94,7 @@ pub(crate) fn capture(
         "{{ {command}\n}} > {}",
         shell_quote(&file.to_string_lossy())
     );
-    let (outcome, _) = run_matching(dir, &shell, env, timeout, None, confinement.as_ref());
+    let (outcome, _) = run_matching(dir, &shell, (env, &[]), timeout, None, confinement.as_ref());
     let mut text = String::new();
     let read =
         std::fs::File::open(&file).and_then(|f| f.take(GRAPH_BYTES_MAX).read_to_string(&mut text));

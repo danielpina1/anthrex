@@ -420,6 +420,8 @@ pub fn op_name(kind: &OpKind) -> &'static str {
         OpKind::StartScout { .. } => "StartScout",
         OpKind::ResolveTarget { .. } => "ResolveTarget",
         OpKind::StartPlanner { .. } => "StartPlanner",
+        OpKind::Tier(_) => "Tier",
+        OpKind::TestAt(_) => "TestAt",
     }
 }
 

@@ -8,13 +8,14 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{DONE_CHECK_GIT_TIMEOUT, OpCtx, RunService, cleanup, merge};
+use super::{DONE_CHECK_GIT_TIMEOUT, OpCtx, RunService, cleanup, merge, tier};
 use crate::headless::{HeadlessSpec, SessionArg};
 use crate::run::confine::confined;
 use crate::run::engine::{EventKind, OpKind, OpResult, ResolutionAt};
 use crate::run::exec::ShellOutcome;
 use crate::run::git::{self, RefCheck, RefreshedIn};
 use crate::run::globs::{OwnsMatcher, ProtectedMatcher};
+use crate::run::model::OpId;
 use crate::run::proof::ProofOp;
 use crate::run::role_launch::worker_git_roots;
 use proto::AgentRole;
@@ -88,7 +89,17 @@ impl RunService {
             return OpResult::Worktree { head };
         };
         let (dir, timeout, confine) = (dir.to_path_buf(), ctx.check_timeout, ctx.confine.clone());
-        match blocking(move || Ok(confined(&dir, &setup, &env, timeout, confine.as_deref()))).await
+        match blocking(move || {
+            Ok(confined(
+                &dir,
+                &setup,
+                &env,
+                &[],
+                timeout,
+                confine.as_deref(),
+            ))
+        })
+        .await
         {
             Ok(outcome) if outcome.ok => OpResult::Worktree { head },
             Ok(outcome) => OpResult::SetupFailed {
@@ -154,8 +165,13 @@ async fn worker_git_dirs(
     Ok(())
 }
 
-/// Executes `kind` for the run of `ctx`.
-pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) -> OpResult {
+/// Executes `kind`, op `op`, for the run of `ctx`.
+pub(super) async fn run(
+    service: &Arc<RunService>,
+    ctx: &OpCtx,
+    op: OpId,
+    kind: OpKind,
+) -> OpResult {
     let git = service.git();
     let t = ctx.git_timeout;
     match kind {
@@ -437,6 +453,15 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
         | OpKind::StartScout { .. }
         | OpKind::StartPlanner { .. }
         | OpKind::ResolveTarget { .. }) => super::orch_ops::run(service, ctx, kind).await,
+        // Milestone 9.1 (task M9.1.9): a tier job and a bisect probe.
+        OpKind::Tier(spec) => {
+            let (sched, queue) = (service.scheduler(), &service.queue);
+            tier::run_tier(ctx, sched, queue, &git, op, &spec).await
+        }
+        OpKind::TestAt(spec) => {
+            let (sched, queue) = (service.scheduler(), &service.queue);
+            tier::run_test_at(ctx, sched, queue, &git, op, &spec).await
+        }
     }
 }
 

@@ -303,6 +303,12 @@ pub enum OpKind {
     StartPlanner {
         spec: Box<crate::scout::planner::PlannerSpec>,
     },
+    /// Milestone 9.1 decisions 14 and 18: one tier job (`driver/tier.rs::run_tier`),
+    /// a read, reconciled `NotStarted`. The result is `Tier`, `SetupFailed` or `Failed`.
+    Tier(Box<crate::run::tiers::TierSpec>),
+    /// Decision 36: one bisect probe (`driver/tier.rs::run_test_at`), a read,
+    /// reconciled `NotStarted`. The result is `TestAt`, `SetupFailed` or `Failed`.
+    TestAt(Box<crate::run::tiers::TestAtSpec>),
 }
 
 impl OpKind {
@@ -335,6 +341,8 @@ impl OpKind {
             OpKind::StartScout { .. } => "StartScout",
             OpKind::ResolveTarget { .. } => "ResolveTarget",
             OpKind::StartPlanner { .. } => "StartPlanner",
+            OpKind::Tier(_) => "Tier",
+            OpKind::TestAt(_) => "TestAt",
         }
     }
 }
@@ -507,5 +515,16 @@ pub enum OpResult {
     /// `StartPlanner`'s sub-planner window.
     PlannerStarted {
         window_id: u32,
+    },
+    /// Milestone 9.1: a tier job's outcome.
+    Tier(Box<crate::run::tiers::TierOutcome>),
+    /// Decision 36: a probe is `red` when a command failed twice; `failing` are those
+    /// commands, `tail` the last red run's output, `show` the probed merge's
+    /// `show --stat` (task M9.1.15).
+    TestAt {
+        red: bool,
+        failing: Vec<String>,
+        tail: String,
+        show: Option<String>,
     },
 }

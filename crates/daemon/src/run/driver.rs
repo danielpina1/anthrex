@@ -35,6 +35,8 @@ mod orch_ops;
 mod refresh;
 mod requests;
 mod restore;
+mod tier;
+pub mod tier_step;
 mod usage;
 mod wake;
 
