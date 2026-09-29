@@ -38,6 +38,7 @@ fn an_unconfined_step_never_sees_the_daemons_socket_or_data_dir() {
         common,
         base: base.clone(),
         name: "s9-1".to_string(),
+        collect: true,
     };
     let ran = run_isolated(&step);
     let _ = std::fs::remove_dir_all(&base);
@@ -52,9 +53,5 @@ fn an_unconfined_step_never_sees_the_daemons_socket_or_data_dir() {
             format!("data={}", tmp.join("data").display()),
         ]
     );
-    assert_eq!(
-        ran.lines.unwrap(),
-        lines,
-        "every line is read, not only the tail"
-    );
+    assert_eq!(ran.names, Some(Vec::new()), "read, and no test failed");
 }

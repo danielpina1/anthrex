@@ -312,6 +312,57 @@ async fn steps_run_in_plan_order_each_holding_its_slots() {
     );
 }
 
+/// The modules each `test <m>` line of the log names, in order.
+fn tested(log: &[String]) -> Vec<String> {
+    log.iter()
+        .filter_map(|l| l.strip_prefix("test "))
+        .map(|l| l.split(' ').next().unwrap_or("").to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn no_check_runs_every_modules_tests_on_a_full_set_with_a_known_graph() {
+    // Ruling C-5, pinned. A full trigger with no `check` and a known graph: build, then
+    // the tests of every module of the graph.
+    let rig = Rig::new();
+    let profile = TierProfile {
+        full_triggers: vec!["mods/b/**".to_string()],
+        ..tiered()
+    };
+    let outcome = rig.tier(1, &rig.spec(profile.clone(), None)).await;
+    assert!(outcome.ok, "{outcome:?}");
+    assert_eq!(
+        outcome.affected,
+        Affected::Modules(["a", "b", "c"].iter().map(|s| s.to_string()).collect())
+    );
+    let log = rig.log();
+    assert!(log[0].starts_with("build "), "{log:#?}");
+    assert_eq!(tested(&log), ["a", "b", "c"], "{log:#?}");
+
+    // With `check`, the full set runs `check` alone.
+    let rig = Rig::new();
+    let outcome = rig.tier(1, &rig.spec(profile, Some("sh check.sh"))).await;
+    assert!(outcome.ok, "{outcome:?}");
+    assert!(matches!(outcome.affected, Affected::Full(_)), "{outcome:?}");
+    let log = rig.log();
+    assert_eq!(log.len(), 1, "{log:#?}");
+    assert!(log[0].starts_with("check "), "{log:#?}");
+
+    // No `check` and an unknown graph: build_check alone.
+    let rig = Rig::new();
+    let profile = TierProfile {
+        module_graph: GraphSource::Command("exit 3".to_string()),
+        ..tiered()
+    };
+    let outcome = rig.tier(1, &rig.spec(profile, None)).await;
+    assert!(outcome.ok, "{outcome:?}");
+    assert!(matches!(outcome.affected, Affected::Full(_)), "{outcome:?}");
+    assert!(outcome.graph_note.is_some());
+    let log = rig.log();
+    assert_eq!(log.len(), 1, "{log:#?}");
+    assert!(log[0].starts_with("build "), "{log:#?}");
+}
+
 #[tokio::test]
 async fn step_environment_puts_the_socket_and_data_dir_under_its_tmpdir() {
     let rig = Rig::new();

@@ -325,3 +325,64 @@ fn a_confined_check_cannot_submit_a_launchd_job() {
         "launchctl submit ran the job unsandboxed: {outcome:?}"
     );
 }
+
+/// Milestone 9.1 decision 28 (task M9.1.9, review minor 4): a tier step run confined
+/// can write its own `TMPDIR`, make `$ANTHREX_DATA_DIR` and bind `$ANTHREX_SOCKET`,
+/// all under that `TMPDIR`, but cannot reach the daemon's socket; its directory is
+/// removed afterwards. The "daemon" is this test's own listener at the confinement's
+/// stand-in socket path, never a real daemon's.
+#[test]
+fn a_confined_tier_step_binds_its_own_socket_and_not_the_daemons() {
+    use daemon::run::driver::tier_step::{StepCommand, run_isolated, step_base};
+    use std::os::unix::net::UnixListener;
+
+    let w = world();
+    let task = w.task();
+    let spec = w.spec(&[]);
+    let daemon = UnixListener::bind(&spec.daemon_socket).unwrap();
+    daemon.set_nonblocking(true).unwrap();
+    let probe = format!(
+        "python3 - <<'PY'\n\
+         import os, socket\n\
+         t = os.environ['TMPDIR']\n\
+         open(os.path.join(t, 'w'), 'w').write('x'); print('tmp-writable')\n\
+         os.makedirs(os.environ['ANTHREX_DATA_DIR']); print('data-made')\n\
+         s = socket.socket(socket.AF_UNIX); s.bind(os.environ['ANTHREX_SOCKET']); s.listen(1)\n\
+         print('bound')\n\
+         c = socket.socket(socket.AF_UNIX)\n\
+         try:\n\
+         \x20   c.connect({daemon:?}); print('daemon-reached')\n\
+         except OSError as e:\n\
+         \x20   print('daemon-denied')\n\
+         PY",
+        daemon = spec.daemon_socket.display().to_string(),
+    );
+    let base = step_base(&w.data, &task);
+    let step = StepCommand {
+        dir: task.clone(),
+        command: probe,
+        env: Vec::new(),
+        slots: Vec::new(),
+        timeout: LONG,
+        confine: Some(spec.clone()),
+        common: w.common(),
+        base: base.clone(),
+        name: "s1-1".to_string(),
+        collect: false,
+    };
+    let ran = run_isolated(&step);
+    let tmp = base.join("s1-1");
+    let exists = tmp.exists();
+    let accepted = daemon.accept().is_ok();
+    let _ = std::fs::remove_dir_all(&base);
+    assert!(ran.outcome.ok, "{:?}", ran.outcome);
+    let lines: Vec<&str> = ran.outcome.tail.lines().collect();
+    assert_eq!(
+        lines,
+        ["tmp-writable", "data-made", "bound", "daemon-denied"],
+        "{}",
+        ran.outcome.tail
+    );
+    assert!(!accepted, "the daemon's socket was reached");
+    assert!(!exists, "the step directory is removed: {}", tmp.display());
+}

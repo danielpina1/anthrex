@@ -138,3 +138,23 @@ async fn red_step_reports_failing_names_and_a_tail() {
     assert_eq!(outcome.tail, expected.join("\n"));
     assert!(summary(&outcome.tail).ends_with("finished in 0.00s"));
 }
+
+#[tokio::test]
+async fn output_past_the_cap_has_no_names_and_is_retried_whole() {
+    // Review item 1 and minor 3: a named failure, then a million empty lines. Each kept
+    // line costs its heap and its `String`, so this passes the cap: the names may be
+    // incomplete, so there are none, and the whole step runs again (no `single_test`).
+    let rig = Rig::new();
+    let mut out = libtest(&["tests::x"]);
+    out.push_str(&"\n".repeat(1_000_000));
+    rig.state("out-b-1", &out);
+    rig.state("code-b-1", "101");
+    let outcome = rig.tier(1, &rig.spec(tiered(), None)).await;
+    assert!(outcome.ok, "{:?}", outcome.steps);
+    let b = &outcome.steps[1];
+    assert!(b.retried, "{b:?}");
+    assert!(b.flaky.is_empty(), "no names past the cap: {b:?}");
+    let log = rig.log();
+    assert!(!log.iter().any(|l| l.starts_with("one ")), "{log:#?}");
+    assert_eq!(log.iter().filter(|l| l.starts_with("test b ")).count(), 2);
+}

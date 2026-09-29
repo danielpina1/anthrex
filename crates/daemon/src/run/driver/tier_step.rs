@@ -31,8 +31,10 @@ use crate::run::slots::{Priority, SlotGrant, SlotRequest, TestScheduler, Want};
 use crate::run::tiers::failing::names;
 use crate::run::tiers::{RETRY_NAMES_MAX, Step, StepKind, StepOutcome, TierSpec};
 
-/// The most output bytes a step keeps for failing-test names; past it the step has no
-/// names (decision 32: a list that may be incomplete is none), so it is retried whole.
+/// The most memory a step's kept output may take while its failing-test names are read:
+/// each line counts its bytes and its `String` (review item 1: counting bytes alone let
+/// 16 MiB of empty lines hold hundreds of megabytes). Past it the step has no names
+/// (decision 32: a list that may be incomplete is none), so it is retried whole.
 pub const OUTPUT_BYTES_MAX: usize = 16 * 1024 * 1024;
 
 /// The three variables decision 28 sets on every command, for the directory `tmp`.
@@ -69,14 +71,18 @@ pub struct StepCommand {
     pub base: PathBuf,
     /// The directory's name under `base`: `s<op>-<step>`.
     pub name: String,
+    /// Read the failing-test names from the whole output (a tiered test step). An
+    /// untiered check keeps only M8a's 200-line tail.
+    pub collect: bool,
 }
 
 /// What one command did.
 #[derive(Debug, Clone)]
 pub struct StepRun {
     pub outcome: ShellOutcome,
-    /// Every output line, or `None` when they passed [`OUTPUT_BYTES_MAX`].
-    pub lines: Option<Vec<String>>,
+    /// The failing-test names of the whole output, read on this blocking thread; `None`
+    /// when not collected or past [`OUTPUT_BYTES_MAX`].
+    pub names: Option<Vec<String>>,
 }
 
 /// Runs `step` in a fresh `<base>/<name>`, removed afterwards. A directory that cannot
@@ -84,7 +90,7 @@ pub struct StepRun {
 pub fn run_isolated(step: &StepCommand) -> StepRun {
     let refused = |reason: String| StepRun {
         outcome: ShellOutcome::refused(reason),
-        lines: Some(Vec::new()),
+        names: None,
     };
     let tmp = match fresh_dir(&step.common, &step.base, &step.name) {
         Ok(tmp) => tmp,
@@ -100,10 +106,13 @@ pub fn run_isolated(step: &StepCommand) -> StepRun {
     };
     let mut extra = step.slots.clone();
     extra.extend(isolation_env(&tmp));
-    let mut lines = Some(Vec::new());
+    let mut lines = step.collect.then(Vec::new);
     let mut bytes = 0usize;
     let mut on_line = |line: &str| {
-        bytes = bytes.saturating_add(line.len() + 1);
+        if lines.is_none() {
+            return;
+        }
+        bytes = bytes.saturating_add(line.len() + std::mem::size_of::<String>());
         if bytes > OUTPUT_BYTES_MAX {
             lines = None;
         } else if let Some(lines) = lines.as_mut() {
@@ -119,7 +128,8 @@ pub fn run_isolated(step: &StepCommand) -> StepRun {
         &mut on_line,
     );
     remove_dir(&tmp);
-    StepRun { outcome, lines }
+    let names = lines.map(|lines| names(lines.into_iter()));
+    StepRun { outcome, names }
 }
 
 /// `<base>/<name>`, made now (mode 0700) under the private `base`: whatever an earlier
@@ -282,12 +292,14 @@ impl<'a> Job<'a> {
         self.sched.acquire(req).await
     }
 
-    /// `command` in a fresh `<base>/s<op>-<step>`, holding `grant`.
+    /// `command` in a fresh `<base>/s<op>-<step>`, holding `grant`; with `collect`, its
+    /// failing-test names read on the blocking thread.
     pub(super) async fn run(
         &self,
         step: &str,
         command: &str,
         grant: &SlotGrant,
+        collect: bool,
     ) -> Result<StepRun, String> {
         let command = StepCommand {
             dir: self.dir.clone(),
@@ -299,6 +311,7 @@ impl<'a> Job<'a> {
             common: self.common.clone(),
             base: self.base.clone(),
             name: format!("s{}-{step}", self.op),
+            collect,
         };
         let bound = self.timeout + OUTPUT_GRACE * 2 + SLACK;
         bounded(bound, move || Ok(run_isolated(&command))).await
@@ -351,7 +364,10 @@ impl<'a> Job<'a> {
                     .await
                     .map_err(stop)?;
                 let grant = self.acquire(Want::One, false, "setup".to_string()).await;
-                let ran = self.run("setup", &setup, &grant).await.map_err(stop)?;
+                let ran = self
+                    .run("setup", &setup, &grant, false)
+                    .await
+                    .map_err(stop)?;
                 drop(grant);
                 if !ran.outcome.ok {
                     return Err(Box::new(OpResult::SetupFailed {
@@ -373,13 +389,9 @@ impl<'a> Job<'a> {
     }
 }
 
-/// The failing names in a run's whole output (none when it overflowed).
+/// A run's outcome and its failing names (none when not read or past the cap).
 fn names_of(run: StepRun) -> (ShellOutcome, Vec<String>) {
-    let found = run
-        .lines
-        .map(|lines| names(lines.into_iter()))
-        .unwrap_or_default();
-    (run.outcome, found)
+    (run.outcome, run.names.unwrap_or_default())
 }
 
 /// Step `k` of the job, with decision 33's retry (ruling C-7) when `tiered`. Returns
@@ -395,7 +407,11 @@ pub(super) async fn run_step(
     let label = || format!("tier {} step {k}", spec.tier);
     let want = want(spec.priority);
     let grant = job.acquire(want, step.exclusive, label()).await;
-    let (first, first_names) = names_of(job.run(&at, &step.command, &grant).await.map_err(stop)?);
+    let (first, first_names) = names_of(
+        job.run(&at, &step.command, &grant, tiered)
+            .await
+            .map_err(stop)?,
+    );
     let mut ran = StepOutcome {
         kind: step.kind,
         command: step.command.clone(),
@@ -426,7 +442,7 @@ pub(super) async fn run_step(
             // By name, holding the step's grant.
             for name in &first_names {
                 let one = job
-                    .run(&at, &proof_command(single, name), &grant)
+                    .run(&at, &proof_command(single, name), &grant, false)
                     .await
                     .map_err(stop)?;
                 ran.secs += one.outcome.secs;
@@ -436,12 +452,16 @@ pub(super) async fn run_step(
                 }
             }
             // Ruling C-7: the names are a speed-up, never the verdict.
-            job.run(&at, &step.command, &grant).await.map_err(stop)?
+            job.run(&at, &step.command, &grant, true)
+                .await
+                .map_err(stop)?
         }
         None => {
             drop(grant);
             let grant = job.acquire(want, step.exclusive, label()).await;
-            job.run(&at, &step.command, &grant).await.map_err(stop)?
+            job.run(&at, &step.command, &grant, true)
+                .await
+                .map_err(stop)?
         }
     };
     let (whole, whole_names) = names_of(whole);

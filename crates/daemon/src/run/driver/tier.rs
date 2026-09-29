@@ -286,12 +286,12 @@ pub(crate) async fn run_test_at(
     let (mut failing, mut tail) = (Vec::new(), String::new());
     for (n, command) in spec.commands.iter().enumerate() {
         let at = (n + 1).to_string();
-        let mut last = match job.run(&at, command, &grant).await {
+        let mut last = match job.run(&at, command, &grant, false).await {
             Ok(run) => run.outcome,
             Err(error) => return failed(error),
         };
         if !last.ok && !last.timed_out {
-            last = match job.run(&at, command, &grant).await {
+            last = match job.run(&at, command, &grant, false).await {
                 Ok(run) => run.outcome,
                 Err(error) => return failed(error),
             };
