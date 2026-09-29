@@ -224,6 +224,22 @@ fn summary_is_written_to_the_report() {
     assert_eq!(report.matches("\n## Tasks\n").count(), 1);
 }
 
+/// M9.16 (found end to end): the summary rewrites the report at once, so a `complete`
+/// run's `REPORT.md` opens with it before the user accepts or discards the run.
+#[test]
+fn a_summary_rewrites_the_report() {
+    let mut fx = launched(false);
+    fx.run_mut().state = RunState::Complete;
+    let effects = edit_plan(&mut fx, json!({"edits": [], "summary": "All done."}));
+    assert!(answer(&effects).0, "{effects:?}");
+    assert!(
+        effects
+            .iter()
+            .any(|e| matches!(e, Effect::WriteReport { run_id } if run_id == RUN_ID)),
+        "{effects:?}"
+    );
+}
+
 /// The user's `run edit`, with or without decision 13's user submit.
 fn user_edit(fx: &mut Fixture, edits: Vec<proto::PlanEdit>, submit: bool) -> Vec<Effect> {
     let reply = fx.reply();

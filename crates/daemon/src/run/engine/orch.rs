@@ -365,7 +365,7 @@ fn edit_plan(
             let text = "edits are not accepted on a complete run; only a summary is";
             return refuse(fx, reply, text);
         };
-        write_summary(run, summary, now);
+        write_summary(run, summary, now, fx);
         return accepted(run, reply, (Vec::new(), None, None), (now, base), fx);
     }
     // Decision 42: a `message` or `refresh` is alone in its call, before any effect.
@@ -411,7 +411,7 @@ fn edit_plan(
         return refuse(fx, reply, text);
     }
     if let Some(summary) = summary {
-        write_summary(&mut edited, summary, now);
+        write_summary(&mut edited, summary, now, &mut effects);
     }
     let notes = new_notes(run, &edited);
     *run = edited;
@@ -507,10 +507,15 @@ fn new_notes(before: &Run, after: &Run) -> Vec<String> {
     out
 }
 
-fn write_summary(run: &mut Run, summary: String, now: u64) {
+/// The report is rewritten at once (M9.16), so a `complete` run's opens with the summary
+/// before the user accepts or discards it.
+fn write_summary(run: &mut Run, summary: String, now: u64, fx: &mut Vec<Effect>) {
     if let Some(o) = run.orch.orchestrator.as_mut() {
         o.summary = Some(summary);
         log(run, now, "the orchestrator wrote its summary");
+        fx.push(Effect::WriteReport {
+            run_id: run.id.clone(),
+        });
     }
 }
 
