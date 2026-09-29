@@ -284,3 +284,20 @@ fn a_goal_that_was_not_sent_frees_the_form() {
         Some("the goal was not sent; press Enter to retry")
     );
 }
+
+/// M9.15 review: a goal's reply that finds its form closed (`Esc` while it waited) is
+/// still shown, as an edit's `Done` is.
+#[test]
+fn a_goal_reply_after_the_form_closed_is_toasted() {
+    let mut app = projects_app();
+    filled_form(&mut app);
+    let (id, _) = tagged(&tap(&mut app, KeyCode::Enter));
+    assert!(tap(&mut app, KeyCode::Esc).is_empty());
+    assert_eq!(app.modal, None);
+    app.toast("");
+    app.on_daemon(triaged(Some("r-new"), id));
+    assert_eq!(
+        app.toast_text(),
+        Some("planning run r-new: the orchestrator starts in a moment")
+    );
+}

@@ -214,8 +214,13 @@ impl App {
                 request_id,
                 ..
             } => {
+                // Review: a reply to this client's goal whose form was closed meanwhile
+                // is still shown. This client sends `StartGoal` only tagged, so an
+                // untagged `Triaged` is not its own and changes nothing (M8c).
                 if self.goal_form_waiting_on(request_id).is_some() {
                     self.goal_triaged(run_id, &message);
+                } else if request_id.is_some() {
+                    self.toast(capped(&message));
                 }
             }
             RunReply::Started { .. }

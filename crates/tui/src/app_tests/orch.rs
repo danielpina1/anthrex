@@ -207,5 +207,28 @@ fn a_toast_quoting_a_hold_id_is_sanitised() {
     assert!(tap(&mut app, KeyCode::Char('x')).is_empty());
     let toast = app.toast_text().expect("a toast");
     assert!(toast.starts_with("hold epic:a b"), "{toast:?}");
-    assert!(crate::safe_text::is_safe(toast), "{toast:?}");
+    assert_eq!(
+        crate::safe_text::tests::first_hostile(toast),
+        None,
+        "{toast:?}"
+    );
+}
+
+/// M9.15 review: while the run awaits approval, `a` and `x` are the plan gate's,
+/// even on a task that names a hold.
+#[test]
+fn the_gate_keys_win_while_the_run_awaits_approval() {
+    let (mut snapshot, windows) = held_fixture();
+    snapshot.runs[0].state = RunState::AwaitingApproval;
+    let mut app = app_with_runs(windows, snapshot);
+    open_run_view(&mut app, RUN_ID);
+    select(&mut app, task_key("t2"));
+    assert!(tap(&mut app, KeyCode::Char('a')).is_empty());
+    assert!(matches!(
+        &app.modal,
+        Some(Modal::Confirm {
+            action: PendingAction::ApproveRun(_),
+            ..
+        })
+    ));
 }

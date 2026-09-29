@@ -64,16 +64,17 @@ pub fn task_held(run: &RunInfo, task: &TaskInfo) -> bool {
 }
 
 /// Decision 9: the status a run contributes to its project's roll-up. Milestone 9: a
-/// hold awaiting approval asks for the user; a `paused(message)` task does not.
+/// hold awaiting approval asks for the user; a `paused(message)` task does not until
+/// the daemon lists it in the run's attention (after 600 s, decision 42c), since any
+/// line the daemon lists there asks for the user.
 pub fn run_status(run: &RunInfo) -> Status {
     let blocked = |task: &TaskInfo| task.state == TaskState::Blocked && !is_paused(task);
+    let asks = run.tasks.iter().any(blocked)
+        || awaiting_holds(run).next().is_some()
+        || !run.attention.is_empty();
     match run.state {
         RunState::AwaitingApproval | RunState::Paused | RunState::Halted => Status::Attention,
-        RunState::Running
-            if run.tasks.iter().any(blocked) || awaiting_holds(run).next().is_some() =>
-        {
-            Status::Attention
-        }
+        RunState::Running | RunState::Planning if asks => Status::Attention,
         RunState::Running | RunState::Planning => Status::Working,
         RunState::Complete | RunState::Accepted => Status::Done,
         // Terminal: never shown (decision 6), mapped only to keep the match exhaustive.

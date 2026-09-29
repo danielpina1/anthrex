@@ -4,7 +4,7 @@
 
 use super::run_tests::{app_of, inspect_node, pairs, value};
 use crate::app::App;
-use crate::safe_text::{self, tests::hostile_text};
+use crate::safe_text::tests::{first_hostile, hostile_text};
 use crate::theme;
 use crate::tree::orch_fixtures::{ORCH_NOW, held_fixture, hold, orch_fixture};
 use crate::tree::run_fixtures::{PROJECT, RUN_ID, headless, planner, run_ref, task};
@@ -318,7 +318,7 @@ fn task_notes_and_message_lines_render_sanitised() {
     assert!(rows.len() > 5, "{} rows", rows.len());
     for row in &rows {
         let text = crate::graph::content_text(row);
-        assert!(safe_text::is_safe(&text), "node {:?}: {text:?}", row.key);
+        assert_eq!(first_hostile(&text), None, "node {:?}: {text:?}", row.key);
         let inspection = crate::inspector::inspect(row, &app);
         let mut texts = vec![
             inspection.name.clone(),
@@ -326,7 +326,7 @@ fn task_notes_and_message_lines_render_sanitised() {
         ];
         texts.extend(inspection.fields.into_iter().map(|field| field.value));
         for text in texts {
-            assert!(safe_text::is_safe(&text), "{:?}: {text:?}", row.key);
+            assert_eq!(first_hostile(&text), None, "{:?}: {text:?}", row.key);
         }
     }
 }

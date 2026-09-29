@@ -3547,7 +3547,7 @@ Two commits: `refactor(tui): move the plan gate's keys and replies into their ow
   - `inspector/run_orch.rs` (new) holds the orchestrator row and a task's `messages` and `notes` rows, so `inspector/run.rs` (+15) and `inspector/run_task.rs` (+29) stay near their budgets.
   - `crates/tui/src/safe_text.rs` (new) is the sanitiser (below). `tree/tests/orch_fixtures.rs` (new) holds M9's fixtures, since `run_fixtures.rs` is 571 lines.
   - `app/run_enter.rs`, `app/headless.rs` and `inspector/run_round.rs` were not changed. Enter on the root already focuses the orchestrator (the pinning test `enter_on_the_root_focuses_the_orchestrator` passes unchanged). Decision 11's kill and remove refusal had landed in M9.10 (`kill_and_remove_of_a_live_orchestrator_open_nothing`, `app_tests/headless.rs`). The research label is in `tree/run_rows.rs::round_label`, which the round inspector already reads.
-- **Budgets passed** (every file stays under 600): `app/mod.rs` 499 → 520 (+3; a `Modal` variant, two `PendingAction` variants, two fields, the toast's sanitising, three `mod` lines); `theme.rs` +27 (+15; `task_look`); `tree/runs.rs` +30 (+15; `is_paused`, `awaiting_holds`, `task_held`); `ui/conversation.rs` +7 (+5; rustfmt spreads the `TurnHeader` pattern over three lines once it binds `turn_id`); `ui/modal.rs` +7 (+5; the help row and the confirm's sanitising). Within budget: `keymap.rs` +3, `tree/run_rows.rs` +1, `graph/run_text.rs` +6, `graph/paint/style.rs` −2, `inspector/run.rs` +15.
+- **Budgets passed** (every file stays under 600): `app/mod.rs` 499 → 520 (+3; a `Modal` variant, two `PendingAction` variants, two fields, the toast's sanitising, three `mod` lines); `theme.rs` +27 (+15; `task_look`); `tree/runs.rs` +30 (+15; `is_paused`, `awaiting_holds`, `task_held`); `ui/conversation.rs` +7 (+5; rustfmt spreads the `TurnHeader` pattern over three lines once it binds `turn_id`); `ui/modal.rs` +7 (+5; the help row and the confirm's sanitising). `inspector/run_task.rs` +29 (+25; the stage's `paused`/`held` words and the two new rows' calls; the rows themselves are in `inspector/run_orch.rs`). Within budget: `keymap.rs` +3, `tree/run_rows.rs` +1, `graph/run_text.rs` +6, `graph/paint/style.rs` −2, `inspector/run.rs` +15.
 - **State labels and glyphs.**
   - A `planning` run: the root's canvas text is `orchestrator  planning` (or `run <h4>  planning`) instead of `merged/total`. The inspector's header is `planning · <age>`. Its `gate` row is `planning · s submits the plan yourself`. The glyph keeps the working colour. The status bar hint is `s submit  j/k move  ⏎ open  f filter: <f>  esc back`.
   - `theme::task_look(state, gate_open, held, paused, animating, frame)` is the one place a task's glyph and colour come from (the canvas and the `deps` row). A held task (its hold `drafting` or `awaiting`) is `○` in the idle colour, and its stage gets ` · held` (for example `S · tdd · queued · held`). A `paused(message)` task is `‖` in `theme::PAUSED_COLOR` (`#cba6f7`, no status colour), and its stage is `paused (message)`. `Reported` keeps M9.2's `✓`, done colour and `reported`.
@@ -3622,3 +3622,30 @@ Two commits: `refactor(tui): move the plan gate's keys and replies into their ow
 
   `run_goal_tests.rs`, `safe_text`'s own tests and `ui/run_goal.rs`'s render test were written with their code.
 - **Verification.** `cargo test -p anthrex-tui` passes: 750 lib tests plus 6 and 1 in the integration binaries. `test_rigs_pin_agents` passes (2). The workspace build, `cargo fmt --all --check`, and `cargo +1.98 clippy --workspace --all-targets -D warnings` for the host and for `x86_64-unknown-linux-gnu` all pass. No test starts a daemon, and no process was left running.
+
+### M9.15 review fixes
+
+One commit, `fix(tui): check sanitising against a literal list, strip hidden format characters, raise the roll-up for holds and listed pauses, and toast a goal reply whose form closed`. Each test was written first and seen red, and each of the reviewer's mutations was then applied from a copy, seen red, and restored.
+
+1. **Sanitising is checked against a literal list, not its own predicate.**
+   - `safe_text::tests` now spells the characters out:
+     - `spaced()`: all of C0 (with ESC, TAB, LF and CR), DEL, all of C1 (with U+0085), U+2028 and U+2029;
+     - `DROPPED`: U+202A–U+202E, U+2066–U+2069, U+200E, U+200F, U+061C, U+200B–U+200D and U+FEFF.
+   - `every_listed_character_is_spaced_or_dropped` checks that `a<c>b` becomes `a b` or `ab` exactly, and that a tab and a newline become spaces.
+   - `is_safe` is removed. Every sanitising test (`task_notes_and_message_lines_render_sanitised`, `a_toast_quoting_a_hold_id_is_sanitised`, and the two below) now asserts `first_hostile(text) == None` against those lists.
+   - Mutations, each red: U+2028 left out of the breaks; U+0085 let through; the isolates narrowed to U+2066–U+2068.
+   - Red before the fix: the new test, and the three existing sanitising tests, found U+061C.
+2. **The roll-up.** New `tree/tests/run_status.rs`:
+   - `a_hold_awaiting_approval_rolls_up_attention` passed at once, since the behaviour came with M9.15. It goes red when the holds clause is removed.
+   - `a_fresh_pause_alone_does_not_roll_up_attention_but_a_listed_one_does` was red before item 7's change. It also goes red when `!is_paused` is removed, or when the attention clause is removed.
+3. **A goal's reply after its form closed.** A tagged `Triaged` that no open form waits on is toasted. An untagged `Triaged` still changes nothing, because this client sends `StartGoal` only tagged; M8c's `other_run_replies_change_nothing` pins that. Test: `a_goal_reply_after_the_form_closed_is_toasted` (red: no toast).
+4. **The confirm's and the sidebar's sanitising are tested.**
+   - `ui/modal.rs`'s confirm body is now `confirm_body(message, width)`; `a_confirm_quoting_a_hold_id_is_sanitised` checks its spans.
+   - `a_run_title_is_drawn_without_hostile_characters` (`ui/tree_view_tests.rs`) checks the sidebar's run line.
+   - Both were red on U+061C before item 8. Each goes red when its `one_line` is removed.
+5. **Budget.** `inspector/run_task.rs` +29 (budget +25) is now in M9.15's budget list.
+6. **The gate wins at the gate.** `the_gate_keys_win_while_the_run_awaits_approval`: on an `awaiting_approval` run, `a` on a task that names an awaiting hold opens the run's approve confirm. It passed at once (pinning). It goes red when `on_hold_key`'s `AwaitingApproval` guard is removed.
+7. **A long pause raises the roll-up (controller's decision).** `tree::run_status` treats any line in the daemon's `RunInfo.attention` as Attention for a `running` or `planning` run. A `paused(message)` task therefore raises it once the daemon lists it (after 600 s, decision 42c), and not before. The daemon's attention also carries the last three `discovery`/`risk` notes (decision 42i), so a run with such a note rolls up as Attention too. That follows from "any daemon attention line asks for the user".
+8. **More hidden characters dropped.** `safe_text::is_bidi_control` became `is_hidden_format`. It also drops U+061C, U+200B–U+200D and U+FEFF; the goal form's paste cleaning uses it too. Dropping U+200D splits a ZWJ emoji into its parts when drawn, which is accepted.
+
+Verification: `cargo test -p anthrex-tui` (756 lib tests, plus 6 and 1), the workspace build, `cargo fmt --all --check`, and `cargo +1.98 clippy --workspace --all-targets -D warnings` for the host and for `x86_64-unknown-linux-gnu`. All pass. No process was left running.

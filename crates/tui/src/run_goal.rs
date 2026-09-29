@@ -76,7 +76,7 @@ fn clean(text: &str, newline: Option<char>) -> String {
         .filter_map(|c| match c {
             '\n' => newline,
             '\t' => Some(' '),
-            c if c.is_control() || crate::safe_text::is_bidi_control(c) => None,
+            c if c.is_control() || crate::safe_text::is_hidden_format(c) => None,
             c => Some(c),
         })
         .collect()

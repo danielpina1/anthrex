@@ -420,3 +420,19 @@ fn a_focused_orchestrator_marks_its_run_line() {
     app.focused = Some(3);
     assert_eq!(marker(&app), "▎");
 }
+
+/// M9.15 review: a run's goal is the user's or an agent's text; the sidebar's run
+/// line carries none of `safe_text`'s hostile characters.
+#[test]
+fn a_run_title_is_drawn_without_hostile_characters() {
+    let (mut snapshot, windows) = tree::run_fixtures::gate_fixture();
+    snapshot.runs[0].goal = crate::safe_text::tests::hostile_text();
+    let app = app_with_runs(windows, snapshot);
+    let text = run_line(&app, 400);
+    assert!(text.contains("a b"), "{text:?}");
+    assert_eq!(
+        crate::safe_text::tests::first_hostile(&text),
+        None,
+        "{text:?}"
+    );
+}
