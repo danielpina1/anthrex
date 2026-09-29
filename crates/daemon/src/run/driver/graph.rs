@@ -233,12 +233,118 @@ fn listed_files(git: &OsStr, dir: &Path, timeout: Duration) -> Option<Vec<String
     Some(paths)
 }
 
+/// Whether a fingerprint is of a regular file: not a symlink, and not missing (which
+/// is also what a path under a symlinked directory gives).
+fn regular(print: &str) -> bool {
+    !print.starts_with("link:") && print != "missing"
+}
+
+/// The directories a `workspace.members` entry names, relative to `dir`, or `None`
+/// when the entry is not one this check can expand exactly (a glob other than a whole
+/// `*` component, an absolute path, or `..`). A `*` component matches every
+/// directory, hidden ones included, as cargo's glob does.
+fn member_dirs(dir: &Path, member: &str) -> Option<Vec<String>> {
+    let mut current = vec![String::new()];
+    for component in member.trim_end_matches('/').split('/') {
+        if component.is_empty() || component == ".." || member.starts_with('/') {
+            return None;
+        }
+        if component == "." {
+            continue;
+        }
+        let wildcard = component == "*";
+        if !wildcard && component.contains(['*', '?', '[', ']', '{', '}']) {
+            return None;
+        }
+        let join = |base: &str, name: &str| match base {
+            "" => name.to_string(),
+            base => format!("{base}/{name}"),
+        };
+        let mut next = Vec::new();
+        for base in &current {
+            if !wildcard {
+                next.push(join(base, component));
+                continue;
+            }
+            let Ok(entries) = std::fs::read_dir(dir.join(base)) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                if entry.path().is_dir() {
+                    next.push(join(base, &entry.file_name().to_string_lossy()));
+                }
+            }
+        }
+        current = next;
+    }
+    Some(current)
+}
+
+/// Ruling C-9 for `cargo`: whether the listed Cargo files are all the graph is read
+/// from. Not when one of them is a symlink, when the root `Cargo.toml` is not a listed
+/// regular file, or when a `workspace.members` directory's `Cargo.toml` is not
+/// (ignored, under a symlinked directory, or a member entry that cannot be expanded
+/// exactly).
+fn cargo_files_suffice(dir: &Path, prints: &BTreeMap<String, String>) -> bool {
+    if !prints.values().all(|print| regular(print)) {
+        return false;
+    }
+    if !prints.contains_key("Cargo.toml") {
+        return false;
+    }
+    let Ok(text) = std::fs::read_to_string(dir.join("Cargo.toml")) else {
+        return false;
+    };
+    let Ok(root) = text.parse::<toml::Table>() else {
+        return false;
+    };
+    let Some(members) = root
+        .get("workspace")
+        .and_then(|w| w.get("members"))
+        .and_then(|m| m.as_array())
+    else {
+        return true;
+    };
+    members.iter().all(|member| {
+        let Some(member) = member.as_str() else {
+            return false;
+        };
+        member_dirs(dir, member).is_some_and(|dirs| {
+            dirs.iter()
+                .all(|d| prints.contains_key(&format!("{d}/Cargo.toml")))
+        })
+    })
+}
+
+/// Ruling C-9 for a command: whether its `manifests` are all the graph is read from.
+/// Not when an entry matches no listed file, or matches a symlink or a path under a
+/// symlinked directory. `None` when an entry is not a valid glob.
+fn manifests_suffice(
+    manifests: &[String],
+    listed: &[String],
+    prints: &BTreeMap<String, String>,
+) -> Option<bool> {
+    for entry in manifests {
+        let matcher = OwnsMatcher::new(std::slice::from_ref(entry)).ok()?;
+        let mut matched = listed.iter().filter(|p| matcher.matches(p)).peekable();
+        if matched.peek().is_none() {
+            return Some(false);
+        }
+        if !matched.all(|p| prints.get(p).is_some_and(|print| regular(print))) {
+            return Some(false);
+        }
+    }
+    Some(true)
+}
+
 /// The cache key of the graph `source` gives in `dir`, or `None` when it cannot be
 /// computed (then the graph is read and nothing is cached):
 /// - `cargo`: every listed `Cargo.toml` and `Cargo.lock`, path and content;
 /// - a command: its text and the module directories, then the listed files matching a
-///   `manifests` glob (the `owns` rules), path and content, or, with no `manifests`,
-///   the checkout's `HEAD` tree (ruling C-8 (2b): correct, but re-read on every tree).
+///   `manifests` glob (the `owns` rules), path and content;
+/// - either, plus the checkout's `HEAD` tree when those files are not all the graph
+///   is read from (ruling C-9) or `manifests` is empty (C-8 (2b)): correct, but re-read
+///   on every tree. An unborn `HEAD` then gives no key.
 fn cache_key(
     git: &OsStr,
     dir: &Path,
@@ -252,26 +358,24 @@ fn cache_key(
         hash.update(bytes);
         hash.update(&[0]);
     };
-    let files = |keep: &dyn Fn(&str) -> bool| -> Option<Vec<String>> {
-        Some(
-            listed_files(git, dir, timeout)?
-                .into_iter()
-                .filter(|p| keep(p))
-                .collect(),
-        )
-    };
-    match source {
+    let listed = || listed_files(git, dir, timeout);
+    let with_tree = match source {
         GraphSource::None => return None,
         GraphSource::Cargo => {
             field(b"cargo");
-            let paths = files(&|p| {
-                let name = p.rsplit('/').next().unwrap_or(p);
-                name == "Cargo.toml" || name == "Cargo.lock"
-            })?;
-            for (path, print) in fingerprint(dir, &paths) {
+            let paths: Vec<String> = listed()?
+                .into_iter()
+                .filter(|p| {
+                    let name = p.rsplit('/').next().unwrap_or(p);
+                    name == "Cargo.toml" || name == "Cargo.lock"
+                })
+                .collect();
+            let prints = fingerprint(dir, &paths);
+            for (path, print) in &prints {
                 field(path.as_bytes());
                 field(print.as_bytes());
             }
+            !cargo_files_suffice(dir, &prints)
         }
         GraphSource::Command(command) => {
             field(b"command");
@@ -281,21 +385,31 @@ fn cache_key(
                 field(module_dir.as_bytes());
             }
             if manifests.is_empty() {
-                field(b"tree");
-                let tree = Git::new(git, timeout)
-                    .ok(dir, &[os("rev-parse"), os("--verify"), os("HEAD^{tree}")])
-                    .ok()?;
-                field(tree.trim().as_bytes());
+                true
             } else {
                 field(b"manifests");
                 let matcher = OwnsMatcher::new(manifests).ok()?;
-                let paths = files(&|p| matcher.matches(p))?;
-                for (path, print) in fingerprint(dir, &paths) {
+                let listed = listed()?;
+                let paths: Vec<String> = listed
+                    .iter()
+                    .filter(|p| matcher.matches(p))
+                    .cloned()
+                    .collect();
+                let prints = fingerprint(dir, &paths);
+                for (path, print) in &prints {
                     field(path.as_bytes());
                     field(print.as_bytes());
                 }
+                !manifests_suffice(manifests, &listed, &prints)?
             }
         }
+    };
+    if with_tree {
+        field(b"tree");
+        let tree = Git::new(git, timeout)
+            .ok(dir, &[os("rev-parse"), os("--verify"), os("HEAD^{tree}")])
+            .ok()?;
+        field(tree.trim().as_bytes());
     }
     Some(format!("{:016x}", hash.0))
 }

@@ -333,6 +333,7 @@ fn a_graph_command_that_times_out_is_unknown() {
         (&names(&["mods/*"]), &[]),
         &[],
         None,
+        // The 3 s bound is what protects the ids' writes: the script must finish them first.
         Duration::from_secs(3),
         &capture,
     );
