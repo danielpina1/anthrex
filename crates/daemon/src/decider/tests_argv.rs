@@ -231,6 +231,7 @@ fn decider_credential_scrub_removes_every_api_credential() {
         "OPENAI_API_KEY",
         "CODEX_API_KEY",
         "CODEX_ACCESS_TOKEN",
+        "OPENAI_BASE_URL",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
         "ANTHROPIC_BASE_URL",
@@ -244,7 +245,12 @@ fn decider_credential_scrub_removes_every_api_credential() {
     // keeps the Anthropic credentials.
     assert_eq!(
         credential_scrub_for(Runtime::Claude, config::ClaudeAuth::ApiKey),
-        ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"]
+        [
+            "OPENAI_API_KEY",
+            "CODEX_API_KEY",
+            "CODEX_ACCESS_TOKEN",
+            "OPENAI_BASE_URL"
+        ]
     );
     assert_eq!(
         credential_scrub_for(Runtime::Codex, config::ClaudeAuth::ApiKey),

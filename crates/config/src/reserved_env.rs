@@ -75,8 +75,16 @@ pub const API_CREDENTIALS: &[&str] = &[
 
 /// OpenAI and Codex env credentials (F2 round 2, N2). anthrex has no Codex auth setting:
 /// its Codex sessions use the user's own `codex login` (`~/.codex/auth.json`), so every
-/// session loses these, and a Codex session never bills an inherited key.
-pub const OPENAI_CREDENTIALS: &[&str] = &["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"];
+/// session loses these, and a Codex session never bills an inherited key. The endpoint
+/// goes with them (user ruling 2026-09-29): an inherited `OPENAI_BASE_URL` would
+/// otherwise send every Codex session, with the user's login, to whatever endpoint the
+/// daemon's shell named.
+pub const OPENAI_CREDENTIALS: &[&str] = &[
+    "OPENAI_API_KEY",
+    "CODEX_API_KEY",
+    "CODEX_ACCESS_TOKEN",
+    "OPENAI_BASE_URL",
+];
 
 /// Reserved families, matched on the upper-cased name, with the reason a profile may
 /// not set them.

@@ -4,7 +4,8 @@
 //! Since final fix batch F2 a login session also loses `ANTHROPIC_API_KEY` and
 //! `ANTHROPIC_AUTH_TOKEN` (and, by the user's ruling of 2026-09-29, `ANTHROPIC_BASE_URL`);
 //! since its round 2, every session loses the OpenAI and Codex
-//! env credentials and the inherited shell start-up variables. Since the Claude
+//! env credentials (and, by the user's ruling of 2026-09-29, `OPENAI_BASE_URL`) and the
+//! inherited shell start-up variables. Since the Claude
 //! tool-search fix (2026-09-27), a Claude session has `ENABLE_TOOL_SEARCH=false`
 //! whatever it inherited or its `env` said.
 //!
@@ -41,6 +42,8 @@ fn the_environment_is_scrubbed() {
         std::env::set_var("OPENAI_API_KEY", "sk-openai-inherited");
         std::env::set_var("CODEX_API_KEY", "sk-codex-inherited");
         std::env::set_var("CODEX_ACCESS_TOKEN", "tok-codex-inherited");
+        // User ruling 2026-09-29: nor Codex's inherited endpoint.
+        std::env::set_var("OPENAI_BASE_URL", "http://127.0.0.1:9");
         std::env::set_var("BASH_ENV", "/nonexistent/env.sh");
         std::env::set_var("SHELLOPTS", "xtrace");
         std::env::set_var("BASH_FUNC_anthrexprobe%%", "() { true; }");
@@ -171,13 +174,15 @@ fn the_environment_is_scrubbed() {
     });
 }
 
-/// F2 round 2 (N1, N2): no inherited OpenAI or Codex credential, and no inherited
-/// shell start-up inlet, in a session's `env` dump.
+/// F2 round 2 (N1, N2): no inherited OpenAI or Codex credential (nor, by the user's
+/// ruling of 2026-09-29, `OPENAI_BASE_URL`), and no inherited shell start-up inlet, in a
+/// session's `env` dump.
 fn assert_no_inherited_inlets(env: &str) {
     for name in [
         "OPENAI_API_KEY=",
         "CODEX_API_KEY=",
         "CODEX_ACCESS_TOKEN=",
+        "OPENAI_BASE_URL=",
         "BASH_ENV=",
         "SHELLOPTS=",
         "BASH_FUNC_anthrexprobe%%=",

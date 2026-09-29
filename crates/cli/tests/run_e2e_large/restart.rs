@@ -1,7 +1,7 @@
 //! A daemon restart resumes the orchestrator with every role flag (decision 11), and a
 //! Claude orchestrator is metered through M8b's OTLP receiver while a Codex one is not
-//! (decisions 14 and 14a); the orchestrator never sees `ANTHROPIC_BASE_URL` (user
-//! ruling 2026-09-29).
+//! (decisions 14 and 14a); the orchestrator never sees `ANTHROPIC_BASE_URL` or
+//! `OPENAI_BASE_URL` (user rulings 2026-09-29).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -166,6 +166,7 @@ fn e2e_claude_orchestrator_gets_the_otlp_environment() {
             ("ANTHREX_CLAUDE_BIN", wrapper),
             ("ANTHREX_CODEX_BIN", wrapper),
             ("ANTHROPIC_BASE_URL", endpoint),
+            ("OPENAI_BASE_URL", endpoint),
         ],
         ADAPT_FILES,
     );
@@ -208,9 +209,10 @@ fn e2e_claude_orchestrator_gets_the_otlp_environment() {
         env.get("ENABLE_TOOL_SEARCH").map(String::as_str),
         Some("false")
     );
-    // The daemon's own environment reached the window, but not its API endpoint.
+    // The daemon's own environment reached the window, but not its API endpoints.
     assert!(env.contains_key("FAKE_AGENT_MCP_LOG"), "{:?}", env.keys());
     assert!(!env.contains_key("ANTHROPIC_BASE_URL"), "{:?}", env.keys());
+    assert!(!env.contains_key("OPENAI_BASE_URL"), "{:?}", env.keys());
 
     // A Codex orchestrator gets none of it, and is not metered.
     let codex = h.start_goal_id("add the files", &["--orchestrator", "codex"]);
@@ -220,6 +222,7 @@ fn e2e_claude_orchestrator_gets_the_otlp_environment() {
         assert!(!env.contains_key(*key), "{key} in {:?}", env.keys());
     }
     assert!(!env.contains_key("ANTHROPIC_BASE_URL"), "{:?}", env.keys());
+    assert!(!env.contains_key("OPENAI_BASE_URL"), "{:?}", env.keys());
     let status = h.status_json(&codex);
     assert_eq!(status["orchestrator"]["route"]["runtime"], "codex");
     let usage = &status["usage"]["by_role"]["orchestrator"];

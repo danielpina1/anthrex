@@ -183,11 +183,17 @@ fn only_a_claude_api_key_session_keeps_the_api_credentials() {
         };
         credential_scrub(&spec).to_vec()
     };
-    let openai = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"];
+    let openai = [
+        "OPENAI_API_KEY",
+        "CODEX_API_KEY",
+        "CODEX_ACCESS_TOKEN",
+        "OPENAI_BASE_URL",
+    ];
     let all = [
         "OPENAI_API_KEY",
         "CODEX_API_KEY",
         "CODEX_ACCESS_TOKEN",
+        "OPENAI_BASE_URL",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
         "ANTHROPIC_BASE_URL",

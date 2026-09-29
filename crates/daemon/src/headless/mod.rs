@@ -226,8 +226,8 @@ pub(crate) fn bounded_text(text: &str) -> String {
 }
 
 /// Final fix batch F2 (review C, M2; round 2, N2): the inherited API credentials (and,
-/// by the user's ruling of 2026-09-29, `ANTHROPIC_BASE_URL`) a session's process must
-/// not see. Every session loses the OpenAI and Codex ones
+/// by the user's rulings of 2026-09-29, `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL`) a
+/// session's process must not see. Every session loses the OpenAI and Codex ones
 /// (anthrex's Codex sessions use the user's `codex login`), and the Anthropic ones
 /// unless it is a Claude session with `auth = "api_key"`, which authenticates with them
 /// (decision 50); `claude -p` would otherwise prefer a key the daemon inherited over the

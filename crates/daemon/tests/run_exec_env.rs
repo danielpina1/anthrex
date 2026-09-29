@@ -29,6 +29,7 @@ fn engine_commands_get_the_profile_env_and_lose_agent_variables() {
         std::env::set_var("OPENAI_API_KEY", "sk-openai-inherited");
         std::env::set_var("CODEX_API_KEY", "sk-codex-inherited");
         std::env::set_var("CODEX_ACCESS_TOKEN", "tok-codex-inherited");
+        std::env::set_var("OPENAI_BASE_URL", "http://127.0.0.1:9");
         std::env::set_var("BASH_ENV", "/nonexistent/env.sh");
         std::env::set_var("SHELLOPTS", "braceexpand");
     }
@@ -86,6 +87,7 @@ fn engine_commands_get_the_profile_env_and_lose_agent_variables() {
         "OPENAI_API_KEY=",
         "CODEX_API_KEY=",
         "CODEX_ACCESS_TOKEN=",
+        "OPENAI_BASE_URL=",
         "BASH_ENV=",
         "SHELLOPTS=",
     ];
