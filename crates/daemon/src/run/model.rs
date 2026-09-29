@@ -470,8 +470,9 @@ pub struct Run {
     /// met (`tiers::graph::note_once`), logged and reported once.
     #[serde(default)]
     pub graph_note: Option<String>,
-    /// Milestone 9.1 decision 27: the daemon's `test_slots`, which the driver stamps on
-    /// every run it starts or restores (the workers' caps); 0 before that.
+    /// Milestone 9.1 decision 27: the daemon's `test_slots` (the workers' caps), which
+    /// the driver stamps on a run it starts (`slots::stamp`) and on each run it loads at
+    /// restore (ruling C-11); 0 before that.
     #[serde(default)]
     pub test_slots: u32,
 }

@@ -100,6 +100,11 @@ impl SlotBook {
         self.held.values().sum()
     }
 
+    /// How many requests wait for a grant.
+    pub fn waiting(&self) -> usize {
+        self.waiting.len()
+    }
+
     /// Queues `req`; [`SlotBook::grant`] says when it may start.
     pub fn ask(&mut self, req: SlotRequest) -> Ticket {
         let seq = self.next;

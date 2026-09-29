@@ -158,14 +158,12 @@ impl Drop for SlotGrant {
     }
 }
 
-/// Decision 27: every run entering the engine, started or restored, carries the
-/// daemon's `slots`, from which its workers' caps are computed. A restored run takes
-/// this daemon's value, not the one it was saved with (decision 3: daemon-wide).
+/// Decision 27: a run started through the driver's event loop carries the daemon's
+/// `slots`, from which its workers' caps are computed. Restored runs never pass through
+/// the loop; `RunService::restore` stamps each one as it is loaded (ruling C-11).
 pub(crate) fn stamp(mut kind: EventKind, slots: u32) -> EventKind {
-    match &mut kind {
-        EventKind::Start { run, .. } => run.test_slots = slots,
-        EventKind::Restore { runs, .. } => runs.iter_mut().for_each(|run| run.test_slots = slots),
-        _ => {}
+    if let EventKind::Start { run, .. } = &mut kind {
+        run.test_slots = slots;
     }
     kind
 }

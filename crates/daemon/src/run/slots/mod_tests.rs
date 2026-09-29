@@ -105,7 +105,12 @@ async fn a_dropped_acquire_gives_up_its_place() {
         };
         waiter.acquire(exclusive).await.slots()
     });
-    tokio::task::yield_now().await;
+    // The exclusive request is queued before it is abandoned.
+    let deadline = Instant::now() + DEADLINE;
+    while crate::lock(&sched.shared.inner).book.waiting() == 0 {
+        assert!(Instant::now() < deadline, "the request was never queued");
+        tokio::task::yield_now().await;
+    }
     blocked.abort();
     assert!(blocked.await.unwrap_err().is_cancelled());
     let waiter = sched.clone();
@@ -118,7 +123,8 @@ async fn a_dropped_acquire_gives_up_its_place() {
         1,
         "not held back by the abandoned wait"
     );
-    assert_eq!(crate::lock(&sched.shared.inner).book.held(), 0);
+    let inner = crate::lock(&sched.shared.inner);
+    assert_eq!((inner.book.held(), inner.book.waiting()), (0, 0));
 }
 
 #[test]
