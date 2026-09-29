@@ -492,6 +492,7 @@ mod modal_keys;
 mod paste;
 pub(crate) mod prompt;
 mod run_enter;
+mod run_gate;
 mod runs;
 mod windows;
 
