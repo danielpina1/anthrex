@@ -2,8 +2,8 @@
 //! substituting them. Pure.
 //!
 //! Only these are placeholders: `{module}`, `{modules}`, `{modules:<t>}`,
-//! `{filter:<t>}`, `{shard}`, `{shards}` and `{test}`. Any other text, `${VAR}` and
-//! shell brace expansion included, is left alone. Inside a template `%` is the value
+//! `{filter:<t>}`, `{shard}`, `{shards}` and `{test}`. Any other text, `${VAR}` (even
+//! `${module}`) and shell brace expansion included, is left alone. Inside a template `%` is the value
 //! and `%%` a literal `%`; the first `}` ends the template.
 
 use super::{Scope, TierProfile};
@@ -55,6 +55,11 @@ pub fn pieces(command: &str) -> Vec<Piece<'_>> {
     let mut i = 0;
     while let Some(offset) = command[i..].find('{') {
         let at = i + offset;
+        // `${…}` is the shell's, whatever the name inside.
+        if command[..at].ends_with('$') {
+            i = at + 1;
+            continue;
+        }
         let rest = &command[at..];
         let simple = SIMPLE
             .iter()

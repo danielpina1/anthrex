@@ -3,8 +3,10 @@
 //! stdout.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::path::Path;
 
+use serde::de::{Deserialize, Deserializer, IgnoredAny, MapAccess, Visitor};
 use serde_json::Value;
 
 use super::{ModuleGraph, ModuleInfo};
@@ -74,6 +76,15 @@ pub fn from_command_json(
     let Value::Object(map) = value else {
         return Err("the graph command's output is not a JSON object".to_string());
     };
+    // `Value` keeps the last of two equal keys; the graph is unknown instead.
+    let mut seen = BTreeSet::new();
+    let Keys(keys) = serde_json::from_str(json.trim())
+        .map_err(|e| format!("the graph command's output is not JSON: {e}"))?;
+    for key in keys {
+        if !seen.insert(key.clone()) {
+            return Err(format!("two modules are named {key}"));
+        }
+    }
     let mut graph = ModuleGraph::default();
     for (name, deps) in &map {
         let Value::Array(deps) = deps else {
@@ -98,4 +109,27 @@ pub fn from_command_json(
         );
     }
     Ok(graph)
+}
+
+/// A JSON object's top-level keys in order, repeats included.
+struct Keys(Vec<String>);
+
+impl<'de> Deserialize<'de> for Keys {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visit;
+        impl<'de> Visitor<'de> for Visit {
+            type Value = Keys;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a JSON object")
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Keys, A::Error> {
+                let mut keys = Vec::new();
+                while let Some((key, _)) = map.next_entry::<String, IgnoredAny>()? {
+                    keys.push(key);
+                }
+                Ok(Keys(keys))
+            }
+        }
+        deserializer.deserialize_map(Visit)
+    }
 }

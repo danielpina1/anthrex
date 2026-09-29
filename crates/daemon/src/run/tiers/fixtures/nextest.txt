@@ -1,0 +1,20 @@
+# Hand-written from cargo-nextest's documented output format (not installed on the machine that captured the other fixtures, M9.1.1 check 8, ruling C-2); replace with captured output.
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+    Starting 4 tests across 1 binary
+        PASS [   0.003s] ax-fixture tests::adds_one_and_one
+        FAIL [   0.004s] ax-fixture tests::adds_two_and_two
+──── STDOUT:             ax-fixture tests::adds_two_and_two
+
+running 1 test
+test tests::adds_two_and_two ... FAILED
+──── STDERR:             ax-fixture tests::adds_two_and_two
+thread 'tests::adds_two_and_two' panicked at src/lib.rs:12:9:
+assertion `left == right` failed: two and two
+
+        PASS [   0.002s] ax-fixture tests::adds_three
+     TIMEOUT [  60.004s] ax-fixture tests::waits_forever
+────────────
+     Summary [  60.010s] 4 tests run: 2 passed, 1 failed, 1 timed out, 0 skipped
+        FAIL [   0.004s] ax-fixture tests::adds_two_and_two
+     TIMEOUT [  60.004s] ax-fixture tests::waits_forever
+error: test run failed

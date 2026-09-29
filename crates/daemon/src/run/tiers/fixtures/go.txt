@@ -1,0 +1,14 @@
+# Hand-written from `go test -v`'s documented output format (go was not installed on the machine that captured the other fixtures, M9.1.1 check 8, ruling C-2); replace with captured output.
+=== RUN   TestAddsOneAndOne
+--- PASS: TestAddsOneAndOne (0.00s)
+=== RUN   TestAddsTwoAndTwo
+    sample_test.go:12: two and two: got 4, want 5
+--- FAIL: TestAddsTwoAndTwo (0.00s)
+=== RUN   TestTable
+=== RUN   TestTable/negative
+    sample_test.go:25: got -1, want 1
+--- FAIL: TestTable (0.00s)
+    --- FAIL: TestTable/negative (0.00s)
+FAIL
+exit status 1
+FAIL	example.com/sample	0.003s

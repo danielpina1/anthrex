@@ -1,7 +1,10 @@
 //! Milestone 9.1's tiered testing, the pure half (decision 1): the tier keys of a
-//! run's profile, their validation (decision 8), placeholders (decision 7) and module
-//! graphs (decision 9). No `std::fs`, `std::process`, `std::thread` or `tokio`: the
-//! driver and profile verification run the commands and hand the output in.
+//! run's profile, their validation (decision 8), placeholders (decision 7), module
+//! graphs (decision 9), the affected set (decision 22), a job's steps (decision 21),
+//! failing-test names (decision 32), test-weakening signals (decision 40) and the
+//! result cache's key (decision 30). No file system, process, thread or async runtime
+//! here (task M9.1.6's grep): the driver and profile verification run the commands and
+//! hand the output in.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -12,11 +15,30 @@ use serde::{Deserialize, Serialize};
 use super::globs::validate_glob;
 use command::{Piece, pieces};
 
+pub mod affected;
+pub mod cache_key;
 pub mod command;
+pub mod failing;
 pub mod graph;
+pub mod steps;
+pub mod weakening;
 
 #[cfg(test)]
+mod affected_tests;
+#[cfg(test)]
+mod cache_key_tests;
+#[cfg(test)]
+mod command_tests;
+#[cfg(test)]
+mod failing_tests;
+#[cfg(test)]
+mod graph_tests;
+#[cfg(test)]
+mod steps_tests;
+#[cfg(test)]
 mod validate_tests;
+#[cfg(test)]
+mod weakening_tests;
 
 /// How long a graph command (or `cargo metadata`) may run (decision 9).
 pub const GRAPH_TIMEOUT: Duration = Duration::from_secs(60);
@@ -29,6 +51,14 @@ pub const COMMAND_CHARS_MAX: usize = 2000;
 /// At most this many `skip_markers`, each 1 to [`SKIP_MARKER_CHARS_MAX`] characters.
 pub const SKIP_MARKERS_MAX: usize = 32;
 pub const SKIP_MARKER_CHARS_MAX: usize = 64;
+/// At most this many failing-test names are read from a red step (decision 32).
+pub const FAILING_NAMES_MAX: usize = 50;
+/// At most this many names are retried one by one with `single_test` (decision 33).
+pub const RETRY_NAMES_MAX: usize = 10;
+/// At most this many test-weakening signals per claim (decision 40).
+pub const SIGNALS_MAX: usize = 20;
+/// The highest stage a plan may name (decision 44).
+pub const STAGE_MAX: u16 = 32;
 
 /// Where the module graph comes from (decision 9). `"none"`, and an absent key, are
 /// [`GraphSource::None`].
@@ -166,7 +196,7 @@ pub fn profile_hash(profile: &super::model::Profile) -> String {
 }
 
 /// What a step's result may be reused for (decision 4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Scope {
     Gate,
@@ -190,6 +220,87 @@ pub struct ModuleInfo {
 pub enum GraphState {
     Known(ModuleGraph),
     Unknown(String),
+}
+
+/// Decision 22's affected set: `Full(reason)` runs `check`; `Modules` names the modules
+/// whose tests run, empty when every changed path was ignored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Affected {
+    Full(String),
+    Modules(BTreeSet<String>),
+}
+
+impl Affected {
+    /// The `affected` part of a cache key (decision 30): the sorted names joined by `,`,
+    /// or `full:<reason>`.
+    pub fn key(&self) -> String {
+        match self {
+            Affected::Full(reason) => format!("full:{reason}"),
+            Affected::Modules(names) => names.iter().cloned().collect::<Vec<_>>().join(","),
+        }
+    }
+}
+
+/// One step of a tier job (decision 4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepKind {
+    Build,
+    Tests,
+    Timing,
+    /// Shard `k` (1-based) of `of`.
+    Shard {
+        k: u8,
+        of: u8,
+    },
+}
+
+/// A step: its command after substitution, whether it must run alone (decision 25),
+/// and the `affected` part of its cache key (`-` for a build step).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Step {
+    pub kind: StepKind,
+    pub command: String,
+    pub exclusive: bool,
+    pub affected_key: String,
+}
+
+/// The steps a tier job runs, in order (decision 21).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TierPlan {
+    pub scope: Scope,
+    pub affected: Affected,
+    pub steps: Vec<Step>,
+}
+
+/// What a result-cache key takes besides the step (decision 30); `None` on a `TierSpec`
+/// for an untiered profile or an `"unknown"` toolchain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CacheCtx {
+    pub profile_hash: String,
+    pub toolchain: String,
+}
+
+/// A test-weakening signal (decision 40). `line` is on the new side for a skip marker
+/// and on the old side for an assertion loss.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Signal {
+    DeletedTestFile {
+        path: String,
+    },
+    SkipMarker {
+        path: String,
+        line: u32,
+        marker: String,
+    },
+    AssertionLoss {
+        path: String,
+        line: u32,
+        removed: u32,
+        added: u32,
+    },
 }
 
 /// Which placeholders a command key may hold (decision 7's "Allowed in").

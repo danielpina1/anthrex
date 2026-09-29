@@ -1,0 +1,25 @@
+   Compiling ax-fixture v0.1.0 (/private/tmp/ax-m911/c8/lt)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (/tmp/ax-m911/target-c8/debug/deps/ax_fixture-a3b02c42c5e0ccf2)
+
+running 2 tests
+test tests::adds_one_and_one ... ok
+test tests::adds_two_and_two ... FAILED
+
+failures:
+
+---- tests::adds_two_and_two stdout ----
+
+thread 'tests::adds_two_and_two' (201395) panicked at src/lib.rs:12:9:
+assertion `left == right` failed: two and two
+  left: 4
+ right: 5
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::adds_two_and_two
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
