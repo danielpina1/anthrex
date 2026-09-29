@@ -3812,7 +3812,7 @@ Commits: `refactor(daemon): move the engine's OrchEvent into its own file` (af00
    - With Codex only, the planners fall to Codex's first entry, the CLI's default model, at `Standard`.
    - **The hint:** after this fix the sub-planners' runtime can be refused only when `[orchestrator.planners] runtime` names it. The orchestrator's runtime is checked first, and the peer step no longer reaches a missing runtime. The refusal still says `change [orchestrator.planners] runtime` when that key is set, and `choose another runtime with --orchestrator` otherwise (unreachable today, defensive).
    - **The other callers of `scout::spec::route`** are the scouts' `scout_route`: `scout/service.rs` (run and onboarding scouts), `profile/service_start.rs` (decision 12's settings check) and `run/orch/roles.rs` (the scout's routing snapshot).
-     - They route by the daemon's `ScoutContext`, `[orchestrator.scouts]` at `Fast` by default. Codex's `Standard` entry is at or above `Fast`, so the default config never steps to the peer.
+     - They route by the daemon's `ScoutContext`, `[orchestrator.scouts]` at `Fast` by default. Codex's `Standard` entry is at or above `Fast`, so the default config never steps to the peer. **Corrected in fix round 3:** that was about the strength step only. With the default config the scouts' runtime is `orchestrator.default_runtime`, Claude, so a Codex-only user's scouts were routed straight to a missing Claude with no step at all.
      - A Codex user who sets `[orchestrator.scouts] strength = "frontier"` would get a Claude scout.
      - No scout, run or onboarding, checks that its runtime is installed. A missing one fails at launch like any headless session.
      - Neither is fixed here: the brief's decision 26 covers the planning agents only. Recorded as an open item for the controller, not in the followups file.
@@ -3835,3 +3835,37 @@ Commits: `refactor(daemon): move the engine's OrchEvent into its own file` (af00
    - `build_tests.rs::a_tilde_entry_on_path_is_expanded_to_home` failed with the expansion removed.
    - Not fixed, as the review said: a relative `ANTHREX_*_BIN` that contains `/` is judged against the daemon's cwd, but launched from the window's.
 5. **The restart test's env file** is written to `env-<id>.tmp` and then renamed, as `daemon/tests/headless_env.rs` does, so `env_of` never reads it half-written.
+
+#### M9.17 fix round 3
+
+Commits: `fix(daemon): route run scouts over the installed runtimes, and record skipped ones as not installed` (items 1 and 4), `test: run promote records its installed check through the engine loop` (item 2), `fix(daemon): check each runtime as the session that uses it is launched` (item 3). The three touch disjoint files.
+
+1. **A Codex-only planner's record now gives the factual reason.** `planner_record` listed the peer's ladder through `ladder_candidates`, so Claude's candidates were `not in the configured list` though the start had found Claude not installed.
+   - The new `roles::mark_not_installed` marks every candidate on a runtime `run.orch.installed` records `false` as `not installed`. `record` keeps a caller's reason, so it survives.
+   - `roles_installed_tests.rs::a_codex_only_planner_records_claude_as_not_installed` was red with the review's case: `claude-opus-5-5` was `not in the configured list`. It also checks that with Claude installed no candidate is called not installed.
+2. **`run promote`'s `OrchEvent::Installed` send is tested through the real engine loop.** `adapt_goal_installed_tests.rs::run_promote_records_what_its_check_found` promotes a fast-path run with `promote()` on a Codex-only rig with the engine spawned.
+   - The launch gate stays closed, so the promoted orchestrator's window never starts a process.
+   - It asserts `run.orch.installed` and a Codex planner route.
+   - With the send replaced by a no-op (a `cp` copy, restored), it failed: `installed` was `{}`.
+3. **The installed check matches what launches the binary.**
+   - `build.rs::found_in` gives two maps:
+     - `window`, for the orchestrator's check (its PTY window starts the agent through `/bin/sh -c 'exec "$0" "$@"'`), which reads a `~` PATH entry against HOME on macOS only;
+     - `headless`, a plain PATH search, as `Command::new(program)` does for sub-planners and scouts. The sub-planners' check uses it, and it is what `run.orch.installed` records.
+   - `path_entry` treats an empty HOME like an absent one, so `~/bin` no longer becomes the relative `bin`.
+   - Both are pure and unit-tested in `build_tests.rs`:
+     - `an_empty_home_expands_nothing` was red: `Some("bin")`.
+     - `only_a_window_on_macos_finds_a_binary_through_a_tilde_entry` was red first by compilation, and later failed with the macOS condition mutated to always true.
+   - **Consequence:** decision 17's `installed`, which the orchestrator sees in its context, is now the headless map. It is conservative for workers, which do launch through a window, but it never claims a runtime a headless role cannot start.
+4. **Run scouts route over the run's installed runtimes.** This changes behaviour from the round-2 note, which is corrected above.
+   - `scout::spec::run_scout_route(ctx, installed)` works as follows:
+     - when nothing pins `[orchestrator.scouts] runtime` and the default runtime is recorded not installed, the installed peer is used;
+     - the strength step reaches the peer only when it is installed;
+     - nothing recorded (a run from before the start check) routes as before.
+   - The driver's `start_scout` resolves it under the engine lock and starts the scout on it through the new `ScoutService::start_on` (`start` is `start_on` with `scout_route`). `spec::headless_spec_on` builds the session on it. `scout_record` names the same route and marks skipped candidates `not installed`.
+   - **Tests:**
+     - `a_codex_only_run_scout_is_routed_to_codex` covers the route, the record's reasons, a frontier strength staying on Codex, and a pinned runtime kept. It was red against a stub returning `scout_route`.
+     - `a_run_scout_with_both_runtimes_is_routed_as_before` is a pin.
+     - `role_route_tests.rs::a_codex_only_run_scout_is_started_on_codex` is at the driver level. Neither binary exists, so the launch fails naming the one tried. It was red with `could not start /nonexistent/anthrex-test/claude`, while the record already said Codex.
+   - **Left as before M9, for M9.5 to decide:**
+     - Onboarding scouts (`profile/service_run.rs`, `profile/service_start.rs`) and deciders still route by the daemon-wide config with no installed check. A Codex-only user with the default config gets a Claude onboarding scout and Claude deciders, which fail at launch; the deciders then fall back.
+     - Run scouts are not among `reach::reachable_runtimes`, so decision 53's project-settings check at `run start` does not cover a run scout's runtime when no other session reaches it.
