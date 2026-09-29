@@ -8,13 +8,17 @@ use proto::ModuleNames;
 use super::{Affected, GraphState, ModuleGraph, TierProfile};
 use crate::run::globs::{OwnsMatcher, path_module};
 
-/// A matcher for `globs` with `owns`' rules (a literal entry covers everything below
-/// it). `None` for an empty list; a glob validation would have refused matches
-/// nothing, which only ever widens the set.
-fn matcher(globs: &[String]) -> Option<OwnsMatcher> {
-    (!globs.is_empty())
-        .then(|| OwnsMatcher::new(globs).ok())
-        .flatten()
+/// A matcher for the glob list `key`, with `owns`' rules (a literal entry covers
+/// everything below it); `None` for an empty list. A list that fails to build (which
+/// validation refuses first) makes the whole set full: matching nothing would let a
+/// broken `source` ignore paths that execute, or a broken trigger miss its files.
+fn matcher(key: &str, globs: &[String]) -> Result<Option<OwnsMatcher>, Affected> {
+    if globs.is_empty() {
+        return Ok(None);
+    }
+    OwnsMatcher::new(globs)
+        .map(Some)
+        .map_err(|e| Affected::Full(format!("{key} globs are invalid: {e}")))
 }
 
 fn matches(matcher: &Option<OwnsMatcher>, path: &str) -> bool {
@@ -35,9 +39,20 @@ pub fn affected(
     paths.sort_unstable();
     paths.dedup();
 
+    let matchers = (|| {
+        Ok((
+            matcher("full_triggers", &tiers.full_triggers)?,
+            matcher("hub", hub)?,
+            matcher("source", source)?,
+            matcher("test_paths", &tiers.test_paths)?,
+        ))
+    })();
+    let (triggers, hubs, sources, tests) = match matchers {
+        Ok(matchers) => matchers,
+        Err(full) => return full,
+    };
+
     // 1. A full trigger or a hub file.
-    let triggers = matcher(&tiers.full_triggers);
-    let hubs = matcher(hub);
     for path in &paths {
         if matches(&triggers, path) {
             return Affected::Full(format!("full trigger: {path}"));
@@ -49,8 +64,6 @@ pub fn affected(
 
     // 2. Each path's module directory; a path in none is ignored only when nothing
     // says it executes.
-    let sources = matcher(source);
-    let tests = matcher(&tiers.test_paths);
     let mut dirs = BTreeSet::new();
     for path in &paths {
         match path_module(path, modules) {

@@ -204,3 +204,41 @@ fn signals_are_capped_at_twenty_deleted_first() {
     );
     assert_eq!(signals(&diff, &[], &s(TEST_PATHS), &s(MARKERS)), got);
 }
+
+#[test]
+fn quoted_paths_are_unquoted() {
+    // A deleted binary test file has no `---`/`+++` lines; its name is only on the
+    // `diff --git` line, C-quoted because of the `é`.
+    let diff = r#"diff --git "a/crates/x/tests/caf\303\251.bin" "b/crates/x/tests/caf\303\251.bin"
+deleted file mode 100644
+index 1111111..0000000
+Binary files "a/crates/x/tests/caf\303\251.bin" and /dev/null differ
+diff --git "a/crates/x/tests/q\"t\tc\303\251.rs" "b/crates/x/tests/q\"t\tc\303\251.rs"
+index 1111111..2222222 100644
+--- "a/crates/x/tests/q\"t\tc\303\251.rs"
++++ "b/crates/x/tests/q\"t\tc\303\251.rs"
+@@ -0,0 +1 @@
++#[ignore]
+diff --git "a/crates/x/tests/\a\b\f\r\v\\.rs" "b/crates/x/tests/\a\b\f\r\v\\.rs"
+index 1111111..2222222 100644
+--- "a/crates/x/tests/\a\b\f\r\v\\.rs"
++++ "b/crates/x/tests/\a\b\f\r\v\\.rs"
+@@ -0,0 +1 @@
++#[ignore]
+"#;
+    let marker = |path: &str| Signal::SkipMarker {
+        path: path.into(),
+        line: 1,
+        marker: "#[ignore]".into(),
+    };
+    assert_eq!(
+        signals(diff, &[], &s(TEST_PATHS), &s(MARKERS)),
+        vec![
+            Signal::DeletedTestFile {
+                path: "crates/x/tests/café.bin".into()
+            },
+            marker("crates/x/tests/q\"t\tcé.rs"),
+            marker("crates/x/tests/\u{7}\u{8}\u{c}\r\u{b}\\.rs"),
+        ]
+    );
+}

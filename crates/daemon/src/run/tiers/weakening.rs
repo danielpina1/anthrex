@@ -160,15 +160,38 @@ fn parse(diff: &str) -> Vec<FileDiff> {
 }
 
 /// The path of `a/<p> b/<p>` (with `--no-renames` both sides are one path), for a file
-/// with no `---`/`+++` lines, such as a binary one.
+/// with no `---`/`+++` lines, such as a binary one. Git C-quotes both sides when the
+/// path has unusual characters: `"a/<q>" "b/<q>"`.
 fn git_line_path(rest: &str) -> Option<String> {
+    if let Some(quoted) = rest.strip_prefix('"') {
+        let end = closing_quote(quoted)?;
+        let first = unquote(&quoted[..end]);
+        let second = quoted[end + 1..].strip_prefix(" \"")?.strip_suffix('"')?;
+        let second = unquote(second);
+        let path = first.strip_prefix("a/")?;
+        return (second.strip_prefix("b/")? == path).then(|| path.to_string());
+    }
     let rest = rest.strip_prefix("a/")?;
     let len = rest.len().checked_sub(3)?;
-    if len % 2 != 0 {
+    if len % 2 != 0 || !rest.is_char_boundary(len / 2) {
         return None;
     }
     let (path, other) = rest.split_at(len / 2);
     (other.strip_prefix(" b/")? == path).then(|| path.to_string())
+}
+
+/// The byte index of the `"` that ends a C-quoted string (after its opening `"`).
+fn closing_quote(quoted: &str) -> Option<usize> {
+    let bytes = quoted.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            b'"' => return Some(i),
+            _ => i += 1,
+        }
+    }
+    None
 }
 
 /// A `---`/`+++` line's path without its side prefix; `None` for `/dev/null`. A quoted
@@ -185,7 +208,8 @@ fn side_path(path: &str, prefix: &str) -> Option<String> {
     Some(path.strip_prefix(prefix).unwrap_or(&path).to_string())
 }
 
-/// C-style unquoting: `\\`, `\"`, `\t`, `\n` and three-digit octal bytes.
+/// C-style unquoting, as git quotes a path: `\a \b \t \n \v \f \r`, any other escaped
+/// character as itself (`\\`, `\"`), and three-digit octal bytes.
 fn unquote(quoted: &str) -> String {
     let bytes = quoted.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -204,16 +228,17 @@ fn unquote(quoted: &str) -> String {
                 out.push(d.iter().fold(0u8, |n, b| n.wrapping_mul(8) + (b - b'0')));
                 i += 4;
             }
-            (None, b't') => {
-                out.push(b'\t');
-                i += 2;
-            }
-            (None, b'n') => {
-                out.push(b'\n');
-                i += 2;
-            }
-            (None, other) => {
-                out.push(other);
+            (None, escape) => {
+                out.push(match escape {
+                    b'a' => 0x07,
+                    b'b' => 0x08,
+                    b't' => b'\t',
+                    b'n' => b'\n',
+                    b'v' => 0x0b,
+                    b'f' => 0x0c,
+                    b'r' => b'\r',
+                    other => other,
+                });
                 i += 2;
             }
         }

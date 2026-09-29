@@ -292,3 +292,66 @@ fn first_rule_wins_and_names_the_first_path() {
         full("hub file: Build.rs")
     );
 }
+
+#[test]
+fn invalid_globs_are_full_never_ignored() {
+    // A broken `source` glob must not make every unowned path look ignorable, nor
+    // match nothing: the whole set is full.
+    let got = of(&["docs/guide.md"], &[], &["src/[", "src/**"]);
+    let Affected::Full(reason) = got else {
+        panic!("expected full, got {got:?}");
+    };
+    assert!(reason.starts_with("source globs are invalid: "), "{reason}");
+    // A broken hub.
+    let got = of(&["mods/a/x"], &["mods/[a"], SOURCE);
+    let Affected::Full(reason) = got else {
+        panic!("expected full, got {got:?}");
+    };
+    assert!(reason.starts_with("hub globs are invalid: "), "{reason}");
+    // A broken full trigger and test path, too.
+    let broken = TierProfile {
+        full_triggers: s(&["[x"]),
+        ..tiers()
+    };
+    let got = affected(
+        &s(&["mods/a/x"]),
+        &broken,
+        &[],
+        &s(SOURCE),
+        &s(&["mods/*"]),
+        &graph(),
+    );
+    assert!(
+        matches!(&got, Affected::Full(r) if r.starts_with("full_triggers globs are invalid: ")),
+        "{got:?}"
+    );
+    let broken = TierProfile {
+        test_paths: s(&["[x"]),
+        ..tiers()
+    };
+    let got = affected(
+        &s(&["mods/a/x"]),
+        &broken,
+        &[],
+        &s(SOURCE),
+        &s(&["mods/*"]),
+        &graph(),
+    );
+    assert!(
+        matches!(&got, Affected::Full(r) if r.starts_with("test_paths globs are invalid: ")),
+        "{got:?}"
+    );
+}
+
+#[test]
+fn docs_only_change_on_an_empty_graph_is_empty() {
+    let got = affected(
+        &s(&["docs/guide.md"]),
+        &tiers(),
+        &[],
+        &s(SOURCE),
+        &s(&["mods/*"]),
+        &GraphState::Known(ModuleGraph::default()),
+    );
+    assert_eq!(got, set(&[]));
+}

@@ -125,3 +125,20 @@ fn filter_expressions_per_scope_are_exact() {
         Some("not (test(/timing/))")
     );
 }
+
+#[test]
+fn an_empty_modules_template_is_refused() {
+    let tiers = TierProfile {
+        build_check: Some("make".into()),
+        module_tests: Some("t {modules:}".into()),
+        ..TierProfile::default()
+    };
+    let problems: Vec<String> = validate(&tiers, None, &s(&["mods/*"]))
+        .into_iter()
+        .map(|(key, message)| format!("{key}: {message}"))
+        .collect();
+    assert_eq!(
+        problems,
+        vec!["module_tests: {modules:<template>} needs a non-empty template"]
+    );
+}

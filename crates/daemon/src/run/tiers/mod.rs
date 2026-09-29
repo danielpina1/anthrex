@@ -395,6 +395,16 @@ pub fn validate(
                 "must contain {modules} or {modules:<template>}".to_string(),
             );
         }
+        // `{modules:}` would expand to nothing: the command would name no module.
+        if pieces(template)
+            .iter()
+            .any(|piece| matches!(piece, Piece::ModulesEach(t) if t.is_empty()))
+        {
+            push(
+                "module_tests",
+                "{modules:<template>} needs a non-empty template".to_string(),
+            );
+        }
         if modules.is_empty() {
             push("module_tests", "needs modules".to_string());
         }
