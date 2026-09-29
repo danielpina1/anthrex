@@ -115,23 +115,39 @@ fn message_kind_defaults_to_info_and_names_three_kinds() {
         parse(&[
             "message",
             "r",
-            "t1",
             "--kind",
             "stop_and_wait",
+            "t1",
             "hi",
             "there"
         ])
         .unwrap()
     );
     assert!(text.contains("kind: StopAndWait"), "{text}");
-    assert!(text.contains("[\"hi\", \"there\"]"), "{text}");
+    assert!(text.contains("[\"t1\", \"hi\", \"there\"]"), "{text}");
     assert_eq!(
-        parse(&["message", "r", "t1", "--kind", "stop-and-wait", "hi"]).unwrap_err(),
+        parse(&["message", "r", "--kind", "stop-and-wait", "t1", "hi"]).unwrap_err(),
         ErrorKind::InvalidValue
     );
     assert_eq!(
         parse(&["message", "r", "t1"]).unwrap_err(),
-        ErrorKind::MissingRequiredArgument
+        ErrorKind::TooFewValues
+    );
+    // M9.14 review fixes, item 1: after the recipient, every word is the text.
+    let text = format!(
+        "{:?}",
+        parse(&["message", "r", "t1", "use", "--kind", "change", "-x"]).unwrap()
+    );
+    assert!(text.contains("kind: Info"), "{text}");
+    // ... the first word after the recipient too.
+    let first = format!(
+        "{:?}",
+        parse(&["message", "r", "t1", "--kind", "stop_and_wait"]).unwrap()
+    );
+    assert!(first.contains("kind: Info"), "{first}");
+    assert!(
+        text.contains("[\"t1\", \"use\", \"--kind\", \"change\", \"-x\"]"),
+        "{text}"
     );
 }
 

@@ -44,7 +44,7 @@ pub(super) async fn start_goal(
             ..
         } => {
             println!("{run_id}");
-            eprintln!("{message}");
+            eprintln!("{}", super::status::printable(&message));
             Ok(())
         }
         RunReply::Triaged { message, .. } => anyhow::bail!(message),

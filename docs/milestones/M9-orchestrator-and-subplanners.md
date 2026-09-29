@@ -3510,3 +3510,28 @@ One commit, `feat(cli): start planned goals, approve holds, message and refresh 
   - `hold_flags_parse`
 - Unit, `run_cmd/status_tests.rs`: `status_shows_orchestrator_planners_holds_summary_and_paused_lines`.
 - E2e: every test the task names, under the names it gives, split across the two files above. Each binary passed three times in a row, with no retry.
+
+### M9.14 review fixes
+
+One commit, `fix(cli): take a message's text verbatim after its recipient, print daemon text without control characters, and split run_cmd and status to their budgets`. Each test was written first and seen red for the reason given.
+
+1. **A message's text is every argument after its recipient.**
+   - *The problem.* `run message` used to parse `--kind` anywhere on the line. So `t1 use --kind change next time` sent kind `change` with the text `use next time`, and `-x is broken` exited 2.
+   - *First attempt.* `trailing_var_arg` plus `allow_hyphen_values` on the text alone still took a `--kind` that came *first* after the recipient as the flag. `t1 --kind stop_and_wait is not a flag` paused the task.
+   - *The fix.* The recipient and the text are now one positional argument: `to_and_text`, with `num_args = 2..`, value names `TO TEXT`, `trailing_var_arg` and `allow_hyphen_values`. The var-arg starts at the recipient. Everything after it is text, verbatim, and only flags before the recipient are the command's.
+   - *Help.* `--kind`'s help says to give it before `TO`. A missing text is clap's `TooFewValues`, exit 2.
+   - *Tests.* `run_cli_message.rs`'s `run` helper now puts the global `--dir` before `run`. The two tests that gave `--kind` after the recipient now give it before.
+   - *New tests and their reds:*
+     - `run_message_text_keeps_flag_like_words` (e2e). It covers `use --kind change next time` (kind `info`, words verbatim), `--kind stop_and_wait is not a flag` as the first words (the task stays `working`), and `running -x is broken`. Red at first: `(Some(Change), Some("use next time"))`. Red again under the first attempt: `Blocked` with `MessagePause`.
+     - The additions to `message_kind_defaults_to_info_and_names_three_kinds` (unit): red with `UnknownArgument` for `-x`.
+2. **File budgets.**
+   - `run_cmd.rs` is 552 → 482 (budget 521). Its unit tests moved, unchanged, to `run_cmd/tests.rs`.
+   - `run_cmd/status.rs` is 371 → 280 (budget 307). `orchestrator_lines`, `state_text` and the count and label helpers moved, unchanged, to the new `run_cmd/status_orch.rs` (103).
+3. **Daemon text is printed without control characters.**
+   - *The problem.* A refusal can echo what the user typed, for example `no such task nope<ESC>[2J`.
+   - *The fix.* `status::printable` shows every control character except the newline as a space. It keeps a multi-line reply's `not delivered:` lines. The CLI applies it to every `anthrex run` error it prints (`run_cmd::main`), to every `Done` message (`print_outcome`), and to triage's message on `run start --goal`. The CLI had no existing sanitiser for this: `status::one_line` also folds newlines.
+   - *Tests:*
+     - `a_refusal_prints_no_control_characters` (e2e; red: stderr carried `\u{1b}[2J\u{7}`);
+     - `printed_daemon_text_has_no_control_characters` (unit: ESC, BEL, CR and C1 CSI become spaces, and newlines stay).
+
+Verification: the cli bin's unit tests (55), `run_cli_message` (8, three runs), `run_cli_orch` (10), `run_cli` (12), the workspace build, `fmt --check`, and `cargo +1.98 clippy -D warnings` for the host and for `x86_64-unknown-linux-gnu`. All pass. No test process was left running.

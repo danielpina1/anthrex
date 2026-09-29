@@ -18,12 +18,12 @@ struct Out {
     stderr: String,
 }
 
-/// `anthrex run <args> --dir <repo>`.
+/// `anthrex --dir <repo> run <args>`: `--dir` comes first, since a message's text takes
+/// every argument after its recipient (M9.14 review fixes, item 1).
 fn run(h: &RunHarness, args: &[&str]) -> Out {
     let repo = h.repo.display().to_string();
-    let mut all = vec!["run"];
+    let mut all = vec!["--dir", repo.as_str(), "run"];
     all.extend_from_slice(args);
-    all.extend_from_slice(&["--dir", &repo]);
     let output = h.anthrex(&all);
     Out {
         code: output.status.code().unwrap_or(-1),
@@ -172,7 +172,7 @@ fn run_message_kind_defaults_to_info() {
     assert_eq!(kind(&h), Some(MessageKind::Info));
     ok(&run(
         &h,
-        &["message", &id, "t1", "--kind", "change", "moved"],
+        &["message", &id, "--kind", "change", "t1", "moved"],
     ));
     assert_eq!(kind(&h), Some(MessageKind::Change));
     ok(&run(
@@ -193,8 +193,81 @@ fn run_message_kind_defaults_to_info() {
         "{}",
         status.stdout
     );
-    let bad = run(&h, &["message", &id, "t1", "--kind", "loud", "x"]);
+    let bad = run(&h, &["message", &id, "--kind", "loud", "t1", "x"]);
     assert_eq!(bad.code, 2, "{}", bad.stderr);
+}
+
+/// M9.14 review fixes, item 1: the text is every argument after the recipient, joined
+/// with one space, flags and leading hyphens included; only flags before the recipient
+/// are the command's.
+#[test]
+fn run_message_text_keeps_flag_like_words() {
+    let h = RunHarness::new("");
+    let id = working(&h, &[], &[]);
+    let last = |h: &RunHarness| {
+        let info = h.run(&id).unwrap();
+        let t1 = t(&info, "t1");
+        (t1.last_message_kind, t1.last_message_line.clone())
+    };
+    ok(&run(
+        &h,
+        &[
+            "message", &id, "t1", "use", "--kind", "change", "next", "time",
+        ],
+    ));
+    assert_eq!(
+        last(&h),
+        (
+            Some(MessageKind::Info),
+            Some("use --kind change next time".to_string())
+        )
+    );
+    ok(&run(
+        &h,
+        &[
+            "message",
+            &id,
+            "t1",
+            "--kind",
+            "stop_and_wait",
+            "is",
+            "not",
+            "a",
+            "flag",
+        ],
+    ));
+    let info = h.run(&id).unwrap();
+    assert_eq!(
+        t(&info, "t1").state,
+        TaskState::Working,
+        "{:?}",
+        t(&info, "t1").block
+    );
+    ok(&run(&h, &["message", &id, "running", "-x", "is", "broken"]));
+    assert_eq!(
+        last(&h),
+        (Some(MessageKind::Info), Some("-x is broken".to_string()))
+    );
+}
+
+/// M9.14 review fixes, item 3: a refusal that echoes what the user typed is printed
+/// with every control character but the newline shown as a space.
+#[test]
+fn a_refusal_prints_no_control_characters() {
+    let h = RunHarness::new("");
+    let id = working(&h, &[], &[]);
+    let out = run(&h, &["message", &id, "nope\x1b[2J\x07", "hi"]);
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(
+        !out.stderr.chars().any(|c| c.is_control() && c != '\n'),
+        "{:?}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("no such task nope [2J "),
+        "{:?}",
+        out.stderr
+    );
 }
 
 /// Decision 40 through the CLI: a message and a refresh are logged with source `user`,
