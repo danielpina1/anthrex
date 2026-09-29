@@ -205,27 +205,53 @@ async fn approval_holds_are_answered_by_the_engine() {
 
 /// A daemon on `dir/d.sock` with its run service, and the milestone-8b profile and
 /// decider services too when `adaptation` is set (deciders off, so nothing is spawned).
-/// Returns a connected, welcomed client.
+/// Both agent programs are `dir/agent`, a stand-in that exits at once, so a planned
+/// run's start finds its orchestrator's runtime installed (decision 26's start check)
+/// and its window runs only the stand-in. Returns a connected, welcomed client.
 async fn tagged_rig(
     dir: &std::path::Path,
     adaptation: bool,
     shutdown: &CancellationToken,
 ) -> (OwnedReadHalf, OwnedWriteHalf) {
-    rig_with(dir, (adaptation, proto::DeciderMode::Off), shutdown).await
+    let agent = dir.join("agent");
+    std::fs::write(&agent, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&agent, std::fs::Permissions::from_mode(0o755)).unwrap();
+    rig_on(
+        dir,
+        (adaptation, proto::DeciderMode::Off),
+        Some(&agent),
+        shutdown,
+    )
+    .await
 }
 
-/// [`tagged_rig`] with the deciders in `mode`. The decider program is pinned to a path
-/// that does not exist, so a call falls back at once; the CLI caps are the shipped
-/// ones (a Codex session cannot exclude a repository's `.codex` settings).
+/// [`rig_on`] with the pinned, nonexistent agent programs.
 async fn rig_with(
     dir: &std::path::Path,
+    mode: (bool, proto::DeciderMode),
+    shutdown: &CancellationToken,
+) -> (OwnedReadHalf, OwnedWriteHalf) {
+    rig_on(dir, mode, None, shutdown).await
+}
+
+/// [`tagged_rig`] with the deciders in `mode`, and `agent` as both agent programs when
+/// given. The decider program is pinned to a path that does not exist, so a call falls
+/// back at once; the CLI caps are the shipped ones (a Codex session cannot exclude a
+/// repository's `.codex` settings).
+async fn rig_on(
+    dir: &std::path::Path,
     (adaptation, mode): (bool, proto::DeciderMode),
+    agent: Option<&std::path::Path>,
     shutdown: &CancellationToken,
 ) -> (OwnedReadHalf, OwnedWriteHalf) {
     let socket = dir.join("d.sock");
     let data = dir.join("data");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let mut config = pinned(socket.clone());
+    if let Some(agent) = agent {
+        config.claude_bin = agent.display().to_string();
+        config.codex_bin = agent.display().to_string();
+    }
     if mode != proto::DeciderMode::Off {
         config.cli_caps = daemon::headless::argv::CLI_CAPS;
     }
@@ -313,7 +339,8 @@ async fn a_tagged_run_request_is_answered_with_its_id() {
 /// M9.2 review ruling 1: a tagged request's success reply carries its id too. A goal
 /// start in a repository with a stored profile and the deciders off takes triage's
 /// fallback (the plan path); since M9.13 that path builds a planned run, so it is
-/// answered `Triaged` with the run's id (its orchestrator's program does not exist).
+/// answered `Triaged` with the run's id (its orchestrator's program is a stand-in that
+/// exits at once).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_tagged_goal_start_is_triaged_with_its_id() {
     use proto::RunReply;
@@ -361,8 +388,8 @@ async fn a_tagged_goal_start_is_triaged_with_its_id() {
 /// Milestone 9 decision 43: pre-run triage's decider session leaves its record in the
 /// repository's history (anthrex's data directory, never the repository) even when no
 /// run is created. The decider program does not exist, so the call falls back; the
-/// goal's Codex orchestrator is then refused for the repository's tracked `.codex`
-/// settings, after triage.
+/// goal's Codex orchestrator is then refused after triage, because its program does
+/// not exist either (decision 26's start check, M9.17 fix round).
 #[tokio::test(flavor = "multi_thread")]
 async fn pre_run_triage_writes_a_record_even_when_no_run_is_created() {
     use proto::{AgentRole, HistoryLine, RoleOutcome, RunReply};
@@ -408,7 +435,10 @@ async fn pre_run_triage_writes_a_record_even_when_no_run_is_created() {
     let RunReply::Refused { message, .. } = &reply else {
         panic!("refused: {reply:?}");
     };
-    assert!(message.contains(".codex/config.toml"), "{message}");
+    assert!(
+        message.contains("the orchestrator's runtime codex is not installed"),
+        "{message}"
+    );
     shutdown.cancel();
 
     let path = repo_dir.join("history.jsonl");

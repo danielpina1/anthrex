@@ -28,6 +28,7 @@ pub mod context;
 pub mod contract;
 pub mod digest;
 pub mod extract;
+pub mod installed;
 pub(crate) mod json;
 pub mod launch;
 pub mod result;

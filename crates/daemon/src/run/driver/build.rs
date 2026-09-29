@@ -21,6 +21,7 @@ use crate::run::git::{self, Git, os};
 use crate::run::globs::ProtectedMatcher;
 use crate::run::journal::runs_dir;
 use crate::run::model::{ClaudeAuth, Run};
+use crate::run::orch::installed::{not_installed, resolve_installed};
 use crate::run::orch::launch::resolve_orchestrator;
 use crate::run::orch::make_planned;
 use crate::run::plan::{BuildContext, random_suffix, resolve_profile, run_id_taken, slug};
@@ -126,18 +127,15 @@ fn executable(bin: &str) -> bool {
 }
 
 impl RunService {
-    /// Decision 26 on a built run: the orchestrator's route (decision 6, from the run's
-    /// frozen `[orchestrator.agent]`, default runtime and roster), `installed` and the
-    /// OTLP token (decision 14a) read on `spawn_blocking`, then `make_planned`.
+    /// Decision 26 on a built run: `installed` and the OTLP token (decision 14a) read
+    /// on `spawn_blocking`, then the orchestrator's route (decision 6, from the run's
+    /// frozen `[orchestrator.agent]`, default runtime and roster) over the installed
+    /// runtimes, then `make_planned`, and the sub-planners' runtime checked installed
+    /// (the start check decision 26 cites, M9.17 fix round).
     async fn make_planned(&self, run: &mut Run, planned: Planned) -> Result<(), String> {
-        let resolved = resolve_orchestrator(
-            planned.choice.as_ref(),
-            &run.limits.orch.agent.config(),
-            run.limits.default_runtime,
-            &run.roster,
-        )?;
         let config = self.manager.config();
         let (claude, codex) = (config.claude_bin.clone(), config.codex_bin.clone());
+        let bins = (claude.clone(), codex.clone());
         let (found, token) = blocking(move || {
             let token = super::orch_ops::fresh_token()
                 .inspect_err(|error| tracing::warn!(%error, "no OTLP token"))
@@ -145,7 +143,33 @@ impl RunService {
             Ok((installed(&claude, &codex), token))
         })
         .await?;
-        make_planned(run, planned.triage, resolved, planned.yes, found);
+        let missing = |runtime: Runtime| -> Option<String> {
+            let bin = match runtime {
+                Runtime::Claude => &bins.0,
+                _ => &bins.1,
+            };
+            let present = found.get(runtime.label()).copied().unwrap_or(false);
+            (!present).then(|| bin.clone())
+        };
+        let resolved = resolve_installed(
+            planned.choice.as_ref(),
+            &run.limits.orch.agent.config(),
+            run.limits.default_runtime,
+            &run.roster,
+            &missing,
+        )?;
+        make_planned(run, planned.triage, resolved, planned.yes, found.clone());
+        let planners = crate::run::orch::launch::planner_route(run).map(|r| r.runtime);
+        if let Some(refusal) = planners.and_then(|runtime| {
+            not_installed(
+                "the sub-planners'",
+                runtime,
+                &missing,
+                "change [orchestrator.planners] runtime",
+            )
+        }) {
+            return Err(refusal);
+        }
         run.triage_usage = planned.usage.unwrap_or_default();
         if let Some(o) = run.orch.orchestrator.as_mut() {
             o.otlp_token = token;

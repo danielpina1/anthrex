@@ -189,16 +189,21 @@ fn repo_with_codex_config(root: &Path) {
 }
 
 /// A service whose caps are the shipped ones (Claude excludes project settings; Codex
-/// cannot).
+/// cannot). Both runtimes count as installed (decision 26's start check, M9.17 fix
+/// round): their binary is `/usr/bin/false`, an executable no build ever launches.
 fn shipped_service(data: &Path) -> Arc<RunService> {
     let mut config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
-    config.claude_bin = "/nonexistent/ax-claude".into();
-    config.codex_bin = "/nonexistent/ax-codex".into();
+    config.claude_bin = INSTALLED_STAND_IN.into();
+    config.codex_bin = INSTALLED_STAND_IN.into();
     config.cli_caps = crate::headless::argv::CLI_CAPS;
     config.worktrees_root = data.join("worktrees");
     let (manager, _events) = WindowManager::new(config);
     RunService::for_manager(&manager, data.to_path_buf(), Arc::new(NoRoots))
 }
+
+/// An executable that stands in for an installed agent binary in a build that never
+/// launches it.
+const INSTALLED_STAND_IN: &str = "/usr/bin/false";
 
 /// A one-task plan in `crates/a`, routed to Claude.
 fn one_task_plan() -> String {
@@ -270,7 +275,8 @@ async fn project_settings_check_covers_the_orchestrator() {
         .expect("an orchestrator record");
     assert_eq!(o.route.runtime, codex);
     assert_eq!(o.otlp_token.len(), 32, "decision 14a's token");
-    assert_eq!(run.orch.installed.get("codex"), Some(&false));
+    // The start refuses a runtime that is not installed, so the one it built on is.
+    assert_eq!(run.orch.installed.get("codex"), Some(&true));
     assert!(run.tasks.is_empty());
 
     let claude = service

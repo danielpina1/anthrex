@@ -7,9 +7,12 @@ use serde_json::{Value, json};
 
 use crate::common::*;
 use crate::epics::*;
+use crate::support::decider::NO_CODEX_BIN;
+use crate::support::fake_agent_bin;
 use crate::support::orch_script::*;
+use crate::support::run_adapt::{ADAPT_FILES, STORED_PROFILE};
 use crate::support::run_harness::{REQUEST_WAIT, RunHarness, git_in};
-use crate::support::run_orch::{ORCH_WAIT, triage_plan};
+use crate::support::run_orch::{ORCH_LINES, ORCH_WAIT, triage_plan};
 use crate::support::run_plans::until as poll;
 
 /// `role_route` lines whose `run_id` is `run` (`Value::Null` for pre-run triage).
@@ -40,8 +43,18 @@ fn check(record: &Value, role: &str, outcome: &str, result: &str) {
 
 #[test]
 fn e2e_role_history_for_large_and_triage_paths() {
-    let h = harness_with(triage(&["code"], "large"));
+    // No `codex` binary: the second goal's Codex orchestrator is not installed.
+    let files: Vec<(&str, &str)> = [ADAPT_FILES, SRC_FILES].concat();
+    let mut h = RunHarness::adapt(
+        "claude",
+        ORCH_LINES,
+        &[("ANTHREX_CODEX_BIN", NO_CODEX_BIN)],
+        &files,
+    );
+    h.stored_profile(STORED_PROFILE);
+    h.decider("triage", 1, triage(&["code"], "large"));
     h.decider("triage", 2, triage_plan());
+    h.decider("triage", 3, triage_plan());
     h.script(
         "scout-s-1",
         &[call(
@@ -153,26 +166,37 @@ fn e2e_role_history_for_large_and_triage_paths() {
             .starts_with("triage/")
     );
 
-    // A goal whose run cannot be created still leaves its triage record. The start
-    // refuses after triage (decision 9): a Codex orchestrator would load the project
-    // configuration this repository now tracks, and `--trust-project` was not given.
+    // A goal whose run cannot be created still leaves its triage record: its Codex
+    // orchestrator's program does not exist, so the start refuses after triage
+    // (decision 26's start check), with no run.
+    let runs_before = h.snapshot().runs.len();
+    let refused = |h: &RunHarness, needle: &str| {
+        let out = h.start_goal("add the files", &["--orchestrator", "codex"]);
+        assert!(!out.status.success(), "{}", stdout(&out));
+        assert!(stderr(&out).contains(needle), "{}", stderr(&out));
+        assert_eq!(h.snapshot().runs.len(), runs_before, "a run was created");
+    };
+    refused(
+        &h,
+        &format!(
+            "the orchestrator's runtime codex is not installed ({NO_CODEX_BIN} is not an \
+             executable file)"
+        ),
+    );
+    // With `codex` present, decision 9's refusal of its tracked project settings, after
+    // triage too.
+    h.restart_daemon(&[("ANTHREX_CODEX_BIN", fake_agent_bin().to_str().unwrap())]);
     std::fs::create_dir_all(h.repo.join(".codex")).unwrap();
     std::fs::write(h.repo.join(".codex/config.toml"), "model = \"x\"\n").unwrap();
     git_in(&h.repo, &["add", ".codex/config.toml"]);
     git_in(&h.repo, &["commit", "-q", "-m", "track codex config"]);
-    let runs_before = h.snapshot().runs.len();
-    let out = h.start_goal("add the files", &["--orchestrator", "codex"]);
-    assert!(!out.status.success(), "{}", stdout(&out));
-    assert!(
-        stderr(&out).contains(".codex/config.toml"),
-        "{}",
-        stderr(&out)
-    );
-    assert_eq!(h.snapshot().runs.len(), runs_before, "a run was created");
+    refused(&h, ".codex/config.toml");
     let triage_lines = routes(&h, &Value::Null);
-    assert_eq!(triage_lines.len(), 2, "{triage_lines:#?}");
-    let second = &triage_lines[1];
-    check(second, "decider", "completed", "answered");
-    assert_ne!(second["record_id"], triage_lines[0]["record_id"]);
-    assert_eq!(h.history_lines("role_route").len(), 6);
+    assert_eq!(triage_lines.len(), 3, "{triage_lines:#?}");
+    for later in &triage_lines[1..] {
+        check(later, "decider", "completed", "answered");
+        assert_ne!(later["record_id"], triage_lines[0]["record_id"]);
+    }
+    assert_ne!(triage_lines[1]["record_id"], triage_lines[2]["record_id"]);
+    assert_eq!(h.history_lines("role_route").len(), 7);
 }
