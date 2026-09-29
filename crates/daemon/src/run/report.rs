@@ -55,6 +55,7 @@ fn header(run: &Run, out: &mut String) {
     out.push_str(&format!("State: {}\n", state_line(run)));
     out.push_str(&format!("Approved by: {}\n", approved_by_line(run)));
     below_frontier(run, out);
+    not_metered(run, out);
     // M8b decision 24: `path: fast (triage: <kinds>/<scale>, <source>)`.
     if let (Some(proto::RunPath::Fast), Some(t)) = (run.path, &run.triage) {
         out.push_str(&format!(
@@ -94,6 +95,19 @@ fn header(run: &Run, out: &mut String) {
     limits(run, out);
     out.push('\n');
     containment(run, out);
+}
+
+/// Milestone 9 decision 14: only Claude Code exports OTLP usage, so a Codex
+/// orchestrator's usage is not metered, and its `by_role["orchestrator"]` stays zero.
+fn not_metered(run: &Run, out: &mut String) {
+    if run
+        .orch
+        .orchestrator
+        .as_ref()
+        .is_some_and(|o| o.route.runtime == proto::Runtime::Codex)
+    {
+        out.push_str("orchestrator usage: not metered (codex)\n");
+    }
 }
 
 /// Milestone 9 decision 6: an orchestrator whose resolved route is below `frontier`

@@ -275,3 +275,26 @@ fn a_finding_located_by_its_input_shows_the_input() {
         "{out}"
     );
 }
+
+/// Milestone 9 decision 14: a Codex orchestrator is not metered, and the report says
+/// so; a Claude one, and a run with no orchestrator, say nothing.
+#[test]
+fn a_codex_orchestrator_is_reported_not_metered() {
+    let line = "\norchestrator usage: not metered (codex)\n";
+    let mut run = base_run();
+    assert!(!render(&run, 0).contains("orchestrator usage"));
+    let with = |run: &mut Run, runtime| {
+        let route = proto::Route {
+            runtime,
+            model: String::new(),
+            strength: proto::Strength::Frontier,
+            effort: proto::Effort::High,
+        };
+        run.orch.orchestrator = Some(crate::run::orch::OrchestratorRecord::new(route, 1));
+    };
+    with(&mut run, proto::Runtime::Claude);
+    assert!(!render(&run, 0).contains("orchestrator usage"));
+    with(&mut run, proto::Runtime::Codex);
+    let report = render(&run, 0);
+    assert!(report.contains(line), "{report}");
+}

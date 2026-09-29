@@ -14,7 +14,7 @@ use crate::support::orch_script::*;
 use crate::support::run_adapt::{ADAPT_FILES, STORED_PROFILE};
 use crate::support::run_harness::{REQUEST_WAIT, RunHarness};
 use crate::support::run_orch::{ORCH_LINES, ORCH_WAIT, triage_plan};
-use crate::support::run_plans::{approve, commit, done, until as poll};
+use crate::support::run_plans::{approve, commit, done, report_with, until as poll};
 
 /// The role flags of a Claude orchestrator's launch that take a value (decision 7).
 const ROLE_FLAGS: &[&str] = &[
@@ -225,5 +225,18 @@ fn e2e_claude_orchestrator_gets_the_otlp_environment() {
     assert!(
         usage.is_null() || usage.as_object().unwrap().values().all(|v| v == 0),
         "{usage}"
+    );
+    // The report says so (decision 14); the Claude run's does not. A planning run's
+    // report is written when the run ends, so both are rejected first.
+    for id in [&codex, &run] {
+        ok(&h.anthrex(&["run", "reject", id, "--confirm", id]));
+        h.wait_run(id, |r| r.state == proto::RunState::Discarded, REQUEST_WAIT);
+    }
+    let line = "\norchestrator usage: not metered (codex)\n";
+    report_with(&h.run(&codex).unwrap(), line);
+    let claude_report = report_with(&h.run(&run).unwrap(), "# anthrex run");
+    assert!(
+        !claude_report.contains("orchestrator usage"),
+        "{claude_report}"
     );
 }
