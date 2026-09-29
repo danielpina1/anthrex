@@ -76,6 +76,7 @@ fn reconcile_a_committed_hand_back_left_mid_merge_finishes_it() {
             worktree: t1.clone(),
             run_head,
             task_head: None,
+            list_merged: false,
         },
     );
 
@@ -87,6 +88,7 @@ fn reconcile_a_committed_hand_back_left_mid_merge_finishes_it() {
                 files: Vec::new(),
                 head: Some(commit.clone()),
                 onto: Some(t1_head),
+                merged: Vec::new(),
             })
         )]
     );
@@ -113,6 +115,7 @@ fn reconcile_an_uncommitted_hand_back_merge_undoes_it() {
             worktree: t1.clone(),
             run_head,
             task_head: None,
+            list_merged: false,
         },
     );
 
@@ -146,6 +149,7 @@ fn reconcile_leaves_a_resolved_conflicted_hand_back_alone() {
             worktree: t1.clone(),
             run_head,
             task_head: None,
+            list_merged: false,
         },
     );
 
@@ -175,6 +179,7 @@ fn pend_hand_back(w: &mut World, t1: &std::path::Path, run_head: &str) {
             worktree: t1.to_path_buf(),
             run_head: run_head.to_string(),
             task_head: None,
+            list_merged: false,
         },
     );
 }
@@ -305,6 +310,7 @@ fn reconcile_a_clean_hand_back_whose_files_never_followed_finishes_it() {
                 files: Vec::new(),
                 head: Some(commit.clone()),
                 onto: Some(t1_head),
+                merged: Vec::new(),
             })
         )]
     );
@@ -393,8 +399,49 @@ fn reconcile_a_finished_conflicted_hand_back_replays_it() {
                 files: vec!["src/a.txt".to_string()],
                 head: Some(t1_head.clone()),
                 onto: Some(t1_head),
+                merged: Vec::new(),
             })
         )]
     );
     assert!(merge_head_exists(&t1));
+}
+
+/// Milestone 9 task M9.13a, decision 42e: M8a's `HandBack` row replays a refresh
+/// (`list_merged`) unchanged. A refresh whose merge was made before the daemon died,
+/// its result not yet journaled, replays as the clean hand-back with the merged
+/// commits the worker's next turn names; one that had not started is left to run
+/// again (the engine sets the refresh due, `a_refresh_lost_in_a_restart_is_due_again`).
+#[test]
+fn refresh_is_replayed_by_reconcile() {
+    let mut w = World::new();
+    let (t1, t1_head) = w.task_with_commit("t1", "src/a.txt", "task\n");
+    let run_head = commit_file(&w.run.integration_path(), "src/r.txt", "run\n", "run: r");
+    w.run.run_head = run_head.clone();
+    let refresh = OpKind::HandBack {
+        worktree: t1.clone(),
+        run_head: run_head.clone(),
+        task_head: None,
+        list_merged: true,
+    };
+    pend(&mut w.run, 1, Some("t1"), refresh.clone());
+    assert_eq!(w.reconcile(), vec![(1, Reconciled::NotStarted)]);
+
+    let (done, merged) =
+        daemon::run::git::hand_back_listing(real_git(), &t1, &run_head, true, T).unwrap();
+    assert_eq!(merged.len(), 1);
+    w.run.pending_ops.clear();
+    pend(&mut w.run, 2, Some("t1"), refresh);
+    assert_eq!(
+        w.reconcile(),
+        vec![(
+            2,
+            Reconciled::Replay(OpResult::HandedBack {
+                files: Vec::new(),
+                head: Some(done.head.clone()),
+                onto: Some(t1_head),
+                merged,
+            })
+        )]
+    );
+    assert_eq!(head(&t1), done.head);
 }

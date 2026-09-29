@@ -188,7 +188,10 @@ pub(super) fn counted(
         return;
     }
     let count = match result {
-        OpResult::Commits { count, .. } => count,
+        // Milestone 9 decision 42e: a refresh merge alone is not work.
+        OpResult::Commits { count, .. } => {
+            super::worker_messages::own_commits(&run.tasks[i], count)
+        }
         OpResult::Failed { message } => return count_failed(run, i, r, message, now),
         _ => {
             run.tasks[i].rounds[r].fallback = FallbackState::None;

@@ -129,7 +129,7 @@ fn build(run: &Run, now: u64, for_fingerprint: bool) -> Value {
             "note": cut_opt(e.note.as_deref(), LINE_MAX),
         })).collect::<Vec<_>>(),
         "integration": integration(run),
-        "attention": crate::run::snapshot::attention(run).iter().map(|l| cut(l, LINE_MAX)).collect::<Vec<_>>(),
+        "attention": crate::run::snapshot::attention(run, now).iter().map(|l| cut(l, LINE_MAX)).collect::<Vec<_>>(),
         "notes": orch.map(|o| o.notes.iter().map(|n| cut(n, LINE_MAX)).collect::<Vec<_>>()).unwrap_or_default(),
         "task_notes": task_notes(run),
         "edits": run.plan_edits.iter().rev().take(EDITS_SHOWN).map(edit_entry).collect::<Vec<_>>(),

@@ -167,6 +167,7 @@ fn notes() -> String {
         kind: proto::MessageKind::Change,
         text: "use the v2 token API".into(),
         delivered: true,
+        outbox: None,
     }])
 }
 

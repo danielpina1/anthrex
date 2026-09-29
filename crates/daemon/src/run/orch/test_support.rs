@@ -127,6 +127,7 @@ pub fn message(at: u64, kind: MessageKind, text: &str, delivered: bool) -> TaskM
         kind,
         text: text.into(),
         delivered,
+        outbox: None,
     }
 }
 

@@ -255,6 +255,10 @@ pub struct TaskMessage {
     pub kind: MessageKind,
     pub text: String,
     pub delivered: bool,
+    /// The outbox message carrying it to a live worker (task M9.13a), `None` when it
+    /// is only recorded for the next session's prompt.
+    #[serde(default)]
+    pub outbox: Option<u64>,
 }
 
 /// A sub-planner's phase (decision 32). `Queued` and `Planning` are live.

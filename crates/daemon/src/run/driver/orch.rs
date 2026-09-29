@@ -162,6 +162,20 @@ impl RunService {
         if call.role == AgentRole::Orchestrator && !self.await_launch(&call, limit).await {
             return refused(ORCHESTRATOR_LAUNCH_PENDING);
         }
+        // Decision 42e: a refresh's clean-tree check, for a caller that passes decision
+        // 15's check, before the engine sees the call.
+        if let Ok(OrchCall::EditPlan {
+            edits,
+            submit,
+            summary,
+        }) = parse_call(call.role, &call.tool, &call.args)
+            && self.looked_up(&call, |_| ()).is_ok()
+        {
+            let alone = !submit && summary.is_none();
+            if let Err(text) = self.refresh_precheck(&call.run_id, &edits, alone).await {
+                return refused(text);
+            }
+        }
         let refusals = match self.tool_refusals(&call).await {
             Ok(refusals) => refusals,
             Err(text) => return refused(text),
@@ -527,3 +541,7 @@ mod read_tests_tools;
 #[cfg(test)]
 #[path = "orch_read_tests_launch.rs"]
 mod read_tests_launch;
+
+#[cfg(test)]
+#[path = "refresh_tests.rs"]
+mod refresh_tests;

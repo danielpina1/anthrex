@@ -155,6 +155,7 @@ fn approve_starts_dispatch_and_yes_skips_the_gate() {
     let mut tools = vec![
         "mcp__anthrex__task_done".to_string(),
         "mcp__anthrex__task_blocked".to_string(),
+        "mcp__anthrex__task_note".to_string(),
     ];
     tools.extend(config::Orchestrator::default().worker_allowed_tools);
     assert_eq!(spec.allowed_tools, tools);
@@ -532,4 +533,25 @@ fn a_dispatch_overtaken_by_a_merge_is_prepared_again() {
         unreachable!()
     };
     assert_eq!(from, &head);
+}
+
+/// Milestone 9 decision 42f: a real Claude worker in `acceptEdits` may call
+/// `task_note` (`WORKER_MCP_TOOLS` has three tools).
+#[test]
+fn worker_spec_allows_task_note() {
+    let mut fx = Fixture::new(&plan_with(PROFILE, &[task("t1", "S", "a", "")]));
+    fx.ready(true);
+    let effects = fx.complete_prepares();
+    let (_, kind) = super::gates::only_op(&effects, "CreateWindow");
+    let OpKind::CreateWindow { spec, .. } = kind else {
+        unreachable!()
+    };
+    assert_eq!(
+        spec.allowed_tools[..3],
+        [
+            "mcp__anthrex__task_done",
+            "mcp__anthrex__task_blocked",
+            "mcp__anthrex__task_note"
+        ]
+    );
 }

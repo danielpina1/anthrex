@@ -246,6 +246,10 @@ pub(super) fn edit(
     let Some(run) = state.runs.get_mut(run_id) else {
         return reply(fx, id, Err(unknown(run_id)));
     };
+    // Milestone 9 decision 42: a `message` or `refresh` is alone in its request.
+    if let Err(error) = crate::run::edits_orch::one_edit_rule(edits, submit, false) {
+        return reply(fx, id, Err(error.to_string()));
+    }
     if run.state.is_terminal() || run.state == RunState::Complete {
         return reply(
             fx,
@@ -378,6 +382,10 @@ pub(super) fn retry(
     };
     let task = &run.tasks[i];
     let refusal = match &task.block {
+        // Milestone 9 decision 42c.
+        _ if super::worker_messages::paused_refusal(task).is_some() => {
+            super::worker_messages::paused_refusal(task)
+        }
         _ if task.state != TaskState::Blocked => Some(format!(
             "task {task_id} is {}; retry applies only to a blocked task",
             task.state.label()

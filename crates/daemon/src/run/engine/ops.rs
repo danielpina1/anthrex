@@ -170,6 +170,11 @@ pub enum OpKind {
         /// in `HandedBack.onto`.
         #[serde(default)]
         task_head: Option<String>,
+        /// Milestone 9 decision 42e: a refresh's hand-back. The executor first checks
+        /// the tracked tree is clean (`Failed { "uncommitted changes" }` otherwise) and,
+        /// after a clean merge, lists the merged commits in `HandedBack.merged`.
+        #[serde(default)]
+        list_merged: bool,
     },
     /// Ruling T11-N1(b): `git::abort_merge` in a held task's worktree, undoing a
     /// hand-back that conflicted while another dependency was still unfinished.
@@ -443,6 +448,10 @@ pub enum OpResult {
         /// Only a merge onto the claimed commit re-queues without the gates.
         #[serde(default)]
         onto: Option<String>,
+        /// Milestone 9 decision 42e: with `list_merged`, the commits a clean merge
+        /// brought in, `<sha> <subject>`, newest first (at most 20).
+        #[serde(default)]
+        merged: Vec<String>,
     },
     /// `AbortMerge` succeeded (ruling T11-N1(b)).
     MergeAborted,

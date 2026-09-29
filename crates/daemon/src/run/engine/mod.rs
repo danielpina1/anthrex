@@ -76,6 +76,7 @@ pub(crate) mod schedule;
 mod signals;
 mod tools;
 mod wake;
+mod worker_messages;
 
 pub use crate::headless::TurnOutcome;
 pub(crate) use clock::epoch_spend;

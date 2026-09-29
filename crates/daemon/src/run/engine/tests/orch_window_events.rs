@@ -64,9 +64,9 @@ fn an_exited_orchestrator_is_not_live_the_run_says_so_and_nothing_wakes_it() {
     assert!(!o.live);
     assert!(o.exited_at.is_some());
     assert!(
-        attention(fx.run()).contains(&EXITED.to_string()),
+        attention(fx.run(), fx.now).contains(&EXITED.to_string()),
         "{:?}",
-        attention(fx.run())
+        attention(fx.run(), fx.now)
     );
     // Wakes are suspended; the note waits in the digest.
     let effects = user_edit(&mut fx);
@@ -93,7 +93,7 @@ fn a_window_that_is_back_is_live_again_and_the_line_goes() {
     let o = fx.run().orch.orchestrator.clone().unwrap();
     assert!(o.live);
     assert_eq!(o.exited_at, None);
-    assert!(!attention(fx.run()).contains(&EXITED.to_string()));
+    assert!(!attention(fx.run(), fx.now).contains(&EXITED.to_string()));
     // Its pending notes wake it now.
     assert_eq!(wakes(&effects), 1, "{effects:#?}");
 }
@@ -111,7 +111,7 @@ fn another_windows_report_changes_nothing() {
     window(&mut fx, ORCH, true);
     assert!(!fx.run().orch.orchestrator.as_ref().unwrap().live);
     assert!(
-        !attention(fx.run()).contains(&EXITED.to_string()),
+        !attention(fx.run(), fx.now).contains(&EXITED.to_string()),
         "a terminal run's exited orchestrator is no longer the user's concern"
     );
 }
@@ -130,9 +130,9 @@ fn a_failed_launch_is_an_attention_line_until_it_starts() {
     );
     let line = "the orchestrator could not start: no such binary".to_string();
     assert!(
-        attention(fx.run()).contains(&line),
+        attention(fx.run(), fx.now).contains(&line),
         "{:?}",
-        attention(fx.run())
+        attention(fx.run(), fx.now)
     );
     // `run resume` launches it again; once it starts, the line goes.
     let reply = fx.reply();
@@ -150,9 +150,9 @@ fn a_failed_launch_is_an_attention_line_until_it_starts() {
         },
     );
     assert!(
-        !attention(fx.run()).contains(&line),
+        !attention(fx.run(), fx.now).contains(&line),
         "{:?}",
-        attention(fx.run())
+        attention(fx.run(), fx.now)
     );
 }
 
@@ -198,7 +198,7 @@ fn a_stale_exit_from_before_the_restart_changes_nothing() {
     window_at(&mut fx, ORCH, false, before);
     let o = fx.run().orch.orchestrator.clone().unwrap();
     assert!(o.live, "a stale exit made it not live");
-    assert!(!attention(fx.run()).contains(&EXITED.to_string()));
+    assert!(!attention(fx.run(), fx.now).contains(&EXITED.to_string()));
     assert_eq!(wakes(&user_edit(&mut fx)), 1, "wakes still reach it");
     // A report made after the restart counts.
     window(&mut fx, ORCH, false);

@@ -36,6 +36,7 @@ fn a_conflict_blocked_task_that_gains_a_dependency_keeps_its_block() {
             files: vec![],
             head: Some(head_of("t1m")),
             onto: Some(head_of("t1")),
+            merged: Vec::new(),
         },
     );
     let (op, _) = candidate(&fx, "t1");
@@ -117,6 +118,7 @@ fn handed_back_with_conflicts(fx: &mut Fixture) -> Vec<Effect> {
             files,
             head: Some(head_of("t1")),
             onto: Some(head_of("t1")),
+            merged: Vec::new(),
         },
     )
 }

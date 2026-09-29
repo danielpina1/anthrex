@@ -185,6 +185,7 @@ fn add_dep_then_answer_waits_for_the_dependency_then_hands_back() {
             files: vec![],
             head: None,
             onto: None,
+            merged: Vec::new(),
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Working);
@@ -390,12 +391,11 @@ fn an_edit_that_reaches_an_unchecked_runtime_is_refused() {
     assert_eq!(fx.run().tasks.len(), 2);
 }
 
-/// M9.2 review ruling 8, pinning, through the engine's `run edit` path: `message` and
-/// `refresh` refuse their whole batch, with a pause or a finish beside them too, and
-/// the run is left exactly as it was. (`amend_task` deps is M9.4's, no longer a
-/// placeholder.)
+/// M9.2 review ruling 8's pinning, as task M9.13a leaves it: a `message` or `refresh`
+/// beside any other edit, a pause or a finish included, is refused by decision 42's
+/// one-edit rule, and the run is left exactly as it was.
 #[test]
-fn placeholder_edits_leave_the_run_unchanged() {
+fn message_or_refresh_beside_another_edit_leaves_the_run_unchanged() {
     use proto::{MessageKind, MessageTarget};
     let plan = plan_with(
         PROFILE,
@@ -415,16 +415,15 @@ fn placeholder_edits_leave_the_run_unchanged() {
     let refresh = PlanEdit::Refresh {
         task_id: "t1".into(),
     };
-    let not_yet = "op: message and refresh are not available yet".to_string();
+    let rule = crate::run::orch::contract::ONE_EDIT_RULE.to_string();
     for batch in [
-        vec![message.clone()],
-        vec![refresh.clone()],
-        vec![PlanEdit::Pause, message],
-        vec![PlanEdit::Finish, refresh],
+        vec![PlanEdit::Pause, message.clone()],
+        vec![PlanEdit::Finish, refresh.clone()],
+        vec![message, refresh],
     ] {
         let before = fx.run().clone();
         let effects = edit(&mut fx, batch.clone());
-        assert_eq!(replies(&effects), vec![Err(not_yet.clone())], "{batch:?}");
+        assert_eq!(replies(&effects), vec![Err(rule.clone())], "{batch:?}");
         assert_eq!(fx.run(), &before, "{batch:?}");
     }
 }

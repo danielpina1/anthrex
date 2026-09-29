@@ -7,12 +7,22 @@ use proto::{AgentRole, BlockReason, TaskState};
 use super::model::Task;
 
 /// The states in which a task has not started: route, size, test mode and dependencies
-/// may change, and it may be split.
-pub(crate) fn not_started(state: TaskState) -> bool {
+/// may change, and it may be split. A `paused(message)` task has started (milestone 9
+/// decision 42c): its worker waits in its session.
+pub(crate) fn not_started(task: &Task) -> bool {
     matches!(
-        state,
+        task.state,
         TaskState::Pending | TaskState::Queued | TaskState::Blocked
-    )
+    ) && !is_paused(task)
+}
+
+/// Milestone 9 decision 42c: `blocked(message_pause)`, shown as `paused(message)`.
+pub(crate) fn is_paused(task: &Task) -> bool {
+    task.state == TaskState::Blocked
+        && task
+            .block
+            .as_ref()
+            .is_some_and(|b| b.reason == BlockReason::MessagePause)
 }
 
 /// A task with a session or an engine operation to stop when it is cancelled.

@@ -267,6 +267,7 @@ fn conflict(run: &mut Run, i: usize, files: Vec<String>, now: u64, fx: &mut Vec<
         worktree: task.worktree.clone(),
         run_head: run.run_head.clone(),
         task_head: task.head.clone(),
+        list_merged: false,
     };
     let op = next_op(run);
     run.tasks[i].merge_op = Some(op);
@@ -304,7 +305,9 @@ pub(super) fn handed_back(
         return;
     }
     let (files, head, onto) = match result {
-        OpResult::HandedBack { files, head, onto } => (files, head, onto),
+        OpResult::HandedBack {
+            files, head, onto, ..
+        } => (files, head, onto),
         OpResult::Failed { message } => {
             let text = format!("could not merge the run head into its worktree: {message}");
             return block(run, i, BlockReason::Environment, text, now);
@@ -392,6 +395,7 @@ fn send_due(run: &mut Run, i: usize, now: u64, fx: &mut Vec<Effect>) {
         worktree: task.worktree.clone(),
         run_head: run.run_head.clone(),
         task_head: task.head.clone(),
+        list_merged: false,
     };
     let op = next_op(run);
     run.tasks[i].merge_op = Some(op);

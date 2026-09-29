@@ -309,6 +309,7 @@ fn reconcile_hand_back_with_merge_head() {
             worktree: path.clone(),
             run_head: run_head.clone(),
             task_head: None,
+            list_merged: false,
         };
         pend(&mut w.run, op, Some(task), kind);
     }
@@ -322,6 +323,7 @@ fn reconcile_hand_back_with_merge_head() {
                     files: vec!["src/shared.txt".into()],
                     head: Some(t1_head.clone()),
                     onto: Some(t1_head),
+                    merged: Vec::new(),
                 })
             ),
             (
@@ -330,6 +332,7 @@ fn reconcile_hand_back_with_merge_head() {
                     files: Vec::new(),
                     head: Some(t2_merge),
                     onto: Some(t2_head),
+                    merged: Vec::new(),
                 })
             ),
             (3, Reconciled::NotStarted),

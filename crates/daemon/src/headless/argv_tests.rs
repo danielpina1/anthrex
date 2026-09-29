@@ -31,6 +31,7 @@ pub(super) fn worker(runtime: Runtime) -> HeadlessSpec {
         allowed_tools: [
             "mcp__anthrex__task_done",
             "mcp__anthrex__task_blocked",
+            "mcp__anthrex__task_note",
             "Bash",
             "Edit",
         ]
@@ -261,7 +262,7 @@ fn argv_builders() {
             "--mcp-config",
             "<json>",
             "--allowedTools",
-            "mcp__anthrex__task_done,mcp__anthrex__task_blocked,Bash,Edit",
+            "mcp__anthrex__task_done,mcp__anthrex__task_blocked,mcp__anthrex__task_note,Bash,Edit",
             "--append-system-prompt",
             "Say \"done\" when done.\nThen stop.",
             "--permission-mode",

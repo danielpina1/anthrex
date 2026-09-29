@@ -8,8 +8,9 @@
 mod support;
 
 use daemon::run::git::{
-    count_commits, create_run_branch, diff_so_far, lock_worktree, preflight, prepare_review,
-    prepare_worktree, project_settings, protected_files, resolve_target, task_summary, verify_done,
+    count_commits, create_run_branch, diff_so_far, hand_back_listing, lock_worktree, preflight,
+    prepare_review, prepare_worktree, project_settings, protected_files, resolve_target,
+    task_summary, verify_done,
 };
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
 use daemon::run::plan::BUILTIN_PROTECTED;
@@ -200,6 +201,16 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
         (
             "resolve_target",
             resolve_target(git, &repo.root, "anthrex/env1/t1", &base_branch, T).map(drop),
+        ),
+        // Milestone 9 (task M9.13a): a refresh's clean-tree check, hand-back and log.
+        (
+            "hand_back_listing",
+            hand_back_listing(git, &task, &newer, true, T).map(|(back, merged)| {
+                assert!(
+                    back.files.is_empty() && merged.len() == 1,
+                    "{back:?} {merged:?}"
+                );
+            }),
         ),
     ];
 

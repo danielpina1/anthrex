@@ -202,6 +202,8 @@ pub(super) fn holds_call(state: &EngineState, call: &ToolCall) -> bool {
     let known = matches!(
         (call.role, call.tool.as_str()),
         (AgentRole::Worker, "task_done" | "task_blocked")
+            // Milestone 9 decision 42f: a worker's note joins the hold (task M9.13a).
+            | (AgentRole::Worker, "task_note")
             | (AgentRole::Reviewer, "submit_review")
             // Milestone 9 decision 35: a research task's report joins the hold.
             | (AgentRole::Scout, "submit_scout_report")

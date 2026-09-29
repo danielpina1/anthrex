@@ -24,6 +24,7 @@ use crate::run::contract::{
     REVIEWER_STOPPED_TWICE, rate_limit_continue, review_changes_message, reviewer_prompt,
 };
 use crate::run::model::{AgentRound, FailedTurn, ReviewLevel, ReviewRecord, Run};
+use crate::run::orch::contract::worker_messages_for_review;
 use crate::run::role_launch::{jitter_ms, reviewer_spec, session_uuid_of};
 use crate::run::roster::pick_reviewer;
 
@@ -164,7 +165,9 @@ pub(super) fn review_ready(
     let first_turn = if reader {
         super::kinds::review_first_turn(run, i, (&base, &head, &patch))
     } else {
-        reviewer_prompt(run, task, round_no, &base, &head, &patch, "")
+        // Milestone 9 decision 42d: the `change` messages the worker received.
+        let messages = worker_messages_for_review(&task.orch.messages);
+        reviewer_prompt(run, task, round_no, &base, &head, &patch, &messages)
     };
     let name = format!("{}/{}.r{round_no}", run.short(), task.id());
     let uuid = (route.runtime == Runtime::Claude).then(|| session_uuid_of(run, op));

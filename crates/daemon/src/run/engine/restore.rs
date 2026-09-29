@@ -39,6 +39,7 @@ use super::{
 };
 use crate::run::contract::{RESUME_REVIEWER, RESUME_WORKER, sha7};
 use crate::run::model::{FallbackState, PendingOp, Run, StallState};
+use crate::run::orch::RefreshState;
 use crate::run::role_launch::session_uuid_of;
 
 /// The journal's answers: `(run id, op, result)`.
@@ -186,6 +187,12 @@ fn lost(run: &mut Run, pending: PendingOp, now: u64, fx: &mut Vec<Effect>) {
         }
         (OpKind::MergeCandidate { .. }, Some(i)) if run.tasks[i].merge_op == Some(op) => {
             run.tasks[i].merge_op = None;
+        }
+        // Milestone 9 decision 42e: a lost refresh is due again at the next boundary.
+        (OpKind::HandBack { .. }, Some(i))
+            if run.tasks[i].orch.refresh == Some(RefreshState::InFlight(op)) =>
+        {
+            run.tasks[i].orch.refresh = Some(RefreshState::Due);
         }
         // Carry T14-R2: a lost merge-queue hand-back is sent again by the running pass.
         (OpKind::HandBack { .. }, Some(i)) if run.tasks[i].merge_op == Some(op) => {

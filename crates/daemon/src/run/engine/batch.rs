@@ -6,9 +6,10 @@
 use proto::{BlockReason, PlanEdit, RunState, Runtime, TaskState};
 
 use super::requests::log;
-use super::{Effect, deciders, outbox, restore};
+use super::{Effect, deciders, outbox, restore, worker_messages};
 use crate::run::edit_log;
 use crate::run::edits::{EditConsequence, apply_edits};
+use crate::run::edits_orch::MessageOutcome;
 use crate::run::model::Run;
 use crate::run::orch::EditSource;
 use crate::run::plan::PlanError;
@@ -22,10 +23,12 @@ pub(super) enum Refused {
     Text(String),
 }
 
-/// An applied batch: the reply's text, and the ids of the tasks it added.
+/// An applied batch: the reply's text, the ids of the tasks it added, and a
+/// `message`'s recipients (milestone 9 decision 42b).
 pub(super) struct Applied {
     pub text: String,
     pub added: Vec<String>,
+    pub message: Option<MessageOutcome>,
 }
 
 /// Decision 13, engine side, for every source (milestone 9 decision 19 applies the
@@ -80,11 +83,17 @@ pub(super) fn apply_batch(
     // Milestone 9 decision 25: the mis-sized tasks this batch rewrote.
     let rewritten = rewritten(run, &edited);
     *run = edited;
+    let mut message = None;
     for consequence in consequences {
         match consequence {
             EditConsequence::CancelLive { task_id } => kill_sessions(run, &task_id, fx),
             // A held task keeps its message until it resumes (`dispatch::enforce_holds`).
             EditConsequence::Deliver { task_id, text } => outbox::queue(run, &task_id, text, now),
+            // Milestone 9 decision 42b: linked to the message the task recorded.
+            EditConsequence::Message { task_id, text } => {
+                worker_messages::queue(run, &task_id, text, now)
+            }
+            EditConsequence::Recipients(outcome) => message = Some(outcome),
             // Decision 37: the scheduler's `complete::finish_pass` does the rest.
             EditConsequence::Finish => {
                 run.finish_edit = true;
@@ -97,12 +106,20 @@ pub(super) fn apply_batch(
                 run.paused_from = Some(RunState::Running);
                 log(run, now, "paused by a plan edit");
             }
-            EditConsequence::Resume => restore::unpause(run, now, fx),
+            // Milestone 9 decision 42c: the run's `resume` releases its paused tasks.
+            EditConsequence::Resume => {
+                worker_messages::release_all(run, now);
+                restore::unpause(run, now, fx);
+            }
         }
     }
     deciders::cross_check(run, &touched, now, fx);
     restart_rewritten(run, &rewritten, source, now, fx);
-    edit_log::record(run, edits, now, source, edit_log::EditOutcome::accepted());
+    let recipients = message.as_ref().map(|m| m.delivered.clone());
+    let outcome = edit_log::EditOutcome::Accepted {
+        recipients: recipients.unwrap_or_default(),
+    };
+    edit_log::record(run, edits, now, source, outcome);
     // Milestone 9 decision 39: the orchestrator sees what the user changed.
     if *source == EditSource::User {
         let text = format!("the user edited the plan: {}", edit_log::describe(edits));
@@ -118,7 +135,17 @@ pub(super) fn apply_batch(
     for task in &deferred {
         text.push_str(&super::complete::deferred_note(task));
     }
-    Ok(Applied { text, added })
+    if let Some(outcome) = &message {
+        text.push_str(&format!("; message for {}", outcome.delivered.join(", ")));
+        for (_, reason) in &outcome.refused {
+            text.push_str(&format!("\nnot delivered: {reason}"));
+        }
+    }
+    Ok(Applied {
+        text,
+        added,
+        message,
+    })
 }
 
 /// Decision 40: a rejected batch of the orchestrator's or a sub-planner's is logged

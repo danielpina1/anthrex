@@ -403,3 +403,33 @@ fn the_orchestrators_calls_before_its_window_wait_for_its_launch() {
         }
     }
 }
+
+/// Milestone 9 task M9.13a: a worker's `task_note` joins the hold (the PR #22 note's
+/// default), so a note made in the session's first moments is recorded, not refused.
+#[test]
+fn a_task_note_before_the_window_is_recorded_after_binding() {
+    let (mut fx, op) = launching();
+    let reply = fx.reply();
+    let call = proto::ToolCall {
+        run_id: RUN_ID.into(),
+        task_id: Some("t1".into()),
+        role: AgentRole::Worker,
+        window_id: EARLY,
+        tool: "task_note".into(),
+        args: serde_json::json!({"kind": "discovery", "text": "early"}),
+        scout_id: None,
+        epic: None,
+    };
+    let refusals = Vec::new();
+    let event = crate::run::engine::OrchEvent::Tool {
+        reply,
+        call,
+        refusals,
+    };
+    let effects = fx.next(EventKind::Orch(event));
+    assert!(replies(&effects).is_empty(), "held: {effects:#?}");
+    let effects = bind(&mut fx, op, EARLY);
+    let note = crate::run::orch::contract::NOTE_RECORDED.to_string();
+    assert_eq!(replies(&effects), vec![Ok(note)]);
+    assert_eq!(fx.task("t1").orch.worker_notes.len(), 1);
+}

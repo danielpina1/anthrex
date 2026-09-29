@@ -350,7 +350,9 @@ pub(super) fn override_task(
     if super::schedule::is_reader_task(&run.tasks[i]) {
         return answer(fx, Err(OVERRIDE_KINDS.to_string()));
     }
-    if let Some(text) = override_refusal(run, i) {
+    // Milestone 9 decision 42c.
+    let paused = super::worker_messages::paused_refusal(&run.tasks[i]);
+    if let Some(text) = paused.or_else(|| override_refusal(run, i)) {
         return answer(fx, Err(text));
     }
     let task = &run.tasks[i];

@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 use proto::{BlockInfo, BlockReason, PlanEdit, PlanTask, Size, TaskState};
 
 use super::contract::{amend_message, answer_message};
-use super::edits_state::{has_live_worker, is_live};
+use super::edits_state::{has_live_worker, is_live, is_paused};
 pub(super) use super::edits_state::{not_started, state_label};
 use super::model::{Run, Task, TaskEvent, task_branch, task_path};
 use super::orch::EditSource;
@@ -39,6 +39,14 @@ pub enum EditConsequence {
         task_id: String,
         text: String,
     },
+    /// Milestone 9 decision 42b: queue a `message`'s `text`, recorded last in the
+    /// task's messages, for its worker.
+    Message {
+        task_id: String,
+        text: String,
+    },
+    /// Decision 42b: a `message`'s resolved recipients, for the reply and the edit log.
+    Recipients(super::edits_orch::MessageOutcome),
     Pause,
     Resume,
     Finish,
@@ -137,7 +145,7 @@ pub(super) struct Batch {
     /// these only (F3).
     pub(super) added_deps: BTreeSet<(String, String)>,
     pub(super) errors: Vec<PlanError>,
-    consequences: Vec<EditConsequence>,
+    pub(super) consequences: Vec<EditConsequence>,
     pub(super) now: u64,
 }
 
@@ -147,8 +155,9 @@ impl Batch {
             PlanEdit::AddTask { task } => self.add_owned(task),
             PlanEdit::SplitTask { task_id, into } => self.split_owned(task_id, into),
             PlanEdit::CancelTask { task_id } => self.cancel(task_id),
-            // Milestone 9 decisions 42a and 42e (task M9.13a).
-            PlanEdit::Message { .. } | PlanEdit::Refresh { .. } => self.not_yet(),
+            // Milestone 9 decisions 42a and 42e.
+            PlanEdit::Message { to, text, kind } => self.message(to, text, *kind),
+            PlanEdit::Refresh { task_id } => self.refresh(task_id),
             PlanEdit::AmendTask { .. } => self.amend_task(edit),
             PlanEdit::AddDep { task_id, dep } => self.add_dep(task_id, dep),
             PlanEdit::Answer { task_id, text } => self.answer(task_id, text),
@@ -288,7 +297,7 @@ impl Batch {
     /// that depended on `id` depend on all of `into` instead.
     pub(super) fn split(&mut self, id: &str, into: &[PlanTask]) {
         let Some(i) = self.find(id) else { return };
-        if !not_started(self.run.tasks[i].state) {
+        if !not_started(&self.run.tasks[i]) {
             return self.refuse(i, "only pending, queued or blocked tasks can be split");
         }
         if into.is_empty() {
@@ -388,7 +397,7 @@ impl Batch {
             ("deps", deps.is_some()),
         ];
         let reresolve = restricted[..4].iter().any(|(_, set)| *set);
-        if restricted.iter().any(|(_, set)| *set) && !not_started(state) {
+        if restricted.iter().any(|(_, set)| *set) && !not_started(&self.run.tasks[i]) {
             for (name, _) in restricted.iter().filter(|(_, set)| *set) {
                 self.refuse(
                     i,
@@ -439,11 +448,14 @@ impl Batch {
             self.amend_deps(i, deps, &mut changed);
         }
         let task = &self.run.tasks[i];
-        if (brief.is_some() || acceptance.is_some()) && has_live_worker(task) {
+        // Decision 42c: a new brief or acceptance also releases a paused task.
+        let reaches = brief.is_some() || acceptance.is_some();
+        if reaches && (has_live_worker(task) || is_paused(task)) {
             self.consequences.push(EditConsequence::Deliver {
                 task_id: task.id().to_string(),
                 text: amend_message(task),
             });
+            self.release_pause(i);
         }
         self.log(i, format!("amended: {}", changed.join(", ")));
     }
@@ -502,7 +514,7 @@ impl Batch {
         if self.epic_being_planned(i) {
             return;
         }
-        if !not_started(self.run.tasks[i].state) {
+        if !not_started(&self.run.tasks[i]) {
             return self.refuse(
                 i,
                 "dependencies can be added only on pending, queued or blocked tasks",

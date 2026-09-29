@@ -11,8 +11,8 @@ use crate::run::engine::OpResult;
 use crate::run::git::is_id;
 use crate::run::git::{
     Git, Leftover, Repo, clear_merge_state, failure, finish_clean, forget_missing,
-    interrupted_conflict, is_ancestor, leftover, listed_worktree_in, os, read, reattach_in, short,
-    sync_in, undo_clean_merge, unmerged,
+    interrupted_conflict, is_ancestor, leftover, listed_worktree_in, merged_log, os, read,
+    reattach_in, short, sync_in, undo_clean_merge, unmerged,
 };
 
 /// `PrepareWorktree` (final fix batch F1c, 3a): the task's checkout is its own
@@ -204,7 +204,7 @@ fn reattach(
 pub(super) fn hand_back(
     g: Git<'_>,
     worktree: &Path,
-    run_head: &str,
+    (run_head, list_merged): (&str, bool),
     notes: &mut Vec<String>,
 ) -> Result<Reconciled, String> {
     let target = read(g, worktree, &format!("{run_head}^{{commit}}"))?;
@@ -245,6 +245,7 @@ pub(super) fn hand_back(
                     files,
                     onto: parent(1)?,
                     head,
+                    merged: Vec::new(),
                 }));
             }
             Leftover::Untouched => {
@@ -275,6 +276,7 @@ pub(super) fn hand_back(
             files,
             onto: head.clone(),
             head,
+            merged: Vec::new(),
         }));
     }
     let Some(target) = target else {
@@ -295,10 +297,17 @@ pub(super) fn hand_back(
                 return Ok(Reconciled::NotStarted);
             }
         }
+        let onto = parent(1)?;
+        // Milestone 9 decision 42e: a refresh's clean merge names what it merged.
+        let merged = match (&onto, list_merged) {
+            (Some(onto), true) => merged_log(g, worktree, onto, &target)?,
+            _ => Vec::new(),
+        };
         return Ok(Reconciled::Replay(OpResult::HandedBack {
             files: Vec::new(),
-            onto: parent(1)?,
+            onto,
             head,
+            merged,
         }));
     }
     if let Some(tree) = interrupted_conflict(g, worktree, &tip, &target)? {

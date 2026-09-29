@@ -14,6 +14,7 @@ use serde_json::json;
 use super::batch::{Applied, Refused, apply_batch, record_rejected};
 use super::requests::log;
 use super::{Effect, EngineState, ReplyId, gate_holds, kinds, planners, run_scouts, wake};
+use crate::run::edits_orch::{MessageOutcome, one_edit_rule};
 use crate::run::model::Run;
 use crate::run::orch::tools::{OrchCall, parse_call};
 use crate::run::orch::{EditSource, EpicRecord, digest};
@@ -117,6 +118,11 @@ pub(super) fn on_orch_event(
     fx: &mut Vec<Effect>,
 ) {
     match event {
+        // Milestone 9 decision 42f: a worker's `task_note` passes M8a's run gate and
+        // early hold like its other tools (`done.rs`).
+        OrchEvent::Tool { reply, call, .. } if call.role == AgentRole::Worker => {
+            super::done::tool(state, reply, call, now, fx)
+        }
         OrchEvent::Tool {
             reply,
             call,
@@ -224,12 +230,8 @@ pub(super) fn tool(
         return refuse(fx, reply, format!("unknown run {}", call.run_id));
     };
     if !matches!(call.role, AgentRole::Orchestrator | AgentRole::Planner) {
-        // Workers' `task_note` (M9.13a).
-        return refuse(
-            fx,
-            reply,
-            format!("tool {} is not available yet", call.tool),
-        );
+        let text = format!("tool {} is not available to this role", call.tool);
+        return refuse(fx, reply, text);
     }
     match run.state {
         RunState::Planning
@@ -325,7 +327,11 @@ fn edit_plan(
             return refuse(fx, reply, text);
         };
         write_summary(run, summary, now);
-        return accepted(run, reply, (Vec::new(), None), (now, base), fx);
+        return accepted(run, reply, (Vec::new(), None, None), (now, base), fx);
+    }
+    // Decision 42: a `message` or `refresh` is alone in its call, before any effect.
+    if let Err(error) = one_edit_rule(edits, submit, summary.is_some()) {
+        return refuse(fx, reply, error.to_string());
     }
     let source = EditSource::Orchestrator;
     // Decision 37: the engine owns its integration reviews.
@@ -336,10 +342,15 @@ fn edit_plan(
     let mut edited = run.clone();
     let mut effects = Vec::new();
     let mut added = Vec::new();
+    let mut message = None;
     if !edits.is_empty() {
         let batch = (edits, &EditScope::Run, refusals);
         match apply_batch(&mut edited, batch, &source, now, &mut effects) {
-            Ok(Applied { added: new, .. }) => added = new,
+            Ok(Applied {
+                added: new,
+                message: outcome,
+                ..
+            }) => (added, message) = (new, outcome),
             // Decision 40: a rejected batch is logged too.
             Err(Refused::Text(text)) => {
                 record_rejected(run, edits, &source, text.clone(), now);
@@ -366,7 +377,7 @@ fn edit_plan(
     let notes = new_notes(run, &edited);
     *run = edited;
     fx.extend(effects);
-    accepted(run, reply, (notes, held), (now, base), fx)
+    accepted(run, reply, (notes, held, message), (now, base), fx)
 }
 
 /// Decision 19's rejected batch: `{"accepted": false, "errors": [...]}`.
@@ -384,7 +395,7 @@ pub(super) fn rejected(errors: &[crate::run::plan::PlanError]) -> String {
 fn accepted(
     run: &mut Run,
     reply: ReplyId,
-    (notes, held): (Vec<String>, Option<String>),
+    (notes, held, message): (Vec<String>, Option<String>, Option<MessageOutcome>),
     (now, base): (u64, &mut Option<Run>),
     fx: &mut Vec<Effect>,
 ) {
@@ -395,14 +406,24 @@ fn accepted(
             .iter()
             .any(|h| &h.id == id && h.state == proto::HoldState::Awaiting)
     });
-    let text = json!({
+    let mut value = json!({
         "accepted": true,
         "revision": run.orch.digest_rev,
         "awaiting_approval": run.state == RunState::AwaitingApproval || hold_awaits,
         "notes": notes,
         "held": held,
-    })
-    .to_string();
+    });
+    // Decision 42b: a message's recipients.
+    if let Some(outcome) = message {
+        let refused: Vec<_> = outcome
+            .refused
+            .iter()
+            .map(|(task, reason)| json!({"task": task, "reason": reason}))
+            .collect();
+        value["delivered"] = json!(outcome.delivered);
+        value["refused"] = json!(refused);
+    }
+    let text = value.to_string();
     fx.push(Effect::Reply {
         reply,
         result: Ok(text),

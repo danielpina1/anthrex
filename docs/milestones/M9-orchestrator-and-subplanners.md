@@ -3218,3 +3218,35 @@ One commit, `fix(daemon): every restart of a restored orchestrator names this da
    - `an_exit_during_a_restart_is_never_reported`: with `restarting` held (a test-only `WindowManager::hold_restarting`), never reported past `EXIT_CONFIRM`; after release, the count starts again.
    - Mutations: `EXIT_CONFIRM = 0` turns both red. Removing the `is_restarting` check turns the second red and leaves the first green.
 4. **Recorded:** a promote let through by `trust_project` does not add the newly reached files to `Run.trusted_project`, so a later `run edit` refuses them. Added to the existing follow-ups entry.
+
+### Task M9.13a (Orchestrator-to-worker messages, refresh and worker notes)
+
+Two commits: `refactor(daemon): move the plan edits' task-state predicates into their own file` (`run/edits_state.rs`, so `edits.rs` had room), then `feat(daemon): deliver worker messages, refresh task branches and record notes`. Each new test was seen red for its reason by mutating the source and restoring it from a copy; the new test files did not compile against the code before.
+
+**Choices the brief left open**
+
+- **`task_note` joins the early hold** (`early::holds_call`). Test: `a_task_note_before_the_window_is_recorded_after_binding`, red with the entry removed.
+- `WORKER_MCP_TOOLS` has three entries. Its pins in `headless/argv_tests.rs` and `engine/tests/dispatch.rs` are updated, plus a new test, `worker_spec_allows_task_note`.
+- `PAUSE_RELEASED` (`orch/contract.rs`) is new text: `[anthrex] The run was resumed. You were asked to stop and wait; continue your task now.` It is queued for every paused task when a `resume` edit or a run resume releases it.
+- `stop_and_wait` to a task that is not `working` is refused as `task <id> is <label>; stop_and_wait needs a working task`. A second `stop_and_wait` to a paused task is refused as `task <id> is already paused(message)`.
+- An unknown id in a message's task list is refused per recipient (`no such task <id>`). The other recipients still get it. The reply names every refusal as `not delivered: <reason>`, and `edit_plan`'s JSON has `delivered` and `refused: [{task, reason}]`.
+- A failed refresh sets `error` on its accepted `plan_edits` entry (`edit_log::set_error`). Alongside that it writes the history line `refresh skipped: <why>` and the wake note `refresh of <t> skipped: <why>`.
+- `refresh_clean(n, list)` gets `n` equal to the merged list's length. The list is capped at 20 by `git log -n 20`, so a refresh of more than 20 commits says 20.
+- Worker notes go in the task report's existing `Notes:` list as `(<kind>, from the worker)`. Messages get their own `Messages:` section, with `not delivered yet` on undelivered ones.
+- Discovery and risk notes show in the snapshot's attention list: the last three, as `<t> noted a <kind>: <first 80 chars>`. They do not show in the digest's attention, which would have changed the digest fixture; the digest gets them through the wake note. A paused task shows in the attention list only after 10 minutes (`PAUSED_ATTENTION_SECS`).
+
+**Deviations from the brief's file list and interfaces**
+
+- The refresh's result routing is in `engine/results.rs`, ahead of the hand-back arms, not in `engine/mod.rs`. That file is at 600 lines, and `results.rs` is where every op result is routed.
+- `TaskMessage.outbox: Option<u64>` (`#[serde(default)]`) links a recorded message to its outbox entry. A fresh session's first turn carries every message in its prompt, so the linked outbox copies are dropped (`worker_messages::launched`) and never sent twice. A resume that fails keeps them out as well. Tested inside `rung_2…`: red with the `carries` filter removed.
+- `MessageOutcome` has `queued` and `text` besides `delivered` and `refused`. `EditConsequence::Recipients(MessageOutcome)` carries it out of `apply_edits`.
+- The paused-task refusal for `override` is in `engine/gates.rs`, which is not in the brief's list. The refusal for `retry` is in `engine/requests.rs`.
+- `OpKind::HandBack.list_merged` and `OpResult::HandedBack.merged` both use `#[serde(default)]`, so a journal from before replays. Reconcile replays a refresh (`refresh_is_replayed_by_reconcile`, in `tests/run_journal/git_handback.rs`) at the reconcile level. It does not go through the abort hook, because a refresh has no abort point of its own; it is M8a's hand-back.
+- **The clean-tree check at acceptance** is `driver/refresh.rs`. It runs only for a lone `[Refresh]` of a working or paused task, from `run edit` and from `edit_plan`. The worker's HEAD object lives in the task's private object directory, so a plain `git status` in the task worktree said `bad object HEAD`. The check therefore runs `sync_in` first, behind the run's `GitQueue::write`, on `spawn_blocking`, inside `DONE_CHECK_GIT_TIMEOUT`, never under the lock. The boundary check in `git::hand_back_listing` (`tracked_changes`) does the same. Only tracked changes count, not untracked files. Its tests are in-crate (`driver/refresh_tests.rs`, through the real socket rig) rather than a new integration binary.
+- The environment check for the refresh's git calls is in `tests/run_git_env.rs`: `hand_back_listing` is added to that binary's one test. That binary is the only one allowed to change the process environment.
+- The brief's `worker_messages.rs` tests are split in two. `engine/tests/worker_messages.rs` holds delivery, recipients and limits; `engine/tests/worker_messages_pause.rs` holds the pause and the notes. The M9.12-era placeholder tests (`edits_tests_placeholders.rs`) are gone: the placeholder in `dispatch_edits.rs` became `message_or_refresh_beside_another_edit_leaves_the_run_unchanged`.
+
+**Open, recorded for review**
+
+- **What counts as the task's own commits.** The fallback's commit count and `task_done`'s zero-commit check subtract `refresh_merges.len()`. A worker that resets its branch below a refresh merge would be under-counted. This is an edge case; the net diff (`verify_done`, `measure_diff`) is unaffected, because it measures against the run head.
+- **A conflicted refresh records no merge in `refresh_merges`.** The worker makes that merge commit itself, so it counts as the worker's own. `Task.conflicts` is unchanged, because only the merge queue counts a conflict.

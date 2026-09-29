@@ -301,6 +301,7 @@ fn message(at: u64, source: EditSource, kind: MessageKind, text: &str) -> TaskMe
         kind,
         text: text.into(),
         delivered: false,
+        outbox: None,
     }
 }
 

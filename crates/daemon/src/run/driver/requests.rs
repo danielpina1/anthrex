@@ -193,6 +193,8 @@ impl RunService {
         edits: Vec<proto::PlanEdit>,
         submit: bool,
     ) -> Result<String, String> {
+        // Milestone 9 decision 42e: a refresh's clean-tree check, before the engine.
+        self.refresh_precheck(&run_id, &edits, !submit).await?;
         let refusals = self.runtime_refusals(&run_id, &edits).await?;
         self.ask(|reply| EventKind::Edit {
             reply,

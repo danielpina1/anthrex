@@ -128,6 +128,7 @@ pub(super) fn resume_held(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
             worktree,
             run_head: run.run_head.clone(),
             task_head,
+            list_merged: false,
         };
         emit_op(run, op, Some(&id), kind, fx);
     }

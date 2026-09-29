@@ -481,8 +481,5 @@ mod rules;
 #[path = "edits_tests_state.rs"]
 mod state;
 
-#[path = "edits_tests_placeholders.rs"]
-mod placeholders;
-
 #[path = "edits_tests_orch.rs"]
 mod orch;

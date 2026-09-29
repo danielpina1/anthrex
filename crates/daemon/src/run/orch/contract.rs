@@ -108,6 +108,11 @@ pub fn planner_wrap_up(n: u32) -> String {
 pub const STOP_AND_WAIT_REFUSAL: &str =
     "this task was asked to stop and wait; wait for the next message";
 
+/// Decision 42c: a paused task released by the run's `resume` edit (task M9.13a's
+/// wording; the brief gives none).
+pub const PAUSE_RELEASED: &str =
+    "[anthrex] The run was resumed. You were asked to stop and wait; continue your task now.";
+
 /// Decision 42f: the reply to an accepted `task_note`.
 pub const NOTE_RECORDED: &str = "Note recorded. Keep working.";
 

@@ -177,8 +177,11 @@ fn check(
             notes,
         ),
         OpKind::HandBack {
-            worktree, run_head, ..
-        } => git::hand_back(g, worktree, run_head, notes),
+            worktree,
+            run_head,
+            list_merged,
+            ..
+        } => git::hand_back(g, worktree, (run_head, *list_merged), notes),
         OpKind::AbortMerge { worktree } => git::abort_merge(g, worktree),
         OpKind::RemoveWorktree {
             root,

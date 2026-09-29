@@ -14,8 +14,9 @@ use super::engine::ladder::{round_spend, total_spend};
 use super::engine::schedule::{critical_path, readers_busy, waves, writers_busy};
 use super::messages::summary;
 use super::model::{AgentRound, Run, Task};
+pub use super::snapshot_orch::PAUSED_ATTENTION_SECS;
 pub use super::snapshot_orch::SNAPSHOT_NOTE_MAX;
-use super::snapshot_orch::{message_line, plan_text_shown, task_notes};
+use super::snapshot_orch::{message_line, noted_lines, paused_line, plan_text_shown, task_notes};
 
 /// History entries a task shows, newest first.
 const HISTORY_SHOWN: usize = 10;
@@ -83,7 +84,9 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         rate_limits: run.rate_limits.clone(),
         tasks,
         critical_path: path.iter().map(|&i| run.tasks[i].spec.id.clone()).collect(),
-        attention: attention(run),
+        // Decision 42i: the run view's list also names the last discoveries and risks,
+        // which the digest carries as `task_notes`.
+        attention: [attention(run, now), noted_lines(run)].concat(),
         report_path: run.report_path(),
         outcome: run.outcome.clone(),
         created_at: run.created_at,
@@ -171,13 +174,17 @@ pub(crate) fn run_usage(run: &Run) -> RunUsage {
     }
 }
 
-/// One line per thing the user must look at: blocked tasks, a moved base, a failed
-/// final check.
-pub(crate) fn attention(run: &Run) -> Vec<String> {
+/// One line per thing the user must look at at `now`: blocked tasks (a
+/// `paused(message)` one only after [`PAUSED_ATTENTION_SECS`], milestone 9 decision
+/// 42c), a moved base, a failed final check.
+pub(crate) fn attention(run: &Run, now: u64) -> Vec<String> {
     let mut lines: Vec<String> = run
         .tasks
         .iter()
         .filter_map(|t| {
+            if crate::run::edits_state::is_paused(t) {
+                return paused_line(t, now);
+            }
             let block = t.block.as_ref()?;
             let reason = serde_json::to_value(block.reason).ok()?;
             Some(format!(

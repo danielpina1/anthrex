@@ -55,6 +55,44 @@ pub(super) fn task_notes(task: &Task) -> Vec<TaskNoteInfo> {
         .collect()
 }
 
+/// Decision 42c: a `paused(message)` task is an attention line once it has lasted this
+/// long.
+pub const PAUSED_ATTENTION_SECS: u64 = 600;
+
+/// Decision 42c: `<t> paused(message) for <n> min`, once the pause has lasted
+/// [`PAUSED_ATTENTION_SECS`].
+pub(super) fn paused_line(task: &Task, now: u64) -> Option<String> {
+    let lasted = now.saturating_sub(task.phase_since);
+    (lasted >= PAUSED_ATTENTION_SECS)
+        .then(|| format!("{} paused(message) for {} min", task.id(), lasted / 60))
+}
+
+/// Decision 42i: the last three `discovery` and `risk` notes across tasks, newest
+/// first, as `<t> noted a <kind>: <first 80 characters>`.
+pub(super) fn noted_lines(run: &Run) -> Vec<String> {
+    let mut notes: Vec<(&Task, &crate::run::orch::WorkerNote)> = run
+        .tasks
+        .iter()
+        .flat_map(|t| t.orch.worker_notes.iter().map(move |n| (t, n)))
+        .filter(|(_, n)| n.kind != proto::TaskNoteKind::Progress)
+        .collect();
+    notes.sort_by_key(|(_, n)| std::cmp::Reverse((n.at, n.seq)));
+    notes
+        .into_iter()
+        .take(3)
+        .map(|(t, n)| {
+            let first: String = n
+                .text
+                .chars()
+                .take(80)
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect();
+            let kind = crate::run::orch::json::label(&n.kind);
+            format!("{} noted a {kind}: {first}", t.id())
+        })
+        .collect()
+}
+
 /// Decision 11's orchestrator, as the run view shows it (never its OTLP token).
 pub(super) fn orchestrator(run: &Run) -> Option<OrchestratorInfo> {
     let o = run.orch.orchestrator.as_ref()?;

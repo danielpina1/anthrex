@@ -348,15 +348,19 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
         OpKind::HandBack {
             worktree,
             run_head,
-            task_head: _,
+            list_merged,
+            ..
         } => settle(
             service
-                .write(ctx, move |g, t| git::hand_back(g, &worktree, &run_head, t))
+                .write(ctx, move |g, t| {
+                    git::hand_back_listing(g, &worktree, &run_head, list_merged, t)
+                })
                 .await
-                .map(|h| OpResult::HandedBack {
+                .map(|(h, merged)| OpResult::HandedBack {
                     files: h.files,
                     head: Some(h.head),
                     onto: Some(h.onto),
+                    merged,
                 }),
         ),
         OpKind::AbortMerge { worktree } => settle(

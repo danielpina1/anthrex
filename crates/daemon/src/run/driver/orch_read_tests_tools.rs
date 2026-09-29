@@ -226,12 +226,9 @@ async fn writes_go_to_the_engine() {
             json!({"kind": "risk", "text": "flaky"}),
         )
         .await;
-    assert!(!ok);
-    // Milestone 9 task M9.13a gives the engine's answer; until then it refuses.
-    assert_eq!(
-        answer,
-        json!({"error": "tool task_note is not available yet"})
-    );
+    // Task M9.13a: the engine records it (decision 42f).
+    assert!(ok, "{answer}");
+    assert_eq!(answer, json!("Note recorded. Keep working."));
 }
 
 /// How long the stand-in `git` of the deadline test sleeps on each call: under the

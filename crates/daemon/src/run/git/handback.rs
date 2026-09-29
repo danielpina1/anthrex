@@ -118,6 +118,84 @@ pub fn hand_back(
     }
 }
 
+/// Milestone 9 decision 42e: a refresh found tracked changes in the worktree at its
+/// turn boundary (`OpResult::Failed`'s message).
+pub const UNCOMMITTED: &str = "uncommitted changes";
+
+/// At most this many merged commits are listed for a refresh (decision 42e).
+pub const MERGED_LIST_MAX: usize = 20;
+
+/// [`hand_back`], and for a refresh (`list_merged`, milestone 9 decision 42e) first the
+/// clean-tree check again, since the worker may have written since the edit was
+/// accepted (a dirty tree is [`UNCOMMITTED`]), then, after a clean merge, the commits
+/// it brought in: `<sha> <subject>`, newest first, at most [`MERGED_LIST_MAX`]. The
+/// merge is the hand-back's own: no `git merge`, never a rebase.
+pub fn hand_back_listing(
+    git: &OsStr,
+    worktree: &Path,
+    run_head: &str,
+    list_merged: bool,
+    timeout: Duration,
+) -> Result<(HandBack, Vec<String>), String> {
+    if !list_merged {
+        return hand_back(git, worktree, run_head, timeout).map(|h| (h, Vec::new()));
+    }
+    if tracked_changes(git, worktree, timeout)? {
+        return Err(UNCOMMITTED.to_string());
+    }
+    let done = hand_back(git, worktree, run_head, timeout)?;
+    let merged = if done.files.is_empty() && done.head != done.onto {
+        merged_log(Git::new(git, timeout), worktree, &done.onto, run_head)?
+    } else {
+        Vec::new()
+    };
+    Ok((done, merged))
+}
+
+/// Decision 42e's clean-tree check: whether the worktree has a tracked change, staged
+/// or not (`git status --porcelain -z --untracked-files=no`, through
+/// `worktree::run_git`: `--no-optional-locks` and the scrubbed environment). The
+/// worker's `HEAD` is imported first, as `verify_done` does, since the engine never
+/// reads the worker's private objects: call it behind [`super::GitQueue::write`].
+pub fn tracked_changes(git: &OsStr, worktree: &Path, timeout: Duration) -> Result<bool, String> {
+    let g = Git::new(git, timeout);
+    sync_in(g, worktree)?;
+    let args = [
+        os("status"),
+        os("--porcelain"),
+        os("-z"),
+        os("--untracked-files=no"),
+    ];
+    Ok(!g.ok(worktree, &args)?.is_empty())
+}
+
+/// The commits of `onto..run_head`, `<sha> <subject>`, newest first, at most
+/// [`MERGED_LIST_MAX`] (`git log`, through `worktree::run_git`). Reconcile reads it
+/// too, for a refresh it replays.
+pub(crate) fn merged_log(
+    g: Git<'_>,
+    worktree: &Path,
+    onto: &str,
+    run_head: &str,
+) -> Result<Vec<String>, String> {
+    let range = format!("{onto}..{run_head}");
+    let max = MERGED_LIST_MAX.to_string();
+    let args = [
+        os("log"),
+        os("--no-color"),
+        os("--format=%h%x1f%s"),
+        os("-n"),
+        os(&max),
+        os("--end-of-options"),
+        os(&range),
+    ];
+    Ok(g.ok(worktree, &args)?
+        .lines()
+        .filter_map(|line| line.split_once('\u{1f}'))
+        .map(|(sha, subject)| format!("{sha} {subject}"))
+        .collect())
+}
+
 /// `merge-tree --write-tree`'s answer for `onto` and the run head.
 enum Merged {
     Clean(String),

@@ -163,6 +163,19 @@ pub fn record(
     }
 }
 
+/// Milestone 9 decision 42e: a refresh that failed at its turn boundary sets the error
+/// of its accepted batch, the newest one described `text` (`refresh <t>`).
+pub fn set_error(run: &mut Run, text: &str, error: &str) {
+    let record = run
+        .plan_edits
+        .iter_mut()
+        .rev()
+        .find(|r| r.accepted && r.text == text);
+    if let Some(record) = record {
+        record.error = Some(clip_error(error));
+    }
+}
+
 #[cfg(test)]
 #[path = "edit_log_tests.rs"]
 mod tests;

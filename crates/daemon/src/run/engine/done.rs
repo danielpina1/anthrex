@@ -19,6 +19,7 @@ use crate::run::contract::{
 };
 use crate::run::globs::names_literally;
 use crate::run::model::{DoneClaim, FallbackState, PendingClaim, Run, StallState};
+use crate::run::orch::contract::STOP_AND_WAIT_REFUSAL;
 
 fn reply(fx: &mut Vec<Effect>, reply: ReplyId, result: Result<String, String>) {
     fx.push(Effect::Reply { reply, result });
@@ -69,6 +70,8 @@ pub(super) fn answer(
     match call.tool.as_str() {
         "task_done" | "task_blocked" => worker_tool(run, id, &call, now, fx),
         "submit_review" => super::review::submit(run, id, &call, now, fx),
+        // Milestone 9 decision 42f, past M8a's run gate above.
+        "task_note" => super::worker_messages::task_note(run, id, &call, now, fx),
         // Milestone 9 decision 35: a research task's report.
         "submit_scout_report" => super::kinds::submit_research(run, id, &call, now, fx),
         other => {
@@ -100,6 +103,10 @@ fn worker_tool(run: &mut Run, id: ReplyId, call: &ToolCall, now: u64, fx: &mut V
         let text = format!("this window is not the current worker of task {task_id}");
         return reply(fx, id, Err(text));
     };
+    // Milestone 9 decision 42c: the fastest stop, ahead of the working-only check.
+    if call.tool == "task_done" && crate::run::edits_state::is_paused(&run.tasks[i]) {
+        return reply(fx, id, Err(STOP_AND_WAIT_REFUSAL.to_string()));
+    }
     let state = run.tasks[i].state;
     if state != TaskState::Working {
         let text = format!(
@@ -274,7 +281,8 @@ fn rejection(run: &Run, i: usize, claim: &PendingClaim, result: &OpResult) -> Op
     // names a branch, or a stopped rebase, is not a claim the branch can carry.
     Some(if head_branch.as_deref() != Some(branch.as_str()) {
         "task_done rejected: this worktree's HEAD must be a detached commit with no rebase in progress; run git checkout --detach (or finish the rebase), commit, and call task_done again".to_string()
-    } else if *commits == 0 {
+    } else if super::worker_messages::own_commits(task, *commits) == 0 {
+        // Milestone 9 decision 42e: a refresh's merge commit is not the task's work.
         "task_done rejected: the branch has no commit since the task started; commit your work first".into()
     } else if *dirty_tracked > 0 {
         format!(

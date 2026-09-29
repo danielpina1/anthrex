@@ -39,7 +39,10 @@ pub use accept::{ACCEPT_MERGE_TIMEOUT, accept, accept_with_merge_timeout};
 pub(crate) use checkout::restore_owner_access;
 pub use checkout::{Repo, checkout_repo_dir, default_repo_dir};
 pub use done::{DoneChecked, count_commits, diff_so_far, verify_done};
-pub use handback::{HandBack, hand_back};
+pub(crate) use handback::merged_log;
+pub use handback::{
+    HandBack, MERGED_LIST_MAX, UNCOMMITTED, hand_back, hand_back_listing, tracked_changes,
+};
 pub use import::{HeadFile, head_file, rebase_in_progress, sync};
 pub use merge::{
     ACCEPT_LIST_MAX, AcceptOutcome, CandidateStep, RefCheck, cas_update, commit_tree,

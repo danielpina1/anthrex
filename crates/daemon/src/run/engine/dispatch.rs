@@ -22,6 +22,7 @@ use super::{
 use crate::run::contract::{handover_prompt, is_stall_nudge, worker_prompt};
 use crate::run::env::profile_env;
 use crate::run::model::{FreshSession, OpId, Run, StallState, Task, TaskEvent};
+use crate::run::orch::contract::notes_section;
 use crate::run::role_launch::{jitter_ms, session_uuid_of, worker_spec};
 
 pub(super) use super::rounds::new_round;
@@ -69,6 +70,7 @@ pub(super) fn schedule(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     }
     remove_cancelled_worktrees(run, now, fx);
     if run.state == RunState::Running {
+        super::worker_messages::refresh_pass(run, now, fx);
         outbox::deliver(run, now, fx);
         complete::complete_pass(run, now, fx);
     }
@@ -274,7 +276,8 @@ fn launch_ready(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
 
 /// A new worker session for task `i`, starting at `start` (decisions 24–26, 30).
 fn launch_worker(run: &mut Run, i: usize, start: String, now: u64, fx: &mut Vec<Effect>) {
-    let prompt = |run: &Run, task: &Task| worker_prompt(run, task, "", "");
+    let prompt =
+        |run: &Run, task: &Task| worker_prompt(run, task, "", &notes_section(&task.orch.messages));
     launch(run, i, Some(start), prompt, now, fx);
 }
 
@@ -291,7 +294,15 @@ pub(super) fn launch_fresh(
     fx: &mut Vec<Effect>,
 ) {
     let prompt = |run: &Run, task: &Task| {
-        let mut text = handover_prompt(run, task, &fresh.reason, stat, patch, "", "");
+        let mut text = handover_prompt(
+            run,
+            task,
+            &fresh.reason,
+            stat,
+            patch,
+            "",
+            &notes_section(&task.orch.messages),
+        );
         if let Some(append) = &fresh.append {
             text.push_str("\n\n");
             text.push_str(append);
@@ -333,6 +344,9 @@ fn launch(
     let task = &run.tasks[i];
     let spec = worker_spec(run, task);
     let first_turn = first_turn(run, task);
+    // Milestone 9 decision 42d: the first turn carries every recorded message.
+    super::worker_messages::launched(run, i);
+    let task = &run.tasks[i];
     let extract = crate::run::orch::extract::worker_slot(run, task);
     let name = format!("{}/{}.w{}", run.short(), task.id(), task.session);
     let uuid = (task.route.runtime == Runtime::Claude).then(|| session_uuid_of(run, op));
