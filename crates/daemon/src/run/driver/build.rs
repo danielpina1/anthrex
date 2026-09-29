@@ -157,9 +157,21 @@ fn missing_in<'a>(
 /// peer runtime only when it is installed, M9.17 fix round 2), on a run whose
 /// `orch.installed` is set. The planners run on the orchestrator's runtime (checked
 /// before this) unless `[orchestrator.planners] runtime` names another, so the hint
-/// names what to change.
-fn planner_refusal(run: &Run, missing: Missing<'_>) -> Option<String> {
+/// names what to change. A runtime the orchestrator's window finds (`window`, the
+/// [`Found::window`] map) only through a `~` entry in `PATH` gets that reason instead
+/// (whole-branch review, item 3): another `--orchestrator` would not help.
+fn planner_refusal(
+    run: &Run,
+    missing: Missing<'_>,
+    window: &BTreeMap<String, bool>,
+) -> Option<String> {
     let route = crate::run::orch::launch::planner_route(run)?;
+    let label = route.runtime.label();
+    if missing(route.runtime).is_some() && window.get(label) == Some(&true) {
+        return Some(format!(
+            "the sub-planners' runtime {label} is found only through a `~` entry in PATH, which headless sessions (sub-planners and scouts) do not search; put {label}'s directory in PATH as an absolute path"
+        ));
+    }
     let hint = match run.limits.orch.planners.runtime {
         Some(_) => "change [orchestrator.planners] runtime",
         None => "choose another runtime with --orchestrator",
@@ -227,7 +239,8 @@ impl RunService {
             planned.yes,
             found.headless.clone(),
         );
-        if let Some(refusal) = planner_refusal(run, &missing_in(&found.headless, &bins)) {
+        let headless = missing_in(&found.headless, &bins);
+        if let Some(refusal) = planner_refusal(run, &headless, &found.window) {
             return Err(refusal);
         }
         run.triage_usage = planned.usage.unwrap_or_default();
@@ -407,7 +420,7 @@ impl RunService {
             resolved.route,
             unix_now(),
         ));
-        if let Some(refusal) = planner_refusal(&promoted, &missing) {
+        if let Some(refusal) = planner_refusal(&promoted, &missing, &found.window) {
             return Err(refusal);
         }
         let before = reachable_runtimes(&run);

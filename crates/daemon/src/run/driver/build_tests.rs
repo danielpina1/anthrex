@@ -77,3 +77,38 @@ fn only_a_window_on_macos_finds_a_binary_through_a_tilde_entry() {
     assert!(yes(&both.window) && yes(&both.headless));
     assert_eq!(both.headless.get("codex"), Some(&false));
 }
+
+/// Whole-branch review, item 3: a runtime the orchestrator's window finds only through
+/// a `~` entry in `PATH` is refused for the sub-planners with the reason, not with
+/// "choose another runtime", which a user with only that runtime cannot follow.
+#[test]
+fn a_planner_runtime_found_only_through_a_tilde_entry_says_so() {
+    use proto::Runtime;
+    let mut run = crate::run::orch::test_support::run_of(1);
+    run.roster = config::default_roster();
+    let mut o = crate::run::orch::test_support::orchestrator();
+    o.route.runtime = Runtime::Codex;
+    o.route.model = String::new();
+    run.orch.orchestrator = Some(o);
+    let map = |claude: bool, codex: bool| -> std::collections::BTreeMap<String, bool> {
+        [("claude".to_string(), claude), ("codex".to_string(), codex)].into()
+    };
+    run.orch.installed = map(false, false);
+    let bins = ("/nonexistent/claude".to_string(), "codex".to_string());
+    let headless = map(false, false);
+    let missing = super::missing_in(&headless, &bins);
+    let window = map(false, true);
+    let refusal = super::planner_refusal(&run, &missing, &window).unwrap();
+    assert_eq!(
+        refusal,
+        "the sub-planners' runtime codex is found only through a `~` entry in PATH, which \
+         headless sessions (sub-planners and scouts) do not search; put codex's directory \
+         in PATH as an absolute path"
+    );
+    // Not found at all: the plain refusal.
+    let refusal = super::planner_refusal(&run, &missing, &map(false, false)).unwrap();
+    assert!(
+        refusal.starts_with("the sub-planners' runtime codex is not installed (codex is not"),
+        "{refusal}"
+    );
+}
