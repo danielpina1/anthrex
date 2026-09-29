@@ -1,16 +1,17 @@
 //! Milestone 8c decisions 32–34: the plan gate's keys (`a`, `x`, `e`, `d`), the task
 //! edit form's keys and its replies, and the stale-modal check after each snapshot.
-//! Moved out of `app/runs.rs` (`AGENTS.md` hard rule 8) before milestone 9 adds holds.
+//! Moved out of `app/runs.rs` (`AGENTS.md` hard rule 8) before milestone 9 adds holds
+//! (`app/run_holds.rs`), which `a` and `x` try first.
 
 use super::{App, Effect, Modal, PendingAction};
 use crate::run_edit::{EditOutcome, TaskEditForm};
 use crate::tree::NodeKey;
 use crossterm::event::KeyEvent;
-use proto::{ClientMsg, RunInfo, RunPath, RunRequest, RunState, TaskInfo, TaskState};
+use proto::{RunInfo, RunPath, RunRequest, RunState, TaskInfo, TaskState};
 
 use super::runs::state_text;
 
-fn confirm(message: String, action: PendingAction) -> Modal {
+pub(super) fn confirm(message: String, action: PendingAction) -> Modal {
     Modal::Confirm { message, action }
 }
 
@@ -38,11 +39,19 @@ impl App {
     }
 
     /// Decision 32's four keys: `a` and `x` ask to approve or reject the run, `d` to
-    /// remove the selected task, `e` opens the edit form on it. Nothing is sent here.
-    pub(super) fn on_gate_key(&mut self, run_id: String, key: char) {
+    /// remove the selected task, `e` opens the edit form on it. Nothing is sent here,
+    /// except milestone 9's hold approval (`app/run_holds.rs`), which `a` and `x` try
+    /// first.
+    pub(super) fn on_gate_key(&mut self, run_id: String, key: char) -> Vec<Effect> {
+        if let Some(effects) = self.on_hold_key(&run_id, key) {
+            return effects;
+        }
         let run = match self.gate_run(&run_id) {
             Ok(run) => run,
-            Err(text) => return self.toast(text),
+            Err(text) => {
+                self.toast(text);
+                return vec![];
+            }
         };
         let task = match &self.tree.selected {
             Some(NodeKey::Task { run: r, id }) if *r == run_id => {
@@ -67,9 +76,13 @@ impl App {
                     run_id,
                 },
             ),
-            (_, None) => return self.toast("select a task to edit or remove"),
+            (_, None) => {
+                self.toast("select a task to edit or remove");
+                return vec![];
+            }
         };
         self.modal = Some(modal);
+        vec![]
     }
 
     /// Decision 33: the open edit form's keys. `Enter` sends the one `Edit` and leaves
@@ -89,31 +102,43 @@ impl App {
                 self.toast("nothing changed");
                 vec![]
             }
+            // Milestone 9 decision 2: sent tagged, so only its own reply ends it.
             EditOutcome::Submit(edits) => {
-                let run_id = form.run_id.clone();
-                vec![Effect::Send(ClientMsg::Run(RunRequest::Edit {
-                    run_id,
+                let request = RunRequest::Edit {
+                    run_id: form.run_id.clone(),
                     edits,
                     submit: false,
-                }))]
+                };
+                let (id, effect) = self.tagged_request(request);
+                if let Some(Modal::EditTask(form)) = &mut self.modal {
+                    form.request_id = Some(id);
+                }
+                vec![effect]
             }
         }
     }
 
-    /// The edit form while it waits for its `run edit` reply.
-    pub(super) fn submitting_form(&mut self) -> Option<&mut TaskEditForm> {
+    /// The edit form while it waits on the tagged request `id` (decision 2).
+    pub(super) fn form_waiting_on(&mut self, id: Option<u64>) -> Option<&mut TaskEditForm> {
         match &mut self.modal {
-            Some(Modal::EditTask(form)) if form.submitting => Some(form),
+            Some(Modal::EditTask(form)) if form.submitting && id.is_some() => {
+                (form.request_id == id).then_some(form)
+            }
             _ => None,
         }
     }
 
     /// Whole-branch review M2: the `Edit` a submitting form waits on was refused by the
     /// connection, or its reply went with a lost link, so no reply will come. The form
-    /// stops submitting and says so inline; `Enter` sends it again.
-    pub(super) fn edit_not_sent(&mut self) {
-        if let Some(form) = self.submitting_form() {
+    /// stops submitting and says so inline; `Enter` sends it again. `id`: the refused
+    /// request's, or `None` for a lost link, which took every reply with it.
+    pub(super) fn edit_not_sent(&mut self, id: Option<u64>) {
+        if let Some(Modal::EditTask(form)) = &mut self.modal
+            && form.submitting
+            && (id.is_none() || form.request_id == id)
+        {
             form.submitting = false;
+            form.request_id = None;
             form.error = Some("the edit was not sent; press Enter to retry".into());
         }
     }
@@ -165,6 +190,8 @@ impl App {
                 Ok(_) => None,
             },
             PendingAction::RejectRun(run_id) => self.gate_run(run_id).err(),
+            PendingAction::RejectHold { run_id, hold } => self.stale_hold(run_id, hold),
+            PendingAction::SubmitPlan(run_id) => self.stale_submit(run_id),
             PendingAction::RemoveTask { run_id, task_id } => {
                 match self.gate_task(run_id, task_id) {
                     Err(text) => Some(text),

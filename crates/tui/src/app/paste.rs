@@ -44,6 +44,7 @@ impl App {
             match modal {
                 Modal::NewAgent(form) => form.on_paste(&text),
                 Modal::EditTask(form) => form.on_paste(&text),
+                Modal::StartGoal(form) => form.on_paste(&text),
                 _ => {}
             }
             return vec![];

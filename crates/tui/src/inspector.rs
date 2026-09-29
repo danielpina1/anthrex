@@ -328,6 +328,7 @@ fn git_text(state: &GitState) -> String {
 mod panel;
 mod run;
 mod run_format;
+mod run_orch;
 mod run_round;
 mod run_task;
 
@@ -348,3 +349,6 @@ mod run_task_tests;
 
 #[cfg(test)]
 mod run_round_tests;
+
+#[cfg(test)]
+mod run_orch_tests;

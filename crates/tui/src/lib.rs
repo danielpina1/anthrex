@@ -3,6 +3,7 @@
 pub mod app;
 pub mod connection;
 pub mod conversation;
+mod conversation_label;
 pub mod dialog;
 pub mod graph;
 pub mod inspector;
@@ -10,6 +11,8 @@ pub mod keymap;
 mod mouse;
 pub mod reconnect;
 pub mod run_edit;
+pub mod run_goal;
+pub mod safe_text;
 pub mod settings;
 pub mod spawn;
 pub mod theme;

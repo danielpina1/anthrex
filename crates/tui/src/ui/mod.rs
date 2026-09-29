@@ -6,6 +6,7 @@ pub mod dialog;
 pub mod modal;
 pub mod overview;
 pub mod run_edit;
+pub mod run_goal;
 pub mod sidebar;
 pub mod statusbar;
 pub mod terminal;

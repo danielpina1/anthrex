@@ -28,6 +28,7 @@ fn help_lines(prefix_label: &str) -> Vec<(String, String)> {
         (format!("{prefix_label} R"), "restart agent".to_string()),
         (format!("{prefix_label} r"), "reconnect".to_string()),
         (format!("{prefix_label} m"), "conversation".to_string()),
+        (format!("{prefix_label} g"), "start a goal".to_string()),
         (
             format!("{prefix_label} t"),
             "tree mode (j/k, h/l, Enter, Space, /)".to_string(),
@@ -124,12 +125,14 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             return dialog::render_force_remove(frame, name, message, area, accent);
         }
         Modal::EditTask(form) => return crate::ui::run_edit::render(frame, form, area, accent),
+        Modal::StartGoal(form) => return crate::ui::run_goal::render(frame, form, area, accent),
         Modal::Confirm { .. } | Modal::Help | Modal::Notice { .. } | Modal::Rename(_) => {}
     }
     let (title, body): (String, Vec<Line>) = match modal {
         // Review M5: a message wider than the screen wraps inside the box.
         Modal::Confirm { message, .. } => (" confirm ".to_string(), {
-            let mut lines = wrapped(message, usize::from(area.width.saturating_sub(4)));
+            let message = crate::safe_text::one_line(message);
+            let mut lines = wrapped(&message, usize::from(area.width.saturating_sub(4)));
             lines.push(Line::raw(""));
             lines.push(Line::styled(
                 "y / Enter = yes    n / Esc = no",
@@ -170,7 +173,11 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 Line::styled("Enter = rename    Esc = cancel", theme::muted()),
             ],
         ),
-        Modal::NewAgent(_) | Modal::Remove(_) | Modal::ForceRemove { .. } | Modal::EditTask(_) => {
+        Modal::NewAgent(_)
+        | Modal::Remove(_)
+        | Modal::ForceRemove { .. }
+        | Modal::EditTask(_)
+        | Modal::StartGoal(_) => {
             unreachable!("handled and returned from above")
         }
     };

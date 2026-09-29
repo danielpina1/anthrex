@@ -5,7 +5,7 @@
 use super::MAX_NODE_WIDTH;
 use crate::tree::{DisplayRound, round_label, run_progress};
 use crate::ui::tree_view::truncate;
-use proto::{PlannerInfo, RunInfo, Size, TaskInfo, TaskState};
+use proto::{PlannerInfo, RunInfo, RunState, Size, TaskInfo, TaskState};
 use unicode_width::UnicodeWidthStr;
 
 /// The widest task text: the widest box less its borders and padding (4), then the
@@ -14,12 +14,18 @@ pub(crate) const TASK_TEXT_MAX: usize = MAX_NODE_WIDTH as usize - 4 - 2;
 
 /// `orchestrator  {merged}/{total}` when the run's orchestrator window is listed,
 /// else `run {last four of the id}  {merged}/{total}`; cancelled tasks are not counted.
+/// A run being planned (milestone 9) says `planning` instead of its progress.
 pub(crate) fn run_text(run: &RunInfo, orchestrator: bool) -> String {
     let (merged, total) = run_progress(run);
-    if orchestrator {
-        format!("orchestrator  {merged}/{total}")
+    let progress = if run.state == RunState::Planning {
+        "planning".to_owned()
     } else {
-        format!("run {}  {merged}/{total}", run_short(&run.run_id))
+        format!("{merged}/{total}")
+    };
+    if orchestrator {
+        format!("orchestrator  {progress}")
+    } else {
+        format!("run {}  {progress}", run_short(&run.run_id))
     }
 }
 

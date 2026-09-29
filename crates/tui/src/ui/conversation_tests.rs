@@ -546,3 +546,6 @@ mod tools;
 
 #[path = "conversation_tests/wrap.rs"]
 mod wrap;
+
+#[path = "conversation_tests/label.rs"]
+mod label;

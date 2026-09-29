@@ -10,7 +10,6 @@
 use super::{App, Effect, TreeInput};
 use crate::tree::{self, NodeKey, Row, RunFilter, TreeState};
 use crossterm::event::{KeyCode, KeyEvent};
-use proto::run_wire::request::EDIT;
 use proto::{
     AgentRoundInfo, ClientMsg, RunInfo, RunReply, RunRequest, RunState, RunsSnapshot, Runtime,
     WindowInfo,
@@ -96,9 +95,11 @@ pub(super) fn no_runs() -> RunsSnapshot {
 /// the daemon's, and a toast is one status-bar line (review M1).
 pub(crate) const TOAST_MAX_CHARS: usize = 300;
 
-/// `text` cut to [`TOAST_MAX_CHARS`] characters plus `…`, on a char boundary.
-fn capped(text: &str) -> String {
-    let mut out: String = text.chars().take(TOAST_MAX_CHARS).collect();
+/// `text` cut to [`TOAST_MAX_CHARS`] characters plus `…`, on a char boundary, with no
+/// control, line-separator or bidi character (`safe_text`, milestone 9's M-6).
+pub(super) fn capped(text: &str) -> String {
+    let head: String = text.chars().take(TOAST_MAX_CHARS).collect();
+    let mut out = crate::safe_text::one_line(&head);
     if text.chars().nth(TOAST_MAX_CHARS).is_some() {
         out.push('…');
     }
@@ -144,6 +145,26 @@ impl App {
             .collect()
     }
 
+    /// Milestone 9 decision 2: `request` as a tagged request under a fresh id, which
+    /// its reply echoes. Ids count from 1 for the client's life.
+    pub(super) fn tagged_request(&mut self, request: RunRequest) -> (u64, Effect) {
+        self.next_request_id += 1;
+        let id = self.next_request_id;
+        (id, Effect::Send(ClientMsg::RunTagged { id, request }))
+    }
+
+    /// Decision 44: the run a goal started, opened once a snapshot names it.
+    pub(super) fn open_pending_run(&mut self) {
+        let Some(id) = self.pending_open.as_ref() else {
+            return;
+        };
+        if tree::shown_runs(&self.runs.runs).any(|run| run.run_id == *id) {
+            let id = id.clone();
+            self.pending_open = None;
+            self.open_run_view(id);
+        }
+    }
+
     pub(crate) fn on_run_reply(&mut self, reply: RunReply) -> Vec<Effect> {
         match reply {
             // Decision 1: every snapshot replaces the last, whatever its revision — a
@@ -156,31 +177,50 @@ impl App {
             }
             // Decision 34: an edit's reply ends a submitting form — closed on `Done`,
             // its error row filled on `Refused`. Every other reply is a toast.
+            // Milestone 9 decision 2: a form's reply is the one carrying its request's
+            // id, never one that merely names the same request.
             RunReply::Done {
-                request, message, ..
+                message,
+                request_id,
+                ..
             } => {
-                if request == EDIT && self.submitting_form().is_some() {
+                if self.form_waiting_on(request_id).is_some() {
                     self.modal = None;
                 }
                 self.toast(capped(&message));
             }
             RunReply::Refused {
-                request, message, ..
+                request,
+                message,
+                request_id,
             } => {
                 let text =
                     first_line_and_more(&message).unwrap_or_else(|| format!("{request} refused"));
-                match self.submitting_form().filter(|_| request == EDIT) {
-                    Some(form) => {
-                        form.error = Some(text);
-                        form.submitting = false;
-                    }
-                    None => self.toast(text),
+                if let Some(form) = self.form_waiting_on(request_id) {
+                    form.error = Some(text);
+                    form.submitting = false;
+                    form.request_id = None;
+                } else if let Some(form) = self.goal_form_waiting_on(request_id) {
+                    form.error = Some(text);
+                    form.submitting = false;
+                    form.request_id = None;
+                } else {
+                    self.toast(text);
+                }
+            }
+            RunReply::Triaged {
+                run_id,
+                message,
+                request_id,
+                ..
+            } => {
+                if self.goal_form_waiting_on(request_id).is_some() {
+                    self.goal_triaged(run_id, &message);
                 }
             }
             RunReply::Started { .. }
             | RunReply::ConfirmNeeded { .. }
             | RunReply::ToolResult { .. }
-            | RunReply::Triaged { .. }
             | RunReply::Profile { .. }
             | RunReply::Stats { .. } => {}
         }
@@ -202,6 +242,7 @@ impl App {
         self.tree.prune(&self.windows);
         self.close_run_view_if_gone(run_row);
         self.close_gate_modal_if_stale();
+        self.open_pending_run();
         let rows = nav_rows_of(
             &self.windows,
             &self.runs.runs,
@@ -324,7 +365,8 @@ impl App {
     /// The keys only the run view has (decisions 21 and 23): `f` cycles the filter, `h`
     /// at the root and `Esc` leave. `None`: not one of them, so the project tree's rule
     /// applies (`h` below the root selects the parent). `a`, `x`, `e` and `d` are the
-    /// plan gate's (decision 32).
+    /// plan gate's (decision 32) and, past the gate, an approval hold's (milestone 9);
+    /// `s` submits a planning run.
     pub(crate) fn on_run_view_key(&mut self, key: KeyEvent) -> Option<Vec<Effect>> {
         let view = self.run_view.as_mut()?;
         match key.code {
@@ -347,7 +389,14 @@ impl App {
             KeyCode::Esc => self.close_run_view(),
             KeyCode::Char(c @ ('a' | 'x' | 'e' | 'd')) => {
                 let run_id = view.run_id.clone();
-                self.on_gate_key(run_id, c);
+                return Some(self.on_gate_key(run_id, c));
+            }
+            // Milestone 9 decision 13: the user's submit, on a planning run's root only.
+            KeyCode::Char('s') => {
+                let run_id = view.run_id.clone();
+                if !self.on_submit_key(&run_id) {
+                    return None;
+                }
             }
             _ => return None,
         }

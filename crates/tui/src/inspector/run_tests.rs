@@ -302,24 +302,20 @@ fn attention_without_blocked_tasks_shows_the_first_other_line_and_counts_the_res
     );
 }
 
+/// Milestone 9 decision 29: the daemon no longer sends M8b's promotion line, and the
+/// client no longer rewrites one: any attention line is shown as sent.
 #[test]
-fn a_promotion_line_carries_the_local_request_time() {
+fn an_attention_line_is_shown_as_the_daemon_sent_it() {
     let mut app = gate_with(|run| {
         run.state = RunState::Running;
         run.promote_requested_at = Some(GEMINI_DAY + 11 * 3600 + 40 * 60);
-        run.attention = vec![
-            "promotion requested; it takes effect when the orchestrator exists (milestone 9)"
-                .into(),
-        ];
+        run.attention = vec!["promotion requested; it takes effect soon".into()];
     });
     app.utc_offset_secs = -3600;
     let inspection = inspect_node(&app, &run_key(RUN_ID));
     assert_eq!(
         value(&inspection, "attention"),
-        Some(
-            "promotion requested at 10:40; it takes effect when the orchestrator exists \
-             (milestone 9)"
-        )
+        Some("promotion requested; it takes effect soon")
     );
 }
 

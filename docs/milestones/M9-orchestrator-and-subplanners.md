@@ -3537,3 +3537,88 @@ One commit, `fix(cli): take a message's text verbatim after its recipient, print
 Verification: the cli bin's unit tests (55), `run_cli_message` (8, three runs), `run_cli_orch` (10), `run_cli` (12), the workspace build, `fmt --check`, and `cargo +1.98 clippy -D warnings` for the host and for `x86_64-unknown-linux-gnu`. All pass. No test process was left running.
 
 - **Controller check, 2026-09-29 (M9.14 review follow-up): a Codex orchestrator's shell cannot reach the daemon socket.** The orchestrator's PTY keeps `ANTHREX_SOCKET` (decision 10), so a Codex orchestrator could in principle run `anthrex run approve --hold …` or `anthrex run accept` from its shell tool. Checked with codex-cli 0.156.1: `codex sandbox -- python3 -c "<AF_UNIX connect to a listener under /tmp>"` (the default read-only seatbelt, no model involved) fails with `PermissionError: [Errno 1] Operation not permitted`, and the listener sees no connection. The Claude orchestrator has `Bash` disallowed. Escalating out of the sandbox under `-a on-request` needs the user's approval in the PTY, which is a human action. So no model can approve a hold or accept a run through the CLI.
+
+### Task M9.15 (TUI)
+
+Two commits: `refactor(tui): move the plan gate's keys and replies into their own file` (a pure move; `app/runs.rs` was already 530 against a 524 + 40 budget), then the task's commit.
+
+- **Where the code went (deviations from the file list).**
+  - `app/runs.rs` keeps the tagged-reply routing, `tagged_request` and `pending_open` (411 lines). The plan gate's keys, the edit form's keys and the stale checks moved, unchanged, to `app/run_gate.rs` in the move commit. The hold keys, the `s` key and their stale checks are in the new `app/run_holds.rs`; the goal form's opening, keys and replies in the new `app/goal.rs`.
+  - `inspector/run_orch.rs` (new) holds the orchestrator row and a task's `messages` and `notes` rows, so `inspector/run.rs` (+15) and `inspector/run_task.rs` (+29) stay near their budgets.
+  - `crates/tui/src/safe_text.rs` (new) is the sanitiser (below). `tree/tests/orch_fixtures.rs` (new) holds M9's fixtures, since `run_fixtures.rs` is 571 lines.
+  - `app/run_enter.rs`, `app/headless.rs` and `inspector/run_round.rs` were not changed. Enter on the root already focuses the orchestrator (the pinning test `enter_on_the_root_focuses_the_orchestrator` passes unchanged). Decision 11's kill and remove refusal had landed in M9.10 (`kill_and_remove_of_a_live_orchestrator_open_nothing`, `app_tests/headless.rs`). The research label is in `tree/run_rows.rs::round_label`, which the round inspector already reads.
+- **Budgets passed** (every file stays under 600): `app/mod.rs` 499 → 520 (+3; a `Modal` variant, two `PendingAction` variants, two fields, the toast's sanitising, three `mod` lines); `theme.rs` +27 (+15; `task_look`); `tree/runs.rs` +30 (+15; `is_paused`, `awaiting_holds`, `task_held`); `ui/conversation.rs` +7 (+5; rustfmt spreads the `TurnHeader` pattern over three lines once it binds `turn_id`); `ui/modal.rs` +7 (+5; the help row and the confirm's sanitising). Within budget: `keymap.rs` +3, `tree/run_rows.rs` +1, `graph/run_text.rs` +6, `graph/paint/style.rs` −2, `inspector/run.rs` +15.
+- **State labels and glyphs.**
+  - A `planning` run: the root's canvas text is `orchestrator  planning` (or `run <h4>  planning`) instead of `merged/total`. The inspector's header is `planning · <age>`. Its `gate` row is `planning · s submits the plan yourself`. The glyph keeps the working colour. The status bar hint is `s submit  j/k move  ⏎ open  f filter: <f>  esc back`.
+  - `theme::task_look(state, gate_open, held, paused, animating, frame)` is the one place a task's glyph and colour come from (the canvas and the `deps` row). A held task (its hold `drafting` or `awaiting`) is `○` in the idle colour, and its stage gets ` · held` (for example `S · tdd · queued · held`). A `paused(message)` task is `‖` in `theme::PAUSED_COLOR` (`#cba6f7`, no status colour), and its stage is `paused (message)`. `Reported` keeps M9.2's `✓`, done colour and `reported`.
+  - `round_label(Scout, n, _)` is `research #n`. M8c's `an_unexpected_role_on_a_task_is_labelled_not_dropped` now expects `research #1`.
+- **Attention.**
+  - A `paused(message)` task is no longer a blocked task in the `attention` row: it appears only through the daemon's own line, `<t> paused(message) for <n> min`, after 600 s.
+  - Each awaiting hold is an attention line: `hold <id>: 1 task waits for approval`, or `… <n> tasks wait for approval` for several (the singular is a deviation from the brief's one plural form). Hold lines come first among the non-blocked lines.
+  - M8b's promotion-line rewrite (decision 29) is gone. Every line is shown as sent. M8c's `a_promotion_line_carries_the_local_request_time` became `an_attention_line_is_shown_as_the_daemon_sent_it`.
+- **Additions not named by the brief.**
+  - `tree::run_status`: a run with a hold awaiting approval rolls up as `Attention`, and a `paused(message)` task alone no longer does.
+  - The run inspector gains an `orchestrator` row (`<runtime>[ <model>] · window #<n> | no window yet · live | exited · <n> wakes · plan submitted | not submitted`) and a `summary` row, both shown only when `RunInfo.orchestrator` is `Some`, so M8c's run mockups are unchanged.
+  - The planner inspection gains `note` (when `PlannerInfo.note` is set) and `session` (as a scout's, `main checkout, read-only`). **M8c mockup changes, both for the new `session` field only:** `planner_fields_match_the_mockup` (`inspector/run_nodes_tests.rs`) and `planner_panel_matches_the_mockup`'s `PLANNER` panel (`inspector/panel/rows_tests.rs`) gain the row `session   no window yet`.
+  - A task's `messages` row is `<count> · latest <info|change|stop and wait>: "<line>"`, shown from the first message. Its `notes` row lists the `discovery` and `risk` notes, newest first, as `<hh:mm> <kind> from <task>: <text>`, joined with ` · `. Both come before `history`.
+- **Holds (decision 28).**
+  - On a run past its gate, `a` on a held task whose hold is `awaiting` sends `ApproveHold` at once (untagged). `x` opens M8c's confirm, `Reject hold <id> of run <run>? Its <n> task(s) is/are cancelled.`, and sends `RejectHold` on `y`.
+  - On the root, both keys act on the one awaiting hold. With several, they toast `select a held task to approve its hold` or `… to reject its hold`. With none, the gate's old toast stands.
+  - A held task whose hold is not awaiting toasts `hold <id> is drafting; it can be approved once it awaits approval`.
+  - A reject confirm closes with `hold <id> is <state>` once a snapshot shows the hold decided.
+  - The status bar shows `a approve hold  x reject hold` while a hold awaits.
+  - `a` sends without a confirm because the brief names the confirm for `x` only.
+- **The user's submit (ruling 5).**
+  - `s` is free in the run view.
+  - On a planning run's root, `s` opens `submit the plan of <run> yourself? (y/n)`. On `y` it sends a tagged `Edit { edits: [], submit: true }`, whose reply is toasted.
+  - On any other node or state, `s` falls through to the tree's keys as before.
+  - The confirm closes with `run <id> is <state>; only a run being planned can be submitted` once the run leaves `planning`.
+- **Request ids (decision 2).**
+  - `App::tagged_request` numbers requests from 1 for the client's life.
+  - The edit form, the goal form and the submit are sent as `ClientMsg::RunTagged`. The form keeps its `request_id`.
+  - `Done` and `Refused` reach a form only when their `request_id` equals the form's. Every other reply is toasted, whatever request it names; `Triaged` reaches only the goal form.
+  - A connection refusal frees a form only for its own id. A lost link or a reconnect frees both forms.
+  - The `d` confirm's `CancelTask` edit, the gate's approve and reject, and the hold verdicts stay untagged, since no form waits on them.
+  - **M8c test changes:** the edit-form tests in `app_tests/gate.rs`, `gate/replies.rs` and `gate/unsent.rs` expect `RunTagged` with ids 1, 2, 3 (new helpers `form_edit`, `form_edit_as`, `to`). `no_gate_path_sends_input` accepts `RunTagged` as well as `Run`. The new test `an_edit_reply_for_another_request_leaves_the_form_submitting` pins the id match.
+- **The goal form (decision 44).**
+  - `C-b g` (`Command::StartGoal`, in the help overlay as `start a goal`) takes the project from, in order:
+    - the selected project row;
+    - the project of the run that the selected node belongs to (the run's row, or any run-view node of it);
+    - the focused window's project.
+  - With no project, it toasts `select a Git project to start a goal`.
+  - The form has four fields:
+    - `goal`: `Ctrl-J` inserts `↵`, which is sent as `\n`; the goal is trimmed; pastes keep their lines;
+    - `runtime`: `‹ configured ›` / `claude` / `codex`; changing it clears the model;
+    - `model`: `default` when empty, which sends `model: None`;
+    - `trust`: a `[ ]` toggle on Space or ←/→.
+  - `Enter` refuses an empty goal (`type a goal first`) and a model without a runtime (`choose claude or codex for a model`).
+  - `Enter` sends the tagged `StartGoal { yes: false, unconfined_checks: false, … }`. While submitting, only `Esc` and `Ctrl-C` act.
+  - A matching `Triaged` closes the form and toasts its message. With a run id, it sets `pending_open`, which opens the run view as soon as a snapshot shows the run (at once, if one already does).
+  - A matching `Refused` fills the error row with the first line and `(+n more)`. The form keeps its input.
+  - The renderer is `ui/run_goal.rs`, titled ` start a goal in <project> `.
+- **Sanitising (M-6).**
+  - `safe_text::one_line` turns every `Cc` control character (which includes U+0085) and U+2028/U+2029 into a space, and drops U+200E, U+200F, U+202A–U+202E and U+2066–U+2069. The TUI had no shared sanitiser beyond `inspector/run_format.rs::clean`, which let `Cf` and the line separators through.
+  - It is applied in these places:
+    - every inspector text, through `clean`;
+    - `graph::content_text`: every canvas and sidebar node's text, including planner and epic names, scout questions and task titles;
+    - the sidebar's run title;
+    - every toast (`App::toast`), since toasts quote hold ids and daemon text;
+    - the confirm modal's message;
+    - the goal form's title and error.
+  - Tests: `task_notes_and_message_lines_render_sanitised` puts every character above into the goal, the attention line, a hold id, the orchestrator's summary and model, a planner's epic, title, note and rejection, and each task's title, epic, message line, note text, note attribution and block text. It checks every run-view row's canvas text and every inspection string. `a_toast_quoting_a_hold_id_is_sanitised` covers the toast; it was seen red with `App::toast` unsanitised, then restored from a copy.
+- **Conversation label (decision 42i).** `conversation_label::user_turn_label` reads the user turn's first text block. It returns `orchestrator` for the prefix `[anthrex] Message from the orchestrator (`, `user` for `[anthrex] Message from the user (`, and otherwise `you`, M8c's label. `ui/conversation.rs` calls it from the `TurnHeader` arm; `conversation.rs` is not touched.
+- **Left open.** The followups file's "From M9.10, for M9.15" item (the TUI refuses `C-b x`/`C-b X` for a decision 11a placeholder headless window, which the daemon would let a client remove) stays open. The brief's M9.15 text does not assign it, and the fix needs the snapshot to tell a placeholder from a repository scout's window (a `WindowInfo` field, so a daemon change) or a different daemon answer. The TUI still offers no kill, input or subscribe for any headless window, so it never offers a control the daemon refuses. The followups entry now says so.
+- **Red before green.** The new tests were written first. With stub types in place so that they compiled (`Modal::StartGoal`, `Command::StartGoal`, `PendingAction::{RejectHold, SubmitPlan}`, `theme::PAUSED_COLOR`), 36 failed, each for the missing behaviour:
+  - the edit form sent untagged `Run(Edit)`;
+  - `t1 blocked: paused(message) — …` was the attention line where the hold line or nothing was expected;
+  - `⊘` and `M · tdd · blocked: paused(message)` were drawn where `‖` and `paused (message)` were expected;
+  - `plan not approved` was the gate row where `planning · …` was expected;
+  - the round label was `scout #2`;
+  - there was no `messages`, `notes`, `note` or `session` row;
+  - the promotion line still carried its local time;
+  - `C-b g` did nothing, and `s` opened no confirm;
+  - `delivered_message_turn_is_labelled_by_source` found `you` on the orchestrator's turn;
+  - hostile characters reached the inspection strings.
+
+  `run_goal_tests.rs`, `safe_text`'s own tests and `ui/run_goal.rs`'s render test were written with their code.
+- **Verification.** `cargo test -p anthrex-tui` passes: 750 lib tests plus 6 and 1 in the integration binaries. `test_rigs_pin_agents` passes (2). The workspace build, `cargo fmt --all --check`, and `cargo +1.98 clippy --workspace --all-targets -D warnings` for the host and for `x86_64-unknown-linux-gnu` all pass. No test starts a daemon, and no process was left running.

@@ -141,16 +141,14 @@ pub(crate) fn node_glyph(row: &Row<'_>, app: &App) -> (&'static str, Color) {
         RowKind::Run { run, .. } => (theme::RUN_GLYPH, theme::run_color(run.state)),
         RowKind::Planner { planner, .. } => planner_glyph(planner, app),
         RowKind::Scout { scout, window, .. } => scout_glyph(scout, *window, frame),
-        RowKind::Task { run, task } => {
-            let gate_open = run.state == RunState::AwaitingApproval;
-            let glyph = theme::task_glyph(task.state, gate_open, animating(task, app), frame);
-            let color = if gate_open {
-                theme::status_color(Status::Idle)
-            } else {
-                theme::task_color(task.state)
-            };
-            (glyph, color)
-        }
+        RowKind::Task { run, task } => theme::task_look(
+            task.state,
+            run.state == RunState::AwaitingApproval,
+            crate::tree::task_held(run, task),
+            crate::tree::is_paused(task),
+            animating(task, app),
+            frame,
+        ),
         RowKind::AgentRound { task, round, .. } => round_glyph(task, round, app),
     }
 }

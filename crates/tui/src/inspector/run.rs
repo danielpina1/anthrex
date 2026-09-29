@@ -10,6 +10,7 @@ use super::run_format::{
     billable, clean, format_duration, format_tokens, kind_glyph, local_hhmm, progress_text,
     reason_text, rows, session_text,
 };
+use super::run_orch::orchestrator_text;
 use super::{Field, Inspection, field};
 use crate::app::{App, state_text};
 use crate::tree::RowKind;
@@ -41,7 +42,13 @@ pub(crate) fn run_inspection(
     fields.push(field("agents", agents_text(run, app)));
     fields.push(field("spend", spend_text(run)));
     fields.push(field("gate", gate_text(run, app)));
-    if let Some(attention) = attention_text(run, app) {
+    if let Some(orchestrator) = &run.orchestrator {
+        fields.push(field("orchestrator", orchestrator_text(orchestrator)));
+        if let Some(summary) = &orchestrator.summary {
+            fields.push(field("summary", clean(summary)));
+        }
+    }
+    if let Some(attention) = attention_text(run) {
         fields.push(field("attention", attention));
     }
     let glyph = kind_glyph(
@@ -147,6 +154,9 @@ fn spend_text(run: &RunInfo) -> String {
 }
 
 fn gate_text(run: &RunInfo, app: &App) -> String {
+    if run.state == RunState::Planning {
+        return "planning · s submits the plan yourself".to_owned();
+    }
     if run.state == RunState::AwaitingApproval {
         return "awaiting approval · a approve · x reject · e edit · d remove".to_owned();
     }
@@ -184,22 +194,31 @@ fn gate_text(run: &RunInfo, app: &App) -> String {
 }
 
 /// The `attention` row: the halt, else the first blocked task, else the first other
-/// line; then how many more there are, each counted once.
-fn attention_text(run: &RunInfo, app: &App) -> Option<String> {
+/// line; then how many more there are, each counted once. Milestone 9: a hold awaiting
+/// approval comes first among the other lines (decision 28); a `paused(message)` task
+/// is not a blocked one, and shows only when the daemon lists it (decision 42c).
+fn attention_text(run: &RunInfo) -> Option<String> {
     let blocked: Vec<&TaskInfo> = run
         .tasks
         .iter()
         .filter(|task| task.state == TaskState::Blocked && task.block.is_some())
+        .filter(|task| !crate::tree::is_paused(task))
         .collect();
     let is_task_line = |line: &str| {
         run.tasks
             .iter()
             .any(|task| task.block.is_some() && line.starts_with(&format!("{} blocked (", task.id)))
     };
-    let others: Vec<&String> = run
-        .attention
-        .iter()
-        .filter(|line| !is_task_line(line))
+    let holds = crate::tree::awaiting_holds(run).map(|hold| match hold.tasks.len() {
+        1 => format!("hold {}: 1 task waits for approval", hold.id),
+        n => format!("hold {}: {n} tasks wait for approval", hold.id),
+    });
+    let others: Vec<String> = holds
+        .chain(
+            (run.attention.iter())
+                .filter(|line| !is_task_line(line))
+                .cloned(),
+        )
         .collect();
     let (first, more) = if run.state == RunState::Halted {
         let reason = run.halted_reason.as_deref().map(clean);
@@ -209,33 +228,21 @@ fn attention_text(run: &RunInfo, app: &App) -> Option<String> {
         let block = task.block.as_ref()?;
         let text = format!(
             "{} blocked: {} — \"{}\"",
-            task.id,
+            clean(&task.id),
             reason_text(block.reason),
             clean(&block.text)
         );
         (text, blocked.len() - 1 + others.len())
     } else {
-        let line = others.first()?;
-        (other_line(run, line, app), others.len() - 1)
+        // Milestone 9 decision 29: the promotion line M8c put a local time into is
+        // gone, so every line is shown as the daemon sent it.
+        (clean(others.first()?), others.len() - 1)
     };
     Some(if more > 0 {
         format!("{first} · +{more} more")
     } else {
         first
     })
-}
-
-/// An attention line as shown. The promotion line carries no time (M8c.1 review I1),
-/// so the request's local time is put back in here.
-fn other_line(run: &RunInfo, line: &str, app: &App) -> String {
-    const PROMOTION: &str = "promotion requested";
-    match (line.strip_prefix(PROMOTION), run.promote_requested_at) {
-        (Some(rest), Some(at)) => clean(&format!(
-            "{PROMOTION} at {}{rest}",
-            local_hhmm(at, app.utc_offset_secs)
-        )),
-        _ => clean(line),
-    }
 }
 
 /// A sub-planner (Interfaces "Sub-planner").
@@ -283,6 +290,14 @@ pub(crate) fn planner_inspection(run: &RunInfo, planner: &PlannerInfo, app: &App
         edits.push_str(&format!(" · re-planned {times} ({list})"));
     }
     fields.push(field("edits", edits));
+    // Milestone 9 decision 33: the planner's own note, and its session.
+    if let Some(note) = &planner.note {
+        fields.push(field("note", clean(note)));
+    }
+    fields.push(field(
+        "session",
+        session_text(planner.window_id, "main checkout, read-only", app),
+    ));
     let title = planner.title.trim();
     let name = if title.is_empty() {
         format!("planner {}", clean(&planner.epic))

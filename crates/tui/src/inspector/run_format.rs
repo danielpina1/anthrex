@@ -59,13 +59,12 @@ pub fn progress_bar(done: u64, total: u64, width: usize) -> String {
     format!("{}{}", "█".repeat(filled), "░".repeat(width - filled))
 }
 
-/// `text` with every control character a space, cut to [`TEXT_MAX_CHARS`] with `…`.
+/// `text` with every control character and line separator a space and every bidi
+/// control dropped (`safe_text::one_line`, milestone 9's M-6), cut to
+/// [`TEXT_MAX_CHARS`] with `…`.
 pub(super) fn clean(text: &str) -> String {
-    let mut out: String = text
-        .chars()
-        .take(TEXT_MAX_CHARS)
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect();
+    let head: String = text.chars().take(TEXT_MAX_CHARS).collect();
+    let mut out = crate::safe_text::one_line(&head);
     if text.chars().nth(TEXT_MAX_CHARS).is_some() {
         out.push('…');
     }

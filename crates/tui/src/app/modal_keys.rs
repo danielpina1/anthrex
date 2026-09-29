@@ -149,6 +149,10 @@ impl App {
                 self.modal = Some(Modal::EditTask(form));
                 self.on_edit_task_key(key)
             }
+            Modal::StartGoal(form) => {
+                self.modal = Some(Modal::StartGoal(form));
+                self.on_goal_key(key)
+            }
         }
     }
 

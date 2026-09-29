@@ -47,6 +47,12 @@ mod runs;
 #[path = "../app_tests/gate.rs"]
 mod gate;
 
+#[path = "../app_tests/orch.rs"]
+mod orch;
+
+#[path = "../app_tests/run_goal.rs"]
+mod run_goal;
+
 fn win(id: u32, name: &str, status: Status) -> WindowInfo {
     WindowInfo {
         id,

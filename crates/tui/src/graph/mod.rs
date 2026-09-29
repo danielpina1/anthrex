@@ -216,6 +216,11 @@ fn place(index: usize, children: &[Vec<usize>], tops: &mut [u16], next_row: &mut
 /// The painter draws exactly this, so the width a tier is sized to and the
 /// text that has to fit in it cannot drift apart.
 pub(crate) fn content_text(row: &Row<'_>) -> String {
+    // Milestone 9 (M9.6 review M-6): planner, epic, scout and task texts are agents'.
+    crate::safe_text::one_line(&raw_content_text(row))
+}
+
+fn raw_content_text(row: &Row<'_>) -> String {
     match &row.kind {
         RowKind::Project { name, .. } => name.clone(),
         RowKind::Window { info, position, .. } => format!("{position} {}", info.name),

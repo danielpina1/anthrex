@@ -13,7 +13,9 @@ use proto::{
 use rows::{SubagentWalk, emit_subagents, guide_prefix, visible_windows};
 pub use run_rows::{RunFilter, display_rounds, round_label, run_rows};
 use runs::{ShownRun, group_projects, run_matches_filter};
-pub use runs::{run_progress, run_status, run_title, shown_runs};
+pub use runs::{
+    awaiting_holds, is_paused, run_progress, run_status, run_title, shown_runs, task_held,
+};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use unicode_segmentation::UnicodeSegmentation;
@@ -551,4 +553,4 @@ pub(crate) fn example_windows() -> Vec<WindowInfo> {
 }
 
 #[cfg(test)]
-pub(crate) use tests::run_fixtures;
+pub(crate) use tests::{orch_fixtures, run_fixtures};

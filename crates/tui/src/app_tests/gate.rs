@@ -66,6 +66,24 @@ pub(super) fn edit(edits: Vec<PlanEdit>) -> Vec<Effect> {
     })
 }
 
+/// The edit form's `Edit`, tagged with `id` (decision 2): a fresh app's first tagged
+/// request is 1.
+pub(super) fn form_edit_as(id: u64, edits: Vec<PlanEdit>) -> Vec<Effect> {
+    vec![Effect::Send(ClientMsg::RunTagged {
+        id,
+        request: RunRequest::Edit {
+            run_id: RUN_ID.into(),
+            edits,
+            submit: false,
+        },
+    })]
+}
+
+/// The edit form's first `Edit` in a fresh app.
+pub(super) fn form_edit(edits: Vec<PlanEdit>) -> Vec<Effect> {
+    form_edit_as(1, edits)
+}
+
 pub(super) fn amend(route: Option<RouteSpec>, size: Option<Size>) -> PlanEdit {
     PlanEdit::AmendTask {
         task_id: "t1".into(),
@@ -135,6 +153,11 @@ pub(super) fn refused(request: &str, message: &str) -> RunReply {
         message: message.into(),
         request_id: None,
     }
+}
+
+/// The reply to the tagged request `id`.
+pub(super) fn to(id: u64, reply: RunReply) -> RunReply {
+    reply.tagged(Some(id))
 }
 
 /// Changes the size to S and submits, leaving the form submitting.
@@ -315,7 +338,7 @@ fn the_edit_form_sends_only_what_changed() {
     tap(&mut app, KeyCode::Left);
     assert_eq!(
         tap(&mut app, KeyCode::Enter),
-        edit(vec![amend(
+        form_edit(vec![amend(
             Some(RouteSpec {
                 runtime: Some(Runtime::Claude),
                 model: None,
@@ -331,7 +354,7 @@ fn the_edit_form_sends_only_what_changed() {
     let mut app = gate();
     assert_eq!(
         submit_a_size_change(&mut app),
-        edit(vec![amend(None, Some(Size::S))])
+        form_edit(vec![amend(None, Some(Size::S))])
     );
 }
 
@@ -355,7 +378,7 @@ fn changing_the_runtime_clears_the_model() {
     assert_eq!(form(&app).model.text(), "");
     assert_eq!(
         tap(&mut app, KeyCode::Enter),
-        edit(vec![amend(
+        form_edit(vec![amend(
             Some(RouteSpec {
                 runtime: Some(Runtime::Codex),
                 model: None,
@@ -379,7 +402,7 @@ fn policy_is_a_choice() {
     );
     assert_eq!(
         tap(&mut app, KeyCode::Enter),
-        edit(vec![amend(
+        form_edit(vec![amend(
             Some(RouteSpec {
                 runtime: None,
                 model: None,
@@ -408,7 +431,7 @@ fn a_mode_other_than_tdd_needs_a_reason() {
     typed(&mut app, "renames only");
     assert_eq!(
         tap(&mut app, KeyCode::Enter),
-        edit(vec![PlanEdit::AmendTask {
+        form_edit(vec![PlanEdit::AmendTask {
             task_id: "t1".into(),
             brief: None,
             acceptance: None,
@@ -432,7 +455,7 @@ fn the_brief_round_trips_its_newlines() {
     typed(&mut app, "x");
     assert_eq!(
         tap(&mut app, KeyCode::Enter),
-        edit(vec![PlanEdit::AmendTask {
+        form_edit(vec![PlanEdit::AmendTask {
             task_id: "t1".into(),
             brief: Some("Line one\nLine two\nx".into()),
             acceptance: None,

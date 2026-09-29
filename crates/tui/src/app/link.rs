@@ -158,7 +158,8 @@ impl App {
         // Review I1: the daemon dropped the view's subscriptions with the connection.
         self.conversation.link_lost();
         // Whole-branch review M2: a submitting edit form's reply went with the link.
-        self.edit_not_sent();
+        self.edit_not_sent(None);
+        self.goal_not_sent(None);
         self.toast("connection to the daemon lost");
         vec![]
     }
@@ -194,7 +195,8 @@ impl App {
         self.link = Link::Connected;
         self.toast("reconnected");
         // Whole-branch review M2: nor does the new connection carry an old reply.
-        self.edit_not_sent();
+        self.edit_not_sent(None);
+        self.goal_not_sent(None);
         let mut effects = self.replace_windows(windows);
         let already_resubscribed = effects.iter().any(|effect| {
             matches!(
@@ -249,9 +251,18 @@ impl App {
             // A dropped keystroke is not worth a toast; the next one will try again.
             ClientMsg::Input { .. } => {}
             _ => {
-                // Whole-branch review M2: a refused `Edit` frees its submitting form.
-                if let ClientMsg::Run(RunRequest::Edit { .. }) = msg {
-                    self.edit_not_sent();
+                // Whole-branch review M2: a refused `Edit` frees its submitting form;
+                // milestone 9: the form's own tagged request, and the goal form's.
+                match msg {
+                    ClientMsg::RunTagged {
+                        id,
+                        request: RunRequest::Edit { .. },
+                    } => self.edit_not_sent(Some(*id)),
+                    ClientMsg::RunTagged {
+                        id,
+                        request: RunRequest::StartGoal { .. },
+                    } => self.goal_not_sent(Some(*id)),
+                    _ => {}
                 }
                 if self.connected() {
                     self.toast("daemon is not responding");
