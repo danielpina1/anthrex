@@ -42,8 +42,9 @@ fn settings_refusal(who: &str, paths: &[String]) -> String {
     )
 }
 
-/// Decision 53's refusal for an edit that would reach `who` (T22-P1, F4): the run's
-/// start trusted only the settings it checked, and `run edit` has no `--trust-project`.
+/// Decision 53's refusal for an edit that would reach `who` (T22-P1, F4): a run started
+/// without `--trust-project` trusted only the settings it checked, and `run edit` has
+/// no `--trust-project` (a run started with it trusts them all, decision 9).
 fn edit_settings_refusal(who: &str, paths: &[String]) -> String {
     format!(
         "this edit would start headless {who} sessions, and this repository has project settings they would run without asking: {}; a run trusts only what its start checked, so review them and start a new run with --trust-project",
@@ -362,7 +363,10 @@ impl RunService {
             let checks = self.check_runtimes(&run, &unreached, timeout).await?;
             refusals = checks.api_key;
             for (runtime, who, paths) in checks.settings {
-                let trusted = paths.iter().all(|p| run.trusted_project.contains(p));
+                // Decision 9 (whole-branch review, item 4): a run started with
+                // `--trust-project` trusts them too, as `run promote` does.
+                let trusted =
+                    run.trust_project || paths.iter().all(|p| run.trusted_project.contains(p));
                 if !trusted && !refusals.iter().any(|(r, _)| *r == runtime) {
                     refusals.push((runtime, edit_settings_refusal(who, &paths)));
                 }

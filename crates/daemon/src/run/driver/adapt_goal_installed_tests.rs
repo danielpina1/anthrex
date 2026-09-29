@@ -414,3 +414,55 @@ async fn a_codex_run_scout_is_covered_by_the_project_settings_check() {
         vec![Runtime::Claude]
     );
 }
+
+/// Whole-branch review, item 4: a run started with `--trust-project` trusts the project
+/// settings a plan edit would newly reach, as `run promote` does (decision 9); a run
+/// started without it is still refused.
+#[tokio::test]
+async fn an_edit_of_a_run_started_with_trust_project_is_not_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("repo");
+    super::repo_with_codex_config(&root);
+    let data = tmp.path().join("data");
+    let service = service(&data, config::Orchestrator::default(), INSTALLED_STAND_IN);
+    let plan = parse_plan(&one_task_plan()).unwrap();
+    let mut run = match service
+        .build_plan(plan, root, true, true, true, Shape::Fast)
+        .await
+    {
+        Ok(run) => run,
+        Err(error) => panic!("{}", error.text()),
+    };
+    // It reaches Claude only (Codex's one model is below every route), so a task added
+    // on Codex reaches `.codex/config.toml`, which the start never checked.
+    run.roster.retain(|e| e.runtime == Runtime::Claude);
+    run.roster.push(proto::ModelEntry {
+        runtime: Runtime::Codex,
+        model: "codex-mini".into(),
+        strength: proto::Strength::Fast,
+        ..run.roster[0].clone()
+    });
+    run.trusted_project.clear();
+    assert_eq!(
+        crate::run::reach::reachable_runtimes(&run),
+        vec![Runtime::Claude]
+    );
+    let edits = vec![proto::PlanEdit::AddTask {
+        task: run.tasks[0].spec.clone(),
+    }];
+    let id = run.id.clone();
+    crate::lock(&service.state).runs.insert(id.clone(), run);
+    let refusals = |trust: bool| {
+        crate::lock(&service.state)
+            .runs
+            .get_mut(&id)
+            .unwrap()
+            .trust_project = trust;
+        service.runtime_refusals(&id, &edits)
+    };
+    let refused = refusals(false).await.unwrap();
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    assert_eq!(refused[0].0, Runtime::Codex);
+    assert!(refused[0].1.contains(".codex/config.toml"), "{refused:?}");
+    assert_eq!(refusals(true).await.unwrap(), Vec::new());
+}
