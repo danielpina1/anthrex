@@ -3899,7 +3899,7 @@ Three reviewers read the whole branch at `0920079`. Commits, each code fix test-
    - The driver's `wake::ready` refuses while it is set (`WindowManager::attention_open`). Only the orchestrator's wake-up reads it.
    - **Test:** `run_e2e_orch_wake.rs::a_wake_waits_for_the_turn_end_after_attention` scripts `UserPromptSubmit`, a `permission_prompt`, a typed line (the user's key), an `idle_prompt` and a 4 s hold with fake-agent hooks. No wake-up is delivered for 3 s after the window turns `Idle`, and it is delivered after the turn's `Stop`. It was red first: `wakes` was 1 inside the window.
    - **Not tested:** the Codex path (its notify clearing the flag) has no test of its own; the clearing events are one `matches!`.
-   - **Cannot be confirmed:** whether real Claude fires `idle_prompt` while a permission dialog is open. No test may run real Claude, and the fake agent cannot show it. The gate holds either way.
+   - **Cannot be confirmed:** whether real Claude fires `idle_prompt` while a permission dialog is open. No test may run real Claude, and the fake agent cannot show it. The gate never pastes into an open dialog either way; **corrected in fix round 2:** it can hold a wake-up after the dialog closed (an interrupt runs no `Stop`), and that hold is now shown (fix round 2, item 2).
 3. **A misleading refusal for a runtime found only through a `~` PATH entry.**
    - `build.rs::planner_refusal` takes the window map. When it finds the sub-planners' runtime and the headless map does not, the refusal says that a `~` entry in PATH is not searched for headless sessions (sub-planners and scouts), and to put the directory in PATH as an absolute path.
    - `build_tests.rs::a_planner_runtime_found_only_through_a_tilde_entry_says_so` was red first by compilation, and fails with the new branch disabled (a `cp` copy, restored).
@@ -3946,3 +3946,31 @@ Three reviewers read the whole branch at `0920079`. Commits, each code fix test-
    - "From milestone 9" gains three items: the 16a snapshot slimming, `OPENAI_BASE_URL` not being scrubbed (a user ruling is needed; the 2026-09-29 ruling named only Anthropic's), and onboarding scouts and deciders having no installed check.
 9. **The three reasonless `#[allow]`s** carry a `reason = "..."`: `cli/tests/run_e2e_large.rs`, `run/orch/roles.rs::record` and `run/git/done.rs::verify_done_excluding`.
 10. `docs/ROADMAP.md` is untouched, as ruled.
+
+#### Fix round 2
+
+The re-review confirmed that item 1's hole is closed on every path it tried. Commits, each test-first:
+
+- `fix(daemon): route a run's scouts from the run alone, and test the launch site` (items 1 and 4);
+- `fix(daemon): reset a window's attention_open when it restarts` (item 3);
+- `fix(daemon): show a wake-up held at a prompt as a run attention line` (item 2).
+
+1. **The launch site is tested.**
+   - `role_route_tests.rs::a_run_scout_is_started_on_the_keys_its_run_froze` starts a scout whose run froze `[orchestrator.scouts] runtime = "codex"`, while the scout service's live keys route to Claude. It asserts the binary the launch tried (Codex) and the record.
+   - It fails with the launch mutated back to the live keys (the reviewer's mutation, applied to a `cp` copy and restored), since the launch then tried Claude.
+   - The test changes no live keys in the service: the rig's service is built with the default config (Claude), and the run's frozen keys differ from it.
+2. **A held wake-up is visible** (controller ruling: safety over liveness).
+   - The wake-up is still never pasted while `attention_open` is set. The trade-off: after a permission dialog closed with an interrupt (Esc, or "No, tell Claude…"), Claude runs no `Stop`, and Codex's aborted turn sends no notify. The flag then stays set, and the wake-up waits until the user types a prompt (`UserPromptSubmit`) or the turn otherwise ends.
+   - The hold is now shown. The driver's `report_held`, run at every check, finds each waiting wake-up whose window is `Idle` or `Done` with the flag set, for at least that run's `wake_quiet_secs` (`WindowManager::held_at_prompt_for`). It reports each change to the engine (`OrchEvent::WakeHeld`).
+   - The engine keeps `RunOrch.wake_held` (in memory only, `serde(skip)`; the driver reports it again after a restart). It is cleared by a delivery (`OrchestratorWoken`) or by the driver.
+   - The snapshot's attention lines then include `orchestrator wake-up held: its window was at a prompt; type in it to continue`, shown in `run status` and counted in the TUI's run roll-up, which reads `RunInfo.attention`.
+   - **Test:** `run_e2e_orch_wake.rs::a_held_wake_is_shown_as_an_attention_line` scripts a permission prompt, a typed key, an `idle_prompt` and no `Stop` for 8 s. The line appears with no paste (`wakes == 0`), and it goes once the turn's `Stop` lets the wake-up through. It was red first: no line within 6 s.
+   - The driver copies the waiting wake-ups out before it takes the manager's lock, so no lock of ours is held across the manager's.
+3. **Restart resets `attention_open`.** `manager/restart.rs` clears it in the swap, and `restart_tests.rs::a_restart_resets_attention_open` was red first.
+   - The field's comment now says what the code does, and the code is kept. A clearing event sticks only when it also takes the status out of `Attention`: `SessionStart`, and Codex's notify once hooks were seen, leave an `Attention` status as it is, and the flag with it.
+   - That is the safe side: while the status is `Attention` no wake-up is ready anyway, and a later key must not unlock a wake-up for a dialog that may still be open.
+4. **Runs recorded before the scouts' keys were frozen** now route their scouts with `launch::scout_routing`: the default scout keys on the run's own frozen `default_runtime`, and the run's roster. Never the live config.
+   - `scout_route_of`, `frozen_scout_route` and `roles::scout_record` take the run alone, so no scout route can read the daemon's config, and `reach` always counts the scouts' runtime.
+   - `roles_installed_tests.rs::a_run_recorded_before_the_frozen_keys_never_reads_the_live_config` was red first by compilation (the new signature). The earlier assertion that such a run follows the live config is replaced.
+   - `engine/tests/role_history.rs`'s scout context helper is gone with the parameter.
+   - **Nit, recorded and not fixed:** project-settings files newly trusted by an edit or a promotion under `--trust-project` are not appended to `run.trusted_project`. Nothing reads that list for a run started with `--trust-project`, since it is trusted whole.
