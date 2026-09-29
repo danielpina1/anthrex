@@ -71,6 +71,9 @@ pub(super) struct Pending {
     digest_revision: u64,
     notes_seq: u64,
     quiet: Duration,
+    /// Which insert this is (`Wakes::insert`): a check drops only a wake-up it saw
+    /// before it read the engine.
+    generation: u64,
 }
 
 /// The wake-ups not yet delivered, the runs whose delivery is under way, and when each
@@ -80,6 +83,7 @@ pub(super) struct Wakes {
     pending: std::sync::Mutex<HashMap<String, Pending>>,
     delivering: std::sync::Mutex<HashSet<String>>,
     exited_since: std::sync::Mutex<HashMap<u32, Instant>>,
+    next_generation: std::sync::atomic::AtomicU64,
 }
 
 impl Wakes {
@@ -99,13 +103,34 @@ impl Wakes {
 }
 
 impl Wakes {
+    /// Keeps `pending` as `run_id`'s wake-up, replacing one not yet delivered, under a
+    /// generation of its own.
+    fn insert(&self, run_id: String, mut pending: Pending) {
+        pending.generation = self.next_generation.fetch_add(1, Ordering::SeqCst);
+        crate::lock(&self.pending).insert(run_id, pending);
+    }
+
+    /// Each waiting wake-up's generation, taken before a check reads the engine.
+    fn generations(&self) -> HashMap<String, u64> {
+        crate::lock(&self.pending)
+            .iter()
+            .map(|(run_id, p)| (run_id.clone(), p.generation))
+            .collect()
+    }
+
     /// Drops the waiting wake-ups `seen` says have no live window to go to, or nothing
-    /// left to say. `seen` may be older than a wake-up queued since (this runs from the
-    /// tick, the window watch and `queue_wake` at once), so "no notes" drops only a
-    /// wake-up whose every note the snapshot had seen made: one built from a newer
-    /// note stays, and the next check judges it on a fresh snapshot.
-    fn keep_live(&self, seen: &[Seen]) {
+    /// left to say. This runs from the tick, the window watch and `queue_wake` at once,
+    /// so `seen` may be older than a wake-up queued since. Only a wake-up in `judged`,
+    /// the generations taken before `seen` was read, is judged: the engine made it in a
+    /// step `seen` already reflects (its state is committed before its effects run).
+    /// Any other is left for the next check. "No notes" still drops only a wake-up
+    /// whose every note the snapshot had seen made (the first fix round's rule, which
+    /// the generation now implies; kept as a second guard).
+    fn keep_live(&self, seen: &[Seen], judged: &HashMap<String, u64>) {
         crate::lock(&self.pending).retain(|run_id, p| {
+            if judged.get(run_id) != Some(&p.generation) {
+                return true;
+            }
             seen.iter().any(|s| {
                 &s.run_id == run_id
                     && s.window_id == p.window_id
@@ -168,8 +193,9 @@ impl RunService {
             digest_revision,
             notes_seq,
             quiet: Duration::from_secs(quiet),
+            generation: 0,
         };
-        crate::lock(&self.wakes.pending).insert(run_id, pending);
+        self.wakes.insert(run_id, pending);
         self.check_orchestrators();
     }
 
@@ -179,6 +205,9 @@ impl RunService {
     /// whose window takes it now. The engine's lock and the manager's are each taken
     /// for one read, never together and never across an await.
     pub(super) fn check_orchestrators(self: &Arc<Self>) {
+        // The waiting wake-ups first, then the engine: every wake-up this check may drop
+        // was queued before the engine snapshot it is judged on.
+        let judged = self.wakes.generations();
         let seen = self.orchestrators_seen();
         let windows = self.manager.list();
         let window = |id: u32| windows.iter().find(|w| w.id == id);
@@ -224,7 +253,7 @@ impl RunService {
         }
         // Which wake-ups the windows take now, read with no lock of ours held.
         let waiting: Vec<(String, u32, Duration)> = {
-            self.wakes.keep_live(&seen);
+            self.wakes.keep_live(&seen, &judged);
             let pending = crate::lock(&self.wakes.pending);
             pending
                 .iter()

@@ -131,9 +131,10 @@ fn a_digest_read_drops_the_wake_up_it_covered() {
         digest_revision: 4,
         notes_seq,
         quiet: Duration::from_secs(1),
+        generation: 0,
     };
-    crate::lock(&wakes.pending).insert("r1".into(), pending(3));
-    crate::lock(&wakes.pending).insert("r2".into(), pending(3));
+    wakes.insert("r1".into(), pending(3));
+    wakes.insert("r2".into(), pending(3));
     wakes.read("r1", 2);
     assert!(
         crate::lock(&wakes.pending).contains_key("r1"),
@@ -147,49 +148,82 @@ fn a_digest_read_drops_the_wake_up_it_covered() {
     );
 }
 
-/// M9.16 fix round: `check_orchestrators` runs from the tick, the window watch and
-/// `queue_wake` at once, so the engine snapshot one call took may predate a note and
-/// the wake-up built from it. A snapshot with no notes drops only a wake-up whose notes
-/// it had seen (and a read then cleared), never a newer one. The interleaving, in
-/// order: the snapshot (notes just cleared, up to seq 3), a new note (seq 4) queued as
-/// a wake-up, then the stale snapshot's pass.
-#[test]
-fn a_stale_snapshot_keeps_a_wake_up_built_from_a_newer_note() {
-    let wakes = Wakes::default();
-    let seen = |notes, last_note_seq| Seen {
+/// The engine's view of run `r1`'s orchestrator in window 1, as a check reads it.
+fn seen(live: bool, notes: bool, last_note_seq: u64) -> Seen {
+    Seen {
         run_id: "r1".into(),
         window_id: 1,
-        live: true,
+        live,
         exited: false,
         terminal: false,
         launching: false,
         launches: 1,
         notes,
         last_note_seq,
-    };
-    let pending = |notes_seq| Pending {
+    }
+}
+
+/// A wake-up for `r1`'s window 1 holding the notes up to `notes_seq`.
+fn waiting(notes_seq: u64) -> Pending {
+    Pending {
         window_id: 1,
         text: "[anthrex] Run r1 changed: t1 blocked (question): which name?.".into(),
         digest_revision: 5,
         notes_seq,
         quiet: Duration::from_secs(1),
-    };
-    let stale = [seen(false, 3)];
-    crate::lock(&wakes.pending).insert("r1".into(), pending(4));
-    wakes.keep_live(&stale);
+        generation: 0,
+    }
+}
+
+/// M9.16 fix round: a snapshot with no notes drops only a wake-up whose notes it had
+/// seen made (and a read then cleared), never one built from a newer note.
+#[test]
+fn a_stale_snapshot_keeps_a_wake_up_built_from_a_newer_note() {
+    let wakes = Wakes::default();
+    wakes.insert("r1".into(), waiting(4));
+    wakes.keep_live(&[seen(true, false, 3)], &wakes.generations());
     assert!(
         crate::lock(&wakes.pending).contains_key("r1"),
         "the new wake-up was dropped by a snapshot older than its note"
     );
     // A snapshot that saw the note (and a read that cleared it) drops it.
-    wakes.keep_live(&[seen(false, 4)]);
+    wakes.keep_live(&[seen(true, false, 4)], &wakes.generations());
     assert!(!crate::lock(&wakes.pending).contains_key("r1"));
-    // Notes held, or a window not live, as before.
-    crate::lock(&wakes.pending).insert("r1".into(), pending(4));
-    wakes.keep_live(&[seen(true, 4)]);
+    // Notes held: kept.
+    wakes.insert("r1".into(), waiting(4));
+    wakes.keep_live(&[seen(true, true, 4)], &wakes.generations());
     assert!(crate::lock(&wakes.pending).contains_key("r1"));
-    let mut dead = seen(true, 4);
-    dead.live = false;
-    wakes.keep_live(&[dead]);
+}
+
+/// M9.16 fix round 2: `check_orchestrators` runs from the tick, the window watch and
+/// `queue_wake` at once, so its engine snapshot may predate a wake-up queued since. In
+/// order: a check takes its snapshot while the relaunched orchestrator is not live yet
+/// (the daemon-restart note, seq 7, already made); the engine sees it live and queues
+/// the wake-up for that same note; then the stale check's pass. The wake-up stays, and
+/// the next check, reading the engine after it was queued, judges it.
+#[test]
+fn a_stale_not_live_snapshot_keeps_a_wake_up_queued_after_it() {
+    let wakes = Wakes::default();
+    let judged = wakes.generations();
+    let stale = [seen(false, true, 7)];
+    wakes.insert("r1".into(), waiting(7));
+    wakes.keep_live(&stale, &judged);
+    assert!(
+        crate::lock(&wakes.pending).contains_key("r1"),
+        "the wake-up was dropped by a snapshot taken before it was queued"
+    );
+    // A run missing from a stale snapshot (its window not bound yet) keeps it too.
+    wakes.keep_live(&[], &judged);
+    assert!(crate::lock(&wakes.pending).contains_key("r1"));
+    // Judged on a snapshot read after it was queued, it goes when its window is not
+    // live.
+    let judged = wakes.generations();
+    wakes.keep_live(&[seen(false, true, 7)], &judged);
     assert!(!crate::lock(&wakes.pending).contains_key("r1"));
+    // A newer wake-up replacing a judged one is not dropped for the old one.
+    wakes.insert("r1".into(), waiting(7));
+    let judged = wakes.generations();
+    wakes.insert("r1".into(), waiting(8));
+    wakes.keep_live(&[seen(false, true, 7)], &judged);
+    assert!(crate::lock(&wakes.pending).contains_key("r1"));
 }
