@@ -379,7 +379,7 @@ In the tree, a run row reads `◈ <goal> · <merged>/<total>`, with the orchestr
 
 ### 9.1 Choosing the orchestrator
 
-The user starts a run with `C-b O`, or with `anthrex run start "<goal>" --orchestrator <runtime>[:<model>] [--workers claude,codex] [--verify <cmd>] [--parallel <n>] [--yes] [--dir <dir>]`. For example `--orchestrator claude:claude-opus-5` or `--orchestrator codex`. A runtime without a model picks that runtime's highest-tier roster entry, first in roster order. The form asks for:
+The user starts a run with `C-b O`, or with `anthrex run start "<goal>" --orchestrator <runtime>[:<model>] [--workers claude,codex] [--verify <cmd>] [--parallel <n>] [--yes] [--dir <dir>]`. For example `--orchestrator claude:claude-opus-5-5` or `--orchestrator codex`. A runtime without a model picks that runtime's highest-tier roster entry, first in roster order. The form asks for:
 
 - the goal;
 - the directory, defaulting to the project selected in the tree, else the client's default directory;

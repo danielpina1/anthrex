@@ -351,7 +351,7 @@ fn route_picks_the_lowest_strength_at_or_above() {
     let peer = route(&roster, Runtime::Codex, Strength::Frontier, Effort::Low);
     assert_eq!(
         (peer.runtime, peer.model.as_str()),
-        (Runtime::Claude, "claude-opus-5")
+        (Runtime::Claude, "claude-opus-5-5")
     );
     // Nothing at or above on either runtime: the runtime's first entry.
     let only_fast = vec![roster[0].clone(), roster[3].clone()];

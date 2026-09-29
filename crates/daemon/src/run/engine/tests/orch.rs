@@ -172,7 +172,7 @@ fn planned_run_starts_in_planning_and_creates_branch_then_orchestrator() {
     assert_eq!(spec.cwd, run.root);
     assert_eq!(spec.worktree_branch, None);
     assert_eq!(spec.runtime, Runtime::Claude);
-    assert_eq!(spec.model.as_deref(), Some("claude-opus-5"));
+    assert_eq!(spec.model.as_deref(), Some("claude-opus-5-5"));
     let first = spec.initial_prompt.clone().unwrap();
     assert!(first.starts_with(&format!(
         "[anthrex] You are the orchestrator of run {RUN_ID}"
@@ -249,7 +249,7 @@ fn resolve_orchestrator_order() {
         pick(None, agent(None, "")),
         Ok((
             Runtime::Claude,
-            "claude-opus-5".into(),
+            "claude-opus-5-5".into(),
             Strength::Frontier,
             Effort::Medium
         ))
@@ -322,7 +322,7 @@ fn resolve_orchestrator_keeps_the_candidate_snapshot() {
         vec![
             taken("claude-haiku-4-5", Strength::Fast, earlier),
             taken("claude-sonnet-5", Strength::Standard, earlier),
-            taken("claude-opus-5", Strength::Frontier, None),
+            taken("claude-opus-5-5", Strength::Frontier, None),
         ]
     );
     let configured = resolve_orchestrator(
@@ -339,7 +339,7 @@ fn resolve_orchestrator_keeps_the_candidate_snapshot() {
         vec![
             taken("claude-haiku-4-5", Strength::Fast, listed),
             taken("claude-sonnet-5", Strength::Standard, None),
-            taken("claude-opus-5", Strength::Frontier, listed),
+            taken("claude-opus-5-5", Strength::Frontier, listed),
         ]
     );
     let choice = OrchestratorChoice {

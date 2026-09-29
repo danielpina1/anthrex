@@ -75,7 +75,7 @@ fn defaults_when_absent() {
     assert_eq!(o.models[0].strength, proto::Strength::Fast);
     assert_eq!(o.models[1].model, "claude-sonnet-5");
     assert_eq!(o.models[1].strength, proto::Strength::Standard);
-    assert_eq!(o.models[2].model, "claude-opus-5");
+    assert_eq!(o.models[2].model, "claude-opus-5-5");
     assert_eq!(o.models[2].strength, proto::Strength::Frontier);
     assert_eq!(o.models[3].runtime, proto::Runtime::Codex);
     assert_eq!(o.models[3].model, "");

@@ -47,7 +47,7 @@ fn policy_fills_routes_by_class() {
         task(&run, "hub").route,
         route(
             Runtime::Claude,
-            "claude-opus-5",
+            "claude-opus-5-5",
             Strength::Frontier,
             Effort::High
         )

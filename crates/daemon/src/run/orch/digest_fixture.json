@@ -121,7 +121,7 @@
         "undelivered": 0
       },
       "review": null,
-      "route": "claude claude-opus-5 high",
+      "route": "claude claude-opus-5-5 high",
       "rung": 0,
       "size": "M",
       "state": "merged",

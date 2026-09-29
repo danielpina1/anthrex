@@ -13,7 +13,7 @@ use crate::Problem;
 pub const MODEL_NOTE_MAX: usize = 80;
 
 /// The built-in roster, decision 23's exact order: `claude`/`claude-haiku-4-5`/`fast`,
-/// `claude`/`claude-sonnet-5`/`standard`, `claude`/`claude-opus-5`/`frontier`,
+/// `claude`/`claude-sonnet-5`/`standard`, `claude`/`claude-opus-5-5`/`frontier`,
 /// `codex`/`""`/`standard`. An empty Codex model means "use Codex's configured
 /// default"; that is the only runtime an empty model is valid for.
 pub fn default_roster() -> Vec<ModelEntry> {
@@ -32,7 +32,7 @@ pub fn default_roster() -> Vec<ModelEntry> {
         },
         ModelEntry {
             runtime: Runtime::Claude,
-            model: "claude-opus-5".to_string(),
+            model: "claude-opus-5-5".to_string(),
             strength: Strength::Frontier,
             note: String::new(),
         },
