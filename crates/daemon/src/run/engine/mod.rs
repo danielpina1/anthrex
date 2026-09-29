@@ -35,7 +35,6 @@
 //! `history.jsonl`, as journaled ops).
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use proto::{FinishAction, PlanEdit, TokenUsage, ToolCall};
 
@@ -50,6 +49,7 @@ mod deciders_size;
 mod dispatch;
 mod done;
 pub(crate) mod early;
+mod effect;
 mod fallback;
 mod gate_holds;
 mod gates;
@@ -82,6 +82,7 @@ pub use crate::headless::TurnOutcome;
 pub(crate) use clock::epoch_spend;
 pub use clock::{BudgetEpoch, TaskClock};
 pub use early::{HOLD_CAP, HOLD_LIMIT_SECS, HOLD_WINDOWS_CAP, HeldEvent, HeldWindow};
+pub use effect::Effect;
 pub use history::HISTORY_FILE;
 pub(crate) use integration::attention as integration_attention;
 pub use ops::{OpKind, OpResult, OverrideCount, ResolutionAt, ScratchAt};
@@ -280,84 +281,6 @@ pub enum AgentSignal {
     },
     ProcessStarted {
         pid: u32,
-    },
-}
-
-/// `Op` carries a whole `OpKind` (about 256 bytes); effects live only between a step
-/// and the driver, so boxing every op would buy nothing.
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq)]
-pub enum Effect {
-    Reply {
-        reply: ReplyId,
-        result: Result<String, String>,
-    },
-    Op {
-        run_id: String,
-        op: OpId,
-        kind: OpKind,
-    },
-    /// One new turn (decision 29).
-    Deliver {
-        run_id: String,
-        message_ids: Vec<u64>,
-        window_id: u32,
-        text: String,
-    },
-    Interrupt {
-        window_id: u32,
-    },
-    KillWindow {
-        window_id: u32,
-    },
-    RetireWindow {
-        window_id: u32,
-    },
-    RemoveWindow {
-        window_id: u32,
-    },
-    WatchWorktree {
-        root: PathBuf,
-    },
-    UnwatchWorktree {
-        root: PathBuf,
-    },
-    Persist {
-        run_id: String,
-        urgent: bool,
-    },
-    WriteReport {
-        run_id: String,
-    },
-    Publish {
-        structural: bool,
-    },
-    /// Milestone 9 decision 22: a sub-planner's epic was accepted; the driver retires
-    /// its session (`ScoutService::accept_planner`).
-    PlannerAccepted {
-        window_id: u32,
-    },
-    /// Decision 22: a sub-planner failed in the engine; the driver stops its session.
-    StopPlanner {
-        window_id: u32,
-        reason: String,
-    },
-    /// Decision 20: a run scout is halted by the engine (`run cancel`, the `finish`
-    /// edit); the driver stops its session on the scout service with `reason`.
-    StopScout {
-        scout_id: String,
-        reason: String,
-    },
-    /// Decision 39: paste `text` into the idle orchestrator's window (the driver's
-    /// `wake.rs`, task M9.13), then answer `OrchEvent::OrchestratorWoken`.
-    WakeOrchestrator {
-        run_id: String,
-        window_id: u32,
-        text: String,
-        digest_revision: u64,
-        /// The highest note seq `text` holds (`OrchEvent::OrchestratorWoken` drops
-        /// the notes up to it).
-        notes_seq: u64,
     },
 }
 
