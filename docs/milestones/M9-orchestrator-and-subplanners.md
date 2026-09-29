@@ -1882,6 +1882,8 @@ Found while writing this brief. Each is resolved by the decision named. Items 1โ
 31. **TT ยง12.1's "Batch boundary" and decision 19's atomic batch** meet at a mixed call. Resolved by decision 42: a `message` or `refresh` is the only edit in its call, and a mixed call is refused before any effect; so the orchestrator refreshes and messages in two calls, which the refresh hold joins into one worker turn (decision 42e).
 32. **Decision 26 cites a start check that did not exist** (found in M9.17). Its "(binary present, user-settings-only caps, the Codex `.codex` tree)" named a binary-present check; `RunService::check_runtimes` checked only decision 50's key and decision 53's project settings, and `installed` (decision 17) was read only for `get_context`. A planned run whose orchestrator's runtime was not installed was built, and its orchestrator failed to launch. Resolved in the M9.17 fix round (`run/orch/installed.rs`): the orchestrator is routed over the installed runtimes, and the start is refused after triage when its runtime, or the sub-planners', is not installed.
 
+33. **Decision 26's start checks named only the orchestrator and its sub-planners** (found by M9's whole-branch review). The run scouts the orchestrator spawns run on `[orchestrator.scouts] runtime`, else `orchestrator.default_runtime`, which the run did not freeze and `reach::reachable_runtimes` did not count, so decisions 50 and 53 never covered them. With Codex scouts configured, a run with a Claude orchestrator in a repository that tracks `.codex/config.toml` started without `--trust-project`, and its Codex scout loaded that config. Resolved by the whole-branch review, item 1: the run freezes its scouts' route keys (`OrchLimits.scouts`) and counts that runtime whenever it has an orchestrator.
+
 ## Produces for M9.5
 
 | Item | For | Where |
@@ -1992,7 +1994,7 @@ Refreshed from `origin/main:docs/milestones/M9-orchestrator-and-subplanners.md` 
 
 ### Deviations from the brief
 
-- (none yet; the implementer records each here, with its evidence)
+- Each task's deviations are recorded with its evidence in that task's notes below ("### Task M9.n", its review and fix-round subsections, and each "Deviations from the brief's file list and interfaces" block), and the whole-branch review's in "### Whole-branch review" at the end.
 - Pre-recorded by the refresh (ruling D-9): the goal form has no `--unconfined-checks` toggle, so on Linux its start is refused with M8a's text unless `[orchestrator] unconfined_checks = true`; smoke stage 11f starts through the CLI there.
 
 ### Changes to earlier briefs
@@ -2300,7 +2302,7 @@ These controller rulings answer the second M9.4 review, of `2e2c8ca`. They repla
 
 ### Task M9.6 (The digest, the context, the task result and the snapshot)
 
-- **Decision 16a's 256 KiB bound cannot hold: a finding.** Measured with `proto::encode` (named MessagePack, as the wire sends it), 50 complete runs of 20 tasks with 4 KiB briefs encode to 5 699 030 bytes before the change and 1 098 030 after. The remaining ~1.1 KiB a task is `TaskInfo`'s other fields (about 70 named keys, routes, budget, spend, phases, history), not plan text. Reaching 256 KiB would need terminal runs' tasks slimmed in the snapshot, which is a design decision of its own, so it was not attempted. `a_snapshot_of_fifty_terminal_runs_stays_small` pins what 16a removes instead: the same runs encode to exactly the same bytes with 4 KiB briefs as with 1-byte ones, and under 1.25 KiB a task (`SNAPSHOT_BOUND`). **Needs a controller ruling** if the 256 KiB number matters.
+- **Decision 16a's 256 KiB bound cannot hold: a finding.** Measured with `proto::encode` (named MessagePack, as the wire sends it), 50 complete runs of 20 tasks with 4 KiB briefs encode to 5 699 030 bytes before the change and 1 098 030 after. The remaining ~1.1 KiB a task is `TaskInfo`'s other fields (about 70 named keys, routes, budget, spend, phases, history), not plan text. Reaching 256 KiB would need terminal runs' tasks slimmed in the snapshot, which is a design decision of its own, so it was not attempted. `a_snapshot_of_fifty_terminal_runs_stays_small` pins what 16a removes instead: the same runs encode to exactly the same bytes with 4 KiB briefs as with 1-byte ones, and under 1.25 KiB a task (`SNAPSHOT_BOUND`). **Needs a controller ruling** if the 256 KiB number matters. **Controller ruling (M9's whole-branch review):** accepted as measured; `SNAPSHOT_BOUND` stands, and slimming terminal runs' tasks is a follow-up for M9.5 (recorded in the followups file's "From milestone 9").
 - **Model (`run/orch/mod.rs`), added now as the task allows.** `RunOrch` gains `orchestrator`, `gate_holds`, `run_scouts`, `digest_rev`, `digest_fp`, `installed`, `research_report`, `planner_usage`; `TaskOrch` gains `gate_hold`, `research`, `review_range`, `messages`, `worker_notes`, `refresh`, `refresh_merges`; the types `OrchestratorRecord`, `GateHoldRecord`, `RunScout`, `RunScoutState` (with `label()`), `WorkerNote` and `RefreshState` are as in Interfaces. Every field is `#[serde(default)]`. `run/model.rs` is unchanged: `Run.orch` already existed.
   - **Deviation: `RunOrch.digest_read_at: Option<u64>`**, not in Interfaces: when the last `DigestRead` arrived. The digest's `gate.holds` keeps an approved hold decided at or after it (all decided holds while it is `None`). **Obligation for the task that handles `OrchEvent::DigestRead` (M9.9's `digest_read_drops_notes_up_to_the_revision`): set it to the event's `now`.**
   - `scout::report::ScoutReportArgs` derives `Serialize`/`Deserialize`, so `TaskOrch.research` persists.
@@ -3810,7 +3812,7 @@ Commits: `refactor(daemon): move the engine's OrchEvent into its own file` (af00
    - A run with nothing recorded keeps M8b's route: a plan-file run, or a promotion from before milestone 9.
    - `installed` is persisted, so the spawn-time route (`engine/planners.rs`, `run/reach.rs`) is the one the start checked.
    - With Codex only, the planners fall to Codex's first entry, the CLI's default model, at `Standard`.
-   - **The hint:** after this fix the sub-planners' runtime can be refused only when `[orchestrator.planners] runtime` names it. The orchestrator's runtime is checked first, and the peer step no longer reaches a missing runtime. The refusal still says `change [orchestrator.planners] runtime` when that key is set, and `choose another runtime with --orchestrator` otherwise (unreachable today, defensive).
+   - **The hint:** after this fix the sub-planners' runtime can be refused only when `[orchestrator.planners] runtime` names it. The orchestrator's runtime is checked first, and the peer step no longer reaches a missing runtime. The refusal still says `change [orchestrator.planners] runtime` when that key is set, and `choose another runtime with --orchestrator` otherwise (unreachable today, defensive). **Corrected by the whole-branch review:** it was reachable after fix round 3 split the check. On macOS, with the runtime found only through a literal `~` entry in PATH, the orchestrator's window check accepts it and the headless check refuses the planners; the refusal now says why (item 3 of "### Whole-branch review").
    - **The other callers of `scout::spec::route`** are the scouts' `scout_route`: `scout/service.rs` (run and onboarding scouts), `profile/service_start.rs` (decision 12's settings check) and `run/orch/roles.rs` (the scout's routing snapshot).
      - They route by the daemon's `ScoutContext`, `[orchestrator.scouts]` at `Fast` by default. Codex's `Standard` entry is at or above `Fast`, so the default config never steps to the peer. **Corrected in fix round 3:** that was about the strength step only. With the default config the scouts' runtime is `orchestrator.default_runtime`, Claude, so a Codex-only user's scouts were routed straight to a missing Claude with no step at all.
      - A Codex user who sets `[orchestrator.scouts] strength = "frontier"` would get a Claude scout.
@@ -3869,3 +3871,78 @@ Commits: `fix(daemon): route run scouts over the installed runtimes, and record 
    - **Left as before M9, for M9.5 to decide:**
      - Onboarding scouts (`profile/service_run.rs`, `profile/service_start.rs`) and deciders still route by the daemon-wide config with no installed check. A Codex-only user with the default config gets a Claude onboarding scout and Claude deciders, which fail at launch; the deciders then fall back.
      - Run scouts are not among `reach::reachable_runtimes`, so decision 53's project-settings check at `run start` does not cover a run scout's runtime when no other session reaches it.
+
+### Whole-branch review
+
+Three reviewers read the whole branch at `0920079`. Commits, each code fix test-first:
+
+- `fix(daemon): freeze the run scouts' route and count it among the runtimes a run reaches` (item 1), with `test: build the Codex-default config with struct update syntax` (a clippy fix to its test);
+- `fix(daemon): hold an orchestrator wake-up until a turn ends after attention` (item 2);
+- `fix(daemon): say when a planner runtime is found only through a ~ entry in PATH` (item 3);
+- `fix(daemon): honour a run's --trust-project when a plan edit reaches a new runtime` (item 4);
+- `test: assert the timeout was waited out, not a thin upper bound, in mcp_until's deadline test` (item 5);
+- `test: give the typing-gap check room for a late first read`, `docs: record the timing budgets the whole-branch review listed` (item 6);
+- `docs: give each reasonless #[allow] its reason` (item 9);
+- this section, the brief's other corrections and the followups file (items 7 and 8).
+
+1. **Critical: a run scout could load the repository's `.codex` config without `--trust-project`** ("Spec and brief defects" 33).
+   - `scout::spec::ScoutRouting` (runtime, default runtime, strength, effort) is frozen into `OrchLimits.scouts` at the start. It has a field-level serde default of `None`, so a run recorded before it follows the scout service's live keys and roster, as before. A run recorded before milestone 9 (no `orch` at all) gets the config defaults, as every other `OrchLimits` key does.
+   - `launch::scout_route_of` routes a run scout on the frozen keys and the run's own roster, over `run.orch.installed`. The driver starts the scout there (`ScoutService::start_on`), and `roles::scout_record` names the same route.
+   - `reach::reachable_runtimes` counts `launch::frozen_scout_route` whenever the run has an orchestrator. Decisions 50 and 53 now cover the scouts at `run start`, at `run promote` (the promoted run is compared with the fast one) and at `run edit`. A config change after the start does not reroute a run's scouts.
+   - **Tests:**
+     - `adapt_goal_installed_tests.rs::a_codex_run_scout_is_covered_by_the_project_settings_check` uses `default_runtime = "codex"`, then `[orchestrator.scouts] runtime = "codex"`, each with a Claude orchestrator and a tracked `.codex/config.toml`. The start is refused without `--trust-project` and starts with it, with the file trusted; the default config reaches Claude only. It was red first: "a run with Codex scouts was not refused".
+     - `roles_installed_tests.rs::a_config_change_after_the_start_does_not_reroute_a_runs_scouts` also covers a run recorded before the keys.
+   - **Test updated:** `orch_read_tests_launch.rs::a_held_submit_carries_its_runtime_refusals` builds a run that "reaches Codex only". Its scouts now count, so the fixture puts them on Codex too.
+   - `plan_tests.rs`'s frozen-limits literal gains the scouts' keys.
+2. **A wake-up's `\r` could answer a permission prompt.**
+   - The status machine is unchanged; the gate is the narrowest that can see the sequence. Each manager `Entry` keeps `attention_open`: it is set when the window's status enters `Attention`, and cleared by `Stop`, `UserPromptSubmit`, Codex's notify or `SessionStart` (checked in `Entry::apply_with_context`, which every status event passes through).
+   - The driver's `wake::ready` refuses while it is set (`WindowManager::attention_open`). Only the orchestrator's wake-up reads it.
+   - **Test:** `run_e2e_orch_wake.rs::a_wake_waits_for_the_turn_end_after_attention` scripts `UserPromptSubmit`, a `permission_prompt`, a typed line (the user's key), an `idle_prompt` and a 4 s hold with fake-agent hooks. No wake-up is delivered for 3 s after the window turns `Idle`, and it is delivered after the turn's `Stop`. It was red first: `wakes` was 1 inside the window.
+   - **Not tested:** the Codex path (its notify clearing the flag) has no test of its own; the clearing events are one `matches!`.
+   - **Cannot be confirmed:** whether real Claude fires `idle_prompt` while a permission dialog is open. No test may run real Claude, and the fake agent cannot show it. The gate holds either way.
+3. **A misleading refusal for a runtime found only through a `~` PATH entry.**
+   - `build.rs::planner_refusal` takes the window map. When it finds the sub-planners' runtime and the headless map does not, the refusal says that a `~` entry in PATH is not searched for headless sessions (sub-planners and scouts), and to put the directory in PATH as an absolute path.
+   - `build_tests.rs::a_planner_runtime_found_only_through_a_tilde_entry_says_so` was red first by compilation, and fails with the new branch disabled (a `cp` copy, restored).
+   - The fix-round-2 note that called the other hint unreachable is corrected in place.
+4. **`runtime_refusals` ignored `trust_project`.** It was a real refusal of a trusted run, and a one-line fix, so it is fixed rather than re-owned.
+   - A run started with `--trust-project` now trusts the project settings an edit newly reaches, as `run promote` does (decision 9).
+   - `an_edit_of_a_run_started_with_trust_project_is_not_refused` was red first. The trusted case returned the refusal; the untrusted case is still refused.
+   - The followups entry is marked fixed. It covered the promotion's untracked files too, which this closes.
+5. **Timing:** `orch_steps_tests.rs`'s `< 270ms` is gone.
+   - `calls == 1` is the property: the wait after the first call is the smaller of `UNTIL_POLL` (200 ms) and the time left, and a sleep never ends early.
+   - The elapsed check is now the lower bound `>= 120ms`.
+6. **Timing budget rows** are in `docs/timing-budgets.md`, "Recorded, from M9's whole-branch review".
+   - `orch_modes.rs`'s typing gap was also loosened from `350` to `100` ms: 50 ms of margin for fake-agent reading the first bytes late was too thin, and 100 ms still tells typing from a paste.
+   - `scout/tests_planner.rs`'s `RETIRE` is recorded as what it is: not a wall-clock bound but `RETIRE_AFTER`'s value in the expected effects.
+7. **The brief.**
+   - **Interfaces that shipped under other names:**
+     - `refresh.rs::merged_since` shipped as `git/handback.rs::hand_back_listing`, whose `MergedCommits` lists the commits a clean refresh merged. The listing is part of the hand-back, not a separate git call.
+     - `engine::after_step` shipped as `engine/orch.rs::settle` and `settle_quiet`.
+     - `worker_messages::refreshed` is `refreshed(run, i, (target, result): (&str, OpResult), now)` and pushes its effects rather than returning them.
+     - The header's branch `m9-orchestrator-and-subplanners` is `m9-orchestrator`.
+   - **File growth over the brief's budgets**, as the review measured it:
+
+     | File | Growth |
+     |---|---|
+     | `adapt_goal.rs` | +141 |
+     | `adapt.rs` | +114 |
+     | `edit_log.rs` | +98 |
+     | `scout/service.rs` | +74 |
+     | `scout/machine.rs` | +59 |
+     | `scout/spec.rs` | +47 (before this round's `ScoutRouting`) |
+     | `fake-agent/src/mcp.rs` | +47 |
+     | `mcp/src/tools.rs` | +25 |
+     | `cli/src/mcp_cmd.rs` | +35 |
+     | `ui/modal.rs` | +31 (its task note said +7) |
+     | `app/headless.rs` | +23 |
+     | `engine/history.rs` | +11 |
+
+     Every file stays under 600 lines.
+   - "Deviations from the brief" now points to the per-task notes.
+   - **Controller ruling on decision 16a's 256 KiB bound:** accepted as measured. `SNAPSHOT_BOUND` (under 1.25 KiB a task) pins what 16a removes; slimming terminal runs' tasks is a follow-up for M9.5.
+8. **The followups file.**
+   - "From M9.10" and "From M9.13a's re-review" are re-owned to M9.5.
+   - "From M9.13's review" is marked fixed (item 4).
+   - "From milestone 9" gains three items: the 16a snapshot slimming, `OPENAI_BASE_URL` not being scrubbed (a user ruling is needed; the 2026-09-29 ruling named only Anthropic's), and onboarding scouts and deciders having no installed check.
+9. **The three reasonless `#[allow]`s** carry a `reason = "..."`: `cli/tests/run_e2e_large.rs`, `run/orch/roles.rs::record` and `run/git/done.rs::verify_done_excluding`.
+10. `docs/ROADMAP.md` is untouched, as ruled.
