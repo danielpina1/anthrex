@@ -77,6 +77,10 @@ pub enum OpKind {
         /// the count leaves out, each once (`worker_messages::not_own`).
         #[serde(default)]
         not_own: Vec<String>,
+        /// The run heads the task's refreshes merged (`worker_messages::not_run`): the
+        /// count leaves out all they reach (M9.13a re-review).
+        #[serde(default)]
+        not_run: Vec<String>,
     },
     /// `run_head`: M8a.8's interface change (the task's own commits exclude a merged
     /// run head). `not_own` as `VerifyDone`'s.
@@ -86,6 +90,8 @@ pub enum OpKind {
         run_head: String,
         #[serde(default)]
         not_own: Vec<String>,
+        #[serde(default)]
+        not_run: Vec<String>,
     },
     DiffSoFar {
         worktree: PathBuf,

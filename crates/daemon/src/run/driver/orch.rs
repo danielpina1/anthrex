@@ -368,13 +368,12 @@ impl RunService {
         let git = self.ctx.git.clone();
         let (root, branch) = (run.root.clone(), task_branch(&run.id, task_id));
         // M9.13a review, item 2: run work a refresh merged in is not the task's.
-        let merges = run
-            .task(task_id)
-            .map(|t| t.orch.refresh_merges.clone())
-            .unwrap_or_default();
+        let refreshed = run.task(task_id).map_or_else(Default::default, |t| {
+            crate::run::git::RefreshedIn::of(&t.orch.refresh_merges, &t.orch.refresh_targets)
+        });
         let each = Duration::from_secs(run.limits.git_timeout_secs).min(DONE_CHECK_GIT_TIMEOUT);
         let read = tokio::task::spawn_blocking(move || {
-            crate::run::git::task_summary_excluding(&git, &root, &start, &branch, &merges, each)
+            crate::run::git::task_summary_excluding(&git, &root, &start, &branch, &refreshed, each)
         });
         match tokio::time::timeout(DONE_CHECK_GIT_TIMEOUT, read).await {
             Ok(Ok(result)) => result,

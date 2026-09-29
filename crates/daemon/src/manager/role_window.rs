@@ -170,6 +170,21 @@ impl WindowManager {
         }
     }
 
+    /// Decision 11 for an ended run (M9.13a re-review, item 5): clears `id`'s live flag
+    /// only while `id` is still that run's window. A window id a restart gave to
+    /// another run's window keeps that run's flag. Under the lock, no I/O.
+    pub fn end_run_window(&self, id: u32, run_id: &str) {
+        let mut inner = crate::lock(&self.inner);
+        if let Some(entry) = inner.entries.get_mut(&id)
+            && entry
+                .role
+                .as_ref()
+                .is_some_and(|role| role.run_ref.run_id == run_id)
+        {
+            entry.run_live = false;
+        }
+    }
+
     /// M9.13 review, item 1: replaces run window `id`'s role environment with
     /// `refresh(<its current one>)`, in the persisted record too, so the next restart
     /// launches with it. Under the lock, no I/O (`refresh` must be pure). `false` when

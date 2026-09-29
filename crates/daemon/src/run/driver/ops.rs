@@ -13,7 +13,7 @@ use crate::headless::{HeadlessSpec, SessionArg};
 use crate::run::confine::confined;
 use crate::run::engine::{EventKind, OpKind, OpResult, ResolutionAt, ScratchAt};
 use crate::run::exec::ShellOutcome;
-use crate::run::git::{self, RefCheck};
+use crate::run::git::{self, RefCheck, RefreshedIn};
 use crate::run::globs::{OwnsMatcher, ProtectedMatcher};
 use crate::run::proof::{ProofError, ProofOp, SETUP_MARKER, run_proof};
 use crate::run::role_launch::worker_git_roots;
@@ -252,6 +252,7 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
             red,
             resolution,
             not_own,
+            not_run,
         } => {
             // Final fix batch F1b: through the queue, since each of these imports the
             // worker's commits and records them on the task's branch first.
@@ -263,11 +264,9 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
                             &worktree,
                             &start,
                             &run_head,
-                            &owns,
-                            &generated,
-                            &protected,
+                            (&owns, &generated, &protected),
                             (red.clone(), resolution.clone()),
-                            &not_own,
+                            RefreshedIn::of(&not_own, &not_run),
                             t,
                         )
                     })
@@ -279,10 +278,12 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
             start,
             run_head,
             not_own,
+            not_run,
         } => settle(
             service
                 .write(ctx, move |g, t| {
-                    git::count_commits_excluding(g, &worktree, &start, &run_head, &not_own, t)
+                    let refreshed = RefreshedIn::of(&not_own, &not_run);
+                    git::count_commits_excluding(g, &worktree, &start, &run_head, &refreshed, t)
                         .map(|(count, head)| OpResult::Commits { count, head })
                 })
                 .await,
@@ -441,11 +442,9 @@ fn verify_done(
     worktree: &Path,
     start: &str,
     run_head: &str,
-    owns: &[String],
-    generated: &[String],
-    protected: &[String],
+    (owns, generated, protected): (&[String], &[String], &[String]),
     (red, resolution): (Option<String>, Option<ResolutionAt>),
-    not_own: &[String],
+    refreshed: RefreshedIn,
     git_timeout: Duration,
 ) -> Result<OpResult, String> {
     let t = git_timeout.min(DONE_CHECK_GIT_TIMEOUT);
@@ -459,7 +458,7 @@ fn verify_done(
         owns,
         (&generated, &protected),
         red.as_deref(),
-        not_own,
+        &refreshed,
         t,
     )?;
     let resolution_only = resolution.map(|r| {

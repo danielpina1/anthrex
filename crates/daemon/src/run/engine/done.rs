@@ -197,6 +197,7 @@ pub(super) fn claim(
         // Set exactly while `handed_back` is (merge::handed_back, ladder::end_hand_back).
         resolution: task.resolution.clone(),
         not_own: super::worker_messages::not_own(task),
+        not_run: super::worker_messages::not_run(task),
     };
     let task_id = task.id().to_string();
     let window_id = session_window(run, i);

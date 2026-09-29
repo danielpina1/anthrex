@@ -106,6 +106,9 @@ pub struct TaskOrch {
     /// Decision 42e: a refresh due or in flight, and the merge commits refreshes made.
     pub refresh: Option<RefreshState>,
     pub refresh_merges: Vec<String>,
+    /// The run heads refreshes merged in, clean or conflicted, each once (M9.13a
+    /// re-review): what they reach is run work, never the task's.
+    pub refresh_targets: Vec<String>,
     /// Decision 25's restarts of the task by a rewrite (M9.9 review fixes, M2).
     pub rewrite_restarts: u32,
     /// Text the next research session's first turn ends with (a worker's

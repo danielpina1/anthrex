@@ -3293,3 +3293,26 @@ One commit, `fix(daemon): keep research and review tasks out of worker messages,
    - Test: `driver/live_flag_tests.rs::an_ended_run_frees_its_orchestrator_before_its_saves_finish`. It uses a real manager and a real PTY window whose `claude` is a sleeping stand-in; the test kills that window itself, and no stand-in was left running.
    - Red: without the call, the flag was still set after 10 s with the run's saves stalled.
    - The e2e `create_orchestrator_sets_the_run_live_flag_and_a_terminal_run_clears_it` passed 12 times alone and 10 times with its whole binary, with no retry.
+
+#### Re-review fixes
+
+One commit, `fix(daemon): record every refresh's run head so no merged run work counts as the task's, fold repository text in refresh texts, and free only an ended run's own window`. Each test was written first and seen red for the reason given; the sources for the mutations were restored from copies.
+
+1–3. **Every refresh records the run head it merged.**
+   - The field is `TaskOrch.refresh_targets` (`#[serde(default)]` through the struct's default, so older runs load with it empty).
+   - Clean, conflicted or up to date, the target is recorded once, in `refreshed`, which now gets the op's `run_head`.
+   - `git::RefreshedIn { merges, targets }` carries these records, and the git reads use them:
+     - `task_summary_excluding`: the log adds `^<target>` for each recorded target `root` has, and still drops the clean merges themselves. The diffstat's base is the newest recorded target that is an ancestor of the branch, else `start`. So a conflicted refresh, which records no merge, and a rebase after a refresh both leave the run work out.
+     - `count_commits_excluding` and `verify_done_excluding` (through `own_commits`): `<head> ^start ^run_head ^<each known target>`, less the recorded clean merges. So a run head that `resume --rebaseline` rewound cannot make merged run work count.
+   - `CountCommits` and `VerifyDone` gain `not_run` (`#[serde(default)]`), the targets each once (`worker_messages::not_run`).
+   - **Choice recorded:** the merge commit the worker makes to finish a conflicted refresh counts as the task's own. It holds the conflict resolution, and no run commit counts.
+   - Real-git tests (`run_refresh.rs`):
+     - `a_conflicted_refresh_leaves_run_work_out_of_task_result` is the reviewer's scenario. With no record, the log lists `run:` commits and `docs/other.md`; with the target, the log is `resolve` and `task: lib`, and the diffstat is `src/lib.rs` only. The count with the run head rewound is 2 (the task commit and its resolving merge). Red with the targets left out of the log.
+     - `a_rebase_after_a_refresh_leaves_run_work_out_of_the_diffstat`: red with the diff base left at `start`.
+     - `a_rewound_run_head_does_not_make_refreshed_run_work_count`: merges alone count 1, with the target 0, for both counts. Red with the targets skipped.
+   - `task_result_leaves_out_refreshed_run_work` now records the target as the engine does.
+   - Engine test: `a_refresh_records_the_run_head_it_merged_clean_or_conflicted` checks the record, once, on the fallback's count and `task_done`'s check. Red without the record, and red without the de-duplication.
+   - **Open:** `verify_done`'s spill diff and `diff_so_far` still diff from the current run head (`<run_head>...<head>`). A run head rewound below a refresh's target would show the merged run files there. That is M8a's rebaseline path, which this re-review did not ask to change; it is added to the follow-ups file.
+4. **Repository text in the refresh texts is one line.** `refresh_clean` and `refresh_clean_paused` fold each commit subject, and `refresh_conflict` and `refresh_conflict_paused` fold the file names, through `messages::one_line`. Test: `refresh_texts_fold_file_names_and_subjects`, with the reviewer's file name and subject plus U+2028, U+2029 and U+0085. No control character or separator is left, and only the text's own two `[anthrex]` markers remain. Red with either fold removed.
+5. **Only an ended run's own window is freed.** `WindowManager::end_run_window(id, run_id)` clears the flag only while window `id`'s role names that run. Both `release_ended_orchestrators` and `clear_ended_orchestrators` use it, so a window id a restart gave to another run's window keeps that run's flag. Test: `an_ended_run_leaves_another_runs_window_with_its_old_id_alone`, with real windows for both runs; the ended run's own window is freed and the other is not. Red when the owner is not checked.
+6. **The lock-order note is reworded** on `release_ended_orchestrators`. Item 8 of the first review is the first place that takes the manager's lock inside the engine's; `refresh_orchestrator_otlp` takes them one at a time. It is safe because no path takes them the other way: the manager never calls into the run service, and its lock is held only inside its own methods. Neither lock is held across I/O or an `await` there; `end_run_window` changes one flag.

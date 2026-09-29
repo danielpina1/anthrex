@@ -102,13 +102,23 @@ pub(super) fn release_all(run: &mut Run, now: u64) {
 /// counts (`CountCommits`, `VerifyDone`) leave them out where the branch still has
 /// them, so a refresh merge alone is never work (M9.13a review, item 3).
 pub(super) fn not_own(task: &Task) -> Vec<String> {
-    let mut merges: Vec<String> = Vec::new();
-    for merge in &task.orch.refresh_merges {
-        if !merges.contains(merge) {
-            merges.push(merge.clone());
+    once(&task.orch.refresh_merges)
+}
+
+/// The run heads the task's refreshes merged, each once: the counts leave out all
+/// they reach (M9.13a re-review).
+pub(super) fn not_run(task: &Task) -> Vec<String> {
+    once(&task.orch.refresh_targets)
+}
+
+fn once(list: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for item in list {
+        if !out.contains(item) {
+            out.push(item.clone());
         }
     }
-    merges
+    out
 }
 
 /// Decision 42e: the outbox holds a task's mail while its refresh is due or in flight,
@@ -187,10 +197,15 @@ pub(super) fn awaits_refresh(run: &Run, i: usize, op: OpId) -> bool {
 /// sent. Conflict: the worker resolves it (`resolving`, as M8a ruling N5's hand-back);
 /// `Task.conflicts` is not touched. Failed, a dirty tree included: no block, a history
 /// line, a wake note, and the error on the refresh's edit-log entry.
-pub(super) fn refreshed(run: &mut Run, i: usize, result: OpResult, now: u64) {
+pub(super) fn refreshed(run: &mut Run, i: usize, (target, result): (&str, OpResult), now: u64) {
     run.tasks[i].orch.refresh = None;
     if run.tasks[i].state.is_finished() {
         return;
+    }
+    // M9.13a re-review: the run head merged in, clean or conflicted, is run work.
+    let targets = &mut run.tasks[i].orch.refresh_targets;
+    if matches!(result, OpResult::HandedBack { .. }) && !targets.iter().any(|t| t == target) {
+        targets.push(target.to_string());
     }
     let id = run.tasks[i].id().to_string();
     // M9.13a review, item 7: a paused worker is told to wait again, not to continue.

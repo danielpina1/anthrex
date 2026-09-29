@@ -9,7 +9,7 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::time::Duration;
 
-use super::{DIFF_FLAGS, Git, failure, os};
+use super::{DIFF_FLAGS, Git, RefreshedIn, failure, os};
 use crate::run::orch::result::TaskGit;
 
 /// Commits `task_result` lists, newest first.
@@ -28,39 +28,39 @@ pub fn task_summary(
     branch: &str,
     timeout: Duration,
 ) -> Result<TaskGit, String> {
-    task_summary_excluding(git, root, start, branch, &[], timeout)
+    task_summary_excluding(git, root, start, branch, &RefreshedIn::default(), timeout)
 }
 
 /// [`task_summary`] for a task its refreshes merged the run branch into (milestone 9
-/// decision 42e; M9.13a review, item 2): merged run work is never the task's. The log
-/// leaves out each refresh merge `refresh_merges` names and everything its second
-/// parent (the run head it merged) reaches; the diff is from the run head the newest
-/// refresh merge the branch still has merged, `<that run head>...<branch>`, instead of
-/// from `start`. A recorded merge `root` does not have is ignored.
+/// decision 42e; M9.13a review, item 2, and re-review): merged run work is never the
+/// task's. The log leaves out everything a recorded target (a run head a refresh
+/// merged, clean or conflicted) reaches, and each clean refresh merge; the diff is from
+/// the newest recorded target the branch has, `<target>...<branch>`, instead of from
+/// `start`. A recorded target `root` does not have is ignored.
 pub fn task_summary_excluding(
     git: &OsStr,
     root: &Path,
     start: &str,
     branch: &str,
-    refresh_merges: &[String],
+    refreshed: &RefreshedIn,
     timeout: Duration,
 ) -> Result<TaskGit, String> {
     // A revision that reads as an option (`--output=<path>`) is refused before git
     // sees it; `--end-of-options` below keeps the range a revision regardless.
     let revs = [start, branch].into_iter();
-    let revs = revs.chain(refresh_merges.iter().map(String::as_str));
+    let revs = revs.chain(refreshed.targets.iter().map(String::as_str));
+    let revs = revs.chain(refreshed.merges.iter().map(String::as_str));
     if let Some(rev) = revs.into_iter().find(|r| r.starts_with('-')) {
         return Err(format!("{rev}: a revision cannot start with '-'"));
     }
     let g = Git::new(git, timeout);
-    // Each recorded merge `root` has, with the run head it merged, oldest first.
-    let mut merges: Vec<(String, String)> = Vec::new();
-    for merge in refresh_merges {
-        let spec = format!("{merge}^2^{{commit}}");
+    // Each recorded target `root` has, oldest first, once.
+    let mut targets: Vec<&str> = Vec::new();
+    for target in &refreshed.targets {
+        let spec = format!("{target}^{{commit}}");
         let args = [os("rev-parse"), os("-q"), os("--verify"), os(&spec)];
-        let parent = g.read(root, &args)?;
-        if parent.success && !merges.iter().any(|(m, _)| m == merge) {
-            merges.push((merge.clone(), parent.stdout.trim().to_string()));
+        if !targets.contains(&target.as_str()) && g.read(root, &args)?.success {
+            targets.push(target);
         }
     }
     let range = format!("{start}..{branch}");
@@ -73,22 +73,28 @@ pub fn task_summary_excluding(
         os("--end-of-options"),
         os(&range),
     ];
-    let excluded: Vec<String> = merges.iter().map(|(_, run)| format!("^{run}")).collect();
+    let excluded: Vec<String> = targets.iter().map(|t| format!("^{t}")).collect();
     args.extend(excluded.iter().map(|rev| os(rev)));
     let log = g.ok(root, &args)?;
+    let merges = &refreshed.merges;
     let commits = log
         .lines()
         .filter_map(|line| line.split_once('\u{1f}'))
         // A short sha is unique in the repository, so it prefixes one merge at most.
-        .filter(|(sha, _)| !merges.iter().any(|(m, _)| m.starts_with(sha)))
+        .filter(|(sha, _)| !merges.iter().any(|m| m.starts_with(sha)))
         .map(|(sha, subject)| (sha.to_string(), subject.to_string()))
         .collect();
-    // The newest recorded merge the branch still reaches: its run head is the base.
+    // The newest recorded target the branch has is the base.
     let mut base = start.to_string();
-    for (merge, run) in merges.iter().rev() {
-        let args = [os("merge-base"), os("--is-ancestor"), os(merge), os(branch)];
+    for target in targets.iter().rev() {
+        let args = [
+            os("merge-base"),
+            os("--is-ancestor"),
+            os(target),
+            os(branch),
+        ];
         if g.read(root, &args)?.success {
-            base = run.clone();
+            base = target.to_string();
             break;
         }
     }

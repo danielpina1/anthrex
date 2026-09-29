@@ -57,8 +57,10 @@ pub(super) fn op_done(
         // Milestone 9 decision 36: a review task's target.
         (OpKind::ResolveTarget { .. }, Some(i)) => kinds::target_done(run, i, op, result, now, fx),
         // Milestone 9 decision 42e: a refresh's hand-back, ahead of M8a's.
-        (OpKind::HandBack { .. }, Some(i)) if worker_messages::awaits_refresh(run, i, op) => {
-            worker_messages::refreshed(run, i, result, now)
+        (OpKind::HandBack { run_head, .. }, Some(i))
+            if worker_messages::awaits_refresh(run, i, op) =>
+        {
+            worker_messages::refreshed(run, i, (&run_head, result), now)
         }
         (OpKind::HandBack { run_head, .. }, Some(i)) if merge::awaits(run, i, op) => {
             merge::handed_back(run, i, op, &run_head, result, now, fx)

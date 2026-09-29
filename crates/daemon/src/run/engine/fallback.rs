@@ -76,6 +76,7 @@ fn count(run: &mut Run, i: usize, r: usize, fx: &mut Vec<Effect>) {
             .unwrap_or_else(|| run.run_head.clone()),
         run_head: run.run_head.clone(),
         not_own: super::worker_messages::not_own(task),
+        not_run: super::worker_messages::not_run(task),
     };
     let id = task.id().to_string();
     let op = next_op(run);

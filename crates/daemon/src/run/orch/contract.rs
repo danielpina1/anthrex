@@ -8,6 +8,7 @@
 //! Claude id at its first mention, which is also correct for Codex (the tool-search
 //! fix's form).
 
+use crate::run::messages::one_line;
 use proto::{DeciderSource, MessageKind, RunPath, Scale, Severity, TaskKind, TriageInfo};
 
 use super::{EditSource, EpicRecord, TaskMessage};
@@ -531,6 +532,10 @@ pub fn worker_messages_for_review(messages: &[TaskMessage]) -> String {
     lines.join("\n")
 }
 
+// M9.13a re-review, item 4: in the refresh texts, a commit subject and a file name are
+// the repository's text, not the engine's, so each is one line (`one_line`) and cannot
+// start an `[anthrex]` line of its own.
+
 /// Decision 42e: a clean refresh merged `n` commits; `list` is `(sha, subject)`, newest
 /// first, of which at most 10 are named.
 pub fn refresh_clean(n: usize, list: &[(String, String)]) -> String {
@@ -551,7 +556,7 @@ fn refreshed_line(n: usize, list: &[(String, String)]) -> String {
     let mut named: Vec<String> = list
         .iter()
         .take(10)
-        .map(|(sha, subject)| format!("{} {subject}", sha7(sha)))
+        .map(|(sha, subject)| format!("{} {}", sha7(sha), one_line(subject)))
         .collect();
     let more = n.saturating_sub(named.len());
     if more > 0 {
@@ -567,7 +572,7 @@ fn refreshed_line(n: usize, list: &[(String, String)]) -> String {
 pub fn refresh_conflict(files: &[String]) -> String {
     format!(
         "[anthrex] Merging the latest run branch into your worktree conflicted in: {}. Resolve them, commit, and continue.",
-        files.join(", ")
+        one_line(&files.join(", "))
     )
 }
 
@@ -575,7 +580,7 @@ pub fn refresh_conflict(files: &[String]) -> String {
 pub fn refresh_conflict_paused(files: &[String]) -> String {
     format!(
         "[anthrex] Merging the latest run branch into your worktree conflicted in: {}. Resolve them and commit, then wait for the next message: you were asked to stop and wait.",
-        files.join(", ")
+        one_line(&files.join(", "))
     )
 }
 

@@ -284,14 +284,20 @@ impl RunService {
 
     /// Decisions 11 and 30, M9.13a review item 8: a run that has ended leaves its
     /// orchestrator window a plain one as soon as the step that ended it, under the
-    /// engine lock (the manager's lock taken inside it, as `refresh_orchestrator_otlp`
-    /// does; neither does I/O). A client that sees the run ended through any request,
-    /// which takes the engine lock, can then kill the window: before, the flag waited
-    /// for the step's saves and its publish.
+    /// engine lock. A client that sees the run ended through any request, which takes
+    /// the engine lock, can then kill the window: before, the flag waited for the
+    /// step's saves and its publish. Only a window that is still that run's is freed
+    /// (re-review, item 5: a restart may give its id to another run's window).
+    ///
+    /// Lock order (re-review, item 6): this is the first place that takes the
+    /// manager's lock inside the engine's. It is safe because no path takes them the
+    /// other way: the manager never calls into the run service, its lock is held only
+    /// inside its own methods, and neither lock is held across I/O or an `await`
+    /// here (`end_run_window` changes one flag).
     pub(super) fn release_ended_orchestrators(&self, state: &crate::run::engine::EngineState) {
         for run in state.runs.values().filter(|run| run.state.is_terminal()) {
             if let Some(id) = run.orch.orchestrator.as_ref().and_then(|o| o.window_id) {
-                self.manager.set_run_window_live(id, false);
+                self.manager.end_run_window(id, &run.id);
             }
         }
     }
@@ -301,7 +307,7 @@ impl RunService {
     pub(super) fn clear_ended_orchestrators(&self, snap: &RunsSnapshot) {
         for run in snap.runs.iter().filter(|run| run.state.is_terminal()) {
             if let Some(id) = run.orchestrator.as_ref().and_then(|o| o.window_id) {
-                self.manager.set_run_window_live(id, false);
+                self.manager.end_run_window(id, &run.run_id);
             }
         }
     }

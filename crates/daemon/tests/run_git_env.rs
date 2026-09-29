@@ -8,9 +8,10 @@
 mod support;
 
 use daemon::run::git::{
-    count_commits, count_commits_excluding, create_run_branch, diff_so_far, hand_back_listing,
-    lock_worktree, preflight, prepare_review, prepare_worktree, project_settings, protected_files,
-    resolve_target, task_summary, task_summary_excluding, verify_done,
+    RefreshedIn, count_commits, count_commits_excluding, create_run_branch, diff_so_far,
+    hand_back_listing, lock_worktree, preflight, prepare_review, prepare_worktree,
+    project_settings, protected_files, resolve_target, task_summary, task_summary_excluding,
+    verify_done,
 };
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
 use daemon::run::plan::BUILTIN_PROTECTED;
@@ -215,8 +216,15 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
         // M9.13a review fixes: the counts and `task_result` without refresh merges.
         (
             "count_commits_excluding",
-            count_commits_excluding(git, &task, &base, &base, std::slice::from_ref(&base), T)
-                .map(drop),
+            count_commits_excluding(
+                git,
+                &task,
+                &base,
+                &base,
+                &RefreshedIn::of(std::slice::from_ref(&base), std::slice::from_ref(&base)),
+                T,
+            )
+            .map(drop),
         ),
         (
             "task_summary_excluding",
@@ -225,7 +233,7 @@ fn every_run_git_call_passes_no_optional_locks_and_no_git_env() {
                 &repo.root,
                 &base,
                 "anthrex/env1/t1",
-                std::slice::from_ref(&base),
+                &RefreshedIn::of(std::slice::from_ref(&base), std::slice::from_ref(&base)),
                 T,
             )
             .map(drop),

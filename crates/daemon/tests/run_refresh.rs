@@ -9,9 +9,9 @@
 mod support;
 
 use daemon::run::git::{
-    MERGED_LIST_MAX, MergedCommits, UNCOMMITTED, count_commits, count_commits_excluding,
-    diff_so_far, hand_back_listing, prepare_worktree, task_summary, task_summary_excluding,
-    verify_done, verify_done_excluding,
+    MERGED_LIST_MAX, MergedCommits, RefreshedIn, UNCOMMITTED, count_commits,
+    count_commits_excluding, diff_so_far, hand_back_listing, prepare_worktree, task_summary,
+    task_summary_excluding, verify_done, verify_done_excluding,
 };
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
 use daemon::run::history_io::measure_diff;
@@ -236,16 +236,18 @@ fn refreshed(repo: &TempRepo) -> (tempfile::TempDir, PathBuf, String, String, St
     (keep, wt, start, run_head, back.head)
 }
 
-fn done_excluding(wt: &Path, start: &str, run_head: &str, not_own: &[String]) -> u32 {
+fn done_excluding(wt: &Path, start: &str, run_head: &str, refreshed: &RefreshedIn) -> u32 {
     let owns = vec!["src/**".to_string()];
     let none = OwnsMatcher::new(&[]).unwrap();
     let builtin: Vec<String> = BUILTIN_PROTECTED.iter().map(|s| s.to_string()).collect();
     let protected = ProtectedMatcher::new(&builtin).unwrap();
     let matchers = (&none, &protected);
     let git = real_git();
-    verify_done_excluding(git, wt, start, run_head, &owns, matchers, None, not_own, T)
-        .unwrap()
-        .commits
+    verify_done_excluding(
+        git, wt, start, run_head, &owns, matchers, None, refreshed, T,
+    )
+    .unwrap()
+    .commits
 }
 
 /// M9.13a review, item 3: the counts leave out a recorded merge the branch has, once
@@ -257,7 +259,7 @@ fn the_counts_leave_a_recorded_refresh_merge_out() {
     let run_head = merge_on_run_branch(&repo.root, "docs/other.md", "x\n", "docs: other");
     let (back, _) = hand_back_listing(real_git(), &wt, &run_head, true, T).unwrap();
     let merge = back.head;
-    let twice = [merge.clone(), merge.clone()];
+    let twice = merges_only(&[merge.clone(), merge.clone()]);
     let (count, _) =
         count_commits_excluding(real_git(), &wt, &start, &run_head, &twice, T).unwrap();
     assert_eq!(count, 0, "the merge alone");
@@ -276,7 +278,7 @@ fn the_counts_leave_a_recorded_refresh_merge_out() {
 fn a_rebase_or_reset_after_a_refresh_keeps_the_real_commit() {
     let repo = base();
     let (_keep, wt, start, run_head, merge) = refreshed(&repo);
-    let not_own = [merge.clone()];
+    let not_own = merges_only(std::slice::from_ref(&merge));
     // Rebased onto the run head: one real commit, the merge gone.
     out(&wt, &["rebase", "-q", "--onto", &run_head, &start]);
     assert!(!is_ancestor(&wt, &merge, "HEAD"));
@@ -287,7 +289,7 @@ fn a_rebase_or_reset_after_a_refresh_keeps_the_real_commit() {
 
     let repo = base();
     let (_keep, wt, start, run_head, merge) = refreshed(&repo);
-    let not_own = [merge.clone()];
+    let not_own = merges_only(std::slice::from_ref(&merge));
     // Reset below the merge, then a new commit.
     out(&wt, &["reset", "-q", "--hard", &start]);
     commit_file(&wt, "src/again.rs", "again\n", "task work again");
@@ -309,7 +311,12 @@ fn task_result_leaves_out_refreshed_run_work() {
         naive.diffstat.contains("docs/other.md"),
         "the bug: {naive:?}"
     );
-    let merges = [merge.clone(), merge];
+    // As the engine records it: the merge, and the run head it merged (twice, left
+    // out once).
+    let merges = RefreshedIn::of(
+        &[merge.clone(), merge],
+        &[run_head.clone(), run_head.clone()],
+    );
     let summary =
         task_summary_excluding(real_git(), &repo.root, &start, &branch, &merges, T).unwrap();
     let subjects: Vec<&str> = summary.commits.iter().map(|(_, s)| s.as_str()).collect();
@@ -328,7 +335,10 @@ fn task_result_leaves_out_refreshed_run_work() {
     commit_file(&wt, "src/later.rs", "later\n", "later work");
     // The engine records the worker's `HEAD` on the branch as it counts.
     count_commits(real_git(), &wt, &start, &run_head, T).unwrap();
-    let merges = [head_parent_merge(&repo.root, &branch)];
+    let merges = RefreshedIn::of(
+        &[head_parent_merge(&repo.root, &branch)],
+        std::slice::from_ref(&run_head),
+    );
     let summary =
         task_summary_excluding(real_git(), &repo.root, &start, &branch, &merges, T).unwrap();
     let subjects: Vec<&str> = summary.commits.iter().map(|(_, s)| s.as_str()).collect();
@@ -339,4 +349,86 @@ fn task_result_leaves_out_refreshed_run_work() {
 /// The branch's first parent: the refresh merge under the newest commit.
 fn head_parent_merge(root: &Path, branch: &str) -> String {
     out(root, &["rev-parse", &format!("{branch}^")])
+}
+
+/// Only merges recorded, as the first review's fixes had it.
+fn merges_only(merges: &[String]) -> RefreshedIn {
+    RefreshedIn::of(merges, &[])
+}
+
+/// A branch's commit subjects in `task_result` with `refreshed` left out.
+fn result_of(root: &Path, start: &str, refreshed: &RefreshedIn) -> (Vec<String>, String) {
+    let branch = format!("anthrex/{RUN}/t1");
+    let summary = task_summary_excluding(real_git(), root, start, &branch, refreshed, T).unwrap();
+    let subjects = summary.commits.into_iter().map(|(_, s)| s).collect();
+    (subjects, summary.diffstat)
+}
+
+/// M9.13a re-review, item 1, the reviewer's scenario: a refresh that conflicts, which
+/// the worker resolves and commits. The task's result has no run commit and no run
+/// file; the worker's resolving merge is its own (recorded choice).
+#[test]
+fn a_conflicted_refresh_leaves_run_work_out_of_task_result() {
+    let repo = base();
+    let (_keep, wt, start) = task(&repo);
+    commit_file(&wt, "src/lib.rs", "pub fn task() {}\n", "task: lib");
+    merge_on_run_branch(&repo.root, "docs/other.md", "x\n", "run: docs");
+    let run_head = merge_on_run_branch(&repo.root, "src/lib.rs", "pub fn run() {}\n", "run: lib");
+    let (back, _) = hand_back_listing(real_git(), &wt, &run_head, true, T).unwrap();
+    assert_eq!(back.files, vec!["src/lib.rs".to_string()]);
+    write(&wt, "src/lib.rs", "pub fn task() {}\npub fn run() {}\n");
+    out(&wt, &["add", "src/lib.rs"]);
+    out(&wt, &["commit", "-q", "-m", "resolve"]);
+    count_commits(real_git(), &wt, &start, &run_head, T).unwrap();
+
+    // Before: no merge recorded for a conflicted refresh, so the run work was listed.
+    let (subjects, stat) = result_of(&repo.root, &start, &RefreshedIn::default());
+    assert!(subjects.iter().any(|s| s.starts_with("run: ")) && stat.contains("docs/other.md"));
+    let refreshed = RefreshedIn::of(&[], std::slice::from_ref(&run_head));
+    let (subjects, stat) = result_of(&repo.root, &start, &refreshed);
+    assert_eq!(subjects, vec!["resolve", "task: lib"], "{stat}");
+    assert!(!stat.contains("docs/other.md"), "{stat}");
+    assert!(stat.contains("src/lib.rs"), "{stat}");
+    // The counts: the task's commit and its resolving merge, no run commit, even with
+    // the run head rewound to the start.
+    let (count, _) =
+        count_commits_excluding(real_git(), &wt, &start, &start, &refreshed, T).unwrap();
+    assert_eq!(count, 2);
+}
+
+/// M9.13a re-review, item 2: after a refresh the worker rebases onto the run head. The
+/// merge is gone, but the target is still the base of the diff.
+#[test]
+fn a_rebase_after_a_refresh_leaves_run_work_out_of_the_diffstat() {
+    let repo = base();
+    let (_keep, wt, start, run_head, merge) = refreshed(&repo);
+    out(&wt, &["rebase", "-q", "--onto", &run_head, &start]);
+    count_commits(real_git(), &wt, &start, &run_head, T).unwrap();
+    let refreshed = RefreshedIn::of(&[merge], std::slice::from_ref(&run_head));
+    let (subjects, stat) = result_of(&repo.root, &start, &refreshed);
+    assert_eq!(subjects, vec!["task work"]);
+    assert!(
+        stat.contains("src/own.rs") && !stat.contains("docs/other.md"),
+        "{stat}"
+    );
+}
+
+/// M9.13a re-review, item 3: `resume --rebaseline` rewinds the run head below what a
+/// refresh merged. A task whose only commit is the refresh's merge still counts 0.
+#[test]
+fn a_rewound_run_head_does_not_make_refreshed_run_work_count() {
+    let repo = base();
+    let (_keep, wt, start) = task(&repo);
+    let run_head = merge_on_run_branch(&repo.root, "docs/other.md", "x\n", "docs: other");
+    let (back, _) = hand_back_listing(real_git(), &wt, &run_head, true, T).unwrap();
+    let rewound = start.clone();
+    let merges_alone = merges_only(std::slice::from_ref(&back.head));
+    let (count, _) =
+        count_commits_excluding(real_git(), &wt, &start, &rewound, &merges_alone, T).unwrap();
+    assert_eq!(count, 1, "the bug: the run commit counts");
+    let refreshed = RefreshedIn::of(&[back.head], std::slice::from_ref(&run_head));
+    let (count, _) =
+        count_commits_excluding(real_git(), &wt, &start, &rewound, &refreshed, T).unwrap();
+    assert_eq!(count, 0);
+    assert_eq!(done_excluding(&wt, &start, &rewound, &refreshed), 0);
 }
