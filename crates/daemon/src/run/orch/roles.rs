@@ -90,7 +90,10 @@ pub fn input_of(run: &Run) -> RoleRoutingInput {
 /// `candidates` when absent and `selected_index` points at it; the chosen candidate
 /// carries no skip reason, and an unchosen one without a reason gets
 /// [`EARLIER_TAKEN`] after the chosen one and [`NOT_CONFIGURED`] before it.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per field of decision 43's record; every caller names each"
+)]
 pub fn record(
     run: Option<&Run>,
     role: AgentRole,

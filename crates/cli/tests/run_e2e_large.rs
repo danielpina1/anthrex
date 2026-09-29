@@ -9,7 +9,10 @@
 
 mod support;
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "run_e2e_orch's shared helpers; this binary uses only some of them"
+)]
 #[path = "run_e2e_orch/common.rs"]
 mod common;
 #[path = "run_e2e_large/epics.rs"]

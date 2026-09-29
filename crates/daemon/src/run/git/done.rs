@@ -115,7 +115,10 @@ fn own_commits(
 
 /// [`verify_done`], whose commit count leaves out what the task's refreshes brought
 /// in ([`RefreshedIn`]; M9.13a review, item 3, and re-review).
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "verify_done's arguments and the refreshed commits to leave out"
+)]
 pub fn verify_done_excluding(
     git: &OsStr,
     worktree: &Path,
