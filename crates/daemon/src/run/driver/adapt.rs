@@ -92,10 +92,7 @@ impl RunService {
         match kind {
             OpKind::Decide {
                 task_ids, request, ..
-            } => {
-                let task = task_ids.into_iter().next();
-                self.decide_as(ctx, Some((op, task)), request).await
-            }
+            } => self.decide_as(ctx, Some((op, task_ids)), request).await,
             kind => super::ops::run(self, ctx, kind).await,
         }
     }
@@ -108,12 +105,13 @@ impl RunService {
     /// `OpKind::Decide` (decision 18): the call, always answered, a fallback included.
     /// A size check's evidence is read first (decision 19); with none readable, the
     /// check is its fallback. Milestone 9 decision 43: a call that starts a decider
-    /// session is recorded as op `op`'s (for task `task`), its record sent to the
-    /// engine before the call and its outcome after.
-    async fn decide_as(
+    /// session is recorded as op `op`'s (about `task_ids`). Its record is kept, and
+    /// saved, by the engine before the call (review M-2), and its outcome sent after. A
+    /// daemon whose deciders are off starts no session and records none (review M-3).
+    pub(super) async fn decide_as(
         &self,
         ctx: &OpCtx,
-        record: Option<(OpId, Option<String>)>,
+        record: Option<(OpId, Vec<String>)>,
         mut request: DeciderRequest,
     ) -> OpResult {
         if let Err(error) = self.with_evidence(ctx, &mut request).await {
@@ -122,10 +120,16 @@ impl RunService {
         }
         let decision = match self.adaptation.get() {
             Some(adaptation) => {
-                let route = &adaptation.deciders.route;
-                let id = record.and_then(|(op, task)| {
-                    self.decider_dispatched(ctx, (op, task.as_deref()), route, &request)
-                });
+                let deciders = &adaptation.deciders;
+                let id = match record {
+                    Some((op, tasks)) if deciders.mode != proto::DeciderMode::Off => {
+                        let roster = &adaptation.scouts.context().roster;
+                        let at = (op, tasks.as_slice());
+                        self.decider_dispatched(ctx, at, (roster, &deciders.route), &request)
+                            .await
+                    }
+                    _ => None,
+                };
                 let decision = decide(&adaptation.deciders, &request).await;
                 if let Some(record_id) = id {
                     let (outcome, result) = roles::decider_outcome(&decision);
@@ -143,27 +147,46 @@ impl RunService {
         OpResult::Decided(Box::new(decision))
     }
 
-    /// Decision 43: a run-bound decider's record, built under the engine's lock (pure)
-    /// and sent to the engine; its record id.
-    fn decider_dispatched(
+    /// Decision 43: a run-bound decider's record, built under the engine's lock (pure),
+    /// with the full candidate snapshot (review I-2), and kept by the engine before the
+    /// call: the engine answers once the step that keeps it was saved (review M-2). No
+    /// lock is held across the wait. Its record id.
+    async fn decider_dispatched(
         &self,
         ctx: &OpCtx,
-        (op, task): (OpId, Option<&str>),
-        route: &proto::Route,
+        (op, tasks): (OpId, &[String]),
+        (roster, route): (&[proto::ModelEntry], &proto::Route),
         request: &DeciderRequest,
     ) -> Option<String> {
+        let strength = self.ctx.orchestrator.deciders.strength;
         let decision = crate::lock(&self.state).runs.get(&ctx.run_id).map(|run| {
             let session = (op.to_string(), request.kind().label());
             let input = roles::input_of(run);
+            let candidates = roles::decider_candidates(roster, route, strength);
             let at = super::unix_now();
-            roles::decider_record(Some(run), (&session.0, session.1), task, route, input, at)
+            let chosen = (route, candidates);
+            roles::decider_record(Some(run), (&session.0, session.1), tasks, chosen, input, at)
         })?;
         let record_id = decision.record_id.clone();
-        self.send(EventKind::Orch(OrchEvent::RoleRoute {
-            run_id: ctx.run_id.clone(),
-            decision: Box::new(decision),
-        }));
+        self.keep_record(&ctx.run_id, decision).await;
         Some(record_id)
+    }
+
+    /// Sends a record to the engine and waits for its answer, which comes after the
+    /// step that keeps it was saved. A refusal (the run is gone) is only logged.
+    pub(super) async fn keep_record(&self, run_id: &str, decision: proto::RoleRoutingDecision) {
+        let kept = self
+            .ask(|reply| {
+                EventKind::Orch(OrchEvent::RoleRoute {
+                    reply,
+                    run_id: run_id.to_string(),
+                    decision: Box::new(decision),
+                })
+            })
+            .await;
+        if let Err(error) = kept {
+            tracing::warn!(run = %run_id, %error, "a role-routing record was not kept");
+        }
     }
 
     /// Decision 19: fills a size check's `evidence` from its `evidence_refs`, resolved

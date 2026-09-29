@@ -3334,11 +3334,11 @@ One commit, `feat(daemon): record routing choices and outcomes for non-task agen
 - **Outcomes:**
   - **Orchestrator:**
     - a failed launch or restart is `failed`;
-    - a window exit while the run goes on is `completed`, `its window exited before the run ended; plan submitted|not submitted[; summary written]`;
+    - a window exit while the run goes on was `completed`; *corrected by the review fixes (M-1)*;
     - live when the run ended is `completed`, `live until the run ended; …`;
     - a run that ended before its window started is `interrupted`.
     - No result names the run's outcome.
-  - **Sub-planner:**
+  - **Sub-planner** (a session stopped by `run cancel` or `finish`: see the review fixes, I-1):
     - `completed` (`epic accepted`) only when its `submit_epic` was accepted. The acceptance is noted on the open record, so a re-plan queued before the end event cannot lose it.
     - Otherwise `failed`, with the machine's reason or `ended without an accepted epic`.
     - Rejected submissions are counted as `; <n> submissions rejected`.
@@ -3352,7 +3352,7 @@ One commit, `feat(daemon): record routing choices and outcomes for non-task agen
 - **Candidate snapshots:**
   - **Orchestrator:** decision 6's `Resolved`, kept in the new `OrchestratorRecord.routing: RoleSnapshot { source, candidates }` (`#[serde(default)]`). Every launch and restart record is copied from it. A record from before this task has an empty source, recorded as `unrecorded`.
   - **Sub-planner and scout:** `roles::ladder_candidates`, M8b's strength-ladder order: the runtime's entries at or above the strength, lowest first, then the peer's.
-  - **Decider:** its one configured route. `DeciderContext` holds no roster, and adding a field would break its struct literals in `fake-agent` and the CLI tests. Milestone 9.5's role lists replace all of these.
+  - **Decider:** ~~its one configured route~~ *corrected by the review fixes (I-2):* the mode's runtime's ladder from the scout service's roster, no peer. Milestone 9.5's role lists replace all of these.
 - **A run scout's record is made by the driver**, as a decider's is. The scout service routes every scout from the daemon's `[orchestrator.scouts]` (`ScoutContext`), which the run does not freeze. So `start_scout` builds the record from that same context, under the engine lock (pure), and sends `OrchEvent::RoleRoute` before `ScoutService::start`. The engine finishes it on `ScoutEnded` or a failed `StartScout`. Its source is a new value, `scout_config` (the proto doc comment lists it).
 - **Idempotence:** a finished record is never finished again. Each finish emits one `AppendHistory`, reconciled by record id. Pre-run triage uses the new `history_io::append_once` (`contains_record`, then `append_line`), on `spawn_blocking`, awaited before the goal's reply; a write failure is only logged. A run whose history is off keeps its records and appends none.
 
@@ -3382,3 +3382,34 @@ Some tests passed at once, because the behaviour came from M9.2 or M8b:
 **Open**
 
 - The driver halves (the `RoleRoute` and `RoleRouteEnded` sends of `decide_as` and `start_scout`) have no driver-level test here. The reducer tests feed the events those paths build with the same pure builders. M9.16 and M9.17's end-to-end tests cover them with real sessions.
+
+### M9.13b review fixes
+
+One commit, `fix(daemon): …`, on top of `1b760c9`. Each test was written first and seen red for the reason given (a runtime failure on the old code, or a mutation of the new code restored from a `cp` copy where the old code had no seam).
+
+- **I-1. Sessions anthrex stopped are `interrupted`.** `planners::halt_all` (`run cancel`, the `finish` edit) now calls `role_routes::sessions_stopped` first. It finishes every open sub-planner and run-scout record `interrupted`, `stopped when the run ended`. The session's later end, `failed` with the halt's reason, finds the record finished and changes nothing. `a_run_never_attributes_its_outcome_to_one_role` now also cancels a running run with a live planner and scout. Red on the old code: both recorded `failed`, `the run was cancelled`.
+- **I-2. A decider's full candidate snapshot.** Candidates come from `roles::decider_candidates(roster, route, deciders.strength)`:
+  - the roster is the scout service's context (`adaptation.scouts.context().roster`);
+  - it takes the mode's runtime's entries at or above the strength, lowest first, with no peer runtime;
+  - the chosen one is marked, and the others get the neutral reasons.
+  - It is used for pre-run triage and for run-bound deciders. The deviation above is corrected.
+  - Tests: `decider_candidates_are_the_modes_runtime_ladder_only` (pure, both runtimes). The triage test in `tests/server_runs.rs` now checks the ordered ladder and each reason; red on the old code, which had one candidate.
+- **M-1. What `completed` means for the orchestrator.** It had submitted its plan (what the session is for) when its window exited while the run went on, or it was live until the run ended. An exit before it submitted a plan is `failed`, `its window exited before it submitted a plan`. An exit after the plan is `completed`, `its window exited after it submitted the plan, before the run ended`. The Interfaces' outcome set has no "exited early", so the result says it.
+  - Test: `engine/tests/role_history_ends.rs::an_orchestrator_exit_is_failed_before_its_plan_and_completed_after`, red on the old code (`completed`).
+  - `orchestrator_restart_gets_a_new_session_id` now expects `failed` for its exit before a plan.
+- **M-2. Saved before the session starts.** `OrchEvent::RoleRoute` gains `reply: ReplyId`; the engine answers `recorded`, or `unknown run <id>`.
+  - The driver's new `RunService::keep_record` sends the event with `ask`, so it waits until the step that keeps the record was saved (`Persist` runs before `Reply`). No lock is held across the wait.
+  - `start_scout` and the run-bound decider (`decide_as`) call it before the session starts.
+  - Tests in `driver/role_route_tests.rs`, a real engine loop and `run.json` writer with no agent:
+    - `a_scout_record_is_saved_before_its_session_starts` is on a one-thread runtime. The scout id is one the service refuses before any await, and `run.json` is read with no await after the op returns.
+    - `a_decider_record_is_saved_before_its_call`: `run.json` writes are stalled (`RunWrites::slot`) while the decider is dispatched. The decider is a `/bin/sh` stand-in the test writes. It exits by itself after writing whether `run.json` held its record.
+    - Red with `keep_record` mutated back to a plain `send`: `run.json has no …/scout/Bad`, and the stand-in wrote `absent`.
+- **M-3. No record when the daemon's deciders are off.** `decide_as` opens a record only when `adaptation.deciders.mode` is not `off`; such a call starts no session. Test: `no_decider_record_when_the_deciders_are_off`, red with the check removed.
+- **M-4. Task ids.** `decider_record` takes every task id of the call. `task_id` names the task when there is exactly one. A call about several, a batch size check, is recorded run-level with no task id rather than only the first. `RoleRoutingDecision` has one `task_id`, and the history format is left as M9.2 made it. Test: `a_decider_record_names_its_task_only_when_it_has_one` (red on the old code, which took the first; it no longer compiled against the old signature).
+- **M-5.** Pinning tests, which passed at once:
+  - `planner_and_scout_ladders_include_the_peer_runtime`;
+  - `each_unchosen_candidate_gets_the_reason_for_its_place`: before the chosen one, `not in the configured list`; after it, `an earlier candidate was taken`; a caller's own reason is kept; an appended chosen route comes last.
+  - (c), the scout's `RoleRoute` from the driver, is M-2's scout test.
+- **M-6.** Pre-run triage's `append_once` runs under a 10 s `tokio::time::timeout` (`TRIAGE_WRITE_TIMEOUT`). On a timeout it logs and the goal goes on. No test: a stalled file system is not reproducible without a fault-injection seam the brief does not ask for.
+- The proto doc comment for `RoleRoutingDecision.source` lists `scout_config` (and the triage record id format), confirmed.
+

@@ -296,8 +296,8 @@ fn role_line(n: u64, outcome: proto::RoleOutcome) -> HistoryLine {
     let mut d = daemon::run::orch::roles::decider_record(
         None,
         (&session, "triage"),
-        None,
-        &route,
+        &[],
+        (&route, Vec::new()),
         input,
         n,
     );

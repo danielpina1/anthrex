@@ -1,0 +1,268 @@
+//! Milestone 9 task M9.13b review fixes (decision 43): the driver keeps a run scout's
+//! and a run-bound decider's record in the engine, saved in `run.json`, before their
+//! session starts (M-2, M-5 c), and records no decider whose daemon has the deciders
+//! off (M-3). A real engine loop and `run.json` writer; no agent: Claude and Codex are
+//! paths that do not exist, and the one decider is a `/bin/sh` stand-in this test
+//! writes, which exits by itself.
+
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use proto::{AgentRole, BlockReason, DeciderMode, RoleOutcome, ScoutKind};
+use tokio_util::sync::CancellationToken;
+
+use crate::decider::{CheckSummaryInput, DeciderRequest};
+use crate::launch::LaunchGate;
+use crate::manager::{ManagerConfig, WindowManager};
+use crate::run::driver::context::OpCtx;
+use crate::run::driver::{RunContext, RunService};
+use crate::run::engine::OpResult;
+use crate::run::journal::RUN_FILE;
+use crate::run::orch::test_support::{block, run_of, task_mut};
+use crate::server::GitWiring;
+
+const WAIT: Duration = Duration::from_secs(30);
+/// How long `run.json` writes are stalled at most while a decider is dispatched.
+const STALL: Duration = Duration::from_secs(3);
+
+/// Writes a decider program under the rig's directory for the run of the given id.
+type MakeBin = fn(&Path, &str) -> PathBuf;
+
+struct Rig {
+    dir: tempfile::TempDir,
+    runs: Arc<RunService>,
+    run_id: String,
+    shutdown: CancellationToken,
+}
+
+impl Drop for Rig {
+    fn drop(&mut self) {
+        self.shutdown.cancel();
+    }
+}
+
+impl Rig {
+    /// A run service with the milestone-8b services, the deciders in `mode` run by
+    /// `decider_bin`, and one running run whose only task is blocked (the scheduler
+    /// starts nothing).
+    fn new(mode: DeciderMode, decider_bin: Option<MakeBin>) -> Rig {
+        let dir = tempfile::Builder::new()
+            .prefix("anthrex-role-route-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let socket = dir.path().join("d.sock");
+        let data = dir.path().join("data");
+        let mut run = run_of(1);
+        run.state = proto::RunState::Running;
+        run.data_dir = data.join("runs").join(&run.id);
+        run.root = dir.path().join("repo");
+        block(task_mut(&mut run, "t0"), BlockReason::Question, "which?");
+        let mut config = ManagerConfig::for_tests(socket.clone(), "/bin/sh".into());
+        config.claude_bin = "/nonexistent/anthrex-test/claude".into();
+        config.codex_bin = "/nonexistent/anthrex-test/codex".into();
+        config.worktrees_root = dir.path().join("worktrees");
+        config.launch_gate = LaunchGate::open_already();
+        if let Some(make) = decider_bin {
+            config.decider_bin = Some(make(dir.path(), &run.id).display().to_string());
+        }
+        let (manager, _events) = WindowManager::new(config);
+        let git = GitWiring::new(config::Git {
+            enabled: false,
+            ..config::Git::default()
+        });
+        let mut orchestrator = config::Orchestrator::default();
+        orchestrator.deciders.mode = mode;
+        let ctx = RunContext::new(
+            data.clone(),
+            manager.config(),
+            orchestrator.clone(),
+            git.registry.clone(),
+        );
+        let runs = RunService::new(manager.clone(), ctx);
+        crate::profile::service::wire(&manager, &runs, &data, &socket, &orchestrator);
+        let run_id = run.id.clone();
+        crate::lock(&runs.state).runs.insert(run_id.clone(), run);
+        let shutdown = CancellationToken::new();
+        runs.spawn(shutdown.clone());
+        Rig {
+            dir,
+            runs,
+            run_id,
+            shutdown,
+        }
+    }
+
+    fn ctx(&self) -> OpCtx {
+        let state = crate::lock(&self.runs.state);
+        OpCtx {
+            run_id: self.run_id.clone(),
+            ..OpCtx::of(&state.runs[&self.run_id])
+        }
+    }
+
+    fn run_json(&self) -> String {
+        let dir = crate::lock(&self.runs.state).runs[&self.run_id]
+            .data_dir
+            .clone();
+        std::fs::read_to_string(dir.join(RUN_FILE)).unwrap_or_default()
+    }
+
+    fn records(&self, role: AgentRole) -> Vec<proto::RoleRoutingDecision> {
+        crate::lock(&self.runs.state).runs[&self.run_id]
+            .role_routing_decisions
+            .iter()
+            .filter(|d| d.role == role)
+            .cloned()
+            .collect()
+    }
+
+    /// Every event sent before this one has been handled: the engine answers in order.
+    async fn settled(&self) {
+        let d = crate::run::orch::roles::decider_record(
+            None,
+            ("0/0", "triage"),
+            &[],
+            (&route(), Vec::new()),
+            Default::default(),
+            0,
+        );
+        self.runs.keep_record("no-such-run", d).await;
+    }
+}
+
+fn route() -> proto::Route {
+    proto::Route {
+        runtime: proto::Runtime::Claude,
+        model: String::new(),
+        strength: proto::Strength::Fast,
+        effort: proto::Effort::Low,
+    }
+}
+
+fn summary_request() -> DeciderRequest {
+    DeciderRequest::CheckSummary(CheckSummaryInput {
+        task_id: "t0".into(),
+        command: "true".into(),
+        code: Some(1),
+        timed_out: false,
+        tail: "failed".into(),
+    })
+}
+
+/// Review M-2 and M-5 (c): `start_scout` has the engine keep, and save, the scout's
+/// record before it starts the session. The scout id is one the service refuses before
+/// any await, and the runtime has one thread: a record merely sent (not awaited) would
+/// not be in `run.json`, nor in the engine, when the op returns.
+#[tokio::test(flavor = "current_thread")]
+async fn a_scout_record_is_saved_before_its_session_starts() {
+    let rig = Rig::new(DeciderMode::Off, None);
+    let spec = crate::scout::spec::ScoutSpec {
+        id: "Bad".into(),
+        kind: ScoutKind::Area,
+        run_id: Some(rig.run_id.clone()),
+        question: "q".into(),
+        first_turn: "q".into(),
+        cwd: rig.dir.path().join("repo"),
+        project: rig.dir.path().join("repo"),
+        web: false,
+        codex_config: Vec::new(),
+        base_sha: "b".repeat(40),
+        repo_paths: Vec::new(),
+    };
+    let result = rig.runs.start_scout(&rig.ctx(), spec).await;
+    assert!(matches!(result, OpResult::Failed { .. }), "{result:?}");
+    // Read at once, with no await in between.
+    let saved = rig.run_json();
+    let id = format!("{}/scout/Bad", rig.run_id);
+    assert!(saved.contains(&id), "run.json has no {id}");
+    let records = rig.records(AgentRole::Scout);
+    assert_eq!(records.len(), 1, "{records:#?}");
+    assert_eq!(
+        (records[0].record_id.as_str(), records[0].outcome),
+        (id.as_str(), None)
+    );
+    assert_eq!(records[0].source, "scout_config");
+}
+
+/// A decider stand-in that writes whether `run.json` held its record when it started,
+/// then exits (so the call falls back).
+fn witness(dir: &Path, run_id: &str) -> PathBuf {
+    let script = dir.join("decider.sh");
+    let run_json = dir.join("data/runs").join(run_id).join(RUN_FILE);
+    let mark = dir.join("mark");
+    let text = format!(
+        "#!/bin/sh\ncat >/dev/null\nif grep -q '\"record_id\":\"{run_id}/decider/5\"' '{}'; then echo present > '{}'; else echo absent > '{}'; fi\n",
+        run_json.display(),
+        mark.display(),
+        mark.display()
+    );
+    std::fs::write(&script, text).unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    script
+}
+
+/// Review M-2: a run-bound decider starts only once its record is saved. The run's
+/// `run.json` writes are stalled while the engine keeps the record; the stand-in
+/// decider, had it started then, would see no record.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_decider_record_is_saved_before_its_call() {
+    let rig = Rig::new(DeciderMode::Claude, Some(witness));
+    let slot = rig.runs.writes.slot(&rig.run_id);
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let (held, holding) = std::sync::mpsc::channel::<()>();
+    let stall = std::thread::spawn(move || {
+        let _guard = crate::lock(&slot);
+        held.send(()).unwrap();
+        let _ = released.recv_timeout(WAIT);
+    });
+    holding.recv_timeout(WAIT).unwrap();
+    let (runs, ctx) = (rig.runs.clone(), rig.ctx());
+    let call = tokio::spawn(async move {
+        runs.decide_as(&ctx, Some((5, vec!["t0".into()])), summary_request())
+            .await
+    });
+    // The engine keeps the record while its save is stalled (or, if an earlier step's
+    // save holds the loop, has not seen it yet) ...
+    let deadline = Instant::now() + STALL;
+    while rig.records(AgentRole::Decider).is_empty() && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    // ... and a decider started meanwhile would run while `run.json` lacks it.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    release.send(()).unwrap();
+    stall.join().unwrap();
+    let result = tokio::time::timeout(WAIT, call).await.unwrap().unwrap();
+    assert!(matches!(result, OpResult::Decided(_)), "{result:?}");
+    let mark = std::fs::read_to_string(rig.dir.path().join("mark")).unwrap_or_default();
+    assert_eq!(
+        mark.trim(),
+        "present",
+        "the decider started before its record was saved"
+    );
+    rig.settled().await;
+    let records = rig.records(AgentRole::Decider);
+    assert_eq!(records.len(), 1, "{records:#?}");
+    assert_eq!(records[0].outcome, Some(RoleOutcome::Fallback));
+    assert_eq!(records[0].task_id.as_deref(), Some("t0"));
+    assert!(
+        records[0].candidates.len() > 1,
+        "{:#?}",
+        records[0].candidates
+    );
+}
+
+/// Review M-3: with the daemon's deciders off no decider session starts, so no record
+/// is opened.
+#[tokio::test(flavor = "multi_thread")]
+async fn no_decider_record_when_the_deciders_are_off() {
+    let rig = Rig::new(DeciderMode::Off, None);
+    let result = rig
+        .runs
+        .decide_as(&rig.ctx(), Some((5, vec!["t0".into()])), summary_request())
+        .await;
+    assert!(matches!(result, OpResult::Decided(_)), "{result:?}");
+    rig.settled().await;
+    assert!(rig.records(AgentRole::Decider).is_empty());
+}

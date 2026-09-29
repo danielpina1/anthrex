@@ -267,6 +267,9 @@ impl RunService {
     }
 }
 
+/// How long the goal's start waits for pre-run triage's history line (review M-6).
+const TRIAGE_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Pre-run triage records made by this daemon: each record id's `<n>`.
 static TRIAGE_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -294,16 +297,27 @@ impl RunService {
         };
         let session = format!("{nanos}/{n}");
         let route = &adaptation.deciders.route;
+        let roster = &adaptation.scouts.context().roster;
+        let strength = self.ctx.orchestrator.deciders.strength;
+        let chosen = (route, roles::decider_candidates(roster, route, strength));
         let at = unix_now();
-        let mut record = roles::decider_record(None, (&session, "triage"), None, route, input, at);
+        let mut record = roles::decider_record(None, (&session, "triage"), &[], chosen, input, at);
         let (outcome, result) = roles::decider_outcome(decision);
         roles::finish(&mut record, outcome, result);
         let repo_dir = crate::profile::repo_dir(&self.ctx.data_dir, &pre.project);
         let path = repo_dir.join(HISTORY_FILE);
         let line = HistoryLine::RoleRoute(record);
-        let written = blocking(move || append_once(&path, &line).map_err(|e| e.to_string())).await;
-        if let Err(error) = written {
-            tracing::warn!(%error, "the triage decider's history record was not written");
+        // Review M-6: a stalled file system never holds the goal's start.
+        let write = blocking(move || append_once(&path, &line).map_err(|e| e.to_string()));
+        match tokio::time::timeout(TRIAGE_WRITE_TIMEOUT, write).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "the triage decider's history record was not written");
+            }
+            Err(_) => tracing::warn!(
+                "the triage decider's history record was not written within {} s",
+                TRIAGE_WRITE_TIMEOUT.as_secs()
+            ),
         }
     }
 }

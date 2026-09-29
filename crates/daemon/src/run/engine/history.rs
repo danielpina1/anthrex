@@ -17,7 +17,7 @@ use crate::run::model::Run;
 mod role_routes;
 pub(super) use role_routes::{
     close, close_session, interrupt_open, open, orchestrator_dispatched, orchestrator_ended,
-    planner_accepted, planner_ended,
+    planner_accepted, planner_ended, sessions_stopped,
 };
 
 /// `<repo_dir>/history.jsonl` (M8b decision 4).

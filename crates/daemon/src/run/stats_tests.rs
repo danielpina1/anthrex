@@ -437,8 +437,8 @@ fn stats_ignores_role_route_lines() {
     let decider = crate::run::orch::roles::decider_record(
         None,
         ("5/1", "triage"),
-        None,
-        &route(),
+        &[],
+        (&route(), Vec::new()),
         proto::RoleRoutingInput::default(),
         300,
     );

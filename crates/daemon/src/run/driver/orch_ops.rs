@@ -314,7 +314,7 @@ impl RunService {
 
     /// Decision 20: a run scout on the scout service; its end is sent as
     /// `OrchEvent::ScoutEnded` after this op's result. Decision 43: its record, on the
-    /// route the service gives it, reaches the engine first.
+    /// route the service gives it, is kept by the engine first.
     async fn start_scout(self: &Arc<Self>, ctx: &OpCtx, spec: ScoutSpec) -> OpResult {
         let Some(scouts) = self.adaptation.get().map(|a| a.scouts.clone()) else {
             return failed("the scout service is not running");
@@ -323,11 +323,9 @@ impl RunService {
         let record = crate::lock(&self.state).runs.get(&ctx.run_id).map(|run| {
             crate::run::orch::roles::scout_record(run, &scout_id, scouts.context(), unix_now())
         });
+        // Review M-2: kept, and saved, before the session starts.
         if let Some(decision) = record {
-            self.send(EventKind::Orch(OrchEvent::RoleRoute {
-                run_id: ctx.run_id.clone(),
-                decision: Box::new(decision),
-            }));
+            self.keep_record(&ctx.run_id, decision).await;
         }
         match scouts.start(spec).await {
             Ok(handle) => {
@@ -437,3 +435,7 @@ mod tests;
 #[cfg(test)]
 #[path = "live_flag_tests.rs"]
 mod live_flag_tests;
+
+#[cfg(test)]
+#[path = "role_route_tests.rs"]
+mod role_route_tests;

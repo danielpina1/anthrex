@@ -17,6 +17,9 @@ use crate::run::orch::roles;
 
 /// The session of an open record ended with the daemon that ran it.
 pub const RESTARTED: &str = "the daemon restarted during this session";
+/// A sub-planner's or run scout's session anthrex stopped because the run was ending
+/// (`run cancel`, the `finish` edit): review I-1.
+pub const STOPPED: &str = "stopped when the run ended";
 
 /// Keeps `decision` open, unless a record of its id is kept already.
 pub(in crate::run::engine) fn open(run: &mut Run, decision: RoleRoutingDecision) {
@@ -96,8 +99,10 @@ pub(in crate::run::engine) fn orchestrator_dispatched(run: &mut Run, trigger: &s
     }
 }
 
-/// The orchestrator's open session ended: `failed` with `why` (a launch or restart
-/// that failed), or `completed` when its window exited while the run went on.
+/// The orchestrator's open session ended while the run goes on: `failed` with `why` (a
+/// launch or restart that failed); or its window exited, which is `completed` when it
+/// had submitted its plan (what the session is for) and `failed` when it had not
+/// (review M-1). The Interfaces' outcomes have no "exited early"; the result says it.
 pub(in crate::run::engine) fn orchestrator_ended(
     run: &mut Run,
     failed: Option<&str>,
@@ -106,12 +111,21 @@ pub(in crate::run::engine) fn orchestrator_ended(
     let Some(id) = open_orchestrator(run) else {
         return;
     };
-    let ended = match failed {
-        Some(why) => (RoleOutcome::Failed, Some(why.to_string())),
-        None => {
-            let text = orchestrator_result(run, "its window exited before the run ended");
-            (RoleOutcome::Completed, Some(text))
-        }
+    let submitted = run
+        .orch
+        .orchestrator
+        .as_ref()
+        .is_some_and(|o| o.plan_submitted);
+    let ended = match (failed, submitted) {
+        (Some(why), _) => (RoleOutcome::Failed, Some(why.to_string())),
+        (None, true) => (
+            RoleOutcome::Completed,
+            Some("its window exited after it submitted the plan, before the run ended".into()),
+        ),
+        (None, false) => (
+            RoleOutcome::Failed,
+            Some("its window exited before it submitted a plan".into()),
+        ),
     };
     close(run, &id, ended, fx);
 }
@@ -228,4 +242,25 @@ pub(in crate::run::engine) fn planner_ended(
     };
     let (outcome, text) = ended;
     close(run, &id, (outcome, Some(format!("{text}{rejected}"))), fx);
+}
+
+/// Review I-1: `run cancel` or the `finish` edit stops every live sub-planner and run
+/// scout (`planners::halt_all`). Their sessions did not fail: each open record is
+/// finished `interrupted`, [`STOPPED`], before the stopped session reports its end.
+pub(in crate::run::engine) fn sessions_stopped(run: &mut Run, fx: &mut Vec<Effect>) {
+    let open: Vec<String> = run
+        .role_routing_decisions
+        .iter()
+        .filter(|d| d.outcome.is_none())
+        .filter(|d| matches!(d.role, AgentRole::Planner | AgentRole::Scout))
+        .map(|d| d.record_id.clone())
+        .collect();
+    for id in open {
+        close(
+            run,
+            &id,
+            (RoleOutcome::Interrupted, Some(STOPPED.into())),
+            fx,
+        );
+    }
 }

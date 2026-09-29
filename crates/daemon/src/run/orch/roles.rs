@@ -168,14 +168,27 @@ pub fn ladder_candidates(
     strength: Strength,
     effort: Effort,
 ) -> Vec<RoutingCandidate> {
-    let mut out = Vec::new();
-    for rt in [runtime, peer(runtime)] {
-        let mut entries: Vec<&ModelEntry> = roster
-            .iter()
-            .filter(|e| e.runtime == rt && e.strength >= strength)
-            .collect();
-        entries.sort_by_key(|e| e.strength);
-        out.extend(entries.into_iter().map(|e| RoutingCandidate {
+    let mut out = runtime_ladder(roster, runtime, strength, effort);
+    out.extend(runtime_ladder(roster, peer(runtime), strength, effort));
+    out
+}
+
+/// `runtime`'s roster entries at or above `strength`, lowest strength first and roster
+/// order among ties, at `effort`.
+fn runtime_ladder(
+    roster: &[ModelEntry],
+    runtime: Runtime,
+    strength: Strength,
+    effort: Effort,
+) -> Vec<RoutingCandidate> {
+    let mut entries: Vec<&ModelEntry> = roster
+        .iter()
+        .filter(|e| e.runtime == runtime && e.strength >= strength)
+        .collect();
+    entries.sort_by_key(|e| e.strength);
+    entries
+        .into_iter()
+        .map(|e| RoutingCandidate {
             route: Route {
                 runtime: e.runtime,
                 model: e.model.clone(),
@@ -183,9 +196,8 @@ pub fn ladder_candidates(
                 effort,
             },
             skipped_reason: None,
-        }));
-    }
-    out
+        })
+        .collect()
 }
 
 /// The run's next orchestrator session id: one more than its orchestrator records.
@@ -276,14 +288,28 @@ pub fn scout_record(
     )
 }
 
+/// A decider's candidates (review I-2): `[orchestrator.deciders]`'s ladder on the
+/// mode's runtime only (the route's), its roster entries at or above `strength`, lowest
+/// first. `DeciderContext::new` takes the first of them, else the runtime's first entry,
+/// which [`record`] then appends.
+pub fn decider_candidates(
+    roster: &[ModelEntry],
+    route: &Route,
+    strength: Strength,
+) -> Vec<RoutingCandidate> {
+    runtime_ladder(roster, route.runtime, strength, route.effort)
+}
+
 /// A decider's record (`run`: a run-bound decider; `None`: pre-run triage, whose
 /// `session_id` is `<request>/<n>`). Its trigger and question kind are the request's
-/// kind; its one candidate is `[orchestrator.deciders]`'s route.
+/// kind; `candidates` are [`decider_candidates`]. `task_id` is the task when the call
+/// is about exactly one; a call about several (a size check of a batch) is run-level
+/// and names none (review M-4).
 pub fn decider_record(
     run: Option<&Run>,
     (session_id, kind): (&str, &str),
-    task_id: Option<&str>,
-    route: &Route,
+    task_ids: &[String],
+    (route, candidates): (&Route, Vec<RoutingCandidate>),
     input: RoleRoutingInput,
     now: u64,
 ) -> RoleRoutingDecision {
@@ -297,11 +323,14 @@ pub fn decider_record(
         "decider_config",
         DECIDER_POLICY,
         input,
-        Vec::new(),
+        candidates,
         route,
         now,
     );
-    decision.task_id = task_id.map(str::to_string);
+    decision.task_id = match task_ids {
+        [one] => Some(one.clone()),
+        _ => None,
+    };
     decision
 }
 

@@ -86,7 +86,10 @@ pub enum OrchEvent {
     OtlpToken { run_id: String, token: String },
     /// Decision 43: the record of a session the driver dispatches (a run-bound decider,
     /// a run scout), sent before the session starts.
+    /// Answered once the record is kept (review M-2): the driver starts the session
+    /// only after the step that keeps it was saved.
     RoleRoute {
+        reply: ReplyId,
         run_id: String,
         decision: Box<RoleRoutingDecision>,
     },
@@ -113,14 +116,14 @@ impl OrchEvent {
         match self {
             OrchEvent::Tool { reply, .. }
             | OrchEvent::ApproveHold { reply, .. }
-            | OrchEvent::RejectHold { reply, .. } => Some(*reply),
+            | OrchEvent::RejectHold { reply, .. }
+            | OrchEvent::RoleRoute { reply, .. } => Some(*reply),
             OrchEvent::ScoutEnded { .. }
             | OrchEvent::PlannerEnded { .. }
             | OrchEvent::OrchestratorWoken { .. }
             | OrchEvent::DigestRead { .. }
             | OrchEvent::OrchestratorWindow { .. }
             | OrchEvent::OtlpToken { .. }
-            | OrchEvent::RoleRoute { .. }
             | OrchEvent::RoleRouteEnded { .. } => None,
         }
     }
@@ -215,10 +218,19 @@ pub(super) fn on_orch_event(
                 o.otlp_token = token;
             }
         }
-        OrchEvent::RoleRoute { run_id, decision } => {
-            if let Some(run) = state.runs.get_mut(&run_id) {
-                super::history::open(run, *decision);
-            }
+        OrchEvent::RoleRoute {
+            reply,
+            run_id,
+            decision,
+        } => {
+            let result = match state.runs.get_mut(&run_id) {
+                Some(run) => {
+                    super::history::open(run, *decision);
+                    Ok("recorded".to_string())
+                }
+                None => Err(format!("unknown run {run_id}")),
+            };
+            fx.push(Effect::Reply { reply, result });
         }
         OrchEvent::RoleRouteEnded {
             run_id,

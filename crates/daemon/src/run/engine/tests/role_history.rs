@@ -21,7 +21,7 @@ use crate::scout::spec::ScoutContext;
 const REPO: &str = "/tmp/data/repos/x-3f9a";
 
 /// The `role_route` lines among `effects`' `AppendHistory` ops: (op, line).
-fn role_lines(effects: &[Effect]) -> Vec<(u64, RoleRoutingDecision)> {
+pub(super) fn role_lines(effects: &[Effect]) -> Vec<(u64, RoleRoutingDecision)> {
     ops_in(effects, "AppendHistory")
         .into_iter()
         .filter_map(|(op, kind)| match kind {
@@ -45,12 +45,12 @@ fn role_lines(effects: &[Effect]) -> Vec<(u64, RoleRoutingDecision)> {
 }
 
 /// `fx`'s run writes history to [`REPO`].
-fn with_history(fx: &mut Fixture) {
+pub(super) fn with_history(fx: &mut Fixture) {
     fx.run_mut().repo_dir = REPO.into();
     fx.run_mut().history = true;
 }
 
-fn of_role(fx: &Fixture, role: AgentRole) -> Vec<RoleRoutingDecision> {
+pub(super) fn of_role(fx: &Fixture, role: AgentRole) -> Vec<RoleRoutingDecision> {
     fx.run()
         .role_routing_decisions
         .iter()
@@ -82,7 +82,9 @@ fn scout_dispatched(fx: &mut Fixture, id: &str, ctx: &ScoutContext) -> String {
         unreachable!()
     };
     let decision = roles::scout_record(fx.run(), &spec.id, ctx, 1_500);
+    let reply = fx.reply();
     fx.next(EventKind::Orch(OrchEvent::RoleRoute {
+        reply,
         run_id: RUN_ID.into(),
         decision: Box::new(decision),
     }));
@@ -111,13 +113,15 @@ fn decider_dispatched(fx: &mut Fixture, op: u64) -> String {
     let d = roles::decider_record(
         Some(run),
         (&op.to_string(), "check_summary"),
-        Some("t1"),
-        &route,
+        &["t1".to_string()],
+        (&route, Vec::new()),
         input,
         1_600,
     );
     let id = d.record_id.clone();
+    let reply = fx.reply();
     fx.next(EventKind::Orch(OrchEvent::RoleRoute {
+        reply,
         run_id: RUN_ID.into(),
         decision: Box::new(d),
     }));
@@ -285,7 +289,8 @@ fn orchestrator_restart_gets_a_new_session_id() {
     }
     let records = of_role(&fx, AgentRole::Orchestrator);
     assert_eq!(records.len(), 3);
-    assert_eq!(records[1].outcome, Some(RoleOutcome::Completed));
+    // Its window exited before it submitted a plan (review M-1).
+    assert_eq!(records[1].outcome, Some(RoleOutcome::Failed));
     assert_eq!(
         (records[2].session_id.as_str(), records[2].outcome),
         ("3", None)
@@ -517,4 +522,42 @@ fn a_run_never_attributes_its_outcome_to_one_role() {
         );
     }
     assert_ne!(state, RunState::Planning);
+
+    // Review I-1: `run cancel` stops a live sub-planner and a running scout. Their
+    // sessions were stopped by anthrex, not failed: `interrupted`, with a reason that
+    // names neither the run's outcome nor the user's action.
+    let mut fx = running();
+    let scout = scout_dispatched(&mut fx, "api", &scout_ctx());
+    let reply = fx.reply();
+    let mut effects = fx.next(EventKind::Cancel {
+        reply,
+        run_id: RUN_ID.into(),
+    });
+    // The driver's halted sessions end with the halt's reason.
+    let halted = || ScoutEnd::Failed {
+        reason: crate::run::engine::planners::RUN_CANCELLED.into(),
+    };
+    effects.extend(planner_ended(&mut fx, ("mail", 1), halted()));
+    effects.extend(scout_ended(&mut fx, &scout, halted()));
+    let lines = role_lines(&effects);
+    let stopped: Vec<(AgentRole, Option<RoleOutcome>, Option<String>)> = lines
+        .iter()
+        .map(|(_, d)| (d.role, d.outcome, d.result.clone()))
+        .collect();
+    let why = Some("stopped when the run ended".to_string());
+    assert_eq!(
+        stopped,
+        vec![
+            (
+                AgentRole::Planner,
+                Some(RoleOutcome::Interrupted),
+                why.clone()
+            ),
+            (AgentRole::Scout, Some(RoleOutcome::Interrupted), why),
+        ]
+    );
+    for d in &fx.run().role_routing_decisions {
+        let text = d.result.clone().unwrap_or_default();
+        assert!(!run_words[..4].iter().any(|w| text.contains(w)), "{text}");
+    }
 }

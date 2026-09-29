@@ -203,6 +203,7 @@ pub const RUN_FINISHED: &str = "the finish edit ends the run";
 /// `ScoutEvent::Halt`, through `Effect::StopPlanner` or `Effect::StopScout`); a queued
 /// one never starts. Each ends `failed` with `reason` (decisions 20 and 32's outcome).
 pub(super) fn halt_all(run: &mut Run, reason: &str, now: u64, fx: &mut Vec<Effect>) {
+    history::sessions_stopped(run, fx);
     for k in 0..run.orch.epics.len() {
         if !run.orch.epics[k].phase.is_live() {
             continue;
