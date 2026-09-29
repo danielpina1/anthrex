@@ -72,6 +72,7 @@ fn a_held_task_is_not_resumed_after_an_exit_or_by_a_delivery() {
             head: None,
             onto: None,
             merged: Vec::new(),
+            merged_total: 0,
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Working);
@@ -112,6 +113,7 @@ fn a_held_task_gets_no_fresh_session_until_its_hand_back() {
             head: None,
             onto: None,
             merged: Vec::new(),
+            merged_total: 0,
         },
     );
     let diffs = ops_in(&effects, "DiffSoFar");
@@ -141,6 +143,7 @@ fn a_conflict_being_delivered_is_not_undone_when_the_task_is_held_again() {
             head: None,
             onto: None,
             merged: Vec::new(),
+            merged_total: 0,
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Working);
@@ -208,6 +211,7 @@ fn a_held_codex_task_that_lost_its_session_before_an_id_gets_a_fresh_one() {
             head: None,
             onto: None,
             merged: Vec::new(),
+            merged_total: 0,
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Working);

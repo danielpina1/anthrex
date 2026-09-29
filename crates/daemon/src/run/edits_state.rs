@@ -2,7 +2,7 @@
 //! AGENTS.md rule 8. Pure — no `std::fs`, `std::process`, `std::thread`, `tokio` or
 //! `std::time::SystemTime` (design decision 2).
 
-use proto::{AgentRole, BlockReason, TaskState};
+use proto::{AgentRole, BlockReason, TaskKind, TaskState};
 
 use super::model::Task;
 
@@ -36,6 +36,12 @@ pub(super) fn is_live(task: &Task) -> bool {
             | TaskState::Review
             | TaskState::MergeQueue
     ) || task.rounds.iter().any(|r| !r.ended)
+}
+
+/// A research or review task (decisions 35 and 36): a scout or a reviewer works it,
+/// never a worker, so no worker message or refresh reaches it (M9.13a review, item 1).
+pub(crate) fn is_reader(task: &Task) -> bool {
+    matches!(task.spec.kind, TaskKind::Research | TaskKind::Review)
 }
 
 /// A task whose worker can take an amendment as a message.

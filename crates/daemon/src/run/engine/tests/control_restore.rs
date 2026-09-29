@@ -469,6 +469,7 @@ fn a_lost_abort_is_sent_again_at_the_restore() {
             head: None,
             onto: None,
             merged: Vec::new(),
+            merged_total: 0,
         },
     );
     let (lost, _) = only_op(&effects, "AbortMerge");
@@ -551,6 +552,7 @@ fn a_hand_back_result_after_a_cancel_is_dropped() {
             head: Some(HEAD.into()),
             onto: Some(head_of("t1")),
             merged: Vec::new(),
+            merged_total: 0,
         },
     );
     let t1 = fx.task("t1");

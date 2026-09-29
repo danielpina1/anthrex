@@ -8,7 +8,7 @@ use proto::TaskState;
 use proto::{BlockInfo, BlockReason, HoldState, MessageKind, MessageTarget, PlanEdit, PlanTask};
 
 use super::edits::{Batch, EditConsequence, not_started, state_label};
-use super::edits_state::{has_live_worker, is_paused};
+use super::edits_state::{has_live_worker, is_paused, is_reader};
 use super::model::{Run, Task, TaskEvent};
 use super::orch::contract::{ONE_EDIT_RULE, message_text};
 use super::orch::{EditSource, RefreshState, TaskMessage};
@@ -67,6 +67,9 @@ fn takes(task: &Task, kind: MessageKind, limit: u32) -> Result<Takes, String> {
             "messages to workers are turned off (orchestrator.message_max_per_turn = 0)".into(),
         );
     }
+    if is_reader(task) {
+        return Err(reader_refusal(task, "a message would not reach a worker"));
+    }
     let question = task
         .block
         .as_ref()
@@ -102,6 +105,15 @@ fn takes(task: &Task, kind: MessageKind, limit: u32) -> Result<Takes, String> {
     Ok(how)
 }
 
+/// M9.13a review, item 1: a research or review task has no worker. Its scout or
+/// reviewer has no message or refresh rule, its mailbox is not a worker's, and a
+/// `stop_and_wait` would leave it paused with its report refused; so it takes neither,
+/// in any state, and `running` never names it.
+fn reader_refusal(task: &Task, why: &str) -> String {
+    let kind = crate::run::orch::json::label(&task.spec.kind);
+    format!("task {} is a {kind} task; {why}", task.id())
+}
+
 /// Decision 42b's recipients, resolved at acceptance: named tasks once each, or, for
 /// `running`, every task with a live worker round and no approval hold still waiting,
 /// found by state and never by id (a run from before M9 may have a task named
@@ -125,7 +137,7 @@ fn recipients(run: &Run, to: &MessageTarget) -> Result<Vec<String>, PlanError> {
         MessageTarget::Running => Ok(run
             .tasks
             .iter()
-            .filter(|t| has_live_worker(t) && !held(run, t))
+            .filter(|t| has_live_worker(t) && !is_reader(t) && !held(run, t))
             .map(|t| t.id().to_string())
             .collect()),
     }
@@ -143,8 +155,9 @@ fn held(run: &Run, task: &Task) -> bool {
 
 /// Decision 42b: records a `message` to each recipient that can take it and refuses the
 /// others, one refusal rolling nothing back; a message no recipient takes is refused
-/// whole. The text is one line (every `\n` and `\r` a space, ruling 2 of the M9.5
-/// review), so it cannot forge a second `[anthrex]` line. A `stop_and_wait` pauses its
+/// whole. The text is one line (`messages::one_line`: every control character and
+/// line separator a space; ruling 2 of the M9.5 review, M9.13a review item 5), so it
+/// cannot forge a second `[anthrex]` line or carry a terminal sequence. A `stop_and_wait` pauses its
 /// working task (decision 42c) and a later message releases a paused one. Only the
 /// orchestrator and the user message workers (decision 22).
 pub(crate) fn apply_message(
@@ -159,10 +172,7 @@ pub(crate) fn apply_message(
     if matches!(source, EditSource::Planner { .. }) {
         return Err(error("a sub-planner cannot message workers".into()));
     }
-    let text: String = text
-        .chars()
-        .map(|c| if matches!(c, '\n' | '\r') { ' ' } else { c })
-        .collect();
+    let text = crate::run::messages::one_line(text);
     if !(1..=MESSAGE_TEXT_MAX).contains(&text.chars().count()) {
         return Err(error(format!(
             "message: text must be 1 to {MESSAGE_TEXT_MAX} characters"
@@ -279,6 +289,10 @@ pub(crate) fn apply_refresh(
             && matches!(p.kind, super::engine::OpKind::HandBack { .. })
     });
     let task = &run.tasks[i];
+    if is_reader(task) {
+        let text = reader_refusal(task, "refresh needs a code or docs task");
+        return Err(PlanError::new(Some(task_id), "", "42", text));
+    }
     let fits = (task.state == TaskState::Working || is_paused(task))
         && !task.awaiting_deps
         && !task.resolving

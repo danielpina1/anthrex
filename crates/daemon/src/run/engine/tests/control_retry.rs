@@ -209,6 +209,7 @@ fn a_retried_held_task_is_handed_back_before_its_fresh_session() {
             head: Some(HEAD.into()),
             onto: Some(HEAD.into()),
             merged: Vec::new(),
+            merged_total: 0,
         },
     );
     let t1 = fx.task("t1");

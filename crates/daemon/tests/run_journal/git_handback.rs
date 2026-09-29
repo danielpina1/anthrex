@@ -89,6 +89,7 @@ fn reconcile_a_committed_hand_back_left_mid_merge_finishes_it() {
                 head: Some(commit.clone()),
                 onto: Some(t1_head),
                 merged: Vec::new(),
+                merged_total: 0,
             })
         )]
     );
@@ -311,6 +312,7 @@ fn reconcile_a_clean_hand_back_whose_files_never_followed_finishes_it() {
                 head: Some(commit.clone()),
                 onto: Some(t1_head),
                 merged: Vec::new(),
+                merged_total: 0,
             })
         )]
     );
@@ -400,6 +402,7 @@ fn reconcile_a_finished_conflicted_hand_back_replays_it() {
                 head: Some(t1_head.clone()),
                 onto: Some(t1_head),
                 merged: Vec::new(),
+                merged_total: 0,
             })
         )]
     );
@@ -428,7 +431,7 @@ fn refresh_is_replayed_by_reconcile() {
 
     let (done, merged) =
         daemon::run::git::hand_back_listing(real_git(), &t1, &run_head, true, T).unwrap();
-    assert_eq!(merged.len(), 1);
+    assert_eq!((merged.lines.len(), merged.total), (1, 1));
     w.run.pending_ops.clear();
     pend(&mut w.run, 2, Some("t1"), refresh);
     assert_eq!(
@@ -439,9 +442,43 @@ fn refresh_is_replayed_by_reconcile() {
                 files: Vec::new(),
                 head: Some(done.head.clone()),
                 onto: Some(t1_head),
-                merged,
+                merged: merged.lines,
+                merged_total: merged.total,
             })
         )]
     );
     assert_eq!(head(&t1), done.head);
+}
+
+/// M9.13a review, item 3: reconcile claims for a refresh only a merge it could have
+/// made. The worker's own commit of a refresh that conflicted has the run head as its
+/// second parent too; a later refresh at the same run head, pending when the daemon
+/// died, is left to run again (and finds the branch up to date), never replayed as a
+/// clean merge whose commit the counts would then leave out.
+#[test]
+fn a_merge_the_worker_committed_is_not_replayed_as_a_refresh() {
+    let mut w = World::new();
+    let (t1, _) = w.task_with_commit("t1", "src/a.txt", "task\n");
+    let run_head = commit_file(&w.run.integration_path(), "src/a.txt", "run\n", "run: a");
+    w.run.run_head = run_head.clone();
+    let (back, _) =
+        daemon::run::git::hand_back_listing(real_git(), &t1, &run_head, true, T).unwrap();
+    assert_eq!(back.files, vec!["src/a.txt".to_string()], "it conflicted");
+    // The worker resolves it and commits: a merge whose second parent is the run head.
+    let resolved = commit_file(&t1, "src/a.txt", "task and run\n", "resolve");
+    let parents = out(&t1, &["rev-list", "--parents", "-n", "1", &resolved]);
+    assert_eq!(parents.split(' ').nth(2), Some(run_head.as_str()));
+    let refresh = OpKind::HandBack {
+        worktree: t1.clone(),
+        run_head: run_head.clone(),
+        task_head: None,
+        list_merged: true,
+    };
+    pend(&mut w.run, 1, Some("t1"), refresh);
+    assert_eq!(w.reconcile(), vec![(1, Reconciled::NotStarted)]);
+    assert_eq!(head(&t1), resolved, "nothing moved");
+    // Run again, the refresh finds nothing new.
+    let (again, merged) =
+        daemon::run::git::hand_back_listing(real_git(), &t1, &run_head, true, T).unwrap();
+    assert_eq!((again.head.as_str(), merged.total), (resolved.as_str(), 0));
 }

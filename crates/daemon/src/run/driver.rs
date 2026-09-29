@@ -342,6 +342,7 @@ impl RunService {
             match guard::guarded_step(&mut state, Event { now, kind }) {
                 Ok(fx) => {
                     self.metered.refresh_live(&state);
+                    self.release_ended_orchestrators(&state);
                     Some(guard::prepare_guarded(&state, fx, now))
                 }
                 Err(panic) => {

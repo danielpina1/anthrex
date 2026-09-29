@@ -53,6 +53,7 @@ fn clean(merged: &[&str]) -> OpResult {
         head: Some(MERGE.into()),
         onto: Some(HEAD.into()),
         merged: merged.iter().map(|s| s.to_string()).collect(),
+        merged_total: merged.len() as u32,
     }
 }
 
@@ -114,6 +115,7 @@ fn refresh_up_to_date_sends_nothing() {
         head: Some(HEAD.into()),
         onto: Some(HEAD.into()),
         merged: Vec::new(),
+        merged_total: 0,
     };
     let effects = fx.done(op, up_to_date);
     assert_eq!(delivers(&effects), vec![NO_COMMIT_NUDGE.to_string()]);
@@ -186,7 +188,24 @@ fn refresh_is_refused_on_a_resolving_or_awaiting_task() {
 
 #[test]
 fn a_refresh_merge_alone_is_not_work() {
-    // The fallback: one commit, the refresh's merge, is no commit.
+    // The count leaves the recorded merge out in git (M9.13a review, item 3:
+    // `the_counts_leave_each_recorded_refresh_merge_out_once`, and the real-git
+    // `run_refresh.rs`); the engine takes the count it gets. The fallback: no own
+    // commit is no commit.
+    let (mut fx, window) = working();
+    fx.task_mut("t1").orch.refresh_merges.push(MERGE.into());
+    let effects = fx.turn_completed(window);
+    let (op, kind) = only_op(&effects, "CountCommits");
+    assert!(matches!(kind, OpKind::CountCommits { not_own, .. } if not_own == [MERGE]));
+    let none = OpResult::Commits {
+        count: 0,
+        head: MERGE.into(),
+    };
+    assert_eq!(
+        delivers(&fx.done(op, none)),
+        vec![NO_COMMIT_NUDGE.to_string()]
+    );
+    // One own commit beside the merge is work.
     let (mut fx, window) = working();
     fx.task_mut("t1").orch.refresh_merges.push(MERGE.into());
     let effects = fx.turn_completed(window);
@@ -195,22 +214,16 @@ fn a_refresh_merge_alone_is_not_work() {
         count: 1,
         head: MERGE.into(),
     };
-    let effects = fx.done(op, one.clone());
-    assert_eq!(delivers(&effects), vec![NO_COMMIT_NUDGE.to_string()]);
-    // The control: with no refresh merge, that commit is the task's.
-    let (mut fx, window) = working();
-    let effects = fx.turn_completed(window);
-    let (op, _) = only_op(&effects, "CountCommits");
     assert_eq!(delivers(&fx.done(op, one)), vec![DONE_NUDGE.to_string()]);
 
-    // `task_done`: the zero-commit check ignores the refresh's merge.
+    // `task_done`: a check that counted no own commit is rejected.
     let (mut fx, window) = working();
     fx.task_mut("t1").orch.refresh_merges.push(MERGE.into());
     let effects = fx.tool(window, "task_done", done_args());
     let (op, _) = only_op(&effects, "VerifyDone");
     let mut result = fx.clean_check("t1");
     if let OpResult::DoneChecked { commits, .. } = &mut result {
-        *commits = 1;
+        *commits = 0;
     }
     let effects = fx.done(op, result);
     assert_eq!(
@@ -255,6 +268,7 @@ fn refresh_conflict_sets_resolving_and_leaves_conflicts_alone() {
         head: Some(HEAD.into()),
         onto: Some(HEAD.into()),
         merged: Vec::new(),
+        merged_total: 0,
     };
     let effects = fx.done(op, conflict);
     let task = fx.task("t1");

@@ -38,10 +38,14 @@ mod worktrees;
 pub use accept::{ACCEPT_MERGE_TIMEOUT, accept, accept_with_merge_timeout};
 pub(crate) use checkout::restore_owner_access;
 pub use checkout::{Repo, checkout_repo_dir, default_repo_dir};
-pub use done::{DoneChecked, count_commits, diff_so_far, verify_done};
+pub use done::{
+    DoneChecked, count_commits, count_commits_excluding, diff_so_far, verify_done,
+    verify_done_excluding,
+};
 pub(crate) use handback::merged_log;
 pub use handback::{
-    HandBack, MERGED_LIST_MAX, UNCOMMITTED, hand_back, hand_back_listing, tracked_changes,
+    HandBack, MERGED_LIST_MAX, MergedCommits, UNCOMMITTED, hand_back, hand_back_listing,
+    tracked_changes,
 };
 pub use import::{HeadFile, head_file, rebase_in_progress, sync};
 pub use merge::{
@@ -51,7 +55,7 @@ pub use merge::{
 pub use merge_state::abort_merge;
 pub use salvage::{delete_branches, remove_checkout, remove_worktree, salvage};
 pub use settings::{codex_config_tree, project_settings};
-pub use summary::{resolve_target, task_summary};
+pub use summary::{resolve_target, task_summary, task_summary_excluding};
 
 /// Reads reconcile (M8a.21) shares with the ops it checks.
 pub(crate) use handback::{finish_clean, interrupted_conflict};

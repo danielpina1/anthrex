@@ -60,6 +60,29 @@ pub fn verify_done(
     red: Option<&str>,
     timeout: Duration,
 ) -> Result<DoneChecked, String> {
+    let (matchers, not_own) = ((generated, protected), &[][..]);
+    verify_done_excluding(
+        git, worktree, start, run_head, owns, matchers, red, not_own, timeout,
+    )
+}
+
+/// [`verify_done`], whose commit count leaves out the commits `not_own` names
+/// (milestone 9 decision 42e: the merge commits a refresh made, by full sha). A
+/// recorded merge the branch no longer reaches (the worker rebased, or reset below it)
+/// is simply not there to leave out, and naming one twice leaves it out once
+/// (M9.13a review, item 3).
+#[allow(clippy::too_many_arguments)]
+pub fn verify_done_excluding(
+    git: &OsStr,
+    worktree: &Path,
+    start: &str,
+    run_head: &str,
+    owns: &[String],
+    (generated, protected): (&OwnsMatcher, &ProtectedMatcher),
+    red: Option<&str>,
+    not_own: &[String],
+    timeout: Duration,
+) -> Result<DoneChecked, String> {
     let owns_matcher = OwnsMatcher::new(owns)?;
     let g = Git::new(git, timeout);
     let pin = task_pin(worktree)?;
@@ -116,7 +139,10 @@ pub fn verify_done(
     ]);
     let changed = g.ok(worktree, &spill_args)?;
     let mut result = DoneChecked {
-        commits: own.len() as u32,
+        commits: own
+            .iter()
+            .filter(|c| !not_own.iter().any(|n| n == *c))
+            .count() as u32,
         dirty_tracked,
         merge_in_progress: merge_head.success,
         untracked_in_owns,
@@ -178,7 +204,7 @@ fn parse_status(status: &str) -> (u32, Vec<String>) {
     (dirty, untracked)
 }
 
-/// The task's own commits (`git rev-list --count <head> ^<start> ^<run_head>`, as
+/// The task's own commits (`git rev-list <head> ^<start> ^<run_head>`, counted, as
 /// [`verify_done`] counts them) and `<head>`: the turn-end fallback's question (decision
 /// 32). With `run_head` excluded, a run head merged in by a hand-back is not counted
 /// as the task's work (fix round 1, finding 10). Final fix batch F1b: `<head>` is the
@@ -191,25 +217,32 @@ pub fn count_commits(
     run_head: &str,
     timeout: Duration,
 ) -> Result<(u32, String), String> {
+    count_commits_excluding(git, worktree, start, run_head, &[], timeout)
+}
+
+/// [`count_commits`], leaving out the commits `not_own` names, as
+/// [`verify_done_excluding`] does (M9.13a review, item 3).
+pub fn count_commits_excluding(
+    git: &OsStr,
+    worktree: &Path,
+    start: &str,
+    run_head: &str,
+    not_own: &[String],
+    timeout: Duration,
+) -> Result<(u32, String), String> {
     let g = Git::new(git, timeout);
     let head = sync_in(g, worktree)?;
     let not_start = format!("^{start}");
     let not_run_head = format!("^{run_head}");
-    let count = g.ok(
+    let own = g.ok(
         worktree,
-        &[
-            os("rev-list"),
-            os("--count"),
-            os(&head),
-            os(&not_start),
-            os(&not_run_head),
-        ],
+        &[os("rev-list"), os(&head), os(&not_start), os(&not_run_head)],
     )?;
-    let count = count
-        .trim()
-        .parse::<u32>()
-        .map_err(|_| format!("git rev-list --count printed {:?}", count.trim()))?;
-    Ok((count, head))
+    let count = own
+        .lines()
+        .filter(|c| !c.is_empty() && !not_own.iter().any(|n| n == c))
+        .count();
+    Ok((count as u32, head))
 }
 
 /// Decision 30's hand-over material: the stat and the diff of the task's net change,

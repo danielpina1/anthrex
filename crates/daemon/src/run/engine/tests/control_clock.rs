@@ -128,6 +128,7 @@ fn a_hold_made_in_the_pass_stops_the_clock_at_once() {
             head: None,
             onto: None,
             merged: Vec::new(),
+            merged_total: 0,
         },
     );
     fx.tick();

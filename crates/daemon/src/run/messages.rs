@@ -43,6 +43,23 @@ pub fn join_turn(messages: &[&Outgoing]) -> String {
     clamp(&joined)
 }
 
+/// M9.9 review fixes, I1: a text that must stay one line. Every control character
+/// (`\n`, `\r`, U+0085 and ESC among them) and the Unicode line and paragraph
+/// separators become spaces, so no source can start a line of its own, or a terminal
+/// sequence, where the text is pasted. Used for wake notes, and (M9.13a review, item
+/// 5) for worker messages and task notes.
+pub(crate) fn one_line(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

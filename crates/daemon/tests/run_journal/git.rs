@@ -324,6 +324,7 @@ fn reconcile_hand_back_with_merge_head() {
                     head: Some(t1_head.clone()),
                     onto: Some(t1_head),
                     merged: Vec::new(),
+                    merged_total: 0,
                 })
             ),
             (
@@ -333,6 +334,7 @@ fn reconcile_hand_back_with_merge_head() {
                     head: Some(t2_merge),
                     onto: Some(t2_head),
                     merged: Vec::new(),
+                    merged_total: 0,
                 })
             ),
             (3, Reconciled::NotStarted),

@@ -378,6 +378,7 @@ pub(super) fn override_task(
         worktree: task.worktree.clone(),
         start,
         run_head: run.run_head.clone(),
+        not_own: super::worker_messages::not_own(task),
     };
     let op = next_op(run);
     run.tasks[i].override_count = Some(OverrideCount {

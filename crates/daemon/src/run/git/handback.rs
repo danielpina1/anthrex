@@ -136,9 +136,9 @@ pub fn hand_back_listing(
     run_head: &str,
     list_merged: bool,
     timeout: Duration,
-) -> Result<(HandBack, Vec<String>), String> {
+) -> Result<(HandBack, MergedCommits), String> {
     if !list_merged {
-        return hand_back(git, worktree, run_head, timeout).map(|h| (h, Vec::new()));
+        return hand_back(git, worktree, run_head, timeout).map(|h| (h, MergedCommits::default()));
     }
     if tracked_changes(git, worktree, timeout)? {
         return Err(UNCOMMITTED.to_string());
@@ -147,9 +147,17 @@ pub fn hand_back_listing(
     let merged = if done.files.is_empty() && done.head != done.onto {
         merged_log(Git::new(git, timeout), worktree, &done.onto, run_head)?
     } else {
-        Vec::new()
+        MergedCommits::default()
     };
     Ok((done, merged))
+}
+
+/// A refresh's merged commits: the newest [`MERGED_LIST_MAX`] as `<sha> <subject>`,
+/// and how many there are in all (M9.13a review, item 6).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MergedCommits {
+    pub lines: Vec<String>,
+    pub total: u32,
 }
 
 /// Decision 42e's clean-tree check: whether the worktree has a tracked change, staged
@@ -170,15 +178,26 @@ pub fn tracked_changes(git: &OsStr, worktree: &Path, timeout: Duration) -> Resul
 }
 
 /// The commits of `onto..run_head`, `<sha> <subject>`, newest first, at most
-/// [`MERGED_LIST_MAX`] (`git log`, through `worktree::run_git`). Reconcile reads it
-/// too, for a refresh it replays.
+/// [`MERGED_LIST_MAX`] (`git log`, through `worktree::run_git`), and their number in all
+/// (`git rev-list --count`). Reconcile reads it too, for a refresh it replays.
 pub(crate) fn merged_log(
     g: Git<'_>,
     worktree: &Path,
     onto: &str,
     run_head: &str,
-) -> Result<Vec<String>, String> {
+) -> Result<MergedCommits, String> {
     let range = format!("{onto}..{run_head}");
+    let count = [
+        os("rev-list"),
+        os("--count"),
+        os("--end-of-options"),
+        os(&range),
+    ];
+    let total = g.ok(worktree, &count)?;
+    let total = total
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| format!("git rev-list --count printed {:?}", total.trim()))?;
     let max = MERGED_LIST_MAX.to_string();
     let args = [
         os("log"),
@@ -189,11 +208,13 @@ pub(crate) fn merged_log(
         os("--end-of-options"),
         os(&range),
     ];
-    Ok(g.ok(worktree, &args)?
+    let lines = g
+        .ok(worktree, &args)?
         .lines()
         .filter_map(|line| line.split_once('\u{1f}'))
         .map(|(sha, subject)| format!("{sha} {subject}"))
-        .collect())
+        .collect();
+    Ok(MergedCommits { lines, total })
 }
 
 /// `merge-tree --write-tree`'s answer for `onto` and the run head.

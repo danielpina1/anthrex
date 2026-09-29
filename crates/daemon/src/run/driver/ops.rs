@@ -251,6 +251,7 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
             spill_exempt: _,
             red,
             resolution,
+            not_own,
         } => {
             // Final fix batch F1b: through the queue, since each of these imports the
             // worker's commits and records them on the task's branch first.
@@ -265,8 +266,8 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
                             &owns,
                             &generated,
                             &protected,
-                            red.clone(),
-                            resolution.clone(),
+                            (red.clone(), resolution.clone()),
+                            &not_own,
                             t,
                         )
                     })
@@ -277,10 +278,11 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
             worktree,
             start,
             run_head,
+            not_own,
         } => settle(
             service
                 .write(ctx, move |g, t| {
-                    git::count_commits(g, &worktree, &start, &run_head, t)
+                    git::count_commits_excluding(g, &worktree, &start, &run_head, &not_own, t)
                         .map(|(count, head)| OpResult::Commits { count, head })
                 })
                 .await,
@@ -360,7 +362,8 @@ pub(super) async fn run(service: &Arc<RunService>, ctx: &OpCtx, kind: OpKind) ->
                     files: h.files,
                     head: Some(h.head),
                     onto: Some(h.onto),
-                    merged,
+                    merged: merged.lines,
+                    merged_total: merged.total,
                 }),
         ),
         OpKind::AbortMerge { worktree } => settle(
@@ -441,22 +444,22 @@ fn verify_done(
     owns: &[String],
     generated: &[String],
     protected: &[String],
-    red: Option<String>,
-    resolution: Option<ResolutionAt>,
+    (red, resolution): (Option<String>, Option<ResolutionAt>),
+    not_own: &[String],
     git_timeout: Duration,
 ) -> Result<OpResult, String> {
     let t = git_timeout.min(DONE_CHECK_GIT_TIMEOUT);
     let generated = OwnsMatcher::new(generated)?;
     let protected = ProtectedMatcher::new(protected)?;
-    let d = git::verify_done(
+    let d = git::verify_done_excluding(
         git,
         worktree,
         start,
         run_head,
         owns,
-        &generated,
-        &protected,
+        (&generated, &protected),
         red.as_deref(),
+        not_own,
         t,
     )?;
     let resolution_only = resolution.map(|r| {

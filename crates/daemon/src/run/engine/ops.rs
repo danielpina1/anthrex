@@ -73,13 +73,19 @@ pub enum OpKind {
         /// fails the `DoneChecked` (ruling T14-R3).
         #[serde(default)]
         resolution: Option<ResolutionAt>,
+        /// Milestone 9 decision 42e (M9.13a review, item 3): the refresh merge commits
+        /// the count leaves out, each once (`worker_messages::not_own`).
+        #[serde(default)]
+        not_own: Vec<String>,
     },
     /// `run_head`: M8a.8's interface change (the task's own commits exclude a merged
-    /// run head).
+    /// run head). `not_own` as `VerifyDone`'s.
     CountCommits {
         worktree: PathBuf,
         start: String,
         run_head: String,
+        #[serde(default)]
+        not_own: Vec<String>,
     },
     DiffSoFar {
         worktree: PathBuf,
@@ -452,6 +458,10 @@ pub enum OpResult {
         /// brought in, `<sha> <subject>`, newest first (at most 20).
         #[serde(default)]
         merged: Vec<String>,
+        /// M9.13a review, item 6: how many commits the clean merge brought in, all of
+        /// them (`git rev-list --count`), which `merged` lists at most 20 of.
+        #[serde(default)]
+        merged_total: u32,
     },
     /// `AbortMerge` succeeded (ruling T11-N1(b)).
     MergeAborted,

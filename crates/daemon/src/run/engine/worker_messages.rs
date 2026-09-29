@@ -14,7 +14,8 @@ use crate::run::edits_orch::release;
 use crate::run::edits_state::is_paused;
 use crate::run::model::{Run, Task};
 use crate::run::orch::contract::{
-    NOTE_LIMIT, NOTE_RECORDED, PAUSE_RELEASED, refresh_clean, refresh_conflict,
+    NOTE_LIMIT, NOTE_RECORDED, PAUSE_RELEASED, refresh_clean, refresh_clean_paused,
+    refresh_conflict, refresh_conflict_paused,
 };
 use crate::run::orch::json::label;
 use crate::run::orch::tools::{OrchCall, parse_call};
@@ -97,11 +98,17 @@ pub(super) fn release_all(run: &mut Run, now: u64) {
     }
 }
 
-/// Decision 42e: a task's commits since it started, less the merge commits its
-/// refreshes made. A refresh merge alone is never work.
-pub(super) fn own_commits(task: &Task, count: u32) -> u32 {
-    let merges = u32::try_from(task.orch.refresh_merges.len()).unwrap_or(u32::MAX);
-    count.saturating_sub(merges)
+/// Decision 42e: the merge commits the task's refreshes made, each once. The commit
+/// counts (`CountCommits`, `VerifyDone`) leave them out where the branch still has
+/// them, so a refresh merge alone is never work (M9.13a review, item 3).
+pub(super) fn not_own(task: &Task) -> Vec<String> {
+    let mut merges: Vec<String> = Vec::new();
+    for merge in &task.orch.refresh_merges {
+        if !merges.contains(merge) {
+            merges.push(merge.clone());
+        }
+    }
+    merges
 }
 
 /// Decision 42e: the outbox holds a task's mail while its refresh is due or in flight,
@@ -174,9 +181,9 @@ pub(super) fn awaits_refresh(run: &Run, i: usize, op: OpId) -> bool {
     run.tasks[i].orch.refresh == Some(RefreshState::InFlight(op))
 }
 
-/// Decision 42e's result. Clean: the worker is told what its branch now has (every
-/// merged commit, so `refresh_clean`'s count is the list's length), and the merge
-/// commit is recorded so it never counts as the task's work. Up to date: nothing is
+/// Decision 42e's result. Clean: the worker is told what its branch now has (the count
+/// of every merged commit, the newest named), and the merge commit is recorded, once,
+/// so it never counts as the task's work (the commit counts leave it out: `not_own`). Up to date: nothing is
 /// sent. Conflict: the worker resolves it (`resolving`, as M8a ruling N5's hand-back);
 /// `Task.conflicts` is not touched. Failed, a dirty tree included: no block, a history
 /// line, a wake note, and the error on the refresh's edit-log entry.
@@ -186,6 +193,8 @@ pub(super) fn refreshed(run: &mut Run, i: usize, result: OpResult, now: u64) {
         return;
     }
     let id = run.tasks[i].id().to_string();
+    // M9.13a review, item 7: a paused worker is told to wait again, not to continue.
+    let paused = is_paused(&run.tasks[i]);
     match result {
         OpResult::HandedBack { files, .. } if !files.is_empty() => {
             run.tasks[i].resolving = true;
@@ -195,14 +204,22 @@ pub(super) fn refreshed(run: &mut Run, i: usize, result: OpResult, now: u64) {
                 now,
                 format!("refresh conflicted in: {}", files.join(", ")),
             );
-            outbox::queue(run, &id, refresh_conflict(&files), now);
+            let text = if paused {
+                refresh_conflict_paused(&files)
+            } else {
+                refresh_conflict(&files)
+            };
+            outbox::queue(run, &id, text, now);
         }
+        // M9.13a review, item 3: a merge already recorded (a replay that found the
+        // last refresh's merge again) is not a second one.
         OpResult::HandedBack {
             head: Some(head),
             onto,
             merged,
+            merged_total,
             ..
-        } if onto.as_ref() != Some(&head) => {
+        } if onto.as_ref() != Some(&head) && !run.tasks[i].orch.refresh_merges.contains(&head) => {
             run.tasks[i].orch.refresh_merges.push(head);
             let list: Vec<(String, String)> = merged
                 .iter()
@@ -211,10 +228,16 @@ pub(super) fn refreshed(run: &mut Run, i: usize, result: OpResult, now: u64) {
                     None => (line.clone(), String::new()),
                 })
                 .collect();
-            let n = list.len();
+            // M9.13a review, item 6: `n` is every merged commit; the list is capped.
+            let n = (merged_total as usize).max(list.len());
             history(run, i, now, format!("refreshed: merged {n} commits"));
             if n >= 1 {
-                outbox::queue(run, &id, refresh_clean(n, &list), now);
+                let text = if paused {
+                    refresh_clean_paused(n, &list)
+                } else {
+                    refresh_clean(n, &list)
+                };
+                outbox::queue(run, &id, text, now);
             }
         }
         OpResult::HandedBack { .. } => history(run, i, now, "refresh: nothing new"),
@@ -270,6 +293,9 @@ pub(super) fn task_note(
     if task.orch.worker_notes.len() >= limit {
         return answer(fx, Err(NOTE_LIMIT.into()));
     }
+    // M9.13a review, item 5: a note reaches the report, the history, the reviewer's
+    // and the next session's prompts and the orchestrator's wake-up as one line.
+    let text = crate::run::messages::one_line(&text);
     let kind_label = label(&kind);
     let first: String = text.chars().take(120).collect();
     let note = WorkerNote {

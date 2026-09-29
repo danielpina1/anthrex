@@ -63,6 +63,7 @@ fn a_conflict_while_a_dependency_is_unfinished_is_aborted() {
             head: None,
             onto: None,
             merged: Vec::new(),
+            merged_total: 0,
         },
     );
     let aborts = ops_in(&effects, "AbortMerge");
@@ -94,6 +95,7 @@ fn a_conflict_while_a_dependency_is_unfinished_is_aborted() {
             head: None,
             onto: None,
             merged: Vec::new(),
+            merged_total: 0,
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Working);
@@ -119,6 +121,7 @@ fn a_failed_abort_blocks_the_task_on_its_environment() {
             head: None,
             onto: None,
             merged: Vec::new(),
+            merged_total: 0,
         },
     );
     let abort = ops_in(&effects, "AbortMerge")[0].0;
@@ -168,6 +171,7 @@ fn an_amendment_to_an_unanswered_held_task_waits_for_the_answer() {
             head: None,
             onto: None,
             merged: Vec::new(),
+            merged_total: 0,
         },
     );
     let t1 = fx.task("t1");
@@ -211,6 +215,7 @@ fn a_conflict_is_kept_after_the_holding_dependency_is_cancelled() {
             head: None,
             onto: None,
             merged: Vec::new(),
+            merged_total: 0,
         },
     );
     assert!(ops_in(&effects, "AbortMerge").is_empty(), "{effects:#?}");
@@ -261,6 +266,7 @@ fn a_conflict_for_a_cancelled_task_is_dropped() {
             head: None,
             onto: None,
             merged: Vec::new(),
+            merged_total: 0,
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Cancelled);
@@ -282,6 +288,7 @@ fn an_abort_result_for_a_cancelled_task_is_ignored() {
             head: None,
             onto: None,
             merged: Vec::new(),
+            merged_total: 0,
         },
     );
     let abort = ops_in(&effects, "AbortMerge")[0].0;
@@ -317,6 +324,7 @@ fn a_failed_abort_keeps_a_dep_cancelled_block() {
             head: None,
             onto: None,
             merged: Vec::new(),
+            merged_total: 0,
         },
     );
     let abort = ops_in(&effects, "AbortMerge")[0].0;
@@ -359,6 +367,7 @@ fn an_untold_conflict_is_aborted_when_the_task_is_held_again() {
             head: None,
             onto: None,
             merged: Vec::new(),
+            merged_total: 0,
         },
     );
     assert_eq!(conflict_messages(&fx, &files), 1);
@@ -399,6 +408,7 @@ fn an_untold_conflict_is_aborted_when_the_task_is_held_again() {
             head: None,
             onto: None,
             merged: Vec::new(),
+            merged_total: 0,
         },
     );
     assert_eq!(conflict_messages(&fx, &files), 1);

@@ -3227,11 +3227,11 @@ Two commits: `refactor(daemon): move the plan edits' task-state predicates into 
 
 - **`task_note` joins the early hold** (`early::holds_call`). Test: `a_task_note_before_the_window_is_recorded_after_binding`, red with the entry removed.
 - `WORKER_MCP_TOOLS` has three entries. Its pins in `headless/argv_tests.rs` and `engine/tests/dispatch.rs` are updated, plus a new test, `worker_spec_allows_task_note`.
-- `PAUSE_RELEASED` (`orch/contract.rs`) is new text: `[anthrex] The run was resumed. You were asked to stop and wait; continue your task now.` It is queued for every paused task when a `resume` edit or a run resume releases it.
+- `PAUSE_RELEASED` (`orch/contract.rs`) is new text: `[anthrex] The run was resumed. You were asked to stop and wait; continue your task now.` It is queued for every paused task when the `resume` plan edit releases it. `anthrex run resume` after a daemon restart releases nothing, so a pause survives a restart (decision 42c; corrected in the review fixes below).
 - `stop_and_wait` to a task that is not `working` is refused as `task <id> is <label>; stop_and_wait needs a working task`. A second `stop_and_wait` to a paused task is refused as `task <id> is already paused(message)`.
 - An unknown id in a message's task list is refused per recipient (`no such task <id>`). The other recipients still get it. The reply names every refusal as `not delivered: <reason>`, and `edit_plan`'s JSON has `delivered` and `refused: [{task, reason}]`.
 - A failed refresh sets `error` on its accepted `plan_edits` entry (`edit_log::set_error`). Alongside that it writes the history line `refresh skipped: <why>` and the wake note `refresh of <t> skipped: <why>`.
-- `refresh_clean(n, list)` gets `n` equal to the merged list's length. The list is capped at 20 by `git log -n 20`, so a refresh of more than 20 commits says 20.
+- `refresh_clean(n, list)` gets `n` from `git rev-list --count`, every merged commit; the list stays capped at 20 (corrected in the review fixes below, item 6).
 - Worker notes go in the task report's existing `Notes:` list as `(<kind>, from the worker)`. Messages get their own `Messages:` section, with `not delivered yet` on undelivered ones.
 - Discovery and risk notes show in the snapshot's attention list: the last three, as `<t> noted a <kind>: <first 80 chars>`. They do not show in the digest's attention, which would have changed the digest fixture; the digest gets them through the wake note. A paused task shows in the attention list only after 10 minutes (`PAUSED_ATTENTION_SECS`).
 
@@ -3250,3 +3250,46 @@ Two commits: `refactor(daemon): move the plan edits' task-state predicates into 
 
 - **What counts as the task's own commits.** The fallback's commit count and `task_done`'s zero-commit check subtract `refresh_merges.len()`. A worker that resets its branch below a refresh merge would be under-counted. This is an edge case; the net diff (`verify_done`, `measure_diff`) is unaffected, because it measures against the run head.
 - **A conflicted refresh records no merge in `refresh_merges`.** The worker makes that merge commit itself, so it counts as the worker's own. `Task.conflicts` is unchanged, because only the merge queue counts a conflict.
+
+### M9.13a review fixes
+
+One commit, `fix(daemon): keep research and review tasks out of worker messages, leave refreshed run work out of a task's commits and result, and free an ended run's orchestrator at once`. Each test was written first and seen red for the reason given; the sources for the mutations were restored from copies.
+
+1. **Research and review tasks take no worker message and no refresh.** Before, a message to a working research task was reported as delivered, but no worker round ever took it. A `stop_and_wait` then paused the task for good, with its scout's `submit_scout_report` refused. A pending research task's message was recorded, but `research_prompt` never shows it.
+   - The choice: refuse. Delivering through `kinds::mailbox_task` would reach a scout or reviewer whose contract has no message or pause rule, and a review task already finishes on its first verdict.
+   - `takes` refuses a research or review task in any state with `task <id> is a <kind> task; a message would not reach a worker`.
+   - `running` never names one (`edits_state::is_reader`).
+   - A refresh of one is refused with `task <id> is a <kind> task; refresh needs a code or docs task`, since such a task has no branch.
+   - Tests (`engine/tests/worker_messages_review.rs`), each red with its check removed:
+     - `a_research_task_takes_no_message_in_any_state` is the reviewer's repro: `info`, `stop_and_wait`, `running` and refresh.
+     - `a_pending_research_or_review_task_records_no_message`.
+2. **`task_result`'s git reads leave out refreshed run work.** `git::task_summary_excluding` is `task_summary` given the task's recorded refresh merges.
+   - The log keeps decision 18's command and adds `^<M^2>` for each merge `M`, then drops the merges themselves.
+   - The diffstat is `<M^2>...<branch>` for the newest recorded merge the branch still has. Without one, it is `start...branch`, as before.
+   - A merge `root` does not have is ignored. `task_summary` itself is unchanged.
+   - Real-git test (`run_refresh.rs`): `task_result_leaves_out_refreshed_run_work`. The unfixed read lists the other file; the fixed one lists only the task's commits and files, including work made after the refresh. Red with the merge list ignored.
+3. **The commit counts leave the refresh merges out in git.** They no longer subtract a number.
+   - `CountCommits` and `VerifyDone` carry `not_own` (`#[serde(default)]`): the task's `refresh_merges`, each once (`worker_messages::not_own`).
+   - `git::count_commits_excluding` and `git::verify_done_excluding` count `HEAD ^start ^run_head` less the commits named there that the branch still has. A worker that rebased onto the run head, or reset below the merge, keeps its real commit.
+   - `own_commits` is gone. `refreshed` records a merge only once, and treats one it already has as `refresh: nothing new`.
+   - Reconcile claims a refresh's clean merge only when `merge-tree` of its first parent and the run head is clean and gives exactly its tree. So a merge the worker committed after a conflicted refresh is never recorded as the refresh's; the refresh runs again and finds the branch up to date.
+   - Real-git tests:
+     - `the_counts_leave_a_recorded_refresh_merge_out`: a merge alone is 0, a merge named twice is left out once. Red with either filter removed.
+     - `a_rebase_or_reset_after_a_refresh_keeps_the_real_commit`: red under the old subtract-the-count rule.
+     - `a_merge_the_worker_committed_is_not_replayed_as_a_refresh` (`run_journal/git_handback.rs`): red with the tree check removed.
+   - Engine tests:
+     - `the_counts_leave_each_recorded_refresh_merge_out_once`: red with the de-duplication removed.
+     - `a_replayed_refresh_merge_is_not_recorded_twice`: red with the `contains` check removed.
+     - `a_refresh_merge_alone_is_not_work` (`refresh.rs`) is rewritten for counts that come from git.
+4. **`run override` counts the same way.** Its `CountCommits` carries `not_own`, so a task whose only commit is a refresh merge counts 0 and is refused. Test: `override_counts_without_the_refresh_merges`, red with `not_own` left empty.
+5. **Message and note texts are one line through `messages::one_line`.** This is the wake notes' rule (M9.9 I1), moved from `engine/wake.rs` to `run/messages.rs`. Every control character, including U+0085 and ESC, becomes a space, as do U+2028 and U+2029. A `task_note`'s text is folded when it is stored, so the report, the history, the prompts and the wake-up all carry one line. Test: `message_and_note_texts_are_one_line`, red with either fold reverted.
+6. **A refresh's `n` is every merged commit.** `git::merged_log` also runs `git rev-list --count <onto>..<run head>` and returns `MergedCommits { lines, total }`. `OpResult::HandedBack` gains `merged_total` (`#[serde(default)]`), and reconcile fills it too. Tests:
+   - `a_refresh_names_the_count_of_every_merged_commit` (engine: 57 commits, 20 listed).
+   - `a_refresh_counts_every_merged_commit_and_lists_the_newest` (real git: 25 commits).
+   - Each is red with the total replaced by the list's length.
+7. **A paused task is told to wait.** For a `paused(message)` task, `refresh_clean_paused` and `refresh_conflict_paused` (`orch/contract.rs`) replace "Rebuild before you continue." and "Resolve them, commit, and continue." with texts that end `then wait for the next message: you were asked to stop and wait.`. Test: `a_paused_task_is_told_to_wait_after_a_refresh`, clean and conflicted, red with the paused check removed. The implementation note on `PAUSE_RELEASED` above is corrected: only the `resume` plan edit releases paused tasks.
+8. **An ended run frees its orchestrator on the step that ended it.** The flag used to clear only in `publish`, after the step's saves. `run list` answers from engine state, so it could show the run `discarded` while the kill was still refused.
+   - `RunService::release_ended_orchestrators` now runs under the engine lock right after each step, as `metered.refresh_live` does. It clears the manager's flag for every terminal run's orchestrator window, taking the manager's lock inside the engine's, the order `refresh_orchestrator_otlp` already uses; neither does I/O.
+   - Test: `driver/live_flag_tests.rs::an_ended_run_frees_its_orchestrator_before_its_saves_finish`. It uses a real manager and a real PTY window whose `claude` is a sleeping stand-in; the test kills that window itself, and no stand-in was left running.
+   - Red: without the call, the flag was still set after 10 s with the run's saves stalled.
+   - The e2e `create_orchestrator_sets_the_run_live_flag_and_a_terminal_run_clears_it` passed 12 times alone and 10 times with its whole binary, with no retry.

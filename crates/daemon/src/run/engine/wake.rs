@@ -5,6 +5,7 @@
 use proto::{BlockReason, TaskState};
 
 use super::Effect;
+use crate::run::messages::one_line;
 use crate::run::model::Run;
 use crate::run::orch::contract::wake_text;
 
@@ -20,21 +21,6 @@ fn earlier(text: &str) -> Option<u64> {
         .strip_suffix(" earlier changes")?
         .parse()
         .ok()
-}
-
-/// M9.9 review fixes, I1: a note is one line. Every control character (`\n`, `\r`,
-/// U+0085 among them) and the Unicode line and paragraph separators become spaces, so
-/// no source can start a line of its own in the pasted wake-up.
-fn one_line(text: &str) -> String {
-    text.chars()
-        .map(|c| {
-            if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') {
-                ' '
-            } else {
-                c
-            }
-        })
-        .collect()
 }
 
 /// Adds `text` to the orchestrator's pending notes, if the run has an orchestrator,

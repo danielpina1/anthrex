@@ -196,6 +196,7 @@ pub(super) fn claim(
         red: args.red.clone(),
         // Set exactly while `handed_back` is (merge::handed_back, ladder::end_hand_back).
         resolution: task.resolution.clone(),
+        not_own: super::worker_messages::not_own(task),
     };
     let task_id = task.id().to_string();
     let window_id = session_window(run, i);
@@ -281,8 +282,8 @@ fn rejection(run: &Run, i: usize, claim: &PendingClaim, result: &OpResult) -> Op
     // names a branch, or a stopped rebase, is not a claim the branch can carry.
     Some(if head_branch.as_deref() != Some(branch.as_str()) {
         "task_done rejected: this worktree's HEAD must be a detached commit with no rebase in progress; run git checkout --detach (or finish the rebase), commit, and call task_done again".to_string()
-    } else if super::worker_messages::own_commits(task, *commits) == 0 {
-        // Milestone 9 decision 42e: a refresh's merge commit is not the task's work.
+    } else if *commits == 0 {
+        // Milestone 9 decision 42e: the count leaves out refresh merges (`not_own`).
         "task_done rejected: the branch has no commit since the task started; commit your work first".into()
     } else if *dirty_tracked > 0 {
         format!(

@@ -28,31 +28,71 @@ pub fn task_summary(
     branch: &str,
     timeout: Duration,
 ) -> Result<TaskGit, String> {
+    task_summary_excluding(git, root, start, branch, &[], timeout)
+}
+
+/// [`task_summary`] for a task its refreshes merged the run branch into (milestone 9
+/// decision 42e; M9.13a review, item 2): merged run work is never the task's. The log
+/// leaves out each refresh merge `refresh_merges` names and everything its second
+/// parent (the run head it merged) reaches; the diff is from the run head the newest
+/// refresh merge the branch still has merged, `<that run head>...<branch>`, instead of
+/// from `start`. A recorded merge `root` does not have is ignored.
+pub fn task_summary_excluding(
+    git: &OsStr,
+    root: &Path,
+    start: &str,
+    branch: &str,
+    refresh_merges: &[String],
+    timeout: Duration,
+) -> Result<TaskGit, String> {
     // A revision that reads as an option (`--output=<path>`) is refused before git
     // sees it; `--end-of-options` below keeps the range a revision regardless.
-    if let Some(rev) = [start, branch].into_iter().find(|r| r.starts_with('-')) {
+    let revs = [start, branch].into_iter();
+    let revs = revs.chain(refresh_merges.iter().map(String::as_str));
+    if let Some(rev) = revs.into_iter().find(|r| r.starts_with('-')) {
         return Err(format!("{rev}: a revision cannot start with '-'"));
     }
     let g = Git::new(git, timeout);
+    // Each recorded merge `root` has, with the run head it merged, oldest first.
+    let mut merges: Vec<(String, String)> = Vec::new();
+    for merge in refresh_merges {
+        let spec = format!("{merge}^2^{{commit}}");
+        let args = [os("rev-parse"), os("-q"), os("--verify"), os(&spec)];
+        let parent = g.read(root, &args)?;
+        if parent.success && !merges.iter().any(|(m, _)| m == merge) {
+            merges.push((merge.clone(), parent.stdout.trim().to_string()));
+        }
+    }
     let range = format!("{start}..{branch}");
-    let log = g.ok(
-        root,
-        &[
-            os("log"),
-            os("--no-color"),
-            os("--format=%h%x1f%s"),
-            os("-n"),
-            os(LOG_MAX),
-            os("--end-of-options"),
-            os(&range),
-        ],
-    )?;
+    let mut args = vec![
+        os("log"),
+        os("--no-color"),
+        os("--format=%h%x1f%s"),
+        os("-n"),
+        os(LOG_MAX),
+        os("--end-of-options"),
+        os(&range),
+    ];
+    let excluded: Vec<String> = merges.iter().map(|(_, run)| format!("^{run}")).collect();
+    args.extend(excluded.iter().map(|rev| os(rev)));
+    let log = g.ok(root, &args)?;
     let commits = log
         .lines()
         .filter_map(|line| line.split_once('\u{1f}'))
+        // A short sha is unique in the repository, so it prefixes one merge at most.
+        .filter(|(sha, _)| !merges.iter().any(|(m, _)| m.starts_with(sha)))
         .map(|(sha, subject)| (sha.to_string(), subject.to_string()))
         .collect();
-    let range = format!("{start}...{branch}");
+    // The newest recorded merge the branch still reaches: its run head is the base.
+    let mut base = start.to_string();
+    for (merge, run) in merges.iter().rev() {
+        let args = [os("merge-base"), os("--is-ancestor"), os(merge), os(branch)];
+        if g.read(root, &args)?.success {
+            base = run.clone();
+            break;
+        }
+    }
+    let range = format!("{base}...{branch}");
     let mut args = vec![os("diff")];
     args.extend(DIFF_FLAGS.iter().map(|flag| os(flag)));
     args.extend([os("--stat=100"), os("--end-of-options"), os(&range)]);

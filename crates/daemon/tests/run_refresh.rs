@@ -9,7 +9,9 @@
 mod support;
 
 use daemon::run::git::{
-    UNCOMMITTED, count_commits, diff_so_far, hand_back_listing, prepare_worktree, verify_done,
+    MERGED_LIST_MAX, MergedCommits, UNCOMMITTED, count_commits, count_commits_excluding,
+    diff_so_far, hand_back_listing, prepare_worktree, task_summary, task_summary_excluding,
+    verify_done, verify_done_excluding,
 };
 use daemon::run::globs::{OwnsMatcher, ProtectedMatcher};
 use daemon::run::history_io::measure_diff;
@@ -73,21 +75,22 @@ fn refresh_merges_cleanly_and_the_next_turn_names_the_commits() {
     assert_eq!(back.onto, own);
     assert_ne!(back.head, own, "a merge commit");
     assert_eq!(head(&wt), back.head);
-    assert_eq!(merged.len(), 2, "{merged:?}");
+    assert_eq!((merged.lines.len(), merged.total), (2, 2), "{merged:?}");
     assert!(
-        merged[0].ends_with(" docs: add b"),
+        merged.lines[0].ends_with(" docs: add b"),
         "newest first: {merged:?}"
     );
-    assert!(merged[1].ends_with(" docs: add a"), "{merged:?}");
+    assert!(merged.lines[1].ends_with(" docs: add a"), "{merged:?}");
     // What the worker's next turn says: every merged commit, so n is the list's length.
     let list: Vec<(String, String)> = merged
+        .lines
         .iter()
         .map(|l| {
             let (sha, subject) = l.split_once(' ').unwrap();
             (sha.to_string(), subject.to_string())
         })
         .collect();
-    let text = refresh_clean(merged.len(), &list);
+    let text = refresh_clean(merged.total as usize, &list);
     assert!(text.contains("(2 commits: "), "{text}");
     assert!(
         text.contains("docs: add b") && text.contains("docs: add a"),
@@ -131,7 +134,7 @@ fn refresh_conflict_leaves_markers_sets_resolving_and_does_not_count_a_conflict(
     let (back, merged) = hand_back_listing(real_git(), &wt, &run_head, true, T).unwrap();
     assert_eq!(back.files, vec!["src/lib.rs".to_string()]);
     assert_eq!(back.head, own, "nothing is committed for the worker");
-    assert!(merged.is_empty());
+    assert_eq!(merged, MergedCommits::default());
     let text = std::fs::read_to_string(wt.join("src/lib.rs")).unwrap();
     assert!(
         text.contains("<<<<<<<") && text.contains(">>>>>>>"),
@@ -204,4 +207,136 @@ fn net_diff_excludes_refreshed_commits() {
     // engine leaves the merge out (`own_commits`, `a_refresh_merge_alone_is_not_work`).
     let (count, _) = count_commits(real_git(), &wt, &start, &run_head, T).unwrap();
     assert_eq!((count, done.commits), (2, 2));
+}
+
+/// M9.13a review, item 6: a refresh of more commits than it lists counts them all.
+#[test]
+fn a_refresh_counts_every_merged_commit_and_lists_the_newest() {
+    let repo = base();
+    let (_keep, wt, _) = task(&repo);
+    commit_file(&wt, "src/own.rs", "own\n", "task work");
+    let mut run_head = String::new();
+    for n in 0..25 {
+        let path = format!("docs/{n}.md");
+        run_head = merge_on_run_branch(&repo.root, &path, "x\n", &format!("docs: {n}"));
+    }
+    let (_, merged) = hand_back_listing(real_git(), &wt, &run_head, true, T).unwrap();
+    assert_eq!(merged.total, 25);
+    assert_eq!(merged.lines.len(), MERGED_LIST_MAX);
+    assert!(merged.lines[0].ends_with(" docs: 24"), "{merged:?}");
+}
+
+/// A refreshed task: one own commit, then a refresh merge of one run commit. (keep,
+/// worktree, start, run head, the merge).
+fn refreshed(repo: &TempRepo) -> (tempfile::TempDir, PathBuf, String, String, String) {
+    let (keep, wt, start) = task(repo);
+    commit_file(&wt, "src/own.rs", "own\n", "task work");
+    let run_head = merge_on_run_branch(&repo.root, "docs/other.md", "x\n", "docs: other");
+    let (back, _) = hand_back_listing(real_git(), &wt, &run_head, true, T).unwrap();
+    (keep, wt, start, run_head, back.head)
+}
+
+fn done_excluding(wt: &Path, start: &str, run_head: &str, not_own: &[String]) -> u32 {
+    let owns = vec!["src/**".to_string()];
+    let none = OwnsMatcher::new(&[]).unwrap();
+    let builtin: Vec<String> = BUILTIN_PROTECTED.iter().map(|s| s.to_string()).collect();
+    let protected = ProtectedMatcher::new(&builtin).unwrap();
+    let matchers = (&none, &protected);
+    let git = real_git();
+    verify_done_excluding(git, wt, start, run_head, &owns, matchers, None, not_own, T)
+        .unwrap()
+        .commits
+}
+
+/// M9.13a review, item 3: the counts leave out a recorded merge the branch has, once
+/// however often it is named; a merge alone is no commit.
+#[test]
+fn the_counts_leave_a_recorded_refresh_merge_out() {
+    let repo = base();
+    let (_keep, wt, start) = task(&repo);
+    let run_head = merge_on_run_branch(&repo.root, "docs/other.md", "x\n", "docs: other");
+    let (back, _) = hand_back_listing(real_git(), &wt, &run_head, true, T).unwrap();
+    let merge = back.head;
+    let twice = [merge.clone(), merge.clone()];
+    let (count, _) =
+        count_commits_excluding(real_git(), &wt, &start, &run_head, &twice, T).unwrap();
+    assert_eq!(count, 0, "the merge alone");
+    assert_eq!(done_excluding(&wt, &start, &run_head, &twice), 0);
+    commit_file(&wt, "src/own.rs", "own\n", "task work");
+    let (count, _) =
+        count_commits_excluding(real_git(), &wt, &start, &run_head, &twice, T).unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(done_excluding(&wt, &start, &run_head, &twice), 1);
+}
+
+/// M9.13a review, item 3: a worker that rebases onto the run head after a refresh,
+/// or resets below the merge, keeps the commit it made; subtracting the recorded
+/// merges from the count used to lose it.
+#[test]
+fn a_rebase_or_reset_after_a_refresh_keeps_the_real_commit() {
+    let repo = base();
+    let (_keep, wt, start, run_head, merge) = refreshed(&repo);
+    let not_own = [merge.clone()];
+    // Rebased onto the run head: one real commit, the merge gone.
+    out(&wt, &["rebase", "-q", "--onto", &run_head, &start]);
+    assert!(!is_ancestor(&wt, &merge, "HEAD"));
+    let (count, _) =
+        count_commits_excluding(real_git(), &wt, &start, &run_head, &not_own, T).unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(done_excluding(&wt, &start, &run_head, &not_own), 1);
+
+    let repo = base();
+    let (_keep, wt, start, run_head, merge) = refreshed(&repo);
+    let not_own = [merge.clone()];
+    // Reset below the merge, then a new commit.
+    out(&wt, &["reset", "-q", "--hard", &start]);
+    commit_file(&wt, "src/again.rs", "again\n", "task work again");
+    let (count, _) =
+        count_commits_excluding(real_git(), &wt, &start, &run_head, &not_own, T).unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(done_excluding(&wt, &start, &run_head, &not_own), 1);
+}
+
+/// M9.13a review, item 2: `task_result`'s log and diffstat leave out the run work a
+/// refresh merged in; before, they listed the run's commits and other tasks' files.
+#[test]
+fn task_result_leaves_out_refreshed_run_work() {
+    let repo = base();
+    let (_keep, wt, start, run_head, merge) = refreshed(&repo);
+    let branch = format!("anthrex/{RUN}/t1");
+    let naive = task_summary(real_git(), &repo.root, &start, &branch, T).unwrap();
+    assert!(
+        naive.diffstat.contains("docs/other.md"),
+        "the bug: {naive:?}"
+    );
+    let merges = [merge.clone(), merge];
+    let summary =
+        task_summary_excluding(real_git(), &repo.root, &start, &branch, &merges, T).unwrap();
+    let subjects: Vec<&str> = summary.commits.iter().map(|(_, s)| s.as_str()).collect();
+    assert_eq!(subjects, vec!["task work"], "{summary:?}");
+    assert!(
+        summary.diffstat.contains("src/own.rs"),
+        "{}",
+        summary.diffstat
+    );
+    assert!(
+        !summary.diffstat.contains("docs/other.md"),
+        "{}",
+        summary.diffstat
+    );
+    // Own work after the refresh counts too.
+    commit_file(&wt, "src/later.rs", "later\n", "later work");
+    // The engine records the worker's `HEAD` on the branch as it counts.
+    count_commits(real_git(), &wt, &start, &run_head, T).unwrap();
+    let merges = [head_parent_merge(&repo.root, &branch)];
+    let summary =
+        task_summary_excluding(real_git(), &repo.root, &start, &branch, &merges, T).unwrap();
+    let subjects: Vec<&str> = summary.commits.iter().map(|(_, s)| s.as_str()).collect();
+    assert_eq!(subjects, vec!["later work", "task work"]);
+    assert!(summary.diffstat.contains("src/later.rs") && !summary.diffstat.contains("docs/"));
+}
+
+/// The branch's first parent: the refresh merge under the newest commit.
+fn head_parent_merge(root: &Path, branch: &str) -> String {
+    out(root, &["rev-parse", &format!("{branch}^")])
 }

@@ -534,6 +534,20 @@ pub fn worker_messages_for_review(messages: &[TaskMessage]) -> String {
 /// Decision 42e: a clean refresh merged `n` commits; `list` is `(sha, subject)`, newest
 /// first, of which at most 10 are named.
 pub fn refresh_clean(n: usize, list: &[(String, String)]) -> String {
+    format!("{} Rebuild before you continue.", refreshed_line(n, list))
+}
+
+/// M9.13a review, item 7: [`refresh_clean`] for a `paused(message)` task, whose worker
+/// must not continue until a message releases it.
+pub fn refresh_clean_paused(n: usize, list: &[(String, String)]) -> String {
+    format!("{} {REBUILD_AND_WAIT}", refreshed_line(n, list))
+}
+
+/// A paused task's refresh: what to do, and that it still waits.
+const REBUILD_AND_WAIT: &str =
+    "Rebuild, then wait for the next message: you were asked to stop and wait.";
+
+fn refreshed_line(n: usize, list: &[(String, String)]) -> String {
     let mut named: Vec<String> = list
         .iter()
         .take(10)
@@ -544,7 +558,7 @@ pub fn refresh_clean(n: usize, list: &[(String, String)]) -> String {
         named.push(format!("and {more} more"));
     }
     format!(
-        "[anthrex] Your branch now includes the latest merged work ({n} commits: {}). Rebuild before you continue.",
+        "[anthrex] Your branch now includes the latest merged work ({n} commits: {}).",
         named.join(", ")
     )
 }
@@ -553,6 +567,14 @@ pub fn refresh_clean(n: usize, list: &[(String, String)]) -> String {
 pub fn refresh_conflict(files: &[String]) -> String {
     format!(
         "[anthrex] Merging the latest run branch into your worktree conflicted in: {}. Resolve them, commit, and continue.",
+        files.join(", ")
+    )
+}
+
+/// M9.13a review, item 7: [`refresh_conflict`] for a `paused(message)` task.
+pub fn refresh_conflict_paused(files: &[String]) -> String {
+    format!(
+        "[anthrex] Merging the latest run branch into your worktree conflicted in: {}. Resolve them and commit, then wait for the next message: you were asked to stop and wait.",
         files.join(", ")
     )
 }

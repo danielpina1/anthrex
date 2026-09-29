@@ -186,6 +186,7 @@ fn add_dep_then_answer_waits_for_the_dependency_then_hands_back() {
             head: None,
             onto: None,
             merged: Vec::new(),
+            merged_total: 0,
         },
     );
     assert_eq!(fx.task("t1").state, TaskState::Working);

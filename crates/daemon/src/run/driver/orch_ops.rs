@@ -282,6 +282,20 @@ impl RunService {
         }
     }
 
+    /// Decisions 11 and 30, M9.13a review item 8: a run that has ended leaves its
+    /// orchestrator window a plain one as soon as the step that ended it, under the
+    /// engine lock (the manager's lock taken inside it, as `refresh_orchestrator_otlp`
+    /// does; neither does I/O). A client that sees the run ended through any request,
+    /// which takes the engine lock, can then kill the window: before, the flag waited
+    /// for the step's saves and its publish.
+    pub(super) fn release_ended_orchestrators(&self, state: &crate::run::engine::EngineState) {
+        for run in state.runs.values().filter(|run| run.state.is_terminal()) {
+            if let Some(id) = run.orch.orchestrator.as_ref().and_then(|o| o.window_id) {
+                self.manager.set_run_window_live(id, false);
+            }
+        }
+    }
+
     /// Decisions 11 and 30: a published run that has ended leaves its orchestrator
     /// window a plain one.
     pub(super) fn clear_ended_orchestrators(&self, snap: &RunsSnapshot) {
@@ -403,3 +417,7 @@ async fn ended(
 #[cfg(test)]
 #[path = "orch_ops_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "live_flag_tests.rs"]
+mod live_flag_tests;

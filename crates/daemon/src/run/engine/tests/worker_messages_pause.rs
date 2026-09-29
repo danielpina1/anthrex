@@ -22,7 +22,7 @@ use crate::run::snapshot::attention;
 
 /// `t1` working, then paused by the user's `stop_and_wait`, its stop turn delivered
 /// and closed.
-fn paused() -> (Fixture, u32) {
+pub(super) fn paused() -> (Fixture, u32) {
     let (mut fx, window) = working();
     edit(
         &mut fx,
@@ -44,7 +44,7 @@ fn is_paused(fx: &Fixture) -> bool {
 }
 
 /// A worker's `task_note` from `window`, as the driver routes it (`OrchEvent::Tool`).
-fn note(fx: &mut Fixture, window: u32, kind: &str, text: &str) -> Vec<Effect> {
+pub(super) fn note(fx: &mut Fixture, window: u32, kind: &str, text: &str) -> Vec<Effect> {
     let reply = fx.reply();
     fx.next(EventKind::Orch(OrchEvent::Tool {
         reply,

@@ -415,6 +415,7 @@ pub fn some_results() -> Vec<OpResult> {
             head: Some("b".repeat(40)),
             onto: None,
             merged: Vec::new(),
+            merged_total: 0,
         },
         OpResult::Finished {
             outcome: "accepted as abcdef1".into(),
