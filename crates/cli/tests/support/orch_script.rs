@@ -7,10 +7,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
-/// The `wait_secs` every scripted `run_status` passes. `fake-agent`'s captures fill
-/// strings only, so a script cannot pass `since` (an integer) and every call answers at
-/// once (decision 16); the calls' bound, `wait_secs + 5` s, is asserted from the MCP
-/// log's `ms` all the same.
+/// The `wait_secs` every [`until`] passes. It passes no `since`, so each call answers at
+/// once (decision 16); a real long-poll captures `/revision` and passes it as
+/// `"since": "{{#rev}}"` (`fake-agent` fills a whole `{{#name}}` as JSON). The calls'
+/// bound, `wait_secs + 5` s, is asserted from the MCP log's `ms`.
 pub const STATUS_WAIT_SECS: u64 = 5;
 
 /// A turn begins: the window is `Working`, so no wake-up is pasted while the script

@@ -30,10 +30,20 @@ pub struct Reply {
     pub text: String,
 }
 
-/// Replaces `{{name}}` with each `capture`'s value in every string of `args`.
+/// Replaces `{{name}}` with each `capture`'s value in every string of `args`. A string
+/// that is exactly `{{#name}}` becomes the capture parsed as JSON (M9.16: an integer
+/// `since`), or the capture as a string when it is not JSON.
 pub fn fill(args: &Value, captures: &BTreeMap<String, String>) -> Value {
     match args {
         Value::String(text) => {
+            let whole = text
+                .strip_prefix("{{#")
+                .and_then(|t| t.strip_suffix("}}"))
+                .and_then(|name| captures.get(name));
+            if let Some(value) = whole {
+                return serde_json::from_str(value)
+                    .unwrap_or_else(|_| Value::String(value.clone()));
+            }
             let mut text = text.clone();
             for (name, value) in captures {
                 text = text.replace(&format!("{{{{{name}}}}}"), value);
@@ -214,6 +224,22 @@ mod tests {
             fill(&args, &captures),
             json!({"red": "abc1234", "list": ["x abc1234 abc1234", 3], "n": null,
                 "other": "{{green}}"})
+        );
+    }
+
+    /// M9.16: a string that is exactly `{{#name}}` becomes the capture's JSON value (an
+    /// integer `since` for `run_status`); anything else stays a string.
+    #[test]
+    fn fill_puts_a_json_value_for_a_whole_hash_capture() {
+        let captures = BTreeMap::from([
+            ("rev".to_string(), "42".to_string()),
+            ("word".to_string(), "abc".to_string()),
+        ]);
+        let args = json!({"since": "{{#rev}}", "text": "at {{#rev}}", "w": "{{#word}}",
+            "x": "{{#missing}}"});
+        assert_eq!(
+            fill(&args, &captures),
+            json!({"since": 42, "text": "at {{#rev}}", "w": "abc", "x": "{{#missing}}"})
         );
     }
 }

@@ -72,6 +72,10 @@ fn e2e_promote_starts_an_orchestrator_and_holds_its_tasks() {
     wait_passed(&h, 1);
 }
 
+/// `daemon::run::driver::wake::SUBMIT_DELAY` (private to the driver): the paste, then
+/// this long, then the `\r` that submits it.
+const SUBMIT_DELAY_MS: u64 = 200;
+
 #[test]
 fn e2e_wake_does_not_collide_with_typing() {
     let h = harness("");
@@ -107,8 +111,10 @@ fn e2e_wake_does_not_collide_with_typing() {
     let started = Instant::now();
     let (mut typed, mut last_typed, mut blocked_at) = (0, 0, None);
     while started.elapsed() < Duration::from_secs(3) {
-        h.type_into(window, b"x");
+        // Taken before the keystroke is sent, so it is never after the daemon's own
+        // record of the client's input.
         (typed, last_typed) = (typed + 1, now_ms());
+        h.type_into(window, b"x");
         if started.elapsed() >= Duration::from_millis(300) && !block.exists() {
             std::fs::write(&block, "").unwrap();
         }
@@ -136,10 +142,13 @@ fn e2e_wake_does_not_collide_with_typing() {
         "{wake}"
     );
     assert_eq!(raw, format!("{keys}{}", framed(wake)), "{message}");
+    // `at` is the submitting `\r`, which the driver writes `SUBMIT_DELAY` after the
+    // paste; the paste itself comes no sooner than `wake_quiet_secs` after the input.
     let submitted = epoch_ms(message["at"].as_str().unwrap());
     assert!(
-        submitted >= last_typed + 1_000,
-        "the paste ended {} ms after the last keystroke",
+        // Less 1 ms: both stamps are cut to whole milliseconds.
+        submitted + 1 >= last_typed + 1_000 + SUBMIT_DELAY_MS,
+        "the paste was submitted {} ms after the last keystroke",
         submitted.saturating_sub(last_typed)
     );
     assert!(epoch_ms(message["first_at"].as_str().unwrap()) <= last_typed);

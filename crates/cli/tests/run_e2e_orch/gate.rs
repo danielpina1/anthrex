@@ -47,6 +47,11 @@ fn e2e_plan_path_scouts_plans_and_reads_the_approval() {
         until("/gate/state", json!("approved"), ORCH_WAIT),
         until("/run/complete", json!(true), RUN_WAIT * 2),
         edit_plan(vec![], json!({"summary": SUMMARY})),
+        // A real long-poll: nothing changes a complete run's digest, so a `since` of
+        // its revision waits out `wait_secs` (decision 16).
+        call("run_status", json!({})),
+        capture_json("rev", "/revision"),
+        call("run_status", json!({"since": "{{#rev}}", "wait_secs": 3})),
         marker(),
         read(None),
     ];
@@ -80,6 +85,13 @@ fn e2e_plan_path_scouts_plans_and_reads_the_approval() {
         .filter(|l| l["script"] == ORCH && l["tool"] == "run_status")
         .collect();
     assert!(calls.len() >= 4, "{calls:?}");
+    let polled: Vec<_> = calls
+        .iter()
+        .filter(|c| c["args"]["since"].is_u64())
+        .collect();
+    assert_eq!(polled.len(), 1, "{polled:?}");
+    let waited = polled[0]["ms"].as_u64().unwrap();
+    assert!(waited >= 3_000, "the long-poll answered after {waited} ms");
     for c in calls {
         let wait = c["args"]["wait_secs"].as_u64().unwrap_or(0);
         let ms = c["ms"].as_u64().expect("the call's duration");
