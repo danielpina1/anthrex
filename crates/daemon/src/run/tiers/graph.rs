@@ -133,3 +133,19 @@ impl<'de> Deserialize<'de> for Keys {
         deserializer.deserialize_map(Visit)
     }
 }
+
+/// Decision 9's note for a run, `module graph unknown: <reason>; every tier runs
+/// check`, given the first time a run meets an unknown graph: `note` is the run's
+/// `Run.graph_note`, set here then; later unknown graphs, and known ones, give `None`,
+/// so the log and the report say it once.
+pub fn note_once(note: &mut Option<String>, graph: &super::GraphState) -> Option<String> {
+    let super::GraphState::Unknown(reason) = graph else {
+        return None;
+    };
+    if note.is_some() {
+        return None;
+    }
+    let line = format!("module graph unknown: {reason}; every tier runs check");
+    *note = Some(line.clone());
+    Some(line)
+}

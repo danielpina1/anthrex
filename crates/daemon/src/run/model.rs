@@ -462,6 +462,14 @@ pub struct Run {
     /// Milestone 9.1 decision 11: the frozen profile's hash, a result-cache key part.
     #[serde(default)]
     pub profile_hash: String,
+    /// Milestone 9.1 decision 11: the toolchain id the run's first tier job read, a
+    /// result-cache key part; `None` until then.
+    #[serde(default)]
+    pub toolchain: Option<String>,
+    /// Milestone 9.1 decision 9: the note of the first unknown module graph the run
+    /// met (`tiers::graph::note_once`), logged and reported once.
+    #[serde(default)]
+    pub graph_note: Option<String>,
 }
 
 impl Run {

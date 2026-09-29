@@ -470,6 +470,8 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         orch: Default::default(),
         role_routing_decisions: Vec::new(),
         profile_hash,
+        toolchain: None,
+        graph_note: None,
     })
 }
 

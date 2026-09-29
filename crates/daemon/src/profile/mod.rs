@@ -32,7 +32,7 @@ pub mod service_run;
 pub mod service_start;
 pub mod store;
 pub mod verify;
-mod verify_tiers;
+pub(crate) mod verify_tiers;
 
 /// The onboarding scout's disposable checkout, under `<wt>/runs/` (decision 8).
 pub const ONBOARDING_CHECKOUT: &str = ".onboarding";

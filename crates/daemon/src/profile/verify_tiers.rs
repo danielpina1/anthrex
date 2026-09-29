@@ -51,8 +51,9 @@ fn run(
     }
 }
 
-/// `command`'s stdout, read from a file in its `TMPDIR`, with its outcome.
-fn capture(
+/// `command`'s stdout, read from a file in its `TMPDIR`, with its outcome. Also the
+/// runner of the tier executor's graph and toolchain commands (`run/driver/graph.rs`).
+pub(crate) fn capture(
     dir: &Path,
     command: &str,
     env: &[(String, String)],
@@ -92,7 +93,7 @@ fn capture(
 }
 
 /// The directories under `dir` that match a `modules` pattern, relative, sorted.
-fn module_dirs(dir: &Path, modules: &[String]) -> Vec<String> {
+pub(crate) fn module_dirs(dir: &Path, modules: &[String]) -> Vec<String> {
     let mut found = Vec::new();
     for pattern in modules {
         let mut current = vec![String::new()];
