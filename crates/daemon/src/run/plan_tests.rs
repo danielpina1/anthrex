@@ -520,6 +520,13 @@ fn limits_are_frozen_at_run_start() {
             model: "claude-sonnet-5".into(),
             effort: Effort::High,
         },
+        // Whole-branch review, item 1: the run scouts' route keys are frozen too.
+        scouts: Some(crate::scout::spec::ScoutRouting {
+            runtime: None,
+            default_runtime: Runtime::Claude,
+            strength: Strength::Fast,
+            effort: Effort::Low,
+        }),
     };
     assert_eq!(run.limits.orch, frozen);
 

@@ -177,8 +177,9 @@ fn repo_with_project_settings(root: &Path) -> String {
 /// Finding 2 (ruling T22-I1b): a sub-planner's `submit_epic` made before its window is
 /// bound is held by the engine, and its runtime refusals are computed before it is
 /// sent, so the replay refuses a batch that reaches a runtime whose checks fail. The
-/// run reaches Codex only (no task; the orchestrator and its planners on Codex); the
-/// batch adds a Claude task, and Claude sessions would load the base's `.mcp.json`.
+/// run reaches Codex only (no task; the orchestrator, its planners and its scouts on
+/// Codex); the batch adds a Claude task, and Claude sessions would load the base's
+/// `.mcp.json`.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_held_submit_carries_its_runtime_refusals() {
     let rig = Arc::new(
@@ -194,6 +195,9 @@ async fn a_held_submit_carries_its_runtime_refusals() {
                 run.limits.orch.planners.runtime = None;
                 // Codex has no frontier model; at standard its planners stay on Codex.
                 run.limits.orch.planners.strength = proto::Strength::Standard;
+                // Whole-branch review, item 1: its scouts count too; on Codex.
+                let scouts = run.limits.orch.scouts.as_mut().unwrap();
+                scouts.runtime = Some(proto::Runtime::Codex);
                 planner_launching(run);
                 let reached = crate::run::reach::reachable_runtimes(run);
                 assert_eq!(reached, [proto::Runtime::Codex]);

@@ -159,6 +159,28 @@ pub fn orchestrator_window_spec(run: &Run, route: &Route, first_prompt: &str) ->
     }
 }
 
+/// A run scout's route: [`crate::scout::spec::run_scout_route`] on the keys and roster
+/// the run froze (whole-branch review, item 1), else, for a run recorded before them,
+/// the scout service's live ones (`ctx`).
+pub fn scout_route_of(run: &Run, ctx: &crate::scout::spec::ScoutContext) -> Route {
+    use crate::scout::spec::{ScoutRouting, run_scout_route};
+    match &run.limits.orch.scouts {
+        Some(routing) => run_scout_route(&run.roster, routing, &run.orch.installed),
+        None => run_scout_route(&ctx.roster, &ScoutRouting::of(ctx), &run.orch.installed),
+    }
+}
+
+/// The run scouts' route on the run's frozen keys alone, `None` for a run recorded
+/// before them (what `reach::reachable_runtimes` can count).
+pub fn frozen_scout_route(run: &Run) -> Option<Route> {
+    let routing = run.limits.orch.scouts.as_ref()?;
+    Some(crate::scout::spec::run_scout_route(
+        &run.roster,
+        routing,
+        &run.orch.installed,
+    ))
+}
+
 /// Decision 31: a sub-planner's route, `[orchestrator.planners]` as the run was built
 /// with it, on its runtime or else the orchestrator's (M8b's `scout::spec::route`). The
 /// route steps to the peer runtime only when the run's start check did not find the peer

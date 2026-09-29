@@ -97,28 +97,62 @@ pub fn scout_route(ctx: &ScoutContext) -> Route {
     route(&ctx.roster, runtime, ctx.scouts.strength, ctx.scouts.effort)
 }
 
-/// A run scout's route (M9.17 fix round 3): [`scout_route`] over the runtimes the run's
-/// start found installed (`run.orch.installed`, keyed by runtime label). When nothing
-/// pins `[orchestrator.scouts] runtime` and the default runtime is not installed, the
-/// installed peer is used; the strength step reaches the peer only when it is
-/// installed. A runtime with nothing recorded counts as installed, so a run from before
-/// the start check is routed as before. Onboarding scouts keep [`scout_route`].
+/// `[orchestrator.scouts]`'s route keys and `orchestrator.default_runtime`, as a run
+/// froze them at its start (whole-branch review, item 1): its scouts' runtime is one its
+/// start checked (decisions 50 and 53), whatever the daemon's config says later.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ScoutRouting {
+    pub runtime: Option<Runtime>,
+    pub default_runtime: Runtime,
+    pub strength: Strength,
+    pub effort: Effort,
+}
+
+impl ScoutRouting {
+    /// The keys `config` gives a run built now.
+    pub fn from_config(config: &config::Orchestrator) -> ScoutRouting {
+        ScoutRouting {
+            runtime: config.scouts.runtime,
+            default_runtime: config.default_runtime,
+            strength: config.scouts.strength,
+            effort: config.scouts.effort,
+        }
+    }
+
+    /// The scout service's live keys (a run recorded before they were frozen).
+    pub fn of(ctx: &ScoutContext) -> ScoutRouting {
+        ScoutRouting {
+            runtime: ctx.scouts.runtime,
+            default_runtime: ctx.default_runtime,
+            strength: ctx.scouts.strength,
+            effort: ctx.scouts.effort,
+        }
+    }
+}
+
+/// A run scout's route (M9.17 fix round 3): [`scout_route`]'s rule on `routing` and
+/// `roster`, over the runtimes the run's start found installed (`run.orch.installed`,
+/// keyed by runtime label). When nothing pins `[orchestrator.scouts] runtime` and the
+/// default runtime is not installed, the installed peer is used; the strength step
+/// reaches the peer only when it is installed. A runtime with nothing recorded counts
+/// as installed. Onboarding scouts keep [`scout_route`].
 pub fn run_scout_route(
-    ctx: &ScoutContext,
+    roster: &[ModelEntry],
+    routing: &ScoutRouting,
     installed: &std::collections::BTreeMap<String, bool>,
 ) -> Route {
     let missing = |runtime: Runtime| installed.get(runtime.label()) == Some(&false);
-    let mut runtime = ctx.scouts.runtime.unwrap_or(ctx.default_runtime);
-    if ctx.scouts.runtime.is_none() && missing(runtime) && !missing(peer(runtime)) {
+    let mut runtime = routing.runtime.unwrap_or(routing.default_runtime);
+    if routing.runtime.is_none() && missing(runtime) && !missing(peer(runtime)) {
         runtime = peer(runtime);
     }
-    let s = &ctx.scouts;
+    let peer_allowed = !missing(peer(runtime));
     route_within(
-        &ctx.roster,
+        roster,
         runtime,
-        s.strength,
-        s.effort,
-        !missing(peer(runtime)),
+        routing.strength,
+        routing.effort,
+        peer_allowed,
     )
 }
 

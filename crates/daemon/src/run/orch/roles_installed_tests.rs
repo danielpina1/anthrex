@@ -11,10 +11,15 @@ use proto::{Route, Runtime, Strength};
 use super::*;
 use crate::run::orch::test_support::{orchestrator, run_of, scout};
 use crate::run::orch::{EpicRecord, PlannerPhase, RunScoutState};
-use crate::scout::spec::{ScoutContext, run_scout_route};
+use crate::scout::spec::{ScoutContext, ScoutRouting};
 
 fn installed(claude: bool) -> BTreeMap<String, bool> {
     [("claude".to_string(), claude), ("codex".to_string(), true)].into()
+}
+
+/// `scout::spec::run_scout_route` on the scout service's live keys.
+fn run_scout_route(ctx: &ScoutContext, installed: &BTreeMap<String, bool>) -> Route {
+    crate::scout::spec::run_scout_route(&ctx.roster, &ScoutRouting::of(ctx), installed)
 }
 
 fn ctx() -> ScoutContext {
@@ -151,4 +156,32 @@ fn a_run_scout_with_both_runtimes_is_routed_as_before() {
             .iter()
             .all(|(_, _, r)| r.as_deref() != Some(NOT_INSTALLED))
     );
+}
+
+/// Whole-branch review, item 1: a run's scouts keep the route keys its start froze and
+/// checked; a config change after the start does not reroute them.
+#[test]
+fn a_config_change_after_the_start_does_not_reroute_a_runs_scouts() {
+    let mut config = config::Orchestrator::default();
+    config.scouts.runtime = Some(Runtime::Codex);
+    let mut run = run_on(installed(true), codex_route(Strength::Standard));
+    run.limits.orch = crate::run::orch::OrchLimits::from_config(&config);
+    // The daemon's config now says Claude, as `ctx()` does.
+    let ctx = ctx();
+    let d = scout_record(&run, "s1", &ctx, 2_000);
+    assert_eq!(d.chosen.runtime, Runtime::Codex);
+    assert_eq!(
+        crate::run::orch::launch::scout_route_of(&run, &ctx).runtime,
+        Runtime::Codex
+    );
+    // A run recorded before the keys were frozen follows the live config.
+    let mut json = serde_json::to_value(&run.limits.orch).unwrap();
+    json.as_object_mut().unwrap().remove("scouts");
+    run.limits.orch = serde_json::from_value(json).unwrap();
+    assert_eq!(run.limits.orch.scouts, None);
+    assert_eq!(
+        crate::run::orch::launch::scout_route_of(&run, &ctx).runtime,
+        Runtime::Claude
+    );
+    assert_eq!(crate::run::orch::launch::frozen_scout_route(&run), None);
 }

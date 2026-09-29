@@ -441,6 +441,10 @@ pub struct OrchLimits {
     /// `[orchestrator.agent]`, frozen too (task M9.7): `run promote` and a promotion
     /// recorded before milestone 9 resolve the orchestrator's route from the run alone.
     pub agent: AgentLimits,
+    /// The run scouts' route keys, frozen (whole-branch review, item 1). `None` on a
+    /// run recorded before them: the scout service's live keys and roster.
+    #[serde(default)]
+    pub scouts: Option<crate::scout::spec::ScoutRouting>,
 }
 
 /// `[orchestrator.agent]`: `runtime` `None` means `default_runtime`; an empty `model`
@@ -501,6 +505,7 @@ impl OrchLimits {
                 model: a.agent.model.clone(),
                 effort: a.agent.effort,
             },
+            scouts: Some(crate::scout::spec::ScoutRouting::from_config(config)),
         }
     }
 }

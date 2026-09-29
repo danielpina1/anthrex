@@ -345,3 +345,72 @@ async fn run_promote_records_what_its_check_found() {
         (Runtime::Codex, "")
     );
 }
+
+/// Whole-branch review, item 1: a run's scouts are among the runtimes its start checks.
+/// With `default_runtime = "codex"` or `[orchestrator.scouts] runtime = "codex"`, a run
+/// with a Claude orchestrator can still spawn Codex scouts, which load a tracked
+/// `.codex/config.toml` unasked; the start is refused without `--trust-project`, and
+/// starts with it, the file trusted. With the default config (Claude scouts) it starts.
+#[tokio::test]
+async fn a_codex_run_scout_is_covered_by_the_project_settings_check() {
+    let mut codex_default = config::Orchestrator::default();
+    codex_default.default_runtime = Runtime::Codex;
+    let mut codex_scouts = config::Orchestrator::default();
+    codex_scouts.scouts.runtime = Some(Runtime::Codex);
+    for (name, config) in [("default_runtime", codex_default), ("scouts", codex_scouts)] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        super::repo_with_codex_config(&root);
+        let data = tmp.path().join("data");
+        let service = service(&data, config, INSTALLED_STAND_IN);
+        let claude = Some(Runtime::Claude);
+        let refused = service
+            .build_plan(
+                empty_plan(),
+                root.clone(),
+                false,
+                false,
+                true,
+                planned(claude),
+            )
+            .await;
+        let Err(BuildError::Refused(text)) = refused else {
+            panic!("{name}: a run with Codex scouts was not refused");
+        };
+        assert!(text.contains(".codex/config.toml"), "{name}: {text}");
+        let run = match service
+            .build_plan(
+                empty_plan(),
+                root.clone(),
+                false,
+                true,
+                true,
+                planned(claude),
+            )
+            .await
+        {
+            Ok(run) => run,
+            Err(error) => panic!("{name}: {}", error.text()),
+        };
+        assert_eq!(run.trusted_project, vec![".codex/config.toml".to_string()]);
+        assert_eq!(
+            crate::run::reach::reachable_runtimes(&run),
+            vec![Runtime::Claude, Runtime::Codex],
+            "{name}"
+        );
+    }
+    // The control: Claude scouts reach nothing new.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("repo");
+    super::repo_with_codex_config(&root);
+    let service = service(
+        &tmp.path().join("data"),
+        config::Orchestrator::default(),
+        INSTALLED_STAND_IN,
+    );
+    let run = build(&service, &root, Some(Runtime::Claude)).await.unwrap();
+    assert_eq!(
+        crate::run::reach::reachable_runtimes(&run),
+        vec![Runtime::Claude]
+    );
+}

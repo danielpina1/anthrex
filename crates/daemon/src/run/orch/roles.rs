@@ -275,17 +275,21 @@ pub fn planner_record(run: &Run, k: usize, session: u32, now: u64) -> RoleRoutin
 }
 
 /// The record of run scout `scout_id`'s session, on the route the driver starts it on
-/// (`scout::spec::run_scout_route` of the scout service's context over the run's
-/// installed runtimes): `[orchestrator.scouts]`.
+/// (`launch::scout_route_of`: `[orchestrator.scouts]` as the run froze it, over the
+/// run's installed runtimes).
 pub fn scout_record(
     run: &Run,
     scout_id: &str,
     ctx: &crate::scout::spec::ScoutContext,
     now: u64,
 ) -> RoleRoutingDecision {
-    let chosen = crate::scout::spec::run_scout_route(ctx, &run.orch.installed);
-    let runtime = ctx.scouts.runtime.unwrap_or(ctx.default_runtime);
-    let ladder = ladder_candidates(&ctx.roster, runtime, ctx.scouts.strength, chosen.effort);
+    let chosen = crate::run::orch::launch::scout_route_of(run, ctx);
+    let (roster, routing) = match &run.limits.orch.scouts {
+        Some(routing) => (&run.roster, routing.clone()),
+        None => (&ctx.roster, crate::scout::spec::ScoutRouting::of(ctx)),
+    };
+    let runtime = routing.runtime.unwrap_or(routing.default_runtime);
+    let ladder = ladder_candidates(roster, runtime, routing.strength, chosen.effort);
     let candidates = mark_not_installed(ladder, &run.orch.installed);
     let mut input = input_of(run);
     if let Some(scout) = run.orch.run_scouts.iter().find(|s| s.id == scout_id) {

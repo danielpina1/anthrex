@@ -325,11 +325,13 @@ impl RunService {
         let (record, route) = {
             let state = crate::lock(&self.state);
             let run = state.runs.get(&ctx.run_id);
-            let installed = run.map(|r| r.orch.installed.clone()).unwrap_or_default();
             let record = run.map(|run| {
                 crate::run::orch::roles::scout_record(run, &scout_id, scouts.context(), unix_now())
             });
-            let route = crate::scout::spec::run_scout_route(scouts.context(), &installed);
+            let route = match run {
+                Some(run) => crate::run::orch::launch::scout_route_of(run, scouts.context()),
+                None => crate::scout::spec::scout_route(scouts.context()),
+            };
             (record, route)
         };
         // Review M-2: kept, and saved, before the session starts; a refusal (the scout
