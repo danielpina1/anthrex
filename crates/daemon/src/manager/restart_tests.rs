@@ -334,3 +334,40 @@ async fn a_refused_restart_does_not_kill_the_live_process() {
     // Clean up: this window still owns a real running shell.
     let _ = m.kill(id);
 }
+
+/// Whole-branch fix round 2, item 3: a restart starts a new program, so the window's
+/// `attention_open` (a dialog of the old one left unanswered) is reset with the rest of
+/// its status, deterministically, rather than left for a hook of the new session.
+#[tokio::test]
+async fn a_restart_resets_attention_open() {
+    let (m, mut events) = WindowManager::new(ManagerConfig::for_tests(
+        "/tmp/unused-restart-attention-test.sock".into(),
+        "/bin/sh".into(),
+    ));
+    let pump = m.clone();
+    tokio::spawn(async move {
+        while let Some((id, ev)) = events.recv().await {
+            pump.handle_event(id, ev);
+        }
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().to_path_buf();
+    let info = m
+        .create(spec("attention", cwd.clone()), cwd, None, 80, 24)
+        .await
+        .unwrap();
+    let id = info.id;
+    crate::lock(&m.inner)
+        .entries
+        .get_mut(&id)
+        .unwrap()
+        .attention_open = true;
+    assert!(m.attention_open(id));
+    m.restart(id).await.unwrap();
+    assert!(
+        !m.attention_open(id),
+        "the restart kept the old program's dialog"
+    );
+    // Clean up: this window owns the restarted shell.
+    let _ = m.kill(id);
+}

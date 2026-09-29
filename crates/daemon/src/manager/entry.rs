@@ -124,10 +124,15 @@ pub(super) struct Entry {
     pub(super) run_live: bool,
     /// When a client's `Input` last reached this window (decision 39's quiet time).
     pub(super) last_client_input: Option<Instant>,
-    /// Whole-branch review, item 2: the window entered `Attention` and no turn end
-    /// (`Stop`, Codex's notify), prompt submit or new session followed. A user key moves
-    /// it on to `Working` though a dialog may still be open (an arrow key), so the
-    /// orchestrator's wake-up waits on this, never on the status alone.
+    /// Whole-branch review, item 2: the window was in `Attention` and no turn end
+    /// (`Stop`, Codex's notify), prompt submit or new session has taken it out since. A
+    /// user key moves it on to `Working` though a dialog may still be open (an arrow
+    /// key), so the orchestrator's wake-up waits on this, never on the status alone.
+    /// Every event that leaves the status `Attention` sets it, so a clearing event
+    /// sticks only when it also takes the status out of `Attention`: `Stop` and
+    /// `UserPromptSubmit` always do; `SessionStart`, and Codex's notify once hooks were
+    /// seen, leave an `Attention` status as it is (`status::next`), and the flag with
+    /// it. A restart resets it (`manager/restart.rs`).
     pub(super) attention_open: bool,
 }
 

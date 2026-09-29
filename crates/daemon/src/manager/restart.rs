@@ -506,6 +506,9 @@ impl WindowManager {
         entry.last_output = now;
         entry.exit = None;
         entry.child_alive = true;
+        // Whole-branch fix round 2, item 3: a dialog of the old program cannot be open
+        // in the new one.
+        entry.attention_open = false;
         // Cleared here, under the same lock as the swap, rather than left for the
         // guard's `Drop` a moment later: this is the one lock acquisition decision 21
         // requires the swap to happen under, so the flag's own release rides along with
