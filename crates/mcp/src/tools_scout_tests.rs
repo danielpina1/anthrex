@@ -106,7 +106,7 @@ fn scout_schema_limits() {
         })
     );
     let keys: Vec<&String> = q.as_object().unwrap().keys().collect();
-    assert_eq!(keys.len(), 17, "{keys:?}");
+    assert_eq!(keys.len(), 29, "{keys:?}");
 
     let mut names = Vec::new();
     walk("submit_scout_report", &s, &mut names);
@@ -117,4 +117,38 @@ fn scout_schema_limits() {
             "a confinement setting in the scout schema: {name}"
         );
     }
+}
+
+/// Milestone 9.1 decision 12: the onboarding scout may propose the tier keys, each with
+/// the daemon's limits, and still nothing else.
+#[test]
+fn mcp_scout_schema_lists_the_new_profile_keys() {
+    let s = schema();
+    let q = &s["properties"]["profile"]["properties"];
+    let text = |max: u64| json!({"type": "string", "minLength": 1, "maxLength": max});
+    let list =
+        |max: u64, chars: u64| json!({"type": "array", "maxItems": max, "items": text(chars)});
+    for key in [
+        "build_check",
+        "module_test",
+        "module_tests",
+        "module_graph",
+        "slow_tests",
+        "timing_tests",
+        "toolchain_id",
+    ] {
+        assert_eq!(q[key], text(2000), "{key}");
+    }
+    assert_eq!(
+        q["module_names"],
+        json!({"type": "string", "enum": ["cargo", "dir"]})
+    );
+    assert_eq!(q["full_triggers"], list(40, 300));
+    assert_eq!(q["test_paths"], list(40, 300));
+    assert_eq!(q["skip_markers"], list(32, 64));
+    assert_eq!(
+        q["full_shards"],
+        json!({"type": "integer", "minimum": 1, "maximum": 16})
+    );
+    assert_eq!(q.as_object().unwrap().len(), 29);
 }

@@ -8,7 +8,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use proto::{OutputFilter, RepoProfile, Route, ScoutFile, ScoutKind, ScoutReport, ScoutState};
+use proto::{
+    ModuleNames, OutputFilter, RepoProfile, Route, ScoutFile, ScoutKind, ScoutReport, ScoutState,
+};
 
 use super::machine::ScoutMachine;
 use super::spec::ScoutSpec;
@@ -56,6 +58,18 @@ const PROFILE_KEYS: &[&str] = &[
     "filter_prefixes",
     "conventions",
     "manifests",
+    "build_check",
+    "module_test",
+    "module_tests",
+    "module_graph",
+    "module_names",
+    "full_triggers",
+    "slow_tests",
+    "timing_tests",
+    "skip_markers",
+    "test_paths",
+    "full_shards",
+    "toolchain_id",
     "env",
 ];
 const ENV_MAX: usize = 20;
@@ -126,6 +140,18 @@ fn profile(value: &Value) -> Result<RepoProfile, String> {
             Some(n)
         }
     };
+    let module_names = match p.get("module_names").map(Value::as_str) {
+        None => None,
+        Some(Some("cargo")) => Some(ModuleNames::Cargo),
+        Some(Some("dir")) => Some(ModuleNames::Dir),
+        Some(_) => return Err("profile.module_names: expected cargo or dir".into()),
+    };
+    let full_shards = match p.get("full_shards").map(Value::as_u64) {
+        None => None,
+        Some(None) => return Err("profile.full_shards: expected an integer".into()),
+        Some(Some(n @ 1..=16)) => u8::try_from(n).ok(),
+        Some(Some(_)) => return Err("profile.full_shards: must be between 1 and 16".into()),
+    };
     let output_filter = match p.get("output_filter").map(Value::as_str) {
         None => OutputFilter::default(),
         Some(Some("failures-only")) => OutputFilter::FailuresOnly,
@@ -152,19 +178,19 @@ fn profile(value: &Value) -> Result<RepoProfile, String> {
         filter_prefixes: list("filter_prefixes", 10, 100)?,
         conventions: list("conventions", 20, 300)?,
         manifests: list("manifests", 50, 300)?,
-        // Milestone 9.1's tier keys: not in the onboarding report until task M9.1.5.
-        build_check: None,
-        module_test: None,
-        module_tests: None,
-        module_graph: None,
-        module_names: None,
-        full_triggers: Vec::new(),
-        slow_tests: None,
-        timing_tests: None,
-        skip_markers: Vec::new(),
-        test_paths: Vec::new(),
-        full_shards: None,
-        toolchain_id: None,
+        // Milestone 9.1 decision 12: the tier keys, limits as the MCP schema's.
+        build_check: text("build_check", 2000)?,
+        module_test: text("module_test", 2000)?,
+        module_tests: text("module_tests", 2000)?,
+        module_graph: text("module_graph", 2000)?,
+        module_names,
+        full_triggers: list("full_triggers", 40, 300)?,
+        slow_tests: text("slow_tests", 2000)?,
+        timing_tests: text("timing_tests", 2000)?,
+        skip_markers: list("skip_markers", 32, 64)?,
+        test_paths: list("test_paths", 40, 300)?,
+        full_shards,
+        toolchain_id: text("toolchain_id", 2000)?,
         env: env(p.get("env"))?,
     })
 }

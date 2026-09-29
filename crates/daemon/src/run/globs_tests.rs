@@ -212,3 +212,49 @@ fn non_ascii_paths_are_protected() {
         assert_eq!(may_cover_protected(entry, "AGENTS.md"), covers, "{entry}");
     }
 }
+
+/// Milestone 9.1 decision 10: a changed path's module is the one `modules_spanned`
+/// gives it as a one-entry `owns` (`.` is no module), for every path of the
+/// `modules_spanned` fixtures above and a few more shapes.
+#[test]
+fn path_module_agrees_with_glob_module() {
+    let fixtures = [
+        s(&["crates/*"]),
+        s(&["crates/*", "tools/cli"]),
+        s(&["mods/*", "crates/*/sub"]),
+        s(&[]),
+    ];
+    let paths = [
+        "crates/proto/src/a.rs",
+        "crates/proto/Cargo.toml",
+        "crates/tui/src/lib.rs",
+        "crates/tui",
+        "crates",
+        "docs/x.md",
+        "Cargo.lock",
+        "tools/cli/main.rs",
+        "mods/a/test.sh",
+        "crates/x/sub/y.rs",
+    ];
+    for modules in &fixtures {
+        for path in paths {
+            let expected = match modules_spanned(&s(&[path]), modules) {
+                ModuleSpan::One(name) if name == "." => None,
+                ModuleSpan::One(name) => Some(name),
+                ModuleSpan::Many => None,
+            };
+            assert_eq!(
+                path_module(path, modules),
+                expected,
+                "{path} in {modules:?}"
+            );
+        }
+    }
+    let modules = s(&["crates/*"]);
+    assert_eq!(
+        path_module("crates/proto/src/a.rs", &modules).as_deref(),
+        Some("crates/proto")
+    );
+    assert_eq!(path_module("docs/x.md", &modules), None);
+    assert_eq!(path_module("crates/proto/src/a.rs", &[]), None);
+}

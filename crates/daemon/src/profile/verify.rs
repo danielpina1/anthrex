@@ -115,7 +115,7 @@ fn run_one(
     }
 }
 
-fn record(command: &str, outcome: ShellOutcome, ok: bool) -> CommandCheck {
+pub(super) fn record(command: &str, outcome: ShellOutcome, ok: bool) -> CommandCheck {
     CommandCheck {
         command: command.to_string(),
         ok,
@@ -133,6 +133,7 @@ fn record(command: &str, outcome: ShellOutcome, ok: bool) -> CommandCheck {
 /// proof command for `sample_test`, which passes only when it exits 0 and a line matches
 /// `test_passed`. A `single_test` that cannot be verified (no `{test}`, no companions,
 /// a pattern that does not compile) is not run; `proposal::apply_verification` says why.
+/// Then milestone 9.1's tier commands (`verify_tiers.rs`).
 pub fn run_commands(
     dir: &Path,
     profile: &RepoProfile,
@@ -162,7 +163,13 @@ pub fn run_commands(
         record(command, outcome, ok)
     };
     let setup = profile.setup.as_ref().map(plain);
-    let check = profile.check.as_ref().map(plain);
+    // Milestone 9.1: a tiered `check`'s placeholders are filled in to run it whole.
+    let check = profile.check.as_ref().map(|command| {
+        let whole = super::verify_tiers::check_command(profile, command);
+        let (outcome, _) = run_one(dir, &whole, &env, timeout, None, confine);
+        let ok = outcome.ok;
+        record(command, outcome, ok)
+    });
     let single_test = match (
         &profile.single_test,
         &profile.sample_test,
@@ -182,19 +189,21 @@ pub fn run_commands(
         }
         _ => None,
     };
-    ProfileVerification {
+    let mut verification = ProfileVerification {
         at: now,
         confined: confine.is_some(),
         setup,
         check,
         single_test,
-        // Milestone 9.1's tier commands: verified from task M9.1.5.
         build_check: None,
         module_graph: None,
         module_test: None,
         module_tests: None,
         toolchain_id: None,
-    }
+    };
+    // Milestone 9.1 decision 12: the tier commands, after M8b's three.
+    super::verify_tiers::run_commands(dir, profile, &env, timeout, confine, &mut verification);
+    verification
 }
 
 /// Pins a checkout this daemon did not pin (one left by an earlier daemon) as the

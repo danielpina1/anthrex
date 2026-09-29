@@ -13,6 +13,7 @@ use proto::{EditFile, Plan, PlanEdit, ProfileSpec, RunState};
 
 use super::globs::validate_glob;
 use super::model::{Profile, Run, RunLimits, task_branch, task_path};
+use super::tiers::{self, TierProfile};
 use super::validate::{
     EditScope, combined_cycles, implicit_deps, resolve_task_lenient, validate_tasks,
 };
@@ -153,6 +154,7 @@ pub fn resolve_profile(plan: &ProfileSpec, config: &ProfileSpec) -> Profile {
         confined_network: false,
         confined_unix_sockets: Vec::new(),
         confined_localhost_ports: Vec::new(),
+        tiers: TierProfile::resolve(plan, config),
     }
 }
 
@@ -275,6 +277,16 @@ fn check_plan(plan: &Plan, profile: &Profile, errors: &mut Vec<PlanError>) {
             ));
         }
     }
+    // Milestone 9.1 decision 8.
+    let tier_problems = tiers::validate(&profile.tiers, profile.check.as_deref(), &profile.modules);
+    for (key, message) in tier_problems {
+        errors.push(PlanError::new(
+            None,
+            &format!("profile.{key}"),
+            "profile",
+            message,
+        ));
+    }
     for (field, globs) in [
         ("profile.generated", &profile.generated),
         ("profile.protected", &profile.protected),
@@ -380,6 +392,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
     }
 
     let unverified = profile.check.is_none();
+    let profile_hash = tiers::profile_hash(&profile);
     Ok(Run {
         id: ctx.id,
         goal: plan.goal,
@@ -456,6 +469,7 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
         plan_edits_since_approval: 0,
         orch: Default::default(),
         role_routing_decisions: Vec::new(),
+        profile_hash,
     })
 }
 

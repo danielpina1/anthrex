@@ -187,3 +187,65 @@ fn unconfined_checks_is_read_and_off_by_default() {
     assert!(problems.is_empty(), "{problems:?}");
     assert!(config.orchestrator.unconfined_checks);
 }
+
+/// Milestone 9.1 decision 5: `[orchestrator.profile]` carries the tier keys.
+#[test]
+fn the_profile_tier_keys_are_read() {
+    let (config, problems) = parse(
+        r##"
+[orchestrator.profile]
+build_check = "cargo build"
+module_test = "cargo test -p {module} {filter:-E %}"
+module_tests = "cargo test {modules:-p %}"
+module_graph = "cargo"
+module_names = "cargo"
+full_triggers = ["Cargo.lock"]
+slow_tests = "test(e2e)"
+timing_tests = "test(timing)"
+skip_markers = ["#[ignore"]
+test_paths = ["**/tests/**"]
+full_shards = 4
+toolchain_id = "rustc -V"
+"##,
+    );
+    assert_eq!(problems, Vec::new());
+    let p = &config.orchestrator.profile;
+    assert_eq!(p.build_check.as_deref(), Some("cargo build"));
+    assert_eq!(
+        p.module_test.as_deref(),
+        Some("cargo test -p {module} {filter:-E %}")
+    );
+    assert_eq!(p.module_tests.as_deref(), Some("cargo test {modules:-p %}"));
+    assert_eq!(p.module_graph.as_deref(), Some("cargo"));
+    assert_eq!(p.module_names, Some(proto::ModuleNames::Cargo));
+    assert_eq!(p.full_triggers, Some(vec!["Cargo.lock".to_string()]));
+    assert_eq!(p.slow_tests.as_deref(), Some("test(e2e)"));
+    assert_eq!(p.timing_tests.as_deref(), Some("test(timing)"));
+    assert_eq!(p.skip_markers, Some(vec!["#[ignore".to_string()]));
+    assert_eq!(p.test_paths, Some(vec!["**/tests/**".to_string()]));
+    assert_eq!(p.full_shards, Some(4));
+    assert_eq!(p.toolchain_id.as_deref(), Some("rustc -V"));
+
+    let (config, problems) = parse(
+        "[orchestrator.profile]\nmodule_names = \"crate\"\nfull_shards = 17\nslow_tests = 3\n",
+    );
+    let keys: Vec<(&str, &str)> = problems
+        .iter()
+        .map(|p| (p.key.as_str(), p.message.as_str()))
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            ("orchestrator.profile.slow_tests", "expected a string"),
+            (
+                "orchestrator.profile.module_names",
+                "expected \"cargo\" or \"dir\""
+            ),
+            (
+                "orchestrator.profile.full_shards",
+                "must be between 1 and 16"
+            ),
+        ]
+    );
+    assert_eq!(config.orchestrator.profile, proto::ProfileSpec::default());
+}

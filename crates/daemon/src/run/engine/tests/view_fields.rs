@@ -374,6 +374,14 @@ fn old_run_json_loads() {
         serde_json::from_value::<crate::run::model::TestingLimits>(testing).unwrap(),
         crate::run::model::TestingLimits::default()
     );
+    // Milestone 9.1 decisions 5 and 11: no tier key, and no profile hash.
+    assert_eq!(map.remove("profile_hash"), Some(serde_json::json!("")));
+    let tiers = map["profile"].as_object_mut().unwrap().remove("tiers");
+    assert_eq!(
+        serde_json::from_value::<crate::run::tiers::TierProfile>(tiers.expect("profile.tiers"))
+            .unwrap(),
+        crate::run::tiers::TierProfile::default()
+    );
     for task in back["tasks"].as_array_mut().unwrap() {
         // Milestone 9 decision 24's plan field, and task 4's empty task state.
         let task = task.as_object_mut().unwrap();

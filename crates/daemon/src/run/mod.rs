@@ -59,6 +59,7 @@ pub mod seatbelt;
 pub mod snapshot;
 mod snapshot_orch;
 pub mod stats;
+pub mod tiers;
 pub mod triage;
 pub mod validate;
 mod validate_graph;

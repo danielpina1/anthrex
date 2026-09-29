@@ -101,6 +101,17 @@ fn glob_module(glob: &str, modules: &[String]) -> GlobModule {
     GlobModule::Named(".".to_string())
 }
 
+/// The module directory a changed path belongs to (milestone 9.1 decision 10): the one
+/// [`modules_spanned`] gives the path as a one-entry `owns`, so sizing and the affected
+/// set never disagree. `None` where that answers `.` (no pattern matched), or where
+/// the path is shorter than a pattern it is a prefix of.
+pub fn path_module(path: &str, modules: &[String]) -> Option<String> {
+    match glob_module(path, modules) {
+        GlobModule::Named(name) if name != "." => Some(name),
+        GlobModule::Named(_) | GlobModule::Many => None,
+    }
+}
+
 /// Which module (or modules) `owns` spans, given `profile.modules`. With no modules
 /// configured, every glob's module is `.`. *(Decision 9.)*
 pub fn modules_spanned(owns: &[String], modules: &[String]) -> ModuleSpan {

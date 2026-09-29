@@ -94,6 +94,9 @@ pub struct Profile {
     /// own `[orchestrator.confined_localhost_ports]` for the repository.
     #[serde(default)]
     pub confined_localhost_ports: Vec<u16>,
+    /// Milestone 9.1 decision 5: the tier keys, all off in a run recorded before them.
+    #[serde(default)]
+    pub tiers: super::tiers::TierProfile,
 }
 
 /// A resolved task: the planner's spec plus everything decisions 8–10 and 35 derive
@@ -456,6 +459,9 @@ pub struct Run {
     /// Milestone 9's run state (`run::orch::RunOrch`).
     #[serde(default)]
     pub orch: super::orch::RunOrch,
+    /// Milestone 9.1 decision 11: the frozen profile's hash, a result-cache key part.
+    #[serde(default)]
+    pub profile_hash: String,
 }
 
 impl Run {
