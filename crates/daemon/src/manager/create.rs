@@ -320,6 +320,7 @@ impl WindowManager {
             role,
             run_live: false,
             last_client_input: None,
+            attention_open: false,
         };
         let info = entry.info(now);
         tracing::info!(

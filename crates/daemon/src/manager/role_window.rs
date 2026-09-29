@@ -245,6 +245,13 @@ impl WindowManager {
         inner.entries.get(&id)?.last_client_input
     }
 
+    /// Whole-branch review, item 2: `id` entered `Attention` and its turn has not ended
+    /// since (`Entry::attention_open`); false for a window that is gone.
+    pub fn attention_open(&self, id: u32) -> bool {
+        let inner = crate::lock(&self.inner);
+        inner.entries.get(&id).is_some_and(|e| e.attention_open)
+    }
+
     /// A client's `Input`: noted, then written. The engine's own writes (a wake-up) go
     /// through `write_input` and are not client input.
     pub fn write_client_input(&self, id: u32, bytes: &[u8]) -> anyhow::Result<()> {

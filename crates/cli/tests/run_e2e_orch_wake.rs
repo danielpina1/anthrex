@@ -214,3 +214,48 @@ fn a_manual_restart_of_the_orchestrator_is_not_an_exit() {
         std::thread::sleep(Duration::from_millis(100));
     }
 }
+
+/// Whole-branch review, item 2: a key the user types into a permission dialog moves the
+/// window from `Attention` to `Working` (an arrow key leaves the dialog open), and a
+/// later `idle_prompt` makes it `Idle`. The wake-up waits for the turn's `Stop` (or the
+/// next `UserPromptSubmit`): its paste and `\r` must never answer the dialog.
+#[test]
+fn a_wake_waits_for_the_turn_end_after_attention() {
+    let steps = [
+        json!({"hook": "UserPromptSubmit", "payload": {"prompt": "plan"}}),
+        json!({"hook": "Notification", "payload": {"notification_type": "permission_prompt", "message": "Claude needs your permission to use Read"}}),
+        json!({"read_line": true}),
+        json!({"hook": "Notification", "payload": {"notification_type": "idle_prompt", "message": "Claude is waiting for your input"}}),
+        json!({"wait_ms": 4000}),
+        read_message(),
+        read_message(),
+    ];
+    let h = RunHarness::orch("", &[]);
+    h.script(ORCH, &steps);
+    let run = h.start_goal_id("rework storage", &[]);
+    let window = h.orchestrator_window(&run);
+    h.wait_window(
+        window,
+        "attention",
+        |w| w.status == Status::Attention,
+        ORCH_WAIT,
+    );
+    h.add_task(&run, "t1");
+    // The user's key (the dialog is still open), then Claude's `idle_prompt`.
+    h.type_into(window, b"down\r");
+    h.wait_window(window, "idle", |w| w.status == Status::Idle, ORCH_WAIT);
+    let idle = Instant::now();
+    // `wake_quiet_secs = 1`: an ungated wake-up would be pasted within about a second.
+    while idle.elapsed() < Duration::from_millis(3_000) {
+        let wakes = h.run(&run).and_then(|r| r.orchestrator).map(|o| o.wakes);
+        assert_eq!(wakes, Some(0), "pasted into an unanswered dialog");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // The turn ends (`read_message`'s `Stop`): delivered.
+    h.wait_messages(ORCH, 1, REQUEST_WAIT);
+    let text = h.read_messages(ORCH)[0]["text"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(text.contains("the user edited the plan"), "{text}");
+}

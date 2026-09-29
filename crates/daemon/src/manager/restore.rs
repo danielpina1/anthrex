@@ -260,6 +260,7 @@ impl WindowManager {
                 role,
                 run_live: false,
                 last_client_input: None,
+                attention_open: false,
                 conversations: crate::conversation::ConversationSet::new(id, runtime),
                 conversation_viewers: 0,
                 transcript: Default::default(),

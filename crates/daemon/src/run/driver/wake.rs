@@ -216,10 +216,17 @@ struct Seen {
     last_note_seq: u64,
 }
 
-/// Whether `window` takes a paste now: `Idle` or `Done`, and no client input for
-/// `quiet`.
-fn ready(window: &WindowInfo, last_input: Option<Instant>, quiet: Duration) -> bool {
+/// Whether `window` takes a paste now: `Idle` or `Done`, no client input for `quiet`,
+/// and (whole-branch review, item 2) no `Attention` left unanswered by a turn end: a
+/// paste's `\r` must never confirm a permission dialog's highlighted choice.
+fn ready(
+    window: &WindowInfo,
+    last_input: Option<Instant>,
+    quiet: Duration,
+    attention_open: bool,
+) -> bool {
     matches!(window.status, Status::Idle | Status::Done)
+        && !attention_open
         && last_input.is_none_or(|at| at.elapsed() >= quiet)
 }
 
@@ -314,7 +321,9 @@ impl RunService {
             .into_iter()
             .filter(|w| {
                 window(w.window_id).is_some_and(|win| {
-                    ready(win, self.manager.last_client_input(w.window_id), w.quiet)
+                    let input = self.manager.last_client_input(w.window_id);
+                    let open = self.manager.attention_open(w.window_id);
+                    ready(win, input, w.quiet, open)
                 })
             })
             .collect();

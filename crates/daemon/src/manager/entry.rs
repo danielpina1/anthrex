@@ -124,6 +124,11 @@ pub(super) struct Entry {
     pub(super) run_live: bool,
     /// When a client's `Input` last reached this window (decision 39's quiet time).
     pub(super) last_client_input: Option<Instant>,
+    /// Whole-branch review, item 2: the window entered `Attention` and no turn end
+    /// (`Stop`, Codex's notify), prompt submit or new session followed. A user key moves
+    /// it on to `Working` though a dialog may still be open (an arrow key), so the
+    /// orchestrator's wake-up waits on this, never on the status alone.
+    pub(super) attention_open: bool,
 }
 
 impl Entry {
@@ -181,7 +186,17 @@ impl Entry {
     }
 
     pub(super) fn apply_with_context(&mut self, event: StatusEvent, ctx: StatusContext) -> bool {
+        use StatusEvent as E;
+        if matches!(
+            event,
+            E::Stop | E::UserPromptSubmit | E::CodexNotify | E::SessionStart
+        ) {
+            self.attention_open = false;
+        }
         let next = status::next(self.status, event, self.spec.runtime, ctx);
+        if next == Status::Attention {
+            self.attention_open = true;
+        }
         if next == self.status {
             return false;
         }
