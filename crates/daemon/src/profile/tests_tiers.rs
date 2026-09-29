@@ -11,13 +11,13 @@ use super::proposal_tiers::{NEEDS_GRAPH, SHARDS_NEED_CHECK};
 use super::summary;
 use super::verify::run_commands;
 
-fn strings(items: &[&str]) -> Vec<String> {
+pub(super) fn strings(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| s.to_string()).collect()
 }
 
 /// A scratch checkout: `mods/{b,a}`, and scripts that log their name and arguments to
 /// `log.txt` in order.
-fn scratch(graph_ok: bool, check_ok: bool) -> tempfile::TempDir {
+pub(super) fn scratch(graph_ok: bool, check_ok: bool) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     for module in ["mods/b", "mods/a", "mods/.hidden", "docs"] {
@@ -55,7 +55,7 @@ fn scratch(graph_ok: bool, check_ok: bool) -> tempfile::TempDir {
     dir
 }
 
-fn log(dir: &Path) -> Vec<String> {
+pub(super) fn log(dir: &Path) -> Vec<String> {
     std::fs::read_to_string(dir.join("log.txt"))
         .unwrap_or_default()
         .lines()
@@ -63,14 +63,14 @@ fn log(dir: &Path) -> Vec<String> {
         .collect()
 }
 
-fn tiered() -> RepoProfile {
+pub(super) fn tiered() -> RepoProfile {
     RepoProfile {
         modules: strings(&["mods/*"]),
         check: Some("sh check.sh --shard {shard}/{shards}".into()),
         build_check: Some("sh build.sh".into()),
         module_graph: Some("sh graph.sh".into()),
         module_test: Some("sh test.sh {module} {filter:--filter %}".into()),
-        module_tests: Some("sh test.sh all {modules:-m %}".into()),
+        module_tests: Some("sh test.sh all {modules:-m %} {filter:--filter %}".into()),
         slow_tests: Some("slow".into()),
         timing_tests: Some("timing".into()),
         full_shards: Some(2),
@@ -79,7 +79,7 @@ fn tiered() -> RepoProfile {
     }
 }
 
-fn check_of<'a>(v: &'a ProfileVerification, key: &str) -> &'a CommandCheck {
+pub(super) fn check_of<'a>(v: &'a ProfileVerification, key: &str) -> &'a CommandCheck {
     let check = match key {
         "build_check" => &v.build_check,
         "module_graph" => &v.module_graph,
@@ -108,7 +108,7 @@ fn verification_runs_the_new_commands_in_order_and_drops_failures() {
             "build.sh ",
             "graph.sh ",
             "test.sh a --filter not (slow) and not (timing)",
-            "test.sh all -m a",
+            "test.sh all -m a --filter not (slow) and not (timing)",
             "toolchain.sh ",
         ]
     );
@@ -173,8 +173,11 @@ fn verification_runs_the_new_commands_in_order_and_drops_failures() {
             ("module_tests", NEEDS_GRAPH),
             ("toolchain_id", "exit 3 after 0s"),
             ("full_shards", SHARDS_NEED_CHECK),
+            // Review I1: cargo names without the cargo graph break decision 8.
+            ("module_names", "cargo needs module_graph = \"cargo\""),
         ]
     );
+    assert_eq!(kept.module_names, None);
     for key in [
         &kept.module_graph,
         &kept.module_test,
@@ -244,7 +247,10 @@ fn profile_show_prints_every_new_key() {
         build_check: Some(check("sh build.sh", false)),
         module_graph: Some(check("sh graph.sh", true)),
         module_test: Some(check("sh test.sh {module} {filter:--filter %}", true)),
-        module_tests: Some(check("sh test.sh all {modules:-m %}", true)),
+        module_tests: Some(check(
+            "sh test.sh all {modules:-m %} {filter:--filter %}",
+            true,
+        )),
         toolchain_id: Some(check("sh toolchain.sh", true)),
     };
     let text = show_text(&profile, Some(&v), &[]);
@@ -253,7 +259,7 @@ check = "sh check.sh --shard {shard}/{shards}"
 output_filter = "failures-only"
 build_check = "sh build.sh"
 module_test = "sh test.sh {module} {filter:--filter %}"
-module_tests = "sh test.sh all {modules:-m %}"
+module_tests = "sh test.sh all {modules:-m %} {filter:--filter %}"
 module_graph = "sh graph.sh"
 module_names = "dir"
 full_triggers = ["Cargo.lock"]
@@ -269,7 +275,7 @@ toolchain_id = "sh toolchain.sh"
 #   build_check  fail   2s   sh build.sh
 #   module_graph ok     2s   sh graph.sh
 #   module_test  ok     2s   sh test.sh {module} {filter:--filter %}
-#   module_tests ok     2s   sh test.sh all {modules:-m %}
+#   module_tests ok     2s   sh test.sh all {modules:-m %} {filter:--filter %}
 #   toolchain_id ok     2s   sh toolchain.sh
 "##;
     assert_eq!(text, expected);

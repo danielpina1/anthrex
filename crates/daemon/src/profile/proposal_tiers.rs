@@ -27,10 +27,25 @@ pub fn problems(profile: &RepoProfile) -> Vec<String> {
     .collect()
 }
 
-/// A scout's tier keys with what cannot be proposed removed: a marker out of bounds
-/// (and every marker past the 32nd), and an out-of-range `full_shards`. The glob lists
-/// are filtered by the caller; commands are left for verification.
+/// A scout's tier keys with what cannot be proposed removed: a blank command or
+/// filter, a marker out of bounds (and every marker past the 32nd), and an
+/// out-of-range `full_shards`. The glob lists are filtered by the caller; commands are
+/// left for verification, and what still breaks decision 8 after it is dropped by
+/// [`apply_verification`].
 pub fn from_findings(out: &mut RepoProfile) {
+    for slot in [
+        &mut out.build_check,
+        &mut out.module_test,
+        &mut out.module_tests,
+        &mut out.module_graph,
+        &mut out.slow_tests,
+        &mut out.timing_tests,
+        &mut out.toolchain_id,
+    ] {
+        if slot.as_deref().is_some_and(|v| v.trim().is_empty()) {
+            *slot = None;
+        }
+    }
     out.skip_markers
         .retain(|m| !m.is_empty() && m.chars().count() <= SKIP_MARKER_CHARS_MAX);
     out.skip_markers.truncate(SKIP_MARKERS_MAX);
@@ -143,6 +158,77 @@ pub fn apply_verification(
                 key: "full_shards".to_string(),
                 command: n.to_string(),
                 reason: SHARDS_NEED_CHECK.to_string(),
+                tail: String::new(),
+            });
+        }
+    }
+    drop_invalid(profile, dropped);
+}
+
+/// Review I1: the key `key` taken out of `profile`, as its value's text.
+fn take_key(profile: &mut RepoProfile, key: &str) -> Option<String> {
+    let list = |list: &mut Vec<String>| Some(std::mem::take(list).join(", "));
+    match key {
+        "check" => profile.check.take(),
+        "build_check" => profile.build_check.take(),
+        "module_test" => profile.module_test.take(),
+        "module_tests" => profile.module_tests.take(),
+        "module_graph" => profile.module_graph.take(),
+        "slow_tests" => profile.slow_tests.take(),
+        "timing_tests" => profile.timing_tests.take(),
+        "toolchain_id" => profile.toolchain_id.take(),
+        "module_names" => profile.module_names.take().map(|n| match n {
+            ModuleNames::Cargo => "cargo".to_string(),
+            ModuleNames::Dir => "dir".to_string(),
+        }),
+        "full_shards" => profile.full_shards.take().map(|n| n.to_string()),
+        "full_triggers" => list(&mut profile.full_triggers),
+        "test_paths" => list(&mut profile.test_paths),
+        "skip_markers" => list(&mut profile.skip_markers),
+        _ => None,
+    }
+}
+
+/// Review I1: what verification kept must pass decision 8, or every run with the
+/// confirmed profile would be refused. Each key with a problem is dropped and listed
+/// with it, in cascade: the keys a problem is about first, and the slow and timing
+/// filters only when nothing else is left to drop (dropping a module command can make
+/// them valid again). `module_names` goes when the cargo graph went.
+fn drop_invalid(profile: &mut RepoProfile, dropped: &mut Vec<DroppedCommand>) {
+    const FILTERS: [&str; 2] = ["slow_tests", "timing_tests"];
+    // Each round drops at least one key; there are fewer keys than rounds.
+    for _ in 0..16 {
+        let problems = validate(
+            &TierProfile::from_repo(profile),
+            profile.check.as_deref(),
+            &profile.modules,
+        );
+        let primary: Vec<(String, String)> = problems
+            .iter()
+            .filter(|(key, _)| !FILTERS.contains(&key.as_str()))
+            .cloned()
+            .collect();
+        let round = if primary.is_empty() {
+            problems
+        } else {
+            primary
+        };
+        if round.is_empty() {
+            return;
+        }
+        let mut reasons: Vec<(String, String)> = Vec::new();
+        for (key, message) in round {
+            match reasons.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, reason)) => reason.push_str(&format!("\n{message}")),
+                None => reasons.push((key, message)),
+            }
+        }
+        for (key, reason) in reasons {
+            let command = take_key(profile, &key).unwrap_or_default();
+            dropped.push(DroppedCommand {
+                key,
+                command,
+                reason,
                 tail: String::new(),
             });
         }

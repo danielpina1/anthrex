@@ -33,6 +33,11 @@ pub const CARGO_METADATA: &str = "cargo metadata --format-version 1 --no-deps --
 /// The most of a graph command's stdout that is read.
 const GRAPH_BYTES_MAX: u64 = 16 * 1024 * 1024;
 
+/// The graph command's bound: its own (decision 9), or verification's when shorter.
+pub(super) fn graph_timeout(verify: Duration) -> Duration {
+    GRAPH_TIMEOUT.min(verify)
+}
+
 /// One command in `dir` as `verify.rs` runs it: confined when `confine` is set, and
 /// unrun (failed) when the checkout cannot be confined.
 fn run(
@@ -108,6 +113,7 @@ fn module_dirs(dir: &Path, modules: &[String]) -> Vec<String> {
     for pattern in modules {
         let mut current = vec![String::new()];
         for component in pattern.trim_end_matches('/').split('/') {
+            let literal = !component.contains(['*', '?', '[']);
             let matcher = globset::Glob::new(component).map(|g| g.compile_matcher());
             let mut next = Vec::new();
             for base in &current {
@@ -117,11 +123,16 @@ fn module_dirs(dir: &Path, modules: &[String]) -> Vec<String> {
                 for entry in entries.flatten() {
                     let name = entry.file_name().to_string_lossy().to_string();
                     let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
+                    // Review m1 and m3: a hidden name, one a shell would read as an
+                    // option, and one with a glob character (which `path_module` never
+                    // names, so no path would ever be in it) are no module.
+                    let plain = !name.starts_with(['.', '-']) && !name.contains(['*', '?', '[']);
                     let matches = match &matcher {
-                        Ok(m) => !name.starts_with('.') && m.is_match(&name),
-                        Err(_) => name == component,
+                        _ if literal => name == component,
+                        Ok(m) => plain && m.is_match(&name),
+                        Err(_) => false,
                     };
-                    if is_dir && (matches || name == component) {
+                    if is_dir && matches {
                         next.push(if base.is_empty() {
                             name
                         } else {
@@ -163,6 +174,7 @@ fn module_names(
             .filter_map(|d| d.rsplit('/').next().map(str::to_string))
             .collect(),
     };
+    names.retain(|name| !name.starts_with('-'));
     names.sort();
     names.dedup();
     Some(names)
@@ -196,8 +208,7 @@ pub fn run_commands(
         GraphSource::Command(command) => Some(command.clone()),
     };
     if let (Some(key), Some(command)) = (&profile.module_graph, graph_command) {
-        let (mut outcome, stdout) =
-            capture(dir, &command, env, GRAPH_TIMEOUT.min(timeout), confine);
+        let (mut outcome, stdout) = capture(dir, &command, env, graph_timeout(timeout), confine);
         let parsed = match (&tiers.module_graph, stdout) {
             _ if !outcome.ok => Err(String::new()),
             (_, None) => Err("its output could not be read".to_string()),

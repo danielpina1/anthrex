@@ -119,3 +119,26 @@ fn onboarding_contract_is_exact() {
 6. Call the anthrex tool submit_scout_report (in Claude: mcp__anthrex__submit_scout_report) exactly once, with a short summary, the files that matter, and the profile. Then stop."
     );
 }
+
+/// Review I1: a blank tier command or filter is refused, as no command could be.
+#[test]
+fn onboarding_report_refuses_blank_tier_values() {
+    for key in [
+        "build_check",
+        "module_test",
+        "module_tests",
+        "module_graph",
+        "slow_tests",
+        "timing_tests",
+        "toolchain_id",
+    ] {
+        let mut profile = serde_json::Map::new();
+        profile.insert(key.to_string(), json!(" \t "));
+        assert_eq!(
+            validate(&report(Value::Object(profile)), ScoutKind::Onboarding),
+            Err(format!(
+                "invalid arguments: profile.{key}: must not be blank"
+            )),
+        );
+    }
+}

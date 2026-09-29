@@ -127,6 +127,11 @@ fn profile(value: &Value) -> Result<RepoProfile, String> {
             .map(|v| string(v, &at("profile", key), 1, chars))
             .transpose()
     };
+    // Review I1: a tier command or filter is never blank.
+    let tier = |key: &str| match text(key, 2000)? {
+        Some(v) if v.trim().is_empty() => Err(format!("profile.{key}: must not be blank")),
+        v => Ok(v),
+    };
     let check_timeout_secs = match p.get("check_timeout_secs") {
         None => None,
         Some(value) => {
@@ -179,18 +184,18 @@ fn profile(value: &Value) -> Result<RepoProfile, String> {
         conventions: list("conventions", 20, 300)?,
         manifests: list("manifests", 50, 300)?,
         // Milestone 9.1 decision 12: the tier keys, limits as the MCP schema's.
-        build_check: text("build_check", 2000)?,
-        module_test: text("module_test", 2000)?,
-        module_tests: text("module_tests", 2000)?,
-        module_graph: text("module_graph", 2000)?,
+        build_check: tier("build_check")?,
+        module_test: tier("module_test")?,
+        module_tests: tier("module_tests")?,
+        module_graph: tier("module_graph")?,
         module_names,
         full_triggers: list("full_triggers", 40, 300)?,
-        slow_tests: text("slow_tests", 2000)?,
-        timing_tests: text("timing_tests", 2000)?,
+        slow_tests: tier("slow_tests")?,
+        timing_tests: tier("timing_tests")?,
         skip_markers: list("skip_markers", 32, 64)?,
         test_paths: list("test_paths", 40, 300)?,
         full_shards,
-        toolchain_id: text("toolchain_id", 2000)?,
+        toolchain_id: tier("toolchain_id")?,
         env: env(p.get("env"))?,
     })
 }
