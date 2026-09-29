@@ -12,9 +12,11 @@
 use super::phases::set_state;
 use std::collections::BTreeSet;
 
-use proto::{AgentRole, BlockInfo, BlockReason, PlanEdit, PlanTask, Size, TaskState};
+use proto::{BlockInfo, BlockReason, PlanEdit, PlanTask, Size, TaskState};
 
 use super::contract::{amend_message, answer_message};
+use super::edits_state::{has_live_worker, is_live};
+pub(super) use super::edits_state::{not_started, state_label};
 use super::model::{Run, Task, TaskEvent, task_branch, task_path};
 use super::orch::EditSource;
 use super::plan::PlanError;
@@ -124,57 +126,6 @@ fn requeue_waiting(run: &mut Run, now: u64) {
         .collect();
     for i in waiting {
         set_state(&mut run.tasks[i], TaskState::Pending, now);
-    }
-}
-
-/// The states in which a task has not started: route, size, test mode and dependencies
-/// may change, and it may be split.
-pub(super) fn not_started(state: TaskState) -> bool {
-    matches!(
-        state,
-        TaskState::Pending | TaskState::Queued | TaskState::Blocked
-    )
-}
-
-/// A task with a session or an engine operation to stop when it is cancelled.
-fn is_live(task: &Task) -> bool {
-    matches!(
-        task.state,
-        TaskState::Preparing
-            | TaskState::Working
-            | TaskState::Proof
-            | TaskState::Check
-            | TaskState::Review
-            | TaskState::MergeQueue
-    ) || task.rounds.iter().any(|r| !r.ended)
-}
-
-/// A task whose worker can take an amendment as a message.
-fn has_live_worker(task: &Task) -> bool {
-    task.state == TaskState::Working
-        || task
-            .rounds
-            .iter()
-            .any(|r| r.role == AgentRole::Worker && !r.ended)
-}
-
-fn block_label(reason: BlockReason) -> &'static str {
-    match reason {
-        BlockReason::MisSized => "mis_sized",
-        BlockReason::Human => "human",
-        BlockReason::Conflict => "conflict",
-        BlockReason::DepCancelled => "dep_cancelled",
-        BlockReason::Question => "question",
-        BlockReason::Environment => "environment",
-        BlockReason::MessagePause => "message_pause",
-    }
-}
-
-/// `working`, `merged`, or `blocked(<reason>)`.
-pub(super) fn state_label(task: &Task) -> String {
-    match (task.state, &task.block) {
-        (TaskState::Blocked, Some(block)) => format!("blocked({})", block_label(block.reason)),
-        (state, _) => state.label().to_string(),
     }
 }
 
