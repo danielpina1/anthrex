@@ -82,7 +82,11 @@ impl super::Host for Slow {
 
 /// Review fix 4: no call starts once the deadline has passed, so the step ends at
 /// most one call's time after it. A 50 ms call and a 120 ms timeout: the wait after
-/// the first call reaches the deadline, and the step ends there.
+/// the first call (the smaller of `UNTIL_POLL`, 200 ms, and the time left) reaches the
+/// deadline, and the step ends there with one call. Whole-branch review, item 5: no
+/// upper bound on the elapsed time (it had about 100 ms of margin on a loaded host);
+/// `calls == 1` is the property, and it holds under any load, since a sleep never ends
+/// early. The lower bound (the timeout was waited out) can only be lengthened by load.
 #[test]
 fn mcp_until_starts_no_call_after_its_deadline() {
     let mut host = Slow {
@@ -103,7 +107,7 @@ fn mcp_until_starts_no_call_after_its_deadline() {
     let flow = super::run(&mut host, &step).unwrap();
     assert!(matches!(flow, super::Flow::Exit(4)));
     assert_eq!(host.calls, 1);
-    assert!(start.elapsed() < std::time::Duration::from_millis(170 + 100));
+    assert!(start.elapsed() >= std::time::Duration::from_millis(120));
 }
 
 #[test]
