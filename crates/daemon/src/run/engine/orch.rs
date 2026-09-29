@@ -8,7 +8,7 @@
 //! verdict, which only the user's requests carry (`OrchEvent::{ApproveHold,
 //! RejectHold}`, from `anthrex run approve|reject --hold`).
 
-use proto::{AgentRole, RunState, Runtime, TokenUsage, ToolCall};
+use proto::{AgentRole, RoleOutcome, RoleRoutingDecision, RunState, Runtime, TokenUsage, ToolCall};
 use serde_json::json;
 
 use super::batch::{Applied, Refused, apply_batch, record_rejected};
@@ -84,6 +84,19 @@ pub enum OrchEvent {
     /// Decision 14a: the run's OTLP token, drawn by the driver from the OS random
     /// source when it launches an orchestrator whose record has none.
     OtlpToken { run_id: String, token: String },
+    /// Decision 43: the record of a session the driver dispatches (a run-bound decider,
+    /// a run scout), sent before the session starts.
+    RoleRoute {
+        run_id: String,
+        decision: Box<RoleRoutingDecision>,
+    },
+    /// Decision 43: that session ended.
+    RoleRouteEnded {
+        run_id: String,
+        record_id: String,
+        outcome: RoleOutcome,
+        result: Option<String>,
+    },
 }
 
 /// How a run scout's or sub-planner's session ended: its report or epic accepted, or
@@ -106,7 +119,9 @@ impl OrchEvent {
             | OrchEvent::OrchestratorWoken { .. }
             | OrchEvent::DigestRead { .. }
             | OrchEvent::OrchestratorWindow { .. }
-            | OrchEvent::OtlpToken { .. } => None,
+            | OrchEvent::OtlpToken { .. }
+            | OrchEvent::RoleRoute { .. }
+            | OrchEvent::RoleRouteEnded { .. } => None,
         }
     }
 }
@@ -152,7 +167,7 @@ pub(super) fn on_orch_event(
             usage,
         } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
-                run_scouts::ended(run, &scout_id, outcome, usage, now);
+                run_scouts::ended(run, &scout_id, (outcome, usage), now, fx);
             }
         }
         OrchEvent::PlannerEnded {
@@ -163,7 +178,7 @@ pub(super) fn on_orch_event(
             usage,
         } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
-                planners::ended(run, (&epic, session), outcome, usage, now);
+                planners::ended(run, (&epic, session), (outcome, usage), now, fx);
             }
         }
         OrchEvent::OrchestratorWoken {
@@ -189,7 +204,7 @@ pub(super) fn on_orch_event(
             launch,
         } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
-                super::orch_window::window_seen(run, (window_id, launch), live, now);
+                super::orch_window::window_seen(run, (window_id, launch), (live, now), fx);
             }
         }
         OrchEvent::OtlpToken { run_id, token } => {
@@ -198,6 +213,21 @@ pub(super) fn on_orch_event(
                 && o.otlp_token.is_empty()
             {
                 o.otlp_token = token;
+            }
+        }
+        OrchEvent::RoleRoute { run_id, decision } => {
+            if let Some(run) = state.runs.get_mut(&run_id) {
+                super::history::open(run, *decision);
+            }
+        }
+        OrchEvent::RoleRouteEnded {
+            run_id,
+            record_id,
+            outcome,
+            result,
+        } => {
+            if let Some(run) = state.runs.get_mut(&run_id) {
+                super::history::close(run, &record_id, (outcome, result), fx);
             }
         }
     }

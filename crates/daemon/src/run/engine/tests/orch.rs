@@ -59,7 +59,7 @@ pub(super) fn planned(yes: bool) -> Fixture {
     make_planned(
         &mut run,
         triage(RunPath::Plan),
-        resolved.route,
+        resolved,
         yes,
         BTreeMap::new(),
     );

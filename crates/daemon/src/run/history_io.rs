@@ -37,6 +37,16 @@ pub fn append_line(path: &Path, line: &HistoryLine) -> std::io::Result<()> {
     file.sync_all()
 }
 
+/// Milestone 9 decision 43, for a record the driver writes itself (pre-run triage's):
+/// `line` appended with [`append_line`] unless the file holds its record already.
+/// True when it was appended. Blocking: the driver calls it on `spawn_blocking`.
+pub fn append_once(path: &Path, line: &HistoryLine) -> std::io::Result<bool> {
+    if contains_record(path, record_id(line))? {
+        return Ok(false);
+    }
+    append_line(path, line).map(|()| true)
+}
+
 /// Whether `file` is non-empty and its last byte is not `\n`.
 fn ends_torn(file: &mut std::fs::File) -> std::io::Result<bool> {
     use std::io::{Read, Seek, SeekFrom};

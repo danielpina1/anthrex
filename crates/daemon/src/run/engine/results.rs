@@ -81,8 +81,8 @@ pub(super) fn op_done(
         (OpKind::MeasureDiff { .. }, Some(i)) => history::measured(run, i, result, now, fx),
         (kind @ OpKind::AppendHistory { .. }, _) => history::appended(run, &kind, result, now),
         // Milestone 9 decisions 5 and 11: the orchestrator's window.
-        (OpKind::CreateOrchestrator { .. }, _) => orch_window::launched(run, op, result, now),
-        (OpKind::RestartOrchestrator { .. }, _) => orch_window::restarted(run, result, now),
+        (OpKind::CreateOrchestrator { .. }, _) => orch_window::launched(run, op, result, now, fx),
+        (OpKind::RestartOrchestrator { .. }, _) => orch_window::restarted(run, result, now, fx),
         // Decisions 20 and 32: a run scout's and a sub-planner's session.
         (kind @ OpKind::StartScout { .. }, _) => run_scouts::started(run, &kind, result, now, fx),
         (kind @ OpKind::StartPlanner { .. }, _) => {

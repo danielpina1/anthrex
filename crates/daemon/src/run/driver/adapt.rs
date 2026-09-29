@@ -36,8 +36,9 @@ use crate::decider::{DeciderContext, DeciderRequest, Evidence};
 use crate::profile::resolve::{apply_choice as apply_to_plan, run_profile};
 use crate::profile::service::ProfileService;
 use crate::profile::store::{self, PROFILE_FILE, Stored};
-use crate::run::engine::{EventKind, OpResult};
-use crate::run::model::{LogEntry, Run};
+use crate::run::engine::{EventKind, OpKind, OpResult, OrchEvent};
+use crate::run::model::{LogEntry, OpId, Run};
+use crate::run::orch::roles;
 use crate::run::plan::Preflight;
 use crate::scout::service::ScoutService;
 
@@ -85,19 +86,84 @@ pub struct Adaptation {
 const NO_DECIDERS: &str = "the decider could not start: the daemon has no decider context";
 
 impl RunService {
+    /// Op `op` of `ctx`'s run: a `Decide` is [`RunService::decide_as`] with its record
+    /// (milestone 9 decision 43), any other op `ops::run`.
+    pub(super) async fn run_op(self: &Arc<Self>, ctx: &OpCtx, op: OpId, kind: OpKind) -> OpResult {
+        match kind {
+            OpKind::Decide {
+                task_ids, request, ..
+            } => {
+                let task = task_ids.into_iter().next();
+                self.decide_as(ctx, Some((op, task)), request).await
+            }
+            kind => super::ops::run(self, ctx, kind).await,
+        }
+    }
+
+    /// `OpKind::Decide` (decision 18), with no role-routing record.
+    pub(super) async fn decide(&self, ctx: &OpCtx, request: DeciderRequest) -> OpResult {
+        self.decide_as(ctx, None, request).await
+    }
+
     /// `OpKind::Decide` (decision 18): the call, always answered, a fallback included.
     /// A size check's evidence is read first (decision 19); with none readable, the
-    /// check is its fallback.
-    pub(super) async fn decide(&self, ctx: &OpCtx, mut request: DeciderRequest) -> OpResult {
+    /// check is its fallback. Milestone 9 decision 43: a call that starts a decider
+    /// session is recorded as op `op`'s (for task `task`), its record sent to the
+    /// engine before the call and its outcome after.
+    async fn decide_as(
+        &self,
+        ctx: &OpCtx,
+        record: Option<(OpId, Option<String>)>,
+        mut request: DeciderRequest,
+    ) -> OpResult {
         if let Err(error) = self.with_evidence(ctx, &mut request).await {
             let reason = format!("the decider could not start: {error}");
             return OpResult::Decided(Box::new(fallback_decision(&request, reason)));
         }
         let decision = match self.adaptation.get() {
-            Some(adaptation) => decide(&adaptation.deciders, &request).await,
+            Some(adaptation) => {
+                let route = &adaptation.deciders.route;
+                let id = record.and_then(|(op, task)| {
+                    self.decider_dispatched(ctx, (op, task.as_deref()), route, &request)
+                });
+                let decision = decide(&adaptation.deciders, &request).await;
+                if let Some(record_id) = id {
+                    let (outcome, result) = roles::decider_outcome(&decision);
+                    self.send(EventKind::Orch(OrchEvent::RoleRouteEnded {
+                        run_id: ctx.run_id.clone(),
+                        record_id,
+                        outcome,
+                        result,
+                    }));
+                }
+                decision
+            }
             None => fallback_decision(&request, NO_DECIDERS.to_string()),
         };
         OpResult::Decided(Box::new(decision))
+    }
+
+    /// Decision 43: a run-bound decider's record, built under the engine's lock (pure)
+    /// and sent to the engine; its record id.
+    fn decider_dispatched(
+        &self,
+        ctx: &OpCtx,
+        (op, task): (OpId, Option<&str>),
+        route: &proto::Route,
+        request: &DeciderRequest,
+    ) -> Option<String> {
+        let decision = crate::lock(&self.state).runs.get(&ctx.run_id).map(|run| {
+            let session = (op.to_string(), request.kind().label());
+            let input = roles::input_of(run);
+            let at = super::unix_now();
+            roles::decider_record(Some(run), (&session.0, session.1), task, route, input, at)
+        })?;
+        let record_id = decision.record_id.clone();
+        self.send(EventKind::Orch(OrchEvent::RoleRoute {
+            run_id: ctx.run_id.clone(),
+            decision: Box::new(decision),
+        }));
+        Some(record_id)
     }
 
     /// Decision 19: fills a size check's `evidence` from its `evidence_refs`, resolved

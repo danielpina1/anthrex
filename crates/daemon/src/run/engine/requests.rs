@@ -94,7 +94,7 @@ pub(super) fn start(
     };
     emit_op(&mut run, op, None, kind, fx);
     if run.state == RunState::Planning {
-        super::orch_window::launch(&mut run, fx);
+        super::orch_window::launch(&mut run, now, fx);
     }
     // M8b decision 19: every task is cross-checked; one waiting is not runnable. The
     // fast path's task is not: triage sized it a moment earlier (ruling R-T13-1).

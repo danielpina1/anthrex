@@ -3,15 +3,18 @@
 //! restored dormant after a daemon restart and restarted by `run resume` with a new
 //! session. Pure (design decision 2).
 
+use proto::AgentRole;
+
 use super::requests::log;
-use super::{Effect, OpId, OpKind, OpResult, emit_op, next_op};
+use super::{Effect, OpId, OpKind, OpResult, emit_op, history, next_op};
 use crate::run::model::Run;
 use crate::run::orch::contract::orchestrator_first_prompt;
 use crate::run::orch::launch::{orchestrator_role, orchestrator_window_spec};
 
 /// Decisions 5 and 26: the orchestrator's window, with its first prompt (the planned
-/// run's, unless a promotion set its own).
-pub(super) fn launch(run: &mut Run, fx: &mut Vec<Effect>) {
+/// run's, unless a promotion set its own). Decision 43: its session's record is opened
+/// first, `start` (`promote` for a promotion), or `retry` after an earlier session.
+pub(super) fn launch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) {
     let Some(o) = run.orch.orchestrator.as_ref() else {
         return;
     };
@@ -23,6 +26,16 @@ pub(super) fn launch(run: &mut Run, fx: &mut Vec<Effect>) {
     };
     let spec = orchestrator_window_spec(run, &route, &first);
     let role = orchestrator_role(run, &route);
+    let earlier = run
+        .role_routing_decisions
+        .iter()
+        .any(|d| d.role == AgentRole::Orchestrator);
+    let trigger = match (earlier, run.promote_requested_at.is_some()) {
+        (true, _) => "retry",
+        (false, true) => "promote",
+        (false, false) => "start",
+    };
+    history::orchestrator_dispatched(run, trigger, now);
     let op = next_op(run);
     if let Some(o) = run.orch.orchestrator.as_mut() {
         o.first_prompt = first;
@@ -37,7 +50,7 @@ pub(super) fn launch(run: &mut Run, fx: &mut Vec<Effect>) {
 }
 
 /// `CreateOrchestrator`'s result: the window counts toward `max_windows` (decision 5).
-pub(super) fn launched(run: &mut Run, op: OpId, result: OpResult, now: u64) {
+pub(super) fn launched(run: &mut Run, op: OpId, result: OpResult, now: u64, fx: &mut Vec<Effect>) {
     let Some(o) = run.orch.orchestrator.as_mut() else {
         return;
     };
@@ -62,11 +75,9 @@ pub(super) fn launched(run: &mut Run, op: OpId, result: OpResult, now: u64) {
         OpResult::Failed { message } => {
             // Decision 13: an attention line too, until a launch succeeds.
             o.start_error = Some(message.clone());
-            log(
-                run,
-                now,
-                format!("the orchestrator could not start: {message}"),
-            );
+            let text = format!("the orchestrator could not start: {message}");
+            history::orchestrator_ended(run, Some(&text), fx);
+            log(run, now, text);
         }
         _ => {}
     }
@@ -76,8 +87,14 @@ pub(super) fn launched(run: &mut Run, op: OpId, result: OpResult, now: u64) {
 /// exit (the user's `anthrex restart`). An exit suspends wake-ups (the record is not
 /// live) and shows the attention line; the run goes on. A report about any other
 /// window, a return on a finished run, or a report the driver made before the last
-/// launch or restart (`launch`, M9.13 review) changes nothing.
-pub(super) fn window_seen(run: &mut Run, (window_id, launch): (u32, u64), live: bool, now: u64) {
+/// launch or restart (`launch`, M9.13 review) changes nothing. Decision 43: an exit
+/// ends the session's record; a return is a new session, `restart`.
+pub(super) fn window_seen(
+    run: &mut Run,
+    (window_id, launch): (u32, u64),
+    (live, now): (bool, u64),
+    fx: &mut Vec<Effect>,
+) {
     let terminal = run.state.is_terminal();
     let Some(o) = run.orch.orchestrator.as_mut() else {
         return;
@@ -89,6 +106,7 @@ pub(super) fn window_seen(run: &mut Run, (window_id, launch): (u32, u64), live: 
     o.live = live;
     if live {
         o.exited_at = None;
+        history::orchestrator_dispatched(run, "restart", now);
         log(
             run,
             now,
@@ -96,6 +114,7 @@ pub(super) fn window_seen(run: &mut Run, (window_id, launch): (u32, u64), live: 
         );
     } else {
         o.exited_at = Some(now);
+        history::orchestrator_ended(run, None, fx);
         log(
             run,
             now,
@@ -105,7 +124,7 @@ pub(super) fn window_seen(run: &mut Run, (window_id, launch): (u32, u64), live: 
 }
 
 /// `RestartOrchestrator`'s result.
-pub(super) fn restarted(run: &mut Run, result: OpResult, now: u64) {
+pub(super) fn restarted(run: &mut Run, result: OpResult, now: u64, fx: &mut Vec<Effect>) {
     let Some(o) = run.orch.orchestrator.as_mut() else {
         return;
     };
@@ -117,11 +136,9 @@ pub(super) fn restarted(run: &mut Run, result: OpResult, now: u64) {
             log(run, now, "the orchestrator restarted");
         }
         OpResult::Failed { message } => {
-            log(
-                run,
-                now,
-                format!("the orchestrator could not restart: {message}"),
-            );
+            let text = format!("the orchestrator could not restart: {message}");
+            history::orchestrator_ended(run, Some(&text), fx);
+            log(run, now, text);
         }
         _ => {}
     }
@@ -156,6 +173,7 @@ pub(super) fn relaunch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool {
             if let Some(o) = run.orch.orchestrator.as_mut() {
                 o.session += 1;
             }
+            history::orchestrator_dispatched(run, "restart", now);
             let op = next_op(run);
             emit_op(run, op, None, OpKind::RestartOrchestrator { window_id }, fx);
             log(
@@ -167,7 +185,7 @@ pub(super) fn relaunch(run: &mut Run, now: u64, fx: &mut Vec<Effect>) -> bool {
             let text = "the daemon restarted and your session was resumed";
             super::wake::note(run, text.to_string());
         }
-        None => launch(run, fx),
+        None => launch(run, now, fx),
     }
     true
 }

@@ -119,7 +119,8 @@ pub struct RoutingDecision {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoleRoutingDecision {
     pub v: u32,
-    /// `<run id>/<role>/<session id>`, or `triage/<run-or-request id>/<n>`.
+    /// `<run id>/<role>/<session id>`, or `triage/<unix nanos>/<n>` for pre-run triage
+    /// (milestone 9 task M9.13b).
     pub record_id: String,
     pub at: u64,
     /// `None` for pre-run triage.
@@ -131,8 +132,8 @@ pub struct RoleRoutingDecision {
     pub session_id: String,
     /// `start`, `restart`, `replan`, `retry`, `triage`, `size_check`, …
     pub trigger: String,
-    /// `explicit_choice`, `agent_config`, `planner_config`, `roster_default` or
-    /// `decider_config`.
+    /// `explicit_choice`, `agent_config`, `planner_config`, `roster_default`,
+    /// `scout_config` or `decider_config`.
     pub source: String,
     /// `m9-orchestrator-v1`, `m9-planner-v1`, `m9-scout-v1` or `m9-decider-v1`.
     pub policy_version: String,

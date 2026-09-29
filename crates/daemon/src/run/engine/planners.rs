@@ -16,12 +16,14 @@ use super::batch::{Applied, Refused, apply_batch, record_rejected};
 use super::orch::{refuse, rejected, settle, settle_quiet};
 use super::requests::log;
 use super::{
-    Effect, OpKind, OpResult, ReplyId, emit_op, gate_holds, kinds, next_op, run_scouts, wake,
+    Effect, OpKind, OpResult, ReplyId, emit_op, gate_holds, history, kinds, next_op, run_scouts,
+    wake,
 };
 use crate::run::edits_orch::planner_confinement;
 use crate::run::globs::{intersects, validate_glob};
 use crate::run::model::Run;
 use crate::run::orch::launch::{planner_route, planner_spec};
+use crate::run::orch::roles;
 use crate::run::orch::tools::{OrchCall, parse_call};
 use crate::run::orch::{EditSource, EpicRecord, PlannerPhase, PlannerSession};
 use crate::run::plan::PlanError;
@@ -95,6 +97,9 @@ fn start(run: &mut Run, k: usize, now: u64, fx: &mut Vec<Effect>) {
     });
     let text = format!("sub-planner {} session {session} starting", epic.epic);
     log(run, now, text);
+    // Decision 43: the session's record, before its start.
+    let record = roles::planner_record(run, k, session, now);
+    history::open(run, record);
     let kind = OpKind::StartPlanner {
         spec: Box::new(spec),
     };
@@ -113,6 +118,10 @@ pub(super) fn started(
     let OpKind::StartPlanner { spec } = kind else {
         return None;
     };
+    if let OpResult::Failed { message } = &result {
+        let why = format!("the sub-planner could not start: {message}");
+        history::planner_ended(run, (&spec.epic, spec.session), Err(why), fx);
+    }
     let k = run.orch.epics.iter().position(|e| e.epic == spec.epic)?;
     let latest = run.orch.epics[k].sessions.len() as u32 == spec.session;
     let epic = &mut run.orch.epics[k];
@@ -147,13 +156,14 @@ pub(super) fn started(
 pub(super) fn ended(
     run: &mut Run,
     (epic, session): (&str, u32),
-    outcome: ScoutEnd,
-    usage: proto::TokenUsage,
+    (outcome, usage): (ScoutEnd, proto::TokenUsage),
     now: u64,
+    fx: &mut Vec<Effect>,
 ) {
     let Some(k) = run.orch.epics.iter().position(|e| e.epic == epic) else {
         return;
     };
+    history::planner_ended(run, (epic, session), Ok(&outcome), fx);
     run.orch.planner_usage += usage;
     let record = &mut run.orch.epics[k];
     let latest = record.sessions.len() as u32 == session;
@@ -502,6 +512,7 @@ fn submit_epic(
     if let Some(session) = record.sessions.last_mut() {
         session.ended_at = Some(now);
     }
+    history::planner_accepted(&mut edited, &epic);
     gate_holds::submit_epic_round(&mut edited, &epic, now);
     let n = edited
         .tasks

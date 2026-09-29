@@ -4,10 +4,12 @@
 //! stored by the service; the engine records that it reported, and its usage. Pure
 //! (design decision 2).
 
+use proto::{AgentRole, RoleOutcome};
+
 use super::orch::{refuse, settle_quiet};
 use super::requests::log;
 use super::wake;
-use super::{Effect, OpKind, OpResult, ReplyId, ScoutEnd, emit_op, next_op};
+use super::{Effect, OpKind, OpResult, ReplyId, ScoutEnd, emit_op, history, next_op};
 use crate::run::globs::validate_glob;
 use crate::run::model::Run;
 use crate::run::orch::launch::scout_spec;
@@ -129,6 +131,8 @@ pub(super) fn started(
         }
         OpResult::Failed { message } => {
             let reason = format!("the scout could not start: {message}");
+            let ended = (RoleOutcome::Failed, Some(reason.clone()));
+            history::close_session(run, (AgentRole::Scout, &spec.id), ended, fx);
             end(run, &spec.id, Err(reason), now);
         }
         _ => {}
@@ -141,14 +145,20 @@ pub(super) fn started(
 pub(super) fn ended(
     run: &mut Run,
     scout_id: &str,
-    outcome: ScoutEnd,
-    usage: proto::TokenUsage,
+    (outcome, usage): (ScoutEnd, proto::TokenUsage),
     now: u64,
+    fx: &mut Vec<Effect>,
 ) {
     if !run.orch.run_scouts.iter().any(|s| s.id == scout_id) {
         return;
     }
     run.scout_usage += usage;
+    // Decision 43: the session's record, with its factual outcome.
+    let ended = match &outcome {
+        ScoutEnd::Reported => (RoleOutcome::Completed, Some("reported".to_string())),
+        ScoutEnd::Failed { reason } => (RoleOutcome::Failed, Some(reason.clone())),
+    };
+    history::close_session(run, (AgentRole::Scout, scout_id), ended, fx);
     let result = match outcome {
         ScoutEnd::Reported => Ok(()),
         ScoutEnd::Failed { reason } => Err(reason),

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use proto::RunsSnapshot;
 
-use super::{INTERRUPT_GRACE, OpCtx, REPORT_EVERY, RETIRE_AFTER, Retiring, RunService, ops};
+use super::{INTERRUPT_GRACE, OpCtx, REPORT_EVERY, RETIRE_AFTER, Retiring, RunService};
 use crate::run::engine::{AgentSignal, Effect, EngineState, EventKind, OpKind};
 use crate::run::journal::{self, JournalLine};
 use crate::run::model::{OpId, Run};
@@ -352,7 +352,7 @@ impl RunService {
                 (false, Some(guard)) => (Some(guard), None),
                 (false, None) => (Some(order.read_owned().await), None),
             };
-            let result = ops::run(&service, &ctx, kind).await;
+            let result = service.run_op(&ctx, op, kind).await;
             if service.stopped.load(Ordering::SeqCst) {
                 return;
             }

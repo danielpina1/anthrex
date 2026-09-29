@@ -62,6 +62,7 @@ mod planners_review;
 mod planners_rounds;
 mod promote;
 mod refresh;
+mod role_history;
 mod run_scouts;
 mod turns;
 mod turns_fixes;

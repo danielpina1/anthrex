@@ -145,7 +145,7 @@ impl RunService {
             Ok((installed(&claude, &codex), token))
         })
         .await?;
-        make_planned(run, planned.triage, resolved.route, planned.yes, found);
+        make_planned(run, planned.triage, resolved, planned.yes, found);
         run.triage_usage = planned.usage.unwrap_or_default();
         if let Some(o) = run.orch.orchestrator.as_mut() {
             o.otlp_token = token;

@@ -31,6 +31,7 @@ pub mod extract;
 pub(crate) mod json;
 pub mod launch;
 pub mod result;
+pub mod roles;
 pub mod rules;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -152,6 +153,9 @@ pub struct OrchestratorRecord {
     /// restart is dropped.
     #[serde(default)]
     pub launches: u64,
+    /// Decision 43: its route's resolution, which every launch's record keeps.
+    #[serde(default)]
+    pub routing: roles::RoleSnapshot,
 }
 
 impl OrchestratorRecord {
@@ -519,12 +523,13 @@ impl Default for PlannerLimits {
 }
 
 /// Decision 26: a run `RunService::build_plan` built from an empty plan becomes a
-/// planned run, `planning` with its orchestrator (the route of decision 6) not yet
-/// launched. `yes` applies at submit (decision 27), so the build's own `yes` is false.
+/// planned run, `planning` with its orchestrator (decision 6's resolution, kept for
+/// decision 43's records) not yet launched. `yes` applies at submit (decision 27), so
+/// the build's own `yes` is false.
 pub fn make_planned(
     run: &mut super::model::Run,
     triage: proto::TriageInfo,
-    route: Route,
+    resolved: launch::Resolved,
     yes: bool,
     installed: BTreeMap<String, bool>,
 ) {
@@ -533,7 +538,12 @@ pub fn make_planned(
     run.triage = Some(triage);
     run.orch.yes = yes;
     run.orch.installed = installed;
-    run.orch.orchestrator = Some(OrchestratorRecord::new(route, run.created_at));
+    let mut record = OrchestratorRecord::new(resolved.route, run.created_at);
+    record.routing = roles::RoleSnapshot {
+        source: resolved.source,
+        candidates: resolved.candidates,
+    };
+    run.orch.orchestrator = Some(record);
 }
 
 impl OrchestratorRecord {
@@ -559,6 +569,7 @@ impl OrchestratorRecord {
             session: 1,
             start_error: None,
             launches: 0,
+            routing: roles::RoleSnapshot::default(),
         }
     }
 }

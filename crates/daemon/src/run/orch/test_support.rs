@@ -88,6 +88,7 @@ pub fn orchestrator() -> OrchestratorRecord {
         session: 1,
         start_error: None,
         launches: 0,
+        routing: Default::default(),
     }
 }
 

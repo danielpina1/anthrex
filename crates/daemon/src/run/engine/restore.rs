@@ -68,6 +68,8 @@ pub(super) fn restore(
             .map(|(_, op)| op)
             .collect();
         prepare(&mut run, &kept, now, fx);
+        // Milestone 9 decision 43: every session the old daemon ran is over.
+        super::history::interrupt_open(&mut run, fx);
         restored.push((run.id.clone(), original));
         state.runs.insert(run.id.clone(), run);
     }

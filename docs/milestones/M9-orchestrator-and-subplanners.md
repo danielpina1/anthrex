@@ -3316,3 +3316,69 @@ One commit, `fix(daemon): record every refresh's run head so no merged run work 
 4. **Repository text in the refresh texts is one line.** `refresh_clean` and `refresh_clean_paused` fold each commit subject, and `refresh_conflict` and `refresh_conflict_paused` fold the file names, through `messages::one_line`. Test: `refresh_texts_fold_file_names_and_subjects`, with the reviewer's file name and subject plus U+2028, U+2029 and U+0085. No control character or separator is left, and only the text's own two `[anthrex]` markers remain. Red with either fold removed.
 5. **Only an ended run's own window is freed.** `WindowManager::end_run_window(id, run_id)` clears the flag only while window `id`'s role names that run. Both `release_ended_orchestrators` and `clear_ended_orchestrators` use it, so a window id a restart gave to another run's window keeps that run's flag. Test: `an_ended_run_leaves_another_runs_window_with_its_old_id_alone`, with real windows for both runs; the ended run's own window is freed and the other is not. Red when the owner is not checked.
 6. **The lock-order note is reworded** on `release_ended_orchestrators`. Item 8 of the first review is the first place that takes the manager's lock inside the engine's; `refresh_orchestrator_otlp` takes them one at a time. It is safe because no path takes them the other way: the manager never calls into the run service, and its lock is held only inside its own methods. Neither lock is held across I/O or an `await` there; `end_run_window` changes one flag.
+
+### Task M9.13b (Routing history for orchestrators, planners, scouts and deciders)
+
+One commit, `feat(daemon): record routing choices and outcomes for non-task agents`. No move commit was needed: the engine's record logic is a new child module of `engine/history.rs`, so `engine/mod.rs` (600) and `driver/ops.rs` (598) are unchanged.
+
+**Choices the brief left open**
+
+- **Deciders and pre-run triage.** M9.2's ruling 2 already added `AgentRole::Decider`, so no placeholder remains. Every decider record, pre-run triage included, has `role: decider`. Its `trigger` and `input.question_kind` are the request's kind (`triage`, `size_check`, `check_summary`, `blocked_reason`). Pre-run triage has `run_id: None`, even when a run is then created. Old lines load unchanged; nothing on the wire changed.
+- **Record ids** are `<run id>/<role>/<session id>` (`roles::record_id`). Pre-run triage's is `triage/<unix nanos>/<n>`, where `<n>` is a per-daemon counter. A task's record is `<run>/<task>` (one `/`), so no record can take another's id.
+- **Session ids:**
+  - The orchestrator's is the n-th orchestrator session dispatched in the run, not `RunRef.session`. A relaunch after a failed launch keeps `RunRef.session` at 1 but is a new session here. A launch, a relaunch, `run resume`'s restart and the user's own `anthrex restart` after an exit each count.
+  - A sub-planner's is `<epic>/<session>`.
+  - A run scout's is its scout id.
+  - A run-bound decider's is its `Decide` op id. A `Decide` lost in a restart is queued again and asked under a new op, so it gets a new record.
+- **No session, no record.** Decider fallbacks that start no session write no record: deciders off, no reader slot, unreadable evidence, and triage's failed `ls-files`. Decision 43 records sessions, and a route that was never dispatched would read as one.
+- **Outcomes:**
+  - **Orchestrator:**
+    - a failed launch or restart is `failed`;
+    - a window exit while the run goes on is `completed`, `its window exited before the run ended; plan submitted|not submitted[; summary written]`;
+    - live when the run ended is `completed`, `live until the run ended; …`;
+    - a run that ended before its window started is `interrupted`.
+    - No result names the run's outcome.
+  - **Sub-planner:**
+    - `completed` (`epic accepted`) only when its `submit_epic` was accepted. The acceptance is noted on the open record, so a re-plan queued before the end event cannot lose it.
+    - Otherwise `failed`, with the machine's reason or `ended without an accepted epic`.
+    - Rejected submissions are counted as `; <n> submissions rejected`.
+  - **Run scout:** `completed` (`reported`), or `failed` with its reason.
+  - **Decider:** `completed` (`answered`), or `fallback` with its reason.
+  - **Restore:** every open record is `interrupted`, `the daemon restarted during this session`, and keeps any status it had (for example `epic accepted; …`).
+- **Triggers:**
+  - orchestrator: `start`, `promote`, `retry` (a later launch) and `restart`;
+  - planner: `start` and `replan`;
+  - scout: `start`.
+- **Candidate snapshots:**
+  - **Orchestrator:** decision 6's `Resolved`, kept in the new `OrchestratorRecord.routing: RoleSnapshot { source, candidates }` (`#[serde(default)]`). Every launch and restart record is copied from it. A record from before this task has an empty source, recorded as `unrecorded`.
+  - **Sub-planner and scout:** `roles::ladder_candidates`, M8b's strength-ladder order: the runtime's entries at or above the strength, lowest first, then the peer's.
+  - **Decider:** its one configured route. `DeciderContext` holds no roster, and adding a field would break its struct literals in `fake-agent` and the CLI tests. Milestone 9.5's role lists replace all of these.
+- **A run scout's record is made by the driver**, as a decider's is. The scout service routes every scout from the daemon's `[orchestrator.scouts]` (`ScoutContext`), which the run does not freeze. So `start_scout` builds the record from that same context, under the engine lock (pure), and sends `OrchEvent::RoleRoute` before `ScoutService::start`. The engine finishes it on `ScoutEnded` or a failed `StartScout`. Its source is a new value, `scout_config` (the proto doc comment lists it).
+- **Idempotence:** a finished record is never finished again. Each finish emits one `AppendHistory`, reconciled by record id. Pre-run triage uses the new `history_io::append_once` (`contains_record`, then `append_line`), on `spawn_blocking`, awaited before the goal's reply; a write failure is only logged. A run whose history is off keeps its records and appends none.
+
+**Deviations from the brief's file list and interfaces**
+
+- `make_planned(run, triage, resolved: Resolved, yes, installed)` takes decision 6's whole resolution, not its route. `promote.rs` sets `routing` the same way.
+- `OrchEvent::RoleRoute { run_id, decision: Box<RoleRoutingDecision> }`: boxed, like the other large payloads.
+- The record logic is `engine/role_routes.rs`, a `#[path]` child of `engine/history.rs`. The orchestrator's capture points are in `engine/orch_window.rs`, where its launch, restart and window events live, not in `engine/orch.rs`. `orch_window::{launch, launched, restarted, window_seen}` and `planners::ended` / `run_scouts::ended` gain `now` or `fx` parameters.
+- Run-bound deciders: `driver/effects.rs` runs each op through `RunService::run_op` (`driver/adapt.rs`), which sends a `Decide` to `decide_as` with its op id. `driver/ops.rs` keeps its unrecorded `decide` arm, so the file is unchanged.
+- `run/model.rs`, `run/reconcile/mod.rs`, and the `RoleRoute` arms of `history_io.rs`, `engine/history.rs` and `stats.rs` needed no change: M9.2 had added them.
+- `pre_run_triage_writes_a_record_even_when_no_run_is_created` is in `tests/server_runs.rs`, not `tests/history_io.rs`, because it needs that file's daemon rig. `rig_with` was added to that rig with a decider mode and the shipped CLI caps.
+  - The decider program is the pinned nonexistent path, so triage falls back.
+  - A Codex orchestrator in a repository that tracks `.codex/config.toml` is then refused after triage.
+  - The record is in `<data>/repos/…/history.jsonl`, and the repository stays clean.
+- `scout_retry_gets_a_new_session_id`: decision 20 uses a scout id once per run, so a retry is a new scout. The test re-asks under a new id and checks distinct session and record ids.
+
+**Red before green.** Only the pure `roles.rs` tests were written against no code: they do not compile without the module. The reducer and triage tests were written with the code and made red by mutation, each from a `cp` backup restored afterwards:
+- `role_routes::open` as a no-op: all 9 reducer tests red.
+- `interrupt_open` and the terminal pass disabled: 4 red (`orchestrator_restart_…`, `a_run_never_attributes_…`, `scout_failed_on_restore_…`, `restore_marks_every_open_record_…`).
+- The `record_triage` call removed: `pre_run_triage_…` red (no line).
+
+Some tests passed at once, because the behaviour came from M9.2 or M8b:
+- `stats_ignores_role_route_lines`: M9.2's ignore arm;
+- `version_1_history_and_an_old_run_json_still_load`: serde defaults;
+- the reconcile half of `role_route_append_is_idempotent_by_record_id`: M8b's `contains_record` row.
+
+**Open**
+
+- The driver halves (the `RoleRoute` and `RoleRouteEnded` sends of `decide_as` and `start_scout`) have no driver-level test here. The reducer tests feed the events those paths build with the same pure builders. M9.16 and M9.17's end-to-end tests cover them with real sessions.

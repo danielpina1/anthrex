@@ -211,16 +211,31 @@ async fn tagged_rig(
     adaptation: bool,
     shutdown: &CancellationToken,
 ) -> (OwnedReadHalf, OwnedWriteHalf) {
+    rig_with(dir, (adaptation, proto::DeciderMode::Off), shutdown).await
+}
+
+/// [`tagged_rig`] with the deciders in `mode`. The decider program is pinned to a path
+/// that does not exist, so a call falls back at once; the CLI caps are the shipped
+/// ones (a Codex session cannot exclude a repository's `.codex` settings).
+async fn rig_with(
+    dir: &std::path::Path,
+    (adaptation, mode): (bool, proto::DeciderMode),
+    shutdown: &CancellationToken,
+) -> (OwnedReadHalf, OwnedWriteHalf) {
     let socket = dir.join("d.sock");
     let data = dir.join("data");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-    let (manager, _events) = WindowManager::new(pinned(socket.clone()));
+    let mut config = pinned(socket.clone());
+    if mode != proto::DeciderMode::Off {
+        config.cli_caps = daemon::headless::argv::CLI_CAPS;
+    }
+    let (manager, _events) = WindowManager::new(config);
     let git = GitWiring::new(config::Git {
         enabled: false,
         ..config::Git::default()
     });
     let mut orchestrator = config::Orchestrator::default();
-    orchestrator.deciders.mode = proto::DeciderMode::Off;
+    orchestrator.deciders.mode = mode;
     let ctx = RunContext::new(
         data.clone(),
         manager.config(),
@@ -341,4 +356,83 @@ async fn a_tagged_goal_start_is_triaged_with_its_id() {
     assert!(run_id.is_some(), "a planned run");
     assert_eq!(request_id, Some(11));
     shutdown.cancel();
+}
+
+/// Milestone 9 decision 43: pre-run triage's decider session leaves its record in the
+/// repository's history (anthrex's data directory, never the repository) even when no
+/// run is created. The decider program does not exist, so the call falls back; the
+/// goal's Codex orchestrator is then refused for the repository's tracked `.codex`
+/// settings, after triage.
+#[tokio::test(flavor = "multi_thread")]
+async fn pre_run_triage_writes_a_record_even_when_no_run_is_created() {
+    use proto::{AgentRole, HistoryLine, RoleOutcome, RunReply};
+    let repo = support::run_git::repo();
+    support::run_git::commit_file(&repo.root, "src/lib.rs", "// lib\n", "lib");
+    support::run_git::commit_file(&repo.root, ".codex/config.toml", "model = \"x\"\n", "codex");
+    let dir = tempfile::Builder::new()
+        .prefix("ax-runs9t")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let meta = proto::ProfileMeta {
+        confirmed_at: 1_700_000_000,
+        report: None,
+        verification: None,
+        fingerprint: Default::default(),
+        edited_keys: Vec::new(),
+        project: None,
+    };
+    let data = dir.path().join("data");
+    let repo_dir = daemon::profile::repo_dir(&data, &repo.root);
+    let profile = proto::RepoProfile {
+        languages: vec!["rust".into()],
+        ..proto::RepoProfile::default()
+    };
+    daemon::profile::store::save(&repo_dir, &profile, &meta).unwrap();
+    let shutdown = CancellationToken::new();
+    let mode = (true, proto::DeciderMode::Claude);
+    let (mut rd, mut wr) = rig_with(dir.path(), mode, &shutdown).await;
+    let goal = "rework storage";
+    let msg = ClientMsg::Run(RunRequest::StartGoal {
+        goal: goal.into(),
+        dir: repo.root.clone(),
+        yes: true,
+        trust_project: false,
+        unconfined_checks: true,
+        orchestrator: Some(proto::OrchestratorChoice {
+            runtime: proto::Runtime::Codex,
+            model: None,
+        }),
+    });
+    write_frame(&mut wr, &msg).await.unwrap();
+    let reply = next_run_reply(&mut rd).await;
+    let RunReply::Refused { message, .. } = &reply else {
+        panic!("refused: {reply:?}");
+    };
+    assert!(message.contains(".codex/config.toml"), "{message}");
+    shutdown.cancel();
+
+    let path = repo_dir.join("history.jsonl");
+    let (lines, problems) = daemon::run::history_io::read_history(&path);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(lines.len(), 1, "{lines:#?}");
+    let HistoryLine::RoleRoute(d) = &lines[0] else {
+        panic!("a role_route line: {lines:#?}");
+    };
+    assert!(d.record_id.starts_with("triage/"), "{}", d.record_id);
+    assert_eq!((d.run_id.as_deref(), d.task_id.as_deref()), (None, None));
+    assert_eq!((d.role, d.trigger.as_str()), (AgentRole::Decider, "triage"));
+    assert_eq!(d.source, "decider_config");
+    assert_eq!(d.outcome, Some(RoleOutcome::Fallback));
+    let reason = d.result.as_deref().unwrap_or_default();
+    assert!(
+        reason.starts_with("the decider could not start"),
+        "{reason}"
+    );
+    assert_eq!(d.input.goal.as_deref(), Some(goal));
+    assert_eq!(d.input.languages, vec!["rust".to_string()]);
+    assert_eq!(d.input.question_kind.as_deref(), Some("triage"));
+    assert_eq!(d.candidates[d.selected_index as usize].route, d.chosen);
+    // Nothing reached the repository.
+    let status = support::run_git::out(&repo.root, &["status", "--porcelain", "--ignored"]);
+    assert!(status.trim().is_empty(), "{status}");
 }

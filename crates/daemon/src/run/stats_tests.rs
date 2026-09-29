@@ -424,3 +424,34 @@ fn reported_tasks_are_left_out_of_the_rows() {
     let m = row(&stats, "M");
     assert_eq!((m.tasks, m.merged), (0, 0));
 }
+
+/// Milestone 9 decision 43: `role_route` lines (the orchestrator's, sub-planners',
+/// scouts' and deciders' records, pre-run triage's included) change no aggregate.
+#[test]
+fn stats_ignores_role_route_lines() {
+    let mut lines = vec![
+        HistoryLine::Task(merged("r1", "a1", Size::S, (8, 5, 1_500, 60))),
+        HistoryLine::Run(run("r1", 3, 1)),
+    ];
+    let without = aggregate(&lines, Path::new(PATH));
+    let decider = crate::run::orch::roles::decider_record(
+        None,
+        ("5/1", "triage"),
+        None,
+        &route(),
+        proto::RoleRoutingInput::default(),
+        300,
+    );
+    let mut planner = decider.clone();
+    planner.record_id = "r1/planner/mail/1".into();
+    planner.run_id = Some("r1".into());
+    planner.role = proto::AgentRole::Planner;
+    planner.outcome = Some(proto::RoleOutcome::Failed);
+    for d in [decider, planner] {
+        lines.push(HistoryLine::RoleRoute(d));
+    }
+    let with = aggregate(&lines, Path::new(PATH));
+    assert_eq!(with, without);
+    assert_eq!((with.task_records, with.run_records), (1, 1));
+    assert_eq!((with.decider_calls, with.decider_fallbacks), (3, 1));
+}

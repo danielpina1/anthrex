@@ -13,6 +13,7 @@ use crate::run::model::Run;
 use crate::run::orch::OrchestratorRecord;
 use crate::run::orch::contract::promoted_first_prompt;
 use crate::run::orch::launch::resolve_orchestrator;
+use crate::run::orch::roles::RoleSnapshot;
 
 /// `EventKind::Promote`.
 pub(super) fn request(
@@ -98,7 +99,12 @@ fn perform(
     )?;
     run.path = Some(RunPath::Plan);
     run.promote_requested_at.get_or_insert(now);
-    run.orch.orchestrator = Some(OrchestratorRecord::new(resolved.route, now));
+    let mut record = OrchestratorRecord::new(resolved.route, now);
+    record.routing = RoleSnapshot {
+        source: resolved.source,
+        candidates: resolved.candidates,
+    };
+    run.orch.orchestrator = Some(record);
     let first = promoted_first_prompt(run);
     if let Some(o) = run.orch.orchestrator.as_mut() {
         o.first_prompt = first;
@@ -108,6 +114,6 @@ fn perform(
         now,
         "promoted to a planned run; its orchestrator starts",
     );
-    orch_window::launch(run, fx);
+    orch_window::launch(run, now, fx);
     Ok(())
 }

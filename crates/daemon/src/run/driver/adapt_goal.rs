@@ -6,12 +6,13 @@
 //! orchestrator plans it. Triage takes no reader slot: no run exists yet.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use proto::run_wire::request;
 use proto::{
-    DeciderMode, OrchestratorChoice, Plan, ProfileSpec, ProposalOrigin, ProposalState, RepoProfile,
-    RunPath, RunReply, TriageInfo,
+    DeciderMode, HistoryLine, OrchestratorChoice, Plan, ProfileSpec, ProposalOrigin, ProposalState,
+    RepoProfile, RoleRoutingInput, RunPath, RunReply, TriageInfo,
 };
 
 use super::super::build::{Planned, Shape};
@@ -22,10 +23,12 @@ use crate::decider::fallback::{OFF_REASON, fallback_decision};
 use crate::decider::{DeciderRequest, Decision, TriageInput};
 use crate::profile::service::{Effective, state_label};
 use crate::run::confine;
-use crate::run::engine::EventKind;
+use crate::run::engine::{EventKind, HISTORY_FILE};
 use crate::run::git::{self, Git, os};
+use crate::run::history_io::append_once;
 use crate::run::model::Run;
 use crate::run::orch::contract::planned_message;
+use crate::run::orch::roles;
 use crate::run::plan::{PlanError, Preflight};
 use crate::run::triage::{self, TriageRoute};
 use crate::scout::report::ONBOARDING_ALIAS;
@@ -251,12 +254,56 @@ impl RunService {
                 }
                 input.files = files;
                 input.files_total = total;
-                decide(&adaptation.deciders, &DeciderRequest::Triage(input)).await
+                let decision = decide(&adaptation.deciders, &DeciderRequest::Triage(input)).await;
+                self.record_triage(adaptation, pre, (goal, profile), &decision)
+                    .await;
+                decision
             }
             Err(error) => fallback_decision(
                 &DeciderRequest::Triage(input),
                 format!("the decider could not start: could not list tracked files: {error}"),
             ),
+        }
+    }
+}
+
+/// Pre-run triage records made by this daemon: each record id's `<n>`.
+static TRIAGE_SEQ: AtomicU64 = AtomicU64::new(1);
+
+impl RunService {
+    /// Milestone 9 decision 43: the triage decider's record, with no run, appended to
+    /// the repository's `history.jsonl` in anthrex's data directory once its answer or
+    /// fallback is in, whatever becomes of the goal. Its id is
+    /// `triage/<unix nanos>/<n>`, which no run's or task's record can take. Written on
+    /// `spawn_blocking`, never under a lock; a failure is only logged.
+    async fn record_triage(
+        &self,
+        adaptation: &Adaptation,
+        pre: &Preflight,
+        (goal, profile): (&str, &RepoProfile),
+        decision: &Decision,
+    ) {
+        let n = TRIAGE_SEQ.fetch_add(1, Ordering::Relaxed);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let input = RoleRoutingInput {
+            goal: Some(roles::capped_goal(goal)),
+            languages: profile.languages.clone(),
+            ..RoleRoutingInput::default()
+        };
+        let session = format!("{nanos}/{n}");
+        let route = &adaptation.deciders.route;
+        let at = unix_now();
+        let mut record = roles::decider_record(None, (&session, "triage"), None, route, input, at);
+        let (outcome, result) = roles::decider_outcome(decision);
+        roles::finish(&mut record, outcome, result);
+        let repo_dir = crate::profile::repo_dir(&self.ctx.data_dir, &pre.project);
+        let path = repo_dir.join(HISTORY_FILE);
+        let line = HistoryLine::RoleRoute(record);
+        let written = blocking(move || append_once(&path, &line).map_err(|e| e.to_string())).await;
+        if let Err(error) = written {
+            tracing::warn!(%error, "the triage decider's history record was not written");
         }
     }
 }

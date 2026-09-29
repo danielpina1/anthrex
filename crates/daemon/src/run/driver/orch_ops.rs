@@ -17,7 +17,7 @@ use std::time::Duration;
 use proto::{RunsSnapshot, Runtime, TokenUsage};
 
 use super::ops::{blocking, failed};
-use super::{DONE_CHECK_GIT_TIMEOUT, OpCtx, RunService};
+use super::{DONE_CHECK_GIT_TIMEOUT, OpCtx, RunService, unix_now};
 use crate::launch::role::{RoleLaunch, otlp_env};
 use crate::run::engine::{EventKind, OpKind, OpResult, OrchEvent, ScoutEnd};
 use crate::run::model::ClaudeAuth;
@@ -313,12 +313,22 @@ impl RunService {
     }
 
     /// Decision 20: a run scout on the scout service; its end is sent as
-    /// `OrchEvent::ScoutEnded` after this op's result.
+    /// `OrchEvent::ScoutEnded` after this op's result. Decision 43: its record, on the
+    /// route the service gives it, reaches the engine first.
     async fn start_scout(self: &Arc<Self>, ctx: &OpCtx, spec: ScoutSpec) -> OpResult {
         let Some(scouts) = self.adaptation.get().map(|a| a.scouts.clone()) else {
             return failed("the scout service is not running");
         };
         let scout_id = spec.id.clone();
+        let record = crate::lock(&self.state).runs.get(&ctx.run_id).map(|run| {
+            crate::run::orch::roles::scout_record(run, &scout_id, scouts.context(), unix_now())
+        });
+        if let Some(decision) = record {
+            self.send(EventKind::Orch(OrchEvent::RoleRoute {
+                run_id: ctx.run_id.clone(),
+                decision: Box::new(decision),
+            }));
+        }
         match scouts.start(spec).await {
             Ok(handle) => {
                 let window_id = handle.window_id;
