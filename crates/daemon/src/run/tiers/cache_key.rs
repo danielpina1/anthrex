@@ -36,3 +36,11 @@ pub fn key(
         toolchain: ctx.toolchain.clone(),
     }
 }
+
+/// The key's toolchain part with the step's effective `PATH` in it (ruling C-13 (5)):
+/// a program found on another `PATH` is another toolchain.
+pub fn with_path(toolchain: &str, path: &str) -> String {
+    let mut hash = crate::profile::store::Fnv1a64::new();
+    hash.update(path.as_bytes());
+    format!("{toolchain} path:{:016x}", hash.0)
+}

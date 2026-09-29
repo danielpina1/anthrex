@@ -24,6 +24,9 @@
 //!   with `daemon::lock` and only to read or update the index: never across a file read
 //!   or write. Two stores racing a rewrite can lose one line (the last rename wins); the
 //!   cache is advisory, so that costs one re-run.
+//! - **Freshness** (ruling C-13): an entry more than 300 s in the future is expired, and
+//!   every lookup stats the file, so a file deleted or replaced behind the daemon is
+//!   read again (a deleted one is empty).
 //! - `test_cache_days = 0` turns the cache off: nothing is read or written.
 
 use std::collections::HashMap;
@@ -52,6 +55,9 @@ pub const CACHE_TAIL_BYTES: usize = 4 * 1024;
 /// A line longer than this is corrupt: skipped without being held.
 const LINE_BYTES_MAX: usize = 1024 * 1024;
 const DAY_SECS: u64 = 86_400;
+/// An entry whose `at` is further ahead of now than this is expired (ruling C-13 (3)):
+/// a clock that jumped cannot keep an entry alive.
+const FUTURE_SECS: u64 = 300;
 
 /// What a green step did (decision 30's value).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,6 +92,24 @@ pub struct CacheLine {
 struct Index {
     map: HashMap<CacheKey, CacheEntry>,
     lines: usize,
+    /// The file as this index last saw it (ruling C-13 (4)).
+    stamp: Stamp,
+}
+
+/// A file's identity and its last change: `(dev, inode, mtime s, mtime ns, length)`;
+/// `None` when it is missing or cannot be read.
+type Stamp = Option<(u64, u64, i64, i64, u64)>;
+
+fn stamp(path: &Path) -> Stamp {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(path).ok()?;
+    Some((
+        meta.dev(),
+        meta.ino(),
+        meta.mtime(),
+        meta.mtime_nsec(),
+        meta.len(),
+    ))
 }
 
 struct Inner {
@@ -159,36 +183,45 @@ impl TestCache {
         line.push(b'\n');
         let path = repo_dir.join(CACHE_FILE);
         append(&path, &line)?;
+        let after = stamp(&path);
         entry.tail.clear();
         let over = {
             let mut repos = crate::lock(&self.inner.repos);
             let index = repos.entry(repo_dir.to_path_buf()).or_default();
             index.map.insert(key, entry);
             index.lines += 1;
+            index.stamp = after;
             index.lines > CACHE_LINES_MAX
         };
         if over {
-            let index = rewrite(&path, unix_now(), self.max_age(), CACHE_LINES_KEPT)?;
+            let mut index = rewrite(&path, unix_now(), self.max_age(), CACHE_LINES_KEPT)?;
+            index.stamp = stamp(&path);
             crate::lock(&self.inner.repos).insert(repo_dir.to_path_buf(), index);
         }
         Ok(())
     }
 
-    /// Loads `repo_dir`'s index unless it is loaded: the file is read with no lock held.
+    /// Loads `repo_dir`'s index unless it is loaded and the file is as it last saw it
+    /// (ruling C-13 (4): a file deleted or replaced behind the daemon is read again; a
+    /// deleted one gives an empty index). The file is stat'ed and read with no lock
+    /// held.
     fn ensure(&self, repo_dir: &Path) -> io::Result<()> {
-        if crate::lock(&self.inner.repos).contains_key(repo_dir) {
+        let path = repo_dir.join(CACHE_FILE);
+        let seen = stamp(&path);
+        if let Some(index) = crate::lock(&self.inner.repos).get(repo_dir)
+            && index.stamp == seen
+        {
             return Ok(());
         }
-        let index = load(&repo_dir.join(CACHE_FILE), unix_now(), self.max_age())?;
-        crate::lock(&self.inner.repos)
-            .entry(repo_dir.to_path_buf())
-            .or_insert(index);
+        let mut index = load(&path, unix_now(), self.max_age())?;
+        index.stamp = stamp(&path);
+        crate::lock(&self.inner.repos).insert(repo_dir.to_path_buf(), index);
         Ok(())
     }
 }
 
 fn expired(entry: &CacheEntry, now: u64, max_age: u64) -> bool {
-    now.saturating_sub(entry.at) > max_age
+    entry.at > now.saturating_add(FUTURE_SECS) || now.saturating_sub(entry.at) > max_age
 }
 
 /// A line's parse, when it is green and within its days.

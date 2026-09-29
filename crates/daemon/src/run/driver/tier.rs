@@ -11,9 +11,11 @@
 //! whole step with a new grant. A build step and a timed-out step are never retried.
 //! An untiered profile runs M8a's `check` once, exactly as written.
 //!
-//! Decisions 30 and 31 (task M9.1.10): a tiered job with a cache context looks each
-//! step up in the daemon's [`TestCache`] before it asks for slots; a hit is not run and
-//! is recorded `cached`. A step whose last whole run passed is stored, with its flaky
+//! Decisions 30 and 31 (task M9.1.10, ruling C-13): a tiered job with a cache context
+//! looks every step up in the daemon's [`TestCache`] before it runs any; a hit is not
+//! run and is recorded `cached`, except that a build step's hit counts only when every
+//! later step hits too. A green step is stored only when the checkout it ran in is
+//! clean and at the key's tree. A step whose last whole run passed is stored, with its flaky
 //! names; a red or timed-out step never is. An untiered profile, and a toolchain that
 //! is `"unknown"`, neither reads nor writes the cache.
 //!
@@ -36,7 +38,7 @@ use crate::run::model::OpId;
 use crate::run::slots::{Priority, TestScheduler, Want};
 use crate::run::test_cache::{CacheEntry, TestCache};
 use crate::run::tiers::affected::affected;
-use crate::run::tiers::cache_key::{CacheKey, key};
+use crate::run::tiers::cache_key::{CacheKey, key, with_path};
 use crate::run::tiers::steps::plan;
 use crate::run::tiers::{
     Affected, CacheCtx, GRAPH_TIMEOUT, GraphState, Scope, Step, StepKind, StepOutcome,
@@ -136,14 +138,25 @@ async fn tier_job(
             })
             .collect()
     };
-    let keys = cache_ctx(spec, tiered, outcome.toolchain.as_deref());
+    let keys: Vec<Option<CacheKey>> = match cache_ctx(spec, tiered, outcome.toolchain.as_deref()) {
+        Some(c) => steps
+            .iter()
+            .map(|step| {
+                Some(key(
+                    &outcome.tree,
+                    scope,
+                    &step.command,
+                    &step.affected_key,
+                    &c,
+                ))
+            })
+            .collect(),
+        None => vec![None; steps.len()],
+    };
+    let hits = usable_hits(&steps, lookup_all(cache, &spec.repo_dir, &keys).await);
+    let mut elsewhere_logged = false;
     for (k, step) in steps.iter().enumerate() {
-        let key = keys
-            .as_ref()
-            .map(|c| key(&outcome.tree, scope, &step.command, &step.affected_key, c));
-        if let Some(key) = &key
-            && lookup(cache, &spec.repo_dir, key).await
-        {
+        if hits[k] {
             outcome.steps.push(hit(step));
             continue;
         }
@@ -155,41 +168,110 @@ async fn tier_job(
             outcome.tail = tail;
             break;
         }
-        if let Some(key) = key {
-            let entry = CacheEntry {
-                ok: true,
-                secs: ran.secs,
-                flaky: ran.flaky.clone(),
-                tail,
-                at: super::unix_now(),
-                run: ctx.run_id.clone(),
-                tier: spec.tier,
-            };
-            store(cache, &spec.repo_dir, key, entry).await;
+        if let Some(key) = keys[k].clone() {
+            // Ruling C-13 (1): the key names the judged head's tree; store only what
+            // ran on exactly that tree.
+            if checkout_is_at(&job, &key.tree).await {
+                let entry = CacheEntry {
+                    ok: true,
+                    secs: ran.secs,
+                    flaky: ran.flaky.clone(),
+                    tail,
+                    at: super::unix_now(),
+                    run: ctx.run_id.clone(),
+                    tier: spec.tier,
+                };
+                store(cache, &spec.repo_dir, key, entry).await;
+            } else if !elsewhere_logged {
+                elsewhere_logged = true;
+                tracing::info!(
+                    dir = %spec.dir.display(),
+                    tree = %key.tree,
+                    "tier steps ran on a checkout that is not the judged tree, or is dirty: not cached"
+                );
+            }
         }
         outcome.steps.push(ran);
     }
     Ok(outcome)
 }
 
+/// Ruling C-13 (2), amending decision 31: a job's steps are not independent (a test
+/// step may use what the build step made), so a build step's hit counts only when
+/// every later step also hits; otherwise everything from the build step on runs.
+fn usable_hits(steps: &[Step], mut hits: Vec<bool>) -> Vec<bool> {
+    if let Some(build) = steps.iter().position(|s| s.kind == StepKind::Build)
+        && hits[build..].iter().any(|hit| !hit)
+    {
+        for hit in &mut hits[build..] {
+            *hit = false;
+        }
+    }
+    hits
+}
+
+/// Whether the job's checkout is clean for tracked files and at `tree`, read on a
+/// bounded blocking thread. Anything that goes wrong is `false`.
+async fn checkout_is_at(job: &Job<'_>, tree: &str) -> bool {
+    let dir = job.dir.clone();
+    match job.read(move |g, t| git::checkout_tree(g, &dir, t)).await {
+        Ok(Some(at)) => at == tree,
+        Ok(None) => false,
+        Err(error) => {
+            tracing::debug!(%error, "could not read a tier checkout's tree");
+            false
+        }
+    }
+}
+
 /// Decision 30's context for this job's keys: none for an untiered profile, without a
 /// context, or with an `"unknown"` toolchain. A toolchain this job ran (decision 11)
 /// replaces the context's.
+///
+/// Ruling C-13 (5), beyond the brief: the toolchain part also carries a hash of the
+/// steps' effective `PATH` (the daemon's own, unless the profile's `env` sets one).
 fn cache_ctx(spec: &TierSpec, tiered: bool, ran_toolchain: Option<&str>) -> Option<CacheCtx> {
     let mut ctx = spec.cache.clone().filter(|_| tiered)?;
     if let Some(id) = ran_toolchain {
         ctx.toolchain = id.to_string();
     }
-    (ctx.toolchain != TOOLCHAIN_UNKNOWN).then_some(ctx)
+    if ctx.toolchain == TOOLCHAIN_UNKNOWN {
+        return None;
+    }
+    let path = spec
+        .env
+        .iter()
+        .rev()
+        .find(|(name, _)| name == "PATH")
+        .map(|(_, value)| value.clone())
+        .unwrap_or_else(|| std::env::var("PATH").unwrap_or_default());
+    ctx.toolchain = with_path(&ctx.toolchain, &path);
+    Some(ctx)
 }
 
-/// Whether `key` is a green hit, read on a bounded blocking thread. Anything that goes
-/// wrong is a miss.
-async fn lookup(cache: &TestCache, repo_dir: &std::path::Path, key: &CacheKey) -> bool {
-    let (cache, repo_dir, key) = (cache.clone(), repo_dir.to_path_buf(), key.clone());
-    bounded(SLACK, move || Ok(cache.lookup(&repo_dir, &key).is_some()))
-        .await
-        .unwrap_or(false)
+/// Which keys are green hits, every one looked up before anything runs, on one bounded
+/// blocking thread. A step without a key misses; anything that goes wrong is a miss.
+async fn lookup_all(
+    cache: &TestCache,
+    repo_dir: &std::path::Path,
+    keys: &[Option<CacheKey>],
+) -> Vec<bool> {
+    let n = keys.len();
+    if keys.iter().all(Option::is_none) {
+        return vec![false; n];
+    }
+    let (cache, repo_dir, keys) = (cache.clone(), repo_dir.to_path_buf(), keys.to_vec());
+    bounded(SLACK, move || {
+        Ok(keys
+            .iter()
+            .map(|key| {
+                key.as_ref()
+                    .is_some_and(|k| cache.lookup(&repo_dir, k).is_some())
+            })
+            .collect())
+    })
+    .await
+    .unwrap_or_else(|_| vec![false; n])
 }
 
 /// Records a green step on a bounded blocking thread. A failure costs a later re-run

@@ -408,3 +408,50 @@ fn a_long_tail_is_cut_to_its_last_lines() {
     );
     assert!(kept.lines().count() <= crate::run::exec::CHECK_TAIL_LINES);
 }
+
+#[test]
+fn an_entry_from_the_future_is_expired_and_dropped() {
+    // Ruling C-13 (3): more than 300 s ahead of now is a clock that cannot be trusted.
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().to_path_buf();
+    let (ahead, near) = (gate("ahead", "c"), gate("near", "c"));
+    let text = format!(
+        "{}\n{}\n",
+        line(&ahead, &green(now() + 3_600)),
+        line(&near, &green(now() + 60))
+    );
+    std::fs::write(repo.join(CACHE_FILE), text).unwrap();
+    let cache = TestCache::new(DAYS);
+    assert_eq!(cache.lookup(&repo, &ahead), None);
+    assert!(cache.lookup(&repo, &near).is_some(), "within 300 s");
+    assert_eq!(lines(&repo).len(), 1, "dropped on load: {:?}", lines(&repo));
+    // Stored by this daemon, it is a miss at once.
+    let later = gate("later", "c");
+    cache
+        .store(&repo, later.clone(), green(now() + 3_600))
+        .unwrap();
+    assert_eq!(cache.lookup(&repo, &later), None);
+}
+
+#[test]
+fn a_deleted_or_replaced_file_is_read_again() {
+    // Ruling C-13 (4): the index follows the file.
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().to_path_buf();
+    let (a, b) = (gate("a", "c"), gate("b", "c"));
+    let cache = TestCache::new(DAYS);
+    cache.store(&repo, a.clone(), green(now())).unwrap();
+    assert!(cache.lookup(&repo, &a).is_some());
+    std::fs::remove_file(repo.join(CACHE_FILE)).unwrap();
+    assert_eq!(cache.lookup(&repo, &a), None, "the file is gone");
+    // Replaced (a new inode) by a file holding another key.
+    let tmp_file = repo.join("other.jsonl");
+    std::fs::write(&tmp_file, format!("{}\n", line(&b, &green(now())))).unwrap();
+    std::fs::rename(&tmp_file, repo.join(CACHE_FILE)).unwrap();
+    assert!(cache.lookup(&repo, &b).is_some());
+    assert_eq!(cache.lookup(&repo, &a), None);
+    // Its own appends do not make it reload needlessly, and are found.
+    cache.store(&repo, a.clone(), green(now())).unwrap();
+    assert!(cache.lookup(&repo, &a).is_some());
+    assert!(cache.lookup(&repo, &b).is_some());
+}

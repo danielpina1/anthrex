@@ -47,3 +47,24 @@ pub fn tree_of(git: &OsStr, dir: &Path, commit: &str, timeout: Duration) -> Resu
     }
     Ok(tree.to_string())
 }
+
+/// The tree the checkout `dir` holds, when it holds exactly its `HEAD`: `HEAD^{tree}`
+/// when `git status --porcelain --untracked-files=no` is empty, `None` when a tracked
+/// file differs (milestone 9.1 ruling C-13 (1): a result is cached only for the tree
+/// it ran on).
+pub fn checkout_tree(git: &OsStr, dir: &Path, timeout: Duration) -> Result<Option<String>, String> {
+    let g = Git::new(git, timeout);
+    let status = g.ok(
+        dir,
+        &[
+            os("status"),
+            os("--porcelain"),
+            os("--untracked-files=no"),
+            os("-z"),
+        ],
+    )?;
+    if !status.is_empty() {
+        return Ok(None);
+    }
+    tree_of(git, dir, "HEAD", timeout).map(Some)
+}

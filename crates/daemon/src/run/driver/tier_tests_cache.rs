@@ -51,7 +51,7 @@ async fn a_second_job_on_the_same_tree_runs_nothing() {
     for line in &lines {
         assert_eq!(line.key.tree, first.tree);
         assert_eq!(line.key.profile_hash, "00000000000000aa");
-        assert_eq!(line.key.toolchain, "none");
+        assert!(line.key.toolchain.starts_with("none path:"), "{line:?}");
         assert!(line.entry.ok);
         assert_eq!((line.entry.run.as_str(), line.entry.tier), ("r1", 1));
     }
@@ -81,7 +81,8 @@ async fn a_second_job_on_the_same_tree_runs_nothing() {
 #[tokio::test]
 async fn red_and_timed_out_steps_are_never_cached() {
     // A red step (its by-name retry fails): the green build before it is stored, the
-    // red step is not, and the next job runs it again.
+    // red step is not, and the next job runs both again (ruling C-13 (2): a build hit
+    // counts only when every later step hits).
     let rig = Rig::new();
     let cache = TestCache::new(14);
     let spec = cached(&rig);
@@ -92,8 +93,14 @@ async fn red_and_timed_out_steps_are_never_cached() {
     assert!(!red.ok);
     assert_eq!(commands(&stored(&spec)), [BUILD_CMD]);
     let again = rig.tier_with(2, &spec, &cache).await;
-    assert!(again.steps[0].cached, "the green build is a hit");
+    assert!(!again.steps[0].cached, "the build runs again: {again:?}");
     assert!(!again.steps[1].cached, "the red step runs again");
+    assert_eq!(
+        rig.log().iter().filter(|l| l.starts_with("build ")).count(),
+        2,
+        "{:#?}",
+        rig.log()
+    );
     assert_eq!(
         rig.log()
             .iter()
@@ -241,5 +248,100 @@ async fn untiered_and_unknown_toolchain_jobs_neither_read_nor_write() {
     assert_ne!(id, "unknown");
     let lines = stored(&known);
     assert_eq!(lines.len(), 3);
-    assert!(lines.iter().all(|l| l.key.toolchain == id), "{id}");
+    let with_path = format!("{id} path:");
+    assert!(
+        lines
+            .iter()
+            .all(|l| l.key.toolchain.starts_with(&with_path)),
+        "{id}"
+    );
+}
+
+/// The build lines and the `test <m>` lines of the log.
+fn builds_and_tests(rig: &Rig) -> (usize, usize) {
+    let log = rig.log();
+    (
+        log.iter().filter(|l| l.starts_with("build ")).count(),
+        log.iter().filter(|l| l.starts_with("test ")).count(),
+    )
+}
+
+#[tokio::test]
+async fn a_cached_build_runs_again_when_a_later_step_misses() {
+    // Ruling C-13 (2), amending decision 31: the steps are not independent; a test step
+    // may need what the build step made, so a build hit counts only when every later
+    // step of the job also hits.
+    let rig = Rig::new();
+    let cache = TestCache::new(14);
+    let spec = cached(&rig);
+    assert!(rig.tier_with(1, &spec, &cache).await.ok);
+    assert_eq!(builds_and_tests(&rig), (1, 2));
+    // The same build command; the test steps' commands (and so their keys) differ.
+    let other = TierSpec {
+        profile: TierProfile {
+            module_test: Some("sh test.sh {module} {filter:--filter %} x".to_string()),
+            ..tiered()
+        },
+        ..spec.clone()
+    };
+    let outcome = rig.tier_with(2, &other, &cache).await;
+    assert!(outcome.ok, "{outcome:?}");
+    assert!(outcome.steps.iter().all(|s| !s.cached), "{outcome:?}");
+    assert_eq!(builds_and_tests(&rig), (2, 4), "{:#?}", rig.log());
+    // Both are stored now, so a third job hits all three.
+    let third = rig.tier_with(3, &other, &cache).await;
+    assert!(third.steps.iter().all(|s| s.cached), "{third:?}");
+    assert_eq!(builds_and_tests(&rig), (2, 4));
+}
+
+#[tokio::test]
+async fn a_checkout_at_another_tree_stores_nothing() {
+    // Ruling C-13 (1): the key's tree is the judged head's, but the steps ran in the
+    // checkout; a result is stored only when that checkout is at the key's tree and
+    // clean.
+    let rig = Rig::new();
+    let cache = TestCache::new(14);
+    let mut spec = cached(&rig);
+    if let Some(scratch) = spec.scratch.as_mut() {
+        scratch.commit = rig.base.clone();
+    }
+    let outcome = rig.tier_with(1, &spec, &cache).await;
+    assert!(outcome.ok, "{outcome:?}");
+    assert_eq!(git(&rig.dir, &["rev-parse", "HEAD"]), rig.base);
+    assert!(stored(&spec).is_empty(), "{:?}", commands(&stored(&spec)));
+
+    // A checkout at the key's tree with a tracked file changed stores nothing either:
+    // a step that edits a tracked file leaves it dirty.
+    let rig = Rig::new();
+    let spec = TierSpec {
+        profile: TierProfile {
+            build_check: Some("sh build.sh && echo dirty >> mods/a/lib.txt".to_string()),
+            ..tiered()
+        },
+        ..cached(&rig)
+    };
+    let outcome = rig.tier_with(1, &spec, &TestCache::new(14)).await;
+    assert!(outcome.ok, "{outcome:?}");
+    assert!(stored(&spec).is_empty(), "{:?}", commands(&stored(&spec)));
+}
+
+#[tokio::test]
+async fn a_changed_path_misses() {
+    // Ruling C-13 (5): the effective PATH is part of the key's toolchain.
+    let rig = Rig::new();
+    let cache = TestCache::new(14);
+    let path = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string());
+    let with_path = |path: &str| {
+        let mut spec = cached(&rig);
+        spec.env.push(("PATH".to_string(), path.to_string()));
+        spec
+    };
+    assert!(rig.tier_with(1, &with_path(&path), &cache).await.ok);
+    let ran = rig.log().len();
+    let longer = format!("{path}:/nonexistent/extra");
+    let moved = rig.tier_with(2, &with_path(&longer), &cache).await;
+    assert!(moved.steps.iter().all(|s| !s.cached), "{moved:?}");
+    assert_eq!(rig.log().len(), ran * 2);
+    let same = rig.tier_with(3, &with_path(&path), &cache).await;
+    assert!(same.steps.iter().all(|s| s.cached), "{same:?}");
 }
