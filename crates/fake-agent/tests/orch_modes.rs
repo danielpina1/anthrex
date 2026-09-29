@@ -485,6 +485,9 @@ fn stdin_file_records_when_a_message_started() {
     assert_eq!(pty.wait(RUN), 0, "screen {:?}", pty.screen());
 
     let read: Value = serde_json::from_str(&lines(&stdin)[0]).unwrap();
+    // A paste arrives in one read (a gap near 0); typing spans the 400 ms sleep. The
+    // lower bound leaves 300 ms for fake-agent to read the first bytes late (whole-branch
+    // review, item 6; `docs/timing-budgets.md`); the upper one is a hang guard.
     let typing = millis(&read["at"]) - millis(&read["first_at"]);
-    assert!((350..5000).contains(&typing), "{read}");
+    assert!((100..5000).contains(&typing), "{read}");
 }
