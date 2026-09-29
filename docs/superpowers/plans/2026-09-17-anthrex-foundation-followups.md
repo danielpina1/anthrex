@@ -1668,3 +1668,7 @@ scope.
 ## From M9.13a's re-review (2026-09-29), for M9
 
 - **A run head rewound below a refresh's target still shows the refreshed run files in the done check's spill diff and in `diff_so_far`.** `git::verify_done` computes the spill as `git diff --name-only <run_head>...<head>`, and `diff_so_far` as `<run_head>...HEAD`. After `resume --rebaseline` rewinds the run head below a run head that a refresh merged into the task, the merge base drops back, so the merged run files appear there: a spill outside `owns`, and more of the diff for the reviewer. The commit counts and `task_result` already leave that run work out, since the M9.13a re-review records every refresh's target (`TaskOrch.refresh_targets`). The same targets could serve as the diff base here: the newest one the head has. This was left alone because the re-review named only the counts and `task_result`, and the spill check is M8a's gate.
+
+## From milestone 9 (2026-09-29)
+
+- **Unconfirmed: a `run_status` read can leave one stale wake-up to be pasted later (M9.17 review).** `driver/orch.rs:333-338`'s `run_status` calls `Wakes::read`, then sends `DigestRead` asynchronously; a read that lands between a step's commit and that step's `queue_wake` may leave its wake-up waiting, pasted later for notes the read already showed, at the cost of one redundant orchestrator turn. Not reproduced.

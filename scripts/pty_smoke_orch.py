@@ -198,7 +198,15 @@ def _start_from_the_cli(proc, run_cmd, repo, fail):
     proc.send(b"\r")
     proc.wait_for(" TREE ", label="overview navigation after filtering")
     proc.send(b"l")
-    proc.wait_for(f"{h4}", label="the run's node in the project overview")
+    # The run's own node (its canvas text, `graph/run_text.rs::run_text`), not the
+    # filter's echo of `h4`.
+    _wait_either(
+        proc,
+        ["orchestrator  planning", "orchestrator  0/2"],
+        10.0,
+        "the run's node in the project overview",
+        fail,
+    )
     proc.send(b"l")
     proc.wait_for(f" run {run_id} ", label="the run view's title")
     return run_id
@@ -227,22 +235,6 @@ def _wait_run(proc, run_cmd, run_id, pred, timeout, label, fail):
         if time.monotonic() >= deadline:
             fail(
                 f"timed out waiting for {label} in run {run_id}; last state {run['state']}"
-                f"\n--- rendered screen ---\n{proc.screen_text()}"
-            )
-        proc.read_available(timeout=POLL)
-
-
-def _wait_idle(proc, run_cmd, window, fail):
-    """Waits, within `RUN_WAIT`, until window `window` is `idle` or `done`."""
-    deadline = time.monotonic() + RUN_WAIT
-    while True:
-        listed = json.loads(run_cmd(["ls", "--json"]).stdout)
-        status = next((w["status"] for w in listed if w["id"] == window), None)
-        if status in ("idle", "done"):
-            return
-        if time.monotonic() >= deadline:
-            fail(
-                f"the orchestrator (window {window}) was {status!r}, not idle, after {RUN_WAIT}s"
                 f"\n--- rendered screen ---\n{proc.screen_text()}"
             )
         proc.read_available(timeout=POLL)
@@ -319,6 +311,7 @@ def orch_stage(pty_proc, bin_path, run_cmd, fail):
         proc.wait_for(f"Approve run {run_id}?", label="the approve confirm")
         proc.send(b"y")
         approved = lambda r: r["state"] != "awaiting_approval"  # noqa: E731
+        # A diagnostic: a failure names the approval, not the run's completion.
         _wait_run(proc, run_cmd, run_id, approved, RUN_CMD_TIMEOUT, "the approval", fail)
         complete = lambda r: r["state"] == "complete"  # noqa: E731
         run = _wait_run(proc, run_cmd, run_id, complete, RUN_WAIT, "complete", fail)
@@ -333,9 +326,8 @@ def orch_stage(pty_proc, bin_path, run_cmd, fail):
         windows.append(str(window))
         proc.send(b"\r")
         proc.wait_for(f"{h4}/orchestrator · ", label="the focused orchestrator window")
-        # Its turn has ended: it reads the next line (`read_message`), so the line is
-        # typed into a terminal that waits for it.
-        _wait_idle(proc, run_cmd, window, fail)
+        # Typed at once, as a user types: decision 39's quiet time keeps a pending
+        # wake-up from being pasted into it.
         proc.send(b"done\r")
         deadline = time.monotonic() + RUN_WAIT
         while True:
