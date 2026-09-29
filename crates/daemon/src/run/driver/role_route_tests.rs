@@ -20,7 +20,8 @@ use crate::run::driver::context::OpCtx;
 use crate::run::driver::{RunContext, RunService};
 use crate::run::engine::OpResult;
 use crate::run::journal::RUN_FILE;
-use crate::run::orch::test_support::{block, run_of, task_mut};
+use crate::run::orch::RunScoutState;
+use crate::run::orch::test_support::{block, run_of, scout, task_mut};
 use crate::server::GitWiring;
 
 const WAIT: Duration = Duration::from_secs(30);
@@ -94,6 +95,24 @@ impl Rig {
         }
     }
 
+    /// Run scout `id` in `state`, put in the engine by hand.
+    fn scout_in(&self, id: &str, state: RunScoutState) {
+        let mut engine = crate::lock(&self.runs.state);
+        let run = engine.runs.get_mut(&self.run_id).unwrap();
+        run.orch
+            .run_scouts
+            .push(scout(id, state, &["crates/m0/**"]));
+    }
+
+    /// Every later `run.json` write of the run fails: its directory would be under a
+    /// regular file.
+    fn break_saves(&self) {
+        let file = self.dir.path().join("not-a-dir");
+        std::fs::write(&file, "x").unwrap();
+        let mut engine = crate::lock(&self.runs.state);
+        engine.runs.get_mut(&self.run_id).unwrap().data_dir = file.join("runs");
+    }
+
     fn ctx(&self) -> OpCtx {
         let state = crate::lock(&self.runs.state);
         OpCtx {
@@ -128,7 +147,8 @@ impl Rig {
             Default::default(),
             0,
         );
-        self.runs.keep_record("no-such-run", d).await;
+        let refused = self.runs.keep_record("no-such-run", d).await;
+        assert!(refused.is_err(), "{refused:?}");
     }
 }
 
@@ -158,19 +178,8 @@ fn summary_request() -> DeciderRequest {
 #[tokio::test(flavor = "current_thread")]
 async fn a_scout_record_is_saved_before_its_session_starts() {
     let rig = Rig::new(DeciderMode::Off, None);
-    let spec = crate::scout::spec::ScoutSpec {
-        id: "Bad".into(),
-        kind: ScoutKind::Area,
-        run_id: Some(rig.run_id.clone()),
-        question: "q".into(),
-        first_turn: "q".into(),
-        cwd: rig.dir.path().join("repo"),
-        project: rig.dir.path().join("repo"),
-        web: false,
-        codex_config: Vec::new(),
-        base_sha: "b".repeat(40),
-        repo_paths: Vec::new(),
-    };
+    rig.scout_in("Bad", RunScoutState::Running);
+    let spec = bad_scout(&rig);
     let result = rig.runs.start_scout(&rig.ctx(), spec).await;
     assert!(matches!(result, OpResult::Failed { .. }), "{result:?}");
     // Read at once, with no await in between.
@@ -184,6 +193,81 @@ async fn a_scout_record_is_saved_before_its_session_starts() {
         (id.as_str(), None)
     );
     assert_eq!(records[0].source, "scout_config");
+}
+
+/// A scout spec whose id (`Bad`) the scout service refuses before any await.
+fn bad_scout(rig: &Rig) -> crate::scout::spec::ScoutSpec {
+    crate::scout::spec::ScoutSpec {
+        id: "Bad".into(),
+        kind: ScoutKind::Area,
+        run_id: Some(rig.run_id.clone()),
+        question: "q".into(),
+        first_turn: "q".into(),
+        cwd: rig.dir.path().join("repo"),
+        project: rig.dir.path().join("repo"),
+        web: false,
+        codex_config: Vec::new(),
+        base_sha: "b".repeat(40),
+        repo_paths: Vec::new(),
+    }
+}
+
+/// Re-review 2: a scout the run stopped (`run cancel`) before its record reached the
+/// engine is refused there, so `start_scout` starts no session, and nothing is recorded:
+/// no session was dispatched (as with M-3's deciders off).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_scout_stopped_before_its_record_is_kept_is_not_started() {
+    let rig = Rig::new(DeciderMode::Off, None);
+    rig.scout_in(
+        "Bad",
+        RunScoutState::Failed {
+            reason: "the run was cancelled".into(),
+        },
+    );
+    let result = rig.runs.start_scout(&rig.ctx(), bad_scout(&rig)).await;
+    let OpResult::Failed { message } = &result else {
+        panic!("{result:?}");
+    };
+    assert!(message.contains("stopped when the run ended"), "{message}");
+    rig.settled().await;
+    assert!(rig.records(AgentRole::Scout).is_empty());
+}
+
+/// Re-review 3: a record whose `run.json` save failed is refused, so the session does
+/// not start: the scout's op fails with the reason, and the decider is not run (its
+/// stand-in writes nothing) and falls back; its record says it was not started.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_record_that_could_not_be_saved_starts_no_session() {
+    let rig = Rig::new(DeciderMode::Claude, Some(witness));
+    rig.scout_in("Bad", RunScoutState::Running);
+    rig.break_saves();
+    let result = rig.runs.start_scout(&rig.ctx(), bad_scout(&rig)).await;
+    let OpResult::Failed { message } = &result else {
+        panic!("{result:?}");
+    };
+    assert!(message.contains("could not be saved"), "{message}");
+    let result = rig
+        .runs
+        .decide_as(&rig.ctx(), Some((5, vec!["t0".into()])), summary_request())
+        .await;
+    assert!(matches!(result, OpResult::Decided(_)), "{result:?}");
+    assert!(
+        !rig.dir.path().join("mark").exists(),
+        "the decider ran though its record was not saved"
+    );
+    rig.settled().await;
+    let decider = rig.records(AgentRole::Decider);
+    assert_eq!(
+        decider[0].outcome,
+        Some(RoleOutcome::Failed),
+        "{decider:#?}"
+    );
+    assert!(
+        decider[0]
+            .result
+            .as_deref()
+            .is_some_and(|r| r.contains("could not be saved"))
+    );
 }
 
 /// A decider stand-in that writes whether `run.json` held its record when it started,

@@ -130,8 +130,20 @@ impl RunService {
                     }
                     _ => None,
                 };
+                // M9.13b re-review 3: a record the engine could not save starts no
+                // session; the call is the fallback, and the record says why.
+                if let Some((record_id, Err(why))) = &id {
+                    let reason = format!("the decider could not start: {why}");
+                    self.send(EventKind::Orch(OrchEvent::RoleRouteEnded {
+                        run_id: ctx.run_id.clone(),
+                        record_id: record_id.clone(),
+                        outcome: proto::RoleOutcome::Failed,
+                        result: Some(format!("not started: {why}")),
+                    }));
+                    return OpResult::Decided(Box::new(fallback_decision(&request, reason)));
+                }
                 let decision = decide(&adaptation.deciders, &request).await;
-                if let Some(record_id) = id {
+                if let Some((record_id, _)) = id {
                     let (outcome, result) = roles::decider_outcome(&decision);
                     self.send(EventKind::Orch(OrchEvent::RoleRouteEnded {
                         run_id: ctx.run_id.clone(),
@@ -150,14 +162,14 @@ impl RunService {
     /// Decision 43: a run-bound decider's record, built under the engine's lock (pure),
     /// with the full candidate snapshot (review I-2), and kept by the engine before the
     /// call: the engine answers once the step that keeps it was saved (review M-2). No
-    /// lock is held across the wait. Its record id.
+    /// lock is held across the wait. Its record id, and whether it was kept.
     async fn decider_dispatched(
         &self,
         ctx: &OpCtx,
         (op, tasks): (OpId, &[String]),
         (roster, route): (&[proto::ModelEntry], &proto::Route),
         request: &DeciderRequest,
-    ) -> Option<String> {
+    ) -> Option<(String, Result<(), String>)> {
         let strength = self.ctx.orchestrator.deciders.strength;
         let decision = crate::lock(&self.state).runs.get(&ctx.run_id).map(|run| {
             let session = (op.to_string(), request.kind().label());
@@ -168,15 +180,21 @@ impl RunService {
             roles::decider_record(Some(run), (&session.0, session.1), tasks, chosen, input, at)
         })?;
         let record_id = decision.record_id.clone();
-        self.keep_record(&ctx.run_id, decision).await;
-        Some(record_id)
+        let kept = self.keep_record(&ctx.run_id, decision).await;
+        Some((record_id, kept))
     }
 
     /// Sends a record to the engine and waits for its answer, which comes after the
-    /// step that keeps it was saved. A refusal (the run is gone) is only logged.
-    pub(super) async fn keep_record(&self, run_id: &str, decision: proto::RoleRoutingDecision) {
+    /// step that keeps it was saved. `Err` (the engine refused it, or `run.json` could
+    /// not be saved: M9.13b re-review 2 and 3) means the session must not start.
+    pub(super) async fn keep_record(
+        &self,
+        run_id: &str,
+        decision: proto::RoleRoutingDecision,
+    ) -> Result<(), String> {
         let kept = self
             .ask(|reply| {
+                crate::lock(&self.writes.record_replies).insert(reply, run_id.to_string());
                 EventKind::Orch(OrchEvent::RoleRoute {
                     reply,
                     run_id: run_id.to_string(),
@@ -184,9 +202,10 @@ impl RunService {
                 })
             })
             .await;
-        if let Err(error) = kept {
+        if let Err(error) = &kept {
             tracing::warn!(run = %run_id, %error, "a role-routing record was not kept");
         }
+        kept.map(|_| ())
     }
 
     /// Decision 19: fills a size check's `evidence` from its `evidence_refs`, resolved

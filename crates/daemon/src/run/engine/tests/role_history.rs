@@ -511,7 +511,7 @@ fn a_run_never_attributes_its_outcome_to_one_role() {
     assert_eq!(d.outcome, Some(RoleOutcome::Completed));
     assert_eq!(
         d.result.as_deref(),
-        Some("live until the run ended; plan submitted")
+        Some("live until the run ended; the run's plan had been submitted")
     );
     let run_words = ["cancel", "fail", "discard", "accept", state.label()];
     for d in &fx.run().role_routing_decisions {

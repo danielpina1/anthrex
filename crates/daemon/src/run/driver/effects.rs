@@ -120,7 +120,14 @@ pub(super) fn prepare(state: &EngineState, fx: Vec<Effect>, now: u64) -> Vec<Rea
 pub(super) struct RunWrites {
     next: AtomicU64,
     runs: Mutex<HashMap<String, Arc<Mutex<u64>>>>,
+    /// Milestone 9 decision 43 (M9.13b re-review 3): the replies that say a record was
+    /// kept, by run. Such a reply is turned into [`RECORD_UNSAVED`] when its step could
+    /// not save that run, so no session starts on a record `run.json` lacks.
+    pub(super) record_replies: Mutex<HashMap<crate::run::engine::ReplyId, String>>,
 }
+
+/// A kept record's reply when its step could not save `run.json`.
+pub(super) const RECORD_UNSAVED: &str = "its record could not be saved";
 
 impl RunWrites {
     /// The write of `run` as it is now, numbered now, to run on a blocking thread.
@@ -188,6 +195,15 @@ impl RunService {
                     self.not_started(ctx, op, "run.json could not be saved");
                 }
                 Ready::Op { ctx, op, kind } => self.start_op(ctx, op, kind).await,
+                Ready::Effect(Effect::Reply { reply, result }) => {
+                    let run = crate::lock(&self.writes.record_replies).remove(&reply);
+                    let unsaved = run.is_some_and(|id| unsaved.contains(&id));
+                    let result = match unsaved {
+                        true => Err(RECORD_UNSAVED.to_string()),
+                        false => result,
+                    };
+                    self.apply(Effect::Reply { reply, result }, now).await;
+                }
                 Ready::Publish(snap) => self.publish(*snap),
                 Ready::PublishLater => crate::lock(&self.book).publish_due = true,
                 Ready::Effect(effect) => self.apply(effect, now).await,

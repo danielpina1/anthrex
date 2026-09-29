@@ -220,6 +220,7 @@ pub(super) fn halt_all(run: &mut Run, reason: &str, now: u64, fx: &mut Vec<Effec
         .collect();
     for (id, running) in live {
         if running {
+            history::session_stopped(run, (AgentRole::Scout, &id), fx);
             fx.push(Effect::StopScout {
                 scout_id: id.clone(),
                 reason: reason.to_string(),

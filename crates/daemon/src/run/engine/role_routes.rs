@@ -13,7 +13,7 @@ use super::super::ScoutEnd;
 use super::{Effect, append};
 use crate::run::history::enabled;
 use crate::run::model::Run;
-use crate::run::orch::roles;
+use crate::run::orch::{RunScoutState, roles};
 
 /// The session of an open record ended with the daemon that ran it.
 pub const RESTARTED: &str = "the daemon restarted during this session";
@@ -75,15 +75,18 @@ fn open_orchestrator(run: &Run) -> Option<String> {
         .map(|d| d.record_id.clone())
 }
 
-/// The orchestrator's status for its record: how the session ended, whether the plan
-/// was submitted, and whether it wrote the run's summary. Never the run's outcome.
+/// The orchestrator's status for its record: how the session ended, whether the run's
+/// plan had been submitted by then, and whether a summary was written. Never the run's
+/// outcome.
 fn orchestrator_result(run: &Run, ended: &str) -> String {
     let Some(o) = run.orch.orchestrator.as_ref() else {
         return ended.to_string();
     };
+    // Re-review 4: `plan_submitted` is the run's; this session may not be the one
+    // that submitted it.
     let plan = match o.plan_submitted {
-        true => "plan submitted",
-        false => "plan not submitted",
+        true => "the run's plan had been submitted",
+        false => "no plan had been submitted",
     };
     let summary = match o.summary {
         Some(_) => "; summary written",
@@ -100,9 +103,10 @@ pub(in crate::run::engine) fn orchestrator_dispatched(run: &mut Run, trigger: &s
 }
 
 /// The orchestrator's open session ended while the run goes on: `failed` with `why` (a
-/// launch or restart that failed); or its window exited, which is `completed` when it
-/// had submitted its plan (what the session is for) and `failed` when it had not
-/// (review M-1). The Interfaces' outcomes have no "exited early"; the result says it.
+/// launch or restart that failed); or its window exited, which is `completed` when the
+/// run's plan had been submitted by then (what an orchestrator session is for) and
+/// `failed` when it had not (review M-1; re-review 4: the result says what is known of
+/// the run's plan, not which session submitted it). The Interfaces' outcomes have no "exited early"; the result says it.
 pub(in crate::run::engine) fn orchestrator_ended(
     run: &mut Run,
     failed: Option<&str>,
@@ -120,11 +124,14 @@ pub(in crate::run::engine) fn orchestrator_ended(
         (Some(why), _) => (RoleOutcome::Failed, Some(why.to_string())),
         (None, true) => (
             RoleOutcome::Completed,
-            Some("its window exited after it submitted the plan, before the run ended".into()),
+            Some(
+                "its window exited after the run's plan had been submitted, before the run ended"
+                    .into(),
+            ),
         ),
         (None, false) => (
             RoleOutcome::Failed,
-            Some("its window exited before it submitted a plan".into()),
+            Some("its window exited before the run's plan was submitted".into()),
         ),
     };
     close(run, &id, ended, fx);
@@ -244,23 +251,44 @@ pub(in crate::run::engine) fn planner_ended(
     close(run, &id, (outcome, Some(format!("{text}{rejected}"))), fx);
 }
 
-/// Review I-1: `run cancel` or the `finish` edit stops every live sub-planner and run
-/// scout (`planners::halt_all`). Their sessions did not fail: each open record is
-/// finished `interrupted`, [`STOPPED`], before the stopped session reports its end.
-pub(in crate::run::engine) fn sessions_stopped(run: &mut Run, fx: &mut Vec<Effect>) {
-    let open: Vec<String> = run
-        .role_routing_decisions
-        .iter()
-        .filter(|d| d.outcome.is_none())
-        .filter(|d| matches!(d.role, AgentRole::Planner | AgentRole::Scout))
-        .map(|d| d.record_id.clone())
-        .collect();
-    for id in open {
-        close(
-            run,
-            &id,
-            (RoleOutcome::Interrupted, Some(STOPPED.into())),
-            fx,
-        );
+/// Review I-1 (narrowed by the re-review, 1): `run cancel` or the `finish` edit
+/// stopped this session (`planners::halt_all`: a planning epic's latest session, a
+/// running scout). It did not fail: its open record is finished `interrupted`,
+/// [`STOPPED`], before the stopped session reports its end. A session `halt_all` does
+/// not stop (an accepted planner still ending, one the engine stopped at
+/// `max_rejections`) keeps its own end.
+pub(in crate::run::engine) fn session_stopped(
+    run: &mut Run,
+    (role, session_id): (AgentRole, &str),
+    fx: &mut Vec<Effect>,
+) {
+    let ended = (RoleOutcome::Interrupted, Some(STOPPED.to_string()));
+    close_session(run, (role, session_id), ended, fx);
+}
+
+/// `OrchEvent::RoleRoute`: the record is kept, unless it is a run scout's whose scout
+/// is no longer running (stopped when the run ended, re-review 2): that session will
+/// not start, so nothing is recorded, and the refusal tells the driver not to start it.
+pub(in crate::run::engine) fn keep(
+    run: &mut Run,
+    decision: RoleRoutingDecision,
+) -> Result<String, String> {
+    if decision.role == AgentRole::Scout {
+        let id = decision.session_id.as_str();
+        let state = run
+            .orch
+            .run_scouts
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| &s.state);
+        match state {
+            Some(RunScoutState::Running) => {}
+            Some(RunScoutState::Failed { .. }) => {
+                return Err(format!("scout {id} was {STOPPED}"));
+            }
+            _ => return Err(format!("scout {id} is not running")),
+        }
     }
+    open(run, decision);
+    Ok("recorded".to_string())
 }

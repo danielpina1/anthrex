@@ -3387,7 +3387,7 @@ Some tests passed at once, because the behaviour came from M9.2 or M8b:
 
 One commit, `fix(daemon): …`, on top of `1b760c9`. Each test was written first and seen red for the reason given (a runtime failure on the old code, or a mutation of the new code restored from a `cp` copy where the old code had no seam).
 
-- **I-1. Sessions anthrex stopped are `interrupted`.** `planners::halt_all` (`run cancel`, the `finish` edit) now calls `role_routes::sessions_stopped` first. It finishes every open sub-planner and run-scout record `interrupted`, `stopped when the run ended`. The session's later end, `failed` with the halt's reason, finds the record finished and changes nothing. `a_run_never_attributes_its_outcome_to_one_role` now also cancels a running run with a live planner and scout. Red on the old code: both recorded `failed`, `the run was cancelled`.
+- **I-1. Sessions anthrex stopped are `interrupted`.** `planners::halt_all` (`run cancel`, the `finish` edit) now finishes the records of the sessions it halts (*narrowed by the re-review, item 1*) `interrupted`, `stopped when the run ended`. The session's later end, `failed` with the halt's reason, finds the record finished and changes nothing. `a_run_never_attributes_its_outcome_to_one_role` now also cancels a running run with a live planner and scout. Red on the old code: both recorded `failed`, `the run was cancelled`.
 - **I-2. A decider's full candidate snapshot.** Candidates come from `roles::decider_candidates(roster, route, deciders.strength)`:
   - the roster is the scout service's context (`adaptation.scouts.context().roster`);
   - it takes the mode's runtime's entries at or above the strength, lowest first, with no peer runtime;
@@ -3412,4 +3412,30 @@ One commit, `fix(daemon): …`, on top of `1b760c9`. Each test was written first
   - (c), the scout's `RoleRoute` from the driver, is M-2's scout test.
 - **M-6.** Pre-run triage's `append_once` runs under a 10 s `tokio::time::timeout` (`TRIAGE_WRITE_TIMEOUT`). On a timeout it logs and the goal goes on. No test: a stalled file system is not reproducible without a fault-injection seam the brief does not ask for.
 - The proto doc comment for `RoleRoutingDecision.source` lists `scout_config` (and the triage record id format), confirmed.
+
+#### Re-review fixes
+
+One commit, `fix(daemon): …`, on top of `6a7c91b`. Each test was written first and seen red on `6a7c91b` for the reason given.
+
+1. **Only the sessions `halt_all` halts are `interrupted`.** `role_routes::sessions_stopped`, which closed every open planner and scout record, is replaced by `session_stopped(run, (role, session))`. `planners::halt_all` calls it for a planning epic's latest session, and `run_scouts::halt_all` for each running scout: the sessions the halt stops. Any other open record keeps its own end:
+   - an accepted planner whose process is still ending;
+   - a planner the engine stopped at `max_rejections`.
+
+   Tests in `engine/tests/role_history_ends.rs`, both red on `6a7c91b` (the record was `interrupted`):
+   - `cancel_leaves_an_accepted_planner_to_its_own_end`: the record stays open through `run cancel`, then ends `completed`, `epic accepted`;
+   - `cancel_leaves_a_planner_failed_at_max_rejections_to_its_own_end`: it ends `failed` with its own rejection reason.
+2. **A scout stopped before its record is kept is not started.** The engine's `RoleRoute` (`role_routes::keep`) refuses a run scout's record when that scout is no longer running: `scout <id> was stopped when the run ended`, or `… is not running`. `start_scout` then returns `the scout was not started: …` without starting a session.
+   - **Choice: nothing is recorded.** No session was dispatched, as with M-3's deciders off. A record would name a route that never ran.
+   - Test: `driver/role_route_tests.rs::a_scout_stopped_before_its_record_is_kept_is_not_started`. Red on `6a7c91b`: the service was reached (`invalid scout id "Bad"`), and a record was kept.
+3. **A record that could not be saved starts no session.** `effects::RunWrites.record_replies` maps each record reply's id to its run; `keep_record` registers it inside `ask`. When `execute` applies that reply, it becomes `Err("its record could not be saved")` if the same step's `run.json` save failed.
+   - No new stall: `execute` already awaits the save before any reply of its step, and only the reply's content changes.
+   - `start_scout` then fails its op, and the engine finishes the kept record `failed` through `StartScout`'s failure.
+   - `decide_as` runs no decider: it answers the fallback (`the decider could not start: …`) and ends the record `failed`, `not started: its record could not be saved`.
+   - Test: `a_record_that_could_not_be_saved_starts_no_session`. The run's data directory is put under a regular file; the scout op fails with the reason, the decider stand-in never runs (no mark file), and the decider record is `failed`. Red on `6a7c91b`: the scout reached the service.
+4. **The orchestrator's result describes the run's plan, not the session.** `plan_submitted` is the run's, so the results are:
+   - `its window exited before the run's plan was submitted`;
+   - `its window exited after the run's plan had been submitted, before the run ended`;
+   - `live until the run ended; the run's plan had been submitted` or `…; no plan had been submitted`.
+
+   `an_orchestrator_exit_is_failed_before_its_plan_and_completed_after` and `a_run_never_attributes_its_outcome_to_one_role` now expect these texts; both were red on `6a7c91b`'s wording.
 
