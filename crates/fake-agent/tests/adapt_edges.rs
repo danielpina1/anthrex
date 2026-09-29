@@ -174,7 +174,12 @@ fn role_and_resumed_sessions_do_not_read_stdin_before_starting() {
         exists_before_stdin(&claimed),
         "the role session did not claim"
     );
-    assert!(records.join("worker-t1-1.args").exists());
+    // The argv is recorded just after the claim (the claim names the record), so it
+    // is waited for too, with nothing written to stdin yet.
+    assert!(
+        exists_before_stdin(&records.join("worker-t1-1.args")),
+        "the role session did not record its argv"
+    );
     drop(role);
 
     let resumed = Agent::spawn(&claude_argv(Session::Resume("s-old"), None), &repo, env);
