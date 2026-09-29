@@ -227,3 +227,63 @@ fn a_stale_not_live_snapshot_keeps_a_wake_up_queued_after_it() {
     wakes.keep_live(&[seen(false, true, 7)], &judged);
     assert!(crate::lock(&wakes.pending).contains_key("r1"));
 }
+
+/// M9.16 fix round 3: a check delivers only the wake-ups it judged on its own engine
+/// snapshot. One queued after it took its generations (so after its snapshot may have
+/// been read) waits for the next check, which judges it first.
+#[test]
+fn a_check_delivers_only_the_wake_ups_it_judged() {
+    let wakes = Wakes::default();
+    let judged = wakes.generations();
+    wakes.insert("r1".into(), waiting(7));
+    assert!(wakes.deliverable(&judged).is_empty(), "delivered unjudged");
+    let judged = wakes.generations();
+    let next = wakes.deliverable(&judged);
+    assert_eq!(next.len(), 1);
+    // Replaced between the pass and the take: the newer one is not taken for it.
+    wakes.insert("r1".into(), waiting(8));
+    assert!(wakes.take(next).is_empty());
+    assert!(crate::lock(&wakes.pending).contains_key("r1"));
+    let judged = wakes.generations();
+    let taken = wakes.take(wakes.deliverable(&judged));
+    assert_eq!(taken.len(), 1);
+    assert_eq!(taken[0].1.notes_seq, 8);
+}
+
+/// M9.16 fix round 3: `check_orchestrators` reads the waiting wake-ups' generations
+/// before the engine. Between the two reads (a test hook), the engine sees the
+/// relaunched orchestrator live and queues the wake-up for its daemon-restart note (the
+/// same seq). The check must keep it; with the reads the other way round it judges the
+/// new wake-up on the not-live snapshot and drops it.
+#[tokio::test]
+async fn a_check_reads_the_generations_before_the_engine() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = ManagerConfig::for_tests(dir.path().join("d.sock"), "/bin/sh".into());
+    let (manager, _events) = WindowManager::new(config);
+    let runs = RunService::for_manager(&manager, dir.path().join("data"), Arc::new(NoRoots));
+    let mut run = crate::run::orch::test_support::run_of(1);
+    run.id = "r1".into();
+    let mut o = crate::run::orch::test_support::orchestrator();
+    // A window no manager lists: nothing is delivered, whatever is kept.
+    o.window_id = Some(1);
+    o.launch_op = None;
+    o.live = false;
+    o.notes = vec!["the daemon restarted".into()];
+    o.note_seqs = vec![7];
+    o.last_note_seq = 7;
+    run.orch.orchestrator = Some(o);
+    crate::lock(&runs.state).runs.insert("r1".into(), run);
+    let service = runs.clone();
+    *crate::lock(&runs.wakes.between_reads) = Some(Box::new(move || {
+        let mut state = crate::lock(&service.state);
+        let o = state.runs.get_mut("r1").unwrap().orch.orchestrator.as_mut();
+        o.unwrap().live = true;
+        drop(state);
+        service.wakes.insert("r1".into(), waiting(7));
+    }));
+    runs.check_orchestrators();
+    assert!(
+        crate::lock(&runs.wakes.pending).contains_key("r1"),
+        "the wake-up queued during the check was dropped"
+    );
+}

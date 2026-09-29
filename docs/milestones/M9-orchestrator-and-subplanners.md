@@ -3728,3 +3728,15 @@ Verification: `run_e2e_orch` three times in a row with `--test-threads=1`, `run_
 2. **Flake in `adapt_edges.rs::role_and_resumed_sessions_do_not_read_stdin_before_starting` (Minor).** `roles.rs` writes the claim, then the argv record, which the claim names, so the record is not guaranteed at the instant the claim appears. The test now waits for the record with the same deadline loop it uses for the claim, `exists_before_stdin`, with nothing written to stdin yet. What it asserts about stdin is unchanged, and fake-agent is unchanged.
 
 Verification: the daemon's `run::driver` lib tests (75), `run_e2e_orch` once with `--test-threads=1` (13), `run_e2e_orch_wake` (5), `run_e2e_orch_ops` (11), `adapt_edges` five times (6 each), clippy for both targets, and fmt.
+
+**Fix round 3.** One commit, `fix(daemon): deliver only the wake-ups a check judged, and pin its read order`. Both changes are in `driver/wake.rs`; both tests were seen red first.
+
+1. **Deliver only judged wake-ups.** Round 2's `keep_live` skipped a wake-up queued after the check took its generations, but the check's delivery pass still delivered every waiting wake-up. So a check whose engine snapshot showed a run already terminal, with its window made plain, could still paste a wake-up it never judged into that window.
+   - **Fix:** the delivery pass is now `Wakes::deliverable(&judged)`, which returns only the wake-ups whose generation this check recorded. The take is now `Wakes::take`, which also requires the generation to be unchanged, so a wake-up replaced between the pass and the take is not taken in place of the new one.
+   - **No extra delay:** `queue_wake`'s own check records the new generation before it reads the engine, so it judges the new wake-up at once.
+   - **Test:** `a_check_delivers_only_the_wake_ups_it_judged`. An unjudged wake-up is not deliverable by that check, and is by the next. A replaced wake-up is not taken for the old one. It was red first: "delivered unjudged".
+2. **The read order is pinned.** `Wakes.between_reads` is a `#[cfg(test)]` hook that runs between `check_orchestrators`' two reads.
+   - **Test:** `a_check_reads_the_generations_before_the_engine`. The run's orchestrator is not live and holds the daemon-restart note (seq 7). The hook marks it live and queues the wake-up for seq 7, as the engine's relaunch does. After the check, the wake-up must still be waiting.
+   - With the two reads swapped (the hook stays between them), it is red: "the wake-up queued during the check was dropped". This was run from a `cp` backup, which was restored.
+
+Verification: the daemon's `run::driver` lib tests (77), `run_e2e_orch` once with `--test-threads=1` (13), `run_e2e_orch_wake` (5), clippy for both targets, and fmt.

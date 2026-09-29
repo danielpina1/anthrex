@@ -84,6 +84,9 @@ pub(super) struct Wakes {
     delivering: std::sync::Mutex<HashSet<String>>,
     exited_since: std::sync::Mutex<HashMap<u32, Instant>>,
     next_generation: std::sync::atomic::AtomicU64,
+    /// Tests only: run between a check's two reads (the generations, then the engine).
+    #[cfg(test)]
+    pub(super) between_reads: std::sync::Mutex<Option<Box<dyn Fn() + Send>>>,
 }
 
 impl Wakes {
@@ -138,6 +141,53 @@ impl Wakes {
                     && (s.notes || p.notes_seq > s.last_note_seq)
             })
         });
+    }
+}
+
+/// A wake-up a check may deliver: its run, window, quiet time and generation.
+pub(super) struct Waiting {
+    run_id: String,
+    window_id: u32,
+    quiet: Duration,
+    generation: u64,
+}
+
+impl Wakes {
+    /// The waiting wake-ups a check may deliver: only those it judged on its own engine
+    /// snapshot (`judged`). One queued since waits for the next check, which judges it
+    /// first; `queue_wake`'s own check does so at once.
+    fn deliverable(&self, judged: &HashMap<String, u64>) -> Vec<Waiting> {
+        crate::lock(&self.pending)
+            .iter()
+            .filter(|(run_id, p)| judged.get(*run_id) == Some(&p.generation))
+            .map(|(run_id, p)| Waiting {
+                run_id: run_id.clone(),
+                window_id: p.window_id,
+                quiet: p.quiet,
+                generation: p.generation,
+            })
+            .collect()
+    }
+
+    /// Takes each of `takes` out for delivery, unless it was replaced or dropped since,
+    /// or its run's delivery is under way.
+    fn take(&self, takes: Vec<Waiting>) -> Vec<(String, Pending)> {
+        let mut pending = crate::lock(&self.pending);
+        let mut delivering = crate::lock(&self.delivering);
+        takes
+            .into_iter()
+            .filter_map(|w| {
+                let same = pending
+                    .get(&w.run_id)
+                    .is_some_and(|p| p.window_id == w.window_id && p.generation == w.generation);
+                if !same || delivering.contains(&w.run_id) {
+                    return None;
+                }
+                let p = pending.remove(&w.run_id)?;
+                delivering.insert(w.run_id.clone());
+                Some((w.run_id, p))
+            })
+            .collect()
     }
 }
 
@@ -208,6 +258,10 @@ impl RunService {
         // The waiting wake-ups first, then the engine: every wake-up this check may drop
         // was queued before the engine snapshot it is judged on.
         let judged = self.wakes.generations();
+        #[cfg(test)]
+        if let Some(hook) = crate::lock(&self.wakes.between_reads).as_ref() {
+            hook();
+        }
         let seen = self.orchestrators_seen();
         let windows = self.manager.list();
         let window = |id: u32| windows.iter().find(|w| w.id == id);
@@ -252,37 +306,19 @@ impl RunService {
             }
         }
         // Which wake-ups the windows take now, read with no lock of ours held.
-        let waiting: Vec<(String, u32, Duration)> = {
+        let waiting = {
             self.wakes.keep_live(&seen, &judged);
-            let pending = crate::lock(&self.wakes.pending);
-            pending
-                .iter()
-                .map(|(run_id, p)| (run_id.clone(), p.window_id, p.quiet))
-                .collect()
+            self.wakes.deliverable(&judged)
         };
-        let takes: Vec<(String, u32)> = waiting
+        let takes: Vec<Waiting> = waiting
             .into_iter()
-            .filter(|(_, id, quiet)| {
-                window(*id).is_some_and(|w| ready(w, self.manager.last_client_input(*id), *quiet))
-            })
-            .map(|(run_id, id, _)| (run_id, id))
-            .collect();
-        let due: Vec<(String, Pending)> = {
-            let mut pending = crate::lock(&self.wakes.pending);
-            let mut delivering = crate::lock(&self.wakes.delivering);
-            takes
-                .into_iter()
-                .filter_map(|(run_id, id)| {
-                    let same = pending.get(&run_id).is_some_and(|p| p.window_id == id);
-                    if !same || delivering.contains(&run_id) {
-                        return None;
-                    }
-                    let p = pending.remove(&run_id)?;
-                    delivering.insert(run_id.clone());
-                    Some((run_id, p))
+            .filter(|w| {
+                window(w.window_id).is_some_and(|win| {
+                    ready(win, self.manager.last_client_input(w.window_id), w.quiet)
                 })
-                .collect()
-        };
+            })
+            .collect();
+        let due = self.wakes.take(takes);
         for (run_id, p) in due {
             self.deliver(run_id, p);
         }
