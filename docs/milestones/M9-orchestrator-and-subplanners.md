@@ -3196,3 +3196,25 @@ One commit, `fix(daemon): pin every test rig's agents, refresh a restarted orche
    - `a_manual_restart_of_the_orchestrator_is_not_an_exit` (e2e: after `anthrex restart <n>`, no attention line, no log line, still live). It turned red only with both driver guards removed; either guard alone keeps it green.
    - `a_stale_exit_from_before_the_restart_changes_nothing` (engine; red with the `launches` check removed).
 5. **Recorded: the plan path's decision 9 refusal comes after the triage call.** `make_planned` and the reach checks run once triage has answered `plan`, so a refused planned start still spends one decider call. It cannot come earlier: the orchestrator's runtime is known only once the start takes the plan path.
+
+#### Re-review fixes
+
+One commit, `fix(daemon): every restart of a restored orchestrator names this daemon's receiver, and every anthrex a test starts pins its agents`.
+
+1. **Every restart path launches with the current OTLP values.** The review's repro was a client's `anthrex restart <n>` of an orchestrator restored after a daemon restart. `WindowManager::restart` read the restored `entry.role`, so the process got the last daemon's endpoint. Now `lifecycle::run` calls `RunService::refresh_orchestrator_otlp` once the receiver is bound and before `serve` takes a client. It passes the receiver's address from memory (`OtlpServer.addr`; `None` when metering is off or did not bind), so there is no file I/O, and at that point no client can restart anything. Every orchestrator window the manager restored gets its role's OTLP variables set for that address with its run's token, or removed. It does this under the engine's lock, then the manager's, one at a time. The refresh in the `RestartOrchestrator` op stays, for windows made later. It could not happen in the driver's restore: that runs before the receiver binds, and the `otlp.addr` found then may be the last daemon's.
+   - Test: `a_manual_restart_after_a_daemon_restart_names_the_receiver_that_is_up_now` (e2e). After the daemon restart, its `claude` is a wrapper that writes the endpoint from its real environment, then execs `fake-agent`.
+   - Red: the wrapper saw the old port (`63001` while the receiver was on `63003`).
+2. **Every `anthrex` a CLI test starts pins the three agent variables.**
+   - `support::pin_agents` sets `ANTHREX_CLAUDE_BIN`, `ANTHREX_CODEX_BIN` and `ANTHREX_DECIDER_BIN` to nonexistent paths. `isolated_command` applies it (`daemon_spawn_stderr.rs` and `codex_version.rs`'s daemons can no longer run the real `codex --version` probe). `filter_run.rs` and `filter_hook.rs` use it too. `mcp_cli.rs`, which has no `support` module, pins them in its own `anthrex()`. A test that needs a stand-in still sets its own value afterwards.
+   - The guard gains `every_test_that_starts_anthrex_or_reads_variables_pins_the_agents`:
+     - a test source that calls `ManagerConfig::from_vars(` must name the claude and codex variables;
+     - one that builds an `anthrex` command (`Command::new(ANTHREX)`, `CARGO_BIN_EXE_anthrex`) must name all three, or use `pin_agents(`;
+     - a line that starts a daemon (`"daemon", "start"`) must go through `isolated_command(` or the run harness's `self.command(`.
+   - Red: it flagged `filter_run.rs`, `filter_hook.rs` (no decider) and `mcp_cli.rs` (none).
+   - **Its limits:** the checks read source text a file at a time. A file that names the variables once passes even if one of its commands does not set them. A command built by a helper in another file is judged by that file. A daemon started by a client command (`ensure_daemon`) is covered only because `isolated_command` pins, and the text check cannot see that.
+   - Production program selection is unchanged.
+3. **One driver test per exit guard** (`driver/wake_exit_tests.rs`, a real shell window killed by the test, the engine's channel read directly):
+   - `an_exit_is_reported_only_once_it_has_lasted`: not reported at first sight, reported after `EXIT_CONFIRM`.
+   - `an_exit_during_a_restart_is_never_reported`: with `restarting` held (a test-only `WindowManager::hold_restarting`), never reported past `EXIT_CONFIRM`; after release, the count starts again.
+   - Mutations: `EXIT_CONFIRM = 0` turns both red. Removing the `is_restarting` check turns the second red and leaves the first green.
+4. **Recorded:** a promote let through by `trust_project` does not add the newly reached files to `Run.trusted_project`, so a later `run edit` refuses them. Added to the existing follow-ups entry.

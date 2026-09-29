@@ -11,17 +11,16 @@ use std::time::{Duration, Instant};
 
 use daemon::output_filter::FILTER_HOOK_DEADLINE;
 use serde_json::{Value, json};
-use support::{ANTHREX, RunningCommand, assert_silent_success, tempdir};
+use support::{ANTHREX, RunningCommand, assert_silent_success, pin_agents, tempdir};
 
 /// A process spawn on top of the hook's own deadline (docs/timing-budgets.md).
 const LIMIT: Duration = Duration::from_secs(20);
 
 fn isolate(cmd: &mut Command, dir: &Path) {
-    cmd.current_dir(dir)
+    pin_agents(cmd)
+        .current_dir(dir)
         .env("ANTHREX_SOCKET", dir.join("daemon.sock"))
         .env("ANTHREX_DATA_DIR", dir.join("data"))
-        .env("ANTHREX_CLAUDE_BIN", "/nonexistent/anthrex-test/claude")
-        .env("ANTHREX_CODEX_BIN", "/nonexistent/anthrex-test/codex")
         // zsh and bash read no startup file of the user's.
         .env("ZDOTDIR", dir)
         .env_remove("BASH_ENV")

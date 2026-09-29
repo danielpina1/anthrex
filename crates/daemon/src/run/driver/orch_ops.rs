@@ -163,6 +163,35 @@ impl RunService {
             .update_role_env(window_id, |env| refreshed_otlp_env(env, otlp));
     }
 
+    /// M9.13 re-review, item 1: at the daemon's start, once the receiver is bound and
+    /// before `serve` takes a client, every orchestrator window the manager restored
+    /// has its role's OTLP variables set for `addr` (this daemon's receiver, `None`
+    /// when metering is off) with its run's token, or removed; so every restart path
+    /// (`run resume`'s op, a client's `anthrex restart`) launches with them. Only the
+    /// engine's and the manager's locks, one at a time, and no I/O.
+    pub fn refresh_orchestrator_otlp(&self, addr: Option<&str>) {
+        let windows: Vec<(u32, String, Option<String>)> = crate::lock(&self.state)
+            .runs
+            .values()
+            .filter_map(|run| {
+                let o = run.orch.orchestrator.as_ref()?;
+                let claude = o.route.runtime == Runtime::Claude && !o.otlp_token.is_empty();
+                Some((
+                    o.window_id?,
+                    run.id.clone(),
+                    claude.then(|| o.otlp_token.clone()),
+                ))
+            })
+            .collect();
+        for (window_id, run_id, token) in windows {
+            let otlp = addr
+                .zip(token.as_deref())
+                .map(|(a, t)| (a, run_id.as_str(), t));
+            self.manager
+                .update_role_env(window_id, |env| refreshed_otlp_env(env, otlp));
+        }
+    }
+
     /// Decisions 5, 10 and 14a: the role's environment (for Claude, the OTLP variables
     /// with the run's token when the receiver is up) and the credential scrub, then the
     /// window, then its run-live flag.

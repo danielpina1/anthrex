@@ -191,6 +191,16 @@ impl WindowManager {
         true
     }
 
+    /// Tests only: holds (or releases) `id`'s `restarting` flag as a restart in flight
+    /// would, so the driver's exit check can be seen during one.
+    #[cfg(test)]
+    pub(crate) fn hold_restarting(&self, id: u32, restarting: bool) {
+        let mut inner = crate::lock(&self.inner);
+        if let Some(entry) = inner.entries.get_mut(&id) {
+            entry.restarting = restarting;
+        }
+    }
+
     /// Whether a restart of `id` is under way (M9.13 review: its exit then is the
     /// restart's, not the program's). Under the lock, no I/O.
     pub fn is_restarting(&self, id: u32) -> bool {

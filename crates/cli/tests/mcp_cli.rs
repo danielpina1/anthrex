@@ -10,6 +10,17 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+/// The built binary, its agent programs pinned to paths that do not exist (M9.13
+/// re-review): `anthrex mcp` starts none, and none could run if it did.
+fn anthrex() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_anthrex"));
+    command
+        .env("ANTHREX_CLAUDE_BIN", "/nonexistent/anthrex-test/claude")
+        .env("ANTHREX_CODEX_BIN", "/nonexistent/anthrex-test/codex")
+        .env("ANTHREX_DECIDER_BIN", "/nonexistent/anthrex-test/decider");
+    command
+}
+
 const DEADLINE: Duration = Duration::from_secs(20);
 
 #[test]
@@ -20,7 +31,7 @@ fn mcp_subcommand_speaks_json_rpc_on_stdout_only() {
         .unwrap();
     let socket = dir.path().join("nobody.sock");
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_anthrex"))
+    let mut child = anthrex()
         .args(["mcp", "--role", "worker", "--run", "r1", "--task", "t1"])
         .args(["--window", "3", "--socket"])
         .arg(&socket)
@@ -182,7 +193,7 @@ fn a_refused_handshake_is_logged_to_stderr_and_never_reaches_stdout() {
         stream.write_all(&proto::encode(&refusal).unwrap()).unwrap();
     });
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_anthrex"))
+    let mut child = anthrex()
         .args(["mcp", "--role", "worker", "--run", "r1", "--task", "t1"])
         .args(["--window", "3", "--socket"])
         .arg(&socket)
@@ -284,7 +295,7 @@ fn a_role_flag_mismatch_is_a_usage_error() {
             &["--scout", "--task"][..],
         ),
     ] {
-        let out = Command::new(env!("CARGO_BIN_EXE_anthrex"))
+        let out = anthrex()
             .arg("mcp")
             .args(args)
             .args([

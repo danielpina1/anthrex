@@ -304,3 +304,7 @@ impl RunService {
 #[cfg(test)]
 #[path = "wake_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "wake_exit_tests.rs"]
+mod exit_tests;

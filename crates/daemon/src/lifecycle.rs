@@ -383,6 +383,10 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
         shutdown.clone(),
     )
     .await;
+    // M9.13 re-review: before any client can restart a restored orchestrator window,
+    // its role names this daemon's receiver (or none), not the last daemon's.
+    let receiver = otlp.as_ref().map(|o| format!("http://{}", o.addr));
+    runs.refresh_orchestrator_otlp(receiver.as_deref());
     let served = server::serve(
         listener,
         manager.clone(),
