@@ -44,6 +44,7 @@ fn yes_records_the_approval() {
             wt_dir: PathBuf::from("/tmp/wt"),
             data_dir: PathBuf::from(format!("/tmp/data/runs/{RUN_ID}")),
             config: &config,
+            testing: &config::Testing::default(),
             now: 1_000,
             yes: true,
         },
@@ -159,4 +160,69 @@ fn a_run_id_is_taken_by_its_own_branch_or_anything_under_it() {
             "refs/anthrex/salvage/add-reset-3f9a/t1/1",
         ])
     ));
+}
+
+/// Milestone 9.1 decision 3: `[testing]`'s run rules are frozen into the run at start
+/// (`RunLimits.testing`), so a later config change cannot move a live run's.
+#[test]
+fn run_limits_freeze_the_testing_limits() {
+    use crate::run::journal::{load_all, save_run};
+    use crate::run::model::TestingLimits;
+
+    let testing = config::Testing {
+        test_slots: Some(3),
+        full_idle_secs: 300,
+        test_cache_days: 7,
+        flaky_quarantine_after: 5,
+        flaky_window_days: 30,
+        bisect_fix_max: 4,
+    };
+    let frozen = TestingLimits {
+        full_idle_secs: 300,
+        bisect_fix_max: 4,
+        flaky_quarantine_after: 5,
+        flaky_window_days: 30,
+    };
+    let data = tempfile::tempdir().unwrap();
+    let config = config::Orchestrator::default();
+    let run = build_run(
+        parse_plan(EXAMPLE_PLAN).unwrap(),
+        preflight(),
+        BuildContext {
+            id: RUN_ID.to_string(),
+            wt_dir: PathBuf::from("/tmp/wt"),
+            data_dir: crate::run::journal::runs_dir(data.path()).join(RUN_ID),
+            config: &config,
+            testing: &testing,
+            now: 1_000,
+            yes: false,
+        },
+    )
+    .unwrap_or_else(|e| panic!("{}", show(&e)));
+    assert_eq!(run.limits.testing, frozen);
+
+    // A default `[testing]` freezes the defaults of Interfaces "config".
+    let defaults = TestingLimits {
+        full_idle_secs: 120,
+        bisect_fix_max: 2,
+        flaky_quarantine_after: 3,
+        flaky_window_days: 14,
+    };
+    assert_eq!(TestingLimits::default(), defaults);
+    assert_eq!(run_ok(EXAMPLE_PLAN).limits.testing, defaults);
+
+    // A restored `run.json` keeps its own: restoring reads no config at all, so a
+    // `[testing]` edited after the start never reaches the run.
+    save_run(&run).unwrap();
+    let (runs, problems) = load_all(data.path());
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].0.limits.testing, frozen);
+
+    // An M9 `run.json`, written before the field existed, loads with the defaults.
+    let mut old = serde_json::to_value(&run).unwrap();
+    let limits = old["limits"].as_object_mut().unwrap();
+    assert!(limits.remove("testing").is_some());
+    let old: crate::run::model::Run = serde_json::from_value(old).unwrap();
+    assert_eq!(old.limits.testing, defaults);
 }

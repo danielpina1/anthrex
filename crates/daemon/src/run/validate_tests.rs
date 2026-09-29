@@ -141,7 +141,8 @@ fn raises_are_recorded_as_notes() {
         &proto::ProfileSpec::default(),
     );
     let config = config::Orchestrator::default();
-    let limits = crate::run::plan::run_limits(&config, None, None, None);
+    let limits =
+        crate::run::plan::run_limits(&config, &config::Testing::default(), None, None, None);
     let spec = crate::run::plan::parse_plan(&plan_with(
         PROFILE,
         &[task_toml(

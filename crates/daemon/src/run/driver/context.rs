@@ -20,6 +20,9 @@ pub struct RunContext {
     /// The manager's `cli_caps` (decision 53's project-settings check reads the same
     /// caps the sessions are launched with, test overrides included).
     pub cli_caps: CliCaps,
+    /// Milestone 9.1 decision 3: the daemon's `[testing]` table, read once at start;
+    /// each run freezes its run rules from it (`RunLimits.testing`).
+    pub testing: config::Testing,
 }
 
 impl RunContext {
@@ -37,7 +40,14 @@ impl RunContext {
             git_roots,
             git: OsString::from("git"),
             cli_caps: manager.cli_caps,
+            testing: config::Testing::default(),
         }
+    }
+
+    /// This context with the daemon's `[testing]` table (the defaults otherwise).
+    pub fn with_testing(mut self, testing: config::Testing) -> Self {
+        self.testing = testing;
+        self
     }
 }
 

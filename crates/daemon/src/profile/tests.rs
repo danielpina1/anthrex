@@ -258,6 +258,7 @@ fn confinement_still_comes_from_the_users_config() {
         wt_dir: PathBuf::from("/tmp/wt"),
         data_dir: PathBuf::from("/tmp/data/runs/confinement-0001"),
         config: &config,
+        testing: &config::Testing::default(),
         now: 1,
         yes: false,
     };
@@ -519,6 +520,7 @@ fn a_stale_profile_gets_the_attention_line() {
         wt_dir: PathBuf::from("/tmp/wt"),
         data_dir: PathBuf::from("/tmp/data/runs/stale-0001"),
         config: &config,
+        testing: &config::Testing::default(),
         now: 1,
         yes: false,
     };

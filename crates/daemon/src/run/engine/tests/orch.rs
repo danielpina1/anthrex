@@ -48,6 +48,7 @@ pub(super) fn planned(yes: bool) -> Fixture {
             wt_dir: WT.into(),
             data_dir: format!("/tmp/data/runs/{RUN_ID}").into(),
             config: &fx.config,
+            testing: &config::Testing::default(),
             now: 1_000,
             yes: false,
         },

@@ -113,6 +113,7 @@ pub fn build_full(
             wt_dir: PathBuf::from("/tmp/wt"),
             data_dir: PathBuf::from(format!("/tmp/data/runs/{RUN_ID}")),
             config,
+            testing: &config::Testing::default(),
             now: 1_000,
             yes: false,
         },

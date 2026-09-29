@@ -11,6 +11,7 @@ mod git;
 mod orchestrator;
 pub mod reserved_env;
 mod runtimes;
+mod testing;
 
 pub use conversation::{
     Badge, Badges, CONVERSATION_LINGER_SECS_RANGE, CONVERSATION_MAX_BYTES_HEADROOM,
@@ -27,6 +28,11 @@ pub use orchestrator::{
     default_roster,
 };
 use runtimes::{read_runtimes, report_unknown_runtimes};
+pub use testing::{
+    BISECT_FIX_MAX_RANGE, FLAKY_QUARANTINE_AFTER_RANGE, FLAKY_WINDOW_DAYS_RANGE,
+    FULL_IDLE_SECS_RANGE, TEST_CACHE_DAYS_RANGE, TEST_SLOTS_RANGE, Testing,
+};
+use testing::{KNOWN_TESTING_KEYS, read_testing};
 
 /// The parsed, validated configuration. Always usable: any invalid or
 /// unknown key in the source file is reported as a [`Problem`] and the
@@ -44,6 +50,7 @@ pub struct Config {
     pub git: Git,
     pub conversation: Conversation,
     pub orchestrator: Orchestrator,
+    pub testing: Testing,
 }
 
 /// `Ctrl` plus this lowercase letter. Never `h`, `i`, `j` or `m`: terminals
@@ -140,6 +147,7 @@ impl Default for Config {
             git: Git::default(),
             conversation: Conversation::default(),
             orchestrator: Orchestrator::default(),
+            testing: Testing::default(),
         }
     }
 }
@@ -186,6 +194,7 @@ pub fn parse(text: &str) -> (Config, Vec<Problem>) {
     read_git(&table, &mut config, &mut problems);
     read_conversation(&table, &mut config, &mut problems);
     config.orchestrator = orchestrator::read(&table, &mut problems);
+    read_testing(&table, &mut config, &mut problems);
 
     report_unknown_keys(&table, &mut problems);
 
@@ -487,6 +496,7 @@ fn report_unknown_keys(table: &toml::Table, problems: &mut Vec<Problem>) {
             "runtimes" => report_unknown_runtimes(value, problems),
             "conversation" => report_unknown_conversation(value, problems),
             "orchestrator" => orchestrator::report_unknown(value, problems),
+            "testing" => report_unknown_nested(value, "testing", KNOWN_TESTING_KEYS, problems),
             other => problems.push(unknown_key_problem(other)),
         }
     }

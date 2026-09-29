@@ -284,7 +284,8 @@ pub async fn run(opts: DaemonOptions) -> anyhow::Result<()> {
         manager.config(),
         loaded_config.orchestrator.clone(),
         git_wiring.registry.clone(),
-    );
+    )
+    .with_testing(loaded_config.testing.clone());
     // Decision 12/14: every restored window is listed, dormant and viewable before
     // anything can connect.
     manager.restore(loaded_state);

@@ -368,6 +368,12 @@ fn old_run_json_loads() {
         serde_json::from_value::<crate::run::orch::OrchLimits>(orch).unwrap(),
         crate::run::orch::OrchLimits::default()
     );
+    // Milestone 9.1 decision 3: the frozen `[testing]` rules, at the config defaults.
+    let testing = limits.remove("testing").expect("limits.testing");
+    assert_eq!(
+        serde_json::from_value::<crate::run::model::TestingLimits>(testing).unwrap(),
+        crate::run::model::TestingLimits::default()
+    );
     for task in back["tasks"].as_array_mut().unwrap() {
         // Milestone 9 decision 24's plan field, and task 4's empty task state.
         let task = task.as_object_mut().unwrap();

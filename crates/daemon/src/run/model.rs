@@ -28,7 +28,7 @@ pub use rounds::*;
 // under the 600-line rule); re-exported, so every `model::` path stays.
 #[path = "model_limits.rs"]
 mod limits;
-pub use limits::{ClaudeAuth, RunLimits};
+pub use limits::{ClaudeAuth, RunLimits, TestingLimits};
 
 // Milestone 8b's additions (M8b decision 1). M8b.4 adds only `impl Run` items; the
 // structs its later tasks add there are re-exported here with `pub use adapt::*`.

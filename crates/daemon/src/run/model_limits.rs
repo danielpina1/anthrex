@@ -79,4 +79,36 @@ pub struct RunLimits {
     /// Milestone 9 (ruling D-5): the orchestrator settings, frozen at run start.
     #[serde(default)]
     pub orch: crate::run::orch::OrchLimits,
+    /// Milestone 9.1 decision 3: `[testing]`'s run rules, frozen at run start. Absent
+    /// from a run recorded before milestone 9.1: the config defaults.
+    #[serde(default)]
+    pub testing: TestingLimits,
+}
+
+/// Milestone 9.1 decision 3: the `[testing]` keys a run is frozen with at start
+/// (`test_slots` and `test_cache_days` are daemon-wide and stay out).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TestingLimits {
+    pub full_idle_secs: u64,
+    pub bisect_fix_max: u8,
+    pub flaky_quarantine_after: u32,
+    pub flaky_window_days: u32,
+}
+
+impl From<&config::Testing> for TestingLimits {
+    fn from(t: &config::Testing) -> Self {
+        TestingLimits {
+            full_idle_secs: t.full_idle_secs,
+            bisect_fix_max: t.bisect_fix_max,
+            flaky_quarantine_after: t.flaky_quarantine_after,
+            flaky_window_days: t.flaky_window_days,
+        }
+    }
+}
+
+impl Default for TestingLimits {
+    fn default() -> Self {
+        (&config::Testing::default()).into()
+    }
 }

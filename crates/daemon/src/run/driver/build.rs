@@ -298,6 +298,7 @@ impl RunService {
             wt_dir,
             data_dir: runs_dir(&self.ctx.data_dir).join(&id),
             config: &config,
+            testing: &self.ctx.testing,
             now,
             yes,
         };

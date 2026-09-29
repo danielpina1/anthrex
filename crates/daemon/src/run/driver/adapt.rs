@@ -470,6 +470,7 @@ mod tests {
             wt_dir: PathBuf::from("/tmp/wt"),
             data_dir: PathBuf::from("/tmp/data/runs/g-0001"),
             config: &config,
+            testing: &config::Testing::default(),
             now: 1,
             yes: false,
         };

@@ -236,6 +236,7 @@ fn build_fast(decision: &Decision) -> Result<crate::run::model::Run, Vec<PlanErr
             wt_dir: "/tmp/wt".into(),
             data_dir: "/tmp/data/runs/fix-the-reset-link-3f9a".into(),
             config: &config,
+            testing: &config::Testing::default(),
             now: 1_000,
             yes: true,
         },

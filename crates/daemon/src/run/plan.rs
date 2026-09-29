@@ -91,6 +91,8 @@ pub struct BuildContext<'a> {
     /// The run's own data directory, `<data_dir>/runs/<id>`.
     pub data_dir: PathBuf,
     pub config: &'a config::Orchestrator,
+    /// Milestone 9.1 decision 3: the daemon's `[testing]` table.
+    pub testing: &'a config::Testing,
     pub now: u64,
     pub yes: bool,
 }
@@ -155,9 +157,11 @@ pub fn resolve_profile(plan: &ProfileSpec, config: &ProfileSpec) -> Profile {
 }
 
 /// The limits a run is frozen with: the config, with the plan's three limits winning
-/// when set. Ranges are checked separately, by [`build_run`].
+/// when set, and `[testing]`'s run rules. Ranges are checked separately, by
+/// [`build_run`].
 pub fn run_limits(
     config: &config::Orchestrator,
+    testing: &config::Testing,
     max_writers: Option<u8>,
     max_readers: Option<u8>,
     max_bounces: Option<u8>,
@@ -187,6 +191,7 @@ pub fn run_limits(
         decider_mode: config.deciders.mode,
         decider_slot_wait_secs: config.deciders.slot_wait_secs,
         orch: super::orch::OrchLimits::from_config(config),
+        testing: testing.into(),
     }
 }
 
@@ -324,7 +329,13 @@ pub fn build_run(plan: Plan, pre: Preflight, ctx: BuildContext<'_>) -> Result<Ru
     profile.confined_localhost_ports = for_repo(&config.confined_localhost_ports, &pre.root)
         .cloned()
         .unwrap_or_default();
-    let limits = run_limits(config, plan.max_writers, plan.max_readers, plan.max_bounces);
+    let limits = run_limits(
+        config,
+        ctx.testing,
+        plan.max_writers,
+        plan.max_readers,
+        plan.max_bounces,
+    );
     let mut errors = Vec::new();
     check_plan(&plan, &profile, &mut errors);
 
