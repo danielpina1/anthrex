@@ -190,6 +190,7 @@ fn only_a_claude_api_key_session_keeps_the_api_credentials() {
         "CODEX_ACCESS_TOKEN",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
     ];
     assert_eq!(scrub(Runtime::Claude, config::ClaudeAuth::Login), all);
     assert_eq!(scrub(Runtime::Claude, config::ClaudeAuth::ApiKey), openai);

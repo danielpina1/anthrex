@@ -233,6 +233,7 @@ fn decider_credential_scrub_removes_every_api_credential() {
         "CODEX_ACCESS_TOKEN",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
     ];
     for runtime in [Runtime::Claude, Runtime::Codex] {
         let scrub = credential_scrub_for(runtime, config::ClaudeAuth::Login);

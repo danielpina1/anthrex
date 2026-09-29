@@ -64,7 +64,14 @@ pub const CLAUDE_TOOL_SEARCH: (&str, &str) = ("ENABLE_TOOL_SEARCH", "false");
 /// Anthropic API credentials, removed from every session that does not authenticate
 /// with them (final fix batch F2, review C minor M2): with `auth = "login"`, `claude -p`
 /// would otherwise prefer a key the daemon happened to inherit over the user's login.
-pub const API_CREDENTIALS: &[&str] = &["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
+/// The endpoint goes with them (user ruling 2026-09-29): an inherited
+/// `ANTHROPIC_BASE_URL` would otherwise send every such session, with the user's login,
+/// to whatever endpoint the daemon's shell named.
+pub const API_CREDENTIALS: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+];
 
 /// OpenAI and Codex env credentials (F2 round 2, N2). anthrex has no Codex auth setting:
 /// its Codex sessions use the user's own `codex login` (`~/.codex/auth.json`), so every

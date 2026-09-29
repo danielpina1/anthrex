@@ -193,6 +193,7 @@ async fn scrub_removes_agent_session_and_credential_variables() {
         ("CLAUDECODE", "1"),
         ("CLAUDE_CODE_ENTRYPOINT", "x"),
         ("ANTHROPIC_API_KEY", "x"),
+        ("ANTHROPIC_BASE_URL", "http://127.0.0.1:9"),
         ("MCP_CONNECTION_NONBLOCKING", "true"),
         ("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://127.0.0.1:9"),
     ]);
@@ -206,6 +207,7 @@ async fn scrub_removes_agent_session_and_credential_variables() {
         "CLAUDECODE=",
         "CLAUDE_CODE_ENTRYPOINT=",
         "ANTHROPIC_API_KEY=",
+        "ANTHROPIC_BASE_URL=",
         "MCP_CONNECTION_NONBLOCKING=",
         "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=",
     ] {

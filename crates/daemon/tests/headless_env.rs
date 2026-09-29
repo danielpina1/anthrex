@@ -2,7 +2,8 @@
 //! `CLAUDE_CODE_*` variables and `CLAUDECODE`, has `ANTHREX_WINDOW_ID` and
 //! `ANTHREX_SOCKET` set to its own window and socket, and gets the profile's `env`.
 //! Since final fix batch F2 a login session also loses `ANTHROPIC_API_KEY` and
-//! `ANTHROPIC_AUTH_TOKEN`; since its round 2, every session loses the OpenAI and Codex
+//! `ANTHROPIC_AUTH_TOKEN` (and, by the user's ruling of 2026-09-29, `ANTHROPIC_BASE_URL`);
+//! since its round 2, every session loses the OpenAI and Codex
 //! env credentials and the inherited shell start-up variables. Since the Claude
 //! tool-search fix (2026-09-27), a Claude session has `ENABLE_TOOL_SEARCH=false`
 //! whatever it inherited or its `env` said.
@@ -32,6 +33,9 @@ fn the_environment_is_scrubbed() {
         // daemon inherited, so `claude -p` cannot prefer it over the user's login.
         std::env::set_var("ANTHROPIC_API_KEY", "sk-inherited");
         std::env::set_var("ANTHROPIC_AUTH_TOKEN", "tok-inherited");
+        // User ruling 2026-09-29: nor an inherited endpoint, which would send the
+        // session, with the user's login, somewhere else.
+        std::env::set_var("ANTHROPIC_BASE_URL", "http://127.0.0.1:9");
         // F2 round 2 (N2): nor Codex's own env credentials; (N1) nor the inherited
         // shell start-up inlets.
         std::env::set_var("OPENAI_API_KEY", "sk-openai-inherited");
@@ -111,10 +115,9 @@ fn the_environment_is_scrubbed() {
             "{env}"
         );
         assert!(
-            !lines
-                .iter()
-                .any(|l| l.starts_with("ANTHROPIC_API_KEY=")
-                    || l.starts_with("ANTHROPIC_AUTH_TOKEN=")),
+            !lines.iter().any(|l| l.starts_with("ANTHROPIC_API_KEY=")
+                || l.starts_with("ANTHROPIC_AUTH_TOKEN=")
+                || l.starts_with("ANTHROPIC_BASE_URL=")),
             "{env}"
         );
         assert_no_inherited_inlets(&env);
@@ -149,7 +152,8 @@ fn the_environment_is_scrubbed() {
         assert!(
             !env.lines().any(|l| l.starts_with("ANTHREX_WINDOW_ID=")
                 || l.starts_with("ANTHREX_SOCKET=")
-                || l.starts_with("ANTHROPIC_API_KEY=")),
+                || l.starts_with("ANTHROPIC_API_KEY=")
+                || l.starts_with("ANTHROPIC_BASE_URL=")),
             "{env}"
         );
         assert_no_inherited_inlets(&env);

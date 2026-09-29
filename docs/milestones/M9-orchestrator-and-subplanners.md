@@ -3649,3 +3649,11 @@ One commit, `fix(tui): check sanitising against a literal list, strip hidden for
 8. **More hidden characters dropped.** `safe_text::is_bidi_control` became `is_hidden_format`. It also drops U+061C, U+200B–U+200D and U+FEFF; the goal form's paste cleaning uses it too. Dropping U+200D splits a ZWJ emoji into its parts when drawn, which is accepted.
 
 Verification: `cargo test -p anthrex-tui` (756 lib tests, plus 6 and 1), the workspace build, `cargo fmt --all --check`, and `cargo +1.98 clippy --workspace --all-targets -D warnings` for the host and for `x86_64-unknown-linux-gnu`. All pass. No process was left running.
+
+### User rulings 2026-09-29
+
+1. **`ANTHROPIC_BASE_URL` is scrubbed from agent sessions** (followups, "From M8b.7"). It joins `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` in `config::reserved_env::API_CREDENTIALS`, so it has exactly the keys' scope:
+   - `headless::credential_scrub_for` removes it from every headless session (workers, reviewers, scouts, planners, deciders) and, through the driver's `RoleLaunch.remove_env`, from the orchestrator's PTY window;
+   - `run::exec::engine_env` already removed the keys from checks, proofs and setup, so it removes the endpoint there too; git commands and the user's own PTY windows are untouched, as for the keys;
+   - a Claude session with `auth = "api_key"` keeps it along with its keys, since `credential_scrub_for` skips the whole Anthropic list for that session. Interpretation: the ruling said "the same scrub list", and the keys' scope was matched.
+   - Tests: `headless_env::the_environment_is_scrubbed` (Claude and Codex sessions), `orchestrator_window::scrub_removes_agent_session_and_credential_variables`, `run_exec_env::engine_commands_get_the_profile_env_and_lose_agent_variables`, and the two exact-list unit tests (`decider_credential_scrub_removes_every_api_credential`, `only_a_claude_api_key_session_keeps_the_api_credentials`). Each was red before the list changed: the variable was in the dumped environment, or the list lacked it.

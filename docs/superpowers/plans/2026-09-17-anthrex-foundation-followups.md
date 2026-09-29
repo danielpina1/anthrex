@@ -1363,7 +1363,11 @@ scope.
 ## From M8b.7 (2026-09-26), for the user and for M8b
 
 - **An inherited `ANTHROPIC_BASE_URL` reaches every headless session, deciders
-  included (not fixed).** `credential_scrub_for` removes `ANTHROPIC_API_KEY` and
+  included (resolved: user ruling 2026-09-29: scrub).** It is now in
+  `config::reserved_env::API_CREDENTIALS`, so `credential_scrub_for` removes it wherever
+  it removes the keys: every headless session, the orchestrator's PTY window and the
+  engine's commands; a Claude `auth = "api_key"` session keeps it with its keys (M9
+  brief, "User rulings 2026-09-29"). The original finding: `credential_scrub_for` removes `ANTHROPIC_API_KEY` and
   `ANTHROPIC_AUTH_TOKEN`, but not `ANTHROPIC_BASE_URL` (or any other `ANTHROPIC_*`
   endpoint variable). M8b.7's credential test recorded it in a decider's environment,
   inherited from the shell that ran the tests. A daemon started from such a shell sends

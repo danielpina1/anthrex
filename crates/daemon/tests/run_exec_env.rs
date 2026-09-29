@@ -24,6 +24,8 @@ fn engine_commands_get_the_profile_env_and_lose_agent_variables() {
         // API credential; (N1) and the shell start-up inlets.
         std::env::set_var("ANTHROPIC_API_KEY", "sk-inherited");
         std::env::set_var("ANTHROPIC_AUTH_TOKEN", "tok-inherited");
+        // User ruling 2026-09-29: the endpoint goes with the keys.
+        std::env::set_var("ANTHROPIC_BASE_URL", "http://127.0.0.1:9");
         std::env::set_var("OPENAI_API_KEY", "sk-openai-inherited");
         std::env::set_var("CODEX_API_KEY", "sk-codex-inherited");
         std::env::set_var("CODEX_ACCESS_TOKEN", "tok-codex-inherited");
@@ -80,6 +82,7 @@ fn engine_commands_get_the_profile_env_and_lose_agent_variables() {
     let denied = [
         "ANTHROPIC_API_KEY=",
         "ANTHROPIC_AUTH_TOKEN=",
+        "ANTHROPIC_BASE_URL=",
         "OPENAI_API_KEY=",
         "CODEX_API_KEY=",
         "CODEX_ACCESS_TOKEN=",
