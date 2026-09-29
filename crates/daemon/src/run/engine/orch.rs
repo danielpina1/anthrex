@@ -85,7 +85,13 @@ pub(super) fn on_orch_event(
             notes_seq,
         } => {
             if let Some(run) = state.runs.get_mut(&run_id) {
+                run.orch.wake_held = false;
                 wake::woken(run, digest_revision, notes_seq);
+            }
+        }
+        OrchEvent::WakeHeld { run_id, held } => {
+            if let Some(run) = state.runs.get_mut(&run_id) {
+                run.orch.wake_held = held;
             }
         }
         OrchEvent::DigestRead {

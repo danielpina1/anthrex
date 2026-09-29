@@ -88,7 +88,16 @@ pub struct RunOrch {
     pub planner_usage: TokenUsage,
     /// The last [`WorkerNote::seq`] handed out by [`add_worker_note`].
     pub note_seq: u64,
+    /// Whole-branch fix round 2, item 2: a wake-up waits only because the orchestrator's
+    /// window was at a prompt (`WindowManager::attention_open`); [`WAKE_HELD`] shows it.
+    /// In memory only: the driver reports it again after a restart.
+    #[serde(skip)]
+    pub wake_held: bool,
 }
+
+/// The attention line of a held wake-up ([`RunOrch::wake_held`]).
+pub const WAKE_HELD: &str =
+    "orchestrator wake-up held: its window was at a prompt; type in it to continue";
 
 /// `Task.orch`: a task's milestone 9 state. Absent from an older run: empty.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

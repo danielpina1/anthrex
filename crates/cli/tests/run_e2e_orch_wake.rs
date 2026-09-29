@@ -259,3 +259,43 @@ fn a_wake_waits_for_the_turn_end_after_attention() {
         .to_string();
     assert!(text.contains("the user edited the plan"), "{text}");
 }
+
+/// Whole-branch fix round 2, item 2 (controller ruling: safety over liveness). The user
+/// answers the permission dialog with a key and Claude ends the turn without `Stop` (an
+/// interrupt runs no `Stop` hook); `idle_prompt` makes the window `Idle`. The wake-up is
+/// still never pasted, but the hold is visible: the run's attention line says so, and
+/// goes once the turn does end.
+#[test]
+fn a_held_wake_is_shown_as_an_attention_line() {
+    let steps = [
+        json!({"hook": "UserPromptSubmit", "payload": {"prompt": "plan"}}),
+        json!({"hook": "Notification", "payload": {"notification_type": "permission_prompt", "message": "Claude needs your permission to use Read"}}),
+        json!({"read_line": true}),
+        json!({"hook": "Notification", "payload": {"notification_type": "idle_prompt", "message": "Claude is waiting for your input"}}),
+        json!({"wait_ms": 8000}),
+        read_message(),
+        read_message(),
+    ];
+    let h = RunHarness::orch("", &[]);
+    h.script(ORCH, &steps);
+    let run = h.start_goal_id("rework storage", &[]);
+    let window = h.orchestrator_window(&run);
+    h.wait_window(
+        window,
+        "attention",
+        |w| w.status == Status::Attention,
+        ORCH_WAIT,
+    );
+    h.add_task(&run, "t1");
+    h.type_into(window, b"esc\r");
+    h.wait_window(window, "idle", |w| w.status == Status::Idle, ORCH_WAIT);
+    let held = |r: &proto::RunInfo| r.attention.iter().any(|a| a.contains(HELD));
+    let info = h.wait_run(&run, held, Duration::from_secs(6));
+    let wakes = info.orchestrator.as_ref().map(|o| o.wakes);
+    assert_eq!(wakes, Some(0), "pasted into an unanswered dialog");
+    // The turn ends (`read_message`'s `Stop`): delivered, and the line is gone.
+    h.wait_messages(ORCH, 1, REQUEST_WAIT);
+    h.wait_run(&run, |r| !held(r), REQUEST_WAIT);
+}
+
+const HELD: &str = "orchestrator wake-up held: its window was at a prompt; type in it to continue";

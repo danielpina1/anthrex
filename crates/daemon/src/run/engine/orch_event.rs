@@ -69,6 +69,9 @@ pub enum OrchEvent {
     /// Decision 14a: the run's OTLP token, drawn by the driver from the OS random
     /// source when it launches an orchestrator whose record has none.
     OtlpToken { run_id: String, token: String },
+    /// Whole-branch fix round 2, item 2: the driver holds `run_id`'s wake-up only
+    /// because its orchestrator's window was at a prompt (`held`), or no longer does.
+    WakeHeld { run_id: String, held: bool },
     /// M9.17 fix round 2: `run promote`'s installed check found `installed` (decision
     /// 17's map); a fast-path run with no orchestrator yet records it, so its promoted
     /// sub-planners' route agrees with the check.
@@ -116,6 +119,7 @@ impl OrchEvent {
             | OrchEvent::DigestRead { .. }
             | OrchEvent::OrchestratorWindow { .. }
             | OrchEvent::OtlpToken { .. }
+            | OrchEvent::WakeHeld { .. }
             | OrchEvent::Installed { .. }
             | OrchEvent::RoleRouteEnded { .. } => None,
         }

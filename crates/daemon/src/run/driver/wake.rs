@@ -83,6 +83,9 @@ pub(super) struct Wakes {
     pending: std::sync::Mutex<HashMap<String, Pending>>,
     delivering: std::sync::Mutex<HashSet<String>>,
     exited_since: std::sync::Mutex<HashMap<u32, Instant>>,
+    /// The runs whose wake-up the engine was last told is held at a prompt
+    /// (`OrchEvent::WakeHeld`).
+    held: std::sync::Mutex<HashSet<String>>,
     next_generation: std::sync::atomic::AtomicU64,
     /// Tests only: run between a check's two reads (the generations, then the engine).
     #[cfg(test)]
@@ -330,6 +333,42 @@ impl RunService {
         let due = self.wakes.take(takes);
         for (run_id, p) in due {
             self.deliver(run_id, p);
+        }
+        self.report_held();
+    }
+
+    /// Whole-branch fix round 2, item 2 (controller ruling: safety over liveness): a
+    /// wake-up that waits only because its window was at a prompt (`attention_open`)
+    /// is never pasted, but once the window has been `Idle` for its quiet time the run
+    /// shows [`crate::run::orch::WAKE_HELD`]; a change either way is sent to the engine.
+    fn report_held(&self) {
+        // The waiting wake-ups copied out first: no lock of ours is held while the
+        // manager's is taken.
+        let waiting: Vec<(String, u32, Duration)> = crate::lock(&self.wakes.pending)
+            .iter()
+            .map(|(run_id, p)| (run_id.clone(), p.window_id, p.quiet))
+            .collect();
+        let now_held: HashSet<String> = waiting
+            .into_iter()
+            .filter(|(_, window, quiet)| {
+                self.manager
+                    .held_at_prompt_for(*window)
+                    .is_some_and(|idle| idle >= *quiet)
+            })
+            .map(|(run_id, _, _)| run_id)
+            .collect();
+        let changes: Vec<(String, bool)> = {
+            let mut held = crate::lock(&self.wakes.held);
+            let gone: Vec<String> = held.difference(&now_held).cloned().collect();
+            let new: Vec<String> = now_held.difference(&held).cloned().collect();
+            *held = now_held;
+            gone.into_iter()
+                .map(|r| (r, false))
+                .chain(new.into_iter().map(|r| (r, true)))
+                .collect()
+        };
+        for (run_id, held) in changes {
+            self.send(EventKind::Orch(OrchEvent::WakeHeld { run_id, held }));
         }
     }
 
