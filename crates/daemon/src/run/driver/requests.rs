@@ -4,52 +4,19 @@
 //! base (decision 20), and `run resume --rebaseline` (decision 21). Every git read runs
 //! on `spawn_blocking`; the engine lock is taken only to read a run's fields.
 
-use std::collections::hash_map::RandomState;
-use std::ffi::OsString;
-use std::hash::{BuildHasher, Hasher};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use proto::run_wire::request;
-use proto::{BaseMovedInfo, FinishAction, Plan, RunReply, RunRequest, Runtime};
+use proto::{BaseMovedInfo, FinishAction, RunReply, RunRequest};
 
+use super::RunService;
 use super::adapt::BuildError;
-use super::{RunService, unix_now};
-use crate::run::confine;
 use crate::run::engine::EventKind;
-use crate::run::git::{self, Git, os};
-use crate::run::globs::ProtectedMatcher;
-use crate::run::journal::runs_dir;
-use crate::run::model::{ClaudeAuth, Run};
-use crate::run::plan::{
-    BuildContext, parse_plan, random_suffix, resolve_profile, run_id_taken, slug,
-};
-use crate::run::reach::{edits_may_widen, reachable_runtimes};
+use crate::run::git::{self, Git};
+use crate::run::model::Run;
+use crate::run::plan::parse_plan;
 use crate::run::validate::EditScope;
-use crate::worktree::repo_worktrees_dir;
-
-/// Decision 15: an id is redrawn at most this many times.
-const ID_DRAWS: usize = 5;
-
-/// Decision 50's refusal.
-const API_KEY_NEEDED: &str = "[orchestrator.claude] auth = \"api_key\" needs ANTHROPIC_API_KEY in the daemon's environment or orchestrator.claude.api_key_helper";
-
-/// Decision 53's refusal for the project settings a headless `who` session would run.
-fn settings_refusal(who: &str, paths: &[String]) -> String {
-    format!(
-        "this repository has project settings that headless {who} sessions would run without asking: {}; review them, then start again with --trust-project",
-        paths.join(", ")
-    )
-}
-
-/// Decision 53's refusal for an edit that would reach `who` (T22-P1, F4): the run's
-/// start trusted only the settings it checked, and `run edit` has no `--trust-project`.
-fn edit_settings_refusal(who: &str, paths: &[String]) -> String {
-    format!(
-        "this edit would start headless {who} sessions, and this repository has project settings they would run without asking: {}; a run trusts only what its start checked, so review them and start a new run with --trust-project",
-        paths.join(", ")
-    )
-}
 
 async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, String> + Send + 'static,
@@ -57,34 +24,6 @@ async fn blocking<T: Send + 'static>(
     tokio::task::spawn_blocking(f)
         .await
         .map_err(|error| format!("a blocking step did not finish: {error}"))?
-}
-
-/// A random 64-bit nonce from the standard library's per-process random keys.
-fn random_nonce() -> u64 {
-    let mut hasher = RandomState::new().build_hasher();
-    hasher.write_u64(unix_now());
-    hasher.finish().max(1)
-}
-
-/// What [`RunService::check_runtimes`] found: decision 50's refusal, and each runtime's
-/// project settings (decision 53) with the name its refusal gives it.
-#[derive(Default)]
-struct RuntimeChecks {
-    api_key: Vec<(Runtime, String)>,
-    settings: Vec<(Runtime, &'static str, Vec<String>)>,
-}
-
-/// Every branch under `refs/heads/anthrex/` (decision 15's redraw test).
-fn run_refs(git: &OsString, root: &Path, timeout: Duration) -> Result<Vec<String>, String> {
-    let listing = Git::new(git, timeout).ok(
-        root,
-        &[
-            os("for-each-ref"),
-            os("--format=%(refname)"),
-            os("refs/heads/anthrex/"),
-        ],
-    )?;
-    Ok(listing.lines().map(str::to_string).collect())
 }
 
 impl RunService {
@@ -239,91 +178,6 @@ impl RunService {
             .map_err(BuildError::text)
     }
 
-    /// Everything `run start` checks and builds for a parsed plan (M8b decision 22 shares
-    /// it with the fast path, `fast`: its barrier before the runtime checks, review m1);
-    /// decision 6's profile choice right after preflight.
-    pub(super) async fn build_plan(
-        &self,
-        mut plan: Plan,
-        dir: PathBuf,
-        yes: bool,
-        trust_project: bool,
-        unconfined_checks: bool,
-        fast: bool,
-    ) -> Result<Run, BuildError> {
-        let mut config = self.ctx.orchestrator.clone();
-        // Final fix batch F1c round 2: never run worker-written code unconfined unless
-        // the user said so, on the command line or in their own config.
-        let available = confine::available();
-        let allowed = unconfined_checks || config.unconfined_checks;
-        if let Some(refusal) = confine::start_refusal(config.worker_sandbox, available, allowed) {
-            return Err(refusal.into());
-        }
-        let timeout = Duration::from_secs(config.git_timeout_secs);
-        let git = self.ctx.git.clone();
-        let g = git.clone();
-        let mut pre = blocking(move || git::preflight(&g, &dir, timeout)).await?;
-        let choice = self.choose_profile(&mut plan, &mut config, &pre).await?;
-
-        // Decision 17 (carry): the protected files, by the chosen profile's matcher,
-        // before `build_run` turns them into the plan's warnings (decision 56).
-        let profile = resolve_profile(&plan.profile, &config.profile);
-        let matcher = ProtectedMatcher::new(&profile.protected)?;
-        let (g, root, base) = (git.clone(), pre.root.clone(), pre.base_sha.clone());
-        pre.protected_files =
-            blocking(move || git::protected_files(&g, &root, &base, &matcher, timeout)).await?;
-
-        let (g, root) = (git.clone(), pre.root.clone());
-        let refs = blocking(move || run_refs(&g, &root, timeout)).await?;
-        let id = self.pick_id(&plan.goal, &refs)?;
-        let wt_dir = repo_worktrees_dir(&self.ctx.worktrees_root, &pre.project);
-        let now = unix_now();
-        let ctx = BuildContext {
-            id: id.clone(),
-            wt_dir,
-            data_dir: runs_dir(&self.ctx.data_dir).join(&id),
-            config: &config,
-            now,
-            yes,
-        };
-        let mut run = crate::run::plan::build_run(plan, pre, ctx).map_err(BuildError::Plan)?;
-        super::adapt::fast_barrier(fast, &run)?;
-        super::adapt::apply_choice(&mut run, choice, now);
-        run.limits.unconfined_checks = run.limits.worker_sandbox && !available;
-        run.session_nonce = random_nonce();
-        run.codex_project_config = Some(self.ctx.cli_caps.codex_project_config());
-        // Final fix batch F2 (C-I1): the base's `.codex`, which every Codex session's
-        // checkout must still hold when its process starts.
-        let (g, root, base) = (git.clone(), run.root.clone(), run.base_sha.clone());
-        run.codex_config_base =
-            blocking(move || git::codex_config_tree(&g, &root, &base, timeout)).await?;
-
-        let runtimes = reachable_runtimes(&run);
-        let checks = self.check_runtimes(&run, &runtimes, timeout).await?;
-        if let Some((_, text)) = checks.api_key.first() {
-            return Err(text.clone().into());
-        }
-        if !trust_project {
-            let refusals: Vec<String> = checks
-                .settings
-                .iter()
-                .filter(|(_, _, paths)| !paths.is_empty())
-                .map(|(_, who, paths)| settings_refusal(who, paths))
-                .collect();
-            if !refusals.is_empty() {
-                return Err(refusals.join("\n").into());
-            }
-        }
-        run.trusted_project = checks
-            .settings
-            .into_iter()
-            .flat_map(|(_, _, paths)| paths)
-            .collect();
-        run.trusted_project.sort();
-        run.trusted_project.dedup();
-        Ok(run)
-    }
-
     /// `run edit`, with its [`Self::runtime_refusals`].
     async fn edit(
         &self,
@@ -341,93 +195,6 @@ impl RunService {
             submit,
         })
         .await
-    }
-
-    /// Ruling T22-I1b (`run edit`, and milestone 9's `edit_plan` and `submit_epic`):
-    /// decisions 50 and 53 for each runtime the run cannot reach yet, with trusted
-    /// project settings passing; only a batch that adds, splits or amends is probed.
-    pub(super) async fn runtime_refusals(
-        &self,
-        run_id: &str,
-        edits: &[proto::PlanEdit],
-    ) -> Result<Vec<(Runtime, String)>, String> {
-        let run = crate::lock(&self.state).runs.get(run_id).cloned();
-        let mut refusals = Vec::new();
-        if let Some(run) = run.filter(|_| edits_may_widen(edits)) {
-            let reachable = reachable_runtimes(&run);
-            let unreached: Vec<Runtime> = [Runtime::Claude, Runtime::Codex]
-                .into_iter()
-                .filter(|r| !reachable.contains(r))
-                .collect();
-            let timeout = Duration::from_secs(self.ctx.orchestrator.git_timeout_secs);
-            let checks = self.check_runtimes(&run, &unreached, timeout).await?;
-            refusals = checks.api_key;
-            for (runtime, who, paths) in checks.settings {
-                let trusted = paths.iter().all(|p| run.trusted_project.contains(p));
-                if !trusted && !refusals.iter().any(|(r, _)| *r == runtime) {
-                    refusals.push((runtime, edit_settings_refusal(who, &paths)));
-                }
-            }
-        }
-        Ok(refusals)
-    }
-
-    /// Decisions 50 and 53 for `runtimes`: decision 50's refusal when Claude is among
-    /// them and has no key, and the project settings each runtime's sessions would load
-    /// unasked, by the caps the sessions are launched with. Claude's only when it cannot
-    /// exclude them; Codex's only when it loads project config with no exclusion.
-    async fn check_runtimes(
-        &self,
-        run: &Run,
-        runtimes: &[Runtime],
-        timeout: Duration,
-    ) -> Result<RuntimeChecks, String> {
-        let mut checks = RuntimeChecks::default();
-        let claude = runtimes.contains(&Runtime::Claude);
-        if claude
-            && run.limits.claude_auth == ClaudeAuth::ApiKey
-            && std::env::var_os("ANTHROPIC_API_KEY").is_none()
-            && run.limits.api_key_helper.is_none()
-        {
-            checks
-                .api_key
-                .push((Runtime::Claude, API_KEY_NEEDED.to_string()));
-        }
-        let caps = self.ctx.cli_caps;
-        let codex = runtimes.contains(&Runtime::Codex)
-            && caps.codex_loads_project_config
-            && caps.codex_user_config_only.is_none();
-        let (root, base) = (run.root.clone(), run.base_sha.clone());
-        if claude && caps.claude_user_settings_only.is_none() {
-            let (g, r, b) = (self.ctx.git.clone(), root.clone(), base.clone());
-            let paths =
-                blocking(move || git::project_settings(&g, &r, &b, true, None, timeout)).await?;
-            checks.settings.push((Runtime::Claude, "Claude", paths));
-        }
-        if codex {
-            let (g, paths) = (self.ctx.git.clone(), caps.codex_project_config_paths);
-            let paths = blocking(move || {
-                git::project_settings(&g, &root, &base, false, Some(paths), timeout)
-            })
-            .await?;
-            checks.settings.push((Runtime::Codex, "Codex", paths));
-        }
-        Ok(checks)
-    }
-
-    /// Decision 15: the slug and a random suffix, redrawn while the id's branches, its
-    /// data directory or an engine run already take it.
-    fn pick_id(&self, goal: &str, refs: &[String]) -> Result<String, String> {
-        for _ in 0..ID_DRAWS {
-            let id = slug(goal, random_suffix());
-            let taken = run_id_taken(&id, refs)
-                || runs_dir(&self.ctx.data_dir).join(&id).exists()
-                || crate::lock(&self.state).runs.contains_key(&id);
-            if !taken {
-                return Ok(id);
-            }
-        }
-        Err("could not pick a free run id".to_string())
     }
 
     /// `run resume`; with `rebaseline`, the base and run heads read first (decision 21).
