@@ -167,3 +167,139 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; 
     // Without a `---- … stdout ----` block before it, a `failures:` list is not read.
     assert_eq!(of("failures:\n    bogus_name\n"), Vec::<String>::new());
 }
+
+/// Ruling C-7's parser half: real outputs that used to give a strict subset.
+#[test]
+fn coloured_output_is_read() {
+    let pytest = "\x1b[31mFAILED\x1b[0m tests/test_x.py::\x1b[1mtest_a\x1b[0m - AssertionError\r
+\x1b[31m========== \x1b[31m\x1b[1m1 failed\x1b[0m, \x1b[32m1 passed\x1b[0m\x1b[31m in 0.01s\x1b[0m\x1b[31m ==========\x1b[0m\r
+";
+    assert_eq!(of(pytest), vec!["tests/test_x.py::test_a"]);
+    let nextest = "        \x1b[31;1mFAIL\x1b[0m [   0.004s] \x1b[35;1mcrate\x1b[0m \x1b[36mtests::\x1b[0m\x1b[34;1mx\x1b[0m
+     \x1b[35;1mTIMEOUT\x1b[0m [  60.004s] \x1b[35;1mcrate\x1b[0m \x1b[36mtests::\x1b[0m\x1b[34;1my\x1b[0m
+";
+    assert_eq!(of(nextest), vec!["tests::x", "tests::y"]);
+    // Each mixed with libtest's plain output: the coloured failures are not lost.
+    let libtest = "test tests::z ... FAILED\n";
+    assert_eq!(
+        of(&format!("{libtest}{pytest}")),
+        vec!["tests::z", "tests/test_x.py::test_a"]
+    );
+    assert_eq!(
+        of(&format!("{nextest}{libtest}")),
+        vec!["tests::x", "tests::y", "tests::z"]
+    );
+    // A coloured summary still counts.
+    let short = "\x1b[31mFAILED\x1b[0m t.py::a - x
+\x1b[31m= \x1b[1m2 failed\x1b[0m\x1b[31m in 0.01s =\x1b[0m
+";
+    assert_eq!(of(short), Vec::<String>::new());
+}
+
+#[test]
+fn a_long_pytest_run_is_counted() {
+    // pytest adds `(h:mm:ss)` from 60 s on; mypy's plugin gives `.pyi` ids.
+    let output = "FAILED stubs/x.pyi::mypy
+FAILED tests/test_a.py::test_x - assert 1 == 2
+========================= 2 failed in 65.12s (0:01:05) =========================
+";
+    assert_eq!(
+        of(output),
+        vec!["stubs/x.pyi::mypy", "tests/test_a.py::test_x"]
+    );
+    let more = "FAILED tests/test_a.py::test_x - assert 1 == 2
+========================= 3 failed, 1 error in 65.12s (0:01:05) =========================
+";
+    assert_eq!(of(more), Vec::<String>::new());
+}
+
+#[test]
+fn pytest_ids_may_name_any_file() {
+    let output = "FAILED test_doc.txt::test_doc.txt
+ERROR stubs/x.pyi::mypy - mypy-status
+FAILED tests/test_a.py::test_x[a b] - boom
+= 2 failed, 1 error in 0.50s =
+";
+    assert_eq!(
+        of(output),
+        vec![
+            "test_doc.txt::test_doc.txt",
+            "stubs/x.pyi::mypy",
+            "tests/test_a.py::test_x[a b]"
+        ]
+    );
+    // A line whose "path" has a space, or no `::` and no `.py`, is not pytest's.
+    assert_eq!(
+        of("ERROR could not connect::retry\nFAILED to start\n"),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn a_crashed_test_binary_gives_no_names() {
+    // One binary's failure is named; another aborted before printing any result.
+    let named = "     Running unittests src/lib.rs (target/debug/deps/ax-1)
+
+running 1 test
+test a_fails ... FAILED
+
+failures:
+
+---- a_fails stdout ----
+boom
+
+failures:
+    a_fails
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/d.rs (target/debug/deps/d-2)
+
+running 1 test
+test d_aborts ... ";
+    let signal = format!(
+        "{named}
+error: test failed, to rerun pass `--lib`
+error: test failed, to rerun pass `--test d`
+
+Caused by:
+  process didn't exit successfully: `/w/target/debug/deps/d-2` (signal: 6, SIGABRT: process abort signal)
+"
+    );
+    assert_eq!(of(&signal), Vec::<String>::new());
+    // Without the `Caused by` line: more failed targets than `test result: FAILED`.
+    let counted = format!(
+        "{named}
+error: test failed, to rerun pass `--lib`
+error: test failed, to rerun pass `--test d`
+"
+    );
+    assert_eq!(of(&counted), Vec::<String>::new());
+    let doctest = "test a ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+error: test failed, to rerun pass `--lib`
+error: doctest failed, to rerun pass `--doc`
+";
+    assert_eq!(of(doctest), Vec::<String>::new());
+    // One result, one error line: the ordinary case keeps its name.
+    assert_eq!(
+        of(include_str!("fixtures/libtest.txt")),
+        vec!["tests::adds_two_and_two"]
+    );
+}
+
+#[test]
+fn a_go_package_that_failed_without_a_test_gives_no_names() {
+    for (fixture, what) in [
+        (include_str!("fixtures/go-build-failed.txt"), "build failed"),
+        (include_str!("fixtures/go-timeout.txt"), "timeout"),
+        (include_str!("fixtures/go-testmain.txt"), "TestMain exit"),
+    ] {
+        assert_eq!(of(fixture), Vec::<String>::new(), "{what}");
+    }
+    // Every failed package named a test: the names stand.
+    assert_eq!(
+        of(include_str!("fixtures/go.txt")),
+        vec!["TestAddsTwoAndTwo", "TestTable", "TestTable/negative"]
+    );
+}

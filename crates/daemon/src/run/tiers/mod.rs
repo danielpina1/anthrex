@@ -315,6 +315,20 @@ fn allowed(key: &str, piece: &Piece<'_>) -> bool {
     }
 }
 
+/// Whether a template holds a `%` that is not part of a `%%`.
+fn names_the_value(template: &str) -> bool {
+    let mut chars = template.chars();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            match chars.next() {
+                Some('%') => {}
+                _ => return true,
+            }
+        }
+    }
+    false
+}
+
 fn has_filter(command: &str) -> bool {
     pieces(command)
         .iter()
@@ -395,14 +409,15 @@ pub fn validate(
                 "must contain {modules} or {modules:<template>}".to_string(),
             );
         }
-        // `{modules:}` would expand to nothing: the command would name no module.
+        // A template with no unescaped `%` (`{modules:}`, `{modules:-p}`) names no
+        // module: the command would run without the affected set.
         if pieces(template)
             .iter()
-            .any(|piece| matches!(piece, Piece::ModulesEach(t) if t.is_empty()))
+            .any(|piece| matches!(piece, Piece::ModulesEach(t) if !names_the_value(t)))
         {
             push(
                 "module_tests",
-                "{modules:<template>} needs a non-empty template".to_string(),
+                "{modules:<template>} needs a % for the module name".to_string(),
             );
         }
         if modules.is_empty() {

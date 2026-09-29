@@ -127,18 +127,23 @@ fn filter_expressions_per_scope_are_exact() {
 }
 
 #[test]
-fn an_empty_modules_template_is_refused() {
-    let tiers = TierProfile {
-        build_check: Some("make".into()),
-        module_tests: Some("t {modules:}".into()),
-        ..TierProfile::default()
+fn a_modules_template_without_a_percent_is_refused() {
+    let problems = |template: &str| -> Vec<String> {
+        let tiers = TierProfile {
+            build_check: Some("make".into()),
+            module_tests: Some(template.into()),
+            ..TierProfile::default()
+        };
+        validate(&tiers, None, &s(&["mods/*"]))
+            .into_iter()
+            .map(|(key, message)| format!("{key}: {message}"))
+            .collect()
     };
-    let problems: Vec<String> = validate(&tiers, None, &s(&["mods/*"]))
-        .into_iter()
-        .map(|(key, message)| format!("{key}: {message}"))
-        .collect();
-    assert_eq!(
-        problems,
-        vec!["module_tests: {modules:<template>} needs a non-empty template"]
-    );
+    let refused = vec!["module_tests: {modules:<template>} needs a % for the module name"];
+    // Empty, no `%` at all, or only an escaped `%%`: no module is named.
+    assert_eq!(problems("t {modules:}"), refused);
+    assert_eq!(problems("t {modules:-p}"), refused);
+    assert_eq!(problems("t {modules:-p%%}"), refused);
+    assert_eq!(problems("t {modules:-p %}"), Vec::<String>::new());
+    assert_eq!(problems("t {modules:-p%%%}"), Vec::<String>::new());
 }

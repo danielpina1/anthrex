@@ -1,0 +1,15 @@
+# Hand-written from `go test -timeout`'s documented output (go was not installed where the other fixtures were captured, ruling C-2); replace with captured output.
+=== RUN   TestAddsTwoAndTwo
+--- FAIL: TestAddsTwoAndTwo (0.00s)
+FAIL
+FAIL	example.com/sample	0.003s
+=== RUN   TestSlow
+panic: test timed out after 1s
+	running tests:
+		TestSlow (1s)
+
+goroutine 7 [running]:
+testing.(*M).startAlarm.func1()
+	/usr/local/go/src/testing/testing.go:2366 +0x30c
+FAIL	example.com/slow	1.012s
+FAIL

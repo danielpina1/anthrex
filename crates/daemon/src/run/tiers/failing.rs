@@ -37,7 +37,12 @@ pub fn names(output_lines: impl Iterator<Item = String>) -> Vec<String> {
     let mut counted = [0u64; 4];
     let mut unreadable = false;
     let mut blocks = FailureBlocks::default();
+    let mut cargo = CargoTargets::default();
+    let mut go = GoPackages::default();
     for line in output_lines {
+        let line = clean(&line);
+        cargo.line(&line);
+        go.line(&line);
         if let Some(block) = blocks.line(&line) {
             named.extend(block.into_iter().map(|n| (Runner::Libtest, n)));
         }
@@ -51,7 +56,7 @@ pub fn names(output_lines: impl Iterator<Item = String>) -> Vec<String> {
         }
     }
     named.extend(blocks.finish().into_iter().map(|n| (Runner::Libtest, n)));
-    if unreadable {
+    if unreadable || cargo.unexplained() || go.unexplained {
         return Vec::new();
     }
     for runner in RUNNERS {
@@ -152,11 +157,21 @@ fn seen(line: &str) -> Seen {
     nextest(line)
 }
 
-/// Whether `rest` starts with a pytest node id: a path to a `.py` file.
+/// Whether `rest` starts with a pytest node id: `<path>::…`, the path with no space
+/// and a file extension (`.py`, `.pyi`, `.txt` for a doctest file, …), or a bare
+/// `.py` path (a collection error).
 fn is_pytest_id(rest: &str) -> bool {
     let id = pytest_id(rest);
-    let file = id.split("::").next().unwrap_or(id);
-    file.ends_with(".py")
+    match id.split_once("::") {
+        Some((path, _)) => {
+            let file = path.rsplit('/').next().unwrap_or(path);
+            !path.contains(char::is_whitespace)
+                && file
+                    .char_indices()
+                    .any(|(i, c)| c == '.' && i > 0 && i + 1 < file.len())
+        }
+        None => !id.contains(char::is_whitespace) && id.ends_with(".py"),
+    }
 }
 
 /// The node id: everything up to the ` - ` that starts the message, a ` - ` inside a
@@ -251,7 +266,14 @@ fn summary(line: &str) -> Vec<(Runner, u64)> {
     // pytest: `==== 1 failed, 1 passed, 2 errors in 0.10s ====`, or without the `=`.
     let text = line.trim().trim_matches('=').trim();
     if let Some((parts, time)) = text.rsplit_once(" in ")
-        && time.trim_end().ends_with('s')
+        && time
+            .trim_end()
+            .split_once(" (")
+            .map_or(time.trim_end(), |(secs, clock)| {
+                // From 60 s on pytest adds the clock time: `65.12s (0:01:05)`.
+                if clock.ends_with(')') { secs } else { "" }
+            })
+            .ends_with('s')
         && !parts.is_empty()
         && parts.split(',').all(|part| {
             part.trim()
@@ -262,4 +284,81 @@ fn summary(line: &str) -> Vec<(Runner, u64)> {
         return vec![(Runner::Pytest, counts(parts, &["failed", "error"], ','))];
     }
     Vec::new()
+}
+
+/// `line` without its ANSI CSI sequences (`ESC [` parameters, intermediates, a final
+/// byte) and without a trailing `\r`, so coloured output reads as plain.
+fn clean(line: &str) -> String {
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for c in chars.by_ref() {
+                if ('\u{40}'..='\u{7e}').contains(&c) {
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// cargo's per-target lines. A test binary that crashed (`process didn't exit
+/// successfully: … (signal: …)`) printed no result for its running test, and more
+/// `error: test failed` / `error: doctest failed` lines than `test result: FAILED`
+/// lines mean a target failed without a result: either way the names are incomplete.
+#[derive(Default)]
+struct CargoTargets {
+    crashed: bool,
+    failed_targets: u32,
+    failed_results: u32,
+}
+
+impl CargoTargets {
+    fn line(&mut self, line: &str) {
+        let trimmed = line.trim_start();
+        if trimmed.contains("process didn't exit successfully: ") && trimmed.contains("(signal:") {
+            self.crashed = true;
+        }
+        if trimmed.starts_with("error: test failed, to rerun pass")
+            || trimmed.starts_with("error: doctest failed")
+        {
+            self.failed_targets += 1;
+        }
+        if trimmed.starts_with("test result: FAILED") {
+            self.failed_results += 1;
+        }
+    }
+
+    fn unexplained(&self) -> bool {
+        self.crashed || self.failed_targets > self.failed_results
+    }
+}
+
+/// Go's package result lines (`ok  \t<pkg>`, `FAIL\t<pkg>`, `?   \t<pkg>`). A failed
+/// package with no `--- FAIL:` since the previous result line (a build failure, a
+/// timeout's panic, a `TestMain` exit) named none of its failures.
+#[derive(Default)]
+struct GoPackages {
+    fails: u32,
+    unexplained: bool,
+}
+
+impl GoPackages {
+    fn line(&mut self, line: &str) {
+        if line.trim_start().starts_with("--- FAIL:") {
+            self.fails += 1;
+        } else if line.starts_with("FAIL\t") {
+            if self.fails == 0 {
+                self.unexplained = true;
+            }
+            self.fails = 0;
+        } else if (line.starts_with("ok ") || line.starts_with("? ")) && line.contains('\t') {
+            self.fails = 0;
+        }
+    }
 }
