@@ -113,13 +113,14 @@ fn e2e_restart_resumes_the_orchestrator_with_its_role_flags() {
 }
 
 /// A `claude` and `codex` stand-in that writes its environment to
-/// `<dir>/env-<window id>.txt`, then runs `fake-agent`.
+/// `<dir>/env-<window id>.txt`, then runs `fake-agent`. The file is written under
+/// another name and renamed, so [`env_of`] never reads it half-written.
 fn env_recorder(dir: &Path) -> PathBuf {
     let wrapper = dir.join("agent-env.sh");
     std::fs::write(
         &wrapper,
         format!(
-            "#!/bin/sh\nif [ -n \"$ANTHREX_WINDOW_ID\" ]; then env > '{}/env-'\"$ANTHREX_WINDOW_ID\"'.txt'; fi\nexec '{}' \"$@\"\n",
+            "#!/bin/sh\nif [ -n \"$ANTHREX_WINDOW_ID\" ]; then out='{}/env-'\"$ANTHREX_WINDOW_ID\"; env > \"$out.tmp\" && mv \"$out.tmp\" \"$out.txt\"; fi\nexec '{}' \"$@\"\n",
             dir.display(),
             crate::support::fake_agent_bin().display()
         ),
