@@ -175,6 +175,10 @@ fn verification_runs_the_new_commands_in_order_and_drops_failures() {
             ("full_shards", SHARDS_NEED_CHECK),
             // Review I1: cargo names without the cargo graph break decision 8.
             ("module_names", "cargo needs module_graph = \"cargo\""),
+            // Ruling C-4 (3): with the module commands and `check` gone, nothing can
+            // take the filters.
+            ("slow_tests", "no kept command can take this filter"),
+            ("timing_tests", "no kept command can take this filter"),
         ]
     );
     assert_eq!(kept.module_names, None);

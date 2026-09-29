@@ -8,7 +8,9 @@ use std::time::Duration;
 use proto::{CommandCheck, ModuleNames, ProfileVerification, RepoProfile};
 
 use super::proposal::apply_verification;
-use super::proposal_tiers::{NEEDS_GRAPH, UNTIERED_CHECK, module_command, verified_form};
+use super::proposal_tiers::{
+    FILTER_UNUSED, NEEDS_GRAPH, UNTIERED_CHECK, module_command, verified_form,
+};
 use super::tests_tiers::{check_of, log, scratch, strings};
 use super::verify::run_commands;
 use crate::run::globs::path_module;
@@ -202,4 +204,131 @@ fn a_partial_wildcard_component_names_no_module_for_verification_or_path_module(
         "{test:?}"
     );
     assert!(!log(dir.path()).iter().any(|l| l.starts_with("test.sh")));
+}
+
+/// Ruling C-4 (1): a tiered proposal that ends untiered loses a `check` holding any
+/// tier placeholder, `{module}` included, though `substitute` leaves `{module}` as it
+/// is; a never-tiered check is left alone (decision 6).
+#[test]
+fn a_check_with_module_goes_when_the_profile_turns_untiered() {
+    let proposed = RepoProfile {
+        check: Some("sh check.sh {module}".into()),
+        build_check: Some("sh build.sh".into()),
+        ..Default::default()
+    };
+    let v = ProfileVerification {
+        at: 0,
+        confined: false,
+        setup: None,
+        check: ok("sh check.sh {module}"),
+        single_test: None,
+        build_check: Some(CommandCheck {
+            ok: false,
+            code: Some(1),
+            ..ok("sh build.sh").unwrap()
+        }),
+        module_graph: None,
+        module_test: None,
+        module_tests: None,
+        toolchain_id: None,
+    };
+    let (kept, dropped) = apply_verification(&proposed, &v, Path::new("/work/app"));
+    assert_eq!(
+        drops(&dropped),
+        [
+            ("build_check", "exit 1 after 0s"),
+            ("check", UNTIERED_CHECK)
+        ]
+    );
+    assert_eq!(kept.check, None);
+
+    let m8b = RepoProfile {
+        check: Some("sh check.sh {module} {shard}".into()),
+        ..Default::default()
+    };
+    let v = ProfileVerification {
+        check: ok("sh check.sh {module} {shard}"),
+        build_check: None,
+        ..v
+    };
+    let (kept, dropped) = apply_verification(&m8b, &v, Path::new("/work/app"));
+    assert!(dropped.is_empty(), "{dropped:?}");
+    assert_eq!(kept.check, m8b.check);
+}
+
+/// Ruling C-4 (2): a filter's own problem drops the filter, in one round.
+#[test]
+fn a_blank_filter_is_dropped_once() {
+    let proposed = RepoProfile {
+        modules: strings(&["mods/*"]),
+        check: Some("sh check.sh".into()),
+        slow_tests: Some("   ".into()),
+        ..Default::default()
+    };
+    let v = ProfileVerification {
+        at: 0,
+        confined: false,
+        setup: None,
+        check: ok("sh check.sh"),
+        single_test: None,
+        build_check: None,
+        module_graph: None,
+        module_test: None,
+        module_tests: None,
+        toolchain_id: None,
+    };
+    let (kept, dropped) = apply_verification(&proposed, &v, Path::new("/work/app"));
+    assert_eq!(drops(&dropped), [("slow_tests", "must not be blank")]);
+    assert_eq!(super::proposal::validate(&kept), Vec::<String>::new());
+    assert_runs_as_verified(&proposed, &kept);
+}
+
+/// Ruling C-4 (3): a filter no kept command can take goes.
+#[test]
+fn a_filter_nothing_can_take_is_dropped() {
+    let proposed = RepoProfile {
+        modules: strings(&["mods/*"]),
+        check: Some("sh check.sh".into()),
+        module_test: Some("sh test.sh {module}".into()),
+        slow_tests: Some("slow".into()),
+        ..Default::default()
+    };
+    let v = ProfileVerification {
+        at: 0,
+        confined: false,
+        setup: None,
+        check: ok("sh check.sh"),
+        single_test: None,
+        build_check: None,
+        module_graph: None,
+        module_test: ok("sh test.sh {module}"),
+        module_tests: None,
+        toolchain_id: None,
+    };
+    let (kept, dropped) = apply_verification(&proposed, &v, Path::new("/work/app"));
+    assert_eq!(
+        drops(&dropped),
+        [
+            (
+                "module_test",
+                "slow_tests: module_test must contain {filter:<template>} to leave slow tests out"
+            ),
+            ("slow_tests", FILTER_UNUSED),
+        ]
+    );
+    assert_eq!(FILTER_UNUSED, "no kept command can take this filter");
+    assert_eq!(kept.slow_tests, None);
+    assert_eq!(kept.check.as_deref(), Some("sh check.sh"));
+
+    // A tiered `check` with a slot takes it.
+    let proposed = RepoProfile {
+        check: Some("sh check.sh {filter:-k %}".into()),
+        ..proposed
+    };
+    let v = ProfileVerification {
+        check: ok("sh check.sh {filter:-k %}"),
+        ..v
+    };
+    let (kept, _) = apply_verification(&proposed, &v, Path::new("/work/app"));
+    assert_eq!(kept.slow_tests.as_deref(), Some("slow"));
 }

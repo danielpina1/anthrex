@@ -16,6 +16,8 @@ use crate::run::tiers::{
 pub const NEEDS_GRAPH: &str = "needs a module graph";
 /// Ruling C-3 (b): why a `check` with tier placeholders goes with the last tier key.
 pub const UNTIERED_CHECK: &str = "check uses tier placeholders but no tier command was kept";
+/// Ruling C-4 (3): why a filter no kept command can take is dropped.
+pub const FILTER_UNUSED: &str = "no kept command can take this filter";
 /// Why `full_shards` above 1 is dropped (decision 12).
 pub const SHARDS_NEED_CHECK: &str = "needs a verified check that contains {shard} and {shards}";
 
@@ -213,32 +215,50 @@ fn drop_invalid(
             profile.check.as_deref(),
             &profile.modules,
         );
-        let mut reasons: Vec<(String, String)> = Vec::new();
-        for (key, message) in problems {
-            let (key, message) = match FILTERS.contains(&key.as_str()) {
-                // `<module command> must contain {filter:<template>} …`
-                true => match message.split_once(' ') {
-                    Some((command, _)) => (command.to_string(), format!("{key}: {message}")),
-                    None => (key, message),
-                },
-                false => (key, message),
+        // (key to drop, the problem's own key, reason)
+        let mut reasons: Vec<(String, String, String)> = Vec::new();
+        for (own, message) in problems {
+            // Ruling C-4 (2): only `<module command> must contain {filter:…` is about
+            // the module command; any other filter problem is the filter's own.
+            let command = ["module_test", "module_tests"]
+                .into_iter()
+                .find(|c| message.starts_with(&format!("{c} must contain {{filter:")));
+            let (key, message) = match command {
+                Some(c) if FILTERS.contains(&own.as_str()) => {
+                    (c.to_string(), format!("{own}: {message}"))
+                }
+                _ => (own.clone(), message),
             };
-            match reasons.iter_mut().find(|(k, _)| *k == key) {
-                Some((_, reason)) => reason.push_str(&format!("\n{message}")),
-                None => reasons.push((key, message)),
+            match reasons.iter_mut().find(|(k, _, _)| *k == key) {
+                Some((_, _, reason)) => reason.push_str(&format!("\n{message}")),
+                None => reasons.push((key, own, message)),
             }
         }
         if reasons.is_empty() {
             reasons = changed_expansions(proposed, profile);
         }
         if reasons.is_empty() {
+            reasons = unused_filters(profile);
+        }
+        if reasons.is_empty() {
             return;
         }
-        for (key, reason) in reasons {
-            let command = take_key(profile, &key).unwrap_or_default();
+        for (key, own, reason) in reasons {
+            let before = profile.clone();
+            let mut taken = take_key(profile, &key);
+            let mut key = key;
+            // No round is a no-op: an attribution that removed nothing falls back to
+            // the problem's own key.
+            if *profile == before && own != key {
+                taken = take_key(profile, &own);
+                key = own;
+            }
+            if *profile == before {
+                continue;
+            }
             dropped.push(DroppedCommand {
                 key,
-                command,
+                command: taken.unwrap_or_default(),
                 reason,
                 tail: String::new(),
             });
@@ -246,25 +266,62 @@ fn drop_invalid(
     }
 }
 
-/// Ruling C-3 (a) and (b): the kept commands that would no longer run as verified,
-/// each with why.
-fn changed_expansions(proposed: &RepoProfile, profile: &RepoProfile) -> Vec<(String, String)> {
+/// Whether `command` holds a tier placeholder (any but `{test}`).
+fn has_tier_placeholder(command: &str) -> bool {
+    pieces(command)
+        .iter()
+        .any(|piece| !matches!(piece, Piece::Text(_) | Piece::Test))
+}
+
+/// Ruling C-4 (3): the slow and timing filters no kept command can take — neither
+/// module command, nor `check` as a tiered check — each with why.
+fn unused_filters(profile: &RepoProfile) -> Vec<(String, String, String)> {
+    let slot = |command: &Option<String>| {
+        command
+            .as_deref()
+            .is_some_and(|c| pieces(c).iter().any(|p| matches!(p, Piece::Filter(_))))
+    };
+    let tiered = TierProfile::from_repo(profile).is_tiered();
+    if slot(&profile.module_test) || slot(&profile.module_tests) || (tiered && slot(&profile.check))
+    {
+        return Vec::new();
+    }
+    [
+        ("slow_tests", &profile.slow_tests),
+        ("timing_tests", &profile.timing_tests),
+    ]
+    .into_iter()
+    .filter(|(_, filter)| filter.is_some())
+    .map(|(key, _)| (key.to_string(), key.to_string(), FILTER_UNUSED.to_string()))
+    .collect()
+}
+
+/// Ruling C-3 (a) and (b), with C-4 (1): the kept commands that would no longer run
+/// as verified, each with why.
+fn changed_expansions(
+    proposed: &RepoProfile,
+    profile: &RepoProfile,
+) -> Vec<(String, String, String)> {
     let mut out = Vec::new();
+    // C-4 (1): a tiered proposal turned untiered loses a `check` with any tier
+    // placeholder, even one (`{module}`) whose text did not change; a check that was
+    // never tiered is M8b's and stays (decision 6).
+    let untiered = !TierProfile::from_repo(profile).is_tiered();
+    if untiered
+        && TierProfile::from_repo(proposed).is_tiered()
+        && profile.check.as_deref().is_some_and(has_tier_placeholder)
+    {
+        let key = "check".to_string();
+        out.push((key.clone(), key, UNTIERED_CHECK.to_string()));
+    }
     for key in ["check", "module_test", "module_tests"] {
+        if out.iter().any(|(k, _, _)| k == key) {
+            continue;
+        }
         let Some(form) = verified_form(profile, key) else {
             continue;
         };
         if Some(&form) == verified_form(proposed, key).as_ref() {
-            continue;
-        }
-        let tier_placeholders = profile.check.as_deref().is_some_and(|check| {
-            pieces(check)
-                .iter()
-                .any(|piece| !matches!(piece, Piece::Text(_) | Piece::Test))
-        });
-        let untiered = !TierProfile::from_repo(profile).is_tiered();
-        if key == "check" && untiered && tier_placeholders {
-            out.push((key.to_string(), UNTIERED_CHECK.to_string()));
             continue;
         }
         let changed: Vec<&str> = ["slow_tests", "timing_tests", "module_names", "module_graph"]
@@ -280,6 +337,7 @@ fn changed_expansions(proposed: &RepoProfile, profile: &RepoProfile) -> Vec<(Str
             keys => format!("{} was dropped", keys.join(" and ")),
         };
         out.push((
+            key.to_string(),
             key.to_string(),
             format!("it would no longer run as verified: {why}"),
         ));

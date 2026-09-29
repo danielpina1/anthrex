@@ -116,11 +116,15 @@ fn a_verified_proposal_always_passes_the_tier_rules() {
                 ..base()
             },
             vec![],
-            vec![(
-                "module_test",
-                "must contain {module} exactly once\n\
+            vec![
+                (
+                    "module_test",
+                    "must contain {module} exactly once\n\
                  slow_tests: module_test must contain {filter:<template>} to leave slow tests out",
-            )],
+                ),
+                // Ruling C-4 (3): nothing kept can take the filter.
+                ("slow_tests", "no kept command can take this filter"),
+            ],
         ),
         // Repro 2: the cargo graph fails; its names go with it.
         (
@@ -181,10 +185,13 @@ fn a_verified_proposal_always_passes_the_tier_rules() {
             },
             vec![],
             // Ruling C-3 (c): the command without a filter slot goes, not the filter.
-            vec![(
-                "module_test",
-                "timing_tests: module_test must contain {filter:<template>} to leave timing tests out",
-            )],
+            vec![
+                (
+                    "module_test",
+                    "timing_tests: module_test must contain {filter:<template>} to leave timing tests out",
+                ),
+                ("timing_tests", "no kept command can take this filter"),
+            ],
         ),
         // A tiered `check` with a placeholder it may not hold.
         (
