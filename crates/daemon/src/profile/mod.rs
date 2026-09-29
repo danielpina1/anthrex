@@ -103,6 +103,8 @@ mod tests;
 #[cfg(test)]
 mod tests_tiers;
 #[cfg(test)]
+mod tests_tiers_expansion;
+#[cfg(test)]
 mod tests_tiers_review;
 #[cfg(test)]
 mod tests_verify;

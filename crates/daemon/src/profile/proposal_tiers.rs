@@ -6,12 +6,16 @@
 use proto::{CommandCheck, DroppedCommand, ModuleNames, ProfileVerification, RepoProfile};
 
 use super::proposal::{NOT_VERIFIED, failure};
+use crate::run::tiers::command::{Piece, Placeholders, filter_expr, pieces, substitute};
 use crate::run::tiers::{
-    FULL_SHARDS_MAX, GraphSource, SKIP_MARKER_CHARS_MAX, SKIP_MARKERS_MAX, TierProfile, validate,
+    FULL_SHARDS_MAX, GraphSource, SKIP_MARKER_CHARS_MAX, SKIP_MARKERS_MAX, Scope, TierProfile,
+    validate,
 };
 
 /// Why a module command is dropped when the names it needs come from a graph that was.
 pub const NEEDS_GRAPH: &str = "needs a module graph";
+/// Ruling C-3 (b): why a `check` with tier placeholders goes with the last tier key.
+pub const UNTIERED_CHECK: &str = "check uses tier placeholders but no tier command was kept";
 /// Why `full_shards` above 1 is dropped (decision 12).
 pub const SHARDS_NEED_CHECK: &str = "needs a verified check that contains {shard} and {shards}";
 
@@ -131,8 +135,8 @@ pub fn apply_verification(
             dropped,
         );
     }
-    let graph_kept =
-        matches!(tiers.module_graph, GraphSource::Cargo) && profile.module_graph.is_some();
+    // Review round 2, minor 1: any kept graph, cargo's or a command's.
+    let graph_kept = tiers.module_graph != GraphSource::None && profile.module_graph.is_some();
     for (key, slot, record) in [
         ("module_test", &mut profile.module_test, &v.module_test),
         ("module_tests", &mut profile.module_tests, &v.module_tests),
@@ -162,7 +166,7 @@ pub fn apply_verification(
             });
         }
     }
-    drop_invalid(profile, dropped);
+    drop_invalid(proposed, profile, dropped);
 }
 
 /// Review I1: the key `key` taken out of `profile`, as its value's text.
@@ -191,37 +195,44 @@ fn take_key(profile: &mut RepoProfile, key: &str) -> Option<String> {
 
 /// Review I1: what verification kept must pass decision 8, or every run with the
 /// confirmed profile would be refused. Each key with a problem is dropped and listed
-/// with it, in cascade: the keys a problem is about first, and the slow and timing
-/// filters only when nothing else is left to drop (dropping a module command can make
-/// them valid again). `module_names` goes when the cargo graph went.
-fn drop_invalid(profile: &mut RepoProfile, dropped: &mut Vec<DroppedCommand>) {
+/// with it, round after round. Ruling C-3 (c): a filter's problem is about the module
+/// command without a `{filter:…}` slot, so that command goes, not the filter.
+/// Ruling C-3 (a) and (b): then every kept command must still expand as verification
+/// ran it under `proposed` ([`verified_form`]); one that would not goes too, naming
+/// the dropped keys that changed it, and the rounds go on.
+fn drop_invalid(
+    proposed: &RepoProfile,
+    profile: &mut RepoProfile,
+    dropped: &mut Vec<DroppedCommand>,
+) {
     const FILTERS: [&str; 2] = ["slow_tests", "timing_tests"];
     // Each round drops at least one key; there are fewer keys than rounds.
-    for _ in 0..16 {
+    for _ in 0..32 {
         let problems = validate(
             &TierProfile::from_repo(profile),
             profile.check.as_deref(),
             &profile.modules,
         );
-        let primary: Vec<(String, String)> = problems
-            .iter()
-            .filter(|(key, _)| !FILTERS.contains(&key.as_str()))
-            .cloned()
-            .collect();
-        let round = if primary.is_empty() {
-            problems
-        } else {
-            primary
-        };
-        if round.is_empty() {
-            return;
-        }
         let mut reasons: Vec<(String, String)> = Vec::new();
-        for (key, message) in round {
+        for (key, message) in problems {
+            let (key, message) = match FILTERS.contains(&key.as_str()) {
+                // `<module command> must contain {filter:<template>} …`
+                true => match message.split_once(' ') {
+                    Some((command, _)) => (command.to_string(), format!("{key}: {message}")),
+                    None => (key, message),
+                },
+                false => (key, message),
+            };
             match reasons.iter_mut().find(|(k, _)| *k == key) {
                 Some((_, reason)) => reason.push_str(&format!("\n{message}")),
                 None => reasons.push((key, message)),
             }
+        }
+        if reasons.is_empty() {
+            reasons = changed_expansions(proposed, profile);
+        }
+        if reasons.is_empty() {
+            return;
         }
         for (key, reason) in reasons {
             let command = take_key(profile, &key).unwrap_or_default();
@@ -233,6 +244,47 @@ fn drop_invalid(profile: &mut RepoProfile, dropped: &mut Vec<DroppedCommand>) {
             });
         }
     }
+}
+
+/// Ruling C-3 (a) and (b): the kept commands that would no longer run as verified,
+/// each with why.
+fn changed_expansions(proposed: &RepoProfile, profile: &RepoProfile) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for key in ["check", "module_test", "module_tests"] {
+        let Some(form) = verified_form(profile, key) else {
+            continue;
+        };
+        if Some(&form) == verified_form(proposed, key).as_ref() {
+            continue;
+        }
+        let tier_placeholders = profile.check.as_deref().is_some_and(|check| {
+            pieces(check)
+                .iter()
+                .any(|piece| !matches!(piece, Piece::Text(_) | Piece::Test))
+        });
+        let untiered = !TierProfile::from_repo(profile).is_tiered();
+        if key == "check" && untiered && tier_placeholders {
+            out.push((key.to_string(), UNTIERED_CHECK.to_string()));
+            continue;
+        }
+        let changed: Vec<&str> = ["slow_tests", "timing_tests", "module_names", "module_graph"]
+            .into_iter()
+            .filter(|k| {
+                let mut a = proposed.clone();
+                let mut b = profile.clone();
+                take_key(&mut a, k) != take_key(&mut b, k)
+            })
+            .collect();
+        let why = match changed.as_slice() {
+            [] => "the keys it depends on changed".to_string(),
+            keys => format!("{} was dropped", keys.join(" and ")),
+        };
+        out.push((
+            key.to_string(),
+            format!("it would no longer run as verified: {why}"),
+        ));
+    }
+    out
 }
 
 /// Milestone 9.1 decision 12: `tiers: <parts>` for a tiered profile, naming the parts
@@ -268,4 +320,51 @@ pub fn summary_line(profile: &RepoProfile) -> Option<String> {
     .flatten()
     .collect();
     (!parts.is_empty()).then(|| format!("tiers: {}", parts.join(", ")))
+}
+
+/// The command M8b's `check` verification runs, and a run runs as the whole suite: for
+/// a tiered profile, `check` with `{filter:…}` empty and `{shard}`/`{shards}` as 1 of
+/// 1; otherwise `check` as written, as M8a runs it.
+pub fn check_command(profile: &RepoProfile, check: &str) -> String {
+    if !TierProfile::from_repo(profile).is_tiered() {
+        return check.to_string();
+    }
+    let values = Placeholders {
+        shard: Some((1, 1)),
+        ..Placeholders::default()
+    };
+    substitute(check, &values)
+}
+
+/// `module_test` (or, `each`, `module_tests`) as verification runs it for `module`:
+/// the module in, and the gate filter of `profile` (decision 25).
+pub fn module_command(profile: &RepoProfile, template: &str, each: bool, module: &str) -> String {
+    let values = Placeholders {
+        module: (!each).then(|| module.to_string()),
+        modules: each.then(|| vec![module.to_string()]),
+        filter: filter_expr(&TierProfile::from_repo(profile), Scope::Gate, false),
+        ..Placeholders::default()
+    };
+    substitute(template, &values)
+}
+
+/// What stands for the module in [`verified_form`]: the module verification picks
+/// depends on the checkout, not on the profile.
+const ANY_MODULE: &str = "<module>";
+
+/// Ruling C-3 (a): how the kept command `key` (`check`, `module_test` or
+/// `module_tests`) expands under `profile`, as verification ran it: the command and,
+/// for a module command, how its module is named. `None` when the key is unset.
+pub fn verified_form(profile: &RepoProfile, key: &str) -> Option<String> {
+    let names = TierProfile::from_repo(profile).module_names;
+    let module = |template: &str, each| {
+        let command = module_command(profile, template, each, ANY_MODULE);
+        format!("{command} ({names:?} names)")
+    };
+    match key {
+        "check" => profile.check.as_deref().map(|c| check_command(profile, c)),
+        "module_test" => profile.module_test.as_deref().map(|t| module(t, false)),
+        "module_tests" => profile.module_tests.as_deref().map(|t| module(t, true)),
+        _ => None,
+    }
 }

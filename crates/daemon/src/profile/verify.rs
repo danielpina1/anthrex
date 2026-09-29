@@ -165,7 +165,7 @@ pub fn run_commands(
     let setup = profile.setup.as_ref().map(plain);
     // Milestone 9.1: a tiered `check`'s placeholders are filled in to run it whole.
     let check = profile.check.as_ref().map(|command| {
-        let whole = super::verify_tiers::check_command(profile, command);
+        let whole = super::proposal_tiers::check_command(profile, command);
         let (outcome, _) = run_one(dir, &whole, &env, timeout, None, confine);
         let ok = outcome.ok;
         record(command, outcome, ok)

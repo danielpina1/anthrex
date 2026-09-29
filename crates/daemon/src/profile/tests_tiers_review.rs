@@ -116,7 +116,11 @@ fn a_verified_proposal_always_passes_the_tier_rules() {
                 ..base()
             },
             vec![],
-            vec![("module_test", "must contain {module} exactly once")],
+            vec![(
+                "module_test",
+                "must contain {module} exactly once\n\
+                 slow_tests: module_test must contain {filter:<template>} to leave slow tests out",
+            )],
         ),
         // Repro 2: the cargo graph fails; its names go with it.
         (
@@ -168,7 +172,7 @@ fn a_verified_proposal_always_passes_the_tier_rules() {
                 "must contain {modules} or {modules:<template>}",
             )],
         ),
-        // A module command that cannot leave slow tests out takes the filter with it.
+        // A module command that cannot leave timing tests out.
         (
             RepoProfile {
                 module_test: Some("sh test.sh {module}".into()),
@@ -176,9 +180,10 @@ fn a_verified_proposal_always_passes_the_tier_rules() {
                 ..base()
             },
             vec![],
+            // Ruling C-3 (c): the command without a filter slot goes, not the filter.
             vec![(
-                "timing_tests",
-                "module_test must contain {filter:<template>} to leave timing tests out",
+                "module_test",
+                "timing_tests: module_test must contain {filter:<template>} to leave timing tests out",
             )],
         ),
         // A tiered `check` with a placeholder it may not hold.
@@ -202,6 +207,8 @@ fn a_verified_proposal_always_passes_the_tier_rules() {
             .collect();
         assert_eq!(got, expected, "{proposed:?}");
         assert_confirmable(&kept);
+        // Ruling C-3 (a): what is kept runs as it was verified.
+        super::tests_tiers_expansion::assert_runs_as_verified(&found, &kept);
     }
 }
 

@@ -16,17 +16,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use proto::{ModuleNames, ProfileVerification, RepoProfile};
 
+use super::proposal_tiers::module_command;
 use super::verify::record;
 use crate::launch::shell_quote;
 use crate::run::confine::ConfineSpec;
 use crate::run::exec::{ShellOutcome, run_matching};
 use crate::run::globs::path_module;
 use crate::run::messages::summary;
-use crate::run::tiers::command::{Placeholders, filter_expr, substitute};
 use crate::run::tiers::graph::{from_cargo_metadata, from_command_json};
-use crate::run::tiers::{
-    GRAPH_TIMEOUT, GraphSource, ModuleGraph, Scope, TOOLCHAIN_TIMEOUT, TierProfile,
-};
+use crate::run::tiers::{GRAPH_TIMEOUT, GraphSource, ModuleGraph, TOOLCHAIN_TIMEOUT, TierProfile};
 
 /// The command the built-in `cargo` graph runs (decision 9).
 pub const CARGO_METADATA: &str = "cargo metadata --format-version 1 --no-deps --offline";
@@ -93,20 +91,6 @@ fn capture(
     (outcome, read.ok().map(|_| text))
 }
 
-/// The command M8b's `check` verification runs: for a tiered profile, `check` with
-/// `{filter:…}` empty and `{shard}`/`{shards}` as 1 of 1, so the whole suite runs;
-/// otherwise `check` as written, as M8a runs it.
-pub fn check_command(profile: &RepoProfile, check: &str) -> String {
-    if !TierProfile::from_repo(profile).is_tiered() {
-        return check.to_string();
-    }
-    let values = Placeholders {
-        shard: Some((1, 1)),
-        ..Placeholders::default()
-    };
-    substitute(check, &values)
-}
-
 /// The directories under `dir` that match a `modules` pattern, relative, sorted.
 fn module_dirs(dir: &Path, modules: &[String]) -> Vec<String> {
     let mut found = Vec::new();
@@ -114,7 +98,9 @@ fn module_dirs(dir: &Path, modules: &[String]) -> Vec<String> {
         let mut current = vec![String::new()];
         for component in pattern.trim_end_matches('/').split('/') {
             let literal = !component.contains(['*', '?', '[']);
-            let matcher = globset::Glob::new(component).map(|g| g.compile_matcher());
+            // Review round 2, minor 2: as in `globs::glob_module`, only a whole `*`
+            // component is a wildcard; any other with a metacharacter matches nothing.
+            let wildcard = component == "*";
             let mut next = Vec::new();
             for base in &current {
                 let Ok(entries) = std::fs::read_dir(dir.join(base)) else {
@@ -127,10 +113,10 @@ fn module_dirs(dir: &Path, modules: &[String]) -> Vec<String> {
                     // option, and one with a glob character (which `path_module` never
                     // names, so no path would ever be in it) are no module.
                     let plain = !name.starts_with(['.', '-']) && !name.contains(['*', '?', '[']);
-                    let matches = match &matcher {
-                        _ if literal => name == component,
-                        Ok(m) => plain && m.is_match(&name),
-                        Err(_) => false,
+                    let matches = if literal {
+                        name == component
+                    } else {
+                        wildcard && plain
                     };
                     if is_dir && matches {
                         next.push(if base.is_empty() {
@@ -233,7 +219,6 @@ pub fn run_commands(
         v.module_graph = Some(record(key, outcome, ok));
     }
     let names = module_names(dir, &tiers, &profile.modules, graph.as_ref());
-    let filter = filter_expr(&tiers, Scope::Gate, false);
     for (template, slot, each) in [
         (&profile.module_test, &mut v.module_test, false),
         (&profile.module_tests, &mut v.module_tests, true),
@@ -251,13 +236,8 @@ pub fn run_commands(
                 false,
             ),
             Some(first) => {
-                let values = Placeholders {
-                    module: (!each).then(|| first.clone()),
-                    modules: each.then(|| vec![first.clone()]),
-                    filter: filter.clone(),
-                    ..Placeholders::default()
-                };
-                let (outcome, ok) = plain(&substitute(template, &values), timeout);
+                let command = module_command(profile, template, each, first);
+                let (outcome, ok) = plain(&command, timeout);
                 record(template, outcome, ok)
             }
         });
