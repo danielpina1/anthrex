@@ -117,3 +117,32 @@ async fn wake_writes_happen_outside_every_lock() {
     // The window this test started, and nothing else.
     let _ = manager.kill(info.id);
 }
+
+/// Decision 39, "a read clears too", in the driver (M9.16, found end to end): a digest
+/// answer that held every note of the wake-up still waiting drops that wake-up, so an
+/// orchestrator that read the change by polling is not pasted at once its turn ends.
+/// A wake-up holding a newer note stays.
+#[test]
+fn a_digest_read_drops_the_wake_up_it_covered() {
+    let wakes = Wakes::default();
+    let pending = |notes_seq| Pending {
+        window_id: 1,
+        text: "[anthrex] Run r1 changed: the user approved the plan.".into(),
+        digest_revision: 4,
+        notes_seq,
+        quiet: Duration::from_secs(1),
+    };
+    crate::lock(&wakes.pending).insert("r1".into(), pending(3));
+    crate::lock(&wakes.pending).insert("r2".into(), pending(3));
+    wakes.read("r1", 2);
+    assert!(
+        crate::lock(&wakes.pending).contains_key("r1"),
+        "a newer note"
+    );
+    wakes.read("r1", 3);
+    assert!(!crate::lock(&wakes.pending).contains_key("r1"));
+    assert!(
+        crate::lock(&wakes.pending).contains_key("r2"),
+        "another run's"
+    );
+}

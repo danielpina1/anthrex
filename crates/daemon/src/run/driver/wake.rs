@@ -82,6 +82,22 @@ pub(super) struct Wakes {
     exited_since: std::sync::Mutex<HashMap<u32, Instant>>,
 }
 
+impl Wakes {
+    /// Decision 39's "a read clears too", for the wake-up already built: a digest
+    /// answer that held every note of `run_id`'s waiting wake-up (`notes_seq`, as the
+    /// engine's `DigestRead` drops them) drops it, so an orchestrator that read the
+    /// change by polling is not pasted at once its turn ends.
+    pub(super) fn read(&self, run_id: &str, notes_seq: u64) {
+        let mut pending = crate::lock(&self.pending);
+        if pending
+            .get(run_id)
+            .is_some_and(|p| p.notes_seq <= notes_seq)
+        {
+            pending.remove(run_id);
+        }
+    }
+}
+
 /// An orchestrator window as the manager lists it now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Listed {
@@ -100,6 +116,9 @@ struct Seen {
     terminal: bool,
     launching: bool,
     launches: u64,
+    /// The engine still holds notes for it: a wake-up whose notes a read dropped since
+    /// (decision 39, "a read clears too") has nothing left to say.
+    notes: bool,
 }
 
 /// Whether `window` takes a paste now: `Idle` or `Done`, and no client input for
@@ -188,7 +207,7 @@ impl RunService {
             let mut pending = crate::lock(&self.wakes.pending);
             pending.retain(|run_id, p| {
                 seen.iter()
-                    .any(|s| &s.run_id == run_id && s.window_id == p.window_id && s.live)
+                    .any(|s| &s.run_id == run_id && s.window_id == p.window_id && s.live && s.notes)
             });
             pending
                 .iter()
@@ -237,6 +256,7 @@ impl RunService {
                     live: o.live,
                     exited: o.exited_at.is_some(),
                     launches: o.launches,
+                    notes: !o.notes.is_empty(),
                     terminal: run.state.is_terminal(),
                     launching: run.pending_ops.values().any(|p| {
                         matches!(

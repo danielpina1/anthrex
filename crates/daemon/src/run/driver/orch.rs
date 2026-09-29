@@ -329,6 +329,8 @@ impl RunService {
         .await;
         match built {
             Ok(text) => {
+                // Decision 39: what the answer held is neither kept nor pasted.
+                self.wakes.read(&run_id, seq);
                 self.send(EventKind::Orch(OrchEvent::DigestRead {
                     run_id,
                     digest_revision,
