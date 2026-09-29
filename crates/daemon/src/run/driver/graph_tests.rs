@@ -16,9 +16,9 @@ use crate::run::tiers::graph::note_once;
 use crate::run::tiers::steps::plan;
 use crate::run::tiers::{Affected, ModuleInfo, StepKind};
 
-const GIT: &str = "git";
+pub(super) const GIT: &str = "git";
 
-fn git(dir: &Path, args: &[&str]) {
+pub(super) fn git(dir: &Path, args: &[&str]) {
     let out = Command::new(GIT)
         .arg("-C")
         .arg(dir)
@@ -35,12 +35,12 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(out.status.success(), "git {args:?}: {out:?}");
 }
 
-fn write(path: &Path, text: &str) {
+pub(super) fn write(path: &Path, text: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, text).unwrap();
 }
 
-fn names(list: &[&str]) -> Vec<String> {
+pub(super) fn names(list: &[&str]) -> Vec<String> {
     list.iter().map(|s| s.to_string()).collect()
 }
 
@@ -60,7 +60,7 @@ fn cargo_tiers() -> TierProfile {
     }
 }
 
-fn command_tiers(command: &str) -> TierProfile {
+pub(super) fn command_tiers(command: &str) -> TierProfile {
     TierProfile {
         build_check: Some("sh build.sh".into()),
         module_test: Some("sh test.sh {module}".into()),
@@ -71,7 +71,7 @@ fn command_tiers(command: &str) -> TierProfile {
 }
 
 /// Lines in a counter file a script appends to.
-fn runs(counter: &Path) -> Vec<String> {
+pub(super) fn runs(counter: &Path) -> Vec<String> {
     std::fs::read_to_string(counter)
         .unwrap_or_default()
         .lines()
@@ -89,7 +89,7 @@ fn cargo_graph_is_read_offline_and_cached_by_manifest_hash() {
     let repo = tmp.path().join("repo");
     write(
         &repo.join("Cargo.toml"),
-        "[workspace]\nmembers = [\"crates/a\", \"crates/b\"]\nresolver = \"2\"\n",
+        "[workspace]\nmembers = [\"crates/*\"]\nresolver = \"2\"\n",
     );
     write(
         &repo.join("crates/a/Cargo.toml"),
@@ -186,6 +186,18 @@ fn cargo_graph_is_read_offline_and_cached_by_manifest_hash() {
     assert_eq!(read(), GraphState::Known(graph));
     assert_eq!(runs(&log).len(), 2, "a changed manifest re-runs cargo");
     assert_eq!(cache_entries(&data.join(GRAPH_CACHE_FILE)).len(), 2);
+
+    // Ruling C-8 (4): an untracked new crate is a new key too.
+    write(
+        &repo.join("crates/c/Cargo.toml"),
+        "[package]\nname = \"ax-c\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write(&repo.join("crates/c/src/lib.rs"), "");
+    let GraphState::Known(with_c) = read() else {
+        panic!("the workspace with an untracked crate has a known graph");
+    };
+    assert!(with_c.modules.contains_key("ax-c"), "{with_c:?}");
+    assert_eq!(runs(&log).len(), 3, "an untracked Cargo.toml re-runs cargo");
 }
 
 #[test]
@@ -225,6 +237,7 @@ fn command_graph_reads_json_from_the_command() {
         write(&repo.join(format!("mods/{module}/x.txt")), module);
     }
     write(&repo.join("deps.txt"), "one\n");
+    git(&repo, &["init", "-q", "-b", "main"]);
     let counter = tmp.path().join("graph-runs");
     write(
         &repo.join("graph.sh"),
@@ -300,12 +313,16 @@ fn a_graph_command_that_times_out_is_unknown() {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(repo.join("mods/a")).unwrap();
-    let ids = tmp.path().join("ids");
+    // Review C-8 (6): the pid first, then the group in a second step, each renamed
+    // into place whole, so a read never sees half a file.
+    let pid_file = tmp.path().join("pid");
+    let pgid_file = tmp.path().join("pgid");
     write(
         &repo.join("slow.sh"),
         &format!(
-            "echo \"$$ $(ps -o pgid= -p $$)\" > '{}'\nsleep 30\n",
-            ids.display()
+            "echo $$ > '{p}.tmp' && mv '{p}.tmp' '{p}'\nps -o pgid= -p $$ > '{g}.tmp' && mv '{g}.tmp' '{g}'\nsleep 30\n",
+            p = pid_file.display(),
+            g = pgid_file.display()
         ),
     );
     let state = module_graph_with(
@@ -316,7 +333,7 @@ fn a_graph_command_that_times_out_is_unknown() {
         (&names(&["mods/*"]), &[]),
         &[],
         None,
-        Duration::from_secs(1),
+        Duration::from_secs(3),
         &capture,
     );
     let GraphState::Unknown(reason) = &state else {
@@ -326,11 +343,19 @@ fn a_graph_command_that_times_out_is_unknown() {
         reason.starts_with("the graph command timed out after"),
         "{reason}"
     );
-    let text = std::fs::read_to_string(&ids).unwrap();
-    let mut parts = text
-        .split_whitespace()
-        .map(|s| s.parse::<libc::pid_t>().unwrap());
-    let (pid, pgid) = (parts.next().unwrap(), parts.next().unwrap());
+    let id = |file: &Path| {
+        std::fs::read_to_string(file)
+            .ok()
+            .and_then(|text| text.trim().parse::<libc::pid_t>().ok())
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let (pid, pgid) = loop {
+        if let (Some(pid), Some(pgid)) = (id(&pid_file), id(&pgid_file)) {
+            break (pid, pgid);
+        }
+        assert!(Instant::now() < deadline, "the script never wrote its ids");
+        std::thread::sleep(Duration::from_millis(20));
+    };
     // SAFETY: getpgrp has no preconditions.
     assert_ne!(pgid, unsafe { libc::getpgrp() }, "its own group, not ours");
     // The whole group was killed: wait for the kernel to finish reaping it.

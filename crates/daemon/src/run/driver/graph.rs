@@ -11,9 +11,10 @@
 //! (AGENTS.md rule 11).
 //!
 //! The cache, `<repo_dir>/module-graph.json`, holds at most [`GRAPH_CACHE_MAX`] known
-//! graphs, each under the FNV-1a of what the graph is read from: every tracked
-//! `Cargo.toml` and `Cargo.lock` for `cargo` (path and content), the command text, the
-//! `manifests` files and the module directories for a command. It is advisory: a hit
+//! graphs, each under the FNV-1a of what the graph is read from: every tracked or
+//! untracked-but-not-ignored `Cargo.toml` and `Cargo.lock` for `cargo` (path and
+//! content); for a command, its text, the module directories and the files its
+//! `manifests` globs match, or the `HEAD` tree when `manifests` is empty. It is advisory: a hit
 //! skips the command, and a missing or corrupt file is simply replaced.
 
 use std::collections::BTreeMap;
@@ -30,6 +31,7 @@ use crate::profile::verify_tiers::{CARGO_METADATA, capture, module_dirs};
 use crate::run::confine::ConfineSpec;
 use crate::run::exec::ShellOutcome;
 use crate::run::git::{Git, os};
+use crate::run::globs::OwnsMatcher;
 use crate::run::tiers::graph::{from_cargo_metadata, from_command_json};
 use crate::run::tiers::{
     GRAPH_TIMEOUT, GraphSource, GraphState, ModuleGraph, TOOLCHAIN_TIMEOUT, TierProfile,
@@ -110,14 +112,21 @@ pub(super) fn module_graph_with(
         GraphSource::Cargo => (CARGO_METADATA.to_string(), "cargo metadata"),
         GraphSource::Command(command) => (command.clone(), "the graph command"),
     };
-    // A command graph's modules are named by their directories (decision 10).
-    let dirs: BTreeMap<String, String> = match (&tiers.module_graph, tiers.module_names) {
-        (GraphSource::Command(_), ModuleNames::Dir) => module_dirs(dir, modules)
-            .into_iter()
-            .filter_map(|d| Some((d.rsplit('/').next()?.to_string(), d.clone())))
-            .collect(),
-        _ => BTreeMap::new(),
-    };
+    // A command graph's modules are named by their directories (decision 10); two
+    // directories with one last component would be one module (ruling C-8 (1)).
+    let mut dirs: BTreeMap<String, String> = BTreeMap::new();
+    if let (GraphSource::Command(_), ModuleNames::Dir) = (&tiers.module_graph, tiers.module_names) {
+        for module_dir in module_dirs(dir, modules) {
+            let name = module_dir
+                .rsplit('/')
+                .next()
+                .unwrap_or(&module_dir)
+                .to_string();
+            if dirs.insert(name.clone(), module_dir.clone()).is_some() {
+                return GraphState::Unknown(format!("two modules are named {name}"));
+            }
+        }
+    }
     let key = cache_key(git, dir, &tiers.module_graph, manifests, &dirs, timeout);
     let cache = repo_dir.join(GRAPH_CACHE_FILE);
     if let Some(graph) = key.as_ref().and_then(|key| cache_get(&cache, key)) {
@@ -146,7 +155,8 @@ pub(super) fn module_graph_with(
 }
 
 /// Decision 11: the toolchain id of the checkout `dir`, the 16-hex FNV-1a of
-/// `command`'s exit code and stdout, or [`TOOLCHAIN_UNKNOWN`] when it fails or runs
+/// `command`'s exit code and stdout (its stderr when stdout is empty, as `java
+/// -version` prints, ruling C-8 (3)), or [`TOOLCHAIN_UNKNOWN`] when it fails or runs
 /// past [`TOOLCHAIN_TIMEOUT`]. Blocking thread only.
 pub(crate) fn toolchain(
     dir: &Path,
@@ -171,7 +181,13 @@ pub(super) fn toolchain_with(
         (true, Some(code), Some(stdout)) => {
             let mut hash = Fnv1a64::new();
             hash.update(&code.to_le_bytes());
-            hash.update(stdout.as_bytes());
+            // `capture` keeps stderr in the outcome's tail (stdout went to its file).
+            let text = if stdout.is_empty() {
+                &outcome.tail
+            } else {
+                &stdout
+            };
+            hash.update(text.as_bytes());
             format!("{:016x}", hash.0)
         }
         _ => TOOLCHAIN_UNKNOWN.to_string(),
@@ -195,8 +211,34 @@ fn failure(label: &str, outcome: &ShellOutcome) -> String {
     }
 }
 
+/// Every file in the checkout `dir` that is tracked, or untracked and not ignored
+/// (`git ls-files --cached --others --exclude-standard`), sorted: the files a graph
+/// may be read from (ruling C-8 (2a), (4)).
+fn listed_files(git: &OsStr, dir: &Path, timeout: Duration) -> Option<Vec<String>> {
+    let args = [
+        os("ls-files"),
+        os("-z"),
+        os("--cached"),
+        os("--others"),
+        os("--exclude-standard"),
+    ];
+    let listed = Git::new(git, timeout).ok(dir, &args).ok()?;
+    let mut paths: Vec<String> = listed
+        .split('\0')
+        .filter(|p| !p.is_empty())
+        .map(str::to_string)
+        .collect();
+    paths.sort();
+    paths.dedup();
+    Some(paths)
+}
+
 /// The cache key of the graph `source` gives in `dir`, or `None` when it cannot be
-/// computed (then the graph is read and nothing is cached).
+/// computed (then the graph is read and nothing is cached):
+/// - `cargo`: every listed `Cargo.toml` and `Cargo.lock`, path and content;
+/// - a command: its text and the module directories, then the listed files matching a
+///   `manifests` glob (the `owns` rules), path and content, or, with no `manifests`,
+///   the checkout's `HEAD` tree (ruling C-8 (2b): correct, but re-read on every tree).
 fn cache_key(
     git: &OsStr,
     dir: &Path,
@@ -210,23 +252,22 @@ fn cache_key(
         hash.update(bytes);
         hash.update(&[0]);
     };
+    let files = |keep: &dyn Fn(&str) -> bool| -> Option<Vec<String>> {
+        Some(
+            listed_files(git, dir, timeout)?
+                .into_iter()
+                .filter(|p| keep(p))
+                .collect(),
+        )
+    };
     match source {
         GraphSource::None => return None,
         GraphSource::Cargo => {
             field(b"cargo");
-            let listed = Git::new(git, timeout)
-                .ok(dir, &[os("ls-files"), os("-z"), os("--cached")])
-                .ok()?;
-            let mut paths: Vec<String> = listed
-                .split('\0')
-                .filter(|p| {
-                    let name = p.rsplit('/').next().unwrap_or(p);
-                    name == "Cargo.toml" || name == "Cargo.lock"
-                })
-                .map(str::to_string)
-                .collect();
-            paths.sort();
-            paths.dedup();
+            let paths = files(&|p| {
+                let name = p.rsplit('/').next().unwrap_or(p);
+                name == "Cargo.toml" || name == "Cargo.lock"
+            })?;
             for (path, print) in fingerprint(dir, &paths) {
                 field(path.as_bytes());
                 field(print.as_bytes());
@@ -235,13 +276,24 @@ fn cache_key(
         GraphSource::Command(command) => {
             field(b"command");
             field(command.as_bytes());
-            for (path, print) in fingerprint(dir, manifests) {
-                field(path.as_bytes());
-                field(print.as_bytes());
-            }
             for (name, module_dir) in dirs {
                 field(name.as_bytes());
                 field(module_dir.as_bytes());
+            }
+            if manifests.is_empty() {
+                field(b"tree");
+                let tree = Git::new(git, timeout)
+                    .ok(dir, &[os("rev-parse"), os("--verify"), os("HEAD^{tree}")])
+                    .ok()?;
+                field(tree.trim().as_bytes());
+            } else {
+                field(b"manifests");
+                let matcher = OwnsMatcher::new(manifests).ok()?;
+                let paths = files(&|p| matcher.matches(p))?;
+                for (path, print) in fingerprint(dir, &paths) {
+                    field(path.as_bytes());
+                    field(print.as_bytes());
+                }
             }
         }
     }
@@ -289,3 +341,6 @@ pub(super) fn cache_put(cache: &Path, key: &str, graph: &ModuleGraph) {
 #[cfg(test)]
 #[path = "graph_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "graph_tests_keys.rs"]
+mod tests_keys;
