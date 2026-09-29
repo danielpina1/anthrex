@@ -320,9 +320,18 @@ impl RunService {
             return failed("the scout service is not running");
         };
         let scout_id = spec.id.clone();
-        let record = crate::lock(&self.state).runs.get(&ctx.run_id).map(|run| {
-            crate::run::orch::roles::scout_record(run, &scout_id, scouts.context(), unix_now())
-        });
+        // M9.17 fix round 3: the route over the run's installed runtimes, the one its
+        // record names.
+        let (record, route) = {
+            let state = crate::lock(&self.state);
+            let run = state.runs.get(&ctx.run_id);
+            let installed = run.map(|r| r.orch.installed.clone()).unwrap_or_default();
+            let record = run.map(|run| {
+                crate::run::orch::roles::scout_record(run, &scout_id, scouts.context(), unix_now())
+            });
+            let route = crate::scout::spec::run_scout_route(scouts.context(), &installed);
+            (record, route)
+        };
         // Review M-2: kept, and saved, before the session starts; a refusal (the scout
         // was stopped meanwhile, or the save failed) starts none (re-review 2, 3).
         if let Some(decision) = record
@@ -330,7 +339,7 @@ impl RunService {
         {
             return failed(format!("the scout was not started: {why}"));
         }
-        match scouts.start(spec).await {
+        match scouts.start_on(spec, route).await {
             Ok(handle) => {
                 let window_id = handle.window_id;
                 let (service, run_id) = (self.clone(), ctx.run_id.clone());

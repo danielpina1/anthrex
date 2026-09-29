@@ -173,6 +173,20 @@ pub fn ladder_candidates(
     out
 }
 
+/// M9.17 fix round 3: each candidate on a runtime the run's start found not installed
+/// (`run.orch.installed`) is skipped as [`NOT_INSTALLED`], its factual reason.
+pub fn mark_not_installed(
+    mut candidates: Vec<RoutingCandidate>,
+    installed: &std::collections::BTreeMap<String, bool>,
+) -> Vec<RoutingCandidate> {
+    for c in &mut candidates {
+        if installed.get(c.route.runtime.label()) == Some(&false) {
+            c.skipped_reason = Some(NOT_INSTALLED.to_string());
+        }
+    }
+    candidates
+}
+
 /// `runtime`'s roster entries at or above `strength`, lowest strength first and roster
 /// order among ties, at `effort`.
 fn runtime_ladder(
@@ -240,7 +254,8 @@ pub fn planner_record(run: &Run, k: usize, session: u32, now: u64) -> RoleRoutin
     let p = &run.limits.orch.planners;
     let orchestrator = run.orch.orchestrator.as_ref().map(|o| o.route.runtime);
     let runtime = p.runtime.or(orchestrator).unwrap_or(epic.route.runtime);
-    let candidates = ladder_candidates(&run.roster, runtime, p.strength, p.effort);
+    let ladder = ladder_candidates(&run.roster, runtime, p.strength, p.effort);
+    let candidates = mark_not_installed(ladder, &run.orch.installed);
     let mut input = input_of(run);
     input.epic = Some(epic.epic.clone());
     input.area = epic.area.clone();
@@ -259,17 +274,19 @@ pub fn planner_record(run: &Run, k: usize, session: u32, now: u64) -> RoleRoutin
     )
 }
 
-/// The record of run scout `scout_id`'s session, on the route the scout service gives
-/// every scout (`scout::spec::scout_route` of its context): `[orchestrator.scouts]`.
+/// The record of run scout `scout_id`'s session, on the route the driver starts it on
+/// (`scout::spec::run_scout_route` of the scout service's context over the run's
+/// installed runtimes): `[orchestrator.scouts]`.
 pub fn scout_record(
     run: &Run,
     scout_id: &str,
     ctx: &crate::scout::spec::ScoutContext,
     now: u64,
 ) -> RoleRoutingDecision {
-    let chosen = crate::scout::spec::scout_route(ctx);
+    let chosen = crate::scout::spec::run_scout_route(ctx, &run.orch.installed);
     let runtime = ctx.scouts.runtime.unwrap_or(ctx.default_runtime);
-    let candidates = ladder_candidates(&ctx.roster, runtime, ctx.scouts.strength, chosen.effort);
+    let ladder = ladder_candidates(&ctx.roster, runtime, ctx.scouts.strength, chosen.effort);
+    let candidates = mark_not_installed(ladder, &run.orch.installed);
     let mut input = input_of(run);
     if let Some(scout) = run.orch.run_scouts.iter().find(|s| s.id == scout_id) {
         input.area = scout.area.clone();
@@ -346,3 +363,7 @@ pub fn decider_outcome(decision: &crate::decider::Decision) -> (RoleOutcome, Opt
 #[cfg(test)]
 #[path = "roles_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "roles_installed_tests.rs"]
+mod installed_tests;

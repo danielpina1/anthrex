@@ -97,9 +97,39 @@ pub fn scout_route(ctx: &ScoutContext) -> Route {
     route(&ctx.roster, runtime, ctx.scouts.strength, ctx.scouts.effort)
 }
 
-/// Decision 12's read-only session for `scout`.
+/// A run scout's route (M9.17 fix round 3): [`scout_route`] over the runtimes the run's
+/// start found installed (`run.orch.installed`, keyed by runtime label). When nothing
+/// pins `[orchestrator.scouts] runtime` and the default runtime is not installed, the
+/// installed peer is used; the strength step reaches the peer only when it is
+/// installed. A runtime with nothing recorded counts as installed, so a run from before
+/// the start check is routed as before. Onboarding scouts keep [`scout_route`].
+pub fn run_scout_route(
+    ctx: &ScoutContext,
+    installed: &std::collections::BTreeMap<String, bool>,
+) -> Route {
+    let missing = |runtime: Runtime| installed.get(runtime.label()) == Some(&false);
+    let mut runtime = ctx.scouts.runtime.unwrap_or(ctx.default_runtime);
+    if ctx.scouts.runtime.is_none() && missing(runtime) && !missing(peer(runtime)) {
+        runtime = peer(runtime);
+    }
+    let s = &ctx.scouts;
+    route_within(
+        &ctx.roster,
+        runtime,
+        s.strength,
+        s.effort,
+        !missing(peer(runtime)),
+    )
+}
+
+/// Decision 12's read-only session for `scout`, on [`scout_route`].
 pub fn headless_spec(scout: &ScoutSpec, ctx: &ScoutContext) -> HeadlessSpec {
-    let route = scout_route(ctx);
+    headless_spec_on(scout, ctx, &scout_route(ctx))
+}
+
+/// Decision 12's read-only session for `scout` on `route` (a run scout's is
+/// [`run_scout_route`]).
+pub fn headless_spec_on(scout: &ScoutSpec, ctx: &ScoutContext, route: &Route) -> HeadlessSpec {
     let claude = route.runtime == Runtime::Claude;
     let (instructions, mut allowed) = match scout.kind {
         ScoutKind::Area => (SCOUT_CONTRACT, vec![SUBMIT_TOOL, "Read", "Glob", "Grep"]),

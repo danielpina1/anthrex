@@ -108,16 +108,27 @@ impl ScoutService {
         }
     }
 
-    /// Starts scout `spec` as window `scout/<id>` (decision 12).
+    /// Starts scout `spec` as window `scout/<id>` (decision 12), on the route this
+    /// service gives every scout.
     pub async fn start(self: &Arc<Self>, spec: ScoutSpec) -> anyhow::Result<ScoutHandle> {
+        let route = spec::scout_route(&self.ctx);
+        self.start_on(spec, route).await
+    }
+
+    /// [`Self::start`] on `route`: a run scout's (M9.17 fix round 3), which the driver
+    /// resolves over the run's installed runtimes.
+    pub async fn start_on(
+        self: &Arc<Self>,
+        spec: ScoutSpec,
+        route: Route,
+    ) -> anyhow::Result<ScoutHandle> {
         anyhow::ensure!(spec::valid_id(&spec.id), "invalid scout id {:?}", spec.id);
         // Ruling M7: the run id is joined into the report's path. Run ids are decision
         // 15's slugs, whose alphabet and length `valid_id` covers.
         if let Some(run) = &spec.run_id {
             anyhow::ensure!(spec::valid_id(run), "invalid run id {run:?}");
         }
-        let headless = spec::headless_spec(&spec, &self.ctx);
-        let route = spec::scout_route(&self.ctx);
+        let headless = spec::headless_spec_on(&spec, &self.ctx, &route);
         let name = format!("scout/{}", spec.id);
         self.launch(spec, route, headless, name, None).await
     }

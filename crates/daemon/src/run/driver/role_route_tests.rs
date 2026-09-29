@@ -350,3 +350,34 @@ async fn no_decider_record_when_the_deciders_are_off() {
     rig.settled().await;
     assert!(rig.records(AgentRole::Decider).is_empty());
 }
+
+/// M9.17 fix round 3: a run scout of a run whose start found Claude not installed is
+/// started on Codex (the scouts' default runtime is Claude), and its record says so.
+/// Neither binary exists here, so the launch fails naming the one it tried.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_codex_only_run_scout_is_started_on_codex() {
+    let rig = Rig::new(DeciderMode::Off, None);
+    std::fs::create_dir_all(rig.dir.path().join("repo")).unwrap();
+    rig.scout_in("s1", RunScoutState::Running);
+    {
+        let mut engine = crate::lock(&rig.runs.state);
+        let run = engine.runs.get_mut(&rig.run_id).unwrap();
+        run.orch.installed = [("claude".to_string(), false), ("codex".to_string(), true)].into();
+    }
+    let spec = crate::scout::spec::ScoutSpec {
+        id: "s1".into(),
+        ..bad_scout(&rig)
+    };
+    let result = rig.runs.start_scout(&rig.ctx(), spec).await;
+    let OpResult::Failed { message } = &result else {
+        panic!("{result:?}");
+    };
+    assert_eq!(message, "could not start /nonexistent/anthrex-test/codex");
+    rig.settled().await;
+    let records = rig.records(AgentRole::Scout);
+    assert_eq!(
+        records[0].chosen.runtime,
+        proto::Runtime::Codex,
+        "{records:#?}"
+    );
+}
