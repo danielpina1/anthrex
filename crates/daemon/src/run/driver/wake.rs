@@ -98,6 +98,24 @@ impl Wakes {
     }
 }
 
+impl Wakes {
+    /// Drops the waiting wake-ups `seen` says have no live window to go to, or nothing
+    /// left to say. `seen` may be older than a wake-up queued since (this runs from the
+    /// tick, the window watch and `queue_wake` at once), so "no notes" drops only a
+    /// wake-up whose every note the snapshot had seen made: one built from a newer
+    /// note stays, and the next check judges it on a fresh snapshot.
+    fn keep_live(&self, seen: &[Seen]) {
+        crate::lock(&self.pending).retain(|run_id, p| {
+            seen.iter().any(|s| {
+                &s.run_id == run_id
+                    && s.window_id == p.window_id
+                    && s.live
+                    && (s.notes || p.notes_seq > s.last_note_seq)
+            })
+        });
+    }
+}
+
 /// An orchestrator window as the manager lists it now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Listed {
@@ -119,6 +137,8 @@ struct Seen {
     /// The engine still holds notes for it: a wake-up whose notes a read dropped since
     /// (decision 39, "a read clears too") has nothing left to say.
     notes: bool,
+    /// The seq of the newest note the engine had made (`OrchestratorRecord::last_note_seq`).
+    last_note_seq: u64,
 }
 
 /// Whether `window` takes a paste now: `Idle` or `Done`, and no client input for
@@ -204,11 +224,8 @@ impl RunService {
         }
         // Which wake-ups the windows take now, read with no lock of ours held.
         let waiting: Vec<(String, u32, Duration)> = {
-            let mut pending = crate::lock(&self.wakes.pending);
-            pending.retain(|run_id, p| {
-                seen.iter()
-                    .any(|s| &s.run_id == run_id && s.window_id == p.window_id && s.live && s.notes)
-            });
+            self.wakes.keep_live(&seen);
+            let pending = crate::lock(&self.wakes.pending);
             pending
                 .iter()
                 .map(|(run_id, p)| (run_id.clone(), p.window_id, p.quiet))
@@ -257,6 +274,7 @@ impl RunService {
                     exited: o.exited_at.is_some(),
                     launches: o.launches,
                     notes: !o.notes.is_empty(),
+                    last_note_seq: o.last_note_seq,
                     terminal: run.state.is_terminal(),
                     launching: run.pending_ops.values().any(|p| {
                         matches!(

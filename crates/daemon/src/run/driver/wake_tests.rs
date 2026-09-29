@@ -146,3 +146,50 @@ fn a_digest_read_drops_the_wake_up_it_covered() {
         "another run's"
     );
 }
+
+/// M9.16 fix round: `check_orchestrators` runs from the tick, the window watch and
+/// `queue_wake` at once, so the engine snapshot one call took may predate a note and
+/// the wake-up built from it. A snapshot with no notes drops only a wake-up whose notes
+/// it had seen (and a read then cleared), never a newer one. The interleaving, in
+/// order: the snapshot (notes just cleared, up to seq 3), a new note (seq 4) queued as
+/// a wake-up, then the stale snapshot's pass.
+#[test]
+fn a_stale_snapshot_keeps_a_wake_up_built_from_a_newer_note() {
+    let wakes = Wakes::default();
+    let seen = |notes, last_note_seq| Seen {
+        run_id: "r1".into(),
+        window_id: 1,
+        live: true,
+        exited: false,
+        terminal: false,
+        launching: false,
+        launches: 1,
+        notes,
+        last_note_seq,
+    };
+    let pending = |notes_seq| Pending {
+        window_id: 1,
+        text: "[anthrex] Run r1 changed: t1 blocked (question): which name?.".into(),
+        digest_revision: 5,
+        notes_seq,
+        quiet: Duration::from_secs(1),
+    };
+    let stale = [seen(false, 3)];
+    crate::lock(&wakes.pending).insert("r1".into(), pending(4));
+    wakes.keep_live(&stale);
+    assert!(
+        crate::lock(&wakes.pending).contains_key("r1"),
+        "the new wake-up was dropped by a snapshot older than its note"
+    );
+    // A snapshot that saw the note (and a read that cleared it) drops it.
+    wakes.keep_live(&[seen(false, 4)]);
+    assert!(!crate::lock(&wakes.pending).contains_key("r1"));
+    // Notes held, or a window not live, as before.
+    crate::lock(&wakes.pending).insert("r1".into(), pending(4));
+    wakes.keep_live(&[seen(true, 4)]);
+    assert!(crate::lock(&wakes.pending).contains_key("r1"));
+    let mut dead = seen(true, 4);
+    dead.live = false;
+    wakes.keep_live(&[dead]);
+    assert!(!crate::lock(&wakes.pending).contains_key("r1"));
+}
