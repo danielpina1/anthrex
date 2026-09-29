@@ -3799,3 +3799,39 @@ Three commits, each test first: `fix(daemon): refuse a planned start whose orche
    - The off-macOS branch now waits for the run's own node text (`orchestrator  planning` or `orchestrator  0/2`) after the first `l`, rather than the filter's echo of `h4`.
 
 The followups file gains a "From milestone 9" section with one line: the unconfirmed stale wake-up after a `run_status` read. The rest of that section is the controller's.
+
+#### M9.17 fix round 2
+
+Commits: `refactor(daemon): move the engine's OrchEvent into its own file` (af00bee, a pure move so `engine/orch.rs` could take a new event without passing 600 lines); `fix(daemon): route sub-planners over the installed runtimes, and check them on promote`; `test: write the restart test's recorded environment atomically`.
+
+1. **Codex-only users were always refused.** The fix-round check was right, but `planner_route` was not.
+   - The sub-planners resolve `[orchestrator.planners]`, frontier by default, through `scout::spec::route`. That function steps to the peer runtime when the chosen one has no entry at or above the strength. The built-in roster has no Codex frontier entry, so a Codex orchestrator's planners were routed to `claude-opus-5-5`. With Claude not installed, every Codex-only start was refused.
+   - `scout::spec::route_within` now takes `peer_allowed`, and `route` passes `true`. `planner_route` allows the peer step only when `run.orch.installed` does not say the peer is missing.
+   - A run with nothing recorded keeps M8b's route: a plan-file run, or a promotion from before milestone 9.
+   - `installed` is persisted, so the spawn-time route (`engine/planners.rs`, `run/reach.rs`) is the one the start checked.
+   - With Codex only, the planners fall to Codex's first entry, the CLI's default model, at `Standard`.
+   - **The hint:** after this fix the sub-planners' runtime can be refused only when `[orchestrator.planners] runtime` names it. The orchestrator's runtime is checked first, and the peer step no longer reaches a missing runtime. The refusal still says `change [orchestrator.planners] runtime` when that key is set, and `choose another runtime with --orchestrator` otherwise (unreachable today, defensive).
+   - **The other callers of `scout::spec::route`** are the scouts' `scout_route`: `scout/service.rs` (run and onboarding scouts), `profile/service_start.rs` (decision 12's settings check) and `run/orch/roles.rs` (the scout's routing snapshot).
+     - They route by the daemon's `ScoutContext`, `[orchestrator.scouts]` at `Fast` by default. Codex's `Standard` entry is at or above `Fast`, so the default config never steps to the peer.
+     - A Codex user who sets `[orchestrator.scouts] strength = "frontier"` would get a Claude scout.
+     - No scout, run or onboarding, checks that its runtime is installed. A missing one fails at launch like any headless session.
+     - Neither is fixed here: the brief's decision 26 covers the planning agents only. Recorded as an open item for the controller, not in the followups file.
+   - **Tests:**
+     - `installed_tests.rs::the_planner_route_steps_to_the_peer_only_when_it_is_installed` was red: the route was Claude where Codex was expected.
+     - New `driver/adapt_goal_installed_tests.rs`, at `build_plan` level with Claude `/nonexistent/ax-claude` and Codex `/usr/bin/false`:
+       - `a_codex_only_user_starts_planned_runs` covers `--orchestrator codex`, `[orchestrator.planners] runtime = "codex"`, and an unpinned goal falling back to Codex. It was red, with launch.rs's pre-fix `planner_route` swapped in for one run, with the review's exact refusal.
+       - `a_missing_planner_runtime_is_still_refused` checks the exact text, and that no run directory and no `refs/heads/anthrex/` branch exist.
+       - `a_user_with_both_runtimes_is_routed_as_before` expects a Codex orchestrator's planner on `claude-opus-5-5`, and an unpinned goal on Claude.
+       - The last two are pins, and passed before the fix as well.
+2. **`run promote` repeats the installed check.**
+   - `promote_refusal` stats the binaries on `blocking` and refuses the orchestrator's runtime as the engine resolves it. That is `resolve_orchestrator`, with no fallback, since the engine performs the promotion without installed information. It then refuses `planner_route` of the promoted run, whose `orch.installed` is what it found.
+   - It returns `Ok(Some(installed))`. `RunService::promote` sends the new `OrchEvent::Installed` before `EventKind::Promote`, and the engine handles events in order. The engine records it only on a run with no orchestrator yet, so the promoted run's spawn-time planner route agrees with the check.
+   - A promotion the engine then refuses (a `complete` run) keeps the recorded map. Nothing reads it without an orchestrator.
+   - **Tests:**
+     - `promoting_to_a_missing_runtime_is_refused_without_side_effects` was red: `Ok(())`. It covers Claude chosen or by default, the `run promote` reply without the engine, Codex accepted, and Codex with planners on Claude refused. The run is compared equal before and after, and nothing is written.
+     - `engine/tests/promote_installed.rs`: the handler disabled (a `cp` copy, restored) made `a_promotion_records_what_its_installed_check_found` fail.
+3. **Item 6:** a skipped runtime with no roster entry, which is Codex in a roster with Claude entries only, is recorded as one candidate. It uses the CLI's default model at `Standard` and is marked `not installed`. `a_skipped_runtime_with_no_roster_entry_is_recorded` was red.
+4. **`~` in PATH.** `executable_in(bin, PATH, HOME)` expands a leading `~` or `~/` entry against `HOME`. With no `HOME` the entry names nothing, and `~user` is not expanded.
+   - `build_tests.rs::a_tilde_entry_on_path_is_expanded_to_home` failed with the expansion removed.
+   - Not fixed, as the review said: a relative `ANTHREX_*_BIN` that contains `/` is judged against the daemon's cwd, but launched from the window's.
+5. **The restart test's env file** is written to `env-<id>.tmp` and then renamed, as `daemon/tests/headless_env.rs` does, so `env_of` never reads it half-written.
