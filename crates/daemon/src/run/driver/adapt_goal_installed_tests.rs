@@ -280,3 +280,68 @@ async fn promoting_to_a_missing_runtime_is_refused_without_side_effects() {
     assert_nothing_written(&data, &root);
     let _ = BuildError::Refused(String::new());
 }
+
+/// M9.17 fix round 3, item 2: `run promote` through the real engine loop records what
+/// its installed check found (`OrchEvent::Installed`, sent before `Promote`), so the
+/// promoted run's sub-planners stay on Codex. The launch gate stays closed: the
+/// promoted orchestrator's window is never started.
+#[tokio::test(flavor = "multi_thread")]
+async fn run_promote_records_what_its_check_found() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("repo");
+    plain_repo(&root);
+    let data = tmp.path().join("data");
+    let mut config = ManagerConfig::for_tests("/tmp/ax-unused.sock".into(), "/bin/sh".into());
+    config.claude_bin = NO_CLAUDE.into();
+    config.codex_bin = INSTALLED_STAND_IN.into();
+    config.cli_caps = crate::headless::argv::CLI_CAPS;
+    config.worktrees_root = data.join("worktrees");
+    config.launch_gate = crate::launch::LaunchGate::closed();
+    let (manager, _events) = WindowManager::new(config);
+    let ctx = RunContext::new(
+        data.clone(),
+        manager.config(),
+        config::Orchestrator::default(),
+        Arc::new(NoRoots),
+    );
+    let service = RunService::new(manager, ctx);
+    let plan = parse_plan(&one_task_plan()).unwrap();
+    let mut run = match service
+        .build_plan(plan, root.clone(), true, false, true, Shape::Fast)
+        .await
+    {
+        Ok(run) => run,
+        Err(error) => panic!("{}", error.text()),
+    };
+    run.path = Some(proto::RunPath::Fast);
+    run.state = proto::RunState::Running;
+    let id = run.id.clone();
+    crate::lock(&service.state).runs.insert(id.clone(), run);
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    service.spawn(shutdown.clone());
+
+    let codex = OrchestratorChoice {
+        runtime: Runtime::Codex,
+        model: None,
+    };
+    let promote = service.promote(id.clone(), Some(codex));
+    let reply = tokio::time::timeout(std::time::Duration::from_secs(30), promote)
+        .await
+        .expect("the engine answered");
+    shutdown.cancel();
+    assert!(
+        !matches!(reply, RunReply::Refused { .. }),
+        "refused: {reply:?}"
+    );
+    let state = crate::lock(&service.state);
+    let run = &state.runs[&id];
+    assert_eq!(
+        run.orch.installed,
+        [("claude".to_string(), false), ("codex".to_string(), true)].into()
+    );
+    let planner = planner_route(run).expect("promoted");
+    assert_eq!(
+        (planner.runtime, planner.model.as_str()),
+        (Runtime::Codex, "")
+    );
+}
