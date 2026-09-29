@@ -224,6 +224,7 @@ fn an_override_with_a_due_hand_back_hands_back_first() {
         priority: None,
         size: None,
         deps: None,
+        stage: None,
     };
     edit(&mut fx, vec![add_dep("t1", "t2"), amend]);
     fx.launch_all();

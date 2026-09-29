@@ -60,6 +60,7 @@ pub(super) fn rewrite(fx: &mut Fixture, brief: &str) -> Vec<Effect> {
             priority: None,
             size: None,
             deps: None,
+            stage: None,
         }],
     )
 }

@@ -150,6 +150,9 @@ fn minimal_task(id: &str) -> PlanTask {
         route: RouteSpec::default(),
         budget: None,
         review_target: None,
+        stage: 1,
+        atomic: false,
+        atomic_reason: None,
     }
 }
 
@@ -181,6 +184,7 @@ fn plan_edits_parse_from_an_edit_file() {
             priority: Some(5),
             size: Some(Size::L),
             deps: Some(vec!["t0".into()]),
+            stage: None,
         },
         PlanEdit::AddDep {
             task_id: "t4".into(),

@@ -156,6 +156,31 @@ pub struct ProfileSpec {
     /// built-in.
     #[serde(default)]
     pub protected: Option<Vec<String>>,
+    // Milestone 9.1 decision 5: the tier keys, every one off when absent.
+    #[serde(default)]
+    pub build_check: Option<String>,
+    #[serde(default)]
+    pub module_test: Option<String>,
+    #[serde(default)]
+    pub module_tests: Option<String>,
+    #[serde(default)]
+    pub module_graph: Option<String>,
+    #[serde(default)]
+    pub module_names: Option<crate::profile::ModuleNames>,
+    #[serde(default)]
+    pub full_triggers: Option<Vec<String>>,
+    #[serde(default)]
+    pub slow_tests: Option<String>,
+    #[serde(default)]
+    pub timing_tests: Option<String>,
+    #[serde(default)]
+    pub skip_markers: Option<Vec<String>>,
+    #[serde(default)]
+    pub test_paths: Option<Vec<String>>,
+    #[serde(default)]
+    pub full_shards: Option<u8>,
+    #[serde(default)]
+    pub toolchain_id: Option<String>,
     #[serde(default)]
     pub env: Option<std::collections::BTreeMap<String, String>>,
 }
@@ -195,10 +220,23 @@ pub struct PlanTask {
     /// Milestone 9 decision 24: the range a `review` task reviews.
     #[serde(default)]
     pub review_target: Option<String>,
+    /// Milestone 9.1 decision 43: the task's stage, 1 to 32.
+    #[serde(default = "first_stage")]
+    pub stage: u16,
+    /// Decision 54: the one hub task a stage may have that changes an interface
+    /// non-additively, with its reason.
+    #[serde(default)]
+    pub atomic: bool,
+    #[serde(default)]
+    pub atomic_reason: Option<String>,
 }
 
 fn default_kind() -> TaskKind {
     TaskKind::Code
+}
+
+fn first_stage() -> u16 {
+    1
 }
 
 /// A whole plan file, parsed with `toml::from_str`.
@@ -252,6 +290,9 @@ pub enum PlanEdit {
         /// Milestone 9 decision 25: replaces the task's dependencies.
         #[serde(default)]
         deps: Option<Vec<String>>,
+        /// Milestone 9.1 decision 43: moves a task that has not started.
+        #[serde(default)]
+        stage: Option<u16>,
     },
     AddDep {
         task_id: String,

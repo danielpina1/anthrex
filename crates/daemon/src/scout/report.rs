@@ -152,6 +152,19 @@ fn profile(value: &Value) -> Result<RepoProfile, String> {
         filter_prefixes: list("filter_prefixes", 10, 100)?,
         conventions: list("conventions", 20, 300)?,
         manifests: list("manifests", 50, 300)?,
+        // Milestone 9.1's tier keys: not in the onboarding report until task M9.1.5.
+        build_check: None,
+        module_test: None,
+        module_tests: None,
+        module_graph: None,
+        module_names: None,
+        full_triggers: Vec::new(),
+        slow_tests: None,
+        timing_tests: None,
+        skip_markers: Vec::new(),
+        test_paths: Vec::new(),
+        full_shards: None,
+        toolchain_id: None,
         env: env(p.get("env"))?,
     })
 }

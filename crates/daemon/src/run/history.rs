@@ -205,6 +205,8 @@ pub fn task_record(run: &Run, task: &Task, outcome: TaskOutcome, now: u64) -> Ta
         sessions: task.session,
         done_signal: task.done.as_ref().map(|d| d.signal),
         merge_commit: task.merge_commit.clone(),
+        stage: task.spec.stage,
+        origin: proto::TaskOrigin::Plan,
     }
 }
 

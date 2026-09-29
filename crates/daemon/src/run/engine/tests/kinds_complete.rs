@@ -258,6 +258,7 @@ fn amend_brief(fx: &mut Fixture) -> Vec<Effect> {
             priority: None,
             size: None,
             deps: None,
+            stage: None,
         }],
     )
 }
@@ -286,6 +287,7 @@ fn rewriting_a_mis_sized_task_restarts_it_at_rung_2() {
             priority: Some(3),
             size: None,
             deps: None,
+            stage: None,
         }],
     );
     assert_eq!(fx.task("t1").state, TaskState::Blocked);

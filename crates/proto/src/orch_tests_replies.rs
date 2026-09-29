@@ -33,6 +33,9 @@ fn a_stats() -> HistoryStats {
         size_checked: 0,
         size_raised: 0,
         problems: Vec::new(),
+        flaky_proposals: Vec::new(),
+        window_days: 0,
+        quarantine_after: 0,
     }
 }
 

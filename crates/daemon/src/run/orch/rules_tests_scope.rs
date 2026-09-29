@@ -40,6 +40,7 @@ fn amend(
         priority,
         size,
         deps: None,
+        stage: None,
     }
 }
 
@@ -68,6 +69,7 @@ fn amend_deps(task_id: &str, deps: &[&str]) -> PlanEdit {
         priority,
         size,
         deps: Some(deps.iter().map(|d| d.to_string()).collect()),
+        stage: None,
     }
 }
 

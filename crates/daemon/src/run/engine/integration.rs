@@ -126,6 +126,9 @@ fn add_round(run: &mut Run, k: usize, now: u64) {
         route: RouteSpec::default(),
         budget: None,
         review_target: Some(format!("{base}..{}", run.run_head)),
+        stage: 1,
+        atomic: false,
+        atomic_reason: None,
     };
     let (mut task, _) = resolve_task_lenient(
         spec,

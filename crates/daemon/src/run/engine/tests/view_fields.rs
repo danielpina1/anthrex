@@ -29,6 +29,7 @@ fn amend(priority: i32) -> Vec<PlanEdit> {
         priority: Some(priority),
         size: None,
         deps: None,
+        stage: None,
     }]
 }
 
@@ -377,6 +378,10 @@ fn old_run_json_loads() {
         );
         let spec = task["spec"].as_object_mut().unwrap();
         assert!(spec.remove("review_target").is_some(), "review_target");
+        // Milestone 9.1 decisions 43 and 54: stage 1, not atomic.
+        assert_eq!(spec.remove("stage"), Some(serde_json::json!(1)));
+        assert_eq!(spec.remove("atomic"), Some(serde_json::json!(false)));
+        assert_eq!(spec.remove("atomic_reason"), Some(serde_json::Value::Null));
         for round in task["rounds"].as_array_mut().unwrap() {
             let round = round.as_object_mut().unwrap();
             for key in ["rate_limited_since", "sent_back_at"] {

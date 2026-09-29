@@ -188,6 +188,12 @@ pub fn run_commands(
         setup,
         check,
         single_test,
+        // Milestone 9.1's tier commands: verified from task M9.1.5.
+        build_check: None,
+        module_graph: None,
+        module_test: None,
+        module_tests: None,
+        toolchain_id: None,
     }
 }
 

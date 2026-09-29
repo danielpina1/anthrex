@@ -382,6 +382,9 @@ fn other_run_replies_change_nothing() {
         size_checked: 0,
         size_raised: 0,
         problems: vec![],
+        flaky_proposals: vec![],
+        window_days: 0,
+        quarantine_after: 0,
     };
     let replies = vec![
         RunReply::Started {

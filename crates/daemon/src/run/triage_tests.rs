@@ -90,6 +90,9 @@ fn single_code_goal_takes_the_fast_path() {
             route: RouteSpec::default(),
             budget: None,
             review_target: None,
+            stage: 1,
+            atomic: false,
+            atomic_reason: None,
         }
     );
     // A docs goal is fast too, with the kind carried.

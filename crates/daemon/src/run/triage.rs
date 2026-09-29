@@ -172,6 +172,9 @@ pub fn route(decision: &Decision, fast_path: bool) -> TriageRoute {
         route: RouteSpec::default(),
         budget: None,
         review_target: None,
+        stage: 1,
+        atomic: false,
+        atomic_reason: None,
     }))
 }
 

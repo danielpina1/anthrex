@@ -130,6 +130,9 @@ pub fn record_id(line: &HistoryLine) -> &str {
         HistoryLine::Run(r) => &r.record_id,
         HistoryLine::Revert(r) => &r.record_id,
         HistoryLine::RoleRoute(r) => &r.record_id,
+        HistoryLine::Tier(r) => &r.record_id,
+        HistoryLine::Flaky(r) => &r.record_id,
+        HistoryLine::Bisect(r) => &r.record_id,
     }
 }
 

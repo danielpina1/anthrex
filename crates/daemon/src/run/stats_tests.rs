@@ -68,6 +68,8 @@ fn task(
         sessions,
         done_signal: None,
         merge_commit: None,
+        stage: 1,
+        origin: proto::TaskOrigin::Plan,
     }
 }
 

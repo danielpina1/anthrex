@@ -25,6 +25,15 @@ pub enum OutputFilter {
     None,
 }
 
+/// How a module directory is named in tier commands (milestone 9.1 decision 10): its
+/// Cargo package name, or its directory's last component.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModuleNames {
+    Cargo,
+    Dir,
+}
+
 /// A repository's confirmed profile, stored as `<repo_dir>/profile.toml`: spec §6's keys
 /// plus `sample_test`, `check_timeout_secs`, `manifests` and `filter_prefixes`
 /// (decision 5).
@@ -65,6 +74,31 @@ pub struct RepoProfile {
     pub conventions: Vec<String>,
     #[serde(default)]
     pub manifests: Vec<String>,
+    // Milestone 9.1 decision 5: the tier keys, every one off when absent.
+    #[serde(default)]
+    pub build_check: Option<String>,
+    #[serde(default)]
+    pub module_test: Option<String>,
+    #[serde(default)]
+    pub module_tests: Option<String>,
+    #[serde(default)]
+    pub module_graph: Option<String>,
+    #[serde(default)]
+    pub module_names: Option<ModuleNames>,
+    #[serde(default)]
+    pub full_triggers: Vec<String>,
+    #[serde(default)]
+    pub slow_tests: Option<String>,
+    #[serde(default)]
+    pub timing_tests: Option<String>,
+    #[serde(default)]
+    pub skip_markers: Vec<String>,
+    #[serde(default)]
+    pub test_paths: Vec<String>,
+    #[serde(default)]
+    pub full_shards: Option<u8>,
+    #[serde(default)]
+    pub toolchain_id: Option<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
 }
@@ -85,6 +119,18 @@ impl RepoProfile {
             setup: self.setup.clone(),
             generated: list(&self.generated),
             protected: list(&self.protected),
+            build_check: self.build_check.clone(),
+            module_test: self.module_test.clone(),
+            module_tests: self.module_tests.clone(),
+            module_graph: self.module_graph.clone(),
+            module_names: self.module_names,
+            full_triggers: list(&self.full_triggers),
+            slow_tests: self.slow_tests.clone(),
+            timing_tests: self.timing_tests.clone(),
+            skip_markers: list(&self.skip_markers),
+            test_paths: list(&self.test_paths),
+            full_shards: self.full_shards,
+            toolchain_id: self.toolchain_id.clone(),
             env: (!self.env.is_empty()).then(|| self.env.clone()),
         }
     }
@@ -119,6 +165,17 @@ pub struct ProfileVerification {
     pub setup: Option<CommandCheck>,
     pub check: Option<CommandCheck>,
     pub single_test: Option<CommandCheck>,
+    // Milestone 9.1 decision 12: the tier commands, verified after M8b's three.
+    #[serde(default)]
+    pub build_check: Option<CommandCheck>,
+    #[serde(default)]
+    pub module_graph: Option<CommandCheck>,
+    #[serde(default)]
+    pub module_test: Option<CommandCheck>,
+    #[serde(default)]
+    pub module_tests: Option<CommandCheck>,
+    #[serde(default)]
+    pub toolchain_id: Option<CommandCheck>,
 }
 
 /// A proposed command that did not pass, and so is not proposed.

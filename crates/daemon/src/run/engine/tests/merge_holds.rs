@@ -84,6 +84,7 @@ fn a_merged_task_leaves_no_mail_behind() {
             priority: None,
             size: None,
             deps: None,
+            stage: None,
         }],
     );
     assert!(replies(&effects)[0].is_ok(), "{effects:#?}");

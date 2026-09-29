@@ -24,6 +24,7 @@ fn amend_brief(task_id: &str, brief: &str) -> PlanEdit {
         priority: None,
         size: None,
         deps: None,
+        stage: None,
     }
 }
 

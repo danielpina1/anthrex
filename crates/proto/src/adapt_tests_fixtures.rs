@@ -56,6 +56,11 @@ pub(super) fn a_verification() -> ProfileVerification {
         setup: Some(a_command_check("cargo fetch", true)),
         check: Some(a_command_check("cargo test", false)),
         single_test: None,
+        build_check: None,
+        module_graph: None,
+        module_test: None,
+        module_tests: None,
+        toolchain_id: None,
     }
 }
 
@@ -153,6 +158,9 @@ pub(super) fn a_stats() -> HistoryStats {
         size_checked: 3,
         size_raised: 1,
         problems: vec!["line 9 does not parse".into()],
+        flaky_proposals: Vec::new(),
+        window_days: 0,
+        quarantine_after: 0,
     }
 }
 
@@ -216,6 +224,8 @@ pub(super) fn a_task_record() -> TaskRecord {
         sessions: 2,
         done_signal: Some(DoneSignal::TaskDone),
         merge_commit: Some("dddd4444".into()),
+        stage: 1,
+        origin: crate::tiers::TaskOrigin::Plan,
     }
 }
 

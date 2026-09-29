@@ -12,13 +12,15 @@ use crate::adapt::{DiffStats, PhaseSecs, RunPath, RunUsage, SizeCheckInfo, Triag
 use crate::profile::ProfileSource;
 use crate::run::{AgentRole, BlockReason, DoneSignal, GateCounts, Route, Size, TaskKind, TestMode};
 use crate::run_info::TokenUsage;
+use crate::tiers::TaskOrigin;
 
 /// The `v` every record written now carries. Milestone 9 (decision 43) raised it from
-/// 1 with the `role_route` line; version-1 lines still decode unchanged.
-pub const HISTORY_VERSION: u32 = 2;
+/// 1 with the `role_route` line, milestone 9.1 (decision 57) to 3 with the `tier`,
+/// `flaky` and `bisect` lines; older lines still decode unchanged.
+pub const HISTORY_VERSION: u32 = 3;
 
 /// One line of `history.jsonl`, tagged `"type": "task" | "run" | "revert" |
-/// "role_route"`.
+/// "role_route" | "tier" | "flaky" | "bisect"`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HistoryLine {
@@ -27,6 +29,10 @@ pub enum HistoryLine {
     Revert(RevertRecord),
     /// Milestone 9 decision 43.
     RoleRoute(RoleRoutingDecision),
+    /// Milestone 9.1 decision 57.
+    Tier(TierRunRecord),
+    Flaky(FlakyRecord),
+    Bisect(BisectLine),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -222,6 +228,11 @@ pub struct TaskRecord {
     pub sessions: u32,
     pub done_signal: Option<DoneSignal>,
     pub merge_commit: Option<String>,
+    /// Milestone 9.1; `0` on a line written before stages.
+    #[serde(default)]
+    pub stage: u16,
+    #[serde(default)]
+    pub origin: TaskOrigin,
 }
 
 /// One finished run.
@@ -283,4 +294,70 @@ pub struct HistoryStats {
     pub size_checked: u32,
     pub size_raised: u32,
     pub problems: Vec<String>,
+    /// Milestone 9.1 decision 34: tests proposed for quarantine, and the window read.
+    #[serde(default)]
+    pub flaky_proposals: Vec<FlakyProposal>,
+    #[serde(default)]
+    pub window_days: u32,
+    #[serde(default)]
+    pub quarantine_after: u32,
+}
+
+/// One tier job (decision 57), `record_id` `<run>/tier/<op>`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TierRunRecord {
+    pub v: u32,
+    pub record_id: String,
+    pub at: u64,
+    pub run_id: String,
+    pub task_id: Option<String>,
+    pub stage: u16,
+    pub tier: u8,
+    pub secs: u64,
+    /// Modules in the affected set; 0 for build only and for the full suite.
+    pub affected: u32,
+    pub full_reason: Option<String>,
+    pub cache_hit: bool,
+    pub cached_steps: u8,
+    pub steps: u8,
+    pub ok: bool,
+    pub flaky: Vec<String>,
+}
+
+/// A test that failed and passed on its retry (TT §3.6, with M8b's `type` tag),
+/// `record_id` `<run>/flaky/<op>/<test>`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FlakyRecord {
+    pub v: u32,
+    pub record_id: String,
+    pub at: u64,
+    pub run_id: String,
+    pub task_id: Option<String>,
+    pub tier: u8,
+    pub test: String,
+}
+
+/// One bisect of a red full suite, `record_id` `<run>/bisect/<stage>/<n>`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BisectLine {
+    pub v: u32,
+    pub record_id: String,
+    pub at: u64,
+    pub run_id: String,
+    pub stage: u16,
+    pub head: String,
+    pub tests: Vec<String>,
+    pub range: u32,
+    pub probes: u32,
+    pub culprit: Option<String>,
+    pub reason: Option<String>,
+    pub fix_task: Option<String>,
+}
+
+/// A flaky test proposed for quarantine (decision 34).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FlakyProposal {
+    pub test: String,
+    pub runs: u32,
+    pub last_at: u64,
 }

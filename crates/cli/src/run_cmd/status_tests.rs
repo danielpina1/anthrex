@@ -114,6 +114,11 @@ fn task(
         last_message_kind: None,
         last_message_line: None,
         task_notes: Vec::new(),
+        stage: 1,
+        origin: proto::TaskOrigin::Plan,
+        fixes: None,
+        tier: None,
+        weakening: Vec::new(),
     }
 }
 
@@ -224,6 +229,8 @@ pub(in crate::run_cmd) fn example() -> RunInfo {
         integration: Vec::new(),
         digest_revision: 0,
         research_report: None,
+        stages: Vec::new(),
+        test_slots: 0,
     }
 }
 

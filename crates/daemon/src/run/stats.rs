@@ -89,8 +89,12 @@ pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
         match line {
             HistoryLine::Task(t) => tasks.push(t),
             HistoryLine::Run(r) => runs.push(r),
-            // Decision 43: role-routing records never count toward the aggregates.
-            HistoryLine::RoleRoute(_) => {}
+            // Decision 43: role-routing records never count toward the aggregates;
+            // neither do milestone 9.1's tier, flaky and bisect lines (until M9.1.18).
+            HistoryLine::RoleRoute(_)
+            | HistoryLine::Tier(_)
+            | HistoryLine::Flaky(_)
+            | HistoryLine::Bisect(_) => {}
             HistoryLine::Revert(r) => match &r.task_id {
                 Some(task) => {
                     task_reverts.insert((r.run_id.as_str(), task.as_str()));
@@ -138,6 +142,9 @@ pub fn aggregate(lines: &[HistoryLine], path: &Path) -> HistoryStats {
             .filter(|c| c.decided.is_some_and(|d| d > c.engine))
             .count() as u32,
         problems: Vec::new(),
+        flaky_proposals: Vec::new(),
+        window_days: 0,
+        quarantine_after: 0,
     }
 }
 

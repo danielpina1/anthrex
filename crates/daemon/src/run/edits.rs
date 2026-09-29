@@ -363,6 +363,7 @@ impl Batch {
             priority,
             size,
             deps,
+            ..
         } = edit
         else {
             return;

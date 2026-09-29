@@ -125,6 +125,9 @@ fn run_info(run: &Run, now: u64) -> RunInfo {
         integration: super::snapshot_orch::integration(run),
         digest_revision: run.orch.digest_rev,
         research_report: super::snapshot_orch::research_report(run),
+        // Milestone 9.1: stages and slots are filled from task M9.1.20.
+        stages: Vec::new(),
+        test_slots: 0,
     }
 }
 
@@ -320,6 +323,7 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
                 .clone()
                 .filter(|_| c.summary_source == Some(proto::DeciderSource::Decider)),
             summary_source: c.summary_source,
+            tier: None,
         }),
         last_proof: t.proofs.last().map(|p| ProofInfo {
             at: p.at,
@@ -378,6 +382,12 @@ fn task_info(t: &Task, on_critical_path: bool, wave: u32, now: u64, plan_text: b
         last_message_kind: t.orch.messages.last().map(|m| m.kind),
         last_message_line: message_line(t),
         task_notes: task_notes(t),
+        // Milestone 9.1: origins, tiers and signals are filled from task M9.1.20.
+        stage: t.spec.stage,
+        origin: proto::TaskOrigin::Plan,
+        fixes: None,
+        tier: None,
+        weakening: Vec::new(),
     }
 }
 
