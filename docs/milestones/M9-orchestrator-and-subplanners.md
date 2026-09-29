@@ -3974,3 +3974,17 @@ The re-review confirmed that item 1's hole is closed on every path it tried. Com
    - `roles_installed_tests.rs::a_run_recorded_before_the_frozen_keys_never_reads_the_live_config` was red first by compilation (the new signature). The earlier assertion that such a run follows the live config is replaced.
    - `engine/tests/role_history.rs`'s scout context helper is gone with the parameter.
    - **Nit, recorded and not fixed:** project-settings files newly trusted by an edit or a promotion under `--trust-project` are not appended to `run.trusted_project`. Nothing reads that list for a run started with `--trust-project`, since it is trusted whole.
+
+#### Fix round 3
+
+The reviewer approved round 2 with three small fixes, in one commit: `fix(daemon): keep the held line in step, off the live config, and steady on focus`.
+
+1. **The held line could outlive the hold.** `report_held` updated the `held` set under its lock but sent `WakeHeld` after releasing it, so two checks at once (the tick and `watch_windows`) could send true after false. It now sends under the lock; `send` is a non-blocking unbounded send.
+   - **No deterministic test.** The race needs a check pre-empted between the set's update and its send. After the fix, both happen under one lock, so there is no gap left to hold a check in. A test hook placed in the old gap would only prove the old code wrong, and hooking the new code would test the hook, not the property. A concurrent stress test would be nondeterministic.
+   - The property now rests on the structure: the set and the engine are told in the same order, under one lock.
+2. **The dead fallback to the live config is gone.** `start_scout` refuses a scout whose run is not in the engine with "the run is gone", so no scout route reads the daemon's config.
+   - `role_route_tests.rs::a_scout_of_a_run_that_is_gone_is_refused` was red on the old code, whose launch tried Claude from the live config.
+3. **The held line no longer flaps on focus.** `WindowManager::held_at_prompt_for` measures from the new `Entry::prompt_since`, set by `Entry::note_prompt` when the window reaches `Idle` or `Done` with `attention_open` set.
+   - A move between the two (a client focusing a Codex window moves `Done` to `Idle`) keeps it. Leaving the prompt ends it, and a restart resets it.
+   - `restart_tests.rs::a_done_to_idle_move_keeps_the_prompt_clock` was red first by compilation. It fails with the clock mutated to restart on every status change, as `since` does.
+   - **The engine's side:** `engine/tests/wake_held.rs::a_held_wake_shows_until_it_is_delivered_or_released` checks that the line appears on `WakeHeld`, goes on `OrchestratorWoken` and on a release, and is never saved. It fails with the clear on `OrchestratorWoken` removed.
